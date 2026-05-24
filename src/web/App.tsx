@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { itemText } from "../core/events.js";
 import "./style.css";
 
 type Role = "user" | "codex" | "event" | "error";
@@ -12,19 +13,11 @@ type Message = {
 const formatEvent = (event: any): string | null => {
   if (event.type === "thread") return `thread: ${event.threadId}`;
   if (event.type === "status") return event.text;
+  if (event.type === "artifact") return event.text;
   if (event.type === "error") return event.message;
   if (event.type !== "item") return null;
-
-  const item = event.item;
-  if (item.type === "agent_message") return null;
-  if (item.type === "reasoning") return item.text ? `reasoning: ${item.text}` : null;
-  if (item.type === "command_execution") return `$ ${item.command}\n${item.aggregated_output ?? ""}`.trim();
-  if (item.type === "file_change") return item.changes.map((change: any) => `${change.kind}: ${change.path}`).join("\n");
-  if (item.type === "web_search") return `web search: ${item.query}`;
-  if (item.type === "todo_list") {
-    return item.items.map((todo: any) => `${todo.completed ? "[x]" : "[ ]"} ${todo.text}`).join("\n");
-  }
-  return `${item.type}: ${item.status ?? "updated"}`;
+  if (event.item.type === "agent_message") return null;
+  return itemText(event.item);
 };
 
 const App = () => {

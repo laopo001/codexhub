@@ -1,5 +1,7 @@
 import { Codex, type CodexOptions, type Input, type Thread, type ThreadOptions } from "@openai/codex-sdk";
+import { readCodexSessionSnapshot } from "./codexSession.js";
 import { toProxyEvent, type ProxyEvent } from "./events.js";
+import { TurnLogger } from "./turnLogger.js";
 
 export type RunRequest = {
   input: Input;
@@ -52,27 +54,47 @@ export class CodexProxy {
   }
 
   async *runStream(request: RunRequest): AsyncGenerator<ProxyEvent> {
-    const thread = request.threadId ? this.getThread(request.threadId) : this.startThread(this.optionsFromRequest(request));
+    const threadOptions = this.optionsFromRequest(request);
+    const workingDirectory = threadOptions.workingDirectory ?? process.cwd();
+    const thread = request.threadId ? this.getThread(request.threadId) : this.startThread(threadOptions);
+    const logger = new TurnLogger(request.input, workingDirectory, request.threadId ?? thread.id);
     let threadId = request.threadId ?? thread.id;
     let finalResponse = "";
 
-    const { events } = await thread.runStreamed(request.input);
-    for await (const event of events) {
-      if (event.type === "thread.started") {
-        threadId = event.thread_id;
-        this.threads.set(event.thread_id, thread);
+    try {
+      const { events } = await thread.runStreamed(request.input);
+      for await (const event of events) {
+        if (event.type === "thread.started") {
+          threadId = event.thread_id;
+          logger.setThreadId(event.thread_id);
+          this.threads.set(event.thread_id, thread);
+        }
+
+        if (event.type === "item.completed" && event.item.type === "agent_message") {
+          finalResponse = event.item.text;
+        }
+
+        const proxyEvent = toProxyEvent(event, finalResponse);
+        logger.record(event, proxyEvent);
+        if (proxyEvent) yield proxyEvent;
       }
 
-      if (event.type === "item.completed" && event.item.type === "agent_message") {
-        finalResponse = event.item.text;
+      if (threadId && !this.threads.has(threadId)) {
+        this.threads.set(threadId, thread);
       }
 
-      const proxyEvent = toProxyEvent(event, finalResponse);
-      if (proxyEvent) yield proxyEvent;
-    }
+      if (threadId) {
+        const snapshot = await readCodexSessionSnapshot(threadId);
+        logger.attachCodexSession(snapshot);
+        for (const event of artifactEventsFromSnapshot(snapshot)) {
+          yield event;
+        }
+      }
 
-    if (threadId && !this.threads.has(threadId)) {
-      this.threads.set(threadId, thread);
+      await logger.complete();
+    } catch (error) {
+      await logger.fail(error).catch((loggingError: unknown) => logger.recordLoggingError(loggingError));
+      throw error;
     }
   }
 
@@ -91,3 +113,18 @@ export class CodexProxy {
     };
   }
 }
+
+const artifactEventsFromSnapshot = (snapshot: Awaited<ReturnType<typeof readCodexSessionSnapshot>>): ProxyEvent[] => {
+  if (!snapshot) return [];
+
+  return snapshot.imageGenerations.map((generation) => ({
+    type: "artifact",
+    path: generation.savedPath,
+    text: [
+      "Generated image",
+      generation.savedPath ? `Saved to: ${generation.savedPath}` : null,
+      generation.revisedPrompt ? `Prompt: ${generation.revisedPrompt}` : null
+    ].filter(Boolean).join("\n"),
+    metadata: generation
+  }));
+};
