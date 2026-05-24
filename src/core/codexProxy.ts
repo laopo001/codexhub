@@ -1,7 +1,7 @@
 import { Codex, type CodexOptions, type Input, type Thread, type ThreadOptions } from "@openai/codex-sdk";
-import { readCodexSessionSnapshot } from "./codexSession.js";
+import { readCodexSessionSnapshot, summarizeCodexSession } from "./codexSession.js";
+import { upsertCodexpThread } from "./codexpCache.js";
 import { toProxyEvent, type ProxyEvent } from "./events.js";
-import { TurnLogger } from "./turnLogger.js";
 
 export type RunRequest = {
   input: Input;
@@ -57,7 +57,6 @@ export class CodexProxy {
     const threadOptions = this.optionsFromRequest(request);
     const workingDirectory = threadOptions.workingDirectory ?? process.cwd();
     const thread = request.threadId ? this.getThread(request.threadId) : this.startThread(threadOptions);
-    const logger = new TurnLogger(request.input, workingDirectory, request.threadId ?? thread.id);
     let threadId = request.threadId ?? thread.id;
     let finalResponse = "";
 
@@ -66,7 +65,6 @@ export class CodexProxy {
       for await (const event of events) {
         if (event.type === "thread.started") {
           threadId = event.thread_id;
-          logger.setThreadId(event.thread_id);
           this.threads.set(event.thread_id, thread);
         }
 
@@ -75,7 +73,6 @@ export class CodexProxy {
         }
 
         const proxyEvent = toProxyEvent(event, finalResponse);
-        logger.record(event, proxyEvent);
         if (proxyEvent) yield proxyEvent;
       }
 
@@ -85,15 +82,13 @@ export class CodexProxy {
 
       if (threadId) {
         const snapshot = await readCodexSessionSnapshot(threadId);
-        logger.attachCodexSession(snapshot);
         for (const event of artifactEventsFromSnapshot(snapshot)) {
           yield event;
         }
+        const summary = snapshot ? await summarizeCodexSession(snapshot, workingDirectory) : null;
+        if (summary) await upsertCodexpThread(workingDirectory, summary);
       }
-
-      await logger.complete();
     } catch (error) {
-      await logger.fail(error).catch((loggingError: unknown) => logger.recordLoggingError(loggingError));
       throw error;
     }
   }

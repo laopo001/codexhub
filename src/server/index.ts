@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { z } from "zod";
 import { CodexProxy } from "../core/codexProxy.js";
 import { loadConfig } from "../core/config.js";
+import { listLoadableCodexThreads, loadCodexThread } from "../core/codexpLog.js";
 
 const turnSchema = z.object({
   input: z.union([
@@ -40,6 +41,27 @@ const main = async () => {
   app.post("/api/turn", async (request) => {
     const payload = turnSchema.parse(request.body);
     return proxy.run(payload);
+  });
+
+  app.get("/api/threads", async (request) => {
+    const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);
+    const workingDirectory = query.workingDirectory ?? config.defaultThreadOptions.workingDirectory ?? process.cwd();
+    return {
+      workingDirectory,
+      threads: await listLoadableCodexThreads(workingDirectory)
+    };
+  });
+
+  app.get("/api/threads/:threadId", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);
+    const workingDirectory = query.workingDirectory ?? config.defaultThreadOptions.workingDirectory ?? process.cwd();
+    const thread = await loadCodexThread(params.threadId, workingDirectory);
+    if (!thread) {
+      reply.code(404);
+      return { error: "thread_not_found" };
+    }
+    return thread;
   });
 
   app.post("/api/turn/stream", async (request, reply) => {

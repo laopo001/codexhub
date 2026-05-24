@@ -10,6 +10,15 @@ type Message = {
   text: string;
 };
 
+type ConversationSummary = {
+  threadId: string;
+  updatedAt: string;
+  firstUserMessage: string;
+  lastAssistantMessage: string;
+  artifactCount: number;
+  messageCount: number;
+};
+
 const formatEvent = (event: any): string | null => {
   if (event.type === "thread") return `thread: ${event.threadId}`;
   if (event.type === "status") return event.text;
@@ -26,8 +35,21 @@ const App = () => {
   const [threadId, setThreadId] = useState<string | undefined>();
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
+  const [loadModalOpen, setLoadModalOpen] = useState(false);
+  const [loadingThreads, setLoadingThreads] = useState(false);
+  const [threadSearch, setThreadSearch] = useState("");
+  const [threads, setThreads] = useState<ConversationSummary[]>([]);
 
   const canSend = useMemo(() => input.trim().length > 0 && !busy, [busy, input]);
+  const filteredThreads = useMemo(() => {
+    const query = threadSearch.trim().toLowerCase();
+    if (!query) return threads;
+    return threads.filter((thread) => [
+      thread.threadId,
+      thread.firstUserMessage,
+      thread.lastAssistantMessage
+    ].some((value) => value.toLowerCase().includes(query)));
+  }, [threadSearch, threads]);
 
   const append = (message: Message) => setMessages((current) => [...current, message]);
 
@@ -91,6 +113,48 @@ const App = () => {
     append({ role: "event", text: "started a new local thread slot" });
   };
 
+  const openLoadModal = async () => {
+    if (busy) return;
+    setLoadModalOpen(true);
+    setLoadingThreads(true);
+    setThreadSearch("");
+    try {
+      const params = new URLSearchParams({ workingDirectory });
+      const response = await fetch(`/api/threads?${params.toString()}`);
+      if (!response.ok) throw new Error(`Failed to list threads: HTTP ${response.status}`);
+      const data = await response.json();
+      setThreads(Array.isArray(data.threads) ? data.threads : []);
+    } catch (error) {
+      append({ role: "error", text: error instanceof Error ? error.message : String(error) });
+      setThreads([]);
+    } finally {
+      setLoadingThreads(false);
+    }
+  };
+
+  const loadThreadById = async (id: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const params = new URLSearchParams({ workingDirectory });
+      const response = await fetch(`/api/threads/${encodeURIComponent(id)}?${params.toString()}`);
+      if (!response.ok) throw new Error(`Thread not found: ${id}`);
+      const data = await response.json();
+      setThreadId(data.threadId);
+      setMessages(
+        data.messages.map((message: any) => ({
+          role: message.role === "assistant" ? "codex" : message.role,
+          text: message.text
+        }))
+      );
+      setLoadModalOpen(false);
+    } catch (error) {
+      append({ role: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <main className="app">
       <aside className="sidebar">
@@ -104,11 +168,14 @@ const App = () => {
           <input value={workingDirectory} onChange={(event) => setWorkingDirectory(event.target.value)} />
         </label>
 
-        <label>
-          Thread
-          <input value={threadId ?? ""} onChange={(event) => setThreadId(event.target.value || undefined)} placeholder="new" />
-        </label>
+        {threadId ? (
+          <div className="threadCurrent">
+            <span>Current thread</span>
+            <code>{threadId}</code>
+          </div>
+        ) : null}
 
+        <button type="button" onClick={openLoadModal} disabled={busy}>Load conversation</button>
         <button type="button" onClick={newThread}>New thread</button>
       </aside>
 
@@ -142,8 +209,66 @@ const App = () => {
           <button type="submit" disabled={!canSend}>{busy ? "Running" : "Send"}</button>
         </form>
       </section>
+
+      {loadModalOpen ? (
+        <div className="modalOverlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setLoadModalOpen(false);
+        }}>
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="loadThreadTitle">
+            <header className="modalHeader">
+              <div>
+                <h2 id="loadThreadTitle">Load conversation</h2>
+                <p>{workingDirectory}</p>
+              </div>
+              <button type="button" className="iconButton" onClick={() => setLoadModalOpen(false)} aria-label="Close">
+                ×
+              </button>
+            </header>
+
+            <input
+              className="threadSearch"
+              value={threadSearch}
+              onChange={(event) => setThreadSearch(event.target.value)}
+              placeholder="Search by prompt, answer, or thread id"
+              autoFocus
+            />
+
+            <div className="threadList">
+              {loadingThreads ? (
+                <div className="threadEmpty">Loading conversations...</div>
+              ) : filteredThreads.length === 0 ? (
+                <div className="threadEmpty">No Codex conversations found for this folder.</div>
+              ) : (
+                filteredThreads.map((thread) => (
+                  <button
+                    type="button"
+                    className="threadRow"
+                    key={thread.threadId}
+                    onClick={() => void loadThreadById(thread.threadId)}
+                  >
+                    <span className="threadTitle">{thread.firstUserMessage || thread.threadId}</span>
+                    <span className="threadMeta">
+                      {formatDate(thread.updatedAt)} · {thread.messageCount} messages
+                      {thread.artifactCount ? ` · ${thread.artifactCount} files` : ""}
+                    </span>
+                    {thread.lastAssistantMessage ? (
+                      <span className="threadPreview">{thread.lastAssistantMessage}</span>
+                    ) : null}
+                  </button>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
+};
+
+const formatDate = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 };
 
 const root = document.getElementById("root");
