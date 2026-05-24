@@ -1,0 +1,173 @@
+:root {
+  color: #17211a;
+  background: #f4f6f1;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px;
+  background: #122018;
+  color: #f8fbf4;
+}
+
+.sidebar h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.sidebar p {
+  margin: 8px 0 0;
+  color: #b8c5b4;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  color: #d8e2d5;
+  font-size: 13px;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #fcfdf9;
+  color: #17211a;
+  padding: 10px 12px;
+}
+
+.sidebar input {
+  border-color: #405244;
+  background: #1a2b20;
+  color: #f8fbf4;
+}
+
+button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: #d95f36;
+  color: white;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-width: 0;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+}
+
+.empty {
+  margin: auto;
+  color: #6a7467;
+}
+
+.message {
+  display: grid;
+  gap: 8px;
+  max-width: 980px;
+  border-left: 4px solid #a8b4a4;
+  padding: 10px 14px;
+  background: #ffffff;
+}
+
+.message.user {
+  border-color: #2f7d5a;
+}
+
+.message.codex {
+  border-color: #d95f36;
+}
+
+.message.error {
+  border-color: #bd3434;
+}
+
+.message span {
+  color: #66715f;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.message pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  border-top: 1px solid #dfe5dc;
+  padding: 16px 24px 24px;
+  background: #f9fbf6;
+}
+
+.composer textarea {
+  resize: vertical;
+  min-height: 88px;
+}
+
+.composer button {
+  align-self: end;
+  min-width: 96px;
+}
+
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    padding: 18px;
+  }
+
+  .composer {
+    grid-template-columns: 1fr;
+  }
+}
