@@ -140,6 +140,21 @@ button:disabled {
   border-color: #d95f36;
 }
 
+.message.event {
+  border-color: #7b8794;
+  background: #fbfcf8;
+}
+
+.message.tool {
+  border-color: #2f6f9f;
+  background: #f8fbfd;
+}
+
+.message.thinking {
+  border-color: #8a6f2f;
+  background: #fffdf6;
+}
+
 .message.error {
   border-color: #bd3434;
 }

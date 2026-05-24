@@ -3,10 +3,12 @@ import { createRoot } from "react-dom/client";
 import { itemText } from "../core/events.js";
 import "./style.css";
 
-type Role = "user" | "codex" | "event" | "error";
+type Role = "user" | "codex" | "event" | "error" | "tool" | "thinking";
 
 type Message = {
   role: Role;
+  id?: string;
+  label?: string;
   text: string;
 };
 
@@ -19,14 +21,48 @@ type ConversationSummary = {
   messageCount: number;
 };
 
-const formatEvent = (event: any): string | null => {
-  if (event.type === "thread") return `thread: ${event.threadId}`;
-  if (event.type === "status") return event.text;
-  if (event.type === "artifact") return event.text;
-  if (event.type === "error") return event.message;
+const eventMessage = (event: any): Message | null => {
+  if (event.type === "thread") return { role: "event", label: "thread", text: event.threadId };
+  if (event.type === "status") return { role: "event", label: "status", text: event.text };
+  if (event.type === "artifact") return { role: "event", label: "artifact", text: event.text };
+  if (event.type === "error") return { role: "error", label: "error", text: event.message };
   if (event.type !== "item") return null;
-  if (event.item.type === "agent_message") return null;
-  return itemText(event.item);
+
+  const text = itemText(event.item) ?? fallbackItemText(event.item);
+  if (!text) return null;
+
+  return {
+    role: itemRole(event.item),
+    id: typeof event.item.id === "string" ? `item:${event.item.id}` : undefined,
+    label: itemLabel(event.item, event.phase),
+    text
+  };
+};
+
+const itemRole = (item: any): Role => {
+  if (item.type === "agent_message") return "codex";
+  if (item.type === "reasoning") return "thinking";
+  if (item.type === "command_execution" || item.type === "mcp_tool_call" || item.type === "web_search") return "tool";
+  if (item.type === "error") return "error";
+  return "event";
+};
+
+const itemLabel = (item: any, phase?: string): string => {
+  const state = item.status ?? phase;
+  if (item.type === "command_execution") return state ? `command: ${state}` : "command";
+  if (item.type === "mcp_tool_call") return state ? `${item.server}.${item.tool}: ${state}` : `${item.server}.${item.tool}`;
+  if (item.type === "web_search") return "web search";
+  if (item.type === "reasoning") return "thinking";
+  if (item.type === "todo_list") return "plan";
+  if (item.type === "file_change") return state ? `file change: ${state}` : "file change";
+  if (item.type === "agent_message") return "codex";
+  return item.type ?? "event";
+};
+
+const fallbackItemText = (item: any): string | null => {
+  if (item.type === "reasoning") return "Thinking...";
+  if (item.type === "mcp_tool_call") return JSON.stringify(item.arguments ?? {}, null, 2);
+  return null;
 };
 
 const App = () => {
@@ -52,6 +88,21 @@ const App = () => {
   }, [threadSearch, threads]);
 
   const append = (message: Message) => setMessages((current) => [...current, message]);
+  const appendOrUpdate = (message: Message) => {
+    setMessages((current) => {
+      if (!message.id) return [...current, message];
+      const index = current.findIndex((entry) => entry.id === message.id);
+      if (index === -1) return [...current, message];
+      return current.map((entry, entryIndex) => entryIndex === index ? message : entry);
+    });
+  };
+  const appendFinal = (text: string) => {
+    setMessages((current) => {
+      const last = current.at(-1);
+      if (last?.role === "codex" && last.text === text) return current;
+      return [...current, { role: "codex", label: "final", text }];
+    });
+  };
 
   const send = async () => {
     const prompt = input.trim();
@@ -94,10 +145,11 @@ const App = () => {
 
           const event = JSON.parse(dataLine.slice(6));
           if (event.type === "thread") setThreadId(event.threadId);
-          if (event.type === "final") append({ role: "codex", text: event.text });
-          else {
-            const text = formatEvent(event);
-            if (text) append({ role: event.type === "error" ? "error" : "event", text });
+          if (event.type === "final") {
+            appendFinal(event.text);
+          } else {
+            const message = eventMessage(event);
+            if (message) appendOrUpdate(message);
           }
         }
       }
@@ -144,6 +196,8 @@ const App = () => {
       setMessages(
         data.messages.map((message: any) => ({
           role: message.role === "assistant" ? "codex" : message.role,
+          id: message.id,
+          label: message.label,
           text: message.text
         }))
       );
@@ -186,7 +240,7 @@ const App = () => {
           ) : (
             messages.map((message, index) => (
               <article className={`message ${message.role}`} key={index}>
-                <span>{message.role}</span>
+                <span>{message.label ?? message.role}</span>
                 <pre>{message.text}</pre>
               </article>
             ))

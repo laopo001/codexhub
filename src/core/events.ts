@@ -3,7 +3,7 @@ import type { ThreadEvent, ThreadItem, Usage } from "@openai/codex-sdk";
 export type ProxyEvent =
   | { type: "thread"; threadId: string }
   | { type: "status"; text: string }
-  | { type: "item"; item: ThreadItem }
+  | { type: "item"; phase: "started" | "updated" | "completed"; item: ThreadItem }
   | { type: "artifact"; text: string; path?: string; metadata?: unknown }
   | { type: "final"; text: string; usage: Usage | null }
   | { type: "error"; message: string };
@@ -15,9 +15,11 @@ export const toProxyEvent = (event: ThreadEvent, finalResponse = ""): ProxyEvent
     case "turn.started":
       return { type: "status", text: "turn.started" };
     case "item.started":
+      return { type: "item", phase: "started", item: event.item };
     case "item.updated":
+      return { type: "item", phase: "updated", item: event.item };
     case "item.completed":
-      return { type: "item", item: event.item };
+      return { type: "item", phase: "completed", item: event.item };
     case "turn.completed":
       return { type: "final", text: finalResponse, usage: event.usage };
     case "turn.failed":
