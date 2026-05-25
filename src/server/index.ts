@@ -22,6 +22,11 @@ const inputSchema = z.union([
   )
 ]);
 
+const threadOptionsSchema = z.object({
+  model: z.string().min(1).optional(),
+  modelReasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional()
+});
+
 const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`event: ${event}\n`);
   raw.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -117,16 +122,20 @@ const main = async () => {
   });
 
   app.post("/api/instances", async (request) => {
-    const payload = z.object({ workingDirectory: z.string().optional() }).parse(request.body ?? {});
+    const payload = z.object({
+      workingDirectory: z.string().optional(),
+      options: threadOptionsSchema.optional()
+    }).parse(request.body ?? {});
     const workingDirectory = payload.workingDirectory ?? defaultWorkingDirectory;
     await touchWorkspace(workingDirectory);
-    return instances.createInstance(workingDirectory);
+    return instances.createInstance(workingDirectory, payload.options ?? {});
   });
 
   app.post("/api/instances/restore", async (request, reply) => {
     const payload = z.object({
       workingDirectory: z.string().min(1),
-      threadId: z.string().min(1)
+      threadId: z.string().min(1),
+      options: threadOptionsSchema.optional()
     }).parse(request.body);
     await touchWorkspace(payload.workingDirectory);
 
@@ -137,7 +146,7 @@ const main = async () => {
     }
 
     const title = thread.messages.find((message) => message.role === "user")?.text.slice(0, 80) || payload.threadId;
-    return instances.restoreInstance(payload.workingDirectory, payload.threadId, thread.messages, title);
+    return instances.restoreInstance(payload.workingDirectory, payload.threadId, thread.messages, title, payload.options ?? {});
   });
 
   app.get("/api/instances/:instanceId", async (request, reply) => {

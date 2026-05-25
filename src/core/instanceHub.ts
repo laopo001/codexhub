@@ -11,6 +11,7 @@ export type InstanceMessage = {
   label?: string;
   text: string;
   attachments?: Array<{ type: "image"; path: string }>;
+  usage?: Usage;
   at: string;
   source?: "web" | "telegram" | "codex" | "proxy-runtime";
   status?: "pending" | "completed" | "failed";
@@ -21,6 +22,8 @@ export type InstanceSummary = {
   instanceId: string;
   workingDirectory: string;
   threadId?: string;
+  model?: string;
+  modelReasoningEffort?: ThreadOptions["modelReasoningEffort"];
   running: boolean;
   attachCount: number;
   title: string;
@@ -47,6 +50,7 @@ type RuntimeInstance = {
   instanceId: string;
   workingDirectory: string;
   threadId?: string;
+  threadOptions: ThreadOptions;
   running: boolean;
   title: string;
   updatedAt: string;
@@ -67,11 +71,12 @@ export class InstanceHub {
     this.proxy = new CodexProxy(codexOptions, defaultThreadOptions);
   }
 
-  createInstance(workingDirectory: string): InstanceDetail {
+  createInstance(workingDirectory: string, options: ThreadOptions = {}): InstanceDetail {
     const now = new Date().toISOString();
     const instance: RuntimeInstance = {
       instanceId: randomUUID(),
       workingDirectory,
+      threadOptions: options,
       running: false,
       title: "New thread",
       updatedAt: now,
@@ -90,7 +95,8 @@ export class InstanceHub {
     workingDirectory: string,
     threadId: string,
     messages: Array<Omit<InstanceMessage, "id" | "at"> & { id?: string; at?: string }>,
-    title = "Restored thread"
+    title = "Restored thread",
+    options: ThreadOptions = {}
   ): InstanceDetail {
     const now = new Date().toISOString();
     const instanceMessages = messages.map((message) => ({
@@ -103,6 +109,7 @@ export class InstanceHub {
       instanceId: randomUUID(),
       workingDirectory,
       threadId,
+      threadOptions: options,
       running: false,
       title,
       updatedAt: instanceMessages.at(-1)?.at ?? now,
@@ -190,10 +197,14 @@ export class InstanceHub {
         threadId: instance.threadId,
         workingDirectory: instance.workingDirectory,
         skipGitRepoCheck: true,
+        options: instance.threadOptions,
         signal: instance.abortController.signal
       })) {
         if (event.type === "thread") instance.threadId = event.threadId;
-        if (event.type === "final" && event.usage) instance.lastUsage = event.usage;
+        if (event.type === "final" && event.usage) {
+          instance.lastUsage = event.usage;
+          this.attachUsageToLatestAgentMessage(instance, event.usage);
+        }
         this.publish(instance, "event", event);
 
         const message = messageFromProxyEvent(event, turnId);
@@ -256,6 +267,24 @@ export class InstanceHub {
     this.publish(instance, "message", undefined, message);
   }
 
+  private attachUsageToLatestAgentMessage(instance: RuntimeInstance, usage: Usage) {
+    let index = -1;
+    for (let i = instance.messages.length - 1; i >= 0; i -= 1) {
+      const message = instance.messages[i];
+      if (message.source === "codex" && message.itemType === "agent_message") {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0) return;
+    const message = {
+      ...instance.messages[index],
+      usage
+    };
+    instance.messages[index] = message;
+    this.publish(instance, "message", undefined, message);
+  }
+
   private publish(
     instance: RuntimeInstance,
     kind: InstanceStreamEvent["kind"],
@@ -280,6 +309,8 @@ export class InstanceHub {
       instanceId: instance.instanceId,
       workingDirectory: instance.workingDirectory,
       threadId: instance.threadId,
+      model: instance.threadOptions.model,
+      modelReasoningEffort: instance.threadOptions.modelReasoningEffort,
       running: instance.running,
       attachCount: instance.attachments.size,
       title: instance.title,

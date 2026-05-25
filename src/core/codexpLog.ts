@@ -7,6 +7,14 @@ import {
 } from "./codexSession.js";
 import { upsertCodexpThread, writeCodexpIndex } from "./codexpCache.js";
 
+type TokenUsage = {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens?: number;
+};
+
 export type CodexpChatMessage = {
   role: "user" | "assistant" | "event" | "error" | "tool" | "thinking";
   at: string;
@@ -14,6 +22,7 @@ export type CodexpChatMessage = {
   label?: string;
   text: string;
   attachments?: Array<{ type: "image"; path: string }>;
+  usage?: TokenUsage;
 };
 
 export const listLoadableCodexThreads = async (workingDirectory: string) => {
@@ -41,6 +50,12 @@ const transcriptFromSnapshot = (snapshot: CodexSessionSnapshot): CodexpChatMessa
   const functionCalls = new Map<string, { name: string; arguments: string }>();
 
   for (const record of snapshot.records) {
+    const payload = asRecord(record.payload);
+    if (record.type === "event_msg" && payload?.type === "token_count") {
+      attachUsageToLatestAssistant(messages, payload);
+      continue;
+    }
+
     const message = messageFromRecord(record, functionCalls);
     if (message) messages.push(message);
   }
@@ -164,6 +179,36 @@ const parseJsonObject = (value: string): Record<string, unknown> | null => {
 const formatJsonLike = (value: string) => {
   const parsed = parseJsonObject(value);
   return parsed ? JSON.stringify(parsed, null, 2) : value;
+};
+
+const attachUsageToLatestAssistant = (messages: CodexpChatMessage[], payload: Record<string, unknown>) => {
+  const usage = tokenUsageFromPayload(payload);
+  if (!usage) return;
+  let index = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === "assistant") {
+      index = i;
+      break;
+    }
+  }
+  if (index < 0) return;
+  messages[index] = {
+    ...messages[index],
+    usage
+  };
+};
+
+const tokenUsageFromPayload = (payload: Record<string, unknown>): TokenUsage | null => {
+  const info = asRecord(payload.info);
+  const usage = asRecord(info?.last_token_usage);
+  if (!usage || typeof usage.total_tokens !== "number") return null;
+  return {
+    input_tokens: typeof usage.input_tokens === "number" ? usage.input_tokens : 0,
+    cached_input_tokens: typeof usage.cached_input_tokens === "number" ? usage.cached_input_tokens : 0,
+    output_tokens: typeof usage.output_tokens === "number" ? usage.output_tokens : 0,
+    reasoning_output_tokens: typeof usage.reasoning_output_tokens === "number" ? usage.reasoning_output_tokens : 0,
+    total_tokens: usage.total_tokens
+  };
 };
 
 const localImageAttachments = (payload: Record<string, unknown>): Array<{ type: "image"; path: string }> => {

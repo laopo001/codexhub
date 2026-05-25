@@ -12,6 +12,7 @@ type Message = {
   label?: string;
   text: string;
   attachments?: Array<{ type: "image"; path: string }>;
+  usage?: Usage;
   at?: string;
   status?: "pending" | "completed" | "failed";
   itemType?: string;
@@ -21,6 +22,8 @@ type InstanceSummary = {
   instanceId: string;
   workingDirectory: string;
   threadId?: string;
+  model?: string;
+  modelReasoningEffort?: ReasoningEffort;
   running: boolean;
   attachCount: number;
   title: string;
@@ -74,7 +77,12 @@ type Usage = {
   cached_input_tokens: number;
   output_tokens: number;
   reasoning_output_tokens: number;
+  total_tokens?: number;
 };
+
+type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+type ModelSelection = "auto" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.3-codex" | "gpt-5.3-codex-spark" | "gpt-5.2";
+type ReasoningSelection = "auto" | ReasoningEffort;
 
 type SystemStatus = {
   model: string | null;
@@ -109,7 +117,22 @@ type CodexUsageSnapshot = {
 
 const storageKey = "codex-proxy-ui-state-v3";
 const webClientId = readWebClientId();
-
+const modelOptions: Array<{ value: ModelSelection; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "gpt-5.5", label: "GPT-5.5" },
+  { value: "gpt-5.4", label: "GPT-5.4" },
+  { value: "gpt-5.4-mini", label: "GPT-5.4-Mini" },
+  { value: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
+  { value: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark" },
+  { value: "gpt-5.2", label: "GPT-5.2" }
+];
+const reasoningOptions: Array<{ value: ReasoningSelection; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "XHigh" }
+];
 const App = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -130,6 +153,8 @@ const App = () => {
     modelReasoningEffort: null,
     contextWindowTokens: null
   });
+  const [selectedModel, setSelectedModel] = useState<ModelSelection>("auto");
+  const [selectedReasoning, setSelectedReasoning] = useState<ReasoningSelection>("auto");
   const [codexUsage, setCodexUsage] = useState<CodexUsageSnapshot | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
 
@@ -149,8 +174,14 @@ const App = () => {
 
   useEffect(() => {
     if (!initialized) return;
-    localStorage.setItem(storageKey, JSON.stringify({ activeWorkspacePath, activeSessionId, lastFolderPath }));
-  }, [activeWorkspacePath, activeSessionId, lastFolderPath, initialized]);
+    localStorage.setItem(storageKey, JSON.stringify({
+      activeWorkspacePath,
+      activeSessionId,
+      lastFolderPath,
+      selectedModel,
+      selectedReasoning
+    }));
+  }, [activeWorkspacePath, activeSessionId, lastFolderPath, selectedModel, selectedReasoning, initialized]);
 
   useEffect(() => {
     const interval = window.setInterval(() => void refreshInstances(), 3000);
@@ -209,6 +240,8 @@ const App = () => {
     setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
     setLastFolderPath(saved?.lastFolderPath ?? "");
     setFolderPath(saved?.lastFolderPath ?? "");
+    setSelectedModel(saved?.selectedModel ?? "auto");
+    setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     setInstances(loadedInstances);
     setInitialized(true);
   };
@@ -252,7 +285,7 @@ const App = () => {
     const instance = await apiJson<InstanceDetail>("/api/instances", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workingDirectory })
+      body: JSON.stringify({ workingDirectory, options: selectedThreadOptions(selectedModel, selectedReasoning) })
     });
     setFolderModalOpen(false);
     await openInstance(instance.instanceId);
@@ -281,7 +314,7 @@ const App = () => {
     const instance = await apiJson<InstanceDetail>("/api/instances/restore", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workingDirectory, threadId })
+      body: JSON.stringify({ workingDirectory, threadId, options: selectedThreadOptions(selectedModel, selectedReasoning) })
     });
     setFolderModalOpen(false);
     await openInstance(instance.instanceId);
@@ -488,7 +521,18 @@ const App = () => {
             <code>{activeSession?.workingDirectory ?? activeWorkspacePath}</code>
           </div>
           <div className="workbar" aria-label="Runtime status">
-            <span>{formatModelStatus(systemStatus)}</span>
+            <label className="runtimeSelect">
+              <span>Model</span>
+              <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value as ModelSelection)}>
+                {modelOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label className="runtimeSelect">
+              <span>Thinking</span>
+              <select value={selectedReasoning} onChange={(event) => setSelectedReasoning(event.target.value as ReasoningSelection)}>
+                {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+              </select>
+            </label>
             <span title={formatContextTitle(codexUsage)}>
               Context {formatContextUsage(codexUsage)}
             </span>
@@ -658,6 +702,11 @@ const MessageCard = ({ message }: { message: Message }) => (
         ) : null)}
       </div>
     ) : null}
+    {message.at || message.usage ? (
+      <footer className="messageMeta" title={formatMessageMetaTitle(message)}>
+        {formatMessageMeta(message)}
+      </footer>
+    ) : null}
   </article>
 );
 
@@ -692,10 +741,10 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
 
 const shortId = (id: string) => id.slice(0, 8);
 
-const formatModelStatus = (status: SystemStatus) => [
-  status.model ?? "default model",
-  status.modelReasoningEffort ?? "default"
-].join(" ");
+const selectedThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
+  ...(model === "auto" ? {} : { model }),
+  ...(reasoning === "auto" ? {} : { modelReasoningEffort: reasoning })
+});
 
 const formatContextUsage = (usageSnapshot: CodexUsageSnapshot | null) => {
   const context = contextUsage(usageSnapshot);
@@ -725,6 +774,31 @@ const formatCompactNumber = (value: number) => {
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
   return String(value);
 };
+
+const formatMessageMeta = (message: Message) => [
+  message.at ? formatMessageTime(message.at) : null,
+  message.usage ? `${formatCompactNumber(usageTotal(message.usage))} tokens` : null
+].filter(Boolean).join(" · ");
+
+const formatMessageMetaTitle = (message: Message) => {
+  if (!message.usage) return message.at ? formatDate(message.at) : undefined;
+  return [
+    message.at ? formatDate(message.at) : null,
+    `input ${formatCompactNumber(message.usage.input_tokens)}`,
+    `cached ${formatCompactNumber(message.usage.cached_input_tokens)}`,
+    `output ${formatCompactNumber(message.usage.output_tokens)}`,
+    `reasoning ${formatCompactNumber(message.usage.reasoning_output_tokens)}`
+  ].filter(Boolean).join(" · ");
+};
+
+const formatMessageTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+
+const usageTotal = (usage: Usage) =>
+  usage.total_tokens ?? usage.input_tokens + usage.output_tokens + usage.reasoning_output_tokens;
 
 const formatRateLimitRemaining = (window: RateLimitWindow | null | undefined) => {
   if (!window) return "--";
@@ -775,11 +849,29 @@ const formatDate = (value: string) => {
   return date.toLocaleString();
 };
 
-const readStoredUiState = (): { activeWorkspacePath?: string; activeSessionId?: string; lastFolderPath?: string } | null => {
+const isModelSelection = (value: unknown): value is ModelSelection =>
+  typeof value === "string" && modelOptions.some((option) => option.value === value);
+
+const isReasoningSelection = (value: unknown): value is ReasoningSelection =>
+  typeof value === "string" && reasoningOptions.some((option) => option.value === value);
+
+const readStoredUiState = (): {
+  activeWorkspacePath?: string;
+  activeSessionId?: string;
+  lastFolderPath?: string;
+  selectedModel?: ModelSelection;
+  selectedReasoning?: ReasoningSelection;
+} | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
     if (!parsed || typeof parsed !== "object") return null;
-    return parsed;
+    return {
+      activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,
+      activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : undefined,
+      lastFolderPath: typeof parsed.lastFolderPath === "string" ? parsed.lastFolderPath : undefined,
+      selectedModel: isModelSelection(parsed.selectedModel) ? parsed.selectedModel : undefined,
+      selectedReasoning: isReasoningSelection(parsed.selectedReasoning) ? parsed.selectedReasoning : undefined
+    };
   } catch {
     return null;
   }
