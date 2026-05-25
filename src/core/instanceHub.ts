@@ -3,7 +3,7 @@ import type { CodexOptions, Input, ThreadOptions } from "@openai/codex-sdk";
 import { CodexProxy } from "./codexProxy.js";
 import { itemText, type ProxyEvent } from "./events.js";
 
-export type InstanceMessageRole = "user" | "codex" | "event" | "error" | "tool" | "thinking";
+export type InstanceMessageRole = "user" | "codex" | "assistant" | "event" | "error" | "tool" | "thinking";
 
 export type InstanceMessage = {
   id: string;
@@ -73,6 +73,37 @@ export class InstanceHub {
       title: "New thread",
       updatedAt: now,
       messages: [],
+      events: [],
+      subscribers: new Set(),
+      attachments: new Set(),
+      seq: 0
+    };
+    this.instances.set(instance.instanceId, instance);
+    this.publish(instance, "instance");
+    return this.detail(instance);
+  }
+
+  restoreInstance(
+    workingDirectory: string,
+    threadId: string,
+    messages: Array<Omit<InstanceMessage, "id" | "at"> & { id?: string; at?: string }>,
+    title = "Restored thread"
+  ): InstanceDetail {
+    const now = new Date().toISOString();
+    const instanceMessages = messages.map((message) => ({
+      ...message,
+      id: message.id ?? randomUUID(),
+      at: message.at ?? now,
+      role: message.role === "assistant" ? "codex" : message.role
+    } satisfies InstanceMessage));
+    const instance: RuntimeInstance = {
+      instanceId: randomUUID(),
+      workingDirectory,
+      threadId,
+      running: false,
+      title,
+      updatedAt: instanceMessages.at(-1)?.at ?? now,
+      messages: instanceMessages,
       events: [],
       subscribers: new Set(),
       attachments: new Set(),

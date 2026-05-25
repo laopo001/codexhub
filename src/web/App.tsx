@@ -50,6 +50,15 @@ type DirectoryListing = {
   children: Array<{ name: string; path: string; hasChildren: boolean }>;
 };
 
+type CodexThreadSummary = {
+  threadId: string;
+  updatedAt: string;
+  firstUserMessage?: string;
+  lastAssistantMessage?: string;
+  messageCount: number;
+  artifactCount: number;
+};
+
 type StreamEvent = {
   seq: number;
   kind: "instance" | "message" | "event" | "done";
@@ -57,11 +66,11 @@ type StreamEvent = {
   message?: Message;
 };
 
-const storageKey = "codex-proxy-ui-state-v2";
+const storageKey = "codex-proxy-ui-state-v3";
 const webClientPrefix = `web-${crypto.randomUUID()}`;
 
 const App = () => {
-  const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
+  const [defaultWorkingDirectory, setDefaultWorkingDirectory] = useState("/home/laop/projects/codex-proxy");
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
@@ -70,23 +79,15 @@ const App = () => {
   const [folderPath, setFolderPath] = useState("/home/laop/projects");
   const [folderListing, setFolderListing] = useState<DirectoryListing | null>(null);
   const [folderError, setFolderError] = useState("");
+  const [threadMode, setThreadMode] = useState(false);
+  const [threads, setThreads] = useState<CodexThreadSummary[]>([]);
+  const [loadingThreads, setLoadingThreads] = useState(false);
+  const [instanceMenu, setInstanceMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
 
-  const activeWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.path === activeWorkspacePath),
-    [activeWorkspacePath, workspaces]
-  );
   const activeSession = useMemo(
     () => sessions.find((session) => session.instanceId === activeSessionId),
     [activeSessionId, sessions]
-  );
-  const workspaceSessions = useMemo(
-    () => sessions.filter((session) => session.workingDirectory === activeWorkspacePath),
-    [activeWorkspacePath, sessions]
-  );
-  const workspaceInstances = useMemo(
-    () => instances.filter((instance) => instance.workingDirectory === activeWorkspacePath),
-    [activeWorkspacePath, instances]
   );
   const activeCanSend = Boolean(activeSession?.input.trim()) && !activeSession?.running;
 
@@ -106,21 +107,33 @@ const App = () => {
     return () => window.clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (!instanceMenu) return undefined;
+    const close = () => setInstanceMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [instanceMenu]);
+
   const initialize = async () => {
-    const [workspaceData, instanceData] = await Promise.all([
-      apiJson<{ workspaces?: WorkspaceEntry[] }>("/api/workspaces"),
+    const [health, instanceData] = await Promise.all([
+      apiJson<{ defaultWorkingDirectory?: string }>("/api/health"),
       apiJson<{ instances?: InstanceSummary[] }>("/api/instances")
     ]);
-    const loadedWorkspaces = Array.isArray(workspaceData.workspaces) ? workspaceData.workspaces : [];
+    const defaultDirectory = health.defaultWorkingDirectory ?? "/home/laop/projects/codex-proxy";
     const loadedInstances = Array.isArray(instanceData.instances) ? instanceData.instances : [];
     const saved = readStoredUiState();
-    const firstWorkspace = saved?.activeWorkspacePath && loadedWorkspaces.some((workspace) => workspace.path === saved.activeWorkspacePath)
-      ? saved.activeWorkspacePath
-      : loadedWorkspaces[0]?.path ?? "/home/laop/projects/codex-proxy";
 
-    setWorkspaces(loadedWorkspaces);
+    setDefaultWorkingDirectory(defaultDirectory);
+    setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
+    setFolderPath(parentPath(defaultDirectory));
     setInstances(loadedInstances);
-    setActiveWorkspacePath(firstWorkspace);
   };
 
   const refreshInstances = async () => {
@@ -128,20 +141,66 @@ const App = () => {
     setInstances(Array.isArray(data.instances) ? data.instances : []);
   };
 
-  const selectWorkspace = (workspacePath: string) => {
-    setActiveWorkspacePath(workspacePath);
-    const existing = sessions.find((session) => session.workingDirectory === workspacePath);
-    setActiveSessionId(existing?.instanceId ?? "");
+  const openPicker = async () => {
+    const startPath = activeSession?.workingDirectory ?? activeWorkspacePath ?? defaultWorkingDirectory;
+    setThreadMode(false);
+    setThreads([]);
+    setFolderModalOpen(true);
+    await loadDirectory(startPath || "/home/laop/projects");
   };
 
-  const openNewSession = async (workspacePath = activeWorkspacePath) => {
+  const loadDirectory = async (targetPath: string) => {
+    setFolderError("");
+    setThreadMode(false);
+    setThreads([]);
+    setFolderPath(targetPath);
+    try {
+      const params = new URLSearchParams({ path: targetPath });
+      setFolderListing(await apiJson<DirectoryListing>(`/api/fs/children?${params.toString()}`));
+    } catch (error) {
+      setFolderListing(null);
+      setFolderError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const createInstanceForSelectedFolder = async () => {
+    const workingDirectory = folderListing?.path ?? folderPath;
     const instance = await apiJson<InstanceDetail>("/api/instances", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workingDirectory: workspacePath })
+      body: JSON.stringify({ workingDirectory })
     });
+    setFolderModalOpen(false);
     await openInstance(instance.instanceId);
-    setActiveWorkspacePath(instance.workingDirectory);
+    await refreshInstances();
+  };
+
+  const showRestorableThreads = async () => {
+    const workingDirectory = folderListing?.path ?? folderPath;
+    setLoadingThreads(true);
+    setThreadMode(true);
+    setFolderError("");
+    try {
+      const params = new URLSearchParams({ workingDirectory });
+      const data = await apiJson<{ threads?: CodexThreadSummary[] }>(`/api/codex-threads?${params.toString()}`);
+      setThreads(Array.isArray(data.threads) ? data.threads : []);
+    } catch (error) {
+      setFolderError(error instanceof Error ? error.message : String(error));
+      setThreads([]);
+    } finally {
+      setLoadingThreads(false);
+    }
+  };
+
+  const restoreThread = async (threadId: string) => {
+    const workingDirectory = folderListing?.path ?? folderPath;
+    const instance = await apiJson<InstanceDetail>("/api/instances/restore", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workingDirectory, threadId })
+    });
+    setFolderModalOpen(false);
+    await openInstance(instance.instanceId);
     await refreshInstances();
   };
 
@@ -157,7 +216,6 @@ const App = () => {
     setActiveWorkspacePath(instance.workingDirectory);
     setActiveSessionId(instance.instanceId);
     subscribeInstance(instance.instanceId, instance.lastSeq);
-    await refreshInstances();
   };
 
   const subscribeInstance = (instanceId: string, after: number) => {
@@ -167,9 +225,7 @@ const App = () => {
       const payload = JSON.parse(event.data) as StreamEvent;
       setSessions((current) => current.map((session) => {
         if (session.instanceId !== payload.instance.instanceId) return session;
-        const messages = payload.message
-          ? mergeMessage(session.messages, payload.message)
-          : session.messages;
+        const messages = payload.message ? mergeMessage(session.messages, payload.message) : session.messages;
         return { ...session, ...payload.instance, messages };
       }));
       void refreshInstances();
@@ -184,13 +240,12 @@ const App = () => {
     const session = sessions.find((item) => item.instanceId === instanceId);
     eventSources.current.get(instanceId)?.close();
     eventSources.current.delete(instanceId);
-    if (session) {
-      await fetch(`/api/instances/${encodeURIComponent(instanceId)}?clientId=${encodeURIComponent(session.clientId)}`, { method: "DELETE" });
-    }
+    const query = session ? `?clientId=${encodeURIComponent(session.clientId)}` : "";
+    await fetch(`/api/instances/${encodeURIComponent(instanceId)}${query}`, { method: "DELETE" });
     setSessions((current) => {
       const next = current.filter((session) => session.instanceId !== instanceId);
       if (activeSessionId !== instanceId) return next;
-      const replacement = next.find((session) => session.workingDirectory === activeWorkspacePath) ?? next[0];
+      const replacement = next[0];
       setActiveSessionId(replacement?.instanceId ?? "");
       if (replacement) setActiveWorkspacePath(replacement.workingDirectory);
       return next;
@@ -221,34 +276,9 @@ const App = () => {
     setSessions((current) => current.map((session) => session.instanceId === instanceId ? { ...session, input } : session));
   };
 
-  const openFolderModal = async () => {
-    setFolderModalOpen(true);
-    await loadDirectory(activeWorkspacePath || "/home/laop/projects");
-  };
-
-  const loadDirectory = async (targetPath: string) => {
-    setFolderError("");
-    setFolderPath(targetPath);
-    try {
-      const params = new URLSearchParams({ path: targetPath });
-      setFolderListing(await apiJson<DirectoryListing>(`/api/fs/children?${params.toString()}`));
-    } catch (error) {
-      setFolderListing(null);
-      setFolderError(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const addFolder = async (workspacePath: string) => {
-    const data = await apiJson<{ workspaces?: WorkspaceEntry[] }>("/api/workspaces", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: workspacePath })
-    });
-    const nextWorkspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
-    const selectedPath = nextWorkspaces[0]?.path ?? workspacePath;
-    setWorkspaces(nextWorkspaces);
-    setFolderModalOpen(false);
-    selectWorkspace(selectedPath);
+  const openInstanceMenu = (event: React.MouseEvent, instanceId: string) => {
+    event.preventDefault();
+    setInstanceMenu({ instanceId, x: event.clientX, y: event.clientY });
   };
 
   return (
@@ -259,89 +289,60 @@ const App = () => {
           <p>Local agent workbench</p>
         </div>
 
-        <div className="sidebarActions">
-          <button type="button" onClick={() => void openFolderModal()}>Add Folder</button>
-          <button type="button" onClick={() => void openNewSession()} disabled={!activeWorkspacePath}>New Thread</button>
+        <div className="sidebarActions single">
+          <button type="button" onClick={() => void openPicker()}>New Thread</button>
         </div>
 
-        <section className="sideSection">
-          <h2>Folders</h2>
-          <div className="workspaceList">
-            {workspaces.map((workspace) => (
-              <button
-                type="button"
-                className={`workspaceRow ${workspace.path === activeWorkspacePath ? "active" : ""}`}
-                key={workspace.path}
-                onClick={() => selectWorkspace(workspace.path)}
-              >
-                <span>{workspace.name}</span>
-                <code>{workspace.path}</code>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="proxyInstances">
+        <section className="proxyInstances expanded">
           <h2>Codex Instances</h2>
-          {workspaceInstances.length === 0 ? (
+          {instances.length === 0 ? (
             <div className="proxyInstanceEmpty">No active instances</div>
           ) : (
             <div className="proxyInstanceList">
-              {workspaceInstances.map((instance) => (
+              {instances.map((instance) => (
                 <button
                   type="button"
-                  className="proxyInstanceRow"
+                  className={`proxyInstanceRow ${instance.instanceId === activeSessionId ? "active" : ""}`}
                   key={instance.instanceId}
                   onClick={() => void openInstance(instance.instanceId)}
+                  onContextMenu={(event) => openInstanceMenu(event, instance.instanceId)}
                 >
                   <span>{instance.threadId ? shortId(instance.threadId) : shortId(instance.instanceId)}</span>
                   <strong>{instance.running ? "running" : "idle"}</strong>
                   <code>{instance.title}</code>
-                  <em>{instance.attachCount} attached</em>
+                  <em>{instance.attachCount} attached · {instance.workingDirectory}</em>
                 </button>
               ))}
             </div>
           )}
         </section>
+        {instanceMenu ? (
+          <div
+            className="instanceContextMenu"
+            style={{ left: instanceMenu.x, top: instanceMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                const instanceId = instanceMenu.instanceId;
+                setInstanceMenu(null);
+                void closeSession(instanceId);
+              }}
+            >
+              Close
+            </button>
+          </div>
+        ) : null}
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div className="workspaceTitle">
-            <span>{activeWorkspace?.name ?? "No folder"}</span>
-            <code>{activeWorkspacePath}</code>
+            <span>{activeSession?.title ?? "No active instance"}</span>
+            <code>{activeSession?.workingDirectory ?? activeWorkspacePath}</code>
           </div>
         </header>
-
-        <div className="tabbar">
-          {workspaceSessions.map((session) => (
-            <button
-              type="button"
-              className={`tab ${session.instanceId === activeSessionId ? "active" : ""}`}
-              key={session.instanceId}
-              onClick={() => setActiveSessionId(session.instanceId)}
-              title={[session.title, session.threadId, session.instanceId].filter(Boolean).join("\n")}
-            >
-              <span className="tabTitle">{session.title}</span>
-              <span className="tabMeta">{session.threadId ? shortId(session.threadId) : shortId(session.instanceId)}</span>
-              {session.running ? <strong>Running</strong> : null}
-              <i
-                role="button"
-                tabIndex={0}
-                aria-label="Close tab"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void closeSession(session.instanceId);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") void closeSession(session.instanceId);
-                }}
-              >
-                x
-              </i>
-            </button>
-          ))}
-        </div>
 
         {activeSession ? (
           <>
@@ -381,7 +382,7 @@ const App = () => {
             </form>
           </>
         ) : (
-          <div className="empty">选择一个实例或新建会话。</div>
+          <div className="empty">新建实例或从 Codex 对话记录还原。</div>
         )}
       </section>
 
@@ -392,7 +393,7 @@ const App = () => {
           <section className="modal folderModal" role="dialog" aria-modal="true" aria-labelledby="folderTitle">
             <header className="modalHeader">
               <div>
-                <h2 id="folderTitle">Add folder</h2>
+                <h2 id="folderTitle">Open Folder</h2>
                 <p>{folderListing?.path ?? folderPath}</p>
               </div>
               <button type="button" className="iconButton" onClick={() => setFolderModalOpen(false)} aria-label="Close">x</button>
@@ -406,10 +407,40 @@ const App = () => {
             >
               <input value={folderPath} onChange={(event) => setFolderPath(event.target.value)} />
               <button type="submit">Go</button>
-              <button type="button" onClick={() => void addFolder(folderListing?.path ?? folderPath)}>Select</button>
+              <button type="button" onClick={() => void loadDirectory(parentPath(folderListing?.path ?? folderPath))}>Parent</button>
             </form>
             {folderError ? <div className="threadEmpty">{folderError}</div> : null}
-            {folderListing ? (
+            <div className="folderModalActions">
+              <button type="button" onClick={() => void createInstanceForSelectedFolder()} disabled={!folderListing}>New Thread</button>
+              <button type="button" className="secondaryButton" onClick={() => void showRestorableThreads()} disabled={!folderListing}>
+                Restore Conversation
+              </button>
+            </div>
+            {threadMode ? (
+              <div className="threadList">
+                {loadingThreads ? (
+                  <div className="threadEmpty">Loading conversations...</div>
+                ) : threads.length === 0 ? (
+                  <div className="threadEmpty">No Codex conversations found for this folder.</div>
+                ) : (
+                  threads.map((thread, index) => (
+                    <button
+                      type="button"
+                      className="threadRow"
+                      key={`${thread.threadId}:${thread.updatedAt}:${index}`}
+                      onClick={() => void restoreThread(thread.threadId)}
+                    >
+                      <span className="threadTitle">{thread.firstUserMessage || thread.threadId}</span>
+                      <span className="threadMeta">
+                        {formatDate(thread.updatedAt)} · {thread.messageCount} messages
+                        {thread.artifactCount ? ` · ${thread.artifactCount} files` : ""}
+                      </span>
+                      {thread.lastAssistantMessage ? <span className="threadPreview">{thread.lastAssistantMessage}</span> : null}
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : folderListing ? (
               <div className="folderBrowser">
                 <div className="shortcutList">
                   {folderListing.shortcuts.map((shortcut) => (
@@ -417,9 +448,6 @@ const App = () => {
                       {shortcut.name}
                     </button>
                   ))}
-                  {folderListing.parent ? (
-                    <button type="button" onClick={() => void loadDirectory(folderListing.parent!)}>Parent</button>
-                  ) : null}
                 </div>
                 <div className="folderList">
                   {folderListing.children.map((child) => (
@@ -470,6 +498,19 @@ const statusLabel = (status: NonNullable<Message["status"]>) => {
   if (status === "pending") return "Waiting";
   if (status === "failed") return "Failed";
   return "Done";
+};
+
+const parentPath = (value: string) => {
+  const normalized = value.replace(/\/+$/, "");
+  if (!normalized || normalized === "/") return "/";
+  const index = normalized.lastIndexOf("/");
+  return index <= 0 ? "/" : normalized.slice(0, index);
+};
+
+const formatDate = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 };
 
 const readStoredUiState = (): { activeWorkspacePath?: string; activeSessionId?: string } | null => {

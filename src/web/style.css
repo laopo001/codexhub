@@ -88,6 +88,10 @@ textarea {
   gap: 10px;
 }
 
+.sidebarActions.single {
+  grid-template-columns: 1fr;
+}
+
 .sideSection {
   display: grid;
   gap: 10px;
@@ -150,6 +154,12 @@ textarea {
   margin-top: auto;
 }
 
+.proxyInstances.expanded {
+  align-content: start;
+  min-height: 0;
+  flex: 1;
+}
+
 .proxyInstances h2 {
   margin: 0;
   color: #d8e2d5;
@@ -165,6 +175,10 @@ textarea {
   max-height: 180px;
   min-height: 0;
   overflow: auto;
+}
+
+.proxyInstances.expanded .proxyInstanceList {
+  max-height: none;
 }
 
 .proxyInstanceRow,
@@ -183,6 +197,11 @@ textarea {
   width: 100%;
   min-height: auto;
   text-align: left;
+}
+
+.proxyInstanceRow.active {
+  border-color: #d95f36;
+  background: #183222;
 }
 
 .proxyInstanceRow span {
@@ -224,9 +243,34 @@ textarea {
   font-size: 13px;
 }
 
+.instanceContextMenu {
+  position: fixed;
+  z-index: 30;
+  min-width: 132px;
+  border: 1px solid #405244;
+  border-radius: 8px;
+  background: #0f1b14;
+  padding: 6px;
+  box-shadow: 0 14px 40px rgb(0 0 0 / 0.28);
+}
+
+.instanceContextMenu button {
+  width: 100%;
+  min-height: 34px;
+  border-radius: 6px;
+  background: transparent;
+  color: #f8fbf4;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.instanceContextMenu button:hover {
+  background: #203526;
+}
+
 .workspace {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -260,81 +304,6 @@ textarea {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tabbar {
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-  overflow-x: auto;
-  border-bottom: 1px solid #dfe5dc;
-  padding: 8px 22px;
-  background: #eef3eb;
-}
-
-.tab {
-  display: inline-grid;
-  grid-template-columns: minmax(84px, 1fr) auto auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  column-gap: 8px;
-  row-gap: 2px;
-  width: 240px;
-  min-height: 46px;
-  border: 1px solid #cbd6c7;
-  background: #ffffff;
-  color: #17211a;
-  padding: 6px 9px;
-  text-align: left;
-}
-
-.tab.active {
-  border-color: #d95f36;
-}
-
-.tabTitle {
-  grid-column: 1;
-  grid-row: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tabMeta {
-  grid-column: 1;
-  grid-row: 2;
-  overflow: hidden;
-  color: #66715f;
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tab strong {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  border-radius: 999px;
-  background: #fff0e9;
-  color: #a94625;
-  font-size: 11px;
-  padding: 2px 6px;
-}
-
-.tab i {
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  color: #66715f;
-  font-style: normal;
-}
-
-.tab i:hover {
-  background: #e6ece2;
 }
 
 .messages {
@@ -618,6 +587,12 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
+}
+
+.folderModalActions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .folderBrowser {

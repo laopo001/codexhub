@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { z } from "zod";
 import { loadConfig } from "../core/config.js";
+import { listLoadableCodexThreads, loadCodexThread } from "../core/codexpLog.js";
 import { InstanceHub } from "../core/instanceHub.js";
 import { addWorkspace, listDirectoryChildren, listWorkspaces, touchWorkspace } from "../core/workspaceState.js";
 
@@ -53,11 +54,38 @@ const main = async () => {
     instances: instances.listInstances()
   }));
 
+  app.get("/api/codex-threads", async (request) => {
+    const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);
+    const workingDirectory = query.workingDirectory ?? defaultWorkingDirectory;
+    await touchWorkspace(workingDirectory);
+    return {
+      workingDirectory,
+      threads: await listLoadableCodexThreads(workingDirectory)
+    };
+  });
+
   app.post("/api/instances", async (request) => {
     const payload = z.object({ workingDirectory: z.string().optional() }).parse(request.body ?? {});
     const workingDirectory = payload.workingDirectory ?? defaultWorkingDirectory;
     await touchWorkspace(workingDirectory);
     return instances.createInstance(workingDirectory);
+  });
+
+  app.post("/api/instances/restore", async (request, reply) => {
+    const payload = z.object({
+      workingDirectory: z.string().min(1),
+      threadId: z.string().min(1)
+    }).parse(request.body);
+    await touchWorkspace(payload.workingDirectory);
+
+    const thread = await loadCodexThread(payload.threadId, payload.workingDirectory);
+    if (!thread) {
+      reply.code(404);
+      return { error: "thread_not_found" };
+    }
+
+    const title = thread.messages.find((message) => message.role === "user")?.text.slice(0, 80) || payload.threadId;
+    return instances.restoreInstance(payload.workingDirectory, payload.threadId, thread.messages, title);
   });
 
   app.get("/api/instances/:instanceId", async (request, reply) => {
