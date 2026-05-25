@@ -71,6 +71,10 @@ type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 type ModelSelection = "auto" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.3-codex" | "gpt-5.3-codex-spark" | "gpt-5.2";
 type ReasoningSelection = "auto" | ReasoningEffort;
 type MessageDisplayMode = "compact" | "detailed";
+type WebRecordView = CodexRecordView & {
+  inspectRecord?: CodexRecord;
+  inspectText?: string;
+};
 
 type SystemStatus = {
   model: string | null;
@@ -136,6 +140,7 @@ const App = () => {
   const [threads, setThreads] = useState<CodexThreadSummary[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(false);
   const [instanceMenu, setInstanceMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null);
+  const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     model: null,
     modelReasoningEffort: null,
@@ -153,11 +158,11 @@ const App = () => {
     () => sessions.find((session) => session.instanceId === activeSessionId),
     [activeSessionId, sessions]
   );
-  const detailedViews = useMemo(
+  const detailedViews = useMemo<CodexRecordView[]>(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
   );
-  const activeViews = useMemo(
+  const activeViews = useMemo<WebRecordView[]>(
     () => messageDisplayMode === "compact" ? compactToolViews(detailedViews) : detailedViews,
     [detailedViews, messageDisplayMode]
   );
@@ -620,6 +625,7 @@ const App = () => {
                 <MessageCard
                   message={message}
                   showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
+                  onInspect={messageDisplayMode === "compact" && message.role === "tool" ? () => setInspectMessage(message) : undefined}
                   onFork={message.canFork ? () => void forkMessage(activeSession.instanceId, message.record.id) : undefined}
                 />
               )}
@@ -752,12 +758,48 @@ const App = () => {
           </section>
         </div>
       ) : null}
+
+      {inspectMessage ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setInspectMessage(null)}>
+          <section className="modal detailModal" onClick={(event) => event.stopPropagation()}>
+            <header className="modalHeader">
+              <div>
+                <h2>{inspectMessage.label}</h2>
+                <p>{inspectMessage.status ? statusLabel(inspectMessage.status) : "Details"}</p>
+              </div>
+              <button type="button" className="iconButton" onClick={() => setInspectMessage(null)} aria-label="Close">x</button>
+            </header>
+            <pre className="detailBody">{formatInspectMessage(inspectMessage)}</pre>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 };
 
-const MessageCard = ({ message, showStatus = true, onFork }: { message: CodexRecordView; showStatus?: boolean; onFork?: () => void }) => (
-  <article className={`message ${message.role}`}>
+const MessageCard = ({
+  message,
+  showStatus = true,
+  onInspect,
+  onFork
+}: {
+  message: WebRecordView;
+  showStatus?: boolean;
+  onInspect?: () => void;
+  onFork?: () => void;
+}) => (
+  <article
+    className={`message ${message.role} ${onInspect ? "inspectable" : ""}`}
+    onClick={onInspect}
+    role={onInspect ? "button" : undefined}
+    tabIndex={onInspect ? 0 : undefined}
+    onKeyDown={onInspect ? (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onInspect();
+      }
+    } : undefined}
+  >
     <span className="messageHeader">
       <b>{message.label ?? message.role}</b>
       {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
@@ -766,14 +808,21 @@ const MessageCard = ({ message, showStatus = true, onFork }: { message: CodexRec
     {message.attachments?.length ? (
       <div className="messageAttachments">
         {message.attachments.map((attachment) => attachment.type === "image" ? (
-          <a href={imageUrl(attachment.path)} target="_blank" rel="noreferrer" className="messageImage" key={attachment.path}>
+          <a
+            href={imageUrl(attachment.path)}
+            target="_blank"
+            rel="noreferrer"
+            className="messageImage"
+            key={attachment.path}
+            onClick={(event) => event.stopPropagation()}
+          >
             <img src={imageUrl(attachment.path)} alt={attachment.path.split("/").at(-1) ?? "image"} />
           </a>
         ) : null)}
       </div>
     ) : null}
     {message.at || message.usage || onFork ? (
-      <footer className="messageMeta" title={formatMessageMetaTitle(message)}>
+      <footer className="messageMeta" title={formatMessageMetaTitle(message)} onClick={(event) => event.stopPropagation()}>
         <span>{formatMessageMeta(message)}</span>
         {onFork ? (
           <a href="#" onClick={(event) => {
@@ -929,8 +978,8 @@ const isMatchingOptimisticUserRecord = (record: CodexRecord, incoming: CodexReco
     && recordPayload.message === incomingPayload.message;
 };
 
-const compactToolViews = (views: CodexRecordView[]) => {
-  const compacted: CodexRecordView[] = [];
+const compactToolViews = (views: CodexRecordView[]): WebRecordView[] => {
+  const compacted: WebRecordView[] = [];
   const toolIndexes = new Map<string, number>();
   for (const view of views) {
     if (view.role !== "tool") {
@@ -963,7 +1012,9 @@ const compactToolViews = (views: CodexRecordView[]) => {
       text: view.status === "failed" && view.text ? [callView.text, `Output:\n${view.text.trimEnd()}`].join("\n\n") : callView.text,
       at: view.at ?? callView.at,
       status: view.status,
-      record: view.record
+      record: callView.record,
+      inspectRecord: view.record,
+      inspectText: view.text
     };
   }
   return compacted;
@@ -972,6 +1023,16 @@ const compactToolViews = (views: CodexRecordView[]) => {
 const compactToolCallId = (view: CodexRecordView) => {
   const payload = asRecord(view.record.payload);
   return typeof payload?.call_id === "string" ? payload.call_id : view.id;
+};
+
+const formatInspectMessage = (message: WebRecordView) => {
+  const inspectRecord = message.inspectRecord ?? message.record;
+  const payload = asRecord(inspectRecord.payload);
+  const output = message.inspectText ?? (typeof payload?.output === "string" ? payload.output.trimEnd() : "");
+  return [
+    message.text.trimEnd(),
+    output ? `Output:\n${output}` : null
+  ].filter(Boolean).join("\n\n");
 };
 
 const errorRecord = (label: string, error: unknown): CodexRecord => ({

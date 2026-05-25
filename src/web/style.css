@@ -433,6 +433,19 @@ textarea {
   background: #f8fbfd;
 }
 
+.message.inspectable {
+  cursor: pointer;
+}
+
+.message.inspectable:hover {
+  background: #f2f8fb;
+}
+
+.message.inspectable:focus-visible {
+  outline: 2px solid #2f6f9f;
+  outline-offset: 2px;
+}
+
 .message.thinking {
   border-color: #8a6f2f;
   background: #fffdf6;
@@ -667,6 +680,12 @@ textarea {
   grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
+.detailModal {
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(860px, 100%);
+  height: min(680px, calc(100vh - 48px));
+}
+
 .modalHeader {
   display: flex;
   align-items: flex-start;
@@ -698,6 +717,18 @@ textarea {
   color: #17211a;
   font-size: 18px;
   line-height: 1;
+}
+
+.detailBody {
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid #dfe5dc;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .threadSearch {
