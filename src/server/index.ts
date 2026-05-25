@@ -56,6 +56,10 @@ const main = async () => {
     return listDirectoryChildren(query.path ?? defaultWorkingDirectory);
   });
 
+  app.get("/api/proxy/instances", async () => ({
+    instances: proxy.listThreadInstances()
+  }));
+
   app.post("/api/turn", async (request) => {
     const payload = turnSchema.parse(request.body);
     return proxy.run(payload);

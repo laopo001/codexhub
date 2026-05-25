@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Virtuoso } from "react-virtuoso";
 import { itemText } from "../core/events.js";
 import "./style.css";
 
@@ -26,6 +27,12 @@ type ConversationSummary = {
   lastAssistantMessage: string;
   artifactCount: number;
   messageCount: number;
+};
+
+type ProxyThreadInstance = {
+  threadId: string;
+  workingDirectory: string;
+  running: boolean;
 };
 
 type ChatSession = {
@@ -108,9 +115,8 @@ const App = () => {
   const [folderPath, setFolderPath] = useState("/home/laop/projects");
   const [folderListing, setFolderListing] = useState<DirectoryListing | null>(null);
   const [folderError, setFolderError] = useState("");
+  const [proxyInstances, setProxyInstances] = useState<ProxyThreadInstance[]>([]);
   const controllers = useRef(new Map<string, AbortController>());
-  const messagesRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickToBottom = useRef(true);
 
   const activeWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.path === activeWorkspacePath),
@@ -139,6 +145,12 @@ const App = () => {
   }, []);
 
   useEffect(() => {
+    void refreshProxyInstances();
+    const interval = window.setInterval(() => void refreshProxyInstances(), 3000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     if (!sessions.length && !activeWorkspacePath) return;
     localStorage.setItem(storageKey, JSON.stringify({
       activeWorkspacePath,
@@ -150,20 +162,6 @@ const App = () => {
       }))
     }));
   }, [activeSessionId, activeWorkspacePath, sessions]);
-
-  useEffect(() => {
-    shouldStickToBottom.current = true;
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    if (!activeSession || !shouldStickToBottom.current) return;
-    const frame = requestAnimationFrame(() => {
-      const messages = messagesRef.current;
-      if (!messages) return;
-      messages.scrollTo({ top: messages.scrollHeight });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [activeSession, activeSessionId]);
 
   const initialize = async () => {
     const response = await fetch("/api/workspaces");
@@ -262,6 +260,7 @@ const App = () => {
         method: "DELETE"
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await refreshProxyInstances();
     } catch (error) {
       console.warn("Failed to release Codex thread cache", error);
     }
@@ -316,6 +315,7 @@ const App = () => {
 
           if (event.type === "thread") {
             updateSession(sessionId, (current) => ({ ...current, threadId: event.threadId }));
+            void refreshProxyInstances();
           }
           if (event.type === "status") {
             updateSession(sessionId, (current) => ({ ...current, status: event.text }));
@@ -338,18 +338,12 @@ const App = () => {
     } finally {
       controllers.current.delete(sessionId);
       updateSession(sessionId, (current) => ({ ...current, busy: false, status: undefined }));
+      void refreshProxyInstances();
     }
   };
 
   const stopSession = (sessionId: string) => {
     controllers.current.get(sessionId)?.abort();
-  };
-
-  const updateScrollStickiness = () => {
-    const messages = messagesRef.current;
-    if (!messages) return;
-    const distanceFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight;
-    shouldStickToBottom.current = distanceFromBottom < 120;
   };
 
   const openLoadModal = async () => {
@@ -437,6 +431,17 @@ const App = () => {
     selectWorkspace(selectedPath);
   };
 
+  const refreshProxyInstances = async () => {
+    try {
+      const response = await fetch("/api/proxy/instances");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      setProxyInstances(Array.isArray(data.instances) ? data.instances : []);
+    } catch (error) {
+      console.warn("Failed to load Codex proxy instances", error);
+    }
+  };
+
   const activeCanSend = Boolean(activeSession?.input.trim()) && !activeSession?.busy;
 
   return (
@@ -467,6 +472,23 @@ const App = () => {
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="proxyInstances">
+          <h2>Codex Instances</h2>
+          {proxyInstances.length === 0 ? (
+            <div className="proxyInstanceEmpty">No active instances</div>
+          ) : (
+            <div className="proxyInstanceList">
+              {proxyInstances.map((instance) => (
+                <div className="proxyInstanceRow" key={`${instance.workingDirectory}::${instance.threadId}`}>
+                  <span>{shortThreadId(instance.threadId)}</span>
+                  <strong>{instance.running ? "running" : "idle"}</strong>
+                  <code>{instance.workingDirectory}</code>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </aside>
 
@@ -513,18 +535,17 @@ const App = () => {
 
         {activeSession ? (
           <>
-            <div className="messages" ref={messagesRef} onScroll={updateScrollStickiness}>
-              {activeSession.messages.length === 0 ? (
-                <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
-              ) : (
-                activeSession.messages.map((message, index) => (
-                  <article className={`message ${message.role}`} key={`${message.id ?? index}-${index}`}>
-                    <span>{message.label ?? message.role}</span>
-                    <pre>{message.text}</pre>
-                  </article>
-                ))
-              )}
-            </div>
+            <Virtuoso
+              key={activeSession.id}
+              className="messages"
+              data={activeSession.messages}
+              followOutput="smooth"
+              initialTopMostItemIndex={Math.max(activeSession.messages.length - 1, 0)}
+              increaseViewportBy={{ top: 360, bottom: 720 }}
+              computeItemKey={(index, message) => `${message.id ?? index}-${index}`}
+              components={{ EmptyPlaceholder: EmptyMessages }}
+              itemContent={(_, message) => <MessageCard message={message} />}
+            />
 
             <form
               className="composer"
@@ -659,6 +680,17 @@ const newSession = (workspacePath: string): ChatSession => ({
   messages: [],
   busy: false
 });
+
+const MessageCard = ({ message }: { message: Message }) => (
+  <article className={`message ${message.role}`}>
+    <span>{message.label ?? message.role}</span>
+    <pre>{message.text}</pre>
+  </article>
+);
+
+const EmptyMessages = () => (
+  <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
+);
 
 const createSessionId = () => `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 

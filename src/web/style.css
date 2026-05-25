@@ -142,6 +142,78 @@ textarea {
   white-space: nowrap;
 }
 
+.proxyInstances {
+  display: grid;
+  align-content: end;
+  gap: 10px;
+  min-height: 132px;
+  margin-top: auto;
+}
+
+.proxyInstances h2 {
+  margin: 0;
+  color: #d8e2d5;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.proxyInstanceList {
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.proxyInstanceRow,
+.proxyInstanceEmpty {
+  border: 1px solid #405244;
+  border-radius: 8px;
+  background: #0f1b14;
+  color: #d8e2d5;
+  padding: 10px 12px;
+}
+
+.proxyInstanceRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+}
+
+.proxyInstanceRow span {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxyInstanceRow strong {
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 2px 7px;
+}
+
+.proxyInstanceRow code {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: #91a090;
+  font-family: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxyInstanceEmpty {
+  color: #91a090;
+  font-size: 13px;
+}
+
 .workspace {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -256,25 +328,26 @@ textarea {
 }
 
 .messages {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
   min-height: 0;
-  overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   padding: 24px 22px 18px;
-  scroll-behavior: smooth;
 }
 
 .empty {
-  margin: auto;
+  display: grid;
+  min-height: 100%;
+  place-items: center;
   color: #6a7467;
 }
 
 .message {
   display: grid;
   gap: 8px;
+  width: 100%;
   max-width: 1080px;
+  min-width: 0;
+  margin-bottom: 12px;
   border-left: 4px solid #a8b4a4;
   padding: 10px 14px;
   background: #ffffff;
@@ -314,7 +387,9 @@ textarea {
 }
 
 .message pre {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.5;

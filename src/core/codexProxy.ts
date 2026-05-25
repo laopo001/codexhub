@@ -18,6 +18,12 @@ export type RunResult = {
   events: ProxyEvent[];
 };
 
+export type ProxyThreadInstance = {
+  threadId: string;
+  workingDirectory: string;
+  running: boolean;
+};
+
 export class CodexProxy {
   private readonly codex: Codex;
   private readonly defaultThreadOptions: ThreadOptions;
@@ -49,6 +55,17 @@ export class CodexProxy {
     const released = this.threads.delete(key);
     this.runningThreads.delete(key);
     return released;
+  }
+
+  listThreadInstances(): ProxyThreadInstance[] {
+    return [...this.threads.keys()].map((key) => {
+      const { threadId, workingDirectory } = parseThreadCacheKey(key);
+      return {
+        threadId,
+        workingDirectory,
+        running: this.runningThreads.has(key)
+      };
+    });
   }
 
   async run(request: RunRequest): Promise<RunResult> {
@@ -148,3 +165,11 @@ const artifactEventsFromSnapshot = (snapshot: Awaited<ReturnType<typeof readCode
 };
 
 const threadCacheKey = (threadId: string, workingDirectory?: string) => `${workingDirectory ?? ""}::${threadId}`;
+
+const parseThreadCacheKey = (key: string) => {
+  const separator = key.lastIndexOf("::");
+  return {
+    workingDirectory: separator === -1 ? "" : key.slice(0, separator),
+    threadId: separator === -1 ? key : key.slice(separator + 2)
+  };
+};
