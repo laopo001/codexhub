@@ -10,6 +10,7 @@ export type InstanceMessage = {
   role: InstanceMessageRole;
   label?: string;
   text: string;
+  attachments?: Array<{ type: "image"; path: string }>;
   at: string;
   source?: "web" | "telegram" | "codex" | "proxy-runtime";
   status?: "pending" | "completed" | "failed";
@@ -159,6 +160,7 @@ export class InstanceHub {
     this.appendMessage(instance, {
       role: "user",
       text: userText,
+      attachments: imageAttachments(input),
       source
     });
     if (!instance.threadId) instance.title = userText.slice(0, 80) || instance.title;
@@ -313,11 +315,15 @@ const summarizeInput = (input: Input) => {
     .map((item) => item.text.trim())
     .filter(Boolean)
     .join("\n");
-  const imageCount = input.filter((item) => item.type === "local_image").length;
-  return [
-    text || null,
-    imageCount ? `[${imageCount} image${imageCount === 1 ? "" : "s"}]` : null
-  ].filter(Boolean).join("\n") || "[structured input]";
+  return text || "[image]";
+};
+
+const imageAttachments = (input: Input): InstanceMessage["attachments"] | undefined => {
+  if (typeof input === "string") return undefined;
+  const images = input
+    .filter((item) => item.type === "local_image")
+    .map((item) => ({ type: "image" as const, path: item.path }));
+  return images.length ? images : undefined;
 };
 
 const isToolItem = (item: any) =>

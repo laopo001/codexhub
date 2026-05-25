@@ -430,6 +430,28 @@ textarea {
   line-height: 1.5;
 }
 
+.messageAttachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.messageImage {
+  display: block;
+  width: min(220px, 100%);
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.messageImage img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+}
+
 .composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

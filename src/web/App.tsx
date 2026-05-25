@@ -11,6 +11,7 @@ type Message = {
   source?: "web" | "telegram" | "codex" | "proxy-runtime";
   label?: string;
   text: string;
+  attachments?: Array<{ type: "image"; path: string }>;
   at?: string;
   status?: "pending" | "completed" | "failed";
   itemType?: string;
@@ -616,7 +617,16 @@ const MessageCard = ({ message }: { message: Message }) => (
       <b>{message.label ?? message.role}{message.source ? ` · ${message.source}` : ""}</b>
       {message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
     </span>
-    <pre>{message.text}</pre>
+    {message.text ? <pre>{message.text}</pre> : null}
+    {message.attachments?.length ? (
+      <div className="messageAttachments">
+        {message.attachments.map((attachment) => attachment.type === "image" ? (
+          <a href={imageUrl(attachment.path)} target="_blank" rel="noreferrer" className="messageImage" key={attachment.path}>
+            <img src={imageUrl(attachment.path)} alt={attachment.path.split("/").at(-1) ?? "image"} />
+          </a>
+        ) : null)}
+      </div>
+    ) : null}
   </article>
 );
 
@@ -629,6 +639,8 @@ const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
   return await response.json() as T;
 };
+
+const imageUrl = (filePath: string) => `/api/uploads/images?${new URLSearchParams({ path: filePath }).toString()}`;
 
 const uploadImage = async (workingDirectory: string, image: ImageAttachment) => apiJson<{ path: string }>("/api/uploads/images", {
   method: "POST",

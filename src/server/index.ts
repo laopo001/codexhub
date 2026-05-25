@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -35,6 +36,8 @@ const imageExtension = (filename?: string) => {
   const extension = path.extname(filename ?? "").toLowerCase();
   return [".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension) ? extension : ".png";
 };
+
+const codexpTmpDirectory = (workingDirectory: string) => path.join(path.resolve(workingDirectory), ".codexp", "tmp");
 
 const uploadImageSchema = z.object({
   workingDirectory: z.string().min(1),
@@ -82,11 +85,21 @@ const main = async () => {
 
   app.post("/api/uploads/images", async (request) => {
     const payload = uploadImageSchema.parse(request.body);
-    const directory = path.join(path.resolve(payload.workingDirectory), "tmp", "codex-proxy-images");
+    const directory = codexpTmpDirectory(payload.workingDirectory);
     await mkdir(directory, { recursive: true });
     const filePath = path.join(directory, `${Date.now()}-${randomUUID()}${imageExtension(payload.filename)}`);
     await writeFile(filePath, Buffer.from(stripDataUrl(payload.contentBase64), "base64"));
     return { path: filePath };
+  });
+
+  app.get("/api/uploads/images", async (request, reply) => {
+    const query = z.object({ path: z.string().min(1) }).parse(request.query);
+    const filePath = path.resolve(query.path);
+    if (!filePath.includes(`${path.sep}.codexp${path.sep}tmp${path.sep}`)) {
+      reply.code(403);
+      return { error: "forbidden_path" };
+    }
+    return reply.send(createReadStream(filePath));
   });
 
   app.get("/api/instances", async () => ({

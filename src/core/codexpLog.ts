@@ -13,6 +13,7 @@ export type CodexpChatMessage = {
   id?: string;
   label?: string;
   text: string;
+  attachments?: Array<{ type: "image"; path: string }>;
 };
 
 export const listLoadableCodexThreads = async (workingDirectory: string) => {
@@ -55,7 +56,13 @@ const messageFromRecord = (
   const at = record.timestamp ?? "";
 
   if (record.type === "event_msg" && payload.type === "user_message" && typeof payload.message === "string") {
-    return { role: "user", at, text: payload.message };
+    const attachments = localImageAttachments(payload);
+    return {
+      role: "user",
+      at,
+      text: payload.message || (attachments.length ? "[image]" : ""),
+      ...(attachments.length ? { attachments } : {})
+    };
   }
 
   if (record.type === "event_msg" && payload.type === "agent_message" && typeof payload.message === "string") {
@@ -157,6 +164,13 @@ const parseJsonObject = (value: string): Record<string, unknown> | null => {
 const formatJsonLike = (value: string) => {
   const parsed = parseJsonObject(value);
   return parsed ? JSON.stringify(parsed, null, 2) : value;
+};
+
+const localImageAttachments = (payload: Record<string, unknown>): Array<{ type: "image"; path: string }> => {
+  if (!Array.isArray(payload.local_images)) return [];
+  return payload.local_images
+    .filter((path): path is string => typeof path === "string" && path.trim().length > 0)
+    .map((path) => ({ type: "image", path }));
 };
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
