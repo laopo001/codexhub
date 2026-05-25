@@ -751,6 +751,26 @@ textarea {
   word-break: break-word;
 }
 
+.detailCodeBlock {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.detailCodeBlock h4 {
+  margin: 0;
+  color: #51604f;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.detailCodeBlock pre {
+  border-left: 3px solid #d85b34;
+  background: #f8faf5;
+  padding: 10px 12px;
+}
+
 .threadSearch {
   background: #ffffff;
 }

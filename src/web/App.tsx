@@ -76,6 +76,14 @@ type WebRecordView = CodexRecordView & {
   inspectCallText?: string;
   inspectText?: string;
 };
+type InspectDetail = {
+  inputMeta: string;
+  inputBlockLabel?: string;
+  inputBlock?: string;
+  outputMeta?: string;
+  outputBlockLabel?: string;
+  outputBlock?: string;
+};
 
 type SystemStatus = {
   model: string | null;
@@ -846,12 +854,24 @@ const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
     <div className="detailBody">
       <section className="detailSection">
         <h3>Input</h3>
-        <pre>{detail.input || "(empty)"}</pre>
+        <pre>{detail.inputMeta || "(empty)"}</pre>
+        {detail.inputBlock ? (
+          <div className="detailCodeBlock">
+            <h4>{detail.inputBlockLabel ?? "Content"}</h4>
+            <pre>{detail.inputBlock}</pre>
+          </div>
+        ) : null}
       </section>
-      {detail.output ? (
+      {detail.outputMeta || detail.outputBlock ? (
         <section className="detailSection">
           <h3>Output</h3>
-          <pre>{detail.output}</pre>
+          {detail.outputMeta ? <pre>{detail.outputMeta}</pre> : null}
+          {detail.outputBlock ? (
+            <div className="detailCodeBlock">
+              <h4>{detail.outputBlockLabel ?? "Text"}</h4>
+              <pre>{detail.outputBlock}</pre>
+            </div>
+          ) : null}
         </section>
       ) : null}
     </div>
@@ -1046,14 +1066,14 @@ const compactToolCallId = (view: CodexRecordView) => {
   return typeof payload?.call_id === "string" ? payload.call_id : view.id;
 };
 
-const formatInspectDetail = (message: WebRecordView) => {
+const formatInspectDetail = (message: WebRecordView): InspectDetail => {
   const inspectRecord = message.inspectRecord ?? message.record;
   const payload = asRecord(inspectRecord.payload);
   const output = normalizeWebToolOutput(message.inspectText ?? (typeof payload?.output === "string" ? payload.output.trimEnd() : ""));
   const callText = message.inspectCallText ?? message.text;
   return {
-    input: formatInspectCallText(message.record, callText.trimEnd()),
-    output: output ? formatInspectOutput(message.record, output) : ""
+    ...formatInspectInput(message.record, callText.trimEnd()),
+    ...formatInspectOutput(message.record, output)
   };
 };
 
@@ -1070,16 +1090,30 @@ const textPreview = (value: unknown) => {
   return `${record.text_preview}${suffix}`;
 };
 
-const formatInspectOutput = (record: CodexRecord, output: string) => {
+const formatInspectOutput = (record: CodexRecord, output: string): Pick<InspectDetail, "outputMeta" | "outputBlockLabel" | "outputBlock"> => {
   const text = output.trimEnd();
-  if (shouldShowRawToolOutput(record)) return text;
-  return text;
+  if (!text) return {};
+  if (shouldShowRawToolOutput(record)) return formatStructuredToolOutput(text);
+  return { outputBlockLabel: "Text", outputBlock: text };
 };
 
 const shouldShowRawToolOutput = (record: CodexRecord) => {
   const payload = asRecord(record.payload);
   return payload?.type === "function_call"
     && (payload.name === "exec_command" || payload.name === "write_stdin");
+};
+
+const formatStructuredToolOutput = (output: string): Pick<InspectDetail, "outputMeta" | "outputBlockLabel" | "outputBlock"> => {
+  const marker = "\nOutput:\n";
+  const index = output.indexOf(marker);
+  if (index === -1) return { outputBlockLabel: "Text", outputBlock: output };
+  const meta = output.slice(0, index).trimEnd();
+  const body = output.slice(index + marker.length).trimEnd();
+  return {
+    outputMeta: meta,
+    outputBlockLabel: "Stdout",
+    outputBlock: body || "<empty>"
+  };
 };
 
 const formatCompactToolCall = (view: CodexRecordView) => {
@@ -1092,40 +1126,47 @@ const formatCompactToolCall = (view: CodexRecordView) => {
   return view.text;
 };
 
-const formatInspectCallText = (record: CodexRecord, fallback: string) => {
+const formatInspectInput = (record: CodexRecord, fallback: string): Omit<InspectDetail, "output"> => {
   const payload = asRecord(record.payload);
-  if (payload?.type !== "function_call") return fallback;
+  if (payload?.type !== "function_call") return { inputMeta: fallback };
   const name = typeof payload.name === "string" ? payload.name : "tool";
   const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");
-  if (!args) return fallback;
-  return formatToolArguments(name, args).join("\n");
+  if (!args) return { inputMeta: fallback };
+  return formatToolInput(name, args);
 };
 
-const formatToolArguments = (name: string, args: Record<string, unknown>) => {
+const formatToolInput = (name: string, args: Record<string, unknown>): Omit<InspectDetail, "output"> => {
   if (name === "write_stdin") {
-    return [
-      `tool: write_stdin`,
-      `action: ${describeWriteStdinAction(args)}`,
-      typeof args.session_id === "number" || typeof args.session_id === "string" ? `session_id: ${args.session_id}` : null,
-      typeof args.yield_time_ms === "number" ? `wait: ${formatMilliseconds(args.yield_time_ms)}` : null,
-      typeof args.max_output_tokens === "number" ? `max_output: ${formatCompactNumber(args.max_output_tokens)} tokens` : null,
-      "\nStdin:",
-      formatWriteStdinBlock(args)
-    ].filter((line): line is string => Boolean(line));
+    return {
+      inputMeta: [
+        `tool: write_stdin`,
+        `action: ${describeWriteStdinAction(args)}`,
+        typeof args.session_id === "number" || typeof args.session_id === "string" ? `session_id: ${args.session_id}` : null,
+        typeof args.yield_time_ms === "number" ? `wait: ${formatMilliseconds(args.yield_time_ms)}` : null,
+        typeof args.max_output_tokens === "number" ? `max_output: ${formatCompactNumber(args.max_output_tokens)} tokens` : null
+      ].filter((line): line is string => Boolean(line)).join("\n"),
+      inputBlockLabel: "Stdin",
+      inputBlock: formatWriteStdinBlock(args)
+    };
   }
   if (name === "exec_command") {
-    return [
-      `tool: exec_command`,
-      typeof args.cmd === "string" ? `cmd: ${args.cmd}` : null,
-      typeof args.workdir === "string" ? `workdir: ${args.workdir}` : null,
-      typeof args.yield_time_ms === "number" ? `wait: ${formatMilliseconds(args.yield_time_ms)}` : null,
-      typeof args.max_output_tokens === "number" ? `max_output: ${formatCompactNumber(args.max_output_tokens)} tokens` : null
-    ].filter((line): line is string => Boolean(line));
+    return {
+      inputMeta: [
+        `tool: exec_command`,
+        typeof args.workdir === "string" ? `workdir: ${args.workdir}` : null,
+        typeof args.yield_time_ms === "number" ? `wait: ${formatMilliseconds(args.yield_time_ms)}` : null,
+        typeof args.max_output_tokens === "number" ? `max_output: ${formatCompactNumber(args.max_output_tokens)} tokens` : null
+      ].filter((line): line is string => Boolean(line)).join("\n"),
+      inputBlockLabel: "Command",
+      inputBlock: typeof args.cmd === "string" ? formatCommandBlock(args.cmd) : "<missing>"
+    };
   }
-  return [
-    `tool: ${name}`,
-    ...Object.entries(args).map(([key, value]) => `${key}: ${formatArgumentValue(value)}`)
-  ];
+  return {
+    inputMeta: [
+      `tool: ${name}`,
+      ...Object.entries(args).map(([key, value]) => `${key}: ${formatArgumentValue(value)}`)
+    ].join("\n")
+  };
 };
 
 const formatWriteStdinSummary = (args: Record<string, unknown>) => {
@@ -1157,6 +1198,10 @@ const formatWriteStdinBlock = (args: Record<string, unknown>) => {
   if (args.chars === "\n") return "Enter (\\n)";
   return args.chars.replace(/\n$/, "\n<EOF>");
 };
+
+const formatCommandBlock = (value: string) => value.includes("\n")
+  ? value.replace(/\n$/, "\n<EOF>")
+  : value;
 
 const formatMilliseconds = (value: number) => {
   if (value >= 1000 && value % 1000 === 0) return `${value / 1000}s`;
