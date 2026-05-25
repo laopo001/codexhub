@@ -104,6 +104,8 @@ const App = () => {
   const [folderListing, setFolderListing] = useState<DirectoryListing | null>(null);
   const [folderError, setFolderError] = useState("");
   const controllers = useRef(new Map<string, AbortController>());
+  const messagesRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottom = useRef(true);
 
   const activeWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.path === activeWorkspacePath),
@@ -143,6 +145,20 @@ const App = () => {
       }))
     }));
   }, [activeSessionId, activeWorkspacePath, sessions]);
+
+  useEffect(() => {
+    shouldStickToBottom.current = true;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSession || !shouldStickToBottom.current) return;
+    const frame = requestAnimationFrame(() => {
+      const messages = messagesRef.current;
+      if (!messages) return;
+      messages.scrollTo({ top: messages.scrollHeight });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeSession, activeSessionId]);
 
   const initialize = async () => {
     const response = await fetch("/api/workspaces");
@@ -216,8 +232,10 @@ const App = () => {
   };
 
   const closeSession = (sessionId: string) => {
+    const session = sessions.find((item) => item.id === sessionId);
     controllers.current.get(sessionId)?.abort();
     controllers.current.delete(sessionId);
+    if (session?.threadId) void releaseThreadCache(session.threadId, session.workspacePath);
     setSessions((current) => {
       const next = current.filter((session) => session.id !== sessionId);
       if (activeSessionId !== sessionId) return next;
@@ -226,6 +244,18 @@ const App = () => {
       if (replacement) setActiveWorkspacePath(replacement.workspacePath);
       return next;
     });
+  };
+
+  const releaseThreadCache = async (threadId: string, workspacePath: string) => {
+    try {
+      const params = new URLSearchParams({ workingDirectory: workspacePath });
+      const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/cache?${params.toString()}`, {
+        method: "DELETE"
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      console.warn("Failed to release Codex thread cache", error);
+    }
   };
 
   const send = async (sessionId: string) => {
@@ -300,6 +330,13 @@ const App = () => {
 
   const stopSession = (sessionId: string) => {
     controllers.current.get(sessionId)?.abort();
+  };
+
+  const updateScrollStickiness = () => {
+    const messages = messagesRef.current;
+    if (!messages) return;
+    const distanceFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight;
+    shouldStickToBottom.current = distanceFromBottom < 120;
   };
 
   const openLoadModal = async () => {
@@ -457,7 +494,7 @@ const App = () => {
 
         {activeSession ? (
           <>
-            <div className="messages">
+            <div className="messages" ref={messagesRef} onScroll={updateScrollStickiness}>
               {activeSession.messages.length === 0 ? (
                 <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
               ) : (
@@ -480,6 +517,11 @@ const App = () => {
               <textarea
                 value={activeSession.input}
                 onChange={(event) => updateSession(activeSession.id, (session) => ({ ...session, input: event.target.value }))}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+                  event.preventDefault();
+                  if (activeCanSend) void send(activeSession.id);
+                }}
                 placeholder="例如：检查这个 repo 的结构并给我下一步建议"
                 rows={4}
               />

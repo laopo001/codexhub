@@ -43,6 +43,14 @@ export class CodexProxy {
     return this.codex.startThread(this.mergeThreadOptions(options));
   }
 
+  releaseThread(id: string, options: ThreadOptions = {}): boolean {
+    const mergedOptions = this.mergeThreadOptions(options);
+    const key = threadCacheKey(id, mergedOptions.workingDirectory);
+    const released = this.threads.delete(key);
+    this.runningThreads.delete(key);
+    return released;
+  }
+
   async run(request: RunRequest): Promise<RunResult> {
     const events: ProxyEvent[] = [];
     let finalResponse = "";

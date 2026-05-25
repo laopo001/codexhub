@@ -84,6 +84,15 @@ const main = async () => {
     return thread;
   });
 
+  app.delete("/api/threads/:threadId/cache", async (request) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);
+    const workingDirectory = query.workingDirectory ?? defaultWorkingDirectory;
+    return {
+      released: proxy.releaseThread(params.threadId, { workingDirectory })
+    };
+  });
+
   app.post("/api/turn/stream", async (request, reply) => {
     const payload = turnSchema.parse(request.body);
     const abortController = new AbortController();
