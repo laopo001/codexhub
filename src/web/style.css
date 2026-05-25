@@ -287,6 +287,24 @@ textarea {
   background: #fbfcf8;
 }
 
+.workbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  color: #66715f;
+  font-size: 12px;
+}
+
+.workbar span {
+  border: 1px solid #dfe5dc;
+  border-radius: 999px;
+  background: #f4f6f1;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
 .workspaceTitle {
   display: grid;
   gap: 3px;

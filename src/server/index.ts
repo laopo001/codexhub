@@ -26,12 +26,16 @@ const main = async () => {
   const instances = new InstanceHub(config.codexOptions, config.defaultThreadOptions);
   const app = Fastify({ logger: true });
   const defaultWorkingDirectory = config.defaultThreadOptions.workingDirectory ?? process.cwd();
+  const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
 
   await app.register(cors, { origin: true });
 
   app.get("/api/health", async () => ({
     ok: true,
-    defaultWorkingDirectory
+    defaultWorkingDirectory,
+    model: config.defaultThreadOptions.model ?? null,
+    modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
+    contextWindowTokens
   }));
 
   app.get("/api/workspaces", async () => ({

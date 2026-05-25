@@ -31,6 +31,7 @@ type InstanceSummary = {
   title: string;
   updatedAt: string;
   messageCount: number;
+  lastUsage?: Usage;
 };
 
 type InstanceDetail = InstanceSummary & {
@@ -66,6 +67,19 @@ type StreamEvent = {
   message?: Message;
 };
 
+type Usage = {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+};
+
+type SystemStatus = {
+  model: string | null;
+  modelReasoningEffort: string | null;
+  contextWindowTokens: number | null;
+};
+
 const storageKey = "codex-proxy-ui-state-v3";
 const webClientId = readWebClientId();
 
@@ -83,6 +97,11 @@ const App = () => {
   const [threads, setThreads] = useState<CodexThreadSummary[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(false);
   const [instanceMenu, setInstanceMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({
+    model: null,
+    modelReasoningEffort: null,
+    contextWindowTokens: null
+  });
   const eventSources = useRef(new Map<string, EventSource>());
 
   const activeSession = useMemo(
@@ -123,7 +142,7 @@ const App = () => {
 
   const initialize = async () => {
     const [health, instanceData] = await Promise.all([
-      apiJson<{ defaultWorkingDirectory?: string }>("/api/health"),
+      apiJson<{ defaultWorkingDirectory?: string } & SystemStatus>("/api/health"),
       apiJson<{ instances?: InstanceSummary[] }>("/api/instances")
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "/home/laop/projects/codex-proxy";
@@ -131,6 +150,11 @@ const App = () => {
     const saved = readStoredUiState();
 
     setDefaultWorkingDirectory(defaultDirectory);
+    setSystemStatus({
+      model: health.model,
+      modelReasoningEffort: health.modelReasoningEffort,
+      contextWindowTokens: health.contextWindowTokens
+    });
     setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
     setFolderPath(parentPath(defaultDirectory));
     setInstances(loadedInstances);
@@ -342,6 +366,12 @@ const App = () => {
             <span>{activeSession?.title ?? "No active instance"}</span>
             <code>{activeSession?.workingDirectory ?? activeWorkspacePath}</code>
           </div>
+          <div className="workbar" aria-label="Runtime status">
+            <span>{formatModelStatus(systemStatus)}</span>
+            <span>Context {formatContextUsage(activeSession, systemStatus.contextWindowTokens)}</span>
+            <span>5h --</span>
+            <span>weekly --</span>
+          </div>
         </header>
 
         {activeSession ? (
@@ -487,6 +517,25 @@ const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 const shortId = (id: string) => id.slice(0, 8);
+
+const formatModelStatus = (status: SystemStatus) => [
+  status.model ?? "default model",
+  status.modelReasoningEffort ?? "default"
+].join(" ");
+
+const formatContextUsage = (session: ChatSession | undefined, contextWindowTokens: number | null) => {
+  const usage = session?.lastUsage;
+  if (!usage) return "--";
+  const used = usage.input_tokens + usage.output_tokens + usage.reasoning_output_tokens;
+  if (!contextWindowTokens) return `${formatCompactNumber(used)} tokens`;
+  return `${Math.min(100, Math.round((used / contextWindowTokens) * 100))}% used`;
+};
+
+const formatCompactNumber = (value: number) => {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return String(value);
+};
 
 function webInstanceClientId(instanceId: string) {
   return `${webClientId}:${instanceId}`;

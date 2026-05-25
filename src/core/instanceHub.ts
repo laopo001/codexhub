@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { CodexOptions, Input, ThreadOptions } from "@openai/codex-sdk";
+import type { CodexOptions, Input, ThreadOptions, Usage } from "@openai/codex-sdk";
 import { CodexProxy } from "./codexProxy.js";
 import { itemText, type ProxyEvent } from "./events.js";
 
@@ -25,6 +25,7 @@ export type InstanceSummary = {
   title: string;
   updatedAt: string;
   messageCount: number;
+  lastUsage?: Usage;
 };
 
 export type InstanceDetail = InstanceSummary & {
@@ -53,6 +54,7 @@ type RuntimeInstance = {
   subscribers: Set<(event: InstanceStreamEvent) => void>;
   attachments: Set<string>;
   abortController?: AbortController;
+  lastUsage?: Usage;
   seq: number;
 };
 
@@ -175,6 +177,7 @@ export class InstanceHub {
         signal: instance.abortController.signal
       })) {
         if (event.type === "thread") instance.threadId = event.threadId;
+        if (event.type === "final" && event.usage) instance.lastUsage = event.usage;
         this.publish(instance, "event", event);
 
         const message = messageFromProxyEvent(event, turnId);
@@ -265,7 +268,8 @@ export class InstanceHub {
       attachCount: instance.attachments.size,
       title: instance.title,
       updatedAt: instance.updatedAt,
-      messageCount: instance.messages.length
+      messageCount: instance.messages.length,
+      lastUsage: instance.lastUsage
     };
   }
 
