@@ -208,6 +208,8 @@ bot.on("text", async (ctx) => {
   ].join("\n"));
   let finalResponse = "";
   const progress: string[] = [];
+  let sentAgentMessage = false;
+  let sentItemCount = 0;
 
   try {
     for await (const event of streamTurn({
@@ -220,8 +222,13 @@ bot.on("text", async (ctx) => {
         state.threadId = event.threadId;
         chatStates.set(ctx.chat.id, state);
       } else if (event.type === "item") {
+        if (event.phase !== "completed") continue;
         const text = itemText(event.item);
-        if (text && event.item.type !== "agent_message") progress.push(text);
+        if (!text) continue;
+        progress.push(text);
+        if (event.item.type === "agent_message") sentAgentMessage = true;
+        sentItemCount += 1;
+        await ctx.reply(clampTelegram(formatItemMessage(event.item, text)));
       } else if (event.type === "final") {
         finalResponse = event.text;
       } else if (event.type === "error") {
@@ -229,8 +236,21 @@ bot.on("text", async (ctx) => {
       }
     }
 
-    const text = finalResponse || progress.slice(-3).join("\n\n") || "Codex completed without text output.";
-    await ctx.telegram.editMessageText(ctx.chat.id, statusMessage.message_id, undefined, clampTelegram(text));
+    if (finalResponse && !sentAgentMessage) {
+      sentItemCount += 1;
+      await ctx.reply(clampTelegram(formatBlock("codex", finalResponse)));
+    }
+
+    await ctx.telegram.editMessageText(
+      ctx.chat.id,
+      statusMessage.message_id,
+      undefined,
+      [
+        "Codex completed.",
+        `thread: ${state.threadId ? shortThreadId(state.threadId) : "(new)"}`,
+        `messages: ${sentItemCount}`
+      ].join("\n")
+    );
   } catch (error) {
     await ctx.telegram.editMessageText(
       ctx.chat.id,
@@ -311,6 +331,21 @@ const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortThreadId = (threadId: string) => threadId.slice(0, 8);
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const formatItemMessage = (item: any, text: string) => formatBlock(itemMessageLabel(item), text);
+
+const itemMessageLabel = (item: any): string => {
+  if (item.type === "agent_message") return "codex";
+  if (item.type === "reasoning") return "thinking";
+  if (item.type === "command_execution") return "command";
+  if (item.type === "mcp_tool_call") return `${item.server}.${item.tool}`;
+  if (item.type === "web_search") return "web search";
+  if (item.type === "file_change") return "file change";
+  if (item.type === "todo_list") return "plan";
+  return item.type ?? "event";
+};
+
+const formatBlock = (label: string, text: string) => `[${label}]\n${text}`;
 
 const clampTelegram = (text: string) => {
   if (text.length <= 3900) return text;
