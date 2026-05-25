@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Virtuoso } from "react-virtuoso";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
 import "./style.css";
@@ -70,6 +70,7 @@ type Usage = {
 type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 type ModelSelection = "auto" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.3-codex" | "gpt-5.3-codex-spark" | "gpt-5.2";
 type ReasoningSelection = "auto" | ReasoningEffort;
+type MessageDisplayMode = "compact" | "detailed";
 
 type SystemStatus = {
   model: string | null;
@@ -142,17 +143,28 @@ const App = () => {
   });
   const [selectedModel, setSelectedModel] = useState<ModelSelection>("auto");
   const [selectedReasoning, setSelectedReasoning] = useState<ReasoningSelection>("auto");
+  const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [codexUsage, setCodexUsage] = useState<CodexUsageSnapshot | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
+  const messagesRef = useRef<VirtuosoHandle>(null);
+  const messagesScrollerRef = useRef<HTMLElement | null>(null);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.instanceId === activeSessionId),
     [activeSessionId, sessions]
   );
-  const activeViews = useMemo(
+  const detailedViews = useMemo(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
   );
+  const activeViews = useMemo(
+    () => messageDisplayMode === "compact" ? compactToolViews(detailedViews) : detailedViews,
+    [detailedViews, messageDisplayMode]
+  );
+  const latestView = activeViews.at(-1);
+  const latestViewKey = latestView
+    ? `${latestView.id}:${latestView.status ?? ""}:${latestView.text.length}:${latestView.usage ? usageTotal(latestView.usage) : ""}`
+    : "";
   const activeCanSend = Boolean(activeSession && (activeSession.input.trim() || activeSession.imageAttachments.length)) && !activeSession?.running;
   const activeCanSubmit = Boolean(activeSession?.running || activeCanSend);
 
@@ -170,9 +182,10 @@ const App = () => {
       activeSessionId,
       lastFolderPath,
       selectedModel,
-      selectedReasoning
+      selectedReasoning,
+      messageDisplayMode
     }));
-  }, [activeWorkspacePath, activeSessionId, lastFolderPath, selectedModel, selectedReasoning, initialized]);
+  }, [activeWorkspacePath, activeSessionId, lastFolderPath, selectedModel, selectedReasoning, messageDisplayMode, initialized]);
 
   useEffect(() => {
     const interval = window.setInterval(() => void refreshInstances(), 3000);
@@ -187,6 +200,26 @@ const App = () => {
   useEffect(() => {
     void refreshCodexUsage(activeSession?.threadId);
   }, [activeSession?.threadId]);
+
+  useEffect(() => {
+    if (!activeViews.length) return;
+    const scrollToBottom = (behavior: "auto" | "smooth" = "smooth") => {
+      messagesRef.current?.scrollToIndex({
+        index: "LAST",
+        align: "end",
+        behavior
+      });
+      const scroller = messagesScrollerRef.current;
+      if (scroller) {
+        scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+      }
+    };
+    const firstFrame = window.requestAnimationFrame(() => {
+      scrollToBottom(activeSession?.running ? "auto" : "smooth");
+      window.setTimeout(() => scrollToBottom("auto"), 80);
+    });
+    return () => window.cancelAnimationFrame(firstFrame);
+  }, [activeSessionId, activeViews.length, latestViewKey, activeSession?.running]);
 
   useEffect(() => {
     if (!instanceMenu) return undefined;
@@ -233,6 +266,7 @@ const App = () => {
     setFolderPath(saved?.lastFolderPath ?? "");
     setSelectedModel(saved?.selectedModel ?? "auto");
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
+    setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setInstances(loadedInstances);
     const savedInstanceExists = saved?.activeSessionId
       ? loadedInstances.some((instance) => instance.instanceId === saved.activeSessionId)
@@ -553,6 +587,17 @@ const App = () => {
             </span>
             <span title={formatResetTitle(codexUsage?.rateLimits?.primary)}>5h {formatRateLimitRemaining(codexUsage?.rateLimits?.primary)}</span>
             <span title={formatResetTitle(codexUsage?.rateLimits?.secondary)}>weekly {formatRateLimitRemaining(codexUsage?.rateLimits?.secondary)}</span>
+            <label className="switchControl">
+              <span>View</span>
+              <button
+                type="button"
+                className={`switchButton ${messageDisplayMode === "compact" ? "active" : ""}`}
+                aria-pressed={messageDisplayMode === "compact"}
+                onClick={() => setMessageDisplayMode((current) => current === "compact" ? "detailed" : "compact")}
+              >
+                {messageDisplayMode === "compact" ? "Simple" : "Detailed"}
+              </button>
+            </label>
           </div>
         </header>
 
@@ -560,6 +605,10 @@ const App = () => {
           <>
             <Virtuoso
               key={activeSession.instanceId}
+              ref={messagesRef}
+              scrollerRef={(ref) => {
+                messagesScrollerRef.current = ref instanceof HTMLElement ? ref : null;
+              }}
               className="messages"
               data={activeViews}
               followOutput={() => "smooth"}
@@ -570,6 +619,7 @@ const App = () => {
               itemContent={(_, message) => (
                 <MessageCard
                   message={message}
+                  showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
                   onFork={message.canFork ? () => void forkMessage(activeSession.instanceId, message.record.id) : undefined}
                 />
               )}
@@ -706,11 +756,11 @@ const App = () => {
   );
 };
 
-const MessageCard = ({ message, onFork }: { message: CodexRecordView; onFork?: () => void }) => (
+const MessageCard = ({ message, showStatus = true, onFork }: { message: CodexRecordView; showStatus?: boolean; onFork?: () => void }) => (
   <article className={`message ${message.role}`}>
     <span className="messageHeader">
       <b>{message.label ?? message.role}</b>
-      {message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
+      {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
     </span>
     {message.text ? <pre>{message.text}</pre> : null}
     {message.attachments?.length ? (
@@ -879,6 +929,51 @@ const isMatchingOptimisticUserRecord = (record: CodexRecord, incoming: CodexReco
     && recordPayload.message === incomingPayload.message;
 };
 
+const compactToolViews = (views: CodexRecordView[]) => {
+  const compacted: CodexRecordView[] = [];
+  const toolIndexes = new Map<string, number>();
+  for (const view of views) {
+    if (view.role !== "tool") {
+      compacted.push(view);
+      continue;
+    }
+
+    const payload = asRecord(view.record.payload);
+    if (view.status === "pending") {
+      const callId = compactToolCallId(view);
+      toolIndexes.set(callId, compacted.length);
+      compacted.push({
+        ...view,
+        id: `compact-tool:${callId}`,
+        label: view.label.replace(/^tool call:\s*/i, "tool: ")
+      });
+      continue;
+    }
+
+    const callId = compactToolCallId(view);
+    const callIndex = toolIndexes.get(callId);
+    if (callIndex == null || payload?.type !== "function_call_output") {
+      compacted.push(view);
+      continue;
+    }
+
+    const callView = compacted[callIndex];
+    compacted[callIndex] = {
+      ...callView,
+      text: view.status === "failed" && view.text ? [callView.text, `Output:\n${view.text.trimEnd()}`].join("\n\n") : callView.text,
+      at: view.at ?? callView.at,
+      status: view.status,
+      record: view.record
+    };
+  }
+  return compacted;
+};
+
+const compactToolCallId = (view: CodexRecordView) => {
+  const payload = asRecord(view.record.payload);
+  return typeof payload?.call_id === "string" ? payload.call_id : view.id;
+};
+
 const errorRecord = (label: string, error: unknown): CodexRecord => ({
   id: `web:${crypto.randomUUID()}`,
   timestamp: new Date().toISOString(),
@@ -907,12 +1002,16 @@ const isModelSelection = (value: unknown): value is ModelSelection =>
 const isReasoningSelection = (value: unknown): value is ReasoningSelection =>
   typeof value === "string" && reasoningOptions.some((option) => option.value === value);
 
+const isMessageDisplayMode = (value: unknown): value is MessageDisplayMode =>
+  value === "compact" || value === "detailed";
+
 const readStoredUiState = (): {
   activeWorkspacePath?: string;
   activeSessionId?: string;
   lastFolderPath?: string;
   selectedModel?: ModelSelection;
   selectedReasoning?: ReasoningSelection;
+  messageDisplayMode?: MessageDisplayMode;
 } | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
@@ -922,7 +1021,10 @@ const readStoredUiState = (): {
       activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : undefined,
       lastFolderPath: typeof parsed.lastFolderPath === "string" ? parsed.lastFolderPath : undefined,
       selectedModel: isModelSelection(parsed.selectedModel) ? parsed.selectedModel : undefined,
-      selectedReasoning: isReasoningSelection(parsed.selectedReasoning) ? parsed.selectedReasoning : undefined
+      selectedReasoning: isReasoningSelection(parsed.selectedReasoning) ? parsed.selectedReasoning : undefined,
+      messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)
+        ? parsed.messageDisplayMode
+        : isMessageDisplayMode(parsed.toolDisplayMode) ? parsed.toolDisplayMode : undefined
     };
   } catch {
     return null;

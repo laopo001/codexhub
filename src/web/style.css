@@ -337,6 +337,39 @@ textarea {
   cursor: pointer;
 }
 
+.switchControl {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  border: 1px solid #dfe5dc;
+  border-radius: 999px;
+  background: #f4f6f1;
+  padding: 2px 4px 2px 8px;
+  white-space: nowrap;
+}
+
+.switchControl span {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.switchButton {
+  min-height: 22px;
+  border-radius: 999px;
+  background: #dfe5dc;
+  color: #405244;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.switchButton.active {
+  background: #2f7d5a;
+  color: #ffffff;
+}
+
 .workspaceTitle {
   display: grid;
   gap: 3px;
