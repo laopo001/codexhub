@@ -463,6 +463,9 @@ textarea {
 }
 
 .messageMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   justify-self: end;
   align-self: end;
   margin-bottom: -16px;
@@ -470,6 +473,18 @@ textarea {
   font-size: 11px;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+.messageMeta a {
+  color: #405244;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.messageMeta a:hover {
+  color: #df5b35;
 }
 
 .messageAttachments {

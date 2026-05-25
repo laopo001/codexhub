@@ -370,6 +370,30 @@ const App = () => {
     await refreshInstances();
   };
 
+  const forkMessage = async (instanceId: string, messageId: string) => {
+    try {
+      const instance = await apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}/fork`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messageId })
+      });
+      await openInstance(instance.instanceId);
+      await refreshInstances();
+    } catch (error) {
+      setSessions((current) => current.map((item) => item.instanceId === instanceId
+        ? {
+          ...item,
+          messages: [...item.messages, {
+            id: crypto.randomUUID(),
+            role: "error",
+            label: "fork failed",
+            text: error instanceof Error ? error.message : String(error)
+          }]
+        }
+        : item));
+    }
+  };
+
   const send = async (instanceId: string) => {
     const session = sessions.find((item) => item.instanceId === instanceId);
     if (!session || session.running) return;
@@ -552,7 +576,12 @@ const App = () => {
               increaseViewportBy={{ top: 360, bottom: 720 }}
               computeItemKey={(_, message) => message.id}
               components={{ EmptyPlaceholder: EmptyMessages }}
-              itemContent={(_, message) => <MessageCard message={message} />}
+              itemContent={(_, message) => (
+                <MessageCard
+                  message={message}
+                  onFork={canForkMessage(message) ? () => void forkMessage(activeSession.instanceId, message.id) : undefined}
+                />
+              )}
             />
 
             <form
@@ -686,7 +715,7 @@ const App = () => {
   );
 };
 
-const MessageCard = ({ message }: { message: Message }) => (
+const MessageCard = ({ message, onFork }: { message: Message; onFork?: () => void }) => (
   <article className={`message ${message.role}`}>
     <span className="messageHeader">
       <b>{message.label ?? message.role}{message.source ? ` · ${message.source}` : ""}</b>
@@ -702,9 +731,15 @@ const MessageCard = ({ message }: { message: Message }) => (
         ) : null)}
       </div>
     ) : null}
-    {message.at || message.usage ? (
+    {message.at || message.usage || onFork ? (
       <footer className="messageMeta" title={formatMessageMetaTitle(message)}>
-        {formatMessageMeta(message)}
+        <span>{formatMessageMeta(message)}</span>
+        {onFork ? (
+          <a href="#" onClick={(event) => {
+            event.preventDefault();
+            onFork();
+          }}>Fork</a>
+        ) : null}
       </footer>
     ) : null}
   </article>
@@ -842,6 +877,9 @@ const statusLabel = (status: NonNullable<Message["status"]>) => {
   if (status === "failed") return "Failed";
   return "Done";
 };
+
+const canForkMessage = (message: Message) =>
+  message.source === "codex" && message.itemType === "agent_message";
 
 const formatDate = (value: string) => {
   const date = new Date(value);

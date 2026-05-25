@@ -181,6 +181,17 @@ const main = async () => {
     }
   });
 
+  app.post("/api/instances/:instanceId/fork", async (request, reply) => {
+    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({ messageId: z.string().min(1) }).parse(request.body);
+    try {
+      return instances.forkInstance(params.instanceId, payload.messageId);
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   app.post("/api/instances/:instanceId/turn", async (request, reply) => {
     const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
     const payload = z.object({

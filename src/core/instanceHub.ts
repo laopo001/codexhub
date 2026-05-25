@@ -51,6 +51,7 @@ type RuntimeInstance = {
   workingDirectory: string;
   threadId?: string;
   threadOptions: ThreadOptions;
+  forkContext?: string;
   running: boolean;
   title: string;
   updatedAt: string;
@@ -91,6 +92,36 @@ export class InstanceHub {
     return this.detail(instance);
   }
 
+  forkInstance(instanceId: string, messageId: string): InstanceDetail {
+    const source = this.requireInstance(instanceId);
+    const targetIndex = source.messages.findIndex((message) => message.id === messageId);
+    if (targetIndex === -1) throw new Error(`Message not found: ${messageId}`);
+
+    const now = new Date().toISOString();
+    const messages = source.messages.slice(0, targetIndex + 1).map((message) => ({
+      ...message,
+      id: randomUUID()
+    }));
+    const instance: RuntimeInstance = {
+      instanceId: randomUUID(),
+      workingDirectory: source.workingDirectory,
+      threadOptions: { ...source.threadOptions },
+      forkContext: forkContextFromMessages(messages),
+      running: false,
+      title: `Fork: ${source.title}`,
+      updatedAt: now,
+      messages,
+      events: [],
+      subscribers: new Set(),
+      attachments: new Set(),
+      lastUsage: latestUsage(messages),
+      seq: 0
+    };
+    this.instances.set(instance.instanceId, instance);
+    this.publish(instance, "instance");
+    return this.detail(instance);
+  }
+
   restoreInstance(
     workingDirectory: string,
     threadId: string,
@@ -103,7 +134,9 @@ export class InstanceHub {
       ...message,
       id: message.id ?? randomUUID(),
       at: message.at ?? now,
-      role: message.role === "assistant" ? "codex" : message.role
+      role: message.role === "assistant" ? "codex" : message.role,
+      source: message.role === "assistant" ? "codex" : message.source,
+      itemType: message.role === "assistant" ? "agent_message" : message.itemType
     } satisfies InstanceMessage));
     const instance: RuntimeInstance = {
       instanceId: randomUUID(),
@@ -191,9 +224,12 @@ export class InstanceHub {
     const turnId = randomUUID();
     this.publish(instance, "instance");
 
+    const codexInput = prepareForkedInput(input, instance.forkContext);
+    instance.forkContext = undefined;
+
     try {
       for await (const event of this.proxy.runStream({
-        input,
+        input: codexInput,
         threadId: instance.threadId,
         workingDirectory: instance.workingDirectory,
         skipGitRepoCheck: true,
@@ -369,6 +405,53 @@ const imageAttachments = (input: Input): InstanceMessage["attachments"] | undefi
     .filter((item) => item.type === "local_image")
     .map((item) => ({ type: "image" as const, path: item.path }));
   return images.length ? images : undefined;
+};
+
+const prepareForkedInput = (input: Input, forkContext?: string): Input => {
+  if (!forkContext) return input;
+  const context = [
+    "This is a forked Codex conversation. Continue from the prior context below, but treat this as a new independent thread.",
+    "",
+    forkContext,
+    "",
+    "New user message:"
+  ].join("\n");
+
+  if (typeof input === "string") return `${context}\n${input}`;
+  return [
+    { type: "text", text: context },
+    ...input
+  ];
+};
+
+const forkContextFromMessages = (messages: InstanceMessage[]) => [
+  "Forked conversation history:",
+  ...messages.map((message) => {
+    const parts = [
+      `${forkRoleLabel(message)}${message.at ? ` (${message.at})` : ""}:`,
+      message.text.trim() || "[empty]",
+      message.attachments?.length
+        ? message.attachments.map((attachment) => `[image: ${attachment.path}]`).join("\n")
+        : null
+    ];
+    return parts.filter(Boolean).join("\n");
+  })
+].join("\n\n");
+
+const forkRoleLabel = (message: InstanceMessage) => {
+  if (message.role === "user") return "USER";
+  if (message.role === "codex" || message.role === "assistant") return "CODEX";
+  if (message.role === "tool") return "TOOL";
+  if (message.role === "thinking") return "THINKING";
+  if (message.role === "error") return "ERROR";
+  return "EVENT";
+};
+
+const latestUsage = (messages: InstanceMessage[]) => {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].usage) return messages[i].usage;
+  }
+  return undefined;
 };
 
 const isToolItem = (item: any) =>
