@@ -6,6 +6,13 @@ type WorkspaceEntry = {
   lastOpenedAt: string;
 };
 
+type DirectoryListing = {
+  path: string;
+  parent: string | null;
+  shortcuts: WorkspaceEntry[];
+  children: Array<{ name: string; path: string; hasChildren: boolean }>;
+};
+
 type InstanceSummary = {
   instanceId: string;
   workingDirectory: string;
@@ -46,7 +53,6 @@ type CodexUsageSnapshot = {
 };
 
 type ChatState = {
-  workingDirectory?: string;
   instanceId?: string;
 };
 
@@ -65,14 +71,13 @@ const allowedChatIds = new Set(
 );
 const bot = new Telegraf(token);
 const chatStates = new Map<number, ChatState>();
+const folderPickers = new Map<number, DirectoryListing>();
 
 const botCommands = [
   { command: "start", description: "show help" },
-  { command: "status", description: "show current folder and instance" },
-  { command: "folders", description: "choose workspace folder" },
-  { command: "addfolder", description: "add and choose a folder" },
+  { command: "status", description: "show current instance" },
   { command: "instances", description: "attach a Codex instance" },
-  { command: "new", description: "create a new Codex instance" }
+  { command: "new", description: "choose a folder and create an instance" }
 ];
 
 const tgClientId = (chatId: number) => `telegram-${chatId}`;
@@ -87,72 +92,30 @@ bot.use(async (ctx, next) => {
 });
 
 bot.start(async (ctx) => {
-  await ensureChatState(ctx.chat.id);
   return ctx.reply([
     "codex-proxy ready.",
     "",
-    "/folders 选择文件夹",
-    "/instances attach 当前文件夹的 Codex 实例",
-    "/new 创建并 attach 新 Codex 实例",
+    "/instances 打开已有 Codex 实例",
+    "/new 选择文件夹并创建 Codex 实例",
     "/status 查看当前状态",
     "",
     "直接发消息会发送给当前 Codex 实例。"
   ].join("\n"));
 });
 
-bot.command("folders", async (ctx) => {
-  try {
-    const workspaces = await listWorkspaces();
-    if (!workspaces.length) {
-      await ctx.reply("没有可选文件夹。请先启动 API server，或使用 /addfolder <path> 添加。");
-      return;
-    }
-    await ctx.reply("选择当前文件夹：", {
-      reply_markup: {
-        inline_keyboard: workspaces.map((workspace, index) => ([{
-          text: `${workspace.name}  ${workspace.path}`,
-          callback_data: `folder:${index}`
-        }]))
-      }
-    });
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-});
-
-bot.command("addfolder", async (ctx) => {
-  const workspacePath = ctx.message.text.replace(/^\/addfolder(@\w+)?\s*/, "").trim();
-  if (!workspacePath) {
-    await ctx.reply("用法：/addfolder /home/laop/projects/codex-proxy");
-    return;
-  }
-
-  try {
-    const workspaces = await addWorkspace(workspacePath);
-    const selected = workspaces[0];
-    if (!selected) throw new Error("Folder was added but API returned no workspace.");
-    await detachCurrent(ctx.chat.id);
-    chatStates.set(ctx.chat.id, { workingDirectory: selected.path });
-    await ctx.reply(`已选择文件夹：\n${selected.path}`);
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-});
-
 bot.command("instances", async (ctx) => {
   try {
-    const state = await ensureChatState(ctx.chat.id);
-    const instances = (await listInstances()).filter((instance) => instance.workingDirectory === state.workingDirectory);
+    const instances = await listInstances();
 
     if (!instances.length) {
-      await ctx.reply(`当前文件夹没有可 attach 的 Codex 实例。\n${state.workingDirectory}`);
+      await ctx.reply("当前没有可打开的 Codex 实例。使用 /new 选择文件夹并创建。");
       return;
     }
 
-    await ctx.reply("选择要 attach 的 Codex 实例：", {
+    await ctx.reply("选择要打开的 Codex 实例：", {
       reply_markup: {
         inline_keyboard: instances.map((instance) => ([{
-          text: `${displayInstanceId(instance)}  ${instance.running ? "running" : "idle"}  ${instance.attachCount} attached`,
+          text: `${displayInstanceId(instance)}  ${instance.running ? "running" : "idle"}  ${shortPath(instance.workingDirectory)}`,
           callback_data: `attach:${instance.instanceId}`
         }]))
       }
@@ -163,11 +126,21 @@ bot.command("instances", async (ctx) => {
 });
 
 bot.command("new", async (ctx) => {
+  const requestedPath = ctx.message.text.replace(/^\/new(@\w+)?\s*/, "").trim();
   try {
-    const state = await ensureChatState(ctx.chat.id);
-    const instance = await createInstance(state.workingDirectory!);
-    await attachInstance(ctx.chat.id, instance.instanceId);
-    await ctx.reply(`已创建并 attach 新 Codex 实例：${shortId(instance.instanceId)}\n文件夹：${instance.workingDirectory}`);
+    if (requestedPath) {
+      const instance = await createInstance(requestedPath);
+      await attachInstance(ctx.chat.id, instance.instanceId);
+      await ctx.reply(`已创建并打开 Codex 实例：${shortId(instance.instanceId)}\n文件夹：${instance.workingDirectory}`);
+      return;
+    }
+
+    const current = chatStates.get(ctx.chat.id)?.instanceId
+      ? await getInstance(chatStates.get(ctx.chat.id)!.instanceId!).catch(() => null)
+      : null;
+    const listing = await loadDirectory(current ? parentPath(current.workingDirectory) : undefined);
+    folderPickers.set(ctx.chat.id, listing);
+    await ctx.reply(newPickerText(listing), newPickerMarkup(listing));
   } catch (error) {
     await ctx.reply(errorText(error));
   }
@@ -175,39 +148,90 @@ bot.command("new", async (ctx) => {
 
 bot.command("status", async (ctx) => {
   try {
-    const state = await ensureChatState(ctx.chat.id);
-    const current = state.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
+    const state = chatStates.get(ctx.chat.id);
+    const current = state?.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
     const usage = await getCodexUsage(current?.threadId).catch(() => null);
-    const instances = (await listInstances()).filter((instance) => instance.workingDirectory === state.workingDirectory);
+    const instances = await listInstances();
     await ctx.reply([
-      `文件夹：${state.workingDirectory}`,
       `当前 instance：${current ? displayInstanceId(current) : "(none)"}`,
+      current ? `文件夹：${current.workingDirectory}` : null,
       current?.threadId ? `thread：${shortId(current.threadId)}` : null,
       `usage：${formatCodexUsage(usage)}`,
       "",
       instances.length
         ? instances.map((instance) => `${displayInstanceId(instance)} ${instance.running ? "running" : "idle"} ${instance.attachCount} attached`).join("\n")
-        : "当前文件夹没有 Codex 实例。"
+        : "当前没有 Codex 实例。"
     ].filter(Boolean).join("\n"));
   } catch (error) {
     await ctx.reply(errorText(error));
   }
 });
 
-bot.action(/^folder:(\d+)$/, async (ctx) => {
+bot.action(/^new:shortcut:(\d+)$/, async (ctx) => {
   try {
     const index = Number(ctx.match[1]);
-    const workspaces = await listWorkspaces();
-    const selected = workspaces[index];
-    if (!selected) throw new Error("Folder selection expired. Run /folders again.");
-    await detachCurrent(ctx.chat!.id);
-    chatStates.set(ctx.chat!.id, { workingDirectory: selected.path });
-    await ctx.answerCbQuery("Folder selected");
-    await ctx.editMessageText(`已选择文件夹：\n${selected.path}`);
+    const current = folderPickers.get(ctx.chat!.id);
+    const selected = current?.shortcuts[index];
+    if (!selected) throw new Error("Folder selection expired. Run /new again.");
+    const listing = await loadDirectory(selected.path);
+    folderPickers.set(ctx.chat!.id, listing);
+    await ctx.answerCbQuery("Opened");
+    await ctx.editMessageText(newPickerText(listing), newPickerMarkup(listing));
   } catch (error) {
     await ctx.answerCbQuery("Failed");
     await ctx.reply(errorText(error));
   }
+});
+
+bot.action(/^new:child:(\d+)$/, async (ctx) => {
+  try {
+    const index = Number(ctx.match[1]);
+    const current = folderPickers.get(ctx.chat!.id);
+    const selected = current?.children[index];
+    if (!selected) throw new Error("Folder selection expired. Run /new again.");
+    const listing = await loadDirectory(selected.path);
+    folderPickers.set(ctx.chat!.id, listing);
+    await ctx.answerCbQuery("Opened");
+    await ctx.editMessageText(newPickerText(listing), newPickerMarkup(listing));
+  } catch (error) {
+    await ctx.answerCbQuery("Failed");
+    await ctx.reply(errorText(error));
+  }
+});
+
+bot.action("new:parent", async (ctx) => {
+  try {
+    const current = folderPickers.get(ctx.chat!.id);
+    if (!current?.parent) throw new Error("No parent folder.");
+    const listing = await loadDirectory(current.parent);
+    folderPickers.set(ctx.chat!.id, listing);
+    await ctx.answerCbQuery("Opened");
+    await ctx.editMessageText(newPickerText(listing), newPickerMarkup(listing));
+  } catch (error) {
+    await ctx.answerCbQuery("Failed");
+    await ctx.reply(errorText(error));
+  }
+});
+
+bot.action("new:create", async (ctx) => {
+  try {
+    const listing = folderPickers.get(ctx.chat!.id);
+    if (!listing) throw new Error("Folder selection expired. Run /new again.");
+    const instance = await createInstance(listing.path);
+    await attachInstance(ctx.chat!.id, instance.instanceId);
+    folderPickers.delete(ctx.chat!.id);
+    await ctx.answerCbQuery("Created");
+    await ctx.editMessageText(`已创建并打开 Codex 实例：${displayInstanceId(instance)}\n文件夹：${instance.workingDirectory}`);
+  } catch (error) {
+    await ctx.answerCbQuery("Failed");
+    await ctx.reply(errorText(error));
+  }
+});
+
+bot.action("new:cancel", async (ctx) => {
+  folderPickers.delete(ctx.chat!.id);
+  await ctx.answerCbQuery("Canceled");
+  await ctx.editMessageText("已取消创建实例。");
 });
 
 bot.action(/^attach:(.+)$/, async (ctx) => {
@@ -216,7 +240,7 @@ bot.action(/^attach:(.+)$/, async (ctx) => {
     const instance = await attachInstance(ctx.chat!.id, instanceId);
     await ctx.answerCbQuery("Attached");
     await ctx.editMessageText([
-      `已 attach：${displayInstanceId(instance)} ${instance.running ? "running" : "idle"}`,
+      `已打开：${displayInstanceId(instance)} ${instance.running ? "running" : "idle"}`,
       instance.workingDirectory
     ].join("\n"));
   } catch (error) {
@@ -229,9 +253,13 @@ bot.on("text", async (ctx) => {
   const prompt = ctx.message.text.trim();
   if (!prompt || prompt.startsWith("/")) return;
 
-  const state = await ensureChatState(ctx.chat.id);
-  const existingInstance = state.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
-  const instance = existingInstance ?? await createAndAttach(ctx.chat.id, state.workingDirectory!);
+  const state = chatStates.get(ctx.chat.id);
+  const existingInstance = state?.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
+  if (!existingInstance) {
+    await ctx.reply("当前没有打开的 Codex 实例。使用 /new 选择文件夹并创建，或用 /instances 打开已有实例。");
+    return;
+  }
+  const instance = existingInstance;
   const statusMessage = await ctx.reply([
     "Codex running...",
     `folder: ${instance.workingDirectory}`,
@@ -268,24 +296,6 @@ bot.on("text", async (ctx) => {
   }
 });
 
-const ensureChatState = async (chatId: number): Promise<ChatState> => {
-  const existing = chatStates.get(chatId);
-  if (existing?.workingDirectory) return existing;
-
-  const workspaces = await listWorkspaces();
-  const first = workspaces[0];
-  if (!first) throw new Error("No workspace available. Start the API server first.");
-
-  const state: ChatState = { workingDirectory: first.path };
-  chatStates.set(chatId, state);
-  return state;
-};
-
-const createAndAttach = async (chatId: number, workingDirectory: string) => {
-  const instance = await createInstance(workingDirectory);
-  return attachInstance(chatId, instance.instanceId);
-};
-
 const attachInstance = async (chatId: number, instanceId: string) => {
   await detachCurrent(chatId);
   const instance = await apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}/attach`, {
@@ -293,7 +303,7 @@ const attachInstance = async (chatId: number, instanceId: string) => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ clientId: tgClientId(chatId) })
   });
-  chatStates.set(chatId, { workingDirectory: instance.workingDirectory, instanceId: instance.instanceId });
+  chatStates.set(chatId, { instanceId: instance.instanceId });
   return instance;
 };
 
@@ -305,23 +315,14 @@ const detachCurrent = async (chatId: number) => {
   }).catch(() => undefined);
 };
 
-const listWorkspaces = async (): Promise<WorkspaceEntry[]> => {
-  const data = await apiJson<{ workspaces?: WorkspaceEntry[] }>("/api/workspaces");
-  return Array.isArray(data.workspaces) ? data.workspaces : [];
-};
-
-const addWorkspace = async (workspacePath: string): Promise<WorkspaceEntry[]> => {
-  const data = await apiJson<{ workspaces?: WorkspaceEntry[] }>("/api/workspaces", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: workspacePath })
-  });
-  return Array.isArray(data.workspaces) ? data.workspaces : [];
-};
-
 const listInstances = async (): Promise<InstanceSummary[]> => {
   const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances");
   return Array.isArray(data.instances) ? data.instances : [];
+};
+
+const loadDirectory = async (directoryPath?: string) => {
+  const query = directoryPath ? `?${new URLSearchParams({ path: directoryPath }).toString()}` : "";
+  return apiJson<DirectoryListing>(`/api/fs/children${query}`);
 };
 
 const getInstance = (instanceId: string) => apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}`);
@@ -378,6 +379,47 @@ const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortId = (id: string) => id.slice(0, 8);
 const displayInstanceId = (instance: Pick<InstanceSummary, "instanceId" | "threadId">) => shortId(instance.threadId ?? instance.instanceId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+const newPickerText = (listing: DirectoryListing) => [
+  "选择文件夹创建 Codex 实例：",
+  listing.path,
+  "",
+  "可以进入子目录，也可以直接在当前目录创建。"
+].join("\n");
+const newPickerMarkup = (listing: DirectoryListing) => {
+  const shortcutRows = listing.shortcuts.slice(0, 4).map((shortcut, index) => ([{
+    text: `Shortcut: ${shortcut.name}`,
+    callback_data: `new:shortcut:${index}`
+  }]));
+  const childRows = listing.children.slice(0, 20).map((child, index) => ([{
+    text: child.hasChildren ? `${child.name}/` : child.name,
+    callback_data: `new:child:${index}`
+  }]));
+
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "Create Instance Here", callback_data: "new:create" }],
+        [
+          { text: "Parent", callback_data: "new:parent" },
+          { text: "Cancel", callback_data: "new:cancel" }
+        ],
+        ...shortcutRows,
+        ...childRows
+      ]
+    }
+  };
+};
+const shortPath = (value: string) => {
+  const home = process.env.HOME;
+  if (home && value.startsWith(`${home}/`)) return `~/${value.slice(home.length + 1)}`;
+  return value;
+};
+const parentPath = (value: string) => {
+  const normalized = value.replace(/\/+$/, "");
+  if (!normalized || normalized === "/") return "/";
+  const index = normalized.lastIndexOf("/");
+  return index <= 0 ? "/" : normalized.slice(0, index);
+};
 const formatCodexUsage = (usage: CodexUsageSnapshot | null) => [
   `5h ${formatRateLimitRemaining(usage?.rateLimits?.primary)}`,
   `weekly ${formatRateLimitRemaining(usage?.rateLimits?.secondary)}`,
