@@ -1112,9 +1112,16 @@ const formatStructuredToolOutput = (output: string): Pick<InspectDetail, "output
   return {
     outputMeta: meta,
     outputBlockLabel: "Stdout",
-    outputBlock: body || "<empty>"
+    outputBlock: cleanTerminalOutput(body) || "<empty>"
   };
 };
+
+const cleanTerminalOutput = (text: string) => text
+  .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+  .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+  .replace(/\x1b[@-Z\\-_]/g, "")
+  .replace(/\r\n/g, "\n")
+  .replace(/\r/g, "\n");
 
 const formatCompactToolCall = (view: CodexRecordView) => {
   const payload = asRecord(view.record.payload);
@@ -1196,12 +1203,10 @@ const formatWriteStdinBlock = (args: Record<string, unknown>) => {
   if (!args.chars) return "<empty> (poll only; no stdin was written)";
   if (args.chars === "\u0003") return "Ctrl-C (\\u0003)";
   if (args.chars === "\n") return "Enter (\\n)";
-  return args.chars.replace(/\n$/, "\n<EOF>");
+  return args.chars.trimEnd();
 };
 
-const formatCommandBlock = (value: string) => value.includes("\n")
-  ? value.replace(/\n$/, "\n<EOF>")
-  : value;
+const formatCommandBlock = (value: string) => value.trimEnd();
 
 const formatMilliseconds = (value: number) => {
   if (value >= 1000 && value % 1000 === 0) return `${value / 1000}s`;
