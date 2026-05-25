@@ -155,7 +155,7 @@ export class InstanceHub {
     const instance = this.requireInstance(instanceId);
     if (instance.running) throw new Error(`Instance is already running: ${instanceId}`);
 
-    const userText = typeof input === "string" ? input : "[structured input]";
+    const userText = summarizeInput(input);
     this.appendMessage(instance, {
       role: "user",
       text: userText,
@@ -304,6 +304,20 @@ const messageFromProxyEvent = (event: ProxyEvent, turnId: string): Omit<Instance
     source: "codex",
     itemType: event.item.type
   };
+};
+
+const summarizeInput = (input: Input) => {
+  if (typeof input === "string") return input;
+  const text = input
+    .filter((item) => item.type === "text")
+    .map((item) => item.text.trim())
+    .filter(Boolean)
+    .join("\n");
+  const imageCount = input.filter((item) => item.type === "local_image").length;
+  return [
+    text || null,
+    imageCount ? `[${imageCount} image${imageCount === 1 ? "" : "s"}]` : null
+  ].filter(Boolean).join("\n") || "[structured input]";
 };
 
 const isToolItem = (item: any) =>

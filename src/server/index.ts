@@ -1,6 +1,9 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import { loadConfig } from "../core/config.js";
 import { readCodexUsage } from "../core/codexUsage.js";
@@ -23,10 +26,26 @@ const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`data: ${JSON.stringify(data)}\n\n`);
 };
 
+const stripDataUrl = (value: string) => {
+  const commaIndex = value.indexOf(",");
+  return value.startsWith("data:") && commaIndex !== -1 ? value.slice(commaIndex + 1) : value;
+};
+
+const imageExtension = (filename?: string) => {
+  const extension = path.extname(filename ?? "").toLowerCase();
+  return [".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension) ? extension : ".png";
+};
+
+const uploadImageSchema = z.object({
+  workingDirectory: z.string().min(1),
+  filename: z.string().optional(),
+  contentBase64: z.string().min(1)
+});
+
 const main = async () => {
   const config = loadConfig();
   const instances = new InstanceHub(config.codexOptions, config.defaultThreadOptions);
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const defaultWorkingDirectory = config.defaultThreadOptions.workingDirectory ?? process.cwd();
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
 
@@ -59,6 +78,15 @@ const main = async () => {
   app.get("/api/fs/children", async (request) => {
     const query = z.object({ path: z.string().optional() }).parse(request.query);
     return listDirectoryChildren(query.path ?? os.homedir());
+  });
+
+  app.post("/api/uploads/images", async (request) => {
+    const payload = uploadImageSchema.parse(request.body);
+    const directory = path.join(path.resolve(payload.workingDirectory), "tmp", "codex-proxy-images");
+    await mkdir(directory, { recursive: true });
+    const filePath = path.join(directory, `${Date.now()}-${randomUUID()}${imageExtension(payload.filename)}`);
+    await writeFile(filePath, Buffer.from(stripDataUrl(payload.contentBase64), "base64"));
+    return { path: filePath };
   });
 
   app.get("/api/instances", async () => ({

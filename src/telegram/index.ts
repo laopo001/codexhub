@@ -31,6 +31,11 @@ type InstanceDetail = InstanceSummary & {
 
 type InstanceMessage = InstanceDetail["messages"][number];
 
+type TurnInput = string | Array<
+  | { type: "text"; text: string }
+  | { type: "local_image"; path: string }
+>;
+
 type RateLimitWindow = {
   used_percent: number;
   window_minutes: number;
@@ -232,7 +237,28 @@ bot.action(/^attach:(.+)$/, async (ctx) => {
 bot.on("text", async (ctx) => {
   const prompt = ctx.message.text.trim();
   if (!prompt || prompt.startsWith("/")) return;
+  await runPrompt(ctx, prompt, []);
+});
 
+bot.on("photo", async (ctx) => {
+  const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
+  const photo = ctx.message.photo.at(-1);
+  if (!photo) return;
+  await runPrompt(ctx, prompt, [{ fileId: photo.file_id, filename: `${photo.file_id}.jpg` }]);
+});
+
+bot.on("document", async (ctx) => {
+  const document = ctx.message.document;
+  if (!document.mime_type?.startsWith("image/")) return;
+  const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
+  await runPrompt(ctx, prompt, [{ fileId: document.file_id, filename: document.file_name ?? `${document.file_id}.png` }]);
+});
+
+const runPrompt = async (
+  ctx: any,
+  prompt: string,
+  images: Array<{ fileId: string; filename: string }>
+) => {
   const state = chatStates.get(ctx.chat.id);
   const existingInstance = state?.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
   if (!existingInstance) {
@@ -243,14 +269,23 @@ bot.on("text", async (ctx) => {
   const statusMessage = await ctx.reply([
     "Codex running...",
     `folder: ${instance.workingDirectory}`,
-    `instance: ${displayInstanceId(instance)}`
-  ].join("\n"));
+    `instance: ${displayInstanceId(instance)}`,
+    images.length ? `images: ${images.length}` : null
+  ].filter(Boolean).join("\n"));
   let sentItemCount = 0;
   const sentMessageStatuses = new Map<string, string>();
 
   try {
+    let input: TurnInput = prompt;
+    if (images.length) {
+      const uploadedImages = await Promise.all(images.map((image) => uploadTelegramImage(instance.workingDirectory, image.fileId, image.filename)));
+      input = [
+        ...(prompt ? [{ type: "text" as const, text: prompt }] : []),
+        ...uploadedImages.map((image) => ({ type: "local_image" as const, path: image.path }))
+      ];
+    }
     const stream = streamInstanceEvents(instance.instanceId, instance.lastSeq);
-    await postTurn(instance.instanceId, prompt);
+    await postTurn(instance.instanceId, input);
 
     for await (const event of stream) {
       if (event.kind === "message" && event.message?.source === "codex" && shouldForwardMessage(event.message, sentMessageStatuses)) {
@@ -274,7 +309,7 @@ bot.on("text", async (ctx) => {
   } catch (error) {
     await ctx.telegram.editMessageText(ctx.chat.id, statusMessage.message_id, undefined, clampTelegram(errorText(error)));
   }
-});
+};
 
 const attachInstance = async (chatId: number, instanceId: string) => {
   await detachCurrent(chatId);
@@ -318,13 +353,29 @@ const createInstance = (workingDirectory: string) => apiJson<InstanceDetail>("/a
   body: JSON.stringify({ workingDirectory })
 });
 
-const postTurn = async (instanceId: string, input: string) => {
+const postTurn = async (instanceId: string, input: TurnInput) => {
   const response = await fetch(apiUrl(`/api/instances/${encodeURIComponent(instanceId)}/turn`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ input, source: "telegram" })
   });
   if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
+};
+
+const uploadTelegramImage = async (workingDirectory: string, fileId: string, filename: string) => {
+  const link = await bot.telegram.getFileLink(fileId);
+  const response = await fetch(link);
+  if (!response.ok) throw new Error(`Telegram file HTTP ${response.status}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return apiJson<{ path: string }>("/api/uploads/images", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      workingDirectory,
+      filename,
+      contentBase64: buffer.toString("base64")
+    })
+  });
 };
 
 const streamInstanceEvents = async function* (instanceId: string, after: number): AsyncGenerator<any> {

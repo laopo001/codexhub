@@ -36,6 +36,14 @@ type InstanceDetail = InstanceSummary & {
 type ChatSession = InstanceDetail & {
   input: string;
   clientId: string;
+  imageAttachments: ImageAttachment[];
+};
+
+type ImageAttachment = {
+  id: string;
+  file: File;
+  name: string;
+  previewUrl: string;
 };
 
 type DirectoryListing = {
@@ -123,7 +131,7 @@ const App = () => {
     () => sessions.find((session) => session.instanceId === activeSessionId),
     [activeSessionId, sessions]
   );
-  const activeCanSend = Boolean(activeSession?.input.trim()) && !activeSession?.running;
+  const activeCanSend = Boolean(activeSession && (activeSession.input.trim() || activeSession.imageAttachments.length)) && !activeSession?.running;
 
   useEffect(() => {
     void initialize();
@@ -270,7 +278,7 @@ const App = () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ clientId })
     });
-    const session: ChatSession = { ...instance, input: "", clientId };
+    const session: ChatSession = { ...instance, input: "", clientId, imageAttachments: [] };
     setSessions((current) => [session, ...current.filter((item) => item.instanceId !== instance.instanceId)]);
     setActiveWorkspacePath(instance.workingDirectory);
     setActiveSessionId(instance.instanceId);
@@ -315,9 +323,36 @@ const App = () => {
   const send = async (instanceId: string) => {
     const session = sessions.find((item) => item.instanceId === instanceId);
     if (!session || session.running) return;
-    const input = session.input.trim();
-    if (!input) return;
-    setSessions((current) => current.map((item) => item.instanceId === instanceId ? { ...item, input: "" } : item));
+    const text = session.input.trim();
+    const imageAttachments = session.imageAttachments;
+    if (!text && !imageAttachments.length) return;
+    setSessions((current) => current.map((item) => item.instanceId === instanceId ? { ...item, input: "", imageAttachments: [] } : item));
+    let uploadedImages: Array<{ path: string }>;
+    try {
+      uploadedImages = await Promise.all(imageAttachments.map((image) => uploadImage(session.workingDirectory, image)));
+      for (const image of imageAttachments) URL.revokeObjectURL(image.previewUrl);
+    } catch (error) {
+      setSessions((current) => current.map((item) => item.instanceId === instanceId
+        ? {
+          ...item,
+          input: text,
+          imageAttachments,
+          messages: [...item.messages, {
+            id: crypto.randomUUID(),
+            role: "error",
+            label: "image upload failed",
+            text: error instanceof Error ? error.message : String(error)
+          }]
+        }
+        : item));
+      return;
+    }
+    const input = uploadedImages.length
+      ? [
+        ...(text ? [{ type: "text" as const, text }] : []),
+        ...uploadedImages.map((image) => ({ type: "local_image" as const, path: image.path }))
+      ]
+      : text;
     const response = await fetch(`/api/instances/${encodeURIComponent(instanceId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -333,6 +368,30 @@ const App = () => {
 
   const updateSessionInput = (instanceId: string, input: string) => {
     setSessions((current) => current.map((session) => session.instanceId === instanceId ? { ...session, input } : session));
+  };
+
+  const addSessionImages = (instanceId: string, files: FileList | null) => {
+    if (!files?.length) return;
+    const images = [...files]
+      .filter((file) => file.type.startsWith("image/"))
+      .map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        name: file.name,
+        previewUrl: URL.createObjectURL(file)
+      }));
+    setSessions((current) => current.map((session) => session.instanceId === instanceId
+      ? { ...session, imageAttachments: [...session.imageAttachments, ...images] }
+      : session));
+  };
+
+  const removeSessionImage = (instanceId: string, imageId: string) => {
+    setSessions((current) => current.map((session) => {
+      if (session.instanceId !== instanceId) return session;
+      const image = session.imageAttachments.find((item) => item.id === imageId);
+      if (image) URL.revokeObjectURL(image.previewUrl);
+      return { ...session, imageAttachments: session.imageAttachments.filter((item) => item.id !== imageId) };
+    }));
   };
 
   const openInstanceMenu = (event: React.MouseEvent, instanceId: string) => {
@@ -430,18 +489,42 @@ const App = () => {
                 void send(activeSession.instanceId);
               }}
             >
-              <textarea
-                value={activeSession.input}
-                onChange={(event) => updateSessionInput(activeSession.instanceId, event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-                  event.preventDefault();
-                  if (activeCanSend) void send(activeSession.instanceId);
-                }}
-                placeholder="例如：检查这个 repo 的结构并给我下一步建议"
-                rows={4}
-              />
+              <div className="composerInput">
+                {activeSession.imageAttachments.length ? (
+                  <div className="imageAttachmentList">
+                    {activeSession.imageAttachments.map((image) => (
+                      <div className="imageAttachment" key={image.id}>
+                        <img src={image.previewUrl} alt={image.name} />
+                        <button type="button" onClick={() => removeSessionImage(activeSession.instanceId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <textarea
+                  value={activeSession.input}
+                  onChange={(event) => updateSessionInput(activeSession.instanceId, event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+                    event.preventDefault();
+                    if (activeCanSend) void send(activeSession.instanceId);
+                  }}
+                  placeholder="例如：检查这个 repo 的结构并给我下一步建议"
+                  rows={4}
+                />
+              </div>
               <div className="composerActions">
+                <label className="imageUploadButton">
+                  Image
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(event) => {
+                      addSessionImages(activeSession.instanceId, event.currentTarget.files);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
                 <button type="submit" disabled={!activeCanSend}>{activeSession.running ? "Running" : "Send"}</button>
               </div>
             </form>
@@ -546,6 +629,23 @@ const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
   return await response.json() as T;
 };
+
+const uploadImage = async (workingDirectory: string, image: ImageAttachment) => apiJson<{ path: string }>("/api/uploads/images", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    workingDirectory,
+    filename: image.name,
+    contentBase64: await fileToBase64(image.file)
+  })
+});
+
+const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result));
+  reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
+  reader.readAsDataURL(file);
+});
 
 const shortId = (id: string) => id.slice(0, 8);
 
