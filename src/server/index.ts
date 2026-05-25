@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import os from "node:os";
 import { z } from "zod";
 import { loadConfig } from "../core/config.js";
 import { readCodexUsage } from "../core/codexUsage.js";
@@ -57,7 +58,7 @@ const main = async () => {
 
   app.get("/api/fs/children", async (request) => {
     const query = z.object({ path: z.string().optional() }).parse(request.query);
-    return listDirectoryChildren(query.path ?? defaultWorkingDirectory);
+    return listDirectoryChildren(query.path ?? os.homedir());
   });
 
   app.get("/api/instances", async () => ({

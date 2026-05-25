@@ -464,8 +464,7 @@ textarea {
   padding: 0 18px;
 }
 
-.secondaryButton,
-.shortcutList button {
+.secondaryButton {
   border: 1px solid #cbd6c7;
   background: #ffffff;
   color: #17211a;
@@ -486,6 +485,7 @@ textarea {
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 16px;
   width: min(900px, 100%);
+  height: min(780px, calc(100vh - 48px));
   max-height: min(780px, calc(100vh - 48px));
   border: 1px solid #cbd6c7;
   border-radius: 8px;
@@ -573,8 +573,7 @@ textarea {
   white-space: nowrap;
 }
 
-.threadMeta,
-.folderRow code {
+.threadMeta {
   overflow: hidden;
   color: #66715f;
   font-family: inherit;
@@ -603,7 +602,7 @@ textarea {
 
 .folderPathForm {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
 }
 
@@ -615,16 +614,8 @@ textarea {
 
 .folderBrowser {
   display: grid;
-  grid-template-columns: 170px minmax(0, 1fr);
-  gap: 14px;
   min-height: 0;
-}
-
-.shortcutList {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-width: 0;
+  overflow: hidden;
 }
 
 @media (max-width: 860px) {

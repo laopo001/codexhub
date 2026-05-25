@@ -57,7 +57,6 @@ export const listDirectoryChildren = async (directoryPath: string) => {
   return {
     path: normalized,
     parent: path.dirname(normalized) === normalized ? null : path.dirname(normalized),
-    shortcuts: directoryShortcuts(),
     children: entries.sort((left, right) => left.name.localeCompare(right.name))
   };
 };
@@ -111,12 +110,6 @@ const hasChildDirectory = async (directoryPath: string): Promise<boolean> => {
     return false;
   }
 };
-
-const directoryShortcuts = () => [
-  workspaceEntry(os.homedir()),
-  workspaceEntry(path.join(os.homedir(), "projects")),
-  workspaceEntry("/mnt/d/Downloads")
-];
 
 const isWorkspaceEntry = (value: unknown): value is WorkspaceEntry => {
   if (!value || typeof value !== "object") return false;

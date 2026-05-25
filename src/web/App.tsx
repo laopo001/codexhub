@@ -16,12 +16,6 @@ type Message = {
   itemType?: string;
 };
 
-type WorkspaceEntry = {
-  path: string;
-  name: string;
-  lastOpenedAt: string;
-};
-
 type InstanceSummary = {
   instanceId: string;
   workingDirectory: string;
@@ -47,7 +41,6 @@ type ChatSession = InstanceDetail & {
 type DirectoryListing = {
   path: string;
   parent: string | null;
-  shortcuts: WorkspaceEntry[];
   children: Array<{ name: string; path: string; hasChildren: boolean }>;
 };
 
@@ -104,13 +97,14 @@ const storageKey = "codex-proxy-ui-state-v3";
 const webClientId = readWebClientId();
 
 const App = () => {
-  const [defaultWorkingDirectory, setDefaultWorkingDirectory] = useState("/home/laop/projects/codex-proxy");
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
   const [instances, setInstances] = useState<InstanceSummary[]>([]);
+  const [initialized, setInitialized] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
-  const [folderPath, setFolderPath] = useState("/home/laop/projects");
+  const [folderPath, setFolderPath] = useState("");
+  const [lastFolderPath, setLastFolderPath] = useState("");
   const [folderListing, setFolderListing] = useState<DirectoryListing | null>(null);
   const [folderError, setFolderError] = useState("");
   const [threadMode, setThreadMode] = useState(false);
@@ -139,8 +133,9 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(storageKey, JSON.stringify({ activeWorkspacePath, activeSessionId }));
-  }, [activeWorkspacePath, activeSessionId]);
+    if (!initialized) return;
+    localStorage.setItem(storageKey, JSON.stringify({ activeWorkspacePath, activeSessionId, lastFolderPath }));
+  }, [activeWorkspacePath, activeSessionId, lastFolderPath, initialized]);
 
   useEffect(() => {
     const interval = window.setInterval(() => void refreshInstances(), 3000);
@@ -180,7 +175,6 @@ const App = () => {
     const loadedInstances = Array.isArray(instanceData.instances) ? instanceData.instances : [];
     const saved = readStoredUiState();
 
-    setDefaultWorkingDirectory(defaultDirectory);
     setSystemStatus({
       model: health.model,
       modelReasoningEffort: health.modelReasoningEffort,
@@ -188,8 +182,10 @@ const App = () => {
     });
     setCodexUsage(usageData);
     setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
-    setFolderPath(parentPath(defaultDirectory));
+    setLastFolderPath(saved?.lastFolderPath ?? "");
+    setFolderPath(saved?.lastFolderPath ?? "");
     setInstances(loadedInstances);
+    setInitialized(true);
   };
 
   const refreshInstances = async () => {
@@ -203,23 +199,25 @@ const App = () => {
   };
 
   const openPicker = async () => {
-    const startPath = activeSession?.workingDirectory ?? activeWorkspacePath ?? defaultWorkingDirectory;
     setThreadMode(false);
     setThreads([]);
     setFolderModalOpen(true);
-    await loadDirectory(startPath || "/home/laop/projects");
+    await loadDirectory(lastFolderPath || undefined);
   };
 
-  const loadDirectory = async (targetPath: string) => {
+  const loadDirectory = async (targetPath?: string) => {
     setFolderError("");
     setThreadMode(false);
     setThreads([]);
-    setFolderPath(targetPath);
     try {
-      const params = new URLSearchParams({ path: targetPath });
-      setFolderListing(await apiJson<DirectoryListing>(`/api/fs/children?${params.toString()}`));
+      const query = targetPath ? `?${new URLSearchParams({ path: targetPath }).toString()}` : "";
+      const listing = await apiJson<DirectoryListing>(`/api/fs/children${query}`);
+      setFolderListing(listing);
+      setFolderPath(listing.path);
+      setLastFolderPath(listing.path);
     } catch (error) {
       setFolderListing(null);
+      if (targetPath) setFolderPath(targetPath);
       setFolderError(error instanceof Error ? error.message : String(error));
     }
   };
@@ -474,7 +472,6 @@ const App = () => {
             >
               <input value={folderPath} onChange={(event) => setFolderPath(event.target.value)} />
               <button type="submit">Go</button>
-              <button type="button" onClick={() => void loadDirectory(parentPath(folderListing?.path ?? folderPath))}>Parent</button>
             </form>
             {folderError ? <div className="threadEmpty">{folderError}</div> : null}
             <div className="folderModalActions">
@@ -509,18 +506,15 @@ const App = () => {
               </div>
             ) : folderListing ? (
               <div className="folderBrowser">
-                <div className="shortcutList">
-                  {folderListing.shortcuts.map((shortcut) => (
-                    <button type="button" key={shortcut.path} onClick={() => void loadDirectory(shortcut.path)}>
-                      {shortcut.name}
-                    </button>
-                  ))}
-                </div>
                 <div className="folderList">
+                  {folderListing.parent ? (
+                    <button type="button" className="folderRow" onClick={() => void loadDirectory(folderListing.parent ?? undefined)}>
+                      <span>..</span>
+                    </button>
+                  ) : null}
                   {folderListing.children.map((child) => (
                     <button type="button" className="folderRow" key={child.path} onClick={() => void loadDirectory(child.path)}>
                       <span>{child.name}</span>
-                      <code>{child.path}</code>
                     </button>
                   ))}
                 </div>
@@ -617,20 +611,13 @@ const statusLabel = (status: NonNullable<Message["status"]>) => {
   return "Done";
 };
 
-const parentPath = (value: string) => {
-  const normalized = value.replace(/\/+$/, "");
-  if (!normalized || normalized === "/") return "/";
-  const index = normalized.lastIndexOf("/");
-  return index <= 0 ? "/" : normalized.slice(0, index);
-};
-
 const formatDate = (value: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 };
 
-const readStoredUiState = (): { activeWorkspacePath?: string; activeSessionId?: string } | null => {
+const readStoredUiState = (): { activeWorkspacePath?: string; activeSessionId?: string; lastFolderPath?: string } | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
     if (!parsed || typeof parsed !== "object") return null;

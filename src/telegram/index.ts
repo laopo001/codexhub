@@ -1,15 +1,8 @@
 import { Telegraf } from "telegraf";
 
-type WorkspaceEntry = {
-  path: string;
-  name: string;
-  lastOpenedAt: string;
-};
-
 type DirectoryListing = {
   path: string;
   parent: string | null;
-  shortcuts: WorkspaceEntry[];
   children: Array<{ name: string; path: string; hasChildren: boolean }>;
 };
 
@@ -72,6 +65,7 @@ const allowedChatIds = new Set(
 const bot = new Telegraf(token);
 const chatStates = new Map<number, ChatState>();
 const folderPickers = new Map<number, DirectoryListing>();
+const lastFolderPaths = new Map<number, string>();
 
 const botCommands = [
   { command: "start", description: "show help" },
@@ -131,14 +125,13 @@ bot.command("new", async (ctx) => {
     if (requestedPath) {
       const instance = await createInstance(requestedPath);
       await attachInstance(ctx.chat.id, instance.instanceId);
+      lastFolderPaths.set(ctx.chat.id, instance.workingDirectory);
       await ctx.reply(`已创建并打开 Codex 实例：${shortId(instance.instanceId)}\n文件夹：${instance.workingDirectory}`);
       return;
     }
 
-    const current = chatStates.get(ctx.chat.id)?.instanceId
-      ? await getInstance(chatStates.get(ctx.chat.id)!.instanceId!).catch(() => null)
-      : null;
-    const listing = await loadDirectory(current ? parentPath(current.workingDirectory) : undefined);
+    const listing = await loadDirectory(lastFolderPaths.get(ctx.chat.id));
+    lastFolderPaths.set(ctx.chat.id, listing.path);
     folderPickers.set(ctx.chat.id, listing);
     await ctx.reply(newPickerText(listing), newPickerMarkup(listing));
   } catch (error) {
@@ -167,22 +160,6 @@ bot.command("status", async (ctx) => {
   }
 });
 
-bot.action(/^new:shortcut:(\d+)$/, async (ctx) => {
-  try {
-    const index = Number(ctx.match[1]);
-    const current = folderPickers.get(ctx.chat!.id);
-    const selected = current?.shortcuts[index];
-    if (!selected) throw new Error("Folder selection expired. Run /new again.");
-    const listing = await loadDirectory(selected.path);
-    folderPickers.set(ctx.chat!.id, listing);
-    await ctx.answerCbQuery("Opened");
-    await ctx.editMessageText(newPickerText(listing), newPickerMarkup(listing));
-  } catch (error) {
-    await ctx.answerCbQuery("Failed");
-    await ctx.reply(errorText(error));
-  }
-});
-
 bot.action(/^new:child:(\d+)$/, async (ctx) => {
   try {
     const index = Number(ctx.match[1]);
@@ -191,6 +168,7 @@ bot.action(/^new:child:(\d+)$/, async (ctx) => {
     if (!selected) throw new Error("Folder selection expired. Run /new again.");
     const listing = await loadDirectory(selected.path);
     folderPickers.set(ctx.chat!.id, listing);
+    lastFolderPaths.set(ctx.chat!.id, listing.path);
     await ctx.answerCbQuery("Opened");
     await ctx.editMessageText(newPickerText(listing), newPickerMarkup(listing));
   } catch (error) {
@@ -205,6 +183,7 @@ bot.action("new:parent", async (ctx) => {
     if (!current?.parent) throw new Error("No parent folder.");
     const listing = await loadDirectory(current.parent);
     folderPickers.set(ctx.chat!.id, listing);
+    lastFolderPaths.set(ctx.chat!.id, listing.path);
     await ctx.answerCbQuery("Opened");
     await ctx.editMessageText(newPickerText(listing), newPickerMarkup(listing));
   } catch (error) {
@@ -220,6 +199,7 @@ bot.action("new:create", async (ctx) => {
     const instance = await createInstance(listing.path);
     await attachInstance(ctx.chat!.id, instance.instanceId);
     folderPickers.delete(ctx.chat!.id);
+    lastFolderPaths.set(ctx.chat!.id, instance.workingDirectory);
     await ctx.answerCbQuery("Created");
     await ctx.editMessageText(`已创建并打开 Codex 实例：${displayInstanceId(instance)}\n文件夹：${instance.workingDirectory}`);
   } catch (error) {
@@ -386,25 +366,19 @@ const newPickerText = (listing: DirectoryListing) => [
   "可以进入子目录，也可以直接在当前目录创建。"
 ].join("\n");
 const newPickerMarkup = (listing: DirectoryListing) => {
-  const shortcutRows = listing.shortcuts.slice(0, 4).map((shortcut, index) => ([{
-    text: `Shortcut: ${shortcut.name}`,
-    callback_data: `new:shortcut:${index}`
-  }]));
   const childRows = listing.children.slice(0, 20).map((child, index) => ([{
     text: child.hasChildren ? `${child.name}/` : child.name,
     callback_data: `new:child:${index}`
   }]));
+  const parentRow = listing.parent ? [[{ text: "..", callback_data: "new:parent" }]] : [];
 
   return {
     reply_markup: {
       inline_keyboard: [
         [{ text: "Create Instance Here", callback_data: "new:create" }],
-        [
-          { text: "Parent", callback_data: "new:parent" },
-          { text: "Cancel", callback_data: "new:cancel" }
-        ],
-        ...shortcutRows,
-        ...childRows
+        ...parentRow,
+        ...childRows,
+        [{ text: "Cancel", callback_data: "new:cancel" }]
       ]
     }
   };
@@ -413,12 +387,6 @@ const shortPath = (value: string) => {
   const home = process.env.HOME;
   if (home && value.startsWith(`${home}/`)) return `~/${value.slice(home.length + 1)}`;
   return value;
-};
-const parentPath = (value: string) => {
-  const normalized = value.replace(/\/+$/, "");
-  if (!normalized || normalized === "/") return "/";
-  const index = normalized.lastIndexOf("/");
-  return index <= 0 ? "/" : normalized.slice(0, index);
 };
 const formatCodexUsage = (usage: CodexUsageSnapshot | null) => [
   `5h ${formatRateLimitRemaining(usage?.rateLimits?.primary)}`,
