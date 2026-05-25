@@ -276,14 +276,14 @@ const lastAssistantMessage = (snapshot: CodexSessionSnapshot): string => {
 
 const waitForSessionFile = async (threadId: string): Promise<string | null> => {
   for (let attempt = 0; attempt < 10; attempt++) {
-    const found = await findSessionFile(threadId);
+    const found = await findCodexSessionFile(threadId);
     if (found) return found;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return null;
 };
 
-const findSessionFile = async (threadId: string): Promise<string | null> => {
+export const findCodexSessionFile = async (threadId: string): Promise<string | null> => {
   const root = path.join(os.homedir(), ".codex", "sessions");
   const matches: string[] = [];
   await visitSessionFiles(root, (filePath) => {

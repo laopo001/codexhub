@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { z } from "zod";
 import { loadConfig } from "../core/config.js";
+import { readCodexUsage } from "../core/codexUsage.js";
 import { listLoadableCodexThreads, loadCodexThread } from "../core/codexpLog.js";
 import { InstanceHub } from "../core/instanceHub.js";
 import { addWorkspace, listDirectoryChildren, listWorkspaces, touchWorkspace } from "../core/workspaceState.js";
@@ -41,6 +42,11 @@ const main = async () => {
   app.get("/api/workspaces", async () => ({
     workspaces: await listWorkspaces(defaultWorkingDirectory)
   }));
+
+  app.get("/api/codex-usage", async (request) => {
+    const query = z.object({ threadId: z.string().optional() }).parse(request.query);
+    return readCodexUsage(query.threadId);
+  });
 
   app.post("/api/workspaces", async (request) => {
     const payload = z.object({ path: z.string().min(1) }).parse(request.body);

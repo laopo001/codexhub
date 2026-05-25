@@ -80,6 +80,26 @@ type SystemStatus = {
   contextWindowTokens: number | null;
 };
 
+type RateLimitWindow = {
+  used_percent: number;
+  window_minutes: number;
+  resets_at: number;
+};
+
+type CodexUsageSnapshot = {
+  rateLimits: {
+    limit_id?: string | null;
+    limit_name?: string | null;
+    primary?: RateLimitWindow | null;
+    secondary?: RateLimitWindow | null;
+    plan_type?: string | null;
+    rate_limit_reached_type?: string | null;
+  } | null;
+  sourceFile: string | null;
+  observedAt: string | null;
+  source: "latest" | "thread";
+};
+
 const storageKey = "codex-proxy-ui-state-v3";
 const webClientId = readWebClientId();
 
@@ -102,6 +122,7 @@ const App = () => {
     modelReasoningEffort: null,
     contextWindowTokens: null
   });
+  const [codexUsage, setCodexUsage] = useState<CodexUsageSnapshot | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
 
   const activeSession = useMemo(
@@ -127,6 +148,15 @@ const App = () => {
   }, []);
 
   useEffect(() => {
+    const interval = window.setInterval(() => void refreshCodexUsage(activeSession?.threadId), 30_000);
+    return () => window.clearInterval(interval);
+  }, [activeSession?.threadId]);
+
+  useEffect(() => {
+    void refreshCodexUsage(activeSession?.threadId);
+  }, [activeSession?.threadId]);
+
+  useEffect(() => {
     if (!instanceMenu) return undefined;
     const close = () => setInstanceMenu(null);
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -141,9 +171,10 @@ const App = () => {
   }, [instanceMenu]);
 
   const initialize = async () => {
-    const [health, instanceData] = await Promise.all([
+    const [health, instanceData, usageData] = await Promise.all([
       apiJson<{ defaultWorkingDirectory?: string } & SystemStatus>("/api/health"),
-      apiJson<{ instances?: InstanceSummary[] }>("/api/instances")
+      apiJson<{ instances?: InstanceSummary[] }>("/api/instances"),
+      apiJson<CodexUsageSnapshot>("/api/codex-usage")
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "/home/laop/projects/codex-proxy";
     const loadedInstances = Array.isArray(instanceData.instances) ? instanceData.instances : [];
@@ -155,6 +186,7 @@ const App = () => {
       modelReasoningEffort: health.modelReasoningEffort,
       contextWindowTokens: health.contextWindowTokens
     });
+    setCodexUsage(usageData);
     setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
     setFolderPath(parentPath(defaultDirectory));
     setInstances(loadedInstances);
@@ -163,6 +195,11 @@ const App = () => {
   const refreshInstances = async () => {
     const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances");
     setInstances(Array.isArray(data.instances) ? data.instances : []);
+  };
+
+  const refreshCodexUsage = async (threadId?: string) => {
+    const query = threadId ? `?${new URLSearchParams({ threadId }).toString()}` : "";
+    setCodexUsage(await apiJson<CodexUsageSnapshot>(`/api/codex-usage${query}`));
   };
 
   const openPicker = async () => {
@@ -369,8 +406,8 @@ const App = () => {
           <div className="workbar" aria-label="Runtime status">
             <span>{formatModelStatus(systemStatus)}</span>
             <span>Context {formatContextUsage(activeSession, systemStatus.contextWindowTokens)}</span>
-            <span>5h --</span>
-            <span>weekly --</span>
+            <span title={formatResetTitle(codexUsage?.rateLimits?.primary)}>5h {formatRateLimitRemaining(codexUsage?.rateLimits?.primary)}</span>
+            <span title={formatResetTitle(codexUsage?.rateLimits?.secondary)}>weekly {formatRateLimitRemaining(codexUsage?.rateLimits?.secondary)}</span>
           </div>
         </header>
 
@@ -535,6 +572,24 @@ const formatCompactNumber = (value: number) => {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
   return String(value);
+};
+
+const formatRateLimitRemaining = (window: RateLimitWindow | null | undefined) => {
+  if (!window) return "--";
+  return `${formatPercent(100 - window.used_percent)}`;
+};
+
+const formatPercent = (value: number) => {
+  if (!Number.isFinite(value)) return "--";
+  const normalized = Math.max(0, Math.min(100, value));
+  return `${Number.isInteger(normalized) ? normalized : normalized.toFixed(1)}%`;
+};
+
+const formatResetTitle = (window: RateLimitWindow | null | undefined) => {
+  if (!window) return undefined;
+  const resetAt = new Date(window.resets_at * 1000);
+  if (Number.isNaN(resetAt.getTime())) return undefined;
+  return `${formatPercent(100 - window.used_percent)} remaining, ${formatPercent(window.used_percent)} used. Resets ${resetAt.toLocaleString()}`;
 };
 
 function webInstanceClientId(instanceId: string) {

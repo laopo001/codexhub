@@ -31,6 +31,20 @@ type InstanceDetail = InstanceSummary & {
 
 type InstanceMessage = InstanceDetail["messages"][number];
 
+type RateLimitWindow = {
+  used_percent: number;
+  window_minutes: number;
+  resets_at: number;
+};
+
+type CodexUsageSnapshot = {
+  rateLimits: {
+    primary?: RateLimitWindow | null;
+    secondary?: RateLimitWindow | null;
+  } | null;
+  source: "latest" | "thread";
+};
+
 type ChatState = {
   workingDirectory?: string;
   instanceId?: string;
@@ -163,11 +177,13 @@ bot.command("status", async (ctx) => {
   try {
     const state = await ensureChatState(ctx.chat.id);
     const current = state.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
+    const usage = await getCodexUsage(current?.threadId).catch(() => null);
     const instances = (await listInstances()).filter((instance) => instance.workingDirectory === state.workingDirectory);
     await ctx.reply([
       `文件夹：${state.workingDirectory}`,
       `当前 instance：${current ? displayInstanceId(current) : "(none)"}`,
       current?.threadId ? `thread：${shortId(current.threadId)}` : null,
+      `usage：${formatCodexUsage(usage)}`,
       "",
       instances.length
         ? instances.map((instance) => `${displayInstanceId(instance)} ${instance.running ? "running" : "idle"} ${instance.attachCount} attached`).join("\n")
@@ -310,6 +326,11 @@ const listInstances = async (): Promise<InstanceSummary[]> => {
 
 const getInstance = (instanceId: string) => apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}`);
 
+const getCodexUsage = (threadId?: string) => {
+  const query = threadId ? `?${new URLSearchParams({ threadId }).toString()}` : "";
+  return apiJson<CodexUsageSnapshot>(`/api/codex-usage${query}`);
+};
+
 const createInstance = (workingDirectory: string) => apiJson<InstanceDetail>("/api/instances", {
   method: "POST",
   headers: { "content-type": "application/json" },
@@ -357,6 +378,20 @@ const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortId = (id: string) => id.slice(0, 8);
 const displayInstanceId = (instance: Pick<InstanceSummary, "instanceId" | "threadId">) => shortId(instance.threadId ?? instance.instanceId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+const formatCodexUsage = (usage: CodexUsageSnapshot | null) => [
+  `5h ${formatRateLimitRemaining(usage?.rateLimits?.primary)}`,
+  `weekly ${formatRateLimitRemaining(usage?.rateLimits?.secondary)}`,
+  usage ? `source ${usage.source}` : null
+].filter(Boolean).join(" · ");
+const formatRateLimitRemaining = (window: RateLimitWindow | null | undefined) => {
+  if (!window) return "--";
+  return formatPercent(100 - window.used_percent);
+};
+const formatPercent = (value: number) => {
+  if (!Number.isFinite(value)) return "--";
+  const normalized = Math.max(0, Math.min(100, value));
+  return `${Number.isInteger(normalized) ? normalized : normalized.toFixed(1)}%`;
+};
 const formatBlock = (label: string, text: string, status?: InstanceMessage["status"]) =>
   `[${[label, status].filter(Boolean).join(" · ")}]\n${text}`;
 
