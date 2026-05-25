@@ -67,7 +67,7 @@ type StreamEvent = {
 };
 
 const storageKey = "codex-proxy-ui-state-v3";
-const webClientPrefix = `web-${crypto.randomUUID()}`;
+const webClientId = readWebClientId();
 
 const App = () => {
   const [defaultWorkingDirectory, setDefaultWorkingDirectory] = useState("/home/laop/projects/codex-proxy");
@@ -205,7 +205,7 @@ const App = () => {
   };
 
   const openInstance = async (instanceId: string) => {
-    const clientId = `${webClientPrefix}-${instanceId}`;
+    const clientId = webInstanceClientId(instanceId);
     const instance = await apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}/attach`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -240,7 +240,7 @@ const App = () => {
     const session = sessions.find((item) => item.instanceId === instanceId);
     eventSources.current.get(instanceId)?.close();
     eventSources.current.delete(instanceId);
-    const query = session ? `?clientId=${encodeURIComponent(session.clientId)}` : "";
+    const query = `?clientId=${encodeURIComponent(session?.clientId ?? webInstanceClientId(instanceId))}`;
     await fetch(`/api/instances/${encodeURIComponent(instanceId)}${query}`, { method: "DELETE" });
     setSessions((current) => {
       const next = current.filter((session) => session.instanceId !== instanceId);
@@ -487,6 +487,19 @@ const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 const shortId = (id: string) => id.slice(0, 8);
+
+function webInstanceClientId(instanceId: string) {
+  return `${webClientId}:${instanceId}`;
+}
+
+function readWebClientId() {
+  const key = "codex-proxy-web-client-id";
+  const existing = sessionStorage.getItem(key);
+  if (existing) return existing;
+  const next = `web:${crypto.randomUUID()}`;
+  sessionStorage.setItem(key, next);
+  return next;
+}
 
 const mergeMessage = (messages: Message[], incoming: Message) => {
   const existingIndex = messages.findIndex((message) => message.id === incoming.id);
