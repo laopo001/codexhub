@@ -73,6 +73,7 @@ type ReasoningSelection = "auto" | ReasoningEffort;
 type MessageDisplayMode = "compact" | "detailed";
 type WebRecordView = CodexRecordView & {
   inspectRecord?: CodexRecord;
+  inspectCallText?: string;
   inspectText?: string;
 };
 
@@ -994,7 +995,9 @@ const compactToolViews = (views: CodexRecordView[]): WebRecordView[] => {
       compacted.push({
         ...view,
         id: `compact-tool:${callId}`,
-        label: view.label.replace(/^tool call:\s*/i, "tool: ")
+        label: view.label.replace(/^tool call:\s*/i, "tool: "),
+        text: formatCompactToolCall(view),
+        inspectCallText: view.text
       });
       continue;
     }
@@ -1029,10 +1032,110 @@ const formatInspectMessage = (message: WebRecordView) => {
   const inspectRecord = message.inspectRecord ?? message.record;
   const payload = asRecord(inspectRecord.payload);
   const output = message.inspectText ?? (typeof payload?.output === "string" ? payload.output.trimEnd() : "");
+  const callText = message.inspectCallText ?? message.text;
   return [
-    message.text.trimEnd(),
+    formatInspectCallText(message.record, callText.trimEnd()),
     output ? `Output:\n${output}` : null
   ].filter(Boolean).join("\n\n");
+};
+
+const formatCompactToolCall = (view: CodexRecordView) => {
+  const payload = asRecord(view.record.payload);
+  if (payload?.type !== "function_call") return view.text;
+  const name = typeof payload.name === "string" ? payload.name : "tool";
+  const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");
+  if (name === "write_stdin" && args) return formatWriteStdinSummary(args);
+  if (name === "exec_command" && typeof args?.cmd === "string") return `$ ${args.cmd}`;
+  return view.text;
+};
+
+const formatInspectCallText = (record: CodexRecord, fallback: string) => {
+  const payload = asRecord(record.payload);
+  if (payload?.type !== "function_call") return fallback;
+  const name = typeof payload.name === "string" ? payload.name : "tool";
+  const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");
+  if (!args) return fallback;
+  return [
+    `Input arguments:`,
+    ...formatToolArguments(name, args)
+  ].join("\n");
+};
+
+const formatToolArguments = (name: string, args: Record<string, unknown>) => {
+  if (name === "write_stdin") {
+    return [
+      `tool: write_stdin`,
+      `action: ${describeWriteStdinAction(args)}`,
+      typeof args.session_id === "number" || typeof args.session_id === "string" ? `session_id: ${args.session_id}` : null,
+      typeof args.yield_time_ms === "number" ? `wait: ${formatMilliseconds(args.yield_time_ms)}` : null,
+      typeof args.max_output_tokens === "number" ? `max_output: ${formatCompactNumber(args.max_output_tokens)} tokens` : null,
+      "\nStdin:",
+      formatWriteStdinBlock(args)
+    ].filter((line): line is string => Boolean(line));
+  }
+  if (name === "exec_command") {
+    return [
+      `tool: exec_command`,
+      typeof args.cmd === "string" ? `cmd: ${args.cmd}` : null,
+      typeof args.workdir === "string" ? `workdir: ${args.workdir}` : null,
+      typeof args.yield_time_ms === "number" ? `wait: ${formatMilliseconds(args.yield_time_ms)}` : null,
+      typeof args.max_output_tokens === "number" ? `max_output: ${formatCompactNumber(args.max_output_tokens)} tokens` : null
+    ].filter((line): line is string => Boolean(line));
+  }
+  return [
+    `tool: ${name}`,
+    ...Object.entries(args).map(([key, value]) => `${key}: ${formatArgumentValue(value)}`)
+  ];
+};
+
+const formatWriteStdinSummary = (args: Record<string, unknown>) => {
+  const session = typeof args.session_id === "number" || typeof args.session_id === "string" ? `session ${args.session_id}` : "session";
+  return `stdin: ${formatWriteStdinChars(args)} -> ${session}`;
+};
+
+const describeWriteStdinAction = (args: Record<string, unknown>) => {
+  const chars = typeof args.chars === "string" ? args.chars : "";
+  if (!chars) return "poll";
+  if (chars === "\u0003") return "send Ctrl-C";
+  if (chars === "\n") return "send Enter";
+  if (chars.length <= 48) return `send ${JSON.stringify(chars)}`;
+  return `send ${chars.length} chars`;
+};
+
+const formatWriteStdinChars = (args: Record<string, unknown>) => {
+  if (typeof args.chars !== "string") return "<missing>";
+  if (!args.chars) return "<empty> (poll only; no stdin was written)";
+  if (args.chars === "\u0003") return "Ctrl-C (\\u0003)";
+  if (args.chars === "\n") return "Enter (\\n)";
+  return JSON.stringify(args.chars);
+};
+
+const formatWriteStdinBlock = (args: Record<string, unknown>) => {
+  if (typeof args.chars !== "string") return "<missing>";
+  if (!args.chars) return "<empty> (poll only; no stdin was written)";
+  if (args.chars === "\u0003") return "Ctrl-C (\\u0003)";
+  if (args.chars === "\n") return "Enter (\\n)";
+  return args.chars.replace(/\n$/, "\n<EOF>");
+};
+
+const formatMilliseconds = (value: number) => {
+  if (value >= 1000 && value % 1000 === 0) return `${value / 1000}s`;
+  return `${value}ms`;
+};
+
+const formatArgumentValue = (value: unknown) => {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value == null) return "null";
+  return JSON.stringify(value);
+};
+
+const parseJsonObject = (value: string): Record<string, unknown> | null => {
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
 };
 
 const errorRecord = (label: string, error: unknown): CodexRecord => ({
