@@ -180,6 +180,9 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 8px;
+  width: 100%;
+  min-height: auto;
+  text-align: left;
 }
 
 .proxyInstanceRow span {
@@ -207,6 +210,13 @@ textarea {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.proxyInstanceRow em {
+  grid-column: 1 / -1;
+  color: #91a090;
+  font-size: 11px;
+  font-style: normal;
 }
 
 .proxyInstanceEmpty {

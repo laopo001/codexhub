@@ -1,5 +1,4 @@
 import { Telegraf } from "telegraf";
-import { itemText } from "../core/events.js";
 
 type WorkspaceEntry = {
   path: string;
@@ -7,15 +6,25 @@ type WorkspaceEntry = {
   lastOpenedAt: string;
 };
 
-type ProxyThreadInstance = {
-  threadId: string;
+type InstanceSummary = {
+  instanceId: string;
   workingDirectory: string;
+  threadId?: string;
   running: boolean;
+  attachCount: number;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
+};
+
+type InstanceDetail = InstanceSummary & {
+  messages: Array<{ id: string; role: string; label?: string; text: string; source?: string }>;
+  lastSeq: number;
 };
 
 type ChatState = {
   workingDirectory?: string;
-  threadId?: string;
+  instanceId?: string;
 };
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -36,13 +45,14 @@ const chatStates = new Map<number, ChatState>();
 
 const botCommands = [
   { command: "start", description: "show help" },
-  { command: "status", description: "show current folder and thread" },
+  { command: "status", description: "show current folder and instance" },
   { command: "folders", description: "choose workspace folder" },
   { command: "addfolder", description: "add and choose a folder" },
   { command: "instances", description: "attach a Codex instance" },
-  { command: "new", description: "create a new instance draft" },
-  { command: "thread", description: "show current thread id" }
+  { command: "new", description: "create a new Codex instance" }
 ];
+
+const tgClientId = (chatId: number) => `telegram-${chatId}`;
 
 bot.use(async (ctx, next) => {
   const chatId = ctx.chat?.id;
@@ -60,7 +70,7 @@ bot.start(async (ctx) => {
     "",
     "/folders 选择文件夹",
     "/instances attach 当前文件夹的 Codex 实例",
-    "/new 在当前文件夹创建新实例草稿",
+    "/new 创建并 attach 新 Codex 实例",
     "/status 查看当前状态",
     "",
     "直接发消息会发送给当前 Codex 实例。"
@@ -98,6 +108,7 @@ bot.command("addfolder", async (ctx) => {
     const workspaces = await addWorkspace(workspacePath);
     const selected = workspaces[0];
     if (!selected) throw new Error("Folder was added but API returned no workspace.");
+    await detachCurrent(ctx.chat.id);
     chatStates.set(ctx.chat.id, { workingDirectory: selected.path });
     await ctx.reply(`已选择文件夹：\n${selected.path}`);
   } catch (error) {
@@ -108,8 +119,7 @@ bot.command("addfolder", async (ctx) => {
 bot.command("instances", async (ctx) => {
   try {
     const state = await ensureChatState(ctx.chat.id);
-    const instances = (await listProxyInstances())
-      .filter((instance) => instance.workingDirectory === state.workingDirectory);
+    const instances = (await listInstances()).filter((instance) => instance.workingDirectory === state.workingDirectory);
 
     if (!instances.length) {
       await ctx.reply(`当前文件夹没有可 attach 的 Codex 实例。\n${state.workingDirectory}`);
@@ -119,8 +129,8 @@ bot.command("instances", async (ctx) => {
     await ctx.reply("选择要 attach 的 Codex 实例：", {
       reply_markup: {
         inline_keyboard: instances.map((instance) => ([{
-          text: `${shortThreadId(instance.threadId)}  ${instance.running ? "running" : "idle"}`,
-          callback_data: `attach:${instance.threadId}`
+          text: `${displayInstanceId(instance)}  ${instance.running ? "running" : "idle"}  ${instance.attachCount} attached`,
+          callback_data: `attach:${instance.instanceId}`
         }]))
       }
     });
@@ -130,29 +140,30 @@ bot.command("instances", async (ctx) => {
 });
 
 bot.command("new", async (ctx) => {
-  const state = await ensureChatState(ctx.chat.id);
-  chatStates.set(ctx.chat.id, { workingDirectory: state.workingDirectory });
-  await ctx.reply(`已切换到新实例草稿。\n文件夹：${state.workingDirectory}\n下一条消息会创建 Codex 实例。`);
-});
-
-bot.command("thread", async (ctx) => {
-  const state = await ensureChatState(ctx.chat.id);
-  await ctx.reply(state.threadId ?? "(new)");
+  try {
+    const state = await ensureChatState(ctx.chat.id);
+    const instance = await createInstance(state.workingDirectory!);
+    await attachInstance(ctx.chat.id, instance.instanceId);
+    await ctx.reply(`已创建并 attach 新 Codex 实例：${shortId(instance.instanceId)}\n文件夹：${instance.workingDirectory}`);
+  } catch (error) {
+    await ctx.reply(errorText(error));
+  }
 });
 
 bot.command("status", async (ctx) => {
   try {
     const state = await ensureChatState(ctx.chat.id);
-    const instances = (await listProxyInstances())
-      .filter((instance) => instance.workingDirectory === state.workingDirectory);
+    const current = state.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
+    const instances = (await listInstances()).filter((instance) => instance.workingDirectory === state.workingDirectory);
     await ctx.reply([
       `文件夹：${state.workingDirectory}`,
-      `当前 thread：${state.threadId ?? "(new)"}`,
+      `当前 instance：${current ? displayInstanceId(current) : "(none)"}`,
+      current?.threadId ? `thread：${shortId(current.threadId)}` : null,
       "",
       instances.length
-        ? instances.map((instance) => `${shortThreadId(instance.threadId)} ${instance.running ? "running" : "idle"}`).join("\n")
+        ? instances.map((instance) => `${displayInstanceId(instance)} ${instance.running ? "running" : "idle"} ${instance.attachCount} attached`).join("\n")
         : "当前文件夹没有 Codex 实例。"
-    ].join("\n"));
+    ].filter(Boolean).join("\n"));
   } catch (error) {
     await ctx.reply(errorText(error));
   }
@@ -164,6 +175,7 @@ bot.action(/^folder:(\d+)$/, async (ctx) => {
     const workspaces = await listWorkspaces();
     const selected = workspaces[index];
     if (!selected) throw new Error("Folder selection expired. Run /folders again.");
+    await detachCurrent(ctx.chat!.id);
     chatStates.set(ctx.chat!.id, { workingDirectory: selected.path });
     await ctx.answerCbQuery("Folder selected");
     await ctx.editMessageText(`已选择文件夹：\n${selected.path}`);
@@ -175,19 +187,11 @@ bot.action(/^folder:(\d+)$/, async (ctx) => {
 
 bot.action(/^attach:(.+)$/, async (ctx) => {
   try {
-    const threadId = ctx.match[1];
-    const state = await ensureChatState(ctx.chat!.id);
-    const instance = (await listProxyInstances()).find((item) =>
-      item.threadId === threadId && item.workingDirectory === state.workingDirectory
-    );
-    if (!instance) throw new Error("Instance no longer exists for current folder. Run /instances again.");
-    chatStates.set(ctx.chat!.id, {
-      workingDirectory: instance.workingDirectory,
-      threadId: instance.threadId
-    });
+    const instanceId = ctx.match[1];
+    const instance = await attachInstance(ctx.chat!.id, instanceId);
     await ctx.answerCbQuery("Attached");
     await ctx.editMessageText([
-      `已 attach：${shortThreadId(instance.threadId)} ${instance.running ? "running" : "idle"}`,
+      `已 attach：${displayInstanceId(instance)} ${instance.running ? "running" : "idle"}`,
       instance.workingDirectory
     ].join("\n"));
   } catch (error) {
@@ -201,63 +205,40 @@ bot.on("text", async (ctx) => {
   if (!prompt || prompt.startsWith("/")) return;
 
   const state = await ensureChatState(ctx.chat.id);
+  const existingInstance = state.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
+  const instance = existingInstance ?? await createAndAttach(ctx.chat.id, state.workingDirectory!);
   const statusMessage = await ctx.reply([
     "Codex running...",
-    `folder: ${state.workingDirectory}`,
-    `thread: ${state.threadId ? shortThreadId(state.threadId) : "(new)"}`
+    `folder: ${instance.workingDirectory}`,
+    `instance: ${displayInstanceId(instance)}`
   ].join("\n"));
-  let finalResponse = "";
-  const progress: string[] = [];
-  let sentAgentMessage = false;
   let sentItemCount = 0;
 
   try {
-    for await (const event of streamTurn({
-      input: prompt,
-      threadId: state.threadId,
-      workingDirectory: state.workingDirectory,
-      skipGitRepoCheck: true
-    })) {
-      if (event.type === "thread" && typeof event.threadId === "string") {
-        state.threadId = event.threadId;
-        chatStates.set(ctx.chat.id, state);
-      } else if (event.type === "item") {
-        if (event.phase !== "completed") continue;
-        const text = itemText(event.item);
-        if (!text) continue;
-        progress.push(text);
-        if (event.item.type === "agent_message") sentAgentMessage = true;
+    const stream = streamInstanceEvents(instance.instanceId, instance.lastSeq);
+    await postTurn(instance.instanceId, prompt);
+
+    for await (const event of stream) {
+      if (event.kind === "message" && event.message?.source === "codex") {
         sentItemCount += 1;
-        await ctx.reply(clampTelegram(formatItemMessage(event.item, text)));
-      } else if (event.type === "final") {
-        finalResponse = event.text;
-      } else if (event.type === "error") {
-        throw new Error(event.message);
+        await ctx.reply(clampTelegram(formatBlock(event.message.label ?? event.message.role, event.message.text)));
       }
+      if (event.kind === "done") break;
     }
 
-    if (finalResponse && !sentAgentMessage) {
-      sentItemCount += 1;
-      await ctx.reply(clampTelegram(formatBlock("codex", finalResponse)));
-    }
-
+    const latest = await getInstance(instance.instanceId).catch(() => null);
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       statusMessage.message_id,
       undefined,
       [
         "Codex completed.",
-        `thread: ${state.threadId ? shortThreadId(state.threadId) : "(new)"}`,
+        `instance: ${latest ? displayInstanceId(latest) : shortId(instance.instanceId)}`,
         `messages: ${sentItemCount}`
       ].join("\n")
     );
   } catch (error) {
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      statusMessage.message_id,
-      undefined,
-      clampTelegram(errorText(error))
-    );
+    await ctx.telegram.editMessageText(ctx.chat.id, statusMessage.message_id, undefined, clampTelegram(errorText(error)));
   }
 });
 
@@ -274,6 +255,30 @@ const ensureChatState = async (chatId: number): Promise<ChatState> => {
   return state;
 };
 
+const createAndAttach = async (chatId: number, workingDirectory: string) => {
+  const instance = await createInstance(workingDirectory);
+  return attachInstance(chatId, instance.instanceId);
+};
+
+const attachInstance = async (chatId: number, instanceId: string) => {
+  await detachCurrent(chatId);
+  const instance = await apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}/attach`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: tgClientId(chatId) })
+  });
+  chatStates.set(chatId, { workingDirectory: instance.workingDirectory, instanceId: instance.instanceId });
+  return instance;
+};
+
+const detachCurrent = async (chatId: number) => {
+  const current = chatStates.get(chatId);
+  if (!current?.instanceId) return;
+  await fetch(apiUrl(`/api/instances/${encodeURIComponent(current.instanceId)}?clientId=${encodeURIComponent(tgClientId(chatId))}`), {
+    method: "DELETE"
+  }).catch(() => undefined);
+};
+
 const listWorkspaces = async (): Promise<WorkspaceEntry[]> => {
   const data = await apiJson<{ workspaces?: WorkspaceEntry[] }>("/api/workspaces");
   return Array.isArray(data.workspaces) ? data.workspaces : [];
@@ -288,18 +293,30 @@ const addWorkspace = async (workspacePath: string): Promise<WorkspaceEntry[]> =>
   return Array.isArray(data.workspaces) ? data.workspaces : [];
 };
 
-const listProxyInstances = async (): Promise<ProxyThreadInstance[]> => {
-  const data = await apiJson<{ instances?: ProxyThreadInstance[] }>("/api/proxy/instances");
+const listInstances = async (): Promise<InstanceSummary[]> => {
+  const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances");
   return Array.isArray(data.instances) ? data.instances : [];
 };
 
-const streamTurn = async function* (payload: Record<string, unknown>): AsyncGenerator<any> {
-  const response = await fetch(apiUrl("/api/turn/stream"), {
+const getInstance = (instanceId: string) => apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}`);
+
+const createInstance = (workingDirectory: string) => apiJson<InstanceDetail>("/api/instances", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ workingDirectory })
+});
+
+const postTurn = async (instanceId: string, input: string) => {
+  const response = await fetch(apiUrl(`/api/instances/${encodeURIComponent(instanceId)}/turn`), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ input, source: "telegram" })
   });
+  if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
+};
 
+const streamInstanceEvents = async function* (instanceId: string, after: number): AsyncGenerator<any> {
+  const response = await fetch(apiUrl(`/api/instances/${encodeURIComponent(instanceId)}/events?after=${after}`));
   if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
 
   const reader = response.body.getReader();
@@ -327,24 +344,9 @@ const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
-
-const shortThreadId = (threadId: string) => threadId.slice(0, 8);
-
+const shortId = (id: string) => id.slice(0, 8);
+const displayInstanceId = (instance: Pick<InstanceSummary, "instanceId" | "threadId">) => shortId(instance.threadId ?? instance.instanceId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-
-const formatItemMessage = (item: any, text: string) => formatBlock(itemMessageLabel(item), text);
-
-const itemMessageLabel = (item: any): string => {
-  if (item.type === "agent_message") return "codex";
-  if (item.type === "reasoning") return "thinking";
-  if (item.type === "command_execution") return "command";
-  if (item.type === "mcp_tool_call") return `${item.server}.${item.tool}`;
-  if (item.type === "web_search") return "web search";
-  if (item.type === "file_change") return "file change";
-  if (item.type === "todo_list") return "plan";
-  return item.type ?? "event";
-};
-
 const formatBlock = (label: string, text: string) => `[${label}]\n${text}`;
 
 const clampTelegram = (text: string) => {

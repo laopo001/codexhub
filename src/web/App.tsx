@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Virtuoso } from "react-virtuoso";
-import { itemText } from "../core/events.js";
 import "./style.css";
 
 type Role = "user" | "codex" | "event" | "error" | "tool" | "thinking";
 
 type Message = {
+  id: string;
   role: Role;
-  source?: "codex" | "proxy-runtime";
-  id?: string;
+  source?: "web" | "telegram" | "codex" | "proxy-runtime";
   label?: string;
   text: string;
+  at?: string;
 };
 
 type WorkspaceEntry = {
@@ -20,30 +20,25 @@ type WorkspaceEntry = {
   lastOpenedAt: string;
 };
 
-type ConversationSummary = {
-  threadId: string;
+type InstanceSummary = {
+  instanceId: string;
+  workingDirectory: string;
+  threadId?: string;
+  running: boolean;
+  attachCount: number;
+  title: string;
   updatedAt: string;
-  firstUserMessage: string;
-  lastAssistantMessage: string;
-  artifactCount: number;
   messageCount: number;
 };
 
-type ProxyThreadInstance = {
-  threadId: string;
-  workingDirectory: string;
-  running: boolean;
+type InstanceDetail = InstanceSummary & {
+  messages: Message[];
+  lastSeq: number;
 };
 
-type ChatSession = {
-  id: string;
-  workspacePath: string;
-  threadId?: string;
-  status?: string;
-  title: string;
+type ChatSession = InstanceDetail & {
   input: string;
-  messages: Message[];
-  busy: boolean;
+  clientId: string;
 };
 
 type DirectoryListing = {
@@ -53,348 +48,175 @@ type DirectoryListing = {
   children: Array<{ name: string; path: string; hasChildren: boolean }>;
 };
 
-const storageKey = "codex-proxy-ui-state-v1";
-
-const eventMessage = (event: any): Message | null => {
-  if (event.type === "artifact") return { role: "event", label: "artifact", text: event.text };
-  if (event.type === "error") return { role: "error", label: "error", text: event.message };
-  if (event.type !== "item") return null;
-
-  const text = itemText(event.item) ?? fallbackItemText(event.item);
-  if (!text) return null;
-
-  return {
-    role: itemRole(event.item),
-    id: typeof event.item.id === "string" ? `item:${event.item.id}` : undefined,
-    label: itemLabel(event.item, event.phase),
-    text
-  };
+type StreamEvent = {
+  seq: number;
+  kind: "instance" | "message" | "event" | "done";
+  instance: InstanceSummary;
+  message?: Message;
 };
 
-const itemRole = (item: any): Role => {
-  if (item.type === "agent_message") return "codex";
-  if (item.type === "reasoning") return "thinking";
-  if (item.type === "command_execution" || item.type === "mcp_tool_call" || item.type === "web_search") return "tool";
-  if (item.type === "error") return "error";
-  return "event";
-};
-
-const itemLabel = (item: any, phase?: string): string => {
-  const state = item.status ?? phase;
-  if (item.type === "command_execution") return state ? `command: ${state}` : "command";
-  if (item.type === "mcp_tool_call") return state ? `${item.server}.${item.tool}: ${state}` : `${item.server}.${item.tool}`;
-  if (item.type === "web_search") return "web search";
-  if (item.type === "reasoning") return "thinking";
-  if (item.type === "todo_list") return "plan";
-  if (item.type === "file_change") return state ? `file change: ${state}` : "file change";
-  if (item.type === "agent_message") return "codex";
-  return item.type ?? "event";
-};
-
-const fallbackItemText = (item: any): string | null => {
-  if (item.type === "reasoning") return "Thinking...";
-  if (item.type === "mcp_tool_call") return JSON.stringify(item.arguments ?? {}, null, 2);
-  return null;
-};
-
-// codex-proxy UI/runtime events. These are generated from the live SSE stream and
-// should stay out of the Codex transcript message list.
-const isProxyRuntimeEventMessage = (message: Message) =>
-  message.source === "proxy-runtime";
+const storageKey = "codex-proxy-ui-state-v2";
+const webClientPrefix = `web-${crypto.randomUUID()}`;
 
 const App = () => {
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
-  const [loadModalOpen, setLoadModalOpen] = useState(false);
-  const [loadingThreads, setLoadingThreads] = useState(false);
-  const [threadSearch, setThreadSearch] = useState("");
-  const [threads, setThreads] = useState<ConversationSummary[]>([]);
+  const [instances, setInstances] = useState<InstanceSummary[]>([]);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderPath, setFolderPath] = useState("/home/laop/projects");
   const [folderListing, setFolderListing] = useState<DirectoryListing | null>(null);
   const [folderError, setFolderError] = useState("");
-  const [proxyInstances, setProxyInstances] = useState<ProxyThreadInstance[]>([]);
-  const controllers = useRef(new Map<string, AbortController>());
+  const eventSources = useRef(new Map<string, EventSource>());
 
   const activeWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.path === activeWorkspacePath),
     [activeWorkspacePath, workspaces]
   );
   const activeSession = useMemo(
-    () => sessions.find((session) => session.id === activeSessionId),
+    () => sessions.find((session) => session.instanceId === activeSessionId),
     [activeSessionId, sessions]
   );
   const workspaceSessions = useMemo(
-    () => sessions.filter((session) => session.workspacePath === activeWorkspacePath),
+    () => sessions.filter((session) => session.workingDirectory === activeWorkspacePath),
     [activeWorkspacePath, sessions]
   );
-  const filteredThreads = useMemo(() => {
-    const query = threadSearch.trim().toLowerCase();
-    if (!query) return threads;
-    return threads.filter((thread) => [
-      thread.threadId,
-      thread.firstUserMessage,
-      thread.lastAssistantMessage
-    ].some((value) => value.toLowerCase().includes(query)));
-  }, [threadSearch, threads]);
+  const workspaceInstances = useMemo(
+    () => instances.filter((instance) => instance.workingDirectory === activeWorkspacePath),
+    [activeWorkspacePath, instances]
+  );
+  const activeCanSend = Boolean(activeSession?.input.trim()) && !activeSession?.running;
 
   useEffect(() => {
     void initialize();
+    return () => {
+      for (const source of eventSources.current.values()) source.close();
+    };
   }, []);
 
   useEffect(() => {
-    void refreshProxyInstances();
-    const interval = window.setInterval(() => void refreshProxyInstances(), 3000);
+    localStorage.setItem(storageKey, JSON.stringify({ activeWorkspacePath, activeSessionId }));
+  }, [activeWorkspacePath, activeSessionId]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => void refreshInstances(), 3000);
     return () => window.clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (!sessions.length && !activeWorkspacePath) return;
-    localStorage.setItem(storageKey, JSON.stringify({
-      activeWorkspacePath,
-      activeSessionId,
-      sessions: sessions.map((session) => ({
-        ...session,
-        busy: false,
-        messages: session.messages.slice(-80)
-      }))
-    }));
-  }, [activeSessionId, activeWorkspacePath, sessions]);
-
   const initialize = async () => {
-    const response = await fetch("/api/workspaces");
-    const data = await response.json();
-    const loadedWorkspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+    const [workspaceData, instanceData] = await Promise.all([
+      apiJson<{ workspaces?: WorkspaceEntry[] }>("/api/workspaces"),
+      apiJson<{ instances?: InstanceSummary[] }>("/api/instances")
+    ]);
+    const loadedWorkspaces = Array.isArray(workspaceData.workspaces) ? workspaceData.workspaces : [];
+    const loadedInstances = Array.isArray(instanceData.instances) ? instanceData.instances : [];
     const saved = readStoredUiState();
-    const savedWorkspacePath = loadedWorkspaces.some((workspace: WorkspaceEntry) => workspace.path === saved?.activeWorkspacePath)
-      ? saved?.activeWorkspacePath
-      : undefined;
-    const firstWorkspace = savedWorkspacePath
-      ?? loadedWorkspaces[0]?.path
-      ?? "/home/laop/projects/codex-proxy";
+    const firstWorkspace = saved?.activeWorkspacePath && loadedWorkspaces.some((workspace) => workspace.path === saved.activeWorkspacePath)
+      ? saved.activeWorkspacePath
+      : loadedWorkspaces[0]?.path ?? "/home/laop/projects/codex-proxy";
 
     setWorkspaces(loadedWorkspaces);
+    setInstances(loadedInstances);
     setActiveWorkspacePath(firstWorkspace);
-
-    const restoredSessions = saved?.sessions?.length
-      ? saved.sessions.map((session) => ({
-        ...session,
-        busy: false,
-        messages: session.messages.filter((message) => !isProxyRuntimeEventMessage(message))
-      }))
-      : [newSession(firstWorkspace)];
-    setSessions(restoredSessions);
-    setActiveSessionId(saved?.activeSessionId && restoredSessions.some((session) => session.id === saved.activeSessionId)
-      ? saved.activeSessionId
-      : restoredSessions[0]?.id ?? "");
   };
 
-  const updateSession = (sessionId: string, updater: (session: ChatSession) => ChatSession) => {
-    setSessions((current) => current.map((session) => session.id === sessionId ? updater(session) : session));
-  };
-
-  const appendMessage = (sessionId: string, message: Message) => {
-    updateSession(sessionId, (session) => ({ ...session, messages: [...session.messages, message] }));
-  };
-
-  const appendOrUpdateMessage = (sessionId: string, message: Message) => {
-    updateSession(sessionId, (session) => {
-      if (!message.id) return { ...session, messages: [...session.messages, message] };
-      const index = session.messages.findIndex((entry) => entry.id === message.id);
-      if (index === -1) return { ...session, messages: [...session.messages, message] };
-      return {
-        ...session,
-        messages: session.messages.map((entry, entryIndex) => entryIndex === index ? message : entry)
-      };
-    });
-  };
-
-  const appendFinal = (sessionId: string, text: string) => {
-    updateSession(sessionId, (session) => {
-      const last = session.messages.at(-1);
-      if (last?.role === "codex" && last.text === text) return session;
-      return { ...session, messages: [...session.messages, { role: "codex", label: "final", text }] };
-    });
+  const refreshInstances = async () => {
+    const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances");
+    setInstances(Array.isArray(data.instances) ? data.instances : []);
   };
 
   const selectWorkspace = (workspacePath: string) => {
     setActiveWorkspacePath(workspacePath);
-    const existing = sessions.find((session) => session.workspacePath === workspacePath);
-    if (existing) {
-      setActiveSessionId(existing.id);
-      return;
+    const existing = sessions.find((session) => session.workingDirectory === workspacePath);
+    setActiveSessionId(existing?.instanceId ?? "");
+  };
+
+  const openNewSession = async (workspacePath = activeWorkspacePath) => {
+    const instance = await apiJson<InstanceDetail>("/api/instances", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workingDirectory: workspacePath })
+    });
+    await openInstance(instance.instanceId);
+    setActiveWorkspacePath(instance.workingDirectory);
+    await refreshInstances();
+  };
+
+  const openInstance = async (instanceId: string) => {
+    const clientId = `${webClientPrefix}-${instanceId}`;
+    const instance = await apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}/attach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientId })
+    });
+    const session: ChatSession = { ...instance, input: "", clientId };
+    setSessions((current) => [session, ...current.filter((item) => item.instanceId !== instance.instanceId)]);
+    setActiveWorkspacePath(instance.workingDirectory);
+    setActiveSessionId(instance.instanceId);
+    subscribeInstance(instance.instanceId, instance.lastSeq);
+    await refreshInstances();
+  };
+
+  const subscribeInstance = (instanceId: string, after: number) => {
+    eventSources.current.get(instanceId)?.close();
+    const source = new EventSource(`/api/instances/${encodeURIComponent(instanceId)}/events?after=${after}`);
+    const handle = (event: MessageEvent) => {
+      const payload = JSON.parse(event.data) as StreamEvent;
+      setSessions((current) => current.map((session) => {
+        if (session.instanceId !== payload.instance.instanceId) return session;
+        const messages = payload.message && !session.messages.some((message) => message.id === payload.message!.id)
+          ? [...session.messages, payload.message]
+          : session.messages;
+        return { ...session, ...payload.instance, messages };
+      }));
+      void refreshInstances();
+    };
+    source.addEventListener("instance", handle);
+    source.addEventListener("message", handle);
+    source.addEventListener("done", handle);
+    eventSources.current.set(instanceId, source);
+  };
+
+  const closeSession = async (instanceId: string) => {
+    const session = sessions.find((item) => item.instanceId === instanceId);
+    eventSources.current.get(instanceId)?.close();
+    eventSources.current.delete(instanceId);
+    if (session) {
+      await fetch(`/api/instances/${encodeURIComponent(instanceId)}?clientId=${encodeURIComponent(session.clientId)}`, { method: "DELETE" });
     }
-    const session = newSession(workspacePath);
-    setSessions((current) => [...current, session]);
-    setActiveSessionId(session.id);
-  };
-
-  const openNewSession = (workspacePath = activeWorkspacePath) => {
-    const session = newSession(workspacePath);
-    setSessions((current) => [...current, session]);
-    setActiveWorkspacePath(workspacePath);
-    setActiveSessionId(session.id);
-  };
-
-  const closeSession = (sessionId: string) => {
-    const session = sessions.find((item) => item.id === sessionId);
-    controllers.current.get(sessionId)?.abort();
-    controllers.current.delete(sessionId);
-    if (session?.threadId) void releaseThreadCache(session.threadId, session.workspacePath);
     setSessions((current) => {
-      const next = current.filter((session) => session.id !== sessionId);
-      if (activeSessionId !== sessionId) return next;
-      const replacement = next.find((session) => session.workspacePath === activeWorkspacePath) ?? next[0];
-      setActiveSessionId(replacement?.id ?? "");
-      if (replacement) setActiveWorkspacePath(replacement.workspacePath);
+      const next = current.filter((session) => session.instanceId !== instanceId);
+      if (activeSessionId !== instanceId) return next;
+      const replacement = next.find((session) => session.workingDirectory === activeWorkspacePath) ?? next[0];
+      setActiveSessionId(replacement?.instanceId ?? "");
+      if (replacement) setActiveWorkspacePath(replacement.workingDirectory);
       return next;
     });
+    await refreshInstances();
   };
 
-  const releaseThreadCache = async (threadId: string, workspacePath: string) => {
-    try {
-      const params = new URLSearchParams({ workingDirectory: workspacePath });
-      const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/cache?${params.toString()}`, {
-        method: "DELETE"
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      await refreshProxyInstances();
-    } catch (error) {
-      console.warn("Failed to release Codex thread cache", error);
+  const send = async (instanceId: string) => {
+    const session = sessions.find((item) => item.instanceId === instanceId);
+    if (!session || session.running) return;
+    const input = session.input.trim();
+    if (!input) return;
+    setSessions((current) => current.map((item) => item.instanceId === instanceId ? { ...item, input: "" } : item));
+    const response = await fetch(`/api/instances/${encodeURIComponent(instanceId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input, source: "web" })
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      setSessions((current) => current.map((item) => item.instanceId === instanceId
+        ? { ...item, messages: [...item.messages, { id: crypto.randomUUID(), role: "error", label: "error", text }] }
+        : item));
     }
   };
 
-  const send = async (sessionId: string) => {
-    const session = sessions.find((item) => item.id === sessionId);
-    if (!session || session.busy) return;
-    const prompt = session.input.trim();
-    if (!prompt) return;
-
-    const controller = new AbortController();
-    controllers.current.set(sessionId, controller);
-    updateSession(sessionId, (current) => ({
-      ...current,
-      busy: true,
-      input: "",
-      title: current.threadId ? current.title : prompt.slice(0, 80),
-      messages: [...current.messages, { role: "user", text: prompt }]
-    }));
-
-    try {
-      const response = await fetch("/api/turn/stream", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          input: prompt,
-          threadId: session.threadId,
-          workingDirectory: session.workspacePath,
-          skipGitRepoCheck: true
-        })
-      });
-
-      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
-        for (const chunk of chunks) {
-          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
-          if (!dataLine) continue;
-          const event = JSON.parse(dataLine.slice(6));
-
-          if (event.type === "thread") {
-            updateSession(sessionId, (current) => ({ ...current, threadId: event.threadId }));
-            void refreshProxyInstances();
-          }
-          if (event.type === "status") {
-            updateSession(sessionId, (current) => ({ ...current, status: event.text }));
-          }
-          if (event.type === "final") {
-            appendFinal(sessionId, event.text);
-            updateSession(sessionId, (current) => ({ ...current, status: undefined }));
-          } else {
-            const message = eventMessage(event);
-            if (message) appendOrUpdateMessage(sessionId, message);
-          }
-        }
-      }
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        appendMessage(sessionId, { role: "error", label: "error", text: error instanceof Error ? error.message : String(error) });
-      } else {
-        appendMessage(sessionId, { role: "event", label: "stopped", text: "Turn stopped by user." });
-      }
-    } finally {
-      controllers.current.delete(sessionId);
-      updateSession(sessionId, (current) => ({ ...current, busy: false, status: undefined }));
-      void refreshProxyInstances();
-    }
-  };
-
-  const stopSession = (sessionId: string) => {
-    controllers.current.get(sessionId)?.abort();
-  };
-
-  const openLoadModal = async () => {
-    if (!activeWorkspacePath) return;
-    setLoadModalOpen(true);
-    setLoadingThreads(true);
-    setThreadSearch("");
-    try {
-      const params = new URLSearchParams({ workingDirectory: activeWorkspacePath });
-      const response = await fetch(`/api/threads?${params.toString()}`);
-      if (!response.ok) throw new Error(`Failed to list threads: HTTP ${response.status}`);
-      const data = await response.json();
-      setThreads(Array.isArray(data.threads) ? data.threads : []);
-    } catch (error) {
-      setThreads([]);
-      if (activeSessionId) appendMessage(activeSessionId, { role: "error", text: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setLoadingThreads(false);
-    }
-  };
-
-  const loadThreadById = async (thread: ConversationSummary) => {
-    const workspacePath = activeWorkspacePath;
-    if (!workspacePath) return;
-    try {
-      const params = new URLSearchParams({ workingDirectory: workspacePath });
-      const response = await fetch(`/api/threads/${encodeURIComponent(thread.threadId)}?${params.toString()}`);
-      if (!response.ok) throw new Error(`Thread not found: ${thread.threadId}`);
-      const data = await response.json();
-      const session: ChatSession = {
-        id: createSessionId(),
-        workspacePath,
-        threadId: data.threadId,
-        title: thread.firstUserMessage || thread.threadId,
-        input: "",
-        busy: false,
-        messages: data.messages
-          .map((message: any) => ({
-            role: message.role === "assistant" ? "codex" : message.role,
-            id: message.id,
-            label: message.label,
-            text: message.text
-          }))
-          .filter((message: Message) => !isProxyRuntimeEventMessage(message))
-      };
-      setSessions((current) => [...current, session]);
-      setActiveSessionId(session.id);
-      setLoadModalOpen(false);
-    } catch (error) {
-      if (activeSessionId) appendMessage(activeSessionId, { role: "error", text: error instanceof Error ? error.message : String(error) });
-    }
+  const updateSessionInput = (instanceId: string, input: string) => {
+    setSessions((current) => current.map((session) => session.instanceId === instanceId ? { ...session, input } : session));
   };
 
   const openFolderModal = async () => {
@@ -407,9 +229,7 @@ const App = () => {
     setFolderPath(targetPath);
     try {
       const params = new URLSearchParams({ path: targetPath });
-      const response = await fetch(`/api/fs/children?${params.toString()}`);
-      if (!response.ok) throw new Error(`Failed to read directory: HTTP ${response.status}`);
-      setFolderListing(await response.json());
+      setFolderListing(await apiJson<DirectoryListing>(`/api/fs/children?${params.toString()}`));
     } catch (error) {
       setFolderListing(null);
       setFolderError(error instanceof Error ? error.message : String(error));
@@ -417,32 +237,17 @@ const App = () => {
   };
 
   const addFolder = async (workspacePath: string) => {
-    const response = await fetch("/api/workspaces", {
+    const data = await apiJson<{ workspaces?: WorkspaceEntry[] }>("/api/workspaces", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path: workspacePath })
     });
-    if (!response.ok) throw new Error(`Failed to add folder: HTTP ${response.status}`);
-    const data = await response.json();
     const nextWorkspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
     const selectedPath = nextWorkspaces[0]?.path ?? workspacePath;
     setWorkspaces(nextWorkspaces);
     setFolderModalOpen(false);
     selectWorkspace(selectedPath);
   };
-
-  const refreshProxyInstances = async () => {
-    try {
-      const response = await fetch("/api/proxy/instances");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      setProxyInstances(Array.isArray(data.instances) ? data.instances : []);
-    } catch (error) {
-      console.warn("Failed to load Codex proxy instances", error);
-    }
-  };
-
-  const activeCanSend = Boolean(activeSession?.input.trim()) && !activeSession?.busy;
 
   return (
     <main className="app">
@@ -454,7 +259,7 @@ const App = () => {
 
         <div className="sidebarActions">
           <button type="button" onClick={() => void openFolderModal()}>Add Folder</button>
-          <button type="button" onClick={() => openNewSession()} disabled={!activeWorkspacePath}>New Thread</button>
+          <button type="button" onClick={() => void openNewSession()} disabled={!activeWorkspacePath}>New Thread</button>
         </div>
 
         <section className="sideSection">
@@ -476,16 +281,22 @@ const App = () => {
 
         <section className="proxyInstances">
           <h2>Codex Instances</h2>
-          {proxyInstances.length === 0 ? (
+          {workspaceInstances.length === 0 ? (
             <div className="proxyInstanceEmpty">No active instances</div>
           ) : (
             <div className="proxyInstanceList">
-              {proxyInstances.map((instance) => (
-                <div className="proxyInstanceRow" key={`${instance.workingDirectory}::${instance.threadId}`}>
-                  <span>{shortThreadId(instance.threadId)}</span>
+              {workspaceInstances.map((instance) => (
+                <button
+                  type="button"
+                  className="proxyInstanceRow"
+                  key={instance.instanceId}
+                  onClick={() => void openInstance(instance.instanceId)}
+                >
+                  <span>{instance.threadId ? shortId(instance.threadId) : shortId(instance.instanceId)}</span>
                   <strong>{instance.running ? "running" : "idle"}</strong>
-                  <code>{instance.workingDirectory}</code>
-                </div>
+                  <code>{instance.title}</code>
+                  <em>{instance.attachCount} attached</em>
+                </button>
               ))}
             </div>
           )}
@@ -498,33 +309,30 @@ const App = () => {
             <span>{activeWorkspace?.name ?? "No folder"}</span>
             <code>{activeWorkspacePath}</code>
           </div>
-          <button type="button" onClick={openLoadModal} disabled={!activeWorkspacePath}>Load Conversation</button>
         </header>
 
         <div className="tabbar">
           {workspaceSessions.map((session) => (
             <button
               type="button"
-              className={`tab ${session.id === activeSessionId ? "active" : ""}`}
-              key={session.id}
-              onClick={() => setActiveSessionId(session.id)}
-              title={[session.title, session.threadId, session.status].filter(Boolean).join("\n")}
+              className={`tab ${session.instanceId === activeSessionId ? "active" : ""}`}
+              key={session.instanceId}
+              onClick={() => setActiveSessionId(session.instanceId)}
+              title={[session.title, session.threadId, session.instanceId].filter(Boolean).join("\n")}
             >
               <span className="tabTitle">{session.title}</span>
-              <span className="tabMeta">
-                {session.status ?? (session.threadId ? shortThreadId(session.threadId) : "draft")}
-              </span>
-              {session.busy ? <strong>Running</strong> : null}
+              <span className="tabMeta">{session.threadId ? shortId(session.threadId) : shortId(session.instanceId)}</span>
+              {session.running ? <strong>Running</strong> : null}
               <i
                 role="button"
                 tabIndex={0}
                 aria-label="Close tab"
                 onClick={(event) => {
                   event.stopPropagation();
-                  closeSession(session.id);
+                  void closeSession(session.instanceId);
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") closeSession(session.id);
+                  if (event.key === "Enter" || event.key === " ") void closeSession(session.instanceId);
                 }}
               >
                 x
@@ -536,13 +344,13 @@ const App = () => {
         {activeSession ? (
           <>
             <Virtuoso
-              key={activeSession.id}
+              key={activeSession.instanceId}
               className="messages"
               data={activeSession.messages}
               followOutput="smooth"
               initialTopMostItemIndex={Math.max(activeSession.messages.length - 1, 0)}
               increaseViewportBy={{ top: 360, bottom: 720 }}
-              computeItemKey={(index, message) => `${message.id ?? index}-${index}`}
+              computeItemKey={(_, message) => message.id}
               components={{ EmptyPlaceholder: EmptyMessages }}
               itemContent={(_, message) => <MessageCard message={message} />}
             />
@@ -551,73 +359,29 @@ const App = () => {
               className="composer"
               onSubmit={(event) => {
                 event.preventDefault();
-                void send(activeSession.id);
+                void send(activeSession.instanceId);
               }}
             >
               <textarea
                 value={activeSession.input}
-                onChange={(event) => updateSession(activeSession.id, (session) => ({ ...session, input: event.target.value }))}
+                onChange={(event) => updateSessionInput(activeSession.instanceId, event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
                   event.preventDefault();
-                  if (activeCanSend) void send(activeSession.id);
+                  if (activeCanSend) void send(activeSession.instanceId);
                 }}
                 placeholder="例如：检查这个 repo 的结构并给我下一步建议"
                 rows={4}
               />
               <div className="composerActions">
-                {activeSession.busy ? (
-                  <button type="button" className="secondaryButton" onClick={() => stopSession(activeSession.id)}>Stop</button>
-                ) : null}
-                <button type="submit" disabled={!activeCanSend}>{activeSession.busy ? "Running" : "Send"}</button>
+                <button type="submit" disabled={!activeCanSend}>{activeSession.running ? "Running" : "Send"}</button>
               </div>
             </form>
           </>
         ) : (
-          <div className="empty">选择一个文件夹或新建会话。</div>
+          <div className="empty">选择一个实例或新建会话。</div>
         )}
       </section>
-
-      {loadModalOpen ? (
-        <div className="modalOverlay" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setLoadModalOpen(false);
-        }}>
-          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="loadThreadTitle">
-            <header className="modalHeader">
-              <div>
-                <h2 id="loadThreadTitle">Load conversation</h2>
-                <p>{activeWorkspacePath}</p>
-              </div>
-              <button type="button" className="iconButton" onClick={() => setLoadModalOpen(false)} aria-label="Close">x</button>
-            </header>
-            <input
-              className="threadSearch"
-              value={threadSearch}
-              onChange={(event) => setThreadSearch(event.target.value)}
-              placeholder="Search by prompt, answer, or thread id"
-              autoFocus
-            />
-            <div className="threadList">
-              {loadingThreads ? (
-                <div className="threadEmpty">Loading conversations...</div>
-              ) : filteredThreads.length === 0 ? (
-                <div className="threadEmpty">No Codex conversations found for this folder.</div>
-              ) : (
-                filteredThreads.map((thread) => (
-                  <button type="button" className="threadRow" key={thread.threadId} onClick={() => void loadThreadById(thread)}>
-                    <span className="threadTitle">{thread.firstUserMessage || thread.threadId}</span>
-                    <span className="threadMeta">
-                      {formatDate(thread.updatedAt)} · {thread.messageCount} messages
-                      {thread.artifactCount ? ` · ${thread.artifactCount} files` : ""}
-                    </span>
-                    {thread.lastAssistantMessage ? <span className="threadPreview">{thread.lastAssistantMessage}</span> : null}
-                  </button>
-                ))
-              )}
-            </div>
-          </section>
-        </div>
-      ) : null}
 
       {folderModalOpen ? (
         <div className="modalOverlay" role="presentation" onMouseDown={(event) => {
@@ -672,18 +436,9 @@ const App = () => {
   );
 };
 
-const newSession = (workspacePath: string): ChatSession => ({
-  id: createSessionId(),
-  workspacePath,
-  title: "New thread",
-  input: "",
-  messages: [],
-  busy: false
-});
-
 const MessageCard = ({ message }: { message: Message }) => (
   <article className={`message ${message.role}`}>
-    <span>{message.label ?? message.role}</span>
+    <span>{message.label ?? message.role}{message.source ? ` · ${message.source}` : ""}</span>
     <pre>{message.text}</pre>
   </article>
 );
@@ -692,11 +447,15 @@ const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
 );
 
-const createSessionId = () => `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
+  const response = await fetch(path, init);
+  if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  return await response.json() as T;
+};
 
-const shortThreadId = (threadId: string) => threadId.slice(0, 8);
+const shortId = (id: string) => id.slice(0, 8);
 
-const readStoredUiState = (): { activeWorkspacePath?: string; activeSessionId?: string; sessions?: ChatSession[] } | null => {
+const readStoredUiState = (): { activeWorkspacePath?: string; activeSessionId?: string } | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
     if (!parsed || typeof parsed !== "object") return null;
@@ -704,12 +463,6 @@ const readStoredUiState = (): { activeWorkspacePath?: string; activeSessionId?: 
   } catch {
     return null;
   }
-};
-
-const formatDate = (value: string) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
 };
 
 const root = document.getElementById("root");

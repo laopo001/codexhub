@@ -1,26 +1,19 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { z } from "zod";
-import { CodexProxy } from "../core/codexProxy.js";
 import { loadConfig } from "../core/config.js";
-import { listLoadableCodexThreads, loadCodexThread } from "../core/codexpLog.js";
+import { InstanceHub } from "../core/instanceHub.js";
 import { addWorkspace, listDirectoryChildren, listWorkspaces, touchWorkspace } from "../core/workspaceState.js";
 
-const turnSchema = z.object({
-  input: z.union([
-    z.string(),
-    z.array(
-      z.union([
-        z.object({ type: z.literal("text"), text: z.string() }),
-        z.object({ type: z.literal("local_image"), path: z.string() })
-      ])
-    )
-  ]),
-  threadId: z.string().optional(),
-  workingDirectory: z.string().optional(),
-  skipGitRepoCheck: z.boolean().optional(),
-  options: z.record(z.string(), z.unknown()).optional()
-});
+const inputSchema = z.union([
+  z.string(),
+  z.array(
+    z.union([
+      z.object({ type: z.literal("text"), text: z.string() }),
+      z.object({ type: z.literal("local_image"), path: z.string() })
+    ])
+  )
+]);
 
 const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`event: ${event}\n`);
@@ -29,7 +22,7 @@ const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
 
 const main = async () => {
   const config = loadConfig();
-  const proxy = new CodexProxy(config.codexOptions, config.defaultThreadOptions);
+  const instances = new InstanceHub(config.codexOptions, config.defaultThreadOptions);
   const app = Fastify({ logger: true });
   const defaultWorkingDirectory = config.defaultThreadOptions.workingDirectory ?? process.cwd();
 
@@ -56,54 +49,69 @@ const main = async () => {
     return listDirectoryChildren(query.path ?? defaultWorkingDirectory);
   });
 
-  app.get("/api/proxy/instances", async () => ({
-    instances: proxy.listThreadInstances()
+  app.get("/api/instances", async () => ({
+    instances: instances.listInstances()
   }));
 
-  app.post("/api/turn", async (request) => {
-    const payload = turnSchema.parse(request.body);
-    return proxy.run(payload);
+  app.post("/api/instances", async (request) => {
+    const payload = z.object({ workingDirectory: z.string().optional() }).parse(request.body ?? {});
+    const workingDirectory = payload.workingDirectory ?? defaultWorkingDirectory;
+    await touchWorkspace(workingDirectory);
+    return instances.createInstance(workingDirectory);
   });
 
-  app.get("/api/threads", async (request) => {
-    const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);
-    const workingDirectory = query.workingDirectory ?? defaultWorkingDirectory;
-    await touchWorkspace(workingDirectory);
-    return {
-      workingDirectory,
-      threads: await listLoadableCodexThreads(workingDirectory)
-    };
-  });
-
-  app.get("/api/threads/:threadId", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);
-    const workingDirectory = query.workingDirectory ?? defaultWorkingDirectory;
-    await touchWorkspace(workingDirectory);
-    const thread = await loadCodexThread(params.threadId, workingDirectory);
-    if (!thread) {
+  app.get("/api/instances/:instanceId", async (request, reply) => {
+    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+    const instance = instances.getInstance(params.instanceId);
+    if (!instance) {
       reply.code(404);
-      return { error: "thread_not_found" };
+      return { error: "instance_not_found" };
     }
-    return thread;
+    return instance;
   });
 
-  app.delete("/api/threads/:threadId/cache", async (request) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);
-    const workingDirectory = query.workingDirectory ?? defaultWorkingDirectory;
-    return {
-      released: proxy.releaseThread(params.threadId, { workingDirectory })
-    };
+  app.post("/api/instances/:instanceId/attach", async (request, reply) => {
+    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({ clientId: z.string().min(1) }).parse(request.body);
+    try {
+      return instances.attach(params.instanceId, payload.clientId);
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
-  app.post("/api/turn/stream", async (request, reply) => {
-    const payload = turnSchema.parse(request.body);
-    const abortController = new AbortController();
-    reply.raw.on("close", () => {
-      if (!reply.raw.writableEnded) abortController.abort();
-    });
-    await touchWorkspace(payload.workingDirectory ?? defaultWorkingDirectory);
+  app.delete("/api/instances/:instanceId", async (request, reply) => {
+    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+    const query = z.object({ clientId: z.string().optional() }).parse(request.query);
+    try {
+      return instances.deleteOrDetach(params.instanceId, query.clientId);
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.post("/api/instances/:instanceId/turn", async (request, reply) => {
+    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({
+      input: inputSchema,
+      source: z.enum(["web", "telegram"]).optional()
+    }).parse(request.body);
+
+    try {
+      void instances.runTurn(params.instanceId, payload.input, payload.source ?? "web");
+      return { ok: true };
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.get("/api/instances/:instanceId/events", async (request, reply) => {
+    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
+
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
@@ -112,15 +120,12 @@ const main = async () => {
     });
 
     try {
-      for await (const event of proxy.runStream({ ...payload, signal: abortController.signal })) {
-        sendSse(reply.raw, event.type, event);
-      }
-      sendSse(reply.raw, "done", { ok: true });
-    } catch (error) {
-      sendSse(reply.raw, "error", {
-        message: error instanceof Error ? error.message : String(error)
+      const unsubscribe = instances.subscribe(params.instanceId, query.after ?? 0, (event) => {
+        sendSse(reply.raw, event.kind, event);
       });
-    } finally {
+      reply.raw.on("close", unsubscribe);
+    } catch (error) {
+      sendSse(reply.raw, "error", { error: error instanceof Error ? error.message : String(error) });
       reply.raw.end();
     }
   });
