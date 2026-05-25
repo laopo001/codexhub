@@ -1,22 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Virtuoso } from "react-virtuoso";
+import { asRecord, type CodexRecord } from "../core/codexRecord.js";
+import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
 import "./style.css";
-
-type Role = "user" | "codex" | "event" | "error" | "tool" | "thinking";
-
-type Message = {
-  id: string;
-  role: Role;
-  source?: "web" | "telegram" | "codex" | "proxy-runtime";
-  label?: string;
-  text: string;
-  attachments?: Array<{ type: "image"; path: string }>;
-  usage?: Usage;
-  at?: string;
-  status?: "pending" | "completed" | "failed";
-  itemType?: string;
-};
 
 type InstanceSummary = {
   instanceId: string;
@@ -33,7 +20,7 @@ type InstanceSummary = {
 };
 
 type InstanceDetail = InstanceSummary & {
-  messages: Message[];
+  records: CodexRecord[];
   lastSeq: number;
 };
 
@@ -67,9 +54,9 @@ type CodexThreadSummary = {
 
 type StreamEvent = {
   seq: number;
-  kind: "instance" | "message" | "event" | "done";
+  kind: "instance" | "record" | "event" | "done";
   instance: InstanceSummary;
-  message?: Message;
+  record?: CodexRecord;
 };
 
 type Usage = {
@@ -162,6 +149,10 @@ const App = () => {
     () => sessions.find((session) => session.instanceId === activeSessionId),
     [activeSessionId, sessions]
   );
+  const activeViews = useMemo(
+    () => recordsToViews(activeSession?.records ?? []),
+    [activeSession?.records]
+  );
   const activeCanSend = Boolean(activeSession && (activeSession.input.trim() || activeSession.imageAttachments.length)) && !activeSession?.running;
   const activeCanSubmit = Boolean(activeSession?.running || activeCanSend);
 
@@ -243,6 +234,15 @@ const App = () => {
     setSelectedModel(saved?.selectedModel ?? "auto");
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     setInstances(loadedInstances);
+    const savedInstanceExists = saved?.activeSessionId
+      ? loadedInstances.some((instance) => instance.instanceId === saved.activeSessionId)
+      : false;
+    const instanceToOpen = savedInstanceExists
+      ? saved?.activeSessionId
+      : loadedInstances.length === 1 ? loadedInstances[0]?.instanceId : undefined;
+    if (instanceToOpen) {
+      await openInstance(instanceToOpen);
+    }
     setInitialized(true);
   };
 
@@ -342,12 +342,13 @@ const App = () => {
       const payload = JSON.parse(event.data) as StreamEvent;
       setSessions((current) => current.map((session) => {
         if (session.instanceId !== payload.instance.instanceId) return session;
-        const messages = payload.message ? mergeMessage(session.messages, payload.message) : session.messages;
-        return { ...session, ...payload.instance, messages };
+        const records = payload.record ? mergeRecord(session.records, payload.record) : session.records;
+        return { ...session, ...payload.instance, records };
       }));
       void refreshInstances();
     };
     source.addEventListener("instance", handle);
+    source.addEventListener("record", handle);
     source.addEventListener("message", handle);
     source.addEventListener("done", handle);
     eventSources.current.set(instanceId, source);
@@ -383,12 +384,7 @@ const App = () => {
       setSessions((current) => current.map((item) => item.instanceId === instanceId
         ? {
           ...item,
-          messages: [...item.messages, {
-            id: crypto.randomUUID(),
-            role: "error",
-            label: "fork failed",
-            text: error instanceof Error ? error.message : String(error)
-          }]
+          records: [...item.records, errorRecord("fork failed", error)]
         }
         : item));
     }
@@ -411,12 +407,7 @@ const App = () => {
           ...item,
           input: text,
           imageAttachments,
-          messages: [...item.messages, {
-            id: crypto.randomUUID(),
-            role: "error",
-            label: "image upload failed",
-            text: error instanceof Error ? error.message : String(error)
-          }]
+          records: [...item.records, errorRecord("image upload failed", error)]
         }
         : item));
       return;
@@ -435,7 +426,7 @@ const App = () => {
     if (!response.ok) {
       const text = await response.text();
       setSessions((current) => current.map((item) => item.instanceId === instanceId
-        ? { ...item, messages: [...item.messages, { id: crypto.randomUUID(), role: "error", label: "error", text }] }
+        ? { ...item, records: [...item.records, errorRecord("error", text)] }
         : item));
     }
   };
@@ -445,7 +436,7 @@ const App = () => {
     if (!response.ok) {
       const text = await response.text();
       setSessions((current) => current.map((item) => item.instanceId === instanceId
-        ? { ...item, messages: [...item.messages, { id: crypto.randomUUID(), role: "error", label: "stop failed", text }] }
+        ? { ...item, records: [...item.records, errorRecord("stop failed", text)] }
         : item));
     }
   };
@@ -570,16 +561,16 @@ const App = () => {
             <Virtuoso
               key={activeSession.instanceId}
               className="messages"
-              data={activeSession.messages}
-              followOutput="smooth"
-              initialTopMostItemIndex={Math.max(activeSession.messages.length - 1, 0)}
+              data={activeViews}
+              followOutput={() => "smooth"}
+              initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
               increaseViewportBy={{ top: 360, bottom: 720 }}
               computeItemKey={(_, message) => message.id}
               components={{ EmptyPlaceholder: EmptyMessages }}
               itemContent={(_, message) => (
                 <MessageCard
                   message={message}
-                  onFork={canForkMessage(message) ? () => void forkMessage(activeSession.instanceId, message.id) : undefined}
+                  onFork={message.canFork ? () => void forkMessage(activeSession.instanceId, message.record.id) : undefined}
                 />
               )}
             />
@@ -715,10 +706,10 @@ const App = () => {
   );
 };
 
-const MessageCard = ({ message, onFork }: { message: Message; onFork?: () => void }) => (
+const MessageCard = ({ message, onFork }: { message: CodexRecordView; onFork?: () => void }) => (
   <article className={`message ${message.role}`}>
     <span className="messageHeader">
-      <b>{message.label ?? message.role}{message.source ? ` · ${message.source}` : ""}</b>
+      <b>{message.label ?? message.role}</b>
       {message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
     </span>
     {message.text ? <pre>{message.text}</pre> : null}
@@ -810,12 +801,12 @@ const formatCompactNumber = (value: number) => {
   return String(value);
 };
 
-const formatMessageMeta = (message: Message) => [
+const formatMessageMeta = (message: CodexRecordView) => [
   message.at ? formatMessageTime(message.at) : null,
   message.usage ? `${formatCompactNumber(usageTotal(message.usage))} tokens` : null
 ].filter(Boolean).join(" · ");
 
-const formatMessageMetaTitle = (message: Message) => {
+const formatMessageMetaTitle = (message: CodexRecordView) => {
   if (!message.usage) return message.at ? formatDate(message.at) : undefined;
   return [
     message.at ? formatDate(message.at) : null,
@@ -866,20 +857,43 @@ function readWebClientId() {
   return next;
 }
 
-const mergeMessage = (messages: Message[], incoming: Message) => {
-  const existingIndex = messages.findIndex((message) => message.id === incoming.id);
-  if (existingIndex === -1) return [...messages, incoming];
-  return messages.map((message, index) => index === existingIndex ? { ...message, ...incoming } : message);
+const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
+  const existingIndex = records.findIndex((record) => record.id === incoming.id);
+  if (existingIndex === -1) {
+    return [
+      ...records.filter((record) => !isMatchingOptimisticUserRecord(record, incoming)),
+      incoming
+    ];
+  }
+  return records.map((record, index) => index === existingIndex ? incoming : record);
 };
 
-const statusLabel = (status: NonNullable<Message["status"]>) => {
+const isMatchingOptimisticUserRecord = (record: CodexRecord, incoming: CodexRecord) => {
+  if (!record.id.startsWith("proxy:user:")) return false;
+  const recordPayload = asRecord(record.payload);
+  const incomingPayload = asRecord(incoming.payload);
+  return record.type === "event_msg"
+    && incoming.type === "event_msg"
+    && recordPayload?.type === "user_message"
+    && incomingPayload?.type === "user_message"
+    && recordPayload.message === incomingPayload.message;
+};
+
+const errorRecord = (label: string, error: unknown): CodexRecord => ({
+  id: `web:${crypto.randomUUID()}`,
+  timestamp: new Date().toISOString(),
+  type: "error",
+  payload: {
+    type: label,
+    message: error instanceof Error ? error.message : String(error)
+  }
+});
+
+const statusLabel = (status: NonNullable<CodexRecordView["status"]>) => {
   if (status === "pending") return "Waiting";
   if (status === "failed") return "Failed";
   return "Done";
 };
-
-const canForkMessage = (message: Message) =>
-  message.source === "codex" && message.itemType === "agent_message";
 
 const formatDate = (value: string) => {
   const date = new Date(value);

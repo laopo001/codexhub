@@ -1,4 +1,6 @@
 import { Telegraf } from "telegraf";
+import type { CodexRecord } from "../core/codexRecord.js";
+import { recordToView, type CodexRecordView } from "../core/codexRecordView.js";
 
 type DirectoryListing = {
   path: string;
@@ -18,18 +20,9 @@ type InstanceSummary = {
 };
 
 type InstanceDetail = InstanceSummary & {
-  messages: Array<{
-    id: string;
-    role: string;
-    label?: string;
-    text: string;
-    source?: string;
-    status?: "pending" | "completed" | "failed";
-  }>;
+  records: CodexRecord[];
   lastSeq: number;
 };
-
-type InstanceMessage = InstanceDetail["messages"][number];
 
 type TurnInput = string | Array<
   | { type: "text"; text: string }
@@ -314,12 +307,11 @@ const runPrompt = async (
     await postTurn(instance.instanceId, input);
 
     for await (const event of stream) {
-      if (event.kind === "message" && event.message?.source === "proxy-runtime" && event.message?.label === "turn stopped") {
-        stopped = true;
-      }
-      if (event.kind === "message" && event.message?.source === "codex" && shouldForwardMessage(event.message, sentMessageStatuses)) {
+      if (event.kind === "record" && event.record) {
+        const view = recordToView(event.record);
+        if (!view || !shouldForwardView(view, sentMessageStatuses)) continue;
         sentItemCount += 1;
-        await ctx.reply(clampTelegram(formatBlock(event.message.label ?? event.message.role, event.message.text, event.message.status)));
+        await ctx.reply(clampTelegram(formatBlock(view.label ?? view.role, view.text, view.status)));
       }
       if (event.kind === "done") break;
     }
@@ -486,26 +478,26 @@ const formatPercent = (value: number) => {
   const normalized = Math.max(0, Math.min(100, value));
   return `${Number.isInteger(normalized) ? normalized : normalized.toFixed(1)}%`;
 };
-const formatBlock = (label: string, text: string, status?: InstanceMessage["status"]) =>
+const formatBlock = (label: string, text: string, status?: CodexRecordView["status"]) =>
   `[${[label, status].filter(Boolean).join(" · ")}]\n${text}`;
 
-const shouldForwardMessage = (message: InstanceMessage, sentStatuses: Map<string, string>) => {
-  const status = message.status ?? "final";
-  const previousStatus = sentStatuses.get(message.id);
-  if (message.role !== "tool") {
+const shouldForwardView = (view: CodexRecordView, sentStatuses: Map<string, string>) => {
+  const status = view.status ?? "final";
+  const previousStatus = sentStatuses.get(view.id);
+  if (view.role !== "tool") {
     if (previousStatus) return false;
-    sentStatuses.set(message.id, status);
+    sentStatuses.set(view.id, status);
     return true;
   }
 
   if (status === "pending") {
     if (previousStatus) return false;
-    sentStatuses.set(message.id, status);
+    sentStatuses.set(view.id, status);
     return true;
   }
 
   if (previousStatus === status) return false;
-  sentStatuses.set(message.id, status);
+  sentStatuses.set(view.id, status);
   return true;
 };
 

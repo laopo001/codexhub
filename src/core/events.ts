@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { ThreadEvent, ThreadItem, Usage } from "@openai/codex-sdk";
 
 export type ProxyEvent =
@@ -31,7 +32,7 @@ export const toProxyEvent = (event: ThreadEvent, finalResponse = ""): ProxyEvent
   }
 };
 
-export const itemText = (item: ThreadItem): string | null => {
+export const itemText = (item: ThreadItem, options: { workingDirectory?: string } = {}): string | null => {
   switch (item.type) {
     case "agent_message":
       return item.text;
@@ -40,7 +41,7 @@ export const itemText = (item: ThreadItem): string | null => {
     case "command_execution":
       return `$ ${item.command}\n${item.aggregated_output}`.trim();
     case "file_change":
-      return item.changes.map((change) => `${change.kind}: ${change.path}`).join("\n");
+      return formatFileChange(item, options.workingDirectory);
     case "mcp_tool_call":
       return formatMcpToolCall(item);
     case "web_search":
@@ -52,6 +53,44 @@ export const itemText = (item: ThreadItem): string | null => {
     default:
       return null;
   }
+};
+
+const formatFileChange = (
+  item: Extract<ThreadItem, { type: "file_change" }>,
+  workingDirectory?: string
+) => {
+  const counts = item.changes.reduce<Record<string, number>>((acc, change) => {
+    acc[change.kind] = (acc[change.kind] ?? 0) + 1;
+    return acc;
+  }, {});
+  const summary = ["add", "update", "delete"]
+    .map((kind) => counts[kind] ? `${counts[kind]} ${kind}` : null)
+    .filter(Boolean)
+    .join(", ");
+  return [
+    item.status === "completed" ? "Patch applied successfully." : "Patch failed.",
+    "",
+    `Status: ${item.status}`,
+    `Changed files: ${item.changes.length}${summary ? ` (${summary})` : ""}`,
+    "",
+    ...item.changes.map((change) => formatFileChangeLine(change, workingDirectory))
+  ].join("\n");
+};
+
+const formatFileChangeLine = (
+  change: Extract<ThreadItem, { type: "file_change" }>["changes"][number],
+  workingDirectory?: string
+) => {
+  const displayPath = relativePath(change.path, workingDirectory);
+  return displayPath === change.path
+    ? `- ${change.kind}: ${displayPath}`
+    : `- ${change.kind}: ${displayPath}\n  ${change.path}`;
+};
+
+const relativePath = (filePath: string, workingDirectory?: string) => {
+  if (!workingDirectory || !path.isAbsolute(filePath)) return filePath;
+  const relative = path.relative(workingDirectory, filePath);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : filePath;
 };
 
 const formatMcpToolCall = (item: Extract<ThreadItem, { type: "mcp_tool_call" }>): string => {

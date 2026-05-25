@@ -8,6 +8,7 @@ import path from "node:path";
 import { z } from "zod";
 import { loadConfig } from "../core/config.js";
 import { readCodexUsage } from "../core/codexUsage.js";
+import { recordsToViews } from "../core/codexRecordView.js";
 import { listLoadableCodexThreads, loadCodexThread } from "../core/codexpLog.js";
 import { InstanceHub } from "../core/instanceHub.js";
 import { addWorkspace, listDirectoryChildren, listWorkspaces, touchWorkspace } from "../core/workspaceState.js";
@@ -145,8 +146,8 @@ const main = async () => {
       return { error: "thread_not_found" };
     }
 
-    const title = thread.messages.find((message) => message.role === "user")?.text.slice(0, 80) || payload.threadId;
-    return instances.restoreInstance(payload.workingDirectory, payload.threadId, thread.messages, title, payload.options ?? {});
+    const title = recordsToViews(thread.records).find((message) => message.role === "user")?.text.slice(0, 80) || payload.threadId;
+    return instances.restoreInstance(payload.workingDirectory, payload.threadId, thread.records, title, payload.options ?? {});
   });
 
   app.get("/api/instances/:instanceId", async (request, reply) => {
