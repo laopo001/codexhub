@@ -770,7 +770,7 @@ const App = () => {
               </div>
               <button type="button" className="iconButton" onClick={() => setInspectMessage(null)} aria-label="Close">x</button>
             </header>
-            <pre className="detailBody">{formatInspectMessage(inspectMessage)}</pre>
+            <ToolInspectBody message={inspectMessage} />
           </section>
         </div>
       ) : null}
@@ -839,6 +839,24 @@ const MessageCard = ({
 const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
 );
+
+const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
+  const detail = formatInspectDetail(message);
+  return (
+    <div className="detailBody">
+      <section className="detailSection">
+        <h3>Input</h3>
+        <pre>{detail.input || "(empty)"}</pre>
+      </section>
+      {detail.output ? (
+        <section className="detailSection">
+          <h3>Output</h3>
+          <pre>{detail.output}</pre>
+        </section>
+      ) : null}
+    </div>
+  );
+};
 
 const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, init);
@@ -1028,15 +1046,40 @@ const compactToolCallId = (view: CodexRecordView) => {
   return typeof payload?.call_id === "string" ? payload.call_id : view.id;
 };
 
-const formatInspectMessage = (message: WebRecordView) => {
+const formatInspectDetail = (message: WebRecordView) => {
   const inspectRecord = message.inspectRecord ?? message.record;
   const payload = asRecord(inspectRecord.payload);
-  const output = message.inspectText ?? (typeof payload?.output === "string" ? payload.output.trimEnd() : "");
+  const output = normalizeWebToolOutput(message.inspectText ?? (typeof payload?.output === "string" ? payload.output.trimEnd() : ""));
   const callText = message.inspectCallText ?? message.text;
-  return [
-    formatInspectCallText(message.record, callText.trimEnd()),
-    output ? `Output:\n${output}` : null
-  ].filter(Boolean).join("\n\n");
+  return {
+    input: formatInspectCallText(message.record, callText.trimEnd()),
+    output: output ? formatInspectOutput(message.record, output) : ""
+  };
+};
+
+const normalizeWebToolOutput = (output: string) => {
+  const parsed = parseJsonObject(output);
+  const preview = textPreview(parsed);
+  return preview ?? output;
+};
+
+const textPreview = (value: unknown) => {
+  const record = asRecord(value);
+  if (!record || record.text_omitted !== true || typeof record.text_preview !== "string") return null;
+  const suffix = typeof record.text_length === "number" ? `\n[output truncated: ${record.text_length} chars]` : "";
+  return `${record.text_preview}${suffix}`;
+};
+
+const formatInspectOutput = (record: CodexRecord, output: string) => {
+  const text = output.trimEnd();
+  if (shouldShowRawToolOutput(record)) return text;
+  return text;
+};
+
+const shouldShowRawToolOutput = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  return payload?.type === "function_call"
+    && (payload.name === "exec_command" || payload.name === "write_stdin");
 };
 
 const formatCompactToolCall = (view: CodexRecordView) => {
@@ -1055,10 +1098,7 @@ const formatInspectCallText = (record: CodexRecord, fallback: string) => {
   const name = typeof payload.name === "string" ? payload.name : "tool";
   const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");
   if (!args) return fallback;
-  return [
-    `Input arguments:`,
-    ...formatToolArguments(name, args)
-  ].join("\n");
+  return formatToolArguments(name, args).join("\n");
 };
 
 const formatToolArguments = (name: string, args: Record<string, unknown>) => {
