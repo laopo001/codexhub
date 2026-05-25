@@ -7,6 +7,7 @@ type Role = "user" | "codex" | "event" | "error" | "tool" | "thinking";
 
 type Message = {
   role: Role;
+  source?: "codex" | "proxy-runtime";
   id?: string;
   label?: string;
   text: string;
@@ -31,6 +32,7 @@ type ChatSession = {
   id: string;
   workspacePath: string;
   threadId?: string;
+  status?: string;
   title: string;
   input: string;
   messages: Message[];
@@ -47,8 +49,6 @@ type DirectoryListing = {
 const storageKey = "codex-proxy-ui-state-v1";
 
 const eventMessage = (event: any): Message | null => {
-  if (event.type === "thread") return { role: "event", label: "thread", text: event.threadId };
-  if (event.type === "status") return { role: "event", label: "status", text: event.text };
   if (event.type === "artifact") return { role: "event", label: "artifact", text: event.text };
   if (event.type === "error") return { role: "error", label: "error", text: event.message };
   if (event.type !== "item") return null;
@@ -89,6 +89,11 @@ const fallbackItemText = (item: any): string | null => {
   if (item.type === "mcp_tool_call") return JSON.stringify(item.arguments ?? {}, null, 2);
   return null;
 };
+
+// codex-proxy UI/runtime events. These are generated from the live SSE stream and
+// should stay out of the Codex transcript message list.
+const isProxyRuntimeEventMessage = (message: Message) =>
+  message.source === "proxy-runtime";
 
 const App = () => {
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
@@ -176,7 +181,11 @@ const App = () => {
     setActiveWorkspacePath(firstWorkspace);
 
     const restoredSessions = saved?.sessions?.length
-      ? saved.sessions.map((session) => ({ ...session, busy: false }))
+      ? saved.sessions.map((session) => ({
+        ...session,
+        busy: false,
+        messages: session.messages.filter((message) => !isProxyRuntimeEventMessage(message))
+      }))
       : [newSession(firstWorkspace)];
     setSessions(restoredSessions);
     setActiveSessionId(saved?.activeSessionId && restoredSessions.some((session) => session.id === saved.activeSessionId)
@@ -308,8 +317,12 @@ const App = () => {
           if (event.type === "thread") {
             updateSession(sessionId, (current) => ({ ...current, threadId: event.threadId }));
           }
+          if (event.type === "status") {
+            updateSession(sessionId, (current) => ({ ...current, status: event.text }));
+          }
           if (event.type === "final") {
             appendFinal(sessionId, event.text);
+            updateSession(sessionId, (current) => ({ ...current, status: undefined }));
           } else {
             const message = eventMessage(event);
             if (message) appendOrUpdateMessage(sessionId, message);
@@ -324,7 +337,7 @@ const App = () => {
       }
     } finally {
       controllers.current.delete(sessionId);
-      updateSession(sessionId, (current) => ({ ...current, busy: false }));
+      updateSession(sessionId, (current) => ({ ...current, busy: false, status: undefined }));
     }
   };
 
@@ -373,12 +386,14 @@ const App = () => {
         title: thread.firstUserMessage || thread.threadId,
         input: "",
         busy: false,
-        messages: data.messages.map((message: any) => ({
-          role: message.role === "assistant" ? "codex" : message.role,
-          id: message.id,
-          label: message.label,
-          text: message.text
-        }))
+        messages: data.messages
+          .map((message: any) => ({
+            role: message.role === "assistant" ? "codex" : message.role,
+            id: message.id,
+            label: message.label,
+            text: message.text
+          }))
+          .filter((message: Message) => !isProxyRuntimeEventMessage(message))
       };
       setSessions((current) => [...current, session]);
       setActiveSessionId(session.id);
@@ -471,8 +486,12 @@ const App = () => {
               className={`tab ${session.id === activeSessionId ? "active" : ""}`}
               key={session.id}
               onClick={() => setActiveSessionId(session.id)}
+              title={[session.title, session.threadId, session.status].filter(Boolean).join("\n")}
             >
-              <span>{session.title}</span>
+              <span className="tabTitle">{session.title}</span>
+              <span className="tabMeta">
+                {session.status ?? (session.threadId ? shortThreadId(session.threadId) : "draft")}
+              </span>
               {session.busy ? <strong>Running</strong> : null}
               <i
                 role="button"
@@ -642,6 +661,8 @@ const newSession = (workspacePath: string): ChatSession => ({
 });
 
 const createSessionId = () => `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const shortThreadId = (threadId: string) => threadId.slice(0, 8);
 
 const readStoredUiState = (): { activeWorkspacePath?: string; activeSessionId?: string; sessions?: ChatSession[] } | null => {
   try {
