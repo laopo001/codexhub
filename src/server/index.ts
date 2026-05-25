@@ -188,6 +188,16 @@ const main = async () => {
     }
   });
 
+  app.post("/api/instances/:instanceId/stop", async (request, reply) => {
+    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+    try {
+      return instances.stopTurn(params.instanceId);
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   app.get("/api/instances/:instanceId/events", async (request, reply) => {
     const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
     const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);

@@ -20,8 +20,21 @@ export type CodexRateLimits = {
   rate_limit_reached_type?: string | null;
 };
 
+type TokenUsage = {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
+};
+
 export type CodexUsageSnapshot = {
   rateLimits: CodexRateLimits | null;
+  tokenUsage: {
+    totalTokenUsage: TokenUsage | null;
+    lastTokenUsage: TokenUsage | null;
+    modelContextWindow: number | null;
+  } | null;
   sourceFile: string | null;
   observedAt: string | null;
   source: "latest" | "thread";
@@ -100,6 +113,7 @@ async function findLatestRateLimitsInFile(
 ): Promise<CodexUsageSnapshot> {
   let latest: CodexUsageSnapshot = {
     rateLimits: null,
+    tokenUsage: null,
     sourceFile: null,
     observedAt: null,
     source
@@ -114,6 +128,7 @@ async function findLatestRateLimitsInFile(
     if (payload?.type !== "token_count" || !isRateLimits(payload.rate_limits)) continue;
     latest = {
       rateLimits: payload.rate_limits,
+      tokenUsage: tokenUsageFromPayload(payload),
       sourceFile: filePath,
       observedAt: typeof parsed.timestamp === "string" ? parsed.timestamp : null,
       source
@@ -137,9 +152,33 @@ function isRateLimits(value: unknown): value is CodexRateLimits {
   return Boolean(rateLimits.primary || rateLimits.secondary);
 }
 
+function tokenUsageFromPayload(payload: any): CodexUsageSnapshot["tokenUsage"] {
+  const info = payload.info;
+  if (!info || typeof info !== "object") return null;
+  return {
+    totalTokenUsage: tokenUsageFromValue(info.total_token_usage),
+    lastTokenUsage: tokenUsageFromValue(info.last_token_usage),
+    modelContextWindow: typeof info.model_context_window === "number" ? info.model_context_window : null
+  };
+}
+
+function tokenUsageFromValue(value: unknown): TokenUsage | null {
+  if (!value || typeof value !== "object") return null;
+  const usage = value as Partial<TokenUsage>;
+  if (typeof usage.total_tokens !== "number") return null;
+  return {
+    input_tokens: typeof usage.input_tokens === "number" ? usage.input_tokens : 0,
+    cached_input_tokens: typeof usage.cached_input_tokens === "number" ? usage.cached_input_tokens : 0,
+    output_tokens: typeof usage.output_tokens === "number" ? usage.output_tokens : 0,
+    reasoning_output_tokens: typeof usage.reasoning_output_tokens === "number" ? usage.reasoning_output_tokens : 0,
+    total_tokens: usage.total_tokens
+  };
+}
+
 function emptySnapshot(source: CodexUsageSnapshot["source"]): CodexUsageSnapshot {
   return {
     rateLimits: null,
+    tokenUsage: null,
     sourceFile: null,
     observedAt: null,
     source

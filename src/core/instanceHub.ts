@@ -152,6 +152,20 @@ export class InstanceHub {
     return { deleted, attachCount: instance.attachments.size };
   }
 
+  stopTurn(instanceId: string) {
+    const instance = this.requireInstance(instanceId);
+    if (!instance.running || !instance.abortController) return { stopped: false };
+    instance.abortController.abort();
+    this.appendMessage(instance, {
+      role: "event",
+      label: "turn stopped",
+      text: "Turn stopped.",
+      source: "proxy-runtime",
+      status: "completed"
+    });
+    return { stopped: true };
+  }
+
   async runTurn(instanceId: string, input: Input, source: "web" | "telegram" = "web") {
     const instance = this.requireInstance(instanceId);
     if (instance.running) throw new Error(`Instance is already running: ${instanceId}`);

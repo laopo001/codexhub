@@ -97,6 +97,11 @@ type CodexUsageSnapshot = {
     plan_type?: string | null;
     rate_limit_reached_type?: string | null;
   } | null;
+  tokenUsage: {
+    totalTokenUsage: Usage & { total_tokens: number } | null;
+    lastTokenUsage: (Usage & { total_tokens: number }) | null;
+    modelContextWindow: number | null;
+  } | null;
   sourceFile: string | null;
   observedAt: string | null;
   source: "latest" | "thread";
@@ -133,6 +138,7 @@ const App = () => {
     [activeSessionId, sessions]
   );
   const activeCanSend = Boolean(activeSession && (activeSession.input.trim() || activeSession.imageAttachments.length)) && !activeSession?.running;
+  const activeCanSubmit = Boolean(activeSession?.running || activeCanSend);
 
   useEffect(() => {
     void initialize();
@@ -173,6 +179,16 @@ const App = () => {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [instanceMenu]);
+
+  useEffect(() => {
+    const stopOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !activeSession?.running) return;
+      event.preventDefault();
+      void stopTurn(activeSession.instanceId);
+    };
+    window.addEventListener("keydown", stopOnEscape);
+    return () => window.removeEventListener("keydown", stopOnEscape);
+  }, [activeSession?.instanceId, activeSession?.running]);
 
   const initialize = async () => {
     const [health, instanceData, usageData] = await Promise.all([
@@ -367,6 +383,16 @@ const App = () => {
     }
   };
 
+  const stopTurn = async (instanceId: string) => {
+    const response = await fetch(`/api/instances/${encodeURIComponent(instanceId)}/stop`, { method: "POST" });
+    if (!response.ok) {
+      const text = await response.text();
+      setSessions((current) => current.map((item) => item.instanceId === instanceId
+        ? { ...item, messages: [...item.messages, { id: crypto.randomUUID(), role: "error", label: "stop failed", text }] }
+        : item));
+    }
+  };
+
   const updateSessionInput = (instanceId: string, input: string) => {
     setSessions((current) => current.map((session) => session.instanceId === instanceId ? { ...session, input } : session));
   };
@@ -463,7 +489,9 @@ const App = () => {
           </div>
           <div className="workbar" aria-label="Runtime status">
             <span>{formatModelStatus(systemStatus)}</span>
-            <span>Context {formatContextUsage(activeSession, systemStatus.contextWindowTokens)}</span>
+            <span title={formatContextTitle(codexUsage)}>
+              Context {formatContextUsage(codexUsage)}
+            </span>
             <span title={formatResetTitle(codexUsage?.rateLimits?.primary)}>5h {formatRateLimitRemaining(codexUsage?.rateLimits?.primary)}</span>
             <span title={formatResetTitle(codexUsage?.rateLimits?.secondary)}>weekly {formatRateLimitRemaining(codexUsage?.rateLimits?.secondary)}</span>
           </div>
@@ -487,7 +515,8 @@ const App = () => {
               className="composer"
               onSubmit={(event) => {
                 event.preventDefault();
-                void send(activeSession.instanceId);
+                if (activeSession.running) void stopTurn(activeSession.instanceId);
+                else void send(activeSession.instanceId);
               }}
             >
               <div className="composerInput">
@@ -526,7 +555,9 @@ const App = () => {
                     }}
                   />
                 </label>
-                <button type="submit" disabled={!activeCanSend}>{activeSession.running ? "Running" : "Send"}</button>
+                <button type="submit" disabled={!activeCanSubmit} aria-label={activeSession.running ? "Stop current turn" : "Send message"}>
+                  {activeSession.running ? "Stop" : "Send"}
+                </button>
               </div>
             </form>
           </>
@@ -666,12 +697,27 @@ const formatModelStatus = (status: SystemStatus) => [
   status.modelReasoningEffort ?? "default"
 ].join(" ");
 
-const formatContextUsage = (session: ChatSession | undefined, contextWindowTokens: number | null) => {
-  const usage = session?.lastUsage;
-  if (!usage) return "--";
-  const used = usage.input_tokens + usage.output_tokens + usage.reasoning_output_tokens;
-  if (!contextWindowTokens) return `${formatCompactNumber(used)} tokens`;
-  return `${Math.min(100, Math.round((used / contextWindowTokens) * 100))}% used`;
+const formatContextUsage = (usageSnapshot: CodexUsageSnapshot | null) => {
+  const context = contextUsage(usageSnapshot);
+  if (!context) return "--";
+  return `${Math.min(100, Math.round((context.usedTokens / context.windowTokens) * 100))}%`;
+};
+
+const formatContextTitle = (usageSnapshot: CodexUsageSnapshot | null) => {
+  const context = contextUsage(usageSnapshot);
+  if (!context) return undefined;
+  return `${formatCompactNumber(context.usedTokens)} / ${formatCompactNumber(context.windowTokens)} tokens used`;
+};
+
+const contextUsage = (usageSnapshot: CodexUsageSnapshot | null) => {
+  const tokenUsage = usageSnapshot?.tokenUsage;
+  const jsonlUsed = tokenUsage?.totalTokenUsage?.total_tokens;
+  const modelContextWindow = tokenUsage?.modelContextWindow;
+  if (typeof jsonlUsed !== "number" || typeof modelContextWindow !== "number" || modelContextWindow <= 0) return null;
+  return {
+    usedTokens: jsonlUsed,
+    windowTokens: modelContextWindow
+  };
 };
 
 const formatCompactNumber = (value: number) => {

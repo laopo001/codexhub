@@ -76,7 +76,8 @@ const botCommands = [
   { command: "start", description: "show help" },
   { command: "status", description: "show current instance" },
   { command: "instances", description: "attach a Codex instance" },
-  { command: "new", description: "choose a folder and create an instance" }
+  { command: "new", description: "choose a folder and create an instance" },
+  { command: "stop", description: "stop the current turn" }
 ];
 
 const tgClientId = (chatId: number) => `telegram-${chatId}`;
@@ -96,6 +97,7 @@ bot.start(async (ctx) => {
     "",
     "/instances 打开已有 Codex 实例",
     "/new 选择文件夹并创建 Codex 实例",
+    "/stop 停止当前 turn",
     "/status 查看当前状态",
     "",
     "直接发消息会发送给当前 Codex 实例。"
@@ -164,6 +166,29 @@ bot.command("status", async (ctx) => {
     await ctx.reply(errorText(error));
   }
 });
+
+const handleStopCommand = async (ctx: any) => {
+  try {
+    const state = chatStates.get(ctx.chat.id);
+    const current = state?.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
+    if (!current) {
+      await ctx.reply("当前没有打开的 Codex 实例。");
+      return;
+    }
+    if (!current.running) {
+      await ctx.reply("No running turn.");
+      return;
+    }
+
+    const result = await stopInstance(current.instanceId);
+    await ctx.reply(result.stopped ? "Stopped current turn." : "No running turn.");
+  } catch (error) {
+    await ctx.reply(errorText(error));
+  }
+};
+
+bot.command("stop", handleStopCommand);
+bot.hears(/^\/stop(?:@\w+)?(?:\s|$)/i, handleStopCommand);
 
 bot.action(/^new:child:(\d+)$/, async (ctx) => {
   try {
@@ -273,6 +298,7 @@ const runPrompt = async (
     images.length ? `images: ${images.length}` : null
   ].filter(Boolean).join("\n"));
   let sentItemCount = 0;
+  let stopped = false;
   const sentMessageStatuses = new Map<string, string>();
 
   try {
@@ -288,6 +314,9 @@ const runPrompt = async (
     await postTurn(instance.instanceId, input);
 
     for await (const event of stream) {
+      if (event.kind === "message" && event.message?.source === "proxy-runtime" && event.message?.label === "turn stopped") {
+        stopped = true;
+      }
       if (event.kind === "message" && event.message?.source === "codex" && shouldForwardMessage(event.message, sentMessageStatuses)) {
         sentItemCount += 1;
         await ctx.reply(clampTelegram(formatBlock(event.message.label ?? event.message.role, event.message.text, event.message.status)));
@@ -301,7 +330,7 @@ const runPrompt = async (
       statusMessage.message_id,
       undefined,
       [
-        "Codex completed.",
+        stopped ? "Codex stopped." : "Codex completed.",
         `instance: ${latest ? displayInstanceId(latest) : shortId(instance.instanceId)}`,
         `messages: ${sentItemCount}`
       ].join("\n")
@@ -361,6 +390,10 @@ const postTurn = async (instanceId: string, input: TurnInput) => {
   });
   if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
 };
+
+const stopInstance = async (instanceId: string) => apiJson<{ stopped: boolean }>(`/api/instances/${encodeURIComponent(instanceId)}/stop`, {
+  method: "POST"
+});
 
 const uploadTelegramImage = async (workingDirectory: string, fileId: string, filename: string) => {
   const link = await bot.telegram.getFileLink(fileId);
