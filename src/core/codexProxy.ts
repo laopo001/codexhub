@@ -1,4 +1,4 @@
-import { Codex, type CodexOptions, type Input, type Thread, type ThreadOptions } from "@openai/codex-sdk";
+import { Codex, type CodexOptions, type Input, type Thread, type ThreadOptions, type TurnOptions } from "@openai/codex-sdk";
 import { readCodexSessionSnapshot, summarizeCodexSession } from "./codexSession.js";
 import { upsertCodexpThread } from "./codexpCache.js";
 import { toProxyEvent, type ProxyEvent } from "./events.js";
@@ -9,6 +9,7 @@ export type RunRequest = {
   workingDirectory?: string;
   skipGitRepoCheck?: boolean;
   options?: ThreadOptions;
+  signal?: AbortSignal;
 };
 
 export type RunResult = {
@@ -21,17 +22,20 @@ export class CodexProxy {
   private readonly codex: Codex;
   private readonly defaultThreadOptions: ThreadOptions;
   private readonly threads = new Map<string, Thread>();
+  private readonly runningThreads = new Set<string>();
 
   constructor(codexOptions: CodexOptions = {}, defaultThreadOptions: ThreadOptions = {}) {
     this.codex = new Codex(codexOptions);
     this.defaultThreadOptions = defaultThreadOptions;
   }
 
-  getThread(id: string): Thread {
-    const existing = this.threads.get(id);
+  getThread(id: string, options: ThreadOptions = {}): Thread {
+    const mergedOptions = this.mergeThreadOptions(options);
+    const key = threadCacheKey(id, mergedOptions.workingDirectory);
+    const existing = this.threads.get(key);
     if (existing) return existing;
-    const resumed = this.codex.resumeThread(id, this.defaultThreadOptions);
-    this.threads.set(id, resumed);
+    const resumed = this.codex.resumeThread(id, mergedOptions);
+    this.threads.set(key, resumed);
     return resumed;
   }
 
@@ -56,16 +60,25 @@ export class CodexProxy {
   async *runStream(request: RunRequest): AsyncGenerator<ProxyEvent> {
     const threadOptions = this.optionsFromRequest(request);
     const workingDirectory = threadOptions.workingDirectory ?? process.cwd();
-    const thread = request.threadId ? this.getThread(request.threadId) : this.startThread(threadOptions);
+    const thread = request.threadId ? this.getThread(request.threadId, threadOptions) : this.startThread(threadOptions);
     let threadId = request.threadId ?? thread.id;
     let finalResponse = "";
+    let runningKey = request.threadId ? threadCacheKey(request.threadId, workingDirectory) : null;
+
+    if (runningKey && this.runningThreads.has(runningKey)) {
+      throw new Error(`Thread is already running: ${request.threadId}`);
+    }
+    if (runningKey) this.runningThreads.add(runningKey);
 
     try {
-      const { events } = await thread.runStreamed(request.input);
+      const turnOptions: TurnOptions = request.signal ? { signal: request.signal } : {};
+      const { events } = await thread.runStreamed(request.input, turnOptions);
       for await (const event of events) {
         if (event.type === "thread.started") {
           threadId = event.thread_id;
-          this.threads.set(event.thread_id, thread);
+          runningKey = threadCacheKey(event.thread_id, workingDirectory);
+          this.threads.set(runningKey, thread);
+          this.runningThreads.add(runningKey);
         }
 
         if (event.type === "item.completed" && event.item.type === "agent_message") {
@@ -76,8 +89,8 @@ export class CodexProxy {
         if (proxyEvent) yield proxyEvent;
       }
 
-      if (threadId && !this.threads.has(threadId)) {
-        this.threads.set(threadId, thread);
+      if (threadId && !this.threads.has(threadCacheKey(threadId, workingDirectory))) {
+        this.threads.set(threadCacheKey(threadId, workingDirectory), thread);
       }
 
       if (threadId) {
@@ -90,6 +103,8 @@ export class CodexProxy {
       }
     } catch (error) {
       throw error;
+    } finally {
+      if (runningKey) this.runningThreads.delete(runningKey);
     }
   }
 
@@ -123,3 +138,5 @@ const artifactEventsFromSnapshot = (snapshot: Awaited<ReturnType<typeof readCode
     metadata: generation
   }));
 };
+
+const threadCacheKey = (threadId: string, workingDirectory?: string) => `${workingDirectory ?? ""}::${threadId}`;

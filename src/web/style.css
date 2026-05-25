@@ -22,7 +22,7 @@ textarea {
 
 .app {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) 1fr;
+  grid-template-columns: 320px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -30,44 +30,22 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 24px;
+  min-width: 0;
+  padding: 22px;
   background: #122018;
   color: #f8fbf4;
 }
 
-.sidebar h1 {
+.brand h1 {
   margin: 0;
   font-size: 28px;
   line-height: 1.1;
   letter-spacing: 0;
 }
 
-.sidebar p {
+.brand p {
   margin: 8px 0 0;
   color: #b8c5b4;
-}
-
-label {
-  display: grid;
-  gap: 8px;
-  color: #d8e2d5;
-  font-size: 13px;
-}
-
-input,
-textarea {
-  width: 100%;
-  border: 1px solid #cbd6c7;
-  border-radius: 8px;
-  background: #fcfdf9;
-  color: #17211a;
-  padding: 10px 12px;
-}
-
-.sidebar input {
-  border-color: #405244;
-  background: #1a2b20;
-  color: #f8fbf4;
 }
 
 button {
@@ -85,28 +63,166 @@ button:disabled {
   opacity: 0.55;
 }
 
-.threadCurrent {
-  display: grid;
-  gap: 6px;
-  color: #d8e2d5;
-  font-size: 13px;
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #fcfdf9;
+  color: #17211a;
+  padding: 10px 12px;
 }
 
-.threadCurrent code {
-  overflow: hidden;
+.sidebarActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.sideSection {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.sideSection h2 {
+  margin: 0;
+  color: #d8e2d5;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspaceList {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.workspaceRow {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: 56px;
   border: 1px solid #405244;
-  border-radius: 8px;
   background: #1a2b20;
   padding: 10px 12px;
-  color: #f8fbf4;
+  text-align: left;
+}
+
+.workspaceRow.active {
+  border-color: #d95f36;
+  background: #203526;
+}
+
+.workspaceRow span {
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspaceRow code {
+  overflow: hidden;
+  color: #b8c5b4;
+  font-family: inherit;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .workspace {
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-width: 0;
+  background: #f4f6f1;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #dfe5dc;
+  padding: 14px 22px;
+  background: #fbfcf8;
+}
+
+.workspaceTitle {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workspaceTitle span {
+  font-weight: 750;
+}
+
+.workspaceTitle code {
+  overflow: hidden;
+  color: #66715f;
+  font-family: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabbar {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid #dfe5dc;
+  padding: 8px 22px;
+  background: #eef3eb;
+}
+
+.tab {
+  display: inline-grid;
+  grid-template-columns: minmax(84px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  width: 220px;
+  min-height: 36px;
+  border: 1px solid #cbd6c7;
+  background: #ffffff;
+  color: #17211a;
+  padding: 0 9px;
+  text-align: left;
+}
+
+.tab.active {
+  border-color: #d95f36;
+}
+
+.tab span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab strong {
+  border-radius: 999px;
+  background: #fff0e9;
+  color: #a94625;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.tab i {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: #66715f;
+  font-style: normal;
+}
+
+.tab i:hover {
+  background: #e6ece2;
 }
 
 .messages {
@@ -115,7 +231,7 @@ button:disabled {
   gap: 12px;
   min-height: 0;
   overflow: auto;
-  padding: 24px;
+  padding: 22px;
 }
 
 .empty {
@@ -126,7 +242,7 @@ button:disabled {
 .message {
   display: grid;
   gap: 8px;
-  max-width: 980px;
+  max-width: 1080px;
   border-left: 4px solid #a8b4a4;
   padding: 10px 14px;
   background: #ffffff;
@@ -174,10 +290,10 @@ button:disabled {
 
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   border-top: 1px solid #dfe5dc;
-  padding: 16px 24px 24px;
+  padding: 16px 22px 22px;
   background: #f9fbf6;
 }
 
@@ -186,9 +302,21 @@ button:disabled {
   min-height: 88px;
 }
 
-.composer button {
+.composerActions {
+  display: flex;
   align-self: end;
-  min-width: 96px;
+  gap: 8px;
+}
+
+.composerActions button {
+  min-width: 94px;
+}
+
+.secondaryButton,
+.shortcutList button {
+  border: 1px solid #cbd6c7;
+  background: #ffffff;
+  color: #17211a;
 }
 
 .modalOverlay {
@@ -205,13 +333,17 @@ button:disabled {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 16px;
-  width: min(860px, 100%);
-  max-height: min(760px, calc(100vh - 48px));
+  width: min(900px, 100%);
+  max-height: min(780px, calc(100vh - 48px));
   border: 1px solid #cbd6c7;
   border-radius: 8px;
   background: #fcfdf9;
   padding: 20px;
   box-shadow: 0 24px 80px rgb(18 32 24 / 0.28);
+}
+
+.folderModal {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
 .modalHeader {
@@ -243,7 +375,7 @@ button:disabled {
   padding: 0;
   background: #e6ece2;
   color: #17211a;
-  font-size: 22px;
+  font-size: 18px;
   line-height: 1;
 }
 
@@ -251,7 +383,8 @@ button:disabled {
   background: #ffffff;
 }
 
-.threadList {
+.threadList,
+.folderList {
   display: grid;
   gap: 10px;
   min-height: 0;
@@ -259,7 +392,8 @@ button:disabled {
   padding-right: 4px;
 }
 
-.threadRow {
+.threadRow,
+.folderRow {
   display: grid;
   gap: 6px;
   width: 100%;
@@ -272,12 +406,14 @@ button:disabled {
   text-align: left;
 }
 
-.threadRow:hover {
+.threadRow:hover,
+.folderRow:hover {
   border-color: #a8b4a4;
   background: #f4f6f1;
 }
 
-.threadTitle {
+.threadTitle,
+.folderRow span {
   overflow: hidden;
   font-weight: 650;
   line-height: 1.35;
@@ -285,9 +421,14 @@ button:disabled {
   white-space: nowrap;
 }
 
-.threadMeta {
+.threadMeta,
+.folderRow code {
+  overflow: hidden;
   color: #66715f;
+  font-family: inherit;
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .threadPreview {
@@ -308,16 +449,38 @@ button:disabled {
   text-align: center;
 }
 
-@media (max-width: 760px) {
+.folderPathForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+}
+
+.folderBrowser {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+}
+
+.shortcutList {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+@media (max-width: 860px) {
   .app {
     grid-template-columns: 1fr;
   }
 
   .sidebar {
-    padding: 18px;
+    max-height: 320px;
   }
 
-  .composer {
+  .composer,
+  .folderPathForm,
+  .folderBrowser {
     grid-template-columns: 1fr;
   }
 
