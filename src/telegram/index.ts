@@ -290,9 +290,16 @@ const runPrompt = async (
     `instance: ${displayInstanceId(instance)}`,
     images.length ? `images: ${images.length}` : null
   ].filter(Boolean).join("\n"));
+  const knownRecordIds = new Set(instance.records.map((record) => record.id));
   let sentItemCount = 0;
   let stopped = false;
   const sentMessageStatuses = new Map<string, string>();
+  const forwardRecord = async (record: CodexRecord) => {
+    const view = recordToView(record);
+    if (!view || !shouldForwardView(view, sentMessageStatuses)) return;
+    sentItemCount += 1;
+    await ctx.reply(clampTelegram(formatBlock(view.label ?? view.role, view.text, view.status)));
+  };
 
   try {
     let input: TurnInput = prompt;
@@ -308,15 +315,15 @@ const runPrompt = async (
 
     for await (const event of stream) {
       if (event.kind === "record" && event.record) {
-        const view = recordToView(event.record);
-        if (!view || !shouldForwardView(view, sentMessageStatuses)) continue;
-        sentItemCount += 1;
-        await ctx.reply(clampTelegram(formatBlock(view.label ?? view.role, view.text, view.status)));
+        await forwardRecord(event.record);
       }
       if (event.kind === "done") break;
     }
 
     const latest = await getInstance(instance.instanceId).catch(() => null);
+    for (const record of latest?.records ?? []) {
+      if (!knownRecordIds.has(record.id)) await forwardRecord(record);
+    }
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       statusMessage.message_id,
@@ -482,6 +489,7 @@ const formatBlock = (label: string, text: string, status?: CodexRecordView["stat
   `[${[label, status].filter(Boolean).join(" · ")}]\n${text}`;
 
 const shouldForwardView = (view: CodexRecordView, sentStatuses: Map<string, string>) => {
+  if (view.role === "user") return false;
   const status = view.status ?? "final";
   const previousStatus = sentStatuses.get(view.id);
   if (view.role !== "tool") {

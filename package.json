@@ -7,7 +7,7 @@
     "dev:api": "tsx src/server/index.ts",
     "dev:web": "vite --host 0.0.0.0",
     "tui": "tsx src/tui/index.tsx",
-    "bot": "tsx src/telegram/index.ts",
+    "bot": "node --env-file=.env --import tsx src/telegram/index.ts",
     "cache:refresh": "tsx src/cli/refreshCache.ts",
     "check": "tsc --noEmit",
     "build": "tsc --noEmit && vite build"
