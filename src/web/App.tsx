@@ -1094,7 +1094,13 @@ const formatInspectOutput = (record: CodexRecord, output: string): Pick<InspectD
   const text = output.trimEnd();
   if (!text) return {};
   if (shouldShowRawToolOutput(record)) return formatStructuredToolOutput(text);
-  return { outputBlockLabel: "Text", outputBlock: text };
+  return { outputMeta: formatToolOutputFields(text) ?? text };
+};
+
+const formatToolOutputFields = (output: string) => {
+  const fields = parseJsonObject(output);
+  if (!fields) return null;
+  return Object.entries(fields).map(([key, value]) => `${key}: ${formatArgumentValue(value)}`).join("\n");
 };
 
 const shouldShowRawToolOutput = (record: CodexRecord) => {
