@@ -18,9 +18,18 @@ type InstanceSummary = {
 };
 
 type InstanceDetail = InstanceSummary & {
-  messages: Array<{ id: string; role: string; label?: string; text: string; source?: string }>;
+  messages: Array<{
+    id: string;
+    role: string;
+    label?: string;
+    text: string;
+    source?: string;
+    status?: "pending" | "completed" | "failed";
+  }>;
   lastSeq: number;
 };
+
+type InstanceMessage = InstanceDetail["messages"][number];
 
 type ChatState = {
   workingDirectory?: string;
@@ -213,15 +222,16 @@ bot.on("text", async (ctx) => {
     `instance: ${displayInstanceId(instance)}`
   ].join("\n"));
   let sentItemCount = 0;
+  const sentMessageStatuses = new Map<string, string>();
 
   try {
     const stream = streamInstanceEvents(instance.instanceId, instance.lastSeq);
     await postTurn(instance.instanceId, prompt);
 
     for await (const event of stream) {
-      if (event.kind === "message" && event.message?.source === "codex") {
+      if (event.kind === "message" && event.message?.source === "codex" && shouldForwardMessage(event.message, sentMessageStatuses)) {
         sentItemCount += 1;
-        await ctx.reply(clampTelegram(formatBlock(event.message.label ?? event.message.role, event.message.text)));
+        await ctx.reply(clampTelegram(formatBlock(event.message.label ?? event.message.role, event.message.text, event.message.status)));
       }
       if (event.kind === "done") break;
     }
@@ -347,7 +357,28 @@ const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortId = (id: string) => id.slice(0, 8);
 const displayInstanceId = (instance: Pick<InstanceSummary, "instanceId" | "threadId">) => shortId(instance.threadId ?? instance.instanceId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-const formatBlock = (label: string, text: string) => `[${label}]\n${text}`;
+const formatBlock = (label: string, text: string, status?: InstanceMessage["status"]) =>
+  `[${[label, status].filter(Boolean).join(" · ")}]\n${text}`;
+
+const shouldForwardMessage = (message: InstanceMessage, sentStatuses: Map<string, string>) => {
+  const status = message.status ?? "final";
+  const previousStatus = sentStatuses.get(message.id);
+  if (message.role !== "tool") {
+    if (previousStatus) return false;
+    sentStatuses.set(message.id, status);
+    return true;
+  }
+
+  if (status === "pending") {
+    if (previousStatus) return false;
+    sentStatuses.set(message.id, status);
+    return true;
+  }
+
+  if (previousStatus === status) return false;
+  sentStatuses.set(message.id, status);
+  return true;
+};
 
 const clampTelegram = (text: string) => {
   if (text.length <= 3900) return text;

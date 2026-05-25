@@ -12,6 +12,8 @@ export type InstanceMessage = {
   text: string;
   at: string;
   source?: "web" | "telegram" | "codex" | "proxy-runtime";
+  status?: "pending" | "completed" | "failed";
+  itemType?: string;
 };
 
 export type InstanceSummary = {
@@ -104,6 +106,9 @@ export class InstanceHub {
     const deleted = instance.attachments.size === 0;
     if (deleted) {
       instance.abortController?.abort();
+      instance.running = false;
+      instance.updatedAt = new Date().toISOString();
+      this.publish(instance, "done");
       if (instance.threadId) this.proxy.releaseThread(instance.threadId, { workingDirectory: instance.workingDirectory });
       this.instances.delete(instanceId);
     } else {
@@ -127,6 +132,7 @@ export class InstanceHub {
 
     instance.running = true;
     instance.abortController = new AbortController();
+    const turnId = randomUUID();
     this.publish(instance, "instance");
 
     try {
@@ -140,8 +146,8 @@ export class InstanceHub {
         if (event.type === "thread") instance.threadId = event.threadId;
         this.publish(instance, "event", event);
 
-        const message = messageFromProxyEvent(event);
-        if (message) this.appendMessage(instance, message);
+        const message = messageFromProxyEvent(event, turnId);
+        if (message) this.upsertMessage(instance, message);
       }
     } catch (error) {
       if (!instance.abortController.signal.aborted) {
@@ -179,6 +185,23 @@ export class InstanceHub {
       ...partial
     };
     instance.messages.push(message);
+    instance.updatedAt = message.at;
+    this.publish(instance, "message", undefined, message);
+  }
+
+  private upsertMessage(instance: RuntimeInstance, partial: Omit<InstanceMessage, "at">) {
+    const now = new Date().toISOString();
+    const existingIndex = instance.messages.findIndex((message) => message.id === partial.id);
+    const message: InstanceMessage = existingIndex === -1
+      ? { at: now, ...partial }
+      : { ...instance.messages[existingIndex], ...partial, at: now };
+
+    if (existingIndex === -1) {
+      instance.messages.push(message);
+    } else {
+      instance.messages[existingIndex] = message;
+    }
+
     instance.updatedAt = message.at;
     this.publish(instance, "message", undefined, message);
   }
@@ -224,20 +247,136 @@ export class InstanceHub {
   }
 }
 
-const messageFromProxyEvent = (event: ProxyEvent): Omit<InstanceMessage, "id" | "at"> | null => {
-  if (event.type === "artifact") return { role: "event", label: "artifact", text: event.text, source: "codex" };
-  if (event.type === "error") return { role: "error", label: "error", text: event.message, source: "codex" };
-  if (event.type !== "item" || event.phase !== "completed") return null;
+const messageFromProxyEvent = (event: ProxyEvent, turnId: string): Omit<InstanceMessage, "at"> | null => {
+  if (event.type === "artifact") {
+    return { id: randomUUID(), role: "event", label: "artifact", text: event.text, source: "codex" };
+  }
+  if (event.type === "error") {
+    return { id: randomUUID(), role: "error", label: "error", text: event.message, source: "codex", status: "failed" };
+  }
+  if (event.type !== "item") return null;
+  if (isToolItem(event.item)) return toolMessageFromItem(event.item, event.phase, turnId);
+  if (event.phase !== "completed") return null;
 
   const text = itemText(event.item);
   if (!text) return null;
 
   return {
+    id: `item:${turnId}:${event.item.id}`,
     role: itemRole(event.item),
     label: itemLabel(event.item),
     text,
-    source: "codex"
+    source: "codex",
+    itemType: event.item.type
   };
+};
+
+const isToolItem = (item: any) =>
+  item.type === "command_execution" || item.type === "mcp_tool_call" || item.type === "web_search";
+
+const toolMessageFromItem = (
+  item: any,
+  phase: "started" | "updated" | "completed",
+  turnId: string
+): Omit<InstanceMessage, "at"> => {
+  const status = toolStatus(item, phase);
+  return {
+    id: `item:${turnId}:${item.id}`,
+    role: "tool",
+    label: toolLabel(item),
+    text: toolText(item, status),
+    source: "codex",
+    status,
+    itemType: item.type
+  };
+};
+
+const toolStatus = (item: any, phase: "started" | "updated" | "completed"): InstanceMessage["status"] => {
+  if (item.status === "failed") return "failed";
+  if (item.status === "completed" || phase === "completed") return "completed";
+  return "pending";
+};
+
+const toolLabel = (item: any): string => {
+  if (item.type === "command_execution") return "tool call: command";
+  if (item.type === "mcp_tool_call") return `tool call: ${item.server}.${item.tool}`;
+  if (item.type === "web_search") return "tool call: web search";
+  return `tool call: ${item.type ?? "unknown"}`;
+};
+
+const toolText = (item: any, status: InstanceMessage["status"]): string => {
+  if (item.type === "command_execution") return commandToolText(item, status);
+  if (item.type === "mcp_tool_call") return mcpToolText(item, status);
+  if (item.type === "web_search") {
+    return [
+      "Call",
+      `web search: ${item.query}`,
+      "",
+      status === "pending" ? "Waiting for result..." : statusText(status)
+    ].join("\n");
+  }
+  return status === "pending" ? "Waiting for result..." : statusText(status);
+};
+
+const commandToolText = (item: any, status: InstanceMessage["status"]) => [
+  "Call",
+  `$ ${item.command}`,
+  "",
+  status === "pending" ? "Waiting for command result..." : `Result: ${statusText(status)}`,
+  typeof item.exit_code === "number" ? `Exit code: ${item.exit_code}` : null,
+  item.aggregated_output ? ["", "Output", item.aggregated_output].join("\n") : null
+].filter(Boolean).join("\n");
+
+const mcpToolText = (item: any, status: InstanceMessage["status"]) => [
+  "Call",
+  `${item.server}.${item.tool}`,
+  "",
+  "Arguments",
+  stringifyUnknown(item.arguments),
+  "",
+  status === "pending" ? "Waiting for tool result..." : `Result: ${statusText(status)}`,
+  mcpResultText(item)
+].filter(Boolean).join("\n");
+
+const mcpResultText = (item: any): string | null => {
+  if (item.error) return item.error.message;
+
+  const content = item.result?.content
+    ?.map((block: unknown) => contentBlockText(block))
+    .filter((text: string | null): text is string => Boolean(text))
+    .join("\n");
+  if (content) return content;
+
+  if (item.result?.structured_content != null) return stringifyUnknown(item.result.structured_content);
+  return null;
+};
+
+const contentBlockText = (block: unknown): string | null => {
+  if (!block || typeof block !== "object") return null;
+  const record = block as Record<string, unknown>;
+
+  if (record.type === "text" && typeof record.text === "string") return record.text;
+  if (record.type === "image") return "[image result]";
+  if (typeof record.content === "string") return record.content;
+  if (typeof record.text === "string") return record.text;
+
+  return null;
+};
+
+const statusText = (status: InstanceMessage["status"]) => {
+  if (status === "failed") return "failed";
+  if (status === "completed") return "completed";
+  return "waiting";
+};
+
+const stringifyUnknown = (value: unknown) => {
+  if (value == null) return "{}";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 };
 
 const itemRole = (item: any): InstanceMessageRole => {

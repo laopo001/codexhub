@@ -390,10 +390,48 @@ textarea {
   border-color: #bd3434;
 }
 
-.message span {
+.messageHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   color: #66715f;
   font-size: 12px;
   text-transform: uppercase;
+}
+
+.messageHeader b {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messageStatus {
+  border-radius: 999px;
+  background: #e6ece2;
+  color: #405244;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1;
+  padding: 4px 7px;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.messageStatus.pending {
+  background: #fff0d8;
+  color: #8a5a13;
+}
+
+.messageStatus.completed {
+  background: #e4f3e8;
+  color: #236c47;
+}
+
+.messageStatus.failed {
+  background: #fbe3df;
+  color: #9b2f25;
 }
 
 .message pre {

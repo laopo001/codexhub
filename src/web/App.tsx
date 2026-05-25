@@ -12,6 +12,8 @@ type Message = {
   label?: string;
   text: string;
   at?: string;
+  status?: "pending" | "completed" | "failed";
+  itemType?: string;
 };
 
 type WorkspaceEntry = {
@@ -165,8 +167,8 @@ const App = () => {
       const payload = JSON.parse(event.data) as StreamEvent;
       setSessions((current) => current.map((session) => {
         if (session.instanceId !== payload.instance.instanceId) return session;
-        const messages = payload.message && !session.messages.some((message) => message.id === payload.message!.id)
-          ? [...session.messages, payload.message]
+        const messages = payload.message
+          ? mergeMessage(session.messages, payload.message)
           : session.messages;
         return { ...session, ...payload.instance, messages };
       }));
@@ -438,7 +440,10 @@ const App = () => {
 
 const MessageCard = ({ message }: { message: Message }) => (
   <article className={`message ${message.role}`}>
-    <span>{message.label ?? message.role}{message.source ? ` · ${message.source}` : ""}</span>
+    <span className="messageHeader">
+      <b>{message.label ?? message.role}{message.source ? ` · ${message.source}` : ""}</b>
+      {message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
+    </span>
     <pre>{message.text}</pre>
   </article>
 );
@@ -454,6 +459,18 @@ const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 const shortId = (id: string) => id.slice(0, 8);
+
+const mergeMessage = (messages: Message[], incoming: Message) => {
+  const existingIndex = messages.findIndex((message) => message.id === incoming.id);
+  if (existingIndex === -1) return [...messages, incoming];
+  return messages.map((message, index) => index === existingIndex ? { ...message, ...incoming } : message);
+};
+
+const statusLabel = (status: NonNullable<Message["status"]>) => {
+  if (status === "pending") return "Waiting";
+  if (status === "failed") return "Failed";
+  return "Done";
+};
 
 const readStoredUiState = (): { activeWorkspacePath?: string; activeSessionId?: string } | null => {
   try {
