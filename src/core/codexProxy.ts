@@ -1,6 +1,6 @@
 import { Codex, type CodexOptions, type Input, type Thread, type ThreadOptions, type TurnOptions } from "@openai/codex-sdk";
 import { readCodexSessionSnapshot, summarizeCodexSession } from "./codexSession.js";
-import { upsertCodexpThread } from "./codexpCache.js";
+import { upsertCodexpInstanceThread } from "./codexpCache.js";
 import { toProxyEvent, type ProxyEvent } from "./events.js";
 
 export type RunRequest = {
@@ -124,7 +124,7 @@ export class CodexProxy {
           yield event;
         }
         const summary = snapshot ? await summarizeCodexSession(snapshot, workingDirectory) : null;
-        if (summary) await upsertCodexpThread(workingDirectory, summary);
+        if (summary) await upsertCodexpInstanceThread(workingDirectory, summary);
       }
     } catch (error) {
       throw error;

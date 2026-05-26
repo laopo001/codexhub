@@ -1,7 +1,9 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import YAML from "yaml";
 import type { InstanceHub, InstanceSummary } from "./instanceHub.js";
+import { recordsToViews } from "./codexRecordView.js";
 import { listWorkspaces, type WorkspaceEntry } from "./workspaceState.js";
 
 type TaskDefinition = {
@@ -20,14 +22,23 @@ type LoadedTask = {
   task: TaskDefinition;
 };
 
-type TaskRunLog = {
-  timestamp: string;
+type TaskRunRecord = {
+  version: 1;
+  runId: string;
   task: string;
   taskFile: string;
   workspace: string;
-  status: "queued" | "started" | "completed" | "failed" | "skipped";
+  status: "completed" | "failed" | "skipped";
+  queuedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
   reason?: string;
   instanceId?: string;
+  input: string;
+  conversation?: {
+    lastUserMessage: string;
+    lastAssistantMessage: string;
+  };
   message?: string;
 };
 
@@ -118,20 +129,25 @@ export class TaskScheduler {
 
   private async enqueue(loaded: LoadedTask) {
     if (this.queuedTasks.has(loaded.key) || this.runningTasks.has(loaded.key)) {
-      await writeTaskLog(loaded, { status: "skipped", reason: "already_queued_or_running" });
+      await appendTaskRun(loaded, {
+        runId: randomUUID(),
+        status: "skipped",
+        reason: "already_queued_or_running"
+      });
       return;
     }
 
     const instance = await this.resolveTaskInstance(loaded);
     if (!instance) return;
 
+    const runId = randomUUID();
+    const queuedAt = new Date().toISOString();
     this.queuedTasks.add(loaded.key);
-    await writeTaskLog(loaded, { status: "queued", instanceId: instance.instanceId });
 
     const previous = this.instanceQueues.get(instance.instanceId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
-      .then(() => this.runTask(loaded, instance.instanceId));
+      .then(() => this.runTask(loaded, instance.instanceId, runId, queuedAt));
     this.instanceQueues.set(instance.instanceId, next);
     void next.finally(() => {
       if (this.instanceQueues.get(instance.instanceId) === next) this.instanceQueues.delete(instance.instanceId);
@@ -144,7 +160,8 @@ export class TaskScheduler {
     if (target) {
       const matches = instances.filter((instance) => instance.instanceId.startsWith(target));
       if (matches.length === 1) return matches[0];
-      await writeTaskLog(loaded, {
+      await appendTaskRun(loaded, {
+        runId: randomUUID(),
         status: "skipped",
         reason: matches.length ? "ambiguous_instance" : "instance_not_found",
         message: target
@@ -153,25 +170,42 @@ export class TaskScheduler {
     }
     if (instances.length === 1) return instances[0];
     if (instances.length > 1) {
-      await writeTaskLog(loaded, { status: "skipped", reason: "ambiguous_instance" });
+      await appendTaskRun(loaded, {
+        runId: randomUUID(),
+        status: "skipped",
+        reason: "ambiguous_instance"
+      });
       return null;
     }
     return this.instances.createInstance(loaded.workspace, {});
   }
 
-  private async runTask(loaded: LoadedTask, instanceId: string) {
+  private async runTask(loaded: LoadedTask, instanceId: string, runId: string, queuedAt: string) {
     this.queuedTasks.delete(loaded.key);
     this.runningTasks.add(loaded.key);
-    await writeTaskLog(loaded, { status: "started", instanceId });
+    const startedAt = new Date().toISOString();
     try {
       await this.waitForInstanceIdle(instanceId);
       await this.instances.runTurn(instanceId, loaded.task.input, "task");
       await this.instances.saveInstances();
-      await writeTaskLog(loaded, { status: "completed", instanceId });
-    } catch (error) {
-      await writeTaskLog(loaded, {
-        status: "failed",
+      await appendTaskRun(loaded, {
+        runId,
+        status: "completed",
+        queuedAt,
+        startedAt,
+        completedAt: new Date().toISOString(),
         instanceId,
+        conversation: taskConversation(this.instances.getInstance(instanceId))
+      });
+    } catch (error) {
+      await appendTaskRun(loaded, {
+        runId,
+        status: "failed",
+        queuedAt,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        instanceId,
+        conversation: taskConversation(this.instances.getInstance(instanceId)),
         message: error instanceof Error ? error.message : String(error)
       });
     } finally {
@@ -286,18 +320,33 @@ const triggerMinuteKey = (date: Date, timezone: string) => {
   return `${local.year}-${local.month}-${local.dayOfMonth}-${local.hour}-${local.minute}`;
 };
 
-const writeTaskLog = async (loaded: LoadedTask, log: Omit<TaskRunLog, "timestamp" | "task" | "taskFile" | "workspace">) => {
+const appendTaskRun = async (
+  loaded: LoadedTask,
+  run: Omit<TaskRunRecord, "version" | "task" | "taskFile" | "workspace" | "input">
+) => {
   const directory = path.join(loaded.workspace, ".codexp", "task-runs");
   await mkdir(directory, { recursive: true });
   const filePath = path.join(directory, `${safeTaskName(loaded.task.name)}.jsonl`);
-  const entry: TaskRunLog = {
-    timestamp: new Date().toISOString(),
+  const completedAt = run.completedAt ?? (run.status === "skipped" ? new Date().toISOString() : undefined);
+  const record: TaskRunRecord = {
+    version: 1,
     task: loaded.task.name,
     taskFile: loaded.filePath,
     workspace: loaded.workspace,
-    ...log
+    input: loaded.task.input,
+    ...run,
+    completedAt
   };
-  await writeFile(filePath, `${JSON.stringify(entry)}\n`, { encoding: "utf8", flag: "a" });
+  await appendFile(filePath, `${JSON.stringify(record)}\n`, "utf8");
+};
+
+const taskConversation = (instance: ReturnType<InstanceHub["getInstance"]>): TaskRunRecord["conversation"] | undefined => {
+  if (!instance) return undefined;
+  const views = recordsToViews(instance.records);
+  const lastUserMessage = [...views].reverse().find((view) => view.role === "user")?.text ?? "";
+  const lastAssistantMessage = [...views].reverse().find((view) => view.role === "codex")?.text ?? "";
+  if (!lastUserMessage && !lastAssistantMessage) return undefined;
+  return { lastUserMessage, lastAssistantMessage };
 };
 
 const safeTaskName = (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "task";
