@@ -36,7 +36,7 @@
 4. 不再兼容 `.codexp/index.yaml`，不要读取、写入或迁移这个文件。
 5. 全局保存的实例 registry 在 `~/.codex-proxy/instances.yaml`；它和工作区内 `.codexp/instances.yaml` 不是同一个概念。
 6. 工作区任务定义放在 `.codexp/tasks/*.yaml`。
-7. 工作区任务运行日志放在 `.codexp/task-runs/*.jsonl`，每个任务一个文件，每一行是一整次运行的完整记录，便于 `tail` 查看最近几次结果。
+7. 工作区任务运行日志放在 `.codexp/task-runs/*.jsonl`，每个任务一个文件，每一行是一整次运行的完整记录，便于 `tail` 查看最近几次结果；日志时间使用当前系统时区的 ISO offset 格式，例如 `2026-05-26T22:00:28+08:00`。
 8. `.codexp/tmp/` 只用于上传图片等临时文件，不要混放任务、实例索引或长期状态。
 
 ## 定时任务约定

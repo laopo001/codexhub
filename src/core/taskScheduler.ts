@@ -141,7 +141,7 @@ export class TaskScheduler {
     if (!instance) return;
 
     const runId = randomUUID();
-    const queuedAt = new Date().toISOString();
+    const queuedAt = localTimestamp();
     this.queuedTasks.add(loaded.key);
 
     const previous = this.instanceQueues.get(instance.instanceId) ?? Promise.resolve();
@@ -183,7 +183,7 @@ export class TaskScheduler {
   private async runTask(loaded: LoadedTask, instanceId: string, runId: string, queuedAt: string) {
     this.queuedTasks.delete(loaded.key);
     this.runningTasks.add(loaded.key);
-    const startedAt = new Date().toISOString();
+    const startedAt = localTimestamp();
     try {
       await this.waitForInstanceIdle(instanceId);
       await this.instances.runTurn(instanceId, loaded.task.input, "task");
@@ -193,7 +193,7 @@ export class TaskScheduler {
         status: "completed",
         queuedAt,
         startedAt,
-        completedAt: new Date().toISOString(),
+        completedAt: localTimestamp(),
         instanceId,
         conversation: taskConversation(this.instances.getInstance(instanceId))
       });
@@ -203,7 +203,7 @@ export class TaskScheduler {
         status: "failed",
         queuedAt,
         startedAt,
-        completedAt: new Date().toISOString(),
+        completedAt: localTimestamp(),
         instanceId,
         conversation: taskConversation(this.instances.getInstance(instanceId)),
         message: error instanceof Error ? error.message : String(error)
@@ -327,7 +327,7 @@ const appendTaskRun = async (
   const directory = path.join(loaded.workspace, ".codexp", "task-runs");
   await mkdir(directory, { recursive: true });
   const filePath = path.join(directory, `${safeTaskName(loaded.task.name)}.jsonl`);
-  const completedAt = run.completedAt ?? (run.status === "skipped" ? new Date().toISOString() : undefined);
+  const completedAt = run.completedAt ?? (run.status === "skipped" ? localTimestamp() : undefined);
   const record: TaskRunRecord = {
     version: 1,
     task: loaded.task.name,
@@ -348,6 +348,29 @@ const taskConversation = (instance: ReturnType<InstanceHub["getInstance"]>): Tas
   if (!lastUserMessage && !lastAssistantMessage) return undefined;
   return { lastUserMessage, lastAssistantMessage };
 };
+
+const localTimestamp = (date = new Date()) => {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absolute = Math.abs(offsetMinutes);
+  const offset = `${sign}${pad2(Math.floor(absolute / 60))}:${pad2(absolute % 60)}`;
+  return [
+    date.getFullYear(),
+    "-",
+    pad2(date.getMonth() + 1),
+    "-",
+    pad2(date.getDate()),
+    "T",
+    pad2(date.getHours()),
+    ":",
+    pad2(date.getMinutes()),
+    ":",
+    pad2(date.getSeconds()),
+    offset
+  ].join("");
+};
+
+const pad2 = (value: number) => String(value).padStart(2, "0");
 
 const safeTaskName = (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "task";
 
