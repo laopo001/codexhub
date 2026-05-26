@@ -12,6 +12,7 @@ type InstanceSummary = {
   threadId?: string;
   model?: string;
   modelReasoningEffort?: ReasoningEffort;
+  status: InstanceStatus;
   running: boolean;
   attachCount: number;
   title: string;
@@ -69,6 +70,7 @@ type Usage = {
 };
 
 type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+type InstanceStatus = "running" | "idle" | "empty";
 type ModelSelection = "auto" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.3-codex" | "gpt-5.3-codex-spark" | "gpt-5.2";
 type ReasoningSelection = "auto" | ReasoningEffort;
 type MessageDisplayMode = "compact" | "detailed";
@@ -424,8 +426,31 @@ const App = () => {
     const session = sessions.find((item) => item.instanceId === instanceId);
     eventSources.current.get(instanceId)?.close();
     eventSources.current.delete(instanceId);
-    const query = `?clientId=${encodeURIComponent(session?.clientId ?? webInstanceClientId(instanceId))}`;
-    await fetch(`/api/instances/${encodeURIComponent(instanceId)}${query}`, { method: "DELETE" });
+    await fetch(`/api/instances/${encodeURIComponent(instanceId)}/detach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientId: session?.clientId ?? webInstanceClientId(instanceId) })
+    });
+    setSessions((current) => {
+      const next = current.filter((session) => session.instanceId !== instanceId);
+      if (activeSessionId !== instanceId) return next;
+      const replacement = next[0];
+      setActiveSessionId(replacement?.instanceId ?? "");
+      if (replacement) setActiveWorkspacePath(replacement.workingDirectory);
+      return next;
+    });
+    await refreshInstances();
+  };
+
+  const saveInstances = async () => {
+    await apiJson("/api/instances/save", { method: "POST" });
+    await refreshInstances();
+  };
+
+  const deleteInstance = async (instanceId: string) => {
+    eventSources.current.get(instanceId)?.close();
+    eventSources.current.delete(instanceId);
+    await fetch(`/api/instances/${encodeURIComponent(instanceId)}`, { method: "DELETE" });
     setSessions((current) => {
       const next = current.filter((session) => session.instanceId !== instanceId);
       if (activeSessionId !== instanceId) return next;
@@ -571,8 +596,9 @@ const App = () => {
           </div>
         </div>
 
-        <div className="sidebarActions single">
+        <div className="sidebarActions">
           <button type="button" onClick={() => void openPicker()}>New Thread</button>
+          <button type="button" onClick={() => void saveInstances()}>Save</button>
         </div>
 
         <section className="proxyInstances expanded">
@@ -590,7 +616,7 @@ const App = () => {
                   onContextMenu={(event) => openInstanceMenu(event, instance.instanceId)}
                 >
                   <span>{instance.threadId ? shortId(instance.threadId) : shortId(instance.instanceId)}</span>
-                  <strong>{instance.running ? "running" : "idle"}</strong>
+                  <strong>{instance.status}</strong>
                   <code>{instance.title}</code>
                   <em>{instance.attachCount} attached · {instance.workingDirectory}</em>
                 </button>
@@ -613,6 +639,16 @@ const App = () => {
               }}
             >
               Close
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const instanceId = instanceMenu.instanceId;
+                setInstanceMenu(null);
+                void deleteInstance(instanceId);
+              }}
+            >
+              Delete
             </button>
           </div>
         ) : null}

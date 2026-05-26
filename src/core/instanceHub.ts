@@ -4,6 +4,7 @@ import { CodexProxy } from "./codexProxy.js";
 import { asRecord, codexRecordFromSession, type CodexRecord } from "./codexRecord.js";
 import { recordsToViews } from "./codexRecordView.js";
 import { readCodexSessionSnapshot } from "./codexSession.js";
+import { readSavedInstances, writeSavedInstances, type SavedInstance } from "./instanceStore.js";
 import type { ProxyEvent } from "./events.js";
 
 export type InstanceSummary = {
@@ -12,12 +13,14 @@ export type InstanceSummary = {
   threadId?: string;
   model?: string;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"];
+  status: "running" | "idle" | "empty";
   running: boolean;
   attachCount: number;
   title: string;
   updatedAt: string;
   messageCount: number;
   lastUsage?: Usage;
+  savedAt?: string;
 };
 
 export type InstanceDetail = InstanceSummary & {
@@ -49,6 +52,7 @@ type RuntimeInstance = {
   attachments: Set<string>;
   abortController?: AbortController;
   lastUsage?: Usage;
+  savedAt?: string;
   seq: number;
 };
 
@@ -58,6 +62,43 @@ export class InstanceHub {
 
   constructor(codexOptions: CodexOptions = {}, defaultThreadOptions: ThreadOptions = {}) {
     this.proxy = new CodexProxy(codexOptions, defaultThreadOptions);
+  }
+
+  async restoreSavedInstances(): Promise<InstanceSummary[]> {
+    const savedInstances = await readSavedInstances();
+    for (const saved of savedInstances) {
+      if (this.instances.has(saved.instanceId)) {
+        const existing = this.instances.get(saved.instanceId)!;
+        existing.savedAt = saved.savedAt;
+        continue;
+      }
+      const instance = await this.runtimeFromSaved(saved);
+      this.instances.set(instance.instanceId, instance);
+      this.publish(instance, "instance");
+    }
+    return this.listInstances();
+  }
+
+  async saveInstances() {
+    const savedAt = new Date().toISOString();
+    const snapshots = [...this.instances.values()].map((instance): SavedInstance => {
+      instance.savedAt = savedAt;
+      return {
+        instanceId: instance.instanceId,
+        workingDirectory: instance.workingDirectory,
+        threadId: instance.threadId,
+        title: instance.title,
+        threadOptions: { ...instance.threadOptions },
+        updatedAt: instance.updatedAt,
+        savedAt
+      };
+    });
+    const result = await writeSavedInstances(snapshots);
+    for (const instance of this.instances.values()) this.publish(instance, "instance");
+    return {
+      path: result.path,
+      instances: this.listInstances()
+    };
   }
 
   createInstance(workingDirectory: string, options: ThreadOptions = {}): InstanceDetail {
@@ -156,22 +197,29 @@ export class InstanceHub {
     return this.detail(instance);
   }
 
-  deleteOrDetach(instanceId: string, clientId?: string) {
+  detach(instanceId: string, clientId: string) {
     const instance = this.requireInstance(instanceId);
-    if (clientId) instance.attachments.delete(clientId);
-    const deleted = instance.attachments.size === 0;
-    if (deleted) {
+    instance.attachments.delete(clientId);
+    instance.updatedAt = new Date().toISOString();
+    if (instance.attachments.size === 0) {
       instance.abortController?.abort();
       instance.running = false;
-      instance.updatedAt = new Date().toISOString();
-      this.publish(instance, "done");
       if (instance.threadId) this.proxy.releaseThread(instance.threadId, { workingDirectory: instance.workingDirectory });
-      this.instances.delete(instanceId);
-    } else {
-      instance.updatedAt = new Date().toISOString();
-      this.publish(instance, "instance");
     }
-    return { deleted, attachCount: instance.attachments.size };
+    this.publish(instance, "instance");
+    return { deleted: false, attachCount: instance.attachments.size };
+  }
+
+  async deleteInstance(instanceId: string) {
+    const instance = this.requireInstance(instanceId);
+    instance.abortController?.abort();
+    instance.running = false;
+    if (instance.threadId) this.proxy.releaseThread(instance.threadId, { workingDirectory: instance.workingDirectory });
+    this.instances.delete(instanceId);
+    const saved = (await readSavedInstances()).filter((item) => item.instanceId !== instanceId);
+    const result = await writeSavedInstances(saved);
+    this.publish(instance, "done");
+    return { deleted: true, attachCount: 0, path: result.path };
   }
 
   stopTurn(instanceId: string) {
@@ -236,6 +284,31 @@ export class InstanceHub {
     const instance = this.instances.get(instanceId);
     if (!instance) throw new Error(`Instance not found: ${instanceId}`);
     return instance;
+  }
+
+  private async runtimeFromSaved(saved: SavedInstance): Promise<RuntimeInstance> {
+    const records = saved.threadId ? await this.recordsForThread(saved.threadId) : [];
+    return {
+      instanceId: saved.instanceId,
+      workingDirectory: saved.workingDirectory,
+      threadId: saved.threadId,
+      threadOptions: saved.threadOptions,
+      running: false,
+      title: saved.title,
+      updatedAt: records.at(-1)?.timestamp ?? saved.updatedAt,
+      records,
+      events: [],
+      subscribers: new Set(),
+      attachments: new Set(),
+      lastUsage: latestUsage(records),
+      savedAt: saved.savedAt,
+      seq: 0
+    };
+  }
+
+  private async recordsForThread(threadId: string): Promise<CodexRecord[]> {
+    const snapshot = await readCodexSessionSnapshot(threadId);
+    return snapshot?.records.map((record) => codexRecordFromSession(record, threadId)) ?? [];
   }
 
   private async syncRecords(instance: RuntimeInstance) {
@@ -325,12 +398,14 @@ export class InstanceHub {
       threadId: instance.threadId,
       model: instance.threadOptions.model,
       modelReasoningEffort: instance.threadOptions.modelReasoningEffort,
+      status: instanceStatus(instance),
       running: instance.running,
       attachCount: instance.attachments.size,
       title: instance.title,
       updatedAt: instance.updatedAt,
       messageCount: recordsToViews(instance.records).length,
-      lastUsage: instance.lastUsage
+      lastUsage: instance.lastUsage,
+      savedAt: instance.savedAt
     };
   }
 
@@ -342,6 +417,11 @@ export class InstanceHub {
     };
   }
 }
+
+const instanceStatus = (instance: RuntimeInstance): InstanceSummary["status"] => {
+  if (instance.running) return "running";
+  return instance.threadId ? "idle" : "empty";
+};
 
 const summarizeInput = (input: Input) => {
   if (typeof input === "string") return input;

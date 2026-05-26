@@ -13,6 +13,7 @@ type InstanceSummary = {
   instanceId: string;
   workingDirectory: string;
   threadId?: string;
+  status: InstanceStatus;
   running: boolean;
   attachCount: number;
   title: string;
@@ -24,6 +25,8 @@ type InstanceDetail = InstanceSummary & {
   records: CodexRecord[];
   lastSeq: number;
 };
+
+type InstanceStatus = "running" | "idle" | "empty";
 
 type TurnInput = string | Array<
   | { type: "text"; text: string }
@@ -110,7 +113,7 @@ bot.command("instances", async (ctx) => {
     await ctx.reply("选择要打开的 Codex 实例：", {
       reply_markup: {
         inline_keyboard: instances.map((instance) => ([{
-          text: `${displayInstanceId(instance)}  ${instance.running ? "running" : "idle"}  ${shortPath(instance.workingDirectory)}`,
+          text: `${displayInstanceId(instance)}  ${instance.status}  ${shortPath(instance.workingDirectory)}`,
           callback_data: `attach:${instance.instanceId}`
         }]))
       }
@@ -153,7 +156,7 @@ bot.command("status", async (ctx) => {
       `usage：${formatCodexUsage(usage)}`,
       "",
       instances.length
-        ? instances.map((instance) => `${displayInstanceId(instance)} ${instance.running ? "running" : "idle"} ${instance.attachCount} attached`).join("\n")
+        ? instances.map((instance) => `${displayInstanceId(instance)} ${instance.status} ${instance.attachCount} attached`).join("\n")
         : "当前没有 Codex 实例。"
     ].filter(Boolean).join("\n"));
   } catch (error) {
@@ -244,7 +247,7 @@ bot.action(/^attach:(.+)$/, async (ctx) => {
     const instance = await attachInstance(ctx.chat!.id, instanceId);
     await ctx.answerCbQuery("Attached");
     await ctx.editMessageText([
-      `已打开：${displayInstanceId(instance)} ${instance.running ? "running" : "idle"}`,
+      `已打开：${displayInstanceId(instance)} ${instance.status}`,
       instance.workingDirectory
     ].join("\n"));
   } catch (error) {
@@ -381,8 +384,10 @@ const attachInstance = async (chatId: number, instanceId: string) => {
 const detachCurrent = async (chatId: number) => {
   const current = chatStates.get(chatId);
   if (!current?.instanceId) return;
-  await fetch(apiUrl(`/api/instances/${encodeURIComponent(current.instanceId)}?clientId=${encodeURIComponent(tgClientId(chatId))}`), {
-    method: "DELETE"
+  await fetch(apiUrl(`/api/instances/${encodeURIComponent(current.instanceId)}/detach`), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: tgClientId(chatId) })
   }).catch(() => undefined);
   chatStates.delete(chatId);
 };

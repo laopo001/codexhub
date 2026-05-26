@@ -51,7 +51,6 @@ const boolFromEnv = (value: string | undefined, fallback: boolean) => {
 const staticRoot = () => boolFromEnv(process.env.CODEX_PROXY_SERVE_STATIC, false)
   ? path.resolve(process.env.CODEX_PROXY_STATIC_DIR ?? "dist")
   : null;
-
 const uploadImageSchema = z.object({
   workingDirectory: z.string().min(1),
   filename: z.string().optional(),
@@ -66,6 +65,7 @@ const main = async () => {
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot();
 
+  await instances.restoreSavedInstances();
   await app.register(cors, { origin: true });
 
   app.get("/api/health", async () => ({
@@ -123,6 +123,12 @@ const main = async () => {
 
   app.get("/api/instances", async () => ({
     instances: instances.listInstances()
+  }));
+
+  app.post("/api/instances/save", async () => instances.saveInstances());
+
+  app.post("/api/instances/restore-saved", async () => ({
+    instances: await instances.restoreSavedInstances()
   }));
 
   app.get("/api/codex-threads", async (request) => {
@@ -184,11 +190,21 @@ const main = async () => {
     }
   });
 
+  app.post("/api/instances/:instanceId/detach", async (request, reply) => {
+    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({ clientId: z.string().min(1) }).parse(request.body);
+    try {
+      return instances.detach(params.instanceId, payload.clientId);
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   app.delete("/api/instances/:instanceId", async (request, reply) => {
     const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
-    const query = z.object({ clientId: z.string().optional() }).parse(request.query);
     try {
-      return instances.deleteOrDetach(params.instanceId, query.clientId);
+      return await instances.deleteInstance(params.instanceId);
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
