@@ -1,6 +1,7 @@
 import { Telegraf } from "telegraf";
 import type { CodexRecord } from "../core/codexRecord.js";
 import { recordToView, type CodexRecordView } from "../core/codexRecordView.js";
+import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../shared/compactRecordViews.js";
 
 type DirectoryListing = {
   path: string;
@@ -293,12 +294,26 @@ const runPrompt = async (
   const knownRecordIds = new Set(instance.records.map((record) => record.id));
   let sentItemCount = 0;
   let stopped = false;
-  const sentMessageStatuses = new Map<string, string>();
+  const compactState = createCompactRecordViewState();
+  const sentMessages = new Map<string, { messageId: number; status: string }>();
   const forwardRecord = async (record: CodexRecord) => {
     const view = recordToView(record);
-    if (!view || !shouldForwardView(view, sentMessageStatuses)) return;
+    if (!view) return;
+    const change = compactRecordView(compactState, view);
+    if (!shouldForwardView(change.view, sentMessages)) return;
+
+    const text = clampTelegram(formatBlock(change.view.label ?? change.view.role, change.view.text, change.view.status));
+    const existing = sentMessages.get(change.previousId ?? change.view.id);
+    if (!change.appended && existing) {
+      await ctx.telegram.editMessageText(ctx.chat.id, existing.messageId, undefined, text);
+      sentMessages.delete(change.previousId ?? change.view.id);
+      sentMessages.set(change.view.id, { messageId: existing.messageId, status: change.view.status ?? "final" });
+      return;
+    }
+
+    const message = await ctx.reply(text);
     sentItemCount += 1;
-    await ctx.reply(clampTelegram(formatBlock(view.label ?? view.role, view.text, view.status)));
+    sentMessages.set(change.view.id, { messageId: message.message_id, status: change.view.status ?? "final" });
   };
 
   try {
@@ -492,24 +507,21 @@ const formatPercent = (value: number) => {
 const formatBlock = (label: string, text: string, status?: CodexRecordView["status"]) =>
   `[${[label, status].filter(Boolean).join(" · ")}]\n${text}`;
 
-const shouldForwardView = (view: CodexRecordView, sentStatuses: Map<string, string>) => {
+const shouldForwardView = (view: CompactRecordView, sentMessages: Map<string, { status: string }>) => {
   if (view.role === "user") return false;
   const status = view.status ?? "final";
-  const previousStatus = sentStatuses.get(view.id);
+  const previousStatus = sentMessages.get(view.id)?.status;
   if (view.role !== "tool") {
     if (previousStatus) return false;
-    sentStatuses.set(view.id, status);
     return true;
   }
 
   if (status === "pending") {
     if (previousStatus) return false;
-    sentStatuses.set(view.id, status);
     return true;
   }
 
   if (previousStatus === status) return false;
-  sentStatuses.set(view.id, status);
   return true;
 };
 

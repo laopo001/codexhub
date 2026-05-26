@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
+import { compactToolViews, type CompactRecordView } from "../shared/compactRecordViews.js";
 import "./style.css";
 
 type InstanceSummary = {
@@ -71,11 +72,7 @@ type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 type ModelSelection = "auto" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.3-codex" | "gpt-5.3-codex-spark" | "gpt-5.2";
 type ReasoningSelection = "auto" | ReasoningEffort;
 type MessageDisplayMode = "compact" | "detailed";
-type WebRecordView = CodexRecordView & {
-  inspectRecord?: CodexRecord;
-  inspectCallText?: string;
-  inspectText?: string;
-};
+type WebRecordView = CompactRecordView;
 type InspectDetail = {
   inputMeta: string;
   inputBlockLabel?: string;
@@ -1109,55 +1106,6 @@ const isMatchingOptimisticUserRecord = (record: CodexRecord, incoming: CodexReco
     && recordPayload.message === incomingPayload.message;
 };
 
-const compactToolViews = (views: CodexRecordView[]): WebRecordView[] => {
-  const compacted: WebRecordView[] = [];
-  const toolIndexes = new Map<string, number>();
-  for (const view of views) {
-    if (view.role !== "tool") {
-      compacted.push(view);
-      continue;
-    }
-
-    const payload = asRecord(view.record.payload);
-    if (view.status === "pending") {
-      const callId = compactToolCallId(view);
-      toolIndexes.set(callId, compacted.length);
-      compacted.push({
-        ...view,
-        id: `compact-tool:${callId}`,
-        label: view.label.replace(/^tool call:\s*/i, "tool: "),
-        text: formatCompactToolCall(view),
-        inspectCallText: view.text
-      });
-      continue;
-    }
-
-    const callId = compactToolCallId(view);
-    const callIndex = toolIndexes.get(callId);
-    if (callIndex == null || payload?.type !== "function_call_output") {
-      compacted.push(view);
-      continue;
-    }
-
-    const callView = compacted[callIndex];
-    compacted[callIndex] = {
-      ...callView,
-      text: view.status === "failed" && view.text ? [callView.text, `Output:\n${view.text.trimEnd()}`].join("\n\n") : callView.text,
-      at: view.at ?? callView.at,
-      status: view.status,
-      record: callView.record,
-      inspectRecord: view.record,
-      inspectText: view.text
-    };
-  }
-  return compacted;
-};
-
-const compactToolCallId = (view: CodexRecordView) => {
-  const payload = asRecord(view.record.payload);
-  return typeof payload?.call_id === "string" ? payload.call_id : view.id;
-};
-
 const formatInspectDetail = (message: WebRecordView): InspectDetail => {
   const inspectRecord = message.inspectRecord ?? message.record;
   const payload = asRecord(inspectRecord.payload);
@@ -1220,17 +1168,6 @@ const cleanTerminalOutput = (text: string) => text
   .replace(/\x1b[@-Z\\-_]/g, "")
   .replace(/\r\n/g, "\n")
   .replace(/\r/g, "\n");
-
-const formatCompactToolCall = (view: CodexRecordView) => {
-  const payload = asRecord(view.record.payload);
-  if (payload?.type !== "function_call") return view.text;
-  const name = typeof payload.name === "string" ? payload.name : "tool";
-  const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");
-  if (name === "write_stdin" && args) return formatWriteStdinSummary(args);
-  if (name === "exec_command" && typeof args?.cmd === "string") return `$ ${args.cmd}`;
-  if (args) return `${name} ${JSON.stringify(args)}`;
-  return view.text;
-};
 
 const formatInspectInput = (record: CodexRecord, fallback: string): Omit<InspectDetail, "output"> => {
   const payload = asRecord(record.payload);
