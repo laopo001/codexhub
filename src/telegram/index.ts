@@ -256,22 +256,32 @@ bot.action(/^attach:(.+)$/, async (ctx) => {
 bot.on("text", async (ctx) => {
   const prompt = ctx.message.text.trim();
   if (!prompt || prompt.startsWith("/")) return;
-  await runPrompt(ctx, prompt, []);
+  runPromptInBackground(ctx, prompt, []);
 });
 
 bot.on("photo", async (ctx) => {
   const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
   const photo = ctx.message.photo.at(-1);
   if (!photo) return;
-  await runPrompt(ctx, prompt, [{ fileId: photo.file_id, filename: `${photo.file_id}.jpg` }]);
+  runPromptInBackground(ctx, prompt, [{ fileId: photo.file_id, filename: `${photo.file_id}.jpg` }]);
 });
 
 bot.on("document", async (ctx) => {
   const document = ctx.message.document;
   if (!document.mime_type?.startsWith("image/")) return;
   const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
-  await runPrompt(ctx, prompt, [{ fileId: document.file_id, filename: document.file_name ?? `${document.file_id}.png` }]);
+  runPromptInBackground(ctx, prompt, [{ fileId: document.file_id, filename: document.file_name ?? `${document.file_id}.png` }]);
 });
+
+const runPromptInBackground = (
+  ctx: any,
+  prompt: string,
+  images: Array<{ fileId: string; filename: string }>
+) => {
+  void runPrompt(ctx, prompt, images).catch((error) => {
+    console.error("Unhandled background runPrompt error", error);
+  });
+};
 
 const runPrompt = async (
   ctx: any,

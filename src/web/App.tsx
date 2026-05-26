@@ -511,9 +511,9 @@ const App = () => {
     setSessions((current) => current.map((session) => session.instanceId === instanceId ? { ...session, input } : session));
   };
 
-  const addSessionImages = (instanceId: string, files: FileList | null) => {
-    if (!files?.length) return;
-    const images = [...files]
+  const addSessionImageFiles = (instanceId: string, files: File[]) => {
+    if (!files.length) return;
+    const images = files
       .filter((file) => file.type.startsWith("image/"))
       .map((file) => ({
         id: browserId(),
@@ -521,9 +521,22 @@ const App = () => {
         name: file.name,
         previewUrl: URL.createObjectURL(file)
       }));
+    if (!images.length) return;
     setSessions((current) => current.map((session) => session.instanceId === instanceId
       ? { ...session, imageAttachments: [...session.imageAttachments, ...images] }
       : session));
+  };
+
+  const addSessionImages = (instanceId: string, files: FileList | null) => {
+    if (!files?.length) return;
+    addSessionImageFiles(instanceId, [...files]);
+  };
+
+  const pasteSessionImages = (instanceId: string, clipboardData: DataTransfer) => {
+    const images = clipboardImageFiles(clipboardData);
+    if (!images.length) return false;
+    addSessionImageFiles(instanceId, images);
+    return true;
   };
 
   const removeSessionImage = (instanceId: string, imageId: string) => {
@@ -688,6 +701,10 @@ const App = () => {
                   <textarea
                     value={activeSession.input}
                     onChange={(event) => updateSessionInput(activeSession.instanceId, event.target.value)}
+                    onPaste={(event) => {
+                      if (!pasteSessionImages(activeSession.instanceId, event.clipboardData)) return;
+                      event.preventDefault();
+                    }}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
                       event.preventDefault();
@@ -1262,6 +1279,15 @@ const parseJsonObject = (value: string): Record<string, unknown> | null => {
   } catch {
     return null;
   }
+};
+
+const clipboardImageFiles = (clipboardData: DataTransfer) => {
+  const itemFiles = [...clipboardData.items]
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+  if (itemFiles.length) return itemFiles;
+  return [...clipboardData.files].filter((file) => file.type.startsWith("image/"));
 };
 
 const errorRecord = (label: string, error: unknown): CodexRecord => ({
