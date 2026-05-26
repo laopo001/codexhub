@@ -739,7 +739,7 @@ const App = () => {
                       {selectedModel === "auto" ? "Auto" : modelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel}
                     </button>
                     <button type="submit" className="composerSendButton" disabled={!activeCanSubmit} aria-label={activeSession.running ? "Stop current turn" : "Send message"}>
-                      {activeSession.running ? "Stop" : "↑"}
+                      {activeSession.running ? <span className="composerStopIcon" aria-hidden="true" /> : "↑"}
                     </button>
                   </div>
                 </div>

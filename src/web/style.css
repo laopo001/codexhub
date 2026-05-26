@@ -716,6 +716,13 @@ textarea {
   color: #8a9584;
 }
 
+.composerStopIcon {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: currentColor;
+}
+
 .composerMenu {
   position: absolute;
   bottom: calc(100% + 10px);
