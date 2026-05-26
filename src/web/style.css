@@ -19,6 +19,7 @@ body,
 body {
   margin: 0;
   overflow: hidden;
+  touch-action: manipulation;
 }
 
 button,
@@ -31,8 +32,20 @@ textarea {
 .app {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
+  width: 100vw;
   height: 100vh;
+  height: 100svh;
   min-height: 0;
+  overflow: hidden;
+}
+
+.app.sidebarCollapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app.sidebarCollapsed .workspace {
+  grid-column: 1;
+  width: 100%;
 }
 
 .sidebar {
@@ -44,6 +57,21 @@ textarea {
   padding: 22px;
   background: #122018;
   color: #f8fbf4;
+}
+
+.sidebarCollapsed .sidebar {
+  display: none;
+}
+
+.sidebarScrim {
+  display: none;
+}
+
+.brand {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .brand h1 {
@@ -280,13 +308,28 @@ textarea {
 }
 
 .topbar {
-  display: flex;
+  position: relative;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid #dfe5dc;
   padding: 14px 22px;
   background: #fbfcf8;
+}
+
+.sidebarPanelToggle {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border: 1px solid #cbd6c7;
+  background: #ffffff;
+  color: #17211a;
+  padding: 0 12px;
+}
+
+.sidebarPanelToggle:hover {
+  background: #f4f6f1;
 }
 
 .workbar {
@@ -396,10 +439,17 @@ textarea {
   padding: 24px 22px 18px;
 }
 
+.messages > div {
+  max-width: calc(100% - 44px);
+}
+
 .empty {
   display: grid;
   min-height: 100%;
+  min-width: 0;
   place-items: center;
+  overflow-wrap: anywhere;
+  text-align: center;
   color: #6a7467;
 }
 
@@ -561,7 +611,7 @@ textarea {
   align-items: end;
   gap: 10px;
   border-top: 1px solid #dfe5dc;
-  padding: 14px 22px 18px;
+  padding: 14px 22px calc(18px + env(safe-area-inset-bottom));
   background: #f4f6f1;
 }
 
@@ -659,7 +709,7 @@ textarea {
   place-items: center;
   background: rgb(18 32 24 / 0.58);
   padding: 24px;
-  z-index: 20;
+  z-index: 100;
 }
 
 .modal {
@@ -861,11 +911,37 @@ textarea {
 @media (max-width: 860px) {
   .app {
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
   }
 
   .sidebar {
-    max-height: 320px;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 70;
+    width: min(320px, 86vw);
+    max-height: none;
+    box-shadow: 18px 0 42px rgb(0 0 0 / 0.32);
+  }
+
+  .sidebarScrim {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: block;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(0 0 0 / 0.42);
+    padding: 0;
+  }
+
+  .app.sidebarCollapsed .sidebar {
+    display: none;
+  }
+
+  .app:not(.sidebarCollapsed) .workspace {
+    grid-column: 1;
   }
 
   .folderPathForm,
@@ -877,9 +953,65 @@ textarea {
     min-height: 0;
   }
 
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  }
+
+  .workspaceTitle {
+    max-width: none;
+  }
+
+  .workbar {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  .runtimeSelect,
+  .switchControl,
+  .workbar span {
+    max-width: 100%;
+  }
+
+  .runtimeSelect {
+    grid-template-columns: auto minmax(0, auto);
+  }
+
+  .runtimeSelect select {
+    min-width: 0;
+  }
+
+  .messages {
+    padding: 14px 12px 12px;
+  }
+
+  .messages > div {
+    max-width: calc(100% - 24px);
+  }
+
+  .message {
+    padding: 10px 10px 22px;
+  }
+
+  .messageMeta {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .composer {
     grid-template-columns: 1fr;
-    padding: 12px;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .composer textarea {
+    min-height: 52px;
+    max-height: 132px;
+    border-radius: 16px;
+    padding: 14px 16px;
   }
 
   .composerActions {

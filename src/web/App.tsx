@@ -159,6 +159,7 @@ const App = () => {
   const [selectedModel, setSelectedModel] = useState<ModelSelection>("auto");
   const [selectedReasoning, setSelectedReasoning] = useState<ReasoningSelection>("auto");
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [codexUsage, setCodexUsage] = useState<CodexUsageSnapshot | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
   const messagesRef = useRef<VirtuosoHandle>(null);
@@ -198,9 +199,10 @@ const App = () => {
       lastFolderPath,
       selectedModel,
       selectedReasoning,
-      messageDisplayMode
+      messageDisplayMode,
+      sidebarCollapsed
     }));
-  }, [activeWorkspacePath, activeSessionId, lastFolderPath, selectedModel, selectedReasoning, messageDisplayMode, initialized]);
+  }, [activeWorkspacePath, activeSessionId, lastFolderPath, selectedModel, selectedReasoning, messageDisplayMode, sidebarCollapsed, initialized]);
 
   useEffect(() => {
     const interval = window.setInterval(() => void refreshInstances(), 3000);
@@ -282,6 +284,7 @@ const App = () => {
     setSelectedModel(saved?.selectedModel ?? "auto");
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
+    setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     setInstances(loadedInstances);
     const savedInstanceExists = saved?.activeSessionId
       ? loadedInstances.some((instance) => instance.instanceId === saved.activeSessionId)
@@ -524,11 +527,21 @@ const App = () => {
   };
 
   return (
-    <main className="app">
+    <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
+      {!sidebarCollapsed ? (
+        <button
+          type="button"
+          className="sidebarScrim"
+          onClick={() => setSidebarCollapsed(true)}
+          aria-label="Hide instances"
+        />
+      ) : null}
       <aside className="sidebar">
         <div className="brand">
-          <h1>Codex Proxy</h1>
-          <p>Local agent workbench</p>
+          <div>
+            <h1>Codex Proxy</h1>
+            <p>Local agent workbench</p>
+          </div>
         </div>
 
         <div className="sidebarActions single">
@@ -580,6 +593,15 @@ const App = () => {
 
       <section className="workspace">
         <header className="topbar">
+          <button
+            type="button"
+            className="sidebarPanelToggle"
+            onClick={() => setSidebarCollapsed((current) => !current)}
+            aria-label={sidebarCollapsed ? "Show instances" : "Hide instances"}
+            title={sidebarCollapsed ? "Show instances" : "Hide instances"}
+          >
+            {sidebarCollapsed ? "Instances" : "Hide"}
+          </button>
           <div className="workspaceTitle">
             <span>{activeSession?.title ?? "No active instance"}</span>
             <code>{activeSession?.workingDirectory ?? activeWorkspacePath}</code>
@@ -1287,6 +1309,7 @@ const readStoredUiState = (): {
   selectedModel?: ModelSelection;
   selectedReasoning?: ReasoningSelection;
   messageDisplayMode?: MessageDisplayMode;
+  sidebarCollapsed?: boolean;
 } | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
@@ -1299,7 +1322,8 @@ const readStoredUiState = (): {
       selectedReasoning: isReasoningSelection(parsed.selectedReasoning) ? parsed.selectedReasoning : undefined,
       messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)
         ? parsed.messageDisplayMode
-        : isMessageDisplayMode(parsed.toolDisplayMode) ? parsed.toolDisplayMode : undefined
+        : isMessageDisplayMode(parsed.toolDisplayMode) ? parsed.toolDisplayMode : undefined,
+      sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined
     };
   } catch {
     return null;

@@ -8,6 +8,7 @@ ENV_FILE="${CODEX_PROXY_ENV_FILE:-.env.prod}"
 PROD_PORT="${CODEX_PROXY_PROD_PORT:-18788}"
 NEXT_PORT="${CODEX_PROXY_NEXT_PORT:-18790}"
 NEXT_URL="http://127.0.0.1:${NEXT_PORT}"
+unset CODEX_SANDBOX_MODE
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing ${ENV_FILE}. Create it from .env.prod.example first." >&2
