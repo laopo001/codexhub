@@ -17,6 +17,11 @@ pnpm dev:api
 pnpm dev:web
 ```
 
+Dev 使用原 4 位端口：
+
+- Web: `http://127.0.0.1:5173`
+- API: `http://127.0.0.1:8788`
+
 TUI：
 
 ```bash
@@ -27,6 +32,31 @@ Telegram bot：
 
 ```bash
 TELEGRAM_BOT_TOKEN=xxx pnpm bot
+```
+
+## 生产发布
+
+生产环境由 PM2 管理，使用 5 位 `1xxxx` 端口；API server 同时服务 Web `dist`。
+
+```bash
+cp .env.prod.example .env.prod
+pnpm publish:prod
+```
+
+长期进程：
+
+- `codex-proxy-prod`: `http://127.0.0.1:18788`
+- `codex-proxy-tg`: Telegram bot，连接 `http://127.0.0.1:18788`
+
+发布脚本会先运行 `pnpm check` 和 `pnpm build`，再用临时端口 `18790` 启动 `codex-proxy-next` 做 `/api/health` 和 `/` 健康检查；检查通过后才重启生产进程。
+
+常用命令：
+
+```bash
+pm2 list
+pm2 logs codex-proxy-prod
+pm2 logs codex-proxy-tg
+pm2 restart codex-proxy-prod
 ```
 
 ## API

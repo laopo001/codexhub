@@ -10,7 +10,8 @@
     "bot": "node --env-file=.env --import tsx src/telegram/index.ts",
     "cache:refresh": "tsx src/cli/refreshCache.ts",
     "check": "tsc --noEmit",
-    "build": "tsc --noEmit && vite build"
+    "build": "tsc --noEmit && vite build",
+    "publish:prod": "bash scripts/publish-prod.sh"
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",

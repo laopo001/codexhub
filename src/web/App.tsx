@@ -499,7 +499,7 @@ const App = () => {
     const images = [...files]
       .filter((file) => file.type.startsWith("image/"))
       .map((file) => ({
-        id: crypto.randomUUID(),
+        id: browserId(),
         file,
         name: file.name,
         previewUrl: URL.createObjectURL(file)
@@ -991,7 +991,7 @@ function readWebClientId() {
   const key = "codex-proxy-web-client-id";
   const existing = sessionStorage.getItem(key);
   if (existing) return existing;
-  const next = `web:${crypto.randomUUID()}`;
+  const next = `web:${browserId()}`;
   sessionStorage.setItem(key, next);
   return next;
 }
@@ -1237,7 +1237,7 @@ const parseJsonObject = (value: string): Record<string, unknown> | null => {
 };
 
 const errorRecord = (label: string, error: unknown): CodexRecord => ({
-  id: `web:${crypto.randomUUID()}`,
+  id: `web:${browserId()}`,
   timestamp: new Date().toISOString(),
   type: "error",
   payload: {
@@ -1245,6 +1245,19 @@ const errorRecord = (label: string, error: unknown): CodexRecord => ({
     message: error instanceof Error ? error.message : String(error)
   }
 });
+
+function browserId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
 
 const statusLabel = (status: NonNullable<CodexRecordView["status"]>) => {
   if (status === "pending") return "Waiting";

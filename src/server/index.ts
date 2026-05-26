@@ -1,8 +1,8 @@
 import cors from "@fastify/cors";
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -44,6 +44,13 @@ const imageExtension = (filename?: string) => {
 };
 
 const codexpTmpDirectory = (workingDirectory: string) => path.join(path.resolve(workingDirectory), ".codexp", "tmp");
+const boolFromEnv = (value: string | undefined, fallback: boolean) => {
+  if (value == null || value === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+};
+const staticRoot = () => boolFromEnv(process.env.CODEX_PROXY_SERVE_STATIC, false)
+  ? path.resolve(process.env.CODEX_PROXY_STATIC_DIR ?? "dist")
+  : null;
 
 const uploadImageSchema = z.object({
   workingDirectory: z.string().min(1),
@@ -57,11 +64,17 @@ const main = async () => {
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const defaultWorkingDirectory = config.defaultThreadOptions.workingDirectory ?? process.cwd();
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
+  const staticDirectory = staticRoot();
 
   await app.register(cors, { origin: true });
 
   app.get("/api/health", async () => ({
     ok: true,
+    env: process.env.CODEX_PROXY_ENV ?? process.env.NODE_ENV ?? "development",
+    build: process.env.CODEX_PROXY_BUILD_ID ?? null,
+    host: config.host,
+    port: config.port,
+    staticDirectory,
     defaultWorkingDirectory,
     model: config.defaultThreadOptions.model ?? null,
     modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
@@ -241,7 +254,58 @@ const main = async () => {
     }
   });
 
+  if (staticDirectory) registerStaticRoutes(app, staticDirectory);
+
   await app.listen({ host: config.host, port: config.port });
+};
+
+const registerStaticRoutes = (app: FastifyInstance, root: string) => {
+  const sendIndex = async (_request: unknown, reply: any) => {
+    const indexPath = path.join(root, "index.html");
+    if (!await fileExists(indexPath)) {
+      reply.code(404);
+      return { error: "dist_index_not_found", path: indexPath };
+    }
+    reply.type("text/html; charset=utf-8");
+    return reply.send(createReadStream(indexPath));
+  };
+
+  app.get("/", sendIndex);
+  app.get("/*", async (request, reply) => {
+    const rawPath = (request.params as { "*": string })["*"] ?? "";
+    const requested = path.resolve(root, rawPath);
+    if (!requested.startsWith(`${root}${path.sep}`)) {
+      reply.code(403);
+      return { error: "forbidden_path" };
+    }
+    if (await fileExists(requested)) {
+      reply.type(contentType(requested));
+      return reply.send(createReadStream(requested));
+    }
+    return sendIndex(request, reply);
+  });
+};
+
+const fileExists = async (filePath: string) => {
+  try {
+    return (await stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const contentType = (filePath: string) => {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".html") return "text/html; charset=utf-8";
+  if (extension === ".js") return "text/javascript; charset=utf-8";
+  if (extension === ".css") return "text/css; charset=utf-8";
+  if (extension === ".json") return "application/json; charset=utf-8";
+  if (extension === ".svg") return "image/svg+xml";
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".ico") return "image/x-icon";
+  return "application/octet-stream";
 };
 
 main().catch((error) => {

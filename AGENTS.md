@@ -27,3 +27,13 @@
 1. 新功能使用 `/api/instances` 系列接口。
 2. 不要再为新逻辑增加 `/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
 3. 历史会话读取可以以后重新设计；当前运行态以 instance 为准。
+
+## 自举开发和发布
+
+1. Dev 继续使用原 4 位端口：Web `5173`，API `8788`。
+2. Prod 使用 5 位 `1xxxx` 端口：主入口 `18788`，发布健康检查临时端口 `18790`。
+3. Prod 由 PM2 管理长期进程：`codex-proxy-prod` 和 `codex-proxy-tg`。
+4. 生产 Web 不跑 Vite；API server 在 `CODEX_PROXY_SERVE_STATIC=true` 时直接服务 `dist`。
+5. Telegram bot 只连接 Prod API：`http://127.0.0.1:18788`。
+6. 发布使用 `pnpm publish:prod`，脚本必须先 `pnpm check`、`pnpm build`，再用 `codex-proxy-next` 在 `18790` 验证 `/api/health` 和 `/`，通过后才重启 Prod。
+7. 不要让本地 Dev 进程替换 PM2 Prod；开发验证和生产发布必须分开。
