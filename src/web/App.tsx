@@ -1136,6 +1136,7 @@ const formatCompactToolCall = (view: CodexRecordView) => {
   const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");
   if (name === "write_stdin" && args) return formatWriteStdinSummary(args);
   if (name === "exec_command" && typeof args?.cmd === "string") return `$ ${args.cmd}`;
+  if (args) return `${name} ${JSON.stringify(args)}`;
   return view.text;
 };
 
