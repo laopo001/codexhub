@@ -11,6 +11,7 @@ import { readCodexUsage } from "../core/codexUsage.js";
 import { recordsToViews } from "../core/codexRecordView.js";
 import { listLoadableCodexThreads, loadCodexThread } from "../core/codexpLog.js";
 import { InstanceHub } from "../core/instanceHub.js";
+import { TaskScheduler } from "../core/taskScheduler.js";
 import { addWorkspace, listDirectoryChildren, listWorkspaces, touchWorkspace } from "../core/workspaceState.js";
 
 const inputSchema = z.union([
@@ -64,8 +65,10 @@ const main = async () => {
   const defaultWorkingDirectory = config.defaultThreadOptions.workingDirectory ?? process.cwd();
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot();
+  const taskScheduler = new TaskScheduler(instances, defaultWorkingDirectory);
 
   await instances.restoreSavedInstances();
+  taskScheduler.start();
   await app.register(cors, { origin: true });
 
   app.get("/api/health", async () => ({

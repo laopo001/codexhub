@@ -229,7 +229,7 @@ export class InstanceHub {
     return { stopped: true };
   }
 
-  async runTurn(instanceId: string, input: Input, _source: "web" | "telegram" = "web") {
+  async runTurn(instanceId: string, input: Input, _source: "web" | "telegram" | "task" = "web") {
     const instance = this.requireInstance(instanceId);
     if (instance.running) throw new Error(`Instance is already running: ${instanceId}`);
 
