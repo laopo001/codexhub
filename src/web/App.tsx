@@ -161,9 +161,12 @@ const App = () => {
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [codexUsage, setCodexUsage] = useState<CodexUsageSnapshot | null>(null);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
   const eventSources = useRef(new Map<string, EventSource>());
   const messagesRef = useRef<VirtuosoHandle>(null);
   const messagesScrollerRef = useRef<HTMLElement | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.instanceId === activeSessionId),
@@ -251,6 +254,20 @@ const App = () => {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [instanceMenu]);
+
+  useEffect(() => {
+    if (!composerMenuOpen) return undefined;
+    const close = () => setComposerMenuOpen(false);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [composerMenuOpen]);
 
   useEffect(() => {
     const stopOnEscape = (event: KeyboardEvent) => {
@@ -607,18 +624,6 @@ const App = () => {
             <code>{activeSession?.workingDirectory ?? activeWorkspacePath}</code>
           </div>
           <div className="workbar" aria-label="Runtime status">
-            <label className="runtimeSelect">
-              <span>Model</span>
-              <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value as ModelSelection)}>
-                {modelOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <label className="runtimeSelect">
-              <span>Thinking</span>
-              <select value={selectedReasoning} onChange={(event) => setSelectedReasoning(event.target.value as ReasoningSelection)}>
-                {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
-              </select>
-            </label>
             <span title={formatContextTitle(codexUsage)}>
               Context {formatContextUsage(codexUsage)}
             </span>
@@ -671,45 +676,84 @@ const App = () => {
                 else void send(activeSession.instanceId);
               }}
             >
-              <div className="composerInput">
-                {activeSession.imageAttachments.length ? (
-                  <div className="imageAttachmentList">
-                    {activeSession.imageAttachments.map((image) => (
-                      <div className="imageAttachment" key={image.id}>
-                        <img src={image.previewUrl} alt={image.name} />
-                        <button type="button" onClick={() => removeSessionImage(activeSession.instanceId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                <textarea
-                  value={activeSession.input}
-                  onChange={(event) => updateSessionInput(activeSession.instanceId, event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-                    event.preventDefault();
-                    if (activeCanSend) void send(activeSession.instanceId);
-                  }}
-                  placeholder="例如：检查这个 repo 的结构并给我下一步建议"
-                  rows={4}
-                />
-              </div>
-              <div className="composerActions">
-                <label className="imageUploadButton">
-                  Image
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={(event) => {
-                      addSessionImages(activeSession.instanceId, event.currentTarget.files);
-                      event.currentTarget.value = "";
+              <div className="composerSurface">
+                <div className="composerInput">
+                  {activeSession.imageAttachments.length ? (
+                    <div className="imageAttachmentList">
+                      {activeSession.imageAttachments.map((image) => (
+                        <div className="imageAttachment" key={image.id}>
+                          <img src={image.previewUrl} alt={image.name} />
+                          <button type="button" onClick={() => removeSessionImage(activeSession.instanceId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <textarea
+                    value={activeSession.input}
+                    onChange={(event) => updateSessionInput(activeSession.instanceId, event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+                      event.preventDefault();
+                      if (activeCanSend) void send(activeSession.instanceId);
                     }}
+                    placeholder="例如：检查这个 repo 的结构并给我下一步建议"
+                    rows={1}
                   />
-                </label>
-                <button type="submit" disabled={!activeCanSubmit} aria-label={activeSession.running ? "Stop current turn" : "Send message"}>
-                  {activeSession.running ? "Stop" : "Send"}
-                </button>
+                </div>
+                <div className="composerActions">
+                  <div className="composerLeftActions">
+                    <div className="composerMenuHost" onClick={(event) => event.stopPropagation()}>
+                      <button
+                        type="button"
+                        className="composerIconButton"
+                        aria-label="Open composer menu"
+                        aria-expanded={composerMenuOpen}
+                        onClick={() => setComposerMenuOpen((open) => !open)}
+                      >
+                        +
+                      </button>
+                      {composerMenuOpen ? (
+                        <div className="composerMenu" role="menu">
+                          <button
+                            type="button"
+                            className="composerMenuItem"
+                            role="menuitem"
+                            onClick={() => {
+                              setComposerMenuOpen(false);
+                              imageFileInputRef.current?.click();
+                            }}
+                          >
+                            <span className="composerMenuIcon" aria-hidden="true">[]</span>
+                            <span>添加照片和文件</span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="composerRightActions">
+                    <button
+                      type="button"
+                      className="composerModelButton"
+                      onClick={() => setRuntimeDialogOpen(true)}
+                    >
+                      {selectedModel === "auto" ? "Auto" : modelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel}
+                    </button>
+                    <button type="submit" className="composerSendButton" disabled={!activeCanSubmit} aria-label={activeSession.running ? "Stop current turn" : "Send message"}>
+                      {activeSession.running ? "Stop" : "↑"}
+                    </button>
+                  </div>
+                </div>
+                <input
+                  ref={imageFileInputRef}
+                  className="imageUploadInput"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(event) => {
+                    addSessionImages(activeSession.instanceId, event.currentTarget.files);
+                    event.currentTarget.value = "";
+                  }}
+                />
               </div>
             </form>
           </>
@@ -717,6 +761,31 @@ const App = () => {
           <div className="empty">新建实例或从 Codex 对话记录还原。</div>
         )}
       </section>
+
+      {runtimeDialogOpen ? (
+        <div className="runtimeDialogOverlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setRuntimeDialogOpen(false);
+        }}>
+          <section className="runtimeDialog" role="dialog" aria-modal="true" aria-labelledby="runtimeDialogTitle">
+            <header className="runtimeDialogHeader">
+              <h2 id="runtimeDialogTitle">Runtime</h2>
+              <button type="button" className="iconButton" onClick={() => setRuntimeDialogOpen(false)} aria-label="Close">x</button>
+            </header>
+            <label className="runtimeDialogField">
+              <span>Model</span>
+              <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value as ModelSelection)}>
+                {modelOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label className="runtimeDialogField">
+              <span>Thinking</span>
+              <select value={selectedReasoning} onChange={(event) => setSelectedReasoning(event.target.value as ReasoningSelection)}>
+                {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+          </section>
+        </div>
+      ) : null}
 
       {folderModalOpen ? (
         <div className="modalOverlay" role="presentation" onMouseDown={(event) => {

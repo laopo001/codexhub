@@ -606,13 +606,22 @@ textarea {
 }
 
 .composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 10px;
   border-top: 1px solid #dfe5dc;
   padding: 14px 22px calc(18px + env(safe-area-inset-bottom));
   background: #f4f6f1;
+}
+
+.composerSurface {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  width: min(1228px, 100%);
+  margin: 0 auto;
+  border: 1px solid #c6d0c2;
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 14px 16px 12px;
+  box-shadow: 0 10px 28px rgb(18 32 24 / 0.08);
 }
 
 .composerInput {
@@ -622,42 +631,180 @@ textarea {
 }
 
 .composer textarea {
-  min-height: 56px;
+  min-height: 28px;
   max-height: 180px;
-  border-color: #c6d0c2;
-  border-radius: 18px;
-  background: #ffffff;
-  padding: 16px 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 6px;
   resize: vertical;
-  box-shadow: 0 10px 28px rgb(18 32 24 / 0.08);
+  box-shadow: none;
+  line-height: 1.55;
+}
+
+.composer textarea:focus {
+  outline: none;
 }
 
 .composerActions {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding-bottom: 4px;
+  min-height: 36px;
 }
 
-.composerActions button,
-.imageUploadButton {
-  min-width: 76px;
-  min-height: 44px;
-  border-radius: 999px;
-  padding: 0 18px;
+.composerLeftActions,
+.composerRightActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.imageUploadButton {
+.composerMenuHost {
+  position: relative;
+}
+
+.composerIconButton,
+.composerSendButton {
   display: grid;
   place-items: center;
-  border: 1px solid #cbd6c7;
-  background: #ffffff;
-  color: #17211a;
-  cursor: pointer;
-  font-size: 14px;
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 999px;
+  padding: 0;
 }
 
-.imageUploadButton input {
-  display: none;
+.composerIconButton {
+  border: 1px solid #cbd6c7;
+  background: transparent;
+  color: #17211a;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.composerIconButton:hover {
+  background: #f4f6f1;
+}
+
+.composerModelButton {
+  min-height: 32px;
+  border: 1px solid #cbd6c7;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #66715f;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.composerModelButton:hover {
+  background: #f4f6f1;
+}
+
+.composerSendButton {
+  background: #17211a;
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.composerSendButton:disabled {
+  background: #dfe5dc;
+  color: #8a9584;
+}
+
+.composerMenu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 50;
+  display: grid;
+  min-width: 204px;
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 6px;
+  box-shadow: 0 18px 46px rgb(18 32 24 / 0.18);
+}
+
+.composerMenuItem {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border-radius: 10px;
+  background: transparent;
+  color: #17211a;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.composerMenuItem:hover:not(:disabled) {
+  background: #f4f6f1;
+}
+
+.composerMenuIcon {
+  color: #66715f;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+.runtimeDialogOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: end center;
+  background: rgb(18 32 24 / 0.28);
+  padding: 24px;
+}
+
+.runtimeDialog {
+  display: grid;
+  gap: 14px;
+  width: min(360px, 100%);
+  border: 1px solid #cbd6c7;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 16px;
+  box-shadow: 0 24px 80px rgb(18 32 24 / 0.26);
+}
+
+.runtimeDialogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.runtimeDialogHeader h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.runtimeDialogField {
+  display: grid;
+  gap: 6px;
+}
+
+.runtimeDialogField span {
+  color: #51604f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.imageUploadInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .imageAttachmentList {
@@ -1003,23 +1150,33 @@ textarea {
   }
 
   .composer {
-    grid-template-columns: 1fr;
     padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
   }
 
+  .composerSurface {
+    border-radius: 18px;
+    padding: 12px 12px 10px;
+  }
+
   .composer textarea {
-    min-height: 52px;
+    min-height: 28px;
     max-height: 132px;
-    border-radius: 16px;
-    padding: 14px 16px;
+    padding: 0 4px;
   }
 
   .composerActions {
-    justify-content: flex-end;
-    padding-bottom: 0;
+    gap: 6px;
+  }
+
+  .composerMenu {
+    min-width: min(204px, calc(100vw - 48px));
   }
 
   .modalOverlay {
+    padding: 12px;
+  }
+
+  .runtimeDialogOverlay {
     padding: 12px;
   }
 }
