@@ -25,7 +25,7 @@ const inputSchema = z.union([
 
 const threadOptionsSchema = z.object({
   model: z.string().min(1).optional(),
-  modelReasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional()
+  modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional()
 });
 
 const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {

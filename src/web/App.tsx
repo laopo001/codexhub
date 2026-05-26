@@ -67,7 +67,7 @@ type Usage = {
   total_tokens?: number;
 };
 
-type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 type ModelSelection = "auto" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.3-codex" | "gpt-5.3-codex-spark" | "gpt-5.2";
 type ReasoningSelection = "auto" | ReasoningEffort;
 type MessageDisplayMode = "compact" | "detailed";
@@ -129,6 +129,7 @@ const modelOptions: Array<{ value: ModelSelection; label: string }> = [
 ];
 const reasoningOptions: Array<{ value: ReasoningSelection; label: string }> = [
   { value: "auto", label: "Auto" },
+  { value: "minimal", label: "Minimal" },
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },

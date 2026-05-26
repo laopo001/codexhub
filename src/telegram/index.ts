@@ -340,7 +340,10 @@ const runPrompt = async (
 };
 
 const attachInstance = async (chatId: number, instanceId: string) => {
-  await detachCurrent(chatId);
+  const current = chatStates.get(chatId);
+  if (current?.instanceId && current.instanceId !== instanceId) {
+    await detachCurrent(chatId);
+  }
   const instance = await apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}/attach`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -356,6 +359,7 @@ const detachCurrent = async (chatId: number) => {
   await fetch(apiUrl(`/api/instances/${encodeURIComponent(current.instanceId)}?clientId=${encodeURIComponent(tgClientId(chatId))}`), {
     method: "DELETE"
   }).catch(() => undefined);
+  chatStates.delete(chatId);
 };
 
 const listInstances = async (): Promise<InstanceSummary[]> => {
