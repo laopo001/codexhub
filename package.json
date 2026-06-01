@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "codexp": "./src/cli/codexp.ts"
+  },
   "scripts": {
     "dev:api": "tsx src/cli/codexp.ts server",
     "dev:web": "vite --host 0.0.0.0",

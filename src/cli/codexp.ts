@@ -1,3 +1,4 @@
+#!/usr/bin/env tsx
 import { Command } from "commander";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
