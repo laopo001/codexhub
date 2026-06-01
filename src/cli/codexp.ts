@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { loadDotEnv } from "../core/dotenv.js";
 import { registerConnectCommand } from "./codexpConnect.js";
 import {
   CodexpTaskScheduler,
@@ -16,11 +17,37 @@ type TaskCommandOptions = {
   intervalMs?: string;
 };
 
+type ServerCommandOptions = {
+  host?: string;
+  port?: string;
+  serveStatic?: string;
+};
+
+await loadDotEnv();
+
 const program = new Command()
   .name("codexp")
   .description("Manage codex-proxy threads")
   .option("--api <url>", "codex-proxy API URL", process.env.CODEX_PROXY_API_URL ?? "http://127.0.0.1:18788")
   .option("--cwd <path>", "directory used by folder-relative commands", process.cwd());
+
+program
+  .command("server")
+  .description("Start the codex-proxy API server")
+  .option("--host <host>", "listen host (overrides CODEX_PROXY_HOST)")
+  .option("--port <port>", "listen port (overrides CODEX_PROXY_PORT)")
+  .option("--serve-static <dir>", "serve built web assets from this directory")
+  .action(async (options: ServerCommandOptions = {}) => {
+    const { startServer } = await import("../server/index.js");
+    const handle = await startServer({
+      host: options.host,
+      port: parsePortOption(options.port),
+      staticDirectory: options.serveStatic
+    });
+    console.error(`codex-proxy server listening: ${serverUrl(handle.host, handle.port)}`);
+    await waitForShutdown();
+    await handle.stop();
+  });
 
 program
   .command("list")
@@ -236,6 +263,20 @@ function parseIntervalMs(value: string | undefined) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`Invalid interval: ${value}`);
   return parsed;
+}
+
+function parsePortOption(value: string | undefined) {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) {
+    throw new Error(`Invalid port: ${value}`);
+  }
+  return parsed;
+}
+
+function serverUrl(host: string, port: number) {
+  const displayHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  return `http://${displayHost}:${port}`;
 }
 
 function waitForShutdown() {

@@ -3,8 +3,10 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { loadConfig } from "../core/config.js";
+import { loadDotEnv } from "../core/dotenv.js";
 import { ThreadHub } from "../core/threadHub.js";
 import { startTelegramBotFromEnv, type TelegramBotHandle } from "../telegram/index.js";
 
@@ -78,21 +80,37 @@ const boolFromEnv = (value: string | undefined, fallback: boolean) => {
   if (value == null || value === "") return fallback;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 };
-const staticRoot = () => boolFromEnv(process.env.CODEX_PROXY_SERVE_STATIC, false)
-  ? path.resolve(process.env.CODEX_PROXY_STATIC_DIR ?? "dist")
-  : null;
+const staticRoot = (override?: string) => override
+  ? path.resolve(override)
+  : boolFromEnv(process.env.CODEX_PROXY_SERVE_STATIC, false)
+    ? path.resolve(process.env.CODEX_PROXY_STATIC_DIR ?? "dist")
+    : null;
 const workerOfflineTimeoutMs = () => Number(process.env.CODEX_PROXY_WORKER_OFFLINE_TIMEOUT_MS || 0) || 45_000;
 const workerSweepIntervalMs = () => Number(process.env.CODEX_PROXY_WORKER_SWEEP_INTERVAL_MS || 0) || 5_000;
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
 };
-const main = async () => {
-  const config = loadConfig();
+
+export type ServerStartOptions = {
+  host?: string;
+  port?: number;
+  staticDirectory?: string;
+};
+
+export type ServerHandle = {
+  app: FastifyInstance;
+  host: string;
+  port: number;
+  stop: () => Promise<void>;
+};
+
+export const startServer = async (options: ServerStartOptions = {}): Promise<ServerHandle> => {
+  const config = loadConfig({ host: options.host, port: options.port });
   const threads = new ThreadHub(config.defaultThreadOptions);
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
-  const staticDirectory = staticRoot();
+  const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
   const workerSweep = setInterval(() => {
     threads.markStaleWorkersOffline(workerOfflineTimeoutMs());
@@ -270,9 +288,22 @@ const main = async () => {
   if (staticDirectory) registerStaticRoutes(app, staticDirectory);
 
   await app.listen({ host: config.host, port: config.port });
-  telegramBot = await startTelegramBotFromEnv({
-    apiBaseUrl: localApiBaseUrl(config.host, config.port)
-  });
+
+  try {
+    telegramBot = await startTelegramBotFromEnv({
+      apiBaseUrl: localApiBaseUrl(config.host, config.port)
+    });
+  } catch (error) {
+    await app.close();
+    throw error;
+  }
+
+  return {
+    app,
+    host: config.host,
+    port: config.port,
+    stop: () => app.close()
+  };
 };
 
 const registerStaticRoutes = (app: FastifyInstance, root: string) => {
@@ -324,7 +355,15 @@ const contentType = (filePath: string) => {
   return "application/octet-stream";
 };
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+const isDirectEntryPoint = () => {
+  const entrypoint = process.argv[1];
+  return Boolean(entrypoint && path.resolve(entrypoint) === fileURLToPath(import.meta.url));
+};
+
+if (isDirectEntryPoint()) {
+  await loadDotEnv();
+  startServer().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

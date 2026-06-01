@@ -17,10 +17,15 @@ export type ProxyConfig = {
   defaultThreadOptions: ThreadOptions;
 };
 
-export const loadConfig = (): ProxyConfig => {
+export type ProxyConfigOverrides = {
+  host?: string;
+  port?: number;
+};
+
+export const loadConfig = (overrides: ProxyConfigOverrides = {}): ProxyConfig => {
   return {
-    host: process.env.CODEX_PROXY_HOST ?? "127.0.0.1",
-    port: Number(process.env.CODEX_PROXY_PORT ?? 8788),
+    host: overrides.host ?? process.env.CODEX_PROXY_HOST ?? "127.0.0.1",
+    port: overrides.port ?? parsePort(process.env.CODEX_PROXY_PORT ?? "8788"),
     defaultThreadOptions: {
       model: process.env.CODEX_MODEL,
       skipGitRepoCheck: boolFromEnv(process.env.CODEX_SKIP_GIT_REPO_CHECK, true),
@@ -31,4 +36,12 @@ export const loadConfig = (): ProxyConfig => {
       networkAccessEnabled: boolFromEnv(process.env.CODEX_NETWORK_ACCESS, true)
     }
   };
+};
+
+const parsePort = (value: string) => {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(`Invalid CODEX_PROXY_PORT: ${value}`);
+  }
+  return port;
 };

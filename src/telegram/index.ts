@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CodexRecord } from "../core/codexRecord.js";
 import { recordToView, type CodexRecordView } from "../core/codexRecordView.js";
+import { loadDotEnv } from "../core/dotenv.js";
 import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../shared/compactRecordViews.js";
 
 type ThreadSummary = {
@@ -449,21 +450,15 @@ export const startTelegramBot = async (options: TelegramBotOptions): Promise<Tel
   return startedBot;
 };
 
-const boolFromEnv = (value: string | undefined, fallback: boolean) => {
-  if (value == null || value === "") return fallback;
-  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
-};
-
 export const startTelegramBotFromEnv = async (options: {
   apiBaseUrl?: string;
   requireToken?: boolean;
   logger?: Pick<Console, "error" | "log">;
 } = {}): Promise<TelegramBotHandle | null> => {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const enabled = boolFromEnv(process.env.CODEX_PROXY_TELEGRAM_ENABLED, options.requireToken ? true : Boolean(token));
-  if (!enabled) return null;
+  const requireToken = options.requireToken ?? true;
   if (!token) {
-    if (options.requireToken) throw new Error("TELEGRAM_BOT_TOKEN is required");
+    if (requireToken) throw new Error("TELEGRAM_BOT_TOKEN is required");
     return null;
   }
   return startTelegramBot({
@@ -480,7 +475,8 @@ const isCliEntrypoint = () => {
 };
 
 if (isCliEntrypoint()) {
-  const handle = await startTelegramBotFromEnv({ requireToken: true });
+  await loadDotEnv();
+  const handle = await startTelegramBotFromEnv();
   process.once("SIGINT", () => handle?.stop("SIGINT"));
   process.once("SIGTERM", () => handle?.stop("SIGTERM"));
 }

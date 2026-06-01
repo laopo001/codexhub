@@ -74,9 +74,11 @@ input: |
 ## 自举开发和发布
 
 1. Dev 继续使用原 4 位端口：Web `5173`，API `8788`。
-2. Prod 使用 5 位 `1xxxx` 端口：主入口 `18788`，发布健康检查临时端口 `18790`。
-3. Prod 由 PM2 管理长期进程：`codex-proxy-prod`。Telegram bot 内置在该 server 进程中，有 `TELEGRAM_BOT_TOKEN` 时自动启动。
-4. 生产 Web 不跑 Vite；API server 在 `CODEX_PROXY_SERVE_STATIC=true` 时直接服务 `dist`。
-5. `codex-proxy-next` 发布健康检查进程必须设置 `CODEX_PROXY_TELEGRAM_ENABLED=false`，避免和生产 bot 使用同一个 Telegram token。
-6. 发布使用 `pnpm publish:prod`，脚本必须先 `pnpm check`、`pnpm build`，再用 `codex-proxy-next` 在 `18790` 验证 `/api/health` 和 `/`，通过后才重启 Prod。
-7. 不要让本地 Dev 进程替换 PM2 Prod；开发验证和生产发布必须分开。
+2. Prod 使用 5 位 `1xxxx` 端口：主入口 `18788`。
+3. API server 统一通过 `codexp server` 启动，只加载当前目录 `.env`；不再提供 `--env`、`--telegram`、`--no-telegram` 或 `CODEX_PROXY_TELEGRAM_ENABLED` 分支开关。
+4. `CODEX_PROXY_HOST` / `CODEX_PROXY_PORT` 可以写入 `.env`；CLI `--host` / `--port` 优先级最高，其次是当前 shell 环境变量，然后是 `.env`。
+5. Telegram bot 默认随 server 启动；没有 `TELEGRAM_BOT_TOKEN` 时 server 应失败，而不是静默跳过。
+6. Prod 由 PM2 管理长期进程：`codex-proxy-prod`。Telegram bot 内置在该 server 进程中。
+7. 生产 Web 不跑 Vite；API server 用 `codexp server --serve-static dist` 直接服务 `dist`。
+8. 发布使用 `pnpm run publish:prod`，脚本必须先 `pnpm check`、`pnpm build`，再启动或重启 `codex-proxy-prod` 并验证 `/api/health` 和 `/`。
+9. 不要让本地 Dev 进程替换 PM2 Prod；开发验证和生产发布必须分开。
