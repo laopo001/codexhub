@@ -592,9 +592,11 @@ textarea {
 
 .composerThreadButton {
   display: grid;
-  gap: 3px;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
   width: 100%;
-  min-height: 42px;
+  min-height: 34px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -623,6 +625,7 @@ textarea {
 }
 
 .composerThreadButton code {
+  justify-self: stretch;
   color: #66715f;
   font-size: 11px;
 }
