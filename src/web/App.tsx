@@ -656,7 +656,8 @@ const App = () => {
           </button>
           <div className="workspaceTitle">
             <span>{activeSession?.title ?? "No active thread"}</span>
-            <code>{activeSession?.workingDirectory ?? activeWorkspacePath}</code>
+           
+            <code>{activeSession?.workingDirectory ?? activeWorkspacePath}    {activeSession ? <code className="workspaceThreadId">thread:  {activeSession.threadId}</code> : null}</code>
           </div>
           <div className="workbar" aria-label="Runtime status">
             <span title={formatContextTitle(codexUsage)}>
