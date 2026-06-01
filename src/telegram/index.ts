@@ -9,15 +9,17 @@ type ThreadSummary = {
   runtime: ThreadRuntimeSummary;
   status: ThreadStatus;
   running: boolean;
-  attachCount: number;
   title: string;
   updatedAt: string;
   messageCount: number;
 };
 
-type ThreadRuntimeSummary =
-  | { kind: "worker"; workerId: string; name?: string; online: boolean }
-  | { kind: "detached"; online: false };
+type ThreadRuntimeSummary = {
+  workerId?: string;
+  name?: string;
+  online: boolean;
+  runnable: boolean;
+};
 
 type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
@@ -68,11 +70,9 @@ const chatStates = new Map<number, ChatState>();
 const botCommands = [
   { command: "start", description: "show help" },
   { command: "status", description: "show current thread" },
-  { command: "threads", description: "attach a Codex thread" },
+  { command: "threads", description: "select a Codex thread" },
   { command: "stop", description: "stop the current turn" }
 ];
-
-const tgClientId = (chatId: number) => `telegram-${chatId}`;
 
 bot.use(async (ctx, next) => {
   const chatId = ctx.chat?.id;
@@ -108,7 +108,7 @@ bot.command("threads", async (ctx) => {
       reply_markup: {
         inline_keyboard: threads.map((thread) => ([{
           text: `${displayThreadId(thread)}  ${thread.status}  ${runtimeLabel(thread)}  ${shortPath(thread.workingDirectory)}`,
-          callback_data: `attach:${thread.threadId}`
+          callback_data: `select:${thread.threadId}`
         }]))
       }
     });
@@ -130,7 +130,7 @@ bot.command("status", async (ctx) => {
       `usage：${formatCodexUsage(usage)}`,
       "",
       threads.length
-        ? threads.map((thread) => `${displayThreadId(thread)} ${thread.status} ${runtimeLabel(thread)} ${thread.attachCount} attached`).join("\n")
+        ? threads.map((thread) => `${displayThreadId(thread)} ${thread.status} ${runtimeLabel(thread)}`).join("\n")
         : "当前没有 Codex thread。"
     ].filter(Boolean).join("\n"));
   } catch (error) {
@@ -161,11 +161,11 @@ const handleStopCommand = async (ctx: any) => {
 bot.command("stop", handleStopCommand);
 bot.hears(/^\/stop(?:@\w+)?(?:\s|$)/i, handleStopCommand);
 
-bot.action(/^attach:(.+)$/, async (ctx) => {
+bot.action(/^select:(.+)$/, async (ctx) => {
   try {
     const threadId = ctx.match[1];
-    const thread = await attachThread(ctx.chat!.id, threadId);
-    await ctx.answerCbQuery("Attached");
+    const thread = await selectThread(ctx.chat!.id, threadId);
+    await ctx.answerCbQuery("Selected");
     await ctx.editMessageText([
       `已打开：${displayThreadId(thread)} ${thread.status}`,
       thread.workingDirectory
@@ -287,29 +287,10 @@ const runPrompt = async (
   }
 };
 
-const attachThread = async (chatId: number, threadId: string) => {
-  const current = chatStates.get(chatId);
-  if (current?.threadId && current.threadId !== threadId) {
-    await detachCurrent(chatId);
-  }
-  const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/attach`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ clientId: tgClientId(chatId) })
-  });
+const selectThread = async (chatId: number, threadId: string) => {
+  const thread = await getThread(threadId);
   chatStates.set(chatId, { threadId: thread.threadId });
   return thread;
-};
-
-const detachCurrent = async (chatId: number) => {
-  const current = chatStates.get(chatId);
-  if (!current?.threadId) return;
-  await fetch(apiUrl(`/api/threads/${encodeURIComponent(current.threadId)}/detach`), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ clientId: tgClientId(chatId) })
-  }).catch(() => undefined);
-  chatStates.delete(chatId);
 };
 
 const listThreads = async (): Promise<ThreadSummary[]> => {
@@ -386,10 +367,9 @@ const shortId = (id: string) => id.slice(0, 8);
 const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
-  if (thread.runtime.kind === "worker") {
-    return `${thread.runtime.online ? "worker" : "offline"}:${thread.runtime.name ?? shortId(thread.runtime.workerId)}`;
-  }
-  return "detached";
+  const state = thread.runtime.runnable ? "online" : "offline";
+  const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? shortId(thread.runtime.workerId)}` : "";
+  return `${state}${worker}`;
 };
 const shortPath = (value: string) => {
   const home = process.env.HOME;

@@ -2,7 +2,7 @@
 
 一个 thread-first 的本地 Codex 控制面。当前运行态由 `codexp connect` 启动的官方 `codex app-server` worker 持有，server 负责排队命令和镜像事件。
 
-- 共享核心：API server 统一维护 Codex threads，Web/TG/task 共同 attach。
+- 共享核心：API server 统一镜像 Codex threads，Web/TG/task 按 `threadId` 选择和转发。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
 - CLI worker：`codexp connect` 复用官方 Codex TUI 和 app-server。
@@ -71,7 +71,7 @@ pm2 restart codex-proxy-prod
 
 ## API
 
-当前运行态 API 以 `threadId` 为主键。新 thread 在本地官方 Codex TUI 里开始，server 只列出、attach 和转发已有 thread：
+当前运行态 API 以 `threadId` 为主键。新 thread 在本地官方 Codex TUI 里开始，server 只列出、读取和转发已有 thread：
 
 ```bash
 THREAD_ID=$(curl -sS http://127.0.0.1:8788/api/threads | jq -r '.threads[0].threadId')

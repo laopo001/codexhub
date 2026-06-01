@@ -7,10 +7,9 @@ import { registerConnectCommand } from "./codexpConnect.js";
 type ThreadSummary = {
   threadId: string;
   workingDirectory: string;
-  runtime?: { kind: "detached"; online: false } | { kind: "worker"; workerId: string; name?: string; online: boolean };
+  runtime?: { workerId?: string; name?: string; online: boolean; runnable: boolean };
   status: "running" | "idle";
   running: boolean;
-  attachCount: number;
   title: string;
   updatedAt: string;
 };
@@ -105,7 +104,6 @@ async function printThreads(threads: ThreadSummary[]) {
     thread: thread.threadId ? thread.threadId.slice(0, 8) : "",
     status: thread.status,
     runtime: formatRuntime(thread),
-    attached: thread.attachCount,
     tasks: taskCounts.get(thread.threadId) ?? 0,
     folder: thread.workingDirectory,
     title: thread.title
@@ -113,10 +111,10 @@ async function printThreads(threads: ThreadSummary[]) {
 }
 
 function formatRuntime(thread: ThreadSummary) {
-  if (thread.runtime?.kind === "worker") {
-    return `${thread.runtime.online ? "worker" : "offline"}:${thread.runtime.name ?? thread.runtime.workerId.slice(0, 8)}`;
-  }
-  return "detached";
+  if (!thread.runtime) return "offline";
+  const state = thread.runtime.runnable ? "online" : "offline";
+  const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? thread.runtime.workerId.slice(0, 8)}` : "";
+  return `${state}${worker}`;
 }
 
 function resolveThreadTarget(target: string, threads: ThreadSummary[]) {

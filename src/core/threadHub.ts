@@ -11,23 +11,20 @@ export type ThreadSummary = {
   runtime: ThreadRuntimeSummary;
   status: "running" | "idle";
   running: boolean;
-  attachCount: number;
   title: string;
   updatedAt: string;
   messageCount: number;
   lastUsage?: Usage;
 };
 
-export type ThreadRuntimeSummary =
-  | {
-      kind: "worker";
-      workerId: string;
-      name?: string;
-      appServerUrl?: string;
-      online: boolean;
-      lastSeenAt: string;
-    }
-  | { kind: "detached"; online: false };
+export type ThreadRuntimeSummary = {
+  workerId?: string;
+  name?: string;
+  appServerUrl?: string;
+  online: boolean;
+  runnable: boolean;
+  lastSeenAt?: string;
+};
 
 export type ThreadRunOptions = {
   model?: string | null;
@@ -104,7 +101,6 @@ type RuntimeThread = {
   events: ThreadStreamEvent[];
   appServerItems: Map<string, AppServerItemState>;
   subscribers: Set<(event: ThreadStreamEvent) => void>;
-  attachments: Set<string>;
   lastUsage?: Usage;
   seq: number;
 };
@@ -154,7 +150,10 @@ export class ThreadHub {
     };
     this.workers.set(workerId, worker);
     for (const thread of this.threads.values()) {
-      if (thread.workerId === workerId) this.publish(thread, "thread");
+      if (thread.workerId === workerId || (!thread.workerId && thread.workingDirectory === worker.workingDirectory)) {
+        thread.workerId = workerId;
+        this.publish(thread, "thread");
+      }
     }
     return { workerId, worker: workerSummary(worker) };
   }
@@ -273,7 +272,6 @@ export class ThreadHub {
       events: [],
       appServerItems: new Map(),
       subscribers: new Set(),
-      attachments: new Set(),
       lastUsage: latestUsage(records),
       seq: 0
     };
@@ -303,23 +301,7 @@ export class ThreadHub {
     thread.running = false;
     this.threads.delete(threadId);
     this.publish(thread, "done");
-    return { deleted: true, attachCount: 0 };
-  }
-
-  attach(threadId: string, clientId: string): ThreadDetail {
-    const thread = this.requireThread(threadId);
-    thread.attachments.add(clientId);
-    thread.updatedAt = new Date().toISOString();
-    this.publish(thread, "thread");
-    return this.detail(thread);
-  }
-
-  detach(threadId: string, clientId: string) {
-    const thread = this.requireThread(threadId);
-    thread.attachments.delete(clientId);
-    thread.updatedAt = new Date().toISOString();
-    this.publish(thread, "thread");
-    return { deleted: false, attachCount: thread.attachments.size };
+    return { deleted: true };
   }
 
   stopTurn(threadId: string) {
@@ -506,7 +488,11 @@ export class ThreadHub {
   private ensureThread(threadId: string, worker: RuntimeWorker, message: Record<string, unknown>) {
     const existing = this.threads.get(threadId);
     if (existing) {
-      if (!existing.workerId) existing.workerId = worker.workerId;
+      const current = existing.workerId ? this.workers.get(existing.workerId) : null;
+      if (!current?.online) {
+        existing.workerId = worker.workerId;
+        this.publish(existing, "thread");
+      }
       return existing;
     }
 
@@ -528,7 +514,6 @@ export class ThreadHub {
       events: [],
       appServerItems: new Map(),
       subscribers: new Set(),
-      attachments: new Set(),
       seq: 0
     };
     this.threads.set(thread.threadId, thread);
@@ -848,7 +833,6 @@ export class ThreadHub {
       runtime: this.runtimeSummary(thread),
       status: thread.running ? "running" : "idle",
       running: thread.running,
-      attachCount: thread.attachments.size,
       title: thread.title,
       updatedAt: thread.updatedAt,
       messageCount: recordsToViews(thread.records).length,
@@ -866,7 +850,11 @@ export class ThreadHub {
 
   private runtimeSummary(thread: RuntimeThread): ThreadRuntimeSummary {
     const worker = thread.workerId ? this.workers.get(thread.workerId) : null;
-    return worker ? workerSummary(worker) : { kind: "detached", online: false };
+    if (worker?.online) return workerRuntimeSummary(worker);
+    const replacement = this.workerForWorkspace(thread.workingDirectory);
+    if (replacement) return workerRuntimeSummary(replacement);
+    if (worker) return workerRuntimeSummary(worker);
+    return { online: false, runnable: false };
   }
 
   private localCommandMessage(thread: RuntimeThread, command: string) {
@@ -882,8 +870,7 @@ export class ThreadHub {
   }
 }
 
-const workerSummary = (worker: RuntimeWorker): WorkerSummary & { kind: "worker" } => ({
-  kind: "worker",
+const workerSummary = (worker: RuntimeWorker): WorkerSummary => ({
   workerId: worker.workerId,
   name: worker.name,
   workingDirectory: worker.workingDirectory,
@@ -892,6 +879,15 @@ const workerSummary = (worker: RuntimeWorker): WorkerSummary & { kind: "worker" 
   lastSeenAt: worker.lastSeenAt,
   pid: worker.pid,
   hostname: worker.hostname
+});
+
+const workerRuntimeSummary = (worker: RuntimeWorker): ThreadRuntimeSummary => ({
+  workerId: worker.workerId,
+  name: worker.name,
+  appServerUrl: worker.appServerUrl,
+  online: worker.online,
+  runnable: worker.online,
+  lastSeenAt: worker.lastSeenAt
 });
 
 const workerCommandsAfter = (worker: RuntimeWorker, after: number) =>
@@ -1144,7 +1140,6 @@ const threadStatusMessage = (thread: RuntimeThread, runtime: ThreadRuntimeSummar
   `runtime: ${formatRuntime(runtime)}`,
   `model: ${formatModel(thread.threadOptions)}`,
   `reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
-  `attached: ${thread.attachments.size}`,
   `records: ${thread.records.length}`,
   `updated: ${thread.updatedAt}`,
   `usage: ${formatUsage(thread.lastUsage)}`
@@ -1169,11 +1164,9 @@ const slashHelpMessage = () => [
 const formatModel = (options: ThreadOptions) => options.model ?? "auto";
 
 const formatRuntime = (runtime: ThreadRuntimeSummary) => {
-  if (runtime.kind === "worker") {
-    const name = runtime.name ?? runtime.workerId.slice(0, 8);
-    return `${runtime.online ? "online" : "offline"} worker:${name}`;
-  }
-  return "detached";
+  const state = runtime.runnable ? "runnable" : runtime.online ? "online" : "offline";
+  const worker = runtime.workerId ? ` worker:${runtime.name ?? runtime.workerId.slice(0, 8)}` : "";
+  return `${state}${worker}`;
 };
 
 const formatUsage = (usage: Usage | undefined) => {

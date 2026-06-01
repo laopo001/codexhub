@@ -2,7 +2,7 @@
 
 ## Thread 模型
 
-1. `threadId` 是 codex-proxy 的产品级运行主键；Web tab、Telegram attach、任务目标和左侧列表都必须指向 `threadId`。
+1. `threadId` 是 codex-proxy 的产品级运行主键；Web tab、Telegram 当前选择、任务目标和左侧列表都必须指向 `threadId`。
 2. 不再引入 `instanceId`。旧的 instance 概念已经被删除，新逻辑不得增加 `/api/instances`、`.codexp/instances.yaml` 或 instance 兼容层。
 3. API server 是控制面和事件镜像层，不直接拥有 Codex runtime。Codex runtime 在 `codexp connect` 启动的官方 `codex app-server` worker 里。
 4. `workerId` 标识一条 `codexp connect` 连接；worker 负责执行 `turn`、`stop`、`fork_thread` 命令。
@@ -11,12 +11,13 @@
 7. 非 headless 的 `codexp connect` 必须用 PTY wrapper 启动官方 `codex --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
 8. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
 
-## Attach 和关闭语义
+## 选择和关闭语义
 
-1. 客户端打开 thread 时调用 `POST /api/threads/:threadId/attach`，传入稳定 `clientId`。
-2. Web 关闭 tab、Telegram 切换 thread 或退出当前 thread 时，调用 `POST /api/threads/:threadId/detach`，body 传 `{ "clientId": "..." }`。
-3. `DELETE /api/threads/:threadId` 表示管理层面的删除 thread 记录。
-4. detach 只减少 attach 计数，不销毁官方 Codex session；真正删除只能走 `DELETE /api/threads/:threadId`。
+1. Web 打开 thread、Telegram 切换当前 thread 只是客户端本地选择；server 不维护客户端打开计数。
+2. 客户端读取 thread 详情使用 `GET /api/threads/:threadId`，事件订阅使用 `GET /api/threads/:threadId/events?after=...`。
+3. Web 关闭 tab 或 Telegram 切换 thread 只关闭本地 UI/session，不向 server 发送关闭通知。
+4. `DELETE /api/threads/:threadId` 表示管理层面的删除 thread 记录；不要把客户端关闭动作映射成删除。
+5. thread 是否可运行只由对应 workspace 的 `codexp connect` worker online/runnable 状态决定。
 
 ## 事件和消息流
 
@@ -33,7 +34,7 @@
 1. 新功能使用 `/api/threads` 和 `/api/workers` 系列接口。
 2. 不再新增 `/api/instances`、`/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
 3. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events/unregister。worker 主动出站连接 server，不要求 server 反连 worker 机器。
-4. 不提供 `POST /api/threads` 创建入口；server 只能 attach、detach、delete、restore existing Codex session、turn、stop、fork。
+4. 不提供 `POST /api/threads` 创建入口；server 只能 list/get/delete、restore existing Codex session、turn、stop、fork。
 
 ## `.codexp` 工作区文件约定
 

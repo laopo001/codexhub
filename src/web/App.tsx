@@ -14,7 +14,6 @@ type ThreadSummary = {
   modelReasoningEffort?: ReasoningEffort;
   status: ThreadStatus;
   running: boolean;
-  attachCount: number;
   title: string;
   updatedAt: string;
   messageCount: number;
@@ -22,14 +21,13 @@ type ThreadSummary = {
 };
 
 type ThreadRuntimeSummary =
-  | {
-      kind: "worker";
-      workerId: string;
-      name?: string;
-      online: boolean;
-      lastSeenAt: string;
-    }
-  | { kind: "detached"; online: false };
+  {
+    workerId?: string;
+    name?: string;
+    online: boolean;
+    runnable: boolean;
+    lastSeenAt?: string;
+  };
 
 type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
@@ -38,7 +36,6 @@ type ThreadDetail = ThreadSummary & {
 
 type ChatSession = ThreadDetail & {
   input: string;
-  clientId: string;
   imageAttachments: ImageAttachment[];
 };
 
@@ -126,7 +123,6 @@ type CodexUsageSnapshot = {
 };
 
 const storageKey = "codex-proxy-ui-state-v3";
-const webClientId = readWebClientId();
 const modelOptions: Array<{ value: ModelSelection; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "gpt-5.5", label: "GPT-5.5" },
@@ -395,13 +391,8 @@ const App = () => {
   };
 
   const openThread = async (threadId: string) => {
-    const clientId = webThreadClientId(threadId);
-    const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/attach`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ clientId })
-    });
-    const session: ChatSession = { ...thread, input: "", clientId, imageAttachments: [] };
+    const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
+    const session: ChatSession = { ...thread, input: "", imageAttachments: [] };
     setSessions((current) => [session, ...current.filter((item) => item.threadId !== thread.threadId)]);
     setActiveWorkspacePath(thread.workingDirectory);
     setActiveSessionId(thread.threadId);
@@ -428,14 +419,8 @@ const App = () => {
   };
 
   const closeSession = async (threadId: string) => {
-    const session = sessions.find((item) => item.threadId === threadId);
     eventSources.current.get(threadId)?.close();
     eventSources.current.delete(threadId);
-    await fetch(`/api/threads/${encodeURIComponent(threadId)}/detach`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ clientId: session?.clientId ?? webThreadClientId(threadId) })
-    });
     setSessions((current) => {
       const next = current.filter((session) => session.threadId !== threadId);
       if (activeSessionId !== threadId) return next;
@@ -622,7 +607,7 @@ const App = () => {
                   <span>{shortId(thread.threadId)}</span>
                   <strong>{thread.status}</strong>
                   <code>{thread.title}</code>
-                  <em>{runtimeLabel(thread)} · {thread.attachCount} attached · {thread.workingDirectory}</em>
+                  <em>{runtimeLabel(thread)} · {thread.workingDirectory}</em>
                 </button>
               ))}
             </div>
@@ -1051,10 +1036,9 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
 const shortId = (id: string) => id.slice(0, 8);
 
 const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
-  if (thread.runtime.kind === "worker") {
-    return `${thread.runtime.online ? "worker" : "offline"}:${thread.runtime.name ?? shortId(thread.runtime.workerId)}`;
-  }
-  return "detached";
+  const state = thread.runtime.runnable ? "online" : "offline";
+  const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? shortId(thread.runtime.workerId)}` : "";
+  return `${state}${worker}`;
 };
 
 const selectedThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
@@ -1148,19 +1132,6 @@ const formatResetTitle = (window: RateLimitWindow | null | undefined) => {
   if (Number.isNaN(resetAt.getTime())) return undefined;
   return `${formatPercent(100 - window.used_percent)} remaining, ${formatPercent(window.used_percent)} used. Resets ${resetAt.toLocaleString()}`;
 };
-
-function webThreadClientId(threadId: string) {
-  return `${webClientId}:${threadId}`;
-}
-
-function readWebClientId() {
-  const key = "codex-proxy-web-client-id";
-  const existing = sessionStorage.getItem(key);
-  if (existing) return existing;
-  const next = `web:${browserId()}`;
-  sessionStorage.setItem(key, next);
-  return next;
-}
 
 const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
   const existingIndex = records.findIndex((record) => record.id === incoming.id);

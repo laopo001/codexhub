@@ -236,28 +236,6 @@ const main = async () => {
     return thread;
   });
 
-  app.post("/api/threads/:threadId/attach", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({ clientId: z.string().min(1) }).parse(request.body);
-    try {
-      return threads.attach(params.threadId, payload.clientId);
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.post("/api/threads/:threadId/detach", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({ clientId: z.string().min(1) }).parse(request.body);
-    try {
-      return threads.detach(params.threadId, payload.clientId);
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
   app.delete("/api/threads/:threadId", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     try {
