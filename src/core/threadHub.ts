@@ -232,7 +232,7 @@ export class ThreadHub {
     const message = asRecord(input.message);
     if (!message) return { ok: true };
 
-    const threadId = input.threadId ?? threadIdFromAppServerMessage(message);
+    const threadId = this.threadIdForWorkerEvent(input, message);
     const error = asRecord(message.error);
     if (error) {
       this.rejectCommand(input.commandId, new Error(stringify(error)));
@@ -249,6 +249,18 @@ export class ThreadHub {
 
   listThreads(): ThreadSummary[] {
     return [...this.threads.values()].map((thread) => this.summary(thread));
+  }
+
+  selectWorkerThread(workerId: string, threadId: string) {
+    const worker = this.requireWorker(workerId);
+    if (!worker.online) throw new Error(`Worker not online: ${workerId}`);
+    const thread = this.requireThread(threadId);
+    if (thread.workerId !== worker.workerId) {
+      throw new Error(`Thread does not belong to worker: ${threadId}`);
+    }
+    this.markWorkerCurrentThread(worker, thread);
+    this.publish(thread, "thread");
+    return { worker: this.workerSummary(worker), thread: this.detail(thread) };
   }
 
   getThread(threadId: string): ThreadDetail | null {
@@ -387,6 +399,16 @@ export class ThreadHub {
     const worker = this.workers.get(workerId);
     if (!worker) throw new Error(`Worker not found: ${workerId}`);
     return worker;
+  }
+
+  private threadIdForWorkerEvent(input: WorkerEventInput, message: Record<string, unknown>) {
+    const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
+    if (pending?.type === "fork_thread") {
+      return resultThreadIdFromAppServerMessage(message)
+        ?? input.threadId
+        ?? threadIdFromAppServerMessage(message);
+    }
+    return input.threadId ?? threadIdFromAppServerMessage(message);
   }
 
   private markWorkerCurrentThread(worker: RuntimeWorker, thread: RuntimeThread) {
@@ -949,6 +971,12 @@ const threadIdFromAppServerMessage = (message: Record<string, unknown>) => {
       : typeof resultThread?.id === "string"
         ? resultThread.id
         : undefined;
+};
+
+const resultThreadIdFromAppServerMessage = (message: Record<string, unknown>) => {
+  const result = asRecord(message.result);
+  const resultThread = asRecord(result?.thread);
+  return typeof resultThread?.id === "string" ? resultThread.id : undefined;
 };
 
 const appServerThreadFromMessage = (message: Record<string, unknown>) => {

@@ -331,7 +331,7 @@ class CodexAppServerBridge {
       this.pending.delete(message.id);
       this.rememberThreads(message);
       const error = asRecord(message.error);
-      const threadId = threadIdForMessage(message) ?? pending.threadId;
+      const threadId = threadIdForPendingMessage(pending, message);
       if (threadId && (!error || pending.method !== "thread/read")) {
         await this.forward(threadId, pending.commandId, message, { heartbeat: pending.method !== "thread/read" });
       }
@@ -780,6 +780,19 @@ const threadIdForMessage = (message: JsonRecord) => {
       : typeof resultThread?.id === "string"
         ? resultThread.id
         : undefined;
+};
+
+const threadIdForPendingMessage = (pending: Pick<PendingRequest, "method" | "threadId">, message: JsonRecord) => {
+  if (pending.method === "thread/fork") {
+    return resultThreadIdForMessage(message) ?? threadIdForMessage(message) ?? pending.threadId;
+  }
+  return threadIdForMessage(message) ?? pending.threadId;
+};
+
+const resultThreadIdForMessage = (message: JsonRecord) => {
+  const result = asRecord(message.result);
+  const resultThread = asRecord(result?.thread);
+  return typeof resultThread?.id === "string" ? resultThread.id : undefined;
 };
 
 const createWorkerId = () => `local-${safeWorkerPart(os.hostname())}-${process.pid}-${randomUUID().slice(0, 8)}`;
