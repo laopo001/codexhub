@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadDotEnv } from "../core/dotenv.js";
-import { registerConnectCommand } from "./codexpConnect.js";
+import { registerCodexProxyWorkerCommands } from "./codexpConnect.js";
 import {
   CodexpTaskScheduler,
   loadTaskFiles,
@@ -27,7 +27,7 @@ await loadDotEnv();
 
 const program = new Command()
   .name("codexp")
-  .description("Manage codex-proxy threads")
+  .description("Run Codex through codex-proxy")
   .option("--server <url>", "codex-proxy server URL", defaultServerUrl())
   .option("--cwd <path>", "directory used by folder-relative commands", process.cwd());
 
@@ -68,7 +68,7 @@ program
     console.log(`Deleted ${formatThread(thread)}`);
   });
 
-registerConnectCommand(program);
+registerCodexProxyWorkerCommands(program);
 
 const taskCommand = program
   .command("task")

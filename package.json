@@ -8,7 +8,6 @@
   },
   "scripts": {
     "dev:api": "tsx src/cli/codexp.ts server",
-    "dev:web": "vite --host 0.0.0.0",
     "bot": "tsx src/telegram/index.ts",
     "codexp": "tsx src/cli/codexp.ts",
     "cache:refresh": "tsx src/cli/refreshCache.ts",

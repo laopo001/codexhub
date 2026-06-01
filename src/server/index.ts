@@ -76,15 +76,9 @@ const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`data: ${JSON.stringify(data)}\n\n`);
 };
 
-const boolFromEnv = (value: string | undefined, fallback: boolean) => {
-  if (value == null || value === "") return fallback;
-  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
-};
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
-  : boolFromEnv(process.env.CODEX_PROXY_SERVE_STATIC, false)
-    ? path.resolve(process.env.CODEX_PROXY_STATIC_DIR ?? "dist")
-    : null;
+  : path.resolve(process.env.CODEX_PROXY_STATIC_DIR ?? "dist");
 const workerOfflineTimeoutMs = () => Number(process.env.CODEX_PROXY_WORKER_OFFLINE_TIMEOUT_MS || 0) || 45_000;
 const workerSweepIntervalMs = () => Number(process.env.CODEX_PROXY_WORKER_SWEEP_INTERVAL_MS || 0) || 5_000;
 const localApiBaseUrl = (host: string, port: number) => {

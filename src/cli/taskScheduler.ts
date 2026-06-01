@@ -187,7 +187,7 @@ export class CodexpTaskScheduler {
     this.runningTasks.add(task.key);
     const startedAt = localTimestamp();
     try {
-      const result = await runCodexExec(task.workspace, task.input);
+      const result = await runCodexExec(task.workspace, task.input, task.thread);
       await appendTaskRun(task, {
         runId,
         status: "completed",
@@ -469,9 +469,12 @@ class CodexExecError extends Error {
   }
 }
 
-function runCodexExec(workspace: string, input: string): Promise<CodexExecResult> {
+function runCodexExec(workspace: string, input: string, threadId?: string): Promise<CodexExecResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", ["exec", "-C", workspace, "-"], {
+    const args = threadId
+      ? ["exec", "-C", workspace, "resume", threadId, "-"]
+      : ["exec", "-C", workspace, "-"];
+    const child = spawn("codex", args, {
       cwd: workspace,
       stdio: ["pipe", "pipe", "pipe"]
     });

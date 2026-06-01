@@ -20,6 +20,15 @@ type ConnectOptions = {
   approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
 };
 
+type ResumeOptions = Omit<ConnectOptions, "headless"> & {
+  last?: boolean;
+  all?: boolean;
+};
+
+type TuiLaunch =
+  | { type: "start"; prompt?: string }
+  | { type: "resume"; sessionId?: string; prompt?: string; last?: boolean; all?: boolean };
+
 type JsonRecord = Record<string, unknown>;
 
 type PendingRequest = {
@@ -64,88 +73,113 @@ type ProxyBridgeRunnerOptions = BridgeOptions & {
   statusBar?: CodexpStatusBar | null;
 };
 
-export const registerConnectCommand = (program: Command) => {
+export const registerCodexProxyWorkerCommands = (program: Command) => {
   program
-    .command("connect")
-    .description("Connect this folder to a codex-proxy server using the official Codex app-server/TUI")
-    .option("--server <url>", "codex-proxy server URL")
+    .argument("[prompt]", "optional prompt to start the Codex session")
     .option("-C, --cd <dir>", "Codex working directory")
     .option("--port <port>", "local Codex app-server websocket port")
     .option("--headless", "do not launch the official Codex TUI")
     .option("-m, --model <model>", "model for remote turns")
     .option("-s, --sandbox <mode>", "sandbox mode for remote turns", "workspace-write")
     .option("-a, --approval-policy <policy>", "approval policy for remote turns", "never")
-    .action(async (options: ConnectOptions) => {
-      const rootOptions = program.opts<{ server: string; cwd: string }>();
-      const apiBase = options.server ?? rootOptions.server;
-      const cwd = path.resolve(options.cd ?? rootOptions.cwd ?? process.cwd());
-      const port = options.port ? Number(options.port) : await findFreePort();
-      if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
+    .action(async (prompt: string | undefined) => {
+      await runCodexpWorker(program, program.opts<ConnectOptions>(), { type: "start", prompt });
+    });
 
-      const appServerUrl = `ws://127.0.0.1:${port}`;
-      const workerId = createWorkerId();
-      const appServer = await startCodexAppServer(cwd, appServerUrl, port);
-      let bridgeRunner: ProxyBridgeRunner | null = null;
-      let tui: CodexTuiPty | null = null;
-      let statusBar: CodexpStatusBar | null = null;
-      let cleanedUp = false;
-      const cleanup = cleanupOnce(async () => {
-        cleanedUp = true;
-        tui?.kill();
-        statusBar?.stop();
-        await bridgeRunner?.stop();
-        appServer.kill("SIGTERM");
+  program
+    .command("resume")
+    .argument("[session]", "Codex session/thread id or thread name")
+    .argument("[prompt]", "optional prompt to send after resuming")
+    .description("Resume an official Codex session with the codex-proxy worker bridge")
+    .option("--server <url>", "codex-proxy server URL")
+    .option("-C, --cd <dir>", "Codex working directory")
+    .option("--port <port>", "local Codex app-server websocket port")
+    .option("--last", "resume the most recent Codex session")
+    .option("--all", "show all Codex sessions in the picker")
+    .option("-m, --model <model>", "model for remote turns")
+    .option("-s, --sandbox <mode>", "sandbox mode for remote turns", "workspace-write")
+    .option("-a, --approval-policy <policy>", "approval policy for remote turns", "never")
+    .action(async (sessionId: string | undefined, prompt: string | undefined, options: ResumeOptions) => {
+      await runCodexpWorker(program, options, {
+        type: "resume",
+        sessionId,
+        prompt,
+        last: options.last,
+        all: options.all
       });
-      const onSignal = (signal: NodeJS.Signals) => {
-        void cleanup().finally(() => process.exit(signalExitCode(signal)));
-      };
-      process.once("SIGINT", onSignal);
-      process.once("SIGTERM", onSignal);
-      process.once("SIGHUP", onSignal);
-
-      try {
-        const appServerStopped = waitForChild(appServer).then(({ code, signal }) => {
-          if (!cleanedUp) process.exitCode = code ?? (signal ? 1 : 1);
-        });
-
-        console.error([
-          `codexp local started: ${workerId}`,
-          `server: ${apiBase} (optional)`,
-          `cwd: ${cwd}`,
-          `app-server: ${appServerUrl}`
-        ].join("\n"));
-
-        statusBar = CodexpStatusBar.start({ apiBase, workerId, cwd });
-        bridgeRunner = new ProxyBridgeRunner({
-          apiBase,
-          appServerUrl,
-          workerId,
-          cwd,
-          model: options.model,
-          sandbox: options.sandbox ?? "workspace-write",
-          approvalPolicy: options.approvalPolicy ?? "never",
-          statusBar
-        });
-        bridgeRunner.start();
-
-        if (options.headless) {
-          await Promise.race([waitForShutdown(), appServerStopped]);
-          return;
-        }
-
-        tui = CodexTuiPty.start(cwd, appServerUrl, statusBar ? {
-          reservedRows: () => statusBar?.reservedRows() ?? 0,
-          onOutput: () => statusBar?.redrawSoon()
-        } : undefined);
-        await Promise.race([tui.waitForExit().then(applyPtyExitCode), appServerStopped]);
-      } finally {
-        process.off("SIGINT", onSignal);
-        process.off("SIGTERM", onSignal);
-        process.off("SIGHUP", onSignal);
-        await cleanup();
-      }
     });
 };
+
+async function runCodexpWorker(program: Command, options: ConnectOptions, launch: TuiLaunch) {
+  const rootOptions = program.opts<{ server: string; cwd: string }>();
+  const apiBase = options.server ?? rootOptions.server;
+  const cwd = path.resolve(options.cd ?? rootOptions.cwd ?? process.cwd());
+  const port = options.port ? Number(options.port) : await findFreePort();
+  if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
+
+  const appServerUrl = `ws://127.0.0.1:${port}`;
+  const workerId = createWorkerId();
+  const appServer = await startCodexAppServer(cwd, appServerUrl, port);
+  let bridgeRunner: ProxyBridgeRunner | null = null;
+  let tui: CodexTuiPty | null = null;
+  let statusBar: CodexpStatusBar | null = null;
+  let cleanedUp = false;
+  const cleanup = cleanupOnce(async () => {
+    cleanedUp = true;
+    tui?.kill();
+    statusBar?.stop();
+    await bridgeRunner?.stop();
+    appServer.kill("SIGTERM");
+  });
+  const onSignal = (signal: NodeJS.Signals) => {
+    void cleanup().finally(() => process.exit(signalExitCode(signal)));
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  process.once("SIGHUP", onSignal);
+
+  try {
+    const appServerStopped = waitForChild(appServer).then(({ code, signal }) => {
+      if (!cleanedUp) process.exitCode = code ?? (signal ? 1 : 1);
+    });
+
+    console.error([
+      `codexp local started: ${workerId}`,
+      `server: ${apiBase} (optional)`,
+      `cwd: ${cwd}`,
+      `app-server: ${appServerUrl}`
+    ].join("\n"));
+
+    statusBar = CodexpStatusBar.start({ apiBase, workerId, cwd });
+    bridgeRunner = new ProxyBridgeRunner({
+      apiBase,
+      appServerUrl,
+      workerId,
+      cwd,
+      model: options.model,
+      sandbox: options.sandbox ?? "workspace-write",
+      approvalPolicy: options.approvalPolicy ?? "never",
+      statusBar
+    });
+    bridgeRunner.start();
+
+    if (options.headless) {
+      await Promise.race([waitForShutdown(), appServerStopped]);
+      return;
+    }
+
+    tui = CodexTuiPty.start(cwd, appServerUrl, launch, statusBar ? {
+      reservedRows: () => statusBar?.reservedRows() ?? 0,
+      onOutput: () => statusBar?.redrawSoon()
+    } : undefined);
+    await Promise.race([tui.waitForExit().then(applyPtyExitCode), appServerStopped]);
+  } finally {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    process.off("SIGHUP", onSignal);
+    await cleanup();
+  }
+}
 
 class ProxyBridgeRunner {
   private bridge: CodexAppServerBridge | null = null;
@@ -573,9 +607,9 @@ class CodexTuiPty {
     private readonly chrome?: PtyChrome
   ) {}
 
-  static start(cwd: string, appServerUrl: string, chrome?: PtyChrome) {
+  static start(cwd: string, appServerUrl: string, launch: TuiLaunch, chrome?: PtyChrome) {
     const term = terminalName();
-    const pty = spawnPty("codex", ["--remote", appServerUrl, "-C", cwd], {
+    const pty = spawnPty("codex", codexTuiArgs(cwd, appServerUrl, launch), {
       cwd,
       name: term,
       cols: process.stdout.columns ?? 80,
@@ -644,6 +678,20 @@ class CodexTuiPty {
       this.rawModeEnabled = false;
     }
   }
+}
+
+function codexTuiArgs(cwd: string, appServerUrl: string, launch: TuiLaunch) {
+  if (launch.type === "start") {
+    const args = ["--remote", appServerUrl, "-C", cwd];
+    if (launch.prompt) args.push(launch.prompt);
+    return args;
+  }
+  const args = ["resume", "--remote", appServerUrl, "-C", cwd];
+  if (launch.last) args.push("--last");
+  if (launch.all) args.push("--all");
+  if (launch.sessionId) args.push(launch.sessionId);
+  if (launch.prompt) args.push(launch.prompt);
+  return args;
 }
 
 type PtyChrome = {
