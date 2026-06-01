@@ -9,6 +9,7 @@ import "./style.css";
 type ThreadSummary = {
   threadId: string;
   workingDirectory: string;
+  runtime: ThreadRuntimeSummary;
   model?: string;
   modelReasoningEffort?: ReasoningEffort;
   status: ThreadStatus;
@@ -19,6 +20,16 @@ type ThreadSummary = {
   messageCount: number;
   lastUsage?: Usage;
 };
+
+type ThreadRuntimeSummary =
+  | {
+      kind: "worker";
+      workerId: string;
+      name?: string;
+      online: boolean;
+      lastSeenAt: string;
+    }
+  | { kind: "detached"; online: false };
 
 type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
@@ -347,18 +358,6 @@ const App = () => {
     }
   };
 
-  const createThreadForSelectedFolder = async () => {
-    const workingDirectory = folderListing?.path ?? folderPath;
-    const thread = await apiJson<ThreadDetail>("/api/threads", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workingDirectory, options: selectedThreadOptions(selectedModel, selectedReasoning) })
-    });
-    setFolderModalOpen(false);
-    await openThread(thread.threadId);
-    await refreshThreads();
-  };
-
   const showRestorableThreads = async () => {
     const workingDirectory = folderListing?.path ?? folderPath;
     setLoadingThreads(true);
@@ -591,7 +590,7 @@ const App = () => {
         </div>
 
         <div className="sidebarActions">
-          <button type="button" onClick={() => void openPicker()}>New Thread</button>
+          <button type="button" onClick={() => void openPicker()}>Open Thread</button>
         </div>
 
         <section className="proxyThreads expanded">
@@ -611,7 +610,7 @@ const App = () => {
                   <span>{shortId(thread.threadId)}</span>
                   <strong>{thread.status}</strong>
                   <code>{thread.title}</code>
-                  <em>{thread.attachCount} attached · {thread.workingDirectory}</em>
+                  <em>{runtimeLabel(thread)} · {thread.attachCount} attached · {thread.workingDirectory}</em>
                 </button>
               ))}
             </div>
@@ -801,7 +800,7 @@ const App = () => {
             </form>
           </>
         ) : (
-          <div className="empty">新建 thread 或从 Codex 对话记录还原。</div>
+          <div className="empty">在本地 Codex CLI 开始一个 thread，或从 Codex 对话记录还原。</div>
         )}
       </section>
 
@@ -854,8 +853,7 @@ const App = () => {
             </form>
             {folderError ? <div className="threadEmpty">{folderError}</div> : null}
             <div className="folderModalActions">
-              <button type="button" onClick={() => void createThreadForSelectedFolder()} disabled={!folderListing}>New Thread</button>
-              <button type="button" className="secondaryButton" onClick={() => void showRestorableThreads()} disabled={!folderListing}>
+              <button type="button" onClick={() => void showRestorableThreads()} disabled={!folderListing}>
                 Restore Conversation
               </button>
             </div>
@@ -1039,6 +1037,13 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
 });
 
 const shortId = (id: string) => id.slice(0, 8);
+
+const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
+  if (thread.runtime.kind === "worker") {
+    return `${thread.runtime.online ? "worker" : "offline"}:${thread.runtime.name ?? shortId(thread.runtime.workerId)}`;
+  }
+  return "detached";
+};
 
 const selectedThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
   ...(model === "auto" ? {} : { model }),

@@ -177,17 +177,12 @@ export class TaskScheduler {
       });
       return null;
     }
-    try {
-      return await this.threads.createThread(loaded.workspace, {});
-    } catch (error) {
-      await appendTaskRun(loaded, {
-        runId: randomUUID(),
-        status: "skipped",
-        reason: "worker_offline",
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return null;
-    }
+    await appendTaskRun(loaded, {
+      runId: randomUUID(),
+      status: "skipped",
+      reason: "thread_not_found"
+    });
+    return null;
   }
 
   private async runTask(loaded: LoadedTask, threadId: string, runId: string, queuedAt: string) {

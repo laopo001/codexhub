@@ -41,20 +41,6 @@ program
   });
 
 program
-  .command("create")
-  .argument("[folder]", "working directory for the new thread")
-  .description("Create a new codex-proxy thread for a folder")
-  .action(async (folder: string) => {
-    const workingDirectory = resolveCommandPath(folder ?? ".");
-    const thread = await apiJson<ThreadSummary>("/api/threads", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workingDirectory })
-    });
-    console.log(`Created ${formatThread(thread)}`);
-  });
-
-program
   .command("delete")
   .argument("<target>", "thread index, full id, or unique id prefix to delete")
   .description("Delete a thread")

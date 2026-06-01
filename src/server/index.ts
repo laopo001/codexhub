@@ -61,6 +61,8 @@ const boolFromEnv = (value: string | undefined, fallback: boolean) => {
 const staticRoot = () => boolFromEnv(process.env.CODEX_PROXY_SERVE_STATIC, false)
   ? path.resolve(process.env.CODEX_PROXY_STATIC_DIR ?? "dist")
   : null;
+const workerOfflineTimeoutMs = () => Number(process.env.CODEX_PROXY_WORKER_OFFLINE_TIMEOUT_MS || 0) || 45_000;
+const workerSweepIntervalMs = () => Number(process.env.CODEX_PROXY_WORKER_SWEEP_INTERVAL_MS || 0) || 5_000;
 const uploadImageSchema = z.object({
   workingDirectory: z.string().min(1),
   filename: z.string().optional(),
@@ -75,6 +77,10 @@ const main = async () => {
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot();
   const taskScheduler = new TaskScheduler(threads, defaultWorkingDirectory);
+  const workerSweep = setInterval(() => {
+    threads.markStaleWorkersOffline(workerOfflineTimeoutMs());
+  }, workerSweepIntervalMs());
+  workerSweep.unref?.();
 
   taskScheduler.start();
   await app.register(cors, { origin: true });
@@ -133,10 +139,12 @@ const main = async () => {
   });
 
   app.get("/api/threads", async () => ({
+    ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs()),
     threads: threads.listThreads()
   }));
 
   app.get("/api/workers", async () => ({
+    ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs()),
     workers: threads.listWorkers()
   }));
 
@@ -150,6 +158,13 @@ const main = async () => {
     const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
     const payload = workerRegistrationSchema.partial().parse(request.body ?? {});
     const result = threads.heartbeatWorker(params.workerId, payload);
+    if (!result.ok) reply.code(404);
+    return result;
+  });
+
+  app.delete("/api/workers/:workerId", async (request, reply) => {
+    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+    const result = threads.unregisterWorker(params.workerId);
     if (!result.ok) reply.code(404);
     return result;
   });
@@ -187,21 +202,6 @@ const main = async () => {
       workingDirectory,
       threads: await listLoadableCodexThreads(workingDirectory)
     };
-  });
-
-  app.post("/api/threads", async (request, reply) => {
-    const payload = z.object({
-      workingDirectory: z.string().optional(),
-      options: threadOptionsSchema.optional()
-    }).parse(request.body ?? {});
-    const workingDirectory = payload.workingDirectory ?? defaultWorkingDirectory;
-    await touchWorkspace(workingDirectory);
-    try {
-      return await threads.createThread(workingDirectory, payload.options ?? {});
-    } catch (error) {
-      reply.code(409);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
   });
 
   app.post("/api/threads/restore", async (request, reply) => {

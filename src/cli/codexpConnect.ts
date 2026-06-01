@@ -75,11 +75,18 @@ export const registerConnectCommand = (program: Command) => {
 
       const appServerUrl = `ws://127.0.0.1:${port}`;
       const appServer = await startCodexAppServer(cwd, appServerUrl, port);
-      const cleanup = cleanupOnce(() => {
+      let bridge: CodexAppServerBridge | null = null;
+      let registeredWorkerId: string | null = null;
+      const cleanup = cleanupOnce(async () => {
+        bridge?.close();
         appServer.kill("SIGTERM");
+        if (registeredWorkerId) await unregisterWorker(apiBase, registeredWorkerId);
       });
-      process.once("SIGINT", cleanup);
-      process.once("SIGTERM", cleanup);
+      const onSignal = (signal: NodeJS.Signals) => {
+        void cleanup().finally(() => process.kill(process.pid, signal));
+      };
+      process.once("SIGINT", onSignal);
+      process.once("SIGTERM", onSignal);
 
       try {
         const workerId = stableWorkerId(cwd);
@@ -95,8 +102,9 @@ export const registerConnectCommand = (program: Command) => {
             hostname: os.hostname()
           })
         });
+        registeredWorkerId = registration.workerId;
 
-        const bridge = await CodexAppServerBridge.connect({
+        bridge = await CodexAppServerBridge.connect({
           apiBase,
           appServerUrl,
           workerId: registration.workerId,
@@ -105,9 +113,6 @@ export const registerConnectCommand = (program: Command) => {
           sandbox: options.sandbox ?? "workspace-write",
           approvalPolicy: options.approvalPolicy ?? "never"
         });
-        const stopBridge = cleanupOnce(() => bridge.close());
-        process.once("SIGINT", stopBridge);
-        process.once("SIGTERM", stopBridge);
 
         void bridge.runCommandLoop().catch((error) => {
           console.error(`codexp connect command loop failed: ${errorText(error)}`);
@@ -136,7 +141,9 @@ export const registerConnectCommand = (program: Command) => {
         });
         await waitForChild(tui);
       } finally {
-        cleanup();
+        process.off("SIGINT", onSignal);
+        process.off("SIGTERM", onSignal);
+        await cleanup();
       }
     });
 };
@@ -207,22 +214,6 @@ class CodexAppServerBridge {
           turnId: command.turnId
         }, command);
       }
-      return;
-    }
-
-    if (command.type === "create_thread") {
-      const result = asRecord(await this.request("thread/start", {
-        cwd: command.workingDirectory,
-        model: command.options?.model ?? this.options.model,
-        approvalPolicy: this.options.approvalPolicy,
-        sandbox: this.options.sandbox,
-        threadSource: "user",
-        sessionStartSource: "startup"
-      }, command));
-      const thread = asRecord(result?.thread);
-      const threadId = typeof thread?.id === "string" ? thread.id : undefined;
-      if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
-      this.bindThread(threadId);
       return;
     }
 
@@ -496,6 +487,10 @@ const apiJson = async <T = unknown>(apiBase: string, route: string, init?: Reque
   return await response.json() as T;
 };
 
+const unregisterWorker = async (apiBase: string, workerId: string) => {
+  await apiJson(apiBase, `/api/workers/${encodeURIComponent(workerId)}`, { method: "DELETE" }).catch(() => undefined);
+};
+
 const parseJsonRecord = (data: unknown): JsonRecord | null => {
   try {
     if (typeof data === "string") return asRecord(JSON.parse(data));
@@ -528,12 +523,12 @@ const waitForShutdown = async () => await new Promise<void>((resolve) => {
   process.once("SIGTERM", resolve);
 });
 
-const cleanupOnce = (cleanup: () => void) => {
+const cleanupOnce = <T>(cleanup: () => T | Promise<T>) => {
   let called = false;
-  return () => {
-    if (called) return;
+  return async () => {
+    if (called) return undefined;
     called = true;
-    cleanup();
+    return await cleanup();
   };
 };
 

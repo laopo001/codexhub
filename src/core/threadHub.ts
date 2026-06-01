@@ -65,7 +65,7 @@ export type WorkerSummary = {
 export type WorkerCommand = {
   seq: number;
   commandId: string;
-  type: "create_thread" | "fork_thread" | "turn" | "stop";
+  type: "fork_thread" | "turn" | "stop";
   workingDirectory: string;
   createdAt: string;
   threadId?: string;
@@ -131,6 +131,10 @@ export class ThreadHub {
     const now = new Date().toISOString();
     const workerId = registration.workerId?.trim() || randomUUID();
     const existing = this.workers.get(workerId);
+    if (existing) {
+      this.rejectPendingWorkerCommands(existing, new Error(`Worker reconnected: ${workerId}`));
+      for (const waiter of [...existing.waiters]) waiter();
+    }
     const worker: RuntimeWorker = {
       workerId,
       name: registration.name,
@@ -140,7 +144,7 @@ export class ThreadHub {
       lastSeenAt: now,
       pid: registration.pid,
       hostname: registration.hostname,
-      commands: existing?.commands ?? [],
+      commands: [],
       waiters: existing?.waiters ?? new Set()
     };
     this.workers.set(workerId, worker);
@@ -165,6 +169,25 @@ export class ThreadHub {
       if (thread.workerId === workerId) this.publish(thread, "thread");
     }
     return { ok: true, workerId };
+  }
+
+  unregisterWorker(workerId: string) {
+    const worker = this.workers.get(workerId);
+    if (!worker) return { ok: false };
+    this.markWorkerOffline(worker, `Worker unregistered: ${workerId}`);
+    return { ok: true, workerId };
+  }
+
+  markStaleWorkersOffline(timeoutMs: number, now = Date.now()) {
+    let offline = 0;
+    for (const worker of this.workers.values()) {
+      if (!worker.online) continue;
+      const lastSeenAt = Date.parse(worker.lastSeenAt);
+      if (Number.isFinite(lastSeenAt) && now - lastSeenAt <= timeoutMs) continue;
+      this.markWorkerOffline(worker, `Worker heartbeat timed out: ${worker.workerId}`);
+      offline += 1;
+    }
+    return { offline };
   }
 
   listWorkers(): WorkerSummary[] {
@@ -224,20 +247,6 @@ export class ThreadHub {
     return thread ? this.detail(thread) : null;
   }
 
-  async createThread(workingDirectory: string, options: ThreadOptions = {}): Promise<ThreadDetail> {
-    const worker = this.requireWorkerForWorkspace(workingDirectory);
-    const commandId = randomUUID();
-    const promise = this.waitForCommand<ThreadDetail>(commandId, "create_thread");
-    this.enqueueWorkerCommand(worker.workerId, {
-      commandId,
-      type: "create_thread",
-      workingDirectory,
-      createdAt: new Date().toISOString(),
-      options: { ...this.defaultThreadOptions, ...options }
-    });
-    return promise;
-  }
-
   restoreThread(
     workingDirectory: string,
     threadId: string,
@@ -272,7 +281,7 @@ export class ThreadHub {
     const source = this.requireThread(threadId);
     const worker = this.requireThreadWorker(source);
     const commandId = randomUUID();
-    const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread");
+    const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId);
     this.enqueueWorkerCommand(worker.workerId, {
       commandId,
       type: "fork_thread",
@@ -369,12 +378,6 @@ export class ThreadHub {
     return thread;
   }
 
-  private requireWorkerForWorkspace(workingDirectory: string) {
-    const worker = this.workerForWorkspace(workingDirectory);
-    if (!worker) throw new Error(`No online worker for workspace: ${workingDirectory}`);
-    return worker;
-  }
-
   private workerForWorkspace(workingDirectory: string) {
     return [...this.workers.values()]
       .filter((worker) => worker.online && worker.workingDirectory === workingDirectory)
@@ -437,7 +440,7 @@ export class ThreadHub {
   private resolveCommandFromMessage(commandId: string, thread: RuntimeThread | null) {
     const pending = this.pendingCommands.get(commandId);
     if (!pending) return;
-    if ((pending.type === "create_thread" || pending.type === "fork_thread") && thread) {
+    if (pending.type === "fork_thread" && thread) {
       this.resolveCommand(commandId, this.detail(thread));
     }
   }
@@ -457,6 +460,26 @@ export class ThreadHub {
     clearTimeout(pending.timer);
     this.pendingCommands.delete(commandId);
     pending.reject(error);
+  }
+
+  private markWorkerOffline(worker: RuntimeWorker, message: string) {
+    const wasOnline = worker.online;
+    worker.online = false;
+    worker.lastSeenAt = new Date().toISOString();
+    this.rejectPendingWorkerCommands(worker, new Error(message));
+    for (const waiter of [...worker.waiters]) waiter();
+    for (const thread of this.threads.values()) {
+      if (thread.workerId !== worker.workerId) continue;
+      if (thread.running) {
+        this.finishWorkerTurnByThread(thread.threadId, new Error(message));
+      } else if (wasOnline) {
+        this.publish(thread, "thread");
+      }
+    }
+  }
+
+  private rejectPendingWorkerCommands(worker: RuntimeWorker, error: Error) {
+    for (const command of worker.commands) this.rejectCommand(command.commandId, error);
   }
 
   private ensureThread(threadId: string, worker: RuntimeWorker, message: Record<string, unknown>) {

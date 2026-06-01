@@ -3,15 +3,10 @@ import type { CodexRecord } from "../core/codexRecord.js";
 import { recordToView, type CodexRecordView } from "../core/codexRecordView.js";
 import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../shared/compactRecordViews.js";
 
-type DirectoryListing = {
-  path: string;
-  parent: string | null;
-  children: Array<{ name: string; path: string; hasChildren: boolean }>;
-};
-
 type ThreadSummary = {
   threadId: string;
   workingDirectory: string;
+  runtime: ThreadRuntimeSummary;
   status: ThreadStatus;
   running: boolean;
   attachCount: number;
@@ -19,6 +14,10 @@ type ThreadSummary = {
   updatedAt: string;
   messageCount: number;
 };
+
+type ThreadRuntimeSummary =
+  | { kind: "worker"; workerId: string; name?: string; online: boolean }
+  | { kind: "detached"; online: false };
 
 type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
@@ -65,14 +64,11 @@ const allowedChatIds = new Set(
 );
 const bot = new Telegraf(token);
 const chatStates = new Map<number, ChatState>();
-const folderPickers = new Map<number, DirectoryListing>();
-const lastFolderPaths = new Map<number, string>();
 
 const botCommands = [
   { command: "start", description: "show help" },
   { command: "status", description: "show current thread" },
   { command: "threads", description: "attach a Codex thread" },
-  { command: "new", description: "choose a folder and create a thread" },
   { command: "stop", description: "stop the current turn" }
 ];
 
@@ -92,11 +88,10 @@ bot.start(async (ctx) => {
     "codex-proxy ready.",
     "",
     "/threads 打开已有 Codex thread",
-    "/new 选择文件夹并创建 Codex thread",
     "/stop 停止当前 turn",
     "/status 查看当前状态",
     "",
-    "直接发消息会发送给当前 Codex thread。"
+    "直接发消息会发送给当前 Codex thread。新 thread 请在本地 Codex CLI 里开始。"
   ].join("\n"));
 });
 
@@ -105,38 +100,18 @@ bot.command("threads", async (ctx) => {
     const threads = await listThreads();
 
     if (!threads.length) {
-      await ctx.reply("当前没有可打开的 Codex thread。使用 /new 选择文件夹并创建。");
+      await ctx.reply("当前没有可打开的 Codex thread。请先在本地 Codex CLI 里开始一个 thread。");
       return;
     }
 
     await ctx.reply("选择要打开的 Codex thread：", {
       reply_markup: {
         inline_keyboard: threads.map((thread) => ([{
-          text: `${displayThreadId(thread)}  ${thread.status}  ${shortPath(thread.workingDirectory)}`,
+          text: `${displayThreadId(thread)}  ${thread.status}  ${runtimeLabel(thread)}  ${shortPath(thread.workingDirectory)}`,
           callback_data: `attach:${thread.threadId}`
         }]))
       }
     });
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-});
-
-bot.command("new", async (ctx) => {
-  const requestedPath = ctx.message.text.replace(/^\/new(@\w+)?\s*/, "").trim();
-  try {
-    if (requestedPath) {
-      const thread = await createThread(requestedPath);
-      await attachThread(ctx.chat.id, thread.threadId);
-      lastFolderPaths.set(ctx.chat.id, thread.workingDirectory);
-      await ctx.reply(`已创建并打开 Codex thread：${shortId(thread.threadId)}\n文件夹：${thread.workingDirectory}`);
-      return;
-    }
-
-    const listing = await loadDirectory(lastFolderPaths.get(ctx.chat.id));
-    lastFolderPaths.set(ctx.chat.id, listing.path);
-    folderPickers.set(ctx.chat.id, listing);
-    await ctx.reply(newPickerText(listing), newPickerMarkup(listing));
   } catch (error) {
     await ctx.reply(errorText(error));
   }
@@ -155,7 +130,7 @@ bot.command("status", async (ctx) => {
       `usage：${formatCodexUsage(usage)}`,
       "",
       threads.length
-        ? threads.map((thread) => `${displayThreadId(thread)} ${thread.status} ${thread.attachCount} attached`).join("\n")
+        ? threads.map((thread) => `${displayThreadId(thread)} ${thread.status} ${runtimeLabel(thread)} ${thread.attachCount} attached`).join("\n")
         : "当前没有 Codex thread。"
     ].filter(Boolean).join("\n"));
   } catch (error) {
@@ -185,60 +160,6 @@ const handleStopCommand = async (ctx: any) => {
 
 bot.command("stop", handleStopCommand);
 bot.hears(/^\/stop(?:@\w+)?(?:\s|$)/i, handleStopCommand);
-
-bot.action(/^new:child:(\d+)$/, async (ctx) => {
-  try {
-    const index = Number(ctx.match[1]);
-    const current = folderPickers.get(ctx.chat!.id);
-    const selected = current?.children[index];
-    if (!selected) throw new Error("Folder selection expired. Run /new again.");
-    const listing = await loadDirectory(selected.path);
-    folderPickers.set(ctx.chat!.id, listing);
-    lastFolderPaths.set(ctx.chat!.id, listing.path);
-    await ctx.answerCbQuery("Opened");
-    await ctx.editMessageText(newPickerText(listing), newPickerMarkup(listing));
-  } catch (error) {
-    await ctx.answerCbQuery("Failed");
-    await ctx.reply(errorText(error));
-  }
-});
-
-bot.action("new:parent", async (ctx) => {
-  try {
-    const current = folderPickers.get(ctx.chat!.id);
-    if (!current?.parent) throw new Error("No parent folder.");
-    const listing = await loadDirectory(current.parent);
-    folderPickers.set(ctx.chat!.id, listing);
-    lastFolderPaths.set(ctx.chat!.id, listing.path);
-    await ctx.answerCbQuery("Opened");
-    await ctx.editMessageText(newPickerText(listing), newPickerMarkup(listing));
-  } catch (error) {
-    await ctx.answerCbQuery("Failed");
-    await ctx.reply(errorText(error));
-  }
-});
-
-bot.action("new:create", async (ctx) => {
-  try {
-    const listing = folderPickers.get(ctx.chat!.id);
-    if (!listing) throw new Error("Folder selection expired. Run /new again.");
-    const thread = await createThread(listing.path);
-    await attachThread(ctx.chat!.id, thread.threadId);
-    folderPickers.delete(ctx.chat!.id);
-    lastFolderPaths.set(ctx.chat!.id, thread.workingDirectory);
-    await ctx.answerCbQuery("Created");
-    await ctx.editMessageText(`已创建并打开 Codex thread：${displayThreadId(thread)}\n文件夹：${thread.workingDirectory}`);
-  } catch (error) {
-    await ctx.answerCbQuery("Failed");
-    await ctx.reply(errorText(error));
-  }
-});
-
-bot.action("new:cancel", async (ctx) => {
-  folderPickers.delete(ctx.chat!.id);
-  await ctx.answerCbQuery("Canceled");
-  await ctx.editMessageText("已取消创建 thread。");
-});
 
 bot.action(/^attach:(.+)$/, async (ctx) => {
   try {
@@ -293,7 +214,7 @@ const runPrompt = async (
   const state = chatStates.get(ctx.chat.id);
   const existingThread = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
   if (!existingThread) {
-    await ctx.reply("当前没有打开的 Codex thread。使用 /new 选择文件夹并创建，或用 /threads 打开已有 thread。");
+    await ctx.reply("当前没有打开的 Codex thread。用 /threads 打开已有 thread；新 thread 请在本地 Codex CLI 里开始。");
     return;
   }
   const thread = existingThread;
@@ -396,23 +317,12 @@ const listThreads = async (): Promise<ThreadSummary[]> => {
   return Array.isArray(data.threads) ? data.threads : [];
 };
 
-const loadDirectory = async (directoryPath?: string) => {
-  const query = directoryPath ? `?${new URLSearchParams({ path: directoryPath }).toString()}` : "";
-  return apiJson<DirectoryListing>(`/api/fs/children${query}`);
-};
-
 const getThread = (threadId: string) => apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
 
 const getCodexUsage = (threadId?: string) => {
   const query = threadId ? `?${new URLSearchParams({ threadId }).toString()}` : "";
   return apiJson<CodexUsageSnapshot>(`/api/codex-usage${query}`);
 };
-
-const createThread = (workingDirectory: string) => apiJson<ThreadDetail>("/api/threads", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ workingDirectory })
-});
 
 const postTurn = async (threadId: string, input: TurnInput) => {
   const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/turn`), {
@@ -475,29 +385,11 @@ const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortId = (id: string) => id.slice(0, 8);
 const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-const newPickerText = (listing: DirectoryListing) => [
-  "选择文件夹创建 Codex thread：",
-  listing.path,
-  "",
-  "可以进入子目录，也可以直接在当前目录创建。"
-].join("\n");
-const newPickerMarkup = (listing: DirectoryListing) => {
-  const childRows = listing.children.slice(0, 20).map((child, index) => ([{
-    text: child.hasChildren ? `${child.name}/` : child.name,
-    callback_data: `new:child:${index}`
-  }]));
-  const parentRow = listing.parent ? [[{ text: "..", callback_data: "new:parent" }]] : [];
-
-  return {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "Create Thread Here", callback_data: "new:create" }],
-        ...parentRow,
-        ...childRows,
-        [{ text: "Cancel", callback_data: "new:cancel" }]
-      ]
-    }
-  };
+const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
+  if (thread.runtime.kind === "worker") {
+    return `${thread.runtime.online ? "worker" : "offline"}:${thread.runtime.name ?? shortId(thread.runtime.workerId)}`;
+  }
+  return "detached";
 };
 const shortPath = (value: string) => {
   const home = process.env.HOME;

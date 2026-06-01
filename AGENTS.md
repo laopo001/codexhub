@@ -5,8 +5,10 @@
 1. `threadId` 是 codex-proxy 的产品级运行主键；Web tab、Telegram attach、任务目标和左侧列表都必须指向 `threadId`。
 2. 不再引入 `instanceId`。旧的 instance 概念已经被删除，新逻辑不得增加 `/api/instances`、`.codexp/instances.yaml` 或 instance 兼容层。
 3. API server 是控制面和事件镜像层，不直接拥有 Codex runtime。Codex runtime 在 `codexp connect` 启动的官方 `codex app-server` worker 里。
-4. `workerId` 标识一条 `codexp connect` 连接；worker 负责执行 `create_thread`、`turn`、`stop`、`fork_thread` 命令。
-5. `threadId` 来自官方 app-server。Web/TG/task 发送输入时，server 只把命令排到对应 worker，执行结果再按 `threadId` 镜像回 thread 记录。
+4. `workerId` 标识一条 `codexp connect` 连接；worker 负责执行 `turn`、`stop`、`fork_thread` 命令。
+5. `threadId` 来自官方 app-server。新 thread 只能由本地 Codex CLI/TUI 或官方 session 恢复产生，server/Web/TG/task 不主动创建 thread。
+6. Web/TG/task 发送输入时，server 只把命令排到对应 worker，执行结果再按 `threadId` 镜像回 thread 记录。
+7. worker 退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。
 
 ## Attach 和关闭语义
 
@@ -27,7 +29,8 @@
 
 1. 新功能使用 `/api/threads` 和 `/api/workers` 系列接口。
 2. 不再新增 `/api/instances`、`/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
-3. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events。worker 主动出站连接 server，不要求 server 反连 worker 机器。
+3. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events/unregister。worker 主动出站连接 server，不要求 server 反连 worker 机器。
+4. 不提供 `POST /api/threads` 创建入口；server 只能 attach、detach、delete、restore existing Codex session、turn、stop、fork。
 
 ## `.codexp` 工作区文件约定
 
@@ -53,7 +56,7 @@ input: |
 
 1. 任务所在工作区由 `.codexp/tasks/*.yaml` 的位置推导，不在 YAML 里写 `folder`。
 2. `thread` 可选；有值时匹配完整 `threadId` 或唯一短前缀。
-3. `thread` 为空时，如果当前工作区只有 1 个 thread 就使用它；没有 thread 且有在线 worker 就创建；多个 thread 时不猜测，跳过并记录 `ambiguous_thread`。
+3. `thread` 为空时，如果当前工作区只有 1 个 thread 就使用它；没有 thread 时跳过并记录 `thread_not_found`；多个 thread 时不猜测，跳过并记录 `ambiguous_thread`。
 4. 任务并发边界是 thread：同一个 thread 上的任务串行，不同 thread 可以并行。
 5. 同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
 6. `codexp list` 应显示每个 thread 对应的 enabled task 数量。

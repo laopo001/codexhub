@@ -69,12 +69,10 @@ pm2 restart codex-proxy-prod
 
 ## API
 
-当前运行态 API 以 `threadId` 为主键；创建 thread 前需要对应 workspace 有在线 worker：
+当前运行态 API 以 `threadId` 为主键。新 thread 在本地官方 Codex TUI 里开始，server 只列出、attach 和转发已有 thread：
 
 ```bash
-THREAD_ID=$(curl -sS -X POST http://127.0.0.1:8788/api/threads \
-  -H 'content-type: application/json' \
-  -d '{"workingDirectory":"/home/laop/projects/codex-proxy"}' | jq -r .threadId)
+THREAD_ID=$(curl -sS http://127.0.0.1:8788/api/threads | jq -r '.threads[0].threadId')
 
 curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
   -H 'content-type: application/json' \
