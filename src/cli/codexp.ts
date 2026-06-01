@@ -3,6 +3,8 @@ import { Command } from "commander";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadDotEnv } from "../core/dotenv.js";
+import { listLoadableCodexThreads } from "../core/codexpLog.js";
+import type { CodexSessionSummary } from "../core/codexSession.js";
 import { registerCodexProxyWorkerCommands } from "./codexpConnect.js";
 import {
   CodexpTaskScheduler,
@@ -21,6 +23,10 @@ type ServerCommandOptions = {
   host?: string;
   port?: string;
   serveStatic?: string;
+};
+
+type ThreadsCommandOptions = {
+  show?: string;
 };
 
 type WorkerSummary = {
@@ -68,10 +74,12 @@ program
 
 program
   .command("threads")
-  .description("List mirrored Codex threads")
-  .action(async () => {
-    const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
-    await printThreads(data.threads ?? []);
+  .description("List local Codex threads for the current directory")
+  .option("--show <count>", "number of recent threads to show", "20")
+  .action(async (options: ThreadsCommandOptions = {}) => {
+    const limit = parsePositiveIntegerOption(options.show, "show");
+    const threads = await listLoadableCodexThreads(commandCwd(), { limit });
+    printCodexSessions(threads);
   });
 
 program
@@ -202,6 +210,20 @@ function printWorkers(workers: WorkerSummary[]) {
   })));
 }
 
+function printCodexSessions(threads: CodexSessionSummary[]) {
+  if (!threads.length) {
+    console.log("No Codex threads for this directory.");
+    return;
+  }
+  console.table(threads.map((thread) => ({
+    updated: formatLocalTime(thread.updatedAt),
+    threadId: thread.threadId,
+    title: truncate(singleLine(thread.firstUserMessage) || "(untitled)", 96),
+    messages: thread.messageCount,
+    artifacts: thread.artifactCount
+  })));
+}
+
 function formatRuntime(thread: ThreadSummary) {
   if (!thread.runtime) return "unavailable";
   const state = thread.runtime.runnable ? "runnable" : "unavailable";
@@ -217,7 +239,7 @@ function resolveThreadTarget(target: string, threads: ThreadSummary[]) {
     const index = Number(trimmed);
     const thread = threads[index];
     if (!thread) {
-      throw new Error(`No thread at index ${index}. Run "pnpm codexp threads" to see valid targets.`);
+      throw new Error(`No server-mirrored thread at index ${index}.`);
     }
     return thread;
   }
@@ -231,11 +253,41 @@ function resolveThreadTarget(target: string, threads: ThreadSummary[]) {
     ].join("\n"));
   }
 
-  throw new Error(`Thread not found: ${trimmed}. Run "pnpm codexp threads" to see valid targets.`);
+  throw new Error(`Server-mirrored thread not found: ${trimmed}.`);
 }
 
 function formatThread(thread: ThreadSummary) {
   return `${thread.threadId.slice(0, 8)} (${thread.workingDirectory}, ${thread.title})`;
+}
+
+function formatLocalTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return [
+    date.getFullYear(),
+    "-",
+    pad2(date.getMonth() + 1),
+    "-",
+    pad2(date.getDate()),
+    " ",
+    pad2(date.getHours()),
+    ":",
+    pad2(date.getMinutes()),
+    ":",
+    pad2(date.getSeconds())
+  ].join("");
+}
+
+function singleLine(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function truncate(value: string, maxLength: number) {
+  return value.length > maxLength ? `${value.slice(0, Math.max(0, maxLength - 1))}…` : value;
+}
+
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
 }
 
 async function startTaskScheduler(options: TaskCommandOptions) {
@@ -317,6 +369,14 @@ function parsePortOption(value: string | undefined) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) {
     throw new Error(`Invalid port: ${value}`);
+  }
+  return parsed;
+}
+
+function parsePositiveIntegerOption(value: string | undefined, name: string) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${name}: ${value}`);
   }
   return parsed;
 }

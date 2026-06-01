@@ -57,6 +57,15 @@ export const readCodexSessionSnapshot = async (threadId: string): Promise<CodexS
   return readCodexSessionSnapshotFromFile(filePath);
 };
 
+type CodexSessionListOptions = {
+  limit?: number;
+};
+
+type SessionFileInfo = {
+  path: string;
+  mtimeMs: number;
+};
+
 export const listCodexSessionFiles = async (): Promise<string[]> => {
   const root = path.join(os.homedir(), ".codex", "sessions");
   const files: string[] = [];
@@ -64,6 +73,21 @@ export const listCodexSessionFiles = async (): Promise<string[]> => {
     files.push(filePath);
   });
   return files.sort();
+};
+
+const listCodexSessionFileInfos = async (): Promise<SessionFileInfo[]> => {
+  const root = path.join(os.homedir(), ".codex", "sessions");
+  const files: SessionFileInfo[] = [];
+  await visitSessionFiles(root, async (filePath) => {
+    let mtimeMs = 0;
+    try {
+      mtimeMs = (await stat(filePath)).mtimeMs;
+    } catch {
+      // Keep unreadable files at the end; the summary reader will skip them.
+    }
+    files.push({ path: filePath, mtimeMs });
+  });
+  return files.sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path));
 };
 
 export const sessionThreadId = (snapshot: CodexSessionSnapshot): string | null => {
@@ -75,14 +99,54 @@ export const sessionThreadId = (snapshot: CodexSessionSnapshot): string | null =
   return null;
 };
 
-export const listCodexSessionsForCwd = async (workingDirectory: string): Promise<CodexSessionSummary[]> => {
-  const files = await listCodexSessionFiles();
-  const summaries = await mapWithConcurrency(files, 16, (filePath) => readSessionSummaryForCwd(filePath, workingDirectory));
+export const listCodexSessionsForCwd = async (
+  workingDirectory: string,
+  options: CodexSessionListOptions = {}
+): Promise<CodexSessionSummary[]> => {
+  const limit = normalizeLimit(options.limit);
+  const files = await listCodexSessionFileInfos();
+  const summaries = limit
+    ? await readRecentSessionSummariesForCwd(files, workingDirectory, limit)
+    : await mapWithConcurrency(files.map((file) => file.path), 16, (filePath) => readSessionSummaryForCwd(filePath, workingDirectory));
 
-  return summaries
+  const byThreadId = summaries
     .filter((summary): summary is CodexSessionSummary => Boolean(summary))
+    .reduce((map, summary) => {
+      const existing = map.get(summary.threadId);
+      if (!existing || Date.parse(summary.updatedAt) > Date.parse(existing.updatedAt)) {
+        map.set(summary.threadId, summary);
+      }
+      return map;
+    }, new Map<string, CodexSessionSummary>());
+
+  const sorted = [...byThreadId.values()]
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  return limit ? sorted.slice(0, limit) : sorted;
 };
+
+const readRecentSessionSummariesForCwd = async (
+  files: SessionFileInfo[],
+  workingDirectory: string,
+  limit: number
+) => {
+  const byThreadId = new Map<string, CodexSessionSummary>();
+  const batchSize = 16;
+  for (let index = 0; index < files.length && byThreadId.size < limit; index += batchSize) {
+    const batch = files.slice(index, index + batchSize);
+    const summaries = await Promise.all(batch.map((file) => readSessionSummaryForCwd(file.path, workingDirectory)));
+    for (const summary of summaries) {
+      if (!summary) continue;
+      const existing = byThreadId.get(summary.threadId);
+      if (!existing || Date.parse(summary.updatedAt) > Date.parse(existing.updatedAt)) {
+        byThreadId.set(summary.threadId, summary);
+      }
+    }
+  }
+  return [...byThreadId.values()];
+};
+
+const normalizeLimit = (value: number | undefined) =>
+  Number.isInteger(value) && value !== undefined && value > 0 ? value : undefined;
 
 export const summarizeCodexSession = async (
   snapshot: CodexSessionSnapshot,

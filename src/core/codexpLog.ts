@@ -7,8 +7,8 @@ import {
 import { codexRecordFromSession } from "./codexRecord.js";
 import { upsertCodexpThread, writeCodexpThreadIndex } from "./codexpCache.js";
 
-export const listLoadableCodexThreads = async (workingDirectory: string) => {
-  const threads = await listCodexSessionsForCwd(workingDirectory);
+export const listLoadableCodexThreads = async (workingDirectory: string, options: { limit?: number } = {}) => {
+  const threads = await listCodexSessionsForCwd(workingDirectory, options);
   await writeCodexpThreadIndex(workingDirectory, threads);
   return threads;
 };

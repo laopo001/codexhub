@@ -35,12 +35,12 @@ pnpm codexp server --host 0.0.0.0 --port 8788
 pnpm codexp --server http://127.0.0.1:8788 -C /path/to/project
 pnpm codexp --server http://127.0.0.1:8788 resume <threadId> -C /path/to/project
 pnpm codexp list
-pnpm codexp threads
+pnpm codexp threads --show 20
 ```
 
 `codexp [prompt]` 会在当前机器启动官方 `codex app-server`，然后用 PTY wrapper 前台运行官方 `codex --remote ... [prompt]` TUI。`codexp resume [threadId] [prompt]` 走同一套 worker/bridge，只是前台 TUI 改为官方 `codex resume --remote ... [threadId] [prompt]`；不传 `threadId` 时保留官方 resume picker，也可以用 `--last`。codex-proxy server 是可选增强：server 在线时，`codexp` 注册一个本次进程唯一的 worker，同步 app-server event，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，只是暂时不能远程转发。后台 bridge 会持续重试，server 恢复后自动注册并开始同步。Web 主列表只展示在线 worker；右侧展示选中 worker 的当前 thread，TUI 里 `/resume` 切换后会随 app-server event 同步。Codex usage 和本地图片处理等机器相关能力由 `codexp` worker 上报或执行，server 只缓存和转发。非 headless 终端底部会保留一行 `codexp` 状态栏，显示当前 worker、thread 和 server 连接状态。官方 TUI 退出时，`codexp` 会立即 unregister worker；如果 `codexp` 异常消失，server 通过 heartbeat timeout 标记 offline，Web 左侧不再显示该 worker。
 
-`codexp list` 与 Web 左侧一致，只显示当前在线的 codexp worker；`codexp threads` 显示 server 已镜像的历史 Codex threads，包括暂时不可运行的 offline thread。
+`codexp list` 与 Web 左侧一致，只显示当前在线的 codexp worker；`codexp threads` 扫描本机官方 Codex session 历史，只显示当前目录的可 resume threads，并输出标题、更新时间和完整 threadId。`--show` 控制最近显示数量，默认 20。
 
 PTY 支持依赖 `node-pty` native build，仓库的 `pnpm-workspace.yaml` 已允许该依赖运行 build script。
 
