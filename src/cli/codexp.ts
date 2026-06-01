@@ -23,6 +23,16 @@ type ServerCommandOptions = {
   serveStatic?: string;
 };
 
+type WorkerSummary = {
+  workerId: string;
+  name?: string;
+  workingDirectory: string;
+  online: boolean;
+  lastSeenAt: string;
+  currentThreadId?: string;
+  currentThread?: ThreadSummary;
+};
+
 await loadDotEnv();
 
 const program = new Command()
@@ -50,7 +60,15 @@ program
 
 program
   .command("list")
-  .description("List running/restored codex-proxy threads")
+  .description("List online codexp workers")
+  .action(async () => {
+    const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
+    printWorkers((data.workers ?? []).filter((worker) => worker.online));
+  });
+
+program
+  .command("threads")
+  .description("List mirrored Codex threads")
   .action(async () => {
     const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
     await printThreads(data.threads ?? []);
@@ -170,6 +188,20 @@ async function printThreads(threads: ThreadSummary[]) {
   })));
 }
 
+function printWorkers(workers: WorkerSummary[]) {
+  if (!workers.length) {
+    console.log("No connected codexp.");
+    return;
+  }
+  console.table(workers.map((worker) => ({
+    worker: worker.name ?? worker.workerId.slice(0, 8),
+    status: worker.currentThread?.status ?? "idle",
+    folder: worker.workingDirectory,
+    thread: worker.currentThreadId ? worker.currentThreadId.slice(0, 8) : "",
+    title: worker.currentThread?.title ?? ""
+  })));
+}
+
 function formatRuntime(thread: ThreadSummary) {
   if (!thread.runtime) return "unavailable";
   const state = thread.runtime.runnable ? "runnable" : "unavailable";
@@ -185,7 +217,7 @@ function resolveThreadTarget(target: string, threads: ThreadSummary[]) {
     const index = Number(trimmed);
     const thread = threads[index];
     if (!thread) {
-      throw new Error(`No thread at index ${index}. Run "pnpm codexp list" to see valid targets.`);
+      throw new Error(`No thread at index ${index}. Run "pnpm codexp threads" to see valid targets.`);
     }
     return thread;
   }
@@ -199,7 +231,7 @@ function resolveThreadTarget(target: string, threads: ThreadSummary[]) {
     ].join("\n"));
   }
 
-  throw new Error(`Thread not found: ${trimmed}. Run "pnpm codexp list" to see valid targets.`);
+  throw new Error(`Thread not found: ${trimmed}. Run "pnpm codexp threads" to see valid targets.`);
 }
 
 function formatThread(thread: ThreadSummary) {

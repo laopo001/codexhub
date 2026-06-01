@@ -12,6 +12,7 @@
 8. 同一个 `workingDirectory` 可以同时运行多个 `codexp` / `codexp resume`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
 9. 非 headless 的 `codexp` / `codexp resume` 必须用 PTY wrapper 启动官方 `codex --remote ...` 或 `codex resume --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
 10. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
+11. `codexp list` 必须和 Web 左侧一致：读取 `/api/workers` 并只显示在线 worker；历史 thread 列表使用 `codexp threads`，读取 `/api/threads`。
 
 ## 选择和关闭语义
 
@@ -68,7 +69,7 @@ input: |
 3. 旧 `instance` 字段只允许作为 `thread` 的过渡别名读取，不要重新引入 instance 模型。
 4. 任务执行必须 local-first：`codexp task run <task_yaml_path>` 和 `codexp task start` 通过本机 `codex exec` / `codex exec resume` 执行，不依赖 codex-proxy server。
 5. 任务并发边界是 task 文件：同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
-6. `codexp list` 应显示每个 thread 对应的 enabled task 数量。
+6. `codexp threads` 应显示每个 thread 对应的 enabled task 数量。
 7. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task list [thread]`、`codexp task template [name]`、`codexp task start`、`codexp task run <task_yaml_path>`。
 8. `codexp task list` 默认离线可用，只扫描当前工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示 server 是否在线。
 9. `codexp task start` 是本地任务调度入口：只扫描当前工作区的 `.codexp/tasks`，按 YAML 里的 `schedule` 在本机执行，不要求 server 能访问本机文件系统。

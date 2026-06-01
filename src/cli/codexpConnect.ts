@@ -798,7 +798,7 @@ class CodexpStatusBar {
       : this.proxyState === "online" ? "connecting" : this.proxyState;
     return [
       `codexp ${this.options.workerId.slice(0, 14)} ${workerState}`,
-      `threads ${workspaceThreads.length}/${threads.length}`,
+      `mirrored ${workspaceThreads.length}/${threads.length}`,
       `running ${runningThreads}`,
       `workers ${onlineWorkers}/${workers.length}`,
       path.basename(this.options.cwd) || this.options.cwd

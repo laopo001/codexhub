@@ -94,24 +94,24 @@ bot.start(async (ctx) => {
   return ctx.reply([
     "codex-proxy ready.",
     "",
-    "/threads 打开已有 Codex thread",
+    "/threads 打开在线 Codex thread",
     "/stop 停止当前 turn",
     "/status 查看当前状态",
     "",
-    "直接发消息会发送给当前 Codex thread。新 thread 请在本地 Codex CLI 里开始。"
+    "直接发消息会发送给当前在线 Codex thread。新 thread 请在本地 codexp 里开始。"
   ].join("\n"));
 });
 
 bot.command("threads", async (ctx) => {
   try {
-    const threads = await listThreads();
+    const threads = await listRunnableThreads();
 
     if (!threads.length) {
-      await ctx.reply("当前没有可打开的 Codex thread。请先在本地 Codex CLI 里开始一个 thread。");
+      await ctx.reply("当前没有可运行的 Codex thread。请先在本地 codexp 里打开或 resume 一个 thread。");
       return;
     }
 
-    await ctx.reply("选择要打开的 Codex thread：", {
+    await ctx.reply("选择要打开的在线 Codex thread：", {
       reply_markup: {
         inline_keyboard: threads.map((thread) => ([{
           text: `${displayThreadId(thread)}  ${thread.status}  ${runtimeLabel(thread)}  ${shortPath(thread.workingDirectory)}`,
@@ -129,16 +129,17 @@ bot.command("status", async (ctx) => {
     const state = chatStates.get(ctx.chat.id);
     const current = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
     const usage = await getCodexUsage(current?.threadId).catch(() => null);
-    const threads = await listThreads();
+    const threads = await listRunnableThreads();
     await ctx.reply([
       `当前 thread：${current ? displayThreadId(current) : "(none)"}`,
       current ? `文件夹：${current.workingDirectory}` : null,
       current?.threadId ? `thread：${shortId(current.threadId)}` : null,
+      current ? `runtime：${runtimeLabel(current)}` : null,
       `usage：${formatCodexUsage(usage)}`,
       "",
       threads.length
         ? threads.map((thread) => `${displayThreadId(thread)} ${thread.status} ${runtimeLabel(thread)}`).join("\n")
-        : "当前没有 Codex thread。"
+        : "当前没有可运行的 Codex thread。"
     ].filter(Boolean).join("\n"));
   } catch (error) {
     await ctx.reply(errorText(error));
@@ -222,7 +223,11 @@ const runPrompt = async (
   const state = chatStates.get(ctx.chat.id);
   const existingThread = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
   if (!existingThread) {
-    await ctx.reply("当前没有打开的 Codex thread。用 /threads 打开已有 thread；新 thread 请在本地 Codex CLI 里开始。");
+    await ctx.reply("当前没有打开的 Codex thread。用 /threads 打开在线 thread；新 thread 请在本地 codexp 里开始。");
+    return;
+  }
+  if (!existingThread.runtime.runnable) {
+    await ctx.reply("当前 thread 没有在线 codexp worker。请先在本地 codexp resume 这个 thread，或用 /threads 切换到在线 thread。");
     return;
   }
   const thread = existingThread;
@@ -305,6 +310,9 @@ const listThreads = async (): Promise<ThreadSummary[]> => {
   const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
   return Array.isArray(data.threads) ? data.threads : [];
 };
+
+const listRunnableThreads = async (): Promise<ThreadSummary[]> =>
+  (await listThreads()).filter((thread) => thread.runtime.runnable);
 
 const getThread = (threadId: string) => apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
 
