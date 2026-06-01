@@ -699,15 +699,15 @@ type PtyChrome = {
   onOutput: () => void;
 };
 
-type StatusThreadSummary = {
-  workingDirectory: string;
-  running: boolean;
-};
-
 type StatusWorkerSummary = {
   workerId: string;
   workingDirectory: string;
   online: boolean;
+  currentThreadId?: string;
+  currentThread?: {
+    threadId: string;
+    running: boolean;
+  };
 };
 
 class CodexpStatusBar {
@@ -775,12 +775,9 @@ class CodexpStatusBar {
   private async refresh() {
     if (this.stopped) return;
     try {
-      const [threadData, workerData] = await Promise.all([
-        apiJson<{ threads?: StatusThreadSummary[] }>(this.options.apiBase, "/api/threads"),
-        apiJson<{ workers?: StatusWorkerSummary[] }>(this.options.apiBase, "/api/workers")
-      ]);
+      const workerData = await apiJson<{ workers?: StatusWorkerSummary[] }>(this.options.apiBase, "/api/workers");
       this.proxyState = "online";
-      this.text = this.renderText(threadData.threads ?? [], workerData.workers ?? []);
+      this.text = this.renderText(workerData.workers ?? []);
     } catch {
       this.proxyState = "offline";
       this.text = this.renderText();
@@ -788,20 +785,19 @@ class CodexpStatusBar {
     this.draw();
   }
 
-  private renderText(threads: StatusThreadSummary[] = [], workers: StatusWorkerSummary[] = []) {
-    const workspaceThreads = threads.filter((thread) => thread.workingDirectory === this.options.cwd);
-    const runningThreads = workspaceThreads.filter((thread) => thread.running).length;
+  private renderText(workers: StatusWorkerSummary[] = []) {
     const onlineWorkers = workers.filter((worker) => worker.online).length;
     const thisWorker = workers.find((worker) => worker.workerId === this.options.workerId);
     const workerState = thisWorker
       ? (thisWorker.online ? "online" : "offline")
       : this.proxyState === "online" ? "connecting" : this.proxyState;
+    const currentThreadId = thisWorker?.currentThreadId ?? thisWorker?.currentThread?.threadId;
+    const running = thisWorker?.currentThread?.running;
     return [
       `codexp ${this.options.workerId.slice(0, 14)} ${workerState}`,
-      `mirrored ${workspaceThreads.length}/${threads.length}`,
-      `running ${runningThreads}`,
-      `workers ${onlineWorkers}/${workers.length}`,
-      path.basename(this.options.cwd) || this.options.cwd
+      `thread ${currentThreadId ? currentThreadId : "none"}`,
+      `running ${running ? 1 : 0}`,
+      `workers ${onlineWorkers}/${workers.length}`
     ].join(" | ");
   }
 
