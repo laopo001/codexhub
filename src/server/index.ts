@@ -283,6 +283,8 @@ const main = async () => {
     }).parse(request.body);
 
     try {
+      const command = threads.runLocalCommand(params.threadId, payload.input, payload.source ?? "web");
+      if (command.handled) return { ok: true, command: command.command };
       threads.runTurn(params.threadId, payload.input, payload.source ?? "web").catch(() => undefined);
       return { ok: true };
     } catch (error) {

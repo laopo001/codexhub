@@ -80,3 +80,5 @@ curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
 
 curl -N "http://127.0.0.1:8788/api/threads/$THREAD_ID/events?after=0"
 ```
+
+Slash commands are handled by codex-proxy before forwarding to Codex. `/status` and `/help` return local proxy status/help records; unsupported slash commands are not sent to the Codex app-server as user turns.

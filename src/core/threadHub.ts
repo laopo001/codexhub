@@ -332,6 +332,20 @@ export class ThreadHub {
     return { stopped: true };
   }
 
+  runLocalCommand(threadId: string, input: Input, _source: "web" | "telegram" | "task" = "web") {
+    const command = parseLocalSlashCommand(input);
+    if (!command) return { handled: false };
+
+    const thread = this.requireThread(threadId);
+    this.appendUserInputRecord(thread, input);
+    this.appendRuntimeRecord(thread, "event_msg", {
+      type: "agent_message",
+      message: this.localCommandMessage(thread, command),
+      phase: "final_answer"
+    });
+    return { handled: true, command };
+  }
+
   runTurn(threadId: string, input: Input, _source: "web" | "telegram" | "task" = "web") {
     const thread = this.requireThread(threadId);
     if (thread.running) throw new Error(`Thread is already running: ${threadId}`);
@@ -817,6 +831,17 @@ export class ThreadHub {
     const worker = thread.workerId ? this.workers.get(thread.workerId) : null;
     return worker ? workerSummary(worker) : { kind: "detached", online: false };
   }
+
+  private localCommandMessage(thread: RuntimeThread, command: string) {
+    if (command === "status") return threadStatusMessage(thread, this.runtimeSummary(thread));
+    if (command === "help") return slashHelpMessage();
+    return [
+      `Unsupported slash command: /${command}`,
+      "",
+      "Slash commands from the official Codex TUI are local UI commands, not app-server turns.",
+      slashHelpMessage()
+    ].join("\n");
+  }
 }
 
 const workerSummary = (worker: RuntimeWorker): WorkerSummary & { kind: "worker" } => ({
@@ -1066,6 +1091,54 @@ const imagePaths = (input: Input) => {
     .filter((item) => item.type === "local_image")
     .map((item) => item.path);
 };
+
+const parseLocalSlashCommand = (input: Input) => {
+  if (typeof input !== "string") return null;
+  const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s|$)/.exec(input.trim());
+  return match?.[1].toLowerCase() ?? null;
+};
+
+const threadStatusMessage = (thread: RuntimeThread, runtime: ThreadRuntimeSummary) => [
+  "Codex Proxy status",
+  `thread: ${thread.threadId}`,
+  `folder: ${thread.workingDirectory}`,
+  `state: ${thread.running ? "running" : "idle"}`,
+  `runtime: ${formatRuntime(runtime)}`,
+  `attached: ${thread.attachments.size}`,
+  `records: ${thread.records.length}`,
+  `updated: ${thread.updatedAt}`,
+  `usage: ${formatUsage(thread.lastUsage)}`
+].join("\n");
+
+const slashHelpMessage = () => [
+  "Supported codex-proxy slash commands:",
+  "/status - show this thread runtime status",
+  "/help - show supported proxy commands"
+].join("\n");
+
+const formatRuntime = (runtime: ThreadRuntimeSummary) => {
+  if (runtime.kind === "worker") {
+    const name = runtime.name ?? runtime.workerId.slice(0, 8);
+    return `${runtime.online ? "online" : "offline"} worker:${name}`;
+  }
+  return "detached";
+};
+
+const formatUsage = (usage: Usage | undefined) => {
+  const record = asRecord(usage);
+  if (!record) return "n/a";
+  const total = numberValue(record.total_tokens) ?? numberValue(record.totalTokens);
+  const input = numberValue(record.input_tokens) ?? numberValue(record.inputTokens);
+  const output = numberValue(record.output_tokens) ?? numberValue(record.outputTokens);
+  if (total == null && input == null && output == null) return "n/a";
+  return [
+    total == null ? null : `total=${total}`,
+    input == null ? null : `input=${input}`,
+    output == null ? null : `output=${output}`
+  ].filter(Boolean).join(", ");
+};
+
+const numberValue = (value: unknown) => typeof value === "number" ? value : undefined;
 
 const numberField = (record: Record<string, unknown> | null, key: string) =>
   typeof record?.[key] === "number" ? record[key] : 0;

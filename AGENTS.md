@@ -24,6 +24,7 @@
 3. Telegram bot 发送消息时也订阅同一个 thread 事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
 4. Web/TG 不各自拼 transcript；thread 详情 `GET /api/threads/:threadId` 返回后端维护的 `records`。
 5. TUI 里创建或恢复的新 thread，由 `codexp connect` 从 app-server event 中发现并注册到 server。
+6. Web/TG/API 输入里的 slash command 不当普通 Codex turn 透传。官方 Codex TUI 的 slash command 是 TUI 本地命令；codex-proxy 只在 server 本地处理明确支持的 `/status`、`/help`，其他命令形态返回不支持说明。
 
 ## API 约定
 
