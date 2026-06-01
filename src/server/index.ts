@@ -28,6 +28,10 @@ const threadOptionsSchema = z.object({
   model: z.string().min(1).optional(),
   modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional()
 });
+const threadRunOptionsSchema = z.object({
+  model: z.string().min(1).nullable().optional(),
+  modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional()
+});
 
 const workerRegistrationSchema = z.object({
   workerId: z.string().min(1).optional(),
@@ -279,13 +283,14 @@ const main = async () => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({
       input: inputSchema,
-      source: z.enum(["web", "telegram", "task"]).optional()
+      source: z.enum(["web", "telegram", "task"]).optional(),
+      options: threadRunOptionsSchema.optional()
     }).parse(request.body);
 
     try {
       const command = threads.runLocalCommand(params.threadId, payload.input, payload.source ?? "web");
       if (command.handled) return { ok: true, command: command.command };
-      threads.runTurn(params.threadId, payload.input, payload.source ?? "web").catch(() => undefined);
+      threads.runTurn(params.threadId, payload.input, payload.source ?? "web", payload.options).catch(() => undefined);
       return { ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

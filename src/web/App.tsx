@@ -81,7 +81,7 @@ type Usage = {
 
 type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 type ThreadStatus = "running" | "idle";
-type ModelSelection = "auto" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.3-codex" | "gpt-5.3-codex-spark" | "gpt-5.2";
+type ModelSelection = string;
 type ReasoningSelection = "auto" | ReasoningEffort;
 type MessageDisplayMode = "compact" | "detailed";
 type WebRecordView = CompactRecordView;
@@ -195,6 +195,7 @@ const App = () => {
     : "";
   const activeCanSend = Boolean(activeSession && (activeSession.input.trim() || activeSession.imageAttachments.length)) && !activeSession?.running;
   const activeCanSubmit = Boolean(activeSession?.running || activeCanSend);
+  const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
 
   useEffect(() => {
     void initialize();
@@ -220,6 +221,12 @@ const App = () => {
     const interval = window.setInterval(() => void refreshThreads(), 3000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!activeSession) return;
+    setSelectedModel(activeSession.model ?? "auto");
+    setSelectedReasoning(activeSession.modelReasoningEffort ?? "auto");
+  }, [activeSession?.threadId, activeSession?.model, activeSession?.modelReasoningEffort]);
 
   useEffect(() => {
     const interval = window.setInterval(() => void refreshCodexUsage(activeSession?.threadId), 30_000);
@@ -380,7 +387,7 @@ const App = () => {
     const thread = await apiJson<ThreadDetail>("/api/threads/restore", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workingDirectory, threadId, options: selectedThreadOptions(selectedModel, selectedReasoning) })
+      body: JSON.stringify({ workingDirectory, threadId, options: selectedRestoreThreadOptions(selectedModel, selectedReasoning) })
     });
     setFolderModalOpen(false);
     await openThread(thread.threadId);
@@ -480,6 +487,11 @@ const App = () => {
     const text = session.input.trim();
     const imageAttachments = session.imageAttachments;
     if (!text && !imageAttachments.length) return;
+    if (!imageAttachments.length && isModelCommand(text)) {
+      setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "" } : item));
+      setRuntimeDialogOpen(true);
+      return;
+    }
     setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [] } : item));
     let uploadedImages: Array<{ path: string }>;
     try {
@@ -505,7 +517,7 @@ const App = () => {
     const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input, source: "web" })
+      body: JSON.stringify({ input, source: "web", options: selectedThreadOptions(selectedModel, selectedReasoning) })
     });
     if (!response.ok) {
       const text = await response.text();
@@ -778,7 +790,7 @@ const App = () => {
                       className="composerModelButton"
                       onClick={() => setRuntimeDialogOpen(true)}
                     >
-                      {selectedModel === "auto" ? "Auto" : modelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel}
+                      {modelLabel(selectedModel)}
                     </button>
                     <button type="submit" className="composerSendButton" disabled={!activeCanSubmit} aria-label={activeSession.running ? "Stop current turn" : "Send message"}>
                       {activeSession.running ? <span className="composerStopIcon" aria-hidden="true" /> : "↑"}
@@ -816,7 +828,7 @@ const App = () => {
             <label className="runtimeDialogField">
               <span>Model</span>
               <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value as ModelSelection)}>
-                {modelOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+                {runtimeModelOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
               </select>
             </label>
             <label className="runtimeDialogField">
@@ -1046,9 +1058,24 @@ const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
 };
 
 const selectedThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
+  model: model === "auto" ? null : model,
+  modelReasoningEffort: reasoning === "auto" ? null : reasoning
+});
+
+const selectedRestoreThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
   ...(model === "auto" ? {} : { model }),
   ...(reasoning === "auto" ? {} : { modelReasoningEffort: reasoning })
 });
+
+const isModelCommand = (text: string) => /^\/model\s*$/i.test(text);
+
+const modelLabel = (model: ModelSelection) =>
+  model === "auto" ? "Auto" : modelOptions.find((option) => option.value === model)?.label ?? model;
+
+const modelOptionsForSelection = (model: ModelSelection) => {
+  if (!model || modelOptions.some((option) => option.value === model)) return modelOptions;
+  return [...modelOptions, { value: model, label: model }];
+};
 
 const formatContextUsage = (usageSnapshot: CodexUsageSnapshot | null) => {
   const context = contextUsage(usageSnapshot);
@@ -1360,7 +1387,7 @@ const formatDate = (value: string) => {
 };
 
 const isModelSelection = (value: unknown): value is ModelSelection =>
-  typeof value === "string" && modelOptions.some((option) => option.value === value);
+  typeof value === "string" && value.trim().length > 0;
 
 const isReasoningSelection = (value: unknown): value is ReasoningSelection =>
   typeof value === "string" && reasoningOptions.some((option) => option.value === value);

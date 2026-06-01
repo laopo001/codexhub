@@ -6,7 +6,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Input } from "@openai/codex-sdk";
 import type { Command } from "commander";
-import type { WorkerCommand } from "../core/threadHub.js";
+import type { ThreadRunOptions, WorkerCommand } from "../core/threadHub.js";
 
 type ConnectOptions = {
   server?: string;
@@ -33,6 +33,11 @@ type SyncedThread = {
   failures: number;
   syncing: boolean;
   lastSnapshot?: string;
+};
+
+type RuntimeSettings = {
+  model?: string | null;
+  modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
 };
 
 type WorkerRegisterResponse = {
@@ -154,6 +159,7 @@ class CodexAppServerBridge {
   private nextId = 1;
   private cursor = 0;
   private closed = false;
+  private readonly forwardedRuntimeSettings = new Map<string, string>();
 
   private constructor(
     private readonly options: BridgeOptions,
@@ -194,7 +200,9 @@ class CodexAppServerBridge {
   async runThreadSyncLoop() {
     while (!this.closed) {
       await delay(1500);
-      for (const [threadId, state] of [...this.syncedThreads]) {
+      const entries = [...this.syncedThreads];
+      await this.syncRuntimeSettings(entries.map(([threadId]) => threadId));
+      for (const [threadId, state] of entries) {
         if (this.closed) return;
         await this.syncThread(threadId, state);
       }
@@ -219,10 +227,11 @@ class CodexAppServerBridge {
 
     if (command.type === "fork_thread") {
       if (!command.threadId) throw new Error("fork_thread command requires threadId");
+      const model = commandModel(command.options, this.options.model);
       const result = asRecord(await this.request("thread/fork", {
         threadId: command.threadId,
         cwd: command.workingDirectory,
-        model: command.options?.model ?? this.options.model,
+        ...(model === undefined ? {} : { model }),
         approvalPolicy: this.options.approvalPolicy,
         sandbox: this.options.sandbox,
         threadSource: "user"
@@ -237,10 +246,11 @@ class CodexAppServerBridge {
     if (!command.input || !command.threadId) return;
     const threadId = command.threadId;
     if (!this.syncedThreads.has(threadId)) {
+      const model = commandModel(command.options, this.options.model);
       await this.request("thread/resume", {
         threadId,
         cwd: command.workingDirectory,
-        model: command.options?.model ?? this.options.model,
+        ...(model === undefined ? {} : { model }),
         approvalPolicy: this.options.approvalPolicy,
         sandbox: this.options.sandbox
       }, command);
@@ -248,7 +258,8 @@ class CodexAppServerBridge {
     }
     await this.request("turn/start", {
       threadId,
-      input: toAppServerInput(command.input)
+      input: toAppServerInput(command.input),
+      ...turnRuntimeParams(command.options)
     }, command);
   }
 
@@ -346,6 +357,44 @@ class CodexAppServerBridge {
     } finally {
       state.syncing = false;
     }
+  }
+
+  private async syncRuntimeSettings(threadIds: string[]) {
+    if (!threadIds.length) return;
+    try {
+      const settings = await this.readRuntimeSettings();
+      const snapshot = JSON.stringify(settings);
+      await Promise.all(threadIds.map(async (threadId) => {
+        if (this.forwardedRuntimeSettings.get(threadId) === snapshot) return;
+        this.forwardedRuntimeSettings.set(threadId, snapshot);
+        await this.forward(threadId, undefined, {
+          method: "thread/settings/updated",
+          params: {
+            threadId,
+            threadSettings: {
+              model: settings.model ?? null,
+              effort: settings.modelReasoningEffort ?? null
+            }
+          }
+        }, { heartbeat: false });
+      }));
+    } catch (error) {
+      console.error(`codexp bridge failed to sync runtime settings: ${errorText(error)}`);
+    }
+  }
+
+  private async readRuntimeSettings(): Promise<RuntimeSettings> {
+    const result = asRecord(await this.request("config/read", {
+      cwd: this.options.cwd,
+      includeLayers: false
+    }));
+    const config = asRecord(result?.config);
+    const model = config?.model;
+    const modelReasoningEffort = config?.model_reasoning_effort;
+    return {
+      model: typeof model === "string" && model ? model : null,
+      modelReasoningEffort: isModelReasoningEffort(modelReasoningEffort) ? modelReasoningEffort : null
+    };
   }
 
   private async forward(
@@ -461,6 +510,24 @@ const toAppServerInput = (input: Input) => {
     return { type: "localImage", path: item.path };
   });
 };
+
+const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
+
+const commandModel = (options: ThreadRunOptions | undefined, fallback?: string) => {
+  if (options && hasOwn(options, "model")) return options.model;
+  return fallback;
+};
+
+const turnRuntimeParams = (options: ThreadRunOptions | undefined) => {
+  const params: { model?: string | null; effort?: ThreadRunOptions["modelReasoningEffort"] } = {};
+  if (!options) return params;
+  if (hasOwn(options, "model")) params.model = options.model;
+  if (hasOwn(options, "modelReasoningEffort")) params.effort = options.modelReasoningEffort;
+  return params;
+};
+
+const isModelReasoningEffort = (value: unknown): value is ThreadRunOptions["modelReasoningEffort"] =>
+  value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
 
 const threadIdForMessage = (message: JsonRecord) => {
   const params = asRecord(message.params);

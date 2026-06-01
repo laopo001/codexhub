@@ -81,4 +81,4 @@ curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
 curl -N "http://127.0.0.1:8788/api/threads/$THREAD_ID/events?after=0"
 ```
 
-Slash commands are handled by codex-proxy before forwarding to Codex. `/status` and `/help` return local proxy status/help records; unsupported slash commands are not sent to the Codex app-server as user turns.
+Slash commands are handled before forwarding to Codex. `/status` and `/help` return local proxy status/help records. `/model` is a client command in Web and opens the Runtime selector; Web sends the selected model/reasoning with the next normal turn. If the official TUI changes model/reasoning locally, `codexp connect` mirrors app-server Runtime settings back into Web from `thread/settings/updated` events or the effective `config/read` result. Unsupported slash commands are not sent to the Codex app-server as user turns because official TUI slash commands are local UI commands, not app-server turns.

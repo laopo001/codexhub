@@ -29,6 +29,11 @@ export type ThreadRuntimeSummary =
     }
   | { kind: "detached"; online: false };
 
+export type ThreadRunOptions = {
+  model?: string | null;
+  modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
+};
+
 export type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
   lastSeq: number;
@@ -71,7 +76,7 @@ export type WorkerCommand = {
   threadId?: string;
   input?: Input;
   turnId?: string;
-  options?: ThreadOptions;
+  options?: ThreadRunOptions;
 };
 
 export type WorkerEventInput = {
@@ -346,10 +351,12 @@ export class ThreadHub {
     return { handled: true, command };
   }
 
-  runTurn(threadId: string, input: Input, _source: "web" | "telegram" | "task" = "web") {
+  runTurn(threadId: string, input: Input, _source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
     const thread = this.requireThread(threadId);
     if (thread.running) throw new Error(`Thread is already running: ${threadId}`);
     const worker = this.requireThreadWorker(thread);
+    const commandOptions = options ? { ...options } : { ...thread.threadOptions };
+    if (options) thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "turn", thread.threadId, 15 * 60_000);
     this.activeTurnCommands.set(thread.threadId, commandId);
@@ -368,7 +375,7 @@ export class ThreadHub {
       createdAt: new Date().toISOString(),
       input,
       threadId: thread.threadId,
-      options: { ...thread.threadOptions }
+      options: commandOptions
     });
     return promise;
   }
@@ -562,6 +569,12 @@ export class ThreadHub {
       return;
     }
 
+    if (method === "thread/settings/updated") {
+      const settings = asRecord(params.threadSettings) ?? asRecord(params.settings);
+      if (settings) this.applyAppServerThreadSettings(thread, settings);
+      return;
+    }
+
     if (method === "turn/started") {
       const turn = asRecord(params.turn);
       if (turn) this.applyAppServerTurn(thread, turn);
@@ -625,6 +638,30 @@ export class ThreadHub {
       thread.running = false;
       thread.appServerTurnId = undefined;
       changed = true;
+    }
+    if (!changed) return;
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+  }
+
+  private applyAppServerThreadSettings(thread: RuntimeThread, settings: Record<string, unknown>) {
+    let changed = false;
+    if ("model" in settings) {
+      const nextModel = typeof settings.model === "string" && settings.model ? settings.model : undefined;
+      if (thread.threadOptions.model !== nextModel) {
+        thread.threadOptions = { ...thread.threadOptions, model: nextModel };
+        if (!nextModel) delete thread.threadOptions.model;
+        changed = true;
+      }
+    }
+    if ("effort" in settings) {
+      const effort = settings.effort;
+      const nextEffort = isThreadReasoningEffort(effort) ? effort : undefined;
+      if (thread.threadOptions.modelReasoningEffort !== nextEffort) {
+        thread.threadOptions = { ...thread.threadOptions, modelReasoningEffort: nextEffort };
+        if (!nextEffort) delete thread.threadOptions.modelReasoningEffort;
+        changed = true;
+      }
     }
     if (!changed) return;
     thread.updatedAt = new Date().toISOString();
@@ -835,10 +872,11 @@ export class ThreadHub {
   private localCommandMessage(thread: RuntimeThread, command: string) {
     if (command === "status") return threadStatusMessage(thread, this.runtimeSummary(thread));
     if (command === "help") return slashHelpMessage();
+    if (command === "model") return modelCommandMessage(thread);
     return [
       `Unsupported slash command: /${command}`,
       "",
-      "Slash commands from the official Codex TUI are local UI commands, not app-server turns.",
+      "Official Codex TUI slash commands are local UI commands. The app-server protocol accepts turn requests and setting overrides, but it does not expose a key event for submitting the TUI composer.",
       slashHelpMessage()
     ].join("\n");
   }
@@ -1104,17 +1142,31 @@ const threadStatusMessage = (thread: RuntimeThread, runtime: ThreadRuntimeSummar
   `folder: ${thread.workingDirectory}`,
   `state: ${thread.running ? "running" : "idle"}`,
   `runtime: ${formatRuntime(runtime)}`,
+  `model: ${formatModel(thread.threadOptions)}`,
+  `reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
   `attached: ${thread.attachments.size}`,
   `records: ${thread.records.length}`,
   `updated: ${thread.updatedAt}`,
   `usage: ${formatUsage(thread.lastUsage)}`
 ].join("\n");
 
+const modelCommandMessage = (thread: RuntimeThread) => [
+  "Model control",
+  `current model: ${formatModel(thread.threadOptions)}`,
+  `current reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
+  "",
+  "In Web, use the Runtime selector. The selected model and reasoning are sent with the next Web turn.",
+  "In the official TUI, run /model locally; codex-proxy cannot press Enter inside the TUI composer through app-server."
+].join("\n");
+
 const slashHelpMessage = () => [
   "Supported codex-proxy slash commands:",
   "/status - show this thread runtime status",
+  "/model - explain model control for Web and TUI",
   "/help - show supported proxy commands"
 ].join("\n");
+
+const formatModel = (options: ThreadOptions) => options.model ?? "auto";
 
 const formatRuntime = (runtime: ThreadRuntimeSummary) => {
   if (runtime.kind === "worker") {
@@ -1139,6 +1191,24 @@ const formatUsage = (usage: Usage | undefined) => {
 };
 
 const numberValue = (value: unknown) => typeof value === "number" ? value : undefined;
+
+const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
+
+const applyThreadRunOptions = (current: ThreadOptions, options: ThreadRunOptions) => {
+  const next = { ...current };
+  if (hasOwn(options, "model")) {
+    if (options.model) next.model = options.model;
+    else delete next.model;
+  }
+  if (hasOwn(options, "modelReasoningEffort")) {
+    if (options.modelReasoningEffort) next.modelReasoningEffort = options.modelReasoningEffort;
+    else delete next.modelReasoningEffort;
+  }
+  return next;
+};
+
+const isThreadReasoningEffort = (value: unknown): value is ThreadOptions["modelReasoningEffort"] =>
+  value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
 
 const numberField = (record: Record<string, unknown> | null, key: string) =>
   typeof record?.[key] === "number" ? record[key] : 0;
