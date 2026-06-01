@@ -69,9 +69,9 @@ input: |
 4. 任务执行必须 local-first：`codexp task run <task_yaml_path>` 和 `codexp task start` 通过本机 `codex exec` / `codex exec resume` 执行，不依赖 codex-proxy server。
 5. 任务并发边界是 task 文件：同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
 6. `codexp list` 应显示每个 thread 对应的 enabled task 数量。
-7. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task ls [thread]`、`codexp task template [name]`、`codexp task start`、`codexp task run <task_yaml_path>`。
-8. `codexp task ls` 默认离线可用，只扫描当前 `--cwd` 工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示 server 是否在线。
-9. `codexp task start` 是本地任务调度入口：只扫描当前 `--cwd` 工作区的 `.codexp/tasks`，按 YAML 里的 `schedule` 在本机执行，不要求 server 能访问本机文件系统。
+7. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task list [thread]`、`codexp task template [name]`、`codexp task start`、`codexp task run <task_yaml_path>`。
+8. `codexp task list` 默认离线可用，只扫描当前工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示 server 是否在线。
+9. `codexp task start` 是本地任务调度入口：只扫描当前工作区的 `.codexp/tasks`，按 YAML 里的 `schedule` 在本机执行，不要求 server 能访问本机文件系统。
 10. `codexp task run <task_yaml_path>` 是手动单次执行入口：立即本地运行指定 YAML 文件，不看 `schedule`，不要求 server 在线。
 
 ## 自举开发和发布

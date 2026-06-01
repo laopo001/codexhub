@@ -59,12 +59,12 @@ pnpm run dev:api
 
 ```bash
 pnpm codexp task template daily-summary
-pnpm codexp task ls
+pnpm codexp task list
 pnpm codexp task start
 pnpm codexp task run .codexp/tasks/daily-summary.yaml
 ```
 
-`--cwd` 默认是运行命令时的当前目录；需要操作其他目录时再显式指定。`codexp task ls` 默认离线可用，只扫描本地 `.codexp/tasks/*.yaml`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并额外显示 server 是否在线。`codexp task start` 是给 PM2 或终端常驻使用的本地调度器，按 YAML 里的 `schedule` cron 到点后在本机执行 Codex：YAML 里没有 `thread` 时执行 `codex exec -C <workspace> -`，有 `thread` 时执行 `codex exec -C <workspace> resume <thread> -` 继续该 session。`codexp task run <task_yaml_path>` 立即本地运行指定 YAML 文件一次，不看 `schedule`，也不依赖 codex-proxy server。运行记录写到本地 `.codexp/task-runs/*.jsonl`。
+`codexp task` 子命令使用运行命令时的当前目录作为 workspace。`codexp task list` 默认离线可用，只扫描本地 `.codexp/tasks/*.yaml`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并额外显示 server 是否在线。`codexp task start` 是给 PM2 或终端常驻使用的本地调度器，按 YAML 里的 `schedule` cron 到点后在本机执行 Codex：YAML 里没有 `thread` 时执行 `codex exec -C <workspace> -`，有 `thread` 时执行 `codex exec -C <workspace> resume <thread> -` 继续该 session。`codexp task run <task_yaml_path>` 立即本地运行指定 YAML 文件一次，不看 `schedule`，也不依赖 codex-proxy server。运行记录写到本地 `.codexp/task-runs/*.jsonl`。
 
 ## 生产发布
 

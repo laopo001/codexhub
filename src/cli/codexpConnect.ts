@@ -111,9 +111,9 @@ export const registerCodexProxyWorkerCommands = (program: Command) => {
 };
 
 async function runCodexpWorker(program: Command, options: ConnectOptions, launch: TuiLaunch) {
-  const rootOptions = program.opts<{ server: string; cwd: string }>();
+  const rootOptions = program.opts<{ server: string }>();
   const apiBase = options.server ?? rootOptions.server;
-  const cwd = path.resolve(options.cd ?? rootOptions.cwd ?? process.cwd());
+  const cwd = path.resolve(options.cd ?? process.cwd());
   const port = options.port ? Number(options.port) : await findFreePort();
   if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
 

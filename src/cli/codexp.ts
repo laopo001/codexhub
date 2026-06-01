@@ -28,8 +28,7 @@ await loadDotEnv();
 const program = new Command()
   .name("codexp")
   .description("Run Codex through codex-proxy")
-  .option("--server <url>", "codex-proxy server URL", defaultServerUrl())
-  .option("--cwd <path>", "directory used by folder-relative commands", process.cwd());
+  .option("--server <url>", "codex-proxy server URL", defaultServerUrl());
 
 program
   .command("server")
@@ -78,14 +77,14 @@ const taskCommand = program
   });
 
 taskCommand
-  .command("ls")
+  .command("list")
   .argument("[thread]", "optional thread index, full id, or unique id prefix")
   .description("List local task YAML files; server connection is optional")
   .action(async (thread?: string) => {
     const { threads, online } = await tryListThreadsForTaskList();
     if (thread && !online) throw new Error(`Cannot filter by thread while server is offline: ${apiBase()}`);
     const target = thread ? resolveThreadTarget(thread, threads) : undefined;
-    await printTasks(threads, { serverOnline: online, target });
+    await printTasks(threads, { serverOnline: online, target, cwd: commandCwd() });
   });
 
 taskCommand
@@ -152,8 +151,7 @@ function apiBase() {
 }
 
 function resolveCommandPath(...segments: string[]) {
-  const options = program.opts<{ cwd: string }>();
-  return path.resolve(options.cwd, ...segments);
+  return path.resolve(commandCwd(), ...segments);
 }
 
 async function printThreads(threads: ThreadSummary[]) {
@@ -209,12 +207,13 @@ function formatThread(thread: ThreadSummary) {
 }
 
 async function startTaskScheduler(options: TaskCommandOptions) {
+  const cwd = commandCwd();
   const scheduler = new CodexpTaskScheduler({
-    workspace: commandCwd(),
+    workspace: cwd,
     scanIntervalMs: parseIntervalMs(options.intervalMs)
   });
   scheduler.start();
-  console.error(`codexp task scheduler started: ${commandCwd()}`);
+  console.error(`codexp task scheduler started: ${cwd}`);
   await waitForShutdown();
   scheduler.stop();
 }
@@ -238,11 +237,11 @@ async function createTaskTemplate(taskName: string) {
 
 async function printTasks(
   threads: ThreadSummary[],
-  options: { serverOnline: boolean; target?: ThreadSummary }
+  options: { serverOnline: boolean; target?: ThreadSummary; cwd: string }
 ) {
   const workspaces = options.target
     ? [options.target.workingDirectory]
-    : uniqueStrings([commandCwd(), ...threads.map((thread) => thread.workingDirectory)]);
+    : uniqueStrings([options.cwd, ...threads.map((thread) => thread.workingDirectory)]);
   const tasks = await loadTaskFiles(workspaces);
   const rows = tasks.map((task) => ({
     task: task.name,
@@ -271,8 +270,7 @@ async function taskCountsByThread(threads: ThreadSummary[]) {
 }
 
 function commandCwd() {
-  const options = program.opts<{ cwd: string }>();
-  return path.resolve(options.cwd);
+  return path.resolve(process.cwd());
 }
 
 function parseIntervalMs(value: string | undefined) {
