@@ -532,21 +532,27 @@ const App = () => {
             <div className="proxyWorkerEmpty">No connected codexp</div>
           ) : (
             <div className="proxyWorkerList">
-              {workers.map((worker) => (
-                <button
-                  type="button"
-                  className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""}`}
-                  key={worker.workerId}
-                  onClick={() => void selectWorker(worker)}
-                >
-                  <span>{worker.name ?? shortId(worker.workerId)}</span>
-                  <strong>{worker.currentThread?.status ?? "idle"}</strong>
-                  <code>{worker.currentThread?.title ?? "No current thread"}</code>
-                  <em>
-                    {worker.currentThreadId ? `thread ${shortId(worker.currentThreadId)}` : "no thread"} · {worker.workingDirectory}
-                  </em>
-                </button>
-              ))}
+              {workers.map((worker) => {
+                const workerLabel = worker.name ?? shortId(worker.workerId);
+                const threadTitle = worker.currentThread?.title ?? "No current thread";
+                const threadLabel = worker.currentThreadId ? `thread ${worker.currentThreadId}` : "no thread";
+                return (
+                  <button
+                    type="button"
+                    className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""}`}
+                    key={worker.workerId}
+                    onClick={() => void selectWorker(worker)}
+                  >
+                    <span title={workerLabel}>{workerLabel}</span>
+                    <strong>{worker.currentThread?.status ?? "idle"}</strong>
+                    <code title={threadTitle}>{threadTitle}</code>
+                    <em className="proxyWorkerMeta">
+                      <span className="proxyWorkerDirectory" title={worker.workingDirectory}>{worker.workingDirectory}</span>
+                      <span className="proxyWorkerThread" title={threadLabel}>{threadLabel}</span>
+                    </em>
+                  </button>
+                );
+              })}
             </div>
           )}
         </section>
@@ -564,13 +570,19 @@ const App = () => {
             {sidebarCollapsed ? "Workers" : "Hide"}
           </button>
           <div className="workspaceTitle">
-            <span>{activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexp"}</span>
-            <code>{activeWorker?.workingDirectory ?? activeWorkspacePath}</code>
-            {activeWorkerThreadId ? (
-              <code className="workspaceThreadId">thread: {activeWorkerThreadId}</code>
-            ) : activeWorker ? (
-              <code className="workspaceThreadId">thread: none</code>
-            ) : null}
+            <span title={activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexp"}>
+              {activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexp"}
+            </span>
+            <code className="workspaceMeta">
+              <span className="workspacePath" title={activeWorker?.workingDirectory ?? activeWorkspacePath}>
+                {activeWorker?.workingDirectory ?? activeWorkspacePath}
+              </span>
+              {activeWorkerThreadId ? (
+                <span className="workspaceThreadId" title={`thread: ${activeWorkerThreadId}`}>thread: {activeWorkerThreadId}</span>
+              ) : activeWorker ? (
+                <span className="workspaceThreadId" title="thread: none">thread: none</span>
+              ) : null}
+            </code>
           </div>
           <div className="workbar" aria-label="Runtime status">
             <span title={formatContextTitle(codexUsage)}>
