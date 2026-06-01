@@ -202,17 +202,6 @@ const main = async () => {
     }
   });
 
-  app.post("/api/workers/:workerId/current-thread", async (request, reply) => {
-    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({ threadId: z.string().min(1) }).parse(request.body);
-    try {
-      return threads.selectWorkerThread(params.workerId, payload.threadId);
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
   app.get("/api/codex-threads", async (request) => {
     const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);
     const workingDirectory = query.workingDirectory ?? defaultWorkingDirectory;

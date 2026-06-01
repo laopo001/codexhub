@@ -251,18 +251,6 @@ export class ThreadHub {
     return [...this.threads.values()].map((thread) => this.summary(thread));
   }
 
-  selectWorkerThread(workerId: string, threadId: string) {
-    const worker = this.requireWorker(workerId);
-    if (!worker.online) throw new Error(`Worker not online: ${workerId}`);
-    const thread = this.requireThread(threadId);
-    if (thread.workerId !== worker.workerId) {
-      throw new Error(`Thread does not belong to worker: ${threadId}`);
-    }
-    this.markWorkerCurrentThread(worker, thread);
-    this.publish(thread, "thread");
-    return { worker: this.workerSummary(worker), thread: this.detail(thread) };
-  }
-
   getThread(threadId: string): ThreadDetail | null {
     const thread = this.threads.get(threadId);
     return thread ? this.detail(thread) : null;

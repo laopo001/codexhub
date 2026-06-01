@@ -145,6 +145,7 @@ const App = () => {
   const [workers, setWorkers] = useState<WorkerSummary[]>([]);
   const [threadSummaries, setThreadSummaries] = useState<ThreadSummary[]>([]);
   const [activeWorkerId, setActiveWorkerId] = useState("");
+  const [selectedThreadByWorker, setSelectedThreadByWorker] = useState<Record<string, string>>({});
   const [initialized, setInitialized] = useState(false);
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
@@ -178,12 +179,17 @@ const App = () => {
       if (thread.runtime.workerId === activeWorkerId) byId.set(thread.threadId, thread);
     }
     if (activeWorker?.currentThread) byId.set(activeWorker.currentThread.threadId, activeWorker.currentThread);
+    const selectedThreadId = activeWorker ? selectedThreadByWorker[activeWorker.workerId] : undefined;
     return [...byId.values()].sort((left, right) => {
+      if (selectedThreadId) {
+        if (left.threadId === selectedThreadId) return -1;
+        if (right.threadId === selectedThreadId) return 1;
+      }
       if (left.threadId === activeWorker?.currentThreadId) return -1;
       if (right.threadId === activeWorker?.currentThreadId) return 1;
       return right.updatedAt.localeCompare(left.updatedAt);
     });
-  }, [activeWorker?.currentThread, activeWorker?.currentThreadId, activeWorkerId, threadSummaries]);
+  }, [activeWorker, activeWorkerId, selectedThreadByWorker, threadSummaries]);
   const detailedViews = useMemo<CodexRecordView[]>(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
@@ -197,14 +203,15 @@ const App = () => {
     ? `${latestView.id}:${latestView.status ?? ""}:${latestView.text.length}:${latestView.usage ? usageTotal(latestView.usage) : ""}`
     : "";
   const activeWorkerThreadId = activeWorker?.currentThreadId ?? "";
-  const activeSessionIsCurrent = Boolean(activeSession && activeWorkerThreadId === activeSession.threadId);
+  const activeDisplayThreadId = activeSession?.threadId ?? activeWorkerThreadId;
+  const activeSessionBelongsToWorker = Boolean(activeSession && activeWorkerThreads.some((thread) => thread.threadId === activeSession.threadId));
   const activeCanSend = Boolean(
     activeSession
-    && activeSessionIsCurrent
+    && activeSessionBelongsToWorker
     && activeWorker?.online
     && (activeSession.input.trim() || activeSession.imageAttachments.length)
   ) && !activeSession?.running;
-  const activeCanSubmit = Boolean(activeSessionIsCurrent && (activeSession?.running || activeCanSend));
+  const activeCanSubmit = Boolean(activeSessionBelongsToWorker && (activeSession?.running || activeCanSend));
   const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
 
   useEffect(() => {
@@ -246,14 +253,27 @@ const App = () => {
     }
 
     setActiveWorkspacePath(worker.workingDirectory);
-    if (!worker.currentThreadId) {
+    const threadIds = new Set(threadSummaries
+      .filter((thread) => thread.runtime.workerId === worker.workerId)
+      .map((thread) => thread.threadId));
+    if (worker.currentThreadId) threadIds.add(worker.currentThreadId);
+    const selectedThreadId = selectedThreadByWorker[worker.workerId];
+    const desiredThreadId = selectedThreadId && threadIds.has(selectedThreadId)
+      ? selectedThreadId
+      : worker.currentThreadId;
+
+    if (selectedThreadId && !threadIds.has(selectedThreadId)) {
+      setSelectedThreadByWorker(({ [worker.workerId]: _removed, ...rest }) => rest);
+    }
+
+    if (!desiredThreadId) {
       if (activeSessionId) setActiveSessionId("");
       return;
     }
-    if (activeSessionId !== worker.currentThreadId) {
-      void openThread(worker.currentThreadId).catch(() => setActiveSessionId(""));
+    if (activeSessionId !== desiredThreadId) {
+      void openThread(desiredThreadId).catch(() => setActiveSessionId(""));
     }
-  }, [activeSessionId, activeWorker, activeWorkerId, initialized, workers]);
+  }, [activeSessionId, activeWorker, activeWorkerId, initialized, selectedThreadByWorker, threadSummaries, workers]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -408,6 +428,10 @@ const App = () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId })
       });
+      const workerId = thread.runtime.workerId ?? activeWorker?.workerId;
+      if (workerId) {
+        setSelectedThreadByWorker((current) => ({ ...current, [workerId]: thread.threadId }));
+      }
       await openThread(thread.threadId);
       await refreshRuntimeState();
     } catch (error) {
@@ -520,29 +544,19 @@ const App = () => {
   const selectWorker = async (worker: WorkerSummary) => {
     setActiveWorkerId(worker.workerId);
     setActiveWorkspacePath(worker.workingDirectory);
-    if (worker.currentThreadId) {
-      await openThread(worker.currentThreadId);
+    const selectedThreadId = selectedThreadByWorker[worker.workerId];
+    const targetThreadId = selectedThreadId ?? worker.currentThreadId;
+    if (targetThreadId) {
+      await openThread(targetThreadId);
     } else {
       setActiveSessionId("");
     }
   };
 
   const switchWorkerThread = async (threadId: string) => {
-    if (!activeWorker || threadId === activeWorker.currentThreadId) return;
-    const result = await apiJson<{ worker: WorkerSummary; thread: ThreadDetail }>(
-      `/api/workers/${encodeURIComponent(activeWorker.workerId)}/current-thread`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ threadId })
-      }
-    );
-    setWorkers((current) => normalizeWorkers([
-      result.worker,
-      ...current.filter((worker) => worker.workerId !== result.worker.workerId)
-    ]));
-    setThreadSummaries((current) => [result.thread, ...current.filter((thread) => thread.threadId !== result.thread.threadId)]);
-    await openThread(result.thread.threadId);
+    if (!activeWorker || threadId === activeSessionId) return;
+    setSelectedThreadByWorker((current) => ({ ...current, [activeWorker.workerId]: threadId }));
+    await openThread(threadId);
   };
 
   return (
@@ -614,8 +628,8 @@ const App = () => {
               <span className="workspacePath" title={activeWorker?.workingDirectory ?? activeWorkspacePath}>
                 {activeWorker?.workingDirectory ?? activeWorkspacePath}
               </span>
-              {activeWorkerThreadId ? (
-                <span className="workspaceThreadId" title={`thread: ${activeWorkerThreadId}`}>thread: {activeWorkerThreadId}</span>
+              {activeDisplayThreadId ? (
+                <span className="workspaceThreadId" title={`thread: ${activeDisplayThreadId}`}>thread: {activeDisplayThreadId}</span>
               ) : activeWorker ? (
                 <span className="workspaceThreadId" title="thread: none">thread: none</span>
               ) : null}
@@ -641,7 +655,7 @@ const App = () => {
           </div>
         </header>
 
-        {activeWorker && activeSession && activeSessionIsCurrent ? (
+        {activeWorker && activeSession && activeSessionBelongsToWorker ? (
           <>
             <Virtuoso
               key={activeSession.threadId}
@@ -678,13 +692,13 @@ const App = () => {
                 <div className="composerThreadPanel" aria-label="Worker threads">
                   {activeWorkerThreads.length ? activeWorkerThreads.map((thread) => {
                     const title = thread.title || shortId(thread.threadId);
-                    const isCurrent = thread.threadId === activeWorker.currentThreadId;
+                    const isSelected = thread.threadId === activeSessionId;
                     return (
                       <button
                         type="button"
-                        className={`composerThreadButton ${isCurrent ? "active" : ""}`}
+                        className={`composerThreadButton ${isSelected ? "active" : ""}`}
                         key={thread.threadId}
-                        aria-pressed={isCurrent}
+                        aria-pressed={isSelected}
                         onClick={() => void switchWorkerThread(thread.threadId)}
                       >
                         <span title={title}>{title}</span>
