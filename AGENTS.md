@@ -68,8 +68,10 @@ input: |
 4. 任务并发边界是 thread：同一个 thread 上的任务串行，不同 thread 可以并行。
 5. 同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
 6. `codexp list` 应显示每个 thread 对应的 enabled task 数量。
-7. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task ls`、`codexp task <thread> ls`、`codexp task template [name]`、`codexp task run`、`codexp task daemon`。
-8. `codexp task daemon` 是本地任务调度入口：只扫描当前 `--cwd` 工作区的 `.codexp/tasks`，通过远端 `/api/threads/:threadId/turn` 投递，不要求 server 能访问本机文件系统。
+7. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task ls [thread]`、`codexp task template [name]`、`codexp task start`、`codexp task run <task_yaml_path>`。
+8. `codexp task ls` 默认离线可用，只扫描当前 `--cwd` 工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示在线 target 匹配状态。
+9. `codexp task start` 是本地任务调度入口：只扫描当前 `--cwd` 工作区的 `.codexp/tasks`，按 YAML 里的 `schedule` 投递，不要求 server 能访问本机文件系统。
+10. `codexp task run <task_yaml_path>` 是手动单次执行入口：立即运行指定 YAML 文件，不看 `schedule`。
 
 ## 自举开发和发布
 

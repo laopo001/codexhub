@@ -64,7 +64,7 @@ export const registerConnectCommand = (program: Command) => {
   program
     .command("connect")
     .description("Connect this folder to a codex-proxy server using the official Codex app-server/TUI")
-    .option("--server <url>", "codex-proxy API URL")
+    .option("--server <url>", "codex-proxy server URL")
     .option("-C, --cd <dir>", "Codex working directory")
     .option("--port <port>", "local Codex app-server websocket port")
     .option("--headless", "do not launch the official Codex TUI")
@@ -72,8 +72,8 @@ export const registerConnectCommand = (program: Command) => {
     .option("-s, --sandbox <mode>", "sandbox mode for remote turns", "workspace-write")
     .option("-a, --approval-policy <policy>", "approval policy for remote turns", "never")
     .action(async (options: ConnectOptions) => {
-      const rootOptions = program.opts<{ api: string; cwd: string }>();
-      const apiBase = options.server ?? rootOptions.api;
+      const rootOptions = program.opts<{ server: string; cwd: string }>();
+      const apiBase = options.server ?? rootOptions.server;
       const cwd = path.resolve(options.cd ?? rootOptions.cwd ?? process.cwd());
       const port = options.port ? Number(options.port) : await findFreePort();
       if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);

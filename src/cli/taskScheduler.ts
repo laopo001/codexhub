@@ -46,6 +46,13 @@ type LoadedTask = TaskFile & {
   input: string;
 };
 
+export type TaskRunResult = {
+  task: string;
+  filePath: string;
+  status: "completed" | "failed" | "skipped";
+  threadId?: string;
+};
+
 type TaskRunRecord = {
   version: 1;
   runId: string;
@@ -121,6 +128,45 @@ export class CodexpTaskScheduler {
     }
   }
 
+  async runFile(filePath: string): Promise<TaskRunResult> {
+    const absolutePath = path.resolve(this.options.workspace, filePath);
+    const task = await loadTaskFile(absolutePath, this.options.workspace);
+    if (!task.valid || typeof task.input !== "string" || task.input.trim().length === 0) {
+      throw new Error(`Invalid task file: ${task.error ?? "invalid_schema"}`);
+    }
+    const loaded: LoadedTask = {
+      ...task,
+      valid: true,
+      input: task.input,
+      key: `${task.workspace}:${task.filePath}`
+    };
+    return this.runImmediate(loaded);
+  }
+
+  private async runImmediate(task: LoadedTask): Promise<TaskRunResult> {
+    if (this.queuedTasks.has(task.key) || this.runningTasks.has(task.key)) {
+      await appendTaskRun(task, {
+        runId: randomUUID(),
+        status: "skipped",
+        reason: "already_queued_or_running"
+      });
+      return { task: task.name, filePath: task.filePath, status: "skipped" };
+    }
+
+    const thread = await this.resolveTaskThread(task);
+    if (!thread) return { task: task.name, filePath: task.filePath, status: "skipped" };
+
+    const runId = randomUUID();
+    const queuedAt = localTimestamp();
+    this.runningTasks.add(task.key);
+    try {
+      const status = await this.runTask(task, thread.threadId, runId, queuedAt);
+      return { task: task.name, filePath: task.filePath, status, threadId: thread.threadId };
+    } finally {
+      this.runningTasks.delete(task.key);
+    }
+  }
+
   private async enqueue(task: LoadedTask) {
     if (this.queuedTasks.has(task.key) || this.runningTasks.has(task.key)) {
       await appendTaskRun(task, {
@@ -141,7 +187,9 @@ export class CodexpTaskScheduler {
     const previous = this.threadQueues.get(thread.threadId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
-      .then(() => this.runTask(task, thread.threadId, runId, queuedAt));
+      .then(async () => {
+        await this.runTask(task, thread.threadId, runId, queuedAt);
+      });
     this.threadQueues.set(thread.threadId, next);
     void next.finally(() => {
       if (this.threadQueues.get(thread.threadId) === next) this.threadQueues.delete(thread.threadId);
@@ -181,7 +229,7 @@ export class CodexpTaskScheduler {
     return currentThreadId ? threads.find((thread) => thread.threadId === currentThreadId) ?? null : null;
   }
 
-  private async runTask(task: LoadedTask, threadId: string, runId: string, queuedAt: string) {
+  private async runTask(task: LoadedTask, threadId: string, runId: string, queuedAt: string): Promise<"completed" | "failed"> {
     this.queuedTasks.delete(task.key);
     this.runningTasks.add(task.key);
     const startedAt = localTimestamp();
@@ -199,6 +247,7 @@ export class CodexpTaskScheduler {
         threadId,
         conversation: taskConversation(thread)
       });
+      return "completed";
     } catch (error) {
       const thread = await getThread(this.options.apiBase, threadId).catch(() => null);
       await appendTaskRun(task, {
@@ -211,6 +260,7 @@ export class CodexpTaskScheduler {
         conversation: taskConversation(thread),
         message: error instanceof Error ? error.message : String(error)
       });
+      return "failed";
     } finally {
       this.runningTasks.delete(task.key);
     }
@@ -260,10 +310,15 @@ export async function loadTaskFiles(workspaces: string[]) {
     }
     for (const entry of entries.filter((name) => name.endsWith(".yaml") || name.endsWith(".yml")).sort()) {
       const filePath = path.join(directory, entry);
-      tasks.push(await readTaskFile(workspace, filePath));
+      tasks.push(await loadTaskFile(filePath, workspace));
     }
   }
   return tasks;
+}
+
+export async function loadTaskFile(filePath: string, fallbackWorkspace: string) {
+  const absolutePath = path.resolve(filePath);
+  return readTaskFile(taskWorkspaceFromPath(absolutePath, fallbackWorkspace), absolutePath);
 }
 
 export function resolveTaskThread(task: TaskFile, threads: ThreadSummary[]) {
@@ -274,22 +329,6 @@ export function resolveTaskThread(task: TaskFile, threads: ThreadSummary[]) {
     return matches.length === 1 ? matches[0] : null;
   }
   return workspaceThreads.length === 1 ? workspaceThreads[0] : null;
-}
-
-export function taskTargetLabel(task: TaskFile, threads: ThreadSummary[], selected?: ThreadSummary) {
-  if (!task.valid) return task.error ?? "invalid";
-  const workspaceThreads = threads.filter((thread) => thread.workingDirectory === task.workspace);
-  if (task.thread) {
-    const matches = workspaceThreads.filter((thread) => thread.threadId.startsWith(task.thread!));
-    if (matches.length === 0) return "missing";
-    if (matches.length > 1) return "ambiguous";
-    if (selected) return matches[0].threadId === selected.threadId ? "this" : `other:${matches[0].threadId.slice(0, 8)}`;
-    return matches[0].threadId.slice(0, 8);
-  }
-  if (workspaceThreads.length === 0) return "missing";
-  if (workspaceThreads.length > 1) return "ambiguous";
-  if (selected) return workspaceThreads[0].threadId === selected.threadId ? "this" : `other:${workspaceThreads[0].threadId.slice(0, 8)}`;
-  return workspaceThreads[0].threadId.slice(0, 8);
 }
 
 async function readTaskFile(workspace: string, filePath: string): Promise<TaskFile> {
@@ -323,6 +362,17 @@ function invalidTask(workspace: string, filePath: string, error: string): TaskFi
     schedule: "",
     error
   };
+}
+
+function taskWorkspaceFromPath(filePath: string, fallbackWorkspace: string) {
+  const parts = filePath.split(path.sep);
+  for (let index = parts.length - 2; index >= 0; index -= 1) {
+    if (parts[index] === ".codexp" && parts[index + 1] === "tasks") {
+      const workspace = parts.slice(0, index).join(path.sep) || path.sep;
+      return path.resolve(workspace);
+    }
+  }
+  return path.resolve(fallbackWorkspace);
 }
 
 function isTaskDefinition(value: unknown): value is TaskDefinition {

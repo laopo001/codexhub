@@ -8,7 +8,6 @@ import {
   loadTaskFiles,
   resolveTaskThread,
   safeTaskName,
-  taskTargetLabel,
   taskTemplate,
   type ThreadSummary
 } from "./taskScheduler.js";
@@ -28,7 +27,7 @@ await loadDotEnv();
 const program = new Command()
   .name("codexp")
   .description("Manage codex-proxy threads")
-  .option("--api <url>", "codex-proxy API URL", process.env.CODEX_PROXY_API_URL ?? "http://127.0.0.1:18788")
+  .option("--server <url>", "codex-proxy server URL", defaultServerUrl())
   .option("--cwd <path>", "directory used by folder-relative commands", process.cwd());
 
 program
@@ -70,34 +69,46 @@ program
 
 registerConnectCommand(program);
 
-program
+const taskCommand = program
   .command("task")
-  .argument("[first]", "ls, template, run, daemon, or thread target")
-  .argument("[second]", "ls or template name")
-  .option("--interval-ms <ms>", "task daemon scan interval in milliseconds")
   .description("Manage codexp task YAML files")
-  .action(async (first?: string, second?: string, options: TaskCommandOptions = {}) => {
-    const action = taskAction(first, second);
-    if (action.kind === "template") {
-      await createTaskTemplate(action.name ?? "daily-summary");
-      return;
-    }
-    if (action.kind === "run") {
-      await runTaskScan(options);
-      return;
-    }
-    if (action.kind === "daemon") {
-      await runTaskDaemon(options);
-      return;
-    }
-    if (action.kind === "ls") {
-      const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
-      const threads = data.threads ?? [];
-      const target = action.target ? resolveThreadTarget(action.target, threads) : undefined;
-      await printTasks(threads, target);
-      return;
-    }
-    throw new Error('Usage: codexp task ls | codexp task <thread> ls | codexp task template [name] | codexp task run | codexp task daemon');
+  .action(() => {
+    taskCommand.help();
+  });
+
+taskCommand
+  .command("ls")
+  .argument("[thread]", "optional thread index, full id, or unique id prefix")
+  .description("List local task YAML files; server connection is optional")
+  .action(async (thread?: string) => {
+    const { threads, online } = await tryListThreadsForTaskList();
+    if (thread && !online) throw new Error(`Cannot filter by thread while server is offline: ${apiBase()}`);
+    const target = thread ? resolveThreadTarget(thread, threads) : undefined;
+    await printTasks(threads, { serverOnline: online, target });
+  });
+
+taskCommand
+  .command("template")
+  .argument("[name]", "task name", "daily-summary")
+  .description("Create a task YAML template")
+  .action(async (name: string) => {
+    await createTaskTemplate(name);
+  });
+
+taskCommand
+  .command("start")
+  .option("--interval-ms <ms>", "task scheduler scan interval in milliseconds")
+  .description("Start the local task scheduler; cron schedules are read from task YAML files")
+  .action(async (options: TaskCommandOptions = {}) => {
+    await startTaskScheduler(options);
+  });
+
+taskCommand
+  .command("run")
+  .argument("<task_yaml_path>", "task YAML file to run once")
+  .description("Run one task YAML file immediately")
+  .action(async (taskYamlPath: string) => {
+    await runTaskFile(taskYamlPath);
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {
@@ -111,13 +122,32 @@ async function apiJson<T = unknown>(path: string, init?: RequestInit): Promise<T
   return await response.json() as T;
 }
 
+async function tryListThreads() {
+  try {
+    const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
+    return { online: true, threads: data.threads ?? [] };
+  } catch {
+    return { online: false, threads: [] };
+  }
+}
+
+async function tryListThreadsForTaskList() {
+  if (!shouldProbeServerForTaskList()) return { online: false, threads: [] };
+  return tryListThreads();
+}
+
+function shouldProbeServerForTaskList() {
+  const source = program.getOptionValueSource("server");
+  return source !== "default" || Boolean(process.env.CODEX_PROXY_SERVER_URL);
+}
+
 function apiUrl(path: string) {
   return new URL(path, apiBase()).toString();
 }
 
 function apiBase() {
-  const options = program.opts<{ api: string }>();
-  return options.api;
+  const options = program.opts<{ server: string }>();
+  return options.server;
 }
 
 function resolveCommandPath(...segments: string[]) {
@@ -177,25 +207,25 @@ function formatThread(thread: ThreadSummary) {
   return `${thread.threadId.slice(0, 8)} (${thread.workingDirectory}, ${thread.title})`;
 }
 
-async function runTaskScan(options: TaskCommandOptions) {
-  const scheduler = new CodexpTaskScheduler({
-    apiBase: apiBase(),
-    workspace: commandCwd(),
-    scanIntervalMs: parseIntervalMs(options.intervalMs)
-  });
-  await scheduler.scan(new Date());
-}
-
-async function runTaskDaemon(options: TaskCommandOptions) {
+async function startTaskScheduler(options: TaskCommandOptions) {
   const scheduler = new CodexpTaskScheduler({
     apiBase: apiBase(),
     workspace: commandCwd(),
     scanIntervalMs: parseIntervalMs(options.intervalMs)
   });
   scheduler.start();
-  console.error(`codexp task daemon started: ${commandCwd()}`);
+  console.error(`codexp task scheduler started: ${commandCwd()}`);
   await waitForShutdown();
   scheduler.stop();
+}
+
+async function runTaskFile(taskYamlPath: string) {
+  const scheduler = new CodexpTaskScheduler({
+    apiBase: apiBase(),
+    workspace: commandCwd()
+  });
+  const result = await scheduler.runFile(taskYamlPath);
+  console.log(`Task ${result.status}: ${result.task}${result.threadId ? ` (${result.threadId.slice(0, 8)})` : ""}`);
 }
 
 async function createTaskTemplate(taskName: string) {
@@ -207,23 +237,12 @@ async function createTaskTemplate(taskName: string) {
   console.log(`Created ${filePath}`);
 }
 
-function taskAction(first?: string, second?: string):
-  | { kind: "template"; name?: string }
-  | { kind: "ls"; target?: string }
-  | { kind: "run" }
-  | { kind: "daemon" }
-  | { kind: "unknown" } {
-  if (!first || first === "ls" || first === "list") return { kind: "ls", target: second };
-  if (first === "template") return { kind: "template", name: second };
-  if (first === "run" || first === "run-once" || first === "once") return { kind: "run" };
-  if (first === "daemon" || first === "watch") return { kind: "daemon" };
-  if (second === "ls" || second === "list") return { kind: "ls", target: first };
-  return { kind: "unknown" };
-}
-
-async function printTasks(threads: ThreadSummary[], target?: ThreadSummary) {
-  const workspaces = target
-    ? [target.workingDirectory]
+async function printTasks(
+  threads: ThreadSummary[],
+  options: { serverOnline: boolean; target?: ThreadSummary }
+) {
+  const workspaces = options.target
+    ? [options.target.workingDirectory]
     : uniqueStrings([commandCwd(), ...threads.map((thread) => thread.workingDirectory)]);
   const tasks = await loadTaskFiles(workspaces);
   const rows = tasks.map((task) => ({
@@ -231,9 +250,8 @@ async function printTasks(threads: ThreadSummary[], target?: ThreadSummary) {
     enabled: task.valid ? (task.enabled ? "yes" : "no") : "invalid",
     schedule: task.schedule,
     thread: task.thread ?? "",
-    target: taskTargetLabel(task, threads, target),
-    file: path.relative(task.workspace, task.filePath) || task.filePath,
-    folder: task.workspace
+    server: options.serverOnline ? "online" : "offline",
+    file: path.relative(task.workspace, task.filePath) || task.filePath
   }));
   if (!rows.length) {
     console.log("No tasks.");
@@ -277,6 +295,13 @@ function parsePortOption(value: string | undefined) {
 function serverUrl(host: string, port: number) {
   const displayHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${displayHost}:${port}`;
+}
+
+function defaultServerUrl() {
+  if (process.env.CODEX_PROXY_SERVER_URL) return process.env.CODEX_PROXY_SERVER_URL;
+  const host = process.env.CODEX_PROXY_HOST ?? "127.0.0.1";
+  const port = process.env.CODEX_PROXY_PORT ?? "18788";
+  return serverUrl(host, Number(port));
 }
 
 function waitForShutdown() {
