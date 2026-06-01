@@ -36,7 +36,7 @@ pnpm codexp server --host 0.0.0.0 --port 8788
 pnpm codexp --server http://127.0.0.1:8788 connect -C /path/to/project
 ```
 
-`codexp connect` 会在当前机器启动官方 `codex app-server`，向 codex-proxy server 注册一个本次进程唯一的 worker，然后用 PTY wrapper 前台运行官方 `codex --remote ...` TUI。Web 主列表只展示在线 worker；右侧展示选中 worker 的当前 thread，TUI 里 `/resume` 切换后会随 app-server event 同步。Web、Telegram、task 或 API 对同一个 `threadId` 发送的 turn 会由 server 转成 worker command，在本机 app-server/cwd 内执行。Codex usage 和本地图片处理等机器相关能力由 `codexp` worker 上报或执行，server 只缓存和转发。非 headless 终端底部会保留一行 `codexp` 状态栏，显示当前 worker、thread 和 server 连接状态。官方 TUI 退出时，`codexp` 会立即 unregister worker；如果 `codexp` 异常消失，server 通过 heartbeat timeout 标记 offline，Web 左侧不再显示该 worker。
+`codexp connect` 会在当前机器启动官方 `codex app-server`，然后用 PTY wrapper 前台运行官方 `codex --remote ...` TUI。codex-proxy server 是可选增强：server 在线时，`codexp` 注册一个本次进程唯一的 worker，同步 app-server event，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，只是暂时不能远程转发。后台 bridge 会持续重试，server 恢复后自动注册并开始同步。Web 主列表只展示在线 worker；右侧展示选中 worker 的当前 thread，TUI 里 `/resume` 切换后会随 app-server event 同步。Codex usage 和本地图片处理等机器相关能力由 `codexp` worker 上报或执行，server 只缓存和转发。非 headless 终端底部会保留一行 `codexp` 状态栏，显示当前 worker、thread 和 server 连接状态。官方 TUI 退出时，`codexp` 会立即 unregister worker；如果 `codexp` 异常消失，server 通过 heartbeat timeout 标记 offline，Web 左侧不再显示该 worker。
 
 PTY 支持依赖 `node-pty` native build，仓库的 `pnpm-workspace.yaml` 已允许该依赖运行 build script。
 
@@ -58,13 +58,13 @@ pnpm run dev:api
 本地定时任务由 `codexp` 运行，不由 server 扫本机目录：
 
 ```bash
-pnpm codexp --server http://127.0.0.1:8788 task template daily-summary
-pnpm codexp --server http://127.0.0.1:8788 task ls
-pnpm codexp --server http://127.0.0.1:8788 task start
-pnpm codexp --server http://127.0.0.1:8788 task run .codexp/tasks/daily-summary.yaml
+pnpm codexp task template daily-summary
+pnpm codexp task ls
+pnpm codexp task start
+pnpm codexp task run .codexp/tasks/daily-summary.yaml
 ```
 
-`--cwd` 默认是运行命令时的当前目录；需要操作其他目录时再显式指定。`codexp task ls` 默认离线可用，只扫描本地 `.codexp/tasks/*.yaml`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并额外显示 task 目标 thread 的在线匹配状态。`codexp task start` 是给 PM2 或终端常驻使用的本地调度器，按 YAML 里的 `schedule` cron 到点后通过 server API 把输入投递给匹配的在线 thread。`codexp task run <task_yaml_path>` 立即运行指定 YAML 文件一次，不看 `schedule`。运行记录写到本地 `.codexp/task-runs/*.jsonl`。
+`--cwd` 默认是运行命令时的当前目录；需要操作其他目录时再显式指定。`codexp task ls` 默认离线可用，只扫描本地 `.codexp/tasks/*.yaml`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并额外显示 server 是否在线。`codexp task start` 是给 PM2 或终端常驻使用的本地调度器，按 YAML 里的 `schedule` cron 到点后在本机执行 `codex exec -C <workspace> -`。`codexp task run <task_yaml_path>` 立即本地运行指定 YAML 文件一次，不看 `schedule`，也不依赖 codex-proxy server。运行记录写到本地 `.codexp/task-runs/*.jsonl`。
 
 ## 生产发布
 
@@ -107,4 +107,4 @@ curl -N "http://127.0.0.1:8788/api/threads/$THREAD_ID/events?after=0"
 
 Slash commands are handled before forwarding to Codex. `/status` and `/help` return local proxy status/help records. `/model` is a client command in Web and opens the Runtime selector; Web sends the selected model/reasoning with the next normal turn. If the official TUI changes model/reasoning locally, `codexp connect` mirrors app-server Runtime settings back into Web from `thread/settings/updated` events or the effective `config/read` result. Unsupported slash commands are not sent to the Codex app-server as user turns because official TUI slash commands are local UI commands, not app-server turns.
 
-Server 不读取运行机器上的 `~/.codex` session、`.codexp/tasks` 或上传临时图片目录。历史 session 通过官方 TUI/app-server 恢复后由 `codexp connect` 镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；usage 由本地 worker heartbeat 上报；定时任务由 `codexp task start` 在本地执行。
+Server 不读取运行机器上的 `~/.codex` session、`.codexp/tasks` 或上传临时图片目录。历史 session 通过官方 TUI/app-server 恢复后由 `codexp connect` 镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；usage 由本地 worker heartbeat 上报；定时任务由 `codexp task start` 在本地通过 `codex exec` 执行。

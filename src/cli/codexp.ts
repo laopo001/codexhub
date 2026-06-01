@@ -210,7 +210,6 @@ function formatThread(thread: ThreadSummary) {
 
 async function startTaskScheduler(options: TaskCommandOptions) {
   const scheduler = new CodexpTaskScheduler({
-    apiBase: apiBase(),
     workspace: commandCwd(),
     scanIntervalMs: parseIntervalMs(options.intervalMs)
   });
@@ -222,11 +221,10 @@ async function startTaskScheduler(options: TaskCommandOptions) {
 
 async function runTaskFile(taskYamlPath: string) {
   const scheduler = new CodexpTaskScheduler({
-    apiBase: apiBase(),
     workspace: commandCwd()
   });
   const result = await scheduler.runFile(taskYamlPath);
-  console.log(`Task ${result.status}: ${result.task}${result.threadId ? ` (${result.threadId.slice(0, 8)})` : ""}`);
+  console.log(`Task ${result.status}: ${result.task}`);
 }
 
 async function createTaskTemplate(taskName: string) {

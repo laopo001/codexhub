@@ -6,11 +6,12 @@
 2. 不再引入 `instanceId`。旧的 instance 概念已经被删除，新逻辑不得增加 `/api/instances`、`.codexp/instances.yaml` 或 instance 兼容层。
 3. API server 是控制面和事件镜像层，不直接拥有 Codex runtime。Codex runtime 在 `codexp connect` 启动的官方 `codex app-server` worker 里。
 4. 一次 `codexp connect` 等价于打开一个官方 Codex：一个 PTY TUI、一个 app-server、一个 worker。`workerId` 标识这次 `codexp` 进程，必须每次启动唯一；`workingDirectory` 只是 worker 属性，不是 worker 主键。
-5. `threadId` 来自官方 app-server。新 thread 只能由本地 Codex CLI/TUI 或官方 session 恢复产生，server/Web/TG/task 不主动创建 thread。
-6. Web/TG/task 发送输入时，server 只把命令排到对应 worker，执行结果再按 `threadId` 镜像回 thread 记录。Web 输入必须跟随选中 worker 的 `currentThreadId`，不能把历史 thread 当成在线入口。
-7. 同一个 `workingDirectory` 可以同时运行多个 `codexp connect`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
-8. 非 headless 的 `codexp connect` 必须用 PTY wrapper 启动官方 `codex --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
-9. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
+5. `codexp connect` 必须 local-first：官方 `codex app-server` 和 TUI 不依赖 server 连接成功；server 离线时本地 TUI 继续可用，后台 bridge 持续重试，server 恢复后再 register worker 并同步事件。
+6. `threadId` 来自官方 app-server。新 thread 只能由本地 Codex CLI/TUI 或官方 session 恢复产生，server/Web/TG/task 不主动创建 thread。
+7. Web/TG/task 发送输入时，server 只把命令排到对应 worker，执行结果再按 `threadId` 镜像回 thread 记录。Web 输入必须跟随选中 worker 的 `currentThreadId`，不能把历史 thread 当成在线入口。
+8. 同一个 `workingDirectory` 可以同时运行多个 `codexp connect`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
+9. 非 headless 的 `codexp connect` 必须用 PTY wrapper 启动官方 `codex --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
+10. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
 
 ## 选择和关闭语义
 
@@ -63,15 +64,15 @@ input: |
 ```
 
 1. 任务所在工作区由 `.codexp/tasks/*.yaml` 的位置推导，不在 YAML 里写 `folder`。
-2. `thread` 可选；有值时匹配完整 `threadId` 或唯一短前缀。
-3. `thread` 为空时，如果当前工作区只有 1 个 thread 就使用它；没有 thread 时跳过并记录 `thread_not_found`；多个 thread 时不猜测，跳过并记录 `ambiguous_thread`。
-4. 任务并发边界是 thread：同一个 thread 上的任务串行，不同 thread 可以并行。
-5. 同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
+2. `thread` 可选，只作为本地 Codex session 目标的预留字段；不要用 server 线程列表解析 `task run/start` 的目标。
+3. 旧 `instance` 字段只允许作为 `thread` 的过渡别名读取，不要重新引入 instance 模型。
+4. 任务执行必须 local-first：`codexp task run <task_yaml_path>` 和 `codexp task start` 通过本机 `codex exec -C <workspace> -` 执行，不依赖 codex-proxy server。
+5. 任务并发边界是 task 文件：同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
 6. `codexp list` 应显示每个 thread 对应的 enabled task 数量。
 7. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task ls [thread]`、`codexp task template [name]`、`codexp task start`、`codexp task run <task_yaml_path>`。
-8. `codexp task ls` 默认离线可用，只扫描当前 `--cwd` 工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示在线 target 匹配状态。
-9. `codexp task start` 是本地任务调度入口：只扫描当前 `--cwd` 工作区的 `.codexp/tasks`，按 YAML 里的 `schedule` 投递，不要求 server 能访问本机文件系统。
-10. `codexp task run <task_yaml_path>` 是手动单次执行入口：立即运行指定 YAML 文件，不看 `schedule`。
+8. `codexp task ls` 默认离线可用，只扫描当前 `--cwd` 工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示 server 是否在线。
+9. `codexp task start` 是本地任务调度入口：只扫描当前 `--cwd` 工作区的 `.codexp/tasks`，按 YAML 里的 `schedule` 在本机执行，不要求 server 能访问本机文件系统。
+10. `codexp task run <task_yaml_path>` 是手动单次执行入口：立即本地运行指定 YAML 文件，不看 `schedule`，不要求 server 在线。
 
 ## 自举开发和发布
 

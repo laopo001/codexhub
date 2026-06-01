@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
-import type { CodexRecord } from "../core/codexRecord.js";
-import { recordsToViews } from "../core/codexRecordView.js";
 
 export type ThreadSummary = {
   threadId: string;
@@ -15,16 +14,13 @@ export type ThreadSummary = {
   updatedAt: string;
 };
 
-type ThreadDetail = ThreadSummary & {
-  records: CodexRecord[];
-};
-
 type TaskDefinition = {
   version: 1;
   name: string;
   enabled: boolean;
   schedule: string;
   thread?: string;
+  instance?: string;
   input: string;
 };
 
@@ -37,6 +33,7 @@ export type TaskFile = {
   schedule: string;
   input?: string;
   thread?: string;
+  instance?: string;
   error?: string;
 };
 
@@ -50,7 +47,6 @@ export type TaskRunResult = {
   task: string;
   filePath: string;
   status: "completed" | "failed" | "skipped";
-  threadId?: string;
 };
 
 type TaskRunRecord = {
@@ -64,19 +60,15 @@ type TaskRunRecord = {
   startedAt?: string;
   completedAt?: string;
   reason?: string;
-  threadId?: string;
   input: string;
-  conversation?: {
-    lastUserMessage: string;
-    lastAssistantMessage: string;
-  };
+  output?: string;
   message?: string;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
 };
 
 type SchedulerOptions = {
-  apiBase: string;
   workspace: string;
-  workerId?: string;
   scanIntervalMs?: number;
 };
 
@@ -86,7 +78,7 @@ const defaultScanIntervalMs = 30_000;
 export class CodexpTaskScheduler {
   private readonly queuedTasks = new Set<string>();
   private readonly runningTasks = new Set<string>();
-  private readonly threadQueues = new Map<string, Promise<void>>();
+  private readonly taskQueues = new Map<string, Promise<void>>();
   private readonly triggeredMinutes = new Map<string, string>();
   private readonly scanIntervalMs: number;
   private interval: NodeJS.Timeout | null = null;
@@ -153,15 +145,12 @@ export class CodexpTaskScheduler {
       return { task: task.name, filePath: task.filePath, status: "skipped" };
     }
 
-    const thread = await this.resolveTaskThread(task);
-    if (!thread) return { task: task.name, filePath: task.filePath, status: "skipped" };
-
     const runId = randomUUID();
     const queuedAt = localTimestamp();
     this.runningTasks.add(task.key);
     try {
-      const status = await this.runTask(task, thread.threadId, runId, queuedAt);
-      return { task: task.name, filePath: task.filePath, status, threadId: thread.threadId };
+      const status = await this.runTask(task, runId, queuedAt);
+      return { task: task.name, filePath: task.filePath, status };
     } finally {
       this.runningTasks.delete(task.key);
     }
@@ -177,87 +166,50 @@ export class CodexpTaskScheduler {
       return;
     }
 
-    const thread = await this.resolveTaskThread(task);
-    if (!thread) return;
-
     const runId = randomUUID();
     const queuedAt = localTimestamp();
     this.queuedTasks.add(task.key);
 
-    const previous = this.threadQueues.get(thread.threadId) ?? Promise.resolve();
+    const previous = this.taskQueues.get(task.key) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(async () => {
-        await this.runTask(task, thread.threadId, runId, queuedAt);
+        await this.runTask(task, runId, queuedAt);
       });
-    this.threadQueues.set(thread.threadId, next);
+    this.taskQueues.set(task.key, next);
     void next.finally(() => {
-      if (this.threadQueues.get(thread.threadId) === next) this.threadQueues.delete(thread.threadId);
+      if (this.taskQueues.get(task.key) === next) this.taskQueues.delete(task.key);
     });
   }
 
-  private async resolveTaskThread(task: LoadedTask): Promise<ThreadSummary | null> {
-    const threads = (await this.listThreads()).filter((thread) => thread.workingDirectory === task.workspace);
-    const target = task.thread?.trim();
-    if (target) {
-      const matches = threads.filter((thread) => thread.threadId.startsWith(target));
-      if (matches.length === 1) return matches[0];
-      await appendTaskRun(task, {
-        runId: randomUUID(),
-        status: "skipped",
-        reason: matches.length ? "ambiguous_thread" : "thread_not_found",
-        message: target
-      });
-      return null;
-    }
-
-    const workerCurrent = await this.currentWorkerThread(threads);
-    if (workerCurrent) return workerCurrent;
-    if (threads.length === 1) return threads[0];
-    await appendTaskRun(task, {
-      runId: randomUUID(),
-      status: "skipped",
-      reason: threads.length ? "ambiguous_thread" : "thread_not_found"
-    });
-    return null;
-  }
-
-  private async currentWorkerThread(threads: ThreadSummary[]) {
-    if (!this.options.workerId) return null;
-    const workers = await apiJson<{ workers?: Array<{ workerId: string; currentThreadId?: string }> }>(this.options.apiBase, "/api/workers");
-    const currentThreadId = workers.workers?.find((worker) => worker.workerId === this.options.workerId)?.currentThreadId;
-    return currentThreadId ? threads.find((thread) => thread.threadId === currentThreadId) ?? null : null;
-  }
-
-  private async runTask(task: LoadedTask, threadId: string, runId: string, queuedAt: string): Promise<"completed" | "failed"> {
+  private async runTask(task: LoadedTask, runId: string, queuedAt: string): Promise<"completed" | "failed"> {
     this.queuedTasks.delete(task.key);
     this.runningTasks.add(task.key);
     const startedAt = localTimestamp();
     try {
-      await this.waitForThreadIdle(threadId);
-      await postTurn(this.options.apiBase, threadId, task.input);
-      await this.waitForThreadIdle(threadId, true);
-      const thread = await getThread(this.options.apiBase, threadId).catch(() => null);
+      const result = await runCodexExec(task.workspace, task.input);
       await appendTaskRun(task, {
         runId,
         status: "completed",
         queuedAt,
         startedAt,
         completedAt: localTimestamp(),
-        threadId,
-        conversation: taskConversation(thread)
+        output: result.output,
+        exitCode: result.exitCode,
+        signal: result.signal
       });
       return "completed";
     } catch (error) {
-      const thread = await getThread(this.options.apiBase, threadId).catch(() => null);
+      const result = error instanceof CodexExecError ? error.result : undefined;
       await appendTaskRun(task, {
         runId,
         status: "failed",
         queuedAt,
         startedAt,
         completedAt: localTimestamp(),
-        threadId,
-        conversation: taskConversation(thread),
+        output: result?.output,
+        exitCode: result?.exitCode,
+        signal: result?.signal,
         message: error instanceof Error ? error.message : String(error)
       });
       return "failed";
@@ -266,21 +218,6 @@ export class CodexpTaskScheduler {
     }
   }
 
-  private async waitForThreadIdle(threadId: string, afterStart = false) {
-    const startedAt = Date.now();
-    let observedRunning = false;
-    while (true) {
-      const thread = await getThread(this.options.apiBase, threadId);
-      if (thread.running) observedRunning = true;
-      if (!thread.running && (!afterStart || observedRunning || Date.now() - startedAt > 1500)) return;
-      await delay(1000);
-    }
-  }
-
-  private async listThreads() {
-    const data = await apiJson<{ threads?: ThreadSummary[] }>(this.options.apiBase, "/api/threads");
-    return data.threads ?? [];
-  }
 }
 
 export function taskTemplate(name: string) {
@@ -343,7 +280,8 @@ async function readTaskFile(workspace: string, filePath: string): Promise<TaskFi
         enabled: parsed.enabled,
         schedule: parsed.schedule,
         input: parsed.input,
-        thread: parsed.thread?.trim() || undefined
+        thread: parsed.thread?.trim() || parsed.instance?.trim() || undefined,
+        instance: parsed.instance?.trim() || undefined
       };
     }
     return invalidTask(workspace, filePath, "invalid_schema");
@@ -385,7 +323,8 @@ function isTaskDefinition(value: unknown): value is TaskDefinition {
     && typeof record.schedule === "string"
     && typeof record.input === "string"
     && record.input.trim().length > 0
-    && (record.thread == null || typeof record.thread === "string");
+    && (record.thread == null || typeof record.thread === "string")
+    && (record.instance == null || typeof record.instance === "string");
 }
 
 function shouldTrigger(task: LoadedTask, now: Date) {
@@ -466,29 +405,6 @@ function triggerMinuteKey(date: Date, timezone: string) {
   return `${local.year}-${local.month}-${local.dayOfMonth}-${local.hour}-${local.minute}`;
 }
 
-async function postTurn(apiBase: string, threadId: string, input: string) {
-  const response = await fetch(apiUrl(apiBase, `/api/threads/${encodeURIComponent(threadId)}/turn`), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ input, source: "task" })
-  });
-  if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
-}
-
-async function getThread(apiBase: string, threadId: string) {
-  return apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
-}
-
-async function apiJson<T = unknown>(apiBase: string, pathname: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiUrl(apiBase, pathname), init);
-  if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
-  return await response.json() as T;
-}
-
-function apiUrl(apiBase: string, pathname: string) {
-  return new URL(pathname, apiBase).toString();
-}
-
 async function appendTaskRun(
   task: LoadedTask,
   run: Omit<TaskRunRecord, "version" | "task" | "taskFile" | "workspace" | "input">
@@ -507,15 +423,6 @@ async function appendTaskRun(
     completedAt
   };
   await appendFile(filePath, `${JSON.stringify(record)}\n`, "utf8");
-}
-
-function taskConversation(thread: ThreadDetail | null): TaskRunRecord["conversation"] | undefined {
-  if (!thread) return undefined;
-  const views = recordsToViews(thread.records);
-  const lastUserMessage = [...views].reverse().find((view) => view.role === "user")?.text ?? "";
-  const lastAssistantMessage = [...views].reverse().find((view) => view.role === "codex")?.text ?? "";
-  if (!lastUserMessage && !lastAssistantMessage) return undefined;
-  return { lastUserMessage, lastAssistantMessage };
 }
 
 function localTimestamp(date = new Date()) {
@@ -543,10 +450,50 @@ function pad2(value: number) {
   return String(value).padStart(2, "0");
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function uniqueStrings(values: string[]) {
   return [...new Set(values)];
+}
+
+type CodexExecResult = {
+  output: string;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+};
+
+class CodexExecError extends Error {
+  constructor(
+    message: string,
+    readonly result: CodexExecResult
+  ) {
+    super(message);
+  }
+}
+
+function runCodexExec(workspace: string, input: string): Promise<CodexExecResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("codex", ["exec", "-C", workspace, "-"], {
+      cwd: workspace,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      process.stdout.write(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      process.stderr.write(chunk);
+    });
+    child.once("error", reject);
+    child.once("exit", (exitCode, signal) => {
+      const output = `${stdout}${stderr ? `${stdout ? "\n" : ""}${stderr}` : ""}`.trim();
+      const result = { output, exitCode, signal };
+      if (exitCode === 0) resolve(result);
+      else reject(new CodexExecError(`codex exec failed${exitCode == null ? "" : ` with exit code ${exitCode}`}`, result));
+    });
+    child.stdin.end(input);
+  });
 }

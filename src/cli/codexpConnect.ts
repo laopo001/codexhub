@@ -60,6 +60,10 @@ type BridgeOptions = {
   approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
 };
 
+type ProxyBridgeRunnerOptions = BridgeOptions & {
+  statusBar?: CodexpStatusBar | null;
+};
+
 export const registerConnectCommand = (program: Command) => {
   program
     .command("connect")
@@ -79,19 +83,18 @@ export const registerConnectCommand = (program: Command) => {
       if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
 
       const appServerUrl = `ws://127.0.0.1:${port}`;
+      const workerId = createWorkerId();
       const appServer = await startCodexAppServer(cwd, appServerUrl, port);
-      let bridge: CodexAppServerBridge | null = null;
+      let bridgeRunner: ProxyBridgeRunner | null = null;
       let tui: CodexTuiPty | null = null;
       let statusBar: CodexpStatusBar | null = null;
-      let registeredWorkerId: string | null = null;
       let cleanedUp = false;
       const cleanup = cleanupOnce(async () => {
         cleanedUp = true;
         tui?.kill();
         statusBar?.stop();
-        bridge?.close();
+        await bridgeRunner?.stop();
         appServer.kill("SIGTERM");
-        if (registeredWorkerId) await unregisterWorker(apiBase, registeredWorkerId);
       });
       const onSignal = (signal: NodeJS.Signals) => {
         void cleanup().finally(() => process.exit(signalExitCode(signal)));
@@ -101,70 +104,40 @@ export const registerConnectCommand = (program: Command) => {
       process.once("SIGHUP", onSignal);
 
       try {
-        const workerId = createWorkerId();
-        const registration = await apiJson<WorkerRegisterResponse>(apiBase, "/api/workers/register", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            workerId,
-            name: workerDisplayName(workerId),
-            workingDirectory: cwd,
-            appServerUrl,
-            pid: process.pid,
-            hostname: os.hostname()
-          })
-        });
-        registeredWorkerId = registration.workerId;
-
-        bridge = await CodexAppServerBridge.connect({
-          apiBase,
-          appServerUrl,
-          workerId: registration.workerId,
-          cwd,
-          model: options.model,
-          sandbox: options.sandbox ?? "workspace-write",
-          approvalPolicy: options.approvalPolicy ?? "never"
-        });
-
-        const bridgeStopped = new Deferred<void>();
-        void bridge.runCommandLoop().catch((error) => {
-          console.error(`codexp connect command loop failed: ${errorText(error)}`);
-          process.exitCode = 1;
-          bridgeStopped.reject(error);
-        });
-        void bridge.runThreadSyncLoop().catch((error) => {
-          console.error(`codexp connect thread sync failed: ${errorText(error)}`);
-          process.exitCode = 1;
-          bridgeStopped.reject(error);
-        });
-        void bridge.runHeartbeatLoop().catch((error) => {
-          console.error(`codexp connect heartbeat failed: ${errorText(error)}`);
-          process.exitCode = 1;
-          bridgeStopped.reject(error);
-        });
-        void bridge.waitForClose().then(() => bridgeStopped.resolve());
         const appServerStopped = waitForChild(appServer).then(({ code, signal }) => {
           if (!cleanedUp) process.exitCode = code ?? (signal ? 1 : 1);
         });
 
         console.error([
-          `codexp worker connected: ${registration.workerId}`,
-          `server: ${apiBase}`,
+          `codexp local started: ${workerId}`,
+          `server: ${apiBase} (optional)`,
           `cwd: ${cwd}`,
           `app-server: ${appServerUrl}`
         ].join("\n"));
 
+        statusBar = CodexpStatusBar.start({ apiBase, workerId, cwd });
+        bridgeRunner = new ProxyBridgeRunner({
+          apiBase,
+          appServerUrl,
+          workerId,
+          cwd,
+          model: options.model,
+          sandbox: options.sandbox ?? "workspace-write",
+          approvalPolicy: options.approvalPolicy ?? "never",
+          statusBar
+        });
+        bridgeRunner.start();
+
         if (options.headless) {
-          await Promise.race([waitForShutdown(), appServerStopped, bridgeStopped.promise]);
+          await Promise.race([waitForShutdown(), appServerStopped]);
           return;
         }
 
-        statusBar = CodexpStatusBar.start({ apiBase, workerId: registration.workerId, cwd });
         tui = CodexTuiPty.start(cwd, appServerUrl, statusBar ? {
           reservedRows: () => statusBar?.reservedRows() ?? 0,
           onOutput: () => statusBar?.redrawSoon()
         } : undefined);
-        await Promise.race([tui.waitForExit().then(applyPtyExitCode), appServerStopped, bridgeStopped.promise]);
+        await Promise.race([tui.waitForExit().then(applyPtyExitCode), appServerStopped]);
       } finally {
         process.off("SIGINT", onSignal);
         process.off("SIGTERM", onSignal);
@@ -173,6 +146,90 @@ export const registerConnectCommand = (program: Command) => {
       }
     });
 };
+
+class ProxyBridgeRunner {
+  private bridge: CodexAppServerBridge | null = null;
+  private registered = false;
+  private stopping = false;
+  private loopStarted = false;
+  private lastState: "offline" | "online" | null = null;
+
+  constructor(private readonly options: ProxyBridgeRunnerOptions) {}
+
+  start() {
+    if (this.loopStarted) return;
+    this.loopStarted = true;
+    void this.runLoop();
+  }
+
+  async stop() {
+    this.stopping = true;
+    this.bridge?.close();
+    await this.unregister();
+  }
+
+  private async runLoop() {
+    while (!this.stopping) {
+      this.options.statusBar?.setProxyState("connecting");
+      try {
+        await this.register();
+        this.bridge = await CodexAppServerBridge.connect(this.options);
+        this.options.statusBar?.setProxyState("online");
+        this.logState("online", `codexp proxy connected: ${this.options.workerId}`);
+        await this.runBridge(this.bridge);
+      } catch (error) {
+        if (this.stopping) return;
+        this.options.statusBar?.setProxyState("offline");
+        this.logState("offline", `codexp proxy offline: ${errorText(error)}`);
+      } finally {
+        this.bridge?.close();
+        this.bridge = null;
+        await this.unregister();
+      }
+      if (!this.stopping) await delay(5000);
+    }
+  }
+
+  private async register() {
+    await apiJson<WorkerRegisterResponse>(this.options.apiBase, "/api/workers/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workerId: this.options.workerId,
+        name: workerDisplayName(this.options.workerId),
+        workingDirectory: this.options.cwd,
+        appServerUrl: this.options.appServerUrl,
+        pid: process.pid,
+        hostname: os.hostname()
+      })
+    });
+    this.registered = true;
+  }
+
+  private async unregister() {
+    if (!this.registered) return;
+    this.registered = false;
+    await unregisterWorker(this.options.apiBase, this.options.workerId);
+  }
+
+  private async runBridge(bridge: CodexAppServerBridge) {
+    const stopped = new Deferred<void>();
+    const fail = (label: string) => (error: unknown) => {
+      if (!this.stopping) stopped.reject(new Error(`${label}: ${errorText(error)}`));
+    };
+    void bridge.runCommandLoop().catch(fail("command loop"));
+    void bridge.runThreadSyncLoop().catch(fail("thread sync"));
+    void bridge.runHeartbeatLoop().catch(fail("heartbeat"));
+    void bridge.waitForClose().then(() => stopped.reject(new Error("app-server bridge closed")));
+    await stopped.promise;
+  }
+
+  private logState(state: "offline" | "online", message: string) {
+    if (this.lastState === state) return;
+    this.lastState = state;
+    console.error(message);
+  }
+}
 
 class CodexAppServerBridge {
   private readonly pending = new Map<string | number, PendingRequest>();
@@ -610,6 +667,7 @@ class CodexpStatusBar {
   private refreshTimer: NodeJS.Timeout | null = null;
   private redrawTimer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private proxyState: "offline" | "connecting" | "online" = "offline";
   private text: string;
 
   private constructor(
@@ -623,6 +681,13 @@ class CodexpStatusBar {
     const bar = new CodexpStatusBar(options);
     bar.attach();
     return bar;
+  }
+
+  setProxyState(state: "offline" | "connecting" | "online") {
+    if (this.proxyState === state) return;
+    this.proxyState = state;
+    this.text = this.renderText();
+    this.redrawSoon();
   }
 
   reservedRows() {
@@ -666,8 +731,10 @@ class CodexpStatusBar {
         apiJson<{ threads?: StatusThreadSummary[] }>(this.options.apiBase, "/api/threads"),
         apiJson<{ workers?: StatusWorkerSummary[] }>(this.options.apiBase, "/api/workers")
       ]);
+      this.proxyState = "online";
       this.text = this.renderText(threadData.threads ?? [], workerData.workers ?? []);
     } catch {
+      this.proxyState = "offline";
       this.text = this.renderText();
     }
     this.draw();
@@ -678,7 +745,9 @@ class CodexpStatusBar {
     const runningThreads = workspaceThreads.filter((thread) => thread.running).length;
     const onlineWorkers = workers.filter((worker) => worker.online).length;
     const thisWorker = workers.find((worker) => worker.workerId === this.options.workerId);
-    const workerState = thisWorker ? (thisWorker.online ? "online" : "offline") : "connecting";
+    const workerState = thisWorker
+      ? (thisWorker.online ? "online" : "offline")
+      : this.proxyState === "online" ? "connecting" : this.proxyState;
     return [
       `codexp ${this.options.workerId.slice(0, 14)} ${workerState}`,
       `threads ${workspaceThreads.length}/${threads.length}`,
