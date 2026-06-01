@@ -10,8 +10,8 @@ import { loadConfig } from "../core/config.js";
 import { readCodexUsage } from "../core/codexUsage.js";
 import { recordsToViews } from "../core/codexRecordView.js";
 import { listLoadableCodexThreads, loadCodexThread } from "../core/codexpLog.js";
-import { InstanceHub } from "../core/instanceHub.js";
 import { TaskScheduler } from "../core/taskScheduler.js";
+import { ThreadHub } from "../core/threadHub.js";
 import { addWorkspace, listDirectoryChildren, listWorkspaces, touchWorkspace } from "../core/workspaceState.js";
 
 const inputSchema = z.union([
@@ -69,14 +69,13 @@ const uploadImageSchema = z.object({
 
 const main = async () => {
   const config = loadConfig();
-  const instances = new InstanceHub(config.codexOptions, config.defaultThreadOptions);
+  const threads = new ThreadHub(config.defaultThreadOptions);
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const defaultWorkingDirectory = config.defaultThreadOptions.workingDirectory ?? process.cwd();
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot();
-  const taskScheduler = new TaskScheduler(instances, defaultWorkingDirectory);
+  const taskScheduler = new TaskScheduler(threads, defaultWorkingDirectory);
 
-  await instances.restoreSavedInstances();
   taskScheduler.start();
   await app.register(cors, { origin: true });
 
@@ -133,26 +132,24 @@ const main = async () => {
     return reply.send(createReadStream(filePath));
   });
 
-  app.get("/api/instances", async () => ({
-    instances: instances.listInstances()
+  app.get("/api/threads", async () => ({
+    threads: threads.listThreads()
   }));
 
-  app.post("/api/instances/save", async () => instances.saveInstances());
-
-  app.post("/api/instances/restore-saved", async () => ({
-    instances: await instances.restoreSavedInstances()
+  app.get("/api/workers", async () => ({
+    workers: threads.listWorkers()
   }));
 
   app.post("/api/workers/register", async (request) => {
     const payload = workerRegistrationSchema.parse(request.body);
     await touchWorkspace(payload.workingDirectory).catch(() => undefined);
-    return instances.registerWorker(payload);
+    return threads.registerWorker(payload);
   });
 
   app.post("/api/workers/:workerId/heartbeat", async (request, reply) => {
     const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
     const payload = workerRegistrationSchema.partial().parse(request.body ?? {});
-    const result = instances.heartbeatWorker(params.workerId, payload);
+    const result = threads.heartbeatWorker(params.workerId, payload);
     if (!result.ok) reply.code(404);
     return result;
   });
@@ -163,19 +160,19 @@ const main = async () => {
       after: z.coerce.number().optional(),
       timeoutMs: z.coerce.number().min(0).max(60000).optional()
     }).parse(request.query);
-    return instances.waitWorkerCommands(params.workerId, query.after ?? 0, query.timeoutMs ?? 25000);
+    return threads.waitWorkerCommands(params.workerId, query.after ?? 0, query.timeoutMs ?? 25000);
   });
 
   app.post("/api/workers/:workerId/events", async (request, reply) => {
     const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
     const payload = z.object({
-      instanceId: z.string().min(1),
+      threadId: z.string().optional(),
       commandId: z.string().optional(),
       heartbeat: z.boolean().optional(),
       message: z.unknown()
     }).parse(request.body);
     try {
-      return instances.applyWorkerEvent(params.workerId, payload);
+      return threads.applyWorkerEvent(params.workerId, payload);
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -192,17 +189,22 @@ const main = async () => {
     };
   });
 
-  app.post("/api/instances", async (request) => {
+  app.post("/api/threads", async (request, reply) => {
     const payload = z.object({
       workingDirectory: z.string().optional(),
       options: threadOptionsSchema.optional()
     }).parse(request.body ?? {});
     const workingDirectory = payload.workingDirectory ?? defaultWorkingDirectory;
     await touchWorkspace(workingDirectory);
-    return instances.createInstance(workingDirectory, payload.options ?? {});
+    try {
+      return await threads.createThread(workingDirectory, payload.options ?? {});
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
-  app.post("/api/instances/restore", async (request, reply) => {
+  app.post("/api/threads/restore", async (request, reply) => {
     const payload = z.object({
       workingDirectory: z.string().min(1),
       threadId: z.string().min(1),
@@ -217,90 +219,91 @@ const main = async () => {
     }
 
     const title = recordsToViews(thread.records).find((message) => message.role === "user")?.text.slice(0, 80) || payload.threadId;
-    return instances.restoreInstance(payload.workingDirectory, payload.threadId, thread.records, title, payload.options ?? {});
+    return threads.restoreThread(payload.workingDirectory, payload.threadId, thread.records, title, payload.options ?? {});
   });
 
-  app.get("/api/instances/:instanceId", async (request, reply) => {
-    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
-    const instance = instances.getInstance(params.instanceId);
-    if (!instance) {
+  app.get("/api/threads/:threadId", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const thread = threads.getThread(params.threadId);
+    if (!thread) {
       reply.code(404);
-      return { error: "instance_not_found" };
+      return { error: "thread_not_found" };
     }
-    return instance;
+    return thread;
   });
 
-  app.post("/api/instances/:instanceId/attach", async (request, reply) => {
-    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+  app.post("/api/threads/:threadId/attach", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({ clientId: z.string().min(1) }).parse(request.body);
     try {
-      return instances.attach(params.instanceId, payload.clientId);
+      return threads.attach(params.threadId, payload.clientId);
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  app.post("/api/instances/:instanceId/detach", async (request, reply) => {
-    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+  app.post("/api/threads/:threadId/detach", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({ clientId: z.string().min(1) }).parse(request.body);
     try {
-      return instances.detach(params.instanceId, payload.clientId);
+      return threads.detach(params.threadId, payload.clientId);
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  app.delete("/api/instances/:instanceId", async (request, reply) => {
-    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+  app.delete("/api/threads/:threadId", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     try {
-      return await instances.deleteInstance(params.instanceId);
+      return await threads.deleteThread(params.threadId);
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  app.post("/api/instances/:instanceId/fork", async (request, reply) => {
-    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+  app.post("/api/threads/:threadId/fork", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({ messageId: z.string().min(1) }).parse(request.body);
     try {
-      return instances.forkInstance(params.instanceId, payload.messageId);
+      return await threads.forkThread(params.threadId, payload.messageId);
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  app.post("/api/instances/:instanceId/turn", async (request, reply) => {
-    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+  app.post("/api/threads/:threadId/turn", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({
       input: inputSchema,
-      source: z.enum(["web", "telegram"]).optional()
+      source: z.enum(["web", "telegram", "task"]).optional()
     }).parse(request.body);
 
     try {
-      void instances.runTurn(params.instanceId, payload.input, payload.source ?? "web");
+      threads.runTurn(params.threadId, payload.input, payload.source ?? "web").catch(() => undefined);
       return { ok: true };
     } catch (error) {
-      reply.code(409);
-      return { error: error instanceof Error ? error.message : String(error) };
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
     }
   });
 
-  app.post("/api/instances/:instanceId/stop", async (request, reply) => {
-    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+  app.post("/api/threads/:threadId/stop", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     try {
-      return instances.stopTurn(params.instanceId);
+      return threads.stopTurn(params.threadId);
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  app.get("/api/instances/:instanceId/events", async (request, reply) => {
-    const params = z.object({ instanceId: z.string().min(1) }).parse(request.params);
+  app.get("/api/threads/:threadId/events", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
 
     reply.raw.writeHead(200, {
@@ -311,7 +314,7 @@ const main = async () => {
     });
 
     try {
-      const unsubscribe = instances.subscribe(params.instanceId, query.after ?? 0, (event) => {
+      const unsubscribe = threads.subscribe(params.threadId, query.after ?? 0, (event) => {
         sendSse(reply.raw, event.kind, event);
       });
       reply.raw.on("close", unsubscribe);

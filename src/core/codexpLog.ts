@@ -5,11 +5,11 @@ import {
   type CodexSessionSnapshot
 } from "./codexSession.js";
 import { codexRecordFromSession } from "./codexRecord.js";
-import { upsertCodexpInstanceThread, writeCodexpInstanceIndex } from "./codexpCache.js";
+import { upsertCodexpThread, writeCodexpThreadIndex } from "./codexpCache.js";
 
 export const listLoadableCodexThreads = async (workingDirectory: string) => {
   const threads = await listCodexSessionsForCwd(workingDirectory);
-  await writeCodexpInstanceIndex(workingDirectory, threads);
+  await writeCodexpThreadIndex(workingDirectory, threads);
   return threads;
 };
 
@@ -18,7 +18,7 @@ export const loadCodexThread = async (threadId: string, workingDirectory: string
   if (!snapshot) return null;
   const summary = await summarizeCodexSession(snapshot, workingDirectory);
   if (!summary) return null;
-  await upsertCodexpInstanceThread(workingDirectory, summary);
+  await upsertCodexpThread(workingDirectory, summary);
   return {
     threadId,
     source: "codex-session-jsonl" as const,

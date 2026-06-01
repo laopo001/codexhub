@@ -2,25 +2,18 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
 import type { CodexSessionSummary } from "./codexSession.js";
-import { readSavedInstances } from "./instanceStore.js";
 
-export type CodexpInstanceIndex = {
-  version: 2;
-  updatedAt: string;
+export type CodexpThreadIndex = {
+  version: 1;
   workingDirectory: string;
-  instances: CodexpWorkspaceInstance[];
+  updatedAt: string;
+  threads: CodexpWorkspaceThread[];
 };
 
-export type CodexpWorkspaceInstance = {
-  instanceId: string;
-  title: string;
-  status: "idle";
+export type CodexpWorkspaceThread = {
+  threadId: string;
   updatedAt: string;
-  source: "codex-session-jsonl";
-  codex: {
-    threadId: string;
-    sessionPath: string;
-  };
+  path: string;
   summary: {
     firstUserMessage: string;
     lastAssistantMessage: string;
@@ -29,96 +22,73 @@ export type CodexpWorkspaceInstance = {
   };
 };
 
-export const codexpInstanceIndexPath = (workingDirectory: string) => path.join(workingDirectory, ".codexp", "instances.yaml");
+export const codexpThreadIndexPath = (workingDirectory: string) => path.join(workingDirectory, ".codexp", "threads.yaml");
 
-export const readCodexpInstanceIndex = async (workingDirectory: string): Promise<CodexpInstanceIndex | null> =>
-  await readIndexFile(codexpInstanceIndexPath(workingDirectory), workingDirectory);
-
-const readIndexFile = async (filePath: string, workingDirectory: string): Promise<CodexpInstanceIndex | null> => {
+export const readCodexpThreadIndex = async (workingDirectory: string): Promise<CodexpThreadIndex | null> => {
   try {
-    const parsed = YAML.parse(await readFile(filePath, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const index = parsed as Partial<CodexpInstanceIndex>;
-    if (index.version !== 2 || index.workingDirectory !== workingDirectory || !Array.isArray(index.instances)) return null;
-    return index as CodexpInstanceIndex;
+    const parsed = YAML.parse(await readFile(codexpThreadIndexPath(workingDirectory), "utf8")) as Partial<CodexpThreadIndex>;
+    if (parsed.version !== 1 || parsed.workingDirectory !== workingDirectory || !Array.isArray(parsed.threads)) return null;
+    return parsed as CodexpThreadIndex;
   } catch {
     return null;
   }
 };
 
-export const writeCodexpInstanceIndex = async (
+export const writeCodexpThreadIndex = async (
   workingDirectory: string,
   threads: CodexSessionSummary[]
-): Promise<string> => {
-  const filePath = codexpInstanceIndexPath(workingDirectory);
-  await mkdir(path.dirname(filePath), { recursive: true });
-  const index: CodexpInstanceIndex = {
-    version: 2,
-    updatedAt: new Date().toISOString(),
+): Promise<CodexpThreadIndex> => {
+  const filePath = codexpThreadIndexPath(workingDirectory);
+  const index: CodexpThreadIndex = {
+    version: 1,
     workingDirectory,
-    instances: await summariesToInstances(workingDirectory, sortedUniqueThreads(threads))
+    updatedAt: new Date().toISOString(),
+    threads: sortedUniqueThreads(threads).map(summaryToThread)
   };
-  await writeFile(filePath, YAML.stringify(index, { lineWidth: 0 }), "utf8");
-  return filePath;
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, YAML.stringify(index), "utf8");
+  return index;
 };
 
-export const upsertCodexpInstanceThread = async (
+export const upsertCodexpThread = async (
   workingDirectory: string,
   summary: CodexSessionSummary
-): Promise<string> => {
-  const existing = await readCodexpInstanceIndex(workingDirectory);
+): Promise<CodexpThreadIndex> => {
+  const existing = await readCodexpThreadIndex(workingDirectory);
   const threads = [
-    summary,
-    ...(existing?.instances ?? [])
-      .map((instance) => workspaceInstanceToSummary(instance, workingDirectory))
-      .filter((thread) => thread.threadId !== summary.threadId)
+    ...(existing?.threads ?? [])
+      .map((thread) => threadToSummary(workingDirectory, thread))
+      .filter((thread) => thread.threadId !== summary.threadId),
+    summary
   ];
-  return writeCodexpInstanceIndex(workingDirectory, threads);
+  return writeCodexpThreadIndex(workingDirectory, threads);
 };
 
-const summariesToInstances = async (workingDirectory: string, threads: CodexSessionSummary[]) => {
-  const savedInstances = await readSavedInstances();
-  return threads.map((thread): CodexpWorkspaceInstance => {
-    const saved = savedInstances.find((instance) =>
-      instance.workingDirectory === workingDirectory && instance.threadId === thread.threadId
-    );
-    const title = saved?.title ?? (thread.firstUserMessage.slice(0, 80) || thread.threadId);
-    return {
-      instanceId: saved?.instanceId ?? `restored:${thread.threadId}`,
-      title,
-      status: "idle",
-      updatedAt: thread.updatedAt,
-      source: "codex-session-jsonl",
-      codex: {
-        threadId: thread.threadId,
-        sessionPath: thread.path
-      },
-      summary: {
-        firstUserMessage: thread.firstUserMessage,
-        lastAssistantMessage: thread.lastAssistantMessage,
-        messageCount: thread.messageCount,
-        artifactCount: thread.artifactCount
-      }
-    };
-  });
-};
+const summaryToThread = (thread: CodexSessionSummary): CodexpWorkspaceThread => ({
+  threadId: thread.threadId,
+  updatedAt: thread.updatedAt,
+  path: thread.path,
+  summary: {
+    firstUserMessage: thread.firstUserMessage,
+    lastAssistantMessage: thread.lastAssistantMessage,
+    messageCount: thread.messageCount,
+    artifactCount: thread.artifactCount
+  }
+});
 
-const workspaceInstanceToSummary = (
-  instance: CodexpWorkspaceInstance,
-  workingDirectory: string
-): CodexSessionSummary => ({
-  threadId: instance.codex.threadId,
+const threadToSummary = (workingDirectory: string, thread: CodexpWorkspaceThread): CodexSessionSummary => ({
+  threadId: thread.threadId,
   cwd: workingDirectory,
-  path: instance.codex.sessionPath,
-  updatedAt: instance.updatedAt,
-  firstUserMessage: instance.summary.firstUserMessage,
-  lastAssistantMessage: instance.summary.lastAssistantMessage,
-  messageCount: instance.summary.messageCount,
-  artifactCount: instance.summary.artifactCount
+  updatedAt: thread.updatedAt,
+  path: thread.path,
+  firstUserMessage: thread.summary.firstUserMessage,
+  lastAssistantMessage: thread.summary.lastAssistantMessage,
+  messageCount: thread.summary.messageCount,
+  artifactCount: thread.summary.artifactCount
 });
 
 const sortedUniqueThreads = (threads: CodexSessionSummary[]) => {
   const byId = new Map<string, CodexSessionSummary>();
   for (const thread of threads) byId.set(thread.threadId, thread);
-  return [...byId.values()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 };

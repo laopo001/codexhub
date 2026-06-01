@@ -176,7 +176,7 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyInstances {
+.proxyThreads {
   display: grid;
   align-content: end;
   gap: 10px;
@@ -184,13 +184,13 @@ textarea {
   margin-top: auto;
 }
 
-.proxyInstances.expanded {
+.proxyThreads.expanded {
   align-content: start;
   min-height: 0;
   flex: 1;
 }
 
-.proxyInstances h2 {
+.proxyThreads h2 {
   margin: 0;
   color: #d8e2d5;
   font-size: 12px;
@@ -199,7 +199,7 @@ textarea {
   text-transform: uppercase;
 }
 
-.proxyInstanceList {
+.proxyThreadList {
   display: grid;
   gap: 8px;
   max-height: 180px;
@@ -207,12 +207,12 @@ textarea {
   overflow: auto;
 }
 
-.proxyInstances.expanded .proxyInstanceList {
+.proxyThreads.expanded .proxyThreadList {
   max-height: none;
 }
 
-.proxyInstanceRow,
-.proxyInstanceEmpty {
+.proxyThreadRow,
+.proxyThreadEmpty {
   border: 1px solid #405244;
   border-radius: 8px;
   background: #0f1b14;
@@ -220,7 +220,7 @@ textarea {
   padding: 10px 12px;
 }
 
-.proxyInstanceRow {
+.proxyThreadRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 8px;
@@ -229,12 +229,12 @@ textarea {
   text-align: left;
 }
 
-.proxyInstanceRow.active {
+.proxyThreadRow.active {
   border-color: #d95f36;
   background: #183222;
 }
 
-.proxyInstanceRow span {
+.proxyThreadRow span {
   overflow: hidden;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-weight: 700;
@@ -242,7 +242,7 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyInstanceRow strong {
+.proxyThreadRow strong {
   border-radius: 999px;
   background: #203526;
   color: #b8c5b4;
@@ -251,7 +251,7 @@ textarea {
   padding: 2px 7px;
 }
 
-.proxyInstanceRow code {
+.proxyThreadRow code {
   grid-column: 1 / -1;
   overflow: hidden;
   color: #91a090;
@@ -261,19 +261,19 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyInstanceRow em {
+.proxyThreadRow em {
   grid-column: 1 / -1;
   color: #91a090;
   font-size: 11px;
   font-style: normal;
 }
 
-.proxyInstanceEmpty {
+.proxyThreadEmpty {
   color: #91a090;
   font-size: 13px;
 }
 
-.instanceContextMenu {
+.threadContextMenu {
   position: fixed;
   z-index: 30;
   min-width: 132px;
@@ -284,7 +284,7 @@ textarea {
   box-shadow: 0 14px 40px rgb(0 0 0 / 0.28);
 }
 
-.instanceContextMenu button {
+.threadContextMenu button {
   width: 100%;
   min-height: 34px;
   border-radius: 6px;
@@ -294,7 +294,7 @@ textarea {
   text-align: left;
 }
 
-.instanceContextMenu button:hover {
+.threadContextMenu button:hover {
   background: #203526;
 }
 

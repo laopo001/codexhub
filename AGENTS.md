@@ -1,68 +1,63 @@
 # codex-proxy 架构约定
 
-## Codex 实例模型
+## Thread 模型
 
-1. `instanceId` 是 codex-proxy 的产品级实例主键；Web tab、Telegram attach、左下角实例列表都必须指向 `instanceId`。
-2. `threadId` 是 Codex SDK 的底层会话 id，只能作为实例的内部字段或展示字段，不要作为 UI/API 主键。
-3. API server 是唯一对 Web/TG 暴露的控制面。Codex 运行态可以由 API server 本地持有，也可以由 `codexp connect` 启动的远程 worker 持有；Web 和 Telegram 都只能通过同一个 `InstanceHub` 访问实例。
-4. 空实例允许存在：`POST /api/instances` 创建 server-local 实例，但不立即创建 Codex thread；第一次 `POST /api/instances/:instanceId/turn` 才创建底层 `threadId`。
-5. worker-backed 实例由 `POST /api/workers/register` 创建或重连，运行态在 worker 侧的官方 `codex app-server` 中；server 只排队命令、镜像消息和广播事件。
+1. `threadId` 是 codex-proxy 的产品级运行主键；Web tab、Telegram attach、任务目标和左侧列表都必须指向 `threadId`。
+2. 不再引入 `instanceId`。旧的 instance 概念已经被删除，新逻辑不得增加 `/api/instances`、`.codexp/instances.yaml` 或 instance 兼容层。
+3. API server 是控制面和事件镜像层，不直接拥有 Codex runtime。Codex runtime 在 `codexp connect` 启动的官方 `codex app-server` worker 里。
+4. `workerId` 标识一条 `codexp connect` 连接；worker 负责执行 `create_thread`、`turn`、`stop`、`fork_thread` 命令。
+5. `threadId` 来自官方 app-server。Web/TG/task 发送输入时，server 只把命令排到对应 worker，执行结果再按 `threadId` 镜像回 thread 记录。
 
 ## Attach 和关闭语义
 
-1. 客户端打开实例时必须调用 `POST /api/instances/:instanceId/attach`，传入稳定 `clientId`。
-2. Web 关闭 tab、Telegram 切换实例或退出当前实例时，必须调用 `POST /api/instances/:instanceId/detach`，body 传 `{ "clientId": "..." }`。
-3. `DELETE /api/instances/:instanceId` 只表示管理层面的真正删除实例，不能再承担 detach 语义。
-4. detach 后如果 attach 计数为 0，可以 abort 当前运行、释放 Codex thread 缓存，但实例仍保留在 `InstanceHub` 列表里。
-5. 不要让单个客户端关闭动作直接无条件销毁实例；真正删除只能走纯 `DELETE /api/instances/:instanceId`。
+1. 客户端打开 thread 时调用 `POST /api/threads/:threadId/attach`，传入稳定 `clientId`。
+2. Web 关闭 tab、Telegram 切换 thread 或退出当前 thread 时，调用 `POST /api/threads/:threadId/detach`，body 传 `{ "clientId": "..." }`。
+3. `DELETE /api/threads/:threadId` 表示管理层面的删除 thread 记录。
+4. detach 只减少 attach 计数，不销毁官方 Codex session；真正删除只能走 `DELETE /api/threads/:threadId`。
 
 ## 事件和消息流
 
-1. `InstanceHub` 负责把 Codex stream 转成统一的实例消息和事件。
-2. Web 通过 `GET /api/instances/:instanceId/events?after=...` 订阅实例事件。
-3. Telegram bot 发送消息时也订阅同一个实例事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
-4. Web/TG 不各自拼 transcript；实例详情 `GET /api/instances/:instanceId` 返回后端维护的 `messages`。
-5. worker-backed 实例的远程输入仍走 `POST /api/instances/:instanceId/turn`；server 转成 worker command，由 `codexp connect` 通过官方 app-server 协议执行。
+1. `ThreadHub` 负责把 app-server events/read snapshots 转成统一 thread records 和 SSE events。
+2. Web 通过 `GET /api/threads/:threadId/events?after=...` 订阅 thread 事件。
+3. Telegram bot 发送消息时也订阅同一个 thread 事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
+4. Web/TG 不各自拼 transcript；thread 详情 `GET /api/threads/:threadId` 返回后端维护的 `records`。
+5. TUI 里创建或恢复的新 thread，由 `codexp connect` 从 app-server event 中发现并注册到 server。
 
 ## API 约定
 
-1. 新功能使用 `/api/instances` 系列接口。
-2. 不要再为新逻辑增加 `/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
-3. 历史会话读取可以以后重新设计；当前运行态以 instance 为准。
-4. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events。worker 主动出站连接 server，不要求 server 反连 worker 机器。
+1. 新功能使用 `/api/threads` 和 `/api/workers` 系列接口。
+2. 不再新增 `/api/instances`、`/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
+3. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events。worker 主动出站连接 server，不要求 server 反连 worker 机器。
 
 ## `.codexp` 工作区文件约定
 
-1. 工作区内 `.codexp/instances.yaml` 是 codex-proxy 的 workspace 级 instance/可恢复会话索引，当前格式为 `version: 2`。
-2. `.codexp/instances.yaml` 顶层使用 `instances` 数组；每一项必须以 `instanceId` 作为主键，底层 Codex 信息放在 `codex.threadId` 和 `codex.sessionPath`。
-3. `.codexp/instances.yaml` 可以包含底层 `threadId`，但文件语义仍然是 codex-proxy instance 索引；对用户和 CLI 不要暴露成 thread 管理模型。
-4. 不再兼容 `.codexp/index.yaml`，不要读取、写入或迁移这个文件。
-5. 全局保存的实例 registry 在 `~/.codex-proxy/instances.yaml`；它和工作区内 `.codexp/instances.yaml` 不是同一个概念。
-6. 工作区任务定义放在 `.codexp/tasks/*.yaml`。
-7. 工作区任务运行日志放在 `.codexp/task-runs/*.jsonl`，每个任务一个文件，每一行是一整次运行的完整记录，便于 `tail` 查看最近几次结果；日志时间使用当前系统时区的 ISO offset 格式，例如 `2026-05-26T22:00:28+08:00`。
-8. `.codexp/tmp/` 只用于上传图片等临时文件，不要混放任务、实例索引或长期状态。
+1. 工作区 Codex session 索引写入 `.codexp/threads.yaml`，顶层使用 `threads` 数组，每项以 `threadId` 作为主键。
+2. 不读取、不写入、不迁移 `.codexp/instances.yaml` 或 `.codexp/index.yaml`。
+3. 工作区任务定义放在 `.codexp/tasks/*.yaml`。
+4. 工作区任务运行日志放在 `.codexp/task-runs/*.jsonl`，每个任务一个文件，每一行是一整次运行的完整记录，便于 `tail` 查看最近几次结果；日志时间使用当前系统时区的 ISO offset 格式，例如 `2026-05-26T22:00:28+08:00`。
+5. `.codexp/tmp/` 只用于上传图片等临时文件，不要混放任务、thread 索引或长期状态。
 
 ## 定时任务约定
 
-1. 任务 YAML 最小结构为：
+任务 YAML 最小结构为：
 
 ```yaml
 version: 1
 name: daily-summary
 enabled: true
 schedule: "0 9 * * *"
-instance:
+thread:
 input: |
   检查这个项目昨天到今天的变更，给我总结风险和下一步。
 ```
 
-2. 任务所在工作区由 `.codexp/tasks/*.yaml` 的位置推导，不在 YAML 里写 `folder`。
-3. `instance` 可选；有值时匹配完整 `instanceId` 或唯一短前缀。
-4. `instance` 为空时，如果当前工作区只有 1 个实例就使用它；没有实例就创建；多个实例时不猜测，跳过并记录 `ambiguous_instance`。
-5. 任务并发边界是实例：同一个实例上的任务串行，不同实例可以并行。
-6. 同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
-7. `codexp list` 应显示每个实例对应的 enabled task 数量。
-8. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task ls`、`codexp task <instance> ls`、`codexp task template [name]`；旧的 `task-template` / `task-templete` 可以保留为兼容入口。
+1. 任务所在工作区由 `.codexp/tasks/*.yaml` 的位置推导，不在 YAML 里写 `folder`。
+2. `thread` 可选；有值时匹配完整 `threadId` 或唯一短前缀。
+3. `thread` 为空时，如果当前工作区只有 1 个 thread 就使用它；没有 thread 且有在线 worker 就创建；多个 thread 时不猜测，跳过并记录 `ambiguous_thread`。
+4. 任务并发边界是 thread：同一个 thread 上的任务串行，不同 thread 可以并行。
+5. 同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
+6. `codexp list` 应显示每个 thread 对应的 enabled task 数量。
+7. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task ls`、`codexp task <thread> ls`、`codexp task template [name]`。
 
 ## 自举开发和发布
 

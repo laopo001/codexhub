@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Input } from "@openai/codex-sdk";
 import type { Command } from "commander";
-import type { InstanceDetail, WorkerCommand } from "../core/instanceHub.js";
+import type { WorkerCommand } from "../core/threadHub.js";
 
 type ConnectOptions = {
   server?: string;
@@ -22,14 +23,13 @@ type JsonRecord = Record<string, unknown>;
 
 type PendingRequest = {
   method: string;
-  instanceId?: string;
+  threadId?: string;
   commandId?: string;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 };
 
 type SyncedThread = {
-  instanceId: string;
   failures: number;
   syncing: boolean;
   lastSnapshot?: string;
@@ -37,7 +37,6 @@ type SyncedThread = {
 
 type WorkerRegisterResponse = {
   workerId: string;
-  instance: InstanceDetail;
 };
 
 type WorkerCommandsResponse = {
@@ -49,7 +48,6 @@ type BridgeOptions = {
   apiBase: string;
   appServerUrl: string;
   workerId: string;
-  instanceId: string;
   cwd: string;
   model?: string;
   sandbox: "read-only" | "workspace-write" | "danger-full-access";
@@ -84,10 +82,12 @@ export const registerConnectCommand = (program: Command) => {
       process.once("SIGTERM", cleanup);
 
       try {
+        const workerId = stableWorkerId(cwd);
         const registration = await apiJson<WorkerRegisterResponse>(apiBase, "/api/workers/register", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            workerId,
             name: options.name ?? os.hostname(),
             workingDirectory: cwd,
             appServerUrl,
@@ -100,7 +100,6 @@ export const registerConnectCommand = (program: Command) => {
           apiBase,
           appServerUrl,
           workerId: registration.workerId,
-          instanceId: registration.instance.instanceId,
           cwd,
           model: options.model,
           sandbox: options.sandbox ?? "workspace-write",
@@ -121,7 +120,6 @@ export const registerConnectCommand = (program: Command) => {
 
         console.error([
           `codexp worker connected: ${registration.workerId}`,
-          `instance: ${registration.instance.instanceId}`,
           `server: ${apiBase}`,
           `cwd: ${cwd}`,
           `app-server: ${appServerUrl}`
@@ -145,7 +143,6 @@ export const registerConnectCommand = (program: Command) => {
 
 class CodexAppServerBridge {
   private readonly pending = new Map<string | number, PendingRequest>();
-  private readonly threadToInstance = new Map<string, string>();
   private readonly syncedThreads = new Map<string, SyncedThread>();
   private nextId = 1;
   private cursor = 0;
@@ -213,9 +210,7 @@ class CodexAppServerBridge {
       return;
     }
 
-    if (!command.input) return;
-    let threadId = command.threadId;
-    if (!threadId) {
+    if (command.type === "create_thread") {
       const result = asRecord(await this.request("thread/start", {
         cwd: command.workingDirectory,
         model: command.options?.model ?? this.options.model,
@@ -225,24 +220,54 @@ class CodexAppServerBridge {
         sessionStartSource: "startup"
       }, command));
       const thread = asRecord(result?.thread);
-      threadId = typeof thread?.id === "string" ? thread.id : undefined;
+      const threadId = typeof thread?.id === "string" ? thread.id : undefined;
       if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
-      this.bindThread(threadId, command.instanceId);
+      this.bindThread(threadId);
+      return;
     }
 
+    if (command.type === "fork_thread") {
+      if (!command.threadId) throw new Error("fork_thread command requires threadId");
+      const result = asRecord(await this.request("thread/fork", {
+        threadId: command.threadId,
+        cwd: command.workingDirectory,
+        model: command.options?.model ?? this.options.model,
+        approvalPolicy: this.options.approvalPolicy,
+        sandbox: this.options.sandbox,
+        threadSource: "user"
+      }, command));
+      const thread = asRecord(result?.thread);
+      const threadId = typeof thread?.id === "string" ? thread.id : undefined;
+      if (!threadId) throw new Error("Codex app-server thread/fork did not return thread.id");
+      this.bindThread(threadId);
+      return;
+    }
+
+    if (!command.input || !command.threadId) return;
+    const threadId = command.threadId;
+    if (!this.syncedThreads.has(threadId)) {
+      await this.request("thread/resume", {
+        threadId,
+        cwd: command.workingDirectory,
+        model: command.options?.model ?? this.options.model,
+        approvalPolicy: this.options.approvalPolicy,
+        sandbox: this.options.sandbox
+      }, command);
+      this.bindThread(threadId);
+    }
     await this.request("turn/start", {
       threadId,
       input: toAppServerInput(command.input)
     }, command);
   }
 
-  private request(method: string, params: unknown, command?: { instanceId?: string; commandId?: string }) {
+  private request(method: string, params: unknown, command?: { threadId?: string; commandId?: string }) {
     const id = this.nextId++;
     const message = { id, method, params };
     return new Promise((resolve, reject) => {
       this.pending.set(id, {
         method,
-        instanceId: command?.instanceId,
+        threadId: command?.threadId,
         commandId: command?.commandId,
         resolve,
         reject
@@ -262,10 +287,11 @@ class CodexAppServerBridge {
     if ((typeof message.id === "string" || typeof message.id === "number") && this.pending.has(message.id)) {
       const pending = this.pending.get(message.id)!;
       this.pending.delete(message.id);
-      this.rememberThreads(message, pending.instanceId);
+      this.rememberThreads(message);
       const error = asRecord(message.error);
-      if (pending.instanceId && (!error || pending.method !== "thread/read")) {
-        await this.forward(pending.instanceId, pending.commandId, message, { heartbeat: pending.method !== "thread/read" });
+      const threadId = threadIdForMessage(message) ?? pending.threadId;
+      if (threadId && (!error || pending.method !== "thread/read")) {
+        await this.forward(threadId, pending.commandId, message, { heartbeat: pending.method !== "thread/read" });
       }
       if (error) pending.reject(new Error(JSON.stringify(error)));
       else pending.resolve(message.result);
@@ -277,56 +303,26 @@ class CodexAppServerBridge {
       return;
     }
 
-    const instanceId = this.instanceIdForMessage(message);
-    if (instanceId) await this.forward(instanceId, undefined, message);
+    const threadId = this.threadIdForMessage(message);
+    if (threadId) await this.forward(threadId, undefined, message);
   }
 
-  private rememberThreads(message: JsonRecord, instanceId?: string) {
-    if (!instanceId) return;
+  private rememberThreads(message: JsonRecord) {
     const result = asRecord(message.result);
     const resultThread = asRecord(result?.thread);
-    if (typeof resultThread?.id === "string") this.bindThread(resultThread.id, instanceId);
+    if (typeof resultThread?.id === "string") this.bindThread(resultThread.id);
   }
 
-  private instanceIdForMessage(message: JsonRecord) {
-    const params = asRecord(message.params);
-    const thread = asRecord(params?.thread);
-    const threadId = typeof params?.threadId === "string"
-      ? params.threadId
-      : typeof thread?.id === "string"
-        ? thread.id
-        : undefined;
+  private threadIdForMessage(message: JsonRecord) {
+    const threadId = threadIdForMessage(message);
     if (!threadId) return undefined;
-
-    const existing = this.threadToInstance.get(threadId);
-    if (existing) return existing;
-
-    if (this.shouldAdoptUnknownThread(message, threadId)) {
-      this.bindThread(threadId, this.options.instanceId);
-      return this.options.instanceId;
-    }
-
-    return undefined;
+    this.bindThread(threadId);
+    return threadId;
   }
 
-  private shouldAdoptUnknownThread(message: JsonRecord, threadId: string) {
-    const method = typeof message.method === "string" ? message.method : "";
-    if (!method) return false;
-
-    const mappedThreads = new Set(this.threadToInstance.keys());
-    if (mappedThreads.size === 0) return true;
-    if (mappedThreads.has(threadId)) return true;
-
-    // Keep one worker-backed codex-proxy instance mapped to one Codex app-server
-    // thread for now. Additional Codex TUI threads can be promoted to separate
-    // instances after the worker protocol grows a thread-created command.
-    return false;
-  }
-
-  private bindThread(threadId: string, instanceId: string) {
-    this.threadToInstance.set(threadId, instanceId);
+  private bindThread(threadId: string) {
     if (!this.syncedThreads.has(threadId)) {
-      this.syncedThreads.set(threadId, { instanceId, failures: 0, syncing: false });
+      this.syncedThreads.set(threadId, { failures: 0, syncing: false });
     }
   }
 
@@ -341,7 +337,7 @@ class CodexAppServerBridge {
       const snapshot = JSON.stringify(result);
       if (snapshot !== state.lastSnapshot) {
         state.lastSnapshot = snapshot;
-        await this.forward(state.instanceId, undefined, { result }, { heartbeat: false });
+        await this.forward(threadId, undefined, { result }, { heartbeat: false });
       }
       state.failures = 0;
     } catch (error) {
@@ -362,7 +358,7 @@ class CodexAppServerBridge {
   }
 
   private async forward(
-    instanceId: string,
+    threadId: string,
     commandId: string | undefined,
     message: JsonRecord,
     options: { heartbeat?: boolean } = {}
@@ -370,7 +366,7 @@ class CodexAppServerBridge {
     await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ instanceId, commandId, message, heartbeat: options.heartbeat })
+      body: JSON.stringify({ threadId, commandId, message, heartbeat: options.heartbeat })
     }).catch((error) => {
       console.error(`codexp bridge failed to forward app-server event: ${errorText(error)}`);
     });
@@ -473,6 +469,25 @@ const toAppServerInput = (input: Input) => {
     if (item.type === "text") return { type: "text", text: item.text, text_elements: [] };
     return { type: "localImage", path: item.path };
   });
+};
+
+const threadIdForMessage = (message: JsonRecord) => {
+  const params = asRecord(message.params);
+  const thread = asRecord(params?.thread);
+  const result = asRecord(message.result);
+  const resultThread = asRecord(result?.thread);
+  return typeof params?.threadId === "string"
+    ? params.threadId
+    : typeof thread?.id === "string"
+      ? thread.id
+      : typeof resultThread?.id === "string"
+        ? resultThread.id
+        : undefined;
+};
+
+const stableWorkerId = (cwd: string) => {
+  const hash = createHash("sha256").update(`${os.hostname()}\0${cwd}`).digest("hex").slice(0, 16);
+  return `local-${hash}`;
 };
 
 const apiJson = async <T = unknown>(apiBase: string, route: string, init?: RequestInit): Promise<T> => {

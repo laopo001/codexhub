@@ -4,17 +4,15 @@ import path from "node:path";
 import YAML from "yaml";
 import { registerConnectCommand } from "./codexpConnect.js";
 
-type InstanceSummary = {
-  instanceId: string;
+type ThreadSummary = {
+  threadId: string;
   workingDirectory: string;
-  threadId?: string;
-  runtime?: { kind: "server" } | { kind: "worker"; workerId: string; name?: string; online: boolean };
-  status: "running" | "idle" | "empty";
+  runtime?: { kind: "detached"; online: false } | { kind: "worker"; workerId: string; name?: string; online: boolean };
+  status: "running" | "idle";
   running: boolean;
   attachCount: number;
   title: string;
   updatedAt: string;
-  savedAt?: string;
 };
 
 type TaskFile = {
@@ -24,71 +22,54 @@ type TaskFile = {
   name: string;
   enabled: boolean;
   schedule: string;
-  instance?: string;
+  thread?: string;
   error?: string;
 };
 
 const program = new Command()
   .name("codexp")
-  .description("Manage codex-proxy instances")
+  .description("Manage codex-proxy threads")
   .option("--api <url>", "codex-proxy API URL", process.env.CODEX_PROXY_API_URL ?? "http://127.0.0.1:18788")
   .option("--cwd <path>", "directory used by folder-relative commands", process.env.CODEX_PROXY_CWD ?? process.env.INIT_CWD ?? process.cwd());
 
 program
   .command("list")
-  .description("List running/restored codex-proxy instances")
+  .description("List running/restored codex-proxy threads")
   .action(async () => {
-    const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances");
-    await printInstances(data.instances ?? []);
+    const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
+    await printThreads(data.threads ?? []);
   });
 
 program
   .command("create")
-  .argument("[folder]", "working directory for the new instance")
-  .description("Create a new codex-proxy instance for a folder")
+  .argument("[folder]", "working directory for the new thread")
+  .description("Create a new codex-proxy thread for a folder")
   .action(async (folder: string) => {
     const workingDirectory = resolveCommandPath(folder ?? ".");
-    const instance = await apiJson<InstanceSummary>("/api/instances", {
+    const thread = await apiJson<ThreadSummary>("/api/threads", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workingDirectory })
     });
-    console.log(`Created ${formatInstance(instance)}`);
-  });
-
-program
-  .command("save")
-  .description("Save all current instances")
-  .action(async () => {
-    const data = await apiJson<{ path: string; instances: InstanceSummary[] }>("/api/instances/save", { method: "POST" });
-    console.log(`Saved ${data.instances.length} instances to ${data.path}`);
-    await printInstances(data.instances);
-  });
-
-program
-  .command("restore")
-  .description("Restore saved instances into the running API server")
-  .action(async () => {
-    const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances/restore-saved", { method: "POST" });
-    await printInstances(data.instances ?? []);
+    console.log(`Created ${formatThread(thread)}`);
   });
 
 program
   .command("delete")
-  .argument("<target>", "instance index, full id, or unique id prefix to delete")
-  .description("Delete an instance and remove it from the saved registry")
+  .argument("<target>", "thread index, full id, or unique id prefix to delete")
+  .description("Delete a thread")
   .action(async (target: string) => {
-    const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances");
-    const instance = resolveInstanceTarget(target, data.instances ?? []);
-    await apiJson(`/api/instances/${encodeURIComponent(instance.instanceId)}`, { method: "DELETE" });
-    console.log(`Deleted ${formatInstance(instance)}`);
+    const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
+    const thread = resolveThreadTarget(target, data.threads ?? []);
+    await apiJson(`/api/threads/${encodeURIComponent(thread.threadId)}`, { method: "DELETE" });
+    console.log(`Deleted ${formatThread(thread)}`);
   });
 
 registerConnectCommand(program);
 
 program
   .command("task")
-  .argument("[first]", "ls, template, or instance target")
+  .argument("[first]", "ls, template, or thread target")
   .argument("[second]", "ls or template name")
   .description("Manage codexp task YAML files")
   .action(async (first?: string, second?: string) => {
@@ -98,17 +79,14 @@ program
       return;
     }
     if (action.kind === "ls") {
-      const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances");
-      const instances = data.instances ?? [];
-      const target = action.target ? resolveInstanceTarget(action.target, instances) : undefined;
-      await printTasks(instances, target);
+      const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
+      const threads = data.threads ?? [];
+      const target = action.target ? resolveThreadTarget(action.target, threads) : undefined;
+      await printTasks(threads, target);
       return;
     }
-    throw new Error('Usage: codexp task ls | codexp task <instance> ls | codexp task template [name]');
+    throw new Error('Usage: codexp task ls | codexp task <thread> ls | codexp task template [name]');
   });
-
-registerTaskTemplateCommand("task-template");
-registerTaskTemplateCommand("task-templete");
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -131,69 +109,57 @@ function resolveCommandPath(...segments: string[]) {
   return path.resolve(options.cwd, ...segments);
 }
 
-async function printInstances(instances: InstanceSummary[]) {
-  if (!instances.length) {
-    console.log("No instances.");
+async function printThreads(threads: ThreadSummary[]) {
+  if (!threads.length) {
+    console.log("No threads.");
     return;
   }
-  const taskCounts = await taskCountsByInstance(instances);
-  console.table(instances.map((instance) => ({
-    instance: instance.instanceId.slice(0, 8),
-    thread: instance.threadId ? instance.threadId.slice(0, 8) : "",
-    status: instance.status,
-    runtime: formatRuntime(instance),
-    attached: instance.attachCount,
-    saved: instance.savedAt ? "yes" : "no",
-    tasks: taskCounts.get(instance.instanceId) ?? 0,
-    folder: instance.workingDirectory,
-    title: instance.title
+  const taskCounts = await taskCountsByThread(threads);
+  console.table(threads.map((thread) => ({
+    thread: thread.threadId ? thread.threadId.slice(0, 8) : "",
+    status: thread.status,
+    runtime: formatRuntime(thread),
+    attached: thread.attachCount,
+    tasks: taskCounts.get(thread.threadId) ?? 0,
+    folder: thread.workingDirectory,
+    title: thread.title
   })));
 }
 
-function formatRuntime(instance: InstanceSummary) {
-  if (instance.runtime?.kind === "worker") {
-    return `${instance.runtime.online ? "worker" : "offline"}:${instance.runtime.name ?? instance.runtime.workerId.slice(0, 8)}`;
+function formatRuntime(thread: ThreadSummary) {
+  if (thread.runtime?.kind === "worker") {
+    return `${thread.runtime.online ? "worker" : "offline"}:${thread.runtime.name ?? thread.runtime.workerId.slice(0, 8)}`;
   }
-  return "server";
+  return "detached";
 }
 
-function resolveInstanceTarget(target: string, instances: InstanceSummary[]) {
+function resolveThreadTarget(target: string, threads: ThreadSummary[]) {
   const trimmed = target.trim();
-  if (!trimmed) throw new Error("Missing instance target.");
+  if (!trimmed) throw new Error("Missing thread target.");
 
   if (/^\d+$/.test(trimmed)) {
     const index = Number(trimmed);
-    const instance = instances[index];
-    if (!instance) {
-      throw new Error(`No instance at index ${index}. Run "pnpm codexp list" to see valid targets.`);
+    const thread = threads[index];
+    if (!thread) {
+      throw new Error(`No thread at index ${index}. Run "pnpm codexp list" to see valid targets.`);
     }
-    return instance;
+    return thread;
   }
 
-  const matches = instances.filter((instance) => instance.instanceId.startsWith(trimmed));
+  const matches = threads.filter((thread) => thread.threadId.startsWith(trimmed));
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) {
     throw new Error([
-      `Instance target "${trimmed}" is ambiguous. Matching instances:`,
-      ...matches.map((instance) => `  ${formatInstance(instance)}`)
+      `Thread target "${trimmed}" is ambiguous. Matching threads:`,
+      ...matches.map((thread) => `  ${formatThread(thread)}`)
     ].join("\n"));
   }
 
-  throw new Error(`Instance not found: ${trimmed}. Run "pnpm codexp list" to see valid targets.`);
+  throw new Error(`Thread not found: ${trimmed}. Run "pnpm codexp list" to see valid targets.`);
 }
 
-function formatInstance(instance: InstanceSummary) {
-  return `${instance.instanceId.slice(0, 8)} (${instance.workingDirectory}, ${instance.title})`;
-}
-
-function registerTaskTemplateCommand(name: string) {
-  program
-    .command(name)
-    .argument("[name]", "task name", "daily-summary")
-    .description("Create a .codexp task YAML template")
-    .action(async (taskName: string) => {
-      await createTaskTemplate(taskName);
-    });
+function formatThread(thread: ThreadSummary) {
+  return `${thread.threadId.slice(0, 8)} (${thread.workingDirectory}, ${thread.title})`;
 }
 
 async function createTaskTemplate(taskName: string) {
@@ -210,7 +176,7 @@ function taskTemplate(name: string) {
 name: ${name}
 enabled: true
 schedule: "0 9 * * *"
-instance:
+thread:
 input: |
   检查这个项目昨天到今天的变更，给我总结风险和下一步。
 `;
@@ -225,22 +191,22 @@ function taskAction(first?: string, second?: string):
   | { kind: "ls"; target?: string }
   | { kind: "unknown" } {
   if (!first || first === "ls" || first === "list") return { kind: "ls", target: second };
-  if (first === "template" || first === "templete") return { kind: "template", name: second };
+  if (first === "template") return { kind: "template", name: second };
   if (second === "ls" || second === "list") return { kind: "ls", target: first };
   return { kind: "unknown" };
 }
 
-async function printTasks(instances: InstanceSummary[], target?: InstanceSummary) {
+async function printTasks(threads: ThreadSummary[], target?: ThreadSummary) {
   const workspaces = target
     ? [target.workingDirectory]
-    : uniqueStrings([commandCwd(), ...instances.map((instance) => instance.workingDirectory)]);
+    : uniqueStrings([commandCwd(), ...threads.map((thread) => thread.workingDirectory)]);
   const tasks = await loadTaskFiles(workspaces);
   const rows = tasks.map((task) => ({
     task: task.name,
     enabled: task.valid ? (task.enabled ? "yes" : "no") : "invalid",
     schedule: task.schedule,
-    instance: task.instance ?? "",
-    target: taskTargetLabel(task, instances, target),
+    thread: task.thread ?? "",
+    target: taskTargetLabel(task, threads, target),
     file: path.relative(task.workspace, task.filePath) || task.filePath,
     folder: task.workspace
   }));
@@ -251,13 +217,13 @@ async function printTasks(instances: InstanceSummary[], target?: InstanceSummary
   console.table(rows);
 }
 
-async function taskCountsByInstance(instances: InstanceSummary[]) {
+async function taskCountsByThread(threads: ThreadSummary[]) {
   const counts = new Map<string, number>();
-  const tasks = await loadTaskFiles(uniqueStrings(instances.map((instance) => instance.workingDirectory)));
+  const tasks = await loadTaskFiles(uniqueStrings(threads.map((thread) => thread.workingDirectory)));
   for (const task of tasks) {
     if (!task.valid || !task.enabled) continue;
-    const target = resolveTaskInstance(task, instances);
-    if (target) counts.set(target.instanceId, (counts.get(target.instanceId) ?? 0) + 1);
+    const target = resolveTaskThread(task, threads);
+    if (target) counts.set(target.threadId, (counts.get(target.threadId) ?? 0) + 1);
   }
   return counts;
 }
@@ -291,7 +257,7 @@ async function readTaskFile(workspace: string, filePath: string): Promise<TaskFi
         name: parsed.name,
         enabled: parsed.enabled,
         schedule: parsed.schedule,
-        instance: parsed.instance?.trim() || undefined
+        thread: parsed.thread?.trim() || undefined
       };
     }
     return invalidTask(workspace, filePath, "invalid_schema");
@@ -312,7 +278,7 @@ function invalidTask(workspace: string, filePath: string, error: string): TaskFi
   };
 }
 
-function isTaskFile(value: unknown): value is { name: string; enabled: boolean; schedule: string; instance?: string } {
+function isTaskFile(value: unknown): value is { name: string; enabled: boolean; schedule: string; thread?: string } {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return record.version === 1
@@ -320,33 +286,33 @@ function isTaskFile(value: unknown): value is { name: string; enabled: boolean; 
     && typeof record.enabled === "boolean"
     && typeof record.schedule === "string"
     && typeof record.input === "string"
-    && (record.instance == null || typeof record.instance === "string");
+    && (record.thread == null || typeof record.thread === "string");
 }
 
-function resolveTaskInstance(task: TaskFile, instances: InstanceSummary[]) {
+function resolveTaskThread(task: TaskFile, threads: ThreadSummary[]) {
   if (!task.valid) return null;
-  const workspaceInstances = instances.filter((instance) => instance.workingDirectory === task.workspace);
-  if (task.instance) {
-    const matches = workspaceInstances.filter((instance) => instance.instanceId.startsWith(task.instance!));
+  const workspaceThreads = threads.filter((thread) => thread.workingDirectory === task.workspace);
+  if (task.thread) {
+    const matches = workspaceThreads.filter((thread) => thread.threadId.startsWith(task.thread!));
     return matches.length === 1 ? matches[0] : null;
   }
-  return workspaceInstances.length === 1 ? workspaceInstances[0] : null;
+  return workspaceThreads.length === 1 ? workspaceThreads[0] : null;
 }
 
-function taskTargetLabel(task: TaskFile, instances: InstanceSummary[], selected?: InstanceSummary) {
+function taskTargetLabel(task: TaskFile, threads: ThreadSummary[], selected?: ThreadSummary) {
   if (!task.valid) return task.error ?? "invalid";
-  const workspaceInstances = instances.filter((instance) => instance.workingDirectory === task.workspace);
-  if (task.instance) {
-    const matches = workspaceInstances.filter((instance) => instance.instanceId.startsWith(task.instance!));
+  const workspaceThreads = threads.filter((thread) => thread.workingDirectory === task.workspace);
+  if (task.thread) {
+    const matches = workspaceThreads.filter((thread) => thread.threadId.startsWith(task.thread!));
     if (matches.length === 0) return "missing";
     if (matches.length > 1) return "ambiguous";
-    if (selected) return matches[0].instanceId === selected.instanceId ? "this" : `other:${matches[0].instanceId.slice(0, 8)}`;
-    return matches[0].instanceId.slice(0, 8);
+    if (selected) return matches[0].threadId === selected.threadId ? "this" : `other:${matches[0].threadId.slice(0, 8)}`;
+    return matches[0].threadId.slice(0, 8);
   }
-  if (workspaceInstances.length === 0) return "create";
-  if (workspaceInstances.length > 1) return "ambiguous";
-  if (selected) return workspaceInstances[0].instanceId === selected.instanceId ? "this" : `other:${workspaceInstances[0].instanceId.slice(0, 8)}`;
-  return workspaceInstances[0].instanceId.slice(0, 8);
+  if (workspaceThreads.length === 0) return "create";
+  if (workspaceThreads.length > 1) return "ambiguous";
+  if (selected) return workspaceThreads[0].threadId === selected.threadId ? "this" : `other:${workspaceThreads[0].threadId.slice(0, 8)}`;
+  return workspaceThreads[0].threadId.slice(0, 8);
 }
 
 function commandCwd() {

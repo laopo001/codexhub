@@ -2,7 +2,7 @@ import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import YAML from "yaml";
-import type { InstanceHub, InstanceSummary } from "./instanceHub.js";
+import type { ThreadHub, ThreadSummary } from "./threadHub.js";
 import { recordsToViews } from "./codexRecordView.js";
 import { listWorkspaces, type WorkspaceEntry } from "./workspaceState.js";
 
@@ -11,7 +11,7 @@ type TaskDefinition = {
   name: string;
   enabled: boolean;
   schedule: string;
-  instance?: string;
+  thread?: string;
   input: string;
 };
 
@@ -33,7 +33,7 @@ type TaskRunRecord = {
   startedAt?: string;
   completedAt?: string;
   reason?: string;
-  instanceId?: string;
+  threadId?: string;
   input: string;
   conversation?: {
     lastUserMessage: string;
@@ -48,13 +48,13 @@ const defaultScanIntervalMs = 30_000;
 export class TaskScheduler {
   private readonly queuedTasks = new Set<string>();
   private readonly runningTasks = new Set<string>();
-  private readonly instanceQueues = new Map<string, Promise<void>>();
+  private readonly threadQueues = new Map<string, Promise<void>>();
   private readonly triggeredMinutes = new Map<string, string>();
   private interval: NodeJS.Timeout | null = null;
   private scanning = false;
 
   constructor(
-    private readonly instances: InstanceHub,
+    private readonly threads: ThreadHub,
     private readonly defaultWorkingDirectory: string,
     private readonly scanIntervalMs = Number(process.env.CODEX_PROXY_TASK_SCAN_INTERVAL_MS || 0) || defaultScanIntervalMs
   ) {}
@@ -117,11 +117,11 @@ export class TaskScheduler {
   private async taskWorkspaces(): Promise<WorkspaceEntry[]> {
     const byPath = new Map<string, WorkspaceEntry>();
     for (const workspace of await listWorkspaces(this.defaultWorkingDirectory)) byPath.set(workspace.path, workspace);
-    for (const instance of this.instances.listInstances()) {
-      byPath.set(instance.workingDirectory, {
-        path: instance.workingDirectory,
-        name: path.basename(instance.workingDirectory) || instance.workingDirectory,
-        lastOpenedAt: instance.updatedAt
+    for (const thread of this.threads.listThreads()) {
+      byPath.set(thread.workingDirectory, {
+        path: thread.workingDirectory,
+        name: path.basename(thread.workingDirectory) || thread.workingDirectory,
+        lastOpenedAt: thread.updatedAt
       });
     }
     return [...byPath.values()];
@@ -137,65 +137,74 @@ export class TaskScheduler {
       return;
     }
 
-    const instance = await this.resolveTaskInstance(loaded);
-    if (!instance) return;
+    const thread = await this.resolveTaskThread(loaded);
+    if (!thread) return;
 
     const runId = randomUUID();
     const queuedAt = localTimestamp();
     this.queuedTasks.add(loaded.key);
 
-    const previous = this.instanceQueues.get(instance.instanceId) ?? Promise.resolve();
+    const previous = this.threadQueues.get(thread.threadId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
-      .then(() => this.runTask(loaded, instance.instanceId, runId, queuedAt));
-    this.instanceQueues.set(instance.instanceId, next);
+      .then(() => this.runTask(loaded, thread.threadId, runId, queuedAt));
+    this.threadQueues.set(thread.threadId, next);
     void next.finally(() => {
-      if (this.instanceQueues.get(instance.instanceId) === next) this.instanceQueues.delete(instance.instanceId);
+      if (this.threadQueues.get(thread.threadId) === next) this.threadQueues.delete(thread.threadId);
     });
   }
 
-  private async resolveTaskInstance(loaded: LoadedTask): Promise<InstanceSummary | null> {
-    const instances = this.instances.listInstances().filter((instance) => instance.workingDirectory === loaded.workspace);
-    const target = loaded.task.instance?.trim();
+  private async resolveTaskThread(loaded: LoadedTask): Promise<ThreadSummary | null> {
+    const threads = this.threads.listThreads().filter((thread) => thread.workingDirectory === loaded.workspace);
+    const target = loaded.task.thread?.trim();
     if (target) {
-      const matches = instances.filter((instance) => instance.instanceId.startsWith(target));
+      const matches = threads.filter((thread) => thread.threadId.startsWith(target));
       if (matches.length === 1) return matches[0];
       await appendTaskRun(loaded, {
         runId: randomUUID(),
         status: "skipped",
-        reason: matches.length ? "ambiguous_instance" : "instance_not_found",
+        reason: matches.length ? "ambiguous_thread" : "thread_not_found",
         message: target
       });
       return null;
     }
-    if (instances.length === 1) return instances[0];
-    if (instances.length > 1) {
+    if (threads.length === 1) return threads[0];
+    if (threads.length > 1) {
       await appendTaskRun(loaded, {
         runId: randomUUID(),
         status: "skipped",
-        reason: "ambiguous_instance"
+        reason: "ambiguous_thread"
       });
       return null;
     }
-    return this.instances.createInstance(loaded.workspace, {});
+    try {
+      return await this.threads.createThread(loaded.workspace, {});
+    } catch (error) {
+      await appendTaskRun(loaded, {
+        runId: randomUUID(),
+        status: "skipped",
+        reason: "worker_offline",
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
   }
 
-  private async runTask(loaded: LoadedTask, instanceId: string, runId: string, queuedAt: string) {
+  private async runTask(loaded: LoadedTask, threadId: string, runId: string, queuedAt: string) {
     this.queuedTasks.delete(loaded.key);
     this.runningTasks.add(loaded.key);
     const startedAt = localTimestamp();
     try {
-      await this.waitForInstanceIdle(instanceId);
-      await this.instances.runTurn(instanceId, loaded.task.input, "task");
-      await this.instances.saveInstances();
+      await this.waitForThreadIdle(threadId);
+      await this.threads.runTurn(threadId, loaded.task.input, "task");
       await appendTaskRun(loaded, {
         runId,
         status: "completed",
         queuedAt,
         startedAt,
         completedAt: localTimestamp(),
-        instanceId,
-        conversation: taskConversation(this.instances.getInstance(instanceId))
+        threadId,
+        conversation: taskConversation(this.threads.getThread(threadId))
       });
     } catch (error) {
       await appendTaskRun(loaded, {
@@ -204,8 +213,8 @@ export class TaskScheduler {
         queuedAt,
         startedAt,
         completedAt: localTimestamp(),
-        instanceId,
-        conversation: taskConversation(this.instances.getInstance(instanceId)),
+        threadId,
+        conversation: taskConversation(this.threads.getThread(threadId)),
         message: error instanceof Error ? error.message : String(error)
       });
     } finally {
@@ -213,8 +222,8 @@ export class TaskScheduler {
     }
   }
 
-  private async waitForInstanceIdle(instanceId: string) {
-    while (this.instances.getInstance(instanceId)?.running) {
+  private async waitForThreadIdle(threadId: string) {
+    while (this.threads.getThread(threadId)?.running) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
@@ -239,7 +248,7 @@ const isTaskDefinition = (value: unknown): value is TaskDefinition => {
     && typeof record.schedule === "string"
     && typeof record.input === "string"
     && record.input.trim().length > 0
-    && (record.instance == null || typeof record.instance === "string");
+    && (record.thread == null || typeof record.thread === "string");
 };
 
 const shouldTrigger = (loaded: LoadedTask, now: Date) => {
@@ -340,9 +349,9 @@ const appendTaskRun = async (
   await appendFile(filePath, `${JSON.stringify(record)}\n`, "utf8");
 };
 
-const taskConversation = (instance: ReturnType<InstanceHub["getInstance"]>): TaskRunRecord["conversation"] | undefined => {
-  if (!instance) return undefined;
-  const views = recordsToViews(instance.records);
+const taskConversation = (thread: ReturnType<ThreadHub["getThread"]>): TaskRunRecord["conversation"] | undefined => {
+  if (!thread) return undefined;
+  const views = recordsToViews(thread.records);
   const lastUserMessage = [...views].reverse().find((view) => view.role === "user")?.text ?? "";
   const lastAssistantMessage = [...views].reverse().find((view) => view.role === "codex")?.text ?? "";
   if (!lastUserMessage && !lastAssistantMessage) return undefined;

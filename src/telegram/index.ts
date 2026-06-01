@@ -9,11 +9,10 @@ type DirectoryListing = {
   children: Array<{ name: string; path: string; hasChildren: boolean }>;
 };
 
-type InstanceSummary = {
-  instanceId: string;
+type ThreadSummary = {
+  threadId: string;
   workingDirectory: string;
-  threadId?: string;
-  status: InstanceStatus;
+  status: ThreadStatus;
   running: boolean;
   attachCount: number;
   title: string;
@@ -21,12 +20,12 @@ type InstanceSummary = {
   messageCount: number;
 };
 
-type InstanceDetail = InstanceSummary & {
+type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
   lastSeq: number;
 };
 
-type InstanceStatus = "running" | "idle" | "empty";
+type ThreadStatus = "running" | "idle";
 
 type TurnInput = string | Array<
   | { type: "text"; text: string }
@@ -48,7 +47,7 @@ type CodexUsageSnapshot = {
 };
 
 type ChatState = {
-  instanceId?: string;
+  threadId?: string;
 };
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -71,9 +70,9 @@ const lastFolderPaths = new Map<number, string>();
 
 const botCommands = [
   { command: "start", description: "show help" },
-  { command: "status", description: "show current instance" },
-  { command: "instances", description: "attach a Codex instance" },
-  { command: "new", description: "choose a folder and create an instance" },
+  { command: "status", description: "show current thread" },
+  { command: "threads", description: "attach a Codex thread" },
+  { command: "new", description: "choose a folder and create a thread" },
   { command: "stop", description: "stop the current turn" }
 ];
 
@@ -92,29 +91,29 @@ bot.start(async (ctx) => {
   return ctx.reply([
     "codex-proxy ready.",
     "",
-    "/instances 打开已有 Codex 实例",
-    "/new 选择文件夹并创建 Codex 实例",
+    "/threads 打开已有 Codex thread",
+    "/new 选择文件夹并创建 Codex thread",
     "/stop 停止当前 turn",
     "/status 查看当前状态",
     "",
-    "直接发消息会发送给当前 Codex 实例。"
+    "直接发消息会发送给当前 Codex thread。"
   ].join("\n"));
 });
 
-bot.command("instances", async (ctx) => {
+bot.command("threads", async (ctx) => {
   try {
-    const instances = await listInstances();
+    const threads = await listThreads();
 
-    if (!instances.length) {
-      await ctx.reply("当前没有可打开的 Codex 实例。使用 /new 选择文件夹并创建。");
+    if (!threads.length) {
+      await ctx.reply("当前没有可打开的 Codex thread。使用 /new 选择文件夹并创建。");
       return;
     }
 
-    await ctx.reply("选择要打开的 Codex 实例：", {
+    await ctx.reply("选择要打开的 Codex thread：", {
       reply_markup: {
-        inline_keyboard: instances.map((instance) => ([{
-          text: `${displayInstanceId(instance)}  ${instance.status}  ${shortPath(instance.workingDirectory)}`,
-          callback_data: `attach:${instance.instanceId}`
+        inline_keyboard: threads.map((thread) => ([{
+          text: `${displayThreadId(thread)}  ${thread.status}  ${shortPath(thread.workingDirectory)}`,
+          callback_data: `attach:${thread.threadId}`
         }]))
       }
     });
@@ -127,10 +126,10 @@ bot.command("new", async (ctx) => {
   const requestedPath = ctx.message.text.replace(/^\/new(@\w+)?\s*/, "").trim();
   try {
     if (requestedPath) {
-      const instance = await createInstance(requestedPath);
-      await attachInstance(ctx.chat.id, instance.instanceId);
-      lastFolderPaths.set(ctx.chat.id, instance.workingDirectory);
-      await ctx.reply(`已创建并打开 Codex 实例：${shortId(instance.instanceId)}\n文件夹：${instance.workingDirectory}`);
+      const thread = await createThread(requestedPath);
+      await attachThread(ctx.chat.id, thread.threadId);
+      lastFolderPaths.set(ctx.chat.id, thread.workingDirectory);
+      await ctx.reply(`已创建并打开 Codex thread：${shortId(thread.threadId)}\n文件夹：${thread.workingDirectory}`);
       return;
     }
 
@@ -146,18 +145,18 @@ bot.command("new", async (ctx) => {
 bot.command("status", async (ctx) => {
   try {
     const state = chatStates.get(ctx.chat.id);
-    const current = state?.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
+    const current = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
     const usage = await getCodexUsage(current?.threadId).catch(() => null);
-    const instances = await listInstances();
+    const threads = await listThreads();
     await ctx.reply([
-      `当前 instance：${current ? displayInstanceId(current) : "(none)"}`,
+      `当前 thread：${current ? displayThreadId(current) : "(none)"}`,
       current ? `文件夹：${current.workingDirectory}` : null,
       current?.threadId ? `thread：${shortId(current.threadId)}` : null,
       `usage：${formatCodexUsage(usage)}`,
       "",
-      instances.length
-        ? instances.map((instance) => `${displayInstanceId(instance)} ${instance.status} ${instance.attachCount} attached`).join("\n")
-        : "当前没有 Codex 实例。"
+      threads.length
+        ? threads.map((thread) => `${displayThreadId(thread)} ${thread.status} ${thread.attachCount} attached`).join("\n")
+        : "当前没有 Codex thread。"
     ].filter(Boolean).join("\n"));
   } catch (error) {
     await ctx.reply(errorText(error));
@@ -167,9 +166,9 @@ bot.command("status", async (ctx) => {
 const handleStopCommand = async (ctx: any) => {
   try {
     const state = chatStates.get(ctx.chat.id);
-    const current = state?.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
+    const current = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
     if (!current) {
-      await ctx.reply("当前没有打开的 Codex 实例。");
+      await ctx.reply("当前没有打开的 Codex thread。");
       return;
     }
     if (!current.running) {
@@ -177,7 +176,7 @@ const handleStopCommand = async (ctx: any) => {
       return;
     }
 
-    const result = await stopInstance(current.instanceId);
+    const result = await stopThread(current.threadId);
     await ctx.reply(result.stopped ? "Stopped current turn." : "No running turn.");
   } catch (error) {
     await ctx.reply(errorText(error));
@@ -223,12 +222,12 @@ bot.action("new:create", async (ctx) => {
   try {
     const listing = folderPickers.get(ctx.chat!.id);
     if (!listing) throw new Error("Folder selection expired. Run /new again.");
-    const instance = await createInstance(listing.path);
-    await attachInstance(ctx.chat!.id, instance.instanceId);
+    const thread = await createThread(listing.path);
+    await attachThread(ctx.chat!.id, thread.threadId);
     folderPickers.delete(ctx.chat!.id);
-    lastFolderPaths.set(ctx.chat!.id, instance.workingDirectory);
+    lastFolderPaths.set(ctx.chat!.id, thread.workingDirectory);
     await ctx.answerCbQuery("Created");
-    await ctx.editMessageText(`已创建并打开 Codex 实例：${displayInstanceId(instance)}\n文件夹：${instance.workingDirectory}`);
+    await ctx.editMessageText(`已创建并打开 Codex thread：${displayThreadId(thread)}\n文件夹：${thread.workingDirectory}`);
   } catch (error) {
     await ctx.answerCbQuery("Failed");
     await ctx.reply(errorText(error));
@@ -238,17 +237,17 @@ bot.action("new:create", async (ctx) => {
 bot.action("new:cancel", async (ctx) => {
   folderPickers.delete(ctx.chat!.id);
   await ctx.answerCbQuery("Canceled");
-  await ctx.editMessageText("已取消创建实例。");
+  await ctx.editMessageText("已取消创建 thread。");
 });
 
 bot.action(/^attach:(.+)$/, async (ctx) => {
   try {
-    const instanceId = ctx.match[1];
-    const instance = await attachInstance(ctx.chat!.id, instanceId);
+    const threadId = ctx.match[1];
+    const thread = await attachThread(ctx.chat!.id, threadId);
     await ctx.answerCbQuery("Attached");
     await ctx.editMessageText([
-      `已打开：${displayInstanceId(instance)} ${instance.status}`,
-      instance.workingDirectory
+      `已打开：${displayThreadId(thread)} ${thread.status}`,
+      thread.workingDirectory
     ].join("\n"));
   } catch (error) {
     await ctx.answerCbQuery("Failed");
@@ -292,19 +291,19 @@ const runPrompt = async (
   images: Array<{ fileId: string; filename: string }>
 ) => {
   const state = chatStates.get(ctx.chat.id);
-  const existingInstance = state?.instanceId ? await getInstance(state.instanceId).catch(() => null) : null;
-  if (!existingInstance) {
-    await ctx.reply("当前没有打开的 Codex 实例。使用 /new 选择文件夹并创建，或用 /instances 打开已有实例。");
+  const existingThread = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
+  if (!existingThread) {
+    await ctx.reply("当前没有打开的 Codex thread。使用 /new 选择文件夹并创建，或用 /threads 打开已有 thread。");
     return;
   }
-  const instance = existingInstance;
+  const thread = existingThread;
   const statusMessage = await ctx.reply([
     "Codex running...",
-    `folder: ${instance.workingDirectory}`,
-    `instance: ${displayInstanceId(instance)}`,
+    `folder: ${thread.workingDirectory}`,
+    `thread: ${displayThreadId(thread)}`,
     images.length ? `images: ${images.length}` : null
   ].filter(Boolean).join("\n"));
-  const knownRecordIds = new Set(instance.records.map((record) => record.id));
+  const knownRecordIds = new Set(thread.records.map((record) => record.id));
   let sentItemCount = 0;
   let stopped = false;
   const compactState = createCompactRecordViewState();
@@ -332,14 +331,14 @@ const runPrompt = async (
   try {
     let input: TurnInput = prompt;
     if (images.length) {
-      const uploadedImages = await Promise.all(images.map((image) => uploadTelegramImage(instance.workingDirectory, image.fileId, image.filename)));
+      const uploadedImages = await Promise.all(images.map((image) => uploadTelegramImage(thread.workingDirectory, image.fileId, image.filename)));
       input = [
         ...(prompt ? [{ type: "text" as const, text: prompt }] : []),
         ...uploadedImages.map((image) => ({ type: "local_image" as const, path: image.path }))
       ];
     }
-    const stream = streamInstanceEvents(instance.instanceId, instance.lastSeq);
-    await postTurn(instance.instanceId, input);
+    const stream = streamThreadEvents(thread.threadId, thread.lastSeq);
+    await postTurn(thread.threadId, input);
 
     for await (const event of stream) {
       if (event.kind === "record" && event.record) {
@@ -348,7 +347,7 @@ const runPrompt = async (
       if (event.kind === "done") break;
     }
 
-    const latest = await getInstance(instance.instanceId).catch(() => null);
+    const latest = await getThread(thread.threadId).catch(() => null);
     for (const record of latest?.records ?? []) {
       if (!knownRecordIds.has(record.id)) await forwardRecord(record);
     }
@@ -358,7 +357,7 @@ const runPrompt = async (
       undefined,
       [
         stopped ? "Codex stopped." : "Codex completed.",
-        `instance: ${latest ? displayInstanceId(latest) : shortId(instance.instanceId)}`,
+        `thread: ${latest ? displayThreadId(latest) : shortId(thread.threadId)}`,
         `messages: ${sentItemCount}`
       ].join("\n")
     );
@@ -367,24 +366,24 @@ const runPrompt = async (
   }
 };
 
-const attachInstance = async (chatId: number, instanceId: string) => {
+const attachThread = async (chatId: number, threadId: string) => {
   const current = chatStates.get(chatId);
-  if (current?.instanceId && current.instanceId !== instanceId) {
+  if (current?.threadId && current.threadId !== threadId) {
     await detachCurrent(chatId);
   }
-  const instance = await apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}/attach`, {
+  const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/attach`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ clientId: tgClientId(chatId) })
   });
-  chatStates.set(chatId, { instanceId: instance.instanceId });
-  return instance;
+  chatStates.set(chatId, { threadId: thread.threadId });
+  return thread;
 };
 
 const detachCurrent = async (chatId: number) => {
   const current = chatStates.get(chatId);
-  if (!current?.instanceId) return;
-  await fetch(apiUrl(`/api/instances/${encodeURIComponent(current.instanceId)}/detach`), {
+  if (!current?.threadId) return;
+  await fetch(apiUrl(`/api/threads/${encodeURIComponent(current.threadId)}/detach`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ clientId: tgClientId(chatId) })
@@ -392,9 +391,9 @@ const detachCurrent = async (chatId: number) => {
   chatStates.delete(chatId);
 };
 
-const listInstances = async (): Promise<InstanceSummary[]> => {
-  const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances");
-  return Array.isArray(data.instances) ? data.instances : [];
+const listThreads = async (): Promise<ThreadSummary[]> => {
+  const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
+  return Array.isArray(data.threads) ? data.threads : [];
 };
 
 const loadDirectory = async (directoryPath?: string) => {
@@ -402,21 +401,21 @@ const loadDirectory = async (directoryPath?: string) => {
   return apiJson<DirectoryListing>(`/api/fs/children${query}`);
 };
 
-const getInstance = (instanceId: string) => apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}`);
+const getThread = (threadId: string) => apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
 
 const getCodexUsage = (threadId?: string) => {
   const query = threadId ? `?${new URLSearchParams({ threadId }).toString()}` : "";
   return apiJson<CodexUsageSnapshot>(`/api/codex-usage${query}`);
 };
 
-const createInstance = (workingDirectory: string) => apiJson<InstanceDetail>("/api/instances", {
+const createThread = (workingDirectory: string) => apiJson<ThreadDetail>("/api/threads", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({ workingDirectory })
 });
 
-const postTurn = async (instanceId: string, input: TurnInput) => {
-  const response = await fetch(apiUrl(`/api/instances/${encodeURIComponent(instanceId)}/turn`), {
+const postTurn = async (threadId: string, input: TurnInput) => {
+  const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/turn`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ input, source: "telegram" })
@@ -424,7 +423,7 @@ const postTurn = async (instanceId: string, input: TurnInput) => {
   if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
 };
 
-const stopInstance = async (instanceId: string) => apiJson<{ stopped: boolean }>(`/api/instances/${encodeURIComponent(instanceId)}/stop`, {
+const stopThread = async (threadId: string) => apiJson<{ stopped: boolean }>(`/api/threads/${encodeURIComponent(threadId)}/stop`, {
   method: "POST"
 });
 
@@ -444,8 +443,8 @@ const uploadTelegramImage = async (workingDirectory: string, fileId: string, fil
   });
 };
 
-const streamInstanceEvents = async function* (instanceId: string, after: number): AsyncGenerator<any> {
-  const response = await fetch(apiUrl(`/api/instances/${encodeURIComponent(instanceId)}/events?after=${after}`));
+const streamThreadEvents = async function* (threadId: string, after: number): AsyncGenerator<any> {
+  const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`));
   if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
 
   const reader = response.body.getReader();
@@ -474,10 +473,10 @@ const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
 const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortId = (id: string) => id.slice(0, 8);
-const displayInstanceId = (instance: Pick<InstanceSummary, "instanceId" | "threadId">) => shortId(instance.threadId ?? instance.instanceId);
+const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const newPickerText = (listing: DirectoryListing) => [
-  "选择文件夹创建 Codex 实例：",
+  "选择文件夹创建 Codex thread：",
   listing.path,
   "",
   "可以进入子目录，也可以直接在当前目录创建。"
@@ -492,7 +491,7 @@ const newPickerMarkup = (listing: DirectoryListing) => {
   return {
     reply_markup: {
       inline_keyboard: [
-        [{ text: "Create Instance Here", callback_data: "new:create" }],
+        [{ text: "Create Thread Here", callback_data: "new:create" }],
         ...parentRow,
         ...childRows,
         [{ text: "Cancel", callback_data: "new:cancel" }]

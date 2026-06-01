@@ -6,13 +6,12 @@ import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js
 import { compactToolViews, type CompactRecordView } from "../shared/compactRecordViews.js";
 import "./style.css";
 
-type InstanceSummary = {
-  instanceId: string;
+type ThreadSummary = {
+  threadId: string;
   workingDirectory: string;
-  threadId?: string;
   model?: string;
   modelReasoningEffort?: ReasoningEffort;
-  status: InstanceStatus;
+  status: ThreadStatus;
   running: boolean;
   attachCount: number;
   title: string;
@@ -21,12 +20,12 @@ type InstanceSummary = {
   lastUsage?: Usage;
 };
 
-type InstanceDetail = InstanceSummary & {
+type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
   lastSeq: number;
 };
 
-type ChatSession = InstanceDetail & {
+type ChatSession = ThreadDetail & {
   input: string;
   clientId: string;
   imageAttachments: ImageAttachment[];
@@ -56,8 +55,8 @@ type CodexThreadSummary = {
 
 type StreamEvent = {
   seq: number;
-  kind: "instance" | "record" | "event" | "done";
-  instance: InstanceSummary;
+  kind: "thread" | "record" | "done";
+  thread: ThreadSummary;
   record?: CodexRecord;
 };
 
@@ -70,7 +69,7 @@ type Usage = {
 };
 
 type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
-type InstanceStatus = "running" | "idle" | "empty";
+type ThreadStatus = "running" | "idle";
 type ModelSelection = "auto" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.3-codex" | "gpt-5.3-codex-spark" | "gpt-5.2";
 type ReasoningSelection = "auto" | ReasoningEffort;
 type MessageDisplayMode = "compact" | "detailed";
@@ -138,7 +137,7 @@ const App = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
-  const [instances, setInstances] = useState<InstanceSummary[]>([]);
+  const [proxyThreads, setProxyThreads] = useState<ThreadSummary[]>([]);
   const [initialized, setInitialized] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderPath, setFolderPath] = useState("");
@@ -148,7 +147,7 @@ const App = () => {
   const [threadMode, setThreadMode] = useState(false);
   const [threads, setThreads] = useState<CodexThreadSummary[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(false);
-  const [instanceMenu, setInstanceMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null);
+  const [threadMenu, setThreadMenu] = useState<{ threadId: string; x: number; y: number } | null>(null);
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     model: null,
@@ -168,7 +167,7 @@ const App = () => {
   const imageFileInputRef = useRef<HTMLInputElement>(null);
 
   const activeSession = useMemo(
-    () => sessions.find((session) => session.instanceId === activeSessionId),
+    () => sessions.find((session) => session.threadId === activeSessionId),
     [activeSessionId, sessions]
   );
   const detailedViews = useMemo<CodexRecordView[]>(
@@ -207,7 +206,7 @@ const App = () => {
   }, [activeWorkspacePath, activeSessionId, lastFolderPath, selectedModel, selectedReasoning, messageDisplayMode, sidebarCollapsed, initialized]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => void refreshInstances(), 3000);
+    const interval = window.setInterval(() => void refreshThreads(), 3000);
     return () => window.clearInterval(interval);
   }, []);
 
@@ -241,8 +240,8 @@ const App = () => {
   }, [activeSessionId, activeViews.length, latestViewKey, activeSession?.running]);
 
   useEffect(() => {
-    if (!instanceMenu) return undefined;
-    const close = () => setInstanceMenu(null);
+    if (!threadMenu) return undefined;
+    const close = () => setThreadMenu(null);
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
@@ -252,7 +251,7 @@ const App = () => {
       window.removeEventListener("click", close);
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [instanceMenu]);
+  }, [threadMenu]);
 
   useEffect(() => {
     if (!composerMenuOpen) return undefined;
@@ -272,20 +271,20 @@ const App = () => {
     const stopOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || !activeSession?.running) return;
       event.preventDefault();
-      void stopTurn(activeSession.instanceId);
+      void stopTurn(activeSession.threadId);
     };
     window.addEventListener("keydown", stopOnEscape);
     return () => window.removeEventListener("keydown", stopOnEscape);
-  }, [activeSession?.instanceId, activeSession?.running]);
+  }, [activeSession?.threadId, activeSession?.running]);
 
   const initialize = async () => {
-    const [health, instanceData, usageData] = await Promise.all([
+    const [health, threadData, usageData] = await Promise.all([
       apiJson<{ defaultWorkingDirectory?: string } & SystemStatus>("/api/health"),
-      apiJson<{ instances?: InstanceSummary[] }>("/api/instances"),
+      apiJson<{ threads?: ThreadSummary[] }>("/api/threads"),
       apiJson<CodexUsageSnapshot>("/api/codex-usage")
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "/home/laop/projects/codex-proxy";
-    const loadedInstances = Array.isArray(instanceData.instances) ? instanceData.instances : [];
+    const loadedThreads = Array.isArray(threadData.threads) ? threadData.threads : [];
     const saved = readStoredUiState();
 
     setSystemStatus({
@@ -301,22 +300,22 @@ const App = () => {
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
-    setInstances(loadedInstances);
-    const savedInstanceExists = saved?.activeSessionId
-      ? loadedInstances.some((instance) => instance.instanceId === saved.activeSessionId)
+    setProxyThreads(loadedThreads);
+    const savedThreadExists = saved?.activeSessionId
+      ? loadedThreads.some((thread) => thread.threadId === saved.activeSessionId)
       : false;
-    const instanceToOpen = savedInstanceExists
+    const threadToOpen = savedThreadExists
       ? saved?.activeSessionId
-      : loadedInstances.length === 1 ? loadedInstances[0]?.instanceId : undefined;
-    if (instanceToOpen) {
-      await openInstance(instanceToOpen);
+      : loadedThreads.length === 1 ? loadedThreads[0]?.threadId : undefined;
+    if (threadToOpen) {
+      await openThread(threadToOpen);
     }
     setInitialized(true);
   };
 
-  const refreshInstances = async () => {
-    const data = await apiJson<{ instances?: InstanceSummary[] }>("/api/instances");
-    setInstances(Array.isArray(data.instances) ? data.instances : []);
+  const refreshThreads = async () => {
+    const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
+    setProxyThreads(Array.isArray(data.threads) ? data.threads : []);
   };
 
   const refreshCodexUsage = async (threadId?: string) => {
@@ -348,16 +347,16 @@ const App = () => {
     }
   };
 
-  const createInstanceForSelectedFolder = async () => {
+  const createThreadForSelectedFolder = async () => {
     const workingDirectory = folderListing?.path ?? folderPath;
-    const instance = await apiJson<InstanceDetail>("/api/instances", {
+    const thread = await apiJson<ThreadDetail>("/api/threads", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workingDirectory, options: selectedThreadOptions(selectedModel, selectedReasoning) })
     });
     setFolderModalOpen(false);
-    await openInstance(instance.instanceId);
-    await refreshInstances();
+    await openThread(thread.threadId);
+    await refreshThreads();
   };
 
   const showRestorableThreads = async () => {
@@ -379,100 +378,95 @@ const App = () => {
 
   const restoreThread = async (threadId: string) => {
     const workingDirectory = folderListing?.path ?? folderPath;
-    const instance = await apiJson<InstanceDetail>("/api/instances/restore", {
+    const thread = await apiJson<ThreadDetail>("/api/threads/restore", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workingDirectory, threadId, options: selectedThreadOptions(selectedModel, selectedReasoning) })
     });
     setFolderModalOpen(false);
-    await openInstance(instance.instanceId);
-    await refreshInstances();
+    await openThread(thread.threadId);
+    await refreshThreads();
   };
 
-  const openInstance = async (instanceId: string) => {
-    const clientId = webInstanceClientId(instanceId);
-    const instance = await apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}/attach`, {
+  const openThread = async (threadId: string) => {
+    const clientId = webThreadClientId(threadId);
+    const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/attach`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ clientId })
     });
-    const session: ChatSession = { ...instance, input: "", clientId, imageAttachments: [] };
-    setSessions((current) => [session, ...current.filter((item) => item.instanceId !== instance.instanceId)]);
-    setActiveWorkspacePath(instance.workingDirectory);
-    setActiveSessionId(instance.instanceId);
-    subscribeInstance(instance.instanceId, instance.lastSeq);
+    const session: ChatSession = { ...thread, input: "", clientId, imageAttachments: [] };
+    setSessions((current) => [session, ...current.filter((item) => item.threadId !== thread.threadId)]);
+    setActiveWorkspacePath(thread.workingDirectory);
+    setActiveSessionId(thread.threadId);
+    subscribeThread(thread.threadId, thread.lastSeq);
   };
 
-  const subscribeInstance = (instanceId: string, after: number) => {
-    eventSources.current.get(instanceId)?.close();
-    const source = new EventSource(`/api/instances/${encodeURIComponent(instanceId)}/events?after=${after}`);
+  const subscribeThread = (threadId: string, after: number) => {
+    eventSources.current.get(threadId)?.close();
+    const source = new EventSource(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`);
     const handle = (event: MessageEvent) => {
       const payload = JSON.parse(event.data) as StreamEvent;
       setSessions((current) => current.map((session) => {
-        if (session.instanceId !== payload.instance.instanceId) return session;
+        if (session.threadId !== payload.thread.threadId) return session;
         const records = payload.record ? mergeRecord(session.records, payload.record) : session.records;
-        return { ...session, ...payload.instance, records };
+        return { ...session, ...payload.thread, records };
       }));
-      void refreshInstances();
+      void refreshThreads();
     };
-    source.addEventListener("instance", handle);
+    source.addEventListener("thread", handle);
     source.addEventListener("record", handle);
     source.addEventListener("message", handle);
     source.addEventListener("done", handle);
-    eventSources.current.set(instanceId, source);
+    eventSources.current.set(threadId, source);
   };
 
-  const closeSession = async (instanceId: string) => {
-    const session = sessions.find((item) => item.instanceId === instanceId);
-    eventSources.current.get(instanceId)?.close();
-    eventSources.current.delete(instanceId);
-    await fetch(`/api/instances/${encodeURIComponent(instanceId)}/detach`, {
+  const closeSession = async (threadId: string) => {
+    const session = sessions.find((item) => item.threadId === threadId);
+    eventSources.current.get(threadId)?.close();
+    eventSources.current.delete(threadId);
+    await fetch(`/api/threads/${encodeURIComponent(threadId)}/detach`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ clientId: session?.clientId ?? webInstanceClientId(instanceId) })
+      body: JSON.stringify({ clientId: session?.clientId ?? webThreadClientId(threadId) })
     });
     setSessions((current) => {
-      const next = current.filter((session) => session.instanceId !== instanceId);
-      if (activeSessionId !== instanceId) return next;
+      const next = current.filter((session) => session.threadId !== threadId);
+      if (activeSessionId !== threadId) return next;
       const replacement = next[0];
-      setActiveSessionId(replacement?.instanceId ?? "");
+      setActiveSessionId(replacement?.threadId ?? "");
       if (replacement) setActiveWorkspacePath(replacement.workingDirectory);
       return next;
     });
-    await refreshInstances();
+    await refreshThreads();
   };
 
-  const saveInstances = async () => {
-    await apiJson("/api/instances/save", { method: "POST" });
-    await refreshInstances();
-  };
-
-  const deleteInstance = async (instanceId: string) => {
-    eventSources.current.get(instanceId)?.close();
-    eventSources.current.delete(instanceId);
-    await fetch(`/api/instances/${encodeURIComponent(instanceId)}`, { method: "DELETE" });
+  const deleteThread = async (threadId: string) => {
+    eventSources.current.get(threadId)?.close();
+    eventSources.current.delete(threadId);
+    await fetch(`/api/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" });
     setSessions((current) => {
-      const next = current.filter((session) => session.instanceId !== instanceId);
-      if (activeSessionId !== instanceId) return next;
+      const next = current.filter((session) => session.threadId !== threadId);
+      if (activeSessionId !== threadId) return next;
       const replacement = next[0];
-      setActiveSessionId(replacement?.instanceId ?? "");
+      setActiveSessionId(replacement?.threadId ?? "");
       if (replacement) setActiveWorkspacePath(replacement.workingDirectory);
       return next;
     });
-    await refreshInstances();
+    await refreshThreads();
   };
 
-  const forkMessage = async (instanceId: string, messageId: string) => {
+  const forkMessage = async (threadId: string, messageId: string) => {
     try {
-      const instance = await apiJson<InstanceDetail>(`/api/instances/${encodeURIComponent(instanceId)}/fork`, {
+      const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/fork`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId })
       });
-      await openInstance(instance.instanceId);
-      await refreshInstances();
+      await openThread(thread.threadId);
+      await refreshThreads();
     } catch (error) {
-      setSessions((current) => current.map((item) => item.instanceId === instanceId
+      setSessions((current) => current.map((item) => item.threadId === threadId
         ? {
           ...item,
           records: [...item.records, errorRecord("fork failed", error)]
@@ -481,19 +475,19 @@ const App = () => {
     }
   };
 
-  const send = async (instanceId: string) => {
-    const session = sessions.find((item) => item.instanceId === instanceId);
+  const send = async (threadId: string) => {
+    const session = sessions.find((item) => item.threadId === threadId);
     if (!session || session.running) return;
     const text = session.input.trim();
     const imageAttachments = session.imageAttachments;
     if (!text && !imageAttachments.length) return;
-    setSessions((current) => current.map((item) => item.instanceId === instanceId ? { ...item, input: "", imageAttachments: [] } : item));
+    setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [] } : item));
     let uploadedImages: Array<{ path: string }>;
     try {
       uploadedImages = await Promise.all(imageAttachments.map((image) => uploadImage(session.workingDirectory, image)));
       for (const image of imageAttachments) URL.revokeObjectURL(image.previewUrl);
     } catch (error) {
-      setSessions((current) => current.map((item) => item.instanceId === instanceId
+      setSessions((current) => current.map((item) => item.threadId === threadId
         ? {
           ...item,
           input: text,
@@ -509,34 +503,34 @@ const App = () => {
         ...uploadedImages.map((image) => ({ type: "local_image" as const, path: image.path }))
       ]
       : text;
-    const response = await fetch(`/api/instances/${encodeURIComponent(instanceId)}/turn`, {
+    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ input, source: "web" })
     });
     if (!response.ok) {
       const text = await response.text();
-      setSessions((current) => current.map((item) => item.instanceId === instanceId
+      setSessions((current) => current.map((item) => item.threadId === threadId
         ? { ...item, records: [...item.records, errorRecord("error", text)] }
         : item));
     }
   };
 
-  const stopTurn = async (instanceId: string) => {
-    const response = await fetch(`/api/instances/${encodeURIComponent(instanceId)}/stop`, { method: "POST" });
+  const stopTurn = async (threadId: string) => {
+    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/stop`, { method: "POST" });
     if (!response.ok) {
       const text = await response.text();
-      setSessions((current) => current.map((item) => item.instanceId === instanceId
+      setSessions((current) => current.map((item) => item.threadId === threadId
         ? { ...item, records: [...item.records, errorRecord("stop failed", text)] }
         : item));
     }
   };
 
-  const updateSessionInput = (instanceId: string, input: string) => {
-    setSessions((current) => current.map((session) => session.instanceId === instanceId ? { ...session, input } : session));
+  const updateSessionInput = (threadId: string, input: string) => {
+    setSessions((current) => current.map((session) => session.threadId === threadId ? { ...session, input } : session));
   };
 
-  const addSessionImageFiles = (instanceId: string, files: File[]) => {
+  const addSessionImageFiles = (threadId: string, files: File[]) => {
     if (!files.length) return;
     const images = files
       .filter((file) => file.type.startsWith("image/"))
@@ -547,35 +541,35 @@ const App = () => {
         previewUrl: URL.createObjectURL(file)
       }));
     if (!images.length) return;
-    setSessions((current) => current.map((session) => session.instanceId === instanceId
+    setSessions((current) => current.map((session) => session.threadId === threadId
       ? { ...session, imageAttachments: [...session.imageAttachments, ...images] }
       : session));
   };
 
-  const addSessionImages = (instanceId: string, files: FileList | null) => {
+  const addSessionImages = (threadId: string, files: FileList | null) => {
     if (!files?.length) return;
-    addSessionImageFiles(instanceId, [...files]);
+    addSessionImageFiles(threadId, [...files]);
   };
 
-  const pasteSessionImages = (instanceId: string, clipboardData: DataTransfer) => {
+  const pasteSessionImages = (threadId: string, clipboardData: DataTransfer) => {
     const images = clipboardImageFiles(clipboardData);
     if (!images.length) return false;
-    addSessionImageFiles(instanceId, images);
+    addSessionImageFiles(threadId, images);
     return true;
   };
 
-  const removeSessionImage = (instanceId: string, imageId: string) => {
+  const removeSessionImage = (threadId: string, imageId: string) => {
     setSessions((current) => current.map((session) => {
-      if (session.instanceId !== instanceId) return session;
+      if (session.threadId !== threadId) return session;
       const image = session.imageAttachments.find((item) => item.id === imageId);
       if (image) URL.revokeObjectURL(image.previewUrl);
       return { ...session, imageAttachments: session.imageAttachments.filter((item) => item.id !== imageId) };
     }));
   };
 
-  const openInstanceMenu = (event: React.MouseEvent, instanceId: string) => {
+  const openThreadMenu = (event: React.MouseEvent, threadId: string) => {
     event.preventDefault();
-    setInstanceMenu({ instanceId, x: event.clientX, y: event.clientY });
+    setThreadMenu({ threadId, x: event.clientX, y: event.clientY });
   };
 
   return (
@@ -585,7 +579,7 @@ const App = () => {
           type="button"
           className="sidebarScrim"
           onClick={() => setSidebarCollapsed(true)}
-          aria-label="Hide instances"
+          aria-label="Hide threads"
         />
       ) : null}
       <aside className="sidebar">
@@ -598,44 +592,43 @@ const App = () => {
 
         <div className="sidebarActions">
           <button type="button" onClick={() => void openPicker()}>New Thread</button>
-          <button type="button" onClick={() => void saveInstances()}>Save</button>
         </div>
 
-        <section className="proxyInstances expanded">
-          <h2>Codex Instances</h2>
-          {instances.length === 0 ? (
-            <div className="proxyInstanceEmpty">No active instances</div>
+        <section className="proxyThreads expanded">
+          <h2>Codex Threads</h2>
+          {proxyThreads.length === 0 ? (
+            <div className="proxyThreadEmpty">No active threads</div>
           ) : (
-            <div className="proxyInstanceList">
-              {instances.map((instance) => (
+            <div className="proxyThreadList">
+              {proxyThreads.map((thread) => (
                 <button
                   type="button"
-                  className={`proxyInstanceRow ${instance.instanceId === activeSessionId ? "active" : ""}`}
-                  key={instance.instanceId}
-                  onClick={() => void openInstance(instance.instanceId)}
-                  onContextMenu={(event) => openInstanceMenu(event, instance.instanceId)}
+                  className={`proxyThreadRow ${thread.threadId === activeSessionId ? "active" : ""}`}
+                  key={thread.threadId}
+                  onClick={() => void openThread(thread.threadId)}
+                  onContextMenu={(event) => openThreadMenu(event, thread.threadId)}
                 >
-                  <span>{instance.threadId ? shortId(instance.threadId) : shortId(instance.instanceId)}</span>
-                  <strong>{instance.status}</strong>
-                  <code>{instance.title}</code>
-                  <em>{instance.attachCount} attached · {instance.workingDirectory}</em>
+                  <span>{shortId(thread.threadId)}</span>
+                  <strong>{thread.status}</strong>
+                  <code>{thread.title}</code>
+                  <em>{thread.attachCount} attached · {thread.workingDirectory}</em>
                 </button>
               ))}
             </div>
           )}
         </section>
-        {instanceMenu ? (
+        {threadMenu ? (
           <div
-            className="instanceContextMenu"
-            style={{ left: instanceMenu.x, top: instanceMenu.y }}
+            className="threadContextMenu"
+            style={{ left: threadMenu.x, top: threadMenu.y }}
             onClick={(event) => event.stopPropagation()}
           >
             <button
               type="button"
               onClick={() => {
-                const instanceId = instanceMenu.instanceId;
-                setInstanceMenu(null);
-                void closeSession(instanceId);
+                const threadId = threadMenu.threadId;
+                setThreadMenu(null);
+                void closeSession(threadId);
               }}
             >
               Close
@@ -643,9 +636,9 @@ const App = () => {
             <button
               type="button"
               onClick={() => {
-                const instanceId = instanceMenu.instanceId;
-                setInstanceMenu(null);
-                void deleteInstance(instanceId);
+                const threadId = threadMenu.threadId;
+                setThreadMenu(null);
+                void deleteThread(threadId);
               }}
             >
               Delete
@@ -660,13 +653,13 @@ const App = () => {
             type="button"
             className="sidebarPanelToggle"
             onClick={() => setSidebarCollapsed((current) => !current)}
-            aria-label={sidebarCollapsed ? "Show instances" : "Hide instances"}
-            title={sidebarCollapsed ? "Show instances" : "Hide instances"}
+            aria-label={sidebarCollapsed ? "Show threads" : "Hide threads"}
+            title={sidebarCollapsed ? "Show threads" : "Hide threads"}
           >
-            {sidebarCollapsed ? "Instances" : "Hide"}
+            {sidebarCollapsed ? "Threads" : "Hide"}
           </button>
           <div className="workspaceTitle">
-            <span>{activeSession?.title ?? "No active instance"}</span>
+            <span>{activeSession?.title ?? "No active thread"}</span>
             <code>{activeSession?.workingDirectory ?? activeWorkspacePath}</code>
           </div>
           <div className="workbar" aria-label="Runtime status">
@@ -692,7 +685,7 @@ const App = () => {
         {activeSession ? (
           <>
             <Virtuoso
-              key={activeSession.instanceId}
+              key={activeSession.threadId}
               ref={messagesRef}
               scrollerRef={(ref) => {
                 messagesScrollerRef.current = ref instanceof HTMLElement ? ref : null;
@@ -709,7 +702,7 @@ const App = () => {
                   message={message}
                   showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
                   onInspect={messageDisplayMode === "compact" && message.role === "tool" ? () => setInspectMessage(message) : undefined}
-                  onFork={message.canFork ? () => void forkMessage(activeSession.instanceId, message.record.id) : undefined}
+                  onFork={message.canFork ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
                 />
               )}
             />
@@ -718,8 +711,8 @@ const App = () => {
               className="composer"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (activeSession.running) void stopTurn(activeSession.instanceId);
-                else void send(activeSession.instanceId);
+                if (activeSession.running) void stopTurn(activeSession.threadId);
+                else void send(activeSession.threadId);
               }}
             >
               <div className="composerSurface">
@@ -729,22 +722,22 @@ const App = () => {
                       {activeSession.imageAttachments.map((image) => (
                         <div className="imageAttachment" key={image.id}>
                           <img src={image.previewUrl} alt={image.name} />
-                          <button type="button" onClick={() => removeSessionImage(activeSession.instanceId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
+                          <button type="button" onClick={() => removeSessionImage(activeSession.threadId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
                         </div>
                       ))}
                     </div>
                   ) : null}
                   <textarea
                     value={activeSession.input}
-                    onChange={(event) => updateSessionInput(activeSession.instanceId, event.target.value)}
+                    onChange={(event) => updateSessionInput(activeSession.threadId, event.target.value)}
                     onPaste={(event) => {
-                      if (!pasteSessionImages(activeSession.instanceId, event.clipboardData)) return;
+                      if (!pasteSessionImages(activeSession.threadId, event.clipboardData)) return;
                       event.preventDefault();
                     }}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
                       event.preventDefault();
-                      if (activeCanSend) void send(activeSession.instanceId);
+                      if (activeCanSend) void send(activeSession.threadId);
                     }}
                     placeholder="例如：检查这个 repo 的结构并给我下一步建议"
                     rows={1}
@@ -800,7 +793,7 @@ const App = () => {
                   accept="image/*"
                   multiple
                   onChange={(event) => {
-                    addSessionImages(activeSession.instanceId, event.currentTarget.files);
+                    addSessionImages(activeSession.threadId, event.currentTarget.files);
                     event.currentTarget.value = "";
                   }}
                 />
@@ -808,7 +801,7 @@ const App = () => {
             </form>
           </>
         ) : (
-          <div className="empty">新建实例或从 Codex 对话记录还原。</div>
+          <div className="empty">新建 thread 或从 Codex 对话记录还原。</div>
         )}
       </section>
 
@@ -861,7 +854,7 @@ const App = () => {
             </form>
             {folderError ? <div className="threadEmpty">{folderError}</div> : null}
             <div className="folderModalActions">
-              <button type="button" onClick={() => void createInstanceForSelectedFolder()} disabled={!folderListing}>New Thread</button>
+              <button type="button" onClick={() => void createThreadForSelectedFolder()} disabled={!folderListing}>New Thread</button>
               <button type="button" className="secondaryButton" onClick={() => void showRestorableThreads()} disabled={!folderListing}>
                 Restore Conversation
               </button>
@@ -1124,8 +1117,8 @@ const formatResetTitle = (window: RateLimitWindow | null | undefined) => {
   return `${formatPercent(100 - window.used_percent)} remaining, ${formatPercent(window.used_percent)} used. Resets ${resetAt.toLocaleString()}`;
 };
 
-function webInstanceClientId(instanceId: string) {
-  return `${webClientId}:${instanceId}`;
+function webThreadClientId(threadId: string) {
+  return `${webClientId}:${threadId}`;
 }
 
 function readWebClientId() {
