@@ -2,11 +2,13 @@ import { Command } from "commander";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
+import { registerConnectCommand } from "./codexpConnect.js";
 
 type InstanceSummary = {
   instanceId: string;
   workingDirectory: string;
   threadId?: string;
+  runtime?: { kind: "server" } | { kind: "worker"; workerId: string; name?: string; online: boolean };
   status: "running" | "idle" | "empty";
   running: boolean;
   attachCount: number;
@@ -82,6 +84,8 @@ program
     console.log(`Deleted ${formatInstance(instance)}`);
   });
 
+registerConnectCommand(program);
+
 program
   .command("task")
   .argument("[first]", "ls, template, or instance target")
@@ -137,12 +141,20 @@ async function printInstances(instances: InstanceSummary[]) {
     instance: instance.instanceId.slice(0, 8),
     thread: instance.threadId ? instance.threadId.slice(0, 8) : "",
     status: instance.status,
+    runtime: formatRuntime(instance),
     attached: instance.attachCount,
     saved: instance.savedAt ? "yes" : "no",
     tasks: taskCounts.get(instance.instanceId) ?? 0,
     folder: instance.workingDirectory,
     title: instance.title
   })));
+}
+
+function formatRuntime(instance: InstanceSummary) {
+  if (instance.runtime?.kind === "worker") {
+    return `${instance.runtime.online ? "worker" : "offline"}:${instance.runtime.name ?? instance.runtime.workerId.slice(0, 8)}`;
+  }
+  return "server";
 }
 
 function resolveInstanceTarget(target: string, instances: InstanceSummary[]) {

@@ -4,8 +4,9 @@
 
 1. `instanceId` 是 codex-proxy 的产品级实例主键；Web tab、Telegram attach、左下角实例列表都必须指向 `instanceId`。
 2. `threadId` 是 Codex SDK 的底层会话 id，只能作为实例的内部字段或展示字段，不要作为 UI/API 主键。
-3. API server 是唯一持有 Codex 运行态的进程。Web 和 Telegram 都是同一个 `InstanceHub` 的客户端，不能各自 new `CodexProxy`。
-4. 空实例允许存在：`POST /api/instances` 创建实例，但不立即创建 Codex thread；第一次 `POST /api/instances/:instanceId/turn` 才创建底层 `threadId`。
+3. API server 是唯一对 Web/TG 暴露的控制面。Codex 运行态可以由 API server 本地持有，也可以由 `codexp connect` 启动的远程 worker 持有；Web 和 Telegram 都只能通过同一个 `InstanceHub` 访问实例。
+4. 空实例允许存在：`POST /api/instances` 创建 server-local 实例，但不立即创建 Codex thread；第一次 `POST /api/instances/:instanceId/turn` 才创建底层 `threadId`。
+5. worker-backed 实例由 `POST /api/workers/register` 创建或重连，运行态在 worker 侧的官方 `codex app-server` 中；server 只排队命令、镜像消息和广播事件。
 
 ## Attach 和关闭语义
 
@@ -21,12 +22,14 @@
 2. Web 通过 `GET /api/instances/:instanceId/events?after=...` 订阅实例事件。
 3. Telegram bot 发送消息时也订阅同一个实例事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
 4. Web/TG 不各自拼 transcript；实例详情 `GET /api/instances/:instanceId` 返回后端维护的 `messages`。
+5. worker-backed 实例的远程输入仍走 `POST /api/instances/:instanceId/turn`；server 转成 worker command，由 `codexp connect` 通过官方 app-server 协议执行。
 
 ## API 约定
 
 1. 新功能使用 `/api/instances` 系列接口。
 2. 不要再为新逻辑增加 `/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
 3. 历史会话读取可以以后重新设计；当前运行态以 instance 为准。
+4. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events。worker 主动出站连接 server，不要求 server 反连 worker 机器。
 
 ## `.codexp` 工作区文件约定
 

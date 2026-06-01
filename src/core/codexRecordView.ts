@@ -130,6 +130,18 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
+  if (payload.type === "local_shell_call") {
+    return {
+      id: record.id,
+      role: "tool",
+      label: "shell",
+      text: localShellText(payload),
+      at: record.timestamp,
+      status: payload.status === "completed" ? "completed" : "pending",
+      record
+    };
+  }
+
   if (payload.type === "function_call_output") {
     const output = typeof payload.output === "string" ? payload.output : stringify(payload.output);
     return {
@@ -155,6 +167,30 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
+  if (payload.type === "mcp_tool_call") {
+    return {
+      id: record.id,
+      role: "tool",
+      label: "mcp tool",
+      text: mcpToolText(payload),
+      at: record.timestamp,
+      status: payload.status === "failed" ? "failed" : payload.status === "completed" ? "completed" : "pending",
+      record
+    };
+  }
+
+  if (payload.type === "web_search_call") {
+    return {
+      id: record.id,
+      role: "tool",
+      label: "web search",
+      text: typeof payload.query === "string" ? payload.query : stringify(payload),
+      at: record.timestamp,
+      status: "completed",
+      record
+    };
+  }
+
   if (payload.type === "error") {
     return {
       id: record.id,
@@ -168,6 +204,28 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
   }
 
   return null;
+};
+
+const localShellText = (payload: Record<string, unknown>) => {
+  const action = asRecord(payload.action);
+  const command = Array.isArray(action?.command)
+    ? action.command.filter((part): part is string => typeof part === "string").join(" ")
+    : "";
+  const output = typeof payload.aggregated_output === "string" ? payload.aggregated_output.trimEnd() : "";
+  return [`$ ${command}`.trim(), output].filter(Boolean).join("\n");
+};
+
+const mcpToolText = (payload: Record<string, unknown>) => {
+  const label = [
+    typeof payload.server === "string" ? payload.server : "",
+    typeof payload.tool === "string" ? payload.tool : ""
+  ].filter(Boolean).join(".");
+  const status = typeof payload.status === "string" ? payload.status : "";
+  const error = asRecord(payload.error);
+  if (typeof error?.message === "string") return `${label}: ${status}\n${error.message}`;
+  if (payload.result != null) return `${label}: ${status}\n${stringify(payload.result)}`;
+  if (payload.arguments != null) return `${label}: ${status}\n${stringify(payload.arguments)}`;
+  return `${label}: ${status}`.trim();
 };
 
 const attachUsageToLatestCodexView = (views: CodexRecordView[], usage: RecordUsage) => {

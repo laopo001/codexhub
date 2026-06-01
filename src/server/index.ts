@@ -29,6 +29,15 @@ const threadOptionsSchema = z.object({
   modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional()
 });
 
+const workerRegistrationSchema = z.object({
+  workerId: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
+  workingDirectory: z.string().min(1),
+  appServerUrl: z.string().min(1).optional(),
+  pid: z.number().int().optional(),
+  hostname: z.string().min(1).optional()
+});
+
 const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`event: ${event}\n`);
   raw.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -133,6 +142,45 @@ const main = async () => {
   app.post("/api/instances/restore-saved", async () => ({
     instances: await instances.restoreSavedInstances()
   }));
+
+  app.post("/api/workers/register", async (request) => {
+    const payload = workerRegistrationSchema.parse(request.body);
+    await touchWorkspace(payload.workingDirectory).catch(() => undefined);
+    return instances.registerWorker(payload);
+  });
+
+  app.post("/api/workers/:workerId/heartbeat", async (request, reply) => {
+    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+    const payload = workerRegistrationSchema.partial().parse(request.body ?? {});
+    const result = instances.heartbeatWorker(params.workerId, payload);
+    if (!result.ok) reply.code(404);
+    return result;
+  });
+
+  app.get("/api/workers/:workerId/commands", async (request) => {
+    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+    const query = z.object({
+      after: z.coerce.number().optional(),
+      timeoutMs: z.coerce.number().min(0).max(60000).optional()
+    }).parse(request.query);
+    return instances.waitWorkerCommands(params.workerId, query.after ?? 0, query.timeoutMs ?? 25000);
+  });
+
+  app.post("/api/workers/:workerId/events", async (request, reply) => {
+    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({
+      instanceId: z.string().min(1),
+      commandId: z.string().optional(),
+      heartbeat: z.boolean().optional(),
+      message: z.unknown()
+    }).parse(request.body);
+    try {
+      return instances.applyWorkerEvent(params.workerId, payload);
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 
   app.get("/api/codex-threads", async (request) => {
     const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);

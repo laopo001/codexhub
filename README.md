@@ -28,6 +28,20 @@ TUI：
 pnpm tui -- --cwd /home/laop/projects/codex-proxy
 ```
 
+官方 Codex TUI + codex-proxy worker：
+
+```bash
+pnpm codexp --api http://127.0.0.1:18788 connect -C /home/laop/projects/codex-proxy
+```
+
+`codexp connect` 会在当前机器启动官方 `codex app-server`，向 codex-proxy server 注册一个 worker-backed instance，然后前台启动官方 `codex --remote ...` TUI。Web、Telegram 或 API 对同一个 `instanceId` 发送的 turn 会由 server 转成 worker command，在本机 app-server/cwd 内执行。
+
+如果只想作为远程 worker，不打开 TUI：
+
+```bash
+pnpm codexp --api http://127.0.0.1:18788 connect -C /home/laop/projects/codex-proxy --headless
+```
+
 Telegram bot：
 
 ```bash
