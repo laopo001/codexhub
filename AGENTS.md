@@ -1,23 +1,25 @@
 # codex-proxy 架构约定
 
-## Thread 模型
+## Worker / Thread 模型
 
-1. `threadId` 是 codex-proxy 的产品级运行主键；Web tab、Telegram 当前选择、任务目标和左侧列表都必须指向 `threadId`。
+1. `workerId` 是 Web 主界面的在线运行入口；左侧列表展示当前在线的 `codexp connect` workers，worker 下的 `currentThreadId` 才是右侧正在镜像的 Codex thread。
 2. 不再引入 `instanceId`。旧的 instance 概念已经被删除，新逻辑不得增加 `/api/instances`、`.codexp/instances.yaml` 或 instance 兼容层。
 3. API server 是控制面和事件镜像层，不直接拥有 Codex runtime。Codex runtime 在 `codexp connect` 启动的官方 `codex app-server` worker 里。
-4. `workerId` 标识一条 `codexp connect` 连接；worker 负责执行 `turn`、`stop`、`fork_thread` 命令。
+4. 一次 `codexp connect` 等价于打开一个官方 Codex：一个 PTY TUI、一个 app-server、一个 worker。`workerId` 标识这次 `codexp` 进程，必须每次启动唯一；`workingDirectory` 只是 worker 属性，不是 worker 主键。
 5. `threadId` 来自官方 app-server。新 thread 只能由本地 Codex CLI/TUI 或官方 session 恢复产生，server/Web/TG/task 不主动创建 thread。
-6. Web/TG/task 发送输入时，server 只把命令排到对应 worker，执行结果再按 `threadId` 镜像回 thread 记录。
-7. 非 headless 的 `codexp connect` 必须用 PTY wrapper 启动官方 `codex --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
-8. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
+6. Web/TG/task 发送输入时，server 只把命令排到对应 worker，执行结果再按 `threadId` 镜像回 thread 记录。Web 输入必须跟随选中 worker 的 `currentThreadId`，不能把历史 thread 当成在线入口。
+7. 同一个 `workingDirectory` 可以同时运行多个 `codexp connect`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
+8. 非 headless 的 `codexp connect` 必须用 PTY wrapper 启动官方 `codex --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
+9. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
 
 ## 选择和关闭语义
 
-1. Web 打开 thread、Telegram 切换当前 thread 只是客户端本地选择；server 不维护客户端打开计数。
+1. Web 选择 worker 只是客户端本地选择；server 不维护客户端打开计数。Web 右侧显示该 worker 当前的 `currentThreadId`，TUI 里 `/resume` 切换 thread 后由 app-server event 同步到 Web。
 2. 客户端读取 thread 详情使用 `GET /api/threads/:threadId`，事件订阅使用 `GET /api/threads/:threadId/events?after=...`。
 3. Web 关闭 tab 或 Telegram 切换 thread 只关闭本地 UI/session，不向 server 发送关闭通知。
 4. `DELETE /api/threads/:threadId` 表示管理层面的删除 thread 记录；不要把客户端关闭动作映射成删除。
-5. thread 是否可运行只由对应 workspace 的 `codexp connect` worker online/runnable 状态决定。
+5. Web 左侧只显示在线 worker；worker 正常 unregister 或 heartbeat timeout 后不再出现在主列表。离线 worker 只允许作为诊断数据查看。
+6. thread 是否可运行由绑定 worker 或同目录唯一可用 worker 决定；多个同目录 worker 同时在线时，不要在未绑定 thread 上自动选择。
 
 ## 事件和消息流
 
@@ -26,8 +28,9 @@
 3. Telegram bot 发送消息时也订阅同一个 thread 事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
 4. Web/TG 不各自拼 transcript；thread 详情 `GET /api/threads/:threadId` 返回后端维护的 `records`。
 5. TUI 里创建或恢复的新 thread，由 `codexp connect` 从 app-server event 中发现并注册到 server。
-6. Web/TG/API 输入里的 slash command 不当普通 Codex turn 透传。官方 Codex TUI 的 slash command 是 TUI 本地命令；codex-proxy 只在 server 本地处理明确支持的 `/status`、`/help`、`/model`，其他命令形态返回不支持说明。
-7. Web 里的 `/model` 是 Web 客户端命令：打开 Runtime 选择器，不转发给官方 TUI。Web 正常 turn 必须把当前 Runtime 的 model / reasoning 作为 app-server `turn/start` override 发送；官方 TUI 本地 `/model` 可能只更新 app-server effective config，因此 `codexp connect` 必须通过 `config/read` 轮询同步 Runtime 设置，并兼容 `thread/settings/updated`。
+6. `codexp connect` 的主动 app-server events 可以更新 worker 的 `currentThreadId`；周期性 `thread/read` 快照同步不能更新 `currentThreadId`，否则 Web 会在历史 thread 间跳动。
+7. Web/TG/API 输入里的 slash command 不当普通 Codex turn 透传。官方 Codex TUI 的 slash command 是 TUI 本地命令；codex-proxy 只在 server 本地处理明确支持的 `/status`、`/help`、`/model`，其他命令形态返回不支持说明。
+8. Web 里的 `/model` 是 Web 客户端命令：打开 Runtime 选择器，不转发给官方 TUI。Web 正常 turn 必须把当前 Runtime 的 model / reasoning 作为 app-server `turn/start` override 发送；官方 TUI 本地 `/model` 可能只更新 app-server effective config，因此 `codexp connect` 必须通过 `config/read` 轮询同步 Runtime 设置，并兼容 `thread/settings/updated`。
 
 ## API 约定
 

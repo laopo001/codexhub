@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +12,6 @@ import type { ThreadRunOptions, WorkerCommand } from "../core/threadHub.js";
 type ConnectOptions = {
   server?: string;
   cd?: string;
-  name?: string;
   port?: string;
   headless?: boolean;
   model?: string;
@@ -66,7 +65,6 @@ export const registerConnectCommand = (program: Command) => {
     .description("Connect this folder to a codex-proxy server using the official Codex app-server/TUI")
     .option("--server <url>", "codex-proxy API URL")
     .option("-C, --cd <dir>", "Codex working directory")
-    .option("--name <name>", "worker display name")
     .option("--port <port>", "local Codex app-server websocket port")
     .option("--headless", "do not launch the official Codex TUI")
     .option("-m, --model <model>", "model for remote turns")
@@ -102,13 +100,13 @@ export const registerConnectCommand = (program: Command) => {
       process.once("SIGHUP", onSignal);
 
       try {
-        const workerId = stableWorkerId(cwd);
+        const workerId = createWorkerId();
         const registration = await apiJson<WorkerRegisterResponse>(apiBase, "/api/workers/register", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             workerId,
-            name: options.name ?? os.hostname(),
+            name: workerDisplayName(workerId),
             workingDirectory: cwd,
             appServerUrl,
             pid: process.pid,
@@ -381,7 +379,7 @@ class CodexAppServerBridge {
       const snapshot = JSON.stringify(result);
       if (snapshot !== state.lastSnapshot) {
         state.lastSnapshot = snapshot;
-        await this.forward(threadId, undefined, { result }, { heartbeat: false });
+        await this.forward(threadId, undefined, { result }, { heartbeat: false, current: false });
       }
       state.failures = 0;
     } catch (error) {
@@ -418,7 +416,7 @@ class CodexAppServerBridge {
               effort: settings.modelReasoningEffort ?? null
             }
           }
-        }, { heartbeat: false });
+        }, { heartbeat: false, current: false });
       }));
     } catch (error) {
       console.error(`codexp bridge failed to sync runtime settings: ${errorText(error)}`);
@@ -443,12 +441,12 @@ class CodexAppServerBridge {
     threadId: string,
     commandId: string | undefined,
     message: JsonRecord,
-    options: { heartbeat?: boolean } = {}
+    options: { heartbeat?: boolean; current?: boolean } = {}
   ) {
     await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId, commandId, message, heartbeat: options.heartbeat })
+      body: JSON.stringify({ threadId, commandId, message, heartbeat: options.heartbeat, current: options.current })
     }).catch((error) => {
       console.error(`codexp bridge failed to forward app-server event: ${errorText(error)}`);
     });
@@ -784,10 +782,11 @@ const threadIdForMessage = (message: JsonRecord) => {
         : undefined;
 };
 
-const stableWorkerId = (cwd: string) => {
-  const hash = createHash("sha256").update(`${os.hostname()}\0${cwd}`).digest("hex").slice(0, 16);
-  return `local-${hash}`;
-};
+const createWorkerId = () => `local-${safeWorkerPart(os.hostname())}-${process.pid}-${randomUUID().slice(0, 8)}`;
+
+const workerDisplayName = (workerId: string) => `codexp-${workerId.split("-").at(-1) ?? workerId.slice(-8)}`;
+
+const safeWorkerPart = (value: string) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
 
 const apiJson = async <T = unknown>(apiBase: string, route: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(new URL(route, apiBase), init);

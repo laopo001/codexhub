@@ -367,7 +367,7 @@ const shortId = (id: string) => id.slice(0, 8);
 const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
-  const state = thread.runtime.runnable ? "online" : "offline";
+  const state = thread.runtime.runnable ? "runnable" : "unavailable";
   const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? shortId(thread.runtime.workerId)}` : "";
   return `${state}${worker}`;
 };

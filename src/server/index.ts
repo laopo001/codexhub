@@ -147,10 +147,13 @@ const main = async () => {
     threads: threads.listThreads()
   }));
 
-  app.get("/api/workers", async () => ({
-    ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs()),
-    workers: threads.listWorkers()
-  }));
+  app.get("/api/workers", async (request) => {
+    const query = z.object({ includeOffline: z.string().optional() }).parse(request.query);
+    return {
+      ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs()),
+      workers: threads.listWorkers({ includeOffline: query.includeOffline === "true" })
+    };
+  });
 
   app.post("/api/workers/register", async (request) => {
     const payload = workerRegistrationSchema.parse(request.body);
@@ -188,6 +191,7 @@ const main = async () => {
       threadId: z.string().optional(),
       commandId: z.string().optional(),
       heartbeat: z.boolean().optional(),
+      current: z.boolean().optional(),
       message: z.unknown()
     }).parse(request.body);
     try {

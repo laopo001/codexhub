@@ -34,6 +34,19 @@ type ThreadDetail = ThreadSummary & {
   lastSeq: number;
 };
 
+type WorkerSummary = {
+  workerId: string;
+  name?: string;
+  workingDirectory: string;
+  appServerUrl?: string;
+  online: boolean;
+  lastSeenAt: string;
+  pid?: number;
+  hostname?: string;
+  currentThreadId?: string;
+  currentThread?: ThreadSummary;
+};
+
 type ChatSession = ThreadDetail & {
   input: string;
   imageAttachments: ImageAttachment[];
@@ -44,21 +57,6 @@ type ImageAttachment = {
   file: File;
   name: string;
   previewUrl: string;
-};
-
-type DirectoryListing = {
-  path: string;
-  parent: string | null;
-  children: Array<{ name: string; path: string; hasChildren: boolean }>;
-};
-
-type CodexThreadSummary = {
-  threadId: string;
-  updatedAt: string;
-  firstUserMessage?: string;
-  lastAssistantMessage?: string;
-  messageCount: number;
-  artifactCount: number;
 };
 
 type StreamEvent = {
@@ -122,7 +120,7 @@ type CodexUsageSnapshot = {
   source: "latest" | "thread";
 };
 
-const storageKey = "codex-proxy-ui-state-v3";
+const storageKey = "codex-proxy-ui-state-v4";
 const modelOptions: Array<{ value: ModelSelection; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "gpt-5.5", label: "GPT-5.5" },
@@ -144,17 +142,9 @@ const App = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
-  const [proxyThreads, setProxyThreads] = useState<ThreadSummary[]>([]);
+  const [workers, setWorkers] = useState<WorkerSummary[]>([]);
+  const [activeWorkerId, setActiveWorkerId] = useState("");
   const [initialized, setInitialized] = useState(false);
-  const [folderModalOpen, setFolderModalOpen] = useState(false);
-  const [folderPath, setFolderPath] = useState("");
-  const [lastFolderPath, setLastFolderPath] = useState("");
-  const [folderListing, setFolderListing] = useState<DirectoryListing | null>(null);
-  const [folderError, setFolderError] = useState("");
-  const [threadMode, setThreadMode] = useState(false);
-  const [threads, setThreads] = useState<CodexThreadSummary[]>([]);
-  const [loadingThreads, setLoadingThreads] = useState(false);
-  const [threadMenu, setThreadMenu] = useState<{ threadId: string; x: number; y: number } | null>(null);
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     model: null,
@@ -177,6 +167,10 @@ const App = () => {
     () => sessions.find((session) => session.threadId === activeSessionId),
     [activeSessionId, sessions]
   );
+  const activeWorker = useMemo(
+    () => workers.find((worker) => worker.workerId === activeWorkerId),
+    [activeWorkerId, workers]
+  );
   const detailedViews = useMemo<CodexRecordView[]>(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
@@ -189,8 +183,15 @@ const App = () => {
   const latestViewKey = latestView
     ? `${latestView.id}:${latestView.status ?? ""}:${latestView.text.length}:${latestView.usage ? usageTotal(latestView.usage) : ""}`
     : "";
-  const activeCanSend = Boolean(activeSession && (activeSession.input.trim() || activeSession.imageAttachments.length)) && !activeSession?.running;
-  const activeCanSubmit = Boolean(activeSession?.running || activeCanSend);
+  const activeWorkerThreadId = activeWorker?.currentThreadId ?? "";
+  const activeSessionIsCurrent = Boolean(activeSession && activeWorkerThreadId === activeSession.threadId);
+  const activeCanSend = Boolean(
+    activeSession
+    && activeSessionIsCurrent
+    && activeWorker?.online
+    && (activeSession.input.trim() || activeSession.imageAttachments.length)
+  ) && !activeSession?.running;
+  const activeCanSubmit = Boolean(activeSessionIsCurrent && (activeSession?.running || activeCanSend));
   const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
 
   useEffect(() => {
@@ -204,19 +205,42 @@ const App = () => {
     if (!initialized) return;
     localStorage.setItem(storageKey, JSON.stringify({
       activeWorkspacePath,
-      activeSessionId,
-      lastFolderPath,
+      activeWorkerId,
       selectedModel,
       selectedReasoning,
       messageDisplayMode,
       sidebarCollapsed
     }));
-  }, [activeWorkspacePath, activeSessionId, lastFolderPath, selectedModel, selectedReasoning, messageDisplayMode, sidebarCollapsed, initialized]);
+  }, [activeWorkspacePath, activeWorkerId, selectedModel, selectedReasoning, messageDisplayMode, sidebarCollapsed, initialized]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => void refreshThreads(), 3000);
+    const interval = window.setInterval(() => void refreshWorkers(), 3000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!initialized) return;
+    if (!workers.length) {
+      if (activeWorkerId) setActiveWorkerId("");
+      if (activeSessionId) setActiveSessionId("");
+      return;
+    }
+
+    const worker = activeWorker ?? workers[0];
+    if (!activeWorker) {
+      setActiveWorkerId(worker.workerId);
+      return;
+    }
+
+    setActiveWorkspacePath(worker.workingDirectory);
+    if (!worker.currentThreadId) {
+      if (activeSessionId) setActiveSessionId("");
+      return;
+    }
+    if (activeSessionId !== worker.currentThreadId) {
+      void openThread(worker.currentThreadId).catch(() => setActiveSessionId(""));
+    }
+  }, [activeSessionId, activeWorker, activeWorkerId, initialized, workers]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -254,20 +278,6 @@ const App = () => {
   }, [activeSessionId, activeViews.length, latestViewKey, activeSession?.running]);
 
   useEffect(() => {
-    if (!threadMenu) return undefined;
-    const close = () => setThreadMenu(null);
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    window.addEventListener("click", close);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [threadMenu]);
-
-  useEffect(() => {
     if (!composerMenuOpen) return undefined;
     const close = () => setComposerMenuOpen(false);
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -292,14 +302,18 @@ const App = () => {
   }, [activeSession?.threadId, activeSession?.running]);
 
   const initialize = async () => {
-    const [health, threadData, usageData] = await Promise.all([
+    const [health, workerData, usageData] = await Promise.all([
       apiJson<{ defaultWorkingDirectory?: string } & SystemStatus>("/api/health"),
-      apiJson<{ threads?: ThreadSummary[] }>("/api/threads"),
+      apiJson<{ workers?: WorkerSummary[] }>("/api/workers"),
       apiJson<CodexUsageSnapshot>("/api/codex-usage")
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "/home/laop/projects/codex-proxy";
-    const loadedThreads = Array.isArray(threadData.threads) ? threadData.threads : [];
+    const loadedWorkers = normalizeWorkers(workerData.workers);
     const saved = readStoredUiState();
+    const savedWorker = saved?.activeWorkerId
+      ? loadedWorkers.find((worker) => worker.workerId === saved.activeWorkerId)
+      : undefined;
+    const initialWorker = savedWorker ?? loadedWorkers[0];
 
     setSystemStatus({
       model: health.model,
@@ -308,28 +322,22 @@ const App = () => {
     });
     setCodexUsage(usageData);
     setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
-    setLastFolderPath(saved?.lastFolderPath ?? "");
-    setFolderPath(saved?.lastFolderPath ?? "");
     setSelectedModel(saved?.selectedModel ?? "auto");
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
-    setProxyThreads(loadedThreads);
-    const savedThreadExists = saved?.activeSessionId
-      ? loadedThreads.some((thread) => thread.threadId === saved.activeSessionId)
-      : false;
-    const threadToOpen = savedThreadExists
-      ? saved?.activeSessionId
-      : loadedThreads.length === 1 ? loadedThreads[0]?.threadId : undefined;
-    if (threadToOpen) {
-      await openThread(threadToOpen);
+    setWorkers(loadedWorkers);
+    if (initialWorker) {
+      setActiveWorkerId(initialWorker.workerId);
+      setActiveWorkspacePath(initialWorker.workingDirectory);
+      if (initialWorker.currentThreadId) await openThread(initialWorker.currentThreadId);
     }
     setInitialized(true);
   };
 
-  const refreshThreads = async () => {
-    const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
-    setProxyThreads(Array.isArray(data.threads) ? data.threads : []);
+  const refreshWorkers = async () => {
+    const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
+    setWorkers(normalizeWorkers(data.workers));
   };
 
   const refreshCodexUsage = async (threadId?: string) => {
@@ -337,66 +345,22 @@ const App = () => {
     setCodexUsage(await apiJson<CodexUsageSnapshot>(`/api/codex-usage${query}`));
   };
 
-  const openPicker = async () => {
-    setThreadMode(false);
-    setThreads([]);
-    setFolderModalOpen(true);
-    await loadDirectory(lastFolderPath || undefined);
-  };
-
-  const loadDirectory = async (targetPath?: string) => {
-    setFolderError("");
-    setThreadMode(false);
-    setThreads([]);
-    try {
-      const query = targetPath ? `?${new URLSearchParams({ path: targetPath }).toString()}` : "";
-      const listing = await apiJson<DirectoryListing>(`/api/fs/children${query}`);
-      setFolderListing(listing);
-      setFolderPath(listing.path);
-      setLastFolderPath(listing.path);
-    } catch (error) {
-      setFolderListing(null);
-      if (targetPath) setFolderPath(targetPath);
-      setFolderError(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const showRestorableThreads = async () => {
-    const workingDirectory = folderListing?.path ?? folderPath;
-    setLoadingThreads(true);
-    setThreadMode(true);
-    setFolderError("");
-    try {
-      const params = new URLSearchParams({ workingDirectory });
-      const data = await apiJson<{ threads?: CodexThreadSummary[] }>(`/api/codex-threads?${params.toString()}`);
-      setThreads(Array.isArray(data.threads) ? data.threads : []);
-    } catch (error) {
-      setFolderError(error instanceof Error ? error.message : String(error));
-      setThreads([]);
-    } finally {
-      setLoadingThreads(false);
-    }
-  };
-
-  const restoreThread = async (threadId: string) => {
-    const workingDirectory = folderListing?.path ?? folderPath;
-    const thread = await apiJson<ThreadDetail>("/api/threads/restore", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workingDirectory, threadId, options: selectedRestoreThreadOptions(selectedModel, selectedReasoning) })
-    });
-    setFolderModalOpen(false);
-    await openThread(thread.threadId);
-    await refreshThreads();
-  };
-
   const openThread = async (threadId: string) => {
     const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
     const session: ChatSession = { ...thread, input: "", imageAttachments: [] };
+    closeThreadSubscriptionsExcept(thread.threadId);
     setSessions((current) => [session, ...current.filter((item) => item.threadId !== thread.threadId)]);
     setActiveWorkspacePath(thread.workingDirectory);
     setActiveSessionId(thread.threadId);
     subscribeThread(thread.threadId, thread.lastSeq);
+  };
+
+  const closeThreadSubscriptionsExcept = (threadId: string) => {
+    for (const [subscribedThreadId, source] of eventSources.current) {
+      if (subscribedThreadId === threadId) continue;
+      source.close();
+      eventSources.current.delete(subscribedThreadId);
+    }
   };
 
   const subscribeThread = (threadId: string, after: number) => {
@@ -409,42 +373,13 @@ const App = () => {
         const records = payload.record ? mergeRecord(session.records, payload.record) : session.records;
         return { ...session, ...payload.thread, records };
       }));
-      void refreshThreads();
+      void refreshWorkers();
     };
     source.addEventListener("thread", handle);
     source.addEventListener("record", handle);
     source.addEventListener("message", handle);
     source.addEventListener("done", handle);
     eventSources.current.set(threadId, source);
-  };
-
-  const closeSession = async (threadId: string) => {
-    eventSources.current.get(threadId)?.close();
-    eventSources.current.delete(threadId);
-    setSessions((current) => {
-      const next = current.filter((session) => session.threadId !== threadId);
-      if (activeSessionId !== threadId) return next;
-      const replacement = next[0];
-      setActiveSessionId(replacement?.threadId ?? "");
-      if (replacement) setActiveWorkspacePath(replacement.workingDirectory);
-      return next;
-    });
-    await refreshThreads();
-  };
-
-  const deleteThread = async (threadId: string) => {
-    eventSources.current.get(threadId)?.close();
-    eventSources.current.delete(threadId);
-    await fetch(`/api/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" });
-    setSessions((current) => {
-      const next = current.filter((session) => session.threadId !== threadId);
-      if (activeSessionId !== threadId) return next;
-      const replacement = next[0];
-      setActiveSessionId(replacement?.threadId ?? "");
-      if (replacement) setActiveWorkspacePath(replacement.workingDirectory);
-      return next;
-    });
-    await refreshThreads();
   };
 
   const forkMessage = async (threadId: string, messageId: string) => {
@@ -455,7 +390,7 @@ const App = () => {
         body: JSON.stringify({ messageId })
       });
       await openThread(thread.threadId);
-      await refreshThreads();
+      await refreshWorkers();
     } catch (error) {
       setSessions((current) => current.map((item) => item.threadId === threadId
         ? {
@@ -563,9 +498,14 @@ const App = () => {
     }));
   };
 
-  const openThreadMenu = (event: React.MouseEvent, threadId: string) => {
-    event.preventDefault();
-    setThreadMenu({ threadId, x: event.clientX, y: event.clientY });
+  const selectWorker = async (worker: WorkerSummary) => {
+    setActiveWorkerId(worker.workerId);
+    setActiveWorkspacePath(worker.workingDirectory);
+    if (worker.currentThreadId) {
+      await openThread(worker.currentThreadId);
+    } else {
+      setActiveSessionId("");
+    }
   };
 
   return (
@@ -575,7 +515,7 @@ const App = () => {
           type="button"
           className="sidebarScrim"
           onClick={() => setSidebarCollapsed(true)}
-          aria-label="Hide threads"
+          aria-label="Hide workers"
         />
       ) : null}
       <aside className="sidebar">
@@ -586,61 +526,30 @@ const App = () => {
           </div>
         </div>
 
-        <div className="sidebarActions">
-          <button type="button" onClick={() => void openPicker()}>Open Thread</button>
-        </div>
-
-        <section className="proxyThreads expanded">
-          <h2>Codex Threads</h2>
-          {proxyThreads.length === 0 ? (
-            <div className="proxyThreadEmpty">No active threads</div>
+        <section className="proxyWorkers expanded">
+          <h2>Codex Workers</h2>
+          {workers.length === 0 ? (
+            <div className="proxyWorkerEmpty">No connected codexp</div>
           ) : (
-            <div className="proxyThreadList">
-              {proxyThreads.map((thread) => (
+            <div className="proxyWorkerList">
+              {workers.map((worker) => (
                 <button
                   type="button"
-                  className={`proxyThreadRow ${thread.threadId === activeSessionId ? "active" : ""}`}
-                  key={thread.threadId}
-                  onClick={() => void openThread(thread.threadId)}
-                  onContextMenu={(event) => openThreadMenu(event, thread.threadId)}
+                  className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""}`}
+                  key={worker.workerId}
+                  onClick={() => void selectWorker(worker)}
                 >
-                  <span>{shortId(thread.threadId)}</span>
-                  <strong>{thread.status}</strong>
-                  <code>{thread.title}</code>
-                  <em>{runtimeLabel(thread)} · {thread.workingDirectory}</em>
+                  <span>{worker.name ?? shortId(worker.workerId)}</span>
+                  <strong>{worker.currentThread?.status ?? "idle"}</strong>
+                  <code>{worker.currentThread?.title ?? "No current thread"}</code>
+                  <em>
+                    {worker.currentThreadId ? `thread ${shortId(worker.currentThreadId)}` : "no thread"} · {worker.workingDirectory}
+                  </em>
                 </button>
               ))}
             </div>
           )}
         </section>
-        {threadMenu ? (
-          <div
-            className="threadContextMenu"
-            style={{ left: threadMenu.x, top: threadMenu.y }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                const threadId = threadMenu.threadId;
-                setThreadMenu(null);
-                void closeSession(threadId);
-              }}
-            >
-              Close
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const threadId = threadMenu.threadId;
-                setThreadMenu(null);
-                void deleteThread(threadId);
-              }}
-            >
-              Delete
-            </button>
-          </div>
-        ) : null}
       </aside>
 
       <section className="workspace">
@@ -649,15 +558,19 @@ const App = () => {
             type="button"
             className="sidebarPanelToggle"
             onClick={() => setSidebarCollapsed((current) => !current)}
-            aria-label={sidebarCollapsed ? "Show threads" : "Hide threads"}
-            title={sidebarCollapsed ? "Show threads" : "Hide threads"}
+            aria-label={sidebarCollapsed ? "Show workers" : "Hide workers"}
+            title={sidebarCollapsed ? "Show workers" : "Hide workers"}
           >
-            {sidebarCollapsed ? "Threads" : "Hide"}
+            {sidebarCollapsed ? "Workers" : "Hide"}
           </button>
           <div className="workspaceTitle">
-            <span>{activeSession?.title ?? "No active thread"}</span>
-           
-            <code>{activeSession?.workingDirectory ?? activeWorkspacePath}    {activeSession ? <code className="workspaceThreadId">thread:  {activeSession.threadId}</code> : null}</code>
+            <span>{activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexp"}</span>
+            <code>{activeWorker?.workingDirectory ?? activeWorkspacePath}</code>
+            {activeWorkerThreadId ? (
+              <code className="workspaceThreadId">thread: {activeWorkerThreadId}</code>
+            ) : activeWorker ? (
+              <code className="workspaceThreadId">thread: none</code>
+            ) : null}
           </div>
           <div className="workbar" aria-label="Runtime status">
             <span title={formatContextTitle(codexUsage)}>
@@ -679,7 +592,7 @@ const App = () => {
           </div>
         </header>
 
-        {activeSession ? (
+        {activeWorker && activeSession && activeSessionIsCurrent ? (
           <>
             <Virtuoso
               key={activeSession.threadId}
@@ -798,7 +711,7 @@ const App = () => {
             </form>
           </>
         ) : (
-          <div className="empty">在本地 Codex CLI 开始一个 thread，或从 Codex 对话记录还原。</div>
+          <div className="empty">{activeWorker ? activeWorker.currentThreadId ? "Loading thread" : "No current thread" : "No connected codexp"}</div>
         )}
       </section>
 
@@ -823,78 +736,6 @@ const App = () => {
                 {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
               </select>
             </label>
-          </section>
-        </div>
-      ) : null}
-
-      {folderModalOpen ? (
-        <div className="modalOverlay" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setFolderModalOpen(false);
-        }}>
-          <section className="modal folderModal" role="dialog" aria-modal="true" aria-labelledby="folderTitle">
-            <header className="modalHeader">
-              <div>
-                <h2 id="folderTitle">Open Folder</h2>
-                <p>{folderListing?.path ?? folderPath}</p>
-              </div>
-              <button type="button" className="iconButton" onClick={() => setFolderModalOpen(false)} aria-label="Close">x</button>
-            </header>
-            <form
-              className="folderPathForm"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void loadDirectory(folderPath);
-              }}
-            >
-              <input value={folderPath} onChange={(event) => setFolderPath(event.target.value)} />
-              <button type="submit">Go</button>
-            </form>
-            {folderError ? <div className="threadEmpty">{folderError}</div> : null}
-            <div className="folderModalActions">
-              <button type="button" onClick={() => void showRestorableThreads()} disabled={!folderListing}>
-                Restore Conversation
-              </button>
-            </div>
-            {threadMode ? (
-              <div className="threadList">
-                {loadingThreads ? (
-                  <div className="threadEmpty">Loading conversations...</div>
-                ) : threads.length === 0 ? (
-                  <div className="threadEmpty">No Codex conversations found for this folder.</div>
-                ) : (
-                  threads.map((thread, index) => (
-                    <button
-                      type="button"
-                      className="threadRow"
-                      key={`${thread.threadId}:${thread.updatedAt}:${index}`}
-                      onClick={() => void restoreThread(thread.threadId)}
-                    >
-                      <span className="threadTitle">{thread.firstUserMessage || thread.threadId}</span>
-                      <span className="threadMeta">
-                        {formatDate(thread.updatedAt)} · {thread.messageCount} messages
-                        {thread.artifactCount ? ` · ${thread.artifactCount} files` : ""}
-                      </span>
-                      {thread.lastAssistantMessage ? <span className="threadPreview">{thread.lastAssistantMessage}</span> : null}
-                    </button>
-                  ))
-                )}
-              </div>
-            ) : folderListing ? (
-              <div className="folderBrowser">
-                <div className="folderList">
-                  {folderListing.parent ? (
-                    <button type="button" className="folderRow" onClick={() => void loadDirectory(folderListing.parent ?? undefined)}>
-                      <span>..</span>
-                    </button>
-                  ) : null}
-                  {folderListing.children.map((child) => (
-                    <button type="button" className="folderRow" key={child.path} onClick={() => void loadDirectory(child.path)}>
-                      <span>{child.name}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
           </section>
         </div>
       ) : null}
@@ -1036,20 +877,14 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
 
 const shortId = (id: string) => id.slice(0, 8);
 
-const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
-  const state = thread.runtime.runnable ? "online" : "offline";
-  const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? shortId(thread.runtime.workerId)}` : "";
-  return `${state}${worker}`;
-};
+const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
+  Array.isArray(workers)
+    ? workers.filter((worker) => worker.online)
+    : [];
 
 const selectedThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
   model: model === "auto" ? null : model,
   modelReasoningEffort: reasoning === "auto" ? null : reasoning
-});
-
-const selectedRestoreThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
-  ...(model === "auto" ? {} : { model }),
-  ...(reasoning === "auto" ? {} : { modelReasoningEffort: reasoning })
 });
 
 const isModelCommand = (text: string) => /^\/model\s*$/i.test(text);
@@ -1369,8 +1204,7 @@ const isMessageDisplayMode = (value: unknown): value is MessageDisplayMode =>
 
 const readStoredUiState = (): {
   activeWorkspacePath?: string;
-  activeSessionId?: string;
-  lastFolderPath?: string;
+  activeWorkerId?: string;
   selectedModel?: ModelSelection;
   selectedReasoning?: ReasoningSelection;
   messageDisplayMode?: MessageDisplayMode;
@@ -1381,8 +1215,7 @@ const readStoredUiState = (): {
     if (!parsed || typeof parsed !== "object") return null;
     return {
       activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,
-      activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : undefined,
-      lastFolderPath: typeof parsed.lastFolderPath === "string" ? parsed.lastFolderPath : undefined,
+      activeWorkerId: typeof parsed.activeWorkerId === "string" ? parsed.activeWorkerId : undefined,
       selectedModel: isModelSelection(parsed.selectedModel) ? parsed.selectedModel : undefined,
       selectedReasoning: isReasoningSelection(parsed.selectedReasoning) ? parsed.selectedReasoning : undefined,
       messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)

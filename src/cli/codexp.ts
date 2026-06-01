@@ -111,8 +111,8 @@ async function printThreads(threads: ThreadSummary[]) {
 }
 
 function formatRuntime(thread: ThreadSummary) {
-  if (!thread.runtime) return "offline";
-  const state = thread.runtime.runnable ? "online" : "offline";
+  if (!thread.runtime) return "unavailable";
+  const state = thread.runtime.runnable ? "runnable" : "unavailable";
   const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? thread.runtime.workerId.slice(0, 8)}` : "";
   return `${state}${worker}`;
 }

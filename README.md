@@ -1,8 +1,8 @@
 # codex-proxy
 
-一个 thread-first 的本地 Codex 控制面。当前运行态由 `codexp connect` 启动的官方 `codex app-server` worker 持有，server 负责排队命令和镜像事件。
+一个 worker-first 的本地 Codex 控制面。当前运行态由 `codexp connect` 启动的官方 `codex app-server` worker 持有，server 负责排队命令和镜像事件。一次 `codexp connect` 等价于打开一个官方 Codex：一个 TUI、一个 app-server、一个 worker；同一个目录可以同时运行多个 worker。
 
-- 共享核心：API server 统一镜像 Codex threads，Web/TG/task 按 `threadId` 选择和转发。
+- 共享核心：API server 统一镜像 Codex workers 和 threads，Web 左侧按在线 worker 选择，右侧跟随 worker 当前 `threadId`。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
 - CLI worker：`codexp connect` 复用官方 Codex TUI 和 app-server。
@@ -28,7 +28,7 @@ Dev 使用原 4 位端口：
 pnpm codexp --api http://127.0.0.1:18788 connect -C /home/laop/projects/codex-proxy
 ```
 
-`codexp connect` 会在当前机器启动官方 `codex app-server`，向 codex-proxy server 注册一个 worker，然后用 PTY wrapper 前台运行官方 `codex --remote ...` TUI。Web、Telegram、task 或 API 对同一个 `threadId` 发送的 turn 会由 server 转成 worker command，在本机 app-server/cwd 内执行。非 headless 终端底部会保留一行 `codexp` 状态栏，显示当前 worker、thread 和 server 连接状态。官方 TUI 退出时，`codexp` 会立即 unregister worker；如果 `codexp` 异常消失，server 通过 heartbeat timeout 标记 offline。
+`codexp connect` 会在当前机器启动官方 `codex app-server`，向 codex-proxy server 注册一个本次进程唯一的 worker，然后用 PTY wrapper 前台运行官方 `codex --remote ...` TUI。Web 主列表只展示在线 worker；右侧展示选中 worker 的当前 thread，TUI 里 `/resume` 切换后会随 app-server event 同步。Web、Telegram、task 或 API 对同一个 `threadId` 发送的 turn 会由 server 转成 worker command，在本机 app-server/cwd 内执行。非 headless 终端底部会保留一行 `codexp` 状态栏，显示当前 worker、thread 和 server 连接状态。官方 TUI 退出时，`codexp` 会立即 unregister worker；如果 `codexp` 异常消失，server 通过 heartbeat timeout 标记 offline，Web 左侧不再显示该 worker。
 
 PTY 支持依赖 `node-pty` native build，仓库的 `pnpm-workspace.yaml` 已允许该依赖运行 build script。
 

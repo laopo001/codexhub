@@ -62,6 +62,8 @@ export type WorkerSummary = {
   lastSeenAt: string;
   pid?: number;
   hostname?: string;
+  currentThreadId?: string;
+  currentThread?: ThreadSummary;
 };
 
 export type WorkerCommand = {
@@ -80,6 +82,7 @@ export type WorkerEventInput = {
   threadId?: string;
   commandId?: string;
   heartbeat?: boolean;
+  current?: boolean;
   message: unknown;
 };
 
@@ -150,12 +153,12 @@ export class ThreadHub {
     };
     this.workers.set(workerId, worker);
     for (const thread of this.threads.values()) {
-      if (thread.workerId === workerId || (!thread.workerId && thread.workingDirectory === worker.workingDirectory)) {
+      if (thread.workerId === workerId) {
         thread.workerId = workerId;
         this.publish(thread, "thread");
       }
     }
-    return { workerId, worker: workerSummary(worker) };
+    return { workerId, worker: this.workerSummary(worker) };
   }
 
   heartbeatWorker(workerId: string, registration: Partial<WorkerRegistration> = {}) {
@@ -194,8 +197,10 @@ export class ThreadHub {
     return { offline };
   }
 
-  listWorkers(): WorkerSummary[] {
-    return [...this.workers.values()].map(workerSummary);
+  listWorkers(options: { includeOffline?: boolean } = {}): WorkerSummary[] {
+    return [...this.workers.values()]
+      .filter((worker) => options.includeOffline || worker.online)
+      .map((worker) => this.workerSummary(worker));
   }
 
   async waitWorkerCommands(workerId: string, after: number, timeoutMs = 25000) {
@@ -235,7 +240,7 @@ export class ThreadHub {
       return { ok: true };
     }
 
-    const thread = threadId ? this.ensureThread(threadId, worker, message) : null;
+    const thread = threadId ? this.ensureThread(threadId, worker, message, input.current !== false) : null;
     if (thread) this.applyAppServerMessage(thread, message);
 
     if (input.commandId) this.resolveCommandFromMessage(input.commandId, thread);
@@ -258,7 +263,7 @@ export class ThreadHub {
     title = threadId,
     options: ThreadOptions = {}
   ): ThreadDetail {
-    const worker = this.workerForWorkspace(workingDirectory);
+    const worker = this.uniqueOnlineWorkerForWorkspace(workingDirectory);
     const now = new Date().toISOString();
     const thread: RuntimeThread = {
       threadId,
@@ -275,6 +280,7 @@ export class ThreadHub {
       lastUsage: latestUsage(records),
       seq: 0
     };
+    if (worker) this.markWorkerCurrentThread(worker, thread);
     this.threads.set(thread.threadId, thread);
     this.publish(thread, "thread");
     return this.detail(thread);
@@ -283,6 +289,7 @@ export class ThreadHub {
   async forkThread(threadId: string, _recordId?: string): Promise<ThreadDetail> {
     const source = this.requireThread(threadId);
     const worker = this.requireThreadWorker(source);
+    this.markWorkerCurrentThread(worker, source);
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId);
     this.enqueueWorkerCommand(worker.workerId, {
@@ -300,6 +307,9 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     thread.running = false;
     this.threads.delete(threadId);
+    for (const worker of this.workers.values()) {
+      if (worker.currentThreadId === threadId) delete worker.currentThreadId;
+    }
     this.publish(thread, "done");
     return { deleted: true };
   }
@@ -308,6 +318,7 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     if (!thread.running) return { stopped: false };
     const worker = this.requireThreadWorker(thread);
+    this.markWorkerCurrentThread(worker, thread);
     this.enqueueWorkerCommand(worker.workerId, {
       commandId: randomUUID(),
       type: "stop",
@@ -324,6 +335,8 @@ export class ThreadHub {
     if (!command) return { handled: false };
 
     const thread = this.requireThread(threadId);
+    const worker = thread.workerId ? this.workers.get(thread.workerId) : null;
+    if (worker?.online) this.markWorkerCurrentThread(worker, thread);
     this.appendUserInputRecord(thread, input);
     this.appendRuntimeRecord(thread, "event_msg", {
       type: "agent_message",
@@ -337,6 +350,7 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     if (thread.running) throw new Error(`Thread is already running: ${threadId}`);
     const worker = this.requireThreadWorker(thread);
+    this.markWorkerCurrentThread(worker, thread);
     const commandOptions = options ? { ...options } : { ...thread.threadOptions };
     if (options) thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
     const commandId = randomUUID();
@@ -375,26 +389,39 @@ export class ThreadHub {
     return worker;
   }
 
+  private markWorkerCurrentThread(worker: RuntimeWorker, thread: RuntimeThread) {
+    worker.currentThreadId = thread.threadId;
+  }
+
   private requireThread(threadId: string) {
     const thread = this.threads.get(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     return thread;
   }
 
-  private workerForWorkspace(workingDirectory: string) {
+  private onlineWorkersForWorkspace(workingDirectory: string) {
     return [...this.workers.values()]
       .filter((worker) => worker.online && worker.workingDirectory === workingDirectory)
-      .sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt))[0] ?? null;
+      .sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt));
+  }
+
+  private uniqueOnlineWorkerForWorkspace(workingDirectory: string) {
+    const workers = this.onlineWorkersForWorkspace(workingDirectory);
+    return workers.length === 1 ? workers[0] : null;
   }
 
   private requireThreadWorker(thread: RuntimeThread) {
     const current = thread.workerId ? this.workers.get(thread.workerId) : null;
     if (current?.online) return current;
-    const replacement = this.workerForWorkspace(thread.workingDirectory);
+    const workers = this.onlineWorkersForWorkspace(thread.workingDirectory);
+    const replacement = workers.length === 1 ? workers[0] : null;
     if (replacement) {
       thread.workerId = replacement.workerId;
       this.publish(thread, "thread");
       return replacement;
+    }
+    if (workers.length > 1) {
+      throw new Error(`Multiple online workers for workspace. Resume this thread in one codexp instance before sending: ${thread.threadId}`);
     }
     throw new Error(`No online worker for thread: ${thread.threadId}`);
   }
@@ -485,14 +512,14 @@ export class ThreadHub {
     for (const command of worker.commands) this.rejectCommand(command.commandId, error);
   }
 
-  private ensureThread(threadId: string, worker: RuntimeWorker, message: Record<string, unknown>) {
+  private ensureThread(threadId: string, worker: RuntimeWorker, message: Record<string, unknown>, markCurrent = true) {
     const existing = this.threads.get(threadId);
     if (existing) {
-      const current = existing.workerId ? this.workers.get(existing.workerId) : null;
-      if (!current?.online) {
+      if (existing.workerId !== worker.workerId) {
         existing.workerId = worker.workerId;
         this.publish(existing, "thread");
       }
+      if (markCurrent) this.markWorkerCurrentThread(worker, existing);
       return existing;
     }
 
@@ -517,6 +544,7 @@ export class ThreadHub {
       seq: 0
     };
     this.threads.set(thread.threadId, thread);
+    if (markCurrent) this.markWorkerCurrentThread(worker, thread);
     this.publish(thread, "thread");
     return thread;
   }
@@ -848,10 +876,26 @@ export class ThreadHub {
     };
   }
 
+  private workerSummary(worker: RuntimeWorker): WorkerSummary {
+    const currentThread = worker.currentThreadId ? this.threads.get(worker.currentThreadId) : undefined;
+    return {
+      workerId: worker.workerId,
+      name: worker.name,
+      workingDirectory: worker.workingDirectory,
+      appServerUrl: worker.appServerUrl,
+      online: worker.online,
+      lastSeenAt: worker.lastSeenAt,
+      pid: worker.pid,
+      hostname: worker.hostname,
+      currentThreadId: currentThread?.threadId ?? worker.currentThreadId,
+      currentThread: currentThread ? this.summary(currentThread) : undefined
+    };
+  }
+
   private runtimeSummary(thread: RuntimeThread): ThreadRuntimeSummary {
     const worker = thread.workerId ? this.workers.get(thread.workerId) : null;
     if (worker?.online) return workerRuntimeSummary(worker);
-    const replacement = this.workerForWorkspace(thread.workingDirectory);
+    const replacement = this.uniqueOnlineWorkerForWorkspace(thread.workingDirectory);
     if (replacement) return workerRuntimeSummary(replacement);
     if (worker) return workerRuntimeSummary(worker);
     return { online: false, runnable: false };
@@ -869,17 +913,6 @@ export class ThreadHub {
     ].join("\n");
   }
 }
-
-const workerSummary = (worker: RuntimeWorker): WorkerSummary => ({
-  workerId: worker.workerId,
-  name: worker.name,
-  workingDirectory: worker.workingDirectory,
-  appServerUrl: worker.appServerUrl,
-  online: worker.online,
-  lastSeenAt: worker.lastSeenAt,
-  pid: worker.pid,
-  hostname: worker.hostname
-});
 
 const workerRuntimeSummary = (worker: RuntimeWorker): ThreadRuntimeSummary => ({
   workerId: worker.workerId,
