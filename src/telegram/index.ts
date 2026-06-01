@@ -1,4 +1,6 @@
 import { Telegraf } from "telegraf";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CodexRecord } from "../core/codexRecord.js";
 import { recordToView, type CodexRecordView } from "../core/codexRecordView.js";
 import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../shared/compactRecordViews.js";
@@ -51,20 +53,23 @@ type ChatState = {
   threadId?: string;
 };
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
-if (!token) {
-  console.error("TELEGRAM_BOT_TOKEN is required");
-  process.exit(1);
-}
+export type TelegramBotOptions = {
+  token: string;
+  apiBaseUrl?: string;
+  allowedChatIds?: Set<number>;
+  logger?: Pick<Console, "error" | "log">;
+};
 
-const apiBaseUrl = process.env.CODEX_PROXY_API_URL ?? "http://127.0.0.1:8788";
-const allowedChatIds = new Set(
-  (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? "")
-    .split(",")
-    .map((value) => Number(value.trim()))
-    .filter(Number.isFinite)
-);
-const bot = new Telegraf(token);
+export type TelegramBotHandle = {
+  apiBaseUrl: string;
+  stop: (reason?: string) => void;
+};
+
+let bot: Telegraf;
+let apiBaseUrl = "http://127.0.0.1:8788";
+let allowedChatIds = new Set<number>();
+let logger: Pick<Console, "error" | "log"> = console;
+let startedBot: TelegramBotHandle | null = null;
 const chatStates = new Map<number, ChatState>();
 
 const botCommands = [
@@ -74,6 +79,7 @@ const botCommands = [
   { command: "stop", description: "stop the current turn" }
 ];
 
+const registerHandlers = () => {
 bot.use(async (ctx, next) => {
   const chatId = ctx.chat?.id;
   if (allowedChatIds.size && chatId !== undefined && !allowedChatIds.has(chatId)) {
@@ -195,6 +201,7 @@ bot.on("document", async (ctx) => {
   const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
   runPromptInBackground(ctx, prompt, [{ fileId: document.file_id, filename: document.file_name ?? `${document.file_id}.png` }]);
 });
+};
 
 const runPromptInBackground = (
   ctx: any,
@@ -202,7 +209,7 @@ const runPromptInBackground = (
   images: Array<{ fileId: string; filename: string }>
 ) => {
   void runPrompt(ctx, prompt, images).catch((error) => {
-    console.error("Unhandled background runPrompt error", error);
+    logger.error("Unhandled background runPrompt error", error);
   });
 };
 
@@ -416,9 +423,75 @@ const clampTelegram = (text: string) => {
   return `${text.slice(0, 3900)}\n\n[truncated]`;
 };
 
-await bot.telegram.setMyCommands(botCommands);
-await bot.launch();
-console.log(`codex-proxy telegram bot started, api=${apiBaseUrl}`);
+export const parseAllowedChatIds = (value: string | undefined) => new Set(
+  (value ?? "")
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter(Number.isFinite)
+);
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+export const startTelegramBot = async (options: TelegramBotOptions): Promise<TelegramBotHandle> => {
+  if (startedBot) return startedBot;
+  const currentBot = new Telegraf(options.token);
+  bot = currentBot;
+  apiBaseUrl = options.apiBaseUrl ?? "http://127.0.0.1:8788";
+  allowedChatIds = options.allowedChatIds ?? new Set<number>();
+  logger = options.logger ?? console;
+  chatStates.clear();
+  registerHandlers();
+
+  await bot.telegram.setMyCommands(botCommands);
+  startedBot = {
+    apiBaseUrl,
+    stop: (reason = "shutdown") => {
+      currentBot.stop(reason);
+      if (bot === currentBot) startedBot = null;
+    }
+  };
+  void currentBot.launch()
+    .then(() => {
+      if (bot === currentBot) startedBot = null;
+    })
+    .catch((error: unknown) => {
+      if (bot === currentBot) startedBot = null;
+      logger.error("codex-proxy telegram bot stopped", error);
+    });
+  logger.log(`codex-proxy telegram bot started, api=${apiBaseUrl}`);
+  return startedBot;
+};
+
+const boolFromEnv = (value: string | undefined, fallback: boolean) => {
+  if (value == null || value === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+};
+
+export const startTelegramBotFromEnv = async (options: {
+  apiBaseUrl?: string;
+  requireToken?: boolean;
+  logger?: Pick<Console, "error" | "log">;
+} = {}): Promise<TelegramBotHandle | null> => {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const enabled = boolFromEnv(process.env.CODEX_PROXY_TELEGRAM_ENABLED, options.requireToken ? true : Boolean(token));
+  if (!enabled) return null;
+  if (!token) {
+    if (options.requireToken) throw new Error("TELEGRAM_BOT_TOKEN is required");
+    return null;
+  }
+  return startTelegramBot({
+    token,
+    apiBaseUrl: process.env.CODEX_PROXY_API_URL ?? options.apiBaseUrl,
+    allowedChatIds: parseAllowedChatIds(process.env.TELEGRAM_ALLOWED_CHAT_IDS),
+    logger: options.logger
+  });
+};
+
+const isCliEntrypoint = () => {
+  const entrypoint = process.argv[1];
+  return Boolean(entrypoint && path.resolve(entrypoint) === fileURLToPath(import.meta.url));
+};
+
+if (isCliEntrypoint()) {
+  const handle = await startTelegramBotFromEnv({ requireToken: true });
+  process.once("SIGINT", () => handle?.stop("SIGINT"));
+  process.once("SIGTERM", () => handle?.stop("SIGTERM"));
+}

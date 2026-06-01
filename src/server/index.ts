@@ -13,6 +13,7 @@ import { listLoadableCodexThreads, loadCodexThread } from "../core/codexpLog.js"
 import { TaskScheduler } from "../core/taskScheduler.js";
 import { ThreadHub } from "../core/threadHub.js";
 import { addWorkspace, listDirectoryChildren, listWorkspaces, touchWorkspace } from "../core/workspaceState.js";
+import { startTelegramBotFromEnv, type TelegramBotHandle } from "../telegram/index.js";
 
 const inputSchema = z.union([
   z.string(),
@@ -67,6 +68,10 @@ const staticRoot = () => boolFromEnv(process.env.CODEX_PROXY_SERVE_STATIC, false
   : null;
 const workerOfflineTimeoutMs = () => Number(process.env.CODEX_PROXY_WORKER_OFFLINE_TIMEOUT_MS || 0) || 45_000;
 const workerSweepIntervalMs = () => Number(process.env.CODEX_PROXY_WORKER_SWEEP_INTERVAL_MS || 0) || 5_000;
+const localApiBaseUrl = (host: string, port: number) => {
+  const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  return `http://${apiHost}:${port}`;
+};
 const uploadImageSchema = z.object({
   workingDirectory: z.string().min(1),
   filename: z.string().optional(),
@@ -81,12 +86,17 @@ const main = async () => {
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot();
   const taskScheduler = new TaskScheduler(threads, defaultWorkingDirectory);
+  let telegramBot: TelegramBotHandle | null = null;
   const workerSweep = setInterval(() => {
     threads.markStaleWorkersOffline(workerOfflineTimeoutMs());
   }, workerSweepIntervalMs());
   workerSweep.unref?.();
 
   taskScheduler.start();
+  app.addHook("onClose", async () => {
+    clearInterval(workerSweep);
+    telegramBot?.stop("server closing");
+  });
   await app.register(cors, { origin: true });
 
   app.get("/api/health", async () => ({
@@ -99,7 +109,10 @@ const main = async () => {
     defaultWorkingDirectory,
     model: config.defaultThreadOptions.model ?? null,
     modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
-    contextWindowTokens
+    contextWindowTokens,
+    telegram: {
+      started: Boolean(telegramBot)
+    }
   }));
 
   app.get("/api/workspaces", async () => ({
@@ -316,6 +329,9 @@ const main = async () => {
   if (staticDirectory) registerStaticRoutes(app, staticDirectory);
 
   await app.listen({ host: config.host, port: config.port });
+  telegramBot = await startTelegramBotFromEnv({
+    apiBaseUrl: localApiBaseUrl(config.host, config.port)
+  });
 };
 
 const registerStaticRoutes = (app: FastifyInstance, root: string) => {

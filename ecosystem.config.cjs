@@ -17,17 +17,6 @@ module.exports = {
       }
     },
     {
-      name: "codex-proxy-tg",
-      cwd: __dirname,
-      script: "node",
-      args: ["--env-file", envFile, "--import", "tsx", "src/telegram/index.ts"],
-      autorestart: true,
-      max_restarts: 10,
-      env: {
-        CODEX_PROXY_API_URL: "http://127.0.0.1:18788"
-      }
-    },
-    {
       name: "codex-proxy-next",
       cwd: __dirname,
       script: "node",
@@ -37,7 +26,8 @@ module.exports = {
         CODEX_PROXY_ENV: "next",
         CODEX_PROXY_PORT: nextPort,
         CODEX_PROXY_SERVE_STATIC: "true",
-        CODEX_PROXY_STATIC_DIR: "dist"
+        CODEX_PROXY_STATIC_DIR: "dist",
+        CODEX_PROXY_TELEGRAM_ENABLED: "false"
       }
     }
   ]

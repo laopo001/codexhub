@@ -25,7 +25,7 @@
 
 1. `ThreadHub` 负责把 app-server events/read snapshots 转成统一 thread records 和 SSE events。
 2. Web 通过 `GET /api/threads/:threadId/events?after=...` 订阅 thread 事件。
-3. Telegram bot 发送消息时也订阅同一个 thread 事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
+3. Telegram bot 由 API server 进程按环境变量内置启动，发送消息时也订阅同一个 thread 事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
 4. Web/TG 不各自拼 transcript；thread 详情 `GET /api/threads/:threadId` 返回后端维护的 `records`。
 5. TUI 里创建或恢复的新 thread，由 `codexp connect` 从 app-server event 中发现并注册到 server。
 6. `codexp connect` 的主动 app-server events 可以更新 worker 的 `currentThreadId`；周期性 `thread/read` 快照同步不能更新 `currentThreadId`，否则 Web 会在历史 thread 间跳动。
@@ -73,8 +73,8 @@ input: |
 
 1. Dev 继续使用原 4 位端口：Web `5173`，API `8788`。
 2. Prod 使用 5 位 `1xxxx` 端口：主入口 `18788`，发布健康检查临时端口 `18790`。
-3. Prod 由 PM2 管理长期进程：`codex-proxy-prod` 和 `codex-proxy-tg`。
+3. Prod 由 PM2 管理长期进程：`codex-proxy-prod`。Telegram bot 内置在该 server 进程中，有 `TELEGRAM_BOT_TOKEN` 时自动启动。
 4. 生产 Web 不跑 Vite；API server 在 `CODEX_PROXY_SERVE_STATIC=true` 时直接服务 `dist`。
-5. Telegram bot 只连接 Prod API：`http://127.0.0.1:18788`。
+5. `codex-proxy-next` 发布健康检查进程必须设置 `CODEX_PROXY_TELEGRAM_ENABLED=false`，避免和生产 bot 使用同一个 Telegram token。
 6. 发布使用 `pnpm publish:prod`，脚本必须先 `pnpm check`、`pnpm build`，再用 `codex-proxy-next` 在 `18790` 验证 `/api/health` 和 `/`，通过后才重启 Prod。
 7. 不要让本地 Dev 进程替换 PM2 Prod；开发验证和生产发布必须分开。

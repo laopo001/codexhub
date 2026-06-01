@@ -39,16 +39,12 @@ curl -fsS "${NEXT_URL}/" >/tmp/codex-proxy-next-index.html
 cleanup_next
 trap - EXIT
 
+pm2 delete codex-proxy-tg >/dev/null 2>&1 || true
+
 if pm2 describe codex-proxy-prod >/dev/null 2>&1; then
   CODEX_PROXY_ENV_FILE="$ENV_FILE" pm2 restart codex-proxy-prod --update-env
 else
   CODEX_PROXY_ENV_FILE="$ENV_FILE" pm2 start ecosystem.config.cjs --only codex-proxy-prod --update-env
-fi
-
-if pm2 describe codex-proxy-tg >/dev/null 2>&1; then
-  CODEX_PROXY_ENV_FILE="$ENV_FILE" pm2 restart codex-proxy-tg --update-env
-else
-  CODEX_PROXY_ENV_FILE="$ENV_FILE" pm2 start ecosystem.config.cjs --only codex-proxy-tg --update-env
 fi
 
 pm2 save
