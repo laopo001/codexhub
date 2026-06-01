@@ -8,7 +8,8 @@
 4. `workerId` 标识一条 `codexp connect` 连接；worker 负责执行 `turn`、`stop`、`fork_thread` 命令。
 5. `threadId` 来自官方 app-server。新 thread 只能由本地 Codex CLI/TUI 或官方 session 恢复产生，server/Web/TG/task 不主动创建 thread。
 6. Web/TG/task 发送输入时，server 只把命令排到对应 worker，执行结果再按 `threadId` 镜像回 thread 记录。
-7. worker 退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。
+7. 非 headless 的 `codexp connect` 必须用 PTY wrapper 启动官方 `codex --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
+8. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
 
 ## Attach 和关闭语义
 

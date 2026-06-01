@@ -28,7 +28,9 @@ Dev 使用原 4 位端口：
 pnpm codexp --api http://127.0.0.1:18788 connect -C /home/laop/projects/codex-proxy
 ```
 
-`codexp connect` 会在当前机器启动官方 `codex app-server`，向 codex-proxy server 注册一个 worker，然后前台启动官方 `codex --remote ...` TUI。Web、Telegram、task 或 API 对同一个 `threadId` 发送的 turn 会由 server 转成 worker command，在本机 app-server/cwd 内执行。
+`codexp connect` 会在当前机器启动官方 `codex app-server`，向 codex-proxy server 注册一个 worker，然后用 PTY wrapper 前台运行官方 `codex --remote ...` TUI。Web、Telegram、task 或 API 对同一个 `threadId` 发送的 turn 会由 server 转成 worker command，在本机 app-server/cwd 内执行。非 headless 终端底部会保留一行 `codexp` 状态栏，显示当前 worker、thread 和 server 连接状态。官方 TUI 退出时，`codexp` 会立即 unregister worker；如果 `codexp` 异常消失，server 通过 heartbeat timeout 标记 offline。
+
+PTY 支持依赖 `node-pty` native build，仓库的 `pnpm-workspace.yaml` 已允许该依赖运行 build script。
 
 如果只想作为远程 worker，不打开 TUI：
 

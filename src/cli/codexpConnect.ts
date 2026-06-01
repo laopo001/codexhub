@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Input } from "@openai/codex-sdk";
 import type { Command } from "commander";
+import { spawn as spawnPty, type IPty } from "node-pty";
 import type { ThreadRunOptions, WorkerCommand } from "../core/threadHub.js";
 
 type ConnectOptions = {
@@ -81,17 +82,24 @@ export const registerConnectCommand = (program: Command) => {
       const appServerUrl = `ws://127.0.0.1:${port}`;
       const appServer = await startCodexAppServer(cwd, appServerUrl, port);
       let bridge: CodexAppServerBridge | null = null;
+      let tui: CodexTuiPty | null = null;
+      let statusBar: CodexpStatusBar | null = null;
       let registeredWorkerId: string | null = null;
+      let cleanedUp = false;
       const cleanup = cleanupOnce(async () => {
+        cleanedUp = true;
+        tui?.kill();
+        statusBar?.stop();
         bridge?.close();
         appServer.kill("SIGTERM");
         if (registeredWorkerId) await unregisterWorker(apiBase, registeredWorkerId);
       });
       const onSignal = (signal: NodeJS.Signals) => {
-        void cleanup().finally(() => process.kill(process.pid, signal));
+        void cleanup().finally(() => process.exit(signalExitCode(signal)));
       };
       process.once("SIGINT", onSignal);
       process.once("SIGTERM", onSignal);
+      process.once("SIGHUP", onSignal);
 
       try {
         const workerId = stableWorkerId(cwd);
@@ -119,13 +127,25 @@ export const registerConnectCommand = (program: Command) => {
           approvalPolicy: options.approvalPolicy ?? "never"
         });
 
+        const bridgeStopped = new Deferred<void>();
         void bridge.runCommandLoop().catch((error) => {
           console.error(`codexp connect command loop failed: ${errorText(error)}`);
           process.exitCode = 1;
+          bridgeStopped.reject(error);
         });
         void bridge.runThreadSyncLoop().catch((error) => {
           console.error(`codexp connect thread sync failed: ${errorText(error)}`);
           process.exitCode = 1;
+          bridgeStopped.reject(error);
+        });
+        void bridge.runHeartbeatLoop().catch((error) => {
+          console.error(`codexp connect heartbeat failed: ${errorText(error)}`);
+          process.exitCode = 1;
+          bridgeStopped.reject(error);
+        });
+        void bridge.waitForClose().then(() => bridgeStopped.resolve());
+        const appServerStopped = waitForChild(appServer).then(({ code, signal }) => {
+          if (!cleanedUp) process.exitCode = code ?? (signal ? 1 : 1);
         });
 
         console.error([
@@ -136,18 +156,20 @@ export const registerConnectCommand = (program: Command) => {
         ].join("\n"));
 
         if (options.headless) {
-          await waitForShutdown();
+          await Promise.race([waitForShutdown(), appServerStopped, bridgeStopped.promise]);
           return;
         }
 
-        const tui = spawn("codex", ["--remote", appServerUrl, "-C", cwd], {
-          cwd,
-          stdio: "inherit"
-        });
-        await waitForChild(tui);
+        statusBar = CodexpStatusBar.start({ apiBase, workerId: registration.workerId, cwd });
+        tui = CodexTuiPty.start(cwd, appServerUrl, statusBar ? {
+          reservedRows: () => statusBar?.reservedRows() ?? 0,
+          onOutput: () => statusBar?.redrawSoon()
+        } : undefined);
+        await Promise.race([tui.waitForExit().then(applyPtyExitCode), appServerStopped, bridgeStopped.promise]);
       } finally {
         process.off("SIGINT", onSignal);
         process.off("SIGTERM", onSignal);
+        process.off("SIGHUP", onSignal);
         await cleanup();
       }
     });
@@ -160,6 +182,7 @@ class CodexAppServerBridge {
   private cursor = 0;
   private closed = false;
   private readonly forwardedRuntimeSettings = new Map<string, string>();
+  private readonly closeSignal = new Deferred<void>();
 
   private constructor(
     private readonly options: BridgeOptions,
@@ -173,6 +196,7 @@ class CodexAppServerBridge {
     ws.addEventListener("error", () => {
       if (!bridge.closed) console.error("codex app-server websocket error");
     });
+    ws.addEventListener("close", () => bridge.markClosed());
     await bridge.request("initialize", {
       clientInfo: { name: "codexp", title: "codex-proxy bridge", version: "0.1.0" },
       capabilities: { experimentalApi: true, requestAttestation: false }
@@ -187,19 +211,27 @@ class CodexAppServerBridge {
         this.options.apiBase,
         `/api/workers/${encodeURIComponent(this.options.workerId)}/commands?${new URLSearchParams({ after: String(this.cursor) })}`
       );
+      if (this.closed) return;
       this.cursor = Math.max(this.cursor, response.cursor);
       for (const command of response.commands) {
         if (this.closed) return;
         await this.handleCommand(command);
         this.cursor = Math.max(this.cursor, command.seq);
       }
+    }
+  }
+
+  async runHeartbeatLoop(intervalMs = 10_000) {
+    while (!this.closed) {
       await this.heartbeat();
+      await delay(intervalMs);
     }
   }
 
   async runThreadSyncLoop() {
     while (!this.closed) {
       await delay(1500);
+      if (this.closed) return;
       const entries = [...this.syncedThreads];
       await this.syncRuntimeSettings(entries.map(([threadId]) => threadId));
       for (const [threadId, state] of entries) {
@@ -210,8 +242,18 @@ class CodexAppServerBridge {
   }
 
   close() {
-    this.closed = true;
+    this.markClosed();
     this.ws.close();
+  }
+
+  waitForClose() {
+    return this.closeSignal.promise;
+  }
+
+  private markClosed() {
+    if (this.closed) return;
+    this.closed = true;
+    this.closeSignal.resolve();
   }
 
   private async handleCommand(command: WorkerCommand) {
@@ -454,6 +496,205 @@ class CodexAppServerBridge {
   }
 }
 
+class CodexTuiPty {
+  private readonly exitSignal = new Deferred<PtyExit>();
+  private readonly disposables: Array<{ dispose: () => void }> = [];
+  private rawModeEnabled = false;
+  private exited = false;
+
+  private constructor(
+    private readonly pty: IPty,
+    private readonly chrome?: PtyChrome
+  ) {}
+
+  static start(cwd: string, appServerUrl: string, chrome?: PtyChrome) {
+    const term = terminalName();
+    const pty = spawnPty("codex", ["--remote", appServerUrl, "-C", cwd], {
+      cwd,
+      name: term,
+      cols: process.stdout.columns ?? 80,
+      rows: terminalRows(chrome?.reservedRows() ?? 0),
+      env: { ...process.env, TERM: term }
+    });
+    const wrapper = new CodexTuiPty(pty, chrome);
+    wrapper.attach();
+    return wrapper;
+  }
+
+  waitForExit() {
+    return this.exitSignal.promise;
+  }
+
+  kill() {
+    this.restoreTerminal();
+    if (!this.exited) {
+      try {
+        this.pty.kill();
+      } catch {
+        // The child may already be gone; cleanup must still unregister the worker.
+      }
+    }
+  }
+
+  private attach() {
+    this.disposables.push(this.pty.onData((data) => {
+      process.stdout.write(data);
+      this.chrome?.onOutput();
+    }));
+    this.disposables.push(this.pty.onExit((event) => {
+      this.exited = true;
+      this.restoreTerminal();
+      this.exitSignal.resolve(event);
+    }));
+
+    const onInput = (data: Buffer) => {
+      this.pty.write(data);
+    };
+    process.stdin.on("data", onInput);
+    this.disposables.push({ dispose: () => process.stdin.off("data", onInput) });
+
+    const onResize = () => {
+      this.resize();
+    };
+    process.stdout.on("resize", onResize);
+    this.disposables.push({ dispose: () => process.stdout.off("resize", onResize) });
+
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+      this.rawModeEnabled = true;
+    }
+    process.stdin.resume();
+    this.resize();
+  }
+
+  private resize() {
+    this.pty.resize(Math.max(process.stdout.columns ?? 80, 2), terminalRows(this.chrome?.reservedRows() ?? 0));
+  }
+
+  private restoreTerminal() {
+    for (const disposable of this.disposables.splice(0)) disposable.dispose();
+    if (this.rawModeEnabled && process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+      this.rawModeEnabled = false;
+    }
+  }
+}
+
+type PtyChrome = {
+  reservedRows: () => number;
+  onOutput: () => void;
+};
+
+type StatusThreadSummary = {
+  workingDirectory: string;
+  running: boolean;
+};
+
+type StatusWorkerSummary = {
+  workerId: string;
+  workingDirectory: string;
+  online: boolean;
+};
+
+class CodexpStatusBar {
+  private readonly disposables: Array<{ dispose: () => void }> = [];
+  private refreshTimer: NodeJS.Timeout | null = null;
+  private redrawTimer: NodeJS.Timeout | null = null;
+  private stopped = false;
+  private text: string;
+
+  private constructor(
+    private readonly options: { apiBase: string; workerId: string; cwd: string }
+  ) {
+    this.text = this.renderText();
+  }
+
+  static start(options: { apiBase: string; workerId: string; cwd: string }) {
+    if (!process.stdout.isTTY) return null;
+    const bar = new CodexpStatusBar(options);
+    bar.attach();
+    return bar;
+  }
+
+  reservedRows() {
+    if (this.stopped || !process.stdout.isTTY) return 0;
+    return (process.stdout.rows ?? 0) >= 5 ? 1 : 0;
+  }
+
+  redrawSoon() {
+    if (this.stopped || !this.reservedRows() || this.redrawTimer) return;
+    this.redrawTimer = globalThis.setTimeout(() => {
+      this.redrawTimer = null;
+      this.draw();
+    }, 25);
+    this.redrawTimer.unref?.();
+  }
+
+  stop() {
+    this.stopped = true;
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.redrawTimer) clearTimeout(this.redrawTimer);
+    this.refreshTimer = null;
+    this.redrawTimer = null;
+    for (const disposable of this.disposables.splice(0)) disposable.dispose();
+    this.clear();
+  }
+
+  private attach() {
+    const onResize = () => this.draw();
+    process.stdout.on("resize", onResize);
+    this.disposables.push({ dispose: () => process.stdout.off("resize", onResize) });
+    this.refreshTimer = setInterval(() => void this.refresh(), 3000);
+    this.refreshTimer.unref?.();
+    void this.refresh();
+    this.draw();
+  }
+
+  private async refresh() {
+    if (this.stopped) return;
+    try {
+      const [threadData, workerData] = await Promise.all([
+        apiJson<{ threads?: StatusThreadSummary[] }>(this.options.apiBase, "/api/threads"),
+        apiJson<{ workers?: StatusWorkerSummary[] }>(this.options.apiBase, "/api/workers")
+      ]);
+      this.text = this.renderText(threadData.threads ?? [], workerData.workers ?? []);
+    } catch {
+      this.text = this.renderText();
+    }
+    this.draw();
+  }
+
+  private renderText(threads: StatusThreadSummary[] = [], workers: StatusWorkerSummary[] = []) {
+    const workspaceThreads = threads.filter((thread) => thread.workingDirectory === this.options.cwd);
+    const runningThreads = workspaceThreads.filter((thread) => thread.running).length;
+    const onlineWorkers = workers.filter((worker) => worker.online).length;
+    const thisWorker = workers.find((worker) => worker.workerId === this.options.workerId);
+    const workerState = thisWorker ? (thisWorker.online ? "online" : "offline") : "connecting";
+    return [
+      `codexp ${this.options.workerId.slice(0, 14)} ${workerState}`,
+      `threads ${workspaceThreads.length}/${threads.length}`,
+      `running ${runningThreads}`,
+      `workers ${onlineWorkers}/${workers.length}`,
+      path.basename(this.options.cwd) || this.options.cwd
+    ].join(" | ");
+  }
+
+  private draw() {
+    if (this.stopped || !this.reservedRows()) return;
+    const rows = process.stdout.rows ?? 0;
+    const cols = process.stdout.columns ?? 0;
+    if (rows < 5 || cols < 10) return;
+    process.stdout.write(`\x1b7\x1b[${rows};1H\x1b[7m${fitStatusText(this.text, cols)}\x1b[0m\x1b[K\x1b8`);
+  }
+
+  private clear() {
+    if (!process.stdout.isTTY) return;
+    const rows = process.stdout.rows ?? 0;
+    if (rows < 1) return;
+    process.stdout.write(`\x1b7\x1b[${rows};1H\x1b[0m\x1b[K\x1b8`);
+  }
+}
+
 const startCodexAppServer = async (cwd: string, appServerUrl: string, port: number) => {
   const child = spawn("codex", ["app-server", "--listen", appServerUrl], {
     cwd,
@@ -573,17 +814,35 @@ const asRecord = (value: unknown): JsonRecord | null => {
   return value as JsonRecord;
 };
 
-const waitForChild = async (child: ChildProcess) => await new Promise<void>((resolve, reject) => {
+type ChildExit = { code: number | null; signal: NodeJS.Signals | null };
+type PtyExit = { exitCode: number; signal?: number };
+
+const waitForChild = async (child: ChildProcess) => await new Promise<ChildExit>((resolve, reject) => {
   child.once("error", reject);
-  child.once("exit", (code, signal) => {
-    if (signal) {
-      process.kill(process.pid, signal);
-      return;
-    }
-    process.exitCode = code ?? 0;
-    resolve();
-  });
+  child.once("exit", (code, signal) => resolve({ code, signal }));
 });
+
+const applyChildExitCode = ({ code, signal }: ChildExit) => {
+  process.exitCode = code ?? (signal ? 1 : 0);
+};
+
+const applyPtyExitCode = ({ exitCode, signal }: PtyExit) => {
+  process.exitCode = exitCode || (signal ? 1 : 0);
+};
+
+const terminalName = () => {
+  const term = process.env.TERM;
+  return term && term !== "dumb" ? term : "xterm-256color";
+};
+
+const terminalRows = (reservedRows: number) =>
+  Math.max((process.stdout.rows ?? 24) - reservedRows, 2);
+
+const fitStatusText = (text: string, columns: number) => {
+  if (columns <= 0) return "";
+  if (text.length >= columns) return text.slice(0, columns);
+  return text.padEnd(columns, " ");
+};
 
 const waitForShutdown = async () => await new Promise<void>((resolve) => {
   process.once("SIGINT", resolve);
@@ -597,6 +856,38 @@ const cleanupOnce = <T>(cleanup: () => T | Promise<T>) => {
     called = true;
     return await cleanup();
   };
+};
+
+class Deferred<T> {
+  readonly promise: Promise<T>;
+  private resolveValue!: (value: T | PromiseLike<T>) => void;
+  private rejectValue!: (error: unknown) => void;
+  private settled = false;
+
+  constructor() {
+    this.promise = new Promise<T>((resolve, reject) => {
+      this.resolveValue = resolve;
+      this.rejectValue = reject;
+    });
+  }
+
+  resolve(value?: T) {
+    if (this.settled) return;
+    this.settled = true;
+    this.resolveValue(value as T);
+  }
+
+  reject(error: unknown) {
+    if (this.settled) return;
+    this.settled = true;
+    this.rejectValue(error);
+  }
+}
+
+const signalExitCode = (signal: NodeJS.Signals) => {
+  const signalNumbers: Partial<Record<NodeJS.Signals, number>> = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 };
+  const signalNumber = signalNumbers[signal] ?? 1;
+  return 128 + signalNumber;
 };
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
