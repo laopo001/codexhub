@@ -4,9 +4,10 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { Input } from "@openai/codex-sdk";
 import type { Command } from "commander";
 import { spawn as spawnPty, type IPty } from "node-pty";
+import { readCodexUsage } from "../core/codexUsage.js";
+import type { ProxyInput } from "../core/proxyInput.js";
 import type { ThreadRunOptions, WorkerCommand } from "../core/threadHub.js";
 
 type ConnectOptions = {
@@ -481,6 +482,14 @@ class CodexAppServerBridge {
   }
 
   private async heartbeat() {
+    const codexUsage = await readCodexUsage().catch(() => undefined);
+    const threadCodexUsage = Object.fromEntries((await Promise.all(
+      [...this.syncedThreads.keys()].map(async (threadId) => {
+        const usage = await readCodexUsage(threadId).catch(() => undefined);
+        return usage ? [threadId, usage] as const : null;
+      })
+    )).filter((item): item is readonly [string, Awaited<ReturnType<typeof readCodexUsage>>] => Boolean(item)));
+
     await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/heartbeat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -488,7 +497,9 @@ class CodexAppServerBridge {
         workingDirectory: this.options.cwd,
         appServerUrl: this.options.appServerUrl,
         pid: process.pid,
-        hostname: os.hostname()
+        hostname: os.hostname(),
+        codexUsage,
+        threadCodexUsage
       })
     }).catch(() => undefined);
   }
@@ -742,11 +753,15 @@ const findFreePort = async () => await new Promise<number>((resolve, reject) => 
   });
 });
 
-const toAppServerInput = (input: Input) => {
+const toAppServerInput = (input: ProxyInput) => {
   if (typeof input === "string") return [{ type: "text", text: input, text_elements: [] }];
   return input.map((item) => {
     if (item.type === "text") return { type: "text", text: item.text, text_elements: [] };
-    return { type: "localImage", path: item.path };
+    return {
+      type: "image",
+      url: item.url,
+      ...(item.detail ? { detail: item.detail } : {})
+    };
   });
 };
 

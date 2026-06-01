@@ -37,15 +37,16 @@
 1. 新功能使用 `/api/threads` 和 `/api/workers` 系列接口。
 2. 不再新增 `/api/instances`、`/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
 3. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events/unregister。worker 主动出站连接 server，不要求 server 反连 worker 机器。
-4. 不提供 `POST /api/threads` 创建入口；server 只能 list/get/delete、restore existing Codex session、turn、stop、fork。
+4. 不提供 `POST /api/threads` 创建入口；server 只能 list/get/delete、turn、stop、fork。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexp connect` 发现并镜像。
+5. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexp` worker/CLI 侧。
 
 ## `.codexp` 工作区文件约定
 
 1. 工作区 Codex session 索引写入 `.codexp/threads.yaml`，顶层使用 `threads` 数组，每项以 `threadId` 作为主键。
 2. 不读取、不写入、不迁移 `.codexp/instances.yaml` 或 `.codexp/index.yaml`。
-3. 工作区任务定义放在 `.codexp/tasks/*.yaml`。
-4. 工作区任务运行日志放在 `.codexp/task-runs/*.jsonl`，每个任务一个文件，每一行是一整次运行的完整记录，便于 `tail` 查看最近几次结果；日志时间使用当前系统时区的 ISO offset 格式，例如 `2026-05-26T22:00:28+08:00`。
-5. `.codexp/tmp/` 只用于上传图片等临时文件，不要混放任务、thread 索引或长期状态。
+3. 工作区任务定义放在 `.codexp/tasks/*.yaml`，由 `codexp` CLI/worker 读取，server 不扫描。
+4. 工作区任务运行日志放在 `.codexp/task-runs/*.jsonl`，由 `codexp` CLI/worker 写入；每个任务一个文件，每一行是一整次运行的完整记录，便于 `tail` 查看最近几次结果；日志时间使用当前系统时区的 ISO offset 格式，例如 `2026-05-26T22:00:28+08:00`。
+5. server 不再把输入图片写入 `.codexp/tmp/`。Web/TG/task 图片输入必须使用 app-server 原生 `{ type: "image", url }` 语义；需要本地临时文件时只能由 `codexp` worker 自己承担。
 
 ## 定时任务约定
 
@@ -67,7 +68,8 @@ input: |
 4. 任务并发边界是 thread：同一个 thread 上的任务串行，不同 thread 可以并行。
 5. 同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
 6. `codexp list` 应显示每个 thread 对应的 enabled task 数量。
-7. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task ls`、`codexp task <thread> ls`、`codexp task template [name]`。
+7. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task ls`、`codexp task <thread> ls`、`codexp task template [name]`、`codexp task run`、`codexp task daemon`。
+8. `codexp task daemon` 是本地任务调度入口：只扫描当前 `--cwd` 工作区的 `.codexp/tasks`，通过远端 `/api/threads/:threadId/turn` 投递，不要求 server 能访问本机文件系统。
 
 ## 自举开发和发布
 

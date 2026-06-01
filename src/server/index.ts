@@ -1,18 +1,11 @@
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance } from "fastify";
-import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, stat, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { loadConfig } from "../core/config.js";
-import { readCodexUsage } from "../core/codexUsage.js";
-import { recordsToViews } from "../core/codexRecordView.js";
-import { listLoadableCodexThreads, loadCodexThread } from "../core/codexpLog.js";
-import { TaskScheduler } from "../core/taskScheduler.js";
 import { ThreadHub } from "../core/threadHub.js";
-import { addWorkspace, listDirectoryChildren, listWorkspaces, touchWorkspace } from "../core/workspaceState.js";
 import { startTelegramBotFromEnv, type TelegramBotHandle } from "../telegram/index.js";
 
 const inputSchema = z.union([
@@ -20,18 +13,49 @@ const inputSchema = z.union([
   z.array(
     z.union([
       z.object({ type: z.literal("text"), text: z.string() }),
-      z.object({ type: z.literal("local_image"), path: z.string() })
+      z.object({
+        type: z.literal("image"),
+        url: z.string().min(1),
+        detail: z.enum(["auto", "low", "high", "original"]).optional()
+      })
     ])
   )
 ]);
 
-const threadOptionsSchema = z.object({
-  model: z.string().min(1).optional(),
-  modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional()
-});
 const threadRunOptionsSchema = z.object({
   model: z.string().min(1).nullable().optional(),
   modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional()
+});
+
+const rateLimitWindowSchema = z.object({
+  used_percent: z.number(),
+  window_minutes: z.number(),
+  resets_at: z.number()
+});
+const tokenUsageSchema = z.object({
+  input_tokens: z.number(),
+  cached_input_tokens: z.number(),
+  output_tokens: z.number(),
+  reasoning_output_tokens: z.number(),
+  total_tokens: z.number()
+});
+const codexUsageSchema = z.object({
+  rateLimits: z.object({
+    limit_id: z.string().nullable().optional(),
+    limit_name: z.string().nullable().optional(),
+    primary: rateLimitWindowSchema.nullable().optional(),
+    secondary: rateLimitWindowSchema.nullable().optional(),
+    plan_type: z.string().nullable().optional(),
+    rate_limit_reached_type: z.string().nullable().optional()
+  }).nullable(),
+  tokenUsage: z.object({
+    totalTokenUsage: tokenUsageSchema.nullable(),
+    lastTokenUsage: tokenUsageSchema.nullable(),
+    modelContextWindow: z.number().nullable()
+  }).nullable(),
+  sourceFile: z.string().nullable(),
+  observedAt: z.string().nullable(),
+  source: z.enum(["latest", "thread"])
 });
 
 const workerRegistrationSchema = z.object({
@@ -40,7 +64,9 @@ const workerRegistrationSchema = z.object({
   workingDirectory: z.string().min(1),
   appServerUrl: z.string().min(1).optional(),
   pid: z.number().int().optional(),
-  hostname: z.string().min(1).optional()
+  hostname: z.string().min(1).optional(),
+  codexUsage: codexUsageSchema.optional(),
+  threadCodexUsage: z.record(z.string(), codexUsageSchema).optional()
 });
 
 const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
@@ -48,17 +74,6 @@ const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`data: ${JSON.stringify(data)}\n\n`);
 };
 
-const stripDataUrl = (value: string) => {
-  const commaIndex = value.indexOf(",");
-  return value.startsWith("data:") && commaIndex !== -1 ? value.slice(commaIndex + 1) : value;
-};
-
-const imageExtension = (filename?: string) => {
-  const extension = path.extname(filename ?? "").toLowerCase();
-  return [".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension) ? extension : ".png";
-};
-
-const codexpTmpDirectory = (workingDirectory: string) => path.join(path.resolve(workingDirectory), ".codexp", "tmp");
 const boolFromEnv = (value: string | undefined, fallback: boolean) => {
   if (value == null || value === "") return fallback;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
@@ -72,27 +87,18 @@ const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
 };
-const uploadImageSchema = z.object({
-  workingDirectory: z.string().min(1),
-  filename: z.string().optional(),
-  contentBase64: z.string().min(1)
-});
-
 const main = async () => {
   const config = loadConfig();
   const threads = new ThreadHub(config.defaultThreadOptions);
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
-  const defaultWorkingDirectory = config.defaultThreadOptions.workingDirectory ?? process.cwd();
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot();
-  const taskScheduler = new TaskScheduler(threads, defaultWorkingDirectory);
   let telegramBot: TelegramBotHandle | null = null;
   const workerSweep = setInterval(() => {
     threads.markStaleWorkersOffline(workerOfflineTimeoutMs());
   }, workerSweepIntervalMs());
   workerSweep.unref?.();
 
-  taskScheduler.start();
   app.addHook("onClose", async () => {
     clearInterval(workerSweep);
     telegramBot?.stop("server closing");
@@ -106,7 +112,6 @@ const main = async () => {
     host: config.host,
     port: config.port,
     staticDirectory,
-    defaultWorkingDirectory,
     model: config.defaultThreadOptions.model ?? null,
     modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
     contextWindowTokens,
@@ -115,44 +120,9 @@ const main = async () => {
     }
   }));
 
-  app.get("/api/workspaces", async () => ({
-    workspaces: await listWorkspaces(defaultWorkingDirectory)
-  }));
-
   app.get("/api/codex-usage", async (request) => {
     const query = z.object({ threadId: z.string().optional() }).parse(request.query);
-    return readCodexUsage(query.threadId);
-  });
-
-  app.post("/api/workspaces", async (request) => {
-    const payload = z.object({ path: z.string().min(1) }).parse(request.body);
-    return {
-      workspaces: await addWorkspace(payload.path)
-    };
-  });
-
-  app.get("/api/fs/children", async (request) => {
-    const query = z.object({ path: z.string().optional() }).parse(request.query);
-    return listDirectoryChildren(query.path ?? os.homedir());
-  });
-
-  app.post("/api/uploads/images", async (request) => {
-    const payload = uploadImageSchema.parse(request.body);
-    const directory = codexpTmpDirectory(payload.workingDirectory);
-    await mkdir(directory, { recursive: true });
-    const filePath = path.join(directory, `${Date.now()}-${randomUUID()}${imageExtension(payload.filename)}`);
-    await writeFile(filePath, Buffer.from(stripDataUrl(payload.contentBase64), "base64"));
-    return { path: filePath };
-  });
-
-  app.get("/api/uploads/images", async (request, reply) => {
-    const query = z.object({ path: z.string().min(1) }).parse(request.query);
-    const filePath = path.resolve(query.path);
-    if (!filePath.includes(`${path.sep}.codexp${path.sep}tmp${path.sep}`)) {
-      reply.code(403);
-      return { error: "forbidden_path" };
-    }
-    return reply.send(createReadStream(filePath));
+    return threads.getCodexUsage(query.threadId);
   });
 
   app.get("/api/threads", async () => ({
@@ -170,7 +140,6 @@ const main = async () => {
 
   app.post("/api/workers/register", async (request) => {
     const payload = workerRegistrationSchema.parse(request.body);
-    await touchWorkspace(payload.workingDirectory).catch(() => undefined);
     return threads.registerWorker(payload);
   });
 
@@ -213,34 +182,6 @@ const main = async () => {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
     }
-  });
-
-  app.get("/api/codex-threads", async (request) => {
-    const query = z.object({ workingDirectory: z.string().optional() }).parse(request.query);
-    const workingDirectory = query.workingDirectory ?? defaultWorkingDirectory;
-    await touchWorkspace(workingDirectory);
-    return {
-      workingDirectory,
-      threads: await listLoadableCodexThreads(workingDirectory)
-    };
-  });
-
-  app.post("/api/threads/restore", async (request, reply) => {
-    const payload = z.object({
-      workingDirectory: z.string().min(1),
-      threadId: z.string().min(1),
-      options: threadOptionsSchema.optional()
-    }).parse(request.body);
-    await touchWorkspace(payload.workingDirectory);
-
-    const thread = await loadCodexThread(payload.threadId, payload.workingDirectory);
-    if (!thread) {
-      reply.code(404);
-      return { error: "thread_not_found" };
-    }
-
-    const title = recordsToViews(thread.records).find((message) => message.role === "user")?.text.slice(0, 80) || payload.threadId;
-    return threads.restoreThread(payload.workingDirectory, payload.threadId, thread.records, title, payload.options ?? {});
   });
 
   app.get("/api/threads/:threadId", async (request, reply) => {

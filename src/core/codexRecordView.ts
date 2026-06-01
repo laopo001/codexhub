@@ -14,7 +14,7 @@ export type CodexRecordView = {
   label: string;
   text: string;
   at?: string;
-  attachments?: Array<{ type: "image"; path: string }>;
+  attachments?: Array<{ type: "image"; url: string }>;
   usage?: RecordUsage;
   status?: "pending" | "completed" | "failed";
   canFork?: boolean;
@@ -58,7 +58,7 @@ export const recordToView = (record: CodexRecord): CodexRecordView | null => {
 
 const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
   if (payload.type === "user_message") {
-    const attachments = localImageAttachments(payload);
+    const attachments = imageAttachments(payload);
     const text = typeof payload.message === "string" ? payload.message : "";
     return {
       id: record.id,
@@ -252,11 +252,11 @@ const tokenUsageFromRecord = (record: CodexRecord): RecordUsage | null => {
   };
 };
 
-const localImageAttachments = (payload: Record<string, unknown>): Array<{ type: "image"; path: string }> => {
-  if (!Array.isArray(payload.local_images)) return [];
-  return payload.local_images
-    .filter((path): path is string => typeof path === "string" && path.trim().length > 0)
-    .map((path) => ({ type: "image", path }));
+const imageAttachments = (payload: Record<string, unknown>): Array<{ type: "image"; url: string }> => {
+  if (!Array.isArray(payload.images)) return [];
+  return payload.images
+    .filter((url): url is string => typeof url === "string" && url.trim().length > 0)
+    .map((url) => ({ type: "image", url }));
 };
 
 const reasoningText = (payload: Record<string, unknown>): string | null => {

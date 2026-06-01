@@ -1,35 +1,26 @@
 import { Command } from "commander";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import YAML from "yaml";
 import { registerConnectCommand } from "./codexpConnect.js";
+import {
+  CodexpTaskScheduler,
+  loadTaskFiles,
+  resolveTaskThread,
+  safeTaskName,
+  taskTargetLabel,
+  taskTemplate,
+  type ThreadSummary
+} from "./taskScheduler.js";
 
-type ThreadSummary = {
-  threadId: string;
-  workingDirectory: string;
-  runtime?: { workerId?: string; name?: string; online: boolean; runnable: boolean };
-  status: "running" | "idle";
-  running: boolean;
-  title: string;
-  updatedAt: string;
-};
-
-type TaskFile = {
-  workspace: string;
-  filePath: string;
-  valid: boolean;
-  name: string;
-  enabled: boolean;
-  schedule: string;
-  thread?: string;
-  error?: string;
+type TaskCommandOptions = {
+  intervalMs?: string;
 };
 
 const program = new Command()
   .name("codexp")
   .description("Manage codex-proxy threads")
   .option("--api <url>", "codex-proxy API URL", process.env.CODEX_PROXY_API_URL ?? "http://127.0.0.1:18788")
-  .option("--cwd <path>", "directory used by folder-relative commands", process.env.CODEX_PROXY_CWD ?? process.env.INIT_CWD ?? process.cwd());
+  .option("--cwd <path>", "directory used by folder-relative commands", process.cwd());
 
 program
   .command("list")
@@ -54,13 +45,22 @@ registerConnectCommand(program);
 
 program
   .command("task")
-  .argument("[first]", "ls, template, or thread target")
+  .argument("[first]", "ls, template, run, daemon, or thread target")
   .argument("[second]", "ls or template name")
+  .option("--interval-ms <ms>", "task daemon scan interval in milliseconds")
   .description("Manage codexp task YAML files")
-  .action(async (first?: string, second?: string) => {
+  .action(async (first?: string, second?: string, options: TaskCommandOptions = {}) => {
     const action = taskAction(first, second);
     if (action.kind === "template") {
       await createTaskTemplate(action.name ?? "daily-summary");
+      return;
+    }
+    if (action.kind === "run") {
+      await runTaskScan(options);
+      return;
+    }
+    if (action.kind === "daemon") {
+      await runTaskDaemon(options);
       return;
     }
     if (action.kind === "ls") {
@@ -70,7 +70,7 @@ program
       await printTasks(threads, target);
       return;
     }
-    throw new Error('Usage: codexp task ls | codexp task <thread> ls | codexp task template [name]');
+    throw new Error('Usage: codexp task ls | codexp task <thread> ls | codexp task template [name] | codexp task run | codexp task daemon');
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {
@@ -85,8 +85,12 @@ async function apiJson<T = unknown>(path: string, init?: RequestInit): Promise<T
 }
 
 function apiUrl(path: string) {
+  return new URL(path, apiBase()).toString();
+}
+
+function apiBase() {
   const options = program.opts<{ api: string }>();
-  return new URL(path, options.api).toString();
+  return options.api;
 }
 
 function resolveCommandPath(...segments: string[]) {
@@ -146,6 +150,27 @@ function formatThread(thread: ThreadSummary) {
   return `${thread.threadId.slice(0, 8)} (${thread.workingDirectory}, ${thread.title})`;
 }
 
+async function runTaskScan(options: TaskCommandOptions) {
+  const scheduler = new CodexpTaskScheduler({
+    apiBase: apiBase(),
+    workspace: commandCwd(),
+    scanIntervalMs: parseIntervalMs(options.intervalMs)
+  });
+  await scheduler.scan(new Date());
+}
+
+async function runTaskDaemon(options: TaskCommandOptions) {
+  const scheduler = new CodexpTaskScheduler({
+    apiBase: apiBase(),
+    workspace: commandCwd(),
+    scanIntervalMs: parseIntervalMs(options.intervalMs)
+  });
+  scheduler.start();
+  console.error(`codexp task daemon started: ${commandCwd()}`);
+  await waitForShutdown();
+  scheduler.stop();
+}
+
 async function createTaskTemplate(taskName: string) {
   const safeName = safeTaskName(taskName);
   const directory = resolveCommandPath(".codexp", "tasks");
@@ -155,27 +180,16 @@ async function createTaskTemplate(taskName: string) {
   console.log(`Created ${filePath}`);
 }
 
-function taskTemplate(name: string) {
-  return `version: 1
-name: ${name}
-enabled: true
-schedule: "0 9 * * *"
-thread:
-input: |
-  检查这个项目昨天到今天的变更，给我总结风险和下一步。
-`;
-}
-
-function safeTaskName(name: string) {
-  return name.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "daily-summary";
-}
-
 function taskAction(first?: string, second?: string):
   | { kind: "template"; name?: string }
   | { kind: "ls"; target?: string }
+  | { kind: "run" }
+  | { kind: "daemon" }
   | { kind: "unknown" } {
   if (!first || first === "ls" || first === "list") return { kind: "ls", target: second };
   if (first === "template") return { kind: "template", name: second };
+  if (first === "run" || first === "run-once" || first === "once") return { kind: "run" };
+  if (first === "daemon" || first === "watch") return { kind: "daemon" };
   if (second === "ls" || second === "list") return { kind: "ls", target: first };
   return { kind: "unknown" };
 }
@@ -212,96 +226,24 @@ async function taskCountsByThread(threads: ThreadSummary[]) {
   return counts;
 }
 
-async function loadTaskFiles(workspaces: string[]) {
-  const tasks: TaskFile[] = [];
-  for (const workspace of workspaces) {
-    const directory = path.join(workspace, ".codexp", "tasks");
-    let entries: string[];
-    try {
-      entries = await readdir(directory);
-    } catch {
-      continue;
-    }
-    for (const entry of entries.filter((name) => name.endsWith(".yaml") || name.endsWith(".yml")).sort()) {
-      const filePath = path.join(directory, entry);
-      tasks.push(await readTaskFile(workspace, filePath));
-    }
-  }
-  return tasks;
-}
-
-async function readTaskFile(workspace: string, filePath: string): Promise<TaskFile> {
-  try {
-    const parsed = YAML.parse(await readFile(filePath, "utf8"));
-    if (isTaskFile(parsed)) {
-      return {
-        workspace,
-        filePath,
-        valid: true,
-        name: parsed.name,
-        enabled: parsed.enabled,
-        schedule: parsed.schedule,
-        thread: parsed.thread?.trim() || undefined
-      };
-    }
-    return invalidTask(workspace, filePath, "invalid_schema");
-  } catch (error) {
-    return invalidTask(workspace, filePath, error instanceof Error ? error.message : String(error));
-  }
-}
-
-function invalidTask(workspace: string, filePath: string, error: string): TaskFile {
-  return {
-    workspace,
-    filePath,
-    valid: false,
-    name: path.basename(filePath, path.extname(filePath)),
-    enabled: false,
-    schedule: "",
-    error
-  };
-}
-
-function isTaskFile(value: unknown): value is { name: string; enabled: boolean; schedule: string; thread?: string } {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return record.version === 1
-    && typeof record.name === "string"
-    && typeof record.enabled === "boolean"
-    && typeof record.schedule === "string"
-    && typeof record.input === "string"
-    && (record.thread == null || typeof record.thread === "string");
-}
-
-function resolveTaskThread(task: TaskFile, threads: ThreadSummary[]) {
-  if (!task.valid) return null;
-  const workspaceThreads = threads.filter((thread) => thread.workingDirectory === task.workspace);
-  if (task.thread) {
-    const matches = workspaceThreads.filter((thread) => thread.threadId.startsWith(task.thread!));
-    return matches.length === 1 ? matches[0] : null;
-  }
-  return workspaceThreads.length === 1 ? workspaceThreads[0] : null;
-}
-
-function taskTargetLabel(task: TaskFile, threads: ThreadSummary[], selected?: ThreadSummary) {
-  if (!task.valid) return task.error ?? "invalid";
-  const workspaceThreads = threads.filter((thread) => thread.workingDirectory === task.workspace);
-  if (task.thread) {
-    const matches = workspaceThreads.filter((thread) => thread.threadId.startsWith(task.thread!));
-    if (matches.length === 0) return "missing";
-    if (matches.length > 1) return "ambiguous";
-    if (selected) return matches[0].threadId === selected.threadId ? "this" : `other:${matches[0].threadId.slice(0, 8)}`;
-    return matches[0].threadId.slice(0, 8);
-  }
-  if (workspaceThreads.length === 0) return "create";
-  if (workspaceThreads.length > 1) return "ambiguous";
-  if (selected) return workspaceThreads[0].threadId === selected.threadId ? "this" : `other:${workspaceThreads[0].threadId.slice(0, 8)}`;
-  return workspaceThreads[0].threadId.slice(0, 8);
-}
-
 function commandCwd() {
   const options = program.opts<{ cwd: string }>();
   return path.resolve(options.cwd);
+}
+
+function parseIntervalMs(value: string | undefined) {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`Invalid interval: ${value}`);
+  return parsed;
+}
+
+function waitForShutdown() {
+  return new Promise<void>((resolve) => {
+    process.once("SIGINT", resolve);
+    process.once("SIGTERM", resolve);
+    process.once("SIGHUP", resolve);
+  });
 }
 
 function uniqueStrings(values: string[]) {

@@ -336,12 +336,12 @@ const App = () => {
 
   const initialize = async () => {
     const [health, workerData, threadData, usageData] = await Promise.all([
-      apiJson<{ defaultWorkingDirectory?: string } & SystemStatus>("/api/health"),
+      apiJson<{ defaultWorkingDirectory?: string | null } & SystemStatus>("/api/health"),
       apiJson<{ workers?: WorkerSummary[] }>("/api/workers"),
       apiJson<{ threads?: ThreadSummary[] }>("/api/threads"),
       apiJson<CodexUsageSnapshot>("/api/codex-usage")
     ]);
-    const defaultDirectory = health.defaultWorkingDirectory ?? "/home/laop/projects/codex-proxy";
+    const defaultDirectory = health.defaultWorkingDirectory ?? "";
     const loadedWorkers = normalizeWorkers(workerData.workers);
     const saved = readStoredUiState();
     const savedWorker = saved?.activeWorkerId
@@ -456,9 +456,9 @@ const App = () => {
       return;
     }
     setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [] } : item));
-    let uploadedImages: Array<{ path: string }>;
+    let encodedImages: Array<{ url: string }>;
     try {
-      uploadedImages = await Promise.all(imageAttachments.map((image) => uploadImage(session.workingDirectory, image)));
+      encodedImages = await Promise.all(imageAttachments.map(async (image) => ({ url: await fileToDataUrl(image.file) })));
       for (const image of imageAttachments) URL.revokeObjectURL(image.previewUrl);
     } catch (error) {
       setSessions((current) => current.map((item) => item.threadId === threadId
@@ -466,15 +466,15 @@ const App = () => {
           ...item,
           input: text,
           imageAttachments,
-          records: [...item.records, errorRecord("image upload failed", error)]
+          records: [...item.records, errorRecord("image encode failed", error)]
         }
         : item));
       return;
     }
-    const input = uploadedImages.length
+    const input = encodedImages.length
       ? [
         ...(text ? [{ type: "text" as const, text }] : []),
-        ...uploadedImages.map((image) => ({ type: "local_image" as const, path: image.path }))
+        ...encodedImages.map((image) => ({ type: "image" as const, url: image.url }))
       ]
       : text;
     const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
@@ -875,14 +875,14 @@ const MessageCard = ({
       <div className="messageAttachments">
         {message.attachments.map((attachment) => attachment.type === "image" ? (
           <a
-            href={imageUrl(attachment.path)}
+            href={attachment.url}
             target="_blank"
             rel="noreferrer"
             className="messageImage"
-            key={attachment.path}
+            key={attachment.url}
             onClick={(event) => event.stopPropagation()}
           >
-            <img src={imageUrl(attachment.path)} alt={attachment.path.split("/").at(-1) ?? "image"} />
+            <img src={attachment.url} alt="attachment" />
           </a>
         ) : null)}
       </div>
@@ -941,19 +941,7 @@ const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   return await response.json() as T;
 };
 
-const imageUrl = (filePath: string) => `/api/uploads/images?${new URLSearchParams({ path: filePath }).toString()}`;
-
-const uploadImage = async (workingDirectory: string, image: ImageAttachment) => apiJson<{ path: string }>("/api/uploads/images", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    workingDirectory,
-    filename: image.name,
-    contentBase64: await fileToBase64(image.file)
-  })
-});
-
-const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(String(reader.result));
   reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));

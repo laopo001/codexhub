@@ -32,7 +32,7 @@ type ThreadStatus = "running" | "idle";
 
 type TurnInput = string | Array<
   | { type: "text"; text: string }
-  | { type: "local_image"; path: string }
+  | { type: "image"; url: string }
 >;
 
 type RateLimitWindow = {
@@ -259,10 +259,10 @@ const runPrompt = async (
   try {
     let input: TurnInput = prompt;
     if (images.length) {
-      const uploadedImages = await Promise.all(images.map((image) => uploadTelegramImage(thread.workingDirectory, image.fileId, image.filename)));
+      const imageUrls = await Promise.all(images.map((image) => telegramImageUrl(image.fileId)));
       input = [
         ...(prompt ? [{ type: "text" as const, text: prompt }] : []),
-        ...uploadedImages.map((image) => ({ type: "local_image" as const, path: image.path }))
+        ...imageUrls.map((url) => ({ type: "image" as const, url }))
       ];
     }
     const stream = streamThreadEvents(thread.threadId, thread.lastSeq);
@@ -325,20 +325,9 @@ const stopThread = async (threadId: string) => apiJson<{ stopped: boolean }>(`/a
   method: "POST"
 });
 
-const uploadTelegramImage = async (workingDirectory: string, fileId: string, filename: string) => {
+const telegramImageUrl = async (fileId: string) => {
   const link = await bot.telegram.getFileLink(fileId);
-  const response = await fetch(link);
-  if (!response.ok) throw new Error(`Telegram file HTTP ${response.status}`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  return apiJson<{ path: string }>("/api/uploads/images", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      workingDirectory,
-      filename,
-      contentBase64: buffer.toString("base64")
-    })
-  });
+  return link.toString();
 };
 
 const streamThreadEvents = async function* (threadId: string, after: number): AsyncGenerator<any> {
