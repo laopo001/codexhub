@@ -37,11 +37,12 @@
 
 ## API 约定
 
-1. 新功能使用 `/api/threads` 和 `/api/workers` 系列接口。
+1. 在线入口和高频状态刷新优先使用 `/api/workers`；worker summary 应携带该 worker 下的轻量 thread summaries，Web/TG 不把全局 `GET /api/threads` 当在线入口。
 2. 不再新增 `/api/instances`、`/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
 3. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events/unregister。worker 主动出站连接 server，不要求 server 反连 worker 机器。
-4. 不提供 `POST /api/threads` 创建入口；server 只能 list/get/delete、turn、stop、fork。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexp resume` 或 TUI 内 `/resume` 发现并镜像。
-5. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexp` worker/CLI 侧。
+4. `/api/threads/:threadId` 系列只用于 thread 详情、SSE 事件、turn/stop/fork/delete 等 thread 操作；`GET /api/threads` 只允许作为诊断/管理兼容列表，不用于 Web 高频轮询。
+5. 不提供 `POST /api/threads` 创建入口；server 只能 get/delete、turn、stop、fork，以及诊断性 list。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexp resume` 或 TUI 内 `/resume` 发现并镜像。
+6. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexp` worker/CLI 侧。
 
 ## `.codexp` 工作区文件约定
 

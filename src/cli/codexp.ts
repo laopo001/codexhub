@@ -37,6 +37,7 @@ type WorkerSummary = {
   lastSeenAt: string;
   currentThreadId?: string;
   currentThread?: ThreadSummary;
+  threads?: ThreadSummary[];
 };
 
 await loadDotEnv();
@@ -87,8 +88,8 @@ program
   .argument("<target>", "thread index, full id, or unique id prefix to delete")
   .description("Delete a thread")
   .action(async (target: string) => {
-    const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
-    const thread = resolveThreadTarget(target, data.threads ?? []);
+    const { threads } = await listWorkerThreads();
+    const thread = resolveThreadTarget(target, threads);
     await apiJson(`/api/threads/${encodeURIComponent(thread.threadId)}`, { method: "DELETE" });
     console.log(`Deleted ${formatThread(thread)}`);
   });
@@ -150,11 +151,24 @@ async function apiJson<T = unknown>(path: string, init?: RequestInit): Promise<T
 
 async function tryListThreads() {
   try {
-    const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
-    return { online: true, threads: data.threads ?? [] };
+    return { online: true, ...(await listWorkerThreads()) };
   } catch {
     return { online: false, threads: [] };
   }
+}
+
+async function listWorkerThreads() {
+  const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
+  return { threads: workerThreads(data.workers) };
+}
+
+function workerThreads(workers: WorkerSummary[] | undefined) {
+  const byId = new Map<string, ThreadSummary>();
+  for (const worker of workers ?? []) {
+    for (const thread of worker.threads ?? []) byId.set(thread.threadId, thread);
+    if (worker.currentThread) byId.set(worker.currentThread.threadId, worker.currentThread);
+  }
+  return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 async function tryListThreadsForTaskList() {

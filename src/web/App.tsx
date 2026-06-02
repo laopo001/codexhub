@@ -45,6 +45,7 @@ type WorkerSummary = {
   hostname?: string;
   currentThreadId?: string;
   currentThread?: ThreadSummary;
+  threads?: ThreadSummary[];
 };
 
 type ChatSession = ThreadDetail & {
@@ -143,7 +144,6 @@ const App = () => {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
   const [workers, setWorkers] = useState<WorkerSummary[]>([]);
-  const [threadSummaries, setThreadSummaries] = useState<ThreadSummary[]>([]);
   const [activeWorkerId, setActiveWorkerId] = useState("");
   const [selectedThreadByWorker, setSelectedThreadByWorker] = useState<Record<string, string>>({});
   const [initialized, setInitialized] = useState(false);
@@ -175,9 +175,7 @@ const App = () => {
   );
   const activeWorkerThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
-    for (const thread of threadSummaries) {
-      if (thread.runtime.workerId === activeWorkerId) byId.set(thread.threadId, thread);
-    }
+    for (const thread of activeWorker?.threads ?? []) byId.set(thread.threadId, thread);
     if (activeWorker?.currentThread) byId.set(activeWorker.currentThread.threadId, activeWorker.currentThread);
     const selectedThreadId = activeWorker ? selectedThreadByWorker[activeWorker.workerId] : undefined;
     return [...byId.values()].sort((left, right) => {
@@ -189,7 +187,7 @@ const App = () => {
       if (right.threadId === activeWorker?.currentThreadId) return 1;
       return right.updatedAt.localeCompare(left.updatedAt);
     });
-  }, [activeWorker, activeWorkerId, selectedThreadByWorker, threadSummaries]);
+  }, [activeWorker, selectedThreadByWorker]);
   const detailedViews = useMemo<CodexRecordView[]>(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
@@ -253,9 +251,7 @@ const App = () => {
     }
 
     setActiveWorkspacePath(worker.workingDirectory);
-    const threadIds = new Set(threadSummaries
-      .filter((thread) => thread.runtime.workerId === worker.workerId)
-      .map((thread) => thread.threadId));
+    const threadIds = new Set((worker.threads ?? []).map((thread) => thread.threadId));
     if (worker.currentThreadId) threadIds.add(worker.currentThreadId);
     const selectedThreadId = selectedThreadByWorker[worker.workerId];
     const desiredThreadId = selectedThreadId && threadIds.has(selectedThreadId)
@@ -273,7 +269,7 @@ const App = () => {
     if (activeSessionId !== desiredThreadId) {
       void openThread(desiredThreadId).catch(() => setActiveSessionId(""));
     }
-  }, [activeSessionId, activeWorker, activeWorkerId, initialized, selectedThreadByWorker, threadSummaries, workers]);
+  }, [activeSessionId, activeWorker, activeWorkerId, initialized, selectedThreadByWorker, workers]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -335,10 +331,9 @@ const App = () => {
   }, [activeSession?.threadId, activeSession?.running]);
 
   const initialize = async () => {
-    const [health, workerData, threadData, usageData] = await Promise.all([
+    const [health, workerData, usageData] = await Promise.all([
       apiJson<{ defaultWorkingDirectory?: string | null } & SystemStatus>("/api/health"),
       apiJson<{ workers?: WorkerSummary[] }>("/api/workers"),
-      apiJson<{ threads?: ThreadSummary[] }>("/api/threads"),
       apiJson<CodexUsageSnapshot>("/api/codex-usage")
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
@@ -361,7 +356,6 @@ const App = () => {
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     setWorkers(loadedWorkers);
-    setThreadSummaries(Array.isArray(threadData.threads) ? threadData.threads : []);
     if (initialWorker) {
       setActiveWorkerId(initialWorker.workerId);
       setActiveWorkspacePath(initialWorker.workingDirectory);
@@ -371,12 +365,8 @@ const App = () => {
   };
 
   const refreshRuntimeState = async () => {
-    const [workerData, threadData] = await Promise.all([
-      apiJson<{ workers?: WorkerSummary[] }>("/api/workers"),
-      apiJson<{ threads?: ThreadSummary[] }>("/api/threads")
-    ]);
+    const workerData = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
     setWorkers(normalizeWorkers(workerData.workers));
-    setThreadSummaries(Array.isArray(threadData.threads) ? threadData.threads : []);
   };
 
   const refreshCodexUsage = async (threadId?: string) => {

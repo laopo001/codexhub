@@ -29,6 +29,16 @@ type ThreadDetail = ThreadSummary & {
   lastSeq: number;
 };
 
+type WorkerSummary = {
+  workerId: string;
+  name?: string;
+  workingDirectory: string;
+  online: boolean;
+  currentThreadId?: string;
+  currentThread?: ThreadSummary;
+  threads?: ThreadSummary[];
+};
+
 type ThreadStatus = "running" | "idle";
 
 type TurnInput = string | Array<
@@ -307,8 +317,8 @@ const selectThread = async (chatId: number, threadId: string) => {
 };
 
 const listThreads = async (): Promise<ThreadSummary[]> => {
-  const data = await apiJson<{ threads?: ThreadSummary[] }>("/api/threads");
-  return Array.isArray(data.threads) ? data.threads : [];
+  const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
+  return workerThreads(data.workers);
 };
 
 const listRunnableThreads = async (): Promise<ThreadSummary[]> =>
@@ -369,6 +379,14 @@ const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
 const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortId = (id: string) => id.slice(0, 8);
+const workerThreads = (workers: WorkerSummary[] | undefined) => {
+  const byId = new Map<string, ThreadSummary>();
+  for (const worker of workers ?? []) {
+    for (const thread of worker.threads ?? []) byId.set(thread.threadId, thread);
+    if (worker.currentThread) byId.set(worker.currentThread.threadId, worker.currentThread);
+  }
+  return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+};
 const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {

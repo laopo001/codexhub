@@ -68,6 +68,7 @@ export type WorkerSummary = {
   hostname?: string;
   currentThreadId?: string;
   currentThread?: ThreadSummary;
+  threads: ThreadSummary[];
   codexUsage?: CodexUsageSnapshot;
 };
 
@@ -162,6 +163,7 @@ export class ThreadHub {
       pid: registration.pid,
       hostname: registration.hostname,
       codexUsage: registration.codexUsage,
+      threads: [],
       commands: [],
       waiters: existing?.waiters ?? new Set()
     };
@@ -917,6 +919,7 @@ export class ThreadHub {
 
   private workerSummary(worker: RuntimeWorker): WorkerSummary {
     const currentThread = worker.currentThreadId ? this.threads.get(worker.currentThreadId) : undefined;
+    const threads = this.workerThreads(worker);
     return {
       workerId: worker.workerId,
       name: worker.name,
@@ -928,8 +931,20 @@ export class ThreadHub {
       hostname: worker.hostname,
       currentThreadId: currentThread?.threadId ?? worker.currentThreadId,
       currentThread: currentThread ? this.summary(currentThread) : undefined,
+      threads,
       codexUsage: worker.codexUsage
     };
+  }
+
+  private workerThreads(worker: RuntimeWorker): ThreadSummary[] {
+    const summaries = [...this.threads.values()]
+      .filter((thread) => thread.workerId === worker.workerId)
+      .map((thread) => this.summary(thread));
+    return summaries.sort((left, right) => {
+      if (left.threadId === worker.currentThreadId) return -1;
+      if (right.threadId === worker.currentThreadId) return 1;
+      return right.updatedAt.localeCompare(left.updatedAt);
+    });
   }
 
   private runtimeSummary(thread: RuntimeThread): ThreadRuntimeSummary {
