@@ -156,6 +156,7 @@ const App = () => {
   const [workers, setWorkers] = useState<WorkerSummary[]>([]);
   const [activeWorkerId, setActiveWorkerId] = useState("");
   const [activeTabThreadByWorker, setActiveTabThreadByWorker] = useState<Record<string, string>>({});
+  const [threadOrderByWorker, setThreadOrderByWorker] = useState<Record<string, string[]>>({});
   const [initialized, setInitialized] = useState(false);
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
@@ -187,8 +188,17 @@ const App = () => {
     const byId = new Map<string, ThreadSummary>();
     for (const thread of activeWorker?.threads ?? []) byId.set(thread.threadId, thread);
     if (activeWorker?.currentThread) byId.set(activeWorker.currentThread.threadId, activeWorker.currentThread);
-    return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  }, [activeWorker]);
+    const orderedIds = threadOrderByWorker[activeWorker?.workerId ?? ""] ?? [];
+    return [
+      ...orderedIds.flatMap((threadId) => {
+        const thread = byId.get(threadId);
+        if (!thread) return [];
+        byId.delete(threadId);
+        return [thread];
+      }),
+      ...byId.values()
+    ];
+  }, [activeWorker, threadOrderByWorker]);
   const activeWorkerThreadTabs = useMemo(() => activeWorkerThreads.map((thread) => {
     const title = thread.title || shortId(thread.threadId);
     const isWorkerCurrentThread = thread.threadId === activeWorker?.currentThreadId;
@@ -366,6 +376,7 @@ const App = () => {
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     setWorkers(loadedWorkers);
+    setThreadOrderByWorker((current) => mergeThreadOrderByWorker(current, loadedWorkers));
     subscribeWorkers(0);
     if (initialWorker) {
       setActiveWorkerId(initialWorker.workerId);
@@ -380,7 +391,9 @@ const App = () => {
     const source = new EventSource(`/api/workers/events?after=${after}`);
     source.addEventListener("workers", (event: MessageEvent) => {
       const payload = JSON.parse(event.data) as WorkerStreamEvent;
-      setWorkers(normalizeWorkers(payload.workers));
+      const nextWorkers = normalizeWorkers(payload.workers);
+      setWorkers(nextWorkers);
+      setThreadOrderByWorker((current) => mergeThreadOrderByWorker(current, nextWorkers));
     });
     workersEventSource.current = source;
   };
@@ -388,8 +401,12 @@ const App = () => {
   const openThread = async (threadId: string) => {
     const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
     const session: ChatSession = { ...thread, input: "", imageAttachments: [] };
+    const workerId = thread.runtime.workerId;
+    if (workerId) {
+      setThreadOrderByWorker((current) => appendThreadOrder(current, workerId, thread.threadId));
+    }
     closeThreadSubscriptionsExcept(thread.threadId);
-    setSessions((current) => [session, ...current.filter((item) => item.threadId !== thread.threadId)]);
+    setSessions((current) => [...current.filter((item) => item.threadId !== thread.threadId), session]);
     setActiveWorkspacePath(thread.workingDirectory);
     setActiveTabThreadId(thread.threadId);
     subscribeThread(thread.threadId, thread.lastSeq);
@@ -431,6 +448,7 @@ const App = () => {
       const workerId = thread.runtime.workerId ?? activeWorker?.workerId;
       if (workerId) {
         setActiveTabThreadByWorker((current) => ({ ...current, [workerId]: thread.threadId }));
+        setThreadOrderByWorker((current) => appendThreadOrder(current, workerId, thread.threadId));
       }
       await openThread(thread.threadId);
     } catch (error) {
@@ -956,6 +974,35 @@ const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
   Array.isArray(workers)
     ? workers.filter((worker) => worker.online)
     : [];
+
+const appendThreadOrder = (current: Record<string, string[]>, workerId: string, threadId: string) => {
+  const existing = current[workerId] ?? [];
+  if (existing.includes(threadId)) return current;
+  return { ...current, [workerId]: [...existing, threadId] };
+};
+
+const mergeThreadOrderByWorker = (current: Record<string, string[]>, workers: WorkerSummary[]) => {
+  const next: Record<string, string[]> = {};
+  for (const worker of workers) {
+    const threadIds = workerThreadIds(worker);
+    const liveThreadIds = new Set(threadIds);
+    const existing = (current[worker.workerId] ?? []).filter((threadId) => liveThreadIds.has(threadId));
+    const appended = threadIds.filter((threadId) => !existing.includes(threadId));
+    next[worker.workerId] = [...existing, ...appended];
+  }
+  return next;
+};
+
+const workerThreadIds = (worker: WorkerSummary) => {
+  const threadIds: string[] = [];
+  const pushThreadId = (threadId?: string) => {
+    if (threadId && !threadIds.includes(threadId)) threadIds.push(threadId);
+  };
+  for (const thread of worker.threads ?? []) pushThreadId(thread.threadId);
+  pushThreadId(worker.currentThread?.threadId);
+  pushThreadId(worker.currentThreadId);
+  return threadIds;
+};
 
 const selectedThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
   model: model === "auto" ? null : model,
