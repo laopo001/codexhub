@@ -50,6 +50,11 @@ type SyncedThread = {
   jsonlSyncing?: boolean;
 };
 
+type BridgeState = {
+  threadIds: string[];
+  currentThreadId?: string;
+};
+
 type RuntimeSettings = {
   model?: string | null;
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
@@ -196,6 +201,7 @@ class ProxyBridgeRunner {
   private stopping = false;
   private loopStarted = false;
   private lastState: "offline" | "online" | null = null;
+  private bridgeState: BridgeState = { threadIds: [] };
 
   constructor(private readonly options: ProxyBridgeRunnerOptions) {}
 
@@ -216,7 +222,7 @@ class ProxyBridgeRunner {
       this.options.statusBar?.setProxyState("connecting");
       try {
         await this.register();
-        this.bridge = await CodexAppServerBridge.connect(this.options);
+        this.bridge = await CodexAppServerBridge.connect(this.options, this.bridgeState);
         this.options.statusBar?.setProxyState("online");
         this.logState("online", `codexp proxy connected: ${this.options.workerId}`);
         await this.runBridge(this.bridge);
@@ -225,6 +231,7 @@ class ProxyBridgeRunner {
         this.options.statusBar?.setProxyState("offline");
         this.logState("offline", `codexp proxy offline: ${errorText(error)}`);
       } finally {
+        if (this.bridge) this.bridgeState = this.bridge.snapshotState();
         this.bridge?.close();
         this.bridge = null;
         await this.unregister();
@@ -243,7 +250,8 @@ class ProxyBridgeRunner {
         workingDirectory: this.options.cwd,
         appServerUrl: this.options.appServerUrl,
         pid: process.pid,
-        hostname: os.hostname()
+        hostname: os.hostname(),
+        currentThreadId: this.bridgeState.currentThreadId
       })
     });
     this.registered = true;
@@ -281,17 +289,22 @@ class CodexAppServerBridge {
   private nextId = 1;
   private cursor = 0;
   private closed = false;
+  private currentThreadId: string | undefined;
   private readonly forwardedRuntimeSettings = new Map<string, string>();
   private readonly closeSignal = new Deferred<void>();
 
   private constructor(
     private readonly options: BridgeOptions,
-    private readonly ws: WebSocket
-  ) {}
+    private readonly ws: WebSocket,
+    initialState: BridgeState
+  ) {
+    this.currentThreadId = initialState.currentThreadId;
+    for (const threadId of initialState.threadIds) this.bindThread(threadId);
+  }
 
-  static async connect(options: BridgeOptions) {
+  static async connect(options: BridgeOptions, initialState: BridgeState = { threadIds: [] }) {
     const ws = await openWebSocket(options.appServerUrl);
-    const bridge = new CodexAppServerBridge(options, ws);
+    const bridge = new CodexAppServerBridge(options, ws, initialState);
     ws.addEventListener("message", (event) => void bridge.handleMessage(event.data));
     ws.addEventListener("error", () => {
       if (!bridge.closed) console.error("codex app-server websocket error");
@@ -303,6 +316,13 @@ class CodexAppServerBridge {
     });
     bridge.notify("initialized");
     return bridge;
+  }
+
+  snapshotState(): BridgeState {
+    return {
+      threadIds: [...this.syncedThreads.keys()],
+      currentThreadId: this.currentThreadId
+    };
   }
 
   async runCommandLoop() {
@@ -589,6 +609,7 @@ class CodexAppServerBridge {
     message: JsonRecord,
     options: { heartbeat?: boolean; current?: boolean } = {}
   ) {
+    if (options.current !== false) this.currentThreadId = threadId;
     await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -653,6 +674,7 @@ class CodexAppServerBridge {
         appServerUrl: this.options.appServerUrl,
         pid: process.pid,
         hostname: os.hostname(),
+        currentThreadId: this.currentThreadId,
         codexUsage,
         threadCodexUsage
       })

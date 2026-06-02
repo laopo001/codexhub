@@ -67,6 +67,7 @@ const workerRegistrationSchema = z.object({
   appServerUrl: z.string().min(1).optional(),
   pid: z.number().int().optional(),
   hostname: z.string().min(1).optional(),
+  currentThreadId: z.string().min(1).optional(),
   codexUsage: codexUsageSchema.optional(),
   threadCodexUsage: z.record(z.string(), codexUsageSchema).optional()
 });

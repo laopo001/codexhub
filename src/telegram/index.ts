@@ -15,6 +15,7 @@ type ThreadSummary = {
   title: string;
   updatedAt: string;
   messageCount: number;
+  codexUsage?: CodexUsageSnapshot;
 };
 
 type ThreadRuntimeSummary = {
@@ -37,6 +38,7 @@ type WorkerSummary = {
   currentThreadId?: string;
   currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
+  codexUsage?: CodexUsageSnapshot;
 };
 
 type ThreadStatus = "running" | "idle";
@@ -61,7 +63,23 @@ type CodexUsageSnapshot = {
 };
 
 type ChatState = {
+  workerId?: string;
+};
+
+type ChatMirror = {
+  workerId: string;
+  controller: AbortController;
+  threadController?: AbortController;
   threadId?: string;
+  knownRecordIds: Set<string>;
+  compactState: ReturnType<typeof createCompactRecordViewState>;
+  sentMessages: Map<string, { messageId: number; status: string }>;
+};
+
+type WorkerStreamEvent = {
+  seq: number;
+  kind: "workers";
+  workers: WorkerSummary[];
 };
 
 export type TelegramBotOptions = {
@@ -82,137 +100,118 @@ let allowedChatIds = new Set<number>();
 let logger: Pick<Console, "error" | "log"> = console;
 let startedBot: TelegramBotHandle | null = null;
 const chatStates = new Map<number, ChatState>();
+const selectionOptions = new Map<string, ChatState>();
+const chatMirrors = new Map<number, ChatMirror>();
+let selectionSeq = 0;
 
 const botCommands = [
   { command: "start", description: "show help" },
-  { command: "status", description: "show current thread" },
-  { command: "threads", description: "select a Codex thread" },
-  { command: "stop", description: "stop the current turn" }
+  { command: "workers", description: "select a Codex worker" },
+  { command: "status", description: "show current worker" }
 ];
 
 const registerHandlers = () => {
-bot.use(async (ctx, next) => {
-  const chatId = ctx.chat?.id;
-  if (allowedChatIds.size && chatId !== undefined && !allowedChatIds.has(chatId)) {
-    if (ctx.callbackQuery) await ctx.answerCbQuery("Unauthorized").catch(() => undefined);
-    return;
-  }
-  await next();
-});
-
-bot.start(async (ctx) => {
-  return ctx.reply([
-    "codex-proxy ready.",
-    "",
-    "/threads 打开在线 Codex thread",
-    "/stop 停止当前 turn",
-    "/status 查看当前状态",
-    "",
-    "直接发消息会发送给当前在线 Codex thread。新 thread 请在本地 codexp 里开始。"
-  ].join("\n"));
-});
-
-bot.command("threads", async (ctx) => {
-  try {
-    const threads = await listRunnableThreads();
-
-    if (!threads.length) {
-      await ctx.reply("当前没有可运行的 Codex thread。请先在本地 codexp 里打开或 resume 一个 thread。");
+  bot.use(async (ctx, next) => {
+    const chatId = ctx.chat?.id;
+    if (allowedChatIds.size && chatId !== undefined && !allowedChatIds.has(chatId)) {
+      if (ctx.callbackQuery) await ctx.answerCbQuery("Unauthorized").catch(() => undefined);
       return;
     }
+    await next();
+  });
 
-    await ctx.reply("选择要打开的在线 Codex thread：", {
-      reply_markup: {
-        inline_keyboard: threads.map((thread) => ([{
-          text: `${displayThreadId(thread)}  ${thread.status}  ${runtimeLabel(thread)}  ${shortPath(thread.workingDirectory)}`,
-          callback_data: `select:${thread.threadId}`
-        }]))
-      }
-    });
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-});
-
-bot.command("status", async (ctx) => {
-  try {
-    const state = chatStates.get(ctx.chat.id);
-    const current = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
-    const usage = await getCodexUsage(current?.threadId).catch(() => null);
-    const threads = await listRunnableThreads();
-    await ctx.reply([
-      `当前 thread：${current ? displayThreadId(current) : "(none)"}`,
-      current ? `文件夹：${current.workingDirectory}` : null,
-      current?.threadId ? `thread：${shortId(current.threadId)}` : null,
-      current ? `runtime：${runtimeLabel(current)}` : null,
-      `usage：${formatCodexUsage(usage)}`,
+  bot.start(async (ctx) => {
+    return ctx.reply([
+      "codex-proxy ready.",
       "",
-      threads.length
-        ? threads.map((thread) => `${displayThreadId(thread)} ${thread.status} ${runtimeLabel(thread)}`).join("\n")
-        : "当前没有可运行的 Codex thread。"
-    ].filter(Boolean).join("\n"));
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-});
-
-const handleStopCommand = async (ctx: any) => {
-  try {
-    const state = chatStates.get(ctx.chat.id);
-    const current = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
-    if (!current) {
-      await ctx.reply("当前没有打开的 Codex thread。");
-      return;
-    }
-    if (!current.running) {
-      await ctx.reply("No running turn.");
-      return;
-    }
-
-    const result = await stopThread(current.threadId);
-    await ctx.reply(result.stopped ? "Stopped current turn." : "No running turn.");
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-};
-
-bot.command("stop", handleStopCommand);
-bot.hears(/^\/stop(?:@\w+)?(?:\s|$)/i, handleStopCommand);
-
-bot.action(/^select:(.+)$/, async (ctx) => {
-  try {
-    const threadId = ctx.match[1];
-    const thread = await selectThread(ctx.chat!.id, threadId);
-    await ctx.answerCbQuery("Selected");
-    await ctx.editMessageText([
-      `已打开：${displayThreadId(thread)} ${thread.status}`,
-      thread.workingDirectory
+      "/workers 选择在线 Codex worker",
+      "/status 查看当前状态",
+      "",
+      "直接发消息会发送给当前 worker 指向的 Codex thread。新 thread 请在本地 codexp 里开始。"
     ].join("\n"));
-  } catch (error) {
-    await ctx.answerCbQuery("Failed");
-    await ctx.reply(errorText(error));
-  }
-});
+  });
 
-bot.on("text", async (ctx) => {
-  const prompt = ctx.message.text.trim();
-  if (!prompt || prompt.startsWith("/")) return;
-  runPromptInBackground(ctx, prompt, []);
-});
+  bot.command("workers", async (ctx) => {
+    try {
+      const workers = await listRunnableWorkers();
 
-bot.on("photo", async (ctx) => {
-  const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
-  const photo = ctx.message.photo.at(-1);
-  if (!photo) return;
-  runPromptInBackground(ctx, prompt, [{ fileId: photo.file_id, filename: `${photo.file_id}.jpg` }]);
-});
+      if (!workers.length) {
+        await ctx.reply("当前没有可运行的 Codex worker。请先在本地 codexp 里打开或 resume 一个 thread。");
+        return;
+      }
 
-bot.on("document", async (ctx) => {
-  const document = ctx.message.document;
-  if (!document.mime_type?.startsWith("image/")) return;
-  const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
-  runPromptInBackground(ctx, prompt, [{ fileId: document.file_id, filename: document.file_name ?? `${document.file_id}.png` }]);
-});
+      await ctx.reply("选择在线 Codex worker：", {
+        reply_markup: {
+          inline_keyboard: workers.map((worker) => ([{
+            text: `${displayWorkerId(worker)}  ${worker.currentThread?.status ?? "idle"}  ${worker.currentThread ? displayThreadId(worker.currentThread) : "no thread"}  ${shortPath(worker.workingDirectory)}`,
+            callback_data: `select:${rememberSelection(ctx.chat.id, worker.workerId)}`
+          }]))
+        }
+      });
+    } catch (error) {
+      await ctx.reply(errorText(error));
+    }
+  });
+
+  bot.command("status", async (ctx) => {
+    try {
+      const state = chatStates.get(ctx.chat.id);
+      const current = state ? await resolveSelectedWorker(state).catch(() => null) : null;
+      const workers = await listRunnableWorkers();
+      const usage = current?.currentThread?.codexUsage ?? current?.codexUsage ?? null;
+      await ctx.reply([
+        `当前 worker：${current ? displayWorkerId(current) : "(none)"}`,
+        `当前 thread：${current?.currentThread ? displayThreadId(current.currentThread) : "(none)"}`,
+        current ? `文件夹：${current.workingDirectory}` : null,
+        current?.currentThreadId ? `thread：${shortId(current.currentThreadId)}` : null,
+        current?.currentThread ? `runtime：${runtimeLabel(current.currentThread)}` : null,
+        `usage：${formatCodexUsage(usage)}`,
+        "",
+        workers.length
+          ? workers.map((worker) => `${displayWorkerId(worker)} ${worker.currentThread ? displayThreadId(worker.currentThread) : "no-thread"} ${worker.currentThread?.status ?? "idle"}`).join("\n")
+          : "当前没有可运行的 Codex worker。"
+      ].filter(Boolean).join("\n"));
+    } catch (error) {
+      await ctx.reply(errorText(error));
+    }
+  });
+
+  bot.action(/^select:(.+)$/, async (ctx) => {
+    try {
+      const selection = selectionOptions.get(selectionKey(ctx.chat!.id, ctx.match[1]));
+      if (!selection?.workerId) throw new Error("Selection expired. Use /workers to choose again.");
+      const worker = await selectWorker(ctx.chat!.id, selection.workerId);
+      await ctx.answerCbQuery("Selected");
+      await ctx.editMessageText([
+        `已选择 worker：${displayWorkerId(worker)}`,
+        worker.currentThread ? `当前 thread：${displayThreadId(worker.currentThread)} ${worker.currentThread.status}` : "当前 thread：(none)",
+        worker.workingDirectory
+      ].join("\n"));
+    } catch (error) {
+      await ctx.answerCbQuery("Failed");
+      await ctx.reply(errorText(error));
+    }
+  });
+
+  bot.on("text", async (ctx) => {
+    const prompt = ctx.message.text.trim();
+    if (!prompt || prompt.startsWith("/")) return;
+    runPromptInBackground(ctx, prompt, []);
+  });
+
+  bot.on("photo", async (ctx) => {
+    const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
+    const photo = ctx.message.photo.at(-1);
+    if (!photo) return;
+    runPromptInBackground(ctx, prompt, [{ fileId: photo.file_id, filename: `${photo.file_id}.jpg` }]);
+  });
+
+  bot.on("document", async (ctx) => {
+    const document = ctx.message.document;
+    if (!document.mime_type?.startsWith("image/")) return;
+    const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
+    runPromptInBackground(ctx, prompt, [{ fileId: document.file_id, filename: document.file_name ?? `${document.file_id}.png` }]);
+  });
 };
 
 const runPromptInBackground = (
@@ -231,45 +230,30 @@ const runPrompt = async (
   images: Array<{ fileId: string; filename: string }>
 ) => {
   const state = chatStates.get(ctx.chat.id);
-  const existingThread = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
-  if (!existingThread) {
-    await ctx.reply("当前没有打开的 Codex thread。用 /threads 打开在线 thread；新 thread 请在本地 codexp 里开始。");
+  const worker = state ? await resolveSelectedWorker(state).catch(() => null) : null;
+  if (!worker) {
+    await ctx.reply("当前没有选择 Codex worker。用 /workers 选择在线 worker。");
     return;
   }
-  if (!existingThread.runtime.runnable) {
-    await ctx.reply("当前 thread 没有在线 codexp worker。请先在本地 codexp resume 这个 thread，或用 /threads 切换到在线 thread。");
+  if (!worker.online) {
+    await ctx.reply("当前 Codex worker 已离线。请用 /workers 重新选择。");
     return;
   }
-  const thread = existingThread;
+  if (!worker.currentThreadId) {
+    await ctx.reply("当前 worker 没有打开 thread。请先在本地 Codex 里开始或 resume 一个 thread。");
+    return;
+  }
+  const mirror = startChatMirror(ctx.chat.id, worker.workerId);
+  const thread = await getThread(worker.currentThreadId);
   const statusMessage = await ctx.reply([
     "Codex running...",
     `folder: ${thread.workingDirectory}`,
     `thread: ${displayThreadId(thread)}`,
     images.length ? `images: ${images.length}` : null
   ].filter(Boolean).join("\n"));
-  const knownRecordIds = new Set(thread.records.map((record) => record.id));
   let sentItemCount = 0;
-  let stopped = false;
-  const compactState = createCompactRecordViewState();
-  const sentMessages = new Map<string, { messageId: number; status: string }>();
   const forwardRecord = async (record: CodexRecord) => {
-    const view = recordToView(record);
-    if (!view) return;
-    const change = compactRecordView(compactState, view);
-    if (!shouldForwardView(change.view, sentMessages)) return;
-
-    const text = clampTelegram(formatBlock(change.view.label ?? change.view.role, change.view.text, change.view.status));
-    const existing = sentMessages.get(change.previousId ?? change.view.id);
-    if (!change.appended && existing) {
-      await ctx.telegram.editMessageText(ctx.chat.id, existing.messageId, undefined, text);
-      sentMessages.delete(change.previousId ?? change.view.id);
-      sentMessages.set(change.view.id, { messageId: existing.messageId, status: change.view.status ?? "final" });
-      return;
-    }
-
-    const message = await ctx.reply(text);
-    sentItemCount += 1;
-    sentMessages.set(change.view.id, { messageId: message.message_id, status: change.view.status ?? "final" });
+    if (await forwardRecordToChat(ctx.chat.id, mirror, record)) sentItemCount += 1;
   };
 
   try {
@@ -281,7 +265,7 @@ const runPrompt = async (
         ...imageUrls.map((url) => ({ type: "image" as const, url }))
       ];
     }
-    const stream = streamThreadEvents(thread.threadId, thread.lastSeq);
+    const stream = await openThreadEventStream(thread.threadId, thread.lastSeq);
     await postTurn(thread.threadId, input);
 
     for await (const event of stream) {
@@ -293,14 +277,14 @@ const runPrompt = async (
 
     const latest = await getThread(thread.threadId).catch(() => null);
     for (const record of latest?.records ?? []) {
-      if (!knownRecordIds.has(record.id)) await forwardRecord(record);
+      await forwardRecord(record);
     }
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       statusMessage.message_id,
       undefined,
       [
-        stopped ? "Codex stopped." : "Codex completed.",
+        "Codex completed.",
         `thread: ${latest ? displayThreadId(latest) : shortId(thread.threadId)}`,
         `messages: ${sentItemCount}`
       ].join("\n")
@@ -310,26 +294,33 @@ const runPrompt = async (
   }
 };
 
-const selectThread = async (chatId: number, threadId: string) => {
-  const thread = await getThread(threadId);
-  chatStates.set(chatId, { threadId: thread.threadId });
-  return thread;
+const selectWorker = async (chatId: number, workerId: string) => {
+  const worker = await resolveWorker(workerId);
+  chatStates.set(chatId, { workerId: worker.workerId });
+  startChatMirror(chatId, worker.workerId);
+  return worker;
 };
 
-const listThreads = async (): Promise<ThreadSummary[]> => {
+const listWorkers = async (): Promise<WorkerSummary[]> => {
   const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
-  return workerThreads(data.workers);
+  return normalizeWorkers(data.workers);
 };
 
-const listRunnableThreads = async (): Promise<ThreadSummary[]> =>
-  (await listThreads()).filter((thread) => thread.runtime.runnable);
+const listRunnableWorkers = async (): Promise<WorkerSummary[]> =>
+  (await listWorkers()).filter((worker) => worker.online);
+
+const resolveWorker = async (workerId: string) => {
+  const worker = (await listWorkers()).find((item) => item.workerId === workerId);
+  if (!worker) throw new Error("Selected worker is no longer online. Use /workers to choose again.");
+  return worker;
+};
+
+const resolveSelectedWorker = async (state: ChatState) => {
+  if (!state.workerId) throw new Error("No selected worker.");
+  return resolveWorker(state.workerId);
+};
 
 const getThread = (threadId: string) => apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
-
-const getCodexUsage = (threadId?: string) => {
-  const query = threadId ? `?${new URLSearchParams({ threadId }).toString()}` : "";
-  return apiJson<CodexUsageSnapshot>(`/api/codex-usage${query}`);
-};
 
 const postTurn = async (threadId: string, input: TurnInput) => {
   const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/turn`), {
@@ -340,34 +331,127 @@ const postTurn = async (threadId: string, input: TurnInput) => {
   if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
 };
 
-const stopThread = async (threadId: string) => apiJson<{ stopped: boolean }>(`/api/threads/${encodeURIComponent(threadId)}/stop`, {
-  method: "POST"
-});
-
 const telegramImageUrl = async (fileId: string) => {
   const link = await bot.telegram.getFileLink(fileId);
   return link.toString();
 };
 
-const streamThreadEvents = async function* (threadId: string, after: number): AsyncGenerator<any> {
-  const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`));
+const startChatMirror = (chatId: number, workerId: string) => {
+  const existing = chatMirrors.get(chatId);
+  if (existing?.workerId === workerId && !existing.controller.signal.aborted) return existing;
+  existing?.controller.abort();
+
+  const mirror: ChatMirror = {
+    workerId,
+    controller: new AbortController(),
+    knownRecordIds: new Set(),
+    compactState: createCompactRecordViewState(),
+    sentMessages: new Map()
+  };
+  chatMirrors.set(chatId, mirror);
+  void runWorkerMirror(chatId, mirror).catch((error) => {
+    if (!isAbortError(error)) logger.error("telegram worker mirror failed", error);
+  });
+  return mirror;
+};
+
+const runWorkerMirror = async (chatId: number, mirror: ChatMirror) => {
+  const stream = await openWorkerEventStream(0, mirror.controller.signal);
+  for await (const event of stream) {
+    if (mirror.controller.signal.aborted) return;
+    const worker = event.workers.find((item) => item.workerId === mirror.workerId && item.online);
+    if (!worker) {
+      await bot.telegram.sendMessage(chatId, "当前 Codex worker 已离线。请用 /workers 重新选择。").catch(() => undefined);
+      chatMirrors.delete(chatId);
+      mirror.controller.abort();
+      return;
+    }
+    if (worker.currentThreadId && worker.currentThreadId !== mirror.threadId) {
+      await switchMirrorThread(chatId, mirror, worker.currentThreadId);
+    }
+  }
+};
+
+const switchMirrorThread = async (chatId: number, mirror: ChatMirror, threadId: string) => {
+  mirror.threadController?.abort();
+  const threadController = new AbortController();
+  mirror.threadController = threadController;
+  mirror.threadId = threadId;
+  mirror.compactState = createCompactRecordViewState();
+  mirror.sentMessages.clear();
+
+  const thread = await getThread(threadId);
+  mirror.knownRecordIds = new Set(thread.records.map((record) => record.id));
+  const stream = await openThreadEventStream(thread.threadId, thread.lastSeq, threadController.signal);
+  void (async () => {
+    try {
+      for await (const event of stream) {
+        if (threadController.signal.aborted || mirror.controller.signal.aborted) return;
+        if (event.kind === "record" && event.record) await forwardRecordToChat(chatId, mirror, event.record);
+      }
+    } catch (error) {
+      if (!isAbortError(error)) logger.error("telegram thread mirror failed", error);
+    }
+  })();
+};
+
+const forwardRecordToChat = async (chatId: number, mirror: ChatMirror, record: CodexRecord) => {
+  if (mirror.knownRecordIds.has(record.id)) return false;
+  mirror.knownRecordIds.add(record.id);
+
+  const view = recordToView(record);
+  if (!view) return false;
+  const change = compactRecordView(mirror.compactState, view);
+  if (!shouldForwardView(change.view, mirror.sentMessages)) return false;
+
+  const text = clampTelegram(formatBlock(change.view.label ?? change.view.role, change.view.text, change.view.status));
+  const existing = mirror.sentMessages.get(change.previousId ?? change.view.id);
+  if (!change.appended && existing) {
+    await bot.telegram.editMessageText(chatId, existing.messageId, undefined, text);
+    mirror.sentMessages.delete(change.previousId ?? change.view.id);
+    mirror.sentMessages.set(change.view.id, { messageId: existing.messageId, status: change.view.status ?? "final" });
+    return false;
+  }
+
+  const message = await bot.telegram.sendMessage(chatId, text);
+  mirror.sentMessages.set(change.view.id, { messageId: message.message_id, status: change.view.status ?? "final" });
+  return true;
+};
+
+const openWorkerEventStream = async (after: number, signal?: AbortSignal): Promise<AsyncGenerator<WorkerStreamEvent>> => {
+  const response = await fetch(apiUrl(`/api/workers/events?after=${after}`), { signal });
   if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
 
-  const reader = response.body.getReader();
+  return streamSseEvents<WorkerStreamEvent>(response.body.getReader());
+};
+
+const openThreadEventStream = async (threadId: string, after: number, signal?: AbortSignal): Promise<AsyncGenerator<any>> => {
+  const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`), { signal });
+  if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
+
+  return streamSseEvents(response.body.getReader());
+};
+
+const streamSseEvents = async function* <T>(reader: ReadableStreamDefaultReader<Uint8Array>): AsyncGenerator<T> {
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split("\n\n");
-    buffer = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
-      if (!dataLine) continue;
-      yield JSON.parse(dataLine.slice(6));
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+      for (const chunk of chunks) {
+        const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+        if (!dataLine) continue;
+        yield JSON.parse(dataLine.slice(6)) as T;
+      }
     }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 };
 
@@ -379,16 +463,18 @@ const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
 const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortId = (id: string) => id.slice(0, 8);
-const workerThreads = (workers: WorkerSummary[] | undefined) => {
-  const byId = new Map<string, ThreadSummary>();
-  for (const worker of workers ?? []) {
-    for (const thread of worker.threads ?? []) byId.set(thread.threadId, thread);
-    if (worker.currentThread) byId.set(worker.currentThread.threadId, worker.currentThread);
-  }
-  return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+const selectionKey = (chatId: number, token: string) => `${chatId}:${token}`;
+const rememberSelection = (chatId: number, workerId: string) => {
+  const token = (++selectionSeq).toString(36);
+  selectionOptions.set(selectionKey(chatId, token), { workerId });
+  return token;
 };
+const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
+  Array.isArray(workers) ? workers.filter((worker) => worker.online) : [];
 const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
+const displayWorkerId = (worker: Pick<WorkerSummary, "workerId" | "name">) => worker.name ?? shortId(worker.workerId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+const isAbortError = (error: unknown) => error instanceof Error && error.name === "AbortError";
 const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
   const state = thread.runtime.runnable ? "runnable" : "unavailable";
   const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? shortId(thread.runtime.workerId)}` : "";
@@ -454,6 +540,10 @@ export const startTelegramBot = async (options: TelegramBotOptions): Promise<Tel
   allowedChatIds = options.allowedChatIds ?? new Set<number>();
   logger = options.logger ?? console;
   chatStates.clear();
+  selectionOptions.clear();
+  for (const mirror of chatMirrors.values()) mirror.controller.abort();
+  chatMirrors.clear();
+  selectionSeq = 0;
   registerHandlers();
 
   await bot.telegram.setMyCommands(botCommands);

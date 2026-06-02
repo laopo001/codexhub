@@ -54,6 +54,7 @@ export type WorkerRegistration = {
   appServerUrl?: string;
   pid?: number;
   hostname?: string;
+  currentThreadId?: string;
   codexUsage?: CodexUsageSnapshot;
   threadCodexUsage?: Record<string, CodexUsageSnapshot>;
 };
@@ -172,6 +173,7 @@ export class ThreadHub {
       lastSeenAt: now,
       pid: registration.pid,
       hostname: registration.hostname,
+      currentThreadId: registration.currentThreadId,
       codexUsage: registration.codexUsage,
       threads: [],
       commands: [],
@@ -179,6 +181,11 @@ export class ThreadHub {
     };
     this.applyThreadCodexUsage(registration.threadCodexUsage);
     this.workers.set(workerId, worker);
+    if (registration.currentThreadId) {
+      this.ensureThread(registration.currentThreadId, worker, {
+        params: { threadId: registration.currentThreadId, cwd: worker.workingDirectory }
+      });
+    }
     for (const thread of this.threads.values()) {
       if (thread.workerId === workerId) {
         thread.workerId = workerId;
@@ -199,8 +206,14 @@ export class ThreadHub {
     worker.appServerUrl = registration.appServerUrl ?? worker.appServerUrl;
     worker.pid = registration.pid ?? worker.pid;
     worker.hostname = registration.hostname ?? worker.hostname;
+    worker.currentThreadId = registration.currentThreadId ?? worker.currentThreadId;
     worker.codexUsage = registration.codexUsage ?? worker.codexUsage;
     const changedUsageThreadIds = this.applyThreadCodexUsage(registration.threadCodexUsage);
+    if (registration.currentThreadId) {
+      this.ensureThread(registration.currentThreadId, worker, {
+        params: { threadId: registration.currentThreadId, cwd: worker.workingDirectory }
+      });
+    }
     worker.online = true;
     worker.lastSeenAt = now;
     if (previousState !== this.workerVisibleState(worker) || changedUsageThreadIds.length) {
