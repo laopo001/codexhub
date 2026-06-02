@@ -647,11 +647,24 @@ textarea {
 
 .workspaceThreadTabLabel {
   display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr);
   align-items: baseline;
   gap: 8px;
   min-width: 0;
   width: 100%;
+}
+
+.workerCurrentThreadMark {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: transparent;
+  align-self: center;
+}
+
+.workerCurrentThreadMark.visible {
+  background: #2f7d5a;
+  box-shadow: 0 0 0 2px #d9eadf;
 }
 
 .workspaceThreadTabLabel span,

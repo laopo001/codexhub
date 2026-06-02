@@ -17,13 +17,14 @@
 
 ## 选择和关闭语义
 
-1. Web 选择 worker 只是客户端本地选择；server 不维护客户端打开计数。Web 右侧默认显示该 worker 当前的 `currentThreadId`，也允许在 worker 下切换查看/输入其他可路由 thread；TUI 里 `/resume` 切换 thread 后由 app-server event 同步到 Web。
-2. 客户端读取 thread 详情使用 `GET /api/threads/:threadId`，事件订阅使用 `GET /api/threads/:threadId/events?after=...`。
-3. Web 关闭 tab 或 Telegram 切换 thread 只关闭本地 UI/session，不向 server 发送关闭通知。
-4. `DELETE /api/threads/:threadId` 表示管理层面的删除 thread 记录；不要把客户端关闭动作映射成删除。
-5. Web 左侧只显示在线 worker；worker 正常 unregister 或 heartbeat timeout 后不再出现在主列表。离线 worker 只允许作为诊断数据查看。
-6. Telegram 只暴露 `/workers` 作为在线入口并只保存 `workerId`；attach worker 后通过 `/api/workers/events` 持续跟随该 worker 的 `currentThreadId`，并订阅对应 thread SSE 镜像消息。TG 发送消息和状态查询前从 `/api/workers` 重新确认该 worker 仍在线，并使用 worker 的 `currentThreadId` 作为底层 thread。TG 不提供 `/threads` 选择或 `/stop` 控制入口。
-7. thread 是否可运行由绑定 worker 或同目录唯一可用 worker 决定；多个同目录 worker 同时在线时，不要在未绑定 thread 上自动选择。
+1. active 概念必须分层：`worker.currentThreadId` 只表示官方 Codex CLI/app-server 的 runtime current thread；Web 的 `activeTabThreadId` / `activeTabThreadByWorker` 只表示右侧 Tabs 当前查看的 thread。Web tab 点击不能被理解成修改 worker runtime current，worker runtime current 只能由 app-server/TUI/bridge 同步。
+2. Web 选择 worker 只是客户端本地选择；server 不维护客户端打开计数。Web 右侧默认显示该 worker 当前的 `currentThreadId`，也允许在 worker 下切换查看/输入其他可路由 thread；TUI 里 `/resume` 切换 thread 后由 app-server event 同步到 Web，但不应强制覆盖用户已经选中的 Web tab，除非当前 tab 已不可用或尚未选择。
+3. 客户端读取 thread 详情使用 `GET /api/threads/:threadId`，事件订阅使用 `GET /api/threads/:threadId/events?after=...`。
+4. Web 关闭 tab 或 Telegram 切换 thread 只关闭本地 UI/session，不向 server 发送关闭通知。
+5. `DELETE /api/threads/:threadId` 表示管理层面的删除 thread 记录；不要把客户端关闭动作映射成删除。
+6. Web 左侧只显示在线 worker；worker 正常 unregister 或 heartbeat timeout 后不再出现在主列表。离线 worker 只允许作为诊断数据查看。
+7. Telegram 只暴露 `/workers` 作为在线入口并只保存 `workerId`；attach worker 后通过 `/api/workers/events` 持续跟随该 worker 的 `currentThreadId`，并订阅对应 thread SSE 镜像消息。TG 发送消息和状态查询前从 `/api/workers` 重新确认该 worker 仍在线，并使用 worker 的 `currentThreadId` 作为底层 thread。TG 不提供 `/threads` 选择或 `/stop` 控制入口。
+8. thread 是否可运行由绑定 worker 或同目录唯一可用 worker 决定；多个同目录 worker 同时在线时，不要在未绑定 thread 上自动选择。
 
 ## 事件和消息流
 

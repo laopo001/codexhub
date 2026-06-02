@@ -152,10 +152,10 @@ const reasoningOptions: Array<{ value: ReasoningSelection; label: string }> = [
 const App = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState("");
+  const [activeTabThreadId, setActiveTabThreadId] = useState("");
   const [workers, setWorkers] = useState<WorkerSummary[]>([]);
   const [activeWorkerId, setActiveWorkerId] = useState("");
-  const [selectedThreadByWorker, setSelectedThreadByWorker] = useState<Record<string, string>>({});
+  const [activeTabThreadByWorker, setActiveTabThreadByWorker] = useState<Record<string, string>>({});
   const [initialized, setInitialized] = useState(false);
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
@@ -176,8 +176,8 @@ const App = () => {
   const imageFileInputRef = useRef<HTMLInputElement>(null);
 
   const activeSession = useMemo(
-    () => sessions.find((session) => session.threadId === activeSessionId),
-    [activeSessionId, sessions]
+    () => sessions.find((session) => session.threadId === activeTabThreadId),
+    [activeTabThreadId, sessions]
   );
   const activeWorker = useMemo(
     () => workers.find((worker) => worker.workerId === activeWorkerId),
@@ -187,24 +187,27 @@ const App = () => {
     const byId = new Map<string, ThreadSummary>();
     for (const thread of activeWorker?.threads ?? []) byId.set(thread.threadId, thread);
     if (activeWorker?.currentThread) byId.set(activeWorker.currentThread.threadId, activeWorker.currentThread);
-    return [...byId.values()].sort((left, right) => {
-      if (left.threadId === activeWorker?.currentThreadId) return -1;
-      if (right.threadId === activeWorker?.currentThreadId) return 1;
-      return right.updatedAt.localeCompare(left.updatedAt);
-    });
+    return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }, [activeWorker]);
   const activeWorkerThreadTabs = useMemo(() => activeWorkerThreads.map((thread) => {
     const title = thread.title || shortId(thread.threadId);
+    const isWorkerCurrentThread = thread.threadId === activeWorker?.currentThreadId;
     return {
       key: thread.threadId,
       label: (
         <span className="workspaceThreadTabLabel" title={`${title}\n${thread.threadId}`}>
+          <span
+            className={`workerCurrentThreadMark ${isWorkerCurrentThread ? "visible" : ""}`}
+            title={isWorkerCurrentThread ? "Worker current thread" : undefined}
+            aria-label={isWorkerCurrentThread ? "Worker current thread" : undefined}
+            aria-hidden={isWorkerCurrentThread ? undefined : true}
+          />
           <span>{title}</span>
           <code>{shortId(thread.threadId)}</code>
         </span>
       )
     };
-  }), [activeWorkerThreads]);
+  }), [activeWorker?.currentThreadId, activeWorkerThreads]);
   const detailedViews = useMemo<CodexRecordView[]>(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
@@ -229,7 +232,7 @@ const App = () => {
   const activeCanSubmit = Boolean(activeSessionBelongsToWorker && (activeSession?.running || activeCanSend));
   const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
   const activeCodexUsage = activeSession?.codexUsage
-    ?? activeWorkerThreads.find((thread) => thread.threadId === activeSessionId)?.codexUsage
+    ?? activeWorkerThreads.find((thread) => thread.threadId === activeTabThreadId)?.codexUsage
     ?? activeWorker?.currentThread?.codexUsage
     ?? activeWorker?.codexUsage
     ?? null;
@@ -258,7 +261,7 @@ const App = () => {
     if (!initialized) return;
     if (!workers.length) {
       if (activeWorkerId) setActiveWorkerId("");
-      if (activeSessionId) setActiveSessionId("");
+      if (activeTabThreadId) setActiveTabThreadId("");
       return;
     }
 
@@ -271,23 +274,23 @@ const App = () => {
     setActiveWorkspacePath(worker.workingDirectory);
     const threadIds = new Set((worker.threads ?? []).map((thread) => thread.threadId));
     if (worker.currentThreadId) threadIds.add(worker.currentThreadId);
-    const selectedThreadId = selectedThreadByWorker[worker.workerId];
-    const desiredThreadId = selectedThreadId && threadIds.has(selectedThreadId)
-      ? selectedThreadId
+    const activeTabThreadIdForWorker = activeTabThreadByWorker[worker.workerId];
+    const desiredThreadId = activeTabThreadIdForWorker && threadIds.has(activeTabThreadIdForWorker)
+      ? activeTabThreadIdForWorker
       : worker.currentThreadId;
 
-    if (selectedThreadId && !threadIds.has(selectedThreadId)) {
-      setSelectedThreadByWorker(({ [worker.workerId]: _removed, ...rest }) => rest);
+    if (activeTabThreadIdForWorker && !threadIds.has(activeTabThreadIdForWorker)) {
+      setActiveTabThreadByWorker(({ [worker.workerId]: _removed, ...rest }) => rest);
     }
 
     if (!desiredThreadId) {
-      if (activeSessionId) setActiveSessionId("");
+      if (activeTabThreadId) setActiveTabThreadId("");
       return;
     }
-    if (activeSessionId !== desiredThreadId) {
-      void openThread(desiredThreadId).catch(() => setActiveSessionId(""));
+    if (activeTabThreadId !== desiredThreadId) {
+      void openThread(desiredThreadId).catch(() => setActiveTabThreadId(""));
     }
-  }, [activeSessionId, activeWorker, activeWorkerId, initialized, selectedThreadByWorker, workers]);
+  }, [activeTabThreadId, activeWorker, activeWorkerId, initialized, activeTabThreadByWorker, workers]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -313,7 +316,7 @@ const App = () => {
       window.setTimeout(() => scrollToBottom("auto"), 80);
     });
     return () => window.cancelAnimationFrame(firstFrame);
-  }, [activeSessionId, activeViews.length, latestViewKey, activeSession?.running]);
+  }, [activeTabThreadId, activeViews.length, latestViewKey, activeSession?.running]);
 
   useEffect(() => {
     if (!composerMenuOpen) return undefined;
@@ -388,7 +391,7 @@ const App = () => {
     closeThreadSubscriptionsExcept(thread.threadId);
     setSessions((current) => [session, ...current.filter((item) => item.threadId !== thread.threadId)]);
     setActiveWorkspacePath(thread.workingDirectory);
-    setActiveSessionId(thread.threadId);
+    setActiveTabThreadId(thread.threadId);
     subscribeThread(thread.threadId, thread.lastSeq);
   };
 
@@ -427,7 +430,7 @@ const App = () => {
       });
       const workerId = thread.runtime.workerId ?? activeWorker?.workerId;
       if (workerId) {
-        setSelectedThreadByWorker((current) => ({ ...current, [workerId]: thread.threadId }));
+        setActiveTabThreadByWorker((current) => ({ ...current, [workerId]: thread.threadId }));
       }
       await openThread(thread.threadId);
     } catch (error) {
@@ -540,18 +543,18 @@ const App = () => {
   const selectWorker = async (worker: WorkerSummary) => {
     setActiveWorkerId(worker.workerId);
     setActiveWorkspacePath(worker.workingDirectory);
-    const selectedThreadId = selectedThreadByWorker[worker.workerId];
-    const targetThreadId = selectedThreadId ?? worker.currentThreadId;
+    const activeTabThreadIdForWorker = activeTabThreadByWorker[worker.workerId];
+    const targetThreadId = activeTabThreadIdForWorker ?? worker.currentThreadId;
     if (targetThreadId) {
       await openThread(targetThreadId);
     } else {
-      setActiveSessionId("");
+      setActiveTabThreadId("");
     }
   };
 
   const switchWorkerThread = async (threadId: string) => {
-    if (!activeWorker || threadId === activeSessionId) return;
-    setSelectedThreadByWorker((current) => ({ ...current, [activeWorker.workerId]: threadId }));
+    if (!activeWorker || threadId === activeTabThreadId) return;
+    setActiveTabThreadByWorker((current) => ({ ...current, [activeWorker.workerId]: threadId }));
     await openThread(threadId);
   };
 
