@@ -83,12 +83,13 @@ export type WorkerStreamEvent = {
 export type WorkerCommand = {
   seq: number;
   commandId: string;
-  type: "fork_thread" | "turn" | "stop";
+  type: "fork_thread" | "rollback_thread" | "turn" | "stop";
   workingDirectory: string;
   createdAt: string;
   threadId?: string;
   input?: ProxyInput;
   turnId?: string;
+  numTurns?: number;
   options?: ThreadRunOptions;
 };
 
@@ -299,6 +300,10 @@ export class ThreadHub {
     }
 
     const thread = threadId ? this.ensureThread(threadId, worker, message, input.current !== false) : null;
+    const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
+    if (thread && pending?.type === "rollback_thread" && asRecord(asRecord(message.result)?.thread)) {
+      this.resetThreadRecords(thread);
+    }
     if (thread) this.applyAppServerMessage(thread, message);
 
     if (input.commandId) this.resolveCommandFromMessage(input.commandId, thread);
@@ -349,9 +354,10 @@ export class ThreadHub {
     return worker?.codexUsage ?? emptyCodexUsage("latest");
   }
 
-  async forkThread(threadId: string, _recordId?: string): Promise<ThreadDetail> {
+  async forkThread(threadId: string, recordId?: string): Promise<ThreadDetail> {
     const source = this.requireThread(threadId);
     const worker = this.requireThreadWorker(source);
+    const rollbackTurns = recordId ? turnsAfterRecord(source, recordId) : 0;
     this.markWorkerCurrentThread(worker, source);
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId);
@@ -362,6 +368,25 @@ export class ThreadHub {
       createdAt: new Date().toISOString(),
       threadId: source.threadId,
       options: { ...source.threadOptions }
+    });
+    const forkedThread = await promise;
+    if (rollbackTurns <= 0) return forkedThread;
+    return await this.rollbackThread(forkedThread.threadId, rollbackTurns);
+  }
+
+  private async rollbackThread(threadId: string, numTurns: number): Promise<ThreadDetail> {
+    const thread = this.requireThread(threadId);
+    const worker = this.requireThreadWorker(thread);
+    this.markWorkerCurrentThread(worker, thread);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<ThreadDetail>(commandId, "rollback_thread", thread.threadId);
+    this.enqueueWorkerCommand(worker.workerId, {
+      commandId,
+      type: "rollback_thread",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId,
+      numTurns
     });
     return promise;
   }
@@ -554,7 +579,7 @@ export class ThreadHub {
   private resolveCommandFromMessage(commandId: string, thread: RuntimeThread | null) {
     const pending = this.pendingCommands.get(commandId);
     if (!pending) return;
-    if (pending.type === "fork_thread" && thread) {
+    if ((pending.type === "fork_thread" || pending.type === "rollback_thread") && thread) {
       this.resolveCommand(commandId, this.detail(thread));
     }
   }
@@ -869,6 +894,12 @@ export class ThreadHub {
     thread.records.push(record);
     thread.updatedAt = record.timestamp ?? thread.updatedAt;
     this.publish(thread, "record", record);
+  }
+
+  private resetThreadRecords(thread: RuntimeThread) {
+    thread.records = [];
+    thread.appServerItems.clear();
+    thread.lastUsage = undefined;
   }
 
   private applyThreadCodexUsage(usages?: Record<string, CodexUsageSnapshot>) {
@@ -1286,6 +1317,33 @@ const appServerTurnParams = (threadId: string | undefined, turn: Record<string, 
   startedAtMs: typeof turn.startedAt === "number" ? turn.startedAt * 1000 : undefined,
   completedAtMs: typeof turn.completedAt === "number" ? turn.completedAt * 1000 : undefined
 });
+
+const turnsAfterRecord = (thread: RuntimeThread, recordId: string) => {
+  const targetTurnId = turnIdFromAppRecordId(thread.threadId, recordId);
+  if (!targetTurnId) throw new Error(`Cannot fork from record without app-server turn id: ${recordId}`);
+  const turnIds = appServerTurnIds(thread);
+  const targetIndex = turnIds.indexOf(targetTurnId);
+  if (targetIndex === -1) throw new Error(`Cannot find fork target turn for record: ${recordId}`);
+  return turnIds.length - targetIndex - 1;
+};
+
+const appServerTurnIds = (thread: RuntimeThread) => {
+  const turnIds: string[] = [];
+  for (const record of thread.records) {
+    const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
+    if (turnId && !turnIds.includes(turnId)) turnIds.push(turnId);
+  }
+  return turnIds;
+};
+
+const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
+  const prefix = `app:${threadId}:`;
+  if (!recordId.startsWith(prefix)) return null;
+  const rest = recordId.slice(prefix.length);
+  const [turnId, kind] = rest.split(":");
+  if (!turnId || !kind) return null;
+  return kind === "user" || kind === "agent" || kind === "usage" ? turnId : null;
+};
 
 const threadIdFromParams = (params: Record<string, unknown>) =>
   typeof params.threadId === "string" ? params.threadId : undefined;

@@ -678,7 +678,7 @@ const App = () => {
                         message={message}
                         showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
                         onInspect={messageDisplayMode === "compact" && message.role === "tool" ? () => setInspectMessage(message) : undefined}
-                        onFork={message.canFork ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
+                        onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
                       />
                     )}
                   />
@@ -936,6 +936,18 @@ const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
 });
 
 const shortId = (id: string) => id.slice(0, 8);
+
+const canForkAtMessage = (threadId: string, message: WebRecordView) =>
+  Boolean(message.canFork && turnIdFromAppRecordId(threadId, message.record.id));
+
+const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
+  const prefix = `app:${threadId}:`;
+  if (!recordId.startsWith(prefix)) return null;
+  const rest = recordId.slice(prefix.length);
+  const [turnId, kind] = rest.split(":");
+  if (!turnId || !kind) return null;
+  return kind === "user" || kind === "agent" || kind === "usage" ? turnId : null;
+};
 
 const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
   Array.isArray(workers)

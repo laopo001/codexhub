@@ -417,6 +417,17 @@ class CodexAppServerBridge {
       return;
     }
 
+    if (command.type === "rollback_thread") {
+      if (!command.threadId) throw new Error("rollback_thread command requires threadId");
+      if (!command.numTurns || command.numTurns < 1) throw new Error("rollback_thread command requires numTurns >= 1");
+      await this.request("thread/rollback", {
+        threadId: command.threadId,
+        numTurns: command.numTurns
+      }, command);
+      this.bindThread(command.threadId);
+      return;
+    }
+
     if (!command.input || !command.threadId) return;
     const threadId = command.threadId;
     if (!this.syncedThreads.has(threadId)) {
