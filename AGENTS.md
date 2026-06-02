@@ -1,21 +1,21 @@
-# codex-proxy 架构约定
+# codexhub 架构约定
 
 ## Worker / Thread 模型
 
-1. `workerId` 是 Web 主界面的在线运行入口；左侧列表展示当前在线的 `codexp` / `codexp resume` workers，worker 下的 `currentThreadId` 才是右侧正在镜像的 Codex thread。
+1. `workerId` 是 Web 主界面的在线运行入口；左侧列表展示当前在线的 `codexhub` / `codexhub resume` workers，worker 下的 `currentThreadId` 才是右侧正在镜像的 Codex thread。
 2. 不再引入 `instanceId`。旧的 instance 概念已经被删除，新逻辑不得增加 `/api/instances`、`.codexp/instances.yaml` 或 instance 兼容层。
-3. API server 是控制面和事件镜像层，不直接拥有 Codex runtime。Codex runtime 在 `codexp` / `codexp resume` 启动的官方 `codex app-server` worker 里。
-4. 一次 `codexp` 或 `codexp resume` 等价于打开一个官方 Codex：一个 PTY TUI、一个 app-server、一个 worker。`workerId` 标识这次 `codexp` 进程，必须每次启动唯一；`workingDirectory` 只是 worker 属性，不是 worker 主键。
-5. `codexp` / `codexp resume` 必须 local-first：官方 `codex app-server` 和 TUI 不依赖 server 连接成功；server 离线时本地 TUI 继续可用，后台 bridge 持续重试，server 恢复后再 register worker 并同步事件。
+3. API server 是控制面和事件镜像层，不直接拥有 Codex runtime。Codex runtime 在 `codexhub` / `codexhub resume` 启动的官方 `codex app-server` worker 里。
+4. 一次 `codexhub` 或 `codexhub resume` 等价于打开一个官方 Codex：一个 PTY TUI、一个 app-server、一个 worker。`workerId` 标识这次 `codexhub` 进程，必须每次启动唯一；`workingDirectory` 只是 worker 属性，不是 worker 主键。
+5. `codexhub` / `codexhub resume` 必须 local-first：官方 `codex app-server` 和 TUI 不依赖 server 连接成功；server 离线时本地 TUI 继续可用，后台 bridge 持续重试，server 恢复后再 register worker 并同步事件。
 6. `threadId` 来自官方 app-server。新 thread 只能由本地 Codex CLI/TUI 或官方 session 恢复产生，server/Web/TG/task 不主动创建 thread。
-7. `codexp` 只是官方 Codex 的代理，不默认设置 `sandbox` 或 `approvalPolicy`；这些权限默认必须由官方 Codex 按当前 cwd 的真实配置解析。只有用户显式传 `--sandbox` / `--approval-policy` 时，bridge 才把它们作为 app-server override 转发。
+7. `codexhub` 只是官方 Codex 的代理，不默认设置 `sandbox` 或 `approvalPolicy`；这些权限默认必须由官方 Codex 按当前 cwd 的真实配置解析。只有用户显式传 `--sandbox` / `--approval-policy` 时，bridge 才把它们作为 app-server override 转发。
 8. 输入语义按客户端形态分层：Telegram 是单聊天窗口模型，输入使用 `/api/workers/:workerId/turn`，由 server 在提交时解析 worker 的 `currentThreadId`；Web 是多窗口/多 thread UI，输入可以使用选中 thread 的 `/api/threads/:threadId/turn`，但 server 必须校验该 thread 能路由到绑定在线 worker 或同目录唯一在线 worker；官方 app-server bridge 最终始终调用 `turn/start { threadId }`。执行结果再按 `threadId` 镜像回 thread 记录。
-9. 同一个 `workingDirectory` 可以同时运行多个 `codexp` / `codexp resume`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
-10. 非 headless 的 `codexp` / `codexp resume` 必须用 PTY wrapper 启动官方 `codex --remote ...` 或 `codex resume --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
-11. `codexp --headless` 不启动 TUI，但仍必须在 app-server/bridge 就绪后主动调用 app-server `thread/start`，创建并同步该 worker 的初始 `currentThreadId`；启动成功后要在终端友好输出 `workerId` 和 `threadId`，便于 Web/TG/task/API 直接向 `/api/workers/:workerId/turn` 发消息。
+9. 同一个 `workingDirectory` 可以同时运行多个 `codexhub` / `codexhub resume`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
+10. 非 headless 的 `codexhub` / `codexhub resume` 必须用 PTY wrapper 启动官方 `codex --remote ...` 或 `codex resume --remote ...` TUI，由 `codexhub` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
+11. `codexhub --headless` 不启动 TUI，但仍必须在 app-server/bridge 就绪后主动调用 app-server `thread/start`，创建并同步该 worker 的初始 `currentThreadId`；启动成功后要在终端友好输出 `workerId` 和 `threadId`，便于 Web/TG/task/API 直接向 `/api/workers/:workerId/turn` 发消息。
 12. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
-13. `codexp list` 必须和 Web 左侧一致：读取 `/api/workers` 并只显示在线 worker。
-14. `codexp threads` 必须扫描本机官方 Codex session 历史并按当前工作目录过滤；它不是 server mirror cache，也不读取 `/api/threads`。输出应包含完整 `threadId`、标题和更新时间，作为 `codexp resume <threadId>` 的辅助列表。`--show <count>` 控制最近显示数量，默认 20；实现应优先扫描最近 session 文件并在收集足够当前目录 thread 后停止。
+13. `codexhub list` 必须和 Web 左侧一致：读取 `/api/workers` 并只显示在线 worker。
+14. `codexhub threads` 必须扫描本机官方 Codex session 历史并按当前工作目录过滤；它不是 server mirror cache，也不读取 `/api/threads`。输出应包含完整 `threadId`、标题和更新时间，作为 `codexhub resume <threadId>` 的辅助列表。`--show <count>` 控制最近显示数量，默认 20；实现应优先扫描最近 session 文件并在收集足够当前目录 thread 后停止。
 
 ## 选择和关闭语义
 
@@ -34,11 +34,11 @@
 2. Web 通过 `GET /api/threads/:threadId/events?after=...` 订阅 thread 事件。
 3. Telegram bot 由 API server 进程按环境变量内置启动，发送消息时也订阅同一个 thread 事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
 4. Web/TG 不各自拼 transcript；thread 详情 `GET /api/threads/:threadId` 返回后端维护的 `records`。
-5. TUI 里创建或恢复的新 thread，由 `codexp` / `codexp resume` 从 app-server event 中发现并注册到 server。
+5. TUI 里创建或恢复的新 thread，由 `codexhub` / `codexhub resume` 从 app-server event 中发现并注册到 server。
 6. worker runtime 状态只能通过显式状态事件更新：`worker_current_changed` 更新 `worker.currentThreadId`，`thread_execution_changed` 更新 thread running/turnId，`runtime_settings_changed` 更新 model/reasoning。普通 `thread_event`、`thread/read` 快照、jsonl records、usage heartbeat、Web tab 点击都不能修改 worker runtime active。
 7. `worker.currentThreadId` 的来源必须是 app-server 主动发出的明确 current 变化 notification。`thread/started` 只有在不是 bridge/server 命令触发时才可视为 CLI/TUI current 变化；如果它来自 Web/TG/API 触发的 `thread/fork`、`thread/resume`、`thread/start`、`turn/start`，只能表示该 thread 开始运行，不能改 `worker.currentThreadId`。Server 侧的 `runTurn`、fork、rollback、stop、local slash command 也不能调用 `markWorkerCurrentThread`。Web 在非 current thread 里发送消息只更新该 thread 的消息/running/usage，不代表 CLI/TUI 当前窗口切换。不要在每个 thread event 上携带 `currentThreadId`，也不要用 `thread.id === currentThreadId` 或 `current: true` 这类字段从内容事件推断 active。
-8. Web/TG/API 输入里的 slash command 不当普通 Codex turn 透传。官方 Codex TUI 的 slash command 是 TUI 本地命令；codex-proxy 只在 server 本地处理明确支持的 `/status`、`/help`、`/model`，其他命令形态返回不支持说明。
-9. Web 里的 `/model` 是 Web 客户端命令：打开 Runtime 选择器，不转发给官方 TUI。Web 正常 turn 必须把当前 Runtime 的 model / reasoning 作为 app-server `turn/start` override 发送；官方 TUI 本地 `/model` 可能只更新 app-server effective config，因此 `codexp` / `codexp resume` 必须通过 `config/read` 轮询同步 Runtime 设置，并兼容 `thread/settings/updated`。
+8. Web/TG/API 输入里的 slash command 不当普通 Codex turn 透传。官方 Codex TUI 的 slash command 是 TUI 本地命令；codexhub 只在 server 本地处理明确支持的 `/status`、`/help`、`/model`，其他命令形态返回不支持说明。
+9. Web 里的 `/model` 是 Web 客户端命令：打开 Runtime 选择器，不转发给官方 TUI。Web 正常 turn 必须把当前 Runtime 的 model / reasoning 作为 app-server `turn/start` override 发送；官方 TUI 本地 `/model` 可能只更新 app-server effective config，因此 `codexhub` / `codexhub resume` 必须通过 `config/read` 轮询同步 Runtime 设置，并兼容 `thread/settings/updated`。
 
 ## API 约定
 
@@ -51,16 +51,16 @@
 7. `/api/threads/:threadId` 系列用于 thread 详情、SSE 事件、turn/stop/fork/rollback/delete 等 thread 操作；Web 可以用 `/api/threads/:threadId/turn` 对选中 thread 输入。`GET /api/threads` 只允许作为诊断/管理兼容列表，不用于 Web 高频轮询。
 8. Web 的消息级 Fork 必须只显示在带 app-server turn id 的 final answer 上。官方 app-server 的 `thread/fork` 不支持 `messageId` / `itemId` 定位；按消息 fork 的实现语义是先对源 thread 调 `thread/fork`，再按目标消息所在 turn 之后的 turn 数，对新 thread 调 `thread/rollback { numTurns }`。不要把 Web 传入的 `messageId` 直接当成官方 `thread/fork` 参数。
 9. fork 后的新 thread transcript 必须以新 session jsonl 的 line 顺序为唯一来源。`thread/read` snapshot 不得展开成 transcript records，也不得作为 jsonl 尚不可用时的兜底；app-server item/user/agent/tool/token 事件不写入 `records`，避免 snapshot 或 live item 重放造成重复 tool/codex 消息。jsonl user/agent/usage records 必须保留 app-server `turn_id`，让 Web 的消息级 Fork 仍能按目标 final answer 定位 turn。官方 `thread/rollback` 不会改写 fork jsonl；fork 后执行过 rollback 时，server 要把应保留的 turn 数传给 bridge，bridge 重置 jsonl 水位线并只重放新 fork jsonl 中前 N 个 turn，随后把 cursor 推到文件末尾，未来新输入再正常追加同步。
-10. 不提供 `POST /api/threads` 创建入口；server 只能 get/delete、turn、stop、fork，以及诊断性 list。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexp resume` 或 TUI 内 `/resume` 发现并镜像。
-11. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexp` worker/CLI 侧。
+10. 不提供 `POST /api/threads` 创建入口；server 只能 get/delete、turn、stop、fork，以及诊断性 list。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexhub resume` 或 TUI 内 `/resume` 发现并镜像。
+11. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexhub` worker/CLI 侧。
 
 ## `.codexp` 工作区文件约定
 
 1. 工作区 Codex session 索引写入 `.codexp/threads.yaml`，顶层使用 `threads` 数组，每项以 `threadId` 作为主键。
 2. 不读取、不写入、不迁移 `.codexp/instances.yaml` 或 `.codexp/index.yaml`。
-3. 工作区任务定义放在 `.codexp/tasks/*.yaml`，由 `codexp` CLI/worker 读取，server 不扫描。
+3. 工作区任务定义放在 `.codexp/tasks/*.yaml`，由 `codexhub` CLI/worker 读取，server 不扫描。
 4. 不写入 `.codexp/task-runs` 运行日志；任务结果应落在对应 Codex thread/session 镜像里。
-5. server 不再把输入图片写入 `.codexp/tmp/`。Web/TG/task 图片输入必须使用 app-server 原生 `{ type: "image", url }` 语义；需要本地临时文件时只能由 `codexp` worker 自己承担。
+5. server 不再把输入图片写入 `.codexp/tmp/`。Web/TG/task 图片输入必须使用 app-server 原生 `{ type: "image", url }` 语义；需要本地临时文件时只能由 `codexhub` worker 自己承担。
 
 ## 定时任务约定
 
@@ -77,23 +77,23 @@ input: |
 ```
 
 1. 任务所在工作区由 `.codexp/tasks/*.yaml` 的位置推导，不在 YAML 里写 `folder`。
-2. `thread` 可选；`codexp task run <task_yaml_path>` 离线一次性执行时，有值就作为官方 Codex session/thread id 传给 `codex exec -C <workspace> resume <thread> -`，没有值时使用 `codex exec -C <workspace> -` 新开非交互 session。`codexp task start` 定时执行时，有值就先让它启动的 task worker 通过 app-server `thread/resume` 恢复该 thread，再向 `/api/threads/:threadId/turn` 发送；没有值时向 task worker 的 `currentThreadId` 发送。
+2. `thread` 可选；`codexhub task run <task_yaml_path>` 离线一次性执行时，有值就作为官方 Codex session/thread id 传给 `codex exec -C <workspace> resume <thread> -`，没有值时使用 `codex exec -C <workspace> -` 新开非交互 session。`codexhub task start` 定时执行时，有值就先让它启动的 task worker 通过 app-server `thread/resume` 恢复该 thread，再向 `/api/threads/:threadId/turn` 发送；没有值时向 task worker 的 `currentThreadId` 发送。
 3. 旧 `instance` 字段只允许作为 `thread` 的过渡别名读取，不要重新引入 instance 模型。
-4. 任务执行必须 local-first 扫描任务文件，但执行入口分层：`codexp task run <task_yaml_path>` 通过本机 `codex exec` / `codex exec resume` 离线执行；`codexp task start` 启动本机 headless codexp worker，并通过 codex-proxy server 的 `/api/workers/:workerId/turn` 定时向该 worker 发送任务输入。
+4. 任务执行必须 local-first 扫描任务文件，但执行入口分层：`codexhub task run <task_yaml_path>` 通过本机 `codex exec` / `codex exec resume` 离线执行；`codexhub task start` 启动本机 headless codexhub worker，并通过 codexhub server 的 `/api/workers/:workerId/turn` 定时向该 worker 发送任务输入。
 5. 任务并发边界是 task 文件：同一个任务已经 queued/running 时，下一次触发应跳过，不额外写本地 task-run 日志。
-6. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task list [thread]`、`codexp task template [name]`、`codexp task start`、`codexp task run <task_yaml_path>`。
-7. `codexp task list` 默认离线可用，只扫描当前工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示 server 是否在线。
-9. `codexp task start` 是本地任务调度入口：只扫描当前工作区的 `.codexp/tasks`，启动后立即创建一个 headless worker 和初始 thread，输出 `workerId` / `threadId`，随后按 YAML 里的 `schedule` 定时发送任务输入；任务 YAML 有 `thread` 时先 resume 该 thread 再发送，没有 `thread` 时发送到 task worker 的 current thread；server 只接收 worker/thread turn，不扫描本机文件系统。
-10. `codexp task run <task_yaml_path>` 是手动单次执行入口：立即本地运行指定 YAML 文件，不看 `schedule`，不要求 server 在线。
+6. 任务 CLI 放在 `codexhub task` 子命令下，例如 `codexhub task list [thread]`、`codexhub task template [name]`、`codexhub task start`、`codexhub task run <task_yaml_path>`。
+7. `codexhub task list` 默认离线可用，只扫描当前工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示 server 是否在线。
+9. `codexhub task start` 是本地任务调度入口：只扫描当前工作区的 `.codexp/tasks`，启动后立即创建一个 headless worker 和初始 thread，输出 `workerId` / `threadId`，随后按 YAML 里的 `schedule` 定时发送任务输入；任务 YAML 有 `thread` 时先 resume 该 thread 再发送，没有 `thread` 时发送到 task worker 的 current thread；server 只接收 worker/thread turn，不扫描本机文件系统。
+10. `codexhub task run <task_yaml_path>` 是手动单次执行入口：立即本地运行指定 YAML 文件，不看 `schedule`，不要求 server 在线。
 
 ## 自举开发和发布
 
 1. 本地默认主入口使用 `8788`，同一个 API server 同时服务 Web `dist` 和 `/api/*`。
 2. Prod 使用 5 位 `1xxxx` 端口：主入口 `18788`。
-3. API server 统一通过 `codexp server` 启动，只加载当前目录 `.env`；不再提供 `--env`、`--telegram`、`--no-telegram` 或 `CODEX_PROXY_TELEGRAM_ENABLED` 分支开关。
+3. API server 统一通过 `codexhub server` 启动，只加载当前目录 `.env`；不再提供 `--env`、`--telegram`、`--no-telegram` 或 `CODEX_PROXY_TELEGRAM_ENABLED` 分支开关。
 4. `CODEX_PROXY_HOST` / `CODEX_PROXY_PORT` 可以写入 `.env`；CLI `--host` / `--port` 优先级最高，其次是当前 shell 环境变量，然后是 `.env`。
 5. Telegram bot 默认随 server 启动；没有 `TELEGRAM_BOT_TOKEN` 时 server 应失败，而不是静默跳过。
-6. Prod 由 PM2 管理长期进程：`codex-proxy-prod`。Telegram bot 内置在该 server 进程中。
+6. Prod 由 PM2 管理长期进程：`codexhub-prod`。Telegram bot 内置在该 server 进程中。
 7. API server 默认直接服务 `dist`；`--serve-static <dir>` 只作为显式目录覆盖，不再用 `CODEX_PROXY_SERVE_STATIC` 区分 dev/prod。
-8. 发布使用 `pnpm run publish:prod`，脚本必须先 `pnpm check`、`pnpm build`，再启动或重启 `codex-proxy-prod` 并验证 `/api/health` 和 `/`。
+8. 发布使用 `pnpm run publish:prod`，脚本必须先 `pnpm check`、`pnpm build`，再启动或重启 `codexhub-prod` 并验证 `/api/health` 和 `/`。
 9. 不要让本地 Dev 进程替换 PM2 Prod；开发验证和生产发布必须分开。

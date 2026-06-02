@@ -20,20 +20,20 @@ PROD_URL="http://127.0.0.1:${PROD_PORT}"
 pnpm check
 pnpm build
 
-pm2 delete codex-proxy-next >/dev/null 2>&1 || true
-pm2 delete codex-proxy-tg >/dev/null 2>&1 || true
-pm2 startOrRestart ecosystem.config.cjs --only codex-proxy-prod --update-env
+pm2 delete codexhub-next >/dev/null 2>&1 || true
+pm2 delete codexhub-tg >/dev/null 2>&1 || true
+pm2 startOrRestart ecosystem.config.cjs --only codexhub-prod --update-env
 
 for _ in {1..30}; do
-  if curl -fsS "${PROD_URL}/api/health" >/tmp/codex-proxy-prod-health.json; then
+  if curl -fsS "${PROD_URL}/api/health" >/tmp/codexhub-prod-health.json; then
     break
   fi
   sleep 1
 done
 
-curl -fsS "${PROD_URL}/api/health" >/tmp/codex-proxy-prod-health.json
-curl -fsS "${PROD_URL}/" >/tmp/codex-proxy-prod-index.html
+curl -fsS "${PROD_URL}/api/health" >/tmp/codexhub-prod-health.json
+curl -fsS "${PROD_URL}/" >/tmp/codexhub-prod-index.html
 
 pm2 save
 
-echo "codex-proxy prod published: ${PROD_URL}"
+echo "codexhub prod published: ${PROD_URL}"

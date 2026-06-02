@@ -128,13 +128,13 @@ const registerHandlers = () => {
 
   bot.start(async (ctx) => {
     return ctx.reply([
-      "codex-proxy ready.",
+      "codexhub ready.",
       "",
       "/workers 选择在线 Codex worker",
       "/detach 取消当前 worker 绑定",
       "/status 查看当前状态",
       "",
-      "直接发消息会发送给当前 worker 指向的 Codex thread。新 thread 请在本地 codexp 里开始。"
+      "直接发消息会发送给当前 worker 指向的 Codex thread。新 thread 请在本地 codexhub 里开始。"
     ].join("\n"));
   });
 
@@ -143,7 +143,7 @@ const registerHandlers = () => {
       const workers = await listRunnableWorkers();
 
       if (!workers.length) {
-        await ctx.reply("当前没有带 current thread 的 Codex worker。请先在本地 codexp 里打开或 resume 一个 thread。");
+        await ctx.reply("当前没有带 current thread 的 Codex worker。请先在本地 codexhub 里打开或 resume 一个 thread。");
         return;
       }
 
@@ -575,9 +575,9 @@ export const startTelegramBot = async (options: TelegramBotOptions): Promise<Tel
     })
     .catch((error: unknown) => {
       if (bot === currentBot) startedBot = null;
-      logger.error("codex-proxy telegram bot stopped", error);
+      logger.error("codexhub telegram bot stopped", error);
     });
-  logger.log(`codex-proxy telegram bot started, api=${apiBaseUrl}`);
+  logger.log(`codexhub telegram bot started, api=${apiBaseUrl}`);
   return startedBot;
 };
 

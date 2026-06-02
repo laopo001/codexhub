@@ -568,7 +568,7 @@ export class ThreadHub {
       return replacement;
     }
     if (workers.length > 1) {
-      throw new Error(`Multiple online workers for workspace. Resume this thread in one codexp instance before sending: ${thread.threadId}`);
+      throw new Error(`Multiple online workers for workspace. Resume this thread in one codexhub instance before sending: ${thread.threadId}`);
     }
     throw new Error(`No online worker for thread: ${thread.threadId}`);
   }
@@ -1200,7 +1200,7 @@ const parseLocalSlashCommand = (input: ProxyInput) => {
 };
 
 const threadStatusMessage = (thread: RuntimeThread, runtime: ThreadRuntimeSummary) => [
-  "Codex Proxy status",
+  "Codex Hub status",
   `thread: ${thread.threadId}`,
   `folder: ${thread.workingDirectory}`,
   `state: ${thread.running ? "running" : "idle"}`,
@@ -1218,11 +1218,11 @@ const modelCommandMessage = (thread: RuntimeThread) => [
   `current reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
   "",
   "In Web, use the Runtime selector. The selected model and reasoning are sent with the next Web turn.",
-  "In the official TUI, run /model locally; codex-proxy cannot press Enter inside the TUI composer through app-server."
+  "In the official TUI, run /model locally; codexhub cannot press Enter inside the TUI composer through app-server."
 ].join("\n");
 
 const slashHelpMessage = () => [
-  "Supported codex-proxy slash commands:",
+  "Supported codexhub slash commands:",
   "/status - show this thread runtime status",
   "/model - explain model control for Web and TUI",
   "/help - show supported proxy commands"

@@ -3,14 +3,14 @@ import path from "node:path";
 import YAML from "yaml";
 import type { CodexSessionSummary } from "./codexSession.js";
 
-export type CodexpThreadIndex = {
+export type CodexhubThreadIndex = {
   version: 1;
   workingDirectory: string;
   updatedAt: string;
-  threads: CodexpWorkspaceThread[];
+  threads: CodexhubWorkspaceThread[];
 };
 
-export type CodexpWorkspaceThread = {
+export type CodexhubWorkspaceThread = {
   threadId: string;
   updatedAt: string;
   path: string;
@@ -22,24 +22,24 @@ export type CodexpWorkspaceThread = {
   };
 };
 
-export const codexpThreadIndexPath = (workingDirectory: string) => path.join(workingDirectory, ".codexp", "threads.yaml");
+export const codexhubThreadIndexPath = (workingDirectory: string) => path.join(workingDirectory, ".codexp", "threads.yaml");
 
-export const readCodexpThreadIndex = async (workingDirectory: string): Promise<CodexpThreadIndex | null> => {
+export const readCodexhubThreadIndex = async (workingDirectory: string): Promise<CodexhubThreadIndex | null> => {
   try {
-    const parsed = YAML.parse(await readFile(codexpThreadIndexPath(workingDirectory), "utf8")) as Partial<CodexpThreadIndex>;
+    const parsed = YAML.parse(await readFile(codexhubThreadIndexPath(workingDirectory), "utf8")) as Partial<CodexhubThreadIndex>;
     if (parsed.version !== 1 || parsed.workingDirectory !== workingDirectory || !Array.isArray(parsed.threads)) return null;
-    return parsed as CodexpThreadIndex;
+    return parsed as CodexhubThreadIndex;
   } catch {
     return null;
   }
 };
 
-export const writeCodexpThreadIndex = async (
+export const writeCodexhubThreadIndex = async (
   workingDirectory: string,
   threads: CodexSessionSummary[]
-): Promise<CodexpThreadIndex> => {
-  const filePath = codexpThreadIndexPath(workingDirectory);
-  const index: CodexpThreadIndex = {
+): Promise<CodexhubThreadIndex> => {
+  const filePath = codexhubThreadIndexPath(workingDirectory);
+  const index: CodexhubThreadIndex = {
     version: 1,
     workingDirectory,
     updatedAt: new Date().toISOString(),
@@ -50,21 +50,21 @@ export const writeCodexpThreadIndex = async (
   return index;
 };
 
-export const upsertCodexpThread = async (
+export const upsertCodexhubThread = async (
   workingDirectory: string,
   summary: CodexSessionSummary
-): Promise<CodexpThreadIndex> => {
-  const existing = await readCodexpThreadIndex(workingDirectory);
+): Promise<CodexhubThreadIndex> => {
+  const existing = await readCodexhubThreadIndex(workingDirectory);
   const threads = [
     ...(existing?.threads ?? [])
       .map((thread) => threadToSummary(workingDirectory, thread))
       .filter((thread) => thread.threadId !== summary.threadId),
     summary
   ];
-  return writeCodexpThreadIndex(workingDirectory, threads);
+  return writeCodexhubThreadIndex(workingDirectory, threads);
 };
 
-const summaryToThread = (thread: CodexSessionSummary): CodexpWorkspaceThread => ({
+const summaryToThread = (thread: CodexSessionSummary): CodexhubWorkspaceThread => ({
   threadId: thread.threadId,
   updatedAt: thread.updatedAt,
   path: thread.path,
@@ -76,7 +76,7 @@ const summaryToThread = (thread: CodexSessionSummary): CodexpWorkspaceThread => 
   }
 });
 
-const threadToSummary = (workingDirectory: string, thread: CodexpWorkspaceThread): CodexSessionSummary => ({
+const threadToSummary = (workingDirectory: string, thread: CodexhubWorkspaceThread): CodexSessionSummary => ({
   threadId: thread.threadId,
   cwd: workingDirectory,
   updatedAt: thread.updatedAt,

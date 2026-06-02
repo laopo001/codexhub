@@ -80,10 +80,10 @@ type BridgeOptions = {
 };
 
 type ProxyBridgeRunnerOptions = BridgeOptions & {
-  statusBar?: CodexpStatusBar | null;
+  statusBar?: CodexhubStatusBar | null;
 };
 
-export type HeadlessCodexpWorkerOptions = {
+export type HeadlessCodexhubWorkerOptions = {
   apiBase: string;
   cwd: string;
   port?: number;
@@ -93,7 +93,7 @@ export type HeadlessCodexpWorkerOptions = {
   approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
 };
 
-export type HeadlessCodexpWorkerHandle = {
+export type HeadlessCodexhubWorkerHandle = {
   workerId: string;
   threadId: string;
   appServerUrl: string;
@@ -103,7 +103,7 @@ export type HeadlessCodexpWorkerHandle = {
   wait: () => Promise<ChildExit>;
 };
 
-export const registerCodexProxyWorkerCommands = (program: Command) => {
+export const registerCodexHubWorkerCommands = (program: Command) => {
   program
     .argument("[prompt]", "optional prompt to start the Codex session")
     .option("-C, --cd <dir>", "Codex working directory")
@@ -113,15 +113,15 @@ export const registerCodexProxyWorkerCommands = (program: Command) => {
     .option("-s, --sandbox <mode>", "sandbox mode for remote turns")
     .option("-a, --approval-policy <policy>", "approval policy for remote turns")
     .action(async (prompt: string | undefined) => {
-      await runCodexpWorker(program, program.opts<ConnectOptions>(), { type: "start", prompt });
+      await runCodexhubWorker(program, program.opts<ConnectOptions>(), { type: "start", prompt });
     });
 
   program
     .command("resume")
     .argument("[session]", "Codex session/thread id or thread name")
     .argument("[prompt]", "optional prompt to send after resuming")
-    .description("Resume an official Codex session with the codex-proxy worker bridge")
-    .option("--server <url>", "codex-proxy server URL")
+    .description("Resume an official Codex session with the codexhub worker bridge")
+    .option("--server <url>", "codexhub server URL")
     .option("-C, --cd <dir>", "Codex working directory")
     .option("--port <port>", "local Codex app-server websocket port")
     .option("--last", "resume the most recent Codex session")
@@ -130,7 +130,7 @@ export const registerCodexProxyWorkerCommands = (program: Command) => {
     .option("-s, --sandbox <mode>", "sandbox mode for remote turns")
     .option("-a, --approval-policy <policy>", "approval policy for remote turns")
     .action(async (sessionId: string | undefined, prompt: string | undefined, options: ResumeOptions) => {
-      await runCodexpWorker(program, options, {
+      await runCodexhubWorker(program, options, {
         type: "resume",
         sessionId,
         prompt,
@@ -140,7 +140,7 @@ export const registerCodexProxyWorkerCommands = (program: Command) => {
     });
 };
 
-async function runCodexpWorker(program: Command, options: ConnectOptions, launch: TuiLaunch) {
+async function runCodexhubWorker(program: Command, options: ConnectOptions, launch: TuiLaunch) {
   const rootOptions = program.opts<{ server: string }>();
   const apiBase = options.server ?? rootOptions.server;
   const cwd = path.resolve(options.cd ?? process.cwd());
@@ -152,7 +152,7 @@ async function runCodexpWorker(program: Command, options: ConnectOptions, launch
   const appServer = await startCodexAppServer(cwd, appServerUrl, port);
   let bridgeRunner: ProxyBridgeRunner | null = null;
   let tui: CodexTuiPty | null = null;
-  let statusBar: CodexpStatusBar | null = null;
+  let statusBar: CodexhubStatusBar | null = null;
   let cleanedUp = false;
   const cleanup = cleanupOnce(async () => {
     cleanedUp = true;
@@ -174,13 +174,13 @@ async function runCodexpWorker(program: Command, options: ConnectOptions, launch
     });
 
     console.error([
-      `codexp local started: ${workerId}`,
+      `codexhub local started: ${workerId}`,
       `server: ${apiBase} (optional)`,
       `cwd: ${cwd}`,
       `app-server: ${appServerUrl}`
     ].join("\n"));
 
-    statusBar = CodexpStatusBar.start({ apiBase, workerId, cwd });
+    statusBar = CodexhubStatusBar.start({ apiBase, workerId, cwd });
     bridgeRunner = new ProxyBridgeRunner({
       apiBase,
       appServerUrl,
@@ -212,7 +212,7 @@ async function runCodexpWorker(program: Command, options: ConnectOptions, launch
   }
 }
 
-export async function startHeadlessCodexpWorker(options: HeadlessCodexpWorkerOptions): Promise<HeadlessCodexpWorkerHandle> {
+export async function startHeadlessCodexhubWorker(options: HeadlessCodexhubWorkerOptions): Promise<HeadlessCodexhubWorkerHandle> {
   const cwd = path.resolve(options.cwd);
   const port = options.port ?? await findFreePort();
   if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
@@ -292,7 +292,7 @@ class ProxyBridgeRunner {
   async ensureThread(threadId: string) {
     const trimmed = threadId.trim();
     if (!trimmed) throw new Error("Missing thread id.");
-    if (!this.bridge) throw new Error("codexp bridge is not connected.");
+    if (!this.bridge) throw new Error("codexhub bridge is not connected.");
     const currentThreadId = await this.bridge.ensureThreadCurrent(trimmed);
     this.bridgeState = this.bridge.snapshotState();
     return currentThreadId;
@@ -311,12 +311,12 @@ class ProxyBridgeRunner {
           this.ready.resolve({ workerId: this.options.workerId, threadId });
         }
         this.options.statusBar?.setProxyState("online");
-        this.logState("online", `codexp proxy connected: ${this.options.workerId}`);
+        this.logState("online", `codexhub proxy connected: ${this.options.workerId}`);
         await this.runBridge(this.bridge);
       } catch (error) {
         if (this.stopping) return;
         this.options.statusBar?.setProxyState("offline");
-        this.logState("offline", `codexp proxy offline: ${errorText(error)}`);
+        this.logState("offline", `codexhub proxy offline: ${errorText(error)}`);
       } finally {
         if (this.bridge) this.bridgeState = this.bridge.snapshotState();
         this.bridge?.close();
@@ -373,7 +373,7 @@ class ProxyBridgeRunner {
     if (this.lastReadyThreadId === threadId) return;
     this.lastReadyThreadId = threadId;
     console.error([
-      `${this.options.readyLabel ?? "codexp headless worker ready"}:`,
+      `${this.options.readyLabel ?? "codexhub headless worker ready"}:`,
       `  workerId: ${this.options.workerId}`,
       `  threadId: ${threadId}`
     ].join("\n"));
@@ -410,7 +410,7 @@ class CodexAppServerBridge {
     });
     ws.addEventListener("close", () => bridge.markClosed());
     await bridge.request("initialize", {
-      clientInfo: { name: "codexp", title: "codex-proxy bridge", version: "0.1.0" },
+      clientInfo: { name: "codexhub", title: "codexhub bridge", version: "0.1.0" },
       capabilities: { experimentalApi: true, requestAttestation: false }
     });
     bridge.notify("initialized");
@@ -678,7 +678,7 @@ class CodexAppServerBridge {
         .map((record) => codexRecordFromSession(record, threadId));
       if (records.length) await this.forwardRecords(threadId, records);
     } catch (error) {
-      console.error(`codexp bridge failed to sync jsonl records for ${threadId}: ${errorText(error)}`);
+      console.error(`codexhub bridge failed to sync jsonl records for ${threadId}: ${errorText(error)}`);
     } finally {
       state.jsonlSyncing = false;
     }
@@ -711,7 +711,7 @@ class CodexAppServerBridge {
         await this.forwardRuntimeSettings(threadId, settings);
       }));
     } catch (error) {
-      console.error(`codexp bridge failed to sync runtime settings: ${errorText(error)}`);
+      console.error(`codexhub bridge failed to sync runtime settings: ${errorText(error)}`);
     }
   }
 
@@ -740,7 +740,7 @@ class CodexAppServerBridge {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ type: "thread_event", threadId, commandId, message, heartbeat: options.heartbeat })
     }).catch((error) => {
-      console.error(`codexp bridge failed to forward app-server event: ${errorText(error)}`);
+      console.error(`codexhub bridge failed to forward app-server event: ${errorText(error)}`);
     });
   }
 
@@ -805,7 +805,7 @@ class CodexAppServerBridge {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ type: "worker_current_changed", currentThreadId: threadId, heartbeat })
     }).catch((error) => {
-      console.error(`codexp bridge failed to forward current thread change: ${errorText(error)}`);
+      console.error(`codexhub bridge failed to forward current thread change: ${errorText(error)}`);
     });
   }
 
@@ -829,7 +829,7 @@ class CodexAppServerBridge {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ type: "thread_execution_changed", threadId, running, turnId, heartbeat: false })
     }).catch((error) => {
-      console.error(`codexp bridge failed to forward thread execution state: ${errorText(error)}`);
+      console.error(`codexhub bridge failed to forward thread execution state: ${errorText(error)}`);
     });
   }
 
@@ -845,7 +845,7 @@ class CodexAppServerBridge {
         heartbeat: false
       })
     }).catch((error) => {
-      console.error(`codexp bridge failed to forward runtime settings: ${errorText(error)}`);
+      console.error(`codexhub bridge failed to forward runtime settings: ${errorText(error)}`);
     });
   }
 
@@ -855,7 +855,7 @@ class CodexAppServerBridge {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ threadId, records, heartbeat: false })
     }).catch((error) => {
-      console.error(`codexp bridge failed to forward jsonl records: ${errorText(error)}`);
+      console.error(`codexhub bridge failed to forward jsonl records: ${errorText(error)}`);
     });
   }
 
@@ -882,7 +882,7 @@ class CodexAppServerBridge {
       id,
       error: {
         code: -32601,
-        message: `codexp bridge does not handle app-server request: ${method}`
+        message: `codexhub bridge does not handle app-server request: ${method}`
       }
     }));
   }
@@ -1025,7 +1025,7 @@ type StatusWorkerSummary = {
   };
 };
 
-class CodexpStatusBar {
+class CodexhubStatusBar {
   private readonly disposables: Array<{ dispose: () => void }> = [];
   private refreshTimer: NodeJS.Timeout | null = null;
   private redrawTimer: NodeJS.Timeout | null = null;
@@ -1041,7 +1041,7 @@ class CodexpStatusBar {
 
   static start(options: { apiBase: string; workerId: string; cwd: string }) {
     if (!process.stdout.isTTY) return null;
-    const bar = new CodexpStatusBar(options);
+    const bar = new CodexhubStatusBar(options);
     bar.attach();
     return bar;
   }
@@ -1109,7 +1109,7 @@ class CodexpStatusBar {
     const currentThreadId = thisWorker?.currentThreadId ?? thisWorker?.currentThread?.threadId;
     const running = thisWorker?.currentThread?.running;
     return [
-      `codexp ${this.options.workerId.slice(0, 14)} ${workerState}`,
+      `codexhub ${this.options.workerId.slice(0, 14)} ${workerState}`,
       `thread ${currentThreadId ? currentThreadId : "none"}`,
       `running ${running ? 1 : 0}`,
       `workers ${onlineWorkers}/${workers.length}`
@@ -1256,7 +1256,7 @@ const resultThreadIdForMessage = (message: JsonRecord) => {
 
 const createWorkerId = () => `local-${safeWorkerPart(os.hostname())}-${process.pid}-${randomUUID().slice(0, 8)}`;
 
-const workerDisplayName = (workerId: string) => `codexp-${workerId.split("-").at(-1) ?? workerId.slice(-8)}`;
+const workerDisplayName = (workerId: string) => `codexhub-${workerId.split("-").at(-1) ?? workerId.slice(-8)}`;
 
 const safeWorkerPart = (value: string) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
 

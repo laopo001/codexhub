@@ -65,7 +65,7 @@ type SchedulerOptions = {
 const defaultTimezone = "Asia/Shanghai";
 const defaultScanIntervalMs = 30_000;
 
-export class CodexpTaskScheduler {
+export class CodexhubTaskScheduler {
   private readonly queuedTasks = new Set<string>();
   private readonly runningTasks = new Set<string>();
   private readonly taskQueues = new Map<string, Promise<void>>();

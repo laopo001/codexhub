@@ -1,10 +1,10 @@
 module.exports = {
   apps: [
     {
-      name: "codex-proxy-prod",
+      name: "codexhub-prod",
       cwd: __dirname,
       script: "node",
-      args: ["--import", "tsx", "src/cli/codexp.ts", "server"],
+      args: ["--import", "tsx", "src/cli/codexhub.ts", "server"],
       autorestart: true,
       max_restarts: 10,
       env: {

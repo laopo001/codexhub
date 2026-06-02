@@ -131,7 +131,7 @@ type CodexUsageSnapshot = {
   source: "latest" | "thread";
 };
 
-const storageKey = "codex-proxy-ui-state-v4";
+const storageKey = "codexhub-ui-state-v4";
 const modelOptions: Array<{ value: ModelSelection; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "gpt-5.5", label: "GPT-5.5" },
@@ -655,7 +655,7 @@ const App = () => {
       <aside className="sidebar">
         <div className="brand">
           <div>
-            <h1>Codex Proxy</h1>
+            <h1>Codex Hub</h1>
             <p>Local agent workbench</p>
           </div>
         </div>
@@ -663,7 +663,7 @@ const App = () => {
         <section className="proxyWorkers expanded">
           <h2>Codex Workers</h2>
           {workers.length === 0 ? (
-            <div className="proxyWorkerEmpty">No connected codexp</div>
+            <div className="proxyWorkerEmpty">No connected codexhub</div>
           ) : (
             <div className="proxyWorkerList">
               {workers.map((worker) => {
@@ -704,8 +704,8 @@ const App = () => {
             {sidebarCollapsed ? "Workers" : "Hide"}
           </button>
           <div className="workspaceTitle">
-            <span title={activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexp"}>
-              {activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexp"}
+            <span title={activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexhub"}>
+              {activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexhub"}
             </span>
             <code className="workspaceMeta">
               <span className="workspacePath" title={activeWorker?.workingDirectory ?? activeWorkspacePath}>
@@ -879,7 +879,7 @@ const App = () => {
             onChange={(threadId) => void switchWorkerThread(threadId)}
           />
         ) : (
-          <div className="empty">{activeWorker ? activeWorker.currentThreadId ? "Loading thread" : "No current thread" : "No connected codexp"}</div>
+          <div className="empty">{activeWorker ? activeWorker.currentThreadId ? "Loading thread" : "No current thread" : "No connected codexhub"}</div>
         )}
       </section>
 

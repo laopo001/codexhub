@@ -3,11 +3,11 @@ import { Command } from "commander";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadDotEnv } from "../core/dotenv.js";
-import { listLoadableCodexThreads } from "../core/codexpLog.js";
+import { listLoadableCodexThreads } from "../core/codexhubLog.js";
 import type { CodexSessionSummary } from "../core/codexSession.js";
-import { registerCodexProxyWorkerCommands, startHeadlessCodexpWorker, type HeadlessCodexpWorkerHandle } from "./codexpConnect.js";
+import { registerCodexHubWorkerCommands, startHeadlessCodexhubWorker, type HeadlessCodexhubWorkerHandle } from "./codexhubConnect.js";
 import {
-  CodexpTaskScheduler,
+  CodexhubTaskScheduler,
   loadTaskFiles,
   resolveTaskThread,
   safeTaskName,
@@ -49,13 +49,13 @@ type WorkerTurnResponse = {
 await loadDotEnv();
 
 const program = new Command()
-  .name("codexp")
-  .description("Run Codex through codex-proxy")
-  .option("--server <url>", "codex-proxy server URL", defaultServerUrl());
+  .name("codexhub")
+  .description("Run Codex through codexhub")
+  .option("--server <url>", "codexhub server URL", defaultServerUrl());
 
 program
   .command("server")
-  .description("Start the codex-proxy API server")
+  .description("Start the codexhub API server")
   .option("--host <host>", "listen host (overrides CODEX_PROXY_HOST)")
   .option("--port <port>", "listen port (overrides CODEX_PROXY_PORT)")
   .option("--serve-static <dir>", "serve built web assets from this directory")
@@ -66,14 +66,14 @@ program
       port: parsePortOption(options.port),
       staticDirectory: options.serveStatic
     });
-    console.error(`codex-proxy server listening: ${serverUrl(handle.host, handle.port)}`);
+    console.error(`codexhub server listening: ${serverUrl(handle.host, handle.port)}`);
     await waitForShutdown();
     await handle.stop();
   });
 
 program
   .command("list")
-  .description("List online codexp workers")
+  .description("List online codexhub workers")
   .action(async () => {
     const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
     printWorkers((data.workers ?? []).filter((worker) => worker.online));
@@ -100,11 +100,11 @@ program
     console.log(`Deleted ${formatThread(thread)}`);
   });
 
-registerCodexProxyWorkerCommands(program);
+registerCodexHubWorkerCommands(program);
 
 const taskCommand = program
   .command("task")
-  .description("Manage codexp task YAML files")
+  .description("Manage codexhub task YAML files")
   .action(() => {
     taskCommand.help();
   });
@@ -218,7 +218,7 @@ async function printThreads(threads: ThreadSummary[]) {
 
 function printWorkers(workers: WorkerSummary[]) {
   if (!workers.length) {
-    console.log("No connected codexp.");
+    console.log("No connected codexhub.");
     return;
   }
   console.table(workers.map((worker) => ({
@@ -312,25 +312,25 @@ function pad2(value: number) {
 
 async function startTaskScheduler(options: TaskCommandOptions) {
   const cwd = commandCwd();
-  console.error(`codexp task worker starting: ${cwd}`);
-  const worker = await startHeadlessCodexpWorker({
+  console.error(`codexhub task worker starting: ${cwd}`);
+  const worker = await startHeadlessCodexhubWorker({
     apiBase: apiBase(),
     cwd,
-    readyLabel: "codexp task worker ready"
+    readyLabel: "codexhub task worker ready"
   });
   await restoreSingleTaskThread(worker, cwd);
-  const scheduler = new CodexpTaskScheduler({
+  const scheduler = new CodexhubTaskScheduler({
     workspace: cwd,
     scanIntervalMs: parseIntervalMs(options.intervalMs),
     runner: async (task) => sendTaskTurn(worker, task)
   });
   try {
     scheduler.start();
-    console.error(`codexp task scheduler started: ${cwd}`);
+    console.error(`codexhub task scheduler started: ${cwd}`);
     await Promise.race([
       waitForShutdown(),
       worker.wait().then(({ code, signal }) => {
-        throw new Error(`codexp task worker exited: code=${code ?? ""} signal=${signal ?? ""}`);
+        throw new Error(`codexhub task worker exited: code=${code ?? ""} signal=${signal ?? ""}`);
       })
     ]);
   } finally {
@@ -339,7 +339,7 @@ async function startTaskScheduler(options: TaskCommandOptions) {
   }
 }
 
-async function restoreSingleTaskThread(worker: HeadlessCodexpWorkerHandle, workspace: string) {
+async function restoreSingleTaskThread(worker: HeadlessCodexhubWorkerHandle, workspace: string) {
   const tasks = await loadTaskFiles([workspace]);
   const threadIds = uniqueStrings(tasks
     .filter((task) => task.valid && task.enabled && task.thread)
@@ -352,10 +352,10 @@ async function restoreSingleTaskThread(worker: HeadlessCodexpWorkerHandle, works
   }
 
   const threadId = await worker.ensureThread(threadIds[0]);
-  console.error(`codexp task worker restored thread: ${threadId}`);
+  console.error(`codexhub task worker restored thread: ${threadId}`);
 }
 
-async function sendTaskTurn(worker: HeadlessCodexpWorkerHandle, task: { input: string; thread?: string }) {
+async function sendTaskTurn(worker: HeadlessCodexhubWorkerHandle, task: { input: string; thread?: string }) {
   if (task.thread) {
     const threadId = await worker.ensureThread(task.thread);
     await apiJson<WorkerTurnResponse>(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
@@ -374,7 +374,7 @@ async function sendTaskTurn(worker: HeadlessCodexpWorkerHandle, task: { input: s
 }
 
 async function runTaskFile(taskYamlPath: string) {
-  const scheduler = new CodexpTaskScheduler({
+  const scheduler = new CodexhubTaskScheduler({
     workspace: commandCwd()
   });
   const result = await scheduler.runFile(taskYamlPath);

@@ -1,15 +1,17 @@
 {
-  "name": "codex-proxy",
+  "name": "codexhub",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "codexp": "./src/cli/codexp.ts"
+    "codexhub": "./src/cli/codexhub.ts",
+    "cxh": "./src/cli/codexhub.ts"
   },
   "scripts": {
-    "dev:api": "tsx src/cli/codexp.ts server",
+    "dev:api": "tsx src/cli/codexhub.ts server",
     "bot": "tsx src/telegram/index.ts",
-    "codexp": "tsx src/cli/codexp.ts",
+    "codexhub": "tsx src/cli/codexhub.ts",
+    "cxh": "tsx src/cli/codexhub.ts",
     "cache:refresh": "tsx src/cli/refreshCache.ts",
     "check": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
