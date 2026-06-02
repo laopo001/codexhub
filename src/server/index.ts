@@ -72,6 +72,8 @@ const workerRegistrationSchema = z.object({
   threadCodexUsage: z.record(z.string(), codexUsageSchema).optional()
 });
 
+const workerHeartbeatSchema = workerRegistrationSchema.omit({ currentThreadId: true }).partial();
+
 const codexRecordSchema = z.object({
   id: z.string().min(1),
   timestamp: z.string().optional(),
@@ -80,6 +82,35 @@ const codexRecordSchema = z.object({
   line: z.number().int().optional(),
   sourceThreadId: z.string().optional()
 });
+
+const workerEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("thread_event"),
+    threadId: z.string().min(1),
+    commandId: z.string().min(1).optional(),
+    heartbeat: z.boolean().optional(),
+    message: z.unknown()
+  }),
+  z.object({
+    type: z.literal("worker_current_changed"),
+    currentThreadId: z.string().min(1),
+    heartbeat: z.boolean().optional()
+  }),
+  z.object({
+    type: z.literal("thread_execution_changed"),
+    threadId: z.string().min(1),
+    running: z.boolean(),
+    turnId: z.string().min(1).optional(),
+    heartbeat: z.boolean().optional()
+  }),
+  z.object({
+    type: z.literal("runtime_settings_changed"),
+    threadId: z.string().min(1),
+    model: z.string().min(1).nullable().optional(),
+    modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
+    heartbeat: z.boolean().optional()
+  })
+]);
 
 const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`event: ${event}\n`);
@@ -184,7 +215,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.post("/api/workers/:workerId/heartbeat", async (request, reply) => {
     const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
-    const payload = workerRegistrationSchema.partial().parse(request.body ?? {});
+    const payload = workerHeartbeatSchema.parse(request.body ?? {});
     const result = threads.heartbeatWorker(params.workerId, payload);
     if (!result.ok) reply.code(404);
     return result;
@@ -227,13 +258,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.post("/api/workers/:workerId/events", async (request, reply) => {
     const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({
-      threadId: z.string().optional(),
-      commandId: z.string().optional(),
-      heartbeat: z.boolean().optional(),
-      current: z.boolean().optional(),
-      message: z.unknown()
-    }).parse(request.body);
+    const payload = workerEventSchema.parse(request.body);
     try {
       return threads.applyWorkerEvent(params.workerId, payload);
     } catch (error) {
@@ -247,7 +272,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const payload = z.object({
       threadId: z.string().min(1),
       heartbeat: z.boolean().optional(),
-      current: z.boolean().optional(),
       records: z.array(codexRecordSchema)
     }).parse(request.body);
     try {

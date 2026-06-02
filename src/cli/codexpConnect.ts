@@ -478,10 +478,9 @@ class CodexAppServerBridge {
       const error = asRecord(message.error);
       const threadId = threadIdForPendingMessage(pending, message);
       if (threadId && (!error || pending.method !== "thread/read")) {
-        await this.forward(threadId, pending.commandId, message, {
-          heartbeat: pending.method !== "thread/read",
-          current: pending.method === "thread/read" ? false : undefined
-        });
+        await this.forwardThreadEvent(threadId, pending.commandId, message, { heartbeat: pending.method !== "thread/read" });
+        if (!error) await this.forwardCurrentForRequest(pending.method, threadId);
+        if (!error) await this.forwardExecutionStateFromMessage(threadId, message);
       }
       if (error) pending.reject(new Error(JSON.stringify(error)));
       else pending.resolve(message.result);
@@ -494,7 +493,10 @@ class CodexAppServerBridge {
     }
 
     const threadId = this.threadIdForMessage(message);
-    if (threadId) await this.forward(threadId, undefined, message);
+    if (threadId) {
+      await this.forwardStateEventsFromMessage(threadId, message);
+      await this.forwardThreadEvent(threadId, undefined, message);
+    }
   }
 
   private rememberThreads(message: JsonRecord) {
@@ -527,7 +529,7 @@ class CodexAppServerBridge {
       const snapshot = JSON.stringify(result);
       if (snapshot !== state.lastSnapshot) {
         state.lastSnapshot = snapshot;
-        await this.forward(threadId, undefined, { result }, { heartbeat: false, current: false });
+        await this.forwardThreadEvent(threadId, undefined, { result }, { heartbeat: false });
       }
       state.failures = 0;
     } catch (error) {
@@ -587,16 +589,7 @@ class CodexAppServerBridge {
       await Promise.all(threadIds.map(async (threadId) => {
         if (this.forwardedRuntimeSettings.get(threadId) === snapshot) return;
         this.forwardedRuntimeSettings.set(threadId, snapshot);
-        await this.forward(threadId, undefined, {
-          method: "thread/settings/updated",
-          params: {
-            threadId,
-            threadSettings: {
-              model: settings.model ?? null,
-              effort: settings.modelReasoningEffort ?? null
-            }
-          }
-        }, { heartbeat: false, current: false });
+        await this.forwardRuntimeSettings(threadId, settings);
       }));
     } catch (error) {
       console.error(`codexp bridge failed to sync runtime settings: ${errorText(error)}`);
@@ -617,19 +610,112 @@ class CodexAppServerBridge {
     };
   }
 
-  private async forward(
+  private async forwardThreadEvent(
     threadId: string,
     commandId: string | undefined,
     message: JsonRecord,
-    options: { heartbeat?: boolean; current?: boolean } = {}
+    options: { heartbeat?: boolean } = {}
   ) {
-    if (options.current !== false) this.currentThreadId = threadId;
     await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId, commandId, message, heartbeat: options.heartbeat, current: options.current })
+      body: JSON.stringify({ type: "thread_event", threadId, commandId, message, heartbeat: options.heartbeat })
     }).catch((error) => {
       console.error(`codexp bridge failed to forward app-server event: ${errorText(error)}`);
+    });
+  }
+
+  private async forwardCurrentForRequest(method: string, threadId: string) {
+    if (
+      method === "thread/fork"
+      || method === "thread/resume"
+      || method === "thread/start"
+      || method === "turn/start"
+    ) {
+      await this.forwardCurrentThreadChanged(threadId);
+    }
+  }
+
+  private async forwardStateEventsFromMessage(threadId: string, message: JsonRecord) {
+    const method = typeof message.method === "string" ? message.method : "";
+    if (method === "thread/started") await this.forwardCurrentThreadChanged(threadId);
+    await this.forwardExecutionStateFromMessage(threadId, message);
+
+    if (method !== "thread/settings/updated") return;
+    const params = asRecord(message.params);
+    const settings = asRecord(params?.threadSettings) ?? asRecord(params?.settings);
+    if (!settings) return;
+    await this.forwardRuntimeSettings(threadId, {
+      model: typeof settings.model === "string" && settings.model ? settings.model : null,
+      modelReasoningEffort: isModelReasoningEffort(settings.effort)
+        ? settings.effort
+        : isModelReasoningEffort(settings.modelReasoningEffort)
+          ? settings.modelReasoningEffort
+          : null
+    });
+  }
+
+  private async forwardExecutionStateFromMessage(threadId: string, message: JsonRecord) {
+    const method = typeof message.method === "string" ? message.method : "";
+    const params = asRecord(message.params);
+    if (method === "turn/started") {
+      const turn = asRecord(params?.turn);
+      await this.forwardThreadExecutionChanged(threadId, true, typeof turn?.id === "string" ? turn.id : undefined);
+      return;
+    }
+    if (method === "turn/completed") {
+      await this.forwardThreadExecutionChanged(threadId, false);
+      return;
+    }
+    if (method === "thread/status/changed") {
+      const thread = asRecord(params?.thread);
+      const status = asRecord(params?.status) ?? asRecord(thread?.status);
+      const type = typeof status?.type === "string" ? status.type : "";
+      if (type === "active" || type === "running") {
+        await this.forwardThreadExecutionChanged(threadId, true);
+        return;
+      }
+      if (type === "idle" || type === "complete" || type === "completed") {
+        await this.forwardThreadExecutionChanged(threadId, false);
+      }
+    }
+  }
+
+  private async forwardCurrentThreadChanged(threadId: string, heartbeat = false) {
+    if (this.currentThreadId === threadId) return;
+    this.currentThreadId = threadId;
+    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "worker_current_changed", currentThreadId: threadId, heartbeat })
+    }).catch((error) => {
+      console.error(`codexp bridge failed to forward current thread change: ${errorText(error)}`);
+    });
+  }
+
+  private async forwardThreadExecutionChanged(threadId: string, running: boolean, turnId?: string) {
+    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "thread_execution_changed", threadId, running, turnId, heartbeat: false })
+    }).catch((error) => {
+      console.error(`codexp bridge failed to forward thread execution state: ${errorText(error)}`);
+    });
+  }
+
+  private async forwardRuntimeSettings(threadId: string, settings: RuntimeSettings) {
+    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "runtime_settings_changed",
+        threadId,
+        model: settings.model,
+        modelReasoningEffort: settings.modelReasoningEffort,
+        heartbeat: false
+      })
+    }).catch((error) => {
+      console.error(`codexp bridge failed to forward runtime settings: ${errorText(error)}`);
     });
   }
 
@@ -637,7 +723,7 @@ class CodexAppServerBridge {
     await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/records`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId, records, heartbeat: false, current: false })
+      body: JSON.stringify({ threadId, records, heartbeat: false })
     }).catch((error) => {
       console.error(`codexp bridge failed to forward jsonl records: ${errorText(error)}`);
     });
@@ -688,7 +774,6 @@ class CodexAppServerBridge {
         appServerUrl: this.options.appServerUrl,
         pid: process.pid,
         hostname: os.hostname(),
-        currentThreadId: this.currentThreadId,
         codexUsage,
         threadCodexUsage
       })

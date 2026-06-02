@@ -93,19 +93,38 @@ export type WorkerCommand = {
   options?: ThreadRunOptions;
 };
 
-export type WorkerEventInput = {
-  threadId?: string;
-  commandId?: string;
-  heartbeat?: boolean;
-  current?: boolean;
-  message: unknown;
-};
+export type WorkerEventInput =
+  | {
+      type: "thread_event";
+      threadId: string;
+      commandId?: string;
+      heartbeat?: boolean;
+      message: unknown;
+    }
+  | {
+      type: "worker_current_changed";
+      currentThreadId: string;
+      heartbeat?: boolean;
+    }
+  | {
+      type: "thread_execution_changed";
+      threadId: string;
+      running: boolean;
+      turnId?: string;
+      heartbeat?: boolean;
+    }
+  | {
+      type: "runtime_settings_changed";
+      threadId: string;
+      model?: string | null;
+      modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
+      heartbeat?: boolean;
+    };
 
 export type WorkerRecordsInput = {
   threadId: string;
   records: CodexRecord[];
   heartbeat?: boolean;
-  current?: boolean;
 };
 
 type RuntimeWorker = WorkerSummary & {
@@ -208,14 +227,8 @@ export class ThreadHub {
     worker.appServerUrl = registration.appServerUrl ?? worker.appServerUrl;
     worker.pid = registration.pid ?? worker.pid;
     worker.hostname = registration.hostname ?? worker.hostname;
-    worker.currentThreadId = registration.currentThreadId ?? worker.currentThreadId;
     worker.codexUsage = registration.codexUsage ?? worker.codexUsage;
     const changedUsageThreadIds = this.applyThreadCodexUsage(registration.threadCodexUsage);
-    if (registration.currentThreadId) {
-      this.ensureThread(registration.currentThreadId, worker, {
-        params: { threadId: registration.currentThreadId, cwd: worker.workingDirectory }
-      });
-    }
     worker.online = true;
     worker.lastSeenAt = now;
     if (previousState !== this.workerVisibleState(worker) || changedUsageThreadIds.length) {
@@ -289,6 +302,30 @@ export class ThreadHub {
   applyWorkerEvent(workerId: string, input: WorkerEventInput) {
     if (input.heartbeat !== false) this.heartbeatWorker(workerId);
     const worker = this.requireWorker(workerId);
+    if (input.type === "worker_current_changed") {
+      const thread = this.ensureThread(input.currentThreadId, worker, {
+        params: { threadId: input.currentThreadId, cwd: worker.workingDirectory }
+      }, false);
+      if (this.markWorkerCurrentThread(worker, thread)) this.publishWorkers();
+      return { ok: true, thread: this.summary(thread) };
+    }
+
+    if (input.type === "thread_execution_changed") {
+      const thread = this.ensureThread(input.threadId, worker, {
+        params: { threadId: input.threadId, cwd: worker.workingDirectory }
+      }, false);
+      this.applyThreadExecutionState(thread, input.running, input.turnId);
+      return { ok: true, thread: this.summary(thread) };
+    }
+
+    if (input.type === "runtime_settings_changed") {
+      const thread = this.ensureThread(input.threadId, worker, {
+        params: { threadId: input.threadId, cwd: worker.workingDirectory }
+      }, false);
+      this.applyRuntimeSettings(thread, input.model, input.modelReasoningEffort);
+      return { ok: true, thread: this.summary(thread) };
+    }
+
     const message = asRecord(input.message);
     if (!message) return { ok: true };
 
@@ -300,9 +337,7 @@ export class ThreadHub {
       return { ok: true };
     }
 
-    const previousCurrentThreadId = worker.currentThreadId;
-    const markCurrent = input.current !== false && !isPassiveThreadSnapshot(input, message);
-    const thread = threadId ? this.ensureThread(threadId, worker, message, markCurrent) : null;
+    const thread = threadId ? this.ensureThread(threadId, worker, message, false) : null;
     const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
     if (thread && pending?.type === "rollback_thread" && asRecord(asRecord(message.result)?.thread)) {
       this.resetThreadRecords(thread);
@@ -310,7 +345,6 @@ export class ThreadHub {
     if (thread) this.applyAppServerMessage(thread, message);
 
     if (input.commandId) this.resolveCommandFromMessage(input.commandId, thread);
-    if (worker.currentThreadId !== previousCurrentThreadId) this.publishWorkers();
     return { ok: true, thread: thread ? this.summary(thread) : undefined };
   }
 
@@ -321,7 +355,7 @@ export class ThreadHub {
       input.threadId,
       worker,
       { params: { threadId: input.threadId } },
-      input.current === true
+      false
     );
     for (const record of input.records) {
       if (record.sourceThreadId && record.sourceThreadId !== input.threadId) continue;
@@ -492,7 +526,7 @@ export class ThreadHub {
     return worker;
   }
 
-  private threadIdForWorkerEvent(input: WorkerEventInput, message: Record<string, unknown>) {
+  private threadIdForWorkerEvent(input: Extract<WorkerEventInput, { type: "thread_event" }>, message: Record<string, unknown>) {
     const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
     if (pending?.type === "fork_thread") {
       return resultThreadIdFromAppServerMessage(message)
@@ -671,12 +705,10 @@ export class ThreadHub {
 
     const result = asRecord(record.result);
     const resultThread = asRecord(result?.thread);
-    const resultTurn = asRecord(result?.turn);
     if (resultThread) {
       this.applyAppServerThread(thread, resultThread);
       this.applyAppServerThreadTurns(thread, resultThread);
     }
-    if (resultTurn) this.applyAppServerTurn(thread, resultTurn);
 
     const method = typeof record.method === "string" ? record.method : "";
     const params = asRecord(record.params);
@@ -689,33 +721,18 @@ export class ThreadHub {
     }
 
     if (method === "thread/status/changed") {
-      const status = asRecord(params.status);
-      if (status?.type === "active" && !thread.running) {
-        thread.running = true;
-        this.publish(thread, "thread");
-      }
-      if (status?.type === "idle" && thread.running) this.finishWorkerTurn(thread);
       return;
     }
 
     if (method === "thread/settings/updated") {
-      const settings = asRecord(params.threadSettings) ?? asRecord(params.settings);
-      if (settings) this.applyAppServerThreadSettings(thread, settings);
       return;
     }
 
     if (method === "turn/started") {
-      const turn = asRecord(params.turn);
-      if (turn) this.applyAppServerTurn(thread, turn);
-      thread.running = true;
-      this.publish(thread, "thread");
       return;
     }
 
     if (method === "turn/completed") {
-      const turn = asRecord(params.turn);
-      if (turn) this.applyAppServerTurn(thread, turn);
-      this.finishWorkerTurn(thread);
       return;
     }
 
@@ -758,14 +775,27 @@ export class ThreadHub {
         changed = true;
       }
     }
-    const status = asRecord(appThread.status);
-    if (status?.type === "active" && !thread.running) {
-      thread.running = true;
+    if (!changed) return;
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+  }
+
+  private applyRuntimeSettings(
+    thread: RuntimeThread,
+    model: string | null | undefined,
+    modelReasoningEffort: ThreadOptions["modelReasoningEffort"] | null | undefined
+  ) {
+    let changed = false;
+    const nextModel = typeof model === "string" && model ? model : undefined;
+    if (thread.threadOptions.model !== nextModel) {
+      thread.threadOptions = { ...thread.threadOptions, model: nextModel };
+      if (!nextModel) delete thread.threadOptions.model;
       changed = true;
     }
-    if (status?.type === "idle" && thread.running) {
-      thread.running = false;
-      thread.appServerTurnId = undefined;
+    const nextEffort = isThreadReasoningEffort(modelReasoningEffort) ? modelReasoningEffort : undefined;
+    if (thread.threadOptions.modelReasoningEffort !== nextEffort) {
+      thread.threadOptions = { ...thread.threadOptions, modelReasoningEffort: nextEffort };
+      if (!nextEffort) delete thread.threadOptions.modelReasoningEffort;
       changed = true;
     }
     if (!changed) return;
@@ -773,28 +803,20 @@ export class ThreadHub {
     this.publish(thread, "thread");
   }
 
-  private applyAppServerThreadSettings(thread: RuntimeThread, settings: Record<string, unknown>) {
+  private applyThreadExecutionState(thread: RuntimeThread, running: boolean, turnId?: string) {
     let changed = false;
-    if ("model" in settings) {
-      const nextModel = typeof settings.model === "string" && settings.model ? settings.model : undefined;
-      if (thread.threadOptions.model !== nextModel) {
-        thread.threadOptions = { ...thread.threadOptions, model: nextModel };
-        if (!nextModel) delete thread.threadOptions.model;
-        changed = true;
-      }
+    if (thread.running !== running) {
+      thread.running = running;
+      changed = true;
     }
-    if ("effort" in settings) {
-      const effort = settings.effort;
-      const nextEffort = isThreadReasoningEffort(effort) ? effort : undefined;
-      if (thread.threadOptions.modelReasoningEffort !== nextEffort) {
-        thread.threadOptions = { ...thread.threadOptions, modelReasoningEffort: nextEffort };
-        if (!nextEffort) delete thread.threadOptions.modelReasoningEffort;
-        changed = true;
-      }
+    const nextTurnId = running ? turnId : undefined;
+    if (thread.appServerTurnId !== nextTurnId) {
+      thread.appServerTurnId = nextTurnId;
+      changed = true;
     }
     if (!changed) return;
     thread.updatedAt = new Date().toISOString();
-    this.publish(thread, "thread");
+    this.publish(thread, running ? "thread" : "done");
   }
 
   private applyAppServerThreadTurns(thread: RuntimeThread, appThread: Record<string, unknown>) {
@@ -803,7 +825,6 @@ export class ThreadHub {
     for (const turnValue of appThread.turns) {
       const turn = asRecord(turnValue);
       if (!turn) continue;
-      this.applyAppServerTurn(thread, turn);
       const params = appServerTurnParams(threadId, turn);
       const items = Array.isArray(turn.items) ? turn.items : [];
       for (const itemValue of items) {
@@ -811,10 +832,6 @@ export class ThreadHub {
         if (item) this.applyAppServerItem(thread, item, true, params);
       }
     }
-  }
-
-  private applyAppServerTurn(thread: RuntimeThread, turn: Record<string, unknown>) {
-    if (typeof turn.id === "string" && typeof turn.completedAt !== "number") thread.appServerTurnId = turn.id;
   }
 
   private applyAgentMessageDelta(thread: RuntimeThread, params: Record<string, unknown>) {
@@ -1129,11 +1146,6 @@ const threadSummarySnapshotKey = (thread: ThreadSummary) => ({
     lastSeenAt: undefined
   }
 });
-
-const isPassiveThreadSnapshot = (input: WorkerEventInput, message: Record<string, unknown>) =>
-  !input.commandId
-  && typeof message.method !== "string"
-  && Boolean(asRecord(asRecord(message.result)?.thread));
 
 const workerCommandsAfter = (worker: RuntimeWorker, after: number) =>
   worker.commands.filter((command) => command.seq > after);

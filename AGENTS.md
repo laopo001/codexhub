@@ -33,9 +33,10 @@
 3. Telegram bot 由 API server 进程按环境变量内置启动，发送消息时也订阅同一个 thread 事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
 4. Web/TG 不各自拼 transcript；thread 详情 `GET /api/threads/:threadId` 返回后端维护的 `records`。
 5. TUI 里创建或恢复的新 thread，由 `codexp` / `codexp resume` 从 app-server event 中发现并注册到 server。
-6. `codexp` / `codexp resume` 的主动 app-server events 可以更新 worker 的 `currentThreadId`；周期性 `thread/read` 快照同步不能更新 `currentThreadId`，否则 Web 会在历史 thread 间跳动。
-7. Web/TG/API 输入里的 slash command 不当普通 Codex turn 透传。官方 Codex TUI 的 slash command 是 TUI 本地命令；codex-proxy 只在 server 本地处理明确支持的 `/status`、`/help`、`/model`，其他命令形态返回不支持说明。
-8. Web 里的 `/model` 是 Web 客户端命令：打开 Runtime 选择器，不转发给官方 TUI。Web 正常 turn 必须把当前 Runtime 的 model / reasoning 作为 app-server `turn/start` override 发送；官方 TUI 本地 `/model` 可能只更新 app-server effective config，因此 `codexp` / `codexp resume` 必须通过 `config/read` 轮询同步 Runtime 设置，并兼容 `thread/settings/updated`。
+6. worker runtime 状态只能通过显式状态事件更新：`worker_current_changed` 更新 `worker.currentThreadId`，`thread_execution_changed` 更新 thread running/turnId，`runtime_settings_changed` 更新 model/reasoning。普通 `thread_event`、`thread/read` 快照、jsonl records、usage heartbeat、Web tab 点击都不能修改 worker runtime active。
+7. `worker.currentThreadId` 的来源必须是 app-server 明确 current 变化：例如 TUI/app-server 发出的 `thread/started`，或 bridge 成功执行会切换 app-server 当前 thread 的 `thread/fork`、`thread/resume`、`thread/start`、`turn/start` 请求后主动上报。不要在每个 thread event 上携带 `currentThreadId`，也不要用 `thread.id === currentThreadId` 或 `current: true` 这类字段从内容事件推断 active。
+8. Web/TG/API 输入里的 slash command 不当普通 Codex turn 透传。官方 Codex TUI 的 slash command 是 TUI 本地命令；codex-proxy 只在 server 本地处理明确支持的 `/status`、`/help`、`/model`，其他命令形态返回不支持说明。
+9. Web 里的 `/model` 是 Web 客户端命令：打开 Runtime 选择器，不转发给官方 TUI。Web 正常 turn 必须把当前 Runtime 的 model / reasoning 作为 app-server `turn/start` override 发送；官方 TUI 本地 `/model` 可能只更新 app-server effective config，因此 `codexp` / `codexp resume` 必须通过 `config/read` 轮询同步 Runtime 设置，并兼容 `thread/settings/updated`。
 
 ## API 约定
 
