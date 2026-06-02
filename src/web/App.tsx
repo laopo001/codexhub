@@ -169,6 +169,7 @@ const App = () => {
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
   const workersEventSource = useRef<EventSource | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
@@ -246,6 +247,27 @@ const App = () => {
     ?? activeWorker?.currentThread?.codexUsage
     ?? activeWorker?.codexUsage
     ?? null;
+  const renderComposerRuntimeControls = (mode: "inline" | "popover") => (
+    <div className={`composerRuntimeControls ${mode}`} aria-label="Runtime usage and model">
+      <div className="composerUsagePills" aria-label="Runtime usage">
+        <span className="usagePill" title={formatContextTitle(activeCodexUsage)}>
+          Context {formatContextUsage(activeCodexUsage)}
+        </span>
+        <span className="usagePill" title={formatResetTitle(activeCodexUsage?.rateLimits?.primary)}>5h {formatRateLimitRemaining(activeCodexUsage?.rateLimits?.primary)}</span>
+        <span className="usagePill" title={formatResetTitle(activeCodexUsage?.rateLimits?.secondary)}>weekly {formatRateLimitRemaining(activeCodexUsage?.rateLimits?.secondary)}</span>
+      </div>
+      <button
+        type="button"
+        className="composerModelButton"
+        onClick={() => {
+          setRuntimeMenuOpen(false);
+          setRuntimeDialogOpen(true);
+        }}
+      >
+        {modelLabel(selectedModel)}
+      </button>
+    </div>
+  );
 
   useEffect(() => {
     void initialize();
@@ -341,6 +363,20 @@ const App = () => {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [composerMenuOpen]);
+
+  useEffect(() => {
+    if (!runtimeMenuOpen) return undefined;
+    const close = () => setRuntimeMenuOpen(false);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [runtimeMenuOpen]);
 
   useEffect(() => {
     const stopOnEscape = (event: KeyboardEvent) => {
@@ -682,29 +718,27 @@ const App = () => {
               ) : null}
             </code>
           </div>
-          <div className="workbar" aria-label="Runtime status">
-            <span title={formatContextTitle(activeCodexUsage)}>
-              Context {formatContextUsage(activeCodexUsage)}
-            </span>
-            <span title={formatResetTitle(activeCodexUsage?.rateLimits?.primary)}>5h {formatRateLimitRemaining(activeCodexUsage?.rateLimits?.primary)}</span>
-            <span title={formatResetTitle(activeCodexUsage?.rateLimits?.secondary)}>weekly {formatRateLimitRemaining(activeCodexUsage?.rateLimits?.secondary)}</span>
-            <label className="switchControl">
-              <span>View</span>
-              <button
-                type="button"
-                className={`switchButton ${messageDisplayMode === "compact" ? "active" : ""}`}
-                aria-pressed={messageDisplayMode === "compact"}
-                onClick={() => setMessageDisplayMode((current) => current === "compact" ? "detailed" : "compact")}
-              >
-                {messageDisplayMode === "compact" ? "Simple" : "Detailed"}
-              </button>
-            </label>
+          <div className="viewbar" aria-label="View settings">
+              
           </div>
         </header>
 
         {activeWorker && activeSession && activeSessionBelongsToWorker ? (
           <Tabs
             className="workspaceThreadTabs"
+            tabBarExtraContent={{
+              right: <label className="switchControl">
+                <span>View</span>
+                <button
+                  type="button"
+                  className={`switchButton ${messageDisplayMode === "compact" ? "active" : ""}`}
+                  aria-pressed={messageDisplayMode === "compact"}
+                  onClick={() => setMessageDisplayMode((current) => current === "compact" ? "detailed" : "compact")}
+                >
+                  {messageDisplayMode === "compact" ? "Simple" : "Detailed"}
+                </button>
+              </label>
+            }}
             size="small"
             activeKey={activeSession.threadId}
             items={activeWorkerThreadTabs.map((item) => ({
@@ -803,13 +837,23 @@ const App = () => {
                             </div>
                           </div>
                           <div className="composerRightActions">
-                            <button
-                              type="button"
-                              className="composerModelButton"
-                              onClick={() => setRuntimeDialogOpen(true)}
-                            >
-                              {modelLabel(selectedModel)}
-                            </button>
+                            {renderComposerRuntimeControls("inline")}
+                            <div className="composerRuntimeMenuHost" onClick={(event) => event.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="composerMoreButton"
+                                aria-label="Show runtime usage and model"
+                                aria-expanded={runtimeMenuOpen}
+                                onClick={() => setRuntimeMenuOpen((open) => !open)}
+                              >
+                                ...
+                              </button>
+                              {runtimeMenuOpen ? (
+                                <div className="composerRuntimePopover">
+                                  {renderComposerRuntimeControls("popover")}
+                                </div>
+                              ) : null}
+                            </div>
                             <button type="submit" className="composerSendButton" disabled={!activeCanSubmit} aria-label={activeSession.running ? "Stop current turn" : "Send message"}>
                               {activeSession.running ? <span className="composerStopIcon" aria-hidden="true" /> : "↑"}
                             </button>

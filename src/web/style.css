@@ -268,7 +268,7 @@ textarea {
   background: #f4f6f1;
 }
 
-.workbar {
+.viewbar {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -276,14 +276,6 @@ textarea {
   min-width: 0;
   color: #66715f;
   font-size: 12px;
-}
-
-.workbar span {
-  border: 1px solid #dfe5dc;
-  border-radius: 999px;
-  background: #f4f6f1;
-  padding: 4px 8px;
-  white-space: nowrap;
 }
 
 .runtimeSelect {
@@ -747,11 +739,47 @@ textarea {
   min-width: 0;
 }
 
+.composerRightActions {
+  justify-content: flex-end;
+}
+
+.composerRuntimeControls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composerUsagePills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  color: #66715f;
+  font-size: 12px;
+}
+
+.usagePill {
+  border: 1px solid #dfe5dc;
+  border-radius: 999px;
+  background: #f4f6f1;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.composerRuntimeMenuHost {
+  position: relative;
+  display: none;
+}
+
 .composerMenuHost {
   position: relative;
 }
 
 .composerIconButton,
+.composerMoreButton,
 .composerSendButton {
   display: grid;
   place-items: center;
@@ -770,8 +798,36 @@ textarea {
   line-height: 1;
 }
 
-.composerIconButton:hover {
+.composerMoreButton {
+  border: 1px solid #cbd6c7;
+  background: #ffffff;
+  color: #66715f;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.composerIconButton:hover,
+.composerMoreButton:hover {
   background: #f4f6f1;
+}
+
+.composerRuntimePopover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 60;
+  max-width: calc(100vw - 32px);
+  border: 1px solid #dfe5dc;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 10px;
+  box-shadow: 0 16px 40px rgb(18 32 24 / 0.18);
+}
+
+.composerRuntimePopover .composerRuntimeControls {
+  justify-content: flex-start;
 }
 
 .composerModelButton {
@@ -1106,16 +1162,9 @@ textarea {
     max-width: none;
   }
 
-  .workbar {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
-    gap: 6px;
-    font-size: 11px;
-  }
-
   .runtimeSelect,
   .switchControl,
-  .workbar span {
+  .usagePill {
     max-width: 100%;
   }
 
@@ -1181,7 +1230,37 @@ textarea {
   }
 
   .composerActions {
+    flex-wrap: wrap;
     gap: 6px;
+  }
+
+  .composerRightActions {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+  }
+
+  .composerRuntimeControls.inline {
+    display: none;
+  }
+
+  .composerRuntimeMenuHost {
+    display: block;
+  }
+
+  .composerRuntimePopover .composerRuntimeControls {
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .composerUsagePills {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    font-size: 11px;
+  }
+
+  .composerRuntimePopover .usagePill {
+    padding: 4px 7px;
   }
 
   .composerMenu {
