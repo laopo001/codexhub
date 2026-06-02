@@ -236,7 +236,7 @@ textarea {
 
 .workspace {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -569,65 +569,8 @@ textarea {
 }
 
 .composerLayout {
-  display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1228px);
-  align-items: stretch;
-  gap: 14px;
   width: min(1522px, 100%);
   margin: 0 auto;
-}
-
-.composerThreadPanel {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  min-width: 0;
-  max-height: 120px;
-  overflow: auto;
-  border: 1px solid #c6d0c2;
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 8px;
-}
-
-.composerThreadButton {
-  display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
-  align-items: baseline;
-  gap: 8px;
-  width: 100%;
-  min-height: 34px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: #17211a;
-  padding: 7px 9px;
-  text-align: left;
-}
-
-.composerThreadButton:hover,
-.composerThreadButton.active {
-  border-color: #2f7d5a;
-  background: #eef6ef;
-}
-
-.composerThreadButton span,
-.composerThreadButton code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composerThreadButton span {
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.composerThreadButton code {
-  justify-self: stretch;
-  color: #66715f;
-  font-size: 11px;
 }
 
 .composerThreadEmpty {
@@ -636,6 +579,97 @@ textarea {
   place-items: center;
   color: #8a9584;
   font-size: 12px;
+}
+
+.workspaceThreadTabs.ant-tabs {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.workspaceThreadTabs.ant-tabs > .ant-tabs-nav {
+  min-width: 0;
+  margin: 0;
+  border-bottom: 1px solid #dfe5dc;
+  background: #ffffff;
+  padding: 0 22px;
+}
+
+.workspaceThreadTabs.ant-tabs > .ant-tabs-content-holder {
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspaceThreadTabs .ant-tabs-content,
+.workspaceThreadTabs .ant-tabs-tabpane {
+  height: 100%;
+  min-height: 0;
+}
+
+.workspaceThreadTabs .ant-tabs-tabpane {
+  overflow: hidden;
+}
+
+.workspaceThreadTabs .ant-tabs-nav-list {
+  min-width: 0;
+}
+
+.workspaceThreadTabs .ant-tabs-tab {
+  min-height: 42px;
+  margin: 0 !important;
+  padding: 8px 12px !important;
+}
+
+.workspaceThreadTabs .ant-tabs-tab:hover,
+.workspaceThreadTabs .ant-tabs-tab-active {
+  background: #eef6ef;
+}
+
+.workspaceThreadTabs .ant-tabs-tab-btn {
+  min-width: 0;
+  width: 100%;
+  color: #17211a;
+}
+
+.workspaceThreadTabs .ant-tabs-ink-bar {
+  background: #2f7d5a;
+}
+
+.threadWorkspacePane {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.workspaceThreadTabLabel {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.workspaceThreadTabLabel span,
+.workspaceThreadTabLabel code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspaceThreadTabLabel span {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workspaceThreadTabLabel code {
+  color: #66715f;
+  font-size: 11px;
 }
 
 .composerSurface {
@@ -1092,12 +1126,18 @@ textarea {
   }
 
   .composerLayout {
-    grid-template-columns: 1fr;
-    gap: 8px;
+    width: 100%;
   }
 
-  .composerThreadPanel {
-    max-height: 98px;
+  .workspaceThreadTabs.ant-tabs > .ant-tabs-nav {
+    width: 100%;
+    overflow-x: auto;
+    padding: 0 12px;
+  }
+
+  .workspaceThreadTabs .ant-tabs-tab {
+    min-height: 38px;
+    padding: 7px 10px !important;
   }
 
   .composerSurface {

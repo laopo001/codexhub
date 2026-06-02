@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Tabs } from "antd";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
 import { compactToolViews, type CompactRecordView } from "../shared/compactRecordViews.js";
+import "antd/dist/reset.css";
 import "./style.css";
 
 type ThreadSummary = {
@@ -185,17 +187,24 @@ const App = () => {
     const byId = new Map<string, ThreadSummary>();
     for (const thread of activeWorker?.threads ?? []) byId.set(thread.threadId, thread);
     if (activeWorker?.currentThread) byId.set(activeWorker.currentThread.threadId, activeWorker.currentThread);
-    const selectedThreadId = activeWorker ? selectedThreadByWorker[activeWorker.workerId] : undefined;
     return [...byId.values()].sort((left, right) => {
-      if (selectedThreadId) {
-        if (left.threadId === selectedThreadId) return -1;
-        if (right.threadId === selectedThreadId) return 1;
-      }
       if (left.threadId === activeWorker?.currentThreadId) return -1;
       if (right.threadId === activeWorker?.currentThreadId) return 1;
       return right.updatedAt.localeCompare(left.updatedAt);
     });
-  }, [activeWorker, selectedThreadByWorker]);
+  }, [activeWorker]);
+  const activeWorkerThreadTabs = useMemo(() => activeWorkerThreads.map((thread) => {
+    const title = thread.title || shortId(thread.threadId);
+    return {
+      key: thread.threadId,
+      label: (
+        <span className="workspaceThreadTabLabel" title={`${title}\n${thread.threadId}`}>
+          <span>{title}</span>
+          <code>{shortId(thread.threadId)}</code>
+        </span>
+      )
+    };
+  }), [activeWorkerThreads]);
   const detailedViews = useMemo<CodexRecordView[]>(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
@@ -643,145 +652,136 @@ const App = () => {
         </header>
 
         {activeWorker && activeSession && activeSessionBelongsToWorker ? (
-          <>
-            <Virtuoso
-              key={activeSession.threadId}
-              ref={messagesRef}
-              scrollerRef={(ref) => {
-                messagesScrollerRef.current = ref instanceof HTMLElement ? ref : null;
-              }}
-              className="messages"
-              data={activeViews}
-              followOutput={() => "smooth"}
-              initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
-              increaseViewportBy={{ top: 360, bottom: 720 }}
-              computeItemKey={(_, message) => message.id}
-              components={{ EmptyPlaceholder: EmptyMessages }}
-              itemContent={(_, message) => (
-                <MessageCard
-                  message={message}
-                  showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
-                  onInspect={messageDisplayMode === "compact" && message.role === "tool" ? () => setInspectMessage(message) : undefined}
-                  onFork={message.canFork ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
-                />
-              )}
-            />
+          <Tabs
+            className="workspaceThreadTabs"
+            size="small"
+            activeKey={activeSession.threadId}
+            items={activeWorkerThreadTabs.map((item) => ({
+              ...item,
+              children: item.key === activeSession.threadId ? (
+                <div className="threadWorkspacePane">
+                  <Virtuoso
+                    key={activeSession.threadId}
+                    ref={messagesRef}
+                    scrollerRef={(ref) => {
+                      messagesScrollerRef.current = ref instanceof HTMLElement ? ref : null;
+                    }}
+                    className="messages"
+                    data={activeViews}
+                    followOutput={() => "smooth"}
+                    initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
+                    increaseViewportBy={{ top: 360, bottom: 720 }}
+                    computeItemKey={(_, message) => message.id}
+                    components={{ EmptyPlaceholder: EmptyMessages }}
+                    itemContent={(_, message) => (
+                      <MessageCard
+                        message={message}
+                        showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
+                        onInspect={messageDisplayMode === "compact" && message.role === "tool" ? () => setInspectMessage(message) : undefined}
+                        onFork={message.canFork ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
+                      />
+                    )}
+                  />
 
-            <form
-              className="composer"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (activeSession.running) void stopTurn(activeSession.threadId);
-                else void send(activeSession.threadId);
-              }}
-            >
-              <div className="composerLayout">
-                <div className="composerThreadPanel" aria-label="Worker threads">
-                  {activeWorkerThreads.length ? activeWorkerThreads.map((thread) => {
-                    const title = thread.title || shortId(thread.threadId);
-                    const isSelected = thread.threadId === activeSessionId;
-                    return (
-                      <button
-                        type="button"
-                        className={`composerThreadButton ${isSelected ? "active" : ""}`}
-                        key={thread.threadId}
-                        aria-pressed={isSelected}
-                        onClick={() => void switchWorkerThread(thread.threadId)}
-                      >
-                        <span title={title}>{title}</span>
-                        <code title={thread.threadId}>{thread.threadId}</code>
-                      </button>
-                    );
-                  }) : (
-                    <div className="composerThreadEmpty">No threads</div>
-                  )}
-                </div>
-                <div className="composerSurface">
-                  <div className="composerInput">
-                    {activeSession.imageAttachments.length ? (
-                      <div className="imageAttachmentList">
-                        {activeSession.imageAttachments.map((image) => (
-                          <div className="imageAttachment" key={image.id}>
-                            <img src={image.previewUrl} alt={image.name} />
-                            <button type="button" onClick={() => removeSessionImage(activeSession.threadId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
+                  <form
+                    className="composer"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (activeSession.running) void stopTurn(activeSession.threadId);
+                      else void send(activeSession.threadId);
+                    }}
+                  >
+                    <div className="composerLayout">
+                      <div className="composerSurface">
+                        <div className="composerInput">
+                          {activeSession.imageAttachments.length ? (
+                            <div className="imageAttachmentList">
+                              {activeSession.imageAttachments.map((image) => (
+                                <div className="imageAttachment" key={image.id}>
+                                  <img src={image.previewUrl} alt={image.name} />
+                                  <button type="button" onClick={() => removeSessionImage(activeSession.threadId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          <textarea
+                            value={activeSession.input}
+                            onChange={(event) => updateSessionInput(activeSession.threadId, event.target.value)}
+                            onPaste={(event) => {
+                              if (!pasteSessionImages(activeSession.threadId, event.clipboardData)) return;
+                              event.preventDefault();
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+                              event.preventDefault();
+                              if (activeCanSend) void send(activeSession.threadId);
+                            }}
+                            placeholder="例如：检查这个 repo 的结构并给我下一步建议"
+                            rows={1}
+                          />
+                        </div>
+                        <div className="composerActions">
+                          <div className="composerLeftActions">
+                            <div className="composerMenuHost" onClick={(event) => event.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="composerIconButton"
+                                aria-label="Open composer menu"
+                                aria-expanded={composerMenuOpen}
+                                onClick={() => setComposerMenuOpen((open) => !open)}
+                              >
+                                +
+                              </button>
+                              {composerMenuOpen ? (
+                                <div className="composerMenu" role="menu">
+                                  <button
+                                    type="button"
+                                    className="composerMenuItem"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setComposerMenuOpen(false);
+                                      imageFileInputRef.current?.click();
+                                    }}
+                                  >
+                                    <span className="composerMenuIcon" aria-hidden="true">[]</span>
+                                    <span>添加照片和文件</span>
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <textarea
-                      value={activeSession.input}
-                      onChange={(event) => updateSessionInput(activeSession.threadId, event.target.value)}
-                      onPaste={(event) => {
-                        if (!pasteSessionImages(activeSession.threadId, event.clipboardData)) return;
-                        event.preventDefault();
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-                        event.preventDefault();
-                        if (activeCanSend) void send(activeSession.threadId);
-                      }}
-                      placeholder="例如：检查这个 repo 的结构并给我下一步建议"
-                      rows={1}
-                    />
-                  </div>
-                  <div className="composerActions">
-                    <div className="composerLeftActions">
-                      <div className="composerMenuHost" onClick={(event) => event.stopPropagation()}>
-                        <button
-                          type="button"
-                          className="composerIconButton"
-                          aria-label="Open composer menu"
-                          aria-expanded={composerMenuOpen}
-                          onClick={() => setComposerMenuOpen((open) => !open)}
-                        >
-                          +
-                        </button>
-                        {composerMenuOpen ? (
-                          <div className="composerMenu" role="menu">
+                          <div className="composerRightActions">
                             <button
                               type="button"
-                              className="composerMenuItem"
-                              role="menuitem"
-                              onClick={() => {
-                                setComposerMenuOpen(false);
-                                imageFileInputRef.current?.click();
-                              }}
+                              className="composerModelButton"
+                              onClick={() => setRuntimeDialogOpen(true)}
                             >
-                              <span className="composerMenuIcon" aria-hidden="true">[]</span>
-                              <span>添加照片和文件</span>
+                              {modelLabel(selectedModel)}
+                            </button>
+                            <button type="submit" className="composerSendButton" disabled={!activeCanSubmit} aria-label={activeSession.running ? "Stop current turn" : "Send message"}>
+                              {activeSession.running ? <span className="composerStopIcon" aria-hidden="true" /> : "↑"}
                             </button>
                           </div>
-                        ) : null}
+                        </div>
+                        <input
+                          ref={imageFileInputRef}
+                          className="imageUploadInput"
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          onChange={(event) => {
+                            addSessionImages(activeSession.threadId, event.currentTarget.files);
+                            event.currentTarget.value = "";
+                          }}
+                        />
                       </div>
                     </div>
-                    <div className="composerRightActions">
-                      <button
-                        type="button"
-                        className="composerModelButton"
-                        onClick={() => setRuntimeDialogOpen(true)}
-                      >
-                        {modelLabel(selectedModel)}
-                      </button>
-                      <button type="submit" className="composerSendButton" disabled={!activeCanSubmit} aria-label={activeSession.running ? "Stop current turn" : "Send message"}>
-                        {activeSession.running ? <span className="composerStopIcon" aria-hidden="true" /> : "↑"}
-                      </button>
-                    </div>
-                  </div>
-                  <input
-                    ref={imageFileInputRef}
-                    className="imageUploadInput"
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={(event) => {
-                      addSessionImages(activeSession.threadId, event.currentTarget.files);
-                      event.currentTarget.value = "";
-                    }}
-                  />
+                  </form>
                 </div>
-              </div>
-            </form>
-          </>
+              ) : null
+            }))}
+            onChange={(threadId) => void switchWorkerThread(threadId)}
+          />
         ) : (
           <div className="empty">{activeWorker ? activeWorker.currentThreadId ? "Loading thread" : "No current thread" : "No connected codexp"}</div>
         )}

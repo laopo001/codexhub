@@ -18,6 +18,7 @@
   "dependencies": {
     "@fastify/cors": "^11.1.0",
     "@openai/codex-sdk": "^0.133.0",
+    "antd": "^6.4.3",
     "commander": "^14.0.2",
     "fastify": "^5.6.2",
     "node-pty": "^1.1.0",
