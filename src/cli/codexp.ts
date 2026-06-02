@@ -318,6 +318,7 @@ async function startTaskScheduler(options: TaskCommandOptions) {
     cwd,
     readyLabel: "codexp task worker ready"
   });
+  await restoreSingleTaskThread(worker, cwd);
   const scheduler = new CodexpTaskScheduler({
     workspace: cwd,
     scanIntervalMs: parseIntervalMs(options.intervalMs),
@@ -336,6 +337,22 @@ async function startTaskScheduler(options: TaskCommandOptions) {
     scheduler.stop();
     await worker.stop();
   }
+}
+
+async function restoreSingleTaskThread(worker: HeadlessCodexpWorkerHandle, workspace: string) {
+  const tasks = await loadTaskFiles([workspace]);
+  const threadIds = uniqueStrings(tasks
+    .filter((task) => task.valid && task.enabled && task.thread)
+    .map((task) => task.thread!));
+
+  if (threadIds.length === 0) return;
+  if (threadIds.length > 1) {
+    console.error("multiple task threads configured; waiting for schedule");
+    return;
+  }
+
+  const threadId = await worker.ensureThread(threadIds[0]);
+  console.error(`codexp task worker restored thread: ${threadId}`);
 }
 
 async function sendTaskTurn(worker: HeadlessCodexpWorkerHandle, task: { input: string; thread?: string }) {
