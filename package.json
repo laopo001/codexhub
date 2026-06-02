@@ -11,8 +11,8 @@
     "AGENTS.md"
   ],
   "bin": {
-    "codexhub": "./bin/codexhub.js",
-    "cxh": "./bin/codexhub.js"
+    "codexhub": "bin/codexhub",
+    "cxh": "bin/cxh"
   },
   "scripts": {
     "dev:api": "tsx src/cli/codexhub.ts server",
