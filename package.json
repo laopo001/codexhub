@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "files": [
+    "bin",
     "src",
     "dist",
     "index.html",
@@ -10,8 +11,8 @@
     "AGENTS.md"
   ],
   "bin": {
-    "codexhub": "./src/cli/codexhub.ts",
-    "cxh": "./src/cli/codexhub.ts"
+    "codexhub": "./bin/codexhub.js",
+    "cxh": "./bin/codexhub.js"
   },
   "scripts": {
     "dev:api": "tsx src/cli/codexhub.ts server",
