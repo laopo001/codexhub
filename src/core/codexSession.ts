@@ -36,6 +36,12 @@ export type CodexSessionSummary = {
   messageCount: number;
 };
 
+export type CodexSessionRecordBatch = {
+  path: string;
+  records: CodexSessionRecord[];
+  lastLine: number;
+};
+
 export const readCodexSessionSnapshotFromFile = async (filePath: string): Promise<CodexSessionSnapshot> => {
   const lines = (await readFile(filePath, "utf8")).trim().split("\n").filter(Boolean);
   const records = lines.map((line, index) => {
@@ -55,6 +61,45 @@ export const readCodexSessionSnapshot = async (threadId: string): Promise<CodexS
   const filePath = await waitForSessionFile(threadId);
   if (!filePath) return null;
   return readCodexSessionSnapshotFromFile(filePath);
+};
+
+export const readCodexSessionRecordsAfter = async (
+  threadId: string,
+  afterLine: number
+): Promise<CodexSessionRecordBatch | null> => {
+  const filePath = await findCodexSessionFile(threadId);
+  if (!filePath) return null;
+
+  const records: CodexSessionRecord[] = [];
+  let lineNumber = 0;
+  const reader = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity
+  });
+
+  try {
+    for await (const line of reader) {
+      lineNumber += 1;
+      if (lineNumber <= afterLine || !line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as { timestamp?: string; type: string; payload: unknown };
+        records.push({
+          line: lineNumber,
+          timestamp: parsed.timestamp,
+          type: parsed.type,
+          payload: sanitizePayload(parsed.payload)
+        });
+      } catch {
+        // A partially written JSONL line will be retried on the next poll.
+        lineNumber -= 1;
+        break;
+      }
+    }
+  } finally {
+    reader.close();
+  }
+
+  return { path: filePath, records, lastLine: lineNumber };
 };
 
 type CodexSessionListOptions = {

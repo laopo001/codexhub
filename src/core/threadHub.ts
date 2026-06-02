@@ -91,6 +91,13 @@ export type WorkerEventInput = {
   message: unknown;
 };
 
+export type WorkerRecordsInput = {
+  threadId: string;
+  records: CodexRecord[];
+  heartbeat?: boolean;
+  current?: boolean;
+};
+
 type RuntimeWorker = WorkerSummary & {
   commands: WorkerCommand[];
   waiters: Set<WorkerWaiter>;
@@ -255,6 +262,25 @@ export class ThreadHub {
 
     if (input.commandId) this.resolveCommandFromMessage(input.commandId, thread);
     return { ok: true, thread: thread ? this.summary(thread) : undefined };
+  }
+
+  applyWorkerRecords(workerId: string, input: WorkerRecordsInput) {
+    if (input.heartbeat !== false) this.heartbeatWorker(workerId);
+    const worker = this.requireWorker(workerId);
+    const thread = this.ensureThread(
+      input.threadId,
+      worker,
+      { params: { threadId: input.threadId } },
+      input.current === true
+    );
+    for (const record of input.records) {
+      if (record.sourceThreadId && record.sourceThreadId !== input.threadId) continue;
+      this.upsertRecord(thread, {
+        ...record,
+        sourceThreadId: record.sourceThreadId ?? input.threadId
+      });
+    }
+    return { ok: true, thread: this.summary(thread), records: input.records.length };
   }
 
   listThreads(): ThreadSummary[] {
@@ -1004,7 +1030,7 @@ const appServerAgentMessageRecord = (
   state: AppServerItemState,
   params: Record<string, unknown>
 ): CodexRecord => ({
-  id: appServerRecordId("agent", itemId, params),
+  id: appServerAgentRecordId(itemId, params),
   timestamp: timestampFromParams(params, "completedAtMs")
     ?? timestampFromParams(params, "startedAtMs")
     ?? new Date().toISOString(),
@@ -1133,6 +1159,14 @@ const appServerRecordId = (
     ? `app:${threadId}:${turnId}:${kind}`
     : `app:${threadId}:${itemId}`;
   return suffix ? `${base}:${suffix}` : base;
+};
+
+const appServerAgentRecordId = (itemId: string, params: Record<string, unknown>) => {
+  const threadId = threadIdFromParams(params);
+  const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+  return turnId
+    ? `app:${threadId}:${turnId}:agent:${itemId}`
+    : `app:${threadId}:${itemId}:agent`;
 };
 
 const appServerTurnParams = (threadId: string | undefined, turn: Record<string, unknown>): Record<string, unknown> => ({

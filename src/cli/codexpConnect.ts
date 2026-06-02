@@ -6,6 +6,8 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Command } from "commander";
 import { spawn as spawnPty, type IPty } from "node-pty";
+import { readCodexSessionRecordsAfter } from "../core/codexSession.js";
+import { asRecord as asCodexRecord, codexRecordFromSession, type CodexRecord } from "../core/codexRecord.js";
 import { readCodexUsage } from "../core/codexUsage.js";
 import type { ProxyInput } from "../core/proxyInput.js";
 import type { ThreadRunOptions, WorkerCommand } from "../core/threadHub.js";
@@ -43,6 +45,9 @@ type SyncedThread = {
   failures: number;
   syncing: boolean;
   lastSnapshot?: string;
+  jsonlPath?: string;
+  jsonlLine?: number;
+  jsonlSyncing?: boolean;
 };
 
 type RuntimeSettings = {
@@ -67,7 +72,10 @@ type BridgeOptions = {
   model?: string;
   sandbox: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
+  transcriptDetailSource: TranscriptDetailSource;
 };
+
+type TranscriptDetailSource = "jsonl" | "app-server" | "off";
 
 type ProxyBridgeRunnerOptions = BridgeOptions & {
   statusBar?: CodexpStatusBar | null;
@@ -159,6 +167,7 @@ async function runCodexpWorker(program: Command, options: ConnectOptions, launch
       model: options.model,
       sandbox: options.sandbox ?? "workspace-write",
       approvalPolicy: options.approvalPolicy ?? "never",
+      transcriptDetailSource: transcriptDetailSource(),
       statusBar
     });
     bridgeRunner.start();
@@ -253,6 +262,7 @@ class ProxyBridgeRunner {
     };
     void bridge.runCommandLoop().catch(fail("command loop"));
     void bridge.runThreadSyncLoop().catch(fail("thread sync"));
+    void bridge.runJsonlRecordSyncLoop().catch(fail("jsonl record sync"));
     void bridge.runHeartbeatLoop().catch(fail("heartbeat"));
     void bridge.waitForClose().then(() => stopped.reject(new Error("app-server bridge closed")));
     await stopped.promise;
@@ -327,6 +337,18 @@ class CodexAppServerBridge {
       for (const [threadId, state] of entries) {
         if (this.closed) return;
         await this.syncThread(threadId, state);
+      }
+    }
+  }
+
+  async runJsonlRecordSyncLoop() {
+    if (this.options.transcriptDetailSource !== "jsonl") return;
+    while (!this.closed) {
+      await delay(1000);
+      if (this.closed) return;
+      for (const [threadId, state] of [...this.syncedThreads]) {
+        if (this.closed) return;
+        await this.syncJsonlRecords(threadId, state);
       }
     }
   }
@@ -491,6 +513,38 @@ class CodexAppServerBridge {
     }
   }
 
+  private async syncJsonlRecords(threadId: string, state: SyncedThread) {
+    if (state.jsonlSyncing) return;
+    state.jsonlSyncing = true;
+    try {
+      const batch = await readCodexSessionRecordsAfter(threadId, state.jsonlLine ?? 0);
+      if (!batch) return;
+      if (state.jsonlPath && state.jsonlPath !== batch.path) {
+        state.jsonlLine = 0;
+        const resetBatch = await readCodexSessionRecordsAfter(threadId, 0);
+        if (!resetBatch) return;
+        state.jsonlPath = resetBatch.path;
+        state.jsonlLine = resetBatch.lastLine;
+        const records = resetBatch.records
+          .filter(shouldMirrorJsonlRecord)
+          .map((record) => codexRecordFromSession(record, threadId));
+        if (records.length) await this.forwardRecords(threadId, records);
+        return;
+      }
+      state.jsonlPath = batch.path;
+      state.jsonlLine = batch.lastLine;
+
+      const records = batch.records
+        .filter(shouldMirrorJsonlRecord)
+        .map((record) => codexRecordFromSession(record, threadId));
+      if (records.length) await this.forwardRecords(threadId, records);
+    } catch (error) {
+      console.error(`codexp bridge failed to sync jsonl records for ${threadId}: ${errorText(error)}`);
+    } finally {
+      state.jsonlSyncing = false;
+    }
+  }
+
   private async syncRuntimeSettings(threadIds: string[]) {
     if (!threadIds.length) return;
     try {
@@ -541,6 +595,16 @@ class CodexAppServerBridge {
       body: JSON.stringify({ threadId, commandId, message, heartbeat: options.heartbeat, current: options.current })
     }).catch((error) => {
       console.error(`codexp bridge failed to forward app-server event: ${errorText(error)}`);
+    });
+  }
+
+  private async forwardRecords(threadId: string, records: CodexRecord[]) {
+    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/records`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId, records, heartbeat: false, current: false })
+    }).catch((error) => {
+      console.error(`codexp bridge failed to forward jsonl records: ${errorText(error)}`);
     });
   }
 
@@ -915,6 +979,20 @@ const threadIdForPendingMessage = (pending: Pick<PendingRequest, "method" | "thr
     return resultThreadIdForMessage(message) ?? threadIdForMessage(message) ?? pending.threadId;
   }
   return threadIdForMessage(message) ?? pending.threadId;
+};
+
+const shouldMirrorJsonlRecord = (record: { type: string; payload: unknown }) => {
+  const payload = asCodexRecord(record.payload);
+  if (!payload) return false;
+  if (record.type === "response_item") return payload.type !== "message";
+  if (record.type !== "event_msg") return false;
+  return payload.type === "image_generation_end" || payload.type === "token_count";
+};
+
+const transcriptDetailSource = (): TranscriptDetailSource => {
+  const value = process.env.CODEX_PROXY_TRANSCRIPT_DETAIL_SOURCE;
+  if (value === "app-server" || value === "off" || value === "jsonl") return value;
+  return "jsonl";
 };
 
 const resultThreadIdForMessage = (message: JsonRecord) => {

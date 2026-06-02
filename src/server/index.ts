@@ -71,6 +71,15 @@ const workerRegistrationSchema = z.object({
   threadCodexUsage: z.record(z.string(), codexUsageSchema).optional()
 });
 
+const codexRecordSchema = z.object({
+  id: z.string().min(1),
+  timestamp: z.string().optional(),
+  type: z.string().min(1),
+  payload: z.unknown(),
+  line: z.number().int().optional(),
+  sourceThreadId: z.string().optional()
+});
+
 const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`event: ${event}\n`);
   raw.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -190,6 +199,22 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }).parse(request.body);
     try {
       return threads.applyWorkerEvent(params.workerId, payload);
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.post("/api/workers/:workerId/records", async (request, reply) => {
+    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({
+      threadId: z.string().min(1),
+      heartbeat: z.boolean().optional(),
+      current: z.boolean().optional(),
+      records: z.array(codexRecordSchema)
+    }).parse(request.body);
+    try {
+      return threads.applyWorkerRecords(params.workerId, payload);
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
