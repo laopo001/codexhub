@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { ThreadOptions, Usage } from "@openai/codex-sdk";
 import { asRecord, type CodexRecord } from "./codexRecord.js";
 import { recordsToViews } from "./codexRecordView.js";
@@ -144,7 +144,6 @@ type RuntimeThread = {
   updatedAt: string;
   records: CodexRecord[];
   events: ThreadStreamEvent[];
-  appServerItems: Map<string, AppServerItemState>;
   subscribers: Set<(event: ThreadStreamEvent) => void>;
   lastUsage?: Usage;
   seq: number;
@@ -159,11 +158,6 @@ type PendingCommand = {
 };
 
 type WorkerWaiter = () => void;
-
-type AppServerItemState = {
-  text?: string;
-  phase?: string | null;
-};
 
 export class ThreadHub {
   private readonly threads = new Map<string, RuntimeThread>();
@@ -693,7 +687,6 @@ export class ThreadHub {
       updatedAt: now,
       records: [],
       events: [],
-      appServerItems: new Map(),
       subscribers: new Set(),
       seq: 0
     };
@@ -711,7 +704,6 @@ export class ThreadHub {
     const resultThread = asRecord(result?.thread);
     if (resultThread) {
       this.applyAppServerThread(thread, resultThread);
-      this.applyAppServerThreadTurns(thread, resultThread);
     }
 
     const method = typeof record.method === "string" ? record.method : "";
@@ -750,20 +742,11 @@ export class ThreadHub {
       return;
     }
 
-    if (method === "item/agentMessage/delta") {
-      this.applyAgentMessageDelta(thread, params);
-      return;
-    }
+    if (method === "item/agentMessage/delta") return;
 
-    if (method === "item/started" || method === "item/completed") {
-      const item = asRecord(params.item);
-      if (item) this.applyAppServerItem(thread, item, method === "item/completed", params);
-      return;
-    }
+    if (method === "item/started" || method === "item/completed") return;
 
-    if (method === "thread/tokenUsage/updated") {
-      this.upsertRecord(thread, tokenUsageRecord(params));
-    }
+    if (method === "thread/tokenUsage/updated") return;
   }
 
   private applyAppServerThread(thread: RuntimeThread, appThread: Record<string, unknown>) {
@@ -823,75 +806,6 @@ export class ThreadHub {
     this.publish(thread, running ? "thread" : "done");
   }
 
-  private applyAppServerThreadTurns(thread: RuntimeThread, appThread: Record<string, unknown>) {
-    if (!Array.isArray(appThread.turns)) return;
-    const threadId = typeof appThread.id === "string" ? appThread.id : thread.threadId;
-    for (const turnValue of appThread.turns) {
-      const turn = asRecord(turnValue);
-      if (!turn) continue;
-      const params = appServerTurnParams(threadId, turn);
-      const items = Array.isArray(turn.items) ? turn.items : [];
-      for (const itemValue of items) {
-        const item = asRecord(itemValue);
-        if (item) this.applyAppServerItem(thread, item, true, params);
-      }
-    }
-  }
-
-  private applyAgentMessageDelta(thread: RuntimeThread, params: Record<string, unknown>) {
-    if (typeof params.itemId !== "string") return;
-    const state = thread.appServerItems.get(params.itemId) ?? {};
-    state.text = `${state.text ?? ""}${typeof params.delta === "string" ? params.delta : ""}`;
-    thread.appServerItems.set(params.itemId, state);
-    this.upsertRecord(thread, appServerAgentMessageRecord(params.itemId, state, params));
-  }
-
-  private applyAppServerItem(
-    thread: RuntimeThread,
-    item: Record<string, unknown>,
-    completed: boolean,
-    params: Record<string, unknown>
-  ) {
-    const itemId = typeof item.id === "string" ? item.id : randomUUID();
-    switch (item.type) {
-      case "userMessage":
-        this.applyAppServerUserMessage(thread, itemId, item, params);
-        return;
-      case "agentMessage": {
-        const state = thread.appServerItems.get(itemId) ?? {};
-        state.text = typeof item.text === "string" ? item.text : state.text ?? "";
-        state.phase = typeof item.phase === "string" ? item.phase : state.phase ?? "assistant";
-        thread.appServerItems.set(itemId, state);
-        this.upsertRecord(thread, appServerAgentMessageRecord(itemId, state, params));
-        return;
-      }
-      case "reasoning":
-      case "plan":
-      case "commandExecution":
-      case "fileChange":
-      case "mcpToolCall":
-      case "webSearch":
-      case "imageGeneration":
-        this.upsertRecord(thread, appServerItemRecord(itemId, item, params, completed));
-        return;
-      default:
-        return;
-    }
-  }
-
-  private applyAppServerUserMessage(
-    thread: RuntimeThread,
-    itemId: string,
-    item: Record<string, unknown>,
-    params: Record<string, unknown>
-  ) {
-    const record = appServerUserRecord(itemId, item, params);
-    const payload = asRecord(record.payload);
-    const message = typeof payload?.message === "string" ? payload.message.trim() : "";
-    if (message && thread.title === thread.threadId) thread.title = message.slice(0, 80);
-    this.upsertRecord(thread, record);
-  }
-
   private appendRuntimeRecord(thread: RuntimeThread, type: string, payload: unknown) {
     const record: CodexRecord = {
       id: `proxy:${randomUUID()}`,
@@ -925,7 +839,6 @@ export class ThreadHub {
 
   private resetThreadRecords(thread: RuntimeThread) {
     thread.records = [];
-    thread.appServerItems.clear();
     thread.lastUsage = undefined;
   }
 
@@ -1235,179 +1148,6 @@ const appServerThreadFromMessage = (message: Record<string, unknown>) => {
   return asRecord(result?.thread) ?? asRecord(params?.thread);
 };
 
-const appServerUserRecord = (
-  itemId: string,
-  item: Record<string, unknown>,
-  params: Record<string, unknown>
-): CodexRecord => {
-  const content = Array.isArray(item.content) ? item.content : [];
-  const message = userInputText(content);
-  const images = userInputImages(content);
-  return {
-    id: appServerRecordId("user", itemId, params, shortHash(`${message}\0${JSON.stringify(images)}`)),
-    timestamp: timestampFromParams(params, "startedAtMs") ?? new Date().toISOString(),
-    type: "event_msg",
-    payload: {
-      type: "user_message",
-      message,
-      images,
-      text_elements: []
-    },
-    sourceThreadId: threadIdFromParams(params)
-  };
-};
-
-const appServerAgentMessageRecord = (
-  itemId: string,
-  state: AppServerItemState,
-  params: Record<string, unknown>
-): CodexRecord => ({
-  id: appServerAgentRecordId(itemId, params),
-  timestamp: timestampFromParams(params, "completedAtMs")
-    ?? timestampFromParams(params, "startedAtMs")
-    ?? new Date().toISOString(),
-  type: "event_msg",
-  payload: {
-    type: "agent_message",
-    message: state.text ?? "",
-    phase: state.phase ?? "final_answer"
-  },
-  sourceThreadId: threadIdFromParams(params)
-});
-
-const appServerItemRecord = (
-  itemId: string,
-  item: Record<string, unknown>,
-  params: Record<string, unknown>,
-  completed: boolean
-): CodexRecord => ({
-  id: `app:${threadIdFromParams(params)}:${itemId}`,
-  timestamp: timestampFromParams(params, completed ? "completedAtMs" : "startedAtMs") ?? new Date().toISOString(),
-  type: appServerItemRecordType(item),
-  payload: appServerItemPayload(item),
-  sourceThreadId: threadIdFromParams(params)
-});
-
-const appServerItemRecordType = (item: Record<string, unknown>) =>
-  item.type === "imageGeneration" ? "event_msg" : "response_item";
-
-const appServerItemPayload = (item: Record<string, unknown>) => {
-  switch (item.type) {
-    case "reasoning":
-      return {
-        type: "reasoning",
-        summary: Array.isArray(item.summary) ? item.summary : [],
-        content: Array.isArray(item.content) ? item.content.join("\n") : ""
-      };
-    case "plan":
-      return {
-        type: "reasoning",
-        summary: typeof item.text === "string" ? [item.text] : [],
-        content: ""
-      };
-    case "commandExecution":
-      return {
-        type: "local_shell_call",
-        call_id: typeof item.id === "string" ? item.id : null,
-        status: item.status === "completed" ? "completed" : "in_progress",
-        action: {
-          type: "exec",
-          command: ["bash", "-lc", typeof item.command === "string" ? item.command : ""],
-          timeout_ms: null,
-          working_directory: typeof item.cwd === "string" ? item.cwd : null,
-          env: null,
-          user: null
-        },
-        aggregated_output: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : ""
-      };
-    case "fileChange":
-      return {
-        type: "file_change",
-        status: typeof item.status === "string" ? item.status : "completed",
-        changes: Array.isArray(item.changes) ? item.changes : []
-      };
-    case "mcpToolCall":
-      return {
-        type: "mcp_tool_call",
-        server: typeof item.server === "string" ? item.server : "",
-        tool: typeof item.tool === "string" ? item.tool : "",
-        status: typeof item.status === "string" ? item.status : "",
-        arguments: item.arguments,
-        result: item.result,
-        error: item.error
-      };
-    case "webSearch":
-      return {
-        type: "web_search_call",
-        query: typeof item.query === "string" ? item.query : "",
-        action: item.action
-      };
-    case "imageGeneration":
-      return {
-        type: "image_generation_end",
-        saved_path: typeof item.savedPath === "string" ? item.savedPath : undefined,
-        revised_prompt: typeof item.revisedPrompt === "string" ? item.revisedPrompt : undefined
-      };
-    default:
-      return {
-        type: "app_server_item",
-        item
-      };
-  }
-};
-
-const tokenUsageRecord = (params: Record<string, unknown>): CodexRecord => {
-  const usage = asRecord(params.tokenUsage);
-  const last = asRecord(usage?.last);
-  return {
-    id: `app:${threadIdFromParams(params)}:${typeof params.turnId === "string" ? params.turnId : "turn"}:usage`,
-    timestamp: new Date().toISOString(),
-    type: "event_msg",
-    payload: {
-      type: "token_count",
-      info: {
-        last_token_usage: {
-          input_tokens: numberField(last, "inputTokens"),
-          cached_input_tokens: numberField(last, "cachedInputTokens"),
-          output_tokens: numberField(last, "outputTokens"),
-          reasoning_output_tokens: numberField(last, "reasoningOutputTokens"),
-          total_tokens: numberField(last, "totalTokens")
-        }
-      }
-    },
-    sourceThreadId: threadIdFromParams(params)
-  };
-};
-
-const appServerRecordId = (
-  kind: string,
-  itemId: string,
-  params: Record<string, unknown>,
-  suffix?: string
-) => {
-  const threadId = threadIdFromParams(params);
-  const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
-  const base = turnId
-    ? `app:${threadId}:${turnId}:${kind}`
-    : `app:${threadId}:${itemId}`;
-  return suffix ? `${base}:${suffix}` : base;
-};
-
-const appServerAgentRecordId = (itemId: string, params: Record<string, unknown>) => {
-  const threadId = threadIdFromParams(params);
-  const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
-  return turnId
-    ? `app:${threadId}:${turnId}:agent`
-    : `app:${threadId}:${itemId}:agent`;
-};
-
-const appServerTurnParams = (threadId: string | undefined, turn: Record<string, unknown>): Record<string, unknown> => ({
-  threadId,
-  turnId: typeof turn.id === "string" ? turn.id : undefined,
-  startedAtMs: typeof turn.startedAt === "number" ? turn.startedAt * 1000 : undefined,
-  completedAtMs: typeof turn.completedAt === "number" ? turn.completedAt * 1000 : undefined
-});
-
 const rollbackPlanAfterRecord = (thread: RuntimeThread, recordId: string) => {
   const targetTurnId = turnIdFromAppRecordId(thread.threadId, recordId);
   if (!targetTurnId) throw new Error(`Cannot fork from record without app-server turn id: ${recordId}`);
@@ -1437,27 +1177,6 @@ const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
   if (!turnId || !kind) return null;
   return kind === "user" || kind === "agent" || kind === "usage" ? turnId : null;
 };
-
-const threadIdFromParams = (params: Record<string, unknown>) =>
-  typeof params.threadId === "string" ? params.threadId : undefined;
-
-const timestampFromParams = (params: Record<string, unknown>, key: string) =>
-  typeof params[key] === "number" ? new Date(params[key] as number).toISOString() : undefined;
-
-const userInputText = (content: unknown[]) => content
-  .map((item) => {
-    const record = asRecord(item);
-    return record?.type === "text" && typeof record.text === "string" ? record.text : null;
-  })
-  .filter((text): text is string => Boolean(text?.trim()))
-  .join("\n");
-
-const userInputImages = (content: unknown[]) => content
-  .map((item) => {
-    const record = asRecord(item);
-    return record?.type === "image" && typeof record.url === "string" ? record.url : null;
-  })
-  .filter((text): text is string => Boolean(text?.trim()));
 
 const summarizeInput = (input: ProxyInput) => {
   if (typeof input === "string") return input;
@@ -1558,12 +1277,6 @@ const emptyCodexUsage = (source: CodexUsageSnapshot["source"]): CodexUsageSnapsh
   observedAt: null,
   source
 });
-
-const numberField = (record: Record<string, unknown> | null, key: string) =>
-  typeof record?.[key] === "number" ? record[key] : 0;
-
-const shortHash = (value: string) =>
-  createHash("sha256").update(value).digest("hex").slice(0, 12);
 
 const stringify = (value: unknown) => {
   try {

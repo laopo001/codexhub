@@ -42,9 +42,6 @@ type PendingRequest = {
 };
 
 type SyncedThread = {
-  failures: number;
-  syncing: boolean;
-  lastSnapshot?: string;
   jsonlPath?: string;
   jsonlLine?: number;
   jsonlSyncing?: boolean;
@@ -80,10 +77,7 @@ type BridgeOptions = {
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
-  transcriptDetailSource: TranscriptDetailSource;
 };
-
-type TranscriptDetailSource = "jsonl" | "app-server" | "off";
 
 type ProxyBridgeRunnerOptions = BridgeOptions & {
   statusBar?: CodexpStatusBar | null;
@@ -196,7 +190,6 @@ async function runCodexpWorker(program: Command, options: ConnectOptions, launch
       model: options.model,
       sandbox: options.sandbox,
       approvalPolicy: options.approvalPolicy,
-      transcriptDetailSource: transcriptDetailSource(),
       statusBar
     });
     bridgeRunner.start();
@@ -237,7 +230,6 @@ export async function startHeadlessCodexpWorker(options: HeadlessCodexpWorkerOpt
     model: options.model,
     sandbox: options.sandbox,
     approvalPolicy: options.approvalPolicy,
-    transcriptDetailSource: transcriptDetailSource(),
     statusBar: null
   });
   const appServerStopped = waitForChild(appServer);
@@ -492,15 +484,10 @@ class CodexAppServerBridge {
       if (this.closed) return;
       const entries = [...this.syncedThreads];
       await this.syncRuntimeSettings(entries.map(([threadId]) => threadId));
-      for (const [threadId, state] of entries) {
-        if (this.closed) return;
-        await this.syncThread(threadId, state);
-      }
     }
   }
 
   async runJsonlRecordSyncLoop() {
-    if (this.options.transcriptDetailSource !== "jsonl") return;
     while (!this.closed) {
       await delay(1000);
       if (this.closed) return;
@@ -653,47 +640,16 @@ class CodexAppServerBridge {
 
   private bindThread(threadId: string) {
     if (!this.syncedThreads.has(threadId)) {
-      this.syncedThreads.set(threadId, { failures: 0, syncing: false });
+      this.syncedThreads.set(threadId, {});
     }
   }
 
   private resetJsonlCursor(threadId: string, keepTurns?: number) {
-    const state = this.syncedThreads.get(threadId) ?? { failures: 0, syncing: false };
+    const state = this.syncedThreads.get(threadId) ?? {};
     state.jsonlPath = undefined;
     state.jsonlLine = 0;
     state.jsonlReplayKeepTurns = keepTurns;
     this.syncedThreads.set(threadId, state);
-  }
-
-  private async syncThread(threadId: string, state: SyncedThread) {
-    if (state.syncing) return;
-    state.syncing = true;
-    try {
-      const result = await this.request("thread/read", {
-        threadId,
-        includeTurns: true
-      });
-      const snapshot = JSON.stringify(result);
-      if (snapshot !== state.lastSnapshot) {
-        state.lastSnapshot = snapshot;
-        await this.forwardThreadEvent(threadId, undefined, { result }, { heartbeat: false });
-      }
-      state.failures = 0;
-    } catch (error) {
-      const text = errorText(error);
-      if (text.includes("is not materialized yet") || text.includes("includeTurns is unavailable before first user message")) {
-        state.failures = 0;
-        return;
-      }
-      state.failures += 1;
-      if (text.includes("ephemeral threads do not support includeTurns")) {
-        this.syncedThreads.delete(threadId);
-      } else if (state.failures === 3) {
-        console.error(`codexp bridge failed to sync thread ${threadId}: ${text}`);
-      }
-    } finally {
-      state.syncing = false;
-    }
   }
 
   private async syncJsonlRecords(threadId: string, state: SyncedThread) {
@@ -1290,12 +1246,6 @@ const shouldMirrorJsonlRecord = (record: { type: string; payload: unknown }) => 
     || payload.type === "agent_message"
     || payload.type === "image_generation_end"
     || payload.type === "token_count";
-};
-
-const transcriptDetailSource = (): TranscriptDetailSource => {
-  const value = process.env.CODEX_PROXY_TRANSCRIPT_DETAIL_SOURCE;
-  if (value === "app-server" || value === "off" || value === "jsonl") return value;
-  return "jsonl";
 };
 
 const resultThreadIdForMessage = (message: JsonRecord) => {

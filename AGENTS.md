@@ -30,7 +30,7 @@
 
 ## 事件和消息流
 
-1. `ThreadHub` 负责把 app-server events/read snapshots 转成统一 thread records 和 SSE events。
+1. `ThreadHub` 负责把 worker 上报的 JSONL records 转成统一 thread records 和 SSE events；app-server events 只用于 worker/thread 状态、current thread、running/turnId、runtime settings 和错误状态，不作为 transcript 来源。
 2. Web 通过 `GET /api/threads/:threadId/events?after=...` 订阅 thread 事件。
 3. Telegram bot 由 API server 进程按环境变量内置启动，发送消息时也订阅同一个 thread 事件流；TG 和 Web 应看到同一批 tool/codex/error 消息。
 4. Web/TG 不各自拼 transcript；thread 详情 `GET /api/threads/:threadId` 返回后端维护的 `records`。
@@ -50,7 +50,7 @@
 6. `/api/workers/:workerId/turn` 是 worker-current-thread 输入入口，主要给 Telegram 这类单上下文客户端使用；它不创建 thread，只在提交时解析 worker 的 `currentThreadId` 并排入 worker 命令队列。
 7. `/api/threads/:threadId` 系列用于 thread 详情、SSE 事件、turn/stop/fork/rollback/delete 等 thread 操作；Web 可以用 `/api/threads/:threadId/turn` 对选中 thread 输入。`GET /api/threads` 只允许作为诊断/管理兼容列表，不用于 Web 高频轮询。
 8. Web 的消息级 Fork 必须只显示在带 app-server turn id 的 final answer 上。官方 app-server 的 `thread/fork` 不支持 `messageId` / `itemId` 定位；按消息 fork 的实现语义是先对源 thread 调 `thread/fork`，再按目标消息所在 turn 之后的 turn 数，对新 thread 调 `thread/rollback { numTurns }`。不要把 Web 传入的 `messageId` 直接当成官方 `thread/fork` 参数。
-9. fork 后的新 thread transcript 必须以新 session jsonl 的 line 顺序为主。`thread/read` snapshot 只用于发现 thread、状态校准和 jsonl 尚不可用时的兜底；一旦 jsonl 中出现同内容的 user/agent/tool records，要用 jsonl records 替换/压过 app-server snapshot transcript records，避免 snapshot 先写 user/final、jsonl 后补 tool 导致 tool 顺序错位。jsonl user/agent/usage records 必须保留 app-server `turn_id`，让 Web 的消息级 Fork 仍能按目标 final answer 定位 turn。官方 `thread/rollback` 不会改写 fork jsonl；fork 后执行过 rollback 时，server 要把应保留的 turn 数传给 bridge，bridge 重置 jsonl 水位线并只重放新 fork jsonl 中前 N 个 turn，随后把 cursor 推到文件末尾，未来新输入再正常追加同步。
+9. fork 后的新 thread transcript 必须以新 session jsonl 的 line 顺序为唯一来源。`thread/read` snapshot 不得展开成 transcript records，也不得作为 jsonl 尚不可用时的兜底；app-server item/user/agent/tool/token 事件不写入 `records`，避免 snapshot 或 live item 重放造成重复 tool/codex 消息。jsonl user/agent/usage records 必须保留 app-server `turn_id`，让 Web 的消息级 Fork 仍能按目标 final answer 定位 turn。官方 `thread/rollback` 不会改写 fork jsonl；fork 后执行过 rollback 时，server 要把应保留的 turn 数传给 bridge，bridge 重置 jsonl 水位线并只重放新 fork jsonl 中前 N 个 turn，随后把 cursor 推到文件末尾，未来新输入再正常追加同步。
 10. 不提供 `POST /api/threads` 创建入口；server 只能 get/delete、turn、stop、fork，以及诊断性 list。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexp resume` 或 TUI 内 `/resume` 发现并镜像。
 11. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexp` worker/CLI 侧。
 
