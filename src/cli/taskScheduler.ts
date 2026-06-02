@@ -75,7 +75,7 @@ export class CodexhubTaskScheduler {
   private scanning = false;
 
   constructor(private readonly options: SchedulerOptions) {
-    this.scanIntervalMs = options.scanIntervalMs ?? (Number(process.env.CODEX_PROXY_TASK_SCAN_INTERVAL_MS || 0) || defaultScanIntervalMs);
+    this.scanIntervalMs = options.scanIntervalMs ?? (Number(process.env.CODEX_HUB_TASK_SCAN_INTERVAL_MS || 0) || defaultScanIntervalMs);
   }
 
   start() {

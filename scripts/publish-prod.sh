@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 ENV_FILE=".env"
-unset CODEX_SANDBOX_MODE
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing ${ENV_FILE}. Create it from .env.example first." >&2
@@ -13,7 +12,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 PROD_PORT="$(
-  node --import tsx --input-type=module -e 'import { loadDotEnv } from "./src/core/dotenv.ts"; await loadDotEnv(); console.log(process.env.CODEX_PROXY_PORT ?? "18788");'
+  node --import tsx --input-type=module -e 'import { loadDotEnv } from "./src/core/dotenv.ts"; await loadDotEnv(); console.log(process.env.CODEX_HUB_PORT ?? "8788");'
 )"
 PROD_URL="http://127.0.0.1:${PROD_PORT}"
 

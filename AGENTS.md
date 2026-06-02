@@ -82,18 +82,18 @@ input: |
 4. 任务执行必须 local-first 扫描任务文件，但执行入口分层：`codexhub task run <task_yaml_path>` 通过本机 `codex exec` / `codex exec resume` 离线执行；`codexhub task start` 启动本机 headless codexhub worker，并通过 codexhub server 的 `/api/workers/:workerId/turn` 定时向该 worker 发送任务输入。
 5. 任务并发边界是 task 文件：同一个任务已经 queued/running 时，下一次触发应跳过，不额外写本地 task-run 日志。
 6. 任务 CLI 放在 `codexhub task` 子命令下，例如 `codexhub task list [thread]`、`codexhub task template [name]`、`codexhub task start`、`codexhub task run <task_yaml_path>`。
-7. `codexhub task list` 默认离线可用，只扫描当前工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示 server 是否在线。
+7. `codexhub task list` 默认离线可用，只扫描当前工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_HUB_SERVER_URL` 时，才连接 server 并显示 server 是否在线。
 9. `codexhub task start` 是本地任务调度入口：只扫描当前工作区的 `.codexp/tasks`，启动后立即创建一个 headless worker 和初始 thread，输出 `workerId` / `threadId`，随后按 YAML 里的 `schedule` 定时发送任务输入；任务 YAML 有 `thread` 时先 resume 该 thread 再发送，没有 `thread` 时发送到 task worker 的 current thread；server 只接收 worker/thread turn，不扫描本机文件系统。
 10. `codexhub task run <task_yaml_path>` 是手动单次执行入口：立即本地运行指定 YAML 文件，不看 `schedule`，不要求 server 在线。
 
 ## 自举开发和发布
 
 1. 本地默认主入口使用 `8788`，同一个 API server 同时服务 Web `dist` 和 `/api/*`。
-2. Prod 使用 5 位 `1xxxx` 端口：主入口 `18788`。
-3. API server 统一通过 `codexhub server` 启动，只加载当前目录 `.env`；不再提供 `--env`、`--telegram`、`--no-telegram` 或 `CODEX_PROXY_TELEGRAM_ENABLED` 分支开关。
-4. `CODEX_PROXY_HOST` / `CODEX_PROXY_PORT` 可以写入 `.env`；CLI `--host` / `--port` 优先级最高，其次是当前 shell 环境变量，然后是 `.env`。
-5. Telegram bot 默认随 server 启动；没有 `TELEGRAM_BOT_TOKEN` 时 server 应失败，而不是静默跳过。
+2. Prod 不使用单独固定端口；监听地址由 `CODEX_HUB_HOST` / `CODEX_HUB_PORT` 或 CLI 参数决定。
+3. API server 统一通过 `codexhub server` 启动，只加载当前目录 `.env`；不再提供 `--env`、`--telegram`、`--no-telegram` 或 `CODEX_HUB_TELEGRAM_ENABLED` 分支开关。
+4. `CODEX_HUB_HOST` / `CODEX_HUB_PORT` 可以写入 `.env`；CLI `--host` / `--port` 优先级最高，其次是当前 shell 环境变量，然后是 `.env`。
+5. Telegram bot 默认随 server 启动；没有 `TELEGRAM_BOT_TOKEN` 时跳过 Telegram bot，但 server 仍正常启动。
 6. Prod 由 PM2 管理长期进程：`codexhub-prod`。Telegram bot 内置在该 server 进程中。
-7. API server 默认直接服务 `dist`；`--serve-static <dir>` 只作为显式目录覆盖，不再用 `CODEX_PROXY_SERVE_STATIC` 区分 dev/prod。
+7. API server 默认直接服务 `dist`；`--serve-static <dir>` 只作为显式目录覆盖，不再用 `CODEX_HUB_SERVE_STATIC` 区分 dev/prod。
 8. 发布使用 `pnpm run publish:prod`，脚本必须先 `pnpm check`、`pnpm build`，再启动或重启 `codexhub-prod` 并验证 `/api/health` 和 `/`。
 9. 不要让本地 Dev 进程替换 PM2 Prod；开发验证和生产发布必须分开。

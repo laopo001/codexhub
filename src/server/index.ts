@@ -119,9 +119,9 @@ const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
 
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
-  : path.resolve(process.env.CODEX_PROXY_STATIC_DIR ?? "dist");
-const workerOfflineTimeoutMs = () => Number(process.env.CODEX_PROXY_WORKER_OFFLINE_TIMEOUT_MS || 0) || 45_000;
-const workerSweepIntervalMs = () => Number(process.env.CODEX_PROXY_WORKER_SWEEP_INTERVAL_MS || 0) || 5_000;
+  : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? "dist");
+const workerOfflineTimeoutMs = () => Number(process.env.CODEX_HUB_WORKER_OFFLINE_TIMEOUT_MS || 0) || 45_000;
+const workerSweepIntervalMs = () => Number(process.env.CODEX_HUB_WORKER_SWEEP_INTERVAL_MS || 0) || 5_000;
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
@@ -160,8 +160,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.get("/api/health", async () => ({
     ok: true,
-    env: process.env.CODEX_PROXY_ENV ?? process.env.NODE_ENV ?? "development",
-    build: process.env.CODEX_PROXY_BUILD_ID ?? null,
+    env: process.env.CODEX_HUB_ENV ?? process.env.NODE_ENV ?? "development",
+    build: process.env.CODEX_HUB_BUILD_ID ?? null,
     host: config.host,
     port: config.port,
     staticDirectory,
@@ -382,7 +382,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   try {
     telegramBot = await startTelegramBotFromEnv({
-      apiBaseUrl: localApiBaseUrl(config.host, config.port)
+      apiBaseUrl: localApiBaseUrl(config.host, config.port),
+      requireToken: false
     });
   } catch (error) {
     await app.close();

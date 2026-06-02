@@ -594,7 +594,7 @@ export const startTelegramBotFromEnv = async (options: {
   }
   return startTelegramBot({
     token,
-    apiBaseUrl: process.env.CODEX_PROXY_SERVER_URL ?? options.apiBaseUrl,
+    apiBaseUrl: process.env.CODEX_HUB_SERVER_URL ?? options.apiBaseUrl,
     allowedChatIds: parseAllowedChatIds(process.env.TELEGRAM_ALLOWED_CHAT_IDS),
     logger: options.logger
   });

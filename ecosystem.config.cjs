@@ -8,7 +8,7 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       env: {
-        CODEX_PROXY_ENV: "production"
+        CODEX_HUB_ENV: "production"
       }
     }
   ]

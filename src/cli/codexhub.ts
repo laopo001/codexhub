@@ -56,8 +56,8 @@ const program = new Command()
 program
   .command("server")
   .description("Start the codexhub API server")
-  .option("--host <host>", "listen host (overrides CODEX_PROXY_HOST)")
-  .option("--port <port>", "listen port (overrides CODEX_PROXY_PORT)")
+  .option("--host <host>", "listen host (overrides CODEX_HUB_HOST)")
+  .option("--port <port>", "listen port (overrides CODEX_HUB_PORT)")
   .option("--serve-static <dir>", "serve built web assets from this directory")
   .action(async (options: ServerCommandOptions = {}) => {
     const { startServer } = await import("../server/index.js");
@@ -184,7 +184,7 @@ async function tryListThreadsForTaskList() {
 
 function shouldProbeServerForTaskList() {
   const source = program.getOptionValueSource("server");
-  return source !== "default" || Boolean(process.env.CODEX_PROXY_SERVER_URL);
+  return source !== "default" || Boolean(process.env.CODEX_HUB_SERVER_URL);
 }
 
 function apiUrl(path: string) {
@@ -458,9 +458,9 @@ function serverUrl(host: string, port: number) {
 }
 
 function defaultServerUrl() {
-  if (process.env.CODEX_PROXY_SERVER_URL) return process.env.CODEX_PROXY_SERVER_URL;
-  const host = process.env.CODEX_PROXY_HOST ?? "127.0.0.1";
-  const port = process.env.CODEX_PROXY_PORT ?? "18788";
+  if (process.env.CODEX_HUB_SERVER_URL) return process.env.CODEX_HUB_SERVER_URL;
+  const host = process.env.CODEX_HUB_HOST ?? "127.0.0.1";
+  const port = process.env.CODEX_HUB_PORT ?? "8788";
   return serverUrl(host, Number(port));
 }
 
