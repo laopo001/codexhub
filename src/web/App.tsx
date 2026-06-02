@@ -461,6 +461,36 @@ const App = () => {
     }
   };
 
+  const rollbackMessage = async (threadId: string, messageId: string) => {
+    try {
+      const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/rollback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messageId })
+      });
+      const session: ChatSession = { ...thread, input: "", imageAttachments: [] };
+      setSessions((current) => {
+        const existing = current.find((item) => item.threadId === thread.threadId);
+        const nextSession = existing
+          ? { ...session, input: existing.input, imageAttachments: existing.imageAttachments }
+          : session;
+        return current.some((item) => item.threadId === thread.threadId)
+          ? current.map((item) => item.threadId === thread.threadId ? nextSession : item)
+          : [...current, nextSession];
+      });
+      setActiveWorkspacePath(thread.workingDirectory);
+      setActiveTabThreadId(thread.threadId);
+      subscribeThread(thread.threadId, thread.lastSeq);
+    } catch (error) {
+      setSessions((current) => current.map((item) => item.threadId === threadId
+        ? {
+          ...item,
+          records: [...item.records, errorRecord("rollback failed", error)]
+        }
+        : item));
+    }
+  };
+
   const send = async (threadId: string) => {
     const session = sessions.find((item) => item.threadId === threadId);
     if (!session || session.running) return;
@@ -700,6 +730,7 @@ const App = () => {
                         showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
                         onInspect={messageDisplayMode === "compact" && message.role === "tool" ? () => setInspectMessage(message) : undefined}
                         onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
+                        onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
                       />
                     )}
                   />
@@ -855,12 +886,14 @@ const MessageCard = ({
   message,
   showStatus = true,
   onInspect,
-  onFork
+  onFork,
+  onRollback
 }: {
   message: WebRecordView;
   showStatus?: boolean;
   onInspect?: () => void;
   onFork?: () => void;
+  onRollback?: () => void;
 }) => (
   <article
     className={`message ${message.role} ${onInspect ? "inspectable" : ""}`}
@@ -895,7 +928,7 @@ const MessageCard = ({
         ) : null)}
       </div>
     ) : null}
-    {message.at || message.usage || onFork ? (
+    {message.at || message.usage || onFork || onRollback ? (
       <footer className="messageMeta" title={formatMessageMetaTitle(message)} onClick={(event) => event.stopPropagation()}>
         <span>{formatMessageMeta(message)}</span>
         {onFork ? (
@@ -903,6 +936,12 @@ const MessageCard = ({
             event.preventDefault();
             onFork();
           }}>Fork</a>
+        ) : null}
+        {onRollback ? (
+          <a href="#" onClick={(event) => {
+            event.preventDefault();
+            onRollback();
+          }}>Rollback</a>
         ) : null}
       </footer>
     ) : null}

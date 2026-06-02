@@ -412,6 +412,13 @@ export class ThreadHub {
     return await this.rollbackThread(forkedThread.threadId, rollbackPlan.rollbackTurns, rollbackPlan.keepTurns);
   }
 
+  async rollbackThreadAfterRecord(threadId: string, recordId: string): Promise<ThreadDetail> {
+    const thread = this.requireThread(threadId);
+    const rollbackPlan = rollbackPlanAfterRecord(thread, recordId);
+    if (rollbackPlan.rollbackTurns <= 0) return this.detail(thread);
+    return await this.rollbackThread(thread.threadId, rollbackPlan.rollbackTurns, rollbackPlan.keepTurns);
+  }
+
   private async rollbackThread(threadId: string, numTurns: number, keepTurns?: number): Promise<ThreadDetail> {
     const thread = this.requireThread(threadId);
     const worker = this.requireThreadWorker(thread);

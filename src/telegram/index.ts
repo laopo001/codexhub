@@ -112,6 +112,7 @@ let selectionSeq = 0;
 const botCommands = [
   { command: "start", description: "show help" },
   { command: "workers", description: "select a Codex worker" },
+  { command: "detach", description: "clear current worker selection" },
   { command: "status", description: "show current worker" }
 ];
 
@@ -130,6 +131,7 @@ const registerHandlers = () => {
       "codex-proxy ready.",
       "",
       "/workers 选择在线 Codex worker",
+      "/detach 取消当前 worker 绑定",
       "/status 查看当前状态",
       "",
       "直接发消息会发送给当前 worker 指向的 Codex thread。新 thread 请在本地 codexp 里开始。"
@@ -156,6 +158,13 @@ const registerHandlers = () => {
     } catch (error) {
       await ctx.reply(errorText(error));
     }
+  });
+
+  bot.command("detach", async (ctx) => {
+    const detached = detachWorker(ctx.chat.id);
+    await ctx.reply(detached
+      ? "已取消当前 worker 绑定。用 /workers 重新选择在线 worker。"
+      : "当前没有绑定 Codex worker。用 /workers 选择在线 worker。");
   });
 
   bot.command("status", async (ctx) => {
@@ -291,6 +300,12 @@ const selectWorker = async (chatId: number, workerId: string) => {
   return worker;
 };
 
+const detachWorker = (chatId: number) => {
+  const hadState = chatStates.delete(chatId);
+  const hadMirror = stopChatMirror(chatId);
+  return hadState || hadMirror;
+};
+
 const listWorkers = async (): Promise<WorkerSummary[]> => {
   const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
   return normalizeWorkers(data.workers);
@@ -330,7 +345,7 @@ const telegramImageUrl = async (fileId: string) => {
 const startChatMirror = (chatId: number, workerId: string) => {
   const existing = chatMirrors.get(chatId);
   if (existing?.workerId === workerId && !existing.controller.signal.aborted) return existing;
-  existing?.controller.abort();
+  stopChatMirror(chatId);
 
   const mirror: ChatMirror = {
     workerId,
@@ -344,6 +359,15 @@ const startChatMirror = (chatId: number, workerId: string) => {
     if (!isAbortError(error)) logger.error("telegram worker mirror failed", error);
   });
   return mirror;
+};
+
+const stopChatMirror = (chatId: number) => {
+  const mirror = chatMirrors.get(chatId);
+  if (!mirror) return false;
+  mirror.controller.abort();
+  mirror.threadController?.abort();
+  chatMirrors.delete(chatId);
+  return true;
 };
 
 const runWorkerMirror = async (chatId: number, mirror: ChatMirror) => {

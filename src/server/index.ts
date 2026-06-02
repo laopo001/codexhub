@@ -313,6 +313,17 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   });
 
+  app.post("/api/threads/:threadId/rollback", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({ messageId: z.string().min(1) }).parse(request.body);
+    try {
+      return await threads.rollbackThreadAfterRecord(params.threadId, payload.messageId);
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   app.post("/api/threads/:threadId/turn", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({
