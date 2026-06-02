@@ -37,12 +37,14 @@
 
 ## API 约定
 
-1. 在线入口和高频状态刷新优先使用 `/api/workers`；worker summary 应携带该 worker 下的轻量 thread summaries，Web/TG 不把全局 `GET /api/threads` 当在线入口。
+1. 在线入口优先使用 `/api/workers` snapshot；worker summary 应携带该 worker 下的轻量 thread summaries，Web/TG 不把全局 `GET /api/threads` 当在线入口。
 2. 不再新增 `/api/instances`、`/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
 3. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events/unregister。worker 主动出站连接 server，不要求 server 反连 worker 机器。
-4. `/api/threads/:threadId` 系列只用于 thread 详情、SSE 事件、turn/stop/fork/delete 等 thread 操作；`GET /api/threads` 只允许作为诊断/管理兼容列表，不用于 Web 高频轮询。
-5. 不提供 `POST /api/threads` 创建入口；server 只能 get/delete、turn、stop、fork，以及诊断性 list。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexp resume` 或 TUI 内 `/resume` 发现并镜像。
-6. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexp` worker/CLI 侧。
+4. Web 初始化/重连可以读取 `GET /api/workers`，后续 worker 列表、current thread、thread summaries 的实时更新使用 `GET /api/workers/events?after=...` SSE，不做固定间隔轮询。
+5. Web 的 context/rate limit usage 使用 worker heartbeat 进入 worker/thread summaries 的 `codexUsage`，通过 `/api/workers/events` 或 thread SSE 更新；不使用 `GET /api/codex-usage?threadId=...` 固定轮询。
+6. `/api/threads/:threadId` 系列只用于 thread 详情、SSE 事件、turn/stop/fork/delete 等 thread 操作；`GET /api/threads` 只允许作为诊断/管理兼容列表，不用于 Web 高频轮询。
+7. 不提供 `POST /api/threads` 创建入口；server 只能 get/delete、turn、stop、fork，以及诊断性 list。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexp resume` 或 TUI 内 `/resume` 发现并镜像。
+8. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexp` worker/CLI 侧。
 
 ## `.codexp` 工作区文件约定
 

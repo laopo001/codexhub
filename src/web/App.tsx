@@ -18,6 +18,7 @@ type ThreadSummary = {
   updatedAt: string;
   messageCount: number;
   lastUsage?: Usage;
+  codexUsage?: CodexUsageSnapshot;
 };
 
 type ThreadRuntimeSummary =
@@ -46,6 +47,7 @@ type WorkerSummary = {
   currentThreadId?: string;
   currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
+  codexUsage?: CodexUsageSnapshot;
 };
 
 type ChatSession = ThreadDetail & {
@@ -65,6 +67,12 @@ type StreamEvent = {
   kind: "thread" | "record" | "done";
   thread: ThreadSummary;
   record?: CodexRecord;
+};
+
+type WorkerStreamEvent = {
+  seq: number;
+  kind: "workers";
+  workers: WorkerSummary[];
 };
 
 type Usage = {
@@ -157,9 +165,9 @@ const App = () => {
   const [selectedReasoning, setSelectedReasoning] = useState<ReasoningSelection>("auto");
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [codexUsage, setCodexUsage] = useState<CodexUsageSnapshot | null>(null);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
+  const workersEventSource = useRef<EventSource | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
   const messagesRef = useRef<VirtuosoHandle>(null);
   const messagesScrollerRef = useRef<HTMLElement | null>(null);
@@ -211,10 +219,16 @@ const App = () => {
   ) && !activeSession?.running;
   const activeCanSubmit = Boolean(activeSessionBelongsToWorker && (activeSession?.running || activeCanSend));
   const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
+  const activeCodexUsage = activeSession?.codexUsage
+    ?? activeWorkerThreads.find((thread) => thread.threadId === activeSessionId)?.codexUsage
+    ?? activeWorker?.currentThread?.codexUsage
+    ?? activeWorker?.codexUsage
+    ?? null;
 
   useEffect(() => {
     void initialize();
     return () => {
+      workersEventSource.current?.close();
       for (const source of eventSources.current.values()) source.close();
     };
   }, []);
@@ -230,11 +244,6 @@ const App = () => {
       sidebarCollapsed
     }));
   }, [activeWorkspacePath, activeWorkerId, selectedModel, selectedReasoning, messageDisplayMode, sidebarCollapsed, initialized]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => void refreshRuntimeState(), 3000);
-    return () => window.clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     if (!initialized) return;
@@ -276,15 +285,6 @@ const App = () => {
     setSelectedModel(activeSession.model ?? "auto");
     setSelectedReasoning(activeSession.modelReasoningEffort ?? "auto");
   }, [activeSession?.threadId, activeSession?.model, activeSession?.modelReasoningEffort]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => void refreshCodexUsage(activeSession?.threadId), 30_000);
-    return () => window.clearInterval(interval);
-  }, [activeSession?.threadId]);
-
-  useEffect(() => {
-    void refreshCodexUsage(activeSession?.threadId);
-  }, [activeSession?.threadId]);
 
   useEffect(() => {
     if (!activeViews.length) return;
@@ -331,10 +331,9 @@ const App = () => {
   }, [activeSession?.threadId, activeSession?.running]);
 
   const initialize = async () => {
-    const [health, workerData, usageData] = await Promise.all([
+    const [health, workerData] = await Promise.all([
       apiJson<{ defaultWorkingDirectory?: string | null } & SystemStatus>("/api/health"),
-      apiJson<{ workers?: WorkerSummary[] }>("/api/workers"),
-      apiJson<CodexUsageSnapshot>("/api/codex-usage")
+      apiJson<{ workers?: WorkerSummary[] }>("/api/workers")
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
     const loadedWorkers = normalizeWorkers(workerData.workers);
@@ -349,13 +348,13 @@ const App = () => {
       modelReasoningEffort: health.modelReasoningEffort,
       contextWindowTokens: health.contextWindowTokens
     });
-    setCodexUsage(usageData);
     setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
     setSelectedModel(saved?.selectedModel ?? "auto");
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     setWorkers(loadedWorkers);
+    subscribeWorkers(0);
     if (initialWorker) {
       setActiveWorkerId(initialWorker.workerId);
       setActiveWorkspacePath(initialWorker.workingDirectory);
@@ -364,14 +363,14 @@ const App = () => {
     setInitialized(true);
   };
 
-  const refreshRuntimeState = async () => {
-    const workerData = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
-    setWorkers(normalizeWorkers(workerData.workers));
-  };
-
-  const refreshCodexUsage = async (threadId?: string) => {
-    const query = threadId ? `?${new URLSearchParams({ threadId }).toString()}` : "";
-    setCodexUsage(await apiJson<CodexUsageSnapshot>(`/api/codex-usage${query}`));
+  const subscribeWorkers = (after: number) => {
+    workersEventSource.current?.close();
+    const source = new EventSource(`/api/workers/events?after=${after}`);
+    source.addEventListener("workers", (event: MessageEvent) => {
+      const payload = JSON.parse(event.data) as WorkerStreamEvent;
+      setWorkers(normalizeWorkers(payload.workers));
+    });
+    workersEventSource.current = source;
   };
 
   const openThread = async (threadId: string) => {
@@ -402,7 +401,6 @@ const App = () => {
         const records = payload.record ? mergeRecord(session.records, payload.record) : session.records;
         return { ...session, ...payload.thread, records };
       }));
-      void refreshRuntimeState();
     };
     source.addEventListener("thread", handle);
     source.addEventListener("record", handle);
@@ -423,7 +421,6 @@ const App = () => {
         setSelectedThreadByWorker((current) => ({ ...current, [workerId]: thread.threadId }));
       }
       await openThread(thread.threadId);
-      await refreshRuntimeState();
     } catch (error) {
       setSessions((current) => current.map((item) => item.threadId === threadId
         ? {
@@ -626,11 +623,11 @@ const App = () => {
             </code>
           </div>
           <div className="workbar" aria-label="Runtime status">
-            <span title={formatContextTitle(codexUsage)}>
-              Context {formatContextUsage(codexUsage)}
+            <span title={formatContextTitle(activeCodexUsage)}>
+              Context {formatContextUsage(activeCodexUsage)}
             </span>
-            <span title={formatResetTitle(codexUsage?.rateLimits?.primary)}>5h {formatRateLimitRemaining(codexUsage?.rateLimits?.primary)}</span>
-            <span title={formatResetTitle(codexUsage?.rateLimits?.secondary)}>weekly {formatRateLimitRemaining(codexUsage?.rateLimits?.secondary)}</span>
+            <span title={formatResetTitle(activeCodexUsage?.rateLimits?.primary)}>5h {formatRateLimitRemaining(activeCodexUsage?.rateLimits?.primary)}</span>
+            <span title={formatResetTitle(activeCodexUsage?.rateLimits?.secondary)}>weekly {formatRateLimitRemaining(activeCodexUsage?.rateLimits?.secondary)}</span>
             <label className="switchControl">
               <span>View</span>
               <button

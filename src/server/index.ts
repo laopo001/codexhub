@@ -159,6 +159,23 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     };
   });
 
+  app.get("/api/workers/events", async (request, reply) => {
+    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
+    threads.markStaleWorkersOffline(workerOfflineTimeoutMs());
+
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no"
+    });
+
+    const unsubscribe = threads.subscribeWorkers(query.after ?? 0, (event) => {
+      sendSse(reply.raw, event.kind, event);
+    });
+    reply.raw.on("close", unsubscribe);
+  });
+
   app.post("/api/workers/register", async (request) => {
     const payload = workerRegistrationSchema.parse(request.body);
     return threads.registerWorker(payload);

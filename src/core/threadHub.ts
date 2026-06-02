@@ -17,6 +17,7 @@ export type ThreadSummary = {
   updatedAt: string;
   messageCount: number;
   lastUsage?: Usage;
+  codexUsage?: CodexUsageSnapshot;
 };
 
 export type ThreadRuntimeSummary = {
@@ -70,6 +71,12 @@ export type WorkerSummary = {
   currentThread?: ThreadSummary;
   threads: ThreadSummary[];
   codexUsage?: CodexUsageSnapshot;
+};
+
+export type WorkerStreamEvent = {
+  seq: number;
+  kind: "workers";
+  workers: WorkerSummary[];
 };
 
 export type WorkerCommand = {
@@ -142,6 +149,9 @@ export class ThreadHub {
   private readonly pendingCommands = new Map<string, PendingCommand>();
   private readonly activeTurnCommands = new Map<string, string>();
   private readonly codexUsageByThread = new Map<string, CodexUsageSnapshot>();
+  private readonly workerEvents: WorkerStreamEvent[] = [];
+  private readonly workerSubscribers = new Set<(event: WorkerStreamEvent) => void>();
+  private workerSeq = 0;
 
   constructor(private readonly defaultThreadOptions: ThreadOptions = {}) {}
 
@@ -175,12 +185,14 @@ export class ThreadHub {
         this.publish(thread, "thread");
       }
     }
+    this.publishWorkers();
     return { workerId, worker: this.workerSummary(worker) };
   }
 
   heartbeatWorker(workerId: string, registration: Partial<WorkerRegistration> = {}) {
     const worker = this.workers.get(workerId);
     if (!worker) return { ok: false };
+    const previousState = this.workerVisibleState(worker);
     const now = new Date().toISOString();
     worker.name = registration.name ?? worker.name;
     worker.workingDirectory = registration.workingDirectory ?? worker.workingDirectory;
@@ -188,11 +200,14 @@ export class ThreadHub {
     worker.pid = registration.pid ?? worker.pid;
     worker.hostname = registration.hostname ?? worker.hostname;
     worker.codexUsage = registration.codexUsage ?? worker.codexUsage;
-    this.applyThreadCodexUsage(registration.threadCodexUsage);
+    const changedUsageThreadIds = this.applyThreadCodexUsage(registration.threadCodexUsage);
     worker.online = true;
     worker.lastSeenAt = now;
-    for (const thread of this.threads.values()) {
-      if (thread.workerId === workerId) this.publish(thread, "thread");
+    if (previousState !== this.workerVisibleState(worker) || changedUsageThreadIds.length) {
+      for (const thread of this.threads.values()) {
+        if (thread.workerId === workerId || changedUsageThreadIds.includes(thread.threadId)) this.publish(thread, "thread");
+      }
+      this.publishWorkers();
     }
     return { ok: true, workerId };
   }
@@ -220,6 +235,17 @@ export class ThreadHub {
     return [...this.workers.values()]
       .filter((worker) => options.includeOffline || worker.online)
       .map((worker) => this.workerSummary(worker));
+  }
+
+  subscribeWorkers(after: number, callback: (event: WorkerStreamEvent) => void) {
+    const events = after > 0 ? this.workerEvents.filter((item) => item.seq > after) : [];
+    if (events.length) {
+      for (const event of events) callback(event);
+    } else {
+      callback(this.workerSnapshotEvent());
+    }
+    this.workerSubscribers.add(callback);
+    return () => this.workerSubscribers.delete(callback);
   }
 
   async waitWorkerCommands(workerId: string, after: number, timeoutMs = 25000) {
@@ -540,6 +566,7 @@ export class ThreadHub {
         this.publish(thread, "thread");
       }
     }
+    if (wasOnline) this.publishWorkers();
   }
 
   private rejectPendingWorkerCommands(worker: RuntimeWorker, error: Error) {
@@ -821,11 +848,16 @@ export class ThreadHub {
   }
 
   private applyThreadCodexUsage(usages?: Record<string, CodexUsageSnapshot>) {
-    if (!usages) return;
+    const changedThreadIds: string[] = [];
+    if (!usages) return changedThreadIds;
     for (const [threadId, usage] of Object.entries(usages)) {
       if (!threadId || !usage) continue;
+      const previous = this.codexUsageByThread.get(threadId);
+      if (previous && JSON.stringify(previous) === JSON.stringify(usage)) continue;
       this.codexUsageByThread.set(threadId, usage);
+      changedThreadIds.push(threadId);
     }
+    return changedThreadIds;
   }
 
   private removeOptimisticUserRecord(thread: RuntimeThread, incoming: CodexRecord) {
@@ -891,6 +923,7 @@ export class ThreadHub {
     thread.events.push(streamEvent);
     if (thread.events.length > 1000) thread.events.splice(0, thread.events.length - 1000);
     for (const subscriber of thread.subscribers) subscriber(streamEvent);
+    this.publishWorkers();
   }
 
   private summary(thread: RuntimeThread): ThreadSummary {
@@ -905,7 +938,8 @@ export class ThreadHub {
       title: thread.title,
       updatedAt: thread.updatedAt,
       messageCount: recordsToViews(thread.records).length,
-      lastUsage: thread.lastUsage
+      lastUsage: thread.lastUsage,
+      codexUsage: this.threadCodexUsage(thread)
     };
   }
 
@@ -945,6 +979,44 @@ export class ThreadHub {
       if (right.threadId === worker.currentThreadId) return 1;
       return right.updatedAt.localeCompare(left.updatedAt);
     });
+  }
+
+  private threadCodexUsage(thread: RuntimeThread) {
+    return this.codexUsageByThread.get(thread.threadId)
+      ?? (thread.workerId ? this.workers.get(thread.workerId)?.codexUsage : undefined);
+  }
+
+  private workerVisibleState(worker: RuntimeWorker) {
+    return JSON.stringify({
+      workerId: worker.workerId,
+      name: worker.name,
+      workingDirectory: worker.workingDirectory,
+      appServerUrl: worker.appServerUrl,
+      online: worker.online,
+      pid: worker.pid,
+      hostname: worker.hostname,
+      currentThreadId: worker.currentThreadId,
+      codexUsage: worker.codexUsage
+    });
+  }
+
+  private workerSnapshotEvent(): WorkerStreamEvent {
+    return {
+      seq: this.workerSeq,
+      kind: "workers",
+      workers: this.listWorkers()
+    };
+  }
+
+  private publishWorkers() {
+    const event: WorkerStreamEvent = {
+      seq: ++this.workerSeq,
+      kind: "workers",
+      workers: this.listWorkers()
+    };
+    this.workerEvents.push(event);
+    if (this.workerEvents.length > 1000) this.workerEvents.splice(0, this.workerEvents.length - 1000);
+    for (const subscriber of this.workerSubscribers) subscriber(event);
   }
 
   private runtimeSummary(thread: RuntimeThread): ThreadRuntimeSummary {
