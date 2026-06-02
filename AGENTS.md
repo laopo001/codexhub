@@ -8,7 +8,7 @@
 4. 一次 `codexp` 或 `codexp resume` 等价于打开一个官方 Codex：一个 PTY TUI、一个 app-server、一个 worker。`workerId` 标识这次 `codexp` 进程，必须每次启动唯一；`workingDirectory` 只是 worker 属性，不是 worker 主键。
 5. `codexp` / `codexp resume` 必须 local-first：官方 `codex app-server` 和 TUI 不依赖 server 连接成功；server 离线时本地 TUI 继续可用，后台 bridge 持续重试，server 恢复后再 register worker 并同步事件。
 6. `threadId` 来自官方 app-server。新 thread 只能由本地 Codex CLI/TUI 或官方 session 恢复产生，server/Web/TG/task 不主动创建 thread。
-7. Web/TG/task 发送输入时，server 只把命令排到对应 worker，执行结果再按 `threadId` 镜像回 thread 记录。TG 输入使用 `/api/workers/:workerId/turn`，由 server 在提交时解析 worker 的 `currentThreadId`；Web 输入必须跟随选中 worker 的 `currentThreadId`，不能把历史 thread 当成在线入口。
+7. 输入语义按客户端形态分层：Telegram 是单聊天窗口模型，输入使用 `/api/workers/:workerId/turn`，由 server 在提交时解析 worker 的 `currentThreadId`；Web 是多窗口/多 thread UI，输入可以使用选中 thread 的 `/api/threads/:threadId/turn`，但 server 必须校验该 thread 能路由到绑定在线 worker 或同目录唯一在线 worker；官方 app-server bridge 最终始终调用 `turn/start { threadId }`。执行结果再按 `threadId` 镜像回 thread 记录。
 8. 同一个 `workingDirectory` 可以同时运行多个 `codexp` / `codexp resume`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
 9. 非 headless 的 `codexp` / `codexp resume` 必须用 PTY wrapper 启动官方 `codex --remote ...` 或 `codex resume --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
 10. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
@@ -17,12 +17,12 @@
 
 ## 选择和关闭语义
 
-1. Web 选择 worker 只是客户端本地选择；server 不维护客户端打开计数。Web 右侧显示该 worker 当前的 `currentThreadId`，TUI 里 `/resume` 切换 thread 后由 app-server event 同步到 Web。
+1. Web 选择 worker 只是客户端本地选择；server 不维护客户端打开计数。Web 右侧默认显示该 worker 当前的 `currentThreadId`，也允许在 worker 下切换查看/输入其他可路由 thread；TUI 里 `/resume` 切换 thread 后由 app-server event 同步到 Web。
 2. 客户端读取 thread 详情使用 `GET /api/threads/:threadId`，事件订阅使用 `GET /api/threads/:threadId/events?after=...`。
 3. Web 关闭 tab 或 Telegram 切换 thread 只关闭本地 UI/session，不向 server 发送关闭通知。
 4. `DELETE /api/threads/:threadId` 表示管理层面的删除 thread 记录；不要把客户端关闭动作映射成删除。
 5. Web 左侧只显示在线 worker；worker 正常 unregister 或 heartbeat timeout 后不再出现在主列表。离线 worker 只允许作为诊断数据查看。
-6. Telegram 只暴露 `/workers` 作为在线入口并只保存 `workerId`；attach worker 后通过 `/api/workers/events` 持续跟随该 worker 的 `currentThreadId`，并订阅对应 thread SSE 镜像消息。发送消息和状态查询前从 `/api/workers` 重新确认该 worker 仍在线，并使用 worker 的 `currentThreadId` 作为底层 thread。TG 不提供 `/threads` 选择或 `/stop` 控制入口。
+6. Telegram 只暴露 `/workers` 作为在线入口并只保存 `workerId`；attach worker 后通过 `/api/workers/events` 持续跟随该 worker 的 `currentThreadId`，并订阅对应 thread SSE 镜像消息。TG 发送消息和状态查询前从 `/api/workers` 重新确认该 worker 仍在线，并使用 worker 的 `currentThreadId` 作为底层 thread。TG 不提供 `/threads` 选择或 `/stop` 控制入口。
 7. thread 是否可运行由绑定 worker 或同目录唯一可用 worker 决定；多个同目录 worker 同时在线时，不要在未绑定 thread 上自动选择。
 
 ## 事件和消息流
@@ -43,9 +43,10 @@
 3. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events/unregister。worker 主动出站连接 server，不要求 server 反连 worker 机器。
 4. Web 初始化/重连可以读取 `GET /api/workers`，后续 worker 列表、current thread、thread summaries 的实时更新使用 `GET /api/workers/events?after=...` SSE，不做固定间隔轮询。
 5. Web 的 context/rate limit usage 使用 worker heartbeat 进入 worker/thread summaries 的 `codexUsage`，通过 `/api/workers/events` 或 thread SSE 更新；不使用 `GET /api/codex-usage?threadId=...` 固定轮询。
-6. `/api/threads/:threadId` 系列只用于 thread 详情、SSE 事件、turn/stop/fork/delete 等 thread 操作；`GET /api/threads` 只允许作为诊断/管理兼容列表，不用于 Web 高频轮询。
-7. 不提供 `POST /api/threads` 创建入口；server 只能 get/delete、turn、stop、fork，以及诊断性 list。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexp resume` 或 TUI 内 `/resume` 发现并镜像。
-8. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexp` worker/CLI 侧。
+6. `/api/workers/:workerId/turn` 是 worker-current-thread 输入入口，主要给 Telegram 这类单上下文客户端使用；它不创建 thread，只在提交时解析 worker 的 `currentThreadId` 并排入 worker 命令队列。
+7. `/api/threads/:threadId` 系列用于 thread 详情、SSE 事件、turn/stop/fork/delete 等 thread 操作；Web 可以用 `/api/threads/:threadId/turn` 对选中 thread 输入。`GET /api/threads` 只允许作为诊断/管理兼容列表，不用于 Web 高频轮询。
+8. 不提供 `POST /api/threads` 创建入口；server 只能 get/delete、turn、stop、fork，以及诊断性 list。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexp resume` 或 TUI 内 `/resume` 发现并镜像。
+9. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexp` worker/CLI 侧。
 
 ## `.codexp` 工作区文件约定
 
