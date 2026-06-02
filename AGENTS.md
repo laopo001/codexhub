@@ -94,6 +94,6 @@ input: |
 4. `CODEX_HUB_HOST` / `CODEX_HUB_PORT` 可以写入 `.env`；CLI `--host` / `--port` 优先级最高，其次是当前 shell 环境变量，然后是 `.env`。
 5. Telegram bot 默认随 server 启动；没有 `TELEGRAM_BOT_TOKEN` 时跳过 Telegram bot，但 server 仍正常启动。
 6. Prod 由 PM2 管理长期进程：`codexhub-prod`。Telegram bot 内置在该 server 进程中。
-7. API server 默认直接服务 `dist`；`--serve-static <dir>` 只作为显式目录覆盖，不再用 `CODEX_HUB_SERVE_STATIC` 区分 dev/prod。
+7. API server 默认直接服务安装包根目录下的 `dist`；`--serve-static <dir>` 只作为显式目录覆盖，不再用 `CODEX_HUB_SERVE_STATIC` 区分 dev/prod。
 8. 发布使用 `pnpm run publish:prod`，脚本必须先 `pnpm check`、`pnpm build`，再启动或重启 `codexhub-prod` 并验证 `/api/health` 和 `/`。
 9. 不要让本地 Dev 进程替换 PM2 Prod；开发验证和生产发布必须分开。

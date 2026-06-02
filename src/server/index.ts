@@ -117,9 +117,10 @@ const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`data: ${JSON.stringify(data)}\n\n`);
 };
 
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
-  : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? "dist");
+  : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? path.join(packageRoot, "dist"));
 const workerOfflineTimeoutMs = () => Number(process.env.CODEX_HUB_WORKER_OFFLINE_TIMEOUT_MS || 0) || 45_000;
 const workerSweepIntervalMs = () => Number(process.env.CODEX_HUB_WORKER_SWEEP_INTERVAL_MS || 0) || 5_000;
 const localApiBaseUrl = (host: string, port: number) => {
