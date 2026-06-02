@@ -153,6 +153,7 @@ export class ThreadHub {
   private readonly codexUsageByThread = new Map<string, CodexUsageSnapshot>();
   private readonly workerEvents: WorkerStreamEvent[] = [];
   private readonly workerSubscribers = new Set<(event: WorkerStreamEvent) => void>();
+  private lastWorkerSnapshotKey = "";
   private workerSeq = 0;
 
   constructor(private readonly defaultThreadOptions: ThreadOptions = {}) {}
@@ -299,7 +300,9 @@ export class ThreadHub {
       return { ok: true };
     }
 
-    const thread = threadId ? this.ensureThread(threadId, worker, message, input.current !== false) : null;
+    const previousCurrentThreadId = worker.currentThreadId;
+    const markCurrent = input.current !== false && !isPassiveThreadSnapshot(input, message);
+    const thread = threadId ? this.ensureThread(threadId, worker, message, markCurrent) : null;
     const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
     if (thread && pending?.type === "rollback_thread" && asRecord(asRecord(message.result)?.thread)) {
       this.resetThreadRecords(thread);
@@ -307,6 +310,7 @@ export class ThreadHub {
     if (thread) this.applyAppServerMessage(thread, message);
 
     if (input.commandId) this.resolveCommandFromMessage(input.commandId, thread);
+    if (worker.currentThreadId !== previousCurrentThreadId) this.publishWorkers();
     return { ok: true, thread: thread ? this.summary(thread) : undefined };
   }
 
@@ -499,7 +503,9 @@ export class ThreadHub {
   }
 
   private markWorkerCurrentThread(worker: RuntimeWorker, thread: RuntimeThread) {
+    const changed = worker.currentThreadId !== thread.threadId;
     worker.currentThreadId = thread.threadId;
+    return changed;
   }
 
   private requireThread(threadId: string) {
@@ -1064,10 +1070,14 @@ export class ThreadHub {
   }
 
   private publishWorkers() {
+    const workers = this.listWorkers();
+    const snapshotKey = workerSnapshotKey(workers);
+    if (snapshotKey === this.lastWorkerSnapshotKey) return;
+    this.lastWorkerSnapshotKey = snapshotKey;
     const event: WorkerStreamEvent = {
       seq: ++this.workerSeq,
       kind: "workers",
-      workers: this.listWorkers()
+      workers
     };
     this.workerEvents.push(event);
     if (this.workerEvents.length > 1000) this.workerEvents.splice(0, this.workerEvents.length - 1000);
@@ -1104,6 +1114,26 @@ const workerRuntimeSummary = (worker: RuntimeWorker): ThreadRuntimeSummary => ({
   runnable: worker.online,
   lastSeenAt: worker.lastSeenAt
 });
+
+const workerSnapshotKey = (workers: WorkerSummary[]) => JSON.stringify(workers.map((worker) => ({
+  ...worker,
+  lastSeenAt: undefined,
+  currentThread: worker.currentThread ? threadSummarySnapshotKey(worker.currentThread) : undefined,
+  threads: worker.threads.map(threadSummarySnapshotKey)
+})));
+
+const threadSummarySnapshotKey = (thread: ThreadSummary) => ({
+  ...thread,
+  runtime: {
+    ...thread.runtime,
+    lastSeenAt: undefined
+  }
+});
+
+const isPassiveThreadSnapshot = (input: WorkerEventInput, message: Record<string, unknown>) =>
+  !input.commandId
+  && typeof message.method !== "string"
+  && Boolean(asRecord(asRecord(message.result)?.thread));
 
 const workerCommandsAfter = (worker: RuntimeWorker, after: number) =>
   worker.commands.filter((command) => command.seq > after);

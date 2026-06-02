@@ -478,7 +478,10 @@ class CodexAppServerBridge {
       const error = asRecord(message.error);
       const threadId = threadIdForPendingMessage(pending, message);
       if (threadId && (!error || pending.method !== "thread/read")) {
-        await this.forward(threadId, pending.commandId, message, { heartbeat: pending.method !== "thread/read" });
+        await this.forward(threadId, pending.commandId, message, {
+          heartbeat: pending.method !== "thread/read",
+          current: pending.method === "thread/read" ? false : undefined
+        });
       }
       if (error) pending.reject(new Error(JSON.stringify(error)));
       else pending.resolve(message.result);
