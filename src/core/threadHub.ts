@@ -396,7 +396,6 @@ export class ThreadHub {
     const source = this.requireThread(threadId);
     const worker = this.requireThreadWorker(source);
     const rollbackTurns = recordId ? turnsAfterRecord(source, recordId) : 0;
-    this.markWorkerCurrentThread(worker, source);
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId);
     this.enqueueWorkerCommand(worker.workerId, {
@@ -415,7 +414,6 @@ export class ThreadHub {
   private async rollbackThread(threadId: string, numTurns: number): Promise<ThreadDetail> {
     const thread = this.requireThread(threadId);
     const worker = this.requireThreadWorker(thread);
-    this.markWorkerCurrentThread(worker, thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "rollback_thread", thread.threadId);
     this.enqueueWorkerCommand(worker.workerId, {
@@ -444,7 +442,6 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     if (!thread.running) return { stopped: false };
     const worker = this.requireThreadWorker(thread);
-    this.markWorkerCurrentThread(worker, thread);
     this.enqueueWorkerCommand(worker.workerId, {
       commandId: randomUUID(),
       type: "stop",
@@ -462,7 +459,6 @@ export class ThreadHub {
 
     const thread = this.requireThread(threadId);
     const worker = thread.workerId ? this.workers.get(thread.workerId) : null;
-    if (worker?.online) this.markWorkerCurrentThread(worker, thread);
     this.appendUserInputRecord(thread, input);
     this.appendRuntimeRecord(thread, "event_msg", {
       type: "agent_message",
@@ -476,7 +472,6 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     if (thread.running) throw new Error(`Thread is already running: ${threadId}`);
     const worker = this.requireThreadWorker(thread);
-    this.markWorkerCurrentThread(worker, thread);
     const commandOptions = options ? { ...options } : { ...thread.threadOptions };
     if (options) thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
     const commandId = randomUUID();
@@ -1349,7 +1344,7 @@ const appServerAgentRecordId = (itemId: string, params: Record<string, unknown>)
   const threadId = threadIdFromParams(params);
   const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
   return turnId
-    ? `app:${threadId}:${turnId}:agent:${itemId}`
+    ? `app:${threadId}:${turnId}:agent`
     : `app:${threadId}:${itemId}:agent`;
 };
 

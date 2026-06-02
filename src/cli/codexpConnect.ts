@@ -291,6 +291,8 @@ class CodexAppServerBridge {
   private closed = false;
   private currentThreadId: string | undefined;
   private readonly forwardedRuntimeSettings = new Map<string, string>();
+  private readonly bridgeStartedThreads = new Set<string>();
+  private bridgeStartedUnknownCount = 0;
   private readonly closeSignal = new Deferred<void>();
 
   private constructor(
@@ -402,6 +404,7 @@ class CodexAppServerBridge {
     if (command.type === "fork_thread") {
       if (!command.threadId) throw new Error("fork_thread command requires threadId");
       const model = commandModel(command.options, this.options.model);
+      this.markBridgeStartedUnknownThread();
       const result = asRecord(await this.request("thread/fork", {
         threadId: command.threadId,
         cwd: command.workingDirectory,
@@ -432,6 +435,7 @@ class CodexAppServerBridge {
     const threadId = command.threadId;
     if (!this.syncedThreads.has(threadId)) {
       const model = commandModel(command.options, this.options.model);
+      this.markBridgeStartedThread(threadId);
       await this.request("thread/resume", {
         threadId,
         cwd: command.workingDirectory,
@@ -441,6 +445,7 @@ class CodexAppServerBridge {
       }, command);
       this.bindThread(threadId);
     }
+    this.markBridgeStartedThread(threadId);
     await this.request("turn/start", {
       threadId,
       input: toAppServerInput(command.input),
@@ -479,7 +484,6 @@ class CodexAppServerBridge {
       const threadId = threadIdForPendingMessage(pending, message);
       if (threadId && (!error || pending.method !== "thread/read")) {
         await this.forwardThreadEvent(threadId, pending.commandId, message, { heartbeat: pending.method !== "thread/read" });
-        if (!error) await this.forwardCurrentForRequest(pending.method, threadId);
         if (!error) await this.forwardExecutionStateFromMessage(threadId, message);
       }
       if (error) pending.reject(new Error(JSON.stringify(error)));
@@ -625,20 +629,17 @@ class CodexAppServerBridge {
     });
   }
 
-  private async forwardCurrentForRequest(method: string, threadId: string) {
-    if (
-      method === "thread/fork"
-      || method === "thread/resume"
-      || method === "thread/start"
-      || method === "turn/start"
-    ) {
-      await this.forwardCurrentThreadChanged(threadId);
-    }
-  }
-
   private async forwardStateEventsFromMessage(threadId: string, message: JsonRecord) {
     const method = typeof message.method === "string" ? message.method : "";
-    if (method === "thread/started") await this.forwardCurrentThreadChanged(threadId);
+    if (method === "thread/started") {
+      if (this.bridgeStartedThreads.has(threadId)) {
+        this.bridgeStartedThreads.delete(threadId);
+      } else if (this.bridgeStartedUnknownCount > 0) {
+        this.bridgeStartedUnknownCount -= 1;
+      } else {
+        await this.forwardCurrentThreadChanged(threadId);
+      }
+    }
     await this.forwardExecutionStateFromMessage(threadId, message);
 
     if (method !== "thread/settings/updated") return;
@@ -691,6 +692,20 @@ class CodexAppServerBridge {
     }).catch((error) => {
       console.error(`codexp bridge failed to forward current thread change: ${errorText(error)}`);
     });
+  }
+
+  private markBridgeStartedThread(threadId: string) {
+    this.bridgeStartedThreads.add(threadId);
+    const timer = setTimeout(() => this.bridgeStartedThreads.delete(threadId), 30_000);
+    timer.unref?.();
+  }
+
+  private markBridgeStartedUnknownThread() {
+    this.bridgeStartedUnknownCount += 1;
+    const timer = setTimeout(() => {
+      this.bridgeStartedUnknownCount = Math.max(0, this.bridgeStartedUnknownCount - 1);
+    }, 30_000);
+    timer.unref?.();
   }
 
   private async forwardThreadExecutionChanged(threadId: string, running: boolean, turnId?: string) {
