@@ -9,6 +9,7 @@ export type CodexSessionRecord = {
   timestamp?: string;
   type: string;
   payload: unknown;
+  turnId?: string;
 };
 
 export type CodexSessionSnapshot = {
@@ -44,13 +45,18 @@ export type CodexSessionRecordBatch = {
 
 export const readCodexSessionSnapshotFromFile = async (filePath: string): Promise<CodexSessionSnapshot> => {
   const lines = (await readFile(filePath, "utf8")).trim().split("\n").filter(Boolean);
+  let currentTurnId: string | undefined;
   const records = lines.map((line, index) => {
     const parsed = JSON.parse(line) as { timestamp?: string; type: string; payload: unknown };
+    const payload = sanitizePayload(parsed.payload);
+    const turnId = parsed.type === "turn_context" ? turnIdFromPayload(payload) : currentTurnId;
+    if (parsed.type === "turn_context") currentTurnId = turnId;
     return {
       line: index + 1,
       timestamp: parsed.timestamp,
       type: parsed.type,
-      payload: sanitizePayload(parsed.payload)
+      payload,
+      turnId
     };
   });
 
@@ -77,17 +83,23 @@ export const readCodexSessionRecordsAfter = async (
     crlfDelay: Infinity
   });
 
+  let currentTurnId: string | undefined;
   try {
     for await (const line of reader) {
       lineNumber += 1;
-      if (lineNumber <= afterLine || !line.trim()) continue;
+      if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line) as { timestamp?: string; type: string; payload: unknown };
+        const payload = sanitizePayload(parsed.payload);
+        const turnId = parsed.type === "turn_context" ? turnIdFromPayload(payload) : currentTurnId;
+        if (parsed.type === "turn_context") currentTurnId = turnId;
+        if (lineNumber <= afterLine) continue;
         records.push({
           line: lineNumber,
           timestamp: parsed.timestamp,
           type: parsed.type,
-          payload: sanitizePayload(parsed.payload)
+          payload,
+          turnId
         });
       } catch {
         // A partially written JSONL line will be retried on the next poll.
@@ -100,6 +112,11 @@ export const readCodexSessionRecordsAfter = async (
   }
 
   return { path: filePath, records, lastLine: lineNumber };
+};
+
+const turnIdFromPayload = (payload: unknown) => {
+  const record = asRecord(payload);
+  return typeof record?.turn_id === "string" ? record.turn_id : undefined;
 };
 
 type CodexSessionListOptions = {

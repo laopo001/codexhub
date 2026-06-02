@@ -1045,10 +1045,11 @@ const formatResetTitle = (window: RateLimitWindow | null | undefined) => {
 };
 
 const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
+  if (hasMatchingJsonlTranscriptRecord(records, incoming)) return records;
   const existingIndex = records.findIndex((record) => record.id === incoming.id);
   if (existingIndex === -1) {
     return [
-      ...records.filter((record) => !isMatchingOptimisticUserRecord(record, incoming)),
+      ...records.filter((record) => !isMatchingOptimisticUserRecord(record, incoming) && !isMatchingAppServerTranscriptRecord(record, incoming)),
       incoming
     ];
   }
@@ -1064,6 +1065,42 @@ const isMatchingOptimisticUserRecord = (record: CodexRecord, incoming: CodexReco
     && recordPayload?.type === "user_message"
     && incomingPayload?.type === "user_message"
     && recordPayload.message === incomingPayload.message;
+};
+
+const hasMatchingJsonlTranscriptRecord = (records: CodexRecord[], incoming: CodexRecord) => {
+  if (incoming.line) return false;
+  if (!incoming.id.startsWith("app:") || incoming.type !== "event_msg") return false;
+  const incomingPayload = asRecord(incoming.payload);
+  if (!incomingPayload) return false;
+  const incomingType = incomingPayload?.type;
+  if (incomingType !== "user_message" && incomingType !== "agent_message") return false;
+  const incomingTurnId = turnIdFromAppRecordId(String(incoming.sourceThreadId ?? ""), incoming.id);
+  return records.some((record) => {
+    if (!record.line || record.type !== "event_msg") return false;
+    const threadId = String(record.sourceThreadId ?? incoming.sourceThreadId ?? "");
+    const recordTurnId = turnIdFromAppRecordId(threadId, record.id);
+    if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
+    const payload = asRecord(record.payload);
+    if (payload?.type !== incomingType || payload.message !== incomingPayload.message) return false;
+    if (incomingType === "agent_message") return payload.phase === incomingPayload.phase;
+    return JSON.stringify(payload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
+  });
+};
+
+const isMatchingAppServerTranscriptRecord = (record: CodexRecord, incoming: CodexRecord) => {
+  if (!incoming.line || incoming.type !== "event_msg" || !record.id.startsWith("app:") || record.line) return false;
+  const recordPayload = asRecord(record.payload);
+  const incomingPayload = asRecord(incoming.payload);
+  if (!incomingPayload) return false;
+  const incomingType = incomingPayload?.type;
+  if (incomingType !== "user_message" && incomingType !== "agent_message") return false;
+  const threadId = String(incoming.sourceThreadId ?? record.sourceThreadId ?? "");
+  const incomingTurnId = turnIdFromAppRecordId(threadId, incoming.id);
+  const recordTurnId = turnIdFromAppRecordId(threadId, record.id);
+  if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
+  if (recordPayload?.type !== incomingType || recordPayload.message !== incomingPayload.message) return false;
+  if (incomingType === "agent_message") return recordPayload.phase === incomingPayload.phase;
+  return JSON.stringify(recordPayload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
 };
 
 const formatInspectDetail = (message: WebRecordView): InspectDetail => {

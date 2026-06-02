@@ -48,6 +48,7 @@ type SyncedThread = {
   jsonlPath?: string;
   jsonlLine?: number;
   jsonlSyncing?: boolean;
+  jsonlReplayKeepTurns?: number;
 };
 
 type BridgeState = {
@@ -428,6 +429,7 @@ class CodexAppServerBridge {
         numTurns: command.numTurns
       }, command);
       this.bindThread(command.threadId);
+      this.resetJsonlCursor(command.threadId, command.keepTurns);
       return;
     }
 
@@ -522,6 +524,14 @@ class CodexAppServerBridge {
     }
   }
 
+  private resetJsonlCursor(threadId: string, keepTurns?: number) {
+    const state = this.syncedThreads.get(threadId) ?? { failures: 0, syncing: false };
+    state.jsonlPath = undefined;
+    state.jsonlLine = 0;
+    state.jsonlReplayKeepTurns = keepTurns;
+    this.syncedThreads.set(threadId, state);
+  }
+
   private async syncThread(threadId: string, state: SyncedThread) {
     if (state.syncing) return;
     state.syncing = true;
@@ -565,7 +575,7 @@ class CodexAppServerBridge {
         if (!resetBatch) return;
         state.jsonlPath = resetBatch.path;
         state.jsonlLine = resetBatch.lastLine;
-        const records = resetBatch.records
+        const records = this.recordsForJsonlSync(resetBatch.records, state)
           .filter(shouldMirrorJsonlRecord)
           .map((record) => codexRecordFromSession(record, threadId));
         if (records.length) await this.forwardRecords(threadId, records);
@@ -574,7 +584,7 @@ class CodexAppServerBridge {
       state.jsonlPath = batch.path;
       state.jsonlLine = batch.lastLine;
 
-      const records = batch.records
+      const records = this.recordsForJsonlSync(batch.records, state)
         .filter(shouldMirrorJsonlRecord)
         .map((record) => codexRecordFromSession(record, threadId));
       if (records.length) await this.forwardRecords(threadId, records);
@@ -583,6 +593,22 @@ class CodexAppServerBridge {
     } finally {
       state.jsonlSyncing = false;
     }
+  }
+
+  private recordsForJsonlSync<T extends { turnId?: string }>(
+    records: T[],
+    state: SyncedThread
+  ): T[] {
+    if (!state.jsonlReplayKeepTurns) return records;
+    const keepTurnIds: string[] = [];
+    for (const record of records) {
+      if (!record.turnId || keepTurnIds.includes(record.turnId)) continue;
+      if (keepTurnIds.length >= state.jsonlReplayKeepTurns) continue;
+      keepTurnIds.push(record.turnId);
+    }
+    const allowed = new Set(keepTurnIds);
+    state.jsonlReplayKeepTurns = undefined;
+    return records.filter((record) => !record.turnId || allowed.has(record.turnId));
   }
 
   private async syncRuntimeSettings(threadIds: string[]) {
@@ -1122,7 +1148,10 @@ const shouldMirrorJsonlRecord = (record: { type: string; payload: unknown }) => 
   if (!payload) return false;
   if (record.type === "response_item") return payload.type !== "message";
   if (record.type !== "event_msg") return false;
-  return payload.type === "image_generation_end" || payload.type === "token_count";
+  return payload.type === "user_message"
+    || payload.type === "agent_message"
+    || payload.type === "image_generation_end"
+    || payload.type === "token_count";
 };
 
 const transcriptDetailSource = (): TranscriptDetailSource => {

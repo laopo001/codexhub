@@ -90,6 +90,7 @@ export type WorkerCommand = {
   input?: ProxyInput;
   turnId?: string;
   numTurns?: number;
+  keepTurns?: number;
   options?: ThreadRunOptions;
 };
 
@@ -395,7 +396,7 @@ export class ThreadHub {
   async forkThread(threadId: string, recordId?: string): Promise<ThreadDetail> {
     const source = this.requireThread(threadId);
     const worker = this.requireThreadWorker(source);
-    const rollbackTurns = recordId ? turnsAfterRecord(source, recordId) : 0;
+    const rollbackPlan = recordId ? rollbackPlanAfterRecord(source, recordId) : { rollbackTurns: 0, keepTurns: 0 };
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId);
     this.enqueueWorkerCommand(worker.workerId, {
@@ -407,11 +408,11 @@ export class ThreadHub {
       options: { ...source.threadOptions }
     });
     const forkedThread = await promise;
-    if (rollbackTurns <= 0) return forkedThread;
-    return await this.rollbackThread(forkedThread.threadId, rollbackTurns);
+    if (rollbackPlan.rollbackTurns <= 0) return forkedThread;
+    return await this.rollbackThread(forkedThread.threadId, rollbackPlan.rollbackTurns, rollbackPlan.keepTurns);
   }
 
-  private async rollbackThread(threadId: string, numTurns: number): Promise<ThreadDetail> {
+  private async rollbackThread(threadId: string, numTurns: number, keepTurns?: number): Promise<ThreadDetail> {
     const thread = this.requireThread(threadId);
     const worker = this.requireThreadWorker(thread);
     const commandId = randomUUID();
@@ -422,7 +423,8 @@ export class ThreadHub {
       workingDirectory: thread.workingDirectory,
       createdAt: new Date().toISOString(),
       threadId: thread.threadId,
-      numTurns
+      numTurns,
+      keepTurns
     });
     return promise;
   }
@@ -946,10 +948,54 @@ export class ThreadHub {
     if (index !== -1) thread.records.splice(index, 1);
   }
 
+  private removeMatchingAppServerTranscriptRecord(thread: RuntimeThread, incoming: CodexRecord) {
+    if (!incoming.line || incoming.type !== "event_msg") return;
+    const incomingPayload = asRecord(incoming.payload);
+    if (!incomingPayload) return;
+    const incomingType = incomingPayload?.type;
+    if (incomingType !== "user_message" && incomingType !== "agent_message") return;
+    const incomingTurnId = turnIdFromAppRecordId(thread.threadId, incoming.id);
+    const index = thread.records.findIndex((record) => {
+      if (!record.id.startsWith("app:") || record.line) return false;
+      const recordTurnId = turnIdFromAppRecordId(thread.threadId, record.id);
+      if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
+      const payload = asRecord(record.payload);
+      if (payload?.type !== incomingType) return false;
+      if (payload.message !== incomingPayload.message) return false;
+      if (incomingType === "agent_message" && payload.phase !== incomingPayload.phase) return false;
+      if (incomingType === "user_message") {
+        return JSON.stringify(payload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
+      }
+      return true;
+    });
+    if (index !== -1) thread.records.splice(index, 1);
+  }
+
+  private hasMatchingJsonlTranscriptRecord(thread: RuntimeThread, incoming: CodexRecord) {
+    if (incoming.line) return false;
+    if (!incoming.id.startsWith("app:") || incoming.type !== "event_msg") return false;
+    const incomingPayload = asRecord(incoming.payload);
+    if (!incomingPayload) return false;
+    const incomingType = incomingPayload?.type;
+    if (incomingType !== "user_message" && incomingType !== "agent_message") return false;
+    const incomingTurnId = turnIdFromAppRecordId(thread.threadId, incoming.id);
+    return thread.records.some((record) => {
+      if (!record.line || record.type !== "event_msg") return false;
+      const recordTurnId = turnIdFromAppRecordId(thread.threadId, record.id);
+      if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
+      const payload = asRecord(record.payload);
+      if (payload?.type !== incomingType || payload.message !== incomingPayload.message) return false;
+      if (incomingType === "agent_message") return payload.phase === incomingPayload.phase;
+      return JSON.stringify(payload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
+    });
+  }
+
   private upsertRecord(thread: RuntimeThread, record: CodexRecord) {
+    if (this.hasMatchingJsonlTranscriptRecord(thread, record)) return;
     const existingIndex = thread.records.findIndex((item) => item.id === record.id);
     if (existingIndex === -1) {
       this.removeOptimisticUserRecord(thread, record);
+      this.removeMatchingAppServerTranscriptRecord(thread, record);
       thread.records.push(record);
     } else {
       if (recordsEqual(thread.records[existingIndex], record)) return;
@@ -1355,13 +1401,16 @@ const appServerTurnParams = (threadId: string | undefined, turn: Record<string, 
   completedAtMs: typeof turn.completedAt === "number" ? turn.completedAt * 1000 : undefined
 });
 
-const turnsAfterRecord = (thread: RuntimeThread, recordId: string) => {
+const rollbackPlanAfterRecord = (thread: RuntimeThread, recordId: string) => {
   const targetTurnId = turnIdFromAppRecordId(thread.threadId, recordId);
   if (!targetTurnId) throw new Error(`Cannot fork from record without app-server turn id: ${recordId}`);
   const turnIds = appServerTurnIds(thread);
   const targetIndex = turnIds.indexOf(targetTurnId);
   if (targetIndex === -1) throw new Error(`Cannot find fork target turn for record: ${recordId}`);
-  return turnIds.length - targetIndex - 1;
+  return {
+    rollbackTurns: turnIds.length - targetIndex - 1,
+    keepTurns: targetIndex + 1
+  };
 };
 
 const appServerTurnIds = (thread: RuntimeThread) => {

@@ -22,7 +22,22 @@ export const codexRecordFromSession = (
 });
 
 const codexRecordId = (record: CodexSessionRecord, sourceThreadId?: string) =>
-  `${sourceThreadId ?? "codex"}:${record.line}:${record.type}`;
+  codexAppRecordId(record, sourceThreadId) ?? `${sourceThreadId ?? "codex"}:${record.line}:${record.type}`;
+
+const codexAppRecordId = (record: CodexSessionRecord, sourceThreadId?: string) => {
+  if (!sourceThreadId || !record.turnId || record.type !== "event_msg") return null;
+  const payload = asRecord(record.payload);
+  switch (payload?.type) {
+    case "user_message":
+      return `app:${sourceThreadId}:${record.turnId}:user:jsonl:${record.line}`;
+    case "agent_message":
+      return `app:${sourceThreadId}:${record.turnId}:agent:jsonl:${record.line}`;
+    case "token_count":
+      return `app:${sourceThreadId}:${record.turnId}:usage:jsonl:${record.line}`;
+    default:
+      return null;
+  }
+};
 
 export const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
