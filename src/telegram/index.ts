@@ -30,6 +30,11 @@ type ThreadDetail = ThreadSummary & {
   lastSeq: number;
 };
 
+type WorkerTurnResponse = {
+  ok: boolean;
+  thread?: ThreadSummary;
+};
+
 type WorkerSummary = {
   workerId: string;
   name?: string;
@@ -136,7 +141,7 @@ const registerHandlers = () => {
       const workers = await listRunnableWorkers();
 
       if (!workers.length) {
-        await ctx.reply("当前没有可运行的 Codex worker。请先在本地 codexp 里打开或 resume 一个 thread。");
+        await ctx.reply("当前没有带 current thread 的 Codex worker。请先在本地 codexp 里打开或 resume 一个 thread。");
         return;
       }
 
@@ -169,7 +174,7 @@ const registerHandlers = () => {
         "",
         workers.length
           ? workers.map((worker) => `${displayWorkerId(worker)} ${worker.currentThread ? displayThreadId(worker.currentThread) : "no-thread"} ${worker.currentThread?.status ?? "idle"}`).join("\n")
-          : "当前没有可运行的 Codex worker。"
+          : "当前没有带 current thread 的 Codex worker。"
       ].filter(Boolean).join("\n"));
     } catch (error) {
       await ctx.reply(errorText(error));
@@ -244,17 +249,12 @@ const runPrompt = async (
     return;
   }
   const mirror = startChatMirror(ctx.chat.id, worker.workerId);
-  const thread = await getThread(worker.currentThreadId);
   const statusMessage = await ctx.reply([
-    "Codex running...",
-    `folder: ${thread.workingDirectory}`,
-    `thread: ${displayThreadId(thread)}`,
+    "Codex queued...",
+    `folder: ${worker.workingDirectory}`,
+    `thread: ${shortId(worker.currentThreadId)}`,
     images.length ? `images: ${images.length}` : null
   ].filter(Boolean).join("\n"));
-  let sentItemCount = 0;
-  const forwardRecord = async (record: CodexRecord) => {
-    if (await forwardRecordToChat(ctx.chat.id, mirror, record)) sentItemCount += 1;
-  };
 
   try {
     let input: TurnInput = prompt;
@@ -265,28 +265,18 @@ const runPrompt = async (
         ...imageUrls.map((url) => ({ type: "image" as const, url }))
       ];
     }
-    const stream = await openThreadEventStream(thread.threadId, thread.lastSeq);
-    await postTurn(thread.threadId, input);
-
-    for await (const event of stream) {
-      if (event.kind === "record" && event.record) {
-        await forwardRecord(event.record);
-      }
-      if (event.kind === "done") break;
-    }
-
-    const latest = await getThread(thread.threadId).catch(() => null);
-    for (const record of latest?.records ?? []) {
-      await forwardRecord(record);
+    const result = await postWorkerTurn(worker.workerId, input);
+    if (result.thread?.threadId && result.thread.threadId !== mirror.threadId) {
+      await switchMirrorThread(ctx.chat.id, mirror, result.thread.threadId);
     }
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       statusMessage.message_id,
       undefined,
       [
-        "Codex completed.",
-        `thread: ${latest ? displayThreadId(latest) : shortId(thread.threadId)}`,
-        `messages: ${sentItemCount}`
+        "Codex queued.",
+        `thread: ${result.thread ? displayThreadId(result.thread) : shortId(worker.currentThreadId)}`,
+        "output: mirrored below"
       ].join("\n")
     );
   } catch (error) {
@@ -307,7 +297,7 @@ const listWorkers = async (): Promise<WorkerSummary[]> => {
 };
 
 const listRunnableWorkers = async (): Promise<WorkerSummary[]> =>
-  (await listWorkers()).filter((worker) => worker.online);
+  (await listWorkers()).filter((worker) => worker.online && Boolean(worker.currentThreadId));
 
 const resolveWorker = async (workerId: string) => {
   const worker = (await listWorkers()).find((item) => item.workerId === workerId);
@@ -322,13 +312,14 @@ const resolveSelectedWorker = async (state: ChatState) => {
 
 const getThread = (threadId: string) => apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
 
-const postTurn = async (threadId: string, input: TurnInput) => {
-  const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/turn`), {
+const postWorkerTurn = async (workerId: string, input: TurnInput) => {
+  const response = await fetch(apiUrl(`/api/workers/${encodeURIComponent(workerId)}/turn`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ input, source: "telegram" })
   });
   if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
+  return await response.json() as WorkerTurnResponse;
 };
 
 const telegramImageUrl = async (fileId: string) => {

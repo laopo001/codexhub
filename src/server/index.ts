@@ -206,6 +206,25 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return threads.waitWorkerCommands(params.workerId, query.after ?? 0, query.timeoutMs ?? 25000);
   });
 
+  app.post("/api/workers/:workerId/turn", async (request, reply) => {
+    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({
+      input: inputSchema,
+      source: z.enum(["web", "telegram", "task"]).optional(),
+      options: threadRunOptionsSchema.optional()
+    }).parse(request.body);
+
+    try {
+      const result = threads.runWorkerTurn(params.workerId, payload.input, payload.source ?? "web", payload.options);
+      result.promise.catch(() => undefined);
+      return { ok: true, thread: result.thread };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Worker has no current thread:") ? 409 : 404);
+      return { error: message };
+    }
+  });
+
   app.post("/api/workers/:workerId/events", async (request, reply) => {
     const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
     const payload = z.object({

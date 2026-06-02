@@ -439,6 +439,17 @@ export class ThreadHub {
     return promise;
   }
 
+  runWorkerTurn(workerId: string, input: ProxyInput, source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
+    const worker = this.requireWorker(workerId);
+    if (!worker.online) throw new Error(`Worker is offline: ${workerId}`);
+    if (!worker.currentThreadId) throw new Error(`Worker has no current thread: ${workerId}`);
+    const thread = this.ensureThread(worker.currentThreadId, worker, {
+      params: { threadId: worker.currentThreadId, cwd: worker.workingDirectory }
+    });
+    const promise = this.runTurn(thread.threadId, input, source, options);
+    return { thread: this.summary(thread), promise };
+  }
+
   subscribe(threadId: string, after: number, callback: (event: ThreadStreamEvent) => void) {
     const thread = this.requireThread(threadId);
     for (const event of thread.events.filter((item) => item.seq > after)) callback(event);
