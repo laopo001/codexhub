@@ -52,6 +52,8 @@ pnpm codexp --server http://127.0.0.1:18788 -C /path/to/project --headless
 
 `--headless` 会在 app-server/bridge 就绪后主动调用一次 app-server `thread/start`，创建该 worker 的初始 `currentThreadId`，因此可以直接接收 Web、Telegram、task 或 API 的 `/api/workers/:workerId/turn` 输入。启动成功后终端会输出 `workerId` 和 `threadId`。
 
+`codexp` 默认不替官方 Codex 设置 `sandbox` 或 `approvalPolicy`；未显式传参时，权限由 Codex 按当前 workspace 的真实配置解析。只有显式传 `--sandbox` 或 `--approval-policy` 时，codexp 才把这些值作为 app-server override 转发。
+
 Telegram bot 随 API server 启动；`.env` 里配置 token 后直接运行 `pnpm run dev:api` 即可：
 
 ```bash

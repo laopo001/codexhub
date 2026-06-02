@@ -8,13 +8,14 @@
 4. 一次 `codexp` 或 `codexp resume` 等价于打开一个官方 Codex：一个 PTY TUI、一个 app-server、一个 worker。`workerId` 标识这次 `codexp` 进程，必须每次启动唯一；`workingDirectory` 只是 worker 属性，不是 worker 主键。
 5. `codexp` / `codexp resume` 必须 local-first：官方 `codex app-server` 和 TUI 不依赖 server 连接成功；server 离线时本地 TUI 继续可用，后台 bridge 持续重试，server 恢复后再 register worker 并同步事件。
 6. `threadId` 来自官方 app-server。新 thread 只能由本地 Codex CLI/TUI 或官方 session 恢复产生，server/Web/TG/task 不主动创建 thread。
-7. 输入语义按客户端形态分层：Telegram 是单聊天窗口模型，输入使用 `/api/workers/:workerId/turn`，由 server 在提交时解析 worker 的 `currentThreadId`；Web 是多窗口/多 thread UI，输入可以使用选中 thread 的 `/api/threads/:threadId/turn`，但 server 必须校验该 thread 能路由到绑定在线 worker 或同目录唯一在线 worker；官方 app-server bridge 最终始终调用 `turn/start { threadId }`。执行结果再按 `threadId` 镜像回 thread 记录。
-8. 同一个 `workingDirectory` 可以同时运行多个 `codexp` / `codexp resume`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
-9. 非 headless 的 `codexp` / `codexp resume` 必须用 PTY wrapper 启动官方 `codex --remote ...` 或 `codex resume --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
-10. `codexp --headless` 不启动 TUI，但仍必须在 app-server/bridge 就绪后主动调用 app-server `thread/start`，创建并同步该 worker 的初始 `currentThreadId`；启动成功后要在终端友好输出 `workerId` 和 `threadId`，便于 Web/TG/task/API 直接向 `/api/workers/:workerId/turn` 发消息。
-11. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
-12. `codexp list` 必须和 Web 左侧一致：读取 `/api/workers` 并只显示在线 worker。
-13. `codexp threads` 必须扫描本机官方 Codex session 历史并按当前工作目录过滤；它不是 server mirror cache，也不读取 `/api/threads`。输出应包含完整 `threadId`、标题和更新时间，作为 `codexp resume <threadId>` 的辅助列表。`--show <count>` 控制最近显示数量，默认 20；实现应优先扫描最近 session 文件并在收集足够当前目录 thread 后停止。
+7. `codexp` 只是官方 Codex 的代理，不默认设置 `sandbox` 或 `approvalPolicy`；这些权限默认必须由官方 Codex 按当前 cwd 的真实配置解析。只有用户显式传 `--sandbox` / `--approval-policy` 时，bridge 才把它们作为 app-server override 转发。
+8. 输入语义按客户端形态分层：Telegram 是单聊天窗口模型，输入使用 `/api/workers/:workerId/turn`，由 server 在提交时解析 worker 的 `currentThreadId`；Web 是多窗口/多 thread UI，输入可以使用选中 thread 的 `/api/threads/:threadId/turn`，但 server 必须校验该 thread 能路由到绑定在线 worker 或同目录唯一在线 worker；官方 app-server bridge 最终始终调用 `turn/start { threadId }`。执行结果再按 `threadId` 镜像回 thread 记录。
+9. 同一个 `workingDirectory` 可以同时运行多个 `codexp` / `codexp resume`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
+10. 非 headless 的 `codexp` / `codexp resume` 必须用 PTY wrapper 启动官方 `codex --remote ...` 或 `codex resume --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
+11. `codexp --headless` 不启动 TUI，但仍必须在 app-server/bridge 就绪后主动调用 app-server `thread/start`，创建并同步该 worker 的初始 `currentThreadId`；启动成功后要在终端友好输出 `workerId` 和 `threadId`，便于 Web/TG/task/API 直接向 `/api/workers/:workerId/turn` 发消息。
+12. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
+13. `codexp list` 必须和 Web 左侧一致：读取 `/api/workers` 并只显示在线 worker。
+14. `codexp threads` 必须扫描本机官方 Codex session 历史并按当前工作目录过滤；它不是 server mirror cache，也不读取 `/api/threads`。输出应包含完整 `threadId`、标题和更新时间，作为 `codexp resume <threadId>` 的辅助列表。`--show <count>` 控制最近显示数量，默认 20；实现应优先扫描最近 session 文件并在收集足够当前目录 thread 后停止。
 
 ## 选择和关闭语义
 

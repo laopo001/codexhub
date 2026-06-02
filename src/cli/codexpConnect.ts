@@ -78,8 +78,8 @@ type BridgeOptions = {
   ensureCurrentThread?: boolean;
   readyLabel?: string;
   model?: string;
-  sandbox: "read-only" | "workspace-write" | "danger-full-access";
-  approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
   transcriptDetailSource: TranscriptDetailSource;
 };
 
@@ -116,8 +116,8 @@ export const registerCodexProxyWorkerCommands = (program: Command) => {
     .option("--port <port>", "local Codex app-server websocket port")
     .option("--headless", "do not launch the official Codex TUI")
     .option("-m, --model <model>", "model for remote turns")
-    .option("-s, --sandbox <mode>", "sandbox mode for remote turns", "workspace-write")
-    .option("-a, --approval-policy <policy>", "approval policy for remote turns", "never")
+    .option("-s, --sandbox <mode>", "sandbox mode for remote turns")
+    .option("-a, --approval-policy <policy>", "approval policy for remote turns")
     .action(async (prompt: string | undefined) => {
       await runCodexpWorker(program, program.opts<ConnectOptions>(), { type: "start", prompt });
     });
@@ -133,8 +133,8 @@ export const registerCodexProxyWorkerCommands = (program: Command) => {
     .option("--last", "resume the most recent Codex session")
     .option("--all", "show all Codex sessions in the picker")
     .option("-m, --model <model>", "model for remote turns")
-    .option("-s, --sandbox <mode>", "sandbox mode for remote turns", "workspace-write")
-    .option("-a, --approval-policy <policy>", "approval policy for remote turns", "never")
+    .option("-s, --sandbox <mode>", "sandbox mode for remote turns")
+    .option("-a, --approval-policy <policy>", "approval policy for remote turns")
     .action(async (sessionId: string | undefined, prompt: string | undefined, options: ResumeOptions) => {
       await runCodexpWorker(program, options, {
         type: "resume",
@@ -194,8 +194,8 @@ async function runCodexpWorker(program: Command, options: ConnectOptions, launch
       cwd,
       ensureCurrentThread: Boolean(options.headless),
       model: options.model,
-      sandbox: options.sandbox ?? "workspace-write",
-      approvalPolicy: options.approvalPolicy ?? "never",
+      sandbox: options.sandbox,
+      approvalPolicy: options.approvalPolicy,
       transcriptDetailSource: transcriptDetailSource(),
       statusBar
     });
@@ -235,8 +235,8 @@ export async function startHeadlessCodexpWorker(options: HeadlessCodexpWorkerOpt
     ensureCurrentThread: true,
     readyLabel: options.readyLabel,
     model: options.model,
-    sandbox: options.sandbox ?? "workspace-write",
-    approvalPolicy: options.approvalPolicy ?? "never",
+    sandbox: options.sandbox,
+    approvalPolicy: options.approvalPolicy,
     transcriptDetailSource: transcriptDetailSource(),
     statusBar: null
   });
@@ -437,8 +437,7 @@ class CodexAppServerBridge {
     const result = asRecord(await this.request("thread/start", {
       cwd: this.options.cwd,
       ...(this.options.model === undefined ? {} : { model: this.options.model }),
-      approvalPolicy: this.options.approvalPolicy,
-      sandbox: this.options.sandbox,
+      ...runtimePermissionParams(this.options),
       threadSource: "user"
     }));
     const thread = asRecord(result?.thread);
@@ -455,8 +454,7 @@ class CodexAppServerBridge {
       threadId,
       cwd: this.options.cwd,
       ...(this.options.model === undefined ? {} : { model: this.options.model }),
-      approvalPolicy: this.options.approvalPolicy,
-      sandbox: this.options.sandbox
+      ...runtimePermissionParams(this.options)
     }, { threadId }));
     const thread = asRecord(result?.thread);
     const currentThreadId = typeof thread?.id === "string" ? thread.id : threadId;
@@ -547,8 +545,7 @@ class CodexAppServerBridge {
         threadId: command.threadId,
         cwd: command.workingDirectory,
         ...(model === undefined ? {} : { model }),
-        approvalPolicy: this.options.approvalPolicy,
-        sandbox: this.options.sandbox,
+        ...runtimePermissionParams(this.options),
         threadSource: "user"
       }, command));
       const thread = asRecord(result?.thread);
@@ -579,8 +576,7 @@ class CodexAppServerBridge {
         threadId,
         cwd: command.workingDirectory,
         ...(model === undefined ? {} : { model }),
-        approvalPolicy: this.options.approvalPolicy,
-        sandbox: this.options.sandbox
+        ...runtimePermissionParams(this.options)
       }, command);
       this.bindThread(threadId);
     }
@@ -1247,6 +1243,11 @@ const commandModel = (options: ThreadRunOptions | undefined, fallback?: string) 
   if (options && hasOwn(options, "model")) return options.model;
   return fallback;
 };
+
+const runtimePermissionParams = (options: Pick<BridgeOptions, "sandbox" | "approvalPolicy">) => ({
+  ...(options.approvalPolicy === undefined ? {} : { approvalPolicy: options.approvalPolicy }),
+  ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox })
+});
 
 const turnRuntimeParams = (options: ThreadRunOptions | undefined) => {
   const params: { model?: string | null; effort?: ThreadRunOptions["modelReasoningEffort"] } = {};
