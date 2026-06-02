@@ -75,6 +75,8 @@ type BridgeOptions = {
   appServerUrl: string;
   workerId: string;
   cwd: string;
+  ensureCurrentThread?: boolean;
+  readyLabel?: string;
   model?: string;
   sandbox: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
@@ -85,6 +87,26 @@ type TranscriptDetailSource = "jsonl" | "app-server" | "off";
 
 type ProxyBridgeRunnerOptions = BridgeOptions & {
   statusBar?: CodexpStatusBar | null;
+};
+
+export type HeadlessCodexpWorkerOptions = {
+  apiBase: string;
+  cwd: string;
+  port?: number;
+  readyLabel?: string;
+  model?: string;
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
+};
+
+export type HeadlessCodexpWorkerHandle = {
+  workerId: string;
+  threadId: string;
+  appServerUrl: string;
+  cwd: string;
+  ensureThread: (threadId: string) => Promise<string>;
+  stop: () => Promise<void>;
+  wait: () => Promise<ChildExit>;
 };
 
 export const registerCodexProxyWorkerCommands = (program: Command) => {
@@ -170,6 +192,7 @@ async function runCodexpWorker(program: Command, options: ConnectOptions, launch
       appServerUrl,
       workerId,
       cwd,
+      ensureCurrentThread: Boolean(options.headless),
       model: options.model,
       sandbox: options.sandbox ?? "workspace-write",
       approvalPolicy: options.approvalPolicy ?? "never",
@@ -196,12 +219,64 @@ async function runCodexpWorker(program: Command, options: ConnectOptions, launch
   }
 }
 
+export async function startHeadlessCodexpWorker(options: HeadlessCodexpWorkerOptions): Promise<HeadlessCodexpWorkerHandle> {
+  const cwd = path.resolve(options.cwd);
+  const port = options.port ?? await findFreePort();
+  if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
+
+  const appServerUrl = `ws://127.0.0.1:${port}`;
+  const workerId = createWorkerId();
+  const appServer = await startCodexAppServer(cwd, appServerUrl, port);
+  const bridgeRunner = new ProxyBridgeRunner({
+    apiBase: options.apiBase,
+    appServerUrl,
+    workerId,
+    cwd,
+    ensureCurrentThread: true,
+    readyLabel: options.readyLabel,
+    model: options.model,
+    sandbox: options.sandbox ?? "workspace-write",
+    approvalPolicy: options.approvalPolicy ?? "never",
+    transcriptDetailSource: transcriptDetailSource(),
+    statusBar: null
+  });
+  const appServerStopped = waitForChild(appServer);
+  const cleanup = cleanupOnce(async () => {
+    await bridgeRunner.stop();
+    appServer.kill("SIGTERM");
+  });
+
+  bridgeRunner.start();
+  try {
+    const ready = await Promise.race([
+      bridgeRunner.waitForReady(),
+      appServerStopped.then(({ code, signal }) => {
+        throw new Error(`codex app-server exited before headless worker was ready: code=${code ?? ""} signal=${signal ?? ""}`);
+      })
+    ]);
+    return {
+      workerId,
+      threadId: ready.threadId,
+      appServerUrl,
+      cwd,
+      ensureThread: (threadId: string) => bridgeRunner.ensureThread(threadId),
+      stop: cleanup,
+      wait: () => appServerStopped
+    };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
 class ProxyBridgeRunner {
   private bridge: CodexAppServerBridge | null = null;
   private registered = false;
   private stopping = false;
   private loopStarted = false;
   private lastState: "offline" | "online" | null = null;
+  private lastReadyThreadId: string | null = null;
+  private readonly ready = new Deferred<{ workerId: string; threadId: string }>();
   private bridgeState: BridgeState = { threadIds: [] };
 
   constructor(private readonly options: ProxyBridgeRunnerOptions) {}
@@ -218,12 +293,31 @@ class ProxyBridgeRunner {
     await this.unregister();
   }
 
+  waitForReady() {
+    return this.ready.promise;
+  }
+
+  async ensureThread(threadId: string) {
+    const trimmed = threadId.trim();
+    if (!trimmed) throw new Error("Missing thread id.");
+    if (!this.bridge) throw new Error("codexp bridge is not connected.");
+    const currentThreadId = await this.bridge.ensureThreadCurrent(trimmed);
+    this.bridgeState = this.bridge.snapshotState();
+    return currentThreadId;
+  }
+
   private async runLoop() {
     while (!this.stopping) {
       this.options.statusBar?.setProxyState("connecting");
       try {
         await this.register();
         this.bridge = await CodexAppServerBridge.connect(this.options, this.bridgeState);
+        if (this.options.ensureCurrentThread) {
+          const threadId = await this.bridge.ensureCurrentThread();
+          this.bridgeState = this.bridge.snapshotState();
+          this.logHeadlessReady(threadId);
+          this.ready.resolve({ workerId: this.options.workerId, threadId });
+        }
         this.options.statusBar?.setProxyState("online");
         this.logState("online", `codexp proxy connected: ${this.options.workerId}`);
         await this.runBridge(this.bridge);
@@ -282,6 +376,16 @@ class ProxyBridgeRunner {
     this.lastState = state;
     console.error(message);
   }
+
+  private logHeadlessReady(threadId: string) {
+    if (this.lastReadyThreadId === threadId) return;
+    this.lastReadyThreadId = threadId;
+    console.error([
+      `${this.options.readyLabel ?? "codexp headless worker ready"}:`,
+      `  workerId: ${this.options.workerId}`,
+      `  threadId: ${threadId}`
+    ].join("\n"));
+  }
 }
 
 class CodexAppServerBridge {
@@ -326,6 +430,39 @@ class CodexAppServerBridge {
       threadIds: [...this.syncedThreads.keys()],
       currentThreadId: this.currentThreadId
     };
+  }
+
+  async ensureCurrentThread() {
+    if (this.currentThreadId) return this.currentThreadId;
+    const result = asRecord(await this.request("thread/start", {
+      cwd: this.options.cwd,
+      ...(this.options.model === undefined ? {} : { model: this.options.model }),
+      approvalPolicy: this.options.approvalPolicy,
+      sandbox: this.options.sandbox,
+      threadSource: "user"
+    }));
+    const thread = asRecord(result?.thread);
+    const threadId = typeof thread?.id === "string" ? thread.id : undefined;
+    if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
+    this.bindThread(threadId);
+    await this.forwardCurrentThreadChanged(threadId);
+    return threadId;
+  }
+
+  async ensureThreadCurrent(threadId: string) {
+    if (this.currentThreadId === threadId) return threadId;
+    const result = asRecord(await this.request("thread/resume", {
+      threadId,
+      cwd: this.options.cwd,
+      ...(this.options.model === undefined ? {} : { model: this.options.model }),
+      approvalPolicy: this.options.approvalPolicy,
+      sandbox: this.options.sandbox
+    }, { threadId }));
+    const thread = asRecord(result?.thread);
+    const currentThreadId = typeof thread?.id === "string" ? thread.id : threadId;
+    this.bindThread(currentThreadId);
+    await this.forwardCurrentThreadChanged(currentThreadId);
+    return currentThreadId;
   }
 
   async runCommandLoop() {

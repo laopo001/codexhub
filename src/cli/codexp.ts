@@ -5,7 +5,7 @@ import path from "node:path";
 import { loadDotEnv } from "../core/dotenv.js";
 import { listLoadableCodexThreads } from "../core/codexpLog.js";
 import type { CodexSessionSummary } from "../core/codexSession.js";
-import { registerCodexProxyWorkerCommands } from "./codexpConnect.js";
+import { registerCodexProxyWorkerCommands, startHeadlessCodexpWorker, type HeadlessCodexpWorkerHandle } from "./codexpConnect.js";
 import {
   CodexpTaskScheduler,
   loadTaskFiles,
@@ -38,6 +38,12 @@ type WorkerSummary = {
   currentThreadId?: string;
   currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
+};
+
+type WorkerTurnResponse = {
+  ok?: boolean;
+  thread?: ThreadSummary;
+  error?: string;
 };
 
 await loadDotEnv();
@@ -306,14 +312,48 @@ function pad2(value: number) {
 
 async function startTaskScheduler(options: TaskCommandOptions) {
   const cwd = commandCwd();
+  console.error(`codexp task worker starting: ${cwd}`);
+  const worker = await startHeadlessCodexpWorker({
+    apiBase: apiBase(),
+    cwd,
+    readyLabel: "codexp task worker ready"
+  });
   const scheduler = new CodexpTaskScheduler({
     workspace: cwd,
-    scanIntervalMs: parseIntervalMs(options.intervalMs)
+    scanIntervalMs: parseIntervalMs(options.intervalMs),
+    runner: async (task) => sendTaskTurn(worker, task)
   });
-  scheduler.start();
-  console.error(`codexp task scheduler started: ${cwd}`);
-  await waitForShutdown();
-  scheduler.stop();
+  try {
+    scheduler.start();
+    console.error(`codexp task scheduler started: ${cwd}`);
+    await Promise.race([
+      waitForShutdown(),
+      worker.wait().then(({ code, signal }) => {
+        throw new Error(`codexp task worker exited: code=${code ?? ""} signal=${signal ?? ""}`);
+      })
+    ]);
+  } finally {
+    scheduler.stop();
+    await worker.stop();
+  }
+}
+
+async function sendTaskTurn(worker: HeadlessCodexpWorkerHandle, task: { input: string; thread?: string }) {
+  if (task.thread) {
+    const threadId = await worker.ensureThread(task.thread);
+    await apiJson<WorkerTurnResponse>(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: task.input, source: "task" })
+    });
+    return;
+  }
+
+  await apiJson<WorkerTurnResponse>(`/api/workers/${encodeURIComponent(worker.workerId)}/turn`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ input: task.input, source: "task" })
+  });
 }
 
 async function runTaskFile(taskYamlPath: string) {

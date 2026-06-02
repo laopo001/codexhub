@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
 
@@ -49,27 +48,18 @@ export type TaskRunResult = {
   status: "completed" | "failed" | "skipped";
 };
 
-type TaskRunRecord = {
-  version: 1;
-  runId: string;
-  task: string;
-  taskFile: string;
+export type TaskRunner = (task: {
   workspace: string;
-  status: "completed" | "failed" | "skipped";
-  queuedAt?: string;
-  startedAt?: string;
-  completedAt?: string;
-  reason?: string;
+  filePath: string;
+  name: string;
   input: string;
-  output?: string;
-  message?: string;
-  exitCode?: number | null;
-  signal?: NodeJS.Signals | null;
-};
+  thread?: string;
+}) => Promise<void>;
 
 type SchedulerOptions = {
   workspace: string;
   scanIntervalMs?: number;
+  runner?: TaskRunner;
 };
 
 const defaultTimezone = "Asia/Shanghai";
@@ -137,19 +127,12 @@ export class CodexpTaskScheduler {
 
   private async runImmediate(task: LoadedTask): Promise<TaskRunResult> {
     if (this.queuedTasks.has(task.key) || this.runningTasks.has(task.key)) {
-      await appendTaskRun(task, {
-        runId: randomUUID(),
-        status: "skipped",
-        reason: "already_queued_or_running"
-      });
       return { task: task.name, filePath: task.filePath, status: "skipped" };
     }
 
-    const runId = randomUUID();
-    const queuedAt = localTimestamp();
     this.runningTasks.add(task.key);
     try {
-      const status = await this.runTask(task, runId, queuedAt);
+      const status = await this.runTask(task);
       return { task: task.name, filePath: task.filePath, status };
     } finally {
       this.runningTasks.delete(task.key);
@@ -158,23 +141,16 @@ export class CodexpTaskScheduler {
 
   private async enqueue(task: LoadedTask) {
     if (this.queuedTasks.has(task.key) || this.runningTasks.has(task.key)) {
-      await appendTaskRun(task, {
-        runId: randomUUID(),
-        status: "skipped",
-        reason: "already_queued_or_running"
-      });
       return;
     }
 
-    const runId = randomUUID();
-    const queuedAt = localTimestamp();
     this.queuedTasks.add(task.key);
 
     const previous = this.taskQueues.get(task.key) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(async () => {
-        await this.runTask(task, runId, queuedAt);
+        await this.runTask(task);
       });
     this.taskQueues.set(task.key, next);
     void next.finally(() => {
@@ -182,36 +158,17 @@ export class CodexpTaskScheduler {
     });
   }
 
-  private async runTask(task: LoadedTask, runId: string, queuedAt: string): Promise<"completed" | "failed"> {
+  private async runTask(task: LoadedTask): Promise<"completed" | "failed"> {
     this.queuedTasks.delete(task.key);
     this.runningTasks.add(task.key);
-    const startedAt = localTimestamp();
     try {
-      const result = await runCodexExec(task.workspace, task.input, task.thread);
-      await appendTaskRun(task, {
-        runId,
-        status: "completed",
-        queuedAt,
-        startedAt,
-        completedAt: localTimestamp(),
-        output: result.output,
-        exitCode: result.exitCode,
-        signal: result.signal
-      });
+      if (this.options.runner) {
+        await this.options.runner(task);
+      } else {
+        await runCodexExec(task.workspace, task.input, task.thread);
+      }
       return "completed";
     } catch (error) {
-      const result = error instanceof CodexExecError ? error.result : undefined;
-      await appendTaskRun(task, {
-        runId,
-        status: "failed",
-        queuedAt,
-        startedAt,
-        completedAt: localTimestamp(),
-        output: result?.output,
-        exitCode: result?.exitCode,
-        signal: result?.signal,
-        message: error instanceof Error ? error.message : String(error)
-      });
       return "failed";
     } finally {
       this.runningTasks.delete(task.key);
@@ -405,57 +362,14 @@ function triggerMinuteKey(date: Date, timezone: string) {
   return `${local.year}-${local.month}-${local.dayOfMonth}-${local.hour}-${local.minute}`;
 }
 
-async function appendTaskRun(
-  task: LoadedTask,
-  run: Omit<TaskRunRecord, "version" | "task" | "taskFile" | "workspace" | "input">
-) {
-  const directory = path.join(task.workspace, ".codexp", "task-runs");
-  await mkdir(directory, { recursive: true });
-  const filePath = path.join(directory, `${safeTaskName(task.name)}.jsonl`);
-  const completedAt = run.completedAt ?? (run.status === "skipped" ? localTimestamp() : undefined);
-  const record: TaskRunRecord = {
-    version: 1,
-    task: task.name,
-    taskFile: task.filePath,
-    workspace: task.workspace,
-    input: task.input,
-    ...run,
-    completedAt
-  };
-  await appendFile(filePath, `${JSON.stringify(record)}\n`, "utf8");
-}
-
-function localTimestamp(date = new Date()) {
-  const offsetMinutes = -date.getTimezoneOffset();
-  const sign = offsetMinutes >= 0 ? "+" : "-";
-  const absolute = Math.abs(offsetMinutes);
-  const offset = `${sign}${pad2(Math.floor(absolute / 60))}:${pad2(absolute % 60)}`;
-  return [
-    date.getFullYear(),
-    "-",
-    pad2(date.getMonth() + 1),
-    "-",
-    pad2(date.getDate()),
-    "T",
-    pad2(date.getHours()),
-    ":",
-    pad2(date.getMinutes()),
-    ":",
-    pad2(date.getSeconds()),
-    offset
-  ].join("");
-}
-
-function pad2(value: number) {
-  return String(value).padStart(2, "0");
-}
-
 function uniqueStrings(values: string[]) {
   return [...new Set(values)];
 }
 
 type CodexExecResult = {
   output: string;
+  workerId?: string;
+  threadId?: string;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
 };

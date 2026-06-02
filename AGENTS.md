@@ -11,9 +11,10 @@
 7. 输入语义按客户端形态分层：Telegram 是单聊天窗口模型，输入使用 `/api/workers/:workerId/turn`，由 server 在提交时解析 worker 的 `currentThreadId`；Web 是多窗口/多 thread UI，输入可以使用选中 thread 的 `/api/threads/:threadId/turn`，但 server 必须校验该 thread 能路由到绑定在线 worker 或同目录唯一在线 worker；官方 app-server bridge 最终始终调用 `turn/start { threadId }`。执行结果再按 `threadId` 镜像回 thread 记录。
 8. 同一个 `workingDirectory` 可以同时运行多个 `codexp` / `codexp resume`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
 9. 非 headless 的 `codexp` / `codexp resume` 必须用 PTY wrapper 启动官方 `codex --remote ...` 或 `codex resume --remote ...` TUI，由 `codexp` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
-10. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
-11. `codexp list` 必须和 Web 左侧一致：读取 `/api/workers` 并只显示在线 worker。
-12. `codexp threads` 必须扫描本机官方 Codex session 历史并按当前工作目录过滤；它不是 server mirror cache，也不读取 `/api/threads`。输出应包含完整 `threadId`、标题和更新时间，作为 `codexp resume <threadId>` 的辅助列表。`--show <count>` 控制最近显示数量，默认 20；实现应优先扫描最近 session 文件并在收集足够当前目录 thread 后停止。
+10. `codexp --headless` 不启动 TUI，但仍必须在 app-server/bridge 就绪后主动调用 app-server `thread/start`，创建并同步该 worker 的初始 `currentThreadId`；启动成功后要在终端友好输出 `workerId` 和 `threadId`，便于 Web/TG/task/API 直接向 `/api/workers/:workerId/turn` 发消息。
+11. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
+12. `codexp list` 必须和 Web 左侧一致：读取 `/api/workers` 并只显示在线 worker。
+13. `codexp threads` 必须扫描本机官方 Codex session 历史并按当前工作目录过滤；它不是 server mirror cache，也不读取 `/api/threads`。输出应包含完整 `threadId`、标题和更新时间，作为 `codexp resume <threadId>` 的辅助列表。`--show <count>` 控制最近显示数量，默认 20；实现应优先扫描最近 session 文件并在收集足够当前目录 thread 后停止。
 
 ## 选择和关闭语义
 
@@ -57,7 +58,7 @@
 1. 工作区 Codex session 索引写入 `.codexp/threads.yaml`，顶层使用 `threads` 数组，每项以 `threadId` 作为主键。
 2. 不读取、不写入、不迁移 `.codexp/instances.yaml` 或 `.codexp/index.yaml`。
 3. 工作区任务定义放在 `.codexp/tasks/*.yaml`，由 `codexp` CLI/worker 读取，server 不扫描。
-4. 工作区任务运行日志放在 `.codexp/task-runs/*.jsonl`，由 `codexp` CLI/worker 写入；每个任务一个文件，每一行是一整次运行的完整记录，便于 `tail` 查看最近几次结果；日志时间使用当前系统时区的 ISO offset 格式，例如 `2026-05-26T22:00:28+08:00`。
+4. 不写入 `.codexp/task-runs` 运行日志；任务结果应落在对应 Codex thread/session 镜像里。
 5. server 不再把输入图片写入 `.codexp/tmp/`。Web/TG/task 图片输入必须使用 app-server 原生 `{ type: "image", url }` 语义；需要本地临时文件时只能由 `codexp` worker 自己承担。
 
 ## 定时任务约定
@@ -75,13 +76,13 @@ input: |
 ```
 
 1. 任务所在工作区由 `.codexp/tasks/*.yaml` 的位置推导，不在 YAML 里写 `folder`。
-2. `thread` 可选；有值时作为官方 Codex session/thread id 传给 `codex exec -C <workspace> resume <thread> -`，没有值时使用 `codex exec -C <workspace> -` 新开非交互 session。不要用 server 线程列表解析 `task run/start` 的目标。
+2. `thread` 可选；`codexp task run <task_yaml_path>` 离线一次性执行时，有值就作为官方 Codex session/thread id 传给 `codex exec -C <workspace> resume <thread> -`，没有值时使用 `codex exec -C <workspace> -` 新开非交互 session。`codexp task start` 定时执行时，有值就先让它启动的 task worker 通过 app-server `thread/resume` 恢复该 thread，再向 `/api/threads/:threadId/turn` 发送；没有值时向 task worker 的 `currentThreadId` 发送。
 3. 旧 `instance` 字段只允许作为 `thread` 的过渡别名读取，不要重新引入 instance 模型。
-4. 任务执行必须 local-first：`codexp task run <task_yaml_path>` 和 `codexp task start` 通过本机 `codex exec` / `codex exec resume` 执行，不依赖 codex-proxy server。
-5. 任务并发边界是 task 文件：同一个任务已经 queued/running 时，下一次触发应跳过并记录 `already_queued_or_running`。
+4. 任务执行必须 local-first 扫描任务文件，但执行入口分层：`codexp task run <task_yaml_path>` 通过本机 `codex exec` / `codex exec resume` 离线执行；`codexp task start` 启动本机 headless codexp worker，并通过 codex-proxy server 的 `/api/workers/:workerId/turn` 定时向该 worker 发送任务输入。
+5. 任务并发边界是 task 文件：同一个任务已经 queued/running 时，下一次触发应跳过，不额外写本地 task-run 日志。
 6. 任务 CLI 放在 `codexp task` 子命令下，例如 `codexp task list [thread]`、`codexp task template [name]`、`codexp task start`、`codexp task run <task_yaml_path>`。
 7. `codexp task list` 默认离线可用，只扫描当前工作区的 `.codexp/tasks`；只有显式传 `--server` 或设置 `CODEX_PROXY_SERVER_URL` 时，才连接 server 并显示 server 是否在线。
-9. `codexp task start` 是本地任务调度入口：只扫描当前工作区的 `.codexp/tasks`，按 YAML 里的 `schedule` 在本机执行，不要求 server 能访问本机文件系统。
+9. `codexp task start` 是本地任务调度入口：只扫描当前工作区的 `.codexp/tasks`，启动后立即创建一个 headless worker 和初始 thread，输出 `workerId` / `threadId`，随后按 YAML 里的 `schedule` 定时发送任务输入；任务 YAML 有 `thread` 时先 resume 该 thread 再发送，没有 `thread` 时发送到 task worker 的 current thread；server 只接收 worker/thread turn，不扫描本机文件系统。
 10. `codexp task run <task_yaml_path>` 是手动单次执行入口：立即本地运行指定 YAML 文件，不看 `schedule`，不要求 server 在线。
 
 ## 自举开发和发布
