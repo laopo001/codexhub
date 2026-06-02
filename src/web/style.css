@@ -19,10 +19,12 @@ body,
 body {
   margin: 0;
   overflow: hidden;
+  touch-action: manipulation;
 }
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -30,8 +32,20 @@ textarea {
 .app {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
+  width: 100vw;
   height: 100vh;
+  height: 100svh;
   min-height: 0;
+  overflow: hidden;
+}
+
+.app.sidebarCollapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app.sidebarCollapsed .workspace {
+  grid-column: 1;
+  width: 100%;
 }
 
 .sidebar {
@@ -43,6 +57,21 @@ textarea {
   padding: 22px;
   background: #122018;
   color: #f8fbf4;
+}
+
+.sidebarCollapsed .sidebar {
+  display: none;
+}
+
+.sidebarScrim {
+  display: none;
+}
+
+.brand {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .brand h1 {
@@ -73,6 +102,7 @@ button:disabled {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid #cbd6c7;
@@ -82,67 +112,7 @@ textarea {
   padding: 10px 12px;
 }
 
-.sidebarActions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.sideSection {
-  display: grid;
-  gap: 10px;
-  min-height: 0;
-}
-
-.sideSection h2 {
-  margin: 0;
-  color: #d8e2d5;
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.workspaceList {
-  display: grid;
-  gap: 8px;
-  min-height: 0;
-  overflow: auto;
-}
-
-.workspaceRow {
-  display: grid;
-  gap: 4px;
-  width: 100%;
-  min-height: 56px;
-  border: 1px solid #405244;
-  background: #1a2b20;
-  padding: 10px 12px;
-  text-align: left;
-}
-
-.workspaceRow.active {
-  border-color: #d95f36;
-  background: #203526;
-}
-
-.workspaceRow span {
-  overflow: hidden;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspaceRow code {
-  overflow: hidden;
-  color: #b8c5b4;
-  font-family: inherit;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.proxyInstances {
+.proxyWorkers {
   display: grid;
   align-content: end;
   gap: 10px;
@@ -150,7 +120,13 @@ textarea {
   margin-top: auto;
 }
 
-.proxyInstances h2 {
+.proxyWorkers.expanded {
+  align-content: start;
+  min-height: 0;
+  flex: 1;
+}
+
+.proxyWorkers h2 {
   margin: 0;
   color: #d8e2d5;
   font-size: 12px;
@@ -159,7 +135,7 @@ textarea {
   text-transform: uppercase;
 }
 
-.proxyInstanceList {
+.proxyWorkerList {
   display: grid;
   gap: 8px;
   max-height: 180px;
@@ -167,8 +143,12 @@ textarea {
   overflow: auto;
 }
 
-.proxyInstanceRow,
-.proxyInstanceEmpty {
+.proxyWorkers.expanded .proxyWorkerList {
+  max-height: none;
+}
+
+.proxyWorkerRow,
+.proxyWorkerEmpty {
   border: 1px solid #405244;
   border-radius: 8px;
   background: #0f1b14;
@@ -176,13 +156,21 @@ textarea {
   padding: 10px 12px;
 }
 
-.proxyInstanceRow {
+.proxyWorkerRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 8px;
+  width: 100%;
+  min-height: auto;
+  text-align: left;
 }
 
-.proxyInstanceRow span {
+.proxyWorkerRow.active {
+  border-color: #d95f36;
+  background: #183222;
+}
+
+.proxyWorkerRow span {
   overflow: hidden;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-weight: 700;
@@ -190,7 +178,7 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyInstanceRow strong {
+.proxyWorkerRow strong {
   border-radius: 999px;
   background: #203526;
   color: #b8c5b4;
@@ -199,7 +187,7 @@ textarea {
   padding: 2px 7px;
 }
 
-.proxyInstanceRow code {
+.proxyWorkerRow code {
   grid-column: 1 / -1;
   overflow: hidden;
   color: #91a090;
@@ -209,14 +197,46 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyInstanceEmpty {
+.proxyWorkerMeta {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: #91a090;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.proxyWorkerMeta span {
+  font-family: inherit;
+  font-weight: 400;
+}
+
+.proxyWorkerDirectory {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.proxyWorkerThread {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #b8c5b4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxyWorkerEmpty {
   color: #91a090;
   font-size: 13px;
 }
 
 .workspace {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -224,13 +244,101 @@ textarea {
 }
 
 .topbar {
-  display: flex;
+  position: relative;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid #dfe5dc;
   padding: 14px 22px;
   background: #fbfcf8;
+}
+
+.sidebarPanelToggle {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border: 1px solid #cbd6c7;
+  background: #ffffff;
+  color: #17211a;
+  padding: 0 12px;
+}
+
+.sidebarPanelToggle:hover {
+  background: #f4f6f1;
+}
+
+.viewbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  color: #66715f;
+  font-size: 12px;
+}
+
+.runtimeSelect {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  border: 1px solid #dfe5dc;
+  border-radius: 999px;
+  background: #f4f6f1;
+  padding: 2px 6px 2px 8px;
+  white-space: nowrap;
+}
+
+.runtimeSelect span {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.runtimeSelect select {
+  width: auto;
+  min-height: 22px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #17211a;
+  padding: 0 16px 0 0;
+  cursor: pointer;
+}
+
+.switchControl {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  border: 1px solid #dfe5dc;
+  border-radius: 999px;
+  background: #f4f6f1;
+  padding: 2px 4px 2px 8px;
+  white-space: nowrap;
+}
+
+.switchControl span {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.switchButton {
+  min-height: 22px;
+  border-radius: 999px;
+  background: #dfe5dc;
+  color: #405244;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.switchButton.active {
+  background: #2f7d5a;
+  color: #ffffff;
 }
 
 .workspaceTitle {
@@ -243,88 +351,34 @@ textarea {
   font-weight: 750;
 }
 
-.workspaceTitle code {
-  overflow: hidden;
+.workspaceTitle .workspaceMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  overflow: visible;
   color: #66715f;
   font-family: inherit;
   font-size: 12px;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tabbar {
-  display: flex;
-  gap: 8px;
+.workspaceTitle .workspacePath {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.workspaceTitle .workspaceThreadId {
+  flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
-  border-bottom: 1px solid #dfe5dc;
-  padding: 8px 22px;
-  background: #eef3eb;
-}
-
-.tab {
-  display: inline-grid;
-  grid-template-columns: minmax(84px, 1fr) auto auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  column-gap: 8px;
-  row-gap: 2px;
-  width: 240px;
-  min-height: 46px;
-  border: 1px solid #cbd6c7;
-  background: #ffffff;
-  color: #17211a;
-  padding: 6px 9px;
-  text-align: left;
-}
-
-.tab.active {
-  border-color: #d95f36;
-}
-
-.tabTitle {
-  grid-column: 1;
-  grid-row: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tabMeta {
-  grid-column: 1;
-  grid-row: 2;
-  overflow: hidden;
-  color: #66715f;
-  font-size: 11px;
+  color: #2f7d5a;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tab strong {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  border-radius: 999px;
-  background: #fff0e9;
-  color: #a94625;
-  font-size: 11px;
-  padding: 2px 6px;
-}
-
-.tab i {
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  color: #66715f;
-  font-style: normal;
-}
-
-.tab i:hover {
-  background: #e6ece2;
 }
 
 .messages {
@@ -334,10 +388,17 @@ textarea {
   padding: 24px 22px 18px;
 }
 
+.messages > div {
+  max-width: calc(100% - 44px);
+}
+
 .empty {
   display: grid;
   min-height: 100%;
+  min-width: 0;
   place-items: center;
+  overflow-wrap: anywhere;
+  text-align: center;
   color: #6a7467;
 }
 
@@ -349,12 +410,23 @@ textarea {
   min-width: 0;
   margin-bottom: 12px;
   border-left: 4px solid #a8b4a4;
-  padding: 10px 14px;
+  padding: 10px 14px 24px;
   background: #ffffff;
 }
 
 .message.user {
+  width: fit-content;
+  min-width: min(320px, 100%);
+  max-width: min(760px, 100%);
+  margin-left: auto;
+  border-right: 4px solid #2f7d5a;
+  border-left: 0;
   border-color: #2f7d5a;
+  background: #fbfdf9;
+}
+
+.message.user .messageHeader {
+  justify-content: flex-end;
 }
 
 .message.codex {
@@ -371,6 +443,19 @@ textarea {
   background: #f8fbfd;
 }
 
+.message.inspectable {
+  cursor: pointer;
+}
+
+.message.inspectable:hover {
+  background: #f2f8fb;
+}
+
+.message.inspectable:focus-visible {
+  outline: 2px solid #2f6f9f;
+  outline-offset: 2px;
+}
+
 .message.thinking {
   border-color: #8a6f2f;
   background: #fffdf6;
@@ -380,10 +465,48 @@ textarea {
   border-color: #bd3434;
 }
 
-.message span {
+.messageHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   color: #66715f;
   font-size: 12px;
   text-transform: uppercase;
+}
+
+.messageHeader b {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messageStatus {
+  border-radius: 999px;
+  background: #e6ece2;
+  color: #405244;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1;
+  padding: 4px 7px;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.messageStatus.pending {
+  background: #fff0d8;
+  color: #8a5a13;
+}
+
+.messageStatus.completed {
+  background: #e4f3e8;
+  color: #236c47;
+}
+
+.messageStatus.failed {
+  background: #fbe3df;
+  color: #9b2f25;
 }
 
 .message pre {
@@ -395,42 +518,480 @@ textarea {
   line-height: 1.5;
 }
 
-.composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+.messageMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+  align-self: end;
+  margin-bottom: -16px;
+  color: #8a9584;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.messageMeta a {
+  color: #405244;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.messageMeta a:hover {
+  color: #df5b35;
+}
+
+.messageAttachments {
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.messageImage {
+  display: block;
+  width: min(220px, 100%);
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.messageImage img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+}
+
+.composer {
   border-top: 1px solid #dfe5dc;
-  padding: 14px 22px 18px;
+  padding: 14px 22px calc(18px + env(safe-area-inset-bottom));
   background: #f4f6f1;
 }
 
-.composer textarea {
-  min-height: 56px;
-  max-height: 180px;
-  border-color: #c6d0c2;
-  border-radius: 18px;
+.composerLayout {
+  width: min(1522px, 100%);
+  margin: 0 auto;
+}
+
+.composerThreadEmpty {
+  display: grid;
+  min-height: 42px;
+  place-items: center;
+  color: #8a9584;
+  font-size: 12px;
+}
+
+.workspaceThreadTabs.ant-tabs {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.workspaceThreadTabs.ant-tabs > .ant-tabs-nav {
+  min-width: 0;
+  margin: 0;
+  border-bottom: 1px solid #dfe5dc;
   background: #ffffff;
-  padding: 16px 18px;
-  resize: vertical;
+  padding: 0 22px;
+}
+
+.workspaceThreadTabs.ant-tabs > .ant-tabs-content-holder {
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspaceThreadTabs .ant-tabs-content,
+.workspaceThreadTabs .ant-tabs-tabpane {
+  height: 100%;
+  min-height: 0;
+}
+
+.workspaceThreadTabs .ant-tabs-tabpane {
+  overflow: hidden;
+}
+
+.workspaceThreadTabs .ant-tabs-nav-list {
+  min-width: 0;
+}
+
+.workspaceThreadTabs .ant-tabs-tab {
+  min-height: 42px;
+  margin: 0 !important;
+  padding: 8px 12px !important;
+}
+
+.workspaceThreadTabs .ant-tabs-tab:hover,
+.workspaceThreadTabs .ant-tabs-tab-active {
+  background: #eef6ef;
+}
+
+.workspaceThreadTabs .ant-tabs-tab-btn {
+  min-width: 0;
+  width: 100%;
+  color: #17211a;
+}
+
+.workspaceThreadTabs .ant-tabs-ink-bar {
+  background: #2f7d5a;
+}
+
+.threadWorkspacePane {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.workspaceThreadTabLabel {
+  display: grid;
+  grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.workerCurrentThreadMark {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: transparent;
+  align-self: center;
+}
+
+.workerCurrentThreadMark.visible {
+  background: #2f7d5a;
+  box-shadow: 0 0 0 2px #d9eadf;
+}
+
+.workspaceThreadTabLabel span,
+.workspaceThreadTabLabel code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspaceThreadTabLabel span {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workspaceThreadTabLabel code {
+  color: #66715f;
+  font-size: 11px;
+}
+
+.composerSurface {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #c6d0c2;
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 14px 16px 12px;
   box-shadow: 0 10px 28px rgb(18 32 24 / 0.08);
+}
+
+.composerInput {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composer textarea {
+  min-height: 28px;
+  max-height: 180px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 6px;
+  resize: vertical;
+  box-shadow: none;
+  line-height: 1.55;
+}
+
+.composer textarea:focus {
+  outline: none;
 }
 
 .composerActions {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding-bottom: 4px;
+  min-height: 36px;
 }
 
-.composerActions button {
-  min-width: 76px;
-  min-height: 44px;
+.composerLeftActions,
+.composerRightActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composerRightActions {
+  justify-content: flex-end;
+}
+
+.composerRuntimeControls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composerUsagePills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  color: #66715f;
+  font-size: 12px;
+}
+
+.usagePill {
+  border: 1px solid #dfe5dc;
   border-radius: 999px;
-  padding: 0 18px;
+  background: #f4f6f1;
+  padding: 4px 8px;
+  white-space: nowrap;
 }
 
-.secondaryButton,
-.shortcutList button {
+.composerRuntimeMenuHost {
+  position: relative;
+  display: none;
+}
+
+.composerMenuHost {
+  position: relative;
+}
+
+.composerIconButton,
+.composerMoreButton,
+.composerSendButton {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 999px;
+  padding: 0;
+}
+
+.composerIconButton {
+  border: 1px solid #cbd6c7;
+  background: transparent;
+  color: #17211a;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.composerMoreButton {
+  border: 1px solid #cbd6c7;
+  background: #ffffff;
+  color: #66715f;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.composerIconButton:hover,
+.composerMoreButton:hover {
+  background: #f4f6f1;
+}
+
+.composerRuntimePopover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 60;
+  max-width: calc(100vw - 32px);
+  border: 1px solid #dfe5dc;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 10px;
+  box-shadow: 0 16px 40px rgb(18 32 24 / 0.18);
+}
+
+.composerRuntimePopover .composerRuntimeControls {
+  justify-content: flex-start;
+}
+
+.composerModelButton {
+  min-height: 32px;
+  border: 1px solid #cbd6c7;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #66715f;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.composerModelButton:hover {
+  background: #f4f6f1;
+}
+
+.composerSendButton {
+  background: #17211a;
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.composerSendButton:disabled {
+  background: #dfe5dc;
+  color: #8a9584;
+}
+
+.composerStopIcon {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: currentColor;
+}
+
+.composerMenu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 50;
+  display: grid;
+  min-width: 204px;
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 6px;
+  box-shadow: 0 18px 46px rgb(18 32 24 / 0.18);
+}
+
+.composerMenuItem {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border-radius: 10px;
+  background: transparent;
+  color: #17211a;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.composerMenuItem:hover:not(:disabled) {
+  background: #f4f6f1;
+}
+
+.composerMenuIcon {
+  color: #66715f;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+.runtimeDialogOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: end center;
+  background: rgb(18 32 24 / 0.28);
+  padding: 24px;
+}
+
+.runtimeDialog {
+  display: grid;
+  gap: 14px;
+  width: min(360px, 100%);
+  border: 1px solid #cbd6c7;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 16px;
+  box-shadow: 0 24px 80px rgb(18 32 24 / 0.26);
+}
+
+.runtimeDialogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.runtimeDialogHeader h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.runtimeDialogField {
+  display: grid;
+  gap: 6px;
+}
+
+.runtimeDialogField span {
+  color: #51604f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.imageUploadInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.imageAttachmentList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.imageAttachment {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.imageAttachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.imageAttachment button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  min-height: 20px;
+  padding: 0;
+  background: rgb(23 33 26 / 0.82);
+  color: #ffffff;
+  font-size: 12px;
+}
+
+.secondaryButton {
   border: 1px solid #cbd6c7;
   background: #ffffff;
   color: #17211a;
@@ -443,7 +1004,7 @@ textarea {
   place-items: center;
   background: rgb(18 32 24 / 0.58);
   padding: 24px;
-  z-index: 20;
+  z-index: 100;
 }
 
 .modal {
@@ -451,6 +1012,7 @@ textarea {
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 16px;
   width: min(900px, 100%);
+  height: min(780px, calc(100vh - 48px));
   max-height: min(780px, calc(100vh - 48px));
   border: 1px solid #cbd6c7;
   border-radius: 8px;
@@ -459,8 +1021,10 @@ textarea {
   box-shadow: 0 24px 80px rgb(18 32 24 / 0.28);
 }
 
-.folderModal {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+.detailModal {
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(860px, 100%);
+  height: min(680px, calc(100vh - 48px));
 }
 
 .modalHeader {
@@ -496,126 +1060,218 @@ textarea {
   line-height: 1;
 }
 
-.threadSearch {
-  background: #ffffff;
-}
-
-.threadList,
-.folderList {
+.detailBody {
   display: grid;
-  gap: 10px;
+  align-content: start;
+  gap: 14px;
   min-height: 0;
+  margin: 0;
   overflow: auto;
-  padding-right: 4px;
-}
-
-.threadRow,
-.folderRow {
-  display: grid;
-  gap: 6px;
-  width: 100%;
-  min-height: auto;
   border: 1px solid #dfe5dc;
   border-radius: 8px;
   background: #ffffff;
-  color: #17211a;
-  padding: 12px 14px;
-  text-align: left;
+  padding: 14px;
 }
 
-.threadRow:hover,
-.folderRow:hover {
-  border-color: #a8b4a4;
-  background: #f4f6f1;
-}
-
-.threadTitle,
-.folderRow span {
-  overflow: hidden;
-  font-weight: 650;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.threadMeta,
-.folderRow code {
-  overflow: hidden;
-  color: #66715f;
-  font-family: inherit;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.threadPreview {
-  display: -webkit-box;
-  overflow: hidden;
-  color: #405244;
-  font-size: 13px;
-  line-height: 1.4;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.threadEmpty {
-  border: 1px dashed #cbd6c7;
-  border-radius: 8px;
-  padding: 18px;
-  color: #66715f;
-  text-align: center;
-}
-
-.folderPathForm {
+.detailSection {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 10px;
-}
-
-.folderBrowser {
-  display: grid;
-  grid-template-columns: 170px minmax(0, 1fr);
-  gap: 14px;
-  min-height: 0;
-}
-
-.shortcutList {
-  display: grid;
-  align-content: start;
   gap: 8px;
-  min-width: 0;
+}
+
+.detailSection h3 {
+  margin: 0;
+  color: #51604f;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.detailSection pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detailCodeBlock {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.detailCodeBlock h4 {
+  margin: 0;
+  color: #51604f;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.detailCodeBlock pre {
+  border-left: 3px solid #d85b34;
+  background: #f8faf5;
+  padding: 10px 12px;
 }
 
 @media (max-width: 860px) {
   .app {
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
   }
 
   .sidebar {
-    max-height: 320px;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 70;
+    width: min(320px, 86vw);
+    max-height: none;
+    box-shadow: 18px 0 42px rgb(0 0 0 / 0.32);
   }
 
-  .folderPathForm,
-  .folderBrowser {
-    grid-template-columns: 1fr;
+  .sidebarScrim {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: block;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(0 0 0 / 0.42);
+    padding: 0;
+  }
+
+  .app.sidebarCollapsed .sidebar {
+    display: none;
+  }
+
+  .app:not(.sidebarCollapsed) .workspace {
+    grid-column: 1;
   }
 
   .workspace {
     min-height: 0;
   }
 
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  }
+
+  .workspaceTitle {
+    max-width: none;
+  }
+
+  .runtimeSelect,
+  .switchControl,
+  .usagePill {
+    max-width: 100%;
+  }
+
+  .runtimeSelect {
+    grid-template-columns: auto minmax(0, auto);
+  }
+
+  .runtimeSelect select {
+    min-width: 0;
+  }
+
+  .messages {
+    padding: 14px 12px 12px;
+  }
+
+  .messages > div {
+    max-width: calc(100% - 24px);
+  }
+
+  .message {
+    padding: 10px 10px 22px;
+  }
+
+  .message.user {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .messageMeta {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .composer {
-    grid-template-columns: 1fr;
-    padding: 12px;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .composerLayout {
+    width: 100%;
+  }
+
+  .workspaceThreadTabs.ant-tabs > .ant-tabs-nav {
+    width: 100%;
+    overflow-x: auto;
+    padding: 0 12px;
+  }
+
+  .workspaceThreadTabs .ant-tabs-tab {
+    min-height: 38px;
+    padding: 7px 10px !important;
+  }
+
+  .composerSurface {
+    border-radius: 18px;
+    padding: 12px 12px 10px;
+  }
+
+  .composer textarea {
+    min-height: 28px;
+    max-height: 132px;
+    padding: 0 4px;
   }
 
   .composerActions {
-    justify-content: flex-end;
-    padding-bottom: 0;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .composerRightActions {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+  }
+
+  .composerRuntimeControls.inline {
+    display: none;
+  }
+
+  .composerRuntimeMenuHost {
+    display: block;
+  }
+
+  .composerRuntimePopover .composerRuntimeControls {
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .composerUsagePills {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    font-size: 11px;
+  }
+
+  .composerRuntimePopover .usagePill {
+    padding: 4px 7px;
+  }
+
+  .composerMenu {
+    min-width: min(204px, calc(100vw - 48px));
   }
 
   .modalOverlay {
+    padding: 12px;
+  }
+
+  .runtimeDialogOverlay {
     padding: 12px;
   }
 }

@@ -9,6 +9,7 @@ export type CodexSessionRecord = {
   timestamp?: string;
   type: string;
   payload: unknown;
+  turnId?: string;
 };
 
 export type CodexSessionSnapshot = {
@@ -36,15 +37,26 @@ export type CodexSessionSummary = {
   messageCount: number;
 };
 
+export type CodexSessionRecordBatch = {
+  path: string;
+  records: CodexSessionRecord[];
+  lastLine: number;
+};
+
 export const readCodexSessionSnapshotFromFile = async (filePath: string): Promise<CodexSessionSnapshot> => {
   const lines = (await readFile(filePath, "utf8")).trim().split("\n").filter(Boolean);
+  let currentTurnId: string | undefined;
   const records = lines.map((line, index) => {
     const parsed = JSON.parse(line) as { timestamp?: string; type: string; payload: unknown };
+    const payload = sanitizePayload(parsed.payload);
+    const turnId = parsed.type === "turn_context" ? turnIdFromPayload(payload) : currentTurnId;
+    if (parsed.type === "turn_context") currentTurnId = turnId;
     return {
       line: index + 1,
       timestamp: parsed.timestamp,
       type: parsed.type,
-      payload: sanitizePayload(parsed.payload)
+      payload,
+      turnId
     };
   });
 
@@ -57,6 +69,65 @@ export const readCodexSessionSnapshot = async (threadId: string): Promise<CodexS
   return readCodexSessionSnapshotFromFile(filePath);
 };
 
+export const readCodexSessionRecordsAfter = async (
+  threadId: string,
+  afterLine: number
+): Promise<CodexSessionRecordBatch | null> => {
+  const filePath = await findCodexSessionFile(threadId);
+  if (!filePath) return null;
+
+  const records: CodexSessionRecord[] = [];
+  let lineNumber = 0;
+  const reader = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity
+  });
+
+  let currentTurnId: string | undefined;
+  try {
+    for await (const line of reader) {
+      lineNumber += 1;
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as { timestamp?: string; type: string; payload: unknown };
+        const payload = sanitizePayload(parsed.payload);
+        const turnId = parsed.type === "turn_context" ? turnIdFromPayload(payload) : currentTurnId;
+        if (parsed.type === "turn_context") currentTurnId = turnId;
+        if (lineNumber <= afterLine) continue;
+        records.push({
+          line: lineNumber,
+          timestamp: parsed.timestamp,
+          type: parsed.type,
+          payload,
+          turnId
+        });
+      } catch {
+        // A partially written JSONL line will be retried on the next poll.
+        lineNumber -= 1;
+        break;
+      }
+    }
+  } finally {
+    reader.close();
+  }
+
+  return { path: filePath, records, lastLine: lineNumber };
+};
+
+const turnIdFromPayload = (payload: unknown) => {
+  const record = asRecord(payload);
+  return typeof record?.turn_id === "string" ? record.turn_id : undefined;
+};
+
+type CodexSessionListOptions = {
+  limit?: number;
+};
+
+type SessionFileInfo = {
+  path: string;
+  mtimeMs: number;
+};
+
 export const listCodexSessionFiles = async (): Promise<string[]> => {
   const root = path.join(os.homedir(), ".codex", "sessions");
   const files: string[] = [];
@@ -64,6 +135,21 @@ export const listCodexSessionFiles = async (): Promise<string[]> => {
     files.push(filePath);
   });
   return files.sort();
+};
+
+const listCodexSessionFileInfos = async (): Promise<SessionFileInfo[]> => {
+  const root = path.join(os.homedir(), ".codex", "sessions");
+  const files: SessionFileInfo[] = [];
+  await visitSessionFiles(root, async (filePath) => {
+    let mtimeMs = 0;
+    try {
+      mtimeMs = (await stat(filePath)).mtimeMs;
+    } catch {
+      // Keep unreadable files at the end; the summary reader will skip them.
+    }
+    files.push({ path: filePath, mtimeMs });
+  });
+  return files.sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path));
 };
 
 export const sessionThreadId = (snapshot: CodexSessionSnapshot): string | null => {
@@ -75,14 +161,54 @@ export const sessionThreadId = (snapshot: CodexSessionSnapshot): string | null =
   return null;
 };
 
-export const listCodexSessionsForCwd = async (workingDirectory: string): Promise<CodexSessionSummary[]> => {
-  const files = await listCodexSessionFiles();
-  const summaries = await mapWithConcurrency(files, 16, (filePath) => readSessionSummaryForCwd(filePath, workingDirectory));
+export const listCodexSessionsForCwd = async (
+  workingDirectory: string,
+  options: CodexSessionListOptions = {}
+): Promise<CodexSessionSummary[]> => {
+  const limit = normalizeLimit(options.limit);
+  const files = await listCodexSessionFileInfos();
+  const summaries = limit
+    ? await readRecentSessionSummariesForCwd(files, workingDirectory, limit)
+    : await mapWithConcurrency(files.map((file) => file.path), 16, (filePath) => readSessionSummaryForCwd(filePath, workingDirectory));
 
-  return summaries
+  const byThreadId = summaries
     .filter((summary): summary is CodexSessionSummary => Boolean(summary))
+    .reduce((map, summary) => {
+      const existing = map.get(summary.threadId);
+      if (!existing || Date.parse(summary.updatedAt) > Date.parse(existing.updatedAt)) {
+        map.set(summary.threadId, summary);
+      }
+      return map;
+    }, new Map<string, CodexSessionSummary>());
+
+  const sorted = [...byThreadId.values()]
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  return limit ? sorted.slice(0, limit) : sorted;
 };
+
+const readRecentSessionSummariesForCwd = async (
+  files: SessionFileInfo[],
+  workingDirectory: string,
+  limit: number
+) => {
+  const byThreadId = new Map<string, CodexSessionSummary>();
+  const batchSize = 16;
+  for (let index = 0; index < files.length && byThreadId.size < limit; index += batchSize) {
+    const batch = files.slice(index, index + batchSize);
+    const summaries = await Promise.all(batch.map((file) => readSessionSummaryForCwd(file.path, workingDirectory)));
+    for (const summary of summaries) {
+      if (!summary) continue;
+      const existing = byThreadId.get(summary.threadId);
+      if (!existing || Date.parse(summary.updatedAt) > Date.parse(existing.updatedAt)) {
+        byThreadId.set(summary.threadId, summary);
+      }
+    }
+  }
+  return [...byThreadId.values()];
+};
+
+const normalizeLimit = (value: number | undefined) =>
+  Number.isInteger(value) && value !== undefined && value > 0 ? value : undefined;
 
 export const summarizeCodexSession = async (
   snapshot: CodexSessionSnapshot,
@@ -276,14 +402,14 @@ const lastAssistantMessage = (snapshot: CodexSessionSnapshot): string => {
 
 const waitForSessionFile = async (threadId: string): Promise<string | null> => {
   for (let attempt = 0; attempt < 10; attempt++) {
-    const found = await findSessionFile(threadId);
+    const found = await findCodexSessionFile(threadId);
     if (found) return found;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return null;
 };
 
-const findSessionFile = async (threadId: string): Promise<string | null> => {
+export const findCodexSessionFile = async (threadId: string): Promise<string | null> => {
   const root = path.join(os.homedir(), ".codex", "sessions");
   const matches: string[] = [];
   await visitSessionFiles(root, (filePath) => {

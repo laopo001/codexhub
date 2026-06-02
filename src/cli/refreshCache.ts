@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { listLoadableCodexThreads } from "../core/codexpLog.js";
+import { listLoadableCodexThreads } from "../core/codexhubLog.js";
 
 const program = new Command()
   .option("--cwd <path>", "workspace whose Codex sessions should be indexed", process.cwd())

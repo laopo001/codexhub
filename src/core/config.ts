@@ -1,6 +1,5 @@
 import type {
   ApprovalMode,
-  CodexOptions,
   ModelReasoningEffort,
   SandboxMode,
   ThreadOptions,
@@ -15,24 +14,20 @@ const boolFromEnv = (value: string | undefined, fallback: boolean): boolean => {
 export type ProxyConfig = {
   host: string;
   port: number;
-  codexOptions: CodexOptions;
   defaultThreadOptions: ThreadOptions;
 };
 
-export const loadConfig = (): ProxyConfig => {
-  const codexOptions: CodexOptions = {
-    apiKey: process.env.CODEX_API_KEY,
-    baseUrl: process.env.CODEX_BASE_URL,
-    codexPathOverride: process.env.CODEX_PATH_OVERRIDE
-  };
+export type ProxyConfigOverrides = {
+  host?: string;
+  port?: number;
+};
 
+export const loadConfig = (overrides: ProxyConfigOverrides = {}): ProxyConfig => {
   return {
-    host: process.env.CODEX_PROXY_HOST ?? "127.0.0.1",
-    port: Number(process.env.CODEX_PROXY_PORT ?? 8788),
-    codexOptions,
+    host: overrides.host ?? process.env.CODEX_PROXY_HOST ?? "127.0.0.1",
+    port: overrides.port ?? parsePort(process.env.CODEX_PROXY_PORT ?? "8788"),
     defaultThreadOptions: {
       model: process.env.CODEX_MODEL,
-      workingDirectory: process.env.CODEX_WORKING_DIRECTORY ?? process.cwd(),
       skipGitRepoCheck: boolFromEnv(process.env.CODEX_SKIP_GIT_REPO_CHECK, true),
       sandboxMode: process.env.CODEX_SANDBOX_MODE as SandboxMode | undefined,
       approvalPolicy: process.env.CODEX_APPROVAL_POLICY as ApprovalMode | undefined,
@@ -41,4 +36,12 @@ export const loadConfig = (): ProxyConfig => {
       networkAccessEnabled: boolFromEnv(process.env.CODEX_NETWORK_ACCESS, true)
     }
   };
+};
+
+const parsePort = (value: string) => {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(`Invalid CODEX_PROXY_PORT: ${value}`);
+  }
+  return port;
 };

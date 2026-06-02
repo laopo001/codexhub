@@ -1,322 +1,472 @@
 import { Telegraf } from "telegraf";
-import { itemText } from "../core/events.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { CodexRecord } from "../core/codexRecord.js";
+import { recordToView, type CodexRecordView } from "../core/codexRecordView.js";
+import { loadDotEnv } from "../core/dotenv.js";
+import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../shared/compactRecordViews.js";
 
-type WorkspaceEntry = {
-  path: string;
-  name: string;
-  lastOpenedAt: string;
-};
-
-type ProxyThreadInstance = {
+type ThreadSummary = {
   threadId: string;
   workingDirectory: string;
+  runtime: ThreadRuntimeSummary;
+  status: ThreadStatus;
   running: boolean;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
+  codexUsage?: CodexUsageSnapshot;
+};
+
+type ThreadRuntimeSummary = {
+  workerId?: string;
+  name?: string;
+  online: boolean;
+  runnable: boolean;
+};
+
+type ThreadDetail = ThreadSummary & {
+  records: CodexRecord[];
+  lastSeq: number;
+};
+
+type WorkerTurnResponse = {
+  ok: boolean;
+  thread?: ThreadSummary;
+};
+
+type WorkerSummary = {
+  workerId: string;
+  name?: string;
+  workingDirectory: string;
+  online: boolean;
+  currentThreadId?: string;
+  currentThread?: ThreadSummary;
+  threads?: ThreadSummary[];
+  codexUsage?: CodexUsageSnapshot;
+};
+
+type ThreadStatus = "running" | "idle";
+
+type TurnInput = string | Array<
+  | { type: "text"; text: string }
+  | { type: "image"; url: string }
+>;
+
+type RateLimitWindow = {
+  used_percent: number;
+  window_minutes: number;
+  resets_at: number;
+};
+
+type CodexUsageSnapshot = {
+  rateLimits: {
+    primary?: RateLimitWindow | null;
+    secondary?: RateLimitWindow | null;
+  } | null;
+  source: "latest" | "thread";
 };
 
 type ChatState = {
-  workingDirectory?: string;
-  threadId?: string;
+  workerId?: string;
 };
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
-if (!token) {
-  console.error("TELEGRAM_BOT_TOKEN is required");
-  process.exit(1);
-}
+type ChatMirror = {
+  workerId: string;
+  controller: AbortController;
+  threadController?: AbortController;
+  threadId?: string;
+  knownRecordIds: Set<string>;
+  compactState: ReturnType<typeof createCompactRecordViewState>;
+  sentMessages: Map<string, { messageId: number; status: string }>;
+};
 
-const apiBaseUrl = process.env.CODEX_PROXY_API_URL ?? "http://127.0.0.1:8788";
-const allowedChatIds = new Set(
-  (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? "")
-    .split(",")
-    .map((value) => Number(value.trim()))
-    .filter(Number.isFinite)
-);
-const bot = new Telegraf(token);
+type WorkerStreamEvent = {
+  seq: number;
+  kind: "workers";
+  workers: WorkerSummary[];
+};
+
+export type TelegramBotOptions = {
+  token: string;
+  apiBaseUrl?: string;
+  allowedChatIds?: Set<number>;
+  logger?: Pick<Console, "error" | "log">;
+};
+
+export type TelegramBotHandle = {
+  apiBaseUrl: string;
+  stop: (reason?: string) => void;
+};
+
+let bot: Telegraf;
+let apiBaseUrl = "http://127.0.0.1:8788";
+let allowedChatIds = new Set<number>();
+let logger: Pick<Console, "error" | "log"> = console;
+let startedBot: TelegramBotHandle | null = null;
 const chatStates = new Map<number, ChatState>();
+const selectionOptions = new Map<string, ChatState>();
+const chatMirrors = new Map<number, ChatMirror>();
+let selectionSeq = 0;
 
 const botCommands = [
   { command: "start", description: "show help" },
-  { command: "status", description: "show current folder and thread" },
-  { command: "folders", description: "choose workspace folder" },
-  { command: "addfolder", description: "add and choose a folder" },
-  { command: "instances", description: "attach a Codex instance" },
-  { command: "new", description: "create a new instance draft" },
-  { command: "thread", description: "show current thread id" }
+  { command: "workers", description: "select a Codex worker" },
+  { command: "detach", description: "clear current worker selection" },
+  { command: "status", description: "show current worker" }
 ];
 
-bot.use(async (ctx, next) => {
-  const chatId = ctx.chat?.id;
-  if (allowedChatIds.size && chatId !== undefined && !allowedChatIds.has(chatId)) {
-    if (ctx.callbackQuery) await ctx.answerCbQuery("Unauthorized").catch(() => undefined);
-    return;
-  }
-  await next();
-});
-
-bot.start(async (ctx) => {
-  await ensureChatState(ctx.chat.id);
-  return ctx.reply([
-    "codex-proxy ready.",
-    "",
-    "/folders 选择文件夹",
-    "/instances attach 当前文件夹的 Codex 实例",
-    "/new 在当前文件夹创建新实例草稿",
-    "/status 查看当前状态",
-    "",
-    "直接发消息会发送给当前 Codex 实例。"
-  ].join("\n"));
-});
-
-bot.command("folders", async (ctx) => {
-  try {
-    const workspaces = await listWorkspaces();
-    if (!workspaces.length) {
-      await ctx.reply("没有可选文件夹。请先启动 API server，或使用 /addfolder <path> 添加。");
+const registerHandlers = () => {
+  bot.use(async (ctx, next) => {
+    const chatId = ctx.chat?.id;
+    if (allowedChatIds.size && chatId !== undefined && !allowedChatIds.has(chatId)) {
+      if (ctx.callbackQuery) await ctx.answerCbQuery("Unauthorized").catch(() => undefined);
       return;
     }
-    await ctx.reply("选择当前文件夹：", {
-      reply_markup: {
-        inline_keyboard: workspaces.map((workspace, index) => ([{
-          text: `${workspace.name}  ${workspace.path}`,
-          callback_data: `folder:${index}`
-        }]))
-      }
-    });
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-});
+    await next();
+  });
 
-bot.command("addfolder", async (ctx) => {
-  const workspacePath = ctx.message.text.replace(/^\/addfolder(@\w+)?\s*/, "").trim();
-  if (!workspacePath) {
-    await ctx.reply("用法：/addfolder /home/laop/projects/codex-proxy");
-    return;
-  }
-
-  try {
-    const workspaces = await addWorkspace(workspacePath);
-    const selected = workspaces[0];
-    if (!selected) throw new Error("Folder was added but API returned no workspace.");
-    chatStates.set(ctx.chat.id, { workingDirectory: selected.path });
-    await ctx.reply(`已选择文件夹：\n${selected.path}`);
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-});
-
-bot.command("instances", async (ctx) => {
-  try {
-    const state = await ensureChatState(ctx.chat.id);
-    const instances = (await listProxyInstances())
-      .filter((instance) => instance.workingDirectory === state.workingDirectory);
-
-    if (!instances.length) {
-      await ctx.reply(`当前文件夹没有可 attach 的 Codex 实例。\n${state.workingDirectory}`);
-      return;
-    }
-
-    await ctx.reply("选择要 attach 的 Codex 实例：", {
-      reply_markup: {
-        inline_keyboard: instances.map((instance) => ([{
-          text: `${shortThreadId(instance.threadId)}  ${instance.running ? "running" : "idle"}`,
-          callback_data: `attach:${instance.threadId}`
-        }]))
-      }
-    });
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-});
-
-bot.command("new", async (ctx) => {
-  const state = await ensureChatState(ctx.chat.id);
-  chatStates.set(ctx.chat.id, { workingDirectory: state.workingDirectory });
-  await ctx.reply(`已切换到新实例草稿。\n文件夹：${state.workingDirectory}\n下一条消息会创建 Codex 实例。`);
-});
-
-bot.command("thread", async (ctx) => {
-  const state = await ensureChatState(ctx.chat.id);
-  await ctx.reply(state.threadId ?? "(new)");
-});
-
-bot.command("status", async (ctx) => {
-  try {
-    const state = await ensureChatState(ctx.chat.id);
-    const instances = (await listProxyInstances())
-      .filter((instance) => instance.workingDirectory === state.workingDirectory);
-    await ctx.reply([
-      `文件夹：${state.workingDirectory}`,
-      `当前 thread：${state.threadId ?? "(new)"}`,
+  bot.start(async (ctx) => {
+    return ctx.reply([
+      "codexhub ready.",
       "",
-      instances.length
-        ? instances.map((instance) => `${shortThreadId(instance.threadId)} ${instance.running ? "running" : "idle"}`).join("\n")
-        : "当前文件夹没有 Codex 实例。"
+      "/workers 选择在线 Codex worker",
+      "/detach 取消当前 worker 绑定",
+      "/status 查看当前状态",
+      "",
+      "直接发消息会发送给当前 worker 指向的 Codex thread。新 thread 请在本地 codexhub 里开始。"
     ].join("\n"));
-  } catch (error) {
-    await ctx.reply(errorText(error));
-  }
-});
+  });
 
-bot.action(/^folder:(\d+)$/, async (ctx) => {
-  try {
-    const index = Number(ctx.match[1]);
-    const workspaces = await listWorkspaces();
-    const selected = workspaces[index];
-    if (!selected) throw new Error("Folder selection expired. Run /folders again.");
-    chatStates.set(ctx.chat!.id, { workingDirectory: selected.path });
-    await ctx.answerCbQuery("Folder selected");
-    await ctx.editMessageText(`已选择文件夹：\n${selected.path}`);
-  } catch (error) {
-    await ctx.answerCbQuery("Failed");
-    await ctx.reply(errorText(error));
-  }
-});
+  bot.command("workers", async (ctx) => {
+    try {
+      const workers = await listRunnableWorkers();
 
-bot.action(/^attach:(.+)$/, async (ctx) => {
-  try {
-    const threadId = ctx.match[1];
-    const state = await ensureChatState(ctx.chat!.id);
-    const instance = (await listProxyInstances()).find((item) =>
-      item.threadId === threadId && item.workingDirectory === state.workingDirectory
-    );
-    if (!instance) throw new Error("Instance no longer exists for current folder. Run /instances again.");
-    chatStates.set(ctx.chat!.id, {
-      workingDirectory: instance.workingDirectory,
-      threadId: instance.threadId
-    });
-    await ctx.answerCbQuery("Attached");
-    await ctx.editMessageText([
-      `已 attach：${shortThreadId(instance.threadId)} ${instance.running ? "running" : "idle"}`,
-      instance.workingDirectory
-    ].join("\n"));
-  } catch (error) {
-    await ctx.answerCbQuery("Failed");
-    await ctx.reply(errorText(error));
-  }
-});
-
-bot.on("text", async (ctx) => {
-  const prompt = ctx.message.text.trim();
-  if (!prompt || prompt.startsWith("/")) return;
-
-  const state = await ensureChatState(ctx.chat.id);
-  const statusMessage = await ctx.reply([
-    "Codex running...",
-    `folder: ${state.workingDirectory}`,
-    `thread: ${state.threadId ? shortThreadId(state.threadId) : "(new)"}`
-  ].join("\n"));
-  let finalResponse = "";
-  const progress: string[] = [];
-  let sentAgentMessage = false;
-  let sentItemCount = 0;
-
-  try {
-    for await (const event of streamTurn({
-      input: prompt,
-      threadId: state.threadId,
-      workingDirectory: state.workingDirectory,
-      skipGitRepoCheck: true
-    })) {
-      if (event.type === "thread" && typeof event.threadId === "string") {
-        state.threadId = event.threadId;
-        chatStates.set(ctx.chat.id, state);
-      } else if (event.type === "item") {
-        if (event.phase !== "completed") continue;
-        const text = itemText(event.item);
-        if (!text) continue;
-        progress.push(text);
-        if (event.item.type === "agent_message") sentAgentMessage = true;
-        sentItemCount += 1;
-        await ctx.reply(clampTelegram(formatItemMessage(event.item, text)));
-      } else if (event.type === "final") {
-        finalResponse = event.text;
-      } else if (event.type === "error") {
-        throw new Error(event.message);
+      if (!workers.length) {
+        await ctx.reply("当前没有带 current thread 的 Codex worker。请先在本地 codexhub 里打开或 resume 一个 thread。");
+        return;
       }
-    }
 
-    if (finalResponse && !sentAgentMessage) {
-      sentItemCount += 1;
-      await ctx.reply(clampTelegram(formatBlock("codex", finalResponse)));
+      await ctx.reply("选择在线 Codex worker：", {
+        reply_markup: {
+          inline_keyboard: workers.map((worker) => ([{
+            text: `${displayWorkerId(worker)}  ${worker.currentThread?.status ?? "idle"}  ${worker.currentThread ? displayThreadId(worker.currentThread) : "no thread"}  ${shortPath(worker.workingDirectory)}`,
+            callback_data: `select:${rememberSelection(ctx.chat.id, worker.workerId)}`
+          }]))
+        }
+      });
+    } catch (error) {
+      await ctx.reply(errorText(error));
     }
+  });
 
+  bot.command("detach", async (ctx) => {
+    const detached = detachWorker(ctx.chat.id);
+    await ctx.reply(detached
+      ? "已取消当前 worker 绑定。用 /workers 重新选择在线 worker。"
+      : "当前没有绑定 Codex worker。用 /workers 选择在线 worker。");
+  });
+
+  bot.command("status", async (ctx) => {
+    try {
+      const state = chatStates.get(ctx.chat.id);
+      const current = state ? await resolveSelectedWorker(state).catch(() => null) : null;
+      const workers = await listRunnableWorkers();
+      const usage = current?.currentThread?.codexUsage ?? current?.codexUsage ?? null;
+      await ctx.reply([
+        `当前 worker：${current ? displayWorkerId(current) : "(none)"}`,
+        `当前 thread：${current?.currentThread ? displayThreadId(current.currentThread) : "(none)"}`,
+        current ? `文件夹：${current.workingDirectory}` : null,
+        current?.currentThreadId ? `thread：${shortId(current.currentThreadId)}` : null,
+        current?.currentThread ? `runtime：${runtimeLabel(current.currentThread)}` : null,
+        `usage：${formatCodexUsage(usage)}`,
+        "",
+        workers.length
+          ? workers.map((worker) => `${displayWorkerId(worker)} ${worker.currentThread ? displayThreadId(worker.currentThread) : "no-thread"} ${worker.currentThread?.status ?? "idle"}`).join("\n")
+          : "当前没有带 current thread 的 Codex worker。"
+      ].filter(Boolean).join("\n"));
+    } catch (error) {
+      await ctx.reply(errorText(error));
+    }
+  });
+
+  bot.action(/^select:(.+)$/, async (ctx) => {
+    try {
+      const selection = selectionOptions.get(selectionKey(ctx.chat!.id, ctx.match[1]));
+      if (!selection?.workerId) throw new Error("Selection expired. Use /workers to choose again.");
+      const worker = await selectWorker(ctx.chat!.id, selection.workerId);
+      await ctx.answerCbQuery("Selected");
+      await ctx.editMessageText([
+        `已选择 worker：${displayWorkerId(worker)}`,
+        worker.currentThread ? `当前 thread：${displayThreadId(worker.currentThread)} ${worker.currentThread.status}` : "当前 thread：(none)",
+        worker.workingDirectory
+      ].join("\n"));
+    } catch (error) {
+      await ctx.answerCbQuery("Failed");
+      await ctx.reply(errorText(error));
+    }
+  });
+
+  bot.on("text", async (ctx) => {
+    const prompt = ctx.message.text.trim();
+    if (!prompt || prompt.startsWith("/")) return;
+    runPromptInBackground(ctx, prompt, []);
+  });
+
+  bot.on("photo", async (ctx) => {
+    const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
+    const photo = ctx.message.photo.at(-1);
+    if (!photo) return;
+    runPromptInBackground(ctx, prompt, [{ fileId: photo.file_id, filename: `${photo.file_id}.jpg` }]);
+  });
+
+  bot.on("document", async (ctx) => {
+    const document = ctx.message.document;
+    if (!document.mime_type?.startsWith("image/")) return;
+    const prompt = ctx.message.caption?.trim() || "请分析这张图片。";
+    runPromptInBackground(ctx, prompt, [{ fileId: document.file_id, filename: document.file_name ?? `${document.file_id}.png` }]);
+  });
+};
+
+const runPromptInBackground = (
+  ctx: any,
+  prompt: string,
+  images: Array<{ fileId: string; filename: string }>
+) => {
+  void runPrompt(ctx, prompt, images).catch((error) => {
+    logger.error("Unhandled background runPrompt error", error);
+  });
+};
+
+const runPrompt = async (
+  ctx: any,
+  prompt: string,
+  images: Array<{ fileId: string; filename: string }>
+) => {
+  const state = chatStates.get(ctx.chat.id);
+  const worker = state ? await resolveSelectedWorker(state).catch(() => null) : null;
+  if (!worker) {
+    await ctx.reply("当前没有选择 Codex worker。用 /workers 选择在线 worker。");
+    return;
+  }
+  if (!worker.online) {
+    await ctx.reply("当前 Codex worker 已离线。请用 /workers 重新选择。");
+    return;
+  }
+  if (!worker.currentThreadId) {
+    await ctx.reply("当前 worker 没有打开 thread。请先在本地 Codex 里开始或 resume 一个 thread。");
+    return;
+  }
+  const mirror = startChatMirror(ctx.chat.id, worker.workerId);
+  const statusMessage = await ctx.reply([
+    "Codex queued...",
+    `folder: ${worker.workingDirectory}`,
+    `thread: ${shortId(worker.currentThreadId)}`,
+    images.length ? `images: ${images.length}` : null
+  ].filter(Boolean).join("\n"));
+
+  try {
+    let input: TurnInput = prompt;
+    if (images.length) {
+      const imageUrls = await Promise.all(images.map((image) => telegramImageUrl(image.fileId)));
+      input = [
+        ...(prompt ? [{ type: "text" as const, text: prompt }] : []),
+        ...imageUrls.map((url) => ({ type: "image" as const, url }))
+      ];
+    }
+    const result = await postWorkerTurn(worker.workerId, input);
+    if (result.thread?.threadId && result.thread.threadId !== mirror.threadId) {
+      await switchMirrorThread(ctx.chat.id, mirror, result.thread.threadId);
+    }
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       statusMessage.message_id,
       undefined,
       [
-        "Codex completed.",
-        `thread: ${state.threadId ? shortThreadId(state.threadId) : "(new)"}`,
-        `messages: ${sentItemCount}`
+        "Codex queued.",
+        `thread: ${result.thread ? displayThreadId(result.thread) : shortId(worker.currentThreadId)}`,
+        "output: mirrored below"
       ].join("\n")
     );
   } catch (error) {
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      statusMessage.message_id,
-      undefined,
-      clampTelegram(errorText(error))
-    );
+    await ctx.telegram.editMessageText(ctx.chat.id, statusMessage.message_id, undefined, clampTelegram(errorText(error)));
   }
-});
-
-const ensureChatState = async (chatId: number): Promise<ChatState> => {
-  const existing = chatStates.get(chatId);
-  if (existing?.workingDirectory) return existing;
-
-  const workspaces = await listWorkspaces();
-  const first = workspaces[0];
-  if (!first) throw new Error("No workspace available. Start the API server first.");
-
-  const state: ChatState = { workingDirectory: first.path };
-  chatStates.set(chatId, state);
-  return state;
 };
 
-const listWorkspaces = async (): Promise<WorkspaceEntry[]> => {
-  const data = await apiJson<{ workspaces?: WorkspaceEntry[] }>("/api/workspaces");
-  return Array.isArray(data.workspaces) ? data.workspaces : [];
+const selectWorker = async (chatId: number, workerId: string) => {
+  const worker = await resolveWorker(workerId);
+  chatStates.set(chatId, { workerId: worker.workerId });
+  startChatMirror(chatId, worker.workerId);
+  return worker;
 };
 
-const addWorkspace = async (workspacePath: string): Promise<WorkspaceEntry[]> => {
-  const data = await apiJson<{ workspaces?: WorkspaceEntry[] }>("/api/workspaces", {
+const detachWorker = (chatId: number) => {
+  const hadState = chatStates.delete(chatId);
+  const hadMirror = stopChatMirror(chatId);
+  return hadState || hadMirror;
+};
+
+const listWorkers = async (): Promise<WorkerSummary[]> => {
+  const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
+  return normalizeWorkers(data.workers);
+};
+
+const listRunnableWorkers = async (): Promise<WorkerSummary[]> =>
+  (await listWorkers()).filter((worker) => worker.online && Boolean(worker.currentThreadId));
+
+const resolveWorker = async (workerId: string) => {
+  const worker = (await listWorkers()).find((item) => item.workerId === workerId);
+  if (!worker) throw new Error("Selected worker is no longer online. Use /workers to choose again.");
+  return worker;
+};
+
+const resolveSelectedWorker = async (state: ChatState) => {
+  if (!state.workerId) throw new Error("No selected worker.");
+  return resolveWorker(state.workerId);
+};
+
+const getThread = (threadId: string) => apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
+
+const postWorkerTurn = async (workerId: string, input: TurnInput) => {
+  const response = await fetch(apiUrl(`/api/workers/${encodeURIComponent(workerId)}/turn`), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: workspacePath })
+    body: JSON.stringify({ input, source: "telegram" })
   });
-  return Array.isArray(data.workspaces) ? data.workspaces : [];
+  if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
+  return await response.json() as WorkerTurnResponse;
 };
 
-const listProxyInstances = async (): Promise<ProxyThreadInstance[]> => {
-  const data = await apiJson<{ instances?: ProxyThreadInstance[] }>("/api/proxy/instances");
-  return Array.isArray(data.instances) ? data.instances : [];
+const telegramImageUrl = async (fileId: string) => {
+  const link = await bot.telegram.getFileLink(fileId);
+  return link.toString();
 };
 
-const streamTurn = async function* (payload: Record<string, unknown>): AsyncGenerator<any> {
-  const response = await fetch(apiUrl("/api/turn/stream"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+const startChatMirror = (chatId: number, workerId: string) => {
+  const existing = chatMirrors.get(chatId);
+  if (existing?.workerId === workerId && !existing.controller.signal.aborted) return existing;
+  stopChatMirror(chatId);
 
+  const mirror: ChatMirror = {
+    workerId,
+    controller: new AbortController(),
+    knownRecordIds: new Set(),
+    compactState: createCompactRecordViewState(),
+    sentMessages: new Map()
+  };
+  chatMirrors.set(chatId, mirror);
+  void runWorkerMirror(chatId, mirror).catch((error) => {
+    if (!isAbortError(error)) logger.error("telegram worker mirror failed", error);
+  });
+  return mirror;
+};
+
+const stopChatMirror = (chatId: number) => {
+  const mirror = chatMirrors.get(chatId);
+  if (!mirror) return false;
+  mirror.controller.abort();
+  mirror.threadController?.abort();
+  chatMirrors.delete(chatId);
+  return true;
+};
+
+const runWorkerMirror = async (chatId: number, mirror: ChatMirror) => {
+  const stream = await openWorkerEventStream(0, mirror.controller.signal);
+  for await (const event of stream) {
+    if (mirror.controller.signal.aborted) return;
+    const worker = event.workers.find((item) => item.workerId === mirror.workerId && item.online);
+    if (!worker) {
+      await bot.telegram.sendMessage(chatId, "当前 Codex worker 已离线。请用 /workers 重新选择。").catch(() => undefined);
+      chatMirrors.delete(chatId);
+      mirror.controller.abort();
+      return;
+    }
+    if (worker.currentThreadId && worker.currentThreadId !== mirror.threadId) {
+      await switchMirrorThread(chatId, mirror, worker.currentThreadId);
+    }
+  }
+};
+
+const switchMirrorThread = async (chatId: number, mirror: ChatMirror, threadId: string) => {
+  mirror.threadController?.abort();
+  const threadController = new AbortController();
+  mirror.threadController = threadController;
+  mirror.threadId = threadId;
+  mirror.compactState = createCompactRecordViewState();
+  mirror.sentMessages.clear();
+
+  const thread = await getThread(threadId);
+  mirror.knownRecordIds = new Set(thread.records.map((record) => record.id));
+  const stream = await openThreadEventStream(thread.threadId, thread.lastSeq, threadController.signal);
+  void (async () => {
+    try {
+      for await (const event of stream) {
+        if (threadController.signal.aborted || mirror.controller.signal.aborted) return;
+        if (event.kind === "record" && event.record) await forwardRecordToChat(chatId, mirror, event.record);
+      }
+    } catch (error) {
+      if (!isAbortError(error)) logger.error("telegram thread mirror failed", error);
+    }
+  })();
+};
+
+const forwardRecordToChat = async (chatId: number, mirror: ChatMirror, record: CodexRecord) => {
+  if (mirror.knownRecordIds.has(record.id)) return false;
+  mirror.knownRecordIds.add(record.id);
+
+  const view = recordToView(record);
+  if (!view) return false;
+  const change = compactRecordView(mirror.compactState, view);
+  if (!shouldForwardView(change.view, mirror.sentMessages)) return false;
+
+  const text = clampTelegram(formatBlock(change.view.label ?? change.view.role, change.view.text, change.view.status));
+  const existing = mirror.sentMessages.get(change.previousId ?? change.view.id);
+  if (!change.appended && existing) {
+    await bot.telegram.editMessageText(chatId, existing.messageId, undefined, text);
+    mirror.sentMessages.delete(change.previousId ?? change.view.id);
+    mirror.sentMessages.set(change.view.id, { messageId: existing.messageId, status: change.view.status ?? "final" });
+    return false;
+  }
+
+  const message = await bot.telegram.sendMessage(chatId, text);
+  mirror.sentMessages.set(change.view.id, { messageId: message.message_id, status: change.view.status ?? "final" });
+  return true;
+};
+
+const openWorkerEventStream = async (after: number, signal?: AbortSignal): Promise<AsyncGenerator<WorkerStreamEvent>> => {
+  const response = await fetch(apiUrl(`/api/workers/events?after=${after}`), { signal });
   if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
 
-  const reader = response.body.getReader();
+  return streamSseEvents<WorkerStreamEvent>(response.body.getReader());
+};
+
+const openThreadEventStream = async (threadId: string, after: number, signal?: AbortSignal): Promise<AsyncGenerator<any>> => {
+  const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`), { signal });
+  if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
+
+  return streamSseEvents(response.body.getReader());
+};
+
+const streamSseEvents = async function* <T>(reader: ReadableStreamDefaultReader<Uint8Array>): AsyncGenerator<T> {
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split("\n\n");
-    buffer = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
-      if (!dataLine) continue;
-      yield JSON.parse(dataLine.slice(6));
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+      for (const chunk of chunks) {
+        const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+        if (!dataLine) continue;
+        yield JSON.parse(dataLine.slice(6)) as T;
+      }
     }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 };
 
@@ -327,34 +477,137 @@ const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
-
-const shortThreadId = (threadId: string) => threadId.slice(0, 8);
-
-const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-
-const formatItemMessage = (item: any, text: string) => formatBlock(itemMessageLabel(item), text);
-
-const itemMessageLabel = (item: any): string => {
-  if (item.type === "agent_message") return "codex";
-  if (item.type === "reasoning") return "thinking";
-  if (item.type === "command_execution") return "command";
-  if (item.type === "mcp_tool_call") return `${item.server}.${item.tool}`;
-  if (item.type === "web_search") return "web search";
-  if (item.type === "file_change") return "file change";
-  if (item.type === "todo_list") return "plan";
-  return item.type ?? "event";
+const shortId = (id: string) => id.slice(0, 8);
+const selectionKey = (chatId: number, token: string) => `${chatId}:${token}`;
+const rememberSelection = (chatId: number, workerId: string) => {
+  const token = (++selectionSeq).toString(36);
+  selectionOptions.set(selectionKey(chatId, token), { workerId });
+  return token;
 };
+const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
+  Array.isArray(workers) ? workers.filter((worker) => worker.online) : [];
+const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
+const displayWorkerId = (worker: Pick<WorkerSummary, "workerId" | "name">) => worker.name ?? shortId(worker.workerId);
+const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+const isAbortError = (error: unknown) => error instanceof Error && error.name === "AbortError";
+const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
+  const state = thread.runtime.runnable ? "runnable" : "unavailable";
+  const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? shortId(thread.runtime.workerId)}` : "";
+  return `${state}${worker}`;
+};
+const shortPath = (value: string) => {
+  const home = process.env.HOME;
+  if (home && value.startsWith(`${home}/`)) return `~/${value.slice(home.length + 1)}`;
+  return value;
+};
+const formatCodexUsage = (usage: CodexUsageSnapshot | null) => [
+  `5h ${formatRateLimitRemaining(usage?.rateLimits?.primary)}`,
+  `weekly ${formatRateLimitRemaining(usage?.rateLimits?.secondary)}`,
+  usage ? `source ${usage.source}` : null
+].filter(Boolean).join(" · ");
+const formatRateLimitRemaining = (window: RateLimitWindow | null | undefined) => {
+  if (!window) return "--";
+  return formatPercent(100 - window.used_percent);
+};
+const formatPercent = (value: number) => {
+  if (!Number.isFinite(value)) return "--";
+  const normalized = Math.max(0, Math.min(100, value));
+  return `${Number.isInteger(normalized) ? normalized : normalized.toFixed(1)}%`;
+};
+const formatBlock = (label: string, text: string, status?: CodexRecordView["status"]) =>
+  `[${[label, status].filter(Boolean).join(" · ")}]\n${text}`;
 
-const formatBlock = (label: string, text: string) => `[${label}]\n${text}`;
+const shouldForwardView = (view: CompactRecordView, sentMessages: Map<string, { status: string }>) => {
+  if (view.role === "user") return false;
+  const status = view.status ?? "final";
+  const previousStatus = sentMessages.get(view.id)?.status;
+  if (view.role !== "tool") {
+    if (previousStatus) return false;
+    return true;
+  }
+
+  if (status === "pending") {
+    if (previousStatus) return false;
+    return true;
+  }
+
+  if (previousStatus === status) return false;
+  return true;
+};
 
 const clampTelegram = (text: string) => {
   if (text.length <= 3900) return text;
   return `${text.slice(0, 3900)}\n\n[truncated]`;
 };
 
-await bot.telegram.setMyCommands(botCommands);
-await bot.launch();
-console.log(`codex-proxy telegram bot started, api=${apiBaseUrl}`);
+export const parseAllowedChatIds = (value: string | undefined) => new Set(
+  (value ?? "")
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter(Number.isFinite)
+);
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+export const startTelegramBot = async (options: TelegramBotOptions): Promise<TelegramBotHandle> => {
+  if (startedBot) return startedBot;
+  const currentBot = new Telegraf(options.token);
+  bot = currentBot;
+  apiBaseUrl = options.apiBaseUrl ?? "http://127.0.0.1:8788";
+  allowedChatIds = options.allowedChatIds ?? new Set<number>();
+  logger = options.logger ?? console;
+  chatStates.clear();
+  selectionOptions.clear();
+  for (const mirror of chatMirrors.values()) mirror.controller.abort();
+  chatMirrors.clear();
+  selectionSeq = 0;
+  registerHandlers();
+
+  await bot.telegram.setMyCommands(botCommands);
+  startedBot = {
+    apiBaseUrl,
+    stop: (reason = "shutdown") => {
+      currentBot.stop(reason);
+      if (bot === currentBot) startedBot = null;
+    }
+  };
+  void currentBot.launch()
+    .then(() => {
+      if (bot === currentBot) startedBot = null;
+    })
+    .catch((error: unknown) => {
+      if (bot === currentBot) startedBot = null;
+      logger.error("codexhub telegram bot stopped", error);
+    });
+  logger.log(`codexhub telegram bot started, api=${apiBaseUrl}`);
+  return startedBot;
+};
+
+export const startTelegramBotFromEnv = async (options: {
+  apiBaseUrl?: string;
+  requireToken?: boolean;
+  logger?: Pick<Console, "error" | "log">;
+} = {}): Promise<TelegramBotHandle | null> => {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const requireToken = options.requireToken ?? true;
+  if (!token) {
+    if (requireToken) throw new Error("TELEGRAM_BOT_TOKEN is required");
+    return null;
+  }
+  return startTelegramBot({
+    token,
+    apiBaseUrl: process.env.CODEX_PROXY_SERVER_URL ?? options.apiBaseUrl,
+    allowedChatIds: parseAllowedChatIds(process.env.TELEGRAM_ALLOWED_CHAT_IDS),
+    logger: options.logger
+  });
+};
+
+const isCliEntrypoint = () => {
+  const entrypoint = process.argv[1];
+  return Boolean(entrypoint && path.resolve(entrypoint) === fileURLToPath(import.meta.url));
+};
+
+if (isCliEntrypoint()) {
+  await loadDotEnv();
+  const handle = await startTelegramBotFromEnv();
+  process.once("SIGINT", () => handle?.stop("SIGINT"));
+  process.once("SIGTERM", () => handle?.stop("SIGTERM"));
+}
