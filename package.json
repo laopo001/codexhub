@@ -1,6 +1,6 @@
 {
   "name": "@dadigua/codexhub",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Worker-first local control plane for Codex.",
   "type": "module",
   "repository": {
