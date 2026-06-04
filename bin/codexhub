@@ -1,2 +1,2 @@
-#!/usr/bin/env tsx
-import "../src/cli/codexhub.ts";
+#!/usr/bin/env node
+import "../dist-node/cli/codexhub.js";

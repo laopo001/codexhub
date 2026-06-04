@@ -1,6 +1,6 @@
 {
   "name": "@dadigua/codexhub",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Worker-first local control plane for Codex.",
   "type": "module",
   "repository": {
@@ -15,6 +15,7 @@
     "bin",
     "src",
     "dist",
+    "dist-node",
     "index.html",
     "README.md",
     "AGENTS.md"
@@ -30,7 +31,7 @@
     "cxh": "tsx src/cli/codexhub.ts",
     "cache:refresh": "tsx src/cli/refreshCache.ts",
     "check": "tsc --noEmit",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc -p tsconfig.node.json && vite build",
     "prepack": "pnpm build",
     "publish:prod": "bash scripts/publish-prod.sh"
   },
