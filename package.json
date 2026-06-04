@@ -1,7 +1,16 @@
 {
   "name": "@dadigua/codexhub",
   "version": "0.3.0",
+  "description": "Worker-first local control plane for Codex.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/laopo001/codexhub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/laopo001/codexhub/issues"
+  },
+  "homepage": "https://github.com/laopo001/codexhub#readme",
   "files": [
     "bin",
     "src",

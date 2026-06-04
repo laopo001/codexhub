@@ -1,0 +1,75 @@
+name: Publish to npm
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'laopo001/codexhub'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check
+        run: pnpm check
+
+      - name: Build
+        run: pnpm build
+
+      - name: Read package metadata
+        id: package
+        run: |
+          node -e "const pkg = require('./package.json'); console.log('name=' + pkg.name); console.log('version=' + pkg.version)" >> "$GITHUB_OUTPUT"
+
+      - name: Check npm version
+        id: npm
+        run: |
+          package="${{ steps.package.outputs.name }}@${{ steps.package.outputs.version }}"
+          if npm view "$package" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$package already exists on npm; skipping publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pack dry run
+        if: steps.npm.outputs.exists != 'true'
+        run: npm pack --dry-run
+
+      - name: Publish
+        if: steps.npm.outputs.exists != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Missing NPM_TOKEN repository secret."
+            exit 1
+          fi
+          npm publish --access public --provenance
