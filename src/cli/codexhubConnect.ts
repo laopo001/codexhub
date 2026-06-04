@@ -383,6 +383,7 @@ class ProxyBridgeRunner {
 class CodexAppServerBridge {
   private readonly pending = new Map<string | number, PendingRequest>();
   private readonly syncedThreads = new Map<string, SyncedThread>();
+  private readonly loadedThreads = new Set<string>();
   private nextId = 1;
   private cursor = 0;
   private closed = false;
@@ -425,7 +426,11 @@ class CodexAppServerBridge {
   }
 
   async ensureCurrentThread() {
-    if (this.currentThreadId) return this.currentThreadId;
+    if (this.currentThreadId) {
+      const threadId = await this.ensureThreadLoaded(this.currentThreadId, this.options.cwd, this.options.model);
+      await this.forwardCurrentThreadChanged(threadId);
+      return threadId;
+    }
     const result = asRecord(await this.request("thread/start", {
       cwd: this.options.cwd,
       ...(this.options.model === undefined ? {} : { model: this.options.model }),
@@ -436,21 +441,13 @@ class CodexAppServerBridge {
     const threadId = typeof thread?.id === "string" ? thread.id : undefined;
     if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
     this.bindThread(threadId);
+    this.markThreadLoaded(threadId);
     await this.forwardCurrentThreadChanged(threadId);
     return threadId;
   }
 
   async ensureThreadCurrent(threadId: string) {
-    if (this.currentThreadId === threadId) return threadId;
-    const result = asRecord(await this.request("thread/resume", {
-      threadId,
-      cwd: this.options.cwd,
-      ...(this.options.model === undefined ? {} : { model: this.options.model }),
-      ...runtimePermissionParams(this.options)
-    }, { threadId }));
-    const thread = asRecord(result?.thread);
-    const currentThreadId = typeof thread?.id === "string" ? thread.id : threadId;
-    this.bindThread(currentThreadId);
+    const currentThreadId = await this.ensureThreadLoaded(threadId, this.options.cwd, this.options.model, { threadId });
     await this.forwardCurrentThreadChanged(currentThreadId);
     return currentThreadId;
   }
@@ -516,6 +513,9 @@ class CodexAppServerBridge {
   private async handleCommand(command: WorkerCommand) {
     if (command.type === "stop") {
       if (command.threadId && command.turnId) {
+        await this.ensureThreadLoaded(command.threadId, command.workingDirectory, commandModel(command.options, this.options.model), undefined, {
+          markBridgeStarted: true
+        });
         await this.request("turn/interrupt", {
           threadId: command.threadId,
           turnId: command.turnId
@@ -527,6 +527,9 @@ class CodexAppServerBridge {
     if (command.type === "fork_thread") {
       if (!command.threadId) throw new Error("fork_thread command requires threadId");
       const model = commandModel(command.options, this.options.model);
+      await this.ensureThreadLoaded(command.threadId, command.workingDirectory, model, undefined, {
+        markBridgeStarted: true
+      });
       this.markBridgeStartedUnknownThread();
       const result = asRecord(await this.request("thread/fork", {
         threadId: command.threadId,
@@ -539,12 +542,16 @@ class CodexAppServerBridge {
       const threadId = typeof thread?.id === "string" ? thread.id : undefined;
       if (!threadId) throw new Error("Codex app-server thread/fork did not return thread.id");
       this.bindThread(threadId);
+      this.markThreadLoaded(threadId);
       return;
     }
 
     if (command.type === "rollback_thread") {
       if (!command.threadId) throw new Error("rollback_thread command requires threadId");
       if (!command.numTurns || command.numTurns < 1) throw new Error("rollback_thread command requires numTurns >= 1");
+      await this.ensureThreadLoaded(command.threadId, command.workingDirectory, commandModel(command.options, this.options.model), undefined, {
+        markBridgeStarted: true
+      });
       await this.request("thread/rollback", {
         threadId: command.threadId,
         numTurns: command.numTurns
@@ -556,20 +563,13 @@ class CodexAppServerBridge {
 
     if (!command.input || !command.threadId) return;
     const threadId = command.threadId;
-    if (!this.syncedThreads.has(threadId)) {
-      const model = commandModel(command.options, this.options.model);
-      this.markBridgeStartedThread(threadId);
-      await this.request("thread/resume", {
-        threadId,
-        cwd: command.workingDirectory,
-        ...(model === undefined ? {} : { model }),
-        ...runtimePermissionParams(this.options)
-      }, command);
-      this.bindThread(threadId);
-    }
-    this.markBridgeStartedThread(threadId);
+    const model = commandModel(command.options, this.options.model);
+    const loadedThreadId = await this.ensureThreadLoaded(threadId, command.workingDirectory, model, command, {
+      markBridgeStarted: true
+    });
+    this.markBridgeStartedThread(loadedThreadId);
     await this.request("turn/start", {
-      threadId,
+      threadId: loadedThreadId,
       input: toAppServerInput(command.input),
       ...turnRuntimeParams(command.options)
     }, command);
@@ -609,7 +609,10 @@ class CodexAppServerBridge {
         if (!error) await this.forwardExecutionStateFromMessage(threadId, message);
       }
       if (error) pending.reject(new Error(JSON.stringify(error)));
-      else pending.resolve(message.result);
+      else {
+        this.rememberLoadedThread(pending, message);
+        pending.resolve(message.result);
+      }
       return;
     }
 
@@ -631,6 +634,12 @@ class CodexAppServerBridge {
     if (typeof resultThread?.id === "string") this.bindThread(resultThread.id);
   }
 
+  private rememberLoadedThread(pending: PendingRequest, message: JsonRecord) {
+    if (pending.method !== "thread/start" && pending.method !== "thread/resume" && pending.method !== "thread/fork") return;
+    const threadId = resultThreadIdForMessage(message) ?? pending.threadId;
+    if (threadId) this.markThreadLoaded(threadId);
+  }
+
   private threadIdForMessage(message: JsonRecord) {
     const threadId = threadIdForMessage(message);
     if (!threadId) return undefined;
@@ -642,6 +651,32 @@ class CodexAppServerBridge {
     if (!this.syncedThreads.has(threadId)) {
       this.syncedThreads.set(threadId, {});
     }
+  }
+
+  private markThreadLoaded(threadId: string) {
+    this.bindThread(threadId);
+    this.loadedThreads.add(threadId);
+  }
+
+  private async ensureThreadLoaded(
+    threadId: string,
+    cwd: string,
+    model?: string | null,
+    command?: { threadId?: string; commandId?: string },
+    options: { markBridgeStarted?: boolean } = {}
+  ) {
+    if (this.loadedThreads.has(threadId)) return threadId;
+    if (options.markBridgeStarted) this.markBridgeStartedThread(threadId);
+    const result = asRecord(await this.request("thread/resume", {
+      threadId,
+      cwd,
+      ...(model === undefined ? {} : { model }),
+      ...runtimePermissionParams(this.options)
+    }, command));
+    const thread = asRecord(result?.thread);
+    const loadedThreadId = typeof thread?.id === "string" ? thread.id : threadId;
+    this.markThreadLoaded(loadedThreadId);
+    return loadedThreadId;
   }
 
   private resetJsonlCursor(threadId: string, keepTurns?: number) {
@@ -747,6 +782,7 @@ class CodexAppServerBridge {
   private async forwardStateEventsFromMessage(threadId: string, message: JsonRecord) {
     const method = typeof message.method === "string" ? message.method : "";
     if (method === "thread/started") {
+      this.markThreadLoaded(threadId);
       if (this.bridgeStartedThreads.has(threadId)) {
         this.bridgeStartedThreads.delete(threadId);
       } else if (this.bridgeStartedUnknownCount > 0) {
