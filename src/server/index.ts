@@ -311,7 +311,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         if (parsed.type === "register") {
           const result = threads.registerWorker({ ...parsed.registration, transportId });
           workerId = result.workerId;
-          commandCursor = parsed.commandCursor ?? 0;
+          commandCursor = threads.clampWorkerCommandCursor(workerId, parsed.commandCursor ?? 0);
           send({ type: "registered", workerId, worker: result.worker });
           startCommandPump();
           return;

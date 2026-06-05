@@ -389,6 +389,7 @@ class ProxyBridgeRunner {
   private setTransportState(state: "connecting" | "online" | "offline", message: string) {
     this.options.statusBar?.setProxyState(state);
     if (state === "connecting") return;
+    if (state === "online") this.bridge?.resetServerMirrorState();
     this.logState(state, message);
   }
 
@@ -866,6 +867,13 @@ class CodexAppServerBridge {
     state.jsonlLine = 0;
     state.jsonlReplayKeepTurns = keepTurns;
     this.syncedThreads.set(threadId, state);
+  }
+
+  resetServerMirrorState() {
+    const threadIds = new Set(this.syncedThreads.keys());
+    if (this.currentThreadId) threadIds.add(this.currentThreadId);
+    for (const threadId of threadIds) this.resetJsonlCursor(threadId);
+    this.forwardedRuntimeSettings.clear();
   }
 
   private async syncJsonlRecords(threadId: string, state: SyncedThread) {

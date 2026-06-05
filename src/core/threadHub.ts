@@ -334,6 +334,12 @@ export class ThreadHub {
     };
   }
 
+  clampWorkerCommandCursor(workerId: string, requestedCursor: number) {
+    const worker = this.workers.get(workerId);
+    const maxCursor = worker?.commands.at(-1)?.seq ?? 0;
+    return Math.min(requestedCursor, maxCursor);
+  }
+
   applyWorkerEvent(workerId: string, input: WorkerEventInput) {
     if (input.heartbeat !== false) this.heartbeatWorker(workerId);
     const worker = this.requireWorker(workerId);
@@ -973,7 +979,8 @@ export class ThreadHub {
       if (recordsEqual(thread.records[existingIndex], record)) return;
       thread.records[existingIndex] = record;
     }
-    thread.updatedAt = record.timestamp ?? new Date().toISOString();
+    sortThreadRecords(thread.records);
+    thread.updatedAt = latestRecordTimestamp(thread.records) ?? record.timestamp ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
     this.publish(thread, "record", record);
@@ -1169,6 +1176,40 @@ const latestUsage = (records: CodexRecord[]) => {
     if (views[i].usage) return views[i].usage;
   }
   return undefined;
+};
+
+const sortThreadRecords = (records: CodexRecord[]) => {
+  records.sort((left, right) => compareThreadRecords(left, right));
+};
+
+const latestRecordTimestamp = (records: CodexRecord[]) => {
+  let latest: { timestamp: string; time: number } | undefined;
+  let fallback: string | undefined;
+  for (const record of records) {
+    const timestamp = record.timestamp;
+    if (!timestamp) continue;
+    fallback = timestamp;
+    const time = Date.parse(timestamp);
+    if (Number.isFinite(time) && (!latest || time > latest.time)) {
+      latest = { timestamp, time };
+    }
+  }
+  return latest?.timestamp ?? fallback;
+};
+
+const compareThreadRecords = (left: CodexRecord, right: CodexRecord) => {
+  if (typeof left.line === "number" && typeof right.line === "number" && left.line !== right.line) {
+    return left.line - right.line;
+  }
+  if (typeof left.line === "number" && typeof right.line !== "number") return -1;
+  if (typeof left.line !== "number" && typeof right.line === "number") return 1;
+
+  const leftTime = Date.parse(left.timestamp ?? "");
+  const rightTime = Date.parse(right.timestamp ?? "");
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+    return leftTime - rightTime;
+  }
+  return left.id.localeCompare(right.id);
 };
 
 const recordsEqual = (left: CodexRecord, right: CodexRecord) =>
