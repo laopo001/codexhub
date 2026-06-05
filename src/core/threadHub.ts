@@ -57,7 +57,10 @@ export type WorkerRegistration = {
   currentThreadId?: string;
   codexUsage?: CodexUsageSnapshot;
   threadCodexUsage?: Record<string, CodexUsageSnapshot>;
+  transportId?: string;
 };
+
+export type WorkerOfflineReason = "heartbeat_timeout" | "transport_disconnected" | "unregistered";
 
 export type WorkerSummary = {
   workerId: string;
@@ -65,7 +68,10 @@ export type WorkerSummary = {
   workingDirectory: string;
   appServerUrl?: string;
   online: boolean;
+  status: "online" | "offline";
   lastSeenAt: string;
+  offlineSinceAt?: string;
+  offlineReason?: WorkerOfflineReason;
   pid?: number;
   hostname?: string;
   currentThreadId?: string;
@@ -129,6 +135,7 @@ export type WorkerRecordsInput = {
 };
 
 type RuntimeWorker = WorkerSummary & {
+  transportId?: string;
   commands: WorkerCommand[];
   waiters: Set<WorkerWaiter>;
 };
@@ -177,7 +184,6 @@ export class ThreadHub {
     const workerId = registration.workerId?.trim() || randomUUID();
     const existing = this.workers.get(workerId);
     if (existing) {
-      this.rejectPendingWorkerCommands(existing, new Error(`Worker reconnected: ${workerId}`));
       for (const waiter of [...existing.waiters]) waiter();
     }
     const worker: RuntimeWorker = {
@@ -186,13 +192,15 @@ export class ThreadHub {
       workingDirectory: registration.workingDirectory,
       appServerUrl: registration.appServerUrl,
       online: true,
+      status: "online",
       lastSeenAt: now,
       pid: registration.pid,
       hostname: registration.hostname,
       currentThreadId: registration.currentThreadId,
       codexUsage: registration.codexUsage,
       threads: [],
-      commands: [],
+      transportId: registration.transportId,
+      commands: existing?.commands ?? [],
       waiters: existing?.waiters ?? new Set()
     };
     this.applyThreadCodexUsage(registration.threadCodexUsage);
@@ -225,7 +233,10 @@ export class ThreadHub {
     worker.codexUsage = registration.codexUsage ?? worker.codexUsage;
     const changedUsageThreadIds = this.applyThreadCodexUsage(registration.threadCodexUsage);
     worker.online = true;
+    worker.status = "online";
     worker.lastSeenAt = now;
+    delete worker.offlineSinceAt;
+    delete worker.offlineReason;
     if (previousState !== this.workerVisibleState(worker) || changedUsageThreadIds.length) {
       for (const thread of this.threads.values()) {
         if (thread.workerId === workerId || changedUsageThreadIds.includes(thread.threadId)) this.publish(thread, "thread");
@@ -235,28 +246,58 @@ export class ThreadHub {
     return { ok: true, workerId };
   }
 
-  unregisterWorker(workerId: string) {
+  unregisterWorker(workerId: string, transportId?: string) {
     const worker = this.workers.get(workerId);
     if (!worker) return { ok: false };
-    this.markWorkerOffline(worker, `Worker unregistered: ${workerId}`);
+    if (transportId && worker.transportId && worker.transportId !== transportId) return { ok: true, workerId };
+    this.removeWorker(worker, `Worker unregistered: ${workerId}`, "unregistered");
     return { ok: true, workerId };
   }
 
-  markStaleWorkersOffline(timeoutMs: number, now = Date.now()) {
-    let offline = 0;
-    for (const worker of this.workers.values()) {
-      if (!worker.online) continue;
-      const lastSeenAt = Date.parse(worker.lastSeenAt);
-      if (Number.isFinite(lastSeenAt) && now - lastSeenAt <= timeoutMs) continue;
-      this.markWorkerOffline(worker, `Worker heartbeat timed out: ${worker.workerId}`);
-      offline += 1;
+  disconnectWorker(workerId: string, transportId?: string) {
+    const worker = this.workers.get(workerId);
+    if (!worker) return { ok: false };
+    if (transportId && worker.transportId && worker.transportId !== transportId) return { ok: true, workerId };
+    this.markWorkerOffline(worker, `Worker transport disconnected: ${workerId}`, "transport_disconnected");
+    return { ok: true, workerId };
+  }
+
+  failWorkerCommand(workerId: string, commandId: string, message: string) {
+    const worker = this.workers.get(workerId);
+    if (!worker) return { ok: false };
+    const pending = this.pendingCommands.get(commandId);
+    const error = new Error(message || `Worker command failed: ${commandId}`);
+    if (pending?.threadId && this.activeTurnCommands.get(pending.threadId) === commandId) {
+      this.finishWorkerTurnByThread(pending.threadId, error);
+    } else {
+      this.rejectCommand(commandId, error);
     }
-    return { offline };
+    return { ok: true, workerId, commandId };
+  }
+
+  markStaleWorkersOffline(timeoutMs: number, now = Date.now(), offlineRetentionMs = Number.POSITIVE_INFINITY) {
+    let offline = 0;
+    let removed = 0;
+    for (const worker of this.workers.values()) {
+      if (worker.online) {
+        const lastSeenAt = Date.parse(worker.lastSeenAt);
+        if (Number.isFinite(lastSeenAt) && now - lastSeenAt <= timeoutMs) continue;
+        this.markWorkerOffline(worker, `Worker heartbeat timed out: ${worker.workerId}`, "heartbeat_timeout", now);
+        offline += 1;
+        continue;
+      }
+
+      const offlineSinceAt = Date.parse(worker.offlineSinceAt ?? worker.lastSeenAt);
+      if (!Number.isFinite(offlineSinceAt) || now - offlineSinceAt < offlineRetentionMs) continue;
+      this.removeWorker(worker, `Worker offline retention expired: ${worker.workerId}`, worker.offlineReason ?? "heartbeat_timeout", now);
+      removed += 1;
+    }
+    return { offline, removed };
   }
 
   listWorkers(options: { includeOffline?: boolean } = {}): WorkerSummary[] {
     return [...this.workers.values()]
-      .filter((worker) => options.includeOffline || worker.online)
+      .filter((worker) => options.includeOffline || worker.online || Boolean(worker.offlineSinceAt))
       .map((worker) => this.workerSummary(worker));
   }
 
@@ -639,10 +680,18 @@ export class ThreadHub {
     pending.reject(error);
   }
 
-  private markWorkerOffline(worker: RuntimeWorker, message: string) {
+  private markWorkerOffline(
+    worker: RuntimeWorker,
+    message: string,
+    reason: WorkerOfflineReason,
+    now = Date.now()
+  ) {
     const wasOnline = worker.online;
+    const offlineSinceAt = new Date(now).toISOString();
     worker.online = false;
-    worker.lastSeenAt = new Date().toISOString();
+    worker.status = "offline";
+    worker.offlineSinceAt = worker.offlineSinceAt ?? offlineSinceAt;
+    worker.offlineReason = reason;
     this.rejectPendingWorkerCommands(worker, new Error(message));
     for (const waiter of [...worker.waiters]) waiter();
     for (const thread of this.threads.values()) {
@@ -654,6 +703,32 @@ export class ThreadHub {
       }
     }
     if (wasOnline) this.publishWorkers();
+  }
+
+  private removeWorker(
+    worker: RuntimeWorker,
+    message: string,
+    reason: WorkerOfflineReason,
+    now = Date.now()
+  ) {
+    const error = new Error(message);
+    const offlineSinceAt = new Date(now).toISOString();
+    worker.online = false;
+    worker.status = "offline";
+    worker.offlineSinceAt = worker.offlineSinceAt ?? offlineSinceAt;
+    worker.offlineReason = reason;
+    this.rejectPendingWorkerCommands(worker, error);
+    for (const waiter of [...worker.waiters]) waiter();
+    this.workers.delete(worker.workerId);
+    for (const thread of this.threads.values()) {
+      if (thread.workerId !== worker.workerId) continue;
+      if (thread.running) {
+        this.finishWorkerTurnByThread(thread.threadId, error);
+      } else {
+        this.publish(thread, "thread");
+      }
+    }
+    this.publishWorkers();
   }
 
   private rejectPendingWorkerCommands(worker: RuntimeWorker, error: Error) {
@@ -999,7 +1074,10 @@ export class ThreadHub {
       workingDirectory: worker.workingDirectory,
       appServerUrl: worker.appServerUrl,
       online: worker.online,
+      status: worker.online ? "online" : "offline",
       lastSeenAt: worker.lastSeenAt,
+      offlineSinceAt: worker.offlineSinceAt,
+      offlineReason: worker.offlineReason,
       pid: worker.pid,
       hostname: worker.hostname,
       currentThreadId: currentThread?.threadId ?? worker.currentThreadId,
@@ -1032,6 +1110,9 @@ export class ThreadHub {
       workingDirectory: worker.workingDirectory,
       appServerUrl: worker.appServerUrl,
       online: worker.online,
+      status: worker.online ? "online" : "offline",
+      offlineSinceAt: worker.offlineSinceAt,
+      offlineReason: worker.offlineReason,
       pid: worker.pid,
       hostname: worker.hostname,
       currentThreadId: worker.currentThreadId,

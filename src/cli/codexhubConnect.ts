@@ -10,7 +10,7 @@ import { readCodexSessionRecordsAfter } from "../core/codexSession.js";
 import { asRecord as asCodexRecord, codexRecordFromSession, type CodexRecord } from "../core/codexRecord.js";
 import { readCodexUsage } from "../core/codexUsage.js";
 import type { ProxyInput } from "../core/proxyInput.js";
-import type { ThreadRunOptions, WorkerCommand } from "../core/threadHub.js";
+import type { ThreadRunOptions, WorkerCommand, WorkerEventInput, WorkerRecordsInput, WorkerRegistration } from "../core/threadHub.js";
 
 type ConnectOptions = {
   server?: string;
@@ -58,13 +58,15 @@ type RuntimeSettings = {
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
 };
 
-type WorkerRegisterResponse = {
-  workerId: string;
-};
+type WorkerTransportMessage =
+  | { type: "registered"; workerId: string; worker?: unknown }
+  | { type: "commands"; cursor: number; commands: WorkerCommand[] }
+  | { type: "error"; message: string };
 
-type WorkerCommandsResponse = {
-  cursor: number;
-  commands: WorkerCommand[];
+type HubTransportSink = {
+  sendEvent: (event: WorkerEventInput) => void;
+  sendRecords: (records: WorkerRecordsInput) => void;
+  sendHeartbeat: (registration: Partial<WorkerRegistration>) => void;
 };
 
 type BridgeOptions = {
@@ -99,6 +101,7 @@ export type HeadlessCodexhubWorkerHandle = {
   appServerUrl: string;
   cwd: string;
   ensureThread: (threadId: string) => Promise<string>;
+  runTurn: (input: ProxyInput, threadId?: string) => Promise<string>;
   stop: () => Promise<void>;
   wait: () => Promise<ChildExit>;
 };
@@ -252,6 +255,7 @@ export async function startHeadlessCodexhubWorker(options: HeadlessCodexhubWorke
       appServerUrl,
       cwd,
       ensureThread: (threadId: string) => bridgeRunner.ensureThread(threadId),
+      runTurn: (input: ProxyInput, threadId?: string) => bridgeRunner.runTurn(input, threadId),
       stop: cleanup,
       wait: () => appServerStopped
     };
@@ -263,7 +267,7 @@ export async function startHeadlessCodexhubWorker(options: HeadlessCodexhubWorke
 
 class ProxyBridgeRunner {
   private bridge: CodexAppServerBridge | null = null;
-  private registered = false;
+  private transport: WorkerHubTransport | null = null;
   private stopping = false;
   private loopStarted = false;
   private lastState: "offline" | "online" | null = null;
@@ -281,8 +285,8 @@ class ProxyBridgeRunner {
 
   async stop() {
     this.stopping = true;
+    this.transport?.stop({ unregister: true });
     this.bridge?.close();
-    await this.unregister();
   }
 
   waitForReady() {
@@ -298,56 +302,64 @@ class ProxyBridgeRunner {
     return currentThreadId;
   }
 
+  async runTurn(input: ProxyInput, threadId?: string) {
+    if (!this.bridge) throw new Error("codexhub bridge is not connected.");
+    const activeThreadId = await this.bridge.runLocalTurn(input, threadId);
+    this.bridgeState = this.bridge.snapshotState();
+    return activeThreadId;
+  }
+
   private async runLoop() {
     while (!this.stopping) {
       this.options.statusBar?.setProxyState("connecting");
       try {
-        await this.register();
-        this.bridge = await CodexAppServerBridge.connect(this.options, this.bridgeState);
+        const sink: HubTransportSink = {
+          sendEvent: (event) => this.transport?.sendEvent(event),
+          sendRecords: (records) => this.transport?.sendRecords(records),
+          sendHeartbeat: (registration) => this.transport?.sendHeartbeat(registration)
+        };
+        this.bridge = await CodexAppServerBridge.connect(this.options, this.bridgeState, sink);
+        this.transport = new WorkerHubTransport(this.options, {
+          registration: () => {
+            this.bridgeState = this.bridge?.snapshotState() ?? this.bridgeState;
+            return {
+              workerId: this.options.workerId,
+              name: workerDisplayName(this.options.workerId),
+              workingDirectory: this.options.cwd,
+              appServerUrl: this.options.appServerUrl,
+              pid: process.pid,
+              hostname: os.hostname(),
+              currentThreadId: this.bridgeState.currentThreadId
+            };
+          },
+          handleCommand: async (command) => {
+            if (!this.bridge) throw new Error("codexhub bridge is not connected.");
+            await this.bridge.runCommand(command);
+            this.bridgeState = this.bridge.snapshotState();
+          },
+          onState: (state, message) => this.setTransportState(state, message)
+        });
         if (this.options.ensureCurrentThread) {
           const threadId = await this.bridge.ensureCurrentThread();
           this.bridgeState = this.bridge.snapshotState();
           this.logHeadlessReady(threadId);
           this.ready.resolve({ workerId: this.options.workerId, threadId });
         }
-        this.options.statusBar?.setProxyState("online");
-        this.logState("online", `codexhub proxy connected: ${this.options.workerId}`);
+        this.transport.start();
         await this.runBridge(this.bridge);
       } catch (error) {
         if (this.stopping) return;
         this.options.statusBar?.setProxyState("offline");
-        this.logState("offline", `codexhub proxy offline: ${errorText(error)}`);
+        this.logState("offline", `codexhub local bridge offline: ${errorText(error)}`);
       } finally {
         if (this.bridge) this.bridgeState = this.bridge.snapshotState();
+        this.transport?.stop({ unregister: this.stopping });
+        this.transport = null;
         this.bridge?.close();
         this.bridge = null;
-        await this.unregister();
       }
       if (!this.stopping) await delay(5000);
     }
-  }
-
-  private async register() {
-    await apiJson<WorkerRegisterResponse>(this.options.apiBase, "/api/workers/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        workerId: this.options.workerId,
-        name: workerDisplayName(this.options.workerId),
-        workingDirectory: this.options.cwd,
-        appServerUrl: this.options.appServerUrl,
-        pid: process.pid,
-        hostname: os.hostname(),
-        currentThreadId: this.bridgeState.currentThreadId
-      })
-    });
-    this.registered = true;
-  }
-
-  private async unregister() {
-    if (!this.registered) return;
-    this.registered = false;
-    await unregisterWorker(this.options.apiBase, this.options.workerId);
   }
 
   private async runBridge(bridge: CodexAppServerBridge) {
@@ -355,12 +367,17 @@ class ProxyBridgeRunner {
     const fail = (label: string) => (error: unknown) => {
       if (!this.stopping) stopped.reject(new Error(`${label}: ${errorText(error)}`));
     };
-    void bridge.runCommandLoop().catch(fail("command loop"));
     void bridge.runThreadSyncLoop().catch(fail("thread sync"));
     void bridge.runJsonlRecordSyncLoop().catch(fail("jsonl record sync"));
     void bridge.runHeartbeatLoop().catch(fail("heartbeat"));
     void bridge.waitForClose().then(() => stopped.reject(new Error("app-server bridge closed")));
     await stopped.promise;
+  }
+
+  private setTransportState(state: "connecting" | "online" | "offline", message: string) {
+    this.options.statusBar?.setProxyState(state);
+    if (state === "connecting") return;
+    this.logState(state, message);
   }
 
   private logState(state: "offline" | "online", message: string) {
@@ -380,12 +397,158 @@ class ProxyBridgeRunner {
   }
 }
 
+type WorkerHubTransportCallbacks = {
+  registration: () => WorkerRegistration;
+  handleCommand: (command: WorkerCommand) => Promise<void>;
+  onState: (state: "connecting" | "online" | "offline", message: string) => void;
+};
+
+class WorkerHubTransport {
+  private ws: WebSocket | null = null;
+  private stopped = false;
+  private loopStarted = false;
+  private registered = false;
+  private commandCursor = 0;
+  private pendingOutgoing: unknown[] = [];
+  private commandChain = Promise.resolve();
+
+  constructor(
+    private readonly options: BridgeOptions,
+    private readonly callbacks: WorkerHubTransportCallbacks
+  ) {}
+
+  start() {
+    if (this.loopStarted) return;
+    this.loopStarted = true;
+    void this.runLoop();
+  }
+
+  stop(options: { unregister?: boolean } = {}) {
+    this.stopped = true;
+    if (options.unregister && this.registered && this.ws?.readyState === WebSocket.OPEN) {
+      this.sendRaw({ type: "unregister" });
+    }
+    this.ws?.close();
+    this.ws = null;
+    this.pendingOutgoing = [];
+  }
+
+  sendEvent(event: WorkerEventInput) {
+    this.sendOrQueue({ type: "event", event });
+  }
+
+  sendRecords(records: WorkerRecordsInput) {
+    this.sendOrQueue({ type: "records", ...records });
+  }
+
+  sendHeartbeat(registration: Partial<WorkerRegistration>) {
+    this.sendOrQueue({ type: "heartbeat", registration }, { queue: false });
+  }
+
+  private async runLoop() {
+    while (!this.stopped) {
+      this.callbacks.onState("connecting", `codexhub transport connecting: ${this.options.workerId}`);
+      try {
+        await this.connectOnce();
+        if (!this.stopped) {
+          this.callbacks.onState("offline", `codexhub transport offline: websocket closed`);
+        }
+      } catch (error) {
+        if (!this.stopped) {
+          this.callbacks.onState("offline", `codexhub transport offline: ${errorText(error)}`);
+        }
+      } finally {
+        this.registered = false;
+        this.ws?.close();
+        this.ws = null;
+      }
+      if (!this.stopped) await delay(5000);
+    }
+  }
+
+  private async connectOnce() {
+    const ws = await openWebSocket(workerTransportUrl(this.options.apiBase));
+    this.ws = ws;
+    const closed = new Deferred<void>();
+    ws.addEventListener("message", (event) => this.handleMessage(event.data));
+    ws.addEventListener("error", () => {
+      if (!this.stopped) console.error("codexhub worker transport websocket error");
+      ws.close();
+    });
+    ws.addEventListener("close", () => closed.resolve(), { once: true });
+    this.sendRaw({
+      type: "register",
+      commandCursor: this.commandCursor,
+      registration: this.callbacks.registration()
+    });
+    await closed.promise;
+  }
+
+  private handleMessage(data: unknown) {
+    const message = parseWorkerTransportMessage(data);
+    if (!message) {
+      console.error("codexhub worker transport received invalid message");
+      return;
+    }
+    if (message.type === "registered") {
+      this.registered = true;
+      this.callbacks.onState("online", `codexhub proxy connected: ${message.workerId}`);
+      this.flushPending();
+      return;
+    }
+    if (message.type === "commands") {
+      this.commandCursor = Math.max(this.commandCursor, message.cursor);
+      this.enqueueCommands(message.commands);
+      return;
+    }
+    console.error(`codexhub worker transport server error: ${message.message}`);
+  }
+
+  private enqueueCommands(commands: WorkerCommand[]) {
+    this.commandChain = this.commandChain.then(async () => {
+      for (const command of commands) {
+        try {
+          await this.callbacks.handleCommand(command);
+        } catch (error) {
+          this.sendOrQueue({
+            type: "command_error",
+            commandId: command.commandId,
+            message: errorText(error)
+          });
+        } finally {
+          this.commandCursor = Math.max(this.commandCursor, command.seq);
+        }
+      }
+    }).catch((error) => {
+      console.error(`codexhub worker transport command queue failed: ${errorText(error)}`);
+    });
+  }
+
+  private flushPending() {
+    for (const message of this.pendingOutgoing.splice(0)) this.sendRaw(message);
+  }
+
+  private sendOrQueue(message: unknown, options: { queue?: boolean } = {}) {
+    if (this.registered && this.ws?.readyState === WebSocket.OPEN) {
+      this.sendRaw(message);
+      return;
+    }
+    if (options.queue === false) return;
+    this.pendingOutgoing.push(message);
+    if (this.pendingOutgoing.length > 1000) this.pendingOutgoing.splice(0, this.pendingOutgoing.length - 1000);
+  }
+
+  private sendRaw(message: unknown) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify(message));
+  }
+}
+
 class CodexAppServerBridge {
   private readonly pending = new Map<string | number, PendingRequest>();
   private readonly syncedThreads = new Map<string, SyncedThread>();
   private readonly loadedThreads = new Set<string>();
   private nextId = 1;
-  private cursor = 0;
   private closed = false;
   private currentThreadId: string | undefined;
   private readonly forwardedRuntimeSettings = new Map<string, string>();
@@ -396,15 +559,16 @@ class CodexAppServerBridge {
   private constructor(
     private readonly options: BridgeOptions,
     private readonly ws: WebSocket,
-    initialState: BridgeState
+    initialState: BridgeState,
+    private readonly hub: HubTransportSink
   ) {
     this.currentThreadId = initialState.currentThreadId;
     for (const threadId of initialState.threadIds) this.bindThread(threadId);
   }
 
-  static async connect(options: BridgeOptions, initialState: BridgeState = { threadIds: [] }) {
+  static async connect(options: BridgeOptions, initialState: BridgeState = { threadIds: [] }, hub: HubTransportSink) {
     const ws = await openWebSocket(options.appServerUrl);
-    const bridge = new CodexAppServerBridge(options, ws, initialState);
+    const bridge = new CodexAppServerBridge(options, ws, initialState, hub);
     ws.addEventListener("message", (event) => void bridge.handleMessage(event.data));
     ws.addEventListener("error", () => {
       if (!bridge.closed) console.error("codex app-server websocket error");
@@ -452,20 +616,23 @@ class CodexAppServerBridge {
     return currentThreadId;
   }
 
-  async runCommandLoop() {
-    while (!this.closed) {
-      const response = await apiJson<WorkerCommandsResponse>(
-        this.options.apiBase,
-        `/api/workers/${encodeURIComponent(this.options.workerId)}/commands?${new URLSearchParams({ after: String(this.cursor) })}`
-      );
-      if (this.closed) return;
-      this.cursor = Math.max(this.cursor, response.cursor);
-      for (const command of response.commands) {
-        if (this.closed) return;
-        await this.handleCommand(command);
-        this.cursor = Math.max(this.cursor, command.seq);
-      }
-    }
+  async runCommand(command: WorkerCommand) {
+    await this.handleCommand(command);
+  }
+
+  async runLocalTurn(input: ProxyInput, threadId?: string) {
+    const targetThreadId = threadId
+      ? await this.ensureThreadLoaded(threadId, this.options.cwd, this.options.model, undefined, {
+        markBridgeStarted: true
+      })
+      : await this.ensureCurrentThread();
+    this.markBridgeStartedThread(targetThreadId);
+    await this.request("turn/start", {
+      threadId: targetThreadId,
+      input: toAppServerInput(input),
+      ...turnRuntimeParams(undefined)
+    }, { threadId: targetThreadId });
+    return targetThreadId;
   }
 
   async runHeartbeatLoop(intervalMs = 10_000) {
@@ -770,13 +937,7 @@ class CodexAppServerBridge {
     message: JsonRecord,
     options: { heartbeat?: boolean } = {}
   ) {
-    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "thread_event", threadId, commandId, message, heartbeat: options.heartbeat })
-    }).catch((error) => {
-      console.error(`codexhub bridge failed to forward app-server event: ${errorText(error)}`);
-    });
+    this.hub.sendEvent({ type: "thread_event", threadId, commandId, message, heartbeat: options.heartbeat });
   }
 
   private async forwardStateEventsFromMessage(threadId: string, message: JsonRecord) {
@@ -836,13 +997,7 @@ class CodexAppServerBridge {
   private async forwardCurrentThreadChanged(threadId: string, heartbeat = false) {
     if (this.currentThreadId === threadId) return;
     this.currentThreadId = threadId;
-    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "worker_current_changed", currentThreadId: threadId, heartbeat })
-    }).catch((error) => {
-      console.error(`codexhub bridge failed to forward current thread change: ${errorText(error)}`);
-    });
+    this.hub.sendEvent({ type: "worker_current_changed", currentThreadId: threadId, heartbeat });
   }
 
   private markBridgeStartedThread(threadId: string) {
@@ -860,39 +1015,21 @@ class CodexAppServerBridge {
   }
 
   private async forwardThreadExecutionChanged(threadId: string, running: boolean, turnId?: string) {
-    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "thread_execution_changed", threadId, running, turnId, heartbeat: false })
-    }).catch((error) => {
-      console.error(`codexhub bridge failed to forward thread execution state: ${errorText(error)}`);
-    });
+    this.hub.sendEvent({ type: "thread_execution_changed", threadId, running, turnId, heartbeat: false });
   }
 
   private async forwardRuntimeSettings(threadId: string, settings: RuntimeSettings) {
-    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/events`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        type: "runtime_settings_changed",
-        threadId,
-        model: settings.model,
-        modelReasoningEffort: settings.modelReasoningEffort,
-        heartbeat: false
-      })
-    }).catch((error) => {
-      console.error(`codexhub bridge failed to forward runtime settings: ${errorText(error)}`);
+    this.hub.sendEvent({
+      type: "runtime_settings_changed",
+      threadId,
+      model: settings.model,
+      modelReasoningEffort: settings.modelReasoningEffort,
+      heartbeat: false
     });
   }
 
   private async forwardRecords(threadId: string, records: CodexRecord[]) {
-    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/records`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId, records, heartbeat: false })
-    }).catch((error) => {
-      console.error(`codexhub bridge failed to forward jsonl records: ${errorText(error)}`);
-    });
+    this.hub.sendRecords({ threadId, records, heartbeat: false });
   }
 
   private respondToServerRequest(message: JsonRecord) {
@@ -932,18 +1069,14 @@ class CodexAppServerBridge {
       })
     )).filter((item): item is readonly [string, Awaited<ReturnType<typeof readCodexUsage>>] => Boolean(item)));
 
-    await apiJson(this.options.apiBase, `/api/workers/${encodeURIComponent(this.options.workerId)}/heartbeat`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        workingDirectory: this.options.cwd,
-        appServerUrl: this.options.appServerUrl,
-        pid: process.pid,
-        hostname: os.hostname(),
-        codexUsage,
-        threadCodexUsage
-      })
-    }).catch(() => undefined);
+    this.hub.sendHeartbeat({
+      workingDirectory: this.options.cwd,
+      appServerUrl: this.options.appServerUrl,
+      pid: process.pid,
+      hostname: os.hostname(),
+      codexUsage,
+      threadCodexUsage
+    });
   }
 }
 
@@ -1296,14 +1429,69 @@ const workerDisplayName = (workerId: string) => `codexhub-${workerId.split("-").
 
 const safeWorkerPart = (value: string) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
 
-const apiJson = async <T = unknown>(apiBase: string, route: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(new URL(route, apiBase), init);
-  if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
-  return await response.json() as T;
+const workerTransportUrl = (apiBase: string) => {
+  const url = new URL("/api/workers/connect", apiBase);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
 };
 
-const unregisterWorker = async (apiBase: string, workerId: string) => {
-  await apiJson(apiBase, `/api/workers/${encodeURIComponent(workerId)}`, { method: "DELETE" }).catch(() => undefined);
+const parseWorkerTransportMessage = (data: unknown): WorkerTransportMessage | null => {
+  const message = parseJsonRecord(data);
+  if (!message) return null;
+  const type = typeof message?.type === "string" ? message.type : "";
+  if (type === "registered") {
+    const workerId = typeof message.workerId === "string" ? message.workerId : "";
+    return workerId ? { type: "registered", workerId, worker: message.worker } : null;
+  }
+  if (type === "commands") {
+    const cursor = typeof message.cursor === "number" ? message.cursor : NaN;
+    return Number.isFinite(cursor) && Array.isArray(message.commands)
+      ? { type: "commands", cursor, commands: message.commands as WorkerCommand[] }
+      : null;
+  }
+  if (type === "error") {
+    return { type: "error", message: typeof message.message === "string" ? message.message : "worker transport server error" };
+  }
+  return null;
+};
+
+const HUB_API_TIMEOUT_MS = 15_000;
+
+type ApiJsonInit = RequestInit & {
+  timeoutMs?: number;
+};
+
+const apiJson = async <T = unknown>(apiBase: string, route: string, init: ApiJsonInit = {}): Promise<T> => {
+  const { timeoutMs = HUB_API_TIMEOUT_MS, signal, ...requestInit } = init;
+  const controller = new AbortController();
+  let timedOut = false;
+  let timeout: NodeJS.Timeout | null = null;
+  let onAbort: (() => void) | null = null;
+
+  if (timeoutMs > 0) {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    timeout.unref?.();
+  }
+  if (signal) {
+    onAbort = () => controller.abort();
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  try {
+    const response = await fetch(new URL(route, apiBase), { ...requestInit, signal: controller.signal });
+    if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
+    return await response.json() as T;
+  } catch (error) {
+    if (timedOut) throw new Error(`API request timed out after ${timeoutMs}ms: ${route}`);
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+  }
 };
 
 const parseJsonRecord = (data: unknown): JsonRecord | null => {

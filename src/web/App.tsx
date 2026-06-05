@@ -61,7 +61,10 @@ type WorkerSummary = {
   workingDirectory: string;
   appServerUrl?: string;
   online: boolean;
+  status?: "online" | "offline";
   lastSeenAt: string;
+  offlineSinceAt?: string;
+  offlineReason?: "heartbeat_timeout" | "transport_disconnected" | "unregistered";
   pid?: number;
   hostname?: string;
   currentThreadId?: string;
@@ -315,6 +318,11 @@ const App = () => {
     && (activeSession.input.trim() || activeSession.imageAttachments.length)
   ) && !activeSession?.running;
   const activeCanSubmit = Boolean(activeSessionBelongsToWorker && (activeSession?.running || activeCanSend));
+  const workspaceEmptyMessage = activeWorker
+    ? activeWorker.online
+      ? activeWorker.currentThreadId ? "Loading thread" : "No current thread"
+      : "Worker offline"
+    : "No connected codexhub";
   const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
   const activeCodexUsage = activeSession?.codexUsage
     ?? activeWorkerThreads.find((thread) => thread.threadId === activeTabThreadId)?.codexUsage
@@ -795,17 +803,21 @@ const App = () => {
             <div className="proxyWorkerList">
               {workers.map((worker) => {
                 const workerLabel = worker.name ?? shortId(worker.workerId);
+                const statusLabel = workerStatusLabel(worker);
+                const statusTitle = workerStatusTitle(worker);
                 const threadTitle = worker.currentThread?.title ?? "No current thread";
-                const threadLabel = worker.currentThreadId ? `thread ${worker.currentThreadId}` : "no thread";
+                const threadLabel = worker.online
+                  ? worker.currentThreadId ? `thread ${worker.currentThreadId}` : "no thread"
+                  : `last seen ${relativeTime(worker.lastSeenAt)}`;
                 return (
                   <button
                     type="button"
-                    className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""}`}
+                    className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""} ${worker.online ? "online" : "offline"}`}
                     key={worker.workerId}
                     onClick={() => void selectWorker(worker)}
                   >
                     <span title={workerLabel}>{workerLabel}</span>
-                    <strong>{worker.currentThread?.status ?? "idle"}</strong>
+                    <strong title={statusTitle}>{statusLabel}</strong>
                     <code title={threadTitle}>{threadTitle}</code>
                     <em className="proxyWorkerMeta">
                       <span className="proxyWorkerDirectory" title={worker.workingDirectory}>{worker.workingDirectory}</span>
@@ -838,6 +850,14 @@ const App = () => {
               <span className="workspacePath" title={activeWorker?.workingDirectory ?? activeWorkspacePath}>
                 {activeWorker?.workingDirectory ?? activeWorkspacePath}
               </span>
+              {activeWorker ? (
+                <span
+                  className={`workspaceWorkerState ${activeWorker.online ? "online" : "offline"}`}
+                  title={workerStatusTitle(activeWorker)}
+                >
+                  {activeWorker.online ? "online" : "offline"}
+                </span>
+              ) : null}
               {activeDisplayThreadId ? (
                 <span className="workspaceThreadId" title={`thread: ${activeDisplayThreadId}`}>thread: {activeDisplayThreadId}</span>
               ) : activeWorker ? (
@@ -1013,7 +1033,7 @@ const App = () => {
             onChange={(threadId) => void switchWorkerThread(threadId)}
           />
         ) : (
-          <div className="empty">{activeWorker ? activeWorker.currentThreadId ? "Loading thread" : "No current thread" : "No connected codexhub"}</div>
+          <div className="empty">{workspaceEmptyMessage}</div>
         )}
       </section>
 
@@ -1273,8 +1293,36 @@ const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
 
 const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
   Array.isArray(workers)
-    ? workers.filter((worker) => worker.online)
+    ? workers
     : [];
+
+const workerStatusLabel = (worker: WorkerSummary) =>
+  worker.online ? worker.currentThread?.status ?? "idle" : "offline";
+
+const workerStatusTitle = (worker: WorkerSummary) => {
+  if (worker.online) return "Worker online";
+  const reason = worker.offlineReason === "heartbeat_timeout"
+    ? "heartbeat timeout"
+    : worker.offlineReason === "transport_disconnected"
+      ? "connection lost"
+      : "offline";
+  const lastSeen = worker.lastSeenAt ? `, last seen ${relativeTime(worker.lastSeenAt)}` : "";
+  return `${reason}${lastSeen}`;
+};
+
+const relativeTime = (iso: string | undefined) => {
+  if (!iso) return "unknown";
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) return "unknown";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+};
 
 const appendThreadOrder = (current: Record<string, string[]>, workerId: string, threadId: string) => {
   const existing = current[workerId] ?? [];

@@ -40,12 +40,6 @@ type WorkerSummary = {
   threads?: ThreadSummary[];
 };
 
-type WorkerTurnResponse = {
-  ok?: boolean;
-  thread?: ThreadSummary;
-  error?: string;
-};
-
 await loadDotEnv();
 
 const program = new Command()
@@ -357,20 +351,11 @@ async function restoreSingleTaskThread(worker: HeadlessCodexhubWorkerHandle, wor
 
 async function sendTaskTurn(worker: HeadlessCodexhubWorkerHandle, task: { input: string; thread?: string }) {
   if (task.thread) {
-    const threadId = await worker.ensureThread(task.thread);
-    await apiJson<WorkerTurnResponse>(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input: task.input, source: "task" })
-    });
+    await worker.runTurn(task.input, task.thread);
     return;
   }
 
-  await apiJson<WorkerTurnResponse>(`/api/workers/${encodeURIComponent(worker.workerId)}/turn`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ input: task.input, source: "task" })
-  });
+  await worker.runTurn(task.input);
 }
 
 async function runTaskFile(taskYamlPath: string) {

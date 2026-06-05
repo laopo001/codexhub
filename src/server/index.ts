@@ -1,5 +1,7 @@
 import cors from "@fastify/cors";
+import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -112,6 +114,36 @@ const workerEventSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+const workerTransportMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("register"),
+    commandCursor: z.number().int().min(0).optional(),
+    registration: workerRegistrationSchema
+  }),
+  z.object({
+    type: z.literal("unregister")
+  }),
+  z.object({
+    type: z.literal("heartbeat"),
+    registration: workerHeartbeatSchema.optional()
+  }),
+  z.object({
+    type: z.literal("event"),
+    event: workerEventSchema
+  }),
+  z.object({
+    type: z.literal("records"),
+    threadId: z.string().min(1),
+    heartbeat: z.boolean().optional(),
+    records: z.array(codexRecordSchema)
+  }),
+  z.object({
+    type: z.literal("command_error"),
+    commandId: z.string().min(1),
+    message: z.string().min(1)
+  })
+]);
+
 const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
   raw.write(`event: ${event}\n`);
   raw.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -121,8 +153,15 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
   : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? path.join(packageRoot, "dist"));
-const workerOfflineTimeoutMs = () => Number(process.env.CODEX_HUB_WORKER_OFFLINE_TIMEOUT_MS || 0) || 45_000;
-const workerSweepIntervalMs = () => Number(process.env.CODEX_HUB_WORKER_SWEEP_INTERVAL_MS || 0) || 5_000;
+const envMs = (name: string, fallback: number) => {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+const workerOfflineTimeoutMs = () => envMs("CODEX_HUB_WORKER_OFFLINE_TIMEOUT_MS", 45_000);
+const workerOfflineRetentionMs = () => envMs("CODEX_HUB_WORKER_OFFLINE_RETENTION_MS", 30 * 60_000);
+const workerSweepIntervalMs = () => envMs("CODEX_HUB_WORKER_SWEEP_INTERVAL_MS", 5_000);
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
@@ -149,7 +188,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
   const workerSweep = setInterval(() => {
-    threads.markStaleWorkersOffline(workerOfflineTimeoutMs());
+    threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs());
   }, workerSweepIntervalMs());
   workerSweep.unref?.();
 
@@ -158,6 +197,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     telegramBot?.stop("server closing");
   });
   await app.register(cors, { origin: true });
+  await app.register(websocket);
 
   app.get("/api/health", async () => ({
     ok: true,
@@ -180,21 +220,21 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
 
   app.get("/api/threads", async () => ({
-    ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs()),
+    ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs()),
     threads: threads.listThreads()
   }));
 
   app.get("/api/workers", async (request) => {
     const query = z.object({ includeOffline: z.string().optional() }).parse(request.query);
     return {
-      ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs()),
+      ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs()),
       workers: threads.listWorkers({ includeOffline: query.includeOffline === "true" })
     };
   });
 
   app.get("/api/workers/events", async (request, reply) => {
     const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
-    threads.markStaleWorkersOffline(workerOfflineTimeoutMs());
+    threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs());
 
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -209,33 +249,103 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     reply.raw.on("close", unsubscribe);
   });
 
-  app.post("/api/workers/register", async (request) => {
-    const payload = workerRegistrationSchema.parse(request.body);
-    return threads.registerWorker(payload);
-  });
+  app.get("/api/workers/connect", { websocket: true }, (socket) => {
+    const transportId = randomUUID();
+    let workerId: string | null = null;
+    let commandCursor = 0;
+    let closed = false;
+    let commandPumpStarted = false;
 
-  app.post("/api/workers/:workerId/heartbeat", async (request, reply) => {
-    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
-    const payload = workerHeartbeatSchema.parse(request.body ?? {});
-    const result = threads.heartbeatWorker(params.workerId, payload);
-    if (!result.ok) reply.code(404);
-    return result;
-  });
+    const send = (message: unknown) => {
+      if (socket.readyState !== 1) return;
+      socket.send(JSON.stringify(message));
+    };
 
-  app.delete("/api/workers/:workerId", async (request, reply) => {
-    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
-    const result = threads.unregisterWorker(params.workerId);
-    if (!result.ok) reply.code(404);
-    return result;
-  });
+    const startCommandPump = () => {
+      if (commandPumpStarted) return;
+      commandPumpStarted = true;
+      void commandPump().catch((error: unknown) => {
+        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
+        socket.close();
+      });
+    };
 
-  app.get("/api/workers/:workerId/commands", async (request) => {
-    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
-    const query = z.object({
-      after: z.coerce.number().optional(),
-      timeoutMs: z.coerce.number().min(0).max(60000).optional()
-    }).parse(request.query);
-    return threads.waitWorkerCommands(params.workerId, query.after ?? 0, query.timeoutMs ?? 25000);
+    const commandPump = async () => {
+      while (!closed && workerId) {
+        const response = await threads.waitWorkerCommands(workerId, commandCursor, 60_000);
+        if (closed || !workerId) return;
+        commandCursor = Math.max(commandCursor, response.cursor);
+        if (response.commands.length) {
+          send({ type: "commands", cursor: commandCursor, commands: response.commands });
+        }
+      }
+    };
+
+    const handleMessage = async (data: unknown) => {
+      let parsed: z.infer<typeof workerTransportMessageSchema>;
+      try {
+        parsed = workerTransportMessageSchema.parse(JSON.parse(String(data)));
+      } catch (error) {
+        send({ type: "error", message: `invalid worker transport message: ${error instanceof Error ? error.message : String(error)}` });
+        return;
+      }
+
+      if (parsed.type !== "register" && !workerId) {
+        send({ type: "error", message: "worker transport must register before sending messages" });
+        return;
+      }
+
+      try {
+        if (parsed.type === "register") {
+          const result = threads.registerWorker({ ...parsed.registration, transportId });
+          workerId = result.workerId;
+          commandCursor = parsed.commandCursor ?? 0;
+          send({ type: "registered", workerId, worker: result.worker });
+          startCommandPump();
+          return;
+        }
+
+        if (parsed.type === "unregister") {
+          threads.unregisterWorker(workerId!, transportId);
+          workerId = null;
+          socket.close();
+          return;
+        }
+
+        if (parsed.type === "heartbeat") {
+          threads.heartbeatWorker(workerId!, parsed.registration ?? {});
+          return;
+        }
+
+        if (parsed.type === "event") {
+          threads.applyWorkerEvent(workerId!, parsed.event);
+          return;
+        }
+
+        if (parsed.type === "records") {
+          threads.applyWorkerRecords(workerId!, {
+            threadId: parsed.threadId,
+            records: parsed.records,
+            heartbeat: parsed.heartbeat
+          });
+          return;
+        }
+
+        threads.failWorkerCommand(workerId!, parsed.commandId, parsed.message);
+      } catch (error) {
+        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
+      }
+    };
+
+    socket.on("message", (data: unknown) => void handleMessage(data));
+    socket.on("close", () => {
+      closed = true;
+      if (workerId) threads.disconnectWorker(workerId, transportId);
+    });
+    socket.on("error", () => {
+      closed = true;
+      if (workerId) threads.disconnectWorker(workerId, transportId);
+    });
   });
 
   app.post("/api/workers/:workerId/turn", async (request, reply) => {
@@ -254,32 +364,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Worker has no current thread:") ? 409 : 404);
       return { error: message };
-    }
-  });
-
-  app.post("/api/workers/:workerId/events", async (request, reply) => {
-    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
-    const payload = workerEventSchema.parse(request.body);
-    try {
-      return threads.applyWorkerEvent(params.workerId, payload);
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.post("/api/workers/:workerId/records", async (request, reply) => {
-    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({
-      threadId: z.string().min(1),
-      heartbeat: z.boolean().optional(),
-      records: z.array(codexRecordSchema)
-    }).parse(request.body);
-    try {
-      return threads.applyWorkerRecords(params.workerId, payload);
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
     }
   });
 
@@ -413,6 +497,10 @@ const registerStaticRoutes = (app: FastifyInstance, root: string) => {
   app.get("/", sendIndex);
   app.get("/*", async (request, reply) => {
     const rawPath = (request.params as { "*": string })["*"] ?? "";
+    if (rawPath === "api" || rawPath.startsWith("api/")) {
+      reply.code(404);
+      return { error: "api_route_not_found", path: `/${rawPath}` };
+    }
     const requested = path.resolve(root, rawPath);
     if (!requested.startsWith(`${root}${path.sep}`)) {
       reply.code(403);

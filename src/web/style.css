@@ -155,6 +155,12 @@ textarea {
   background: #183222;
 }
 
+.proxyWorkerRow.offline {
+  border-color: #334238;
+  background: #111811;
+  color: #9daa98;
+}
+
 .proxyWorkerRow span {
   overflow: hidden;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
@@ -170,6 +176,16 @@ textarea {
   font-size: 11px;
   font-weight: 650;
   padding: 2px 7px;
+}
+
+.proxyWorkerRow.offline strong {
+  background: #39271d;
+  color: #f0b58d;
+}
+
+.proxyWorkerRow.offline code,
+.proxyWorkerRow.offline .proxyWorkerMeta {
+  color: #7e8c7b;
 }
 
 .proxyWorkerRow code {
@@ -366,6 +382,21 @@ textarea {
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspaceTitle .workspaceWorkerState {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #dfeade;
+  color: #2f7d5a;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workspaceTitle .workspaceWorkerState.offline {
+  background: #f6e0cf;
+  color: #a14a26;
 }
 
 .messages {
