@@ -259,7 +259,11 @@ const App = () => {
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
   const workersEventSource = useRef<EventSource | null>(null);
+  const workersLastSeq = useRef(0);
+  const workersReconnectTimer = useRef<number | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
+  const threadLastSeqs = useRef(new Map<string, number>());
+  const threadReconnectTimers = useRef(new Map<string, number>());
   const openingThreads = useRef(new Map<string, Promise<void>>());
   const latestRequestedThreadId = useRef("");
   const messagesRef = useRef<VirtuosoHandle>(null);
@@ -369,6 +373,12 @@ const App = () => {
     return () => {
       workersEventSource.current?.close();
       for (const source of eventSources.current.values()) source.close();
+      if (workersReconnectTimer.current !== null) {
+        window.clearTimeout(workersReconnectTimer.current);
+        workersReconnectTimer.current = null;
+      }
+      for (const timer of threadReconnectTimers.current.values()) window.clearTimeout(timer);
+      threadReconnectTimers.current.clear();
     };
   }, []);
 
@@ -520,17 +530,59 @@ const App = () => {
     setInitialized(true);
   };
 
-  const subscribeWorkers = (after: number) => {
+  function clearWorkersReconnectTimer() {
+    if (workersReconnectTimer.current === null) return;
+    window.clearTimeout(workersReconnectTimer.current);
+    workersReconnectTimer.current = null;
+  }
+
+  function scheduleWorkersReconnect() {
+    clearWorkersReconnectTimer();
+    workersReconnectTimer.current = window.setTimeout(() => {
+      workersReconnectTimer.current = null;
+      subscribeWorkers(workersLastSeq.current);
+    }, 1000);
+  }
+
+  function subscribeWorkers(after: number) {
+    clearWorkersReconnectTimer();
     workersEventSource.current?.close();
-    const source = new EventSource(`/api/workers/events?after=${after}`);
+    const subscribedAfter = Math.max(after, workersLastSeq.current);
+    const source = new EventSource(`/api/workers/events?after=${subscribedAfter}`);
     source.addEventListener("workers", (event: MessageEvent) => {
       const payload = JSON.parse(event.data) as WorkerStreamEvent;
+      workersLastSeq.current = Math.max(workersLastSeq.current, payload.seq);
       const nextWorkers = normalizeWorkers(payload.workers);
       setWorkers(nextWorkers);
       setThreadOrderByWorker((current) => mergeThreadOrderByWorker(current, nextWorkers));
     });
+    source.addEventListener("error", (event) => {
+      if (event instanceof MessageEvent) return;
+      if (workersEventSource.current !== source) return;
+      source.close();
+      workersEventSource.current = null;
+      scheduleWorkersReconnect();
+    });
     workersEventSource.current = source;
-  };
+  }
+
+  function clearThreadReconnectTimer(threadId: string) {
+    const timer = threadReconnectTimers.current.get(threadId);
+    if (timer === undefined) return;
+    window.clearTimeout(timer);
+    threadReconnectTimers.current.delete(threadId);
+  }
+
+  function scheduleThreadReconnect(threadId: string) {
+    clearThreadReconnectTimer(threadId);
+    const timer = window.setTimeout(() => {
+      threadReconnectTimers.current.delete(threadId);
+      if (latestRequestedThreadId.current !== threadId) return;
+      if (eventSources.current.has(threadId)) return;
+      subscribeThread(threadId, threadLastSeqs.current.get(threadId) ?? 0);
+    }, 1000);
+    threadReconnectTimers.current.set(threadId, timer);
+  }
 
   const openThread = async (threadId: string) => {
     latestRequestedThreadId.current = threadId;
@@ -567,6 +619,10 @@ const App = () => {
       closeThreadSubscriptionsExcept(thread.threadId);
       setActiveWorkspacePath(thread.workingDirectory);
       setActiveTabThreadId(thread.threadId);
+      threadLastSeqs.current.set(
+        thread.threadId,
+        Math.max(threadLastSeqs.current.get(thread.threadId) ?? 0, thread.lastSeq)
+      );
       subscribeThread(thread.threadId, thread.lastSeq);
     })();
 
@@ -588,18 +644,25 @@ const App = () => {
   const closeThreadSubscriptionsExcept = (threadId: string) => {
     for (const [subscribedThreadId, source] of eventSources.current) {
       if (subscribedThreadId === threadId) continue;
+      clearThreadReconnectTimer(subscribedThreadId);
       source.close();
       eventSources.current.delete(subscribedThreadId);
     }
   };
 
-  const subscribeThread = (threadId: string, after: number) => {
+  function subscribeThread(threadId: string, after: number) {
+    clearThreadReconnectTimer(threadId);
     const existing = eventSources.current.get(threadId);
     if (existing && existing.readyState !== EventSource.CLOSED) return;
     existing?.close();
-    const source = new EventSource(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`);
+    const subscribedAfter = Math.max(after, threadLastSeqs.current.get(threadId) ?? 0);
+    const source = new EventSource(`/api/threads/${encodeURIComponent(threadId)}/events?after=${subscribedAfter}`);
     const handle = (event: MessageEvent) => {
       const payload = JSON.parse(event.data) as StreamEvent;
+      threadLastSeqs.current.set(
+        payload.thread.threadId,
+        Math.max(threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
+      );
       setSessions((current) => current.map((session) => {
         if (session.threadId !== payload.thread.threadId) return session;
         const records = payload.record ? mergeRecord(session.records, payload.record) : session.records;
@@ -610,13 +673,15 @@ const App = () => {
     source.addEventListener("record", handle);
     source.addEventListener("message", handle);
     source.addEventListener("done", handle);
-    source.addEventListener("error", () => {
-      if (source.readyState === EventSource.CLOSED && eventSources.current.get(threadId) === source) {
-        eventSources.current.delete(threadId);
-      }
+    source.addEventListener("error", (event) => {
+      if (event instanceof MessageEvent) return;
+      if (eventSources.current.get(threadId) !== source) return;
+      source.close();
+      eventSources.current.delete(threadId);
+      scheduleThreadReconnect(threadId);
     });
     eventSources.current.set(threadId, source);
-  };
+  }
 
   const forkMessage = async (threadId: string, messageId: string) => {
     try {

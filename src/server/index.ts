@@ -144,21 +144,63 @@ const workerTransportMessageSchema = z.discriminatedUnion("type", [
   })
 ]);
 
-const sendSse = (raw: NodeJS.WritableStream, event: string, data: unknown) => {
-  raw.write(`event: ${event}\n`);
-  raw.write(`data: ${JSON.stringify(data)}\n\n`);
+type SseStream = NodeJS.WritableStream & {
+  destroyed?: boolean;
+  flushHeaders?: () => void;
+  writableEnded?: boolean;
+  writeHead?: (statusCode: number, headers: Record<string, string>) => void;
 };
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const staticRoot = (override?: string) => override
-  ? path.resolve(override)
-  : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? path.join(packageRoot, "dist"));
 const envMs = (name: string, fallback: number) => {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 };
+
+const sseHeartbeatMs = () => envMs("CODEX_HUB_SSE_HEARTBEAT_MS", 20_000);
+
+const sseEventId = (data: unknown) => {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const seq = (data as { seq?: unknown }).seq;
+  return typeof seq === "number" && Number.isFinite(seq) ? String(seq) : null;
+};
+
+const sendSse = (raw: SseStream, event: string, data: unknown) => {
+  const id = sseEventId(data);
+  if (id) raw.write(`id: ${id}\n`);
+  raw.write(`event: ${event}\n`);
+  raw.write(`data: ${JSON.stringify(data)}\n\n`);
+};
+
+const sendSseComment = (raw: SseStream, comment: string) => {
+  if (raw.destroyed || raw.writableEnded) return;
+  raw.write(`: ${comment}\n\n`);
+};
+
+const startSse = (raw: SseStream) => {
+  raw.writeHead?.(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no"
+  });
+  raw.flushHeaders?.();
+  sendSseComment(raw, "connected");
+
+  const intervalMs = sseHeartbeatMs();
+  const heartbeat = intervalMs > 0
+    ? setInterval(() => sendSseComment(raw, "ping"), intervalMs)
+    : null;
+  return () => {
+    if (heartbeat) clearInterval(heartbeat);
+  };
+};
+
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const staticRoot = (override?: string) => override
+  ? path.resolve(override)
+  : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? path.join(packageRoot, "dist"));
 const workerOfflineTimeoutMs = () => envMs("CODEX_HUB_WORKER_OFFLINE_TIMEOUT_MS", 45_000);
 const workerOfflineRetentionMs = () => envMs("CODEX_HUB_WORKER_OFFLINE_RETENTION_MS", 30 * 60_000);
 const workerSweepIntervalMs = () => envMs("CODEX_HUB_WORKER_SWEEP_INTERVAL_MS", 5_000);
@@ -236,17 +278,15 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
     threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs());
 
-    reply.raw.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      "x-accel-buffering": "no"
-    });
+    const stopSse = startSse(reply.raw);
 
     const unsubscribe = threads.subscribeWorkers(query.after ?? 0, (event) => {
       sendSse(reply.raw, event.kind, event);
     });
-    reply.raw.on("close", unsubscribe);
+    reply.raw.on("close", () => {
+      stopSse();
+      unsubscribe();
+    });
   });
 
   app.get("/api/workers/connect", { websocket: true }, (socket) => {
@@ -443,19 +483,18 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
 
-    reply.raw.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      "x-accel-buffering": "no"
-    });
+    const stopSse = startSse(reply.raw);
 
     try {
       const unsubscribe = threads.subscribe(params.threadId, query.after ?? 0, (event) => {
         sendSse(reply.raw, event.kind, event);
       });
-      reply.raw.on("close", unsubscribe);
+      reply.raw.on("close", () => {
+        stopSse();
+        unsubscribe();
+      });
     } catch (error) {
+      stopSse();
       sendSse(reply.raw, "error", { error: error instanceof Error ? error.message : String(error) });
       reply.raw.end();
     }
