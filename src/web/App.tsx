@@ -23,6 +23,7 @@ import remarkGfm from "remark-gfm";
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
 import { compactToolViews, type CompactRecordView } from "../shared/compactRecordViews.js";
+import { recordsToDetailedViews } from "./detailedRecordViews.js";
 import {
   normalizeUpdatePlanStatus,
   parseUpdatePlanArguments,
@@ -328,13 +329,17 @@ const App = () => {
       )
     };
   }), [activeWorker?.currentThreadId, activeWorkerThreads]);
-  const detailedViews = useMemo<CodexRecordView[]>(
+  const baseViews = useMemo<CodexRecordView[]>(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
   );
+  const detailedViews = useMemo<CodexRecordView[]>(
+    () => recordsToDetailedViews(activeSession?.records ?? []),
+    [activeSession?.records]
+  );
   const activeViews = useMemo<WebRecordView[]>(
-    () => messageDisplayMode === "compact" ? compactToolViews(detailedViews) : detailedViews,
-    [detailedViews, messageDisplayMode]
+    () => messageDisplayMode === "compact" ? compactToolViews(baseViews) : detailedViews,
+    [baseViews, detailedViews, messageDisplayMode]
   );
   const latestView = activeViews.at(-1);
   const latestViewKey = latestView
@@ -1059,6 +1064,7 @@ const App = () => {
                         <MessageCard
                           message={message}
                           showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
+                          renderToolPreview={messageDisplayMode === "compact"}
                           renderMode={renderMode}
                           markdownEnabled={markdownEnabled}
                           onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
@@ -1230,6 +1236,7 @@ const App = () => {
 const MessageCard = ({
   message,
   showStatus = true,
+  renderToolPreview = true,
   renderMode,
   markdownEnabled,
   onRenderModeChange,
@@ -1239,6 +1246,7 @@ const MessageCard = ({
 }: {
   message: WebRecordView;
   showStatus?: boolean;
+  renderToolPreview?: boolean;
   renderMode: MessageRenderMode;
   markdownEnabled: boolean;
   onRenderModeChange?: (mode: MessageRenderMode) => void;
@@ -1246,7 +1254,7 @@ const MessageCard = ({
   onFork?: () => void;
   onRollback?: () => void;
 }) => {
-  const toolBody = renderToolMessageBody(message, showStatus ? message.status : undefined);
+  const toolBody = renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined) : null;
   const hasToolBody = toolBody !== null;
   return (
     <article
