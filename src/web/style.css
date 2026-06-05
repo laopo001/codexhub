@@ -86,21 +86,6 @@ textarea {
   color: #b8c5b4;
 }
 
-button {
-  min-height: 40px;
-  border: 0;
-  border-radius: 8px;
-  background: #d95f36;
-  color: white;
-  padding: 0 16px;
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
 input,
 select,
 textarea {
@@ -259,6 +244,7 @@ textarea {
   flex: 0 0 auto;
   min-height: 34px;
   border: 1px solid #cbd6c7;
+  border-radius: 8px;
   background: #ffffff;
   color: #17211a;
   padding: 0 12px;
@@ -329,6 +315,7 @@ textarea {
 
 .switchButton {
   min-height: 22px;
+  border: 0;
   border-radius: 999px;
   background: #dfe5dc;
   color: #405244;
@@ -518,6 +505,126 @@ textarea {
   line-height: 1.5;
 }
 
+.messageMarkdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #17211a;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.messageMarkdown > :first-child {
+  margin-top: 0;
+}
+
+.messageMarkdown > :last-child {
+  margin-bottom: 0;
+}
+
+.messageMarkdown p,
+.messageMarkdown ul,
+.messageMarkdown ol,
+.messageMarkdown blockquote,
+.messageMarkdown .markdownCodeBlock,
+.messageMarkdown .markdownTableScroll {
+  margin: 0 0 8px;
+}
+
+.messageMarkdown ul,
+.messageMarkdown ol {
+  padding-left: 22px;
+}
+
+.messageMarkdown li + li {
+  margin-top: 3px;
+}
+
+.messageMarkdown blockquote {
+  border-left: 3px solid #cbd6c7;
+  color: #51604f;
+  padding-left: 10px;
+}
+
+.messageMarkdown a {
+  color: #246c8f;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.messageMarkdown a:hover {
+  color: #df5b35;
+}
+
+.messageMarkdown code {
+  border-radius: 4px;
+  background: #f0f4ed;
+  color: #26342a;
+  padding: 1px 4px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+}
+
+.markdownCodeBlock {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid #dfe5dc;
+  border-radius: 8px;
+  background: #f8faf6;
+  padding: 10px 12px;
+}
+
+.markdownCodeBlock code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: normal;
+  white-space: pre;
+  word-break: normal;
+}
+
+.markdownCodeBlock .markdownHighlightedCode {
+  width: max-content;
+  min-width: 100%;
+}
+
+.markdownTableScroll {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.messageMarkdown table {
+  width: max-content;
+  min-width: min(100%, 520px);
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.messageMarkdown th,
+.messageMarkdown td {
+  border: 1px solid #d7dfd3;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.messageMarkdown th {
+  background: #eef4ec;
+  color: #26342a;
+  font-weight: 700;
+}
+
+.messageMarkdown hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid #dfe5dc;
+  margin: 10px 0;
+}
+
 .messageMeta {
   display: inline-flex;
   align-items: center;
@@ -541,6 +648,34 @@ textarea {
 
 .messageMeta a:hover {
   color: #df5b35;
+}
+
+.sidebarScrim,
+.proxyWorkerRow,
+.sidebarPanelToggle,
+.switchButton,
+.composerIconButton,
+.composerMoreButton,
+.composerSendButton,
+.composerModelButton,
+.composerMenuItem,
+.imageAttachment button,
+.iconButton {
+  cursor: pointer;
+}
+
+.proxyWorkerRow:disabled,
+.sidebarPanelToggle:disabled,
+.switchButton:disabled,
+.composerIconButton:disabled,
+.composerMoreButton:disabled,
+.composerSendButton:disabled,
+.composerModelButton:disabled,
+.composerMenuItem:disabled,
+.imageAttachment button:disabled,
+.iconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .messageAttachments {
@@ -786,6 +921,7 @@ textarea {
   width: 36px;
   min-width: 36px;
   min-height: 36px;
+  border: 0;
   border-radius: 999px;
   padding: 0;
 }
@@ -885,6 +1021,7 @@ textarea {
   align-items: center;
   gap: 8px;
   min-height: 36px;
+  border: 0;
   border-radius: 10px;
   background: transparent;
   color: #17211a;
@@ -985,6 +1122,8 @@ textarea {
   place-items: center;
   width: 20px;
   min-height: 20px;
+  border: 0;
+  border-radius: 999px;
   padding: 0;
   background: rgb(23 33 26 / 0.82);
   color: #ffffff;
@@ -1053,6 +1192,8 @@ textarea {
   place-items: center;
   width: 36px;
   min-height: 36px;
+  border: 0;
+  border-radius: 8px;
   padding: 0;
   background: #e6ece2;
   color: #17211a;

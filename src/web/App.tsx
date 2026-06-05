@@ -1,11 +1,29 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Tabs } from "antd";
+import ReactMarkdown, { type Components } from "react-markdown";
+import { ConfigProvider, Switch, Tabs } from "antd";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
+import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
+import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
+import css from "react-syntax-highlighter/dist/esm/languages/prism/css";
+import diff from "react-syntax-highlighter/dist/esm/languages/prism/diff";
+import javascript from "react-syntax-highlighter/dist/esm/languages/prism/javascript";
+import json from "react-syntax-highlighter/dist/esm/languages/prism/json";
+import jsx from "react-syntax-highlighter/dist/esm/languages/prism/jsx";
+import markdown from "react-syntax-highlighter/dist/esm/languages/prism/markdown";
+import markup from "react-syntax-highlighter/dist/esm/languages/prism/markup";
+import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
+import sql from "react-syntax-highlighter/dist/esm/languages/prism/sql";
+import tsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
+import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
+import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
+import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light";
+import remarkGfm from "remark-gfm";
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
 import { compactToolViews, type CompactRecordView } from "../shared/compactRecordViews.js";
-import "antd/dist/reset.css";
+import "antd/dist/antd.css";
 import "./style.css";
 
 type ThreadSummary = {
@@ -90,6 +108,7 @@ type ThreadStatus = "running" | "idle";
 type ModelSelection = string;
 type ReasoningSelection = "auto" | ReasoningEffort;
 type MessageDisplayMode = "compact" | "detailed";
+type MessageRenderMode = "markdown" | "raw";
 type WebRecordView = CompactRecordView;
 type InspectDetail = {
   inputMeta: string;
@@ -149,6 +168,58 @@ const reasoningOptions: Array<{ value: ReasoningSelection; label: string }> = [
   { value: "high", label: "High" },
   { value: "xhigh", label: "XHigh" }
 ];
+
+SyntaxHighlighter.registerLanguage("bash", bash);
+SyntaxHighlighter.registerLanguage("css", css);
+SyntaxHighlighter.registerLanguage("diff", diff);
+SyntaxHighlighter.registerLanguage("javascript", javascript);
+SyntaxHighlighter.registerLanguage("json", json);
+SyntaxHighlighter.registerLanguage("jsx", jsx);
+SyntaxHighlighter.registerLanguage("markdown", markdown);
+SyntaxHighlighter.registerLanguage("markup", markup);
+SyntaxHighlighter.registerLanguage("python", python);
+SyntaxHighlighter.registerLanguage("sql", sql);
+SyntaxHighlighter.registerLanguage("tsx", tsx);
+SyntaxHighlighter.registerLanguage("typescript", typescript);
+SyntaxHighlighter.registerLanguage("yaml", yaml);
+
+const syntaxHighlighterStyle = oneLight as SyntaxHighlighterProps["style"];
+const syntaxHighlighterCustomStyle: React.CSSProperties = {
+  margin: 0,
+  overflow: "visible",
+  background: "transparent",
+  padding: 0,
+  fontSize: "12px",
+  lineHeight: 1.55
+};
+const languageAliases: Record<string, string> = {
+  console: "bash",
+  html: "markup",
+  js: "javascript",
+  md: "markdown",
+  sh: "bash",
+  shell: "bash",
+  ts: "typescript",
+  xml: "markup",
+  yml: "yaml",
+  zsh: "bash"
+};
+const highlightedLanguages = new Set([
+  "bash",
+  "css",
+  "diff",
+  "javascript",
+  "json",
+  "jsx",
+  "markdown",
+  "markup",
+  "python",
+  "sql",
+  "tsx",
+  "typescript",
+  "yaml"
+]);
+
 const App = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -167,12 +238,15 @@ const App = () => {
   const [selectedModel, setSelectedModel] = useState<ModelSelection>("auto");
   const [selectedReasoning, setSelectedReasoning] = useState<ReasoningSelection>("auto");
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
+  const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
   const workersEventSource = useRef<EventSource | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
+  const openingThreads = useRef(new Map<string, Promise<void>>());
+  const latestRequestedThreadId = useRef("");
   const messagesRef = useRef<VirtuosoHandle>(null);
   const messagesScrollerRef = useRef<HTMLElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
@@ -320,7 +394,7 @@ const App = () => {
       return;
     }
     if (activeTabThreadId !== desiredThreadId) {
-      void openThread(desiredThreadId).catch(() => setActiveTabThreadId(""));
+      void openThread(desiredThreadId).catch(() => clearActiveThreadIfLatest(desiredThreadId));
     }
   }, [activeTabThreadId, activeWorker, activeWorkerId, initialized, activeTabThreadByWorker, workers]);
 
@@ -417,7 +491,10 @@ const App = () => {
     if (initialWorker) {
       setActiveWorkerId(initialWorker.workerId);
       setActiveWorkspacePath(initialWorker.workingDirectory);
-      if (initialWorker.currentThreadId) await openThread(initialWorker.currentThreadId);
+      const initialThreadId = initialWorker.currentThreadId;
+      if (initialThreadId) {
+        await openThread(initialThreadId).catch(() => clearActiveThreadIfLatest(initialThreadId));
+      }
     }
     setInitialized(true);
   };
@@ -435,17 +512,56 @@ const App = () => {
   };
 
   const openThread = async (threadId: string) => {
-    const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
-    const session: ChatSession = { ...thread, input: "", imageAttachments: [] };
-    const workerId = thread.runtime.workerId;
-    if (workerId) {
-      setThreadOrderByWorker((current) => appendThreadOrder(current, workerId, thread.threadId));
+    latestRequestedThreadId.current = threadId;
+    setActiveTabThreadId(threadId);
+
+    const existingSession = sessions.find((session) => session.threadId === threadId);
+    const existingSource = eventSources.current.get(threadId);
+    if (existingSource && existingSource.readyState !== EventSource.CLOSED) {
+      closeThreadSubscriptionsExcept(threadId);
+      if (existingSession) setActiveWorkspacePath(existingSession.workingDirectory);
+      return;
     }
-    closeThreadSubscriptionsExcept(thread.threadId);
-    setSessions((current) => [...current.filter((item) => item.threadId !== thread.threadId), session]);
-    setActiveWorkspacePath(thread.workingDirectory);
-    setActiveTabThreadId(thread.threadId);
-    subscribeThread(thread.threadId, thread.lastSeq);
+
+    const existingOpen = openingThreads.current.get(threadId);
+    if (existingOpen) return existingOpen;
+
+    const open = (async () => {
+      const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
+      const session: ChatSession = { ...thread, input: "", imageAttachments: [] };
+      const workerId = thread.runtime.workerId;
+      if (workerId) {
+        setThreadOrderByWorker((current) => appendThreadOrder(current, workerId, thread.threadId));
+      }
+      setSessions((current) => {
+        const existing = current.find((item) => item.threadId === thread.threadId);
+        const nextSession = existing
+          ? { ...session, input: existing.input, imageAttachments: existing.imageAttachments }
+          : session;
+        return current.some((item) => item.threadId === thread.threadId)
+          ? current.map((item) => item.threadId === thread.threadId ? nextSession : item)
+          : [...current, nextSession];
+      });
+      if (latestRequestedThreadId.current !== thread.threadId) return;
+      closeThreadSubscriptionsExcept(thread.threadId);
+      setActiveWorkspacePath(thread.workingDirectory);
+      setActiveTabThreadId(thread.threadId);
+      subscribeThread(thread.threadId, thread.lastSeq);
+    })();
+
+    openingThreads.current.set(threadId, open);
+    try {
+      await open;
+    } catch (error) {
+      clearActiveThreadIfLatest(threadId);
+      throw error;
+    } finally {
+      openingThreads.current.delete(threadId);
+    }
+  };
+
+  const clearActiveThreadIfLatest = (threadId: string) => {
+    if (latestRequestedThreadId.current === threadId) setActiveTabThreadId("");
   };
 
   const closeThreadSubscriptionsExcept = (threadId: string) => {
@@ -457,7 +573,9 @@ const App = () => {
   };
 
   const subscribeThread = (threadId: string, after: number) => {
-    eventSources.current.get(threadId)?.close();
+    const existing = eventSources.current.get(threadId);
+    if (existing && existing.readyState !== EventSource.CLOSED) return;
+    existing?.close();
     const source = new EventSource(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`);
     const handle = (event: MessageEvent) => {
       const payload = JSON.parse(event.data) as StreamEvent;
@@ -471,6 +589,11 @@ const App = () => {
     source.addEventListener("record", handle);
     source.addEventListener("message", handle);
     source.addEventListener("done", handle);
+    source.addEventListener("error", () => {
+      if (source.readyState === EventSource.CLOSED && eventSources.current.get(threadId) === source) {
+        eventSources.current.delete(threadId);
+      }
+    });
     eventSources.current.set(threadId, source);
   };
 
@@ -615,6 +738,10 @@ const App = () => {
     return true;
   };
 
+  const updateMessageRenderMode = (messageId: string, mode: MessageRenderMode) => {
+    setMessageRenderModes((current) => current[messageId] === mode ? current : { ...current, [messageId]: mode });
+  };
+
   const removeSessionImage = (threadId: string, imageId: string) => {
     setSessions((current) => current.map((session) => {
       if (session.threadId !== threadId) return session;
@@ -630,7 +757,7 @@ const App = () => {
     const activeTabThreadIdForWorker = activeTabThreadByWorker[worker.workerId];
     const targetThreadId = activeTabThreadIdForWorker ?? worker.currentThreadId;
     if (targetThreadId) {
-      await openThread(targetThreadId);
+      await openThread(targetThreadId).catch(() => clearActiveThreadIfLatest(targetThreadId));
     } else {
       setActiveTabThreadId("");
     }
@@ -639,7 +766,7 @@ const App = () => {
   const switchWorkerThread = async (threadId: string) => {
     if (!activeWorker || threadId === activeTabThreadId) return;
     setActiveTabThreadByWorker((current) => ({ ...current, [activeWorker.workerId]: threadId }));
-    await openThread(threadId);
+    await openThread(threadId).catch(() => clearActiveThreadIfLatest(threadId));
   };
 
   return (
@@ -758,15 +885,22 @@ const App = () => {
                     increaseViewportBy={{ top: 360, bottom: 720 }}
                     computeItemKey={(_, message) => message.id}
                     components={{ EmptyPlaceholder: EmptyMessages }}
-                    itemContent={(_, message) => (
-                      <MessageCard
-                        message={message}
-                        showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
-                        onInspect={messageDisplayMode === "compact" && message.role === "tool" ? () => setInspectMessage(message) : undefined}
-                        onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
-                        onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
-                      />
-                    )}
+                    itemContent={(_, message) => {
+                      const markdownEnabled = canRenderMarkdown(message);
+                      const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
+                      return (
+                        <MessageCard
+                          message={message}
+                          showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
+                          renderMode={renderMode}
+                          markdownEnabled={markdownEnabled}
+                          onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
+                          onInspect={messageDisplayMode === "compact" && message.role === "tool" ? () => setInspectMessage(message) : undefined}
+                          onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
+                          onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
+                        />
+                      );
+                    }}
                   />
 
                   <form
@@ -929,18 +1063,24 @@ const App = () => {
 const MessageCard = ({
   message,
   showStatus = true,
+  renderMode,
+  markdownEnabled,
+  onRenderModeChange,
   onInspect,
   onFork,
   onRollback
 }: {
   message: WebRecordView;
   showStatus?: boolean;
+  renderMode: MessageRenderMode;
+  markdownEnabled: boolean;
+  onRenderModeChange?: (mode: MessageRenderMode) => void;
   onInspect?: () => void;
   onFork?: () => void;
   onRollback?: () => void;
 }) => (
   <article
-    className={`message ${message.role} ${onInspect ? "inspectable" : ""}`}
+    className={`message ${message.role} ${onInspect ? "inspectable" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
     onClick={onInspect}
     role={onInspect ? "button" : undefined}
     tabIndex={onInspect ? 0 : undefined}
@@ -955,7 +1095,7 @@ const MessageCard = ({
       <b>{message.label ?? message.role}</b>
       {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
     </span>
-    {message.text ? <pre>{message.text}</pre> : null}
+    {message.text ? <MessageText text={message.text} mode={renderMode} markdownEnabled={markdownEnabled} /> : null}
     {message.attachments?.length ? (
       <div className="messageAttachments">
         {message.attachments.map((attachment) => attachment.type === "image" ? (
@@ -972,9 +1112,19 @@ const MessageCard = ({
         ) : null)}
       </div>
     ) : null}
-    {message.at || message.usage || onFork || onRollback ? (
+    {message.at || message.usage || markdownEnabled || onFork || onRollback ? (
       <footer className="messageMeta" title={formatMessageMetaTitle(message)} onClick={(event) => event.stopPropagation()}>
         <span>{formatMessageMeta(message)}</span>
+        {markdownEnabled && onRenderModeChange ? (
+          <Switch
+            size="small"
+            checked={renderMode === "markdown"}
+            checkedChildren="MD"
+            unCheckedChildren="Raw"
+            onChange={(checked) => onRenderModeChange(checked ? "markdown" : "raw")}
+            aria-label="Toggle Markdown rendering"
+          />
+        ) : null}
         {onFork ? (
           <a href="#" onClick={(event) => {
             event.preventDefault();
@@ -991,6 +1141,61 @@ const MessageCard = ({
     ) : null}
   </article>
 );
+
+const MessageText = ({
+  text,
+  mode,
+  markdownEnabled
+}: {
+  text: string;
+  mode: MessageRenderMode;
+  markdownEnabled: boolean;
+}) => {
+  if (!markdownEnabled || mode === "raw") return <pre>{text}</pre>;
+  return (
+    <div className="messageMarkdown">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+};
+
+const markdownComponents: Components = {
+  a: ({ children, href, ...props }) => (
+    <a href={href} target="_blank" rel="noreferrer" {...props}>
+      {children}
+    </a>
+  ),
+  pre: ({ children }) => (
+    <div className="markdownCodeBlock">
+      {children}
+    </div>
+  ),
+  code: ({ children, className, ...props }) => {
+    const language = markdownCodeLanguage(className);
+    if (!language) return <code className={className} {...props}>{children}</code>;
+    return (
+      <SyntaxHighlighter
+        PreTag="div"
+        CodeTag="code"
+        language={language}
+        style={syntaxHighlighterStyle}
+        customStyle={syntaxHighlighterCustomStyle}
+        codeTagProps={{ className: "markdownHighlightedCode" }}
+        showLineNumbers={false}
+        wrapLongLines={false}
+      >
+        {String(children).replace(/\n$/, "")}
+      </SyntaxHighlighter>
+    );
+  },
+  table: ({ children }) => (
+    <div className="markdownTableScroll">
+      <table>{children}</table>
+    </div>
+  )
+};
 
 const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
@@ -1040,6 +1245,19 @@ const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
 });
 
 const shortId = (id: string) => id.slice(0, 8);
+
+const canRenderMarkdown = (message: WebRecordView) => {
+  if (message.role !== "codex") return false;
+  const label = message.label.toLowerCase();
+  return label === "commentary" || label === "final_answer" || label === "assistant";
+};
+
+const markdownCodeLanguage = (className: string | undefined) => {
+  const language = className?.match(/language-([\w-]+)/)?.[1].toLowerCase();
+  if (!language) return null;
+  const normalized = languageAliases[language] ?? language;
+  return highlightedLanguages.has(normalized) ? normalized : null;
+};
 
 const canForkAtMessage = (threadId: string, message: WebRecordView) =>
   Boolean(message.canFork && turnIdFromAppRecordId(threadId, message.record.id));
@@ -1473,4 +1691,8 @@ const readStoredUiState = (): {
 const root = document.getElementById("root");
 if (!root) throw new Error("root element not found");
 
-createRoot(root).render(<App />);
+createRoot(root).render(
+  <ConfigProvider theme={{ zeroRuntime: true }}>
+    <App />
+  </ConfigProvider>
+);
