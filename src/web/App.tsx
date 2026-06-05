@@ -1607,7 +1607,10 @@ const groupWorkers = (workers: WorkerSummary[]): WorkerDeviceGroup[] => {
     key: device.key,
     label: device.label,
     counts: device.counts,
-    folders: device.folders
+    folders: device.folders.map((folder) => ({
+      ...folder,
+      workers: [...folder.workers].reverse()
+    }))
   }));
 };
 
