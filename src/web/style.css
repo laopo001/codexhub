@@ -555,6 +555,140 @@ textarea {
   background: #f8fbfd;
 }
 
+.message.richTool {
+  border-color: #5a6890;
+  background: #f7f9fd;
+}
+
+.toolPreview {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: #17211a;
+}
+
+.toolPreviewTitle {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  color: #344050;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.toolPreviewTitle strong {
+  overflow: hidden;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolPreviewTitleMark {
+  flex: 0 0 auto;
+  color: #687391;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.toolPreviewMeta {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 6px 10px;
+  padding-left: 26px;
+  color: #6d7783;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.toolPreviewMetaItem {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolPreviewBody {
+  min-width: 0;
+  margin: 0;
+  padding-left: 26px;
+  color: #26342a;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.toolCommandLine {
+  padding-left: 26px;
+  color: #26342a;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+.updatePlanExplanation {
+  min-width: 0;
+  margin: 0;
+  padding-left: 26px;
+  color: #5f6a78;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.updatePlanSteps {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 0 26px;
+  list-style: none;
+}
+
+.updatePlanStep {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+  gap: 4px;
+  color: #26342a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.updatePlanStepIcon {
+  width: 18px;
+  color: #7a8493;
+  font-weight: 750;
+  text-align: center;
+}
+
+.updatePlanStepText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.updatePlanStep.completed .updatePlanStepIcon {
+  color: #2f7d5a;
+}
+
+.updatePlanStep.completed .updatePlanStepText {
+  color: #7a8580;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.updatePlanStep.in_progress .updatePlanStepIcon,
+.updatePlanStep.in_progress .updatePlanStepText {
+  color: #9b641f;
+  font-weight: 650;
+}
+
+.updatePlanStep.pending .updatePlanStepIcon {
+  color: #9aa39c;
+}
+
 .message.inspectable {
   cursor: pointer;
 }

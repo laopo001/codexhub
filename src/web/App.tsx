@@ -23,6 +23,13 @@ import remarkGfm from "remark-gfm";
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
 import { compactToolViews, type CompactRecordView } from "../shared/compactRecordViews.js";
+import {
+  normalizeUpdatePlanStatus,
+  parseUpdatePlanArguments,
+  updatePlanStatusIcon,
+  updatePlanStatusLabel,
+  type UpdatePlanView as UpdatePlanViewModel
+} from "../shared/updatePlanView.js";
 import "antd/dist/antd.css";
 import "./style.css";
 
@@ -140,6 +147,14 @@ type InspectDetail = {
   outputMeta?: string;
   outputBlockLabel?: string;
   outputBlock?: string;
+};
+type WebToolPresenter = {
+  render?: (args: Record<string, unknown>, status?: CodexRecordView["status"]) => React.ReactNode | null;
+  inspect?: (args: Record<string, unknown>, output: string) => InspectDetail | null;
+};
+type ParsedToolCall = {
+  name: string;
+  args: Record<string, unknown>;
 };
 
 type SystemStatus = {
@@ -1199,7 +1214,7 @@ const App = () => {
           <section className="modal detailModal" onClick={(event) => event.stopPropagation()}>
             <header className="modalHeader">
               <div>
-                <h2>{inspectMessage.label}</h2>
+                <h2>{formatInspectTitle(inspectMessage)}</h2>
                 <p>{inspectMessage.status ? statusLabel(inspectMessage.status) : "Details"}</p>
               </div>
               <button type="button" className="iconButton" onClick={() => setInspectMessage(null)} aria-label="Close">x</button>
@@ -1230,69 +1245,189 @@ const MessageCard = ({
   onInspect?: () => void;
   onFork?: () => void;
   onRollback?: () => void;
+}) => {
+  const toolBody = renderToolMessageBody(message, showStatus ? message.status : undefined);
+  const hasToolBody = toolBody !== null;
+  return (
+    <article
+      className={`message ${message.role} ${hasToolBody ? "richTool" : ""} ${onInspect ? "inspectable" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
+      onClick={onInspect}
+      role={onInspect ? "button" : undefined}
+      tabIndex={onInspect ? 0 : undefined}
+      onKeyDown={onInspect ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onInspect();
+        }
+      } : undefined}
+    >
+      {hasToolBody ? null : (
+        <span className="messageHeader">
+          <b>{message.label ?? message.role}</b>
+          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
+        </span>
+      )}
+      {hasToolBody ? (
+        toolBody
+      ) : message.text ? (
+        <MessageText text={message.text} mode={renderMode} markdownEnabled={markdownEnabled} />
+      ) : null}
+      {message.attachments?.length ? (
+        <div className="messageAttachments">
+          {message.attachments.map((attachment) => attachment.type === "image" ? (
+            <a
+              href={attachment.url}
+              target="_blank"
+              rel="noreferrer"
+              className="messageImage"
+              key={attachment.url}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <img src={attachment.url} alt="attachment" />
+            </a>
+          ) : null)}
+        </div>
+      ) : null}
+      {message.at || message.usage || markdownEnabled || onFork || onRollback ? (
+        <footer className="messageMeta" title={formatMessageMetaTitle(message)} onClick={(event) => event.stopPropagation()}>
+          <span>{formatMessageMeta(message)}</span>
+          {markdownEnabled && onRenderModeChange ? (
+            <Switch
+              size="small"
+              checked={renderMode === "markdown"}
+              checkedChildren="MD"
+              unCheckedChildren="Raw"
+              onChange={(checked) => onRenderModeChange(checked ? "markdown" : "raw")}
+              aria-label="Toggle Markdown rendering"
+            />
+          ) : null}
+          {onFork ? (
+            <a href="#" onClick={(event) => {
+              event.preventDefault();
+              onFork();
+            }}>Fork</a>
+          ) : null}
+          {onRollback ? (
+            <a href="#" onClick={(event) => {
+              event.preventDefault();
+              onRollback();
+            }}>Rollback</a>
+          ) : null}
+        </footer>
+      ) : null}
+    </article>
+  );
+};
+
+const UpdatePlanPreview = ({
+  plan,
+  status
+}: {
+  plan: UpdatePlanViewModel;
+  status?: CodexRecordView["status"];
 }) => (
-  <article
-    className={`message ${message.role} ${onInspect ? "inspectable" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
-    onClick={onInspect}
-    role={onInspect ? "button" : undefined}
-    tabIndex={onInspect ? 0 : undefined}
-    onKeyDown={onInspect ? (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        onInspect();
-      }
-    } : undefined}
-  >
-    <span className="messageHeader">
-      <b>{message.label ?? message.role}</b>
-      {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
-    </span>
-    {message.text ? <MessageText text={message.text} mode={renderMode} markdownEnabled={markdownEnabled} /> : null}
-    {message.attachments?.length ? (
-      <div className="messageAttachments">
-        {message.attachments.map((attachment) => attachment.type === "image" ? (
-          <a
-            href={attachment.url}
-            target="_blank"
-            rel="noreferrer"
-            className="messageImage"
-            key={attachment.url}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <img src={attachment.url} alt="attachment" />
-          </a>
-        ) : null)}
+  <ToolPreview title="Updated Plan" status={status} className="updatePlanPreview">
+    {plan.explanation ? <p className="updatePlanExplanation">{plan.explanation}</p> : null}
+    {plan.steps.length ? (
+      <ol className="updatePlanSteps">
+        {plan.steps.map((step, index) => {
+          const normalizedStatus = normalizeUpdatePlanStatus(step.status);
+          return (
+            <li className={`updatePlanStep ${normalizedStatus}`} key={`${index}:${step.step}`} title={updatePlanStatusLabel(step.status)}>
+              <span className="updatePlanStepIcon" aria-hidden="true">{updatePlanStatusIcon(step.status)}</span>
+              <span className="updatePlanStepText">{step.step}</span>
+            </li>
+          );
+        })}
+      </ol>
+    ) : null}
+  </ToolPreview>
+);
+
+const CommandToolPreview = ({
+  args,
+  status
+}: {
+  args: Record<string, unknown>;
+  status?: CodexRecordView["status"];
+}) => {
+  const command = typeof args.cmd === "string" ? formatCommandBlock(args.cmd) : "<missing>";
+  return (
+    <ToolPreview title="tool: exec_command" status={status} meta={toolPreviewMeta(args)}>
+      <pre className="toolCommandLine">{command.includes("\n") ? command : `$ ${command}`}</pre>
+    </ToolPreview>
+  );
+};
+
+const WriteStdinToolPreview = ({
+  args,
+  status
+}: {
+  args: Record<string, unknown>;
+  status?: CodexRecordView["status"];
+}) => (
+  <ToolPreview title="tool: write_stdin" status={status} meta={toolPreviewMeta(args)}>
+    <p className="toolPreviewBody">{formatWriteStdinSummary(args)}</p>
+  </ToolPreview>
+);
+
+const ToolPreview = ({
+  title,
+  status,
+  className = "",
+  meta,
+  children
+}: {
+  title: string;
+  status?: CodexRecordView["status"];
+  className?: string;
+  meta?: string[];
+  children: React.ReactNode;
+}) => (
+  <div className={`toolPreview ${className}`.trim()}>
+    <div className="toolPreviewTitle">
+      <span className="toolPreviewTitleMark" aria-hidden="true">•</span>
+      <strong>{title}</strong>
+      {status ? <em className={`messageStatus ${status}`}>{statusLabel(status)}</em> : null}
+    </div>
+    {meta?.length ? (
+      <div className="toolPreviewMeta">
+        {meta.map((item) => <span className="toolPreviewMetaItem" key={item} title={item}>{item}</span>)}
       </div>
     ) : null}
-    {message.at || message.usage || markdownEnabled || onFork || onRollback ? (
-      <footer className="messageMeta" title={formatMessageMetaTitle(message)} onClick={(event) => event.stopPropagation()}>
-        <span>{formatMessageMeta(message)}</span>
-        {markdownEnabled && onRenderModeChange ? (
-          <Switch
-            size="small"
-            checked={renderMode === "markdown"}
-            checkedChildren="MD"
-            unCheckedChildren="Raw"
-            onChange={(checked) => onRenderModeChange(checked ? "markdown" : "raw")}
-            aria-label="Toggle Markdown rendering"
-          />
-        ) : null}
-        {onFork ? (
-          <a href="#" onClick={(event) => {
-            event.preventDefault();
-            onFork();
-          }}>Fork</a>
-        ) : null}
-        {onRollback ? (
-          <a href="#" onClick={(event) => {
-            event.preventDefault();
-            onRollback();
-          }}>Rollback</a>
-        ) : null}
-      </footer>
-    ) : null}
-  </article>
+    {children}
+  </div>
 );
+
+const webToolPresenters: Record<string, WebToolPresenter> = {
+  exec_command: {
+    render: (args, status) => <CommandToolPreview args={args} status={status} />,
+    inspect: (args, output) => ({
+      ...formatToolInput("exec_command", args),
+      ...formatRawToolOutput(output)
+    })
+  },
+  update_plan: {
+    render: (args, status) => {
+      const plan = parseUpdatePlanArguments(args);
+      return plan ? <UpdatePlanPreview plan={plan} status={status} /> : null;
+    },
+    inspect: (args, output) => {
+      const plan = parseUpdatePlanArguments(args);
+      return plan ? {
+        inputMeta: formatUpdatePlanInspectInput(plan),
+        outputMeta: output.trimEnd() || undefined
+      } : null;
+    }
+  },
+  write_stdin: {
+    render: (args, status) => <WriteStdinToolPreview args={args} status={status} />,
+    inspect: (args, output) => ({
+      ...formatToolInput("write_stdin", args),
+      ...formatRawToolOutput(output)
+    })
+  }
+};
 
 const MessageText = ({
   text,
@@ -1594,7 +1729,7 @@ const formatContextTitle = (threadUsage: ThreadUsage | null) => {
   const context = threadUsage?.context;
   if (!context) return undefined;
   return [
-    `${formatCompactNumber(context.usedTokens)} / ${formatCompactNumber(context.windowTokens)} tokens used`,
+    `${formatCompactNumber(context.usedTokens)} / ${formatCompactNumber(context.windowTokens)} input tokens`,
     threadUsage.observedAt ? `observed ${formatDate(threadUsage.observedAt)}` : null
   ].filter(Boolean).join(" · ");
 };
@@ -1716,11 +1851,37 @@ const formatInspectDetail = (message: WebRecordView): InspectDetail => {
   const inspectRecord = message.inspectRecord ?? message.record;
   const payload = asRecord(inspectRecord.payload);
   const output = normalizeWebToolOutput(message.inspectText ?? (typeof payload?.output === "string" ? payload.output.trimEnd() : ""));
+  const toolCall = parseToolCallMessage(message);
+  const presenterInspect = toolCall
+    ? webToolPresenters[toolCall.name]?.inspect?.(toolCall.args, output)
+    : null;
+  if (presenterInspect) return presenterInspect;
+
   const callText = message.inspectCallText ?? message.text;
   return {
     ...formatInspectInput(message.record, callText.trimEnd()),
     ...formatInspectOutput(message.record, output)
   };
+};
+
+const formatInspectTitle = (message: WebRecordView) => {
+  const toolCall = parseToolCallMessage(message);
+  return toolCall ? `tool: ${toolCall.name}` : message.label;
+};
+
+const renderToolMessageBody = (message: WebRecordView, status?: CodexRecordView["status"]) => {
+  const toolCall = parseToolCallMessage(message);
+  if (!toolCall) return null;
+  return webToolPresenters[toolCall.name]?.render?.(toolCall.args, status) ?? null;
+};
+
+const parseToolCallMessage = (message: WebRecordView): ParsedToolCall | null => {
+  if (message.role !== "tool") return null;
+  const payload = asRecord(message.record.payload);
+  if (payload?.type !== "function_call") return null;
+  const name = typeof payload.name === "string" ? payload.name : "tool";
+  const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");
+  return { name, args: args ?? {} };
 };
 
 const normalizeWebToolOutput = (output: string) => {
@@ -1766,6 +1927,11 @@ const formatStructuredToolOutput = (output: string): Pick<InspectDetail, "output
     outputBlockLabel: "Stdout",
     outputBlock: cleanTerminalOutput(body) || "<empty>"
   };
+};
+
+const formatRawToolOutput = (output: string): Pick<InspectDetail, "outputMeta" | "outputBlockLabel" | "outputBlock"> => {
+  const text = output.trimEnd();
+  return text ? formatStructuredToolOutput(text) : {};
 };
 
 const cleanTerminalOutput = (text: string) => text
@@ -1817,6 +1983,18 @@ const formatToolInput = (name: string, args: Record<string, unknown>): Omit<Insp
     ].join("\n")
   };
 };
+
+const toolPreviewMeta = (args: Record<string, unknown>) => [
+  typeof args.workdir === "string" ? args.workdir : null,
+  typeof args.yield_time_ms === "number" ? `wait ${formatMilliseconds(args.yield_time_ms)}` : null,
+  typeof args.max_output_tokens === "number" ? `max ${formatCompactNumber(args.max_output_tokens)} tokens` : null
+].filter((item): item is string => Boolean(item));
+
+const formatUpdatePlanInspectInput = (plan: UpdatePlanViewModel) => [
+  "tool: update_plan",
+  plan.explanation ? `explanation: ${plan.explanation}` : null,
+  ...plan.steps.map((step) => `${updatePlanStatusIcon(step.status)} ${step.step} [${updatePlanStatusLabel(step.status)}]`)
+].filter((line): line is string => Boolean(line)).join("\n");
 
 const formatWriteStdinSummary = (args: Record<string, unknown>) => {
   const session = typeof args.session_id === "number" || typeof args.session_id === "string" ? `session ${args.session_id}` : "session";

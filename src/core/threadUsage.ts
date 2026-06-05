@@ -36,8 +36,9 @@ export const threadUsageFromRecord = (record: CodexRecord): ThreadUsage | null =
   if (record.type !== "event_msg" || payload?.type !== "token_count") return null;
 
   const info = asRecord(payload.info);
-  const totalTokenUsage = asRecord(info?.total_token_usage);
-  const usedTokens = numberValue(totalTokenUsage?.total_tokens);
+  const lastTokenUsage = asRecord(info?.last_token_usage);
+  const usedTokens = numberValue(lastTokenUsage?.input_tokens)
+    ?? numberValue(lastTokenUsage?.total_tokens);
   const windowTokens = numberValue(info?.model_context_window);
   const rateLimits = asRecord(payload.rate_limits);
 

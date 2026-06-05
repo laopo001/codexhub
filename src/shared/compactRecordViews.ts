@@ -1,6 +1,7 @@
 import { asRecord } from "../core/codexRecord.js";
 import type { CodexRecord } from "../core/codexRecord.js";
 import type { CodexRecordView } from "../core/codexRecordView.js";
+import { formatUpdatePlanCompact, parseUpdatePlanArguments } from "./updatePlanView.js";
 
 export type CompactRecordView = CodexRecordView & {
   inspectRecord?: CodexRecord;
@@ -47,7 +48,7 @@ export const compactRecordView = (
     const compactView: CompactRecordView = {
       ...view,
       id: `compact-tool:${callId}`,
-      label: view.label.replace(/^tool call:\s*/i, "tool: "),
+      label: formatCompactToolLabel(view),
       text: formatCompactToolCall(view),
       inspectCallText: view.text
     };
@@ -87,10 +88,21 @@ const formatCompactToolCall = (view: CodexRecordView) => {
   if (payload?.type !== "function_call") return view.text;
   const name = typeof payload.name === "string" ? payload.name : "tool";
   const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");
+  if (name === "update_plan" && args) {
+    const plan = parseUpdatePlanArguments(args);
+    if (plan) return formatUpdatePlanCompact(plan);
+  }
   if (name === "write_stdin" && args) return formatWriteStdinSummary(args);
   if (name === "exec_command" && typeof args?.cmd === "string") return `$ ${args.cmd}`;
   if (args) return `${name} ${JSON.stringify(args)}`;
   return view.text;
+};
+
+const formatCompactToolLabel = (view: CodexRecordView) => {
+  const payload = asRecord(view.record.payload);
+  return payload?.type === "function_call" && payload.name === "update_plan"
+    ? "Updated Plan"
+    : view.label.replace(/^tool call:\s*/i, "tool: ");
 };
 
 const formatWriteStdinSummary = (args: Record<string, unknown>) => {
