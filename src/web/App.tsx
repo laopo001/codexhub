@@ -73,6 +73,18 @@ type WorkerSummary = {
   codexUsage?: CodexUsageSnapshot;
 };
 
+type WorkerFolderGroup = {
+  key: string;
+  label: string;
+  workers: WorkerSummary[];
+};
+
+type WorkerDeviceGroup = {
+  key: string;
+  label: string;
+  folders: WorkerFolderGroup[];
+};
+
 type ChatSession = ThreadDetail & {
   input: string;
   imageAttachments: ImageAttachment[];
@@ -262,6 +274,7 @@ const App = () => {
     () => workers.find((worker) => worker.workerId === activeWorkerId),
     [activeWorkerId, workers]
   );
+  const workerGroups = useMemo(() => groupWorkers(workers), [workers]);
   const activeWorkerThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
     for (const thread of activeWorker?.threads ?? []) byId.set(thread.threadId, thread);
@@ -801,29 +814,42 @@ const App = () => {
             <div className="proxyWorkerEmpty">No connected codexhub</div>
           ) : (
             <div className="proxyWorkerList">
-              {workers.map((worker) => {
-                const workerLabel = worker.name ?? shortId(worker.workerId);
-                const statusLabel = workerStatusLabel(worker);
-                const statusTitle = workerStatusTitle(worker);
-                const threadTitle = worker.currentThread?.title ?? "No current thread";
-                const lastSeenLabel = worker.online ? "" : `last seen ${relativeTime(worker.lastSeenAt)}`;
-                return (
-                  <button
-                    type="button"
-                    className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""} ${worker.online ? "online" : "offline"}`}
-                    key={worker.workerId}
-                    onClick={() => void selectWorker(worker)}
-                  >
-                    <span title={workerLabel}>{workerLabel}</span>
-                    <strong title={statusTitle}>{statusLabel}</strong>
-                    <code title={threadTitle}>{threadTitle}</code>
-                    <em className="proxyWorkerMeta">
-                      <span className="proxyWorkerDirectory" title={worker.workingDirectory}>{worker.workingDirectory}</span>
-                      {lastSeenLabel ? <span className="proxyWorkerLastSeen" title={lastSeenLabel}>{lastSeenLabel}</span> : null}
-                    </em>
-                  </button>
-                );
-              })}
+              {workerGroups.map((device) => (
+                <section className="proxyWorkerDeviceGroup" key={device.key}>
+                  <h3 className="proxyWorkerDeviceHeader" title={device.label}>{device.label}</h3>
+                  {device.folders.map((folder) => (
+                    <section className="proxyWorkerFolderGroup" key={folder.key}>
+                      <h4 className="proxyWorkerFolderHeader" title={folder.label}>{folder.label}</h4>
+                      <div className="proxyWorkerRows">
+                        {folder.workers.map((worker) => {
+                          const workerLabel = worker.name ?? shortId(worker.workerId);
+                          const statusLabel = workerStatusLabel(worker);
+                          const statusTitle = workerStatusTitle(worker);
+                          const threadTitle = worker.currentThread?.title ?? "No current thread";
+                          const lastSeenLabel = worker.online ? "" : `last seen ${relativeTime(worker.lastSeenAt)}`;
+                          return (
+                            <button
+                              type="button"
+                              className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""} ${worker.online ? "online" : "offline"}`}
+                              key={worker.workerId}
+                              onClick={() => void selectWorker(worker)}
+                            >
+                              <span title={workerLabel}>{workerLabel}</span>
+                              <strong title={statusTitle}>{statusLabel}</strong>
+                              <code title={threadTitle}>{threadTitle}</code>
+                              {lastSeenLabel ? (
+                                <em className="proxyWorkerMeta">
+                                  <span className="proxyWorkerLastSeen" title={lastSeenLabel}>{lastSeenLabel}</span>
+                                </em>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </section>
+              ))}
             </div>
           )}
         </section>
@@ -1293,6 +1319,42 @@ const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
   Array.isArray(workers)
     ? workers
     : [];
+
+const groupWorkers = (workers: WorkerSummary[]): WorkerDeviceGroup[] => {
+  const devices = new Map<string, { label: string; folders: Map<string, WorkerFolderGroup> }>();
+  for (const worker of workers) {
+    const deviceLabel = workerDeviceLabel(worker);
+    const folderLabel = worker.workingDirectory || "unknown folder";
+    let device = devices.get(deviceLabel);
+    if (!device) {
+      device = { label: deviceLabel, folders: new Map() };
+      devices.set(deviceLabel, device);
+    }
+    let folder = device.folders.get(folderLabel);
+    if (!folder) {
+      folder = { key: `${deviceLabel}:${folderLabel}`, label: folderLabel, workers: [] };
+      device.folders.set(folderLabel, folder);
+    }
+    folder.workers.push(worker);
+  }
+  return [...devices.entries()].map(([key, device]) => ({
+    key,
+    label: device.label,
+    folders: [...device.folders.values()]
+  }));
+};
+
+const workerDeviceLabel = (worker: WorkerSummary) =>
+  worker.hostname?.trim() || hostnameFromUrl(worker.appServerUrl) || "unknown device";
+
+const hostnameFromUrl = (url: string | undefined) => {
+  if (!url) return "";
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+};
 
 const workerStatusLabel = (worker: WorkerSummary) =>
   worker.online ? worker.currentThread?.status ?? "idle" : "offline";

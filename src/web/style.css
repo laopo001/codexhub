@@ -122,7 +122,8 @@ textarea {
 
 .proxyWorkerList {
   display: grid;
-  gap: 8px;
+  align-content: start;
+  gap: 14px;
   max-height: 180px;
   min-height: 0;
   overflow-x: hidden;
@@ -131,6 +132,51 @@ textarea {
 
 .proxyWorkers.expanded .proxyWorkerList {
   max-height: none;
+}
+
+.proxyWorkerDeviceGroup,
+.proxyWorkerFolderGroup,
+.proxyWorkerRows {
+  display: grid;
+  min-width: 0;
+}
+
+.proxyWorkerDeviceGroup {
+  gap: 8px;
+}
+
+.proxyWorkerFolderGroup {
+  gap: 6px;
+  border-left: 1px solid #2d4033;
+  padding-left: 8px;
+}
+
+.proxyWorkerRows {
+  gap: 6px;
+}
+
+.proxyWorkerDeviceHeader,
+.proxyWorkerFolderHeader {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxyWorkerDeviceHeader {
+  color: #f8fbf4;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.proxyWorkerFolderHeader {
+  color: #91a090;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
 }
 
 .proxyWorkerRow,
@@ -216,14 +262,6 @@ textarea {
 .proxyWorkerMeta span {
   font-family: inherit;
   font-weight: 400;
-}
-
-.proxyWorkerDirectory {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .proxyWorkerLastSeen {
