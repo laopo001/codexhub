@@ -74,6 +74,8 @@ type BridgeOptions = {
   workerId: string;
   cwd: string;
   ensureCurrentThread?: boolean;
+  initialTuiResume?: { threadId?: string };
+  acceptTuiCurrentThreadEvents?: boolean;
   readyLabel?: string;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
@@ -189,6 +191,8 @@ async function runCodexhubWorker(program: Command, options: ConnectOptions, laun
       workerId,
       cwd,
       ensureCurrentThread: Boolean(options.headless),
+      initialTuiResume: launch.type === "resume" ? { threadId: launch.sessionId } : undefined,
+      acceptTuiCurrentThreadEvents: !options.headless,
       model: options.model,
       sandbox: options.sandbox,
       approvalPolicy: options.approvalPolicy,
@@ -201,6 +205,9 @@ async function runCodexhubWorker(program: Command, options: ConnectOptions, laun
       return;
     }
 
+    // Resume emits one-shot thread notifications. Wait only for the local app-server bridge,
+    // never for the optional codexhub server transport, so offline/local-first TUI startup still works.
+    await Promise.race([bridgeRunner.waitForLocalAppBridgeReady(), delay(1500)]);
     tui = CodexTuiPty.start(cwd, appServerUrl, launch, statusBar ? {
       reservedRows: () => statusBar?.reservedRows() ?? 0,
       onOutput: () => statusBar?.redrawSoon()
@@ -272,6 +279,7 @@ class ProxyBridgeRunner {
   private lastState: "offline" | "online" | null = null;
   private lastReadyThreadId: string | null = null;
   private readonly ready = new Deferred<{ workerId: string; threadId: string }>();
+  private readonly localAppBridgeReady = new Deferred<void>();
   private bridgeState: BridgeState = { threadIds: [] };
 
   constructor(private readonly options: ProxyBridgeRunnerOptions) {}
@@ -290,6 +298,10 @@ class ProxyBridgeRunner {
 
   waitForReady() {
     return this.ready.promise;
+  }
+
+  waitForLocalAppBridgeReady() {
+    return this.localAppBridgeReady.promise;
   }
 
   async ensureThread(threadId: string) {
@@ -338,6 +350,7 @@ class ProxyBridgeRunner {
           },
           onState: (state, message) => this.setTransportState(state, message)
         });
+        this.localAppBridgeReady.resolve();
         if (this.options.ensureCurrentThread) {
           const threadId = await this.bridge.ensureCurrentThread();
           this.bridgeState = this.bridge.snapshotState();
@@ -553,6 +566,7 @@ class CodexAppServerBridge {
   private readonly forwardedRuntimeSettings = new Map<string, string>();
   private readonly bridgeStartedThreads = new Set<string>();
   private bridgeStartedUnknownCount = 0;
+  private initialTuiResumeCurrentPending: boolean;
   private readonly closeSignal = new Deferred<void>();
 
   private constructor(
@@ -562,6 +576,7 @@ class CodexAppServerBridge {
     private readonly hub: HubTransportSink
   ) {
     this.currentThreadId = initialState.currentThreadId;
+    this.initialTuiResumeCurrentPending = Boolean(options.initialTuiResume);
     for (const threadId of initialState.threadIds) this.bindThread(threadId);
   }
 
@@ -951,6 +966,9 @@ class CodexAppServerBridge {
         await this.forwardCurrentThreadChanged(threadId);
       }
     }
+    if (this.shouldForwardTuiResumeCurrent(method, threadId)) {
+      await this.forwardCurrentThreadChanged(threadId);
+    }
     await this.forwardExecutionStateFromMessage(threadId, message);
 
     if (method !== "thread/settings/updated") return;
@@ -997,6 +1015,22 @@ class CodexAppServerBridge {
     if (this.currentThreadId === threadId) return;
     this.currentThreadId = threadId;
     this.hub.sendEvent({ type: "worker_current_changed", currentThreadId: threadId, heartbeat });
+  }
+
+  private shouldForwardTuiResumeCurrent(method: string, threadId: string) {
+    if (!this.options.acceptTuiCurrentThreadEvents) return false;
+    if (this.bridgeStartedThreads.has(threadId) || this.bridgeStartedUnknownCount > 0) return false;
+
+    if (this.initialTuiResumeCurrentPending && isInitialTuiResumeCurrentMethod(method)) {
+      const hintedThreadId = this.options.initialTuiResume?.threadId?.trim();
+      if (hintedThreadId && hintedThreadId !== threadId) return false;
+      this.initialTuiResumeCurrentPending = false;
+      return true;
+    }
+
+    return Boolean(this.currentThreadId)
+      && this.currentThreadId !== threadId
+      && isTuiResumeCurrentMethod(method);
   }
 
   private markBridgeStartedThread(threadId: string) {
@@ -1374,6 +1408,12 @@ const turnRuntimeParams = (options: ThreadRunOptions | undefined) => {
 
 const isModelReasoningEffort = (value: unknown): value is ThreadRunOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
+
+const isInitialTuiResumeCurrentMethod = (method: string) =>
+  method === "thread/status/changed" || isTuiResumeCurrentMethod(method);
+
+const isTuiResumeCurrentMethod = (method: string) =>
+  method === "thread/goal/cleared" || method === "thread/goal/updated";
 
 const threadIdForMessage = (message: JsonRecord) => {
   const params = asRecord(message.params);
