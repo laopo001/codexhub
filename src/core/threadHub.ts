@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { ThreadOptions, Usage } from "@openai/codex-sdk";
 import { asRecord, type CodexRecord } from "./codexRecord.js";
 import { recordsToViews } from "./codexRecordView.js";
-import type { CodexUsageSnapshot } from "./codexUsage.js";
 import type { ProxyInput } from "./proxyInput.js";
+import { emptyThreadUsage, threadUsageFromRecords, type ThreadUsage } from "./threadUsage.js";
 
 export type ThreadSummary = {
   threadId: string;
@@ -17,7 +17,7 @@ export type ThreadSummary = {
   updatedAt: string;
   messageCount: number;
   lastUsage?: Usage;
-  codexUsage?: CodexUsageSnapshot;
+  threadUsage: ThreadUsage;
 };
 
 export type ThreadRuntimeSummary = {
@@ -55,8 +55,6 @@ export type WorkerRegistration = {
   pid?: number;
   hostname?: string;
   currentThreadId?: string;
-  codexUsage?: CodexUsageSnapshot;
-  threadCodexUsage?: Record<string, CodexUsageSnapshot>;
   transportId?: string;
 };
 
@@ -77,7 +75,6 @@ export type WorkerSummary = {
   currentThreadId?: string;
   currentThread?: ThreadSummary;
   threads: ThreadSummary[];
-  codexUsage?: CodexUsageSnapshot;
 };
 
 export type WorkerStreamEvent = {
@@ -150,6 +147,7 @@ type RuntimeThread = {
   title: string;
   updatedAt: string;
   records: CodexRecord[];
+  threadUsage: ThreadUsage;
   events: ThreadStreamEvent[];
   subscribers: Set<(event: ThreadStreamEvent) => void>;
   lastUsage?: Usage;
@@ -171,7 +169,6 @@ export class ThreadHub {
   private readonly workers = new Map<string, RuntimeWorker>();
   private readonly pendingCommands = new Map<string, PendingCommand>();
   private readonly activeTurnCommands = new Map<string, string>();
-  private readonly codexUsageByThread = new Map<string, CodexUsageSnapshot>();
   private readonly workerEvents: WorkerStreamEvent[] = [];
   private readonly workerSubscribers = new Set<(event: WorkerStreamEvent) => void>();
   private lastWorkerSnapshotKey = "";
@@ -197,13 +194,11 @@ export class ThreadHub {
       pid: registration.pid,
       hostname: registration.hostname,
       currentThreadId: registration.currentThreadId,
-      codexUsage: registration.codexUsage,
       threads: [],
       transportId: registration.transportId,
       commands: existing?.commands ?? [],
       waiters: existing?.waiters ?? new Set()
     };
-    this.applyThreadCodexUsage(registration.threadCodexUsage);
     this.workers.set(workerId, worker);
     if (registration.currentThreadId) {
       this.ensureThread(registration.currentThreadId, worker, {
@@ -230,16 +225,20 @@ export class ThreadHub {
     worker.appServerUrl = registration.appServerUrl ?? worker.appServerUrl;
     worker.pid = registration.pid ?? worker.pid;
     worker.hostname = registration.hostname ?? worker.hostname;
-    worker.codexUsage = registration.codexUsage ?? worker.codexUsage;
-    const changedUsageThreadIds = this.applyThreadCodexUsage(registration.threadCodexUsage);
+    if (registration.currentThreadId) {
+      worker.currentThreadId = registration.currentThreadId;
+      this.ensureThread(registration.currentThreadId, worker, {
+        params: { threadId: registration.currentThreadId, cwd: worker.workingDirectory }
+      }, false);
+    }
     worker.online = true;
     worker.status = "online";
     worker.lastSeenAt = now;
     delete worker.offlineSinceAt;
     delete worker.offlineReason;
-    if (previousState !== this.workerVisibleState(worker) || changedUsageThreadIds.length) {
+    if (previousState !== this.workerVisibleState(worker)) {
       for (const thread of this.threads.values()) {
-        if (thread.workerId === workerId || changedUsageThreadIds.includes(thread.threadId)) this.publish(thread, "thread");
+        if (thread.workerId === workerId) this.publish(thread, "thread");
       }
       this.publishWorkers();
     }
@@ -412,20 +411,9 @@ export class ThreadHub {
     return thread ? this.detail(thread) : null;
   }
 
-  getCodexUsage(threadId?: string): CodexUsageSnapshot {
-    if (threadId) {
-      const threadUsage = this.codexUsageByThread.get(threadId);
-      if (threadUsage) return threadUsage;
-
-      const thread = this.threads.get(threadId);
-      const workerUsage = thread?.workerId ? this.workers.get(thread.workerId)?.codexUsage : undefined;
-      return workerUsage ?? emptyCodexUsage("thread");
-    }
-
-    const worker = [...this.workers.values()]
-      .filter((item) => item.online && item.codexUsage)
-      .sort((left, right) => Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt))[0];
-    return worker?.codexUsage ?? emptyCodexUsage("latest");
+  getThreadUsage(threadId?: string): ThreadUsage {
+    if (!threadId) return emptyThreadUsage();
+    return this.threads.get(threadId)?.threadUsage ?? emptyThreadUsage();
   }
 
   async forkThread(threadId: string, recordId?: string): Promise<ThreadDetail> {
@@ -761,6 +749,7 @@ export class ThreadHub {
       title,
       updatedAt: now,
       records: [],
+      threadUsage: emptyThreadUsage(),
       events: [],
       subscribers: new Set(),
       seq: 0
@@ -915,19 +904,7 @@ export class ThreadHub {
   private resetThreadRecords(thread: RuntimeThread) {
     thread.records = [];
     thread.lastUsage = undefined;
-  }
-
-  private applyThreadCodexUsage(usages?: Record<string, CodexUsageSnapshot>) {
-    const changedThreadIds: string[] = [];
-    if (!usages) return changedThreadIds;
-    for (const [threadId, usage] of Object.entries(usages)) {
-      if (!threadId || !usage) continue;
-      const previous = this.codexUsageByThread.get(threadId);
-      if (previous && JSON.stringify(previous) === JSON.stringify(usage)) continue;
-      this.codexUsageByThread.set(threadId, usage);
-      changedThreadIds.push(threadId);
-    }
-    return changedThreadIds;
+    thread.threadUsage = emptyThreadUsage();
   }
 
   private removeOptimisticUserRecord(thread: RuntimeThread, incoming: CodexRecord) {
@@ -998,6 +975,7 @@ export class ThreadHub {
     }
     thread.updatedAt = record.timestamp ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
+    thread.threadUsage = threadUsageFromRecords(thread.records);
     this.publish(thread, "record", record);
   }
 
@@ -1053,7 +1031,7 @@ export class ThreadHub {
       updatedAt: thread.updatedAt,
       messageCount: recordsToViews(thread.records).length,
       lastUsage: thread.lastUsage,
-      codexUsage: this.threadCodexUsage(thread)
+      threadUsage: thread.threadUsage
     };
   }
 
@@ -1082,8 +1060,7 @@ export class ThreadHub {
       hostname: worker.hostname,
       currentThreadId: currentThread?.threadId ?? worker.currentThreadId,
       currentThread: currentThread ? this.summary(currentThread) : undefined,
-      threads,
-      codexUsage: worker.codexUsage
+      threads
     };
   }
 
@@ -1098,11 +1075,6 @@ export class ThreadHub {
     });
   }
 
-  private threadCodexUsage(thread: RuntimeThread) {
-    return this.codexUsageByThread.get(thread.threadId)
-      ?? (thread.workerId ? this.workers.get(thread.workerId)?.codexUsage : undefined);
-  }
-
   private workerVisibleState(worker: RuntimeWorker) {
     return JSON.stringify({
       workerId: worker.workerId,
@@ -1115,8 +1087,7 @@ export class ThreadHub {
       offlineReason: worker.offlineReason,
       pid: worker.pid,
       hostname: worker.hostname,
-      currentThreadId: worker.currentThreadId,
-      codexUsage: worker.codexUsage
+      currentThreadId: worker.currentThreadId
     });
   }
 
@@ -1350,14 +1321,6 @@ const applyThreadRunOptions = (current: ThreadOptions, options: ThreadRunOptions
 
 const isThreadReasoningEffort = (value: unknown): value is ThreadOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
-
-const emptyCodexUsage = (source: CodexUsageSnapshot["source"]): CodexUsageSnapshot => ({
-  rateLimits: null,
-  tokenUsage: null,
-  sourceFile: null,
-  observedAt: null,
-  source
-});
 
 const stringify = (value: unknown) => {
   try {

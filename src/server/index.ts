@@ -31,37 +31,6 @@ const threadRunOptionsSchema = z.object({
   modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional()
 });
 
-const rateLimitWindowSchema = z.object({
-  used_percent: z.number(),
-  window_minutes: z.number(),
-  resets_at: z.number()
-});
-const tokenUsageSchema = z.object({
-  input_tokens: z.number(),
-  cached_input_tokens: z.number(),
-  output_tokens: z.number(),
-  reasoning_output_tokens: z.number(),
-  total_tokens: z.number()
-});
-const codexUsageSchema = z.object({
-  rateLimits: z.object({
-    limit_id: z.string().nullable().optional(),
-    limit_name: z.string().nullable().optional(),
-    primary: rateLimitWindowSchema.nullable().optional(),
-    secondary: rateLimitWindowSchema.nullable().optional(),
-    plan_type: z.string().nullable().optional(),
-    rate_limit_reached_type: z.string().nullable().optional()
-  }).nullable(),
-  tokenUsage: z.object({
-    totalTokenUsage: tokenUsageSchema.nullable(),
-    lastTokenUsage: tokenUsageSchema.nullable(),
-    modelContextWindow: z.number().nullable()
-  }).nullable(),
-  sourceFile: z.string().nullable(),
-  observedAt: z.string().nullable(),
-  source: z.enum(["latest", "thread"])
-});
-
 const workerRegistrationSchema = z.object({
   workerId: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
@@ -69,12 +38,10 @@ const workerRegistrationSchema = z.object({
   appServerUrl: z.string().min(1).optional(),
   pid: z.number().int().optional(),
   hostname: z.string().min(1).optional(),
-  currentThreadId: z.string().min(1).optional(),
-  codexUsage: codexUsageSchema.optional(),
-  threadCodexUsage: z.record(z.string(), codexUsageSchema).optional()
+  currentThreadId: z.string().min(1).optional()
 });
 
-const workerHeartbeatSchema = workerRegistrationSchema.omit({ currentThreadId: true }).partial();
+const workerHeartbeatSchema = workerRegistrationSchema.partial();
 
 const codexRecordSchema = z.object({
   id: z.string().min(1),
@@ -256,9 +223,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   }));
 
-  app.get("/api/codex-usage", async (request) => {
-    const query = z.object({ threadId: z.string().optional() }).parse(request.query);
-    return threads.getCodexUsage(query.threadId);
+  app.get("/api/codex-usage", async (request, reply) => {
+    reply.header("x-codexhub-compat", "threadUsage");
+    const query = z.object({ threadId: z.string().min(1).optional() }).parse(request.query);
+    if (!query.threadId) {
+      reply.code(400);
+      return { error: "threadId_required", message: "This compatibility endpoint only returns thread-local usage." };
+    }
+    return threads.getThreadUsage(query.threadId);
   });
 
   app.get("/api/threads", async () => ({

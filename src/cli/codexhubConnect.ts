@@ -8,7 +8,6 @@ import type { Command } from "commander";
 import { spawn as spawnPty, type IPty } from "node-pty";
 import { readCodexSessionRecordsAfter } from "../core/codexSession.js";
 import { asRecord as asCodexRecord, codexRecordFromSession, type CodexRecord } from "../core/codexRecord.js";
-import { readCodexUsage } from "../core/codexUsage.js";
 import type { ProxyInput } from "../core/proxyInput.js";
 import type { ThreadRunOptions, WorkerCommand, WorkerEventInput, WorkerRecordsInput, WorkerRegistration } from "../core/threadHub.js";
 
@@ -1061,21 +1060,12 @@ class CodexAppServerBridge {
   }
 
   private async heartbeat() {
-    const codexUsage = await readCodexUsage().catch(() => undefined);
-    const threadCodexUsage = Object.fromEntries((await Promise.all(
-      [...this.syncedThreads.keys()].map(async (threadId) => {
-        const usage = await readCodexUsage(threadId).catch(() => undefined);
-        return usage ? [threadId, usage] as const : null;
-      })
-    )).filter((item): item is readonly [string, Awaited<ReturnType<typeof readCodexUsage>>] => Boolean(item)));
-
     this.hub.sendHeartbeat({
       workingDirectory: this.options.cwd,
       appServerUrl: this.options.appServerUrl,
       pid: process.pid,
       hostname: os.hostname(),
-      codexUsage,
-      threadCodexUsage
+      currentThreadId: this.currentThreadId
     });
   }
 }

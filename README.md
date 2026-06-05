@@ -2,7 +2,7 @@
 
 一个 worker-first 的本地 Codex 控制面。当前运行态由 `codexhub` / `codexhub resume` 启动的官方 `codex app-server` worker 持有，server 负责排队命令和镜像事件。一次 `codexhub` 或 `codexhub resume` 等价于打开一个官方 Codex：一个 TUI、一个 app-server、一个 worker；同一个目录可以同时运行多个 worker。
 
-- 共享核心：API server 统一镜像 Codex workers 和 threads，Web 左侧按在线 worker 选择，右侧跟随 worker 当前 `threadId`。
+- 共享核心：API server 统一镜像 Codex workers 和 threads，Web 左侧按设备、文件夹和 worker 展示在线及短期保留的 recently disconnected workers，右侧跟随在线 worker 当前 `threadId`。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
 - CLI worker：`codexhub` / `codexhub resume` 复用官方 Codex TUI 和 app-server。
@@ -40,9 +40,9 @@ pnpm codexhub threads --show 20
 
 `cxh` 是 `codexhub` 的短别名，例如 `pnpm cxh list`。
 
-`codexhub [prompt]` 会在当前机器启动官方 `codex app-server`，然后用 PTY wrapper 前台运行官方 `codex --remote ... [prompt]` TUI。`codexhub resume [threadId] [prompt]` 走同一套 worker/bridge，只是前台 TUI 改为官方 `codex resume --remote ... [threadId] [prompt]`；不传 `threadId` 时保留官方 resume picker，也可以用 `--last`。codexhub server 是可选增强：server 在线时，`codexhub` 注册一个本次进程唯一的 worker，同步 app-server event，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，只是暂时不能远程转发。后台 bridge 会持续重试，server 恢复后自动注册并开始同步。Web 主列表只展示在线 worker；右侧展示选中 worker 的当前 thread，TUI 里 `/resume` 切换后会随 app-server event 同步。Codex usage 和本地图片处理等机器相关能力由 `codexhub` worker 上报或执行，server 只缓存和转发。非 headless 终端底部会保留一行 `codexhub` 状态栏，显示当前 worker、thread 和 server 连接状态。官方 TUI 退出时，`codexhub` 会立即 unregister worker；如果 `codexhub` 异常消失，server 通过 heartbeat timeout 标记 offline，Web 左侧不再显示该 worker。
+`codexhub [prompt]` 会在当前机器启动官方 `codex app-server`，然后用 PTY wrapper 前台运行官方 `codex --remote ... [prompt]` TUI。`codexhub resume [threadId] [prompt]` 走同一套 worker/bridge，只是前台 TUI 改为官方 `codex resume --remote ... [threadId] [prompt]`；不传 `threadId` 时保留官方 resume picker，也可以用 `--last`。codexhub server 是可选增强：server 在线时，`codexhub` 注册一个本次进程唯一的 worker，同步 app-server event，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，只是暂时不能远程转发。后台 bridge 会持续重试，server 恢复后自动注册并开始同步。Web 主列表展示在线 worker 以及 retention 期内的 recently disconnected worker，并按设备、文件夹和 worker 分组；只有在线 worker 可运行，右侧展示选中在线 worker 的当前 thread，TUI 里 `/resume` 切换后会随 app-server event 同步。Thread usage 由 server 从每个 thread 镜像到的 JSONL `token_count` records 计算，本地图片处理等机器相关能力由 `codexhub` worker 执行。非 headless 终端底部会保留一行 `codexhub` 状态栏，显示当前 worker、thread 和 server 连接状态。官方 TUI 正常退出时，`codexhub` 会立即 unregister worker 并从主列表消失；如果 `codexhub` 异常消失，server 通过 heartbeat timeout 或 transport disconnect 标记 offline，并在 retention 期内保留为 recently disconnected。
 
-`codexhub list` 与 Web 左侧一致，只显示当前在线的 codexhub worker；`codexhub threads` 扫描本机官方 Codex session 历史，只显示当前目录的可 resume threads，并输出标题、更新时间和完整 threadId。`--show` 控制最近显示数量，默认 20。
+`codexhub list` 与 Web 左侧一致，显示在线以及 retention 期内 recently disconnected 的 codexhub worker；`codexhub threads` 扫描本机官方 Codex session 历史，只显示当前目录的可 resume threads，并输出标题、更新时间和完整 threadId。`--show` 控制最近显示数量，默认 20。
 
 PTY 支持依赖 `node-pty` native build，仓库的 `pnpm-workspace.yaml` 已允许该依赖运行 build script。
 
@@ -116,4 +116,4 @@ curl -N "http://127.0.0.1:8788/api/threads/$THREAD_ID/events?after=0"
 
 Slash commands are handled before forwarding to Codex. `/status` and `/help` return local proxy status/help records. `/model` is a client command in Web and opens the Runtime selector; Web sends the selected model/reasoning with the next normal turn. If the official TUI changes model/reasoning locally, `codexhub` / `codexhub resume` mirrors app-server Runtime settings back into Web from `thread/settings/updated` events or the effective `config/read` result. Unsupported slash commands are not sent to the Codex app-server as user turns because official TUI slash commands are local UI commands, not app-server turns.
 
-Server 不读取运行机器上的 `~/.codex` session、`.codexp/tasks` 或上传临时图片目录。历史 session 通过 `codexhub resume` 或官方 TUI/app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；usage 由本地 worker heartbeat 上报；定时任务由 `codexhub task start` 在本地扫描任务文件并投递到它启动的 headless worker。
+Server 不读取运行机器上的 `~/.codex` session、`.codexp/tasks` 或上传临时图片目录。历史 session 通过 `codexhub resume` 或官方 TUI/app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；thread usage 由 server 从镜像的 `token_count` records 计算；定时任务由 `codexhub task start` 在本地扫描任务文件并投递到它启动的 headless worker。

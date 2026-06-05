@@ -2,7 +2,7 @@
 
 ## Worker / Thread 模型
 
-1. `workerId` 是 Web 主界面的在线运行入口；左侧列表展示当前在线的 `codexhub` / `codexhub resume` workers，worker 下的 `currentThreadId` 才是右侧正在镜像的 Codex thread。
+1. `workerId` 是 Web 主界面的运行入口；只有在线 worker 可运行。左侧列表展示当前在线以及 retention 期内 recently disconnected 的 `codexhub` / `codexhub resume` workers，worker 下的 `currentThreadId` 才是右侧正在镜像的 Codex thread。
 2. 不再引入 `instanceId`。旧的 instance 概念已经被删除，新逻辑不得增加 `/api/instances`、`.codexp/instances.yaml` 或 instance 兼容层。
 3. API server 是控制面和事件镜像层，不直接拥有 Codex runtime。Codex runtime 在 `codexhub` / `codexhub resume` 启动的官方 `codex app-server` worker 里。
 4. 一次 `codexhub` 或 `codexhub resume` 等价于打开一个官方 Codex：一个 PTY TUI、一个 app-server、一个 worker。`workerId` 标识这次 `codexhub` 进程，必须每次启动唯一；`workingDirectory` 只是 worker 属性，不是 worker 主键。
@@ -13,8 +13,8 @@
 9. 同一个 `workingDirectory` 可以同时运行多个 `codexhub` / `codexhub resume`，即多个官方 Codex/app-server worker。thread 优先发给自己绑定的在线 worker；未绑定 thread 只有在同目录唯一在线 worker 时才自动路由，多 worker 时不能猜。
 10. 非 headless 的 `codexhub` / `codexhub resume` 必须用 PTY wrapper 启动官方 `codex --remote ...` 或 `codex resume --remote ...` TUI，由 `codexhub` 作为父进程负责 stdin/stdout/resize 转发、底部状态栏和子进程生命周期，不再使用 `stdio: inherit`。
 11. `codexhub --headless` 不启动 TUI，但仍必须在 app-server/bridge 就绪后主动调用 app-server `thread/start`，创建并同步该 worker 的初始 `currentThreadId`；启动成功后要在终端友好输出 `workerId` 和 `threadId`，便于 Web/TG/task/API 直接向 `/api/workers/:workerId/turn` 发消息。
-12. worker 正常退出时必须 unregister；server 也必须通过 heartbeat timeout 把异常退出的 worker 标记为 offline。Heartbeat 是异常兜底，不是正常退出主路径。
-13. `codexhub list` 必须和 Web 左侧一致：读取 `/api/workers` 并只显示在线 worker。
+12. worker 正常退出时必须 unregister 并从主列表消失；server 也必须通过 heartbeat timeout 或 transport disconnect 把异常退出的 worker 标记为 offline，并在 retention 期内作为 recently disconnected 保留。Heartbeat 是异常兜底，不是正常退出主路径。
+13. `codexhub list` 必须和 Web 左侧一致：读取 `/api/workers` 并显示在线 worker 以及 retention 期内 recently disconnected worker；只有在线 worker 可运行。
 14. `codexhub threads` 必须扫描本机官方 Codex session 历史并按当前工作目录过滤；它不是 server mirror cache，也不读取 `/api/threads`。输出应包含完整 `threadId`、标题和更新时间，作为 `codexhub resume <threadId>` 的辅助列表。`--show <count>` 控制最近显示数量，默认 20；实现应优先扫描最近 session 文件并在收集足够当前目录 thread 后停止。
 
 ## 选择和关闭语义
@@ -24,7 +24,7 @@
 3. 客户端读取 thread 详情使用 `GET /api/threads/:threadId`，事件订阅使用 `GET /api/threads/:threadId/events?after=...`。
 4. Web 关闭 tab 或 Telegram 切换 thread 只关闭本地 UI/session，不向 server 发送关闭通知。
 5. `DELETE /api/threads/:threadId` 表示管理层面的删除 thread 记录；不要把客户端关闭动作映射成删除。
-6. Web 左侧只显示在线 worker；worker 正常 unregister 或 heartbeat timeout 后不再出现在主列表。离线 worker 只允许作为诊断数据查看。
+6. Web 左侧显示在线 worker 以及 retention 期内的 recently disconnected worker。worker 正常 unregister 后不再出现在主列表；heartbeat timeout 或 transport disconnect 产生的离线 worker 仅作为重连/诊断信号保留，不能作为可运行入口。
 7. Telegram 只暴露 `/workers` 作为在线入口并只保存 `workerId`；attach worker 后通过 `/api/workers/events` 持续跟随该 worker 的 `currentThreadId`，并订阅对应 thread SSE 镜像消息。TG 发送消息和状态查询前从 `/api/workers` 重新确认该 worker 仍在线，并使用 worker 的 `currentThreadId` 作为底层 thread。TG 不提供 `/threads` 选择或 `/stop` 控制入口。
 8. thread 是否可运行由绑定 worker 或同目录唯一可用 worker 决定；多个同目录 worker 同时在线时，不要在未绑定 thread 上自动选择。
 
@@ -42,11 +42,11 @@
 
 ## API 约定
 
-1. 在线入口优先使用 `/api/workers` snapshot；worker summary 应携带该 worker 下的轻量 thread summaries，Web/TG 不把全局 `GET /api/threads` 当在线入口。
+1. worker 入口优先使用 `/api/workers` snapshot；worker summary 应携带该 worker 下的轻量 thread summaries，并可包含 retention 期内 recently disconnected worker。Web/TG 不把全局 `GET /api/threads` 当在线入口。
 2. 不再新增 `/api/instances`、`/api/turn/stream` 或 `/api/threads/:threadId/cache` 依赖。
 3. worker 通信使用 `/api/workers/*`：register/heartbeat/commands/events/unregister。worker 主动出站连接 server，不要求 server 反连 worker 机器。
 4. Web 初始化/重连可以读取 `GET /api/workers`，后续 worker 列表、current thread、thread summaries 的实时更新使用 `GET /api/workers/events?after=...` SSE，不做固定间隔轮询。
-5. Web 的 context/rate limit usage 使用 worker heartbeat 进入 worker/thread summaries 的 `codexUsage`，通过 `/api/workers/events` 或 thread SSE 更新；不使用 `GET /api/codex-usage?threadId=...` 固定轮询。
+5. Web 的 context/rate limit usage 使用 thread-local `threadUsage`，由 server 从该 thread 的 JSONL `token_count` records 计算并进入 thread summaries，通过 `/api/workers/events` 或 thread SSE 更新；worker heartbeat 不携带 usage，不使用 `GET /api/codex-usage?threadId=...` 固定轮询。
 6. `/api/workers/:workerId/turn` 是 worker-current-thread 输入入口，主要给 Telegram 这类单上下文客户端使用；它不创建 thread，只在提交时解析 worker 的 `currentThreadId` 并排入 worker 命令队列。
 7. `/api/threads/:threadId` 系列用于 thread 详情、SSE 事件、turn/stop/fork/rollback/delete 等 thread 操作；Web 可以用 `/api/threads/:threadId/turn` 对选中 thread 输入。`GET /api/threads` 只允许作为诊断/管理兼容列表，不用于 Web 高频轮询。
 8. Web 的消息级 Fork 必须只显示在带 app-server turn id 的 final answer 上。官方 app-server 的 `thread/fork` 不支持 `messageId` / `itemId` 定位；按消息 fork 的实现语义是先对源 thread 调 `thread/fork`，再按目标消息所在 turn 之后的 turn 数，对新 thread 调 `thread/rollback { numTurns }`。不要把 Web 传入的 `messageId` 直接当成官方 `thread/fork` 参数。

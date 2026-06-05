@@ -15,7 +15,7 @@ type ThreadSummary = {
   title: string;
   updatedAt: string;
   messageCount: number;
-  codexUsage?: CodexUsageSnapshot;
+  threadUsage: ThreadUsage;
 };
 
 type ThreadRuntimeSummary = {
@@ -43,7 +43,6 @@ type WorkerSummary = {
   currentThreadId?: string;
   currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
-  codexUsage?: CodexUsageSnapshot;
 };
 
 type ThreadStatus = "running" | "idle";
@@ -54,17 +53,19 @@ type TurnInput = string | Array<
 >;
 
 type RateLimitWindow = {
-  used_percent: number;
-  window_minutes: number;
-  resets_at: number;
+  usedPercent: number;
+  windowMinutes: number;
+  resetsAt: number;
 };
 
-type CodexUsageSnapshot = {
-  rateLimits: {
-    primary?: RateLimitWindow | null;
-    secondary?: RateLimitWindow | null;
+type ThreadUsage = {
+  context: {
+    usedTokens: number;
+    windowTokens: number;
   } | null;
-  source: "latest" | "thread";
+  primaryRateLimit: RateLimitWindow | null;
+  secondaryRateLimit: RateLimitWindow | null;
+  observedAt: string | null;
 };
 
 type ChatState = {
@@ -172,14 +173,14 @@ const registerHandlers = () => {
       const state = chatStates.get(ctx.chat.id);
       const current = state ? await resolveSelectedWorker(state).catch(() => null) : null;
       const workers = await listRunnableWorkers();
-      const usage = current?.currentThread?.codexUsage ?? current?.codexUsage ?? null;
+      const usage = current?.currentThread?.threadUsage ?? null;
       await ctx.reply([
         `当前 worker：${current ? displayWorkerId(current) : "(none)"}`,
         `当前 thread：${current?.currentThread ? displayThreadId(current.currentThread) : "(none)"}`,
         current ? `文件夹：${current.workingDirectory}` : null,
         current?.currentThreadId ? `thread：${shortId(current.currentThreadId)}` : null,
         current?.currentThread ? `runtime：${runtimeLabel(current.currentThread)}` : null,
-        `usage：${formatCodexUsage(usage)}`,
+        `usage：${formatThreadUsage(usage)}`,
         "",
         workers.length
           ? workers.map((worker) => `${displayWorkerId(worker)} ${worker.currentThread ? displayThreadId(worker.currentThread) : "no-thread"} ${worker.currentThread?.status ?? "idle"}`).join("\n")
@@ -500,14 +501,19 @@ const shortPath = (value: string) => {
   if (home && value.startsWith(`${home}/`)) return `~/${value.slice(home.length + 1)}`;
   return value;
 };
-const formatCodexUsage = (usage: CodexUsageSnapshot | null) => [
-  `5h ${formatRateLimitRemaining(usage?.rateLimits?.primary)}`,
-  `weekly ${formatRateLimitRemaining(usage?.rateLimits?.secondary)}`,
-  usage ? `source ${usage.source}` : null
+const formatThreadUsage = (usage: ThreadUsage | null) => [
+  `context ${formatContextUsage(usage)}`,
+  `5h ${formatRateLimitRemaining(usage?.primaryRateLimit)}`,
+  `weekly ${formatRateLimitRemaining(usage?.secondaryRateLimit)}`
 ].filter(Boolean).join(" · ");
+const formatContextUsage = (usage: ThreadUsage | null) => {
+  const context = usage?.context;
+  if (!context) return "--";
+  return `${formatPercent((context.usedTokens / context.windowTokens) * 100)}`;
+};
 const formatRateLimitRemaining = (window: RateLimitWindow | null | undefined) => {
   if (!window) return "--";
-  return formatPercent(100 - window.used_percent);
+  return formatPercent(100 - window.usedPercent);
 };
 const formatPercent = (value: number) => {
   if (!Number.isFinite(value)) return "--";

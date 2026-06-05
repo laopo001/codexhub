@@ -38,7 +38,7 @@ type ThreadSummary = {
   updatedAt: string;
   messageCount: number;
   lastUsage?: Usage;
-  codexUsage?: CodexUsageSnapshot;
+  threadUsage: ThreadUsage;
 };
 
 type ThreadRuntimeSummary =
@@ -70,18 +70,26 @@ type WorkerSummary = {
   currentThreadId?: string;
   currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
-  codexUsage?: CodexUsageSnapshot;
+};
+
+type WorkerGroupCounts = {
+  total: number;
+  online: number;
+  offline: number;
+  running: number;
 };
 
 type WorkerFolderGroup = {
   key: string;
   label: string;
+  counts: WorkerGroupCounts;
   workers: WorkerSummary[];
 };
 
 type WorkerDeviceGroup = {
   key: string;
   label: string;
+  counts: WorkerGroupCounts;
   folders: WorkerFolderGroup[];
 };
 
@@ -141,28 +149,19 @@ type SystemStatus = {
 };
 
 type RateLimitWindow = {
-  used_percent: number;
-  window_minutes: number;
-  resets_at: number;
+  usedPercent: number;
+  windowMinutes: number;
+  resetsAt: number;
 };
 
-type CodexUsageSnapshot = {
-  rateLimits: {
-    limit_id?: string | null;
-    limit_name?: string | null;
-    primary?: RateLimitWindow | null;
-    secondary?: RateLimitWindow | null;
-    plan_type?: string | null;
-    rate_limit_reached_type?: string | null;
+type ThreadUsage = {
+  context: {
+    usedTokens: number;
+    windowTokens: number;
   } | null;
-  tokenUsage: {
-    totalTokenUsage: Usage & { total_tokens: number } | null;
-    lastTokenUsage: (Usage & { total_tokens: number }) | null;
-    modelContextWindow: number | null;
-  } | null;
-  sourceFile: string | null;
+  primaryRateLimit: RateLimitWindow | null;
+  secondaryRateLimit: RateLimitWindow | null;
   observedAt: string | null;
-  source: "latest" | "thread";
 };
 
 const storageKey = "codexhub-ui-state-v4";
@@ -255,6 +254,7 @@ const App = () => {
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [collapsedWorkerGroups, setCollapsedWorkerGroups] = useState<Record<string, boolean>>({});
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
@@ -338,22 +338,20 @@ const App = () => {
   const workspaceEmptyMessage = activeWorker
     ? activeWorker.online
       ? activeWorker.currentThreadId ? "Loading thread" : "No current thread"
-      : "Worker offline"
-    : "No connected codexhub";
+      : "Worker recently disconnected"
+    : "No online or recently disconnected codexhub";
   const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
-  const activeCodexUsage = activeSession?.codexUsage
-    ?? activeWorkerThreads.find((thread) => thread.threadId === activeTabThreadId)?.codexUsage
-    ?? activeWorker?.currentThread?.codexUsage
-    ?? activeWorker?.codexUsage
+  const activeThreadUsage = activeSession?.threadUsage
+    ?? activeWorkerThreads.find((thread) => thread.threadId === activeTabThreadId)?.threadUsage
     ?? null;
   const renderComposerRuntimeControls = (mode: "inline" | "popover") => (
     <div className={`composerRuntimeControls ${mode}`} aria-label="Runtime usage and model">
       <div className="composerUsagePills" aria-label="Runtime usage">
-        <span className="usagePill" title={formatContextTitle(activeCodexUsage)}>
-          Context {formatContextUsage(activeCodexUsage)}
+        <span className="usagePill" title={formatContextTitle(activeThreadUsage)}>
+          Context {formatContextUsage(activeThreadUsage)}
         </span>
-        <span className="usagePill" title={formatResetTitle(activeCodexUsage?.rateLimits?.primary)}>5h {formatRateLimitRemaining(activeCodexUsage?.rateLimits?.primary)}</span>
-        <span className="usagePill" title={formatResetTitle(activeCodexUsage?.rateLimits?.secondary)}>weekly {formatRateLimitRemaining(activeCodexUsage?.rateLimits?.secondary)}</span>
+        <span className="usagePill" title={formatResetTitle(activeThreadUsage?.primaryRateLimit)}>5h {formatRateLimitRemaining(activeThreadUsage?.primaryRateLimit)}</span>
+        <span className="usagePill" title={formatResetTitle(activeThreadUsage?.secondaryRateLimit)}>weekly {formatRateLimitRemaining(activeThreadUsage?.secondaryRateLimit)}</span>
       </div>
       <button
         type="button"
@@ -390,9 +388,19 @@ const App = () => {
       selectedModel,
       selectedReasoning,
       messageDisplayMode,
-      sidebarCollapsed
+      sidebarCollapsed,
+      collapsedWorkerGroups
     }));
-  }, [activeWorkspacePath, activeWorkerId, selectedModel, selectedReasoning, messageDisplayMode, sidebarCollapsed, initialized]);
+  }, [
+    activeWorkspacePath,
+    activeWorkerId,
+    selectedModel,
+    selectedReasoning,
+    messageDisplayMode,
+    sidebarCollapsed,
+    collapsedWorkerGroups,
+    initialized
+  ]);
 
   useEffect(() => {
     if (!initialized) return;
@@ -516,6 +524,7 @@ const App = () => {
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
+    setCollapsedWorkerGroups(saved?.collapsedWorkerGroups ?? {});
     setWorkers(loadedWorkers);
     setThreadOrderByWorker((current) => mergeThreadOrderByWorker(current, loadedWorkers));
     subscribeWorkers(0);
@@ -837,6 +846,10 @@ const App = () => {
     }));
   };
 
+  const toggleWorkerGroup = (groupKey: string) => {
+    setCollapsedWorkerGroups((current) => ({ ...current, [groupKey]: !current[groupKey] }));
+  };
+
   const selectWorker = async (worker: WorkerSummary) => {
     setActiveWorkerId(worker.workerId);
     setActiveWorkspacePath(worker.workingDirectory);
@@ -876,45 +889,75 @@ const App = () => {
         <section className="proxyWorkers expanded">
           <h2>Codex Workers</h2>
           {workers.length === 0 ? (
-            <div className="proxyWorkerEmpty">No connected codexhub</div>
+            <div className="proxyWorkerEmpty">No online or recently disconnected codexhub</div>
           ) : (
             <div className="proxyWorkerList">
-              {workerGroups.map((device) => (
-                <section className="proxyWorkerDeviceGroup" key={device.key}>
-                  <h3 className="proxyWorkerDeviceHeader" title={device.label}>{device.label}</h3>
-                  {device.folders.map((folder) => (
-                    <section className="proxyWorkerFolderGroup" key={folder.key}>
-                      <h4 className="proxyWorkerFolderHeader" title={folder.label}>{folder.label}</h4>
-                      <div className="proxyWorkerRows">
-                        {folder.workers.map((worker) => {
-                          const workerLabel = worker.name ?? shortId(worker.workerId);
-                          const statusLabel = workerStatusLabel(worker);
-                          const statusTitle = workerStatusTitle(worker);
-                          const threadTitle = worker.currentThread?.title ?? "No current thread";
-                          const lastSeenLabel = worker.online ? "" : `last seen ${relativeTime(worker.lastSeenAt)}`;
-                          return (
-                            <button
-                              type="button"
-                              className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""} ${worker.online ? "online" : "offline"}`}
-                              key={worker.workerId}
-                              onClick={() => void selectWorker(worker)}
-                            >
-                              <span title={workerLabel}>{workerLabel}</span>
-                              <strong title={statusTitle}>{statusLabel}</strong>
-                              <code title={threadTitle}>{threadTitle}</code>
-                              {lastSeenLabel ? (
-                                <em className="proxyWorkerMeta">
-                                  <span className="proxyWorkerLastSeen" title={lastSeenLabel}>{lastSeenLabel}</span>
-                                </em>
-                              ) : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))}
-                </section>
-              ))}
+              {workerGroups.map((device) => {
+                const deviceHasActiveWorker = groupHasWorker(device, activeWorkerId);
+                const deviceCollapsed = Boolean(collapsedWorkerGroups[device.key] && !deviceHasActiveWorker);
+                return (
+                  <section className="proxyWorkerDeviceGroup" key={device.key}>
+                    <button
+                      type="button"
+                      className="proxyWorkerGroupToggle device"
+                      title={`${device.label} (${formatWorkerGroupCounts(device.counts)})`}
+                      aria-expanded={!deviceCollapsed}
+                      onClick={() => toggleWorkerGroup(device.key)}
+                    >
+                      <span className={`proxyWorkerGroupChevron ${deviceCollapsed ? "collapsed" : ""}`} aria-hidden="true">&gt;</span>
+                      <span className="proxyWorkerDeviceHeader">{device.label}</span>
+                      <span className="proxyWorkerGroupCount">{formatWorkerGroupCounts(device.counts)}</span>
+                    </button>
+                    {!deviceCollapsed ? device.folders.map((folder) => {
+                      const folderHasActiveWorker = folderHasWorker(folder, activeWorkerId);
+                      const folderCollapsed = Boolean(collapsedWorkerGroups[folder.key] && !folderHasActiveWorker);
+                      return (
+                        <section className="proxyWorkerFolderGroup" key={folder.key}>
+                          <button
+                            type="button"
+                            className="proxyWorkerGroupToggle folder"
+                            title={`${folder.label} (${formatWorkerGroupCounts(folder.counts)})`}
+                            aria-expanded={!folderCollapsed}
+                            onClick={() => toggleWorkerGroup(folder.key)}
+                          >
+                            <span className={`proxyWorkerGroupChevron ${folderCollapsed ? "collapsed" : ""}`} aria-hidden="true">&gt;</span>
+                            <span className="proxyWorkerFolderHeader">{folder.label}</span>
+                            <span className="proxyWorkerGroupCount">{formatWorkerGroupCounts(folder.counts)}</span>
+                          </button>
+                          {!folderCollapsed ? (
+                            <div className="proxyWorkerRows">
+                              {folder.workers.map((worker) => {
+                                const workerLabel = worker.name ?? shortId(worker.workerId);
+                                const statusLabel = workerStatusLabel(worker);
+                                const statusTitle = workerStatusTitle(worker);
+                                const threadTitle = worker.online ? worker.currentThread?.title ?? "No current thread" : "Recently disconnected";
+                                const lastSeenLabel = worker.online ? "" : `recently disconnected, last seen ${relativeTime(worker.lastSeenAt)}`;
+                                return (
+                                  <button
+                                    type="button"
+                                    className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""} ${worker.online ? "online" : "offline"}`}
+                                    key={worker.workerId}
+                                    onClick={() => void selectWorker(worker)}
+                                  >
+                                    <span title={workerLabel}>{workerLabel}</span>
+                                    <strong title={statusTitle}>{statusLabel}</strong>
+                                    <code title={threadTitle}>{threadTitle}</code>
+                                    {lastSeenLabel ? (
+                                      <em className="proxyWorkerMeta">
+                                        <span className="proxyWorkerLastSeen" title={lastSeenLabel}>{lastSeenLabel}</span>
+                                      </em>
+                                    ) : null}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </section>
+                      );
+                    }) : null}
+                  </section>
+                );
+              })}
             </div>
           )}
         </section>
@@ -1386,28 +1429,76 @@ const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
     : [];
 
 const groupWorkers = (workers: WorkerSummary[]): WorkerDeviceGroup[] => {
-  const devices = new Map<string, { label: string; folders: Map<string, WorkerFolderGroup> }>();
+  const devices = new Map<string, WorkerDeviceGroup & { folderMap: Map<string, WorkerFolderGroup> }>();
   for (const worker of workers) {
     const deviceLabel = workerDeviceLabel(worker);
     const folderLabel = worker.workingDirectory || "unknown folder";
+    const workerState = workerGroupState(worker);
     let device = devices.get(deviceLabel);
     if (!device) {
-      device = { label: deviceLabel, folders: new Map() };
+      device = {
+        key: `device:${deviceLabel}`,
+        label: deviceLabel,
+        counts: emptyWorkerGroupCounts(),
+        folders: [],
+        folderMap: new Map()
+      };
       devices.set(deviceLabel, device);
     }
-    let folder = device.folders.get(folderLabel);
+    incrementWorkerGroupCounts(device.counts, workerState);
+    let folder = device.folderMap.get(folderLabel);
     if (!folder) {
-      folder = { key: `${deviceLabel}:${folderLabel}`, label: folderLabel, workers: [] };
-      device.folders.set(folderLabel, folder);
+      folder = {
+        key: `folder:${deviceLabel}:${folderLabel}`,
+        label: folderLabel,
+        counts: emptyWorkerGroupCounts(),
+        workers: []
+      };
+      device.folderMap.set(folderLabel, folder);
+      device.folders.push(folder);
     }
+    incrementWorkerGroupCounts(folder.counts, workerState);
     folder.workers.push(worker);
   }
-  return [...devices.entries()].map(([key, device]) => ({
-    key,
+  return [...devices.values()].map((device) => ({
+    key: device.key,
     label: device.label,
-    folders: [...device.folders.values()]
+    counts: device.counts,
+    folders: device.folders
   }));
 };
+
+const emptyWorkerGroupCounts = (): WorkerGroupCounts => ({
+  total: 0,
+  online: 0,
+  offline: 0,
+  running: 0
+});
+
+const incrementWorkerGroupCounts = (counts: WorkerGroupCounts, state: "online" | "offline" | "running") => {
+  counts.total += 1;
+  if (state === "offline") counts.offline += 1;
+  else counts.online += 1;
+  if (state === "running") counts.running += 1;
+};
+
+const workerGroupState = (worker: WorkerSummary): "online" | "offline" | "running" => {
+  if (!worker.online) return "offline";
+  return worker.currentThread?.running || worker.currentThread?.status === "running" ? "running" : "online";
+};
+
+const formatWorkerGroupCounts = (counts: WorkerGroupCounts) => {
+  const parts = [`${counts.online} online`];
+  if (counts.offline) parts.push(`${counts.offline} offline`);
+  if (counts.running) parts.push(`${counts.running} running`);
+  return parts.join(" / ");
+};
+
+const groupHasWorker = (group: WorkerDeviceGroup, workerId: string) =>
+  Boolean(workerId && group.folders.some((folder) => folderHasWorker(folder, workerId)));
+
+const folderHasWorker = (folder: WorkerFolderGroup, workerId: string) =>
+  Boolean(workerId && folder.workers.some((worker) => worker.workerId === workerId));
 
 const workerDeviceLabel = (worker: WorkerSummary) =>
   worker.hostname?.trim() || hostnameFromUrl(worker.appServerUrl) || "unknown device";
@@ -1430,9 +1521,9 @@ const workerStatusTitle = (worker: WorkerSummary) => {
     ? "heartbeat timeout"
     : worker.offlineReason === "transport_disconnected"
       ? "connection lost"
-      : "offline";
+      : "recently disconnected";
   const lastSeen = worker.lastSeenAt ? `, last seen ${relativeTime(worker.lastSeenAt)}` : "";
-  return `${reason}${lastSeen}`;
+  return `Recently disconnected: ${reason}${lastSeen}`;
 };
 
 const relativeTime = (iso: string | undefined) => {
@@ -1493,27 +1584,19 @@ const modelOptionsForSelection = (model: ModelSelection) => {
   return [...modelOptions, { value: model, label: model }];
 };
 
-const formatContextUsage = (usageSnapshot: CodexUsageSnapshot | null) => {
-  const context = contextUsage(usageSnapshot);
+const formatContextUsage = (threadUsage: ThreadUsage | null) => {
+  const context = threadUsage?.context;
   if (!context) return "--";
   return `${Math.min(100, Math.round((context.usedTokens / context.windowTokens) * 100))}%`;
 };
 
-const formatContextTitle = (usageSnapshot: CodexUsageSnapshot | null) => {
-  const context = contextUsage(usageSnapshot);
+const formatContextTitle = (threadUsage: ThreadUsage | null) => {
+  const context = threadUsage?.context;
   if (!context) return undefined;
-  return `${formatCompactNumber(context.usedTokens)} / ${formatCompactNumber(context.windowTokens)} tokens used`;
-};
-
-const contextUsage = (usageSnapshot: CodexUsageSnapshot | null) => {
-  const tokenUsage = usageSnapshot?.tokenUsage;
-  const jsonlUsed = tokenUsage?.totalTokenUsage?.total_tokens;
-  const modelContextWindow = tokenUsage?.modelContextWindow;
-  if (typeof jsonlUsed !== "number" || typeof modelContextWindow !== "number" || modelContextWindow <= 0) return null;
-  return {
-    usedTokens: jsonlUsed,
-    windowTokens: modelContextWindow
-  };
+  return [
+    `${formatCompactNumber(context.usedTokens)} / ${formatCompactNumber(context.windowTokens)} tokens used`,
+    threadUsage.observedAt ? `observed ${formatDate(threadUsage.observedAt)}` : null
+  ].filter(Boolean).join(" · ");
 };
 
 const formatCompactNumber = (value: number) => {
@@ -1549,7 +1632,7 @@ const usageTotal = (usage: Usage) =>
 
 const formatRateLimitRemaining = (window: RateLimitWindow | null | undefined) => {
   if (!window) return "--";
-  return `${formatPercent(100 - window.used_percent)}`;
+  return `${formatPercent(100 - window.usedPercent)}`;
 };
 
 const formatPercent = (value: number) => {
@@ -1560,9 +1643,14 @@ const formatPercent = (value: number) => {
 
 const formatResetTitle = (window: RateLimitWindow | null | undefined) => {
   if (!window) return undefined;
-  const resetAt = new Date(window.resets_at * 1000);
+  const resetAt = new Date(window.resetsAt * 1000);
   if (Number.isNaN(resetAt.getTime())) return undefined;
-  return `${formatPercent(100 - window.used_percent)} remaining, ${formatPercent(window.used_percent)} used. Resets ${resetAt.toLocaleString()}`;
+  return [
+    `${formatPercent(100 - window.usedPercent)} remaining`,
+    `${formatPercent(window.usedPercent)} used`,
+    `${window.windowMinutes}m window`,
+    `resets ${resetAt.toLocaleString()}`
+  ].join(", ");
 };
 
 const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
@@ -1842,6 +1930,7 @@ const readStoredUiState = (): {
   selectedReasoning?: ReasoningSelection;
   messageDisplayMode?: MessageDisplayMode;
   sidebarCollapsed?: boolean;
+  collapsedWorkerGroups?: Record<string, boolean>;
 } | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
@@ -1854,11 +1943,20 @@ const readStoredUiState = (): {
       messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)
         ? parsed.messageDisplayMode
         : isMessageDisplayMode(parsed.toolDisplayMode) ? parsed.toolDisplayMode : undefined,
-      sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined
+      sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined,
+      collapsedWorkerGroups: booleanRecord(parsed.collapsedWorkerGroups)
     };
   } catch {
     return null;
   }
+};
+
+const booleanRecord = (value: unknown): Record<string, boolean> | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean")
+  );
 };
 
 const root = document.getElementById("root");

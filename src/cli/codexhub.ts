@@ -35,6 +35,7 @@ type WorkerSummary = {
   workingDirectory: string;
   online: boolean;
   lastSeenAt: string;
+  offlineReason?: "heartbeat_timeout" | "transport_disconnected" | "unregistered";
   currentThreadId?: string;
   currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
@@ -67,10 +68,10 @@ program
 
 program
   .command("list")
-  .description("List online codexhub workers")
+  .description("List codexhub workers")
   .action(async () => {
     const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
-    printWorkers((data.workers ?? []).filter((worker) => worker.online));
+    printWorkers(data.workers ?? []);
   });
 
 program
@@ -212,15 +213,17 @@ async function printThreads(threads: ThreadSummary[]) {
 
 function printWorkers(workers: WorkerSummary[]) {
   if (!workers.length) {
-    console.log("No connected codexhub.");
+    console.log("No online or recently disconnected codexhub.");
     return;
   }
   console.table(workers.map((worker) => ({
     worker: worker.name ?? worker.workerId.slice(0, 8),
-    status: worker.currentThread?.status ?? "idle",
+    state: worker.online ? "online" : "offline",
+    status: worker.online ? worker.currentThread?.status ?? "idle" : workerOfflineReason(worker),
     folder: worker.workingDirectory,
-    thread: worker.currentThreadId ? worker.currentThreadId.slice(0, 8) : "",
-    title: worker.currentThread?.title ?? ""
+    thread: worker.online && worker.currentThreadId ? worker.currentThreadId.slice(0, 8) : "",
+    lastSeen: worker.online ? "" : relativeTime(worker.lastSeenAt),
+    title: worker.online ? worker.currentThread?.title ?? "" : "recently disconnected"
   })));
 }
 
@@ -272,6 +275,26 @@ function resolveThreadTarget(target: string, threads: ThreadSummary[]) {
 
 function formatThread(thread: ThreadSummary) {
   return `${thread.threadId.slice(0, 8)} (${thread.workingDirectory}, ${thread.title})`;
+}
+
+function workerOfflineReason(worker: WorkerSummary) {
+  if (worker.offlineReason === "heartbeat_timeout") return "heartbeat timeout";
+  if (worker.offlineReason === "transport_disconnected") return "connection lost";
+  return "recently disconnected";
+}
+
+function relativeTime(iso: string | undefined) {
+  if (!iso) return "unknown";
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) return "unknown";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
 }
 
 function formatLocalTime(value: string) {

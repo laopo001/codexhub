@@ -155,6 +155,57 @@ textarea {
   gap: 6px;
 }
 
+.proxyWorkerGroupToggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.proxyWorkerGroupToggle.folder {
+  padding-top: 1px;
+}
+
+.proxyWorkerGroupChevron {
+  display: inline-grid;
+  place-items: center;
+  width: 10px;
+  color: #91a090;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  transform: rotate(90deg);
+}
+
+.proxyWorkerGroupChevron.collapsed {
+  transform: rotate(0deg);
+}
+
+.proxyWorkerGroupCount {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 10px;
+  font-weight: 650;
+  padding: 1px 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxyWorkerGroupToggle.folder .proxyWorkerGroupCount {
+  background: transparent;
+  color: #7e8c7b;
+  padding-right: 0;
+}
+
 .proxyWorkerDeviceHeader,
 .proxyWorkerFolderHeader {
   min-width: 0;
@@ -725,6 +776,7 @@ textarea {
 }
 
 .sidebarScrim,
+.proxyWorkerGroupToggle,
 .proxyWorkerRow,
 .sidebarPanelToggle,
 .switchButton,
@@ -739,6 +791,7 @@ textarea {
 }
 
 .proxyWorkerRow:disabled,
+.proxyWorkerGroupToggle:disabled,
 .sidebarPanelToggle:disabled,
 .switchButton:disabled,
 .composerIconButton:disabled,
@@ -1375,6 +1428,24 @@ textarea {
 
   .workspaceTitle {
     max-width: none;
+  }
+
+  .workspaceTitle .workspaceMeta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+    overflow: hidden;
+    white-space: normal;
+  }
+
+  .workspaceTitle .workspacePath {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .workspaceTitle .workspaceThreadId {
+    grid-column: 1 / -1;
   }
 
   .runtimeSelect,
