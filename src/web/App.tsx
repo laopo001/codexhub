@@ -806,9 +806,7 @@ const App = () => {
                 const statusLabel = workerStatusLabel(worker);
                 const statusTitle = workerStatusTitle(worker);
                 const threadTitle = worker.currentThread?.title ?? "No current thread";
-                const threadLabel = worker.online
-                  ? worker.currentThreadId ? `thread ${worker.currentThreadId}` : "no thread"
-                  : `last seen ${relativeTime(worker.lastSeenAt)}`;
+                const lastSeenLabel = worker.online ? "" : `last seen ${relativeTime(worker.lastSeenAt)}`;
                 return (
                   <button
                     type="button"
@@ -821,7 +819,7 @@ const App = () => {
                     <code title={threadTitle}>{threadTitle}</code>
                     <em className="proxyWorkerMeta">
                       <span className="proxyWorkerDirectory" title={worker.workingDirectory}>{worker.workingDirectory}</span>
-                      <span className="proxyWorkerThread" title={threadLabel}>{threadLabel}</span>
+                      {lastSeenLabel ? <span className="proxyWorkerLastSeen" title={lastSeenLabel}>{lastSeenLabel}</span> : null}
                     </em>
                   </button>
                 );

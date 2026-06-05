@@ -125,7 +125,8 @@ textarea {
   gap: 8px;
   max-height: 180px;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .proxyWorkers.expanded .proxyWorkerList {
@@ -147,6 +148,8 @@ textarea {
   gap: 4px 8px;
   width: 100%;
   min-height: auto;
+  min-width: 0;
+  overflow: hidden;
   text-align: left;
 }
 
@@ -204,6 +207,7 @@ textarea {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
   color: #91a090;
   font-size: 11px;
   font-style: normal;
@@ -215,14 +219,15 @@ textarea {
 }
 
 .proxyWorkerDirectory {
-  flex: 0 0 auto;
-  overflow: visible;
-  text-overflow: clip;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.proxyWorkerThread {
-  flex: 1 1 auto;
+.proxyWorkerLastSeen {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   color: #b8c5b4;
