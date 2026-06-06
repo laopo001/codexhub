@@ -2,10 +2,10 @@
 
 ## Worker / Thread 模型
 
-1. `workerId` 是 Web 主界面的运行入口；只有在线 worker 可运行。左侧列表展示当前在线以及 retention 期内 recently disconnected 的 `codexhub` / `codexhub resume` workers，worker 下的 `currentThreadId` 才是右侧正在镜像的 Codex thread。
+1. `workerId` 是 Codex runtime 路由入口；只有在线 worker 可运行。Web 产品界面优先按 machine / project / thread 展示，worker 作为项目下的运行态暴露。诊断列表仍可展示当前在线以及 retention 期内 recently disconnected 的 `codexhub` / `codexhub resume` workers，worker 下的 `currentThreadId` 才是右侧正在镜像的 Codex thread。
 2. 不再引入 `instanceId`。旧的 instance 概念已经被删除，新逻辑不得增加 `/api/instances`、`.codexp/instances.yaml` 或 instance 兼容层。
 3. API server 是控制面和事件镜像层，不直接拥有 Codex runtime。Codex runtime 在 `codexhub` / `codexhub resume` 启动的官方 `codex app-server` worker 里。
-4. 一次 `codexhub` 或 `codexhub resume` 等价于打开一个官方 Codex：一个 PTY TUI、一个 app-server、一个 worker。`workerId` 标识这次 `codexhub` 进程，必须每次启动唯一；`workingDirectory` 只是 worker 属性，不是 worker 主键。
+4. 一次 `codexhub` 或 `codexhub resume` 等价于打开一个官方 Codex：一个 PTY TUI、一个 app-server、一个 worker。`codexhub machine` 也可以为某个 project 启动一个 headless app-server worker。`workerId` 标识这次 worker 进程，必须每次启动唯一；`workingDirectory` 只是 worker 属性，不是 worker 主键。
 5. `codexhub` / `codexhub resume` 必须 local-first：官方 `codex app-server` 和 TUI 不依赖 server 连接成功；server 离线时本地 TUI 继续可用，后台 bridge 持续重试，server 恢复后再 register worker 并同步事件。
 6. `threadId` 来自官方 app-server。新 thread 只能由本地 Codex CLI/TUI 或官方 session 恢复产生，server/Web/TG/task 不主动创建 thread。
 7. `codexhub` 只是官方 Codex 的代理，不默认设置 `sandbox` 或 `approvalPolicy`；这些权限默认必须由官方 Codex 按当前 cwd 的真实配置解析。只有用户显式传 `--sandbox` / `--approval-policy` 时，bridge 才把它们作为 app-server override 转发。
@@ -52,7 +52,15 @@
 8. Web 的消息级 Fork 必须只显示在带 app-server turn id 的 final answer 上。官方 app-server 的 `thread/fork` 不支持 `messageId` / `itemId` 定位；按消息 fork 的实现语义是先对源 thread 调 `thread/fork`，再按目标消息所在 turn 之后的 turn 数，对新 thread 调 `thread/rollback { numTurns }`。不要把 Web 传入的 `messageId` 直接当成官方 `thread/fork` 参数。
 9. fork 后的新 thread transcript 必须以新 session jsonl 的 line 顺序为唯一来源。`thread/read` snapshot 不得展开成 transcript records，也不得作为 jsonl 尚不可用时的兜底；app-server item/user/agent/tool/token 事件不写入 `records`，避免 snapshot 或 live item 重放造成重复 tool/codex 消息。jsonl user/agent/usage records 必须保留 app-server `turn_id`，让 Web 的消息级 Fork 仍能按目标 final answer 定位 turn。官方 `thread/rollback` 不会改写 fork jsonl；fork 后执行过 rollback 时，server 要把应保留的 turn 数传给 bridge，bridge 重置 jsonl 水位线并只重放新 fork jsonl 中前 N 个 turn，随后把 cursor 推到文件末尾，未来新输入再正常追加同步。
 10. 不提供 `POST /api/threads` 创建入口；server 只能 get/delete、turn、stop、fork，以及诊断性 list。恢复历史 Codex session 必须走官方 TUI/app-server，由 `codexhub resume` 或 TUI 内 `/resume` 发现并镜像。
-11. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexhub` worker/CLI 侧。
+11. server 不读取本机 `~/.codex`、不扫描本机 `.codexp/tasks`、不提供本机文件浏览 API；这些本地职责必须放在 `codexhub` worker/CLI/machine 侧。server 可以持久化 machine/project/thread 摘要元数据，但不能把持久化元数据当成 Codex runtime 或本机文件系统权限。
+
+## Machine / Project 模型
+
+1. `codexhub machine` 是每台机器长期运行一次的本机启动器。machine 主动出站连接 server，注册 `machineId` / `hostname`，并接收 server 派发的本机命令。
+2. Web 的“打开文件夹/项目”请求必须发给在线 machine。server 不扫描目录；machine 进程在本机解析路径，确认路径存在、是目录、当前进程可进入，然后启动或复用 headless worker。
+3. project 是 server 持久化的 UI/路由元数据，主键由 `machineId + path` 推导。project 不是 worker，不拥有 Codex runtime；一个 project 可以有 0 个、1 个或多个 worker。
+4. server 轻量状态默认写入 `~/.local/share/codexhub/server-state.yaml`，可由 `CODEX_HUB_DATA_DIR` 覆盖目录。YAML 只保存 machines、projects、thread summaries 等小数据；transcript records 仍来自 worker 镜像。
+5. machine 启动的 worker 必须在 worker registration 中携带 `machineId`，这样 server/Web 可以把 worker 归到正确 project。手动启动的旧 worker 没有 `machineId` 时，server 可以按 hostname 推导机器级 machine id 作为兼容分组。
 
 ## `.codexp` 工作区文件约定
 

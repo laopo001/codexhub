@@ -1,11 +1,12 @@
 # codexhub
 
-一个 worker-first 的本地 Codex 控制面。当前运行态由 `codexhub` / `codexhub resume` 启动的官方 `codex app-server` worker 持有，server 负责排队命令和镜像事件。一次 `codexhub` 或 `codexhub resume` 等价于打开一个官方 Codex：一个 TUI、一个 app-server、一个 worker；同一个目录可以同时运行多个 worker。
+一个 project-first 的本地 Codex 控制面。Web 按机器、项目和对话组织工作区；运行态仍由官方 `codex app-server` worker 持有，server 负责排队命令、镜像事件和保存轻量项目元数据。一次 `codexhub` / `codexhub resume` 等价于打开一个官方 Codex：一个 TUI、一个 app-server、一个 worker；`codexhub machine` 可以在一台机器上长期运行一次，并按 Web 选择的文件夹创建或复用 headless worker。
 
-- 共享核心：API server 统一镜像 Codex workers 和 threads，Web 左侧按设备、文件夹和 worker 展示在线及短期保留的 recently disconnected workers，右侧跟随在线 worker 当前 `threadId`。
+- 共享核心：API server 统一镜像 Codex workers 和 threads，Web 左侧按项目优先展示，并保留 worker 诊断列表，右侧跟随在线 worker 当前 `threadId`。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
-- CLI worker：`codexhub` / `codexhub resume` 复用官方 Codex TUI 和 app-server。
+- Machine：`codexhub machine` 每台机器运行一次，负责本机路径校验和按项目启动 headless worker。
+- CLI worker：`codexhub` / `codexhub resume` 继续复用官方 Codex TUI 和 app-server。
 - Telegram bot：由 API server 内置启动，把 Telegram 消息转成 Codex turn。
 
 ## 启动
@@ -28,6 +29,22 @@ pnpm run dev:api
 ```bash
 pnpm codexhub server --host 0.0.0.0 --port 8788
 ```
+
+每台机器可以只启动一次：
+
+```bash
+pnpm codexhub machine --server http://127.0.0.1:8788
+```
+
+随后在 Web 左侧通过弹窗选择项目路径。server 会把打开项目请求发给在线 machine；machine 进程在本机解析路径，确认它存在且是目录，然后创建或复用该目录下的 headless worker。server 不扫描本机文件系统。
+
+server 的轻量状态默认保存到：
+
+```text
+~/.local/share/codexhub/server-state.yaml
+```
+
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects 和 thread summaries，完整 transcript 仍来自 worker 镜像的 Codex session/jsonl。
 
 官方 Codex TUI + codexhub worker：
 

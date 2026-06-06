@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Command } from "commander";
 import { spawn as spawnPty, type IPty } from "node-pty";
+import { listLoadableCodexThreads } from "../core/codexhubLog.js";
 import { readCodexSessionRecordsAfter } from "../core/codexSession.js";
 import { asRecord as asCodexRecord, codexRecordFromSession, type CodexRecord } from "../core/codexRecord.js";
 import type { ProxyInput } from "../core/proxyInput.js";
@@ -72,6 +73,7 @@ type BridgeOptions = {
   apiBase: string;
   appServerUrl: string;
   workerId: string;
+  machineId?: string;
   cwd: string;
   ensureCurrentThread?: boolean;
   initialTuiResume?: { threadId?: string };
@@ -89,6 +91,7 @@ type ProxyBridgeRunnerOptions = BridgeOptions & {
 export type HeadlessCodexhubWorkerOptions = {
   apiBase: string;
   cwd: string;
+  machineId?: string;
   port?: number;
   readyLabel?: string;
   model?: string;
@@ -233,6 +236,7 @@ export async function startHeadlessCodexhubWorker(options: HeadlessCodexhubWorke
     apiBase: options.apiBase,
     appServerUrl,
     workerId,
+    machineId: options.machineId,
     cwd,
     ensureCurrentThread: true,
     readyLabel: options.readyLabel,
@@ -335,6 +339,7 @@ class ProxyBridgeRunner {
             this.bridgeState = this.bridge?.snapshotState() ?? this.bridgeState;
             return {
               workerId: this.options.workerId,
+              machineId: this.options.machineId,
               name: workerDisplayName(this.options.workerId),
               workingDirectory: this.options.cwd,
               appServerUrl: this.options.appServerUrl,
@@ -345,8 +350,9 @@ class ProxyBridgeRunner {
           },
           handleCommand: async (command) => {
             if (!this.bridge) throw new Error("codexhub bridge is not connected.");
-            await this.bridge.runCommand(command);
+            const result = await this.bridge.runCommand(command);
             this.bridgeState = this.bridge.snapshotState();
+            return result;
           },
           onState: (state, message) => this.setTransportState(state, message)
         });
@@ -412,7 +418,7 @@ class ProxyBridgeRunner {
 
 type WorkerHubTransportCallbacks = {
   registration: () => WorkerRegistration;
-  handleCommand: (command: WorkerCommand) => Promise<void>;
+  handleCommand: (command: WorkerCommand) => Promise<unknown>;
   onState: (state: "connecting" | "online" | "offline", message: string) => void;
 };
 
@@ -521,7 +527,14 @@ class WorkerHubTransport {
     this.commandChain = this.commandChain.then(async () => {
       for (const command of commands) {
         try {
-          await this.callbacks.handleCommand(command);
+          const result = await this.callbacks.handleCommand(command);
+          if (result !== undefined) {
+            this.sendOrQueue({
+              type: "command_result",
+              commandId: command.commandId,
+              result
+            });
+          }
         } catch (error) {
           this.sendOrQueue({
             type: "command_error",
@@ -632,7 +645,7 @@ class CodexAppServerBridge {
   }
 
   async runCommand(command: WorkerCommand) {
-    await this.handleCommand(command);
+    return await this.handleCommand(command);
   }
 
   async runLocalTurn(input: ProxyInput, threadId?: string) {
@@ -693,6 +706,34 @@ class CodexAppServerBridge {
   }
 
   private async handleCommand(command: WorkerCommand) {
+    if (command.type === "list_threads") {
+      return {
+        threads: await listLoadableCodexThreads(command.workingDirectory, { limit: command.limit })
+      };
+    }
+
+    if (command.type === "start_thread") {
+      const threadId = await this.startNewThread(
+        command.workingDirectory,
+        commandModel(command.options, this.options.model),
+        command
+      );
+      return { threadId };
+    }
+
+    if (command.type === "resume_thread") {
+      if (!command.threadId) throw new Error("resume_thread command requires threadId");
+      const threadId = await this.ensureThreadLoaded(
+        command.threadId,
+        command.workingDirectory,
+        commandModel(command.options, this.options.model),
+        command,
+        { markBridgeStarted: true }
+      );
+      await this.forwardCurrentThreadChanged(threadId);
+      return { threadId };
+    }
+
     if (command.type === "stop") {
       if (command.threadId && command.turnId) {
         await this.ensureThreadLoaded(command.threadId, command.workingDirectory, commandModel(command.options, this.options.model), undefined, {
@@ -755,6 +796,26 @@ class CodexAppServerBridge {
       input: toAppServerInput(command.input),
       ...turnRuntimeParams(command.options)
     }, command);
+  }
+
+  private async startNewThread(
+    cwd: string,
+    model: string | null | undefined,
+    command: { commandId?: string; threadId?: string }
+  ) {
+    const result = asRecord(await this.request("thread/start", {
+      cwd,
+      ...(model === undefined ? {} : { model }),
+      ...runtimePermissionParams(this.options),
+      threadSource: "user"
+    }, command));
+    const thread = asRecord(result?.thread);
+    const threadId = typeof thread?.id === "string" ? thread.id : undefined;
+    if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
+    this.bindThread(threadId);
+    this.markThreadLoaded(threadId);
+    await this.forwardCurrentThreadChanged(threadId);
+    return threadId;
   }
 
   private request(method: string, params: unknown, command?: { threadId?: string; commandId?: string }) {

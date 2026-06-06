@@ -5,6 +5,7 @@ import path from "node:path";
 import { loadDotEnv } from "../core/dotenv.js";
 import { listLoadableCodexThreads } from "../core/codexhubLog.js";
 import type { CodexSessionSummary } from "../core/codexSession.js";
+import { runCodexhubMachine } from "./codexhubMachine.js";
 import { registerCodexHubWorkerCommands, startHeadlessCodexhubWorker, type HeadlessCodexhubWorkerHandle } from "./codexhubConnect.js";
 import {
   CodexhubTaskScheduler,
@@ -23,6 +24,12 @@ type ServerCommandOptions = {
   host?: string;
   port?: string;
   serveStatic?: string;
+};
+
+type MachineCommandOptions = {
+  server?: string;
+  machineId?: string;
+  name?: string;
 };
 
 type ThreadsCommandOptions = {
@@ -55,10 +62,11 @@ program
   .option("--port <port>", "listen port (overrides CODEX_HUB_PORT)")
   .option("--serve-static <dir>", "serve built web assets from this directory")
   .action(async (options: ServerCommandOptions = {}) => {
+    const rootOptions = program.opts<{ port?: string }>();
     const { startServer } = await import("../server/index.js");
     const handle = await startServer({
       host: options.host,
-      port: parsePortOption(options.port),
+      port: parsePortOption(options.port ?? rootOptions.port),
       staticDirectory: options.serveStatic
     });
     console.error(`codexhub server listening: ${serverUrl(handle.host, handle.port)}`);
@@ -72,6 +80,20 @@ program
   .action(async () => {
     const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
     printWorkers(data.workers ?? []);
+  });
+
+program
+  .command("machine")
+  .description("Run one machine that can start project workers")
+  .option("--server <url>", "codexhub server URL")
+  .option("--machine-id <id>", "stable machine id")
+  .option("--name <name>", "display name")
+  .action(async (options: MachineCommandOptions = {}) => {
+    await runCodexhubMachine({
+      apiBase: options.server ?? apiBase(),
+      machineId: options.machineId,
+      name: options.name
+    });
   });
 
 program

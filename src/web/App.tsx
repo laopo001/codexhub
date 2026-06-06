@@ -65,6 +65,7 @@ type ThreadDetail = ThreadSummary & {
 
 type WorkerSummary = {
   workerId: string;
+  machineId?: string;
   name?: string;
   workingDirectory: string;
   appServerUrl?: string;
@@ -78,6 +79,102 @@ type WorkerSummary = {
   currentThreadId?: string;
   currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
+};
+
+type MachineSummary = {
+  machineId: string;
+  name?: string;
+  hostname: string;
+  online: boolean;
+  status: "online" | "offline";
+  lastSeenAt: string;
+  offlineSinceAt?: string;
+  offlineReason?: "transport_disconnected" | "unregistered";
+  cwd?: string;
+};
+
+type MachineDirectoryEntry = {
+  name: string;
+  path: string;
+};
+
+type MachineDirectoryListing = {
+  cwd: string;
+  parent?: string;
+  home: string;
+  entries: MachineDirectoryEntry[];
+};
+
+type StoredProjectThread = {
+  threadId: string;
+  projectId: string;
+  title: string;
+  updatedAt: string;
+  status: ThreadStatus;
+  messageCount: number;
+};
+
+type CodexThreadCandidate = {
+  threadId: string;
+  cwd: string;
+  path: string;
+  updatedAt: string;
+  firstUserMessage: string;
+  lastAssistantMessage: string;
+  artifactCount: number;
+  messageCount: number;
+};
+
+type ProjectSummary = {
+  projectId: string;
+  machineId: string;
+  path: string;
+  name: string;
+  pinned?: boolean;
+  createdAt: string;
+  lastOpenedAt: string;
+  lastWorkerId?: string;
+  lastThreadId?: string;
+  machine?: MachineSummary;
+  online: boolean;
+  running: boolean;
+  workers: WorkerSummary[];
+  threads: ThreadSummary[];
+  storedThreads: StoredProjectThread[];
+};
+
+type ProjectMachineGroup = {
+  key: string;
+  label: string;
+  online: boolean;
+  statusLabel: string;
+  projects: ProjectSummary[];
+};
+
+type ProjectPickerState = {
+  machineId: string;
+  path: string;
+  parent?: string;
+  home?: string;
+  entries: MachineDirectoryEntry[];
+  loading: boolean;
+  error: string;
+};
+
+type ThreadPickerState = {
+  workerId: string;
+  loading: boolean;
+  error: string;
+  candidates: CodexThreadCandidate[];
+  acting: "new" | string | null;
+};
+
+type ProjectsPayload = {
+  seq?: number;
+  kind?: "projects";
+  statePath?: string;
+  machines?: MachineSummary[];
+  projects?: ProjectSummary[];
 };
 
 type WorkerGroupCounts = {
@@ -255,7 +352,12 @@ const App = () => {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
   const [workers, setWorkers] = useState<WorkerSummary[]>([]);
+  const [machines, setMachines] = useState<MachineSummary[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeWorkerId, setActiveWorkerId] = useState("");
+  const [openingProjectKey, setOpeningProjectKey] = useState("");
+  const [projectPicker, setProjectPicker] = useState<ProjectPickerState | null>(null);
+  const [threadPicker, setThreadPicker] = useState<ThreadPickerState | null>(null);
   const [activeTabThreadByWorker, setActiveTabThreadByWorker] = useState<Record<string, string>>({});
   const [threadOrderByWorker, setThreadOrderByWorker] = useState<Record<string, string[]>>({});
   const [initialized, setInitialized] = useState(false);
@@ -275,8 +377,11 @@ const App = () => {
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
   const workersEventSource = useRef<EventSource | null>(null);
+  const projectsEventSource = useRef<EventSource | null>(null);
   const workersLastSeq = useRef(0);
+  const projectsLastSeq = useRef(0);
   const workersReconnectTimer = useRef<number | null>(null);
+  const projectsReconnectTimer = useRef<number | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
   const threadLastSeqs = useRef(new Map<string, number>());
   const threadReconnectTimers = useRef(new Map<string, number>());
@@ -294,6 +399,9 @@ const App = () => {
     () => workers.find((worker) => worker.workerId === activeWorkerId),
     [activeWorkerId, workers]
   );
+  const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
+  const projectList = useMemo(() => mergeProjectsWithWorkers(projects, workers), [projects, workers]);
+  const projectGroups = useMemo(() => groupProjectsByMachine(projectList, machines), [projectList, machines]);
   const workerGroups = useMemo(() => groupWorkers(workers), [workers]);
   const activeWorkerThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
@@ -390,10 +498,15 @@ const App = () => {
     void initialize();
     return () => {
       workersEventSource.current?.close();
+      projectsEventSource.current?.close();
       for (const source of eventSources.current.values()) source.close();
       if (workersReconnectTimer.current !== null) {
         window.clearTimeout(workersReconnectTimer.current);
         workersReconnectTimer.current = null;
+      }
+      if (projectsReconnectTimer.current !== null) {
+        window.clearTimeout(projectsReconnectTimer.current);
+        projectsReconnectTimer.current = null;
       }
       for (const timer of threadReconnectTimers.current.values()) window.clearTimeout(timer);
       threadReconnectTimers.current.clear();
@@ -522,12 +635,15 @@ const App = () => {
   }, [activeSession?.threadId, activeSession?.running]);
 
   const initialize = async () => {
-    const [health, workerData] = await Promise.all([
+    const [health, workerData, projectData] = await Promise.all([
       apiJson<{ defaultWorkingDirectory?: string | null } & SystemStatus>("/api/health"),
-      apiJson<{ workers?: WorkerSummary[] }>("/api/workers")
+      apiJson<{ workers?: WorkerSummary[] }>("/api/workers"),
+      apiJson<ProjectsPayload>("/api/projects")
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
     const loadedWorkers = normalizeWorkers(workerData.workers);
+    const loadedMachines = normalizeMachines(projectData.machines);
+    const loadedProjects = normalizeProjects(projectData.projects);
     const saved = readStoredUiState();
     const savedWorker = saved?.activeWorkerId
       ? loadedWorkers.find((worker) => worker.workerId === saved.activeWorkerId)
@@ -545,9 +661,12 @@ const App = () => {
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     setCollapsedWorkerGroups(saved?.collapsedWorkerGroups ?? {});
+    setMachines(loadedMachines);
+    setProjects(loadedProjects);
     setWorkers(loadedWorkers);
     setThreadOrderByWorker((current) => mergeThreadOrderByWorker(current, loadedWorkers));
     subscribeWorkers(0);
+    subscribeProjects(0);
     if (initialWorker) {
       setActiveWorkerId(initialWorker.workerId);
       setActiveWorkspacePath(initialWorker.workingDirectory);
@@ -573,6 +692,20 @@ const App = () => {
     }, 1000);
   }
 
+  function clearProjectsReconnectTimer() {
+    if (projectsReconnectTimer.current === null) return;
+    window.clearTimeout(projectsReconnectTimer.current);
+    projectsReconnectTimer.current = null;
+  }
+
+  function scheduleProjectsReconnect() {
+    clearProjectsReconnectTimer();
+    projectsReconnectTimer.current = window.setTimeout(() => {
+      projectsReconnectTimer.current = null;
+      subscribeProjects(projectsLastSeq.current);
+    }, 1000);
+  }
+
   function subscribeWorkers(after: number) {
     clearWorkersReconnectTimer();
     workersEventSource.current?.close();
@@ -593,6 +726,27 @@ const App = () => {
       scheduleWorkersReconnect();
     });
     workersEventSource.current = source;
+  }
+
+  function subscribeProjects(after: number) {
+    clearProjectsReconnectTimer();
+    projectsEventSource.current?.close();
+    const subscribedAfter = Math.max(after, projectsLastSeq.current);
+    const source = new EventSource(`/api/projects/events?after=${subscribedAfter}`);
+    source.addEventListener("projects", (event: MessageEvent) => {
+      const payload = JSON.parse(event.data) as ProjectsPayload;
+      if (typeof payload.seq === "number") projectsLastSeq.current = Math.max(projectsLastSeq.current, payload.seq);
+      setMachines(normalizeMachines(payload.machines));
+      setProjects(normalizeProjects(payload.projects));
+    });
+    source.addEventListener("error", (event) => {
+      if (event instanceof MessageEvent) return;
+      if (projectsEventSource.current !== source) return;
+      source.close();
+      projectsEventSource.current = null;
+      scheduleProjectsReconnect();
+    });
+    projectsEventSource.current = source;
   }
 
   function clearThreadReconnectTimer(threadId: string) {
@@ -882,11 +1036,259 @@ const App = () => {
     }
   };
 
+  const selectProject = async (project: ProjectSummary) => {
+    setActiveWorkspacePath(project.path);
+    const worker = project.workers.find((item) => item.online) ?? project.workers[0];
+    if (worker?.online) {
+      await selectWorker(worker);
+      return;
+    }
+    await openProject(project.path, project.machineId);
+  };
+
+  const loadProjectPickerDirectory = async (machineId: string, targetPath?: string) => {
+    const trimmedPath = targetPath?.trim();
+    setProjectPicker((current) => current && current.machineId === machineId ? {
+      ...current,
+      path: trimmedPath ?? current.path,
+      loading: true,
+      error: ""
+    } : current);
+    try {
+      const query = trimmedPath ? `?path=${encodeURIComponent(trimmedPath)}` : "";
+      const listing = await apiJson<MachineDirectoryListing>(
+        `/api/machines/${encodeURIComponent(machineId)}/directories${query}`
+      );
+      setProjectPicker((current) => current && current.machineId === machineId ? {
+        ...current,
+        path: listing.cwd,
+        parent: listing.parent,
+        home: listing.home,
+        entries: listing.entries,
+        loading: false,
+        error: ""
+      } : current);
+    } catch (error) {
+      setProjectPicker((current) => current && current.machineId === machineId ? {
+        ...current,
+        loading: false,
+        error: error instanceof Error ? error.message : String(error)
+      } : current);
+    }
+  };
+
+  const openProjectPicker = (machine: ProjectMachineGroup) => {
+    const summary = machines.find((item) => item.machineId === machine.key);
+    const initialPath = summary?.cwd ?? machine.projects[0]?.path ?? "";
+    setProjectPicker({
+      machineId: machine.key,
+      path: initialPath,
+      entries: [],
+      loading: true,
+      error: ""
+    });
+    void loadProjectPickerDirectory(machine.key, initialPath);
+  };
+
+  const changeProjectPickerMachine = (machineId: string) => {
+    const summary = machines.find((machine) => machine.machineId === machineId);
+    const initialPath = summary?.cwd ?? "";
+    setProjectPicker({
+      machineId,
+      path: initialPath,
+      entries: [],
+      loading: true,
+      error: ""
+    });
+    void loadProjectPickerDirectory(machineId, initialPath);
+  };
+
+  const submitProjectPickerPath = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!projectPicker) return;
+    void loadProjectPickerDirectory(projectPicker.machineId, projectPicker.path);
+  };
+
+  const confirmProjectPicker = async () => {
+    if (!projectPicker) return;
+    const opened = await openProject(projectPicker.path, projectPicker.machineId);
+    if (opened) setProjectPicker(null);
+  };
+
+  const loadThreadPickerCandidates = async (workerId: string) => {
+    setThreadPicker((current) => current && current.workerId === workerId ? {
+      ...current,
+      loading: true,
+      error: ""
+    } : current);
+    try {
+      const payload = await apiJson<{ threads?: CodexThreadCandidate[] }>(
+        `/api/workers/${encodeURIComponent(workerId)}/thread-candidates?limit=50`
+      );
+      setThreadPicker((current) => current && current.workerId === workerId ? {
+        ...current,
+        loading: false,
+        candidates: Array.isArray(payload.threads) ? payload.threads : [],
+        error: ""
+      } : current);
+    } catch (error) {
+      setThreadPicker((current) => current && current.workerId === workerId ? {
+        ...current,
+        loading: false,
+        error: error instanceof Error ? error.message : String(error)
+      } : current);
+    }
+  };
+
+  const openThreadPicker = (worker: WorkerSummary) => {
+    setActiveWorkerId(worker.workerId);
+    setActiveWorkspacePath(worker.workingDirectory);
+    setThreadPicker({
+      workerId: worker.workerId,
+      loading: true,
+      error: "",
+      candidates: [],
+      acting: null
+    });
+    void loadThreadPickerCandidates(worker.workerId);
+  };
+
+  const activateWorkerThread = async (workerId: string, threadId: string) => {
+    const worker = workers.find((item) => item.workerId === workerId);
+    if (worker) {
+      setActiveWorkerId(worker.workerId);
+      setActiveWorkspacePath(worker.workingDirectory);
+    }
+    setActiveTabThreadByWorker((current) => ({ ...current, [workerId]: threadId }));
+    setThreadOrderByWorker((current) => appendThreadOrder(current, workerId, threadId));
+    if (sessions.some((session) => session.threadId === threadId)) {
+      latestRequestedThreadId.current = threadId;
+      closeThreadSubscriptionsExcept(threadId);
+      setActiveTabThreadId(threadId);
+      return;
+    }
+    await openThread(threadId);
+  };
+
+  const threadIsOpenForWorker = (workerId: string, threadId: string) => {
+    const worker = workers.find((item) => item.workerId === workerId);
+    return Boolean(
+      worker?.currentThreadId === threadId
+      || worker?.threads?.some((thread) => thread.threadId === threadId)
+      || (threadOrderByWorker[workerId] ?? []).includes(threadId)
+      || sessions.some((session) => session.threadId === threadId)
+    );
+  };
+
+  const createWorkerThread = async () => {
+    if (!threadPicker) return;
+    const workerId = threadPicker.workerId;
+    setThreadPicker((current) => current && current.workerId === workerId ? { ...current, acting: "new", error: "" } : current);
+    try {
+      const thread = await apiJson<ThreadDetail>(`/api/workers/${encodeURIComponent(workerId)}/threads`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "new" })
+      });
+      setThreadPicker(null);
+      await activateWorkerThread(workerId, thread.threadId);
+    } catch (error) {
+      setThreadPicker((current) => current && current.workerId === workerId ? {
+        ...current,
+        acting: null,
+        error: error instanceof Error ? error.message : String(error)
+      } : current);
+    }
+  };
+
+  const chooseThreadCandidate = async (candidate: CodexThreadCandidate) => {
+    if (!threadPicker) return;
+    const workerId = threadPicker.workerId;
+    if (threadIsOpenForWorker(workerId, candidate.threadId)) {
+      setThreadPicker(null);
+      await activateWorkerThread(workerId, candidate.threadId);
+      return;
+    }
+    setThreadPicker((current) => current && current.workerId === workerId ? {
+      ...current,
+      acting: candidate.threadId,
+      error: ""
+    } : current);
+    try {
+      const thread = await apiJson<ThreadDetail>(`/api/workers/${encodeURIComponent(workerId)}/threads`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "resume", threadId: candidate.threadId })
+      });
+      setThreadPicker(null);
+      await activateWorkerThread(workerId, thread.threadId);
+    } catch (error) {
+      setThreadPicker((current) => current && current.workerId === workerId ? {
+        ...current,
+        acting: null,
+        error: error instanceof Error ? error.message : String(error)
+      } : current);
+    }
+  };
+
+  const openProject = async (projectPath: string, machineId?: string): Promise<boolean> => {
+    const trimmedPath = projectPath.trim();
+    if (!trimmedPath) return false;
+    const key = `${machineId ?? ""}:${trimmedPath}`;
+    setProjectPicker((current) => current && current.machineId === machineId ? { ...current, error: "" } : current);
+    setOpeningProjectKey(key);
+    try {
+      const payload = await apiJson<ProjectsPayload & {
+        result?: { workerId: string; threadId: string; cwd: string };
+      }>("/api/projects/open", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: trimmedPath, machineId: machineId || undefined, reuse: true })
+      });
+      setMachines(normalizeMachines(payload.machines));
+      setProjects(normalizeProjects(payload.projects));
+      setActiveWorkspacePath(payload.result?.cwd ?? trimmedPath);
+      const freshWorkers = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers")
+        .then((data) => normalizeWorkers(data.workers))
+        .catch(() => workers);
+      setWorkers(freshWorkers);
+      setThreadOrderByWorker((current) => mergeThreadOrderByWorker(current, freshWorkers));
+      const worker = payload.result?.workerId
+        ? freshWorkers.find((item) => item.workerId === payload.result?.workerId)
+        : undefined;
+      if (worker) await selectWorker(worker);
+      else if (payload.result?.threadId) await openThread(payload.result.threadId).catch(() => clearActiveThreadIfLatest(payload.result!.threadId));
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setProjectPicker((current) => current && current.machineId === machineId ? { ...current, error: message } : current);
+      return false;
+    } finally {
+      setOpeningProjectKey((current) => current === key ? "" : current);
+    }
+  };
+
   const switchWorkerThread = async (threadId: string) => {
     if (!activeWorker || threadId === activeTabThreadId) return;
     setActiveTabThreadByWorker((current) => ({ ...current, [activeWorker.workerId]: threadId }));
     await openThread(threadId).catch(() => clearActiveThreadIfLatest(threadId));
   };
+
+  const projectPickerMachine = projectPicker
+    ? machines.find((machine) => machine.machineId === projectPicker.machineId)
+    : undefined;
+  const projectPickerOpening = projectPicker
+    ? openingProjectKey === `${projectPicker.machineId}:${projectPicker.path.trim()}`
+    : false;
+  const threadPickerWorker = threadPicker
+    ? workers.find((worker) => worker.workerId === threadPicker.workerId)
+    : undefined;
+  const threadPickerOpenThreadIds = new Set<string>([
+    ...(threadPickerWorker?.threads?.map((thread) => thread.threadId) ?? []),
+    ...(threadPickerWorker?.currentThreadId ? [threadPickerWorker.currentThreadId] : []),
+    ...(threadPicker ? threadOrderByWorker[threadPicker.workerId] ?? [] : []),
+    ...sessions.map((session) => session.threadId)
+  ]);
 
   return (
     <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
@@ -902,9 +1304,62 @@ const App = () => {
         <div className="brand">
           <div>
             <h1>Codex Hub</h1>
-            <p>Local agent workbench</p>
+            <p>Local machine workbench</p>
           </div>
         </div>
+
+        <section className="projectPanel">
+          <div className="projectPanelHeader">
+            <h2>Projects</h2>
+            <span>{onlineMachines.length} machines</span>
+          </div>
+          {projectGroups.length === 0 ? (
+            <div className="proxyWorkerEmpty">No machines</div>
+          ) : (
+            <div className="projectList">
+              {projectGroups.map((machine) => (
+                <section className="projectMachineGroup" key={machine.key}>
+                  <div className={`projectMachineHeader ${machine.online ? "online" : "offline"}`}>
+                    <span title={machine.label}>{machine.label}</span>
+                    <strong>{machine.statusLabel}</strong>
+                  </div>
+                  <div className="projectMachineRows">
+                    <button
+                      type="button"
+                      className="projectAddButton"
+                      onClick={() => openProjectPicker(machine)}
+                      disabled={!machine.online}
+                    >
+                      Add Project
+                    </button>
+                    {machine.projects.length === 0 ? (
+                      <div className="projectEmptyRow">No projects</div>
+                    ) : machine.projects.map((project) => {
+                      const projectKey = `${project.machineId}:${project.path}`;
+                      const active = project.workers.some((worker) => worker.workerId === activeWorkerId);
+                      const statusLabel = projectStatusLabel(project);
+                      const threadTitle = project.threads[0]?.title ?? project.storedThreads[0]?.title ?? "No conversations";
+                      return (
+                        <button
+                          type="button"
+                          key={project.projectId}
+                          className={`projectRow ${active ? "active" : ""} ${project.online ? "online" : "offline"}`}
+                          onClick={() => void selectProject(project)}
+                          disabled={openingProjectKey === projectKey}
+                        >
+                          <span title={project.name}>{project.name}</span>
+                          <strong>{openingProjectKey === projectKey ? "opening" : statusLabel}</strong>
+                          <code title={project.path}>{project.path}</code>
+                          <em title={threadTitle}>{threadTitle}</em>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="proxyWorkers expanded">
           <h2>Codex Workers</h2>
@@ -1026,17 +1481,31 @@ const App = () => {
           <Tabs
             className="workspaceThreadTabs"
             tabBarExtraContent={{
-              right: <label className="switchControl">
-                <span>View</span>
-                <button
-                  type="button"
-                  className={`switchButton ${messageDisplayMode === "compact" ? "active" : ""}`}
-                  aria-pressed={messageDisplayMode === "compact"}
-                  onClick={() => setMessageDisplayMode((current) => current === "compact" ? "detailed" : "compact")}
-                >
-                  {messageDisplayMode === "compact" ? "Simple" : "Detailed"}
-                </button>
-              </label>
+              right: (
+                <div className="threadTabActions">
+                  <button
+                    type="button"
+                    className="threadTabAddButton"
+                    onClick={() => openThreadPicker(activeWorker)}
+                    disabled={!activeWorker.online}
+                    aria-label="Add thread tab"
+                    title="Add thread tab"
+                  >
+                    +
+                  </button>
+                  <label className="switchControl">
+                    <span>View</span>
+                    <button
+                      type="button"
+                      className={`switchButton ${messageDisplayMode === "compact" ? "active" : ""}`}
+                      aria-pressed={messageDisplayMode === "compact"}
+                      onClick={() => setMessageDisplayMode((current) => current === "compact" ? "detailed" : "compact")}
+                    >
+                      {messageDisplayMode === "compact" ? "Simple" : "Detailed"}
+                    </button>
+                  </label>
+                </div>
+              )
             }}
             size="small"
             activeKey={activeSession.threadId}
@@ -1186,7 +1655,14 @@ const App = () => {
             onChange={(threadId) => void switchWorkerThread(threadId)}
           />
         ) : (
-          <div className="empty">{workspaceEmptyMessage}</div>
+          <div className="empty">
+            <span>{workspaceEmptyMessage}</span>
+            {activeWorker?.online ? (
+              <button type="button" className="emptyActionButton" onClick={() => openThreadPicker(activeWorker)}>
+                Add Thread
+              </button>
+            ) : null}
+          </div>
         )}
       </section>
 
@@ -1211,6 +1687,155 @@ const App = () => {
                 {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
               </select>
             </label>
+          </section>
+        </div>
+      ) : null}
+
+      {threadPicker ? (
+        <div className="modalOverlay threadPickerOverlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setThreadPicker(null);
+        }}>
+          <section className="threadPickerModal" role="dialog" aria-modal="true" aria-labelledby="threadPickerTitle">
+            <header className="threadPickerHeader">
+              <div>
+                <h2 id="threadPickerTitle">Add Thread</h2>
+                <p>{threadPickerWorker?.name ?? shortId(threadPicker.workerId)}</p>
+              </div>
+              <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
+            </header>
+            <div className="threadPickerList" role="listbox" aria-label="Thread candidates">
+              <button
+                type="button"
+                className="threadPickerRow newThread"
+                onClick={() => void createWorkerThread()}
+                disabled={threadPicker.loading || threadPicker.acting !== null}
+              >
+                <span className="threadPickerRowTitle">New thread</span>
+                <span className="threadPickerRowMeta">{threadPicker.acting === "new" ? "creating" : "Start a new Codex thread"}</span>
+              </button>
+              {threadPicker.loading ? (
+                <div className="threadPickerEmpty">Loading threads</div>
+              ) : threadPicker.candidates.length === 0 ? (
+                <div className="threadPickerEmpty">No local threads</div>
+              ) : threadPicker.candidates.map((candidate) => {
+                const isCurrent = candidate.threadId === threadPickerWorker?.currentThreadId;
+                const isOpen = threadPickerOpenThreadIds.has(candidate.threadId);
+                const acting = threadPicker.acting === candidate.threadId;
+                return (
+                  <button
+                    type="button"
+                    className={`threadPickerRow ${isCurrent ? "current" : ""} ${isOpen ? "open" : ""}`}
+                    key={candidate.threadId}
+                    onClick={() => void chooseThreadCandidate(candidate)}
+                    disabled={threadPicker.acting !== null}
+                    title={candidate.threadId}
+                  >
+                    <span className="threadPickerRowTitle">{threadCandidateTitle(candidate)}</span>
+                    <span className="threadPickerRowMeta">
+                      <code>{shortId(candidate.threadId)}</code>
+                      <span>{formatThreadCandidateTime(candidate.updatedAt)}</span>
+                      {isCurrent ? <strong>current</strong> : isOpen ? <strong>open</strong> : null}
+                      {acting ? <strong>restoring</strong> : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {threadPicker.error ? <div className="projectOpenError">{threadPicker.error}</div> : null}
+          </section>
+        </div>
+      ) : null}
+
+      {projectPicker ? (
+        <div className="modalOverlay projectPickerOverlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setProjectPicker(null);
+        }}>
+          <section className="projectPickerModal" role="dialog" aria-modal="true" aria-labelledby="projectPickerTitle">
+            <header className="projectPickerHeader">
+              <div>
+                <h2 id="projectPickerTitle">Add Project</h2>
+                <p>{projectPickerMachine?.name ?? projectPickerMachine?.hostname ?? projectPicker.machineId}</p>
+              </div>
+              <button type="button" className="iconButton" onClick={() => setProjectPicker(null)} aria-label="Close">x</button>
+            </header>
+            <div className="projectPickerBody">
+              <label className="projectPickerField">
+                <span>Machine</span>
+                <select
+                  value={projectPicker.machineId}
+                  onChange={(event) => changeProjectPickerMachine(event.target.value)}
+                  disabled={projectPicker.loading || onlineMachines.length <= 1}
+                >
+                  {onlineMachines.map((machine) => (
+                    <option value={machine.machineId} key={machine.machineId}>
+                      {machine.name ?? machine.hostname}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="projectPickerField">
+                <span>Folder path</span>
+                <form className="projectPickerPathForm" onSubmit={submitProjectPickerPath}>
+                  <button
+                    type="button"
+                    className="projectPickerPathButton"
+                    onClick={() => projectPicker.parent ? void loadProjectPickerDirectory(projectPicker.machineId, projectPicker.parent) : undefined}
+                    disabled={projectPicker.loading || !projectPicker.parent}
+                    aria-label="Go to parent folder"
+                  >
+                    ..
+                  </button>
+                  <button
+                    type="button"
+                    className="projectPickerPathButton"
+                    onClick={() => projectPicker.home ? void loadProjectPickerDirectory(projectPicker.machineId, projectPicker.home) : undefined}
+                    disabled={projectPicker.loading || !projectPicker.home}
+                    aria-label="Go to home folder"
+                  >
+                    ~
+                  </button>
+                  <input
+                    value={projectPicker.path}
+                    onChange={(event) => setProjectPicker((current) => current ? { ...current, path: event.target.value } : current)}
+                    spellCheck={false}
+                    aria-label="Folder path"
+                  />
+                  <button type="submit" className="projectPickerGoButton" disabled={projectPicker.loading || !projectPicker.path.trim()}>
+                    Go
+                  </button>
+                </form>
+              </div>
+              <div className="projectPickerList" role="listbox" aria-label="Folders">
+                {projectPicker.loading ? (
+                  <div className="projectPickerEmpty">Loading folders</div>
+                ) : projectPicker.entries.length === 0 ? (
+                  <div className="projectPickerEmpty">No folders</div>
+                ) : projectPicker.entries.map((entry) => (
+                  <button
+                    type="button"
+                    className="projectPickerRow"
+                    key={entry.path}
+                    onClick={() => void loadProjectPickerDirectory(projectPicker.machineId, entry.path)}
+                    title={entry.path}
+                  >
+                    <span className="projectFolderIcon" aria-hidden="true" />
+                    <span>{entry.name}</span>
+                  </button>
+                ))}
+              </div>
+              {projectPicker.error ? <div className="projectOpenError">{projectPicker.error}</div> : null}
+            </div>
+            <footer className="projectPickerFooter">
+              <button type="button" className="secondaryButton" onClick={() => setProjectPicker(null)}>Cancel</button>
+              <button
+                type="button"
+                className="projectPickerPrimaryButton"
+                onClick={() => void confirmProjectPicker()}
+                disabled={projectPicker.loading || projectPickerOpening || !projectPicker.path.trim()}
+              >
+                {projectPickerOpening ? "Opening" : "Add Project"}
+              </button>
+            </footer>
           </section>
         </div>
       ) : null}
@@ -1571,6 +2196,136 @@ const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
     ? workers
     : [];
 
+const normalizeMachines = (machines: MachineSummary[] | undefined) =>
+  Array.isArray(machines)
+    ? machines
+    : [];
+
+const normalizeProjects = (projects: ProjectSummary[] | undefined) =>
+  Array.isArray(projects)
+    ? projects
+    : [];
+
+const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSummary[]): ProjectMachineGroup[] => {
+  const machinesById = new Map(machines.map((machine) => [machine.machineId, machine]));
+  const groups = new Map<string, ProjectMachineGroup>();
+  for (const machine of machines) {
+    if (!machine.online) continue;
+    groups.set(machine.machineId, {
+      key: machine.machineId,
+      label: machine.name ?? machine.hostname,
+      online: machine.online,
+      statusLabel: machine.online ? "ready" : "offline",
+      projects: []
+    });
+  }
+  for (const project of projects) {
+    const machine = machinesById.get(project.machineId) ?? project.machine;
+    const label = machine
+      ? machine.name ?? machine.hostname
+      : project.machineId;
+    const online = Boolean(machine && "online" in machine ? machine.online : project.online);
+    let group = groups.get(project.machineId);
+    if (!group) {
+      group = {
+        key: project.machineId,
+        label,
+        online,
+        statusLabel: online ? "online" : "offline",
+        projects: []
+      };
+      groups.set(project.machineId, group);
+    }
+    group.online = group.online || online;
+    if (group.label === project.machineId && label !== project.machineId) group.label = label;
+    group.projects.push(project);
+  }
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      statusLabel: projectMachineStatus(group),
+      projects: [...group.projects].sort((left, right) => {
+        return compareProjectRows(left, right);
+      })
+    }))
+    .sort((left, right) => Number(right.online) - Number(left.online) || left.label.localeCompare(right.label));
+};
+
+const projectMachineStatus = (group: Pick<ProjectMachineGroup, "online" | "projects">) => {
+  const onlineProjects = group.projects.filter((project) => project.online).length;
+  if (!group.online) return "offline";
+  if (onlineProjects) return `${onlineProjects}/${group.projects.length} active`;
+  return "ready";
+};
+
+const mergeProjectsWithWorkers = (projects: ProjectSummary[], workers: WorkerSummary[]) => {
+  const projectsByKey = new Map(projects.map((project) => [projectRuntimeKey(project.machineId, project.path), {
+    ...project,
+    workers: [...(project.workers ?? [])],
+    threads: [...(project.threads ?? [])],
+    storedThreads: [...(project.storedThreads ?? [])]
+  }]));
+  for (const worker of workers) {
+    const key = projectRuntimeKey(machineIdForWorker(worker), worker.workingDirectory);
+    let project = projectsByKey.get(key);
+    if (!project) {
+      project = {
+        projectId: key,
+        machineId: machineIdForWorker(worker),
+        path: worker.workingDirectory,
+        name: basename(worker.workingDirectory),
+        createdAt: worker.lastSeenAt,
+        lastOpenedAt: worker.lastSeenAt,
+        lastWorkerId: worker.workerId,
+        lastThreadId: worker.currentThreadId,
+        online: worker.online,
+        running: Boolean(worker.currentThread?.running),
+        workers: [],
+        threads: [],
+        storedThreads: []
+      };
+      projectsByKey.set(key, project);
+    }
+    if (!project.workers.some((item) => item.workerId === worker.workerId)) project.workers.push(worker);
+    for (const thread of worker.threads ?? []) {
+      if (!project.threads.some((item) => item.threadId === thread.threadId)) project.threads.push(thread);
+    }
+    if (worker.currentThread && !project.threads.some((item) => item.threadId === worker.currentThread?.threadId)) {
+      project.threads.unshift(worker.currentThread);
+    }
+    project.online = project.online || worker.online;
+    project.running = project.running || Boolean(worker.currentThread?.running || worker.currentThread?.status === "running");
+  }
+  return [...projectsByKey.values()].sort((left, right) => {
+    return compareProjectRows(left, right);
+  });
+};
+
+const projectRuntimeKey = (machineId: string, projectPath: string) => `${machineId}\0${projectPath}`;
+
+const compareProjectRows = (left: ProjectSummary, right: ProjectSummary) => {
+  if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1;
+  const createdCompare = left.createdAt.localeCompare(right.createdAt);
+  if (createdCompare) return createdCompare;
+  const nameCompare = left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+  if (nameCompare) return nameCompare;
+  return left.path.localeCompare(right.path, undefined, { sensitivity: "base" });
+};
+
+const machineIdForWorker = (worker: WorkerSummary) => worker.machineId ?? `machine-${safeMachinePart(worker.hostname ?? "local")}`;
+
+const safeMachinePart = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
+
+const basename = (projectPath: string) => projectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? projectPath;
+
+const projectStatusLabel = (project: ProjectSummary) => {
+  if (project.running) return "running";
+  if (project.workers.some((worker) => worker.online)) return "online";
+  if (project.machine && "online" in project.machine && project.machine.online) return "ready";
+  return "offline";
+};
+
 const groupWorkers = (workers: WorkerSummary[]): WorkerDeviceGroup[] => {
   const devices = new Map<string, WorkerDeviceGroup & { folderMap: Map<string, WorkerFolderGroup> }>();
   for (const worker of workers) {
@@ -1685,6 +2440,13 @@ const relativeTime = (iso: string | undefined) => {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
 };
+
+const threadCandidateTitle = (candidate: CodexThreadCandidate) =>
+  compactLine(candidate.firstUserMessage || candidate.lastAssistantMessage || shortId(candidate.threadId));
+
+const formatThreadCandidateTime = (value: string) => relativeTime(value);
+
+const compactLine = (value: string) => value.replace(/\s+/g, " ").trim();
 
 const appendThreadOrder = (current: Record<string, string[]>, workerId: string, threadId: string) => {
   const existing = current[workerId] ?? [];

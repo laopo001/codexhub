@@ -7,8 +7,10 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { MachineHub } from "../core/machineHub.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
+import { CodexhubServerState } from "../core/serverState.js";
 import { ThreadHub } from "../core/threadHub.js";
 import { startTelegramBotFromEnv, type TelegramBotHandle } from "../telegram/index.js";
 
@@ -33,6 +35,7 @@ const threadRunOptionsSchema = z.object({
 
 const workerRegistrationSchema = z.object({
   workerId: z.string().min(1).optional(),
+  machineId: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
   workingDirectory: z.string().min(1),
   appServerUrl: z.string().min(1).optional(),
@@ -103,6 +106,65 @@ const workerTransportMessageSchema = z.discriminatedUnion("type", [
     threadId: z.string().min(1),
     heartbeat: z.boolean().optional(),
     records: z.array(codexRecordSchema)
+  }),
+  z.object({
+    type: z.literal("command_result"),
+    commandId: z.string().min(1),
+    result: z.unknown()
+  }),
+  z.object({
+    type: z.literal("command_error"),
+    commandId: z.string().min(1),
+    message: z.string().min(1)
+  })
+]);
+
+const machineRegistrationSchema = z.object({
+  machineId: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
+  hostname: z.string().min(1),
+  pid: z.number().int().optional(),
+  platform: z.string().min(1).optional(),
+  cwd: z.string().min(1).optional()
+});
+
+const machineHeartbeatSchema = machineRegistrationSchema.partial();
+
+const machineStartWorkerResultSchema = z.object({
+  workerId: z.string().min(1),
+  threadId: z.string().min(1),
+  appServerUrl: z.string().min(1),
+  cwd: z.string().min(1),
+  reused: z.boolean().optional()
+});
+
+const machineDirectoryListingSchema = z.object({
+  cwd: z.string().min(1),
+  parent: z.string().min(1).optional(),
+  home: z.string().min(1),
+  entries: z.array(z.object({
+    name: z.string().min(1),
+    path: z.string().min(1)
+  }))
+});
+
+const machineTransportMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("register"),
+    commandCursor: z.number().int().min(0).optional(),
+    registration: machineRegistrationSchema
+  }),
+  z.object({
+    type: z.literal("unregister")
+  }),
+  z.object({
+    type: z.literal("heartbeat"),
+    registration: machineHeartbeatSchema.optional()
+  }),
+  z.object({
+    type: z.literal("command_result"),
+    commandId: z.string().min(1),
+    result: z.union([machineStartWorkerResultSchema, machineDirectoryListingSchema])
   }),
   z.object({
     type: z.literal("command_error"),
@@ -192,7 +254,11 @@ export type ServerHandle = {
 export const startServer = async (options: ServerStartOptions = {}): Promise<ServerHandle> => {
   const config = loadConfig({ host: options.host, port: options.port });
   const threads = new ThreadHub(config.defaultThreadOptions);
+  const state = await CodexhubServerState.load();
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
+  const projectSubscribers = new Set<(event: ReturnType<typeof projectSnapshotEvent>) => void>();
+  let projectSeq = 0;
+  const machines = new MachineHub({ onChange: () => publishProjects() });
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
@@ -204,9 +270,35 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.addHook("onClose", async () => {
     clearInterval(workerSweep);
     telegramBot?.stop("server closing");
+    await state.flush();
   });
   await app.register(cors, { origin: true });
   await app.register(websocket);
+
+  function projectSnapshot() {
+    return state.snapshot({
+      machines: machines.listMachines(),
+      workers: threads.listWorkers({ includeOffline: true }),
+      threads: threads.listThreads()
+    });
+  }
+
+  function projectSnapshotEvent() {
+    return {
+      seq: projectSeq,
+      kind: "projects" as const,
+      ...projectSnapshot()
+    };
+  }
+
+  function publishProjects() {
+    const event = {
+      seq: ++projectSeq,
+      kind: "projects" as const,
+      ...projectSnapshot()
+    };
+    for (const subscriber of projectSubscribers) subscriber(event);
+  }
 
   app.get("/api/health", async () => ({
     ok: true,
@@ -215,6 +307,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     host: config.host,
     port: config.port,
     staticDirectory,
+    statePath: state.path,
     model: config.defaultThreadOptions.model ?? null,
     modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
     contextWindowTokens,
@@ -244,6 +337,98 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs()),
       workers: threads.listWorkers({ includeOffline: query.includeOffline === "true" })
     };
+  });
+
+  app.get("/api/workers/:workerId/thread-candidates", async (request, reply) => {
+    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+    const query = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() }).parse(request.query);
+    try {
+      return await threads.listWorkerThreadCandidates(params.workerId, query.limit ?? 50);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Worker not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.post("/api/workers/:workerId/threads", async (request, reply) => {
+    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+    const payload = z.discriminatedUnion("action", [
+      z.object({ action: z.literal("new") }),
+      z.object({ action: z.literal("resume"), threadId: z.string().min(1) })
+    ]).parse(request.body);
+    try {
+      const thread = payload.action === "new"
+        ? await threads.startWorkerThread(params.workerId)
+        : await threads.resumeWorkerThread(params.workerId, payload.threadId);
+      publishProjects();
+      return thread;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Worker not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.get("/api/machines", async () => ({
+    machines: machines.listMachines()
+  }));
+
+  app.get("/api/machines/:machineId/directories", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
+    const query = z.object({ path: z.string().optional() }).parse(request.query);
+    try {
+      const command = machines.listDirectory(params.machineId, { cwd: query.path });
+      return await command.promise;
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.get("/api/projects", async () => projectSnapshot());
+
+  app.get("/api/projects/events", async (request, reply) => {
+    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
+    const stopSse = startSse(reply.raw);
+    const after = query.after ?? 0;
+    if (after <= 0) sendSse(reply.raw, "projects", projectSnapshotEvent());
+    const subscriber = (event: ReturnType<typeof projectSnapshotEvent>) => {
+      if (event.seq > after) sendSse(reply.raw, event.kind, event);
+    };
+    projectSubscribers.add(subscriber);
+    reply.raw.on("close", () => {
+      stopSse();
+      projectSubscribers.delete(subscriber);
+    });
+  });
+
+  app.post("/api/projects/open", async (request, reply) => {
+    const payload = z.object({
+      machineId: z.string().min(1).optional(),
+      path: z.string().min(1),
+      reuse: z.boolean().optional()
+    }).parse(request.body);
+
+    try {
+      const machine = resolveTargetMachine(machines.listMachines(), payload.machineId);
+      const started = machines.startWorker(machine.machineId, {
+        cwd: payload.path,
+        reuse: payload.reuse ?? true
+      });
+      const result = await started.promise;
+      const project = state.upsertProject({
+        machineId: machine.machineId,
+        path: result.cwd,
+        workerId: result.workerId,
+        threadId: result.threadId
+      });
+      publishProjects();
+      return { ok: true, machine, project, result, ...projectSnapshot() };
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   app.get("/api/workers/events", async (request, reply) => {
@@ -313,12 +498,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           workerId = result.workerId;
           commandCursor = threads.clampWorkerCommandCursor(workerId, parsed.commandCursor ?? 0);
           send({ type: "registered", workerId, worker: result.worker });
+          publishProjects();
           startCommandPump();
           return;
         }
 
         if (parsed.type === "unregister") {
           threads.unregisterWorker(workerId!, transportId);
+          publishProjects();
           workerId = null;
           socket.close();
           return;
@@ -326,11 +513,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
         if (parsed.type === "heartbeat") {
           threads.heartbeatWorker(workerId!, parsed.registration ?? {});
+          publishProjects();
           return;
         }
 
         if (parsed.type === "event") {
           threads.applyWorkerEvent(workerId!, parsed.event);
+          publishProjects();
           return;
         }
 
@@ -340,6 +529,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
             records: parsed.records,
             heartbeat: parsed.heartbeat
           });
+          publishProjects();
+          return;
+        }
+
+        if (parsed.type === "command_result") {
+          threads.resolveWorkerCommand(workerId!, parsed.commandId, parsed.result);
+          publishProjects();
           return;
         }
 
@@ -352,11 +548,124 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     socket.on("message", (data: unknown) => void handleMessage(data));
     socket.on("close", () => {
       closed = true;
-      if (workerId) threads.disconnectWorker(workerId, transportId);
+      if (workerId) {
+        threads.disconnectWorker(workerId, transportId);
+        publishProjects();
+      }
     });
     socket.on("error", () => {
       closed = true;
-      if (workerId) threads.disconnectWorker(workerId, transportId);
+      if (workerId) {
+        threads.disconnectWorker(workerId, transportId);
+        publishProjects();
+      }
+    });
+  });
+
+  app.get("/api/machines/connect", { websocket: true }, (socket) => {
+    const transportId = randomUUID();
+    let machineId: string | null = null;
+    let commandCursor = 0;
+    let closed = false;
+    let commandPumpStarted = false;
+
+    const send = (message: unknown) => {
+      if (socket.readyState !== 1) return;
+      socket.send(JSON.stringify(message));
+    };
+
+    const startCommandPump = () => {
+      if (commandPumpStarted) return;
+      commandPumpStarted = true;
+      void commandPump().catch((error: unknown) => {
+        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
+        socket.close();
+      });
+    };
+
+    const commandPump = async () => {
+      while (!closed && machineId) {
+        const response = await machines.waitMachineCommands(machineId, commandCursor, 60_000);
+        if (closed || !machineId) return;
+        commandCursor = Math.max(commandCursor, response.cursor);
+        if (response.commands.length) {
+          send({ type: "commands", cursor: commandCursor, commands: response.commands });
+        }
+      }
+    };
+
+    const handleMessage = async (data: unknown) => {
+      let parsed: z.infer<typeof machineTransportMessageSchema>;
+      try {
+        parsed = machineTransportMessageSchema.parse(JSON.parse(String(data)));
+      } catch (error) {
+        send({ type: "error", message: `invalid machine transport message: ${error instanceof Error ? error.message : String(error)}` });
+        return;
+      }
+
+      if (parsed.type !== "register" && !machineId) {
+        send({ type: "error", message: "machine transport must register before sending messages" });
+        return;
+      }
+
+      try {
+        if (parsed.type === "register") {
+          const result = machines.registerMachine({ ...parsed.registration, transportId });
+          state.upsertMachine({
+            machineId: result.machineId,
+            hostname: result.machine.hostname,
+            name: result.machine.name,
+            lastSeenAt: result.machine.lastSeenAt
+          });
+          machineId = result.machineId;
+          commandCursor = machines.clampMachineCommandCursor(machineId, parsed.commandCursor ?? 0);
+          send({ type: "registered", machineId, machine: result.machine });
+          publishProjects();
+          startCommandPump();
+          return;
+        }
+
+        if (parsed.type === "unregister") {
+          machines.unregisterMachine(machineId!, transportId);
+          publishProjects();
+          machineId = null;
+          socket.close();
+          return;
+        }
+
+        if (parsed.type === "heartbeat") {
+          machines.heartbeatMachine(machineId!, parsed.registration ?? {});
+          publishProjects();
+          return;
+        }
+
+        if (parsed.type === "command_result") {
+          machines.resolveCommand(machineId!, parsed.commandId, parsed.result);
+          publishProjects();
+          return;
+        }
+
+        machines.failCommand(machineId!, parsed.commandId, parsed.message);
+        publishProjects();
+      } catch (error) {
+        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
+      }
+    };
+
+    socket.on("message", (data: unknown) => void handleMessage(data));
+    socket.on("close", () => {
+      closed = true;
+      if (machineId) {
+        machines.disconnectMachine(machineId, transportId);
+        publishProjects();
+      }
+    });
+    socket.on("error", () => {
+      closed = true;
+      if (machineId) {
+        machines.disconnectMachine(machineId, transportId);
+        publishProjects();
+      }
     });
   });
 
@@ -492,6 +801,21 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     port: config.port,
     stop: () => app.close()
   };
+};
+
+const resolveTargetMachine = (
+  allMachines: Array<{ machineId: string; online: boolean }>,
+  requestedMachineId: string | undefined
+) => {
+  const onlineMachines = allMachines.filter((machine) => machine.online);
+  if (requestedMachineId) {
+    const machine = onlineMachines.find((item) => item.machineId === requestedMachineId);
+    if (!machine) throw new Error(`Machine is offline or not found: ${requestedMachineId}`);
+    return machine;
+  }
+  if (onlineMachines.length === 1) return onlineMachines[0];
+  if (onlineMachines.length === 0) throw new Error("No online codexhub machine.");
+  throw new Error("Multiple online machines. Choose one before opening a project.");
 };
 
 const registerStaticRoutes = (app: FastifyInstance, root: string) => {
