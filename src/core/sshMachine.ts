@@ -38,6 +38,19 @@ type SshMachineManagerOptions = {
 };
 
 const outputLimit = 12_000;
+const defaultRemotePath = [
+  "$HOME/.nvm/versions/node/v22.22.1/bin",
+  "$HOME/.nvm/versions/node/v20.18.0/bin",
+  "$HOME/Library/pnpm",
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+  "/usr/sbin",
+  "/sbin",
+  "$HOME/.local/bin",
+  "$PATH"
+].join(":");
 
 export class SshMachineManager {
   private readonly connections = new Map<string, RuntimeSshMachineConnection>();
@@ -60,6 +73,7 @@ export class SshMachineManager {
     const localHost = loopbackHost(this.options.localHost);
     const remoteApiBase = `http://127.0.0.1:${remotePort}`;
     const remoteCommand = input.remoteCommand ?? [
+      `PATH=${shellDoubleQuote(defaultRemotePath)}`,
       "codexhub",
       "machine",
       "--server",
@@ -168,6 +182,8 @@ const trimOutput = (value: string) =>
   value.length <= outputLimit ? value : value.slice(value.length - outputLimit);
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+
+const shellDoubleQuote = (value: string) => `"${value.replace(/["\\`]/g, "\\$&")}"`;
 
 const waitForChildExit = async (child: ChildProcess, timeoutMs: number) => await new Promise<boolean>((resolve) => {
   if (child.exitCode !== null || child.signalCode !== null) {

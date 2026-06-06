@@ -312,13 +312,18 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const state = await CodexhubServerState.load();
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const projectSubscribers = new Set<(event: ReturnType<typeof projectSnapshotEvent>) => void>();
+  const connectionSubscribers = new Set<(event: ReturnType<typeof connectionSnapshotEvent>) => void>();
   let projectSeq = 0;
+  let connectionSeq = 0;
   const machines = new MachineHub({ onChange: () => publishProjects() });
   const sshMachines = new SshMachineManager({
     localHost: config.host,
     localPort: config.port,
     sshConfigPath: process.env.CODEX_HUB_SSH_CONFIG,
-    onChange: () => publishProjects()
+    onChange: () => {
+      publishConnections();
+      publishProjects();
+    }
   });
   const plugins = new PluginHub({ builtins: [telegramBuiltinPlugin()] });
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
@@ -381,6 +386,23 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       ...projectSnapshot()
     };
     for (const subscriber of projectSubscribers) subscriber(event);
+  }
+
+  function connectionSnapshotEvent() {
+    return {
+      seq: connectionSeq,
+      kind: "connections" as const,
+      connections: sshMachines.listConnections()
+    };
+  }
+
+  function publishConnections() {
+    const event = {
+      seq: ++connectionSeq,
+      kind: "connections" as const,
+      connections: sshMachines.listConnections()
+    };
+    for (const subscriber of connectionSubscribers) subscriber(event);
   }
 
   async function runLocalTask(taskId: string) {
@@ -540,6 +562,41 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     });
   });
 
+  app.get("/api/events", async (request, reply) => {
+    const query = z.object({
+      sessionsAfter: z.coerce.number().optional(),
+      projectsAfter: z.coerce.number().optional(),
+      connectionsAfter: z.coerce.number().optional()
+    }).parse(request.query);
+    threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
+
+    const stopSse = startSse(reply.raw);
+    const sessionsAfter = query.sessionsAfter ?? 0;
+    const projectsAfter = query.projectsAfter ?? 0;
+    const connectionsAfter = query.connectionsAfter ?? 0;
+
+    const unsubscribeSessions = threads.subscribeRuntimeSessions(sessionsAfter, (event) => {
+      sendSse(reply.raw, event.kind, event);
+    });
+    if (projectsAfter <= 0 || projectSeq > projectsAfter) sendSse(reply.raw, "projects", projectSnapshotEvent());
+    if (connectionsAfter <= 0 || connectionSeq > connectionsAfter) sendSse(reply.raw, "connections", connectionSnapshotEvent());
+
+    const projectSubscriber = (event: ReturnType<typeof projectSnapshotEvent>) => {
+      if (event.seq > projectsAfter) sendSse(reply.raw, event.kind, event);
+    };
+    const connectionSubscriber = (event: ReturnType<typeof connectionSnapshotEvent>) => {
+      if (event.seq > connectionsAfter) sendSse(reply.raw, event.kind, event);
+    };
+    projectSubscribers.add(projectSubscriber);
+    connectionSubscribers.add(connectionSubscriber);
+    reply.raw.on("close", () => {
+      stopSse();
+      unsubscribeSessions();
+      projectSubscribers.delete(projectSubscriber);
+      connectionSubscribers.delete(connectionSubscriber);
+    });
+  });
+
   app.get("/api/sessions/:sessionId/thread-candidates", async (request, reply) => {
     const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
     const query = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() }).parse(request.query);
@@ -601,6 +658,21 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.get("/api/ssh/connections", async () => ({
     connections: sshMachines.listConnections()
   }));
+
+  app.get("/api/ssh/connections/events", async (request, reply) => {
+    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
+    const stopSse = startSse(reply.raw);
+    const after = query.after ?? 0;
+    if (after <= 0 || connectionSeq > after) sendSse(reply.raw, "connections", connectionSnapshotEvent());
+    const subscriber = (event: ReturnType<typeof connectionSnapshotEvent>) => {
+      if (event.seq > after) sendSse(reply.raw, event.kind, event);
+    };
+    connectionSubscribers.add(subscriber);
+    reply.raw.on("close", () => {
+      stopSse();
+      connectionSubscribers.delete(subscriber);
+    });
+  });
 
   app.get("/api/plugins", async () => ({
     plugins: await plugins.listPlugins()
@@ -1142,6 +1214,7 @@ const registerStaticRoutes = (app: FastifyInstance, root: string) => {
       return { error: "dist_index_not_found", path: indexPath };
     }
     reply.type("text/html; charset=utf-8");
+    reply.header("cache-control", "no-cache");
     return reply.send(createReadStream(indexPath));
   };
 

@@ -199,7 +199,7 @@ type PendingCommand = {
   threadId?: string;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
+  timer?: NodeJS.Timeout;
 };
 
 type WorkerWaiter = () => void;
@@ -633,7 +633,7 @@ export class ThreadHub {
     const commandOptions = options ? { ...options } : { ...thread.threadOptions };
     if (options) thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
     const commandId = randomUUID();
-    const promise = this.waitForCommand<void>(commandId, "turn", thread.threadId, 15 * 60_000);
+    const promise = this.waitForCommand<void>(commandId, "turn", thread.threadId, turnCommandTimeoutMs());
     this.activeTurnCommands.set(thread.threadId, commandId);
 
     const userText = summarizeInput(input);
@@ -758,21 +758,23 @@ export class ThreadHub {
     commandId: string,
     type: WorkerCommand["type"],
     threadId?: string,
-    timeoutMs = 30000
+    timeoutMs: number | null | undefined = 30000
   ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingCommands.delete(commandId);
-        if (threadId && this.activeTurnCommands.get(threadId) === commandId) {
-          this.activeTurnCommands.delete(threadId);
-          const thread = this.threads.get(threadId);
-          if (thread) {
-            thread.running = false;
-            this.publish(thread, "done");
+      const timer = typeof timeoutMs === "number" && timeoutMs > 0
+        ? setTimeout(() => {
+          this.pendingCommands.delete(commandId);
+          if (threadId && this.activeTurnCommands.get(threadId) === commandId) {
+            this.activeTurnCommands.delete(threadId);
+            const thread = this.threads.get(threadId);
+            if (thread) {
+              thread.running = false;
+              this.publish(thread, "done");
+            }
           }
-        }
-        reject(new Error(`Session command timed out: ${type}`));
-      }, timeoutMs);
+          reject(new Error(`Session command timed out: ${type}`));
+        }, timeoutMs)
+        : undefined;
       this.pendingCommands.set(commandId, {
         type,
         threadId,
@@ -794,7 +796,7 @@ export class ThreadHub {
   private resolveCommand(commandId: string, value?: unknown) {
     const pending = this.pendingCommands.get(commandId);
     if (!pending) return;
-    clearTimeout(pending.timer);
+    if (pending.timer) clearTimeout(pending.timer);
     this.pendingCommands.delete(commandId);
     pending.resolve(value);
   }
@@ -803,7 +805,7 @@ export class ThreadHub {
     if (!commandId) return;
     const pending = this.pendingCommands.get(commandId);
     if (!pending) return;
-    clearTimeout(pending.timer);
+    if (pending.timer) clearTimeout(pending.timer);
     this.pendingCommands.delete(commandId);
     pending.reject(error);
   }
@@ -933,6 +935,7 @@ export class ThreadHub {
     }
 
     if (method === "turn/completed") {
+      this.finishWorkerTurn(thread);
       return;
     }
 
@@ -1513,6 +1516,13 @@ const formatUsage = (usage: Usage | undefined) => {
 };
 
 const numberValue = (value: unknown) => typeof value === "number" ? value : undefined;
+
+const turnCommandTimeoutMs = () => {
+  const raw = process.env.CODEX_HUB_TURN_TIMEOUT_MS?.trim();
+  if (!raw) return null;
+  const timeoutMs = Number(raw);
+  return Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : null;
+};
 
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 

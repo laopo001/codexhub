@@ -368,6 +368,68 @@ textarea {
   min-width: 0;
 }
 
+.projectOfflineSection {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 6px;
+}
+
+.projectOfflineHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #91a090;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 0;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.projectOfflineHeader:hover {
+  color: #d8e2d5;
+}
+
+.projectOfflineArrow {
+  display: inline-block;
+  color: #71806f;
+  font-size: 10px;
+  transform: rotate(90deg);
+}
+
+.projectOfflineArrow.collapsed {
+  transform: rotate(0deg);
+}
+
+.projectOfflineHeader span:not(.projectOfflineArrow) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectOfflineHeader strong {
+  border-radius: 999px;
+  background: #2d4033;
+  color: #b9c6b4;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+}
+
+.projectOfflineMachines {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .projectMachineHeader {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -512,6 +574,12 @@ textarea {
   gap: 8px;
 }
 
+.taskPanelTitle {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
 .taskPanelHeader h2 {
   margin: 0;
   color: #d8e2d5;
@@ -521,7 +589,18 @@ textarea {
   text-transform: uppercase;
 }
 
+.taskPanelTitle span {
+  min-width: 0;
+  overflow: hidden;
+  color: #91a090;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .taskPanelHeader button {
+  flex: 0 0 auto;
   min-height: 26px;
   border: 1px solid #405244;
   border-radius: 8px;
@@ -604,6 +683,11 @@ textarea {
   color: #cdddf6;
 }
 
+.taskStatus.paused {
+  background: #2d332e;
+  color: #9daa98;
+}
+
 .taskStatus.failed,
 .taskStatus.skipped {
   background: #39271d;
@@ -621,6 +705,10 @@ textarea {
 
 .taskRow small {
   color: #f0b58d;
+}
+
+.taskRow.paused .taskLastError {
+  color: #9daa98;
 }
 
 .taskActions {
@@ -740,238 +828,6 @@ textarea {
   border-color: #405244;
   background: #203526;
   color: #7e8c7b;
-}
-
-.runtimeSessionsPanel {
-  display: grid;
-  align-content: end;
-  gap: 10px;
-  min-height: 132px;
-  margin-top: auto;
-}
-
-.runtimeSessionsPanel.expanded {
-  align-content: start;
-  min-height: 0;
-  flex: 1;
-}
-
-.runtimeSessionsPanel h2 {
-  margin: 0;
-  color: #d8e2d5;
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.runtimeSessionList {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  max-height: 180px;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-.runtimeSessionsPanel.expanded .runtimeSessionList {
-  max-height: none;
-}
-
-.runtimeSessionDeviceGroup,
-.runtimeSessionFolderGroup,
-.runtimeSessionRows {
-  display: grid;
-  min-width: 0;
-}
-
-.runtimeSessionDeviceGroup {
-  gap: 8px;
-}
-
-.runtimeSessionFolderGroup {
-  gap: 6px;
-  border-left: 1px solid #2d4033;
-  padding-left: 8px;
-}
-
-.runtimeSessionRows {
-  gap: 6px;
-}
-
-.runtimeSessionGroupToggle {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-  text-align: left;
-}
-
-.runtimeSessionGroupToggle.folder {
-  padding-top: 1px;
-}
-
-.runtimeSessionGroupChevron {
-  display: inline-grid;
-  place-items: center;
-  width: 10px;
-  color: #91a090;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 10px;
-  transform: rotate(90deg);
-}
-
-.runtimeSessionGroupChevron.collapsed {
-  transform: rotate(0deg);
-}
-
-.runtimeSessionGroupCount {
-  min-width: 0;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #203526;
-  color: #b8c5b4;
-  font-size: 10px;
-  font-weight: 650;
-  padding: 1px 6px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.runtimeSessionGroupToggle.folder .runtimeSessionGroupCount {
-  background: transparent;
-  color: #7e8c7b;
-  padding-right: 0;
-}
-
-.runtimeSessionDeviceHeader,
-.runtimeSessionFolderHeader {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.runtimeSessionDeviceHeader {
-  color: #f8fbf4;
-  font-size: 12px;
-  font-weight: 750;
-  line-height: 1.2;
-}
-
-.runtimeSessionFolderHeader {
-  color: #91a090;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.25;
-}
-
-.runtimeSessionRow,
-.runtimeSessionEmpty {
-  border: 1px solid #405244;
-  border-radius: 8px;
-  background: #0f1b14;
-  color: #d8e2d5;
-  padding: 10px 12px;
-}
-
-.runtimeSessionRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 8px;
-  width: 100%;
-  min-height: auto;
-  min-width: 0;
-  overflow: hidden;
-  text-align: left;
-}
-
-.runtimeSessionRow.active {
-  border-color: #d95f36;
-  background: #183222;
-}
-
-.runtimeSessionRow.offline {
-  border-color: #334238;
-  background: #111811;
-  color: #9daa98;
-}
-
-.runtimeSessionRow span {
-  overflow: hidden;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.runtimeSessionRow strong {
-  border-radius: 999px;
-  background: #203526;
-  color: #b8c5b4;
-  font-size: 11px;
-  font-weight: 650;
-  padding: 2px 7px;
-}
-
-.runtimeSessionRow.offline strong {
-  background: #39271d;
-  color: #f0b58d;
-}
-
-.runtimeSessionRow.offline code,
-.runtimeSessionRow.offline .runtimeSessionMeta {
-  color: #7e8c7b;
-}
-
-.runtimeSessionRow code {
-  grid-column: 1 / -1;
-  overflow: hidden;
-  color: #91a090;
-  font-family: inherit;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.runtimeSessionMeta {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  overflow: hidden;
-  color: #91a090;
-  font-size: 11px;
-  font-style: normal;
-}
-
-.runtimeSessionMeta span {
-  font-family: inherit;
-  font-weight: 400;
-}
-
-.runtimeSessionLastSeen {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  color: #b8c5b4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.runtimeSessionEmpty {
-  color: #91a090;
-  font-size: 13px;
 }
 
 .workspace {
@@ -1568,8 +1424,6 @@ textarea {
 }
 
 .sidebarScrim,
-.runtimeSessionGroupToggle,
-.runtimeSessionRow,
 .sidebarPanelToggle,
 .switchButton,
 .composerIconButton,
@@ -1582,8 +1436,6 @@ textarea {
   cursor: pointer;
 }
 
-.runtimeSessionRow:disabled,
-.runtimeSessionGroupToggle:disabled,
 .sidebarPanelToggle:disabled,
 .switchButton:disabled,
 .composerIconButton:disabled,
