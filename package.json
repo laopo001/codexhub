@@ -1,7 +1,7 @@
 {
   "name": "@dadigua/codexhub",
   "version": "0.4.1",
-  "description": "Worker-first local control plane for Codex.",
+  "description": "Local-first Codex control plane for local, SSH, and registered machines.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -13,12 +13,17 @@
   "homepage": "https://github.com/laopo001/codexhub#readme",
   "files": [
     "bin",
+    "scripts",
     "src",
     "dist",
     "dist-node",
     "index.html",
     "README.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    ".env.example",
+    "ecosystem.config.cjs",
+    "Dockerfile",
+    ".dockerignore"
   ],
   "bin": {
     "codexhub": "bin/codexhub",
@@ -30,8 +35,16 @@
     "codexhub": "tsx src/cli/codexhub.ts",
     "cxh": "tsx src/cli/codexhub.ts",
     "cache:refresh": "tsx src/cli/refreshCache.ts",
+    "start": "node bin/codexhub server --host 0.0.0.0",
+    "electron:start": "pnpm build && electron --no-sandbox dist-node/electron/main.js",
+    "smoke:machine-session": "tsx scripts/smoke-machine-session.ts",
+    "smoke:registered-machine": "tsx scripts/smoke-registered-machine.ts",
+    "smoke:ssh-loopback": "tsx scripts/smoke-ssh-loopback.ts",
+    "smoke:task-lock": "tsx scripts/smoke-task-lock.ts",
+    "smoke:electron": "pnpm build && tsx scripts/smoke-electron.ts",
+    "clean": "node -e \"const fs=require('node:fs'); for (const path of ['dist','dist-node']) fs.rmSync(path,{recursive:true,force:true});\"",
     "check": "tsc --noEmit",
-    "build": "tsc --noEmit && tsc -p tsconfig.node.json && vite build",
+    "build": "pnpm run clean && tsc --noEmit && tsc -p tsconfig.node.json && vite build",
     "prepack": "pnpm build",
     "publish:prod": "bash scripts/publish-prod.sh"
   },
@@ -60,6 +73,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^5.1.1",
+    "electron": "^42.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.2.4"
   },

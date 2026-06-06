@@ -7,31 +7,55 @@ import {
   type MachineCommand,
   type MachineDirectoryListing,
   type MachineRegistration,
-  type MachineStartWorkerResult
+  type MachineStartSessionResult,
+  type MachineType
 } from "../core/machineHub.js";
-import { startHeadlessCodexhubWorker, type HeadlessCodexhubWorkerHandle } from "./codexhubConnect.js";
+import type { WorkerCommand } from "../core/threadHub.js";
+import {
+  startHeadlessCodexhubSession,
+  type HeadlessCodexhubSessionHandle,
+  type HeadlessSessionTransport,
+  type HeadlessSessionTransportCallbacks
+} from "./codexhubConnect.js";
 
-type MachineRunnerOptions = {
+export type MachineRunnerOptions = {
   apiBase: string;
   machineId?: string;
+  type?: MachineType;
   name?: string;
+};
+
+export type CodexhubMachineHandle = {
+  machineId: string;
+  stop: () => Promise<void>;
 };
 
 type MachineTransportMessage =
   | { type: "registered"; machineId: string; machine?: unknown }
   | { type: "commands"; cursor: number; commands: MachineCommand[] }
+  | { type: "session_registered"; sessionId: string; session?: unknown }
+  | { type: "session_commands"; sessionId: string; cursor: number; commands: WorkerCommand[] }
+  | { type: "session_error"; sessionId: string; message: string }
   | { type: "error"; message: string };
 
-type ManagedWorker = {
-  worker: HeadlessCodexhubWorkerHandle;
+type ManagedRuntimeSession = {
+  session: HeadlessCodexhubSessionHandle;
   cwd: string;
 };
 
 export const runCodexhubMachine = async (options: MachineRunnerOptions) => {
-  const runner = new CodexhubMachineRunner(options);
-  runner.start();
+  const runner = startCodexhubMachine(options);
   await waitForShutdown();
   await runner.stop();
+};
+
+export const startCodexhubMachine = (options: MachineRunnerOptions): CodexhubMachineHandle => {
+  const runner = new CodexhubMachineRunner(options);
+  runner.start();
+  return {
+    machineId: runner.id,
+    stop: () => runner.stop()
+  };
 };
 
 class CodexhubMachineRunner {
@@ -42,10 +66,15 @@ class CodexhubMachineRunner {
   private loopStarted = false;
   private commandCursor = 0;
   private commandChain = Promise.resolve();
-  private readonly workersByCwd = new Map<string, ManagedWorker>();
+  private readonly sessionsByCwd = new Map<string, ManagedRuntimeSession>();
+  private readonly sessionTransports = new Map<string, MachineSessionTransport>();
 
   constructor(private readonly options: MachineRunnerOptions) {
     this.machineId = options.machineId?.trim() || createMachineId(os.hostname());
+  }
+
+  get id() {
+    return this.machineId;
   }
 
   start() {
@@ -57,10 +86,16 @@ class CodexhubMachineRunner {
 
   async stop() {
     this.stopped = true;
+    const sessions = [...this.sessionsByCwd.values()];
+    this.sessionsByCwd.clear();
+    await Promise.allSettled(sessions.map((item) => item.session.stop()));
+    if (this.registered) {
+      this.sendRaw({ type: "unregister" });
+      await delay(50);
+    }
+    this.registered = false;
+    this.sessionTransports.clear();
     this.ws?.close();
-    const workers = [...this.workersByCwd.values()];
-    this.workersByCwd.clear();
-    await Promise.allSettled(workers.map((item) => item.worker.stop()));
   }
 
   private async runLoop() {
@@ -93,6 +128,7 @@ class CodexhubMachineRunner {
     });
     ws.addEventListener("close", () => {
       clearInterval(heartbeat);
+      for (const transport of this.sessionTransports.values()) transport.markDisconnected();
       closed.resolve();
     }, { once: true });
     this.sendRaw({
@@ -106,11 +142,13 @@ class CodexhubMachineRunner {
   private registration(): MachineRegistration {
     return {
       machineId: this.machineId,
+      type: this.options.type ?? "registered",
       name: this.options.name,
       hostname: os.hostname(),
       pid: process.pid,
       platform: `${process.platform}-${process.arch}`,
-      cwd: process.cwd()
+      cwd: process.cwd(),
+      capabilities: { projectLauncher: true }
     };
   }
 
@@ -127,11 +165,21 @@ class CodexhubMachineRunner {
     if (message.type === "registered") {
       this.registered = true;
       console.error(`codexhub machine connected: ${message.machineId}`);
+      for (const transport of this.sessionTransports.values()) transport.reconnect();
       return;
     }
     if (message.type === "commands") {
       this.commandCursor = Math.max(this.commandCursor, message.cursor);
       this.enqueueCommands(message.commands);
+      return;
+    }
+    if (message.type === "session_registered" || message.type === "session_commands" || message.type === "session_error") {
+      const transport = this.sessionTransports.get(message.sessionId);
+      if (!transport) {
+        console.error(`codexhub machine received session message for unknown session: ${message.sessionId}`);
+        return;
+      }
+      transport.handleServerMessage(message);
       return;
     }
     console.error(`codexhub machine server error: ${message.message}`);
@@ -141,8 +189,8 @@ class CodexhubMachineRunner {
     this.commandChain = this.commandChain.then(async () => {
       for (const command of commands) {
         try {
-          const result = command.type === "start_worker"
-            ? await this.startWorker(command)
+          const result = command.type === "start_session"
+            ? await this.startSession(command)
             : await this.listDirectory(command);
           this.sendRaw({ type: "command_result", commandId: command.commandId, result });
         } catch (error) {
@@ -160,37 +208,47 @@ class CodexhubMachineRunner {
     });
   }
 
-  private async startWorker(command: MachineCommand): Promise<MachineStartWorkerResult> {
-    if (command.type !== "start_worker") throw new Error(`Unexpected command: ${command.type}`);
+  private async startSession(command: MachineCommand): Promise<MachineStartSessionResult> {
+    if (command.type !== "start_session") throw new Error(`Unexpected command: ${command.type}`);
     const cwd = await resolveDirectory(command.cwd);
-    const existing = command.reuse !== false ? this.workersByCwd.get(cwd) : undefined;
+    const existing = command.reuse !== false ? this.sessionsByCwd.get(cwd) : undefined;
     if (existing) {
       return {
-        workerId: existing.worker.workerId,
-        threadId: existing.worker.threadId,
-        appServerUrl: existing.worker.appServerUrl,
+        sessionId: existing.session.sessionId,
+        threadId: existing.session.threadId,
+        appServerUrl: existing.session.appServerUrl,
         cwd,
         reused: true
       };
     }
 
-    console.error(`codexhub machine worker starting: ${cwd}`);
-    const worker = await startHeadlessCodexhubWorker({
+    console.error(`codexhub machine session starting: ${cwd}`);
+    const session = await startHeadlessCodexhubSession({
       apiBase: this.options.apiBase,
       machineId: this.machineId,
       cwd,
-      readyLabel: "codexhub machine worker ready"
+      readyLabel: "codexhub machine session ready",
+      transportFactory: (context, callbacks) => {
+        const transport = new MachineSessionTransport({
+          sessionId: context.sessionId,
+          send: (message) => this.sendRaw(message),
+          callbacks,
+          onStop: () => this.sessionTransports.delete(context.sessionId)
+        });
+        this.sessionTransports.set(context.sessionId, transport);
+        return transport;
+      }
     });
-    this.workersByCwd.set(cwd, { worker, cwd });
-    void worker.wait().then(() => {
-      if (this.workersByCwd.get(cwd)?.worker.workerId === worker.workerId) this.workersByCwd.delete(cwd);
+    this.sessionsByCwd.set(cwd, { session, cwd });
+    void session.wait().then(() => {
+      if (this.sessionsByCwd.get(cwd)?.session.sessionId === session.sessionId) this.sessionsByCwd.delete(cwd);
     }).catch(() => {
-      if (this.workersByCwd.get(cwd)?.worker.workerId === worker.workerId) this.workersByCwd.delete(cwd);
+      if (this.sessionsByCwd.get(cwd)?.session.sessionId === session.sessionId) this.sessionsByCwd.delete(cwd);
     });
     return {
-      workerId: worker.workerId,
-      threadId: worker.threadId,
-      appServerUrl: worker.appServerUrl,
+      sessionId: session.sessionId,
+      threadId: session.threadId,
+      appServerUrl: session.appServerUrl,
       cwd
     };
   }
@@ -218,6 +276,137 @@ class CodexhubMachineRunner {
   private sendRaw(message: unknown) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(message));
+  }
+}
+
+type MachineSessionTransportMessage =
+  | Extract<MachineTransportMessage, { type: "session_registered" | "session_commands" | "session_error" }>;
+
+class MachineSessionTransport implements HeadlessSessionTransport {
+  private registered = false;
+  private stopped = false;
+  private commandCursor = 0;
+  private pendingOutgoing: unknown[] = [];
+  private commandChain = Promise.resolve();
+
+  constructor(private readonly options: {
+    sessionId: string;
+    send: (message: unknown) => void;
+    callbacks: HeadlessSessionTransportCallbacks;
+    onStop: () => void;
+  }) {}
+
+  start() {
+    if (this.stopped) return;
+    this.register();
+  }
+
+  reconnect() {
+    if (this.stopped) return;
+    this.registered = false;
+    this.register();
+  }
+
+  markDisconnected() {
+    if (this.stopped || !this.registered) return;
+    this.registered = false;
+    this.options.callbacks.onState("offline", `codexhub machine session offline: ${this.options.sessionId}`);
+  }
+
+  stop(options: { unregister?: boolean } = {}) {
+    if (this.stopped) return;
+    this.stopped = true;
+    if (options.unregister && this.registered) {
+      this.options.send({ type: "session_unregister", sessionId: this.options.sessionId });
+    }
+    this.registered = false;
+    this.pendingOutgoing = [];
+    this.options.onStop();
+  }
+
+  sendEvent(event: Parameters<HeadlessSessionTransport["sendEvent"]>[0]) {
+    this.sendOrQueue({ type: "session_event", sessionId: this.options.sessionId, event });
+  }
+
+  sendRecords(records: Parameters<HeadlessSessionTransport["sendRecords"]>[0]) {
+    this.sendOrQueue({ type: "session_records", sessionId: this.options.sessionId, ...records });
+  }
+
+  sendHeartbeat(registration: Parameters<HeadlessSessionTransport["sendHeartbeat"]>[0]) {
+    this.sendOrQueue({
+      type: "session_heartbeat",
+      sessionId: this.options.sessionId,
+      registration
+    }, { queue: false });
+  }
+
+  handleServerMessage(message: MachineSessionTransportMessage) {
+    if (this.stopped) return;
+    if (message.type === "session_registered") {
+      this.registered = true;
+      this.options.callbacks.onState("online", `codexhub machine session connected: ${message.sessionId}`);
+      this.flushPending();
+      return;
+    }
+    if (message.type === "session_commands") {
+      this.commandCursor = Math.max(this.commandCursor, message.cursor);
+      this.enqueueCommands(message.commands);
+      return;
+    }
+    console.error(`codexhub machine session error: ${message.message}`);
+  }
+
+  private register() {
+    this.options.callbacks.onState("connecting", `codexhub machine session connecting: ${this.options.sessionId}`);
+    this.options.send({
+      type: "session_register",
+      sessionId: this.options.sessionId,
+      commandCursor: this.commandCursor,
+      registration: this.options.callbacks.registration()
+    });
+  }
+
+  private enqueueCommands(commands: WorkerCommand[]) {
+    this.commandChain = this.commandChain.then(async () => {
+      for (const command of commands) {
+        try {
+          const result = await this.options.callbacks.handleCommand(command);
+          if (result !== undefined) {
+            this.sendOrQueue({
+              type: "session_command_result",
+              sessionId: this.options.sessionId,
+              commandId: command.commandId,
+              result
+            });
+          }
+        } catch (error) {
+          this.sendOrQueue({
+            type: "session_command_error",
+            sessionId: this.options.sessionId,
+            commandId: command.commandId,
+            message: errorText(error)
+          });
+        } finally {
+          this.commandCursor = Math.max(this.commandCursor, command.seq);
+        }
+      }
+    }).catch((error) => {
+      console.error(`codexhub machine session command queue failed: ${errorText(error)}`);
+    });
+  }
+
+  private flushPending() {
+    for (const message of this.pendingOutgoing.splice(0)) this.options.send(message);
+  }
+
+  private sendOrQueue(message: unknown, options: { queue?: boolean } = {}) {
+    if (this.registered) {
+      this.options.send(message);
+      return;
+    }
+    if (options.queue === false) return;
+    this.pendingOutgoing.push(message);
+    if (this.pendingOutgoing.length > 1000) this.pendingOutgoing.splice(0, this.pendingOutgoing.length - 1000);
   }
 }
 
@@ -264,6 +453,22 @@ const parseMachineTransportMessage = (data: unknown): MachineTransportMessage | 
       ? { type: "commands", cursor, commands: message.commands as MachineCommand[] }
       : null;
   }
+  if (type === "session_registered") {
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
+    return sessionId ? { type: "session_registered", sessionId, session: message.session } : null;
+  }
+  if (type === "session_commands") {
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
+    const cursor = typeof message.cursor === "number" ? message.cursor : NaN;
+    return sessionId && Number.isFinite(cursor) && Array.isArray(message.commands)
+      ? { type: "session_commands", sessionId, cursor, commands: message.commands as WorkerCommand[] }
+      : null;
+  }
+  if (type === "session_error") {
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
+    const messageText = typeof message.message === "string" ? message.message : "machine session server error";
+    return sessionId ? { type: "session_error", sessionId, message: messageText } : null;
+  }
   if (type === "error") {
     return { type: "error", message: typeof message.message === "string" ? message.message : "machine transport server error" };
   }
@@ -290,6 +495,7 @@ const asRecord = (value: unknown): JsonRecord | null => {
 const waitForShutdown = async () => await new Promise<void>((resolve) => {
   process.once("SIGINT", resolve);
   process.once("SIGTERM", resolve);
+  process.once("SIGHUP", resolve);
 });
 
 class Deferred<T> {

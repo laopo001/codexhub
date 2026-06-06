@@ -54,6 +54,8 @@ textarea {
   gap: 18px;
   min-width: 0;
   min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 22px;
   background: #122018;
   color: #f8fbf4;
@@ -97,9 +99,203 @@ textarea {
   padding: 10px 12px;
 }
 
+.connectionPanel {
+  display: grid;
+  align-content: start;
+  flex: 0 0 auto;
+  gap: 10px;
+  min-width: 0;
+}
+
+.connectionPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.connectionPanelHeader h2 {
+  margin: 0;
+  color: #d8e2d5;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.connectionPanelHeader span {
+  color: #91a090;
+  font-size: 11px;
+}
+
+.connectionTabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #0f1b14;
+  padding: 4px;
+}
+
+.connectionTabs button {
+  min-width: 0;
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #91a090;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.connectionTabs button.active {
+  background: #203526;
+  color: #f8fbf4;
+}
+
+.connectionList {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.connectionEmpty,
+.connectionRow {
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #111811;
+  color: #91a090;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.connectionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.connectionRow.online {
+  border-color: #405244;
+  background: #0f1b14;
+  color: #d8e2d5;
+}
+
+.connectionRow span,
+.connectionRow code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connectionRow span {
+  font-weight: 800;
+}
+
+.connectionRow code {
+  grid-column: 1 / -1;
+  color: #91a090;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.connectionRow strong {
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+}
+
+.connectionHostButton {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.connectionHostButton:disabled {
+  cursor: default;
+}
+
+.registeredCommand {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #111811;
+  padding: 8px;
+}
+
+.registeredCommand code {
+  min-width: 0;
+  overflow: hidden;
+  color: #d8e2d5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registeredCommand button {
+  min-height: 28px;
+  border: 1px solid #405244;
+  border-radius: 6px;
+  background: #203526;
+  color: #f8fbf4;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.sshManualForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.sshManualForm input {
+  min-height: 34px;
+  border-color: #334238;
+  background: #0f1b14;
+  color: #f8fbf4;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.sshManualForm button {
+  min-height: 34px;
+  border: 1px solid #d95f36;
+  border-radius: 8px;
+  background: #d95f36;
+  color: #fff8f2;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sshManualForm button:disabled {
+  border-color: #405244;
+  background: #203526;
+  color: #7e8c7b;
+}
+
 .projectPanel {
   display: grid;
   align-content: start;
+  flex: 0 0 auto;
   gap: 10px;
   min-height: 0;
 }
@@ -301,21 +497,22 @@ textarea {
   font-size: 11px;
 }
 
-.proxyWorkers {
+.taskPanel {
   display: grid;
-  align-content: end;
-  gap: 10px;
-  min-height: 132px;
-  margin-top: auto;
-}
-
-.proxyWorkers.expanded {
   align-content: start;
-  min-height: 0;
-  flex: 1;
+  flex: 0 0 auto;
+  gap: 10px;
+  min-width: 0;
 }
 
-.proxyWorkers h2 {
+.taskPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.taskPanelHeader h2 {
   margin: 0;
   color: #d8e2d5;
   font-size: 12px;
@@ -324,7 +521,251 @@ textarea {
   text-transform: uppercase;
 }
 
-.proxyWorkerList {
+.taskPanelHeader button {
+  min-height: 26px;
+  border: 1px solid #405244;
+  border-radius: 8px;
+  background: #203526;
+  color: #f8fbf4;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.taskList {
+  display: grid;
+  gap: 6px;
+  max-height: 170px;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.taskEmpty,
+.taskRow {
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #111811;
+  color: #91a090;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.taskRow {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.taskRow.enabled {
+  border-color: #405244;
+  background: #0f1b14;
+  color: #d8e2d5;
+}
+
+.taskRowHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.taskRowHeader span,
+.taskRow code,
+.taskRow em,
+.taskRow small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskRowHeader span {
+  font-weight: 800;
+}
+
+.taskStatus {
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 10px;
+  font-weight: 750;
+  padding: 1px 6px;
+}
+
+.taskStatus.completed {
+  background: #1c4a34;
+  color: #c9f1da;
+}
+
+.taskStatus.queued {
+  background: #2f3d52;
+  color: #cdddf6;
+}
+
+.taskStatus.failed,
+.taskStatus.skipped {
+  background: #39271d;
+  color: #f0b58d;
+}
+
+.taskRow code,
+.taskRow em,
+.taskRow small {
+  color: #91a090;
+  font-family: inherit;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.taskRow small {
+  color: #f0b58d;
+}
+
+.taskActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.taskRunButton,
+.taskDeleteButton {
+  min-height: 26px;
+  border: 1px solid #405244;
+  border-radius: 8px;
+  background: #203526;
+  color: #f8fbf4;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.taskRunButton {
+  border-color: #d95f36;
+  background: #d95f36;
+  color: #fff8f2;
+}
+
+.taskDeleteButton {
+  margin-left: auto;
+  width: 28px;
+  padding: 0;
+}
+
+.taskRunButton:disabled,
+.taskDeleteButton:disabled {
+  border-color: #405244;
+  background: #203526;
+  color: #7e8c7b;
+}
+
+.taskForm {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #0f1b14;
+  padding: 10px;
+}
+
+.taskField {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.taskField span {
+  color: #b8c5b4;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.taskField input,
+.taskField select,
+.taskField textarea {
+  min-height: 32px;
+  border-color: #334238;
+  background: #111811;
+  color: #f8fbf4;
+  padding: 7px 8px;
+  font-size: 12px;
+}
+
+.taskField textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.taskFormActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.taskEnabledControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #b8c5b4;
+  font-size: 12px;
+}
+
+.taskPanel .ant-switch {
+  background: #405244;
+}
+
+.taskPanel .ant-switch.ant-switch-checked {
+  background: #2f7d5a;
+}
+
+.taskFormActions button {
+  min-height: 32px;
+  border: 1px solid #d95f36;
+  border-radius: 8px;
+  background: #d95f36;
+  color: #fff8f2;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.taskFormActions button:disabled {
+  border-color: #405244;
+  background: #203526;
+  color: #7e8c7b;
+}
+
+.runtimeSessionsPanel {
+  display: grid;
+  align-content: end;
+  gap: 10px;
+  min-height: 132px;
+  margin-top: auto;
+}
+
+.runtimeSessionsPanel.expanded {
+  align-content: start;
+  min-height: 0;
+  flex: 1;
+}
+
+.runtimeSessionsPanel h2 {
+  margin: 0;
+  color: #d8e2d5;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.runtimeSessionList {
   display: grid;
   align-content: start;
   gap: 14px;
@@ -334,32 +775,32 @@ textarea {
   overflow-y: auto;
 }
 
-.proxyWorkers.expanded .proxyWorkerList {
+.runtimeSessionsPanel.expanded .runtimeSessionList {
   max-height: none;
 }
 
-.proxyWorkerDeviceGroup,
-.proxyWorkerFolderGroup,
-.proxyWorkerRows {
+.runtimeSessionDeviceGroup,
+.runtimeSessionFolderGroup,
+.runtimeSessionRows {
   display: grid;
   min-width: 0;
 }
 
-.proxyWorkerDeviceGroup {
+.runtimeSessionDeviceGroup {
   gap: 8px;
 }
 
-.proxyWorkerFolderGroup {
+.runtimeSessionFolderGroup {
   gap: 6px;
   border-left: 1px solid #2d4033;
   padding-left: 8px;
 }
 
-.proxyWorkerRows {
+.runtimeSessionRows {
   gap: 6px;
 }
 
-.proxyWorkerGroupToggle {
+.runtimeSessionGroupToggle {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -373,11 +814,11 @@ textarea {
   text-align: left;
 }
 
-.proxyWorkerGroupToggle.folder {
+.runtimeSessionGroupToggle.folder {
   padding-top: 1px;
 }
 
-.proxyWorkerGroupChevron {
+.runtimeSessionGroupChevron {
   display: inline-grid;
   place-items: center;
   width: 10px;
@@ -387,11 +828,11 @@ textarea {
   transform: rotate(90deg);
 }
 
-.proxyWorkerGroupChevron.collapsed {
+.runtimeSessionGroupChevron.collapsed {
   transform: rotate(0deg);
 }
 
-.proxyWorkerGroupCount {
+.runtimeSessionGroupCount {
   min-width: 0;
   overflow: hidden;
   border-radius: 999px;
@@ -404,14 +845,14 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyWorkerGroupToggle.folder .proxyWorkerGroupCount {
+.runtimeSessionGroupToggle.folder .runtimeSessionGroupCount {
   background: transparent;
   color: #7e8c7b;
   padding-right: 0;
 }
 
-.proxyWorkerDeviceHeader,
-.proxyWorkerFolderHeader {
+.runtimeSessionDeviceHeader,
+.runtimeSessionFolderHeader {
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -419,14 +860,14 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyWorkerDeviceHeader {
+.runtimeSessionDeviceHeader {
   color: #f8fbf4;
   font-size: 12px;
   font-weight: 750;
   line-height: 1.2;
 }
 
-.proxyWorkerFolderHeader {
+.runtimeSessionFolderHeader {
   color: #91a090;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
@@ -434,8 +875,8 @@ textarea {
   line-height: 1.25;
 }
 
-.proxyWorkerRow,
-.proxyWorkerEmpty {
+.runtimeSessionRow,
+.runtimeSessionEmpty {
   border: 1px solid #405244;
   border-radius: 8px;
   background: #0f1b14;
@@ -443,7 +884,7 @@ textarea {
   padding: 10px 12px;
 }
 
-.proxyWorkerRow {
+.runtimeSessionRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 8px;
@@ -454,18 +895,18 @@ textarea {
   text-align: left;
 }
 
-.proxyWorkerRow.active {
+.runtimeSessionRow.active {
   border-color: #d95f36;
   background: #183222;
 }
 
-.proxyWorkerRow.offline {
+.runtimeSessionRow.offline {
   border-color: #334238;
   background: #111811;
   color: #9daa98;
 }
 
-.proxyWorkerRow span {
+.runtimeSessionRow span {
   overflow: hidden;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-weight: 700;
@@ -473,7 +914,7 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyWorkerRow strong {
+.runtimeSessionRow strong {
   border-radius: 999px;
   background: #203526;
   color: #b8c5b4;
@@ -482,17 +923,17 @@ textarea {
   padding: 2px 7px;
 }
 
-.proxyWorkerRow.offline strong {
+.runtimeSessionRow.offline strong {
   background: #39271d;
   color: #f0b58d;
 }
 
-.proxyWorkerRow.offline code,
-.proxyWorkerRow.offline .proxyWorkerMeta {
+.runtimeSessionRow.offline code,
+.runtimeSessionRow.offline .runtimeSessionMeta {
   color: #7e8c7b;
 }
 
-.proxyWorkerRow code {
+.runtimeSessionRow code {
   grid-column: 1 / -1;
   overflow: hidden;
   color: #91a090;
@@ -502,7 +943,7 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyWorkerMeta {
+.runtimeSessionMeta {
   grid-column: 1 / -1;
   display: flex;
   align-items: baseline;
@@ -514,12 +955,12 @@ textarea {
   font-style: normal;
 }
 
-.proxyWorkerMeta span {
+.runtimeSessionMeta span {
   font-family: inherit;
   font-weight: 400;
 }
 
-.proxyWorkerLastSeen {
+.runtimeSessionLastSeen {
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
@@ -528,7 +969,7 @@ textarea {
   white-space: nowrap;
 }
 
-.proxyWorkerEmpty {
+.runtimeSessionEmpty {
   color: #91a090;
   font-size: 13px;
 }
@@ -682,7 +1123,7 @@ textarea {
   white-space: nowrap;
 }
 
-.workspaceTitle .workspaceWorkerState {
+.workspaceTitle .workspaceRuntimeSessionState {
   flex: 0 0 auto;
   border-radius: 999px;
   background: #dfeade;
@@ -692,7 +1133,7 @@ textarea {
   font-weight: 700;
 }
 
-.workspaceTitle .workspaceWorkerState.offline {
+.workspaceTitle .workspaceRuntimeSessionState.offline {
   background: #f6e0cf;
   color: #a14a26;
 }
@@ -1127,8 +1568,8 @@ textarea {
 }
 
 .sidebarScrim,
-.proxyWorkerGroupToggle,
-.proxyWorkerRow,
+.runtimeSessionGroupToggle,
+.runtimeSessionRow,
 .sidebarPanelToggle,
 .switchButton,
 .composerIconButton,
@@ -1141,8 +1582,8 @@ textarea {
   cursor: pointer;
 }
 
-.proxyWorkerRow:disabled,
-.proxyWorkerGroupToggle:disabled,
+.runtimeSessionRow:disabled,
+.runtimeSessionGroupToggle:disabled,
 .sidebarPanelToggle:disabled,
 .switchButton:disabled,
 .composerIconButton:disabled,
@@ -1301,7 +1742,7 @@ textarea {
   width: 100%;
 }
 
-.workerCurrentThreadMark {
+.runtimeSessionCurrentThreadMark {
   width: 7px;
   height: 7px;
   border-radius: 999px;
@@ -1309,7 +1750,7 @@ textarea {
   align-self: center;
 }
 
-.workerCurrentThreadMark.visible {
+.runtimeSessionCurrentThreadMark.visible {
   background: #2f7d5a;
   box-shadow: 0 0 0 2px #d9eadf;
 }

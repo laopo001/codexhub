@@ -11,13 +11,13 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-PROD_PORT="$(
-  node --import tsx --input-type=module -e 'import { loadDotEnv } from "./src/core/dotenv.ts"; await loadDotEnv(); console.log(process.env.CODEX_HUB_PORT ?? "8788");'
-)"
-PROD_URL="http://127.0.0.1:${PROD_PORT}"
-
 pnpm check
 pnpm build
+
+PROD_PORT="$(
+  node --input-type=module -e 'import { loadDotEnv } from "./dist-node/core/dotenv.js"; await loadDotEnv(); console.log(process.env.CODEX_HUB_PORT ?? "8788");'
+)"
+PROD_URL="http://127.0.0.1:${PROD_PORT}"
 
 pm2 delete codexhub-next >/dev/null 2>&1 || true
 pm2 delete codexhub-tg >/dev/null 2>&1 || true

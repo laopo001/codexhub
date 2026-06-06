@@ -1,17 +1,26 @@
 import { randomUUID } from "node:crypto";
 
+export type MachineType = "local" | "ssh" | "registered";
+
+export type MachineCapabilities = {
+  projectLauncher: boolean;
+};
+
 export type MachineRegistration = {
   machineId?: string;
+  type?: MachineType;
   name?: string;
   hostname: string;
   pid?: number;
   platform?: string;
   cwd?: string;
+  capabilities?: Partial<MachineCapabilities>;
   transportId?: string;
 };
 
 export type MachineSummary = {
   machineId: string;
+  type: MachineType;
   name?: string;
   hostname: string;
   online: boolean;
@@ -22,10 +31,11 @@ export type MachineSummary = {
   pid?: number;
   platform?: string;
   cwd?: string;
+  capabilities: MachineCapabilities;
 };
 
-export type MachineStartWorkerResult = {
-  workerId: string;
+export type MachineStartSessionResult = {
+  sessionId: string;
   threadId: string;
   appServerUrl: string;
   cwd: string;
@@ -44,7 +54,7 @@ export type MachineDirectoryListing = {
   entries: MachineDirectoryEntry[];
 };
 
-export type MachineCommandResult = MachineStartWorkerResult | MachineDirectoryListing;
+export type MachineCommandResult = MachineStartSessionResult | MachineDirectoryListing;
 
 type MachineCommandBase = {
   seq: number;
@@ -53,7 +63,7 @@ type MachineCommandBase = {
 };
 
 type MachineCommandDetail = {
-  type: "start_worker";
+  type: "start_session";
   cwd: string;
   reuse?: boolean;
 } | {
@@ -96,6 +106,7 @@ export class MachineHub {
     }
     const machine: RuntimeMachine = {
       machineId,
+      type: normalizeMachineType(registration.type, existing?.type),
       name: registration.name,
       hostname: registration.hostname,
       online: true,
@@ -104,6 +115,7 @@ export class MachineHub {
       pid: registration.pid,
       platform: registration.platform,
       cwd: registration.cwd,
+      capabilities: normalizeMachineCapabilities(registration.capabilities, existing?.capabilities),
       transportId: registration.transportId,
       commands: existing?.commands ?? [],
       waiters: existing?.waiters ?? new Set()
@@ -117,10 +129,12 @@ export class MachineHub {
     const machine = this.machines.get(machineId);
     if (!machine) return { ok: false };
     machine.name = registration.name ?? machine.name;
+    machine.type = normalizeMachineType(registration.type, machine.type);
     machine.hostname = registration.hostname ?? machine.hostname;
     machine.pid = registration.pid ?? machine.pid;
     machine.platform = registration.platform ?? machine.platform;
     machine.cwd = registration.cwd ?? machine.cwd;
+    machine.capabilities = normalizeMachineCapabilities(registration.capabilities, machine.capabilities);
     machine.lastSeenAt = new Date().toISOString();
     if (!machine.online) {
       machine.online = true;
@@ -154,20 +168,20 @@ export class MachineHub {
       .map(machineSummary);
   }
 
-  startWorker(machineId: string, input: { cwd: string; reuse?: boolean }, timeoutMs = 90_000) {
+  startSession(machineId: string, input: { cwd: string; reuse?: boolean }, timeoutMs = 90_000) {
     const machine = this.requireMachine(machineId);
     if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,
-      type: "start_worker",
+      type: "start_session",
       createdAt: new Date().toISOString(),
       cwd: input.cwd,
       reuse: input.reuse
     });
     return {
       command,
-      promise: this.waitForCommand<MachineStartWorkerResult>(commandId, machine.machineId, "start_worker", timeoutMs)
+      promise: this.waitForCommand<MachineStartSessionResult>(commandId, machine.machineId, "start_session", timeoutMs)
     };
   }
 
@@ -242,9 +256,7 @@ export class MachineHub {
   private enqueueMachineCommand(machineId: string, command: MachineCommandInput) {
     const machine = this.requireMachine(machineId);
     const seq = (machine.commands.at(-1)?.seq ?? 0) + 1;
-    const next: MachineCommand = command.type === "start_worker"
-      ? { ...command, seq }
-      : { ...command, seq };
+    const next: MachineCommand = { ...command, seq };
     machine.commands.push(next);
     if (machine.commands.length > 500) machine.commands.splice(0, machine.commands.length - 500);
     for (const waiter of [...machine.waiters]) waiter();
@@ -295,6 +307,7 @@ const safeMachinePart = (value: string) =>
 
 const machineSummary = (machine: RuntimeMachine): MachineSummary => ({
   machineId: machine.machineId,
+  type: machine.type,
   name: machine.name,
   hostname: machine.hostname,
   online: machine.online,
@@ -304,8 +317,25 @@ const machineSummary = (machine: RuntimeMachine): MachineSummary => ({
   offlineReason: machine.offlineReason,
   pid: machine.pid,
   platform: machine.platform,
-  cwd: machine.cwd
+  cwd: machine.cwd,
+  capabilities: machine.capabilities
 });
 
 const machineCommandsAfter = (machine: RuntimeMachine, after: number) =>
   machine.commands.filter((command) => command.seq > after);
+
+export const normalizeMachineType = (
+  value: MachineType | undefined,
+  fallback: MachineType = "registered"
+): MachineType => {
+  return value === "local" || value === "ssh" || value === "registered" ? value : fallback;
+};
+
+export const normalizeMachineCapabilities = (
+  value: Partial<MachineCapabilities> | undefined,
+  fallback: MachineCapabilities = { projectLauncher: true }
+): MachineCapabilities => ({
+  projectLauncher: typeof value?.projectLauncher === "boolean"
+    ? value.projectLauncher
+    : fallback.projectLauncher
+});

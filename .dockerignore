@@ -1,0 +1,16 @@
+.git
+.github
+.codexp
+.playwright-cli
+.tmp-plugin-fixture
+node_modules
+dist
+dist-node
+references
+schemas
+.env
+.env.*
+!.env.example
+*.log
+Dockerfile
+.dockerignore

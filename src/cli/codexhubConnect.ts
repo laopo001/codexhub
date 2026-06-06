@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { access } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -9,8 +10,15 @@ import { spawn as spawnPty, type IPty } from "node-pty";
 import { listLoadableCodexThreads } from "../core/codexhubLog.js";
 import { readCodexSessionRecordsAfter } from "../core/codexSession.js";
 import { asRecord as asCodexRecord, codexRecordFromSession, type CodexRecord } from "../core/codexRecord.js";
+import type { MachineCommand, MachineRegistration } from "../core/machineHub.js";
 import type { ProxyInput } from "../core/proxyInput.js";
-import type { ThreadRunOptions, WorkerCommand, WorkerEventInput, WorkerRecordsInput, WorkerRegistration } from "../core/threadHub.js";
+import type {
+  SessionRegistration,
+  ThreadRunOptions,
+  WorkerCommand,
+  WorkerEventInput,
+  WorkerRecordsInput
+} from "../core/threadHub.js";
 
 type ConnectOptions = {
   server?: string;
@@ -58,21 +66,48 @@ type RuntimeSettings = {
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
 };
 
-type WorkerTransportMessage =
-  | { type: "registered"; workerId: string; worker?: unknown }
-  | { type: "commands"; cursor: number; commands: WorkerCommand[] }
+type MachineTransportMessage =
+  | { type: "registered"; machineId: string; machine?: unknown }
+  | { type: "commands"; cursor: number; commands: MachineCommand[] }
+  | { type: "session_registered"; sessionId: string; session?: unknown }
+  | { type: "session_commands"; sessionId: string; cursor: number; commands: WorkerCommand[] }
+  | { type: "session_error"; sessionId: string; message: string }
   | { type: "error"; message: string };
 
 type HubTransportSink = {
   sendEvent: (event: WorkerEventInput) => void;
   sendRecords: (records: WorkerRecordsInput) => void;
-  sendHeartbeat: (registration: Partial<WorkerRegistration>) => void;
+  sendHeartbeat: (registration: Partial<SessionRegistration>) => void;
 };
+
+export type HeadlessSessionTransportContext = {
+  sessionId: string;
+  apiBase: string;
+  machineId?: string;
+  cwd: string;
+  appServerUrl: string;
+};
+
+export type HeadlessSessionTransportCallbacks = {
+  registration: () => SessionRegistration;
+  handleCommand: (command: WorkerCommand) => Promise<unknown>;
+  onState: (state: "connecting" | "online" | "offline", message: string) => void;
+};
+
+export type HeadlessSessionTransport = HubTransportSink & {
+  start: () => void;
+  stop: (options?: { unregister?: boolean }) => void;
+};
+
+export type HeadlessSessionTransportFactory = (
+  context: HeadlessSessionTransportContext,
+  callbacks: HeadlessSessionTransportCallbacks
+) => HeadlessSessionTransport;
 
 type BridgeOptions = {
   apiBase: string;
   appServerUrl: string;
-  workerId: string;
+  sessionId: string;
   machineId?: string;
   cwd: string;
   ensureCurrentThread?: boolean;
@@ -82,13 +117,14 @@ type BridgeOptions = {
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
+  transportFactory?: HeadlessSessionTransportFactory;
 };
 
 type ProxyBridgeRunnerOptions = BridgeOptions & {
   statusBar?: CodexhubStatusBar | null;
 };
 
-export type HeadlessCodexhubWorkerOptions = {
+export type HeadlessCodexhubSessionOptions = {
   apiBase: string;
   cwd: string;
   machineId?: string;
@@ -97,10 +133,11 @@ export type HeadlessCodexhubWorkerOptions = {
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
+  transportFactory?: HeadlessSessionTransportFactory;
 };
 
-export type HeadlessCodexhubWorkerHandle = {
-  workerId: string;
+export type HeadlessCodexhubSessionHandle = {
+  sessionId: string;
   threadId: string;
   appServerUrl: string;
   cwd: string;
@@ -110,7 +147,7 @@ export type HeadlessCodexhubWorkerHandle = {
   wait: () => Promise<ChildExit>;
 };
 
-export const registerCodexHubWorkerCommands = (program: Command) => {
+export const registerCodexHubSessionCommands = (program: Command) => {
   program
     .argument("[prompt]", "optional prompt to start the Codex session")
     .option("-C, --cd <dir>", "Codex working directory")
@@ -120,14 +157,14 @@ export const registerCodexHubWorkerCommands = (program: Command) => {
     .option("-s, --sandbox <mode>", "sandbox mode for remote turns")
     .option("-a, --approval-policy <policy>", "approval policy for remote turns")
     .action(async (prompt: string | undefined) => {
-      await runCodexhubWorker(program, program.opts<ConnectOptions>(), { type: "start", prompt });
+      await runCodexhubSession(program, program.opts<ConnectOptions>(), { type: "start", prompt });
     });
 
   program
     .command("resume")
     .argument("[session]", "Codex session/thread id or thread name")
     .argument("[prompt]", "optional prompt to send after resuming")
-    .description("Resume an official Codex session with the codexhub worker bridge")
+    .description("Resume an official Codex session with the codexhub runtime bridge")
     .option("--server <url>", "codexhub server URL")
     .option("-C, --cd <dir>", "Codex working directory")
     .option("--port <port>", "local Codex app-server websocket port")
@@ -137,7 +174,7 @@ export const registerCodexHubWorkerCommands = (program: Command) => {
     .option("-s, --sandbox <mode>", "sandbox mode for remote turns")
     .option("-a, --approval-policy <policy>", "approval policy for remote turns")
     .action(async (sessionId: string | undefined, prompt: string | undefined, options: ResumeOptions) => {
-      await runCodexhubWorker(program, options, {
+      await runCodexhubSession(program, options, {
         type: "resume",
         sessionId,
         prompt,
@@ -147,7 +184,7 @@ export const registerCodexHubWorkerCommands = (program: Command) => {
     });
 };
 
-async function runCodexhubWorker(program: Command, options: ConnectOptions, launch: TuiLaunch) {
+async function runCodexhubSession(program: Command, options: ConnectOptions, launch: TuiLaunch) {
   const rootOptions = program.opts<{ server: string }>();
   const apiBase = options.server ?? rootOptions.server;
   const cwd = path.resolve(options.cd ?? process.cwd());
@@ -155,18 +192,23 @@ async function runCodexhubWorker(program: Command, options: ConnectOptions, laun
   if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
 
   const appServerUrl = `ws://127.0.0.1:${port}`;
-  const workerId = createWorkerId();
+  const sessionId = createSessionId();
+  const machineId = createSessionMachineId(sessionId);
   const appServer = await startCodexAppServer(cwd, appServerUrl, port);
   let bridgeRunner: ProxyBridgeRunner | null = null;
   let tui: CodexTuiPty | null = null;
   let statusBar: CodexhubStatusBar | null = null;
   let cleanedUp = false;
+  const appServerStopped = waitForChild(appServer).then(({ code, signal }) => {
+    if (!cleanedUp) process.exitCode = code ?? (signal ? 1 : 1);
+    return { code, signal };
+  });
   const cleanup = cleanupOnce(async () => {
     cleanedUp = true;
     tui?.kill();
     statusBar?.stop();
     await bridgeRunner?.stop();
-    appServer.kill("SIGTERM");
+    await terminateChild(appServer, appServerStopped);
   });
   const onSignal = (signal: NodeJS.Signals) => {
     void cleanup().finally(() => process.exit(signalExitCode(signal)));
@@ -176,22 +218,19 @@ async function runCodexhubWorker(program: Command, options: ConnectOptions, laun
   process.once("SIGHUP", onSignal);
 
   try {
-    const appServerStopped = waitForChild(appServer).then(({ code, signal }) => {
-      if (!cleanedUp) process.exitCode = code ?? (signal ? 1 : 1);
-    });
-
     console.error([
-      `codexhub local started: ${workerId}`,
+      `codexhub session started: ${sessionId}`,
       `server: ${apiBase} (optional)`,
       `cwd: ${cwd}`,
       `app-server: ${appServerUrl}`
     ].join("\n"));
 
-    statusBar = CodexhubStatusBar.start({ apiBase, workerId, cwd });
+    statusBar = CodexhubStatusBar.start({ apiBase, sessionId, cwd });
     bridgeRunner = new ProxyBridgeRunner({
       apiBase,
       appServerUrl,
-      workerId,
+      sessionId,
+      machineId,
       cwd,
       ensureCurrentThread: Boolean(options.headless),
       initialTuiResume: launch.type === "resume" ? { threadId: launch.sessionId } : undefined,
@@ -199,6 +238,13 @@ async function runCodexhubWorker(program: Command, options: ConnectOptions, laun
       model: options.model,
       sandbox: options.sandbox,
       approvalPolicy: options.approvalPolicy,
+      transportFactory: (_context, callbacks) => new MachineBackedSessionTransport({
+        apiBase,
+        sessionId: sessionId,
+        machineId,
+        machineName: `codexhub session ${sessionId.slice(-8)}`,
+        cwd
+      }, callbacks),
       statusBar
     });
     bridgeRunner.start();
@@ -224,18 +270,18 @@ async function runCodexhubWorker(program: Command, options: ConnectOptions, laun
   }
 }
 
-export async function startHeadlessCodexhubWorker(options: HeadlessCodexhubWorkerOptions): Promise<HeadlessCodexhubWorkerHandle> {
+export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSessionOptions): Promise<HeadlessCodexhubSessionHandle> {
   const cwd = path.resolve(options.cwd);
   const port = options.port ?? await findFreePort();
   if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
 
   const appServerUrl = `ws://127.0.0.1:${port}`;
-  const workerId = createWorkerId();
+  const sessionId = createSessionId();
   const appServer = await startCodexAppServer(cwd, appServerUrl, port);
   const bridgeRunner = new ProxyBridgeRunner({
     apiBase: options.apiBase,
     appServerUrl,
-    workerId,
+    sessionId,
     machineId: options.machineId,
     cwd,
     ensureCurrentThread: true,
@@ -243,12 +289,13 @@ export async function startHeadlessCodexhubWorker(options: HeadlessCodexhubWorke
     model: options.model,
     sandbox: options.sandbox,
     approvalPolicy: options.approvalPolicy,
+    transportFactory: options.transportFactory,
     statusBar: null
   });
   const appServerStopped = waitForChild(appServer);
   const cleanup = cleanupOnce(async () => {
     await bridgeRunner.stop();
-    appServer.kill("SIGTERM");
+    await terminateChild(appServer, appServerStopped);
   });
 
   bridgeRunner.start();
@@ -256,11 +303,11 @@ export async function startHeadlessCodexhubWorker(options: HeadlessCodexhubWorke
     const ready = await Promise.race([
       bridgeRunner.waitForReady(),
       appServerStopped.then(({ code, signal }) => {
-        throw new Error(`codex app-server exited before headless worker was ready: code=${code ?? ""} signal=${signal ?? ""}`);
+        throw new Error(`codex app-server exited before headless session was ready: code=${code ?? ""} signal=${signal ?? ""}`);
       })
     ]);
     return {
-      workerId,
+      sessionId,
       threadId: ready.threadId,
       appServerUrl,
       cwd,
@@ -277,12 +324,12 @@ export async function startHeadlessCodexhubWorker(options: HeadlessCodexhubWorke
 
 class ProxyBridgeRunner {
   private bridge: CodexAppServerBridge | null = null;
-  private transport: WorkerHubTransport | null = null;
+  private transport: HeadlessSessionTransport | null = null;
   private stopping = false;
   private loopStarted = false;
   private lastState: "offline" | "online" | null = null;
   private lastReadyThreadId: string | null = null;
-  private readonly ready = new Deferred<{ workerId: string; threadId: string }>();
+  private readonly ready = new Deferred<{ sessionId: string; threadId: string }>();
   private readonly localAppBridgeReady = new Deferred<void>();
   private bridgeState: BridgeState = { threadIds: [] };
 
@@ -334,13 +381,12 @@ class ProxyBridgeRunner {
           sendHeartbeat: (registration) => this.transport?.sendHeartbeat(registration)
         };
         this.bridge = await CodexAppServerBridge.connect(this.options, this.bridgeState, sink);
-        this.transport = new WorkerHubTransport(this.options, {
+        const callbacks: HeadlessSessionTransportCallbacks = {
           registration: () => {
             this.bridgeState = this.bridge?.snapshotState() ?? this.bridgeState;
             return {
-              workerId: this.options.workerId,
               machineId: this.options.machineId,
-              name: workerDisplayName(this.options.workerId),
+              name: sessionDisplayName(this.options.sessionId),
               workingDirectory: this.options.cwd,
               appServerUrl: this.options.appServerUrl,
               pid: process.pid,
@@ -355,13 +401,29 @@ class ProxyBridgeRunner {
             return result;
           },
           onState: (state, message) => this.setTransportState(state, message)
-        });
+        };
+        const transportContext: HeadlessSessionTransportContext = {
+          sessionId: this.options.sessionId,
+          apiBase: this.options.apiBase,
+          machineId: this.options.machineId,
+          cwd: this.options.cwd,
+          appServerUrl: this.options.appServerUrl
+        };
+        this.transport = this.options.transportFactory
+          ? this.options.transportFactory(transportContext, callbacks)
+          : new MachineBackedSessionTransport({
+            apiBase: this.options.apiBase,
+            sessionId: this.options.sessionId,
+            machineId: this.options.machineId ?? createSessionMachineId(this.options.sessionId),
+            machineName: `codexhub session ${this.options.sessionId.slice(-8)}`,
+            cwd: this.options.cwd
+          }, callbacks);
         this.localAppBridgeReady.resolve();
         if (this.options.ensureCurrentThread) {
           const threadId = await this.bridge.ensureCurrentThread();
           this.bridgeState = this.bridge.snapshotState();
           this.logHeadlessReady(threadId);
-          this.ready.resolve({ workerId: this.options.workerId, threadId });
+          this.ready.resolve({ sessionId: this.options.sessionId, threadId });
         }
         this.transport.start();
         await this.runBridge(this.bridge);
@@ -409,31 +471,33 @@ class ProxyBridgeRunner {
     if (this.lastReadyThreadId === threadId) return;
     this.lastReadyThreadId = threadId;
     console.error([
-      `${this.options.readyLabel ?? "codexhub headless worker ready"}:`,
-      `  workerId: ${this.options.workerId}`,
+      `${this.options.readyLabel ?? "codexhub headless session ready"}:`,
+      `  sessionId: ${this.options.sessionId}`,
       `  threadId: ${threadId}`
     ].join("\n"));
   }
 }
 
-type WorkerHubTransportCallbacks = {
-  registration: () => WorkerRegistration;
-  handleCommand: (command: WorkerCommand) => Promise<unknown>;
-  onState: (state: "connecting" | "online" | "offline", message: string) => void;
-};
-
-class WorkerHubTransport {
+class MachineBackedSessionTransport implements HeadlessSessionTransport {
   private ws: WebSocket | null = null;
   private stopped = false;
   private loopStarted = false;
-  private registered = false;
-  private commandCursor = 0;
+  private machineRegistered = false;
+  private sessionRegistered = false;
+  private machineCursor = 0;
+  private sessionCursor = 0;
   private pendingOutgoing: unknown[] = [];
-  private commandChain = Promise.resolve();
+  private sessionCommandChain = Promise.resolve();
 
   constructor(
-    private readonly options: BridgeOptions,
-    private readonly callbacks: WorkerHubTransportCallbacks
+    private readonly options: {
+      apiBase: string;
+      sessionId: string;
+      machineId: string;
+      machineName: string;
+      cwd: string;
+    },
+    private readonly callbacks: HeadlessSessionTransportCallbacks
   ) {}
 
   start() {
@@ -444,8 +508,9 @@ class WorkerHubTransport {
 
   stop(options: { unregister?: boolean } = {}) {
     this.stopped = true;
-    if (options.unregister && this.registered && this.ws?.readyState === WebSocket.OPEN) {
-      this.sendRaw({ type: "unregister" });
+    if (options.unregister && this.ws?.readyState === WebSocket.OPEN) {
+      if (this.sessionRegistered) this.sendRaw({ type: "session_unregister", sessionId: this.sessionId });
+      if (this.machineRegistered) this.sendRaw({ type: "unregister" });
     }
     this.ws?.close();
     this.ws = null;
@@ -453,31 +518,32 @@ class WorkerHubTransport {
   }
 
   sendEvent(event: WorkerEventInput) {
-    this.sendOrQueue({ type: "event", event });
+    this.sendOrQueue({ type: "session_event", sessionId: this.sessionId, event });
   }
 
   sendRecords(records: WorkerRecordsInput) {
-    this.sendOrQueue({ type: "records", ...records });
+    this.sendOrQueue({ type: "session_records", sessionId: this.sessionId, ...records });
   }
 
-  sendHeartbeat(registration: Partial<WorkerRegistration>) {
-    this.sendOrQueue({ type: "heartbeat", registration }, { queue: false });
+  sendHeartbeat(registration: Partial<SessionRegistration>) {
+    this.sendOrQueue({ type: "session_heartbeat", sessionId: this.sessionId, registration }, { queue: false });
+  }
+
+  private get sessionId() {
+    return this.options.sessionId;
   }
 
   private async runLoop() {
     while (!this.stopped) {
-      this.callbacks.onState("connecting", `codexhub transport connecting: ${this.options.workerId}`);
+      this.callbacks.onState("connecting", `codexhub machine transport connecting: ${this.options.machineId}`);
       try {
         await this.connectOnce();
-        if (!this.stopped) {
-          this.callbacks.onState("offline", `codexhub transport offline: websocket closed`);
-        }
+        if (!this.stopped) this.callbacks.onState("offline", "codexhub machine transport offline: websocket closed");
       } catch (error) {
-        if (!this.stopped) {
-          this.callbacks.onState("offline", `codexhub transport offline: ${errorText(error)}`);
-        }
+        if (!this.stopped) this.callbacks.onState("offline", `codexhub machine transport offline: ${errorText(error)}`);
       } finally {
-        this.registered = false;
+        this.machineRegistered = false;
+        this.sessionRegistered = false;
         this.ws?.close();
         this.ws = null;
       }
@@ -486,67 +552,129 @@ class WorkerHubTransport {
   }
 
   private async connectOnce() {
-    const ws = await openWebSocket(workerTransportUrl(this.options.apiBase));
+    const ws = await openWebSocket(machineTransportUrl(this.options.apiBase));
     this.ws = ws;
     const closed = new Deferred<void>();
+    const heartbeat = setInterval(() => this.sendMachineHeartbeat(), 10_000);
+    heartbeat.unref?.();
     ws.addEventListener("message", (event) => this.handleMessage(event.data));
     ws.addEventListener("error", () => {
-      if (!this.stopped) console.error("codexhub worker transport websocket error");
+      if (!this.stopped) console.error("codexhub machine transport websocket error");
       ws.close();
     });
-    ws.addEventListener("close", () => closed.resolve(), { once: true });
+    ws.addEventListener("close", () => {
+      clearInterval(heartbeat);
+      closed.resolve();
+    }, { once: true });
     this.sendRaw({
       type: "register",
-      commandCursor: this.commandCursor,
-      registration: this.callbacks.registration()
+      commandCursor: this.machineCursor,
+      registration: this.machineRegistration()
     });
     await closed.promise;
   }
 
+  private machineRegistration(): MachineRegistration {
+    return {
+      machineId: this.options.machineId,
+      type: "local",
+      name: this.options.machineName,
+      hostname: os.hostname(),
+      pid: process.pid,
+      platform: `${process.platform}-${process.arch}`,
+      cwd: this.options.cwd,
+      capabilities: { projectLauncher: false }
+    };
+  }
+
+  private sendMachineHeartbeat() {
+    if (!this.machineRegistered) return;
+    this.sendRaw({ type: "heartbeat", registration: this.machineRegistration() });
+  }
+
   private handleMessage(data: unknown) {
-    const message = parseWorkerTransportMessage(data);
+    const message = parseMachineTransportMessage(data);
     if (!message) {
-      console.error("codexhub worker transport received invalid message");
+      console.error("codexhub machine transport received invalid message");
       return;
     }
     if (message.type === "registered") {
-      this.registered = true;
-      this.callbacks.onState("online", `codexhub proxy connected: ${message.workerId}`);
-      this.flushPending();
+      this.machineRegistered = true;
+      this.registerSession();
       return;
     }
     if (message.type === "commands") {
-      this.commandCursor = Math.max(this.commandCursor, message.cursor);
-      this.enqueueCommands(message.commands);
+      this.machineCursor = Math.max(this.machineCursor, message.cursor);
+      this.failUnsupportedMachineCommands(message.commands);
       return;
     }
-    console.error(`codexhub worker transport server error: ${message.message}`);
+    if (message.type === "session_registered") {
+      this.sessionRegistered = true;
+      this.callbacks.onState("online", `codexhub session connected through machine: ${message.sessionId}`);
+      this.flushPending();
+      return;
+    }
+    if (message.type === "session_commands") {
+      if (message.sessionId !== this.sessionId) return;
+      this.sessionCursor = Math.max(this.sessionCursor, message.cursor);
+      this.enqueueSessionCommands(message.commands);
+      return;
+    }
+    if (message.type === "session_error") {
+      console.error(`codexhub machine session server error: ${message.message}`);
+      return;
+    }
+    console.error(`codexhub machine transport server error: ${message.message}`);
   }
 
-  private enqueueCommands(commands: WorkerCommand[]) {
-    this.commandChain = this.commandChain.then(async () => {
+  private registerSession() {
+    if (!this.machineRegistered) return;
+    this.callbacks.onState("connecting", `codexhub session registering through machine: ${this.sessionId}`);
+    this.sendRaw({
+      type: "session_register",
+      sessionId: this.sessionId,
+      commandCursor: this.sessionCursor,
+      registration: this.callbacks.registration()
+    });
+  }
+
+  private failUnsupportedMachineCommands(commands: MachineCommand[]) {
+    for (const command of commands) {
+      this.sendRaw({
+        type: "command_error",
+        commandId: command.commandId,
+        message: "This foreground Codex session is not a project launcher. Run `codexhub machine` for project browsing."
+      });
+      this.machineCursor = Math.max(this.machineCursor, command.seq);
+    }
+  }
+
+  private enqueueSessionCommands(commands: WorkerCommand[]) {
+    this.sessionCommandChain = this.sessionCommandChain.then(async () => {
       for (const command of commands) {
         try {
           const result = await this.callbacks.handleCommand(command);
           if (result !== undefined) {
             this.sendOrQueue({
-              type: "command_result",
+              type: "session_command_result",
+              sessionId: this.sessionId,
               commandId: command.commandId,
               result
             });
           }
         } catch (error) {
           this.sendOrQueue({
-            type: "command_error",
+            type: "session_command_error",
+            sessionId: this.sessionId,
             commandId: command.commandId,
             message: errorText(error)
           });
         } finally {
-          this.commandCursor = Math.max(this.commandCursor, command.seq);
+          this.sessionCursor = Math.max(this.sessionCursor, command.seq);
         }
       }
     }).catch((error) => {
-      console.error(`codexhub worker transport command queue failed: ${errorText(error)}`);
+      console.error(`codexhub machine session command queue failed: ${errorText(error)}`);
     });
   }
 
@@ -555,7 +683,7 @@ class WorkerHubTransport {
   }
 
   private sendOrQueue(message: unknown, options: { queue?: boolean } = {}) {
-    if (this.registered && this.ws?.readyState === WebSocket.OPEN) {
+    if (this.sessionRegistered && this.ws?.readyState === WebSocket.OPEN) {
       this.sendRaw(message);
       return;
     }
@@ -1083,7 +1211,7 @@ class CodexAppServerBridge {
   private async forwardCurrentThreadChanged(threadId: string, heartbeat = false) {
     if (this.currentThreadId === threadId) return;
     this.currentThreadId = threadId;
-    this.hub.sendEvent({ type: "worker_current_changed", currentThreadId: threadId, heartbeat });
+    this.hub.sendEvent({ type: "session_current_changed", currentThreadId: threadId, heartbeat });
   }
 
   private shouldForwardTuiResumeCurrent(method: string, threadId: string) {
@@ -1208,7 +1336,7 @@ class CodexTuiPty {
       try {
         this.pty.kill();
       } catch {
-        // The child may already be gone; cleanup must still unregister the worker.
+        // The child may already be gone; cleanup must still unregister the session.
       }
     }
   }
@@ -1276,8 +1404,8 @@ type PtyChrome = {
   onOutput: () => void;
 };
 
-type StatusWorkerSummary = {
-  workerId: string;
+type StatusRuntimeSessionSummary = {
+  sessionId: string;
   workingDirectory: string;
   online: boolean;
   currentThreadId?: string;
@@ -1296,12 +1424,12 @@ class CodexhubStatusBar {
   private text: string;
 
   private constructor(
-    private readonly options: { apiBase: string; workerId: string; cwd: string }
+    private readonly options: { apiBase: string; sessionId: string; cwd: string }
   ) {
     this.text = this.renderText();
   }
 
-  static start(options: { apiBase: string; workerId: string; cwd: string }) {
+  static start(options: { apiBase: string; sessionId: string; cwd: string }) {
     if (!process.stdout.isTTY) return null;
     const bar = new CodexhubStatusBar(options);
     bar.attach();
@@ -1352,9 +1480,9 @@ class CodexhubStatusBar {
   private async refresh() {
     if (this.stopped) return;
     try {
-      const workerData = await apiJson<{ workers?: StatusWorkerSummary[] }>(this.options.apiBase, "/api/workers");
+      const sessionData = await apiJson<{ sessions?: StatusRuntimeSessionSummary[] }>(this.options.apiBase, "/api/sessions");
       this.proxyState = "online";
-      this.text = this.renderText(workerData.workers ?? []);
+      this.text = this.renderText(sessionData.sessions ?? []);
     } catch {
       this.proxyState = "offline";
       this.text = this.renderText();
@@ -1362,19 +1490,19 @@ class CodexhubStatusBar {
     this.draw();
   }
 
-  private renderText(workers: StatusWorkerSummary[] = []) {
-    const onlineWorkers = workers.filter((worker) => worker.online).length;
-    const thisWorker = workers.find((worker) => worker.workerId === this.options.workerId);
-    const workerState = thisWorker
-      ? (thisWorker.online ? "online" : "offline")
+  private renderText(sessions: StatusRuntimeSessionSummary[] = []) {
+    const onlineSessions = sessions.filter((session) => session.online).length;
+    const thisSession = sessions.find((session) => session.sessionId === this.options.sessionId);
+    const sessionState = thisSession
+      ? (thisSession.online ? "online" : "offline")
       : this.proxyState === "online" ? "connecting" : this.proxyState;
-    const currentThreadId = thisWorker?.currentThreadId ?? thisWorker?.currentThread?.threadId;
-    const running = thisWorker?.currentThread?.running;
+    const currentThreadId = thisSession?.currentThreadId ?? thisSession?.currentThread?.threadId;
+    const running = thisSession?.currentThread?.running;
     return [
-      `codexhub ${this.options.workerId.slice(0, 14)} ${workerState}`,
+      `codexhub ${this.options.sessionId.slice(0, 14)} ${sessionState}`,
       `thread ${currentThreadId ? currentThreadId : "none"}`,
       `running ${running ? 1 : 0}`,
-      `workers ${onlineWorkers}/${workers.length}`
+      `sessions ${onlineSessions}/${sessions.length}`
     ].join(" | ");
   }
 
@@ -1395,13 +1523,36 @@ class CodexhubStatusBar {
 }
 
 const startCodexAppServer = async (cwd: string, appServerUrl: string, port: number) => {
-  const child = spawn("codex", ["app-server", "--listen", appServerUrl], {
+  const launch = await codexAppServerLaunch(appServerUrl);
+  const child = spawn(launch.command, launch.args, {
     cwd,
     stdio: ["ignore", "ignore", "pipe"]
   });
   child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
   await waitForReady(port, child);
   return child;
+};
+
+const codexAppServerLaunch = async (appServerUrl: string) => {
+  if (process.platform === "linux" && await fileExists("/usr/bin/setpriv")) {
+    return {
+      command: "/usr/bin/setpriv",
+      args: ["--pdeathsig", "TERM", "codex", "app-server", "--listen", appServerUrl]
+    };
+  }
+  return {
+    command: "codex",
+    args: ["app-server", "--listen", appServerUrl]
+  };
+};
+
+const fileExists = async (filePath: string) => {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const waitForReady = async (port: number, child: ChildProcess) => {
@@ -1522,34 +1673,55 @@ const resultThreadIdForMessage = (message: JsonRecord) => {
   return typeof resultThread?.id === "string" ? resultThread.id : undefined;
 };
 
-const createWorkerId = () => `local-${safeWorkerPart(os.hostname())}-${process.pid}-${randomUUID().slice(0, 8)}`;
+const createSessionId = () => `local-${safeSessionPart(os.hostname())}-${process.pid}-${randomUUID().slice(0, 8)}`;
 
-const workerDisplayName = (workerId: string) => `codexhub-${workerId.split("-").at(-1) ?? workerId.slice(-8)}`;
+const createSessionMachineId = (sessionId: string) => `machine-session-${safeSessionPart(sessionId)}`;
 
-const safeWorkerPart = (value: string) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
+const sessionDisplayName = (sessionId: string) => `codexhub-${sessionId.split("-").at(-1) ?? sessionId.slice(-8)}`;
 
-const workerTransportUrl = (apiBase: string) => {
-  const url = new URL("/api/workers/connect", apiBase);
+const safeSessionPart = (value: string) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
+
+const machineTransportUrl = (apiBase: string) => {
+  const url = new URL("/api/machines/connect", apiBase);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 };
 
-const parseWorkerTransportMessage = (data: unknown): WorkerTransportMessage | null => {
+const parseMachineTransportMessage = (data: unknown): MachineTransportMessage | null => {
   const message = parseJsonRecord(data);
   if (!message) return null;
   const type = typeof message?.type === "string" ? message.type : "";
   if (type === "registered") {
-    const workerId = typeof message.workerId === "string" ? message.workerId : "";
-    return workerId ? { type: "registered", workerId, worker: message.worker } : null;
+    const machineId = typeof message.machineId === "string" ? message.machineId : "";
+    return machineId ? { type: "registered", machineId, machine: message.machine } : null;
   }
   if (type === "commands") {
     const cursor = typeof message.cursor === "number" ? message.cursor : NaN;
     return Number.isFinite(cursor) && Array.isArray(message.commands)
-      ? { type: "commands", cursor, commands: message.commands as WorkerCommand[] }
+      ? { type: "commands", cursor, commands: message.commands as MachineCommand[] }
       : null;
   }
+  if (type === "session_registered") {
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
+    return sessionId ? { type: "session_registered", sessionId, session: message.session } : null;
+  }
+  if (type === "session_commands") {
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
+    const cursor = typeof message.cursor === "number" ? message.cursor : NaN;
+    return sessionId && Number.isFinite(cursor) && Array.isArray(message.commands)
+      ? { type: "session_commands", sessionId, cursor, commands: message.commands as WorkerCommand[] }
+      : null;
+  }
+  if (type === "session_error") {
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
+    return sessionId ? {
+      type: "session_error",
+      sessionId,
+      message: typeof message.message === "string" ? message.message : "machine session server error"
+    } : null;
+  }
   if (type === "error") {
-    return { type: "error", message: typeof message.message === "string" ? message.message : "worker transport server error" };
+    return { type: "error", message: typeof message.message === "string" ? message.message : "machine transport server error" };
   }
   return null;
 };
@@ -1615,6 +1787,27 @@ const waitForChild = async (child: ChildProcess) => await new Promise<ChildExit>
   child.once("error", reject);
   child.once("exit", (code, signal) => resolve({ code, signal }));
 });
+
+const terminateChild = async (
+  child: ChildProcess,
+  stopped: Promise<ChildExit>,
+  gracefulTimeoutMs = 3000,
+  killTimeoutMs = 3000
+) => {
+  if (child.exitCode !== null || child.signalCode !== null) return await stopped;
+  child.kill("SIGTERM");
+  const graceful = await Promise.race([
+    stopped,
+    delay(gracefulTimeoutMs).then(() => null)
+  ]);
+  if (graceful) return graceful;
+
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  return await Promise.race([
+    stopped,
+    delay(killTimeoutMs).then(() => ({ code: child.exitCode, signal: child.signalCode }))
+  ]);
+};
 
 const applyChildExitCode = ({ code, signal }: ChildExit) => {
   process.exitCode = code ?? (signal ? 1 : 0);

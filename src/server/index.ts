@@ -10,9 +10,20 @@ import { z } from "zod";
 import { MachineHub } from "../core/machineHub.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
+import { PluginHub } from "../core/pluginHub.js";
 import { CodexhubServerState } from "../core/serverState.js";
-import { ThreadHub } from "../core/threadHub.js";
-import { startTelegramBotFromEnv, type TelegramBotHandle } from "../telegram/index.js";
+import { listSshHosts } from "../core/sshConfig.js";
+import { SshMachineManager } from "../core/sshMachine.js";
+import { cronMatches, cronMinuteKey, defaultTaskTimezone, isCronExpression } from "../core/taskCron.js";
+import { runtimeSessionFromWorker, ThreadHub } from "../core/threadHub.js";
+import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
+import {
+  startTelegramPlugin,
+  telegramBuiltinPlugin,
+  telegramIntegrationType,
+  telegramPluginRuntimeState
+} from "../plugins/telegram.js";
+import type { TelegramBotHandle } from "../telegram/index.js";
 
 const inputSchema = z.union([
   z.string(),
@@ -33,8 +44,7 @@ const threadRunOptionsSchema = z.object({
   modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional()
 });
 
-const workerRegistrationSchema = z.object({
-  workerId: z.string().min(1).optional(),
+const sessionRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
   workingDirectory: z.string().min(1),
@@ -42,9 +52,9 @@ const workerRegistrationSchema = z.object({
   pid: z.number().int().optional(),
   hostname: z.string().min(1).optional(),
   currentThreadId: z.string().min(1).optional()
-});
+}).strict();
 
-const workerHeartbeatSchema = workerRegistrationSchema.partial();
+const sessionHeartbeatSchema = sessionRegistrationSchema.partial();
 
 const codexRecordSchema = z.object({
   id: z.string().min(1),
@@ -55,7 +65,7 @@ const codexRecordSchema = z.object({
   sourceThreadId: z.string().optional()
 });
 
-const workerEventSchema = z.discriminatedUnion("type", [
+const sessionEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("thread_event"),
     threadId: z.string().min(1),
@@ -64,7 +74,7 @@ const workerEventSchema = z.discriminatedUnion("type", [
     message: z.unknown()
   }),
   z.object({
-    type: z.literal("worker_current_changed"),
+    type: z.literal("session_current_changed"),
     currentThreadId: z.string().min(1),
     heartbeat: z.boolean().optional()
   }),
@@ -84,54 +94,23 @@ const workerEventSchema = z.discriminatedUnion("type", [
   })
 ]);
 
-const workerTransportMessageSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("register"),
-    commandCursor: z.number().int().min(0).optional(),
-    registration: workerRegistrationSchema
-  }),
-  z.object({
-    type: z.literal("unregister")
-  }),
-  z.object({
-    type: z.literal("heartbeat"),
-    registration: workerHeartbeatSchema.optional()
-  }),
-  z.object({
-    type: z.literal("event"),
-    event: workerEventSchema
-  }),
-  z.object({
-    type: z.literal("records"),
-    threadId: z.string().min(1),
-    heartbeat: z.boolean().optional(),
-    records: z.array(codexRecordSchema)
-  }),
-  z.object({
-    type: z.literal("command_result"),
-    commandId: z.string().min(1),
-    result: z.unknown()
-  }),
-  z.object({
-    type: z.literal("command_error"),
-    commandId: z.string().min(1),
-    message: z.string().min(1)
-  })
-]);
-
 const machineRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
+  type: z.enum(["local", "ssh", "registered"]).optional(),
   name: z.string().min(1).optional(),
   hostname: z.string().min(1),
   pid: z.number().int().optional(),
   platform: z.string().min(1).optional(),
-  cwd: z.string().min(1).optional()
+  cwd: z.string().min(1).optional(),
+  capabilities: z.object({
+    projectLauncher: z.boolean().optional()
+  }).optional()
 });
 
 const machineHeartbeatSchema = machineRegistrationSchema.partial();
 
-const machineStartWorkerResultSchema = z.object({
-  workerId: z.string().min(1),
+const machineStartSessionResultSchema = z.object({
+  sessionId: z.string().min(1),
   threadId: z.string().min(1),
   appServerUrl: z.string().min(1),
   cwd: z.string().min(1),
@@ -164,14 +143,77 @@ const machineTransportMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("command_result"),
     commandId: z.string().min(1),
-    result: z.union([machineStartWorkerResultSchema, machineDirectoryListingSchema])
+    result: z.union([machineStartSessionResultSchema, machineDirectoryListingSchema])
   }),
   z.object({
     type: z.literal("command_error"),
     commandId: z.string().min(1),
     message: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("session_register"),
+    sessionId: z.string().min(1),
+    commandCursor: z.number().int().min(0).optional(),
+    registration: sessionRegistrationSchema
+  }),
+  z.object({
+    type: z.literal("session_unregister"),
+    sessionId: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("session_heartbeat"),
+    sessionId: z.string().min(1),
+    registration: sessionHeartbeatSchema.optional()
+  }),
+  z.object({
+    type: z.literal("session_event"),
+    sessionId: z.string().min(1),
+    event: sessionEventSchema
+  }),
+  z.object({
+    type: z.literal("session_records"),
+    sessionId: z.string().min(1),
+    threadId: z.string().min(1),
+    heartbeat: z.boolean().optional(),
+    records: z.array(codexRecordSchema)
+  }),
+  z.object({
+    type: z.literal("session_command_result"),
+    sessionId: z.string().min(1),
+    commandId: z.string().min(1),
+    result: z.unknown()
+  }),
+  z.object({
+    type: z.literal("session_command_error"),
+    sessionId: z.string().min(1),
+    commandId: z.string().min(1),
+    message: z.string().min(1)
   })
 ]);
+
+const sshConnectSchema = z.object({
+  host: z.string().min(1),
+  name: z.string().min(1).optional(),
+  remotePort: z.number().int().min(1).max(65535).optional(),
+  remoteCommand: z.string().min(1).optional()
+});
+
+const cronScheduleSchema = z.string().min(1).refine(isCronExpression, {
+  message: "Invalid cron schedule. Use five fields such as \"0 9 * * *\"."
+});
+
+const taskCreateSchema = z.object({
+  name: z.string().min(1),
+  enabled: z.boolean().optional(),
+  schedule: cronScheduleSchema,
+  machineId: z.string().min(1),
+  projectPath: z.string().min(1),
+  projectId: z.string().min(1).optional(),
+  threadId: z.string().min(1).optional(),
+  input: z.string().min(1)
+});
+
+const taskUpdateSchema = taskCreateSchema.partial();
 
 type SseStream = NodeJS.WritableStream & {
   destroyed?: boolean;
@@ -188,6 +230,15 @@ const envMs = (name: string, fallback: number) => {
 };
 
 const sseHeartbeatMs = () => envMs("CODEX_HUB_SSE_HEARTBEAT_MS", 20_000);
+const envFlag = (name: string, fallback: boolean) => {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = raw.trim().toLowerCase();
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  return fallback;
+};
+const localMachineEnabled = () => envFlag("CODEX_HUB_LOCAL_MACHINE", true);
 
 const sseEventId = (data: unknown) => {
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -230,9 +281,13 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
   : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? path.join(packageRoot, "dist"));
-const workerOfflineTimeoutMs = () => envMs("CODEX_HUB_WORKER_OFFLINE_TIMEOUT_MS", 45_000);
-const workerOfflineRetentionMs = () => envMs("CODEX_HUB_WORKER_OFFLINE_RETENTION_MS", 30 * 60_000);
-const workerSweepIntervalMs = () => envMs("CODEX_HUB_WORKER_SWEEP_INTERVAL_MS", 5_000);
+const sessionOfflineTimeoutMs = () =>
+  envMs("CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS", envMs("CODEX_HUB_WORKER_OFFLINE_TIMEOUT_MS", 45_000));
+const sessionOfflineRetentionMs = () =>
+  envMs("CODEX_HUB_SESSION_OFFLINE_RETENTION_MS", envMs("CODEX_HUB_WORKER_OFFLINE_RETENTION_MS", 30 * 60_000));
+const sessionSweepIntervalMs = () =>
+  envMs("CODEX_HUB_SESSION_SWEEP_INTERVAL_MS", envMs("CODEX_HUB_WORKER_SWEEP_INTERVAL_MS", 5_000));
+const taskScanIntervalMs = () => envMs("CODEX_HUB_TASK_SCAN_INTERVAL_MS", 30_000);
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
@@ -259,17 +314,45 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const projectSubscribers = new Set<(event: ReturnType<typeof projectSnapshotEvent>) => void>();
   let projectSeq = 0;
   const machines = new MachineHub({ onChange: () => publishProjects() });
+  const sshMachines = new SshMachineManager({
+    localHost: config.host,
+    localPort: config.port,
+    sshConfigPath: process.env.CODEX_HUB_SSH_CONFIG,
+    onChange: () => publishProjects()
+  });
+  const plugins = new PluginHub({ builtins: [telegramBuiltinPlugin()] });
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
-  const workerSweep = setInterval(() => {
-    threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs());
-  }, workerSweepIntervalMs());
-  workerSweep.unref?.();
+  let localMachine: CodexhubMachineHandle | null = null;
+
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof z.ZodError) {
+      reply.code(400).send({
+        error: "invalid_request",
+        issues: error.issues
+      });
+      return;
+    }
+    reply.send(error);
+  });
+
+  const sessionSweep = setInterval(() => {
+    threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
+  }, sessionSweepIntervalMs());
+  sessionSweep.unref?.();
+  const runningTasks = new Set<string>();
+  const triggeredTaskMinutes = new Map<string, string>();
+  const taskSweep = setInterval(() => void scanLocalTasks(new Date()), taskScanIntervalMs());
+  taskSweep.unref?.();
 
   app.addHook("onClose", async () => {
-    clearInterval(workerSweep);
+    clearInterval(sessionSweep);
+    clearInterval(taskSweep);
+    await sshMachines.stopAll();
+    await localMachine?.stop();
     telegramBot?.stop("server closing");
+    plugins.setIntegrationState(telegramIntegrationType, telegramPluginRuntimeState(false));
     await state.flush();
   });
   await app.register(cors, { origin: true });
@@ -278,7 +361,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   function projectSnapshot() {
     return state.snapshot({
       machines: machines.listMachines(),
-      workers: threads.listWorkers({ includeOffline: true }),
+      runtimeSessions: threads.listWorkers({ includeOffline: true }),
       threads: threads.listThreads()
     });
   }
@@ -300,6 +383,116 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     for (const subscriber of projectSubscribers) subscriber(event);
   }
 
+  async function runLocalTask(taskId: string) {
+    const task = state.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    if (runningTasks.has(task.taskId)) {
+      const skippedTask = state.updateTaskRun(task.taskId, {
+        lastStatus: "skipped",
+        lastError: "Task already running"
+      });
+      publishProjects();
+      return {
+        ok: true,
+        skipped: true,
+        task: skippedTask
+      };
+    }
+    let releaseOnReturn = true;
+    runningTasks.add(task.taskId);
+    try {
+      const started = machines.startSession(task.machineId, {
+        cwd: task.projectPath,
+        reuse: true
+      });
+      const session = await started.promise;
+      const sessionId = session.sessionId;
+      let threadId = task.threadId ?? session.threadId;
+      if (task.threadId) {
+        const resumed = await threads.resumeWorkerThread(sessionId, task.threadId);
+        threadId = resumed.threadId;
+      }
+      const localCommand = threads.runLocalCommand(threadId, task.input, "task");
+      if (localCommand.handled) {
+        const completedTask = state.updateTaskRun(task.taskId, {
+          lastStatus: "completed",
+          threadId
+        });
+        publishProjects();
+        return {
+          ok: true,
+          task: completedTask,
+          sessionId,
+          threadId,
+          command: localCommand.command
+        };
+      }
+      const turn = threads.runTurn(threadId, task.input, "task");
+      const queuedTask = state.updateTaskRun(task.taskId, {
+        lastStatus: "queued",
+        threadId
+      });
+      publishProjects();
+      releaseOnReturn = false;
+      turn.then(() => {
+        state.updateTaskRun(task.taskId, {
+          lastStatus: "completed",
+          threadId
+        });
+        publishProjects();
+      }).catch((error: unknown) => {
+        state.updateTaskRun(task.taskId, {
+          lastStatus: "failed",
+          threadId,
+          lastError: error instanceof Error ? error.message : String(error)
+        });
+        publishProjects();
+      }).finally(() => {
+        runningTasks.delete(task.taskId);
+      });
+      return {
+        ok: true,
+        task: queuedTask,
+        sessionId,
+        threadId
+      };
+    } catch (error) {
+      state.updateTaskRun(task.taskId, {
+        lastStatus: "failed",
+        lastError: error instanceof Error ? error.message : String(error)
+      });
+      publishProjects();
+      throw error;
+    } finally {
+      if (releaseOnReturn) runningTasks.delete(task.taskId);
+    }
+  }
+
+  async function scanLocalTasks(now: Date) {
+    for (const task of state.listTasks()) {
+      if (!task.enabled) continue;
+      if (!cronMatches(task.schedule, now, defaultTaskTimezone)) continue;
+      const minuteKey = cronMinuteKey(now, defaultTaskTimezone);
+      if (triggeredTaskMinutes.get(task.taskId) === minuteKey) continue;
+      triggeredTaskMinutes.set(task.taskId, minuteKey);
+      void runLocalTask(task.taskId)
+        .catch((error: unknown) => {
+          console.error(`codexhub task failed: ${task.name}: ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }
+  }
+
+  async function startBuiltinIntegrations() {
+    plugins.setIntegrationState(telegramIntegrationType, telegramPluginRuntimeState(false));
+    if (await plugins.hasEnabledBuiltinIntegration(telegramIntegrationType)) {
+      telegramBot = await startTelegramPlugin({
+        apiBaseUrl: localApiBaseUrl(config.host, config.port),
+        requireToken: false
+      });
+      plugins.setIntegrationState(telegramIntegrationType, telegramPluginRuntimeState(Boolean(telegramBot)));
+    }
+  }
+
   app.get("/api/health", async () => ({
     ok: true,
     env: process.env.CODEX_HUB_ENV ?? process.env.NODE_ENV ?? "development",
@@ -311,61 +504,88 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     model: config.defaultThreadOptions.model ?? null,
     modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
     contextWindowTokens,
+    ssh: {
+      connections: sshMachines.listConnections()
+    },
     telegram: {
       started: Boolean(telegramBot)
     }
   }));
 
-  app.get("/api/codex-usage", async (request, reply) => {
-    reply.header("x-codexhub-compat", "threadUsage");
-    const query = z.object({ threadId: z.string().min(1).optional() }).parse(request.query);
-    if (!query.threadId) {
-      reply.code(400);
-      return { error: "threadId_required", message: "This compatibility endpoint only returns thread-local usage." };
-    }
-    return threads.getThreadUsage(query.threadId);
-  });
-
   app.get("/api/threads", async () => ({
-    ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs()),
+    ...threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
     threads: threads.listThreads()
   }));
 
-  app.get("/api/workers", async (request) => {
+  app.get("/api/sessions", async (request) => {
     const query = z.object({ includeOffline: z.string().optional() }).parse(request.query);
     return {
-      ...threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs()),
-      workers: threads.listWorkers({ includeOffline: query.includeOffline === "true" })
+      ...threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
+      sessions: threads.listRuntimeSessions({ includeOffline: query.includeOffline === "true" })
     };
   });
 
-  app.get("/api/workers/:workerId/thread-candidates", async (request, reply) => {
-    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+  app.get("/api/sessions/events", async (request, reply) => {
+    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
+    threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
+
+    const stopSse = startSse(reply.raw);
+
+    const unsubscribe = threads.subscribeRuntimeSessions(query.after ?? 0, (event) => {
+      sendSse(reply.raw, event.kind, event);
+    });
+    reply.raw.on("close", () => {
+      stopSse();
+      unsubscribe();
+    });
+  });
+
+  app.get("/api/sessions/:sessionId/thread-candidates", async (request, reply) => {
+    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
     const query = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() }).parse(request.query);
     try {
-      return await threads.listWorkerThreadCandidates(params.workerId, query.limit ?? 50);
+      return await threads.listWorkerThreadCandidates(params.sessionId, query.limit ?? 50);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Worker not found:") ? 404 : 409);
+      reply.code(message.startsWith("Session not found:") ? 404 : 409);
       return { error: message };
     }
   });
 
-  app.post("/api/workers/:workerId/threads", async (request, reply) => {
-    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
+  app.post("/api/sessions/:sessionId/threads", async (request, reply) => {
+    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
     const payload = z.discriminatedUnion("action", [
       z.object({ action: z.literal("new") }),
       z.object({ action: z.literal("resume"), threadId: z.string().min(1) })
     ]).parse(request.body);
     try {
       const thread = payload.action === "new"
-        ? await threads.startWorkerThread(params.workerId)
-        : await threads.resumeWorkerThread(params.workerId, payload.threadId);
+        ? await threads.startWorkerThread(params.sessionId)
+        : await threads.resumeWorkerThread(params.sessionId, payload.threadId);
       publishProjects();
       return thread;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Worker not found:") ? 404 : 409);
+      reply.code(message.startsWith("Session not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.post("/api/sessions/:sessionId/turn", async (request, reply) => {
+    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({
+      input: inputSchema,
+      source: z.enum(["web", "telegram", "task"]).optional(),
+      options: threadRunOptionsSchema.optional()
+    }).parse(request.body);
+
+    try {
+      const result = threads.runWorkerTurn(params.sessionId, payload.input, payload.source ?? "web", payload.options);
+      result.promise.catch(() => undefined);
+      return { ok: true, thread: result.thread, command: result.command };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Session has no current thread:") ? 409 : 404);
       return { error: message };
     }
   });
@@ -373,6 +593,59 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.get("/api/machines", async () => ({
     machines: machines.listMachines()
   }));
+
+  app.get("/api/ssh/hosts", async () => ({
+    hosts: await listSshHosts()
+  }));
+
+  app.get("/api/ssh/connections", async () => ({
+    connections: sshMachines.listConnections()
+  }));
+
+  app.get("/api/plugins", async () => ({
+    plugins: await plugins.listPlugins()
+  }));
+
+  app.get("/api/plugins/:pluginId/assets/*", async (request, reply) => {
+    const params = z.object({
+      pluginId: z.string().min(1),
+      "*": z.string().min(1)
+    }).parse(request.params);
+    try {
+      const filePath = await plugins.resolveAsset(params.pluginId, params["*"]);
+      reply.type(contentType(filePath));
+      return reply.send(createReadStream(filePath));
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.post("/api/ssh/connect", async (request, reply) => {
+    const payload = sshConnectSchema.parse(request.body);
+    try {
+      return {
+        ok: true,
+        connection: sshMachines.connect(payload)
+      };
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.delete("/api/ssh/connections/:connectionId", async (request, reply) => {
+    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
+    try {
+      return {
+        ok: true,
+        connection: await sshMachines.stop(params.connectionId)
+      };
+    } catch (error) {
+      reply.code(404);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 
   app.get("/api/machines/:machineId/directories", async (request, reply) => {
     const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
@@ -412,15 +685,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
     try {
       const machine = resolveTargetMachine(machines.listMachines(), payload.machineId);
-      const started = machines.startWorker(machine.machineId, {
+      const started = machines.startSession(machine.machineId, {
         cwd: payload.path,
         reuse: payload.reuse ?? true
       });
       const result = await started.promise;
+      const sessionId = result.sessionId;
       const project = state.upsertProject({
         machineId: machine.machineId,
         path: result.cwd,
-        workerId: result.workerId,
+        sessionId,
         threadId: result.threadId
       });
       publishProjects();
@@ -431,135 +705,79 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   });
 
-  app.get("/api/workers/events", async (request, reply) => {
-    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
-    threads.markStaleWorkersOffline(workerOfflineTimeoutMs(), Date.now(), workerOfflineRetentionMs());
+  app.get("/api/tasks", async () => ({
+    tasks: state.listTasks()
+  }));
 
-    const stopSse = startSse(reply.raw);
-
-    const unsubscribe = threads.subscribeWorkers(query.after ?? 0, (event) => {
-      sendSse(reply.raw, event.kind, event);
-    });
-    reply.raw.on("close", () => {
-      stopSse();
-      unsubscribe();
-    });
+  app.post("/api/tasks", async (request, reply) => {
+    const payload = taskCreateSchema.parse(request.body);
+    try {
+      const task = state.upsertTask({
+        taskId: randomUUID(),
+        name: payload.name,
+        enabled: payload.enabled ?? true,
+        schedule: payload.schedule,
+        machineId: payload.machineId,
+        projectId: payload.projectId,
+        projectPath: payload.projectPath,
+        threadId: payload.threadId,
+        input: payload.input
+      });
+      return { ok: true, task };
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
-  app.get("/api/workers/connect", { websocket: true }, (socket) => {
-    const transportId = randomUUID();
-    let workerId: string | null = null;
-    let commandCursor = 0;
-    let closed = false;
-    let commandPumpStarted = false;
-
-    const send = (message: unknown) => {
-      if (socket.readyState !== 1) return;
-      socket.send(JSON.stringify(message));
-    };
-
-    const startCommandPump = () => {
-      if (commandPumpStarted) return;
-      commandPumpStarted = true;
-      void commandPump().catch((error: unknown) => {
-        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
-        socket.close();
+  app.patch("/api/tasks/:taskId", async (request, reply) => {
+    const params = z.object({ taskId: z.string().min(1) }).parse(request.params);
+    const payload = taskUpdateSchema.parse(request.body);
+    const existing = state.getTask(params.taskId);
+    if (!existing) {
+      reply.code(404);
+      return { error: "task_not_found" };
+    }
+    try {
+      const task = state.upsertTask({
+        ...existing,
+        ...payload,
+        taskId: existing.taskId,
+        name: payload.name ?? existing.name,
+        enabled: payload.enabled ?? existing.enabled,
+        schedule: payload.schedule ?? existing.schedule,
+        machineId: payload.machineId ?? existing.machineId,
+        projectPath: payload.projectPath ?? existing.projectPath,
+        input: payload.input ?? existing.input,
+        projectId: payload.projectId ?? existing.projectId,
+        threadId: payload.threadId ?? existing.threadId,
+        createdAt: existing.createdAt
       });
-    };
+      return { ok: true, task };
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 
-    const commandPump = async () => {
-      while (!closed && workerId) {
-        const response = await threads.waitWorkerCommands(workerId, commandCursor, 60_000);
-        if (closed || !workerId) return;
-        commandCursor = Math.max(commandCursor, response.cursor);
-        if (response.commands.length) {
-          send({ type: "commands", cursor: commandCursor, commands: response.commands });
-        }
-      }
-    };
+  app.delete("/api/tasks/:taskId", async (request, reply) => {
+    const params = z.object({ taskId: z.string().min(1) }).parse(request.params);
+    if (!state.deleteTask(params.taskId)) {
+      reply.code(404);
+      return { error: "task_not_found" };
+    }
+    return { ok: true, deleted: true };
+  });
 
-    const handleMessage = async (data: unknown) => {
-      let parsed: z.infer<typeof workerTransportMessageSchema>;
-      try {
-        parsed = workerTransportMessageSchema.parse(JSON.parse(String(data)));
-      } catch (error) {
-        send({ type: "error", message: `invalid worker transport message: ${error instanceof Error ? error.message : String(error)}` });
-        return;
-      }
-
-      if (parsed.type !== "register" && !workerId) {
-        send({ type: "error", message: "worker transport must register before sending messages" });
-        return;
-      }
-
-      try {
-        if (parsed.type === "register") {
-          const result = threads.registerWorker({ ...parsed.registration, transportId });
-          workerId = result.workerId;
-          commandCursor = threads.clampWorkerCommandCursor(workerId, parsed.commandCursor ?? 0);
-          send({ type: "registered", workerId, worker: result.worker });
-          publishProjects();
-          startCommandPump();
-          return;
-        }
-
-        if (parsed.type === "unregister") {
-          threads.unregisterWorker(workerId!, transportId);
-          publishProjects();
-          workerId = null;
-          socket.close();
-          return;
-        }
-
-        if (parsed.type === "heartbeat") {
-          threads.heartbeatWorker(workerId!, parsed.registration ?? {});
-          publishProjects();
-          return;
-        }
-
-        if (parsed.type === "event") {
-          threads.applyWorkerEvent(workerId!, parsed.event);
-          publishProjects();
-          return;
-        }
-
-        if (parsed.type === "records") {
-          threads.applyWorkerRecords(workerId!, {
-            threadId: parsed.threadId,
-            records: parsed.records,
-            heartbeat: parsed.heartbeat
-          });
-          publishProjects();
-          return;
-        }
-
-        if (parsed.type === "command_result") {
-          threads.resolveWorkerCommand(workerId!, parsed.commandId, parsed.result);
-          publishProjects();
-          return;
-        }
-
-        threads.failWorkerCommand(workerId!, parsed.commandId, parsed.message);
-      } catch (error) {
-        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
-      }
-    };
-
-    socket.on("message", (data: unknown) => void handleMessage(data));
-    socket.on("close", () => {
-      closed = true;
-      if (workerId) {
-        threads.disconnectWorker(workerId, transportId);
-        publishProjects();
-      }
-    });
-    socket.on("error", () => {
-      closed = true;
-      if (workerId) {
-        threads.disconnectWorker(workerId, transportId);
-        publishProjects();
-      }
-    });
+  app.post("/api/tasks/:taskId/run", async (request, reply) => {
+    const params = z.object({ taskId: z.string().min(1) }).parse(request.params);
+    try {
+      return await runLocalTask(params.taskId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Task not found:") ? 404 : 409);
+      return { error: message };
+    }
   });
 
   app.get("/api/machines/connect", { websocket: true }, (socket) => {
@@ -568,6 +786,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     let commandCursor = 0;
     let closed = false;
     let commandPumpStarted = false;
+    const sessionIds = new Set<string>();
+    const sessionCursors = new Map<string, number>();
+    const sessionCommandPumps = new Set<string>();
 
     const send = (message: unknown) => {
       if (socket.readyState !== 1) return;
@@ -594,6 +815,48 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       }
     };
 
+    const sessionTransportId = (sessionId: string) => `${transportId}:${sessionId}`;
+
+    const startSessionCommandPump = (sessionId: string) => {
+      if (sessionCommandPumps.has(sessionId)) return;
+      sessionCommandPumps.add(sessionId);
+      void sessionCommandPump(sessionId)
+        .catch((error: unknown) => {
+          send({
+            type: "session_error",
+            sessionId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        })
+        .finally(() => {
+          sessionCommandPumps.delete(sessionId);
+        });
+    };
+
+    const sessionCommandPump = async (sessionId: string) => {
+      while (!closed && sessionIds.has(sessionId)) {
+        const response = await threads.waitWorkerCommands(sessionId, sessionCursors.get(sessionId) ?? 0, 60_000);
+        if (closed || !sessionIds.has(sessionId)) return;
+        sessionCursors.set(sessionId, Math.max(sessionCursors.get(sessionId) ?? 0, response.cursor));
+        if (response.commands.length) {
+          send({
+            type: "session_commands",
+            sessionId,
+            cursor: sessionCursors.get(sessionId) ?? response.cursor,
+            commands: response.commands
+          });
+        }
+      }
+    };
+
+    const disconnectSessions = () => {
+      for (const sessionId of [...sessionIds]) {
+        threads.disconnectWorker(sessionId, sessionTransportId(sessionId));
+      }
+      sessionIds.clear();
+      sessionCursors.clear();
+    };
+
     const handleMessage = async (data: unknown) => {
       let parsed: z.infer<typeof machineTransportMessageSchema>;
       try {
@@ -613,9 +876,11 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           const result = machines.registerMachine({ ...parsed.registration, transportId });
           state.upsertMachine({
             machineId: result.machineId,
+            type: result.machine.type,
             hostname: result.machine.hostname,
             name: result.machine.name,
-            lastSeenAt: result.machine.lastSeenAt
+            lastSeenAt: result.machine.lastSeenAt,
+            capabilities: result.machine.capabilities
           });
           machineId = result.machineId;
           commandCursor = machines.clampMachineCommandCursor(machineId, parsed.commandCursor ?? 0);
@@ -627,6 +892,11 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
         if (parsed.type === "unregister") {
           machines.unregisterMachine(machineId!, transportId);
+          for (const sessionId of [...sessionIds]) {
+            threads.unregisterWorker(sessionId, sessionTransportId(sessionId));
+          }
+          sessionIds.clear();
+          sessionCursors.clear();
           publishProjects();
           machineId = null;
           socket.close();
@@ -635,6 +905,63 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
         if (parsed.type === "heartbeat") {
           machines.heartbeatMachine(machineId!, parsed.registration ?? {});
+          publishProjects();
+          return;
+        }
+
+        if (parsed.type === "session_register") {
+          const result = threads.registerWorker({
+            ...parsed.registration,
+            workerId: parsed.sessionId,
+            machineId: machineId!,
+            transportId: sessionTransportId(parsed.sessionId)
+          });
+          sessionIds.add(result.workerId);
+          sessionCursors.set(result.workerId, threads.clampWorkerCommandCursor(result.workerId, parsed.commandCursor ?? 0));
+          send({ type: "session_registered", sessionId: result.workerId, session: runtimeSessionFromWorker(result.worker) });
+          publishProjects();
+          startSessionCommandPump(result.workerId);
+          return;
+        }
+
+        if (parsed.type === "session_unregister") {
+          threads.unregisterWorker(parsed.sessionId, sessionTransportId(parsed.sessionId));
+          sessionIds.delete(parsed.sessionId);
+          sessionCursors.delete(parsed.sessionId);
+          publishProjects();
+          return;
+        }
+
+        if (parsed.type === "session_heartbeat") {
+          threads.heartbeatWorker(parsed.sessionId, parsed.registration ?? {});
+          publishProjects();
+          return;
+        }
+
+        if (parsed.type === "session_event") {
+          threads.applyWorkerEvent(parsed.sessionId, parsed.event);
+          publishProjects();
+          return;
+        }
+
+        if (parsed.type === "session_records") {
+          threads.applyWorkerRecords(parsed.sessionId, {
+            threadId: parsed.threadId,
+            records: parsed.records,
+            heartbeat: parsed.heartbeat
+          });
+          publishProjects();
+          return;
+        }
+
+        if (parsed.type === "session_command_result") {
+          threads.resolveWorkerCommand(parsed.sessionId, parsed.commandId, parsed.result);
+          publishProjects();
+          return;
+        }
+
+        if (parsed.type === "session_command_error") {
+          threads.failWorkerCommand(parsed.sessionId, parsed.commandId, parsed.message);
           publishProjects();
           return;
         }
@@ -655,6 +982,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     socket.on("message", (data: unknown) => void handleMessage(data));
     socket.on("close", () => {
       closed = true;
+      disconnectSessions();
       if (machineId) {
         machines.disconnectMachine(machineId, transportId);
         publishProjects();
@@ -662,30 +990,12 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     });
     socket.on("error", () => {
       closed = true;
+      disconnectSessions();
       if (machineId) {
         machines.disconnectMachine(machineId, transportId);
         publishProjects();
       }
     });
-  });
-
-  app.post("/api/workers/:workerId/turn", async (request, reply) => {
-    const params = z.object({ workerId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({
-      input: inputSchema,
-      source: z.enum(["web", "telegram", "task"]).optional(),
-      options: threadRunOptionsSchema.optional()
-    }).parse(request.body);
-
-    try {
-      const result = threads.runWorkerTurn(params.workerId, payload.input, payload.source ?? "web", payload.options);
-      result.promise.catch(() => undefined);
-      return { ok: true, thread: result.thread };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Worker has no current thread:") ? 409 : 404);
-      return { error: message };
-    }
   });
 
   app.get("/api/threads/:threadId", async (request, reply) => {
@@ -785,11 +1095,17 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   await app.listen({ host: config.host, port: config.port });
 
-  try {
-    telegramBot = await startTelegramBotFromEnv({
-      apiBaseUrl: localApiBaseUrl(config.host, config.port),
-      requireToken: false
+  if (localMachineEnabled()) {
+    localMachine = startCodexhubMachine({
+      apiBase: localApiBaseUrl(config.host, config.port),
+      machineId: process.env.CODEX_HUB_LOCAL_MACHINE_ID,
+      type: "local",
+      name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "This Computer"
     });
+  }
+
+  try {
+    await startBuiltinIntegrations();
   } catch (error) {
     await app.close();
     throw error;

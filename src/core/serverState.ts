@@ -3,15 +3,17 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
-import type { MachineSummary } from "./machineHub.js";
-import { createMachineId } from "./machineHub.js";
-import type { ThreadSummary, WorkerSummary } from "./threadHub.js";
+import type { MachineCapabilities, MachineSummary, MachineType } from "./machineHub.js";
+import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
+import { runtimeSessionFromWorker, type RuntimeSessionSummary, type ThreadSummary, type WorkerSummary as InternalWorkerSummary } from "./threadHub.js";
 
 export type StoredMachine = {
   machineId: string;
+  type: MachineType;
   name?: string;
   hostname: string;
   lastSeenAt: string;
+  capabilities: MachineCapabilities;
 };
 
 export type StoredProject = {
@@ -22,7 +24,7 @@ export type StoredProject = {
   pinned?: boolean;
   createdAt: string;
   lastOpenedAt: string;
-  lastWorkerId?: string;
+  lastSessionId?: string;
   lastThreadId?: string;
 };
 
@@ -35,26 +37,44 @@ export type StoredThreadSummary = {
   messageCount: number;
 };
 
+export type StoredTask = {
+  taskId: string;
+  name: string;
+  enabled: boolean;
+  schedule: string;
+  machineId: string;
+  projectPath: string;
+  projectId?: string;
+  threadId?: string;
+  input: string;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt?: string;
+  lastStatus?: "queued" | "completed" | "failed" | "skipped";
+  lastError?: string;
+};
+
 export type ServerStateData = {
   version: 1;
   updatedAt: string;
   machines: StoredMachine[];
   projects: StoredProject[];
   threads: StoredThreadSummary[];
+  tasks: StoredTask[];
 };
 
 export type ProjectSummary = StoredProject & {
   machine?: MachineSummary | StoredMachine;
   online: boolean;
   running: boolean;
-  workers: WorkerSummary[];
+  sessions: RuntimeSessionSummary[];
   threads: ThreadSummary[];
   storedThreads: StoredThreadSummary[];
 };
 
 type RuntimeSnapshot = {
   machines: MachineSummary[];
-  workers: WorkerSummary[];
+  runtimeSessions: InternalWorkerSummary[];
   threads: ThreadSummary[];
 };
 
@@ -89,19 +109,86 @@ export class CodexhubServerState {
     return [...this.data.projects].sort(compareStoredProjects);
   }
 
-  upsertMachine(input: { machineId: string; hostname: string; name?: string; lastSeenAt?: string }) {
+  listTasks() {
+    return [...this.data.tasks].sort(compareTasks);
+  }
+
+  getTask(taskId: string) {
+    return this.data.tasks.find((task) => task.taskId === taskId) ?? null;
+  }
+
+  upsertTask(input: Omit<StoredTask, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {
+    const now = input.updatedAt ?? new Date().toISOString();
+    const projectId = input.projectId ?? projectIdFor(input.machineId, input.projectPath);
+    const existing = this.data.tasks.find((task) => task.taskId === input.taskId);
+    if (existing) {
+      Object.assign(existing, {
+        ...input,
+        projectId,
+        updatedAt: now
+      });
+      this.touch();
+      return existing;
+    }
+    const task: StoredTask = {
+      ...input,
+      projectId,
+      createdAt: input.createdAt ?? now,
+      updatedAt: now
+    };
+    this.data.tasks.push(task);
+    this.touch();
+    return task;
+  }
+
+  updateTaskRun(taskId: string, input: Pick<StoredTask, "lastStatus"> & {
+    lastRunAt?: string;
+    threadId?: string;
+    lastError?: string;
+  }) {
+    const task = this.data.tasks.find((item) => item.taskId === taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    task.lastStatus = input.lastStatus;
+    task.lastRunAt = input.lastRunAt ?? new Date().toISOString();
+    task.threadId = input.threadId ?? task.threadId;
+    task.lastError = input.lastError;
+    task.updatedAt = new Date().toISOString();
+    this.touch();
+    return task;
+  }
+
+  deleteTask(taskId: string) {
+    const index = this.data.tasks.findIndex((task) => task.taskId === taskId);
+    if (index === -1) return false;
+    this.data.tasks.splice(index, 1);
+    this.touch();
+    return true;
+  }
+
+  upsertMachine(input: {
+    machineId: string;
+    hostname: string;
+    type?: MachineType;
+    name?: string;
+    lastSeenAt?: string;
+    capabilities?: Partial<MachineCapabilities>;
+  }) {
     const now = input.lastSeenAt ?? new Date().toISOString();
     const existing = this.data.machines.find((machine) => machine.machineId === input.machineId);
     if (existing) {
+      existing.type = normalizeMachineType(input.type, existing.type);
       existing.hostname = input.hostname || existing.hostname;
       existing.name = input.name ?? existing.name;
       existing.lastSeenAt = maxIso(existing.lastSeenAt, now);
+      existing.capabilities = normalizeMachineCapabilities(input.capabilities, existing.capabilities);
     } else {
       this.data.machines.push({
         machineId: input.machineId,
+        type: normalizeMachineType(input.type),
         name: input.name,
         hostname: input.hostname,
-        lastSeenAt: now
+        lastSeenAt: now,
+        capabilities: normalizeMachineCapabilities(input.capabilities)
       });
     }
     this.touch();
@@ -112,7 +199,7 @@ export class CodexhubServerState {
     path: string;
     name?: string;
     now?: string;
-    workerId?: string;
+    sessionId?: string;
     threadId?: string;
   }) {
     const now = input.now ?? new Date().toISOString();
@@ -123,7 +210,7 @@ export class CodexhubServerState {
     if (existing) {
       existing.name = input.name ?? existing.name;
       existing.lastOpenedAt = maxIso(existing.lastOpenedAt, now);
-      existing.lastWorkerId = input.workerId ?? existing.lastWorkerId;
+      existing.lastSessionId = input.sessionId ?? existing.lastSessionId;
       existing.lastThreadId = input.threadId ?? existing.lastThreadId;
       this.touch();
       return existing;
@@ -135,7 +222,7 @@ export class CodexhubServerState {
       name: input.name ?? projectName(normalizedPath),
       createdAt: now,
       lastOpenedAt: now,
-      lastWorkerId: input.workerId,
+      lastSessionId: input.sessionId,
       lastThreadId: input.threadId
     };
     this.data.projects.push(project);
@@ -143,32 +230,33 @@ export class CodexhubServerState {
     return project;
   }
 
-  captureRuntime(snapshot: Pick<RuntimeSnapshot, "workers" | "threads">) {
-    const workersById = new Map(snapshot.workers.map((worker) => [worker.workerId, worker]));
-    for (const worker of snapshot.workers) {
-      const machineId = machineIdForWorker(worker);
+  captureRuntime(snapshot: Pick<RuntimeSnapshot, "runtimeSessions" | "threads">) {
+    const runtimeSessionsById = new Map(snapshot.runtimeSessions.map((session) => [session.workerId, session]));
+    for (const session of snapshot.runtimeSessions) {
+      const machineId = machineIdForRuntimeSession(session);
       this.upsertMachine({
         machineId,
-        hostname: worker.hostname ?? machineId,
-        name: worker.hostname,
-        lastSeenAt: worker.lastSeenAt
+        hostname: session.hostname ?? machineId,
+        name: session.hostname,
+        lastSeenAt: session.lastSeenAt,
+        capabilities: session.machineId ? undefined : { projectLauncher: false }
       });
       this.upsertProject({
         machineId,
-        path: worker.workingDirectory,
-        workerId: worker.workerId,
-        threadId: worker.currentThreadId,
-        now: worker.lastSeenAt
+        path: session.workingDirectory,
+        sessionId: session.workerId,
+        threadId: session.currentThreadId,
+        now: session.lastSeenAt
       });
     }
 
     for (const thread of snapshot.threads) {
-      const worker = thread.runtime.workerId ? workersById.get(thread.runtime.workerId) : undefined;
-      const project = worker
+      const session = thread.runtime.sessionId ? runtimeSessionsById.get(thread.runtime.sessionId) : undefined;
+      const project = session
         ? this.upsertProject({
-          machineId: machineIdForWorker(worker),
+          machineId: machineIdForRuntimeSession(session),
           path: thread.workingDirectory,
-          workerId: worker.workerId,
+          sessionId: session.workerId,
           threadId: thread.threadId,
           now: thread.updatedAt
         })
@@ -182,30 +270,32 @@ export class CodexhubServerState {
     for (const machine of runtime.machines) {
       this.upsertMachine({
         machineId: machine.machineId,
+        type: machine.type,
         hostname: machine.hostname,
         name: machine.name,
-        lastSeenAt: machine.lastSeenAt
+        lastSeenAt: machine.lastSeenAt,
+        capabilities: machine.capabilities
       });
     }
-    this.captureRuntime({ workers: runtime.workers, threads: runtime.threads });
+    this.captureRuntime({ runtimeSessions: runtime.runtimeSessions, threads: runtime.threads });
 
     const machinesById = new Map<string, MachineSummary | StoredMachine>();
     for (const machine of this.data.machines) machinesById.set(machine.machineId, machine);
     for (const machine of runtime.machines) machinesById.set(machine.machineId, machine);
-    const workersByProject = new Map<string, WorkerSummary[]>();
-    for (const worker of runtime.workers) {
-      const projectId = projectIdFor(machineIdForWorker(worker), worker.workingDirectory);
-      const workers = workersByProject.get(projectId) ?? [];
-      workers.push(worker);
-      workersByProject.set(projectId, workers);
+    const sessionsByProject = new Map<string, InternalWorkerSummary[]>();
+    for (const session of runtime.runtimeSessions) {
+      const projectId = projectIdFor(machineIdForRuntimeSession(session), session.workingDirectory);
+      const sessions = sessionsByProject.get(projectId) ?? [];
+      sessions.push(session);
+      sessionsByProject.set(projectId, sessions);
     }
     const threadsByProject = new Map<string, ThreadSummary[]>();
     for (const thread of runtime.threads) {
-      const worker = thread.runtime.workerId
-        ? runtime.workers.find((item) => item.workerId === thread.runtime.workerId)
+      const session = thread.runtime.sessionId
+        ? runtime.runtimeSessions.find((item) => item.workerId === thread.runtime.sessionId)
         : undefined;
-      const project = worker
-        ? this.findProject(machineIdForWorker(worker), thread.workingDirectory)
+      const project = session
+        ? this.findProject(machineIdForRuntimeSession(session), thread.workingDirectory)
         : this.uniqueProjectForPath(thread.workingDirectory);
       if (!project) continue;
       const threads = threadsByProject.get(project.projectId) ?? [];
@@ -220,7 +310,7 @@ export class CodexhubServerState {
     }
 
     const projects: ProjectSummary[] = this.listStoredProjects().map((project) => {
-      const workers = (workersByProject.get(project.projectId) ?? [])
+      const sessions = (sessionsByProject.get(project.projectId) ?? [])
         .sort((left, right) => Number(right.online) - Number(left.online) || right.lastSeenAt.localeCompare(left.lastSeenAt));
       const threads = (threadsByProject.get(project.projectId) ?? [])
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
@@ -230,9 +320,9 @@ export class CodexhubServerState {
       return {
         ...project,
         machine,
-        online: workers.some((worker) => worker.online) || Boolean(machine && "online" in machine && machine.online),
-        running: workers.some((worker) => worker.currentThread?.running || worker.currentThread?.status === "running"),
-        workers,
+        online: sessions.some((session) => session.online) || Boolean(machine && "online" in machine && machine.online),
+        running: sessions.some((session) => session.currentThread?.running || session.currentThread?.status === "running"),
+        sessions: sessions.map(runtimeSessionFromWorker),
         threads,
         storedThreads
       };
@@ -310,27 +400,23 @@ export class CodexhubServerState {
   }
 }
 
-export const machineIdForWorker = (worker: Pick<WorkerSummary, "machineId" | "hostname">) =>
-  worker.machineId ?? createMachineId(worker.hostname ?? "local");
+export const machineIdForRuntimeSession = (session: Pick<InternalWorkerSummary, "machineId" | "hostname">) =>
+  session.machineId ?? createMachineId(session.hostname ?? "local");
 
 const defaultDataDir = () =>
   path.resolve(process.env.CODEX_HUB_DATA_DIR ?? path.join(os.homedir(), ".local", "share", "codexhub"));
 
 const readStateFile = async (filePath: string): Promise<ServerStateData> => {
   try {
-    const parsed = YAML.parse(await readFile(filePath, "utf8")) as (Partial<ServerStateData> & {
-      agents?: unknown[];
-    }) | null;
+    const parsed = YAML.parse(await readFile(filePath, "utf8")) as Partial<ServerStateData> | null;
     if (parsed?.version !== 1) return emptyState();
-    const legacyMachines = Array.isArray(parsed.agents)
-      ? parsed.agents.map(legacyAgentToMachine).filter(isStoredMachine)
-      : [];
     return {
       version: 1,
       updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
-      machines: Array.isArray(parsed.machines) ? parsed.machines.filter(isStoredMachine) : legacyMachines,
+      machines: Array.isArray(parsed.machines) ? parsed.machines.map(normalizeStoredMachine).filter(isStoredMachine) : [],
       projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
-      threads: Array.isArray(parsed.threads) ? parsed.threads.filter(isStoredThread) : []
+      threads: Array.isArray(parsed.threads) ? parsed.threads.filter(isStoredThread) : [],
+      tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : []
     };
   } catch {
     return emptyState();
@@ -342,7 +428,8 @@ const emptyState = (): ServerStateData => ({
   updatedAt: new Date().toISOString(),
   machines: [],
   projects: [],
-  threads: []
+  threads: [],
+  tasks: []
 });
 
 const projectIdFor = (machineId: string, projectPath: string) =>
@@ -352,26 +439,49 @@ const projectName = (projectPath: string) => path.basename(projectPath) || proje
 
 const maxIso = (left: string, right: string) => left.localeCompare(right) >= 0 ? left : right;
 
-const legacyAgentToMachine = (value: unknown): StoredMachine | null => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const item = value as { agentId?: unknown; name?: unknown; hostname?: unknown; lastSeenAt?: unknown };
-  if (typeof item.agentId !== "string" || typeof item.hostname !== "string" || typeof item.lastSeenAt !== "string") return null;
+const normalizeStoredMachine = (value: unknown): unknown => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const item = value as Record<string, unknown>;
   return {
-    machineId: item.agentId,
-    name: typeof item.name === "string" ? item.name : undefined,
-    hostname: item.hostname,
-    lastSeenAt: item.lastSeenAt
+    ...item,
+    type: normalizeMachineType(item.type as MachineType | undefined),
+    capabilities: normalizeMachineCapabilities(asMachineCapabilities(item.capabilities))
+  };
+};
+
+const asMachineCapabilities = (value: unknown): Partial<MachineCapabilities> | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const item = value as Partial<MachineCapabilities>;
+  return {
+    projectLauncher: typeof item.projectLauncher === "boolean" ? item.projectLauncher : undefined
   };
 };
 
 const normalizeStoredProject = (value: unknown): unknown => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const item = value as Record<string, unknown>;
-  if (typeof item.machineId === "string") return item;
-  if (typeof item.agentId !== "string") return item;
+  return {
+    projectId: item.projectId,
+    machineId: item.machineId,
+    path: item.path,
+    name: item.name,
+    pinned: item.pinned,
+    createdAt: item.createdAt,
+    lastOpenedAt: item.lastOpenedAt,
+    lastSessionId: item.lastSessionId,
+    lastThreadId: item.lastThreadId
+  };
+};
+
+const normalizeStoredTask = (value: unknown): unknown => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const item = value as Record<string, unknown>;
+  const machineId = typeof item.machineId === "string" ? item.machineId : "";
+  const projectPath = typeof item.projectPath === "string" ? item.projectPath : "";
   return {
     ...item,
-    machineId: item.agentId
+    projectPath,
+    projectId: typeof item.projectId === "string" ? item.projectId : machineId && projectPath ? projectIdFor(machineId, projectPath) : undefined
   };
 };
 
@@ -384,12 +494,20 @@ const compareStoredProjects = (left: StoredProject, right: StoredProject) => {
   return left.path.localeCompare(right.path, undefined, { sensitivity: "base" });
 };
 
+const compareTasks = (left: StoredTask, right: StoredTask) => {
+  if (Boolean(left.enabled) !== Boolean(right.enabled)) return left.enabled ? -1 : 1;
+  const nameCompare = left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+  if (nameCompare) return nameCompare;
+  return left.createdAt.localeCompare(right.createdAt);
+};
+
 const isStoredMachine = (value: unknown): value is StoredMachine => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const item = value as Partial<StoredMachine>;
   return typeof item.machineId === "string"
     && typeof item.hostname === "string"
-    && typeof item.lastSeenAt === "string";
+    && typeof item.lastSeenAt === "string"
+    && (item.type === "local" || item.type === "ssh" || item.type === "registered");
 };
 
 const isStoredProject = (value: unknown): value is StoredProject => {
@@ -412,4 +530,23 @@ const isStoredThread = (value: unknown): value is StoredThreadSummary => {
     && typeof item.updatedAt === "string"
     && (item.status === "running" || item.status === "idle")
     && typeof item.messageCount === "number";
+};
+
+const isStoredTask = (value: unknown): value is StoredTask => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Partial<StoredTask>;
+  return typeof item.taskId === "string"
+    && typeof item.name === "string"
+    && typeof item.enabled === "boolean"
+    && typeof item.schedule === "string"
+    && typeof item.machineId === "string"
+    && typeof item.projectPath === "string"
+    && typeof item.input === "string"
+    && typeof item.createdAt === "string"
+    && typeof item.updatedAt === "string"
+    && (item.projectId === undefined || typeof item.projectId === "string")
+    && (item.threadId === undefined || typeof item.threadId === "string")
+    && (item.lastRunAt === undefined || typeof item.lastRunAt === "string")
+    && (item.lastStatus === undefined || item.lastStatus === "queued" || item.lastStatus === "completed" || item.lastStatus === "failed" || item.lastStatus === "skipped")
+    && (item.lastError === undefined || typeof item.lastError === "string");
 };

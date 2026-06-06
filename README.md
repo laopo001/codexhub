@@ -1,12 +1,13 @@
 # codexhub
 
-一个 project-first 的本地 Codex 控制面。Web 按机器、项目和对话组织工作区；运行态仍由官方 `codex app-server` worker 持有，server 负责排队命令、镜像事件和保存轻量项目元数据。一次 `codexhub` / `codexhub resume` 等价于打开一个官方 Codex：一个 TUI、一个 app-server、一个 worker；`codexhub machine` 可以在一台机器上长期运行一次，并按 Web 选择的文件夹创建或复用 headless worker。
+一个 local-first 的 Codex 控制面。Web 按机器、项目、运行会话和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
-- 共享核心：API server 统一镜像 Codex workers 和 threads，Web 左侧按项目优先展示，并保留 worker 诊断列表，右侧跟随在线 worker 当前 `threadId`。
+- 共享核心：API server 统一管理 machines、runtime sessions 和 threads，Web 左侧按项目优先展示，右侧跟随选中 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
-- Machine：`codexhub machine` 每台机器运行一次，负责本机路径校验和按项目启动 headless worker。
-- CLI worker：`codexhub` / `codexhub resume` 继续复用官方 Codex TUI 和 app-server。
+- Machine：server 默认内嵌一台 `local` machine；远端或宿主机也可以用 `codexhub machine` 主动注册，负责路径校验和按项目启动 runtime session。
+- SSH：本机 server 可读取 `~/.ssh/config` 的 host 列表，通过系统 `ssh` 建立 reverse tunnel 并在远端启动 `codexhub machine`。
+- Local session CLI：`codexhub` / `codexhub resume` 继续复用官方 Codex TUI 和 app-server。
 - Telegram bot：由 API server 内置启动，把 Telegram 消息转成 Codex turn。
 
 ## 启动
@@ -24,19 +25,34 @@ pnpm run dev:api
 
 - Web/API: `http://127.0.0.1:8788`
 
+普通本机启动时，server 会默认注册一台 `local` machine，Web 的 Connections / This Computer 可以直接看到它，并通过 Projects 打开本机目录、启动 Codex runtime session。需要关闭这个内嵌本机入口时设置：
+
+```bash
+CODEX_HUB_LOCAL_MACHINE=0 pnpm codexhub server
+```
+
 也可以直接指定监听地址：
 
 ```bash
 pnpm codexhub server --host 0.0.0.0 --port 8788
 ```
 
-每台机器可以只启动一次：
+远端机器或容器外的宿主机可以主动注册：
 
 ```bash
-pnpm codexhub machine --server http://127.0.0.1:8788
+pnpm codexhub machine --server http://127.0.0.1:8788 --type registered
 ```
 
-随后在 Web 左侧通过弹窗选择项目路径。server 会把打开项目请求发给在线 machine；machine 进程在本机解析路径，确认它存在且是目录，然后创建或复用该目录下的 headless worker。server 不扫描本机文件系统。
+也可以在 Web 的 Connections / Registered 里复制同等命令。随后在 Web 左侧通过弹窗选择项目路径。server 会把打开项目请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用该目录下的 runtime session。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
+
+也可以让本机 server 主动通过 SSH 管理远端机器。SSH host 发现默认读取本机 `~/.ssh/config`，支持 `Include` 引入的配置文件；需要覆盖路径时设置 `CODEX_HUB_SSH_CONFIG=/path/to/config`。连接和认证交给系统 `ssh`、`ssh-agent`、`known_hosts`、ProxyJump 等已有配置：
+
+```bash
+pnpm codexhub ssh hosts
+pnpm codexhub ssh connect my-remote --name my-remote
+```
+
+`codexhub ssh connect` 会建立 reverse tunnel，并在远端执行 `codexhub machine --server http://127.0.0.1:<remotePort> --type ssh`。远端需要能从 `PATH` 找到 `codexhub`；断开 SSH 后，这条连接下启动的远端 runtime session 会随进程退出。
 
 server 的轻量状态默认保存到：
 
@@ -44,9 +60,9 @@ server 的轻量状态默认保存到：
 ~/.local/share/codexhub/server-state.yaml
 ```
 
-可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects 和 thread summaries，完整 transcript 仍来自 worker 镜像的 Codex session/jsonl。
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects 和 thread summaries，完整 transcript 仍来自 runtime session 镜像的 Codex session/jsonl。
 
-官方 Codex TUI + codexhub worker：
+官方 Codex TUI + codexhub runtime session：
 
 ```bash
 pnpm codexhub --server http://127.0.0.1:8788 -C /path/to/project
@@ -57,41 +73,147 @@ pnpm codexhub threads --show 20
 
 `cxh` 是 `codexhub` 的短别名，例如 `pnpm cxh list`。
 
-`codexhub [prompt]` 会在当前机器启动官方 `codex app-server`，然后用 PTY wrapper 前台运行官方 `codex --remote ... [prompt]` TUI。`codexhub resume [threadId] [prompt]` 走同一套 worker/bridge，只是前台 TUI 改为官方 `codex resume --remote ... [threadId] [prompt]`；不传 `threadId` 时保留官方 resume picker，也可以用 `--last`。codexhub server 是可选增强：server 在线时，`codexhub` 注册一个本次进程唯一的 worker，同步 app-server event，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，只是暂时不能远程转发。后台 bridge 会持续重试，server 恢复后自动注册并开始同步。Web 主列表展示在线 worker 以及 retention 期内的 recently disconnected worker，并按设备、文件夹和 worker 分组；只有在线 worker 可运行，右侧展示选中在线 worker 的当前 thread，TUI 里 `/resume` 切换后会随 app-server event 同步。Thread usage 由 server 从每个 thread 镜像到的 JSONL `token_count` records 计算，本地图片处理等机器相关能力由 `codexhub` worker 执行。非 headless 终端底部会保留一行 `codexhub` 状态栏，显示当前 worker、thread 和 server 连接状态。官方 TUI 正常退出时，`codexhub` 会立即 unregister worker 并从主列表消失；如果 `codexhub` 异常消失，server 通过 heartbeat timeout 或 transport disconnect 标记 offline，并在 retention 期内保留为 recently disconnected。
+`codexhub [prompt]` 会在当前机器启动官方 `codex app-server`，然后用 PTY wrapper 前台运行官方 `codex --remote ... [prompt]` TUI。`codexhub resume [threadId] [prompt]` 走同一套 runtime bridge，只是前台 TUI 改为官方 `codex resume --remote ... [threadId] [prompt]`；不传 `threadId` 时保留官方 resume picker，也可以用 `--last`。
 
-`codexhub list` 与 Web 左侧一致，显示在线以及 retention 期内 recently disconnected 的 codexhub worker；`codexhub threads` 扫描本机官方 Codex session 历史，只显示当前目录的可 resume threads，并输出标题、更新时间和完整 threadId。`--show` 控制最近显示数量，默认 20。
+server 在线时，前台 `codexhub` 会通过 machine websocket 注册一个 transient session host，再把当前 runtime session 挂到这台 session host 下；它只代表这个前台 Codex 进程，不作为项目浏览/启动器。Web 里打开本机任意项目优先使用内嵌 `local` machine；远端或宿主机项目使用 SSH / registered machine。
+
+server 在线时，runtime session 会同步 app-server event 和 JSONL transcript，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，后台 bridge 会持续重试。Web 主列表以 runtime sessions 展示运行态，Telegram 绑定 runtime session，右侧 thread 对话流仍由 `/api/threads/:threadId` 和 `/api/threads/:threadId/events` 驱动。Thread usage 由 server 从每个 thread 镜像到的 JSONL `token_count` records 计算。
+
+`codexhub list` 与 Web 左侧一致，显示当前 runtime sessions；`codexhub threads` 扫描本机官方 Codex session 历史，只显示当前目录的可 resume threads，并输出标题、更新时间和完整 threadId。`--show` 控制最近显示数量，默认 20。
 
 PTY 支持依赖 `node-pty` native build，仓库的 `pnpm-workspace.yaml` 已允许该依赖运行 build script。
 
-如果只想作为远程 worker，不打开 TUI：
+如果只想启动一个 headless runtime session，不打开 TUI：
 
 ```bash
 pnpm codexhub --server http://127.0.0.1:8788 -C /path/to/project --headless
 ```
 
-`--headless` 会在 app-server/bridge 就绪后主动调用一次 app-server `thread/start`，创建该 worker 的初始 `currentThreadId`，因此可以直接接收 Web、Telegram、task 或 API 的 `/api/workers/:workerId/turn` 输入。启动成功后终端会输出 `workerId` 和 `threadId`。
+`--headless` 会在 app-server/bridge 就绪后主动调用一次 app-server `thread/start`，创建该 runtime session 的初始 `currentThreadId`。启动成功后终端会输出 `sessionId` 和 `threadId`，Web、Telegram、task 或 API 都可以用这个 session/thread 继续投递消息。
 
 `codexhub` 默认不替官方 Codex 设置 `sandbox` 或 `approvalPolicy`；未显式传参时，权限由 Codex 按当前 workspace 的真实配置解析。只有显式传 `--sandbox` 或 `--approval-policy` 时，codexhub 才把这些值作为 app-server override 转发。
 
-Telegram bot 随 API server 启动；`.env` 里配置 token 后直接运行 `pnpm run dev:api` 即可：
+Telegram bot 是内建 integration plugin。`.env` 里配置 token 后直接运行 `pnpm run dev:api` 即可：
 
 ```bash
 TELEGRAM_BOT_TOKEN=xxx
 pnpm run dev:api
 ```
 
-没有 `TELEGRAM_BOT_TOKEN` 时 server 会跳过 Telegram bot 并继续启动；项目不再提供 `--telegram` / `--no-telegram` / `--env` 或 `CODEX_HUB_TELEGRAM_ENABLED` 这类分支开关。`pnpm bot` 仅保留为手动调试独立 bot 的入口，不要和 server 内置 bot 同时运行。
+没有 `TELEGRAM_BOT_TOKEN` 时 server 会跳过 Telegram bot 并继续启动，`/api/plugins` 会显示 `codexhub.telegram` 未配置。需要临时关闭这个内建插件时设置 `CODEX_HUB_PLUGIN_TELEGRAM=0`。项目不再提供 `--telegram` / `--no-telegram` / `--env` 或 `CODEX_HUB_TELEGRAM_ENABLED` 这类分支开关。`pnpm bot` 仅保留为手动调试独立 bot 的入口，不要和 server 内建 Telegram plugin 同时运行。
 
-本地定时任务由 `codexhub` 运行，不由 server 扫本机目录：
+本地定时任务由本机 server 记录和调度，不写入远端 workspace。任务选择一台 machine、一个 project path、可选 thread，并按 cron schedule 向该 thread 投递一轮对话；第一次没有 `threadId` 时会使用打开项目后得到的当前 thread，并写回 task 状态。
 
 ```bash
-pnpm codexhub task template daily-summary
-pnpm codexhub task list
-pnpm codexhub task start
-pnpm codexhub task run .codexp/tasks/daily-summary.yaml
+curl -sS -X POST http://127.0.0.1:8788/api/tasks \
+  -H 'content-type: application/json' \
+  -d '{
+    "name": "daily-summary",
+    "enabled": true,
+    "schedule": "0 9 * * *",
+    "machineId": "machine-example",
+    "projectPath": "/path/to/project",
+    "input": "检查这个项目昨天到今天的变更，给我总结风险和下一步。"
+  }'
+
+curl -sS http://127.0.0.1:8788/api/tasks
+curl -sS -X POST http://127.0.0.1:8788/api/tasks/<taskId>/run
 ```
 
-`codexhub task` 子命令使用运行命令时的当前目录作为 workspace。`codexhub task list` 默认离线可用，只扫描本地 `.codexp/tasks/*.yaml`；只有显式传 `--server` 或设置 `CODEX_HUB_SERVER_URL` 时，才连接 server 并额外显示 server 是否在线。`codexhub task start` 是给 PM2 或终端常驻使用的本地调度器：启动后会先在当前 workspace 拉起一个 headless codexhub worker，输出 `workerId` 和 `threadId`，再按 YAML 里的 `schedule` cron 到点后投递任务输入。任务 YAML 有 `thread` 时，调度器会先让该 worker 通过 app-server `thread/resume` 恢复这个 thread，再向 `/api/threads/:threadId/turn` 发送；没有 `thread` 时向 worker 当前 thread 的 `/api/workers/:workerId/turn` 发送。`codexhub task run <task_yaml_path>` 立即本地运行指定 YAML 文件一次，不看 `schedule`，保留直接 `codex exec` / `codex exec resume` 的离线一次性执行语义。
+CLI 也操作同一份 server-local task 状态：
+
+```bash
+pnpm codexhub task create \
+  --name daily-summary \
+  --schedule "0 9 * * *" \
+  --machine machine-example \
+  --project /path/to/project \
+  --input "检查这个项目昨天到今天的变更，给我总结风险和下一步。"
+
+pnpm codexhub task list
+pnpm codexhub task run daily-summary
+```
+
+server 每 30 秒扫描一次本地 task 状态，间隔可用 `CODEX_HUB_TASK_SCAN_INTERVAL_MS` 调整。task 的 `schedule` 会在保存时校验为五字段 cron 表达式；无效表达式会被 API 拒绝，而不是静默保存后永远不触发。task 不再写入 `.codexp/tasks`，也不由远端 workspace 持有。
+
+runtime session 的断线判定和 recently disconnected 保留时间可以用 `CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS`、`CODEX_HUB_SESSION_OFFLINE_RETENTION_MS`、`CODEX_HUB_SESSION_SWEEP_INTERVAL_MS` 调整。旧的 `CODEX_HUB_WORKER_*` 变量仍作为过渡兜底读取，但新配置应使用 `SESSION` 命名。
+
+## 插件
+
+当前插件系统分两层：外部插件只做本机静态 contribution 注入，server 扫描插件 manifest，Web 根据 `/api/plugins` 返回的 contribution 加载样式；内建插件可以提供受控 integration runtime，例如 `codexhub.telegram`。它不执行外部插件 JS，也不把 SSH、Telegram、theme 全部抽成一个大生命周期框架。
+
+默认插件目录：
+
+```text
+~/.local/share/codexhub/plugins
+./plugins
+```
+
+也可以用 `CODEX_HUB_PLUGIN_DIR` 或 `CODEX_HUB_PLUGIN_DIRS` 覆盖；多个目录用系统 path delimiter 分隔。一个最小主题插件：
+
+```yaml
+# ~/.local/share/codexhub/plugins/my-theme/plugin.yaml
+version: 1
+id: my-theme
+name: My Theme
+enabled: true
+contributes:
+  web:
+    styles:
+      - style.css
+```
+
+外部插件也可以声明 integration 作为 UI/管理元数据，但当前只有 `runtime: builtin` 的内建 integration 会被 server 启动：
+
+```yaml
+version: 1
+id: my-integration-notes
+name: My Integration Notes
+enabled: true
+contributes:
+  integrations:
+    - type: my-channel
+      label: My Channel
+      requiredEnv:
+        - MY_CHANNEL_TOKEN
+```
+
+```css
+/* ~/.local/share/codexhub/plugins/my-theme/style.css */
+:root {
+  --codexhub-accent: #2f6fed;
+}
+```
+
+可用 API：
+
+```bash
+curl -sS http://127.0.0.1:8788/api/plugins
+```
+
+SSH 继续保留为 machine transport 类型；Telegram 是内建 integration plugin；主题/CSS 是 Web contribution plugin。三者共享插件清单和 contribution 视图，但不强行共享同一套运行时生命周期。
+
+## 验证
+
+```bash
+pnpm check
+pnpm run smoke:machine-session
+pnpm run smoke:registered-machine
+pnpm run smoke:ssh-loopback
+pnpm run smoke:task-lock
+pnpm run smoke:electron
+pnpm build
+```
+
+`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证 `/api/projects/open`、`/api/sessions`、thread detail 不再暴露 `workerId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。
+
+`smoke:registered-machine` 会启动一个真实 `codexhub machine --type registered` CLI 子进程，验证 registered machine 注册、项目打开、runtime session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期。
+
+`smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证远端 `codexhub machine --type ssh` 注册、项目打开、runtime session 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
+
+`smoke:task-lock` 会用假的 registered machine/session 走真实 websocket 协议，验证同一个 task 在已有 queued/running turn 时第二次运行会 `skipped`，且 turn 完成后可以再次运行。
+
+`smoke:electron` 会以 headless Electron 启动桌面入口的内嵌 server，验证默认端口 `18788` 被占用时会自动 fallback 到空闲端口，并检查 `/api/health` 可用；它不创建真实桌面窗口。
 
 ## 生产发布
 
@@ -117,11 +239,95 @@ pm2 logs codexhub-prod
 pm2 restart codexhub-prod
 ```
 
-## API
+## Docker
 
-当前运行态 API 以 `threadId` 为主键。新 thread 在本地官方 Codex TUI 里开始，server 只列出、读取和转发已有 thread：
+容器镜像用于运行本机 Node.js server、Web 和 API。Codex runtime 仍由连接进来的 machine/session 提供；也就是说，宿主机或远端机器继续用 `codexhub machine`、SSH 或前台 `codexhub` 把项目接到这个 server。
 
 ```bash
+docker build -t codexhub .
+
+docker run --rm \
+  -p 8788:8788 \
+  -v codexhub-data:/data \
+  -v "$HOME/.local/share/codexhub/plugins:/plugins:ro" \
+  codexhub
+```
+
+容器默认环境：
+
+- `CODEX_HUB_HOST=0.0.0.0`
+- `CODEX_HUB_PORT=8788`
+- `CODEX_HUB_DATA_DIR=/data`
+- `CODEX_HUB_PLUGIN_DIR=/plugins`
+- `CODEX_HUB_LOCAL_MACHINE=0`
+
+Docker 默认不启动内嵌 `local` machine，因为容器内看到的是容器文件系统。若确实要让容器内 server 管理挂载进来的项目目录，可以显式设置 `CODEX_HUB_LOCAL_MACHINE=1` 并挂载对应路径。
+
+如果要让容器里的 server 读取本机 SSH 配置并主动连接远端 machine，可以额外挂载 SSH 配置：
+
+```bash
+docker run --rm \
+  -p 8788:8788 \
+  -v codexhub-data:/data \
+  -v "$HOME/.ssh:/root/.ssh:ro" \
+  codexhub
+```
+
+宿主机作为 registered machine 连接容器里的 server：
+
+```bash
+codexhub machine --server http://127.0.0.1:8788 --type registered
+```
+
+## Electron
+
+Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认优先使用 `127.0.0.1:18788`，如果默认端口已被占用会自动换到空闲端口，然后打开该地址；Codex runtime 仍然由本机/SSH/registered machine session 提供。
+
+```bash
+pnpm electron:start
+```
+
+这个脚本使用 npm 安装的 Electron binary，并在 Linux 开发环境下传 `--no-sandbox` 规避本地 `chrome-sandbox` setuid 权限问题。正式分发时可以在后续引入 electron-builder / forge，把同一个 `dist-node/electron/main.js` 作为 main process 入口。
+
+可选环境变量：
+
+- `CODEX_HUB_ELECTRON_PORT`: Electron 内嵌 server 端口；显式设置后端口被占用会直接报错，未设置时默认尝试 `18788` 并可 fallback
+- `CODEX_HUB_ELECTRON_HOST`: Electron 内嵌 server host，默认 `127.0.0.1`
+- `CODEX_HUB_ELECTRON_DEVTOOLS=1`: 启动后打开 DevTools
+
+在 Electron 里连接宿主机 project launcher 的方式和 Web 相同；也可以从 Connections / Registered 复制命令：
+
+```bash
+codexhub machine --server http://127.0.0.1:18788 --type registered
+```
+
+## API
+
+当前公开 API 分成两层：`sessionId` 是在线 runtime session 的投递入口，`threadId` 是 transcript、事件订阅和多 thread 操作的主键。机器和项目入口负责把路径请求路由到在线 machine，再启动或复用 runtime session：
+
+```bash
+curl -sS http://127.0.0.1:8788/api/machines
+curl -sS http://127.0.0.1:8788/api/projects
+
+curl -sS -X POST http://127.0.0.1:8788/api/projects/open \
+  -H 'content-type: application/json' \
+  -d '{"machineId":"machine-example","path":"/path/to/project"}'
+```
+
+单上下文入口（例如 Telegram 或只想跟随当前 thread 的脚本）绑定 runtime session，然后发送到该 session 当前 thread：
+
+```bash
+SESSION_ID=$(curl -sS http://127.0.0.1:8788/api/sessions | jq -r '.sessions[0].sessionId')
+
+curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/turn" \
+  -H 'content-type: application/json' \
+  -d '{"input":"继续当前对话","source":"telegram"}'
+```
+
+Web 这类多 thread UI 可以直接针对选中的 thread 投递、订阅事件，或让在线 session start/resume 一个 thread tab：
+
+```bash
+SESSION_ID=$(curl -sS http://127.0.0.1:8788/api/sessions | jq -r '.sessions[0].sessionId')
 THREAD_ID=$(curl -sS http://127.0.0.1:8788/api/threads | jq -r '.threads[0].threadId')
 
 curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
@@ -129,8 +335,16 @@ curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
   -d '{"input":"看一下这个项目结构","source":"web"}'
 
 curl -N "http://127.0.0.1:8788/api/threads/$THREAD_ID/events?after=0"
+
+curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
+  -H 'content-type: application/json' \
+  -d '{"action":"resume","threadId":"019e..."}'
+
+curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
+  -H 'content-type: application/json' \
+  -d '{"action":"new"}'
 ```
 
-Slash commands are handled before forwarding to Codex. `/status` and `/help` return local proxy status/help records. `/model` is a client command in Web and opens the Runtime selector; Web sends the selected model/reasoning with the next normal turn. If the official TUI changes model/reasoning locally, `codexhub` / `codexhub resume` mirrors app-server Runtime settings back into Web from `thread/settings/updated` events or the effective `config/read` result. Unsupported slash commands are not sent to the Codex app-server as user turns because official TUI slash commands are local UI commands, not app-server turns.
+Slash command 会在转发给 Codex 前先处理。`/status` 和 `/help` 返回本地代理状态/帮助记录；Web 里的 `/model` 是客户端命令，会打开 Runtime 选择器，下一次普通 turn 再把选中的 model/reasoning 发给 app-server。如果官方 TUI 在本地改了 model/reasoning，`codexhub` / `codexhub resume` 会从 `thread/settings/updated` 或有效的 `config/read` 结果镜像回 Web。不支持的 slash command 不会作为普通 user turn 发给 Codex app-server，因为官方 TUI 的 slash command 是本地 UI 命令，不是 app-server turn。
 
-Server 不读取运行机器上的 `~/.codex` session、`.codexp/tasks` 或上传临时图片目录。历史 session 通过 `codexhub resume` 或官方 TUI/app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；thread usage 由 server 从镜像的 `token_count` records 计算；定时任务由 `codexhub task start` 在本地扫描任务文件并投递到它启动的 headless worker。
+Server 不读取运行机器上的 `~/.codex` session、远端 `.codexp/tasks` 或上传临时图片目录。历史 session 通过 `codexhub resume` 或官方 TUI/app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；thread usage 由 server 从镜像的 `token_count` records 计算；新定时任务由本机 server state 调度。

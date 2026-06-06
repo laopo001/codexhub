@@ -51,7 +51,7 @@ type ThreadSummary = {
 
 type ThreadRuntimeSummary =
   {
-    workerId?: string;
+    sessionId?: string;
     name?: string;
     online: boolean;
     runnable: boolean;
@@ -63,8 +63,8 @@ type ThreadDetail = ThreadSummary & {
   lastSeq: number;
 };
 
-type WorkerSummary = {
-  workerId: string;
+type RuntimeSessionSummary = {
+  sessionId: string;
   machineId?: string;
   name?: string;
   workingDirectory: string;
@@ -81,8 +81,13 @@ type WorkerSummary = {
   threads?: ThreadSummary[];
 };
 
+type RuntimeSession = RuntimeSessionSummary & {
+  sessionId: string;
+};
+
 type MachineSummary = {
   machineId: string;
+  type?: "local" | "ssh" | "registered";
   name?: string;
   hostname: string;
   online: boolean;
@@ -91,6 +96,9 @@ type MachineSummary = {
   offlineSinceAt?: string;
   offlineReason?: "transport_disconnected" | "unregistered";
   cwd?: string;
+  capabilities?: {
+    projectLauncher?: boolean;
+  };
 };
 
 type MachineDirectoryEntry = {
@@ -103,6 +111,50 @@ type MachineDirectoryListing = {
   parent?: string;
   home: string;
   entries: MachineDirectoryEntry[];
+};
+
+type SshHost = {
+  alias: string;
+  hostName?: string;
+  user?: string;
+  port?: number;
+  proxyJump?: string;
+};
+
+type SshConnection = {
+  connectionId: string;
+  host: string;
+  name?: string;
+  status: "starting" | "running" | "exited";
+  remotePort: number;
+  startedAt: string;
+  updatedAt: string;
+  lastOutput?: string;
+};
+
+type PluginSummary = {
+  pluginId: string;
+  name: string;
+  version?: string;
+  enabled: boolean;
+  origin?: "builtin" | "local";
+  contributions?: {
+    web?: {
+      styles?: Array<{
+        path: string;
+        url: string;
+      }>;
+    };
+    integrations?: Array<{
+      type: string;
+      runtime: "builtin" | "external";
+      enabled: boolean;
+      label?: string;
+      requiredEnv?: string[];
+      configured?: boolean;
+      started?: boolean;
+    }>;
+  };
 };
 
 type StoredProjectThread = {
@@ -133,20 +185,50 @@ type ProjectSummary = {
   pinned?: boolean;
   createdAt: string;
   lastOpenedAt: string;
-  lastWorkerId?: string;
+  lastSessionId?: string;
   lastThreadId?: string;
   machine?: MachineSummary;
   online: boolean;
   running: boolean;
-  workers: WorkerSummary[];
+  sessions: RuntimeSession[];
   threads: ThreadSummary[];
   storedThreads: StoredProjectThread[];
+};
+
+type LocalTaskStatus = "queued" | "completed" | "failed" | "skipped";
+
+type LocalTask = {
+  taskId: string;
+  name: string;
+  enabled: boolean;
+  schedule: string;
+  machineId: string;
+  projectPath: string;
+  projectId?: string;
+  threadId?: string;
+  input: string;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt?: string;
+  lastStatus?: LocalTaskStatus;
+  lastError?: string;
+};
+
+type TaskDraft = {
+  name: string;
+  enabled: boolean;
+  schedule: string;
+  machineId: string;
+  projectPath: string;
+  threadId: string;
+  input: string;
 };
 
 type ProjectMachineGroup = {
   key: string;
   label: string;
   online: boolean;
+  projectLauncher: boolean;
   statusLabel: string;
   projects: ProjectSummary[];
 };
@@ -162,7 +244,7 @@ type ProjectPickerState = {
 };
 
 type ThreadPickerState = {
-  workerId: string;
+  sessionId: string;
   loading: boolean;
   error: string;
   candidates: CodexThreadCandidate[];
@@ -177,25 +259,25 @@ type ProjectsPayload = {
   projects?: ProjectSummary[];
 };
 
-type WorkerGroupCounts = {
+type RuntimeSessionGroupCounts = {
   total: number;
   online: number;
   offline: number;
   running: number;
 };
 
-type WorkerFolderGroup = {
+type RuntimeSessionFolderGroup = {
   key: string;
   label: string;
-  counts: WorkerGroupCounts;
-  workers: WorkerSummary[];
+  counts: RuntimeSessionGroupCounts;
+  runtimeSessions: RuntimeSession[];
 };
 
-type WorkerDeviceGroup = {
+type RuntimeSessionDeviceGroup = {
   key: string;
   label: string;
-  counts: WorkerGroupCounts;
-  folders: WorkerFolderGroup[];
+  counts: RuntimeSessionGroupCounts;
+  folders: RuntimeSessionFolderGroup[];
 };
 
 type ChatSession = ThreadDetail & {
@@ -217,10 +299,10 @@ type StreamEvent = {
   record?: CodexRecord;
 };
 
-type WorkerStreamEvent = {
+type RuntimeSessionStreamEvent = {
   seq: number;
-  kind: "workers";
-  workers: WorkerSummary[];
+  kind: "sessions";
+  sessions: RuntimeSession[];
 };
 
 type Usage = {
@@ -237,6 +319,7 @@ type ModelSelection = string;
 type ReasoningSelection = "auto" | ReasoningEffort;
 type MessageDisplayMode = "compact" | "detailed";
 type MessageRenderMode = "markdown" | "raw";
+type ConnectionMode = "local" | "ssh" | "registered";
 type WebRecordView = CompactRecordView;
 type InspectDetail = {
   inputMeta: string;
@@ -277,7 +360,8 @@ type ThreadUsage = {
   observedAt: string | null;
 };
 
-const storageKey = "codexhub-ui-state-v4";
+const storageKey = "codexhub-ui-state-v5";
+const legacyStorageKey = "codexhub-ui-state-v4";
 const modelOptions: Array<{ value: ModelSelection; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "gpt-5.5", label: "GPT-5.5" },
@@ -351,15 +435,28 @@ const App = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
-  const [workers, setWorkers] = useState<WorkerSummary[]>([]);
+  const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [activeWorkerId, setActiveWorkerId] = useState("");
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("local");
+  const [sshHosts, setSshHosts] = useState<SshHost[]>([]);
+  const [sshConnections, setSshConnections] = useState<SshConnection[]>([]);
+  const [sshManualHost, setSshManualHost] = useState("");
+  const [sshConnectingHost, setSshConnectingHost] = useState("");
+  const [sshError, setSshError] = useState("");
+  const [registeredCommandCopied, setRegisteredCommandCopied] = useState(false);
+  const [plugins, setPlugins] = useState<PluginSummary[]>([]);
+  const [tasks, setTasks] = useState<LocalTask[]>([]);
+  const [taskDraft, setTaskDraft] = useState<TaskDraft>(() => defaultTaskDraft());
+  const [taskFormOpen, setTaskFormOpen] = useState(false);
+  const [taskBusyId, setTaskBusyId] = useState("");
+  const [taskError, setTaskError] = useState("");
+  const [activeSessionId, setActiveSessionId] = useState("");
   const [openingProjectKey, setOpeningProjectKey] = useState("");
   const [projectPicker, setProjectPicker] = useState<ProjectPickerState | null>(null);
   const [threadPicker, setThreadPicker] = useState<ThreadPickerState | null>(null);
-  const [activeTabThreadByWorker, setActiveTabThreadByWorker] = useState<Record<string, string>>({});
-  const [threadOrderByWorker, setThreadOrderByWorker] = useState<Record<string, string[]>>({});
+  const [activeTabThreadBySession, setActiveTabThreadBySession] = useState<Record<string, string>>({});
+  const [threadOrderBySession, setThreadOrderBySession] = useState<Record<string, string[]>>({});
   const [initialized, setInitialized] = useState(false);
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
@@ -372,15 +469,15 @@ const App = () => {
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [collapsedWorkerGroups, setCollapsedWorkerGroups] = useState<Record<string, boolean>>({});
+  const [collapsedSessionGroups, setCollapsedSessionGroups] = useState<Record<string, boolean>>({});
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
-  const workersEventSource = useRef<EventSource | null>(null);
+  const runtimeSessionsEventSource = useRef<EventSource | null>(null);
   const projectsEventSource = useRef<EventSource | null>(null);
-  const workersLastSeq = useRef(0);
+  const runtimeSessionsLastSeq = useRef(0);
   const projectsLastSeq = useRef(0);
-  const workersReconnectTimer = useRef<number | null>(null);
+  const runtimeSessionsReconnectTimer = useRef<number | null>(null);
   const projectsReconnectTimer = useRef<number | null>(null);
   const eventSources = useRef(new Map<string, EventSource>());
   const threadLastSeqs = useRef(new Map<string, number>());
@@ -395,19 +492,25 @@ const App = () => {
     () => sessions.find((session) => session.threadId === activeTabThreadId),
     [activeTabThreadId, sessions]
   );
-  const activeWorker = useMemo(
-    () => workers.find((worker) => worker.workerId === activeWorkerId),
-    [activeWorkerId, workers]
+  const activeRuntimeSession = useMemo(
+    () => runtimeSessions.find((session) => session.sessionId === activeSessionId),
+    [activeSessionId, runtimeSessions]
   );
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
-  const projectList = useMemo(() => mergeProjectsWithWorkers(projects, workers), [projects, workers]);
+  const localMachines = useMemo(() => machines.filter((machine) => machine.type === "local"), [machines]);
+  const registeredMachines = useMemo(() => machines.filter((machine) => machine.type === "registered"), [machines]);
+  const registeredCommand = useMemo(() => {
+    const origin = window.location.origin;
+    return `codexhub machine --server ${origin} --type registered`;
+  }, []);
+  const projectList = useMemo(() => mergeProjectsWithRuntimeSessions(projects, runtimeSessions), [projects, runtimeSessions]);
   const projectGroups = useMemo(() => groupProjectsByMachine(projectList, machines), [projectList, machines]);
-  const workerGroups = useMemo(() => groupWorkers(workers), [workers]);
-  const activeWorkerThreads = useMemo(() => {
+  const runtimeSessionGroups = useMemo(() => groupRuntimeSessions(runtimeSessions), [runtimeSessions]);
+  const activeRuntimeSessionThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
-    for (const thread of activeWorker?.threads ?? []) byId.set(thread.threadId, thread);
-    if (activeWorker?.currentThread) byId.set(activeWorker.currentThread.threadId, activeWorker.currentThread);
-    const orderedIds = threadOrderByWorker[activeWorker?.workerId ?? ""] ?? [];
+    for (const thread of activeRuntimeSession?.threads ?? []) byId.set(thread.threadId, thread);
+    if (activeRuntimeSession?.currentThread) byId.set(activeRuntimeSession.currentThread.threadId, activeRuntimeSession.currentThread);
+    const orderedIds = threadOrderBySession[activeRuntimeSession?.sessionId ?? ""] ?? [];
     return [
       ...orderedIds.flatMap((threadId) => {
         const thread = byId.get(threadId);
@@ -417,26 +520,26 @@ const App = () => {
       }),
       ...byId.values()
     ];
-  }, [activeWorker, threadOrderByWorker]);
-  const activeWorkerThreadTabs = useMemo(() => activeWorkerThreads.map((thread) => {
+  }, [activeRuntimeSession, threadOrderBySession]);
+  const activeRuntimeSessionThreadTabs = useMemo(() => activeRuntimeSessionThreads.map((thread) => {
     const title = thread.title || shortId(thread.threadId);
-    const isWorkerCurrentThread = thread.threadId === activeWorker?.currentThreadId;
+    const isRuntimeSessionCurrentThread = thread.threadId === activeRuntimeSession?.currentThreadId;
     return {
       key: thread.threadId,
       label: (
         <span className="workspaceThreadTabLabel" title={`${title}\n${thread.threadId}`}>
           <span
-            className={`workerCurrentThreadMark ${isWorkerCurrentThread ? "visible" : ""}`}
-            title={isWorkerCurrentThread ? "Worker current thread" : undefined}
-            aria-label={isWorkerCurrentThread ? "Worker current thread" : undefined}
-            aria-hidden={isWorkerCurrentThread ? undefined : true}
+            className={`runtimeSessionCurrentThreadMark ${isRuntimeSessionCurrentThread ? "visible" : ""}`}
+            title={isRuntimeSessionCurrentThread ? "Session current thread" : undefined}
+            aria-label={isRuntimeSessionCurrentThread ? "Session current thread" : undefined}
+            aria-hidden={isRuntimeSessionCurrentThread ? undefined : true}
           />
           <span>{title}</span>
           <code>{shortId(thread.threadId)}</code>
         </span>
       )
     };
-  }), [activeWorker?.currentThreadId, activeWorkerThreads]);
+  }), [activeRuntimeSession?.currentThreadId, activeRuntimeSessionThreads]);
   const baseViews = useMemo<CodexRecordView[]>(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
@@ -453,24 +556,24 @@ const App = () => {
   const latestViewKey = latestView
     ? `${latestView.id}:${latestView.status ?? ""}:${latestView.text.length}:${latestView.usage ? usageTotal(latestView.usage) : ""}`
     : "";
-  const activeWorkerThreadId = activeWorker?.currentThreadId ?? "";
-  const activeDisplayThreadId = activeSession?.threadId ?? activeWorkerThreadId;
-  const activeSessionBelongsToWorker = Boolean(activeSession && activeWorkerThreads.some((thread) => thread.threadId === activeSession.threadId));
+  const activeRuntimeSessionThreadId = activeRuntimeSession?.currentThreadId ?? "";
+  const activeDisplayThreadId = activeSession?.threadId ?? activeRuntimeSessionThreadId;
+  const activeThreadBelongsToSession = Boolean(activeSession && activeRuntimeSessionThreads.some((thread) => thread.threadId === activeSession.threadId));
   const activeCanSend = Boolean(
     activeSession
-    && activeSessionBelongsToWorker
-    && activeWorker?.online
+    && activeThreadBelongsToSession
+    && activeRuntimeSession?.online
     && (activeSession.input.trim() || activeSession.imageAttachments.length)
   ) && !activeSession?.running;
-  const activeCanSubmit = Boolean(activeSessionBelongsToWorker && (activeSession?.running || activeCanSend));
-  const workspaceEmptyMessage = activeWorker
-    ? activeWorker.online
-      ? activeWorker.currentThreadId ? "Loading thread" : "No current thread"
-      : "Worker recently disconnected"
-    : "No online or recently disconnected codexhub";
+  const activeCanSubmit = Boolean(activeThreadBelongsToSession && (activeSession?.running || activeCanSend));
+  const workspaceEmptyMessage = activeRuntimeSession
+    ? activeRuntimeSession.online
+      ? activeRuntimeSession.currentThreadId ? "Loading thread" : "No current thread"
+      : "Runtime session disconnected"
+    : "No runtime session";
   const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
   const activeThreadUsage = activeSession?.threadUsage
-    ?? activeWorkerThreads.find((thread) => thread.threadId === activeTabThreadId)?.threadUsage
+    ?? activeRuntimeSessionThreads.find((thread) => thread.threadId === activeTabThreadId)?.threadUsage
     ?? null;
   const renderComposerRuntimeControls = (mode: "inline" | "popover") => (
     <div className={`composerRuntimeControls ${mode}`} aria-label="Runtime usage and model">
@@ -497,12 +600,12 @@ const App = () => {
   useEffect(() => {
     void initialize();
     return () => {
-      workersEventSource.current?.close();
+      runtimeSessionsEventSource.current?.close();
       projectsEventSource.current?.close();
       for (const source of eventSources.current.values()) source.close();
-      if (workersReconnectTimer.current !== null) {
-        window.clearTimeout(workersReconnectTimer.current);
-        workersReconnectTimer.current = null;
+      if (runtimeSessionsReconnectTimer.current !== null) {
+        window.clearTimeout(runtimeSessionsReconnectTimer.current);
+        runtimeSessionsReconnectTimer.current = null;
       }
       if (projectsReconnectTimer.current !== null) {
         window.clearTimeout(projectsReconnectTimer.current);
@@ -517,48 +620,70 @@ const App = () => {
     if (!initialized) return;
     localStorage.setItem(storageKey, JSON.stringify({
       activeWorkspacePath,
-      activeWorkerId,
+      activeSessionId,
       selectedModel,
       selectedReasoning,
       messageDisplayMode,
       sidebarCollapsed,
-      collapsedWorkerGroups
+      collapsedSessionGroups
     }));
   }, [
     activeWorkspacePath,
-    activeWorkerId,
+    activeSessionId,
     selectedModel,
     selectedReasoning,
     messageDisplayMode,
     sidebarCollapsed,
-    collapsedWorkerGroups,
+    collapsedSessionGroups,
     initialized
   ]);
 
   useEffect(() => {
     if (!initialized) return;
-    if (!workers.length) {
-      if (activeWorkerId) setActiveWorkerId("");
+    setTaskDraft((current) => {
+      if (current.machineId && current.projectPath) return current;
+      const preferredMachine = onlineMachines.find(machineProjectLauncher)
+        ?? machines.find(machineProjectLauncher)
+        ?? onlineMachines[0]
+        ?? machines[0];
+      const preferredProject = preferredMachine
+        ? projectList.find((project) => project.machineId === preferredMachine.machineId)
+        : projectList[0];
+      const nextMachineId = current.machineId || preferredProject?.machineId || preferredMachine?.machineId || "";
+      const nextProjectPath = current.projectPath || preferredProject?.path || "";
+      if (nextMachineId === current.machineId && nextProjectPath === current.projectPath) return current;
+      return {
+        ...current,
+        machineId: nextMachineId,
+        projectPath: nextProjectPath
+      };
+    });
+  }, [initialized, machines, onlineMachines, projectList]);
+
+  useEffect(() => {
+    if (!initialized) return;
+    if (!runtimeSessions.length) {
+      if (activeSessionId) setActiveSessionId("");
       if (activeTabThreadId) setActiveTabThreadId("");
       return;
     }
 
-    const worker = activeWorker ?? workers[0];
-    if (!activeWorker) {
-      setActiveWorkerId(worker.workerId);
+    const session = activeRuntimeSession ?? runtimeSessions[0];
+    if (!activeRuntimeSession) {
+      setActiveSessionId(session.sessionId);
       return;
     }
 
-    setActiveWorkspacePath(worker.workingDirectory);
-    const threadIds = new Set((worker.threads ?? []).map((thread) => thread.threadId));
-    if (worker.currentThreadId) threadIds.add(worker.currentThreadId);
-    const activeTabThreadIdForWorker = activeTabThreadByWorker[worker.workerId];
-    const desiredThreadId = activeTabThreadIdForWorker && threadIds.has(activeTabThreadIdForWorker)
-      ? activeTabThreadIdForWorker
-      : worker.currentThreadId;
+    setActiveWorkspacePath(session.workingDirectory);
+    const threadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
+    if (session.currentThreadId) threadIds.add(session.currentThreadId);
+    const activeTabThreadIdForRuntimeSession = activeTabThreadBySession[session.sessionId];
+    const desiredThreadId = activeTabThreadIdForRuntimeSession && threadIds.has(activeTabThreadIdForRuntimeSession)
+      ? activeTabThreadIdForRuntimeSession
+      : session.currentThreadId;
 
-    if (activeTabThreadIdForWorker && !threadIds.has(activeTabThreadIdForWorker)) {
-      setActiveTabThreadByWorker(({ [worker.workerId]: _removed, ...rest }) => rest);
+    if (activeTabThreadIdForRuntimeSession && !threadIds.has(activeTabThreadIdForRuntimeSession)) {
+      setActiveTabThreadBySession(({ [session.sessionId]: _removed, ...rest }) => rest);
     }
 
     if (!desiredThreadId) {
@@ -568,7 +693,7 @@ const App = () => {
     if (activeTabThreadId !== desiredThreadId) {
       void openThread(desiredThreadId).catch(() => clearActiveThreadIfLatest(desiredThreadId));
     }
-  }, [activeTabThreadId, activeWorker, activeWorkerId, initialized, activeTabThreadByWorker, workers]);
+  }, [activeTabThreadId, activeRuntimeSession, activeSessionId, initialized, activeTabThreadBySession, runtimeSessions]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -634,21 +759,45 @@ const App = () => {
     return () => window.removeEventListener("keydown", stopOnEscape);
   }, [activeSession?.threadId, activeSession?.running]);
 
+  useEffect(() => {
+    const links: HTMLLinkElement[] = [];
+    for (const plugin of plugins) {
+      if (!plugin.enabled) continue;
+      for (const style of plugin.contributions?.web?.styles ?? []) {
+        if (!style.url) continue;
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = style.url;
+        link.dataset.codexhubPlugin = plugin.pluginId;
+        link.dataset.codexhubPluginAsset = style.path;
+        document.head.appendChild(link);
+        links.push(link);
+      }
+    }
+    return () => {
+      for (const link of links) link.remove();
+    };
+  }, [plugins]);
+
   const initialize = async () => {
-    const [health, workerData, projectData] = await Promise.all([
+    const [health, sessionData, projectData, sshHostData, sshConnectionData, pluginData, taskData] = await Promise.all([
       apiJson<{ defaultWorkingDirectory?: string | null } & SystemStatus>("/api/health"),
-      apiJson<{ workers?: WorkerSummary[] }>("/api/workers"),
-      apiJson<ProjectsPayload>("/api/projects")
+      apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions"),
+      apiJson<ProjectsPayload>("/api/projects"),
+      apiJson<{ hosts?: SshHost[] }>("/api/ssh/hosts").catch(() => ({ hosts: [] })),
+      apiJson<{ connections?: SshConnection[] }>("/api/ssh/connections").catch(() => ({ connections: [] })),
+      apiJson<{ plugins?: PluginSummary[] }>("/api/plugins").catch(() => ({ plugins: [] })),
+      apiJson<{ tasks?: LocalTask[] }>("/api/tasks").catch(() => ({ tasks: [] }))
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
-    const loadedWorkers = normalizeWorkers(workerData.workers);
+    const loadedRuntimeSessions = normalizeRuntimeSessions(sessionData.sessions);
     const loadedMachines = normalizeMachines(projectData.machines);
     const loadedProjects = normalizeProjects(projectData.projects);
     const saved = readStoredUiState();
-    const savedWorker = saved?.activeWorkerId
-      ? loadedWorkers.find((worker) => worker.workerId === saved.activeWorkerId)
+    const savedRuntimeSession = saved?.activeSessionId
+      ? loadedRuntimeSessions.find((session) => session.sessionId === saved.activeSessionId)
       : undefined;
-    const initialWorker = savedWorker ?? loadedWorkers[0];
+    const initialRuntimeSession = savedRuntimeSession ?? loadedRuntimeSessions[0];
 
     setSystemStatus({
       model: health.model,
@@ -660,17 +809,21 @@ const App = () => {
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
-    setCollapsedWorkerGroups(saved?.collapsedWorkerGroups ?? {});
+    setCollapsedSessionGroups(saved?.collapsedSessionGroups ?? {});
     setMachines(loadedMachines);
     setProjects(loadedProjects);
-    setWorkers(loadedWorkers);
-    setThreadOrderByWorker((current) => mergeThreadOrderByWorker(current, loadedWorkers));
-    subscribeWorkers(0);
+    setSshHosts(Array.isArray(sshHostData.hosts) ? sshHostData.hosts : []);
+    setSshConnections(Array.isArray(sshConnectionData.connections) ? sshConnectionData.connections : []);
+    setPlugins(normalizePlugins(pluginData.plugins));
+    setTasks(normalizeTasks(taskData.tasks));
+    setRuntimeSessions(loadedRuntimeSessions);
+    setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, loadedRuntimeSessions));
+    subscribeRuntimeSessions(0);
     subscribeProjects(0);
-    if (initialWorker) {
-      setActiveWorkerId(initialWorker.workerId);
-      setActiveWorkspacePath(initialWorker.workingDirectory);
-      const initialThreadId = initialWorker.currentThreadId;
+    if (initialRuntimeSession) {
+      setActiveSessionId(initialRuntimeSession.sessionId);
+      setActiveWorkspacePath(initialRuntimeSession.workingDirectory);
+      const initialThreadId = initialRuntimeSession.currentThreadId;
       if (initialThreadId) {
         await openThread(initialThreadId).catch(() => clearActiveThreadIfLatest(initialThreadId));
       }
@@ -678,17 +831,17 @@ const App = () => {
     setInitialized(true);
   };
 
-  function clearWorkersReconnectTimer() {
-    if (workersReconnectTimer.current === null) return;
-    window.clearTimeout(workersReconnectTimer.current);
-    workersReconnectTimer.current = null;
+  function clearRuntimeSessionsReconnectTimer() {
+    if (runtimeSessionsReconnectTimer.current === null) return;
+    window.clearTimeout(runtimeSessionsReconnectTimer.current);
+    runtimeSessionsReconnectTimer.current = null;
   }
 
-  function scheduleWorkersReconnect() {
-    clearWorkersReconnectTimer();
-    workersReconnectTimer.current = window.setTimeout(() => {
-      workersReconnectTimer.current = null;
-      subscribeWorkers(workersLastSeq.current);
+  function scheduleRuntimeSessionsReconnect() {
+    clearRuntimeSessionsReconnectTimer();
+    runtimeSessionsReconnectTimer.current = window.setTimeout(() => {
+      runtimeSessionsReconnectTimer.current = null;
+      subscribeRuntimeSessions(runtimeSessionsLastSeq.current);
     }, 1000);
   }
 
@@ -706,26 +859,26 @@ const App = () => {
     }, 1000);
   }
 
-  function subscribeWorkers(after: number) {
-    clearWorkersReconnectTimer();
-    workersEventSource.current?.close();
-    const subscribedAfter = Math.max(after, workersLastSeq.current);
-    const source = new EventSource(`/api/workers/events?after=${subscribedAfter}`);
-    source.addEventListener("workers", (event: MessageEvent) => {
-      const payload = JSON.parse(event.data) as WorkerStreamEvent;
-      workersLastSeq.current = Math.max(workersLastSeq.current, payload.seq);
-      const nextWorkers = normalizeWorkers(payload.workers);
-      setWorkers(nextWorkers);
-      setThreadOrderByWorker((current) => mergeThreadOrderByWorker(current, nextWorkers));
+  function subscribeRuntimeSessions(after: number) {
+    clearRuntimeSessionsReconnectTimer();
+    runtimeSessionsEventSource.current?.close();
+    const subscribedAfter = Math.max(after, runtimeSessionsLastSeq.current);
+    const source = new EventSource(`/api/sessions/events?after=${subscribedAfter}`);
+    source.addEventListener("sessions", (event: MessageEvent) => {
+      const payload = JSON.parse(event.data) as RuntimeSessionStreamEvent;
+      runtimeSessionsLastSeq.current = Math.max(runtimeSessionsLastSeq.current, payload.seq);
+      const nextRuntimeSessions = normalizeRuntimeSessions(payload.sessions);
+      setRuntimeSessions(nextRuntimeSessions);
+      setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, nextRuntimeSessions));
     });
     source.addEventListener("error", (event) => {
       if (event instanceof MessageEvent) return;
-      if (workersEventSource.current !== source) return;
+      if (runtimeSessionsEventSource.current !== source) return;
       source.close();
-      workersEventSource.current = null;
-      scheduleWorkersReconnect();
+      runtimeSessionsEventSource.current = null;
+      scheduleRuntimeSessionsReconnect();
     });
-    workersEventSource.current = source;
+    runtimeSessionsEventSource.current = source;
   }
 
   function subscribeProjects(after: number) {
@@ -748,6 +901,183 @@ const App = () => {
     });
     projectsEventSource.current = source;
   }
+
+  const refreshSshConnections = async () => {
+    const payload = await apiJson<{ connections?: SshConnection[] }>("/api/ssh/connections");
+    setSshConnections(Array.isArray(payload.connections) ? payload.connections : []);
+  };
+
+  const connectSshHost = async (host: string, name?: string) => {
+    const trimmedHost = host.trim();
+    if (!trimmedHost) return;
+    setSshError("");
+    setSshConnectingHost(trimmedHost);
+    try {
+      const payload = await apiJson<{ connection?: SshConnection }>("/api/ssh/connect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ host: trimmedHost, name })
+      });
+      if (payload.connection) {
+        setSshConnections((current) => [payload.connection!, ...current.filter((item) => item.connectionId !== payload.connection!.connectionId)]);
+      }
+      await refreshSshConnections().catch(() => undefined);
+      setSshManualHost("");
+    } catch (error) {
+      setSshError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSshConnectingHost((current) => current === trimmedHost ? "" : current);
+    }
+  };
+
+  const copyRegisteredCommand = async () => {
+    await navigator.clipboard?.writeText(registeredCommand).catch(() => undefined);
+    setRegisteredCommandCopied(true);
+    window.setTimeout(() => setRegisteredCommandCopied(false), 1200);
+  };
+
+  const refreshRuntimeSessions = async () => {
+    const freshRuntimeSessions = await apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions")
+      .then((data) => normalizeRuntimeSessions(data.sessions));
+    setRuntimeSessions(freshRuntimeSessions);
+    setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, freshRuntimeSessions));
+    return freshRuntimeSessions;
+  };
+
+  const refreshTasks = async () => {
+    const payload = await apiJson<{ tasks?: LocalTask[] }>("/api/tasks");
+    setTasks(normalizeTasks(payload.tasks));
+  };
+
+  const updateTaskDraftMachine = (machineId: string) => {
+    const nextProject = projectList.find((project) => project.machineId === machineId);
+    setTaskDraft((current) => ({
+      ...current,
+      machineId,
+      projectPath: nextProject?.path ?? "",
+      threadId: ""
+    }));
+  };
+
+  const updateTaskDraftProject = (projectPath: string) => {
+    setTaskDraft((current) => ({
+      ...current,
+      projectPath,
+      threadId: ""
+    }));
+  };
+
+  const createTask = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = taskDraft.name.trim() || "Scheduled task";
+    const schedule = taskDraft.schedule.trim();
+    const machineId = taskDraft.machineId.trim();
+    const projectPath = taskDraft.projectPath.trim();
+    const input = taskDraft.input.trim();
+    const threadId = taskDraft.threadId.trim();
+    if (!machineId || !projectPath || !schedule || !input) {
+      setTaskError("Missing task fields");
+      return;
+    }
+    const project = projectList.find((item) => item.machineId === machineId && item.path === projectPath);
+    setTaskBusyId("create");
+    setTaskError("");
+    try {
+      const payload = await apiJson<{ task?: LocalTask }>("/api/tasks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name,
+          enabled: taskDraft.enabled,
+          schedule,
+          machineId,
+          projectId: project?.projectId,
+          projectPath,
+          input,
+          ...(threadId ? { threadId } : {})
+        })
+      });
+      if (payload.task) {
+        setTasks((current) => normalizeTasks([payload.task!, ...current.filter((task) => task.taskId !== payload.task!.taskId)]));
+      } else {
+        await refreshTasks();
+      }
+      setTaskDraft((current) => ({
+        ...defaultTaskDraft(),
+        machineId,
+        projectPath,
+        schedule: current.schedule,
+        input: current.input
+      }));
+      setTaskFormOpen(false);
+    } catch (error) {
+      setTaskError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTaskBusyId((current) => current === "create" ? "" : current);
+    }
+  };
+
+  const patchTask = async (taskId: string, patch: Partial<Pick<LocalTask, "enabled" | "name" | "schedule" | "machineId" | "projectId" | "projectPath" | "threadId" | "input">>) => {
+    setTaskBusyId(taskId);
+    setTaskError("");
+    try {
+      const payload = await apiJson<{ task?: LocalTask }>(`/api/tasks/${encodeURIComponent(taskId)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      if (payload.task) {
+        setTasks((current) => normalizeTasks(current.map((task) => task.taskId === taskId ? payload.task! : task)));
+      } else {
+        await refreshTasks();
+      }
+    } catch (error) {
+      setTaskError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTaskBusyId((current) => current === taskId ? "" : current);
+    }
+  };
+
+  const deleteTask = async (taskId: string) => {
+    setTaskBusyId(taskId);
+    setTaskError("");
+    try {
+      await apiJson<{ ok: boolean }>(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+      setTasks((current) => current.filter((task) => task.taskId !== taskId));
+    } catch (error) {
+      setTaskError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTaskBusyId((current) => current === taskId ? "" : current);
+    }
+  };
+
+  const runTaskNow = async (task: LocalTask) => {
+    setTaskBusyId(task.taskId);
+    setTaskError("");
+    try {
+      const payload = await apiJson<{ task?: LocalTask; threadId?: string; sessionId?: string }>(
+        `/api/tasks/${encodeURIComponent(task.taskId)}/run`,
+        { method: "POST" }
+      );
+      if (payload.task) {
+        setTasks((current) => normalizeTasks(current.map((item) => item.taskId === task.taskId ? payload.task! : item)));
+      }
+      await refreshTasks().catch(() => undefined);
+      const freshRuntimeSessions = await refreshRuntimeSessions().catch(() => runtimeSessions);
+      if (payload.sessionId) {
+        const session = freshRuntimeSessions.find((item) => item.sessionId === payload.sessionId);
+        if (session) setActiveSessionId(session.sessionId);
+      }
+      if (payload.threadId) {
+        await openThread(payload.threadId).catch(() => clearActiveThreadIfLatest(payload.threadId!));
+      }
+    } catch (error) {
+      setTaskError(error instanceof Error ? error.message : String(error));
+      await refreshTasks().catch(() => undefined);
+    } finally {
+      setTaskBusyId((current) => current === task.taskId ? "" : current);
+    }
+  };
 
   function clearThreadReconnectTimer(threadId: string) {
     const timer = threadReconnectTimers.current.get(threadId);
@@ -785,9 +1115,9 @@ const App = () => {
     const open = (async () => {
       const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
       const session: ChatSession = { ...thread, input: "", imageAttachments: [] };
-      const workerId = thread.runtime.workerId;
-      if (workerId) {
-        setThreadOrderByWorker((current) => appendThreadOrder(current, workerId, thread.threadId));
+      const sessionId = thread.runtime.sessionId;
+      if (sessionId) {
+        setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
       }
       setSessions((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
@@ -873,10 +1203,10 @@ const App = () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId })
       });
-      const workerId = thread.runtime.workerId ?? activeWorker?.workerId;
-      if (workerId) {
-        setActiveTabThreadByWorker((current) => ({ ...current, [workerId]: thread.threadId }));
-        setThreadOrderByWorker((current) => appendThreadOrder(current, workerId, thread.threadId));
+      const sessionId = thread.runtime.sessionId ?? activeRuntimeSession?.sessionId;
+      if (sessionId) {
+        setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
+        setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
       }
       await openThread(thread.threadId);
     } catch (error) {
@@ -1020,15 +1350,15 @@ const App = () => {
     }));
   };
 
-  const toggleWorkerGroup = (groupKey: string) => {
-    setCollapsedWorkerGroups((current) => ({ ...current, [groupKey]: !current[groupKey] }));
+  const toggleSessionGroup = (groupKey: string) => {
+    setCollapsedSessionGroups((current) => ({ ...current, [groupKey]: !current[groupKey] }));
   };
 
-  const selectWorker = async (worker: WorkerSummary) => {
-    setActiveWorkerId(worker.workerId);
-    setActiveWorkspacePath(worker.workingDirectory);
-    const activeTabThreadIdForWorker = activeTabThreadByWorker[worker.workerId];
-    const targetThreadId = activeTabThreadIdForWorker ?? worker.currentThreadId;
+  const selectRuntimeSession = async (session: RuntimeSession) => {
+    setActiveSessionId(session.sessionId);
+    setActiveWorkspacePath(session.workingDirectory);
+    const activeTabThreadIdForRuntimeSession = activeTabThreadBySession[session.sessionId];
+    const targetThreadId = activeTabThreadIdForRuntimeSession ?? session.currentThreadId;
     if (targetThreadId) {
       await openThread(targetThreadId).catch(() => clearActiveThreadIfLatest(targetThreadId));
     } else {
@@ -1038,9 +1368,9 @@ const App = () => {
 
   const selectProject = async (project: ProjectSummary) => {
     setActiveWorkspacePath(project.path);
-    const worker = project.workers.find((item) => item.online) ?? project.workers[0];
-    if (worker?.online) {
-      await selectWorker(worker);
+    const session = project.sessions.find((item) => item.online) ?? project.sessions[0];
+    if (session?.online) {
+      await selectRuntimeSession(session);
       return;
     }
     await openProject(project.path, project.machineId);
@@ -1115,24 +1445,24 @@ const App = () => {
     if (opened) setProjectPicker(null);
   };
 
-  const loadThreadPickerCandidates = async (workerId: string) => {
-    setThreadPicker((current) => current && current.workerId === workerId ? {
+  const loadThreadPickerCandidates = async (sessionId: string) => {
+    setThreadPicker((current) => current && current.sessionId === sessionId ? {
       ...current,
       loading: true,
       error: ""
     } : current);
     try {
       const payload = await apiJson<{ threads?: CodexThreadCandidate[] }>(
-        `/api/workers/${encodeURIComponent(workerId)}/thread-candidates?limit=50`
+        `/api/sessions/${encodeURIComponent(sessionId)}/thread-candidates?limit=50`
       );
-      setThreadPicker((current) => current && current.workerId === workerId ? {
+      setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
         loading: false,
         candidates: Array.isArray(payload.threads) ? payload.threads : [],
         error: ""
       } : current);
     } catch (error) {
-      setThreadPicker((current) => current && current.workerId === workerId ? {
+      setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
         loading: false,
         error: error instanceof Error ? error.message : String(error)
@@ -1140,27 +1470,27 @@ const App = () => {
     }
   };
 
-  const openThreadPicker = (worker: WorkerSummary) => {
-    setActiveWorkerId(worker.workerId);
-    setActiveWorkspacePath(worker.workingDirectory);
+  const openThreadPicker = (session: RuntimeSession) => {
+    setActiveSessionId(session.sessionId);
+    setActiveWorkspacePath(session.workingDirectory);
     setThreadPicker({
-      workerId: worker.workerId,
+      sessionId: session.sessionId,
       loading: true,
       error: "",
       candidates: [],
       acting: null
     });
-    void loadThreadPickerCandidates(worker.workerId);
+    void loadThreadPickerCandidates(session.sessionId);
   };
 
-  const activateWorkerThread = async (workerId: string, threadId: string) => {
-    const worker = workers.find((item) => item.workerId === workerId);
-    if (worker) {
-      setActiveWorkerId(worker.workerId);
-      setActiveWorkspacePath(worker.workingDirectory);
+  const activateRuntimeSessionThread = async (sessionId: string, threadId: string) => {
+    const session = runtimeSessions.find((item) => item.sessionId === sessionId);
+    if (session) {
+      setActiveSessionId(session.sessionId);
+      setActiveWorkspacePath(session.workingDirectory);
     }
-    setActiveTabThreadByWorker((current) => ({ ...current, [workerId]: threadId }));
-    setThreadOrderByWorker((current) => appendThreadOrder(current, workerId, threadId));
+    setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
+    setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, threadId));
     if (sessions.some((session) => session.threadId === threadId)) {
       latestRequestedThreadId.current = threadId;
       closeThreadSubscriptionsExcept(threadId);
@@ -1170,30 +1500,30 @@ const App = () => {
     await openThread(threadId);
   };
 
-  const threadIsOpenForWorker = (workerId: string, threadId: string) => {
-    const worker = workers.find((item) => item.workerId === workerId);
+  const threadIsOpenForSession = (sessionId: string, threadId: string) => {
+    const session = runtimeSessions.find((item) => item.sessionId === sessionId);
     return Boolean(
-      worker?.currentThreadId === threadId
-      || worker?.threads?.some((thread) => thread.threadId === threadId)
-      || (threadOrderByWorker[workerId] ?? []).includes(threadId)
+      session?.currentThreadId === threadId
+      || session?.threads?.some((thread) => thread.threadId === threadId)
+      || (threadOrderBySession[sessionId] ?? []).includes(threadId)
       || sessions.some((session) => session.threadId === threadId)
     );
   };
 
-  const createWorkerThread = async () => {
+  const createRuntimeSessionThread = async () => {
     if (!threadPicker) return;
-    const workerId = threadPicker.workerId;
-    setThreadPicker((current) => current && current.workerId === workerId ? { ...current, acting: "new", error: "" } : current);
+    const sessionId = threadPicker.sessionId;
+    setThreadPicker((current) => current && current.sessionId === sessionId ? { ...current, acting: "new", error: "" } : current);
     try {
-      const thread = await apiJson<ThreadDetail>(`/api/workers/${encodeURIComponent(workerId)}/threads`, {
+      const thread = await apiJson<ThreadDetail>(`/api/sessions/${encodeURIComponent(sessionId)}/threads`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "new" })
       });
       setThreadPicker(null);
-      await activateWorkerThread(workerId, thread.threadId);
+      await activateRuntimeSessionThread(sessionId, thread.threadId);
     } catch (error) {
-      setThreadPicker((current) => current && current.workerId === workerId ? {
+      setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
         acting: null,
         error: error instanceof Error ? error.message : String(error)
@@ -1203,27 +1533,27 @@ const App = () => {
 
   const chooseThreadCandidate = async (candidate: CodexThreadCandidate) => {
     if (!threadPicker) return;
-    const workerId = threadPicker.workerId;
-    if (threadIsOpenForWorker(workerId, candidate.threadId)) {
+    const sessionId = threadPicker.sessionId;
+    if (threadIsOpenForSession(sessionId, candidate.threadId)) {
       setThreadPicker(null);
-      await activateWorkerThread(workerId, candidate.threadId);
+      await activateRuntimeSessionThread(sessionId, candidate.threadId);
       return;
     }
-    setThreadPicker((current) => current && current.workerId === workerId ? {
+    setThreadPicker((current) => current && current.sessionId === sessionId ? {
       ...current,
       acting: candidate.threadId,
       error: ""
     } : current);
     try {
-      const thread = await apiJson<ThreadDetail>(`/api/workers/${encodeURIComponent(workerId)}/threads`, {
+      const thread = await apiJson<ThreadDetail>(`/api/sessions/${encodeURIComponent(sessionId)}/threads`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "resume", threadId: candidate.threadId })
       });
       setThreadPicker(null);
-      await activateWorkerThread(workerId, thread.threadId);
+      await activateRuntimeSessionThread(sessionId, thread.threadId);
     } catch (error) {
-      setThreadPicker((current) => current && current.workerId === workerId ? {
+      setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
         acting: null,
         error: error instanceof Error ? error.message : String(error)
@@ -1239,7 +1569,7 @@ const App = () => {
     setOpeningProjectKey(key);
     try {
       const payload = await apiJson<ProjectsPayload & {
-        result?: { workerId: string; threadId: string; cwd: string };
+        result?: { sessionId: string; threadId: string; cwd: string };
       }>("/api/projects/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1248,15 +1578,16 @@ const App = () => {
       setMachines(normalizeMachines(payload.machines));
       setProjects(normalizeProjects(payload.projects));
       setActiveWorkspacePath(payload.result?.cwd ?? trimmedPath);
-      const freshWorkers = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers")
-        .then((data) => normalizeWorkers(data.workers))
-        .catch(() => workers);
-      setWorkers(freshWorkers);
-      setThreadOrderByWorker((current) => mergeThreadOrderByWorker(current, freshWorkers));
-      const worker = payload.result?.workerId
-        ? freshWorkers.find((item) => item.workerId === payload.result?.workerId)
+      const freshRuntimeSessions = await apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions")
+        .then((data) => normalizeRuntimeSessions(data.sessions))
+        .catch(() => runtimeSessions);
+      setRuntimeSessions(freshRuntimeSessions);
+      setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, freshRuntimeSessions));
+      const sessionId = payload.result?.sessionId;
+      const session = sessionId
+        ? freshRuntimeSessions.find((item) => item.sessionId === sessionId)
         : undefined;
-      if (worker) await selectWorker(worker);
+      if (session) await selectRuntimeSession(session);
       else if (payload.result?.threadId) await openThread(payload.result.threadId).catch(() => clearActiveThreadIfLatest(payload.result!.threadId));
       return true;
     } catch (error) {
@@ -1268,9 +1599,9 @@ const App = () => {
     }
   };
 
-  const switchWorkerThread = async (threadId: string) => {
-    if (!activeWorker || threadId === activeTabThreadId) return;
-    setActiveTabThreadByWorker((current) => ({ ...current, [activeWorker.workerId]: threadId }));
+  const switchRuntimeSessionThread = async (threadId: string) => {
+    if (!activeRuntimeSession || threadId === activeTabThreadId) return;
+    setActiveTabThreadBySession((current) => ({ ...current, [activeRuntimeSession.sessionId]: threadId }));
     await openThread(threadId).catch(() => clearActiveThreadIfLatest(threadId));
   };
 
@@ -1280,15 +1611,25 @@ const App = () => {
   const projectPickerOpening = projectPicker
     ? openingProjectKey === `${projectPicker.machineId}:${projectPicker.path.trim()}`
     : false;
-  const threadPickerWorker = threadPicker
-    ? workers.find((worker) => worker.workerId === threadPicker.workerId)
+  const threadPickerRuntimeSession = threadPicker
+    ? runtimeSessions.find((session) => session.sessionId === threadPicker.sessionId)
     : undefined;
   const threadPickerOpenThreadIds = new Set<string>([
-    ...(threadPickerWorker?.threads?.map((thread) => thread.threadId) ?? []),
-    ...(threadPickerWorker?.currentThreadId ? [threadPickerWorker.currentThreadId] : []),
-    ...(threadPicker ? threadOrderByWorker[threadPicker.workerId] ?? [] : []),
+    ...(threadPickerRuntimeSession?.threads?.map((thread) => thread.threadId) ?? []),
+    ...(threadPickerRuntimeSession?.currentThreadId ? [threadPickerRuntimeSession.currentThreadId] : []),
+    ...(threadPicker ? threadOrderBySession[threadPicker.sessionId] ?? [] : []),
     ...sessions.map((session) => session.threadId)
   ]);
+  const taskMachineOptions = uniqueMachines(machines).filter(machineProjectLauncher);
+  const taskProjectOptions = projectList.filter((project) => !taskDraft.machineId || project.machineId === taskDraft.machineId);
+  const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
+  const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject);
+  const canCreateTask = Boolean(
+    taskDraft.machineId.trim()
+    && taskDraft.projectPath.trim()
+    && taskDraft.schedule.trim()
+    && taskDraft.input.trim()
+  );
 
   return (
     <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
@@ -1297,7 +1638,7 @@ const App = () => {
           type="button"
           className="sidebarScrim"
           onClick={() => setSidebarCollapsed(true)}
-          aria-label="Hide workers"
+          aria-label="Hide sessions"
         />
       ) : null}
       <aside className="sidebar">
@@ -1308,13 +1649,113 @@ const App = () => {
           </div>
         </div>
 
+        <section className="connectionPanel">
+          <div className="connectionPanelHeader">
+            <h2>Connections</h2>
+            <span>{onlineMachines.length} online</span>
+          </div>
+          <div className="connectionTabs" role="tablist" aria-label="Connection type">
+            <button
+              type="button"
+              className={connectionMode === "local" ? "active" : ""}
+              onClick={() => setConnectionMode("local")}
+            >
+              This Computer
+            </button>
+            <button
+              type="button"
+              className={connectionMode === "ssh" ? "active" : ""}
+              onClick={() => setConnectionMode("ssh")}
+            >
+              SSH
+            </button>
+            <button
+              type="button"
+              className={connectionMode === "registered" ? "active" : ""}
+              onClick={() => setConnectionMode("registered")}
+            >
+              Registered
+            </button>
+          </div>
+          {connectionMode === "local" ? (
+            <div className="connectionList">
+              {localMachines.length === 0 ? (
+                <div className="connectionEmpty">No machines</div>
+              ) : localMachines.map((machine) => (
+                <div className={`connectionRow ${machine.online ? "online" : "offline"}`} key={machine.machineId}>
+                  <span title={machine.name ?? machine.hostname}>{machine.name ?? machine.hostname}</span>
+                  <strong>{machine.type}</strong>
+                  <code>{machine.online ? "online" : "offline"}</code>
+                </div>
+              ))}
+            </div>
+          ) : connectionMode === "ssh" ? (
+            <div className="connectionList">
+              <form className="sshManualForm" onSubmit={(event) => {
+                event.preventDefault();
+                void connectSshHost(sshManualHost, sshManualHost);
+              }}>
+                <input
+                  value={sshManualHost}
+                  onChange={(event) => setSshManualHost(event.target.value)}
+                  placeholder="user@host"
+                  spellCheck={false}
+                />
+                <button type="submit" disabled={!sshManualHost.trim() || sshConnectingHost === sshManualHost.trim()}>
+                  {sshConnectingHost === sshManualHost.trim() ? "..." : "Connect"}
+                </button>
+              </form>
+              {sshHosts.length === 0 ? (
+                <div className="connectionEmpty">No SSH hosts</div>
+              ) : sshHosts.map((host) => {
+                const existing = sshConnections.find((connection) => connection.host === host.alias && connection.status !== "exited");
+                const connecting = sshConnectingHost === host.alias;
+                return (
+                  <div className={`connectionRow ${existing ? "online" : ""}`} key={host.alias}>
+                    <button
+                      type="button"
+                      className="connectionHostButton"
+                      title={host.hostName ?? host.alias}
+                      onClick={() => void connectSshHost(host.alias, host.alias)}
+                      disabled={Boolean(existing) || connecting}
+                    >
+                      <span>{host.alias}</span>
+                      <code>{sshHostMeta(host)}</code>
+                    </button>
+                    <strong>{existing ? existing.status : connecting ? "starting" : "ready"}</strong>
+                  </div>
+                );
+              })}
+              {sshError ? <div className="projectOpenError">{sshError}</div> : null}
+            </div>
+          ) : (
+            <div className="connectionList">
+              <div className="registeredCommand">
+                <code title={registeredCommand}>{registeredCommand}</code>
+                <button type="button" onClick={() => void copyRegisteredCommand()}>
+                  {registeredCommandCopied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              {registeredMachines.length === 0 ? (
+                <div className="connectionEmpty">No registered machines</div>
+              ) : registeredMachines.map((machine) => (
+                <div className={`connectionRow ${machine.online ? "online" : "offline"}`} key={machine.machineId}>
+                  <span title={machine.name ?? machine.hostname}>{machine.name ?? machine.hostname}</span>
+                  <strong>{machine.online ? "online" : "offline"}</strong>
+                  <code title={machine.machineId}>{machine.machineId}</code>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         <section className="projectPanel">
           <div className="projectPanelHeader">
             <h2>Projects</h2>
             <span>{onlineMachines.length} machines</span>
           </div>
           {projectGroups.length === 0 ? (
-            <div className="proxyWorkerEmpty">No machines</div>
+            <div className="runtimeSessionEmpty">No machines</div>
           ) : (
             <div className="projectList">
               {projectGroups.map((machine) => (
@@ -1328,7 +1769,8 @@ const App = () => {
                       type="button"
                       className="projectAddButton"
                       onClick={() => openProjectPicker(machine)}
-                      disabled={!machine.online}
+                      disabled={!machine.online || !machine.projectLauncher}
+                      title={machine.projectLauncher ? undefined : "Session host"}
                     >
                       Add Project
                     </button>
@@ -1336,7 +1778,7 @@ const App = () => {
                       <div className="projectEmptyRow">No projects</div>
                     ) : machine.projects.map((project) => {
                       const projectKey = `${project.machineId}:${project.path}`;
-                      const active = project.workers.some((worker) => worker.workerId === activeWorkerId);
+                      const active = project.sessions.some((session) => session.sessionId === activeSessionId);
                       const statusLabel = projectStatusLabel(project);
                       const threadTitle = project.threads[0]?.title ?? project.storedThreads[0]?.title ?? "No conversations";
                       return (
@@ -1361,65 +1803,212 @@ const App = () => {
           )}
         </section>
 
-        <section className="proxyWorkers expanded">
-          <h2>Codex Workers</h2>
-          {workers.length === 0 ? (
-            <div className="proxyWorkerEmpty">No online or recently disconnected codexhub</div>
+        <section className="taskPanel">
+          <div className="taskPanelHeader">
+            <h2>Tasks</h2>
+            <button type="button" onClick={() => setTaskFormOpen((open) => !open)}>
+              {taskFormOpen ? "Close" : "New"}
+            </button>
+          </div>
+          {tasks.length === 0 ? (
+            <div className="taskEmpty">No tasks</div>
           ) : (
-            <div className="proxyWorkerList">
-              {workerGroups.map((device) => {
-                const deviceHasActiveWorker = groupHasWorker(device, activeWorkerId);
-                const deviceCollapsed = Boolean(collapsedWorkerGroups[device.key] && !deviceHasActiveWorker);
+            <div className="taskList">
+              {tasks.map((task) => {
+                const busy = taskBusyId === task.taskId;
                 return (
-                  <section className="proxyWorkerDeviceGroup" key={device.key}>
+                  <div className={`taskRow ${task.enabled ? "enabled" : "paused"}`} key={task.taskId}>
+                    <div className="taskRowHeader">
+                      <span title={task.name}>{task.name}</span>
+                      <strong className={`taskStatus ${task.lastStatus ?? "idle"}`}>
+                        {taskStatusLabel(task)}
+                      </strong>
+                    </div>
+                    <code title={task.schedule}>{task.schedule}</code>
+                    <em title={taskTargetTitle(task, projectList, machines)}>{taskTargetLabel(task, projectList, machines)}</em>
+                    {task.lastError ? <small title={task.lastError}>{task.lastError}</small> : null}
+                    <div className="taskActions">
+                      <button
+                        type="button"
+                        className="taskRunButton"
+                        onClick={() => void runTaskNow(task)}
+                        disabled={busy}
+                      >
+                        {busy ? "..." : "Run"}
+                      </button>
+                      <Switch
+                        size="small"
+                        checked={task.enabled}
+                        onChange={(checked) => void patchTask(task.taskId, { enabled: checked })}
+                        disabled={busy}
+                        aria-label={task.enabled ? "Disable task" : "Enable task"}
+                      />
+                      <button
+                        type="button"
+                        className="taskDeleteButton"
+                        onClick={() => void deleteTask(task.taskId)}
+                        disabled={busy}
+                        aria-label={`Delete ${task.name}`}
+                      >
+                        x
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {taskFormOpen ? (
+            <form className="taskForm" onSubmit={createTask}>
+              <label className="taskField">
+                <span>Name</span>
+                <input
+                  value={taskDraft.name}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="daily-summary"
+                />
+              </label>
+              <label className="taskField">
+                <span>Machine</span>
+                <select
+                  value={taskDraft.machineId}
+                  onChange={(event) => updateTaskDraftMachine(event.target.value)}
+                  disabled={!taskMachineOptions.length}
+                >
+                  <option value="">Machine</option>
+                  {taskMachineOptions.map((machine) => (
+                    <option value={machine.machineId} key={machine.machineId}>
+                      {machine.name ?? machine.hostname}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="taskField">
+                <span>Project</span>
+                <select
+                  value={taskDraft.projectPath}
+                  onChange={(event) => updateTaskDraftProject(event.target.value)}
+                  disabled={!taskProjectOptions.length}
+                >
+                  <option value="">Project</option>
+                  {taskProjectOptions.map((project) => (
+                    <option value={project.path} key={`${project.machineId}:${project.path}`}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="taskField">
+                <span>Thread</span>
+                <select
+                  value={taskDraft.threadId}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, threadId: event.target.value }))}
+                  disabled={!selectedTaskProject}
+                >
+                  <option value="">Current thread</option>
+                  {taskThreadOptions.map((thread) => (
+                    <option value={thread.threadId} key={thread.threadId}>
+                      {thread.title || shortId(thread.threadId)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="taskField">
+                <span>Schedule</span>
+                <input
+                  value={taskDraft.schedule}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, schedule: event.target.value }))}
+                  placeholder="0 9 * * *"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="taskField">
+                <span>Prompt</span>
+                <textarea
+                  value={taskDraft.input}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, input: event.target.value }))}
+                  rows={3}
+                  placeholder="检查这个项目最近的变更，给我总结风险和下一步。"
+                />
+              </label>
+              <div className="taskFormActions">
+                <label className="taskEnabledControl">
+                  <Switch
+                    size="small"
+                    checked={taskDraft.enabled}
+                    onChange={(checked) => setTaskDraft((current) => ({ ...current, enabled: checked }))}
+                    aria-label={taskDraft.enabled ? "Disable new task" : "Enable new task"}
+                  />
+                  <span>Enabled</span>
+                </label>
+                <button type="submit" disabled={!canCreateTask || taskBusyId === "create"}>
+                  {taskBusyId === "create" ? "Saving" : "Save"}
+                </button>
+              </div>
+            </form>
+          ) : null}
+          {taskError ? <div className="projectOpenError">{taskError}</div> : null}
+        </section>
+
+        <section className="runtimeSessionsPanel expanded">
+          <h2>Runtime Sessions</h2>
+          {runtimeSessions.length === 0 ? (
+            <div className="runtimeSessionEmpty">No runtime sessions</div>
+          ) : (
+            <div className="runtimeSessionList">
+              {runtimeSessionGroups.map((device) => {
+                const deviceHasActiveRuntimeSession = groupHasSession(device, activeSessionId);
+                const deviceCollapsed = Boolean(collapsedSessionGroups[device.key] && !deviceHasActiveRuntimeSession);
+                return (
+                  <section className="runtimeSessionDeviceGroup" key={device.key}>
                     <button
                       type="button"
-                      className="proxyWorkerGroupToggle device"
-                      title={`${device.label} (${formatWorkerGroupCounts(device.counts)})`}
+                      className="runtimeSessionGroupToggle device"
+                      title={`${device.label} (${formatRuntimeSessionGroupCounts(device.counts)})`}
                       aria-expanded={!deviceCollapsed}
-                      onClick={() => toggleWorkerGroup(device.key)}
+                      onClick={() => toggleSessionGroup(device.key)}
                     >
-                      <span className={`proxyWorkerGroupChevron ${deviceCollapsed ? "collapsed" : ""}`} aria-hidden="true">&gt;</span>
-                      <span className="proxyWorkerDeviceHeader">{device.label}</span>
-                      <span className="proxyWorkerGroupCount">{formatWorkerGroupCounts(device.counts)}</span>
+                      <span className={`runtimeSessionGroupChevron ${deviceCollapsed ? "collapsed" : ""}`} aria-hidden="true">&gt;</span>
+                      <span className="runtimeSessionDeviceHeader">{device.label}</span>
+                      <span className="runtimeSessionGroupCount">{formatRuntimeSessionGroupCounts(device.counts)}</span>
                     </button>
                     {!deviceCollapsed ? device.folders.map((folder) => {
-                      const folderHasActiveWorker = folderHasWorker(folder, activeWorkerId);
-                      const folderCollapsed = Boolean(collapsedWorkerGroups[folder.key] && !folderHasActiveWorker);
+                      const folderHasActiveRuntimeSession = folderHasSession(folder, activeSessionId);
+                      const folderCollapsed = Boolean(collapsedSessionGroups[folder.key] && !folderHasActiveRuntimeSession);
                       return (
-                        <section className="proxyWorkerFolderGroup" key={folder.key}>
+                        <section className="runtimeSessionFolderGroup" key={folder.key}>
                           <button
                             type="button"
-                            className="proxyWorkerGroupToggle folder"
-                            title={`${folder.label} (${formatWorkerGroupCounts(folder.counts)})`}
+                            className="runtimeSessionGroupToggle folder"
+                            title={`${folder.label} (${formatRuntimeSessionGroupCounts(folder.counts)})`}
                             aria-expanded={!folderCollapsed}
-                            onClick={() => toggleWorkerGroup(folder.key)}
+                            onClick={() => toggleSessionGroup(folder.key)}
                           >
-                            <span className={`proxyWorkerGroupChevron ${folderCollapsed ? "collapsed" : ""}`} aria-hidden="true">&gt;</span>
-                            <span className="proxyWorkerFolderHeader">{folder.label}</span>
-                            <span className="proxyWorkerGroupCount">{formatWorkerGroupCounts(folder.counts)}</span>
+                            <span className={`runtimeSessionGroupChevron ${folderCollapsed ? "collapsed" : ""}`} aria-hidden="true">&gt;</span>
+                            <span className="runtimeSessionFolderHeader">{folder.label}</span>
+                            <span className="runtimeSessionGroupCount">{formatRuntimeSessionGroupCounts(folder.counts)}</span>
                           </button>
                           {!folderCollapsed ? (
-                            <div className="proxyWorkerRows">
-                              {folder.workers.map((worker) => {
-                                const workerLabel = worker.name ?? shortId(worker.workerId);
-                                const statusLabel = workerStatusLabel(worker);
-                                const statusTitle = workerStatusTitle(worker);
-                                const threadTitle = worker.online ? worker.currentThread?.title ?? "No current thread" : "Recently disconnected";
-                                const lastSeenLabel = worker.online ? "" : `recently disconnected, last seen ${relativeTime(worker.lastSeenAt)}`;
+                            <div className="runtimeSessionRows">
+                              {folder.runtimeSessions.map((session) => {
+                                const sessionLabel = session.name ?? shortId(session.sessionId);
+                                const statusLabel = runtimeSessionStatusLabel(session);
+                                const statusTitle = runtimeSessionStatusTitle(session);
+                                const threadTitle = session.online ? session.currentThread?.title ?? "No current thread" : "Disconnected";
+                                const lastSeenLabel = session.online ? "" : `recently disconnected, last seen ${relativeTime(session.lastSeenAt)}`;
                                 return (
                                   <button
                                     type="button"
-                                    className={`proxyWorkerRow ${worker.workerId === activeWorkerId ? "active" : ""} ${worker.online ? "online" : "offline"}`}
-                                    key={worker.workerId}
-                                    onClick={() => void selectWorker(worker)}
+                                    className={`runtimeSessionRow ${session.sessionId === activeSessionId ? "active" : ""} ${session.online ? "online" : "offline"}`}
+                                    key={session.sessionId}
+                                    onClick={() => void selectRuntimeSession(session)}
                                   >
-                                    <span title={workerLabel}>{workerLabel}</span>
+                                    <span title={sessionLabel}>{sessionLabel}</span>
                                     <strong title={statusTitle}>{statusLabel}</strong>
                                     <code title={threadTitle}>{threadTitle}</code>
                                     {lastSeenLabel ? (
-                                      <em className="proxyWorkerMeta">
-                                        <span className="proxyWorkerLastSeen" title={lastSeenLabel}>{lastSeenLabel}</span>
+                                      <em className="runtimeSessionMeta">
+                                        <span className="runtimeSessionLastSeen" title={lastSeenLabel}>{lastSeenLabel}</span>
                                       </em>
                                     ) : null}
                                   </button>
@@ -1444,30 +2033,30 @@ const App = () => {
             type="button"
             className="sidebarPanelToggle"
             onClick={() => setSidebarCollapsed((current) => !current)}
-            aria-label={sidebarCollapsed ? "Show workers" : "Hide workers"}
-            title={sidebarCollapsed ? "Show workers" : "Hide workers"}
+            aria-label={sidebarCollapsed ? "Show sessions" : "Hide sessions"}
+            title={sidebarCollapsed ? "Show sessions" : "Hide sessions"}
           >
-            {sidebarCollapsed ? "Workers" : "Hide"}
+            {sidebarCollapsed ? "Sessions" : "Hide"}
           </button>
           <div className="workspaceTitle">
-            <span title={activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexhub"}>
-              {activeWorker ? activeWorker.name ?? shortId(activeWorker.workerId) : "No connected codexhub"}
+            <span title={activeRuntimeSession ? activeRuntimeSession.name ?? shortId(activeRuntimeSession.sessionId) : "No connected codexhub"}>
+              {activeRuntimeSession ? activeRuntimeSession.name ?? shortId(activeRuntimeSession.sessionId) : "No connected codexhub"}
             </span>
             <code className="workspaceMeta">
-              <span className="workspacePath" title={activeWorker?.workingDirectory ?? activeWorkspacePath}>
-                {activeWorker?.workingDirectory ?? activeWorkspacePath}
+              <span className="workspacePath" title={activeRuntimeSession?.workingDirectory ?? activeWorkspacePath}>
+                {activeRuntimeSession?.workingDirectory ?? activeWorkspacePath}
               </span>
-              {activeWorker ? (
+              {activeRuntimeSession ? (
                 <span
-                  className={`workspaceWorkerState ${activeWorker.online ? "online" : "offline"}`}
-                  title={workerStatusTitle(activeWorker)}
+                  className={`workspaceRuntimeSessionState ${activeRuntimeSession.online ? "online" : "offline"}`}
+                  title={runtimeSessionStatusTitle(activeRuntimeSession)}
                 >
-                  {activeWorker.online ? "online" : "offline"}
+                  {activeRuntimeSession.online ? "online" : "offline"}
                 </span>
               ) : null}
               {activeDisplayThreadId ? (
                 <span className="workspaceThreadId" title={`thread: ${activeDisplayThreadId}`}>thread: {activeDisplayThreadId}</span>
-              ) : activeWorker ? (
+              ) : activeRuntimeSession ? (
                 <span className="workspaceThreadId" title="thread: none">thread: none</span>
               ) : null}
             </code>
@@ -1477,7 +2066,7 @@ const App = () => {
           </div>
         </header>
 
-        {activeWorker && activeSession && activeSessionBelongsToWorker ? (
+        {activeRuntimeSession && activeSession && activeThreadBelongsToSession ? (
           <Tabs
             className="workspaceThreadTabs"
             tabBarExtraContent={{
@@ -1486,8 +2075,8 @@ const App = () => {
                   <button
                     type="button"
                     className="threadTabAddButton"
-                    onClick={() => openThreadPicker(activeWorker)}
-                    disabled={!activeWorker.online}
+                    onClick={() => openThreadPicker(activeRuntimeSession)}
+                    disabled={!activeRuntimeSession.online}
                     aria-label="Add thread tab"
                     title="Add thread tab"
                   >
@@ -1509,7 +2098,7 @@ const App = () => {
             }}
             size="small"
             activeKey={activeSession.threadId}
-            items={activeWorkerThreadTabs.map((item) => ({
+            items={activeRuntimeSessionThreadTabs.map((item) => ({
               ...item,
               children: item.key === activeSession.threadId ? (
                 <div className="threadWorkspacePane">
@@ -1652,13 +2241,13 @@ const App = () => {
                 </div>
               ) : null
             }))}
-            onChange={(threadId) => void switchWorkerThread(threadId)}
+            onChange={(threadId) => void switchRuntimeSessionThread(threadId)}
           />
         ) : (
           <div className="empty">
             <span>{workspaceEmptyMessage}</span>
-            {activeWorker?.online ? (
-              <button type="button" className="emptyActionButton" onClick={() => openThreadPicker(activeWorker)}>
+            {activeRuntimeSession?.online ? (
+              <button type="button" className="emptyActionButton" onClick={() => openThreadPicker(activeRuntimeSession)}>
                 Add Thread
               </button>
             ) : null}
@@ -1699,7 +2288,7 @@ const App = () => {
             <header className="threadPickerHeader">
               <div>
                 <h2 id="threadPickerTitle">Add Thread</h2>
-                <p>{threadPickerWorker?.name ?? shortId(threadPicker.workerId)}</p>
+                <p>{threadPickerRuntimeSession?.name ?? shortId(threadPicker.sessionId)}</p>
               </div>
               <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
             </header>
@@ -1707,7 +2296,7 @@ const App = () => {
               <button
                 type="button"
                 className="threadPickerRow newThread"
-                onClick={() => void createWorkerThread()}
+                onClick={() => void createRuntimeSessionThread()}
                 disabled={threadPicker.loading || threadPicker.acting !== null}
               >
                 <span className="threadPickerRowTitle">New thread</span>
@@ -1718,7 +2307,7 @@ const App = () => {
               ) : threadPicker.candidates.length === 0 ? (
                 <div className="threadPickerEmpty">No local threads</div>
               ) : threadPicker.candidates.map((candidate) => {
-                const isCurrent = candidate.threadId === threadPickerWorker?.currentThreadId;
+                const isCurrent = candidate.threadId === threadPickerRuntimeSession?.currentThreadId;
                 const isOpen = threadPickerOpenThreadIds.has(candidate.threadId);
                 const acting = threadPicker.acting === candidate.threadId;
                 return (
@@ -2191,9 +2780,15 @@ const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
   return kind === "user" || kind === "agent" || kind === "usage" ? turnId : null;
 };
 
-const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
-  Array.isArray(workers)
-    ? workers
+const normalizeRuntimeSessions = (sessions: RuntimeSessionSummary[] | undefined): RuntimeSession[] =>
+  Array.isArray(sessions)
+    ? sessions
+      .filter((session) => typeof session.sessionId === "string" && Boolean(session.sessionId))
+      .map((session) => ({
+        ...session,
+        sessionId: session.sessionId,
+        threads: Array.isArray(session.threads) ? session.threads : []
+      }))
     : [];
 
 const normalizeMachines = (machines: MachineSummary[] | undefined) =>
@@ -2203,8 +2798,96 @@ const normalizeMachines = (machines: MachineSummary[] | undefined) =>
 
 const normalizeProjects = (projects: ProjectSummary[] | undefined) =>
   Array.isArray(projects)
-    ? projects
+    ? projects.map((project) => ({
+      ...project,
+      sessions: normalizeRuntimeSessions(project.sessions),
+      threads: Array.isArray(project.threads) ? project.threads : [],
+      storedThreads: Array.isArray(project.storedThreads) ? project.storedThreads : []
+    }))
     : [];
+
+const normalizePlugins = (plugins: PluginSummary[] | undefined) =>
+  Array.isArray(plugins)
+    ? plugins.map((plugin) => ({
+      ...plugin,
+      contributions: {
+        web: {
+          styles: Array.isArray(plugin.contributions?.web?.styles) ? plugin.contributions.web.styles : []
+        },
+        integrations: Array.isArray(plugin.contributions?.integrations) ? plugin.contributions.integrations : []
+      }
+    }))
+    : [];
+
+const normalizeTasks = (tasks: LocalTask[] | undefined) =>
+  Array.isArray(tasks)
+    ? [...tasks].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    : [];
+
+const defaultTaskDraft = (): TaskDraft => ({
+  name: "daily-summary",
+  enabled: true,
+  schedule: "0 9 * * *",
+  machineId: "",
+  projectPath: "",
+  threadId: "",
+  input: "检查这个项目最近的变更，给我总结风险和下一步。"
+});
+
+const taskThreadOptionsFor = (project: ProjectSummary | undefined) => {
+  const threads = new Map<string, Pick<ThreadSummary, "threadId" | "title" | "updatedAt">>();
+  const pushThread = (thread: Pick<ThreadSummary, "threadId" | "title" | "updatedAt"> | StoredProjectThread) => {
+    if (!thread.threadId) return;
+    const existing = threads.get(thread.threadId);
+    if (existing && existing.updatedAt >= thread.updatedAt) return;
+    threads.set(thread.threadId, {
+      threadId: thread.threadId,
+      title: thread.title,
+      updatedAt: thread.updatedAt
+    });
+  };
+  for (const thread of project?.threads ?? []) pushThread(thread);
+  for (const thread of project?.storedThreads ?? []) pushThread(thread);
+  return [...threads.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+};
+
+const taskStatusLabel = (task: LocalTask) => {
+  if (task.lastStatus === "queued") return "queued";
+  if (task.lastStatus === "completed") return "done";
+  if (task.lastStatus === "failed") return "failed";
+  if (task.lastStatus === "skipped") return "skipped";
+  return task.enabled ? "scheduled" : "paused";
+};
+
+const taskTargetLabel = (task: LocalTask, projects: ProjectSummary[], machines: MachineSummary[]) => {
+  const project = projects.find((item) => item.machineId === task.machineId && item.path === task.projectPath);
+  const machine = machines.find((item) => item.machineId === task.machineId);
+  const projectName = project?.name ?? basename(task.projectPath);
+  const machineName = machine?.name ?? machine?.hostname ?? task.machineId;
+  const thread = task.threadId ? shortId(task.threadId) : "current";
+  return `${projectName} · ${machineName} · ${thread}`;
+};
+
+const taskTargetTitle = (task: LocalTask, projects: ProjectSummary[], machines: MachineSummary[]) => {
+  const project = projects.find((item) => item.machineId === task.machineId && item.path === task.projectPath);
+  const machine = machines.find((item) => item.machineId === task.machineId);
+  return [
+    `machine: ${machine?.name ?? machine?.hostname ?? task.machineId}`,
+    `project: ${project?.path ?? task.projectPath}`,
+    `thread: ${task.threadId ?? "current"}`,
+    task.lastRunAt ? `last run: ${formatDate(task.lastRunAt)}` : null
+  ].filter(Boolean).join("\n");
+};
+
+const uniqueMachines = (machines: MachineSummary[]) => {
+  const byId = new Map<string, MachineSummary>();
+  for (const machine of machines) {
+    const key = `${machine.type ?? "registered"}:${machine.name ?? machine.hostname ?? machine.machineId}`;
+    const existing = byId.get(key);
+    if (!existing || (!existing.online && machine.online)) byId.set(key, machine);
+  }
+  return [...byId.values()];
+};
 
 const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSummary[]): ProjectMachineGroup[] => {
   const machinesById = new Map(machines.map((machine) => [machine.machineId, machine]));
@@ -2215,6 +2898,7 @@ const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSum
       key: machine.machineId,
       label: machine.name ?? machine.hostname,
       online: machine.online,
+      projectLauncher: machineProjectLauncher(machine),
       statusLabel: machine.online ? "ready" : "offline",
       projects: []
     });
@@ -2231,12 +2915,14 @@ const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSum
         key: project.machineId,
         label,
         online,
+        projectLauncher: machineProjectLauncher(machine),
         statusLabel: online ? "online" : "offline",
         projects: []
       };
       groups.set(project.machineId, group);
     }
     group.online = group.online || online;
+    group.projectLauncher = group.projectLauncher || machineProjectLauncher(machine);
     if (group.label === project.machineId && label !== project.machineId) group.label = label;
     group.projects.push(project);
   }
@@ -2251,50 +2937,60 @@ const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSum
     .sort((left, right) => Number(right.online) - Number(left.online) || left.label.localeCompare(right.label));
 };
 
-const projectMachineStatus = (group: Pick<ProjectMachineGroup, "online" | "projects">) => {
+const projectMachineStatus = (group: Pick<ProjectMachineGroup, "online" | "projectLauncher" | "projects">) => {
   const onlineProjects = group.projects.filter((project) => project.online).length;
   if (!group.online) return "offline";
+  if (!group.projectLauncher) return "session";
   if (onlineProjects) return `${onlineProjects}/${group.projects.length} active`;
   return "ready";
 };
 
-const mergeProjectsWithWorkers = (projects: ProjectSummary[], workers: WorkerSummary[]) => {
+const machineProjectLauncher = (machine: MachineSummary | StoredMachineLike | undefined) =>
+  machine?.capabilities?.projectLauncher !== false;
+
+type StoredMachineLike = {
+  capabilities?: {
+    projectLauncher?: boolean;
+  };
+};
+
+const mergeProjectsWithRuntimeSessions = (projects: ProjectSummary[], runtimeSessions: RuntimeSession[]) => {
   const projectsByKey = new Map(projects.map((project) => [projectRuntimeKey(project.machineId, project.path), {
     ...project,
-    workers: [...(project.workers ?? [])],
+    sessions: [...(project.sessions ?? [])],
     threads: [...(project.threads ?? [])],
     storedThreads: [...(project.storedThreads ?? [])]
   }]));
-  for (const worker of workers) {
-    const key = projectRuntimeKey(machineIdForWorker(worker), worker.workingDirectory);
+  for (const session of runtimeSessions) {
+    const key = projectRuntimeKey(machineIdForSession(session), session.workingDirectory);
     let project = projectsByKey.get(key);
     if (!project) {
       project = {
         projectId: key,
-        machineId: machineIdForWorker(worker),
-        path: worker.workingDirectory,
-        name: basename(worker.workingDirectory),
-        createdAt: worker.lastSeenAt,
-        lastOpenedAt: worker.lastSeenAt,
-        lastWorkerId: worker.workerId,
-        lastThreadId: worker.currentThreadId,
-        online: worker.online,
-        running: Boolean(worker.currentThread?.running),
-        workers: [],
+        machineId: machineIdForSession(session),
+        path: session.workingDirectory,
+        name: basename(session.workingDirectory),
+        createdAt: session.lastSeenAt,
+        lastOpenedAt: session.lastSeenAt,
+        lastSessionId: session.sessionId,
+        lastThreadId: session.currentThreadId,
+        online: session.online,
+        running: Boolean(session.currentThread?.running),
+        sessions: [],
         threads: [],
         storedThreads: []
       };
       projectsByKey.set(key, project);
     }
-    if (!project.workers.some((item) => item.workerId === worker.workerId)) project.workers.push(worker);
-    for (const thread of worker.threads ?? []) {
+    if (!project.sessions.some((item) => item.sessionId === session.sessionId)) project.sessions.push(session);
+    for (const thread of session.threads ?? []) {
       if (!project.threads.some((item) => item.threadId === thread.threadId)) project.threads.push(thread);
     }
-    if (worker.currentThread && !project.threads.some((item) => item.threadId === worker.currentThread?.threadId)) {
-      project.threads.unshift(worker.currentThread);
+    if (session.currentThread && !project.threads.some((item) => item.threadId === session.currentThread?.threadId)) {
+      project.threads.unshift(session.currentThread);
     }
-    project.online = project.online || worker.online;
-    project.running = project.running || Boolean(worker.currentThread?.running || worker.currentThread?.status === "running");
+    project.online = project.online || session.online;
+    project.running = project.running || Boolean(session.currentThread?.running || session.currentThread?.status === "running");
   }
   return [...projectsByKey.values()].sort((left, right) => {
     return compareProjectRows(left, right);
@@ -2312,7 +3008,7 @@ const compareProjectRows = (left: ProjectSummary, right: ProjectSummary) => {
   return left.path.localeCompare(right.path, undefined, { sensitivity: "base" });
 };
 
-const machineIdForWorker = (worker: WorkerSummary) => worker.machineId ?? `machine-${safeMachinePart(worker.hostname ?? "local")}`;
+const machineIdForSession = (session: RuntimeSession) => session.machineId ?? `machine-${safeMachinePart(session.hostname ?? "local")}`;
 
 const safeMachinePart = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
@@ -2321,42 +3017,49 @@ const basename = (projectPath: string) => projectPath.split(/[\\/]/).filter(Bool
 
 const projectStatusLabel = (project: ProjectSummary) => {
   if (project.running) return "running";
-  if (project.workers.some((worker) => worker.online)) return "online";
+  if (project.sessions.some((session) => session.online)) return "online";
   if (project.machine && "online" in project.machine && project.machine.online) return "ready";
   return "offline";
 };
 
-const groupWorkers = (workers: WorkerSummary[]): WorkerDeviceGroup[] => {
-  const devices = new Map<string, WorkerDeviceGroup & { folderMap: Map<string, WorkerFolderGroup> }>();
-  for (const worker of workers) {
-    const deviceLabel = workerDeviceLabel(worker);
-    const folderLabel = worker.workingDirectory || "unknown folder";
-    const workerState = workerGroupState(worker);
+const sshHostMeta = (host: SshHost) => [
+  host.user,
+  host.hostName,
+  host.port ? `:${host.port}` : null,
+  host.proxyJump ? `via ${host.proxyJump}` : null
+].filter(Boolean).join(" ") || host.alias;
+
+const groupRuntimeSessions = (runtimeSessions: RuntimeSession[]): RuntimeSessionDeviceGroup[] => {
+  const devices = new Map<string, RuntimeSessionDeviceGroup & { folderMap: Map<string, RuntimeSessionFolderGroup> }>();
+  for (const session of runtimeSessions) {
+    const deviceLabel = runtimeSessionDeviceLabel(session);
+    const folderLabel = session.workingDirectory || "unknown folder";
+    const sessionState = runtimeSessionGroupState(session);
     let device = devices.get(deviceLabel);
     if (!device) {
       device = {
         key: `device:${deviceLabel}`,
         label: deviceLabel,
-        counts: emptyWorkerGroupCounts(),
+        counts: emptyRuntimeSessionGroupCounts(),
         folders: [],
         folderMap: new Map()
       };
       devices.set(deviceLabel, device);
     }
-    incrementWorkerGroupCounts(device.counts, workerState);
+    incrementRuntimeSessionGroupCounts(device.counts, sessionState);
     let folder = device.folderMap.get(folderLabel);
     if (!folder) {
       folder = {
         key: `folder:${deviceLabel}:${folderLabel}`,
         label: folderLabel,
-        counts: emptyWorkerGroupCounts(),
-        workers: []
+        counts: emptyRuntimeSessionGroupCounts(),
+        runtimeSessions: []
       };
       device.folderMap.set(folderLabel, folder);
       device.folders.push(folder);
     }
-    incrementWorkerGroupCounts(folder.counts, workerState);
-    folder.workers.push(worker);
+    incrementRuntimeSessionGroupCounts(folder.counts, sessionState);
+    folder.runtimeSessions.push(session);
   }
   return [...devices.values()].map((device) => ({
     key: device.key,
@@ -2364,45 +3067,45 @@ const groupWorkers = (workers: WorkerSummary[]): WorkerDeviceGroup[] => {
     counts: device.counts,
     folders: device.folders.map((folder) => ({
       ...folder,
-      workers: [...folder.workers].reverse()
+      runtimeSessions: [...folder.runtimeSessions].reverse()
     }))
   }));
 };
 
-const emptyWorkerGroupCounts = (): WorkerGroupCounts => ({
+const emptyRuntimeSessionGroupCounts = (): RuntimeSessionGroupCounts => ({
   total: 0,
   online: 0,
   offline: 0,
   running: 0
 });
 
-const incrementWorkerGroupCounts = (counts: WorkerGroupCounts, state: "online" | "offline" | "running") => {
+const incrementRuntimeSessionGroupCounts = (counts: RuntimeSessionGroupCounts, state: "online" | "offline" | "running") => {
   counts.total += 1;
   if (state === "offline") counts.offline += 1;
   else counts.online += 1;
   if (state === "running") counts.running += 1;
 };
 
-const workerGroupState = (worker: WorkerSummary): "online" | "offline" | "running" => {
-  if (!worker.online) return "offline";
-  return worker.currentThread?.running || worker.currentThread?.status === "running" ? "running" : "online";
+const runtimeSessionGroupState = (session: RuntimeSession): "online" | "offline" | "running" => {
+  if (!session.online) return "offline";
+  return session.currentThread?.running || session.currentThread?.status === "running" ? "running" : "online";
 };
 
-const formatWorkerGroupCounts = (counts: WorkerGroupCounts) => {
+const formatRuntimeSessionGroupCounts = (counts: RuntimeSessionGroupCounts) => {
   const parts = [`${counts.online} online`];
   if (counts.offline) parts.push(`${counts.offline} offline`);
   if (counts.running) parts.push(`${counts.running} running`);
   return parts.join(" / ");
 };
 
-const groupHasWorker = (group: WorkerDeviceGroup, workerId: string) =>
-  Boolean(workerId && group.folders.some((folder) => folderHasWorker(folder, workerId)));
+const groupHasSession = (group: RuntimeSessionDeviceGroup, sessionId: string) =>
+  Boolean(sessionId && group.folders.some((folder) => folderHasSession(folder, sessionId)));
 
-const folderHasWorker = (folder: WorkerFolderGroup, workerId: string) =>
-  Boolean(workerId && folder.workers.some((worker) => worker.workerId === workerId));
+const folderHasSession = (folder: RuntimeSessionFolderGroup, sessionId: string) =>
+  Boolean(sessionId && folder.runtimeSessions.some((session) => session.sessionId === sessionId));
 
-const workerDeviceLabel = (worker: WorkerSummary) =>
-  worker.hostname?.trim() || hostnameFromUrl(worker.appServerUrl) || "unknown device";
+const runtimeSessionDeviceLabel = (session: RuntimeSession) =>
+  session.hostname?.trim() || hostnameFromUrl(session.appServerUrl) || "unknown device";
 
 const hostnameFromUrl = (url: string | undefined) => {
   if (!url) return "";
@@ -2413,18 +3116,18 @@ const hostnameFromUrl = (url: string | undefined) => {
   }
 };
 
-const workerStatusLabel = (worker: WorkerSummary) =>
-  worker.online ? worker.currentThread?.status ?? "idle" : "offline";
+const runtimeSessionStatusLabel = (session: RuntimeSession) =>
+  session.online ? session.currentThread?.status ?? "idle" : "offline";
 
-const workerStatusTitle = (worker: WorkerSummary) => {
-  if (worker.online) return "Worker online";
-  const reason = worker.offlineReason === "heartbeat_timeout"
+const runtimeSessionStatusTitle = (session: RuntimeSession) => {
+  if (session.online) return "Runtime session online";
+  const reason = session.offlineReason === "heartbeat_timeout"
     ? "heartbeat timeout"
-    : worker.offlineReason === "transport_disconnected"
+    : session.offlineReason === "transport_disconnected"
       ? "connection lost"
       : "recently disconnected";
-  const lastSeen = worker.lastSeenAt ? `, last seen ${relativeTime(worker.lastSeenAt)}` : "";
-  return `Recently disconnected: ${reason}${lastSeen}`;
+  const lastSeen = session.lastSeenAt ? `, last seen ${relativeTime(session.lastSeenAt)}` : "";
+  return `Session disconnected: ${reason}${lastSeen}`;
 };
 
 const relativeTime = (iso: string | undefined) => {
@@ -2448,32 +3151,32 @@ const formatThreadCandidateTime = (value: string) => relativeTime(value);
 
 const compactLine = (value: string) => value.replace(/\s+/g, " ").trim();
 
-const appendThreadOrder = (current: Record<string, string[]>, workerId: string, threadId: string) => {
-  const existing = current[workerId] ?? [];
+const appendThreadOrder = (current: Record<string, string[]>, sessionId: string, threadId: string) => {
+  const existing = current[sessionId] ?? [];
   if (existing.includes(threadId)) return current;
-  return { ...current, [workerId]: [...existing, threadId] };
+  return { ...current, [sessionId]: [...existing, threadId] };
 };
 
-const mergeThreadOrderByWorker = (current: Record<string, string[]>, workers: WorkerSummary[]) => {
+const mergeThreadOrderByRuntimeSession = (current: Record<string, string[]>, runtimeSessions: RuntimeSession[]) => {
   const next: Record<string, string[]> = {};
-  for (const worker of workers) {
-    const threadIds = workerThreadIds(worker);
+  for (const session of runtimeSessions) {
+    const threadIds = sessionThreadIds(session);
     const liveThreadIds = new Set(threadIds);
-    const existing = (current[worker.workerId] ?? []).filter((threadId) => liveThreadIds.has(threadId));
+    const existing = (current[session.sessionId] ?? []).filter((threadId) => liveThreadIds.has(threadId));
     const appended = threadIds.filter((threadId) => !existing.includes(threadId));
-    next[worker.workerId] = [...existing, ...appended];
+    next[session.sessionId] = [...existing, ...appended];
   }
   return next;
 };
 
-const workerThreadIds = (worker: WorkerSummary) => {
+const sessionThreadIds = (session: RuntimeSession) => {
   const threadIds: string[] = [];
   const pushThreadId = (threadId?: string) => {
     if (threadId && !threadIds.includes(threadId)) threadIds.push(threadId);
   };
-  for (const thread of worker.threads ?? []) pushThreadId(thread.threadId);
-  pushThreadId(worker.currentThread?.threadId);
-  pushThreadId(worker.currentThreadId);
+  for (const thread of session.threads ?? []) pushThreadId(thread.threadId);
+  pushThreadId(session.currentThread?.threadId);
+  pushThreadId(session.currentThreadId);
   return threadIds;
 };
 
@@ -2876,26 +3579,28 @@ const isMessageDisplayMode = (value: unknown): value is MessageDisplayMode =>
 
 const readStoredUiState = (): {
   activeWorkspacePath?: string;
-  activeWorkerId?: string;
+  activeSessionId?: string;
   selectedModel?: ModelSelection;
   selectedReasoning?: ReasoningSelection;
   messageDisplayMode?: MessageDisplayMode;
   sidebarCollapsed?: boolean;
-  collapsedWorkerGroups?: Record<string, boolean>;
+  collapsedSessionGroups?: Record<string, boolean>;
 } | null => {
   try {
-    const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+    const parsed = JSON.parse(localStorage.getItem(storageKey) ?? localStorage.getItem(legacyStorageKey) ?? "null");
     if (!parsed || typeof parsed !== "object") return null;
     return {
       activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,
-      activeWorkerId: typeof parsed.activeWorkerId === "string" ? parsed.activeWorkerId : undefined,
+      activeSessionId: typeof parsed.activeSessionId === "string"
+        ? parsed.activeSessionId
+        : typeof parsed.activeWorkerId === "string" ? parsed.activeWorkerId : undefined,
       selectedModel: isModelSelection(parsed.selectedModel) ? parsed.selectedModel : undefined,
       selectedReasoning: isReasoningSelection(parsed.selectedReasoning) ? parsed.selectedReasoning : undefined,
       messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)
         ? parsed.messageDisplayMode
         : isMessageDisplayMode(parsed.toolDisplayMode) ? parsed.toolDisplayMode : undefined,
       sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined,
-      collapsedWorkerGroups: booleanRecord(parsed.collapsedWorkerGroups)
+      collapsedSessionGroups: booleanRecord(parsed.collapsedSessionGroups)
     };
   } catch {
     return null;

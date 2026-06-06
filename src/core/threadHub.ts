@@ -22,12 +22,30 @@ export type ThreadSummary = {
 };
 
 export type ThreadRuntimeSummary = {
-  workerId?: string;
+  sessionId?: string;
   name?: string;
   appServerUrl?: string;
   online: boolean;
   runnable: boolean;
   lastSeenAt?: string;
+};
+
+export type RuntimeSessionSummary = {
+  sessionId: string;
+  machineId?: string;
+  name?: string;
+  workingDirectory: string;
+  appServerUrl?: string;
+  online: boolean;
+  status: "online" | "offline";
+  lastSeenAt: string;
+  offlineSinceAt?: string;
+  offlineReason?: WorkerOfflineReason;
+  pid?: number;
+  hostname?: string;
+  currentThreadId?: string;
+  currentThread?: ThreadSummary;
+  threads: ThreadSummary[];
 };
 
 export type ThreadRunOptions = {
@@ -60,6 +78,8 @@ export type WorkerRegistration = {
   transportId?: string;
 };
 
+export type SessionRegistration = Omit<WorkerRegistration, "workerId" | "transportId">;
+
 export type WorkerOfflineReason = "heartbeat_timeout" | "transport_disconnected" | "unregistered";
 
 export type WorkerSummary = {
@@ -84,6 +104,12 @@ export type WorkerStreamEvent = {
   seq: number;
   kind: "workers";
   workers: WorkerSummary[];
+};
+
+export type RuntimeSessionStreamEvent = {
+  seq: number;
+  kind: "sessions";
+  sessions: RuntimeSessionSummary[];
 };
 
 export type WorkerCommand = {
@@ -120,7 +146,7 @@ export type WorkerEventInput =
       message: unknown;
     }
   | {
-      type: "worker_current_changed";
+      type: "session_current_changed";
       currentThreadId: string;
       heartbeat?: boolean;
     }
@@ -265,7 +291,7 @@ export class ThreadHub {
     const worker = this.workers.get(workerId);
     if (!worker) return { ok: false };
     if (transportId && worker.transportId && worker.transportId !== transportId) return { ok: true, workerId };
-    this.removeWorker(worker, `Worker unregistered: ${workerId}`, "unregistered");
+    this.removeWorker(worker, `Session unregistered: ${workerId}`, "unregistered");
     return { ok: true, workerId };
   }
 
@@ -273,7 +299,7 @@ export class ThreadHub {
     const worker = this.workers.get(workerId);
     if (!worker) return { ok: false };
     if (transportId && worker.transportId && worker.transportId !== transportId) return { ok: true, workerId };
-    this.markWorkerOffline(worker, `Worker transport disconnected: ${workerId}`, "transport_disconnected");
+    this.markWorkerOffline(worker, `Session transport disconnected: ${workerId}`, "transport_disconnected");
     return { ok: true, workerId };
   }
 
@@ -281,7 +307,7 @@ export class ThreadHub {
     const worker = this.workers.get(workerId);
     if (!worker) return { ok: false };
     const pending = this.pendingCommands.get(commandId);
-    const error = new Error(message || `Worker command failed: ${commandId}`);
+    const error = new Error(message || `Session command failed: ${commandId}`);
     if (pending?.threadId && this.activeTurnCommands.get(pending.threadId) === commandId) {
       this.finishWorkerTurnByThread(pending.threadId, error);
     } else {
@@ -298,7 +324,7 @@ export class ThreadHub {
     if (pending.type === "start_thread" || pending.type === "resume_thread") {
       const threadId = commandResultThreadId(result);
       if (!threadId) {
-        this.rejectCommand(commandId, new Error(`Worker command did not return threadId: ${pending.type}`));
+        this.rejectCommand(commandId, new Error(`Session command did not return threadId: ${pending.type}`));
         return { ok: false, workerId, commandId };
       }
       const thread = this.ensureThread(threadId, worker, {
@@ -318,14 +344,14 @@ export class ThreadHub {
       if (worker.online) {
         const lastSeenAt = Date.parse(worker.lastSeenAt);
         if (Number.isFinite(lastSeenAt) && now - lastSeenAt <= timeoutMs) continue;
-        this.markWorkerOffline(worker, `Worker heartbeat timed out: ${worker.workerId}`, "heartbeat_timeout", now);
+        this.markWorkerOffline(worker, `Session heartbeat timed out: ${worker.workerId}`, "heartbeat_timeout", now);
         offline += 1;
         continue;
       }
 
       const offlineSinceAt = Date.parse(worker.offlineSinceAt ?? worker.lastSeenAt);
       if (!Number.isFinite(offlineSinceAt) || now - offlineSinceAt < offlineRetentionMs) continue;
-      this.removeWorker(worker, `Worker offline retention expired: ${worker.workerId}`, worker.offlineReason ?? "heartbeat_timeout", now);
+      this.removeWorker(worker, `Session offline retention expired: ${worker.workerId}`, worker.offlineReason ?? "heartbeat_timeout", now);
       removed += 1;
     }
     return { offline, removed };
@@ -337,6 +363,10 @@ export class ThreadHub {
       .map((worker) => this.workerSummary(worker));
   }
 
+  listRuntimeSessions(options: { includeOffline?: boolean } = {}): RuntimeSessionSummary[] {
+    return this.listWorkers(options).map(runtimeSessionFromWorker);
+  }
+
   subscribeWorkers(after: number, callback: (event: WorkerStreamEvent) => void) {
     const events = after > 0 ? this.workerEvents.filter((item) => item.seq > after) : [];
     if (events.length) {
@@ -346,6 +376,18 @@ export class ThreadHub {
     }
     this.workerSubscribers.add(callback);
     return () => this.workerSubscribers.delete(callback);
+  }
+
+  subscribeRuntimeSessions(after: number, callback: (event: RuntimeSessionStreamEvent) => void) {
+    const publish = (event: WorkerStreamEvent) => callback(runtimeSessionEventFromWorkers(event));
+    const events = after > 0 ? this.workerEvents.filter((item) => item.seq > after) : [];
+    if (events.length) {
+      for (const event of events) publish(event);
+    } else {
+      callback(this.runtimeSessionSnapshotEvent());
+    }
+    this.workerSubscribers.add(publish);
+    return () => this.workerSubscribers.delete(publish);
   }
 
   async waitWorkerCommands(workerId: string, after: number, timeoutMs = 25000) {
@@ -380,7 +422,7 @@ export class ThreadHub {
   applyWorkerEvent(workerId: string, input: WorkerEventInput) {
     if (input.heartbeat !== false) this.heartbeatWorker(workerId);
     const worker = this.requireWorker(workerId);
-    if (input.type === "worker_current_changed") {
+    if (input.type === "session_current_changed") {
       const thread = this.ensureThread(input.currentThreadId, worker, {
         params: { threadId: input.currentThreadId, cwd: worker.workingDirectory }
       }, false);
@@ -615,11 +657,19 @@ export class ThreadHub {
 
   runWorkerTurn(workerId: string, input: ProxyInput, source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
     const worker = this.requireWorker(workerId);
-    if (!worker.online) throw new Error(`Worker is offline: ${workerId}`);
-    if (!worker.currentThreadId) throw new Error(`Worker has no current thread: ${workerId}`);
+    if (!worker.online) throw new Error(`Session is offline: ${workerId}`);
+    if (!worker.currentThreadId) throw new Error(`Session has no current thread: ${workerId}`);
     const thread = this.ensureThread(worker.currentThreadId, worker, {
       params: { threadId: worker.currentThreadId, cwd: worker.workingDirectory }
     });
+    const command = this.runLocalCommand(thread.threadId, input, source);
+    if (command.handled) {
+      return {
+        thread: this.summary(thread),
+        promise: Promise.resolve(),
+        command: command.command
+      };
+    }
     const promise = this.runTurn(thread.threadId, input, source, options);
     return { thread: this.summary(thread), promise };
   }
@@ -633,13 +683,13 @@ export class ThreadHub {
 
   private requireWorker(workerId: string) {
     const worker = this.workers.get(workerId);
-    if (!worker) throw new Error(`Worker not found: ${workerId}`);
+    if (!worker) throw new Error(`Session not found: ${workerId}`);
     return worker;
   }
 
   private requireOnlineWorker(workerId: string) {
     const worker = this.requireWorker(workerId);
-    if (!worker.online) throw new Error(`Worker is offline: ${workerId}`);
+    if (!worker.online) throw new Error(`Session is offline: ${workerId}`);
     return worker;
   }
 
@@ -687,9 +737,9 @@ export class ThreadHub {
       return replacement;
     }
     if (workers.length > 1) {
-      throw new Error(`Multiple online workers for workspace. Resume this thread in one codexhub instance before sending: ${thread.threadId}`);
+      throw new Error(`Multiple online sessions for workspace. Resume this thread in one codexhub instance before sending: ${thread.threadId}`);
     }
-    throw new Error(`No online worker for thread: ${thread.threadId}`);
+    throw new Error(`No online session for thread: ${thread.threadId}`);
   }
 
   private enqueueWorkerCommand(workerId: string, command: Omit<WorkerCommand, "seq">) {
@@ -721,7 +771,7 @@ export class ThreadHub {
             this.publish(thread, "done");
           }
         }
-        reject(new Error(`Worker command timed out: ${type}`));
+        reject(new Error(`Session command timed out: ${type}`));
       }, timeoutMs);
       this.pendingCommands.set(commandId, {
         type,
@@ -1192,6 +1242,10 @@ export class ThreadHub {
     };
   }
 
+  private runtimeSessionSnapshotEvent(): RuntimeSessionStreamEvent {
+    return runtimeSessionEventFromWorkers(this.workerSnapshotEvent());
+  }
+
   private publishWorkers() {
     const workers = this.listWorkers();
     const snapshotKey = workerSnapshotKey(workers);
@@ -1230,12 +1284,36 @@ export class ThreadHub {
 }
 
 const workerRuntimeSummary = (worker: RuntimeWorker): ThreadRuntimeSummary => ({
-  workerId: worker.workerId,
+  sessionId: worker.workerId,
   name: worker.name,
   appServerUrl: worker.appServerUrl,
   online: worker.online,
   runnable: worker.online,
   lastSeenAt: worker.lastSeenAt
+});
+
+export const runtimeSessionFromWorker = (worker: WorkerSummary): RuntimeSessionSummary => ({
+  sessionId: worker.workerId,
+  machineId: worker.machineId,
+  name: worker.name,
+  workingDirectory: worker.workingDirectory,
+  appServerUrl: worker.appServerUrl,
+  online: worker.online,
+  status: worker.status,
+  lastSeenAt: worker.lastSeenAt,
+  offlineSinceAt: worker.offlineSinceAt,
+  offlineReason: worker.offlineReason,
+  pid: worker.pid,
+  hostname: worker.hostname,
+  currentThreadId: worker.currentThreadId,
+  currentThread: worker.currentThread,
+  threads: worker.threads
+});
+
+const runtimeSessionEventFromWorkers = (event: WorkerStreamEvent): RuntimeSessionStreamEvent => ({
+  seq: event.seq,
+  kind: "sessions",
+  sessions: event.workers.map(runtimeSessionFromWorker)
 });
 
 const workerSnapshotKey = (workers: WorkerSummary[]) => JSON.stringify(workers.map((worker) => ({
@@ -1416,8 +1494,8 @@ const formatModel = (options: ThreadOptions) => options.model ?? "auto";
 
 const formatRuntime = (runtime: ThreadRuntimeSummary) => {
   const state = runtime.runnable ? "runnable" : runtime.online ? "online" : "offline";
-  const worker = runtime.workerId ? ` worker:${runtime.name ?? runtime.workerId.slice(0, 8)}` : "";
-  return `${state}${worker}`;
+  const session = runtime.sessionId ? ` session:${runtime.name ?? runtime.sessionId.slice(0, 8)}` : "";
+  return `${state}${session}`;
 };
 
 const formatUsage = (usage: Usage | undefined) => {

@@ -10,6 +10,7 @@
   "include": [
     "src/cli/**/*.ts",
     "src/core/**/*.ts",
+    "src/electron/**/*.ts",
     "src/server/**/*.ts",
     "src/shared/**/*.ts",
     "src/telegram/**/*.ts"

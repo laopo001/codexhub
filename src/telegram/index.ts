@@ -19,7 +19,7 @@ type ThreadSummary = {
 };
 
 type ThreadRuntimeSummary = {
-  workerId?: string;
+  sessionId?: string;
   name?: string;
   online: boolean;
   runnable: boolean;
@@ -30,16 +30,18 @@ type ThreadDetail = ThreadSummary & {
   lastSeq: number;
 };
 
-type WorkerTurnResponse = {
+type SessionTurnResponse = {
   ok: boolean;
   thread?: ThreadSummary;
 };
 
-type WorkerSummary = {
-  workerId: string;
+type RuntimeSessionSummary = {
+  sessionId: string;
+  machineId?: string;
   name?: string;
   workingDirectory: string;
   online: boolean;
+  status?: "online" | "offline";
   currentThreadId?: string;
   currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
@@ -69,11 +71,11 @@ type ThreadUsage = {
 };
 
 type ChatState = {
-  workerId?: string;
+  sessionId?: string;
 };
 
 type ChatMirror = {
-  workerId: string;
+  sessionId: string;
   controller: AbortController;
   threadController?: AbortController;
   threadId?: string;
@@ -82,10 +84,10 @@ type ChatMirror = {
   sentMessages: Map<string, { messageId: number; status: string }>;
 };
 
-type WorkerStreamEvent = {
+type SessionStreamEvent = {
   seq: number;
-  kind: "workers";
-  workers: WorkerSummary[];
+  kind: "sessions";
+  sessions: RuntimeSessionSummary[];
 };
 
 export type TelegramBotOptions = {
@@ -112,9 +114,9 @@ let selectionSeq = 0;
 
 const botCommands = [
   { command: "start", description: "show help" },
-  { command: "workers", description: "select a Codex worker" },
-  { command: "detach", description: "clear current worker selection" },
-  { command: "status", description: "show current worker" }
+  { command: "sessions", description: "select a Codex session" },
+  { command: "detach", description: "clear current session selection" },
+  { command: "status", description: "show current session" }
 ];
 
 const registerHandlers = () => {
@@ -131,60 +133,62 @@ const registerHandlers = () => {
     return ctx.reply([
       "codexhub ready.",
       "",
-      "/workers 选择在线 Codex worker",
-      "/detach 取消当前 worker 绑定",
+      "/sessions 选择在线 Codex session",
+      "/detach 取消当前 session 绑定",
       "/status 查看当前状态",
       "",
-      "直接发消息会发送给当前 worker 指向的 Codex thread。新 thread 请在本地 codexhub 里开始。"
+      "直接发消息会发送给当前 session 指向的 Codex thread。新 thread 请在本地 codexhub 里开始。"
     ].join("\n"));
   });
 
-  bot.command("workers", async (ctx) => {
+  const handleSessionsCommand = async (ctx: any) => {
     try {
-      const workers = await listRunnableWorkers();
+      const sessions = await listRunnableSessions();
 
-      if (!workers.length) {
-        await ctx.reply("当前没有带 current thread 的 Codex worker。请先在本地 codexhub 里打开或 resume 一个 thread。");
+      if (!sessions.length) {
+        await ctx.reply("当前没有带 current thread 的 Codex session。请先在本地 codexhub 里打开或 resume 一个 thread。");
         return;
       }
 
-      await ctx.reply("选择在线 Codex worker：", {
+      await ctx.reply("选择在线 Codex session：", {
         reply_markup: {
-          inline_keyboard: workers.map((worker) => ([{
-            text: `${displayWorkerId(worker)}  ${worker.currentThread?.status ?? "idle"}  ${worker.currentThread ? displayThreadId(worker.currentThread) : "no thread"}  ${shortPath(worker.workingDirectory)}`,
-            callback_data: `select:${rememberSelection(ctx.chat.id, worker.workerId)}`
+          inline_keyboard: sessions.map((session) => ([{
+            text: `${displaySessionId(session)}  ${session.currentThread?.status ?? "idle"}  ${session.currentThread ? displayThreadId(session.currentThread) : "no thread"}  ${shortPath(session.workingDirectory)}`,
+            callback_data: `select:${rememberSelection(ctx.chat.id, session.sessionId)}`
           }]))
         }
       });
     } catch (error) {
       await ctx.reply(errorText(error));
     }
-  });
+  };
+
+  bot.command("sessions", handleSessionsCommand);
 
   bot.command("detach", async (ctx) => {
-    const detached = detachWorker(ctx.chat.id);
+    const detached = detachSession(ctx.chat.id);
     await ctx.reply(detached
-      ? "已取消当前 worker 绑定。用 /workers 重新选择在线 worker。"
-      : "当前没有绑定 Codex worker。用 /workers 选择在线 worker。");
+      ? "已取消当前 session 绑定。用 /sessions 重新选择在线 session。"
+      : "当前没有绑定 Codex session。用 /sessions 选择在线 session。");
   });
 
   bot.command("status", async (ctx) => {
     try {
       const state = chatStates.get(ctx.chat.id);
-      const current = state ? await resolveSelectedWorker(state).catch(() => null) : null;
-      const workers = await listRunnableWorkers();
+      const current = state ? await resolveSelectedSession(state).catch(() => null) : null;
+      const sessions = await listRunnableSessions();
       const usage = current?.currentThread?.threadUsage ?? null;
       await ctx.reply([
-        `当前 worker：${current ? displayWorkerId(current) : "(none)"}`,
+        `当前 session：${current ? displaySessionId(current) : "(none)"}`,
         `当前 thread：${current?.currentThread ? displayThreadId(current.currentThread) : "(none)"}`,
         current ? `文件夹：${current.workingDirectory}` : null,
         current?.currentThreadId ? `thread：${shortId(current.currentThreadId)}` : null,
         current?.currentThread ? `runtime：${runtimeLabel(current.currentThread)}` : null,
         `usage：${formatThreadUsage(usage)}`,
         "",
-        workers.length
-          ? workers.map((worker) => `${displayWorkerId(worker)} ${worker.currentThread ? displayThreadId(worker.currentThread) : "no-thread"} ${worker.currentThread?.status ?? "idle"}`).join("\n")
-          : "当前没有带 current thread 的 Codex worker。"
+        sessions.length
+          ? sessions.map((session) => `${displaySessionId(session)} ${session.currentThread ? displayThreadId(session.currentThread) : "no-thread"} ${session.currentThread?.status ?? "idle"}`).join("\n")
+          : "当前没有带 current thread 的 Codex session。"
       ].filter(Boolean).join("\n"));
     } catch (error) {
       await ctx.reply(errorText(error));
@@ -194,13 +198,13 @@ const registerHandlers = () => {
   bot.action(/^select:(.+)$/, async (ctx) => {
     try {
       const selection = selectionOptions.get(selectionKey(ctx.chat!.id, ctx.match[1]));
-      if (!selection?.workerId) throw new Error("Selection expired. Use /workers to choose again.");
-      const worker = await selectWorker(ctx.chat!.id, selection.workerId);
+      if (!selection?.sessionId) throw new Error("Selection expired. Use /sessions to choose again.");
+      const session = await selectSession(ctx.chat!.id, selection.sessionId);
       await ctx.answerCbQuery("Selected");
       await ctx.editMessageText([
-        `已选择 worker：${displayWorkerId(worker)}`,
-        worker.currentThread ? `当前 thread：${displayThreadId(worker.currentThread)} ${worker.currentThread.status}` : "当前 thread：(none)",
-        worker.workingDirectory
+        `已选择 session：${displaySessionId(session)}`,
+        session.currentThread ? `当前 thread：${displayThreadId(session.currentThread)} ${session.currentThread.status}` : "当前 thread：(none)",
+        session.workingDirectory
       ].join("\n"));
     } catch (error) {
       await ctx.answerCbQuery("Failed");
@@ -245,24 +249,24 @@ const runPrompt = async (
   images: Array<{ fileId: string; filename: string }>
 ) => {
   const state = chatStates.get(ctx.chat.id);
-  const worker = state ? await resolveSelectedWorker(state).catch(() => null) : null;
-  if (!worker) {
-    await ctx.reply("当前没有选择 Codex worker。用 /workers 选择在线 worker。");
+  const session = state ? await resolveSelectedSession(state).catch(() => null) : null;
+  if (!session) {
+    await ctx.reply("当前没有选择 Codex session。用 /sessions 选择在线 session。");
     return;
   }
-  if (!worker.online) {
-    await ctx.reply("当前 Codex worker 已离线。请用 /workers 重新选择。");
+  if (!session.online) {
+    await ctx.reply("当前 Codex session 已离线。请用 /sessions 重新选择。");
     return;
   }
-  if (!worker.currentThreadId) {
-    await ctx.reply("当前 worker 没有打开 thread。请先在本地 Codex 里开始或 resume 一个 thread。");
+  if (!session.currentThreadId) {
+    await ctx.reply("当前 session 没有打开 thread。请先在本地 Codex 里开始或 resume 一个 thread。");
     return;
   }
-  const mirror = startChatMirror(ctx.chat.id, worker.workerId);
+  const mirror = startChatMirror(ctx.chat.id, session.sessionId);
   const statusMessage = await ctx.reply([
     "Codex queued...",
-    `folder: ${worker.workingDirectory}`,
-    `thread: ${shortId(worker.currentThreadId)}`,
+    `folder: ${session.workingDirectory}`,
+    `thread: ${shortId(session.currentThreadId)}`,
     images.length ? `images: ${images.length}` : null
   ].filter(Boolean).join("\n"));
 
@@ -275,7 +279,7 @@ const runPrompt = async (
         ...imageUrls.map((url) => ({ type: "image" as const, url }))
       ];
     }
-    const result = await postWorkerTurn(worker.workerId, input);
+    const result = await postSessionTurn(session.sessionId, input);
     if (result.thread?.threadId && result.thread.threadId !== mirror.threadId) {
       await switchMirrorThread(ctx.chat.id, mirror, result.thread.threadId);
     }
@@ -285,7 +289,7 @@ const runPrompt = async (
       undefined,
       [
         "Codex queued.",
-        `thread: ${result.thread ? displayThreadId(result.thread) : shortId(worker.currentThreadId)}`,
+        `thread: ${result.thread ? displayThreadId(result.thread) : shortId(session.currentThreadId)}`,
         "output: mirrored below"
       ].join("\n")
     );
@@ -294,48 +298,48 @@ const runPrompt = async (
   }
 };
 
-const selectWorker = async (chatId: number, workerId: string) => {
-  const worker = await resolveWorker(workerId);
-  chatStates.set(chatId, { workerId: worker.workerId });
-  startChatMirror(chatId, worker.workerId);
-  return worker;
+const selectSession = async (chatId: number, sessionId: string) => {
+  const session = await resolveSession(sessionId);
+  chatStates.set(chatId, { sessionId: session.sessionId });
+  startChatMirror(chatId, session.sessionId);
+  return session;
 };
 
-const detachWorker = (chatId: number) => {
+const detachSession = (chatId: number) => {
   const hadState = chatStates.delete(chatId);
   const hadMirror = stopChatMirror(chatId);
   return hadState || hadMirror;
 };
 
-const listWorkers = async (): Promise<WorkerSummary[]> => {
-  const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
-  return normalizeWorkers(data.workers);
+const listSessions = async (): Promise<RuntimeSessionSummary[]> => {
+  const data = await apiJson<{ sessions?: RuntimeSessionSummary[] }>("/api/sessions");
+  return normalizeSessions(data.sessions);
 };
 
-const listRunnableWorkers = async (): Promise<WorkerSummary[]> =>
-  (await listWorkers()).filter((worker) => worker.online && Boolean(worker.currentThreadId));
+const listRunnableSessions = async (): Promise<RuntimeSessionSummary[]> =>
+  (await listSessions()).filter((session) => session.online && Boolean(session.currentThreadId));
 
-const resolveWorker = async (workerId: string) => {
-  const worker = (await listWorkers()).find((item) => item.workerId === workerId);
-  if (!worker) throw new Error("Selected worker is no longer online. Use /workers to choose again.");
-  return worker;
+const resolveSession = async (sessionId: string) => {
+  const session = (await listSessions()).find((item) => item.sessionId === sessionId);
+  if (!session) throw new Error("Selected session is no longer online. Use /sessions to choose again.");
+  return session;
 };
 
-const resolveSelectedWorker = async (state: ChatState) => {
-  if (!state.workerId) throw new Error("No selected worker.");
-  return resolveWorker(state.workerId);
+const resolveSelectedSession = async (state: ChatState) => {
+  if (!state.sessionId) throw new Error("No selected session.");
+  return resolveSession(state.sessionId);
 };
 
 const getThread = (threadId: string) => apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
 
-const postWorkerTurn = async (workerId: string, input: TurnInput) => {
-  const response = await fetch(apiUrl(`/api/workers/${encodeURIComponent(workerId)}/turn`), {
+const postSessionTurn = async (sessionId: string, input: TurnInput) => {
+  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/turn`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ input, source: "telegram" })
   });
   if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
-  return await response.json() as WorkerTurnResponse;
+  return await response.json() as SessionTurnResponse;
 };
 
 const telegramImageUrl = async (fileId: string) => {
@@ -343,21 +347,21 @@ const telegramImageUrl = async (fileId: string) => {
   return link.toString();
 };
 
-const startChatMirror = (chatId: number, workerId: string) => {
+const startChatMirror = (chatId: number, sessionId: string) => {
   const existing = chatMirrors.get(chatId);
-  if (existing?.workerId === workerId && !existing.controller.signal.aborted) return existing;
+  if (existing?.sessionId === sessionId && !existing.controller.signal.aborted) return existing;
   stopChatMirror(chatId);
 
   const mirror: ChatMirror = {
-    workerId,
+    sessionId,
     controller: new AbortController(),
     knownRecordIds: new Set(),
     compactState: createCompactRecordViewState(),
     sentMessages: new Map()
   };
   chatMirrors.set(chatId, mirror);
-  void runWorkerMirror(chatId, mirror).catch((error) => {
-    if (!isAbortError(error)) logger.error("telegram worker mirror failed", error);
+  void runSessionMirror(chatId, mirror).catch((error) => {
+    if (!isAbortError(error)) logger.error("telegram session mirror failed", error);
   });
   return mirror;
 };
@@ -371,19 +375,19 @@ const stopChatMirror = (chatId: number) => {
   return true;
 };
 
-const runWorkerMirror = async (chatId: number, mirror: ChatMirror) => {
-  const stream = await openWorkerEventStream(0, mirror.controller.signal);
+const runSessionMirror = async (chatId: number, mirror: ChatMirror) => {
+  const stream = await openSessionEventStream(0, mirror.controller.signal);
   for await (const event of stream) {
     if (mirror.controller.signal.aborted) return;
-    const worker = event.workers.find((item) => item.workerId === mirror.workerId && item.online);
-    if (!worker) {
-      await bot.telegram.sendMessage(chatId, "当前 Codex worker 已离线。请用 /workers 重新选择。").catch(() => undefined);
+    const session = event.sessions.find((item) => item.sessionId === mirror.sessionId && item.online);
+    if (!session) {
+      await bot.telegram.sendMessage(chatId, "当前 Codex session 已离线。请用 /sessions 重新选择。").catch(() => undefined);
       chatMirrors.delete(chatId);
       mirror.controller.abort();
       return;
     }
-    if (worker.currentThreadId && worker.currentThreadId !== mirror.threadId) {
-      await switchMirrorThread(chatId, mirror, worker.currentThreadId);
+    if (session.currentThreadId && session.currentThreadId !== mirror.threadId) {
+      await switchMirrorThread(chatId, mirror, session.currentThreadId);
     }
   }
 };
@@ -434,11 +438,11 @@ const forwardRecordToChat = async (chatId: number, mirror: ChatMirror, record: C
   return true;
 };
 
-const openWorkerEventStream = async (after: number, signal?: AbortSignal): Promise<AsyncGenerator<WorkerStreamEvent>> => {
-  const response = await fetch(apiUrl(`/api/workers/events?after=${after}`), { signal });
+const openSessionEventStream = async (after: number, signal?: AbortSignal): Promise<AsyncGenerator<SessionStreamEvent>> => {
+  const response = await fetch(apiUrl(`/api/sessions/events?after=${after}`), { signal });
   if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
 
-  return streamSseEvents<WorkerStreamEvent>(response.body.getReader());
+  return streamSseEvents<SessionStreamEvent>(response.body.getReader());
 };
 
 const openThreadEventStream = async (threadId: string, after: number, signal?: AbortSignal): Promise<AsyncGenerator<any>> => {
@@ -480,21 +484,21 @@ const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
 const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortId = (id: string) => id.slice(0, 8);
 const selectionKey = (chatId: number, token: string) => `${chatId}:${token}`;
-const rememberSelection = (chatId: number, workerId: string) => {
+const rememberSelection = (chatId: number, sessionId: string) => {
   const token = (++selectionSeq).toString(36);
-  selectionOptions.set(selectionKey(chatId, token), { workerId });
+  selectionOptions.set(selectionKey(chatId, token), { sessionId });
   return token;
 };
-const normalizeWorkers = (workers: WorkerSummary[] | undefined) =>
-  Array.isArray(workers) ? workers.filter((worker) => worker.online) : [];
+const normalizeSessions = (sessions: RuntimeSessionSummary[] | undefined) =>
+  Array.isArray(sessions) ? sessions.filter((session) => session.online) : [];
 const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
-const displayWorkerId = (worker: Pick<WorkerSummary, "workerId" | "name">) => worker.name ?? shortId(worker.workerId);
+const displaySessionId = (session: Pick<RuntimeSessionSummary, "sessionId" | "name">) => session.name ?? shortId(session.sessionId);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const isAbortError = (error: unknown) => error instanceof Error && error.name === "AbortError";
 const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
   const state = thread.runtime.runnable ? "runnable" : "unavailable";
-  const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? shortId(thread.runtime.workerId)}` : "";
-  return `${state}${worker}`;
+  const session = thread.runtime.sessionId;
+  return `${state}${session ? `:${thread.runtime.name ?? shortId(session)}` : ""}`;
 };
 const shortPath = (value: string) => {
   const home = process.env.HOME;

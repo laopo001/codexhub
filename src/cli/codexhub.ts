@@ -1,24 +1,12 @@
 #!/usr/bin/env tsx
 import { Command } from "commander";
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadDotEnv } from "../core/dotenv.js";
 import { listLoadableCodexThreads } from "../core/codexhubLog.js";
 import type { CodexSessionSummary } from "../core/codexSession.js";
+import type { ThreadSummary } from "../core/threadHub.js";
 import { runCodexhubMachine } from "./codexhubMachine.js";
-import { registerCodexHubWorkerCommands, startHeadlessCodexhubWorker, type HeadlessCodexhubWorkerHandle } from "./codexhubConnect.js";
-import {
-  CodexhubTaskScheduler,
-  loadTaskFiles,
-  resolveTaskThread,
-  safeTaskName,
-  taskTemplate,
-  type ThreadSummary
-} from "./taskScheduler.js";
-
-type TaskCommandOptions = {
-  intervalMs?: string;
-};
+import { registerCodexHubSessionCommands } from "./codexhubConnect.js";
 
 type ServerCommandOptions = {
   host?: string;
@@ -29,6 +17,7 @@ type ServerCommandOptions = {
 type MachineCommandOptions = {
   server?: string;
   machineId?: string;
+  type?: "local" | "ssh" | "registered";
   name?: string;
 };
 
@@ -36,8 +25,39 @@ type ThreadsCommandOptions = {
   show?: string;
 };
 
-type WorkerSummary = {
-  workerId: string;
+type SshConnectCommandOptions = {
+  name?: string;
+  remotePort?: string;
+};
+
+type TaskCreateCommandOptions = {
+  name: string;
+  schedule: string;
+  machine: string;
+  project: string;
+  input: string;
+  thread?: string;
+  disabled?: boolean;
+};
+
+type LocalTask = {
+  taskId: string;
+  name: string;
+  enabled: boolean;
+  schedule: string;
+  machineId: string;
+  projectPath: string;
+  projectId?: string;
+  threadId?: string;
+  input: string;
+  updatedAt: string;
+  lastRunAt?: string;
+  lastStatus?: "queued" | "completed" | "failed" | "skipped";
+  lastError?: string;
+};
+
+type RuntimeSessionSummary = {
+  sessionId: string;
   name?: string;
   workingDirectory: string;
   online: boolean;
@@ -76,24 +96,73 @@ program
 
 program
   .command("list")
-  .description("List codexhub workers")
+  .description("List codexhub runtime sessions")
   .action(async () => {
-    const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
-    printWorkers(data.workers ?? []);
+    const data = await apiJson<{ sessions?: RuntimeSessionSummary[] }>("/api/sessions");
+    printRuntimeSessions(data.sessions ?? []);
   });
 
 program
   .command("machine")
-  .description("Run one machine that can start project workers")
+  .description("Run one machine that can start project runtime sessions")
   .option("--server <url>", "codexhub server URL")
   .option("--machine-id <id>", "stable machine id")
+  .option("--type <type>", "machine connection type: local, ssh, or registered", "registered")
   .option("--name <name>", "display name")
   .action(async (options: MachineCommandOptions = {}) => {
     await runCodexhubMachine({
       apiBase: options.server ?? apiBase(),
       machineId: options.machineId,
+      type: parseMachineType(options.type),
       name: options.name
     });
+  });
+
+const sshCommand = program
+  .command("ssh")
+  .description("Manage SSH machines from the local codexhub server")
+  .action(() => {
+    sshCommand.help();
+  });
+
+sshCommand
+  .command("hosts")
+  .description("List hosts discovered from ~/.ssh/config")
+  .action(async () => {
+    const data = await apiJson<{ hosts?: Array<{ alias: string; hostName?: string; user?: string; port?: number; proxyJump?: string }> }>("/api/ssh/hosts");
+    const hosts = data.hosts ?? [];
+    if (!hosts.length) {
+      console.log("No SSH hosts found.");
+      return;
+    }
+    console.table(hosts.map((host) => ({
+      host: host.alias,
+      hostname: host.hostName ?? "",
+      user: host.user ?? "",
+      port: host.port ?? "",
+      proxyJump: host.proxyJump ?? ""
+    })));
+  });
+
+sshCommand
+  .command("connect")
+  .argument("<host>", "SSH host alias or destination")
+  .option("--name <name>", "display name for the remote machine")
+  .option("--remote-port <port>", "remote loopback port for the reverse tunnel")
+  .description("Connect to a remote machine over SSH and start codexhub machine there")
+  .action(async (host: string, options: SshConnectCommandOptions = {}) => {
+    const payload = await apiJson<{ connection?: { connectionId: string; host: string; status: string; remotePort: number } }>("/api/ssh/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        host,
+        name: options.name,
+        remotePort: options.remotePort ? parsePortOption(options.remotePort) : undefined
+      })
+    });
+    const connection = payload.connection;
+    if (!connection) throw new Error("SSH connect did not return a connection.");
+    console.log(`SSH connection ${connection.status}: ${connection.host} (${connection.connectionId}, remote port ${connection.remotePort})`);
   });
 
 program
@@ -111,54 +180,95 @@ program
   .argument("<target>", "thread index, full id, or unique id prefix to delete")
   .description("Delete a thread")
   .action(async (target: string) => {
-    const { threads } = await listWorkerThreads();
+    const { threads } = await listSessionThreads();
     const thread = resolveThreadTarget(target, threads);
     await apiJson(`/api/threads/${encodeURIComponent(thread.threadId)}`, { method: "DELETE" });
     console.log(`Deleted ${formatThread(thread)}`);
   });
 
-registerCodexHubWorkerCommands(program);
+registerCodexHubSessionCommands(program);
 
 const taskCommand = program
   .command("task")
-  .description("Manage codexhub task YAML files")
+  .description("Manage local server-scheduled tasks")
   .action(() => {
     taskCommand.help();
   });
 
 taskCommand
   .command("list")
-  .argument("[thread]", "optional thread index, full id, or unique id prefix")
-  .description("List local task YAML files; server connection is optional")
-  .action(async (thread?: string) => {
-    const { threads, online } = await tryListThreadsForTaskList();
-    if (thread && !online) throw new Error(`Cannot filter by thread while server is offline: ${apiBase()}`);
-    const target = thread ? resolveThreadTarget(thread, threads) : undefined;
-    await printTasks(threads, { serverOnline: online, target, cwd: commandCwd() });
+  .description("List local tasks stored in the codexhub server")
+  .action(async () => {
+    const tasks = await listLocalTasks();
+    printLocalTasks(tasks);
   });
 
 taskCommand
-  .command("template")
-  .argument("[name]", "task name", "daily-summary")
-  .description("Create a task YAML template")
-  .action(async (name: string) => {
-    await createTaskTemplate(name);
-  });
-
-taskCommand
-  .command("start")
-  .option("--interval-ms <ms>", "task scheduler scan interval in milliseconds")
-  .description("Start the local task scheduler; cron schedules are read from task YAML files")
-  .action(async (options: TaskCommandOptions = {}) => {
-    await startTaskScheduler(options);
+  .command("create")
+  .requiredOption("--name <name>", "task name")
+  .requiredOption("--schedule <cron>", "cron schedule, for example \"0 9 * * *\"")
+  .requiredOption("--machine <machineId>", "target machine id")
+  .requiredOption("--project <path>", "target project path on that machine")
+  .requiredOption("--input <text>", "message to send on each run")
+  .option("--thread <threadId>", "optional thread to resume before sending")
+  .option("--disabled", "create the task disabled")
+  .description("Create a server-local scheduled conversation task")
+  .action(async (options: TaskCreateCommandOptions) => {
+    const payload = await apiJson<{ task?: LocalTask }>("/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: options.name,
+        enabled: !options.disabled,
+        schedule: options.schedule,
+        machineId: options.machine,
+        projectPath: options.project,
+        threadId: options.thread,
+        input: options.input
+      })
+    });
+    if (!payload.task) throw new Error("Task create did not return a task.");
+    printLocalTasks([payload.task]);
   });
 
 taskCommand
   .command("run")
-  .argument("<task_yaml_path>", "task YAML file to run once")
-  .description("Run one task YAML file immediately")
-  .action(async (taskYamlPath: string) => {
-    await runTaskFile(taskYamlPath);
+  .argument("<task>", "task id, unique id prefix, or unique task name")
+  .description("Run one server-local task immediately")
+  .action(async (target: string) => {
+    const task = resolveTaskTarget(target, await listLocalTasks());
+    const payload = await apiJson<{ task?: LocalTask; threadId?: string; sessionId?: string }>(
+      `/api/tasks/${encodeURIComponent(task.taskId)}/run`,
+      { method: "POST" }
+    );
+    if (payload.task) printLocalTasks([payload.task]);
+    console.log(`Run queued on session ${payload.sessionId ?? "(unknown)"} thread ${payload.threadId ?? "(unknown)"}`);
+  });
+
+taskCommand
+  .command("enable")
+  .argument("<task>", "task id, unique id prefix, or unique task name")
+  .description("Enable a server-local task")
+  .action(async (target: string) => {
+    await setTaskEnabled(target, true);
+  });
+
+taskCommand
+  .command("disable")
+  .argument("<task>", "task id, unique id prefix, or unique task name")
+  .description("Disable a server-local task")
+  .action(async (target: string) => {
+    await setTaskEnabled(target, false);
+  });
+
+taskCommand
+  .command("delete")
+  .argument("<task>", "task id, unique id prefix, or unique task name")
+  .description("Delete a server-local task")
+  .action(async (target: string) => {
+    const task = resolveTaskTarget(target, await listLocalTasks());
+    await apiJson(`/api/tasks/${encodeURIComponent(task.taskId)}`, { method: "DELETE" });
+    console.log(`Deleted ${formatTask(task)}`);
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {
@@ -172,36 +282,76 @@ async function apiJson<T = unknown>(path: string, init?: RequestInit): Promise<T
   return await response.json() as T;
 }
 
-async function tryListThreads() {
-  try {
-    return { online: true, ...(await listWorkerThreads()) };
-  } catch {
-    return { online: false, threads: [] };
-  }
+async function listSessionThreads() {
+  const data = await apiJson<{ sessions?: RuntimeSessionSummary[] }>("/api/sessions");
+  return { threads: sessionThreads(data.sessions) };
 }
 
-async function listWorkerThreads() {
-  const data = await apiJson<{ workers?: WorkerSummary[] }>("/api/workers");
-  return { threads: workerThreads(data.workers) };
-}
-
-function workerThreads(workers: WorkerSummary[] | undefined) {
+function sessionThreads(sessions: RuntimeSessionSummary[] | undefined) {
   const byId = new Map<string, ThreadSummary>();
-  for (const worker of workers ?? []) {
-    for (const thread of worker.threads ?? []) byId.set(thread.threadId, thread);
-    if (worker.currentThread) byId.set(worker.currentThread.threadId, worker.currentThread);
+  for (const session of sessions ?? []) {
+    for (const thread of session.threads ?? []) byId.set(thread.threadId, thread);
+    if (session.currentThread) byId.set(session.currentThread.threadId, session.currentThread);
   }
   return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
-async function tryListThreadsForTaskList() {
-  if (!shouldProbeServerForTaskList()) return { online: false, threads: [] };
-  return tryListThreads();
+async function listLocalTasks() {
+  const data = await apiJson<{ tasks?: LocalTask[] }>("/api/tasks");
+  return (data.tasks ?? []).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
-function shouldProbeServerForTaskList() {
-  const source = program.getOptionValueSource("server");
-  return source !== "default" || Boolean(process.env.CODEX_HUB_SERVER_URL);
+function printLocalTasks(tasks: LocalTask[]) {
+  if (!tasks.length) {
+    console.log("No tasks.");
+    return;
+  }
+  console.table(tasks.map((task) => ({
+    task: task.name,
+    id: task.taskId.slice(0, 8),
+    enabled: task.enabled ? "yes" : "no",
+    schedule: task.schedule,
+    status: task.lastStatus ?? "",
+    lastRun: task.lastRunAt ? formatLocalTime(task.lastRunAt) : "",
+    machine: task.machineId,
+    project: task.projectPath,
+    thread: task.threadId ? task.threadId.slice(0, 8) : "",
+    error: task.lastError ? truncate(singleLine(task.lastError), 80) : ""
+  })));
+}
+
+function resolveTaskTarget(target: string, tasks: LocalTask[]) {
+  const trimmed = target.trim();
+  if (!trimmed) throw new Error("Missing task target.");
+
+  const exactId = tasks.find((task) => task.taskId === trimmed);
+  if (exactId) return exactId;
+
+  const matches = tasks.filter((task) => task.taskId.startsWith(trimmed) || task.name === trimmed);
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    throw new Error([
+      `Task target "${trimmed}" is ambiguous. Matching tasks:`,
+      ...matches.map((task) => `  ${formatTask(task)}`)
+    ].join("\n"));
+  }
+
+  throw new Error(`Task not found: ${trimmed}.`);
+}
+
+async function setTaskEnabled(target: string, enabled: boolean) {
+  const task = resolveTaskTarget(target, await listLocalTasks());
+  const payload = await apiJson<{ task?: LocalTask }>(`/api/tasks/${encodeURIComponent(task.taskId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled })
+  });
+  if (!payload.task) throw new Error("Task update did not return a task.");
+  printLocalTasks([payload.task]);
+}
+
+function formatTask(task: LocalTask) {
+  return `${task.taskId.slice(0, 8)} (${task.name}, ${task.projectPath})`;
 }
 
 function apiUrl(path: string) {
@@ -213,39 +363,19 @@ function apiBase() {
   return options.server;
 }
 
-function resolveCommandPath(...segments: string[]) {
-  return path.resolve(commandCwd(), ...segments);
-}
-
-async function printThreads(threads: ThreadSummary[]) {
-  if (!threads.length) {
-    console.log("No threads.");
+function printRuntimeSessions(sessions: RuntimeSessionSummary[]) {
+  if (!sessions.length) {
+    console.log("No runtime sessions.");
     return;
   }
-  const taskCounts = await taskCountsByThread(threads);
-  console.table(threads.map((thread) => ({
-    thread: thread.threadId ? thread.threadId.slice(0, 8) : "",
-    status: thread.status,
-    runtime: formatRuntime(thread),
-    tasks: taskCounts.get(thread.threadId) ?? 0,
-    folder: thread.workingDirectory,
-    title: thread.title
-  })));
-}
-
-function printWorkers(workers: WorkerSummary[]) {
-  if (!workers.length) {
-    console.log("No online or recently disconnected codexhub.");
-    return;
-  }
-  console.table(workers.map((worker) => ({
-    worker: worker.name ?? worker.workerId.slice(0, 8),
-    state: worker.online ? "online" : "offline",
-    status: worker.online ? worker.currentThread?.status ?? "idle" : workerOfflineReason(worker),
-    folder: worker.workingDirectory,
-    thread: worker.online && worker.currentThreadId ? worker.currentThreadId.slice(0, 8) : "",
-    lastSeen: worker.online ? "" : relativeTime(worker.lastSeenAt),
-    title: worker.online ? worker.currentThread?.title ?? "" : "recently disconnected"
+  console.table(sessions.map((session) => ({
+    session: session.name ?? session.sessionId.slice(0, 8),
+    state: session.online ? "online" : "offline",
+    status: session.online ? session.currentThread?.status ?? "idle" : sessionOfflineReason(session),
+    folder: session.workingDirectory,
+    thread: session.online && session.currentThreadId ? session.currentThreadId.slice(0, 8) : "",
+    lastSeen: session.online ? "" : relativeTime(session.lastSeenAt),
+    title: session.online ? session.currentThread?.title ?? "" : "recently disconnected"
   })));
 }
 
@@ -261,13 +391,6 @@ function printCodexSessions(threads: CodexSessionSummary[]) {
     messages: thread.messageCount,
     artifacts: thread.artifactCount
   })));
-}
-
-function formatRuntime(thread: ThreadSummary) {
-  if (!thread.runtime) return "unavailable";
-  const state = thread.runtime.runnable ? "runnable" : "unavailable";
-  const worker = thread.runtime.workerId ? `:${thread.runtime.name ?? thread.runtime.workerId.slice(0, 8)}` : "";
-  return `${state}${worker}`;
 }
 
 function resolveThreadTarget(target: string, threads: ThreadSummary[]) {
@@ -299,9 +422,9 @@ function formatThread(thread: ThreadSummary) {
   return `${thread.threadId.slice(0, 8)} (${thread.workingDirectory}, ${thread.title})`;
 }
 
-function workerOfflineReason(worker: WorkerSummary) {
-  if (worker.offlineReason === "heartbeat_timeout") return "heartbeat timeout";
-  if (worker.offlineReason === "transport_disconnected") return "connection lost";
+function sessionOfflineReason(session: RuntimeSessionSummary) {
+  if (session.offlineReason === "heartbeat_timeout") return "heartbeat timeout";
+  if (session.offlineReason === "transport_disconnected") return "connection lost";
   return "recently disconnected";
 }
 
@@ -349,120 +472,8 @@ function pad2(value: number) {
   return String(value).padStart(2, "0");
 }
 
-async function startTaskScheduler(options: TaskCommandOptions) {
-  const cwd = commandCwd();
-  console.error(`codexhub task worker starting: ${cwd}`);
-  const worker = await startHeadlessCodexhubWorker({
-    apiBase: apiBase(),
-    cwd,
-    readyLabel: "codexhub task worker ready"
-  });
-  await restoreSingleTaskThread(worker, cwd);
-  const scheduler = new CodexhubTaskScheduler({
-    workspace: cwd,
-    scanIntervalMs: parseIntervalMs(options.intervalMs),
-    runner: async (task) => sendTaskTurn(worker, task)
-  });
-  try {
-    scheduler.start();
-    console.error(`codexhub task scheduler started: ${cwd}`);
-    await Promise.race([
-      waitForShutdown(),
-      worker.wait().then(({ code, signal }) => {
-        throw new Error(`codexhub task worker exited: code=${code ?? ""} signal=${signal ?? ""}`);
-      })
-    ]);
-  } finally {
-    scheduler.stop();
-    await worker.stop();
-  }
-}
-
-async function restoreSingleTaskThread(worker: HeadlessCodexhubWorkerHandle, workspace: string) {
-  const tasks = await loadTaskFiles([workspace]);
-  const threadIds = uniqueStrings(tasks
-    .filter((task) => task.valid && task.enabled && task.thread)
-    .map((task) => task.thread!));
-
-  if (threadIds.length === 0) return;
-  if (threadIds.length > 1) {
-    console.error("multiple task threads configured; waiting for schedule");
-    return;
-  }
-
-  const threadId = await worker.ensureThread(threadIds[0]);
-  console.error(`codexhub task worker restored thread: ${threadId}`);
-}
-
-async function sendTaskTurn(worker: HeadlessCodexhubWorkerHandle, task: { input: string; thread?: string }) {
-  if (task.thread) {
-    await worker.runTurn(task.input, task.thread);
-    return;
-  }
-
-  await worker.runTurn(task.input);
-}
-
-async function runTaskFile(taskYamlPath: string) {
-  const scheduler = new CodexhubTaskScheduler({
-    workspace: commandCwd()
-  });
-  const result = await scheduler.runFile(taskYamlPath);
-  console.log(`Task ${result.status}: ${result.task}`);
-}
-
-async function createTaskTemplate(taskName: string) {
-  const safeName = safeTaskName(taskName);
-  const directory = resolveCommandPath(".codexp", "tasks");
-  const filePath = path.join(directory, `${safeName}.yaml`);
-  await mkdir(directory, { recursive: true });
-  await writeFile(filePath, taskTemplate(safeName), { encoding: "utf8", flag: "wx" });
-  console.log(`Created ${filePath}`);
-}
-
-async function printTasks(
-  threads: ThreadSummary[],
-  options: { serverOnline: boolean; target?: ThreadSummary; cwd: string }
-) {
-  const workspaces = options.target
-    ? [options.target.workingDirectory]
-    : uniqueStrings([options.cwd, ...threads.map((thread) => thread.workingDirectory)]);
-  const tasks = await loadTaskFiles(workspaces);
-  const rows = tasks.map((task) => ({
-    task: task.name,
-    enabled: task.valid ? (task.enabled ? "yes" : "no") : "invalid",
-    schedule: task.schedule,
-    thread: task.thread ?? "",
-    server: options.serverOnline ? "online" : "offline",
-    file: path.relative(task.workspace, task.filePath) || task.filePath
-  }));
-  if (!rows.length) {
-    console.log("No tasks.");
-    return;
-  }
-  console.table(rows);
-}
-
-async function taskCountsByThread(threads: ThreadSummary[]) {
-  const counts = new Map<string, number>();
-  const tasks = await loadTaskFiles(uniqueStrings(threads.map((thread) => thread.workingDirectory)));
-  for (const task of tasks) {
-    if (!task.valid || !task.enabled) continue;
-    const target = resolveTaskThread(task, threads);
-    if (target) counts.set(target.threadId, (counts.get(target.threadId) ?? 0) + 1);
-  }
-  return counts;
-}
-
 function commandCwd() {
   return path.resolve(process.cwd());
-}
-
-function parseIntervalMs(value: string | undefined) {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`Invalid interval: ${value}`);
-  return parsed;
 }
 
 function parsePortOption(value: string | undefined) {
@@ -472,6 +483,12 @@ function parsePortOption(value: string | undefined) {
     throw new Error(`Invalid port: ${value}`);
   }
   return parsed;
+}
+
+function parseMachineType(value: string | undefined): "local" | "ssh" | "registered" | undefined {
+  if (!value) return undefined;
+  if (value === "local" || value === "ssh" || value === "registered") return value;
+  throw new Error(`Invalid machine type: ${value}`);
 }
 
 function parsePositiveIntegerOption(value: string | undefined, name: string) {
@@ -500,8 +517,4 @@ function waitForShutdown() {
     process.once("SIGTERM", resolve);
     process.once("SIGHUP", resolve);
   });
-}
-
-function uniqueStrings(values: string[]) {
-  return [...new Set(values)];
 }
