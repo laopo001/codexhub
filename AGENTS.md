@@ -31,10 +31,11 @@ codexhub 是本机 Node.js server + Web 控制面。server 负责 machines、pro
 
 1. server 读取 SSH config 用 `src/core/sshConfig.ts`，支持 `Include` 和简单 `*`/`?` glob；可用 `CODEX_HUB_SSH_CONFIG` 指向测试或自定义配置。
 2. CodexHub state 只保存用户添加进 CodexHub 的 SSH config alias，不复制 `HostName`、`User`、`Port`、`ProxyJump` 等连接配置。`/api/ssh/config-hosts` 是本机 SSH config 候选来源，`/api/ssh/hosts` 是 CodexHub 收纳列表。
-3. `/api/ssh/connect` 通过系统 `ssh` 建立 `-R 127.0.0.1:<remotePort>:<localHost>:<localPort>`。默认远端命令是 bootstrap：用远端 `node` 经 reverse tunnel 下载本机 server 下发的 `dist-node/ssh/remote-client.cjs`，按 sha256 缓存到 `~/.cache/codexhub/remote-client/<hash>/client.cjs` 后运行，不要求远端预装 CodexHub。
-4. `CODEX_HUB_SSH_REMOTE_MODE=installed` 可临时退回旧模式，让远端执行全局 `codexhub machine --server http://127.0.0.1:<remotePort> --type ssh`。
-5. 如果 server 监听 `0.0.0.0` 或 `::`，reverse tunnel 的本机目标应映射到 `127.0.0.1`。
-6. SSH 是 connection/transport 方式，不需要把所有 transport 都抽象成插件系统。先保持直接、可验证、断开即结束。
+3. server 启动后默认读取 CodexHub SSH alias 列表并自动连接；可用 `CODEX_HUB_SSH_AUTOCONNECT=0` 关闭。添加 alias 后也应由 server 侧启动连接，不依赖 Web 切换到 SSH tab。
+4. `/api/ssh/connect` 通过系统 `ssh` 建立 `-R 127.0.0.1:<remotePort>:<localHost>:<localPort>`。默认远端命令是 bootstrap：用远端 `node` 经 reverse tunnel 下载本机 server 下发的 `dist-node/ssh/remote-client.cjs`，按 sha256 缓存到 `~/.cache/codexhub/remote-client/<hash>/client.cjs` 后运行，不要求远端预装 CodexHub。
+5. `CODEX_HUB_SSH_REMOTE_MODE=installed` 可临时退回旧模式，让远端执行全局 `codexhub machine --server http://127.0.0.1:<remotePort> --type ssh`。
+6. 如果 server 监听 `0.0.0.0` 或 `::`，reverse tunnel 的本机目标应映射到 `127.0.0.1`。
+7. SSH 是 connection/transport 方式，不需要把所有 transport 都抽象成插件系统。先保持直接、可验证、断开即结束。
 
 ## Project / Task 模型
 

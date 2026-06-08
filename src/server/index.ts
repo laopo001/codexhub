@@ -479,6 +479,35 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     });
   }
 
+  async function autoConnectSavedSshHosts(reason: string) {
+    if (!sshAutoConnectEnabled()) return;
+    const hosts = await listCodexhubSshHosts();
+    for (const host of hosts) {
+      await autoConnectSavedSshHost(host.alias, reason);
+    }
+  }
+
+  async function autoConnectSavedSshHost(alias: string, reason: string) {
+    if (!sshAutoConnectEnabled()) return;
+    if (sshMachines.listConnections().some((connection) => connection.host === alias && connection.status !== "exited")) return;
+    const configHostsByAlias = await localSshConfigHostsByAlias();
+    if (!configHostsByAlias.has(alias)) {
+      app.log.warn({ host: alias, reason }, "codexhub saved SSH host is missing from ssh config");
+      return;
+    }
+    try {
+      sshMachines.connect({ host: alias, name: alias });
+      app.log.info({ host: alias, reason }, "codexhub SSH autoconnect started");
+    } catch (error) {
+      app.log.warn({ err: error, host: alias, reason }, "codexhub SSH autoconnect failed");
+    }
+  }
+
+  async function stopSshConnectionsForHost(alias: string) {
+    const connections = sshMachines.listConnections().filter((connection) => connection.host === alias && connection.status !== "exited");
+    await Promise.allSettled(connections.map((connection) => sshMachines.stop(connection.connectionId)));
+  }
+
   async function waitForRuntimeSession(sessionId: string, timeoutMs = 10_000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() <= deadline) {
@@ -878,7 +907,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       reply.code(404);
       return { error: `SSH config host not found: ${alias}` };
     }
+    const alreadySaved = state.listSshHosts().some((host) => host.alias === alias);
     state.upsertSshHost({ alias });
+    if (!alreadySaved) void autoConnectSavedSshHost(alias, "host_added");
     return {
       ok: true,
       hosts: await listCodexhubSshHosts()
@@ -887,6 +918,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.delete("/api/ssh/hosts/:alias", async (request) => {
     const params = sshHostAliasSchema.parse(request.params);
+    await stopSshConnectionsForHost(params.alias);
     return {
       ok: true,
       deleted: state.deleteSshHost(params.alias),
@@ -1447,6 +1479,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   await app.listen({ host: config.host, port: config.port });
 
+  await autoConnectSavedSshHosts("startup");
+
   if (localMachineEnabled()) {
     localMachine = startCodexhubMachine({
       apiBase: localApiBaseUrl(config.host, config.port),
@@ -1546,6 +1580,8 @@ const contentType = (filePath: string) => {
 };
 
 const sshRemoteMode = () => process.env.CODEX_HUB_SSH_REMOTE_MODE === "installed" ? "installed" : "bootstrap";
+
+const sshAutoConnectEnabled = () => process.env.CODEX_HUB_SSH_AUTOCONNECT !== "0";
 
 const isDirectEntryPoint = () => {
   const entrypoint = process.argv[1];

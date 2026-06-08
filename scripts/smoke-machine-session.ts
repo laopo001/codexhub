@@ -99,6 +99,7 @@ const main = async () => {
   process.env.TELEGRAM_BOT_TOKEN = "";
 
   await assertServerStateSnapshotPure();
+  await writeStartupSshHostState(dataDir, "included-host");
 
   const port = await findFreePort();
   const { startServer } = await import("../src/server/index.js");
@@ -108,6 +109,9 @@ const main = async () => {
   try {
     const machine = await waitForLocalMachine(apiBase);
     console.log(`machine ok: ${machine.machineId}`);
+
+    await assertSshStartupConnect(apiBase, port, fakeSshArgsPath, sshConfigPath, remoteClient.hash);
+    console.log("ssh startup connect ok");
 
     await assertSshHosts(apiBase);
     console.log("ssh hosts ok");
@@ -236,6 +240,13 @@ const writeRemoteClientFixture = async (root: string) => {
   };
 };
 
+const writeStartupSshHostState = async (dataDir: string, alias: string) => {
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const state = await CodexhubServerState.load({ dataDir });
+  state.upsertSshHost({ alias });
+  await state.flush();
+};
+
 const assertSshHosts = async (apiBase: string) => {
   const configData = await apiJson<{ hosts?: SshHost[] }>(apiBase, "/api/ssh/config-hosts");
   assertNoWorkerId(configData, "/api/ssh/config-hosts");
@@ -250,9 +261,12 @@ const assertSshHosts = async (apiBase: string) => {
   }
   if (configHosts.some((host) => host.alias === "*")) throw new Error("wildcard ssh host was exposed");
 
-  const emptyData = await apiJson<{ hosts?: SshHost[] }>(apiBase, "/api/ssh/hosts");
-  assertNoWorkerId(emptyData, "/api/ssh/hosts");
-  if ((emptyData.hosts ?? []).length !== 0) throw new Error(`codexhub ssh hosts should start empty: ${JSON.stringify(emptyData.hosts)}`);
+  const savedData = await apiJson<{ hosts?: SshHost[] }>(apiBase, "/api/ssh/hosts");
+  assertNoWorkerId(savedData, "/api/ssh/hosts");
+  const existing = savedData.hosts?.find((host) => host.alias === "included-host");
+  if (!existing || existing.hostName !== "included.example.com" || existing.user !== "ubuntu") {
+    throw new Error(`codexhub ssh hosts did not load saved alias from state: ${JSON.stringify(savedData.hosts)}`);
+  }
 
   const added = await apiJson<{ hosts?: SshHost[] }>(apiBase, "/api/ssh/hosts", {
     method: "POST",
@@ -335,6 +349,36 @@ const assertSshConnect = async (
   }
 };
 
+const assertSshStartupConnect = async (
+  apiBase: string,
+  serverPort: number,
+  argsPath: string,
+  sshConfigPath: string,
+  remoteClientHash: string
+) => {
+  const connection = await waitForSshConnection(apiBase, "included-host");
+  if (connection.remoteMode !== "bootstrap" || connection.remoteClientHash !== remoteClientHash) {
+    throw new Error(`startup ssh connection did not use bootstrap remote client: ${JSON.stringify(connection)}`);
+  }
+  const args = await waitForFakeSshArgs(argsPath);
+  const configIndex = args.indexOf("-F");
+  if (configIndex < 0 || args[configIndex + 1] !== sshConfigPath) {
+    throw new Error(`startup fake ssh args did not include configured ssh config: ${JSON.stringify(args)}`);
+  }
+  const reverseIndex = args.indexOf("-R");
+  if (reverseIndex < 0) throw new Error(`startup fake ssh args did not include -R: ${JSON.stringify(args)}`);
+  const reverse = args[reverseIndex + 1];
+  if (!reverse.startsWith("127.0.0.1:") || !reverse.endsWith(`:127.0.0.1:${serverPort}`)) {
+    throw new Error(`startup ssh reverse tunnel did not target server port ${serverPort}: ${reverse}`);
+  }
+  const remoteCommand = args.at(-1) ?? "";
+  if (!remoteCommand.includes(`/api/ssh/remote-client/${remoteClientHash}`) || !remoteCommand.includes("--type ssh")) {
+    throw new Error(`startup ssh remote command did not use remote client: ${remoteCommand}`);
+  }
+  await apiJson(apiBase, `/api/ssh/connections/${encodeURIComponent(connection.connectionId)}`, { method: "DELETE" });
+  await writeFile(argsPath, "", "utf8");
+};
+
 const assertSshRemoteClientEndpoint = async (
   apiBase: string,
   remoteClient: { path: string; hash: string }
@@ -358,6 +402,17 @@ const waitForFakeSshArgs = async (argsPath: string) => {
     await delay(50);
   }
   throw new Error("fake ssh did not receive arguments");
+};
+
+const waitForSshConnection = async (apiBase: string, host: string) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5_000) {
+    const listed = await apiJson<{ connections?: SshConnection[] }>(apiBase, "/api/ssh/connections").catch(() => ({ connections: [] }));
+    const connection = listed.connections?.find((item) => item.host === host && item.status !== "exited");
+    if (connection) return connection;
+    await delay(50);
+  }
+  throw new Error(`SSH host did not autoconnect: ${host}`);
 };
 
 const assertWebRealtime = async (apiBase: string, threadId: string, trigger: () => Promise<void>) => {

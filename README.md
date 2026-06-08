@@ -56,6 +56,12 @@ pnpm codexhub ssh connect my-remote --name my-remote
 
 `codexhub ssh hosts` 只显示已添加到 CodexHub 的 SSH config alias；HostName、User、Port、ProxyJump 等连接细节仍以本机 SSH config 为准，不复制进 CodexHub state。`codexhub ssh connect` 会建立 reverse tunnel，默认让远端 `node` 通过 `http://127.0.0.1:<remotePort>/api/ssh/remote-client/<hash>` 下载本机当前 build 的 remote client，按 sha256 缓存到 `~/.cache/codexhub/remote-client/<hash>/client.cjs` 后运行。远端不需要预装或升级 CodexHub，但仍需要能从 `PATH` 找到 `node` 和官方 `codex` runtime。断开 SSH 后，这条连接下启动的远端 runtime session 会随进程退出。
 
+server 启动时会默认读取已添加到 CodexHub 的 SSH alias 并自动连接；添加 alias 后也会由 server 侧尝试启动连接，不依赖 Web 是否切到 SSH tab。需要临时关闭时设置：
+
+```bash
+CODEX_HUB_SSH_AUTOCONNECT=0
+```
+
 如需临时使用旧模式，可以设置：
 
 ```bash

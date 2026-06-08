@@ -491,7 +491,6 @@ const App = () => {
   const connectionsLastSeq = useRef(0);
   const controlReconnectTimer = useRef<number | null>(null);
   const realtimeThreadSubscriptions = useRef(new Set<string>());
-  const autoConnectedSshHosts = useRef(new Set<string>());
   const threadLastSeqs = useRef(new Map<string, number>());
   const openingThreads = useRef(new Map<string, Promise<void>>());
   const latestRequestedThreadId = useRef("");
@@ -1071,7 +1070,6 @@ const App = () => {
   const removeSshHost = async (host: SshHost, activeConnection?: SshConnection) => {
     const suffix = activeConnection ? " and stop the current connection" : "";
     if (!window.confirm(`Remove ${host.alias} from CodexHub SSH hosts${suffix}?`)) return;
-    autoConnectedSshHosts.current.delete(host.alias);
     setSshError("");
     setSshHostBusy(host.alias);
     try {
@@ -1087,18 +1085,6 @@ const App = () => {
       setSshHostBusy((current) => current === host.alias ? "" : current);
     }
   };
-
-  useEffect(() => {
-    if (!initialized || connectionMode !== "ssh" || sshConnectingHost || sshHostBusy) return;
-    const nextHost = sshHosts.find((host) => {
-      if (host.configured === false) return false;
-      if (autoConnectedSshHosts.current.has(host.alias)) return false;
-      return !activeSshConnectionForHost(sshConnections, host.alias);
-    });
-    if (!nextHost) return;
-    autoConnectedSshHosts.current.add(nextHost.alias);
-    void connectSshHost(nextHost.alias, nextHost.alias);
-  }, [connectionMode, initialized, sshConnectingHost, sshConnections, sshHostBusy, sshHosts]);
 
   const copyRegisteredCommand = async () => {
     await navigator.clipboard?.writeText(registeredCommand).catch(() => undefined);
