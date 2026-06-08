@@ -63,8 +63,6 @@ type RuntimeSessionSummary = {
   online: boolean;
   lastSeenAt: string;
   offlineReason?: "heartbeat_timeout" | "transport_disconnected" | "unregistered";
-  currentThreadId?: string;
-  currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
 };
 
@@ -127,12 +125,12 @@ const sshCommand = program
 
 sshCommand
   .command("hosts")
-  .description("List hosts discovered from ~/.ssh/config")
+  .description("List SSH host aliases added to CodexHub")
   .action(async () => {
     const data = await apiJson<{ hosts?: Array<{ alias: string; hostName?: string; user?: string; port?: number; proxyJump?: string }> }>("/api/ssh/hosts");
     const hosts = data.hosts ?? [];
     if (!hosts.length) {
-      console.log("No SSH hosts found.");
+      console.log("No CodexHub SSH hosts added.");
       return;
     }
     console.table(hosts.map((host) => ({
@@ -145,11 +143,52 @@ sshCommand
   });
 
 sshCommand
+  .command("config-hosts")
+  .description("List hosts discovered from ~/.ssh/config")
+  .action(async () => {
+    const data = await apiJson<{ hosts?: Array<{ alias: string; hostName?: string; user?: string; port?: number; proxyJump?: string }> }>("/api/ssh/config-hosts");
+    const hosts = data.hosts ?? [];
+    if (!hosts.length) {
+      console.log("No SSH config hosts found.");
+      return;
+    }
+    console.table(hosts.map((host) => ({
+      host: host.alias,
+      hostname: host.hostName ?? "",
+      user: host.user ?? "",
+      port: host.port ?? "",
+      proxyJump: host.proxyJump ?? ""
+    })));
+  });
+
+sshCommand
+  .command("add")
+  .argument("<alias>", "SSH config host alias to add to CodexHub")
+  .description("Add a host alias from ~/.ssh/config to CodexHub")
+  .action(async (alias: string) => {
+    await apiJson("/api/ssh/hosts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ alias })
+    });
+    console.log(`Added CodexHub SSH host: ${alias}`);
+  });
+
+sshCommand
+  .command("remove")
+  .argument("<alias>", "SSH host alias to remove from CodexHub")
+  .description("Remove a host alias from CodexHub without editing ~/.ssh/config")
+  .action(async (alias: string) => {
+    await apiJson(`/api/ssh/hosts/${encodeURIComponent(alias)}`, { method: "DELETE" });
+    console.log(`Removed CodexHub SSH host: ${alias}`);
+  });
+
+sshCommand
   .command("connect")
   .argument("<host>", "SSH host alias or destination")
   .option("--name <name>", "display name for the remote machine")
   .option("--remote-port <port>", "remote loopback port for the reverse tunnel")
-  .description("Connect to a remote machine over SSH and start codexhub machine there")
+  .description("Connect to a remote machine over SSH and start the CodexHub remote client there")
   .action(async (host: string, options: SshConnectCommandOptions = {}) => {
     const payload = await apiJson<{ connection?: { connectionId: string; host: string; status: string; remotePort: number } }>("/api/ssh/connect", {
       method: "POST",
@@ -291,7 +330,6 @@ function sessionThreads(sessions: RuntimeSessionSummary[] | undefined) {
   const byId = new Map<string, ThreadSummary>();
   for (const session of sessions ?? []) {
     for (const thread of session.threads ?? []) byId.set(thread.threadId, thread);
-    if (session.currentThread) byId.set(session.currentThread.threadId, session.currentThread);
   }
   return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
@@ -369,14 +407,23 @@ function printRuntimeSessions(sessions: RuntimeSessionSummary[]) {
     return;
   }
   console.table(sessions.map((session) => ({
+    ...runtimeSessionDisplay(session),
     session: session.name ?? session.sessionId.slice(0, 8),
     state: session.online ? "online" : "offline",
-    status: session.online ? session.currentThread?.status ?? "idle" : sessionOfflineReason(session),
-    folder: session.workingDirectory,
-    thread: session.online && session.currentThreadId ? session.currentThreadId.slice(0, 8) : "",
-    lastSeen: session.online ? "" : relativeTime(session.lastSeenAt),
-    title: session.online ? session.currentThread?.title ?? "" : "recently disconnected"
   })));
+}
+
+function runtimeSessionDisplay(session: RuntimeSessionSummary) {
+  const threads = session.threads ?? [];
+  const runningThread = threads.find((thread) => thread.running || thread.status === "running");
+  const latestThread = runningThread ?? threads[0];
+  return {
+    status: session.online ? runningThread ? "running" : "idle" : sessionOfflineReason(session),
+    folder: session.workingDirectory,
+    thread: session.online && latestThread ? latestThread.threadId.slice(0, 8) : "",
+    lastSeen: session.online ? "" : relativeTime(session.lastSeenAt),
+    title: session.online ? latestThread?.title ?? "" : "recently disconnected"
+  };
 }
 
 function printCodexSessions(threads: CodexSessionSummary[]) {

@@ -76,8 +76,6 @@ type RuntimeSessionSummary = {
   offlineReason?: "heartbeat_timeout" | "transport_disconnected" | "unregistered";
   pid?: number;
   hostname?: string;
-  currentThreadId?: string;
-  currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
 };
 
@@ -118,7 +116,11 @@ type SshHost = {
   hostName?: string;
   user?: string;
   port?: number;
+  identityFiles?: string[];
   proxyJump?: string;
+  configured?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 type SshConnection = {
@@ -129,6 +131,8 @@ type SshConnection = {
   remotePort: number;
   startedAt: string;
   updatedAt: string;
+  exitCode?: number | null;
+  signal?: string | null;
   lastOutput?: string;
 };
 
@@ -284,11 +288,27 @@ type RuntimeSessionStreamEvent = {
   sessions: RuntimeSession[];
 };
 
+type TasksStreamEvent = {
+  seq: number;
+  kind: "tasks";
+  tasks: LocalTask[];
+};
+
 type ConnectionsStreamEvent = {
   seq: number;
   kind: "connections";
   connections: SshConnection[];
 };
+
+type RealtimeMessage =
+  | ({ type: "sessions" } & RuntimeSessionStreamEvent)
+  | ({ type: "projects" } & ProjectsPayload)
+  | ({ type: "tasks" } & TasksStreamEvent)
+  | ({ type: "connections" } & ConnectionsStreamEvent)
+  | ({ type: "thread" | "record" | "done" } & StreamEvent)
+  | { type: "ready" }
+  | { type: "thread_subscribed" | "thread_unsubscribed"; threadId: string }
+  | { type: "error"; message: string; scope?: string; threadId?: string };
 
 type Usage = {
   input_tokens: number;
@@ -425,9 +445,11 @@ const App = () => {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>("local");
   const [sshHosts, setSshHosts] = useState<SshHost[]>([]);
+  const [sshConfigHosts, setSshConfigHosts] = useState<SshHost[]>([]);
   const [sshConnections, setSshConnections] = useState<SshConnection[]>([]);
-  const [sshManualHost, setSshManualHost] = useState("");
+  const [sshHostDraft, setSshHostDraft] = useState("");
   const [sshConnectingHost, setSshConnectingHost] = useState("");
+  const [sshHostBusy, setSshHostBusy] = useState("");
   const [sshError, setSshError] = useState("");
   const [registeredCommandCopied, setRegisteredCommandCopied] = useState(false);
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
@@ -439,6 +461,8 @@ const App = () => {
   const [activeSessionId, setActiveSessionId] = useState("");
   const [selectedProjectKey, setSelectedProjectKey] = useState("");
   const [openingProjectKey, setOpeningProjectKey] = useState("");
+  const [projectOpenError, setProjectOpenError] = useState("");
+  const [deletingProjectId, setDeletingProjectId] = useState("");
   const [projectPicker, setProjectPicker] = useState<ProjectPickerState | null>(null);
   const [threadPicker, setThreadPicker] = useState<ThreadPickerState | null>(null);
   const [activeTabThreadBySession, setActiveTabThreadBySession] = useState<Record<string, string>>({});
@@ -455,18 +479,20 @@ const App = () => {
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [collapsedProjectMachineKeys, setCollapsedProjectMachineKeys] = useState<string[]>([]);
   const [offlineProjectsCollapsed, setOfflineProjectsCollapsed] = useState(true);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
-  const controlEventSource = useRef<EventSource | null>(null);
+  const realtimeSocket = useRef<WebSocket | null>(null);
   const runtimeSessionsLastSeq = useRef(0);
   const projectsLastSeq = useRef(0);
+  const tasksLastSeq = useRef(0);
   const connectionsLastSeq = useRef(0);
   const controlReconnectTimer = useRef<number | null>(null);
-  const eventSources = useRef(new Map<string, EventSource>());
+  const realtimeThreadSubscriptions = useRef(new Set<string>());
+  const autoConnectedSshHosts = useRef(new Set<string>());
   const threadLastSeqs = useRef(new Map<string, number>());
-  const threadReconnectTimers = useRef(new Map<string, number>());
   const openingThreads = useRef(new Map<string, Promise<void>>());
   const latestRequestedThreadId = useRef("");
   const messagesRef = useRef<VirtuosoHandle>(null);
@@ -484,6 +510,10 @@ const App = () => {
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
   const localMachines = useMemo(() => machines.filter((machine) => machine.type === "local"), [machines]);
   const registeredMachines = useMemo(() => machines.filter((machine) => machine.type === "registered"), [machines]);
+  const sshConfigHostOptions = useMemo(() => {
+    const savedAliases = new Set(sshHosts.map((host) => host.alias));
+    return sshConfigHosts.filter((host) => !savedAliases.has(host.alias));
+  }, [sshConfigHosts, sshHosts]);
   const registeredCommand = useMemo(() => {
     const origin = window.location.origin;
     return `codexhub machine --server ${origin} --type registered`;
@@ -509,7 +539,6 @@ const App = () => {
   const activeRuntimeSessionThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
     for (const thread of activeRuntimeSession?.threads ?? []) byId.set(thread.threadId, thread);
-    if (activeRuntimeSession?.currentThread) byId.set(activeRuntimeSession.currentThread.threadId, activeRuntimeSession.currentThread);
     const orderedIds = threadOrderBySession[activeRuntimeSession?.sessionId ?? ""] ?? [];
     return [
       ...orderedIds.flatMap((threadId) => {
@@ -521,25 +550,23 @@ const App = () => {
       ...byId.values()
     ];
   }, [activeRuntimeSession, threadOrderBySession]);
+  const activeRuntimeSessionThreadIds = useMemo(
+    () => activeRuntimeSessionThreads.map((thread) => thread.threadId),
+    [activeRuntimeSessionThreads]
+  );
+  const activeRuntimeSessionThreadIdsKey = activeRuntimeSessionThreadIds.join("\n");
   const activeRuntimeSessionThreadTabs = useMemo(() => activeRuntimeSessionThreads.map((thread) => {
     const title = thread.title || shortId(thread.threadId);
-    const isRuntimeSessionCurrentThread = thread.threadId === activeRuntimeSession?.currentThreadId;
     return {
       key: thread.threadId,
       label: (
         <span className="workspaceThreadTabLabel" title={`${title}\n${thread.threadId}`}>
-          <span
-            className={`runtimeSessionCurrentThreadMark ${isRuntimeSessionCurrentThread ? "visible" : ""}`}
-            title={isRuntimeSessionCurrentThread ? "Session current thread" : undefined}
-            aria-label={isRuntimeSessionCurrentThread ? "Session current thread" : undefined}
-            aria-hidden={isRuntimeSessionCurrentThread ? undefined : true}
-          />
           <span>{title}</span>
           <code>{shortId(thread.threadId)}</code>
         </span>
       )
     };
-  }), [activeRuntimeSession?.currentThreadId, activeRuntimeSessionThreads]);
+  }), [activeRuntimeSessionThreads]);
   const baseViews = useMemo<CodexRecordView[]>(
     () => recordsToViews(activeSession?.records ?? []),
     [activeSession?.records]
@@ -556,8 +583,7 @@ const App = () => {
   const latestViewKey = latestView
     ? `${latestView.id}:${latestView.status ?? ""}:${latestView.text.length}:${latestView.usage ? usageTotal(latestView.usage) : ""}`
     : "";
-  const activeRuntimeSessionThreadId = activeRuntimeSession?.currentThreadId ?? "";
-  const activeDisplayThreadId = activeSession?.threadId ?? activeRuntimeSessionThreadId;
+  const activeDisplayThreadId = activeSession?.threadId ?? activeTabThreadId;
   const activeThreadBelongsToSession = Boolean(activeSession && activeRuntimeSessionThreads.some((thread) => thread.threadId === activeSession.threadId));
   const activeCanSend = Boolean(
     activeSession
@@ -568,7 +594,7 @@ const App = () => {
   const activeCanSubmit = Boolean(activeThreadBelongsToSession && (activeSession?.running || activeCanSend));
   const workspaceEmptyMessage = activeRuntimeSession
     ? activeRuntimeSession.online
-      ? activeRuntimeSession.currentThreadId ? "Loading thread" : "No current thread"
+      ? activeRuntimeSessionThreads.length ? "Select a thread" : "No threads"
       : "Runtime session disconnected"
     : "No runtime session";
   const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
@@ -600,14 +626,12 @@ const App = () => {
   useEffect(() => {
     void initialize();
     return () => {
-      controlEventSource.current?.close();
-      for (const source of eventSources.current.values()) source.close();
+      realtimeSocket.current?.close();
       if (controlReconnectTimer.current !== null) {
         window.clearTimeout(controlReconnectTimer.current);
         controlReconnectTimer.current = null;
       }
-      for (const timer of threadReconnectTimers.current.values()) window.clearTimeout(timer);
-      threadReconnectTimers.current.clear();
+      realtimeThreadSubscriptions.current.clear();
     };
   }, []);
 
@@ -620,7 +644,8 @@ const App = () => {
       selectedModel,
       selectedReasoning,
       messageDisplayMode,
-      sidebarCollapsed
+      sidebarCollapsed,
+      collapsedProjectMachineKeys
     }));
   }, [
     activeWorkspacePath,
@@ -630,6 +655,7 @@ const App = () => {
     selectedReasoning,
     messageDisplayMode,
     sidebarCollapsed,
+    collapsedProjectMachineKeys,
     initialized
   ]);
 
@@ -676,6 +702,22 @@ const App = () => {
       return;
     }
 
+    const selectedProjectSession = selectedProject?.sessions.find((session) => session.online)
+      ?? selectedProject?.sessions[0];
+    if (selectedProjectKey && selectedProject && activeRuntimeSession && !selectedProject.sessions.some((session) => session.sessionId === activeRuntimeSession.sessionId)) {
+      if (selectedProjectSession) setActiveSessionId(selectedProjectSession.sessionId);
+      else {
+        setActiveSessionId("");
+        if (activeTabThreadId) setActiveTabThreadId("");
+      }
+      return;
+    }
+    if (!activeRuntimeSession && selectedProjectKey && selectedProject) {
+      if (selectedProjectSession) setActiveSessionId(selectedProjectSession.sessionId);
+      else if (activeTabThreadId) setActiveTabThreadId("");
+      return;
+    }
+
     const session = activeRuntimeSession ?? runtimeSessions[0];
     if (!activeRuntimeSession) {
       setActiveSessionId(session.sessionId);
@@ -684,11 +726,15 @@ const App = () => {
 
     setActiveWorkspacePath(session.workingDirectory);
     const threadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
-    if (session.currentThreadId) threadIds.add(session.currentThreadId);
     const activeTabThreadIdForRuntimeSession = activeTabThreadBySession[session.sessionId];
+    const projectLastThreadId = selectedProject?.sessions.some((item) => item.sessionId === session.sessionId)
+      ? selectedProject.lastThreadId
+      : undefined;
     const desiredThreadId = activeTabThreadIdForRuntimeSession && threadIds.has(activeTabThreadIdForRuntimeSession)
       ? activeTabThreadIdForRuntimeSession
-      : session.currentThreadId;
+      : projectLastThreadId && threadIds.has(projectLastThreadId)
+        ? projectLastThreadId
+        : session.threads?.[0]?.threadId;
 
     if (activeTabThreadIdForRuntimeSession && !threadIds.has(activeTabThreadIdForRuntimeSession)) {
       setActiveTabThreadBySession(({ [session.sessionId]: _removed, ...rest }) => rest);
@@ -701,7 +747,12 @@ const App = () => {
     if (activeTabThreadId !== desiredThreadId) {
       void openThread(desiredThreadId).catch(() => clearActiveThreadIfLatest(desiredThreadId));
     }
-  }, [activeTabThreadId, activeRuntimeSession, activeSessionId, initialized, activeTabThreadBySession, runtimeSessions]);
+  }, [activeTabThreadId, activeRuntimeSession, activeSessionId, initialized, activeTabThreadBySession, runtimeSessions, selectedProject]);
+
+  useEffect(() => {
+    if (!initialized) return;
+    syncThreadSubscriptions(activeRuntimeSessionThreadIds);
+  }, [activeRuntimeSessionThreadIdsKey, initialized]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -788,11 +839,12 @@ const App = () => {
   }, [plugins]);
 
   const initialize = async () => {
-    const [health, sessionData, projectData, sshHostData, sshConnectionData, pluginData, taskData] = await Promise.all([
+    const [health, sessionData, projectData, sshHostData, sshConfigHostData, sshConnectionData, pluginData, taskData] = await Promise.all([
       apiJson<{ defaultWorkingDirectory?: string | null } & SystemStatus>("/api/health"),
       apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions"),
       apiJson<ProjectsPayload>("/api/projects"),
       apiJson<{ hosts?: SshHost[] }>("/api/ssh/hosts").catch(() => ({ hosts: [] })),
+      apiJson<{ hosts?: SshHost[] }>("/api/ssh/config-hosts").catch(() => ({ hosts: [] })),
       apiJson<{ connections?: SshConnection[] }>("/api/ssh/connections").catch(() => ({ connections: [] })),
       apiJson<{ plugins?: PluginSummary[] }>("/api/plugins").catch(() => ({ plugins: [] })),
       apiJson<{ tasks?: LocalTask[] }>("/api/tasks").catch(() => ({ tasks: [] }))
@@ -818,19 +870,23 @@ const App = () => {
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     setSelectedProjectKey(saved?.selectedProjectKey ?? "");
+    setCollapsedProjectMachineKeys(saved?.collapsedProjectMachineKeys ?? []);
     setMachines(loadedMachines);
     setProjects(loadedProjects);
     setSshHosts(Array.isArray(sshHostData.hosts) ? sshHostData.hosts : []);
+    setSshConfigHosts(Array.isArray(sshConfigHostData.hosts) ? sshConfigHostData.hosts : []);
     setSshConnections(Array.isArray(sshConnectionData.connections) ? sshConnectionData.connections : []);
     setPlugins(normalizePlugins(pluginData.plugins));
     setTasks(normalizeTasks(taskData.tasks));
     setRuntimeSessions(loadedRuntimeSessions);
     setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, loadedRuntimeSessions));
-    subscribeControlEvents();
+    connectRealtimeEvents();
     if (initialRuntimeSession) {
       setActiveSessionId(initialRuntimeSession.sessionId);
       setActiveWorkspacePath(initialRuntimeSession.workingDirectory);
-      const initialThreadId = initialRuntimeSession.currentThreadId;
+      const initialProject = loadedProjects.find((project) => project.sessions.some((session) => session.sessionId === initialRuntimeSession.sessionId))
+        ?? loadedProjects.find((project) => project.machineId === initialRuntimeSession.machineId && project.path === initialRuntimeSession.workingDirectory);
+      const initialThreadId = preferredThreadIdForRuntimeSession(initialRuntimeSession, initialProject);
       if (initialThreadId) {
         await openThread(initialThreadId).catch(() => clearActiveThreadIfLatest(initialThreadId));
       }
@@ -848,50 +904,132 @@ const App = () => {
     clearControlReconnectTimer();
     controlReconnectTimer.current = window.setTimeout(() => {
       controlReconnectTimer.current = null;
-      subscribeControlEvents();
+      connectRealtimeEvents();
     }, 1000);
   }
 
-  function subscribeControlEvents() {
-    clearControlReconnectTimer();
-    controlEventSource.current?.close();
-    const query = new URLSearchParams({
-      sessionsAfter: String(runtimeSessionsLastSeq.current),
-      projectsAfter: String(projectsLastSeq.current),
-      connectionsAfter: String(connectionsLastSeq.current)
+  function realtimeUrl() {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${window.location.host}/api/events/ws`;
+  }
+
+  function sendRealtime(message: unknown) {
+    const socket = realtimeSocket.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify(message));
+    return true;
+  }
+
+  function sendRealtimeHello() {
+    sendRealtime({
+      type: "hello",
+      sessionsAfter: runtimeSessionsLastSeq.current,
+      projectsAfter: projectsLastSeq.current,
+      tasksAfter: tasksLastSeq.current,
+      connectionsAfter: connectionsLastSeq.current
     });
-    const source = new EventSource(`/api/events?${query.toString()}`);
-    source.addEventListener("sessions", (event: MessageEvent) => {
-      const payload = JSON.parse(event.data) as RuntimeSessionStreamEvent;
+  }
+
+  function resubscribeRealtimeThreads() {
+    for (const threadId of realtimeThreadSubscriptions.current) {
+      sendRealtime({
+        type: "subscribe_thread",
+        threadId,
+        after: threadLastSeqs.current.get(threadId) ?? 0
+      });
+    }
+  }
+
+  function connectRealtimeEvents() {
+    clearControlReconnectTimer();
+    realtimeSocket.current?.close();
+    const socket = new WebSocket(realtimeUrl());
+    socket.addEventListener("open", () => {
+      sendRealtimeHello();
+      resubscribeRealtimeThreads();
+    });
+    socket.addEventListener("message", (event: MessageEvent) => {
+      const message = JSON.parse(event.data) as RealtimeMessage;
+      handleRealtimeMessage(message);
+    });
+    socket.addEventListener("error", () => {
+      if (realtimeSocket.current === socket) socket.close();
+    });
+    socket.addEventListener("close", () => {
+      if (realtimeSocket.current !== socket) return;
+      realtimeSocket.current = null;
+      scheduleControlReconnect();
+    });
+    realtimeSocket.current = socket;
+  }
+
+  function handleRealtimeMessage(message: RealtimeMessage) {
+    if (message.type === "sessions") {
+      const payload = message;
       runtimeSessionsLastSeq.current = Math.max(runtimeSessionsLastSeq.current, payload.seq);
       const nextRuntimeSessions = normalizeRuntimeSessions(payload.sessions);
       setRuntimeSessions(nextRuntimeSessions);
       setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, nextRuntimeSessions));
-    });
-    source.addEventListener("projects", (event: MessageEvent) => {
-      const payload = JSON.parse(event.data) as ProjectsPayload;
+      return;
+    }
+    if (message.type === "projects") {
+      const payload = message;
       if (typeof payload.seq === "number") projectsLastSeq.current = Math.max(projectsLastSeq.current, payload.seq);
       setMachines(normalizeMachines(payload.machines));
       setProjects(normalizeProjects(payload.projects));
-    });
-    source.addEventListener("connections", (event: MessageEvent) => {
-      const payload = JSON.parse(event.data) as ConnectionsStreamEvent;
+      return;
+    }
+    if (message.type === "tasks") {
+      const payload = message;
+      tasksLastSeq.current = Math.max(tasksLastSeq.current, payload.seq);
+      setTasks(normalizeTasks(payload.tasks));
+      return;
+    }
+    if (message.type === "connections") {
+      const payload = message;
       connectionsLastSeq.current = Math.max(connectionsLastSeq.current, payload.seq);
       setSshConnections(Array.isArray(payload.connections) ? payload.connections : []);
-    });
-    source.addEventListener("error", (event) => {
-      if (event instanceof MessageEvent) return;
-      if (controlEventSource.current !== source) return;
-      source.close();
-      controlEventSource.current = null;
-      scheduleControlReconnect();
-    });
-    controlEventSource.current = source;
+      return;
+    }
+    if (message.type === "thread" || message.type === "record" || message.type === "done") {
+      applyThreadStreamEvent(message);
+    }
   }
+
+  const refreshSshHosts = async () => {
+    const [hostData, configHostData] = await Promise.all([
+      apiJson<{ hosts?: SshHost[] }>("/api/ssh/hosts"),
+      apiJson<{ hosts?: SshHost[] }>("/api/ssh/config-hosts")
+    ]);
+    setSshHosts(Array.isArray(hostData.hosts) ? hostData.hosts : []);
+    setSshConfigHosts(Array.isArray(configHostData.hosts) ? configHostData.hosts : []);
+  };
 
   const refreshSshConnections = async () => {
     const payload = await apiJson<{ connections?: SshConnection[] }>("/api/ssh/connections");
     setSshConnections(Array.isArray(payload.connections) ? payload.connections : []);
+  };
+
+  const addSshHost = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const alias = sshHostDraft.trim();
+    if (!alias) return;
+    setSshError("");
+    setSshHostBusy(alias);
+    try {
+      const payload = await apiJson<{ hosts?: SshHost[] }>("/api/ssh/hosts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ alias })
+      });
+      setSshHosts(Array.isArray(payload.hosts) ? payload.hosts : []);
+      await refreshSshHosts().catch(() => undefined);
+      setSshHostDraft("");
+    } catch (error) {
+      setSshError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSshHostBusy((current) => current === alias ? "" : current);
+    }
   };
 
   const connectSshHost = async (host: string, name?: string) => {
@@ -909,13 +1047,58 @@ const App = () => {
         setSshConnections((current) => [payload.connection!, ...current.filter((item) => item.connectionId !== payload.connection!.connectionId)]);
       }
       await refreshSshConnections().catch(() => undefined);
-      setSshManualHost("");
     } catch (error) {
       setSshError(error instanceof Error ? error.message : String(error));
     } finally {
       setSshConnectingHost((current) => current === trimmedHost ? "" : current);
     }
   };
+
+  const stopSshConnection = async (connectionId: string) => {
+    try {
+      const payload = await apiJson<{ connection?: SshConnection }>(`/api/ssh/connections/${encodeURIComponent(connectionId)}`, {
+        method: "DELETE"
+      });
+      if (payload.connection) {
+        setSshConnections((current) => [payload.connection!, ...current.filter((item) => item.connectionId !== connectionId)]);
+      }
+      await refreshSshConnections().catch(() => undefined);
+    } catch (error) {
+      setSshError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const removeSshHost = async (host: SshHost, activeConnection?: SshConnection) => {
+    const suffix = activeConnection ? " and stop the current connection" : "";
+    if (!window.confirm(`Remove ${host.alias} from CodexHub SSH hosts${suffix}?`)) return;
+    autoConnectedSshHosts.current.delete(host.alias);
+    setSshError("");
+    setSshHostBusy(host.alias);
+    try {
+      const payload = await apiJson<{ hosts?: SshHost[] }>(`/api/ssh/hosts/${encodeURIComponent(host.alias)}`, {
+        method: "DELETE"
+      });
+      setSshHosts(Array.isArray(payload.hosts) ? payload.hosts : []);
+      await refreshSshHosts().catch(() => undefined);
+      if (activeConnection) await stopSshConnection(activeConnection.connectionId);
+    } catch (error) {
+      setSshError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSshHostBusy((current) => current === host.alias ? "" : current);
+    }
+  };
+
+  useEffect(() => {
+    if (!initialized || connectionMode !== "ssh" || sshConnectingHost || sshHostBusy) return;
+    const nextHost = sshHosts.find((host) => {
+      if (host.configured === false) return false;
+      if (autoConnectedSshHosts.current.has(host.alias)) return false;
+      return !activeSshConnectionForHost(sshConnections, host.alias);
+    });
+    if (!nextHost) return;
+    autoConnectedSshHosts.current.add(nextHost.alias);
+    void connectSshHost(nextHost.alias, nextHost.alias);
+  }, [connectionMode, initialized, sshConnectingHost, sshConnections, sshHostBusy, sshHosts]);
 
   const copyRegisteredCommand = async () => {
     await navigator.clipboard?.writeText(registeredCommand).catch(() => undefined);
@@ -1078,33 +1261,14 @@ const App = () => {
     }
   };
 
-  function clearThreadReconnectTimer(threadId: string) {
-    const timer = threadReconnectTimers.current.get(threadId);
-    if (timer === undefined) return;
-    window.clearTimeout(timer);
-    threadReconnectTimers.current.delete(threadId);
-  }
-
-  function scheduleThreadReconnect(threadId: string) {
-    clearThreadReconnectTimer(threadId);
-    const timer = window.setTimeout(() => {
-      threadReconnectTimers.current.delete(threadId);
-      if (latestRequestedThreadId.current !== threadId) return;
-      if (eventSources.current.has(threadId)) return;
-      subscribeThread(threadId, threadLastSeqs.current.get(threadId) ?? 0);
-    }, 1000);
-    threadReconnectTimers.current.set(threadId, timer);
-  }
-
   const openThread = async (threadId: string) => {
     latestRequestedThreadId.current = threadId;
     setActiveTabThreadId(threadId);
 
     const existingSession = sessions.find((session) => session.threadId === threadId);
-    const existingSource = eventSources.current.get(threadId);
-    if (existingSource && existingSource.readyState !== EventSource.CLOSED) {
-      closeThreadSubscriptionsExcept(threadId);
-      if (existingSession) setActiveWorkspacePath(existingSession.workingDirectory);
+    if (existingSession) {
+      subscribeThread(threadId, existingSession.lastSeq);
+      setActiveWorkspacePath(existingSession.workingDirectory);
       return;
     }
 
@@ -1118,6 +1282,8 @@ const App = () => {
       if (sessionId) {
         setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
       }
+      setRuntimeSessions((current) => patchRuntimeSessionsThread(current, thread));
+      setProjects((current) => patchProjectsThread(current, thread));
       setSessions((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
         const nextSession = existing
@@ -1128,7 +1294,6 @@ const App = () => {
           : [...current, nextSession];
       });
       if (latestRequestedThreadId.current !== thread.threadId) return;
-      closeThreadSubscriptionsExcept(thread.threadId);
       setActiveWorkspacePath(thread.workingDirectory);
       setActiveTabThreadId(thread.threadId);
       threadLastSeqs.current.set(
@@ -1153,46 +1318,49 @@ const App = () => {
     if (latestRequestedThreadId.current === threadId) setActiveTabThreadId("");
   };
 
-  const closeThreadSubscriptionsExcept = (threadId: string) => {
-    for (const [subscribedThreadId, source] of eventSources.current) {
-      if (subscribedThreadId === threadId) continue;
-      clearThreadReconnectTimer(subscribedThreadId);
-      source.close();
-      eventSources.current.delete(subscribedThreadId);
-    }
-  };
-
   function subscribeThread(threadId: string, after: number) {
-    clearThreadReconnectTimer(threadId);
-    const existing = eventSources.current.get(threadId);
-    if (existing && existing.readyState !== EventSource.CLOSED) return;
-    existing?.close();
     const subscribedAfter = Math.max(after, threadLastSeqs.current.get(threadId) ?? 0);
-    const source = new EventSource(`/api/threads/${encodeURIComponent(threadId)}/events?after=${subscribedAfter}`);
-    const handle = (event: MessageEvent) => {
-      const payload = JSON.parse(event.data) as StreamEvent;
-      threadLastSeqs.current.set(
-        payload.thread.threadId,
-        Math.max(threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
-      );
-      setSessions((current) => current.map((session) => {
-        if (session.threadId !== payload.thread.threadId) return session;
-        const records = payload.record ? mergeRecord(session.records, payload.record) : session.records;
-        return { ...session, ...payload.thread, records };
-      }));
-    };
-    source.addEventListener("thread", handle);
-    source.addEventListener("record", handle);
-    source.addEventListener("message", handle);
-    source.addEventListener("done", handle);
-    source.addEventListener("error", (event) => {
-      if (event instanceof MessageEvent) return;
-      if (eventSources.current.get(threadId) !== source) return;
-      source.close();
-      eventSources.current.delete(threadId);
-      scheduleThreadReconnect(threadId);
+    threadLastSeqs.current.set(threadId, subscribedAfter);
+    const alreadySubscribed = realtimeThreadSubscriptions.current.has(threadId);
+    realtimeThreadSubscriptions.current.add(threadId);
+    if (alreadySubscribed) return;
+    sendRealtime({
+      type: "subscribe_thread",
+      threadId,
+      after: subscribedAfter
     });
-    eventSources.current.set(threadId, source);
+  }
+
+  function unsubscribeThread(threadId: string) {
+    if (!realtimeThreadSubscriptions.current.delete(threadId)) return;
+    sendRealtime({ type: "unsubscribe_thread", threadId });
+  }
+
+  function syncThreadSubscriptions(threadIds: string[]) {
+    const desired = new Set(threadIds);
+    for (const threadId of [...realtimeThreadSubscriptions.current]) {
+      if (!desired.has(threadId)) unsubscribeThread(threadId);
+    }
+    for (const threadId of desired) {
+      subscribeThread(threadId, threadLastSeqs.current.get(threadId) ?? 0);
+    }
+  }
+
+  function applyThreadStreamEvent(payload: StreamEvent) {
+    threadLastSeqs.current.set(
+      payload.thread.threadId,
+      Math.max(threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
+    );
+    setSessions((current) => current.map((session) => {
+      if (session.threadId !== payload.thread.threadId) return session;
+      const records = payload.record ? mergeRecord(session.records, payload.record) : session.records;
+      return { ...session, ...payload.thread, records };
+    }));
+    if (payload.thread.runtime.sessionId) {
+      setThreadOrderBySession((current) => appendThreadOrder(current, payload.thread.runtime.sessionId!, payload.thread.threadId));
+    }
+    setRuntimeSessions((current) => patchRuntimeSessionsThread(current, payload.thread));
+    setProjects((current) => patchProjectsThread(current, payload.thread));
   }
 
   const forkMessage = async (threadId: string, messageId: string) => {
@@ -1359,7 +1527,10 @@ const App = () => {
       focusTaskDraftProject(project);
     }
     const activeTabThreadIdForRuntimeSession = activeTabThreadBySession[session.sessionId];
-    const targetThreadId = activeTabThreadIdForRuntimeSession ?? session.currentThreadId;
+    const sessionThreadIds = new Set(session.threads?.map((thread) => thread.threadId) ?? []);
+    const targetThreadId = activeTabThreadIdForRuntimeSession && sessionThreadIds.has(activeTabThreadIdForRuntimeSession)
+      ? activeTabThreadIdForRuntimeSession
+      : preferredThreadIdForRuntimeSession(session, project);
     if (targetThreadId) {
       await openThread(targetThreadId).catch(() => clearActiveThreadIfLatest(targetThreadId));
     } else {
@@ -1371,12 +1542,16 @@ const App = () => {
     setSelectedProjectKey(projectKeyForProject(project));
     focusTaskDraftProject(project);
     setTaskError("");
+    setProjectOpenError("");
     setActiveWorkspacePath(project.path);
     const session = project.sessions.find((item) => item.online) ?? project.sessions[0];
     if (session?.online) {
       await selectRuntimeSession(session);
       return;
     }
+    setActiveSessionId("");
+    setActiveTabThreadId("");
+    latestRequestedThreadId.current = "";
     await openProject(project.path, project.machineId);
   };
 
@@ -1497,7 +1672,7 @@ const App = () => {
     setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, threadId));
     if (sessions.some((session) => session.threadId === threadId)) {
       latestRequestedThreadId.current = threadId;
-      closeThreadSubscriptionsExcept(threadId);
+      subscribeThread(threadId, threadLastSeqs.current.get(threadId) ?? 0);
       setActiveTabThreadId(threadId);
       return;
     }
@@ -1507,8 +1682,7 @@ const App = () => {
   const threadIsOpenForSession = (sessionId: string, threadId: string) => {
     const session = runtimeSessions.find((item) => item.sessionId === sessionId);
     return Boolean(
-      session?.currentThreadId === threadId
-      || session?.threads?.some((thread) => thread.threadId === threadId)
+      session?.threads?.some((thread) => thread.threadId === threadId)
       || (threadOrderBySession[sessionId] ?? []).includes(threadId)
       || sessions.some((session) => session.threadId === threadId)
     );
@@ -1573,6 +1747,11 @@ const App = () => {
       setSelectedProjectKey(projectKeyFor(machineId, trimmedPath));
       focusTaskDraftProject({ machineId, path: trimmedPath });
     }
+    setProjectOpenError("");
+    setActiveWorkspacePath(trimmedPath);
+    setActiveSessionId("");
+    setActiveTabThreadId("");
+    latestRequestedThreadId.current = "";
     setProjectPicker((current) => current && current.machineId === machineId ? { ...current, error: "" } : current);
     setOpeningProjectKey(key);
     try {
@@ -1585,6 +1764,7 @@ const App = () => {
       });
       setMachines(normalizeMachines(payload.machines));
       setProjects(normalizeProjects(payload.projects));
+      setProjectOpenError("");
       setActiveWorkspacePath(payload.result?.cwd ?? trimmedPath);
       const freshRuntimeSessions = await apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions")
         .then((data) => normalizeRuntimeSessions(data.sessions))
@@ -1595,16 +1775,43 @@ const App = () => {
       const session = sessionId
         ? freshRuntimeSessions.find((item) => item.sessionId === sessionId)
         : undefined;
-      if (session) await selectRuntimeSession(session);
+      if (session && payload.result?.threadId) await activateRuntimeSessionThread(session.sessionId, payload.result.threadId);
+      else if (session) await selectRuntimeSession(session);
       else if (payload.result?.threadId) await openThread(payload.result.threadId).catch(() => clearActiveThreadIfLatest(payload.result!.threadId));
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      setProjectOpenError(message);
       setProjectPicker((current) => current && current.machineId === machineId ? { ...current, error: message } : current);
       return false;
     } finally {
       setOpeningProjectKey((current) => current === key ? "" : current);
     }
+  };
+
+  const deleteProject = async (project: ProjectSummary) => {
+    if (!window.confirm(`Remove ${project.name} from CodexHub projects?\n\nThis does not delete files or stop running sessions.`)) return;
+    setDeletingProjectId(project.projectId);
+    try {
+      const payload = await apiJson<ProjectsPayload>(`/api/projects/${encodeURIComponent(project.projectId)}`, {
+        method: "DELETE"
+      });
+      setMachines(normalizeMachines(payload.machines));
+      setProjects(normalizeProjects(payload.projects));
+      if (selectedProjectKey === projectKeyForProject(project)) setSelectedProjectKey("");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeletingProjectId((current) => current === project.projectId ? "" : current);
+    }
+  };
+
+  const toggleProjectMachineGroup = (machineKey: string) => {
+    setCollapsedProjectMachineKeys((current) =>
+      current.includes(machineKey)
+        ? current.filter((key) => key !== machineKey)
+        : [...current, machineKey]
+    );
   };
 
   const switchRuntimeSessionThread = async (threadId: string) => {
@@ -1624,7 +1831,6 @@ const App = () => {
     : undefined;
   const threadPickerOpenThreadIds = new Set<string>([
     ...(threadPickerRuntimeSession?.threads?.map((thread) => thread.threadId) ?? []),
-    ...(threadPickerRuntimeSession?.currentThreadId ? [threadPickerRuntimeSession.currentThreadId] : []),
     ...(threadPicker ? threadOrderBySession[threadPicker.sessionId] ?? [] : []),
     ...sessions.map((session) => session.threadId)
   ]);
@@ -1647,38 +1853,64 @@ const App = () => {
     && taskDraft.schedule.trim()
     && taskDraft.input.trim()
   );
-  const renderProjectMachineGroup = (machine: ProjectMachineGroup) => (
-    <section className="projectMachineGroup" key={machine.key}>
-      <div className={`projectMachineHeader ${machine.online ? "online" : "offline"}`}>
-        <span title={machine.label}>{machine.label}</span>
-        <strong>{machine.statusLabel}</strong>
-      </div>
-      <div className="projectMachineRows">
-        {machine.projects.length === 0 ? (
-          <div className="projectEmptyRow">No projects</div>
-        ) : machine.projects.map((project) => {
-          const projectKey = projectKeyForProject(project);
-          const active = projectKey === activeProjectKey;
-          const statusLabel = projectStatusLabel(project);
-          const threadTitle = project.threads[0]?.title ?? project.storedThreads[0]?.title ?? "No conversations";
-          return (
-            <button
-              type="button"
-              key={project.projectId}
-              className={`projectRow ${active ? "active" : ""} ${project.online ? "online" : "offline"}`}
-              onClick={() => void selectProject(project)}
-              disabled={openingProjectKey === projectKey}
-            >
-              <span title={project.name}>{project.name}</span>
-              <strong>{openingProjectKey === projectKey ? "opening" : statusLabel}</strong>
-              <code title={project.path}>{project.path}</code>
-              <em title={threadTitle}>{threadTitle}</em>
-            </button>
-          );
-        })}
-      </div>
-    </section>
-  );
+  const renderProjectMachineGroup = (machine: ProjectMachineGroup) => {
+    const collapsed = collapsedProjectMachineKeys.includes(machine.key);
+    return (
+      <section className="projectMachineGroup" key={machine.key}>
+        <button
+          type="button"
+          className={`projectMachineHeader ${machine.online ? "online" : "offline"}`}
+          onClick={() => toggleProjectMachineGroup(machine.key)}
+          aria-expanded={!collapsed}
+        >
+          <span className={`projectOfflineArrow ${collapsed ? "collapsed" : ""}`}>{">"}</span>
+          <span title={machine.label}>{machine.label}</span>
+          <strong>{machine.statusLabel}</strong>
+        </button>
+        {!collapsed ? (
+          <div className="projectMachineRows">
+            {machine.projects.length === 0 ? (
+              <div className="projectEmptyRow">No projects</div>
+            ) : machine.projects.map((project) => {
+              const projectKey = projectKeyForProject(project);
+              const active = projectKey === activeProjectKey;
+              const statusLabel = projectStatusLabel(project);
+              const threadTitle = project.threads[0]?.title ?? project.storedThreads[0]?.title ?? "No conversations";
+              const deleting = deletingProjectId === project.projectId;
+              return (
+                <div
+                  key={project.projectId}
+                  className={`projectRow ${active ? "active" : ""} ${project.online ? "online" : "offline"}`}
+                >
+                  <button
+                    type="button"
+                    className="projectOpenButton"
+                    onClick={() => void selectProject(project)}
+                    disabled={openingProjectKey === projectKey || deleting}
+                  >
+                    <span title={project.name}>{project.name}</span>
+                    <strong>{openingProjectKey === projectKey ? "opening" : statusLabel}</strong>
+                    <code title={project.path}>{project.path}</code>
+                    <em title={threadTitle}>{threadTitle}</em>
+                  </button>
+                  <button
+                    type="button"
+                    className="projectDeleteButton"
+                    onClick={() => void deleteProject(project)}
+                    disabled={deleting}
+                    aria-label={`Remove ${project.name}`}
+                    title={`Remove ${project.name} from CodexHub`}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </section>
+    );
+  };
 
   return (
     <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
@@ -1740,38 +1972,65 @@ const App = () => {
             </div>
           ) : connectionMode === "ssh" ? (
             <div className="connectionList">
-              <form className="sshManualForm" onSubmit={(event) => {
-                event.preventDefault();
-                void connectSshHost(sshManualHost, sshManualHost);
-              }}>
+              <form className="sshManualForm" onSubmit={(event) => void addSshHost(event)}>
                 <input
-                  value={sshManualHost}
-                  onChange={(event) => setSshManualHost(event.target.value)}
-                  placeholder="user@host"
+                  value={sshHostDraft}
+                  onChange={(event) => setSshHostDraft(event.target.value)}
+                  list="sshConfigHostOptions"
+                  placeholder="SSH config alias"
                   spellCheck={false}
                 />
-                <button type="submit" disabled={!sshManualHost.trim() || sshConnectingHost === sshManualHost.trim()}>
-                  {sshConnectingHost === sshManualHost.trim() ? "..." : "Connect"}
+                <datalist id="sshConfigHostOptions">
+                  {sshConfigHostOptions.map((host) => (
+                    <option key={host.alias} value={host.alias}>
+                      {sshHostMeta(host)}
+                    </option>
+                  ))}
+                </datalist>
+                <button
+                  type="submit"
+                  disabled={
+                    !sshHostDraft.trim()
+                    || sshHostBusy === sshHostDraft.trim()
+                    || sshHosts.some((host) => host.alias === sshHostDraft.trim())
+                    || !sshConfigHosts.some((host) => host.alias === sshHostDraft.trim())
+                  }
+                >
+                  {sshHostBusy === sshHostDraft.trim() ? "..." : "Add"}
                 </button>
               </form>
               {sshHosts.length === 0 ? (
                 <div className="connectionEmpty">No SSH hosts</div>
               ) : sshHosts.map((host) => {
-                const existing = sshConnections.find((connection) => connection.host === host.alias && connection.status !== "exited");
+                const activeConnection = activeSshConnectionForHost(sshConnections, host.alias);
+                const latestConnection = latestSshConnectionForHost(sshConnections, host.alias);
                 const connecting = sshConnectingHost === host.alias;
+                const statusLabel = sshConnectionStatusLabel(latestConnection, connecting, host.configured !== false);
+                const statusClass = sshConnectionStatusClass(statusLabel);
+                const connectionDetail = sshConnectionDetail(host, latestConnection);
                 return (
-                  <div className={`connectionRow ${existing ? "online" : ""}`} key={host.alias}>
+                  <div className={`connectionRow ssh ${statusClass}`} key={host.alias} title={sshConnectionTitle(host, latestConnection)}>
                     <button
                       type="button"
                       className="connectionHostButton"
-                      title={host.hostName ?? host.alias}
+                      title={host.configured === false ? "SSH config entry missing" : host.hostName ?? host.alias}
                       onClick={() => void connectSshHost(host.alias, host.alias)}
-                      disabled={Boolean(existing) || connecting}
+                      disabled={host.configured === false || Boolean(activeConnection) || connecting || sshHostBusy === host.alias}
                     >
                       <span>{host.alias}</span>
-                      <code>{sshHostMeta(host)}</code>
+                      <code title={connectionDetail}>{connectionDetail}</code>
                     </button>
-                    <strong>{existing ? existing.status : connecting ? "starting" : "ready"}</strong>
+                    <strong>{statusLabel}</strong>
+                    <button
+                      type="button"
+                      className="connectionDeleteButton"
+                      onClick={() => void removeSshHost(host, activeConnection)}
+                      disabled={sshHostBusy === host.alias}
+                      aria-label={`Remove ${host.alias}`}
+                      title={`Remove ${host.alias} from CodexHub`}
+                    >
+                      ×
+                    </button>
                   </div>
                 );
               })}
@@ -1838,6 +2097,7 @@ const App = () => {
               ) : null}
             </div>
           )}
+          {projectOpenError ? <div className="projectOpenError">{projectOpenError}</div> : null}
         </section>
 
         <section className="taskPanel">
@@ -2279,13 +2539,12 @@ const App = () => {
               ) : threadPicker.candidates.length === 0 ? (
                 <div className="threadPickerEmpty">No local threads</div>
               ) : threadPicker.candidates.map((candidate) => {
-                const isCurrent = candidate.threadId === threadPickerRuntimeSession?.currentThreadId;
                 const isOpen = threadPickerOpenThreadIds.has(candidate.threadId);
                 const acting = threadPicker.acting === candidate.threadId;
                 return (
                   <button
                     type="button"
-                    className={`threadPickerRow ${isCurrent ? "current" : ""} ${isOpen ? "open" : ""}`}
+                    className={`threadPickerRow ${isOpen ? "open" : ""}`}
                     key={candidate.threadId}
                     onClick={() => void chooseThreadCandidate(candidate)}
                     disabled={threadPicker.acting !== null}
@@ -2293,10 +2552,10 @@ const App = () => {
                   >
                     <span className="threadPickerRowTitle">{threadCandidateTitle(candidate)}</span>
                     <span className="threadPickerRowMeta">
-                      <code>{shortId(candidate.threadId)}</code>
-                      <span>{formatThreadCandidateTime(candidate.updatedAt)}</span>
-                      {isCurrent ? <strong>current</strong> : isOpen ? <strong>open</strong> : null}
-                      {acting ? <strong>restoring</strong> : null}
+	                      <code>{shortId(candidate.threadId)}</code>
+	                      <span>{formatThreadCandidateTime(candidate.updatedAt)}</span>
+	                      {isOpen ? <strong>open</strong> : null}
+	                      {acting ? <strong>restoring</strong> : null}
                     </span>
                   </button>
                 );
@@ -2843,7 +3102,7 @@ const taskTargetLabel = (task: LocalTask, projects: ProjectSummary[], machines: 
   const machine = machines.find((item) => item.machineId === task.machineId);
   const projectName = project?.name ?? basename(task.projectPath);
   const machineName = machine?.name ?? machine?.hostname ?? task.machineId;
-  const thread = task.threadId ? shortId(task.threadId) : "current";
+  const thread = task.threadId ? shortId(task.threadId) : "project thread";
   return `${projectName} · ${machineName} · ${thread}`;
 };
 
@@ -2853,7 +3112,7 @@ const taskTargetTitle = (task: LocalTask, projects: ProjectSummary[], machines: 
   return [
     `machine: ${machine?.name ?? machine?.hostname ?? task.machineId}`,
     `project: ${project?.path ?? task.projectPath}`,
-    `thread: ${task.threadId ?? "current"}`,
+    `thread: ${task.threadId ?? "project default"}`,
     task.lastRunAt ? `last run: ${formatDate(task.lastRunAt)}` : null
   ].filter(Boolean).join("\n");
 };
@@ -2949,28 +3208,25 @@ const mergeProjectsWithRuntimeSessions = (projects: ProjectSummary[], runtimeSes
         machineId: machineIdForSession(session),
         path: session.workingDirectory,
         name: basename(session.workingDirectory),
-        createdAt: session.lastSeenAt,
-        lastOpenedAt: session.lastSeenAt,
-        lastSessionId: session.sessionId,
-        lastThreadId: session.currentThreadId,
-        online: session.online,
-        running: Boolean(session.currentThread?.running),
-        sessions: [],
-        threads: [],
+	        createdAt: session.lastSeenAt,
+	        lastOpenedAt: session.lastSeenAt,
+	        lastSessionId: session.sessionId,
+	        lastThreadId: session.threads?.[0]?.threadId,
+	        online: session.online,
+	        running: Boolean(session.threads?.some((thread) => thread.running || thread.status === "running")),
+	        sessions: [],
+	        threads: [],
         storedThreads: []
       };
       projectsByKey.set(key, project);
     }
     if (!project.sessions.some((item) => item.sessionId === session.sessionId)) project.sessions.push(session);
-    for (const thread of session.threads ?? []) {
-      if (!project.threads.some((item) => item.threadId === thread.threadId)) project.threads.push(thread);
-    }
-    if (session.currentThread && !project.threads.some((item) => item.threadId === session.currentThread?.threadId)) {
-      project.threads.unshift(session.currentThread);
-    }
-    project.online = project.online || session.online;
-    project.running = project.running || Boolean(session.currentThread?.running || session.currentThread?.status === "running");
-  }
+	    for (const thread of session.threads ?? []) {
+	      if (!project.threads.some((item) => item.threadId === thread.threadId)) project.threads.push(thread);
+	    }
+	    project.online = project.online || session.online;
+	    project.running = project.running || Boolean(session.threads?.some((thread) => thread.running || thread.status === "running"));
+	  }
   return [...projectsByKey.values()].sort((left, right) => {
     return compareProjectRows(left, right);
   });
@@ -3012,6 +3268,53 @@ const sshHostMeta = (host: SshHost) => [
   host.port ? `:${host.port}` : null,
   host.proxyJump ? `via ${host.proxyJump}` : null
 ].filter(Boolean).join(" ") || host.alias;
+
+type SshConnectionStatusLabel = "ready" | "starting" | "connected" | "failed" | "stopped" | "missing";
+
+const latestSshConnectionForHost = (connections: SshConnection[], host: string) =>
+  connections
+    .filter((connection) => connection.host === host)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+
+const activeSshConnectionForHost = (connections: SshConnection[], host: string) =>
+  latestSshConnectionForHost(connections.filter((connection) => connection.status !== "exited"), host);
+
+const sshConnectionStatusLabel = (
+  connection: SshConnection | undefined,
+  connecting: boolean,
+  configured: boolean
+): SshConnectionStatusLabel => {
+  if (connecting) return "starting";
+  if (connection?.status === "starting") return "starting";
+  if (connection?.status === "running") return "connected";
+  if (connection?.status === "exited") return sshConnectionStoppedCleanly(connection) ? "stopped" : "failed";
+  return configured ? "ready" : "missing";
+};
+
+const sshConnectionStatusClass = (status: SshConnectionStatusLabel) =>
+  status === "connected" ? "online connected" : status;
+
+const sshConnectionStoppedCleanly = (connection: SshConnection) =>
+  connection.status === "exited"
+  && (connection.exitCode === 0 || connection.signal === "SIGTERM" || connection.signal === "SIGKILL");
+
+const sshConnectionDetail = (host: SshHost, connection: SshConnection | undefined) => {
+  const lastLine = compactSshOutput(connection?.lastOutput);
+  if (connection?.status === "exited" && lastLine) return lastLine;
+  if (host.configured === false) return "not found in SSH config";
+  return sshHostMeta(host);
+};
+
+const sshConnectionTitle = (host: SshHost, connection: SshConnection | undefined) => {
+  if (!connection) return host.configured === false ? "SSH config entry missing" : "Ready to connect";
+  const status = sshConnectionStatusLabel(connection, false, host.configured !== false);
+  const lastLine = compactSshOutput(connection.lastOutput);
+  const updated = connection.updatedAt ? `updated ${relativeTime(connection.updatedAt)}` : "";
+  return [status, updated, lastLine ? `last output: ${lastLine}` : ""].filter(Boolean).join("; ");
+};
+
+const compactSshOutput = (value: string | undefined) =>
+  value?.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)?.slice(0, 180) ?? "";
 
 const runtimeSessionStatusTitle = (session: RuntimeSession) => {
   if (session.online) return "Runtime session online";
@@ -3069,9 +3372,49 @@ const sessionThreadIds = (session: RuntimeSession) => {
     if (threadId && !threadIds.includes(threadId)) threadIds.push(threadId);
   };
   for (const thread of session.threads ?? []) pushThreadId(thread.threadId);
-  pushThreadId(session.currentThread?.threadId);
-  pushThreadId(session.currentThreadId);
   return threadIds;
+};
+
+const preferredThreadIdForRuntimeSession = (session: RuntimeSession, project?: ProjectSummary) => {
+  const sessionThreadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
+  if (project?.lastThreadId && sessionThreadIds.has(project.lastThreadId)) return project.lastThreadId;
+  return session.threads?.[0]?.threadId
+    ?? project?.lastThreadId
+    ?? project?.threads?.[0]?.threadId
+    ?? project?.storedThreads?.[0]?.threadId
+    ?? "";
+};
+
+const patchRuntimeSessionsThread = (runtimeSessions: RuntimeSession[], thread: ThreadSummary) =>
+  runtimeSessions.map((session) => {
+    if (session.sessionId !== thread.runtime.sessionId) return session;
+    return {
+      ...session,
+      threads: upsertThreadSummary(session.threads ?? [], thread)
+    };
+  });
+
+const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) =>
+  projects.map((project) => {
+    const matchesSession = Boolean(thread.runtime.sessionId && project.sessions.some((session) => session.sessionId === thread.runtime.sessionId));
+    const matchesPath = project.path === thread.workingDirectory;
+    if (!matchesSession && !matchesPath) return project;
+    const threads = upsertThreadSummary(project.threads ?? [], thread);
+    return {
+      ...project,
+      lastThreadId: thread.threadId,
+      running: threads.some((item) => item.running || item.status === "running"),
+      threads
+    };
+  });
+
+const upsertThreadSummary = (threads: ThreadSummary[], thread: ThreadSummary) => {
+  const byId = new Map(threads.map((item) => [item.threadId, item]));
+  byId.set(thread.threadId, { ...byId.get(thread.threadId), ...thread });
+  return [...byId.values()].sort((left, right) => {
+    return Number(right.running) - Number(left.running)
+      || right.updatedAt.localeCompare(left.updatedAt);
+  });
 };
 
 const selectedThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
@@ -3479,6 +3822,7 @@ const readStoredUiState = (): {
   selectedReasoning?: ReasoningSelection;
   messageDisplayMode?: MessageDisplayMode;
   sidebarCollapsed?: boolean;
+  collapsedProjectMachineKeys?: string[];
 } | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey) ?? localStorage.getItem(legacyStorageKey) ?? "null");
@@ -3494,7 +3838,10 @@ const readStoredUiState = (): {
       messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)
         ? parsed.messageDisplayMode
         : isMessageDisplayMode(parsed.toolDisplayMode) ? parsed.toolDisplayMode : undefined,
-      sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined
+      sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined,
+      collapsedProjectMachineKeys: Array.isArray(parsed.collapsedProjectMachineKeys)
+        ? parsed.collapsedProjectMachineKeys.filter((key: unknown): key is string => typeof key === "string" && key.trim().length > 0)
+        : undefined
     };
   } catch {
     return null;

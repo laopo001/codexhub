@@ -75,7 +75,7 @@ const main = async () => {
     const turn = await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input: "/status", source: "web" })
+      body: JSON.stringify({ threadId, input: "/status", source: "web" })
     });
     assertNoWorkerId(turn, "/api/sessions/:sessionId/turn");
 

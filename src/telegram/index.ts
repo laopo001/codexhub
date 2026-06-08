@@ -32,7 +32,7 @@ type ThreadDetail = ThreadSummary & {
 
 type SessionTurnResponse = {
   ok: boolean;
-  thread?: ThreadSummary;
+  command?: string;
 };
 
 type RuntimeSessionSummary = {
@@ -42,8 +42,6 @@ type RuntimeSessionSummary = {
   workingDirectory: string;
   online: boolean;
   status?: "online" | "offline";
-  currentThreadId?: string;
-  currentThread?: ThreadSummary;
   threads?: ThreadSummary[];
 };
 
@@ -72,6 +70,7 @@ type ThreadUsage = {
 
 type ChatState = {
   sessionId?: string;
+  threadId?: string;
 };
 
 type ChatMirror = {
@@ -135,26 +134,26 @@ const registerHandlers = () => {
       "",
       "/sessions 选择在线 Codex session",
       "/detach 取消当前 session 绑定",
-      "/status 查看当前状态",
-      "",
-      "直接发消息会发送给当前 session 指向的 Codex thread。新 thread 请在本地 codexhub 里开始。"
-    ].join("\n"));
-  });
+	      "/status 查看当前状态",
+	      "",
+	      "先选择 session，再选择 thread。之后直接发消息会发送给这个 chat 绑定的 thread。"
+	    ].join("\n"));
+	  });
 
   const handleSessionsCommand = async (ctx: any) => {
     try {
       const sessions = await listRunnableSessions();
 
       if (!sessions.length) {
-        await ctx.reply("当前没有带 current thread 的 Codex session。请先在本地 codexhub 里打开或 resume 一个 thread。");
+        await ctx.reply("当前没有在线 Codex session。请先在 codexhub 里打开一个 project。");
         return;
       }
 
       await ctx.reply("选择在线 Codex session：", {
         reply_markup: {
           inline_keyboard: sessions.map((session) => ([{
-            text: `${displaySessionId(session)}  ${session.currentThread?.status ?? "idle"}  ${session.currentThread ? displayThreadId(session.currentThread) : "no thread"}  ${shortPath(session.workingDirectory)}`,
-            callback_data: `select:${rememberSelection(ctx.chat.id, session.sessionId)}`
+            text: `${displaySessionId(session)}  ${sessionStatusLabel(session)}  ${sessionThreadCountLabel(session)}  ${shortPath(session.workingDirectory)}`,
+            callback_data: `select_session:${rememberSelection(ctx.chat.id, { sessionId: session.sessionId })}`
           }]))
         }
       });
@@ -177,33 +176,66 @@ const registerHandlers = () => {
       const state = chatStates.get(ctx.chat.id);
       const current = state ? await resolveSelectedSession(state).catch(() => null) : null;
       const sessions = await listRunnableSessions();
-      const usage = current?.currentThread?.threadUsage ?? null;
+      const thread = state?.threadId ? await getThread(state.threadId).catch(() => null) : null;
+      const usage = thread?.threadUsage ?? null;
       await ctx.reply([
         `当前 session：${current ? displaySessionId(current) : "(none)"}`,
-        `当前 thread：${current?.currentThread ? displayThreadId(current.currentThread) : "(none)"}`,
+        `当前 thread：${thread ? displayThreadId(thread) : "(none)"}`,
         current ? `文件夹：${current.workingDirectory}` : null,
-        current?.currentThreadId ? `thread：${shortId(current.currentThreadId)}` : null,
-        current?.currentThread ? `runtime：${runtimeLabel(current.currentThread)}` : null,
+        thread ? `thread：${shortId(thread.threadId)}` : null,
+        thread ? `runtime：${runtimeLabel(thread)}` : null,
         `usage：${formatThreadUsage(usage)}`,
         "",
         sessions.length
-          ? sessions.map((session) => `${displaySessionId(session)} ${session.currentThread ? displayThreadId(session.currentThread) : "no-thread"} ${session.currentThread?.status ?? "idle"}`).join("\n")
-          : "当前没有带 current thread 的 Codex session。"
+          ? sessions.map((session) => `${displaySessionId(session)} ${sessionStatusLabel(session)} ${sessionThreadCountLabel(session)}`).join("\n")
+          : "当前没有在线 Codex session。"
       ].filter(Boolean).join("\n"));
     } catch (error) {
       await ctx.reply(errorText(error));
     }
   });
 
-  bot.action(/^select:(.+)$/, async (ctx) => {
+  bot.action(/^select_session:(.+)$/, async (ctx) => {
     try {
       const selection = selectionOptions.get(selectionKey(ctx.chat!.id, ctx.match[1]));
       if (!selection?.sessionId) throw new Error("Selection expired. Use /sessions to choose again.");
-      const session = await selectSession(ctx.chat!.id, selection.sessionId);
+      const session = await resolveSession(selection.sessionId);
+      await ctx.answerCbQuery("Selected");
+      await showThreadSelection(ctx, session);
+    } catch (error) {
+      await ctx.answerCbQuery("Failed");
+      await ctx.reply(errorText(error));
+    }
+  });
+
+  bot.action(/^select_thread:(.+)$/, async (ctx) => {
+    try {
+      const selection = selectionOptions.get(selectionKey(ctx.chat!.id, ctx.match[1]));
+      if (!selection?.sessionId || !selection.threadId) throw new Error("Selection expired. Use /sessions to choose again.");
+      const session = await selectThread(ctx.chat!.id, selection.sessionId, selection.threadId);
+      const thread = await getThread(selection.threadId);
       await ctx.answerCbQuery("Selected");
       await ctx.editMessageText([
         `已选择 session：${displaySessionId(session)}`,
-        session.currentThread ? `当前 thread：${displayThreadId(session.currentThread)} ${session.currentThread.status}` : "当前 thread：(none)",
+        `已绑定 thread：${displayThreadId(thread)} ${thread.status}`,
+        session.workingDirectory
+      ].join("\n"));
+    } catch (error) {
+      await ctx.answerCbQuery("Failed");
+      await ctx.reply(errorText(error));
+    }
+  });
+
+  bot.action(/^new_thread:(.+)$/, async (ctx) => {
+    try {
+      const selection = selectionOptions.get(selectionKey(ctx.chat!.id, ctx.match[1]));
+      if (!selection?.sessionId) throw new Error("Selection expired. Use /sessions to choose again.");
+      const thread = await createSessionThread(selection.sessionId);
+      const session = await selectThread(ctx.chat!.id, selection.sessionId, thread.threadId);
+      await ctx.answerCbQuery("Created");
+      await ctx.editMessageText([
+        `已选择 session：${displaySessionId(session)}`,
+        `已新建 thread：${displayThreadId(thread)} ${thread.status}`,
         session.workingDirectory
       ].join("\n"));
     } catch (error) {
@@ -233,6 +265,30 @@ const registerHandlers = () => {
   });
 };
 
+const showThreadSelection = async (ctx: any, session: RuntimeSessionSummary) => {
+  const threads = [...(session.threads ?? [])]
+    .sort((left, right) => Number(right.running) - Number(left.running) || right.updatedAt.localeCompare(left.updatedAt));
+  await ctx.editMessageText([
+    `已选择 session：${displaySessionId(session)}`,
+    session.workingDirectory,
+    "",
+    "选择 thread："
+  ].join("\n"), {
+    reply_markup: {
+      inline_keyboard: [
+        [{
+          text: "New thread",
+          callback_data: `new_thread:${rememberSelection(ctx.chat!.id, { sessionId: session.sessionId })}`
+        }],
+        ...threads.map((thread) => ([{
+          text: `${displayThreadId(thread)}  ${thread.status}  ${thread.title || "(untitled)"}`,
+          callback_data: `select_thread:${rememberSelection(ctx.chat!.id, { sessionId: session.sessionId, threadId: thread.threadId })}`
+        }]))
+      ]
+    }
+  });
+};
+
 const runPromptInBackground = (
   ctx: any,
   prompt: string,
@@ -258,15 +314,16 @@ const runPrompt = async (
     await ctx.reply("当前 Codex session 已离线。请用 /sessions 重新选择。");
     return;
   }
-  if (!session.currentThreadId) {
-    await ctx.reply("当前 session 没有打开 thread。请先在本地 Codex 里开始或 resume 一个 thread。");
+  if (!state?.threadId) {
+    await ctx.reply("当前 chat 没有绑定 thread。请用 /sessions 选择 session 后再选择 thread。");
     return;
   }
-  const mirror = startChatMirror(ctx.chat.id, session.sessionId);
+  const threadId = state.threadId;
+  const mirror = startChatMirror(ctx.chat.id, session.sessionId, threadId);
   const statusMessage = await ctx.reply([
     "Codex queued...",
     `folder: ${session.workingDirectory}`,
-    `thread: ${shortId(session.currentThreadId)}`,
+    `thread: ${shortId(threadId)}`,
     images.length ? `images: ${images.length}` : null
   ].filter(Boolean).join("\n"));
 
@@ -279,17 +336,14 @@ const runPrompt = async (
         ...imageUrls.map((url) => ({ type: "image" as const, url }))
       ];
     }
-    const result = await postSessionTurn(session.sessionId, input);
-    if (result.thread?.threadId && result.thread.threadId !== mirror.threadId) {
-      await switchMirrorThread(ctx.chat.id, mirror, result.thread.threadId);
-    }
+    await postThreadTurn(threadId, input);
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       statusMessage.message_id,
       undefined,
       [
         "Codex queued.",
-        `thread: ${result.thread ? displayThreadId(result.thread) : shortId(session.currentThreadId)}`,
+        `thread: ${shortId(threadId)}`,
         "output: mirrored below"
       ].join("\n")
     );
@@ -298,10 +352,13 @@ const runPrompt = async (
   }
 };
 
-const selectSession = async (chatId: number, sessionId: string) => {
+const selectThread = async (chatId: number, sessionId: string, threadId: string) => {
   const session = await resolveSession(sessionId);
-  chatStates.set(chatId, { sessionId: session.sessionId });
-  startChatMirror(chatId, session.sessionId);
+  if (!session.threads?.some((thread) => thread.threadId === threadId)) {
+    await getThread(threadId);
+  }
+  chatStates.set(chatId, { sessionId: session.sessionId, threadId });
+  startChatMirror(chatId, session.sessionId, threadId);
   return session;
 };
 
@@ -317,7 +374,7 @@ const listSessions = async (): Promise<RuntimeSessionSummary[]> => {
 };
 
 const listRunnableSessions = async (): Promise<RuntimeSessionSummary[]> =>
-  (await listSessions()).filter((session) => session.online && Boolean(session.currentThreadId));
+  (await listSessions()).filter((session) => session.online);
 
 const resolveSession = async (sessionId: string) => {
   const session = (await listSessions()).find((item) => item.sessionId === sessionId);
@@ -332,8 +389,15 @@ const resolveSelectedSession = async (state: ChatState) => {
 
 const getThread = (threadId: string) => apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
 
-const postSessionTurn = async (sessionId: string, input: TurnInput) => {
-  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/turn`), {
+const createSessionThread = async (sessionId: string) =>
+  apiJson<ThreadDetail>(`/api/sessions/${encodeURIComponent(sessionId)}/threads`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "new" })
+  });
+
+const postThreadTurn = async (threadId: string, input: TurnInput) => {
+  const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/turn`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ input, source: "telegram" })
@@ -347,19 +411,23 @@ const telegramImageUrl = async (fileId: string) => {
   return link.toString();
 };
 
-const startChatMirror = (chatId: number, sessionId: string) => {
+const startChatMirror = (chatId: number, sessionId: string, threadId: string) => {
   const existing = chatMirrors.get(chatId);
-  if (existing?.sessionId === sessionId && !existing.controller.signal.aborted) return existing;
+  if (existing?.sessionId === sessionId && existing.threadId === threadId && !existing.controller.signal.aborted) return existing;
   stopChatMirror(chatId);
 
   const mirror: ChatMirror = {
     sessionId,
     controller: new AbortController(),
+    threadId,
     knownRecordIds: new Set(),
     compactState: createCompactRecordViewState(),
     sentMessages: new Map()
   };
   chatMirrors.set(chatId, mirror);
+  void switchMirrorThread(chatId, mirror, threadId).catch((error) => {
+    if (!isAbortError(error)) logger.error("telegram thread mirror failed", error);
+  });
   void runSessionMirror(chatId, mirror).catch((error) => {
     if (!isAbortError(error)) logger.error("telegram session mirror failed", error);
   });
@@ -385,9 +453,6 @@ const runSessionMirror = async (chatId: number, mirror: ChatMirror) => {
       chatMirrors.delete(chatId);
       mirror.controller.abort();
       return;
-    }
-    if (session.currentThreadId && session.currentThreadId !== mirror.threadId) {
-      await switchMirrorThread(chatId, mirror, session.currentThreadId);
     }
   }
 };
@@ -484,15 +549,22 @@ const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
 const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
 const shortId = (id: string) => id.slice(0, 8);
 const selectionKey = (chatId: number, token: string) => `${chatId}:${token}`;
-const rememberSelection = (chatId: number, sessionId: string) => {
+const rememberSelection = (chatId: number, state: ChatState) => {
   const token = (++selectionSeq).toString(36);
-  selectionOptions.set(selectionKey(chatId, token), { sessionId });
+  selectionOptions.set(selectionKey(chatId, token), state);
   return token;
 };
 const normalizeSessions = (sessions: RuntimeSessionSummary[] | undefined) =>
   Array.isArray(sessions) ? sessions.filter((session) => session.online) : [];
 const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
 const displaySessionId = (session: Pick<RuntimeSessionSummary, "sessionId" | "name">) => session.name ?? shortId(session.sessionId);
+const sessionThreads = (session: Pick<RuntimeSessionSummary, "threads">) => session.threads ?? [];
+const sessionStatusLabel = (session: Pick<RuntimeSessionSummary, "threads">) =>
+  sessionThreads(session).some((thread) => thread.running || thread.status === "running") ? "running" : "idle";
+const sessionThreadCountLabel = (session: Pick<RuntimeSessionSummary, "threads">) => {
+  const count = sessionThreads(session).length;
+  return `${count} thread${count === 1 ? "" : "s"}`;
+};
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const isAbortError = (error: unknown) => error instanceof Error && error.name === "AbortError";
 const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {

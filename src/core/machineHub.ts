@@ -128,6 +128,7 @@ export class MachineHub {
   heartbeatMachine(machineId: string, registration: Partial<MachineRegistration> = {}) {
     const machine = this.machines.get(machineId);
     if (!machine) return { ok: false };
+    const previousState = machineVisibleState(machine);
     machine.name = registration.name ?? machine.name;
     machine.type = normalizeMachineType(registration.type, machine.type);
     machine.hostname = registration.hostname ?? machine.hostname;
@@ -142,7 +143,7 @@ export class MachineHub {
       delete machine.offlineSinceAt;
       delete machine.offlineReason;
     }
-    this.options.onChange?.();
+    if (previousState !== machineVisibleState(machine)) this.options.onChange?.();
     return { ok: true, machineId };
   }
 
@@ -290,13 +291,14 @@ export class MachineHub {
     reason: NonNullable<MachineSummary["offlineReason"]>,
     message: string
   ) {
+    const previousState = machineVisibleState(machine);
     machine.online = false;
     machine.status = "offline";
     machine.offlineSinceAt = machine.offlineSinceAt ?? new Date().toISOString();
     machine.offlineReason = reason;
     for (const command of machine.commands) this.failCommand(machine.machineId, command.commandId, message);
     for (const waiter of [...machine.waiters]) waiter();
-    this.options.onChange?.();
+    if (previousState !== machineVisibleState(machine)) this.options.onChange?.();
   }
 }
 
@@ -323,6 +325,21 @@ const machineSummary = (machine: RuntimeMachine): MachineSummary => ({
 
 const machineCommandsAfter = (machine: RuntimeMachine, after: number) =>
   machine.commands.filter((command) => command.seq > after);
+
+const machineVisibleState = (machine: RuntimeMachine) => JSON.stringify({
+  machineId: machine.machineId,
+  type: machine.type,
+  name: machine.name,
+  hostname: machine.hostname,
+  online: machine.online,
+  status: machine.status,
+  offlineSinceAt: machine.offlineSinceAt,
+  offlineReason: machine.offlineReason,
+  pid: machine.pid,
+  platform: machine.platform,
+  cwd: machine.cwd,
+  capabilities: machine.capabilities
+});
 
 export const normalizeMachineType = (
   value: MachineType | undefined,

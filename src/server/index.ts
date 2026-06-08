@@ -14,6 +14,7 @@ import { PluginHub } from "../core/pluginHub.js";
 import { CodexhubServerState } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
+import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { cronMatches, cronMinuteKey, defaultTaskTimezone, isCronExpression } from "../core/taskCron.js";
 import { runtimeSessionFromWorker, ThreadHub } from "../core/threadHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
@@ -72,11 +73,6 @@ const sessionEventSchema = z.discriminatedUnion("type", [
     commandId: z.string().min(1).optional(),
     heartbeat: z.boolean().optional(),
     message: z.unknown()
-  }),
-  z.object({
-    type: z.literal("session_current_changed"),
-    currentThreadId: z.string().min(1),
-    heartbeat: z.boolean().optional()
   }),
   z.object({
     type: z.literal("thread_execution_changed"),
@@ -191,12 +187,35 @@ const machineTransportMessageSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+const webEventsMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("hello"),
+    sessionsAfter: z.number().int().min(0).optional(),
+    projectsAfter: z.number().int().min(0).optional(),
+    tasksAfter: z.number().int().min(0).optional(),
+    connectionsAfter: z.number().int().min(0).optional()
+  }).strict(),
+  z.object({
+    type: z.literal("subscribe_thread"),
+    threadId: z.string().min(1),
+    after: z.number().int().min(0).optional()
+  }).strict(),
+  z.object({
+    type: z.literal("unsubscribe_thread"),
+    threadId: z.string().min(1)
+  }).strict()
+]);
+
 const sshConnectSchema = z.object({
   host: z.string().min(1),
   name: z.string().min(1).optional(),
   remotePort: z.number().int().min(1).max(65535).optional(),
   remoteCommand: z.string().min(1).optional()
 });
+
+const sshHostAliasSchema = z.object({
+  alias: z.string().min(1)
+}).strict();
 
 const cronScheduleSchema = z.string().min(1).refine(isCronExpression, {
   message: "Invalid cron schedule. Use five fields such as \"0 9 * * *\"."
@@ -308,18 +327,33 @@ export type ServerHandle = {
 
 export const startServer = async (options: ServerStartOptions = {}): Promise<ServerHandle> => {
   const config = loadConfig({ host: options.host, port: options.port });
-  const threads = new ThreadHub(config.defaultThreadOptions);
   const state = await CodexhubServerState.load();
+  let threads: ThreadHub;
+  const captureRuntimeState = () => {
+    state.captureRuntime({
+      runtimeSessions: threads.listWorkers({ includeOffline: true }),
+      threads: threads.listThreads()
+    });
+  };
+  threads = new ThreadHub(config.defaultThreadOptions, {
+    onCatalogChange: () => publishProjects(),
+    onThreadChange: () => captureRuntimeState()
+  });
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const projectSubscribers = new Set<(event: ReturnType<typeof projectSnapshotEvent>) => void>();
+  const taskSubscribers = new Set<(event: ReturnType<typeof taskSnapshotEvent>) => void>();
   const connectionSubscribers = new Set<(event: ReturnType<typeof connectionSnapshotEvent>) => void>();
   let projectSeq = 0;
+  let taskSeq = 0;
   let connectionSeq = 0;
   const machines = new MachineHub({ onChange: () => publishProjects() });
+  const sshRemoteClient = await resolveSshRemoteClientBundle();
   const sshMachines = new SshMachineManager({
     localHost: config.host,
     localPort: config.port,
     sshConfigPath: process.env.CODEX_HUB_SSH_CONFIG,
+    remoteMode: sshRemoteMode(),
+    remoteClient: sshRemoteClient ?? undefined,
     onChange: () => {
       publishConnections();
       publishProjects();
@@ -380,12 +414,30 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   function publishProjects() {
+    captureRuntimeState();
     const event = {
       seq: ++projectSeq,
       kind: "projects" as const,
       ...projectSnapshot()
     };
     for (const subscriber of projectSubscribers) subscriber(event);
+  }
+
+  function taskSnapshotEvent() {
+    return {
+      seq: taskSeq,
+      kind: "tasks" as const,
+      tasks: state.listTasks()
+    };
+  }
+
+  function publishTasks() {
+    const event = {
+      seq: ++taskSeq,
+      kind: "tasks" as const,
+      tasks: state.listTasks()
+    };
+    for (const subscriber of taskSubscribers) subscriber(event);
   }
 
   function connectionSnapshotEvent() {
@@ -405,6 +457,38 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     for (const subscriber of connectionSubscribers) subscriber(event);
   }
 
+  async function localSshConfigHostsByAlias() {
+    return new Map((await listSshHosts()).map((host) => [host.alias, host]));
+  }
+
+  async function listCodexhubSshHosts() {
+    const configHostsByAlias = await localSshConfigHostsByAlias();
+    return state.listSshHosts().map((storedHost) => {
+      const configHost = configHostsByAlias.get(storedHost.alias);
+      return {
+        alias: storedHost.alias,
+        hostName: configHost?.hostName,
+        user: configHost?.user,
+        port: configHost?.port,
+        identityFiles: configHost?.identityFiles ?? [],
+        proxyJump: configHost?.proxyJump,
+        configured: Boolean(configHost),
+        createdAt: storedHost.createdAt,
+        updatedAt: storedHost.updatedAt
+      };
+    });
+  }
+
+  async function waitForRuntimeSession(sessionId: string, timeoutMs = 10_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() <= deadline) {
+      const session = threads.listWorkers({ includeOffline: true }).find((worker) => worker.workerId === sessionId);
+      if (session?.online) return session;
+      await delay(50);
+    }
+    throw new Error(`Session did not register: ${sessionId}`);
+  }
+
   async function runLocalTask(taskId: string) {
     const task = state.getTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -413,7 +497,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         lastStatus: "skipped",
         lastError: "Task already running"
       });
-      publishProjects();
+      publishTasks();
       return {
         ok: true,
         skipped: true,
@@ -429,10 +513,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       });
       const session = await started.promise;
       const sessionId = session.sessionId;
+      await waitForRuntimeSession(sessionId);
       let threadId = task.threadId ?? session.threadId;
       if (task.threadId) {
         const resumed = await threads.resumeWorkerThread(sessionId, task.threadId);
         threadId = resumed.threadId;
+      } else {
+        threads.attachWorkerThread(sessionId, threadId);
       }
       const localCommand = threads.runLocalCommand(threadId, task.input, "task");
       if (localCommand.handled) {
@@ -440,7 +527,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           lastStatus: "completed",
           threadId
         });
-        publishProjects();
+        publishTasks();
         return {
           ok: true,
           task: completedTask,
@@ -454,21 +541,21 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         lastStatus: "queued",
         threadId
       });
-      publishProjects();
+      publishTasks();
       releaseOnReturn = false;
       turn.then(() => {
         state.updateTaskRun(task.taskId, {
           lastStatus: "completed",
           threadId
         });
-        publishProjects();
+        publishTasks();
       }).catch((error: unknown) => {
         state.updateTaskRun(task.taskId, {
           lastStatus: "failed",
           threadId,
           lastError: error instanceof Error ? error.message : String(error)
         });
-        publishProjects();
+        publishTasks();
       }).finally(() => {
         runningTasks.delete(task.taskId);
       });
@@ -483,7 +570,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         lastStatus: "failed",
         lastError: error instanceof Error ? error.message : String(error)
       });
-      publishProjects();
+      publishTasks();
       throw error;
     } finally {
       if (releaseOnReturn) runningTasks.delete(task.taskId);
@@ -566,6 +653,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const query = z.object({
       sessionsAfter: z.coerce.number().optional(),
       projectsAfter: z.coerce.number().optional(),
+      tasksAfter: z.coerce.number().optional(),
       connectionsAfter: z.coerce.number().optional()
     }).parse(request.query);
     threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
@@ -573,28 +661,150 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const stopSse = startSse(reply.raw);
     const sessionsAfter = query.sessionsAfter ?? 0;
     const projectsAfter = query.projectsAfter ?? 0;
+    const tasksAfter = query.tasksAfter ?? 0;
     const connectionsAfter = query.connectionsAfter ?? 0;
 
     const unsubscribeSessions = threads.subscribeRuntimeSessions(sessionsAfter, (event) => {
       sendSse(reply.raw, event.kind, event);
     });
     if (projectsAfter <= 0 || projectSeq > projectsAfter) sendSse(reply.raw, "projects", projectSnapshotEvent());
+    if (tasksAfter <= 0 || taskSeq > tasksAfter) sendSse(reply.raw, "tasks", taskSnapshotEvent());
     if (connectionsAfter <= 0 || connectionSeq > connectionsAfter) sendSse(reply.raw, "connections", connectionSnapshotEvent());
 
     const projectSubscriber = (event: ReturnType<typeof projectSnapshotEvent>) => {
       if (event.seq > projectsAfter) sendSse(reply.raw, event.kind, event);
     };
+    const taskSubscriber = (event: ReturnType<typeof taskSnapshotEvent>) => {
+      if (event.seq > tasksAfter) sendSse(reply.raw, event.kind, event);
+    };
     const connectionSubscriber = (event: ReturnType<typeof connectionSnapshotEvent>) => {
       if (event.seq > connectionsAfter) sendSse(reply.raw, event.kind, event);
     };
     projectSubscribers.add(projectSubscriber);
+    taskSubscribers.add(taskSubscriber);
     connectionSubscribers.add(connectionSubscriber);
     reply.raw.on("close", () => {
       stopSse();
       unsubscribeSessions();
       projectSubscribers.delete(projectSubscriber);
+      taskSubscribers.delete(taskSubscriber);
       connectionSubscribers.delete(connectionSubscriber);
     });
+  });
+
+  app.get("/api/events/ws", { websocket: true }, (socket) => {
+    const threadUnsubscribers = new Map<string, () => void>();
+    let unsubscribeSessions: (() => void) | null = null;
+    let projectSubscriber: ((event: ReturnType<typeof projectSnapshotEvent>) => void) | null = null;
+    let taskSubscriber: ((event: ReturnType<typeof taskSnapshotEvent>) => void) | null = null;
+    let connectionSubscriber: ((event: ReturnType<typeof connectionSnapshotEvent>) => void) | null = null;
+
+    const send = (message: unknown) => {
+      if (socket.readyState !== 1) return;
+      socket.send(JSON.stringify(message));
+    };
+
+    const sendEvent = <T extends { kind: string }>(event: T) => {
+      send({ type: event.kind, ...event });
+    };
+
+    const unsubscribeControl = () => {
+      unsubscribeSessions?.();
+      unsubscribeSessions = null;
+      if (projectSubscriber) projectSubscribers.delete(projectSubscriber);
+      if (taskSubscriber) taskSubscribers.delete(taskSubscriber);
+      if (connectionSubscriber) connectionSubscribers.delete(connectionSubscriber);
+      projectSubscriber = null;
+      taskSubscriber = null;
+      connectionSubscriber = null;
+    };
+
+    const subscribeControl = (input: Extract<z.infer<typeof webEventsMessageSchema>, { type: "hello" }>) => {
+      unsubscribeControl();
+      threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
+
+      const sessionsAfter = input.sessionsAfter ?? 0;
+      const projectsAfter = input.projectsAfter ?? 0;
+      const tasksAfter = input.tasksAfter ?? 0;
+      const connectionsAfter = input.connectionsAfter ?? 0;
+
+      unsubscribeSessions = threads.subscribeRuntimeSessions(sessionsAfter, (event) => {
+        sendEvent(event);
+      });
+      if (projectsAfter <= 0 || projectSeq > projectsAfter) sendEvent(projectSnapshotEvent());
+      if (tasksAfter <= 0 || taskSeq > tasksAfter) sendEvent(taskSnapshotEvent());
+      if (connectionsAfter <= 0 || connectionSeq > connectionsAfter) sendEvent(connectionSnapshotEvent());
+
+      projectSubscriber = (event) => {
+        if (event.seq > projectsAfter) sendEvent(event);
+      };
+      taskSubscriber = (event) => {
+        if (event.seq > tasksAfter) sendEvent(event);
+      };
+      connectionSubscriber = (event) => {
+        if (event.seq > connectionsAfter) sendEvent(event);
+      };
+      projectSubscribers.add(projectSubscriber);
+      taskSubscribers.add(taskSubscriber);
+      connectionSubscribers.add(connectionSubscriber);
+      send({ type: "ready" });
+    };
+
+    const subscribeThread = (threadId: string, after = 0) => {
+      threadUnsubscribers.get(threadId)?.();
+      threadUnsubscribers.delete(threadId);
+      try {
+        const unsubscribe = threads.subscribe(threadId, after, (event) => {
+          sendEvent(event);
+        });
+        threadUnsubscribers.set(threadId, unsubscribe);
+        send({ type: "thread_subscribed", threadId });
+      } catch (error) {
+        send({
+          type: "error",
+          scope: "thread",
+          threadId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    };
+
+    const unsubscribeThread = (threadId: string) => {
+      threadUnsubscribers.get(threadId)?.();
+      threadUnsubscribers.delete(threadId);
+      send({ type: "thread_unsubscribed", threadId });
+    };
+
+    const closeSubscriptions = () => {
+      unsubscribeControl();
+      for (const unsubscribe of threadUnsubscribers.values()) unsubscribe();
+      threadUnsubscribers.clear();
+    };
+
+    const handleMessage = (data: unknown) => {
+      let parsed: z.infer<typeof webEventsMessageSchema>;
+      try {
+        parsed = webEventsMessageSchema.parse(JSON.parse(String(data)));
+      } catch (error) {
+        send({ type: "error", message: `invalid web events message: ${error instanceof Error ? error.message : String(error)}` });
+        return;
+      }
+
+      if (parsed.type === "hello") {
+        subscribeControl(parsed);
+        return;
+      }
+      if (parsed.type === "subscribe_thread") {
+        subscribeThread(parsed.threadId, parsed.after ?? 0);
+        return;
+      }
+      if (parsed.type === "unsubscribe_thread") {
+        unsubscribeThread(parsed.threadId);
+      }
+    };
+
+    socket.on("message", (data: unknown) => handleMessage(data));
+    socket.on("close", closeSubscriptions);
   });
 
   app.get("/api/sessions/:sessionId/thread-candidates", async (request, reply) => {
@@ -631,18 +841,19 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.post("/api/sessions/:sessionId/turn", async (request, reply) => {
     const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
     const payload = z.object({
+      threadId: z.string().min(1),
       input: inputSchema,
       source: z.enum(["web", "telegram", "task"]).optional(),
       options: threadRunOptionsSchema.optional()
     }).parse(request.body);
 
     try {
-      const result = threads.runWorkerTurn(params.sessionId, payload.input, payload.source ?? "web", payload.options);
+      const result = threads.runWorkerThreadTurn(params.sessionId, payload.threadId, payload.input, payload.source ?? "web", payload.options);
       result.promise.catch(() => undefined);
       return { ok: true, thread: result.thread, command: result.command };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session has no current thread:") ? 409 : 404);
+      reply.code(message.startsWith("Session not found:") || message.startsWith("Thread not found:") ? 404 : 409);
       return { error: message };
     }
   });
@@ -651,13 +862,54 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     machines: machines.listMachines()
   }));
 
-  app.get("/api/ssh/hosts", async () => ({
+  app.get("/api/ssh/config-hosts", async () => ({
     hosts: await listSshHosts()
   }));
+
+  app.get("/api/ssh/hosts", async () => ({
+    hosts: await listCodexhubSshHosts()
+  }));
+
+  app.post("/api/ssh/hosts", async (request, reply) => {
+    const payload = sshHostAliasSchema.parse(request.body);
+    const alias = payload.alias.trim();
+    const configHostsByAlias = await localSshConfigHostsByAlias();
+    if (!configHostsByAlias.has(alias)) {
+      reply.code(404);
+      return { error: `SSH config host not found: ${alias}` };
+    }
+    state.upsertSshHost({ alias });
+    return {
+      ok: true,
+      hosts: await listCodexhubSshHosts()
+    };
+  });
+
+  app.delete("/api/ssh/hosts/:alias", async (request) => {
+    const params = sshHostAliasSchema.parse(request.params);
+    return {
+      ok: true,
+      deleted: state.deleteSshHost(params.alias),
+      hosts: await listCodexhubSshHosts()
+    };
+  });
 
   app.get("/api/ssh/connections", async () => ({
     connections: sshMachines.listConnections()
   }));
+
+  app.get("/api/ssh/remote-client/:hash", async (request, reply) => {
+    const params = z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(request.params);
+    const bundle = await readSshRemoteClientBundle(params.hash);
+    if (!bundle) {
+      reply.code(404);
+      return { error: "ssh_remote_client_not_found" };
+    }
+    reply.type("text/javascript; charset=utf-8");
+    reply.header("cache-control", "public, max-age=31536000, immutable");
+    reply.header("x-codexhub-remote-client-sha256", bundle.hash);
+    return reply.send(bundle.content);
+  });
 
   app.get("/api/ssh/connections/events", async (request, reply) => {
     const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
@@ -748,6 +1000,17 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     });
   });
 
+  app.delete("/api/projects/:projectId", async (request, reply) => {
+    const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
+    const deleted = state.deleteProject(params.projectId);
+    if (!deleted) {
+      reply.code(404);
+      return { error: `Project not found: ${params.projectId}` };
+    }
+    publishProjects();
+    return { ok: true, deleted, ...projectSnapshot() };
+  });
+
   app.post("/api/projects/open", async (request, reply) => {
     const payload = z.object({
       machineId: z.string().min(1).optional(),
@@ -763,6 +1026,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       });
       const result = await started.promise;
       const sessionId = result.sessionId;
+      await waitForRuntimeSession(sessionId);
+      threads.attachWorkerThread(sessionId, result.threadId);
       const project = state.upsertProject({
         machineId: machine.machineId,
         path: result.cwd,
@@ -781,6 +1046,21 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     tasks: state.listTasks()
   }));
 
+  app.get("/api/tasks/events", async (request, reply) => {
+    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
+    const stopSse = startSse(reply.raw);
+    const after = query.after ?? 0;
+    if (after <= 0 || taskSeq > after) sendSse(reply.raw, "tasks", taskSnapshotEvent());
+    const subscriber = (event: ReturnType<typeof taskSnapshotEvent>) => {
+      if (event.seq > after) sendSse(reply.raw, event.kind, event);
+    };
+    taskSubscribers.add(subscriber);
+    reply.raw.on("close", () => {
+      stopSse();
+      taskSubscribers.delete(subscriber);
+    });
+  });
+
   app.post("/api/tasks", async (request, reply) => {
     const payload = taskCreateSchema.parse(request.body);
     try {
@@ -795,6 +1075,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         threadId: payload.threadId,
         input: payload.input
       });
+      publishTasks();
       return { ok: true, task };
     } catch (error) {
       reply.code(409);
@@ -825,6 +1106,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         threadId: payload.threadId ?? existing.threadId,
         createdAt: existing.createdAt
       });
+      publishTasks();
       return { ok: true, task };
     } catch (error) {
       reply.code(409);
@@ -838,6 +1120,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       reply.code(404);
       return { error: "task_not_found" };
     }
+    publishTasks();
     return { ok: true, deleted: true };
   });
 
@@ -982,8 +1265,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         }
 
         if (parsed.type === "session_register") {
+          const { currentThreadId: _legacyCurrentThreadId, ...registration } = parsed.registration;
           const result = threads.registerWorker({
-            ...parsed.registration,
+            ...registration,
             workerId: parsed.sessionId,
             machineId: machineId!,
             transportId: sessionTransportId(parsed.sessionId)
@@ -1005,14 +1289,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         }
 
         if (parsed.type === "session_heartbeat") {
-          threads.heartbeatWorker(parsed.sessionId, parsed.registration ?? {});
-          publishProjects();
+          const { currentThreadId: _legacyCurrentThreadId, ...registration } = parsed.registration ?? {};
+          threads.heartbeatWorker(parsed.sessionId, registration);
           return;
         }
 
         if (parsed.type === "session_event") {
           threads.applyWorkerEvent(parsed.sessionId, parsed.event);
-          publishProjects();
           return;
         }
 
@@ -1022,19 +1305,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
             records: parsed.records,
             heartbeat: parsed.heartbeat
           });
-          publishProjects();
           return;
         }
 
         if (parsed.type === "session_command_result") {
           threads.resolveWorkerCommand(parsed.sessionId, parsed.commandId, parsed.result);
-          publishProjects();
           return;
         }
 
         if (parsed.type === "session_command_error") {
           threads.failWorkerCommand(parsed.sessionId, parsed.commandId, parsed.message);
-          publishProjects();
           return;
         }
 
@@ -1246,6 +1526,11 @@ const fileExists = async (filePath: string) => {
   }
 };
 
+const delay = async (ms: number) => await new Promise<void>((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  timer.unref?.();
+});
+
 const contentType = (filePath: string) => {
   const extension = path.extname(filePath).toLowerCase();
   if (extension === ".html") return "text/html; charset=utf-8";
@@ -1259,6 +1544,8 @@ const contentType = (filePath: string) => {
   if (extension === ".ico") return "image/x-icon";
   return "application/octet-stream";
 };
+
+const sshRemoteMode = () => process.env.CODEX_HUB_SSH_REMOTE_MODE === "installed" ? "installed" : "bootstrap";
 
 const isDirectEntryPoint = () => {
   const entrypoint = process.argv[1];

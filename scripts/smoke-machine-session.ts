@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -23,6 +24,15 @@ type ProjectOpenResponse = {
 type ThreadDetail = {
   threadId: string;
   records?: unknown[];
+};
+
+type RealtimeMessage = {
+  type?: string;
+  kind?: string;
+  threadId?: string;
+  thread?: {
+    threadId?: string;
+  };
 };
 
 type LocalTask = {
@@ -52,6 +62,8 @@ type SshConnection = {
   remotePort: number;
   localHost: string;
   localPort: number;
+  remoteMode?: "bootstrap" | "installed" | "custom";
+  remoteClientHash?: string;
 };
 
 type TaskResponse = {
@@ -73,16 +85,20 @@ const main = async () => {
   const fakeSshArgsPath = path.join(fakeSshDir, "ssh-args.txt");
   await writeExternalPlugin(pluginDir);
   const sshConfigPath = await writeSshConfigFixture(sshDir);
+  const remoteClient = await writeRemoteClientFixture(sshDir);
   await writeFakeSsh(fakeSshDir);
 
   process.env.CODEX_HUB_DATA_DIR = dataDir;
   process.env.CODEX_HUB_PLUGIN_DIR = pluginDir;
   process.env.CODEX_HUB_SSH_CONFIG = sshConfigPath;
+  process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH = remoteClient.path;
   process.env.CODEXHUB_FAKE_SSH_ARGS_FILE = fakeSshArgsPath;
   process.env.PATH = `${fakeSshDir}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.CODEX_HUB_LOCAL_MACHINE = "1";
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "1";
   process.env.TELEGRAM_BOT_TOKEN = "";
+
+  await assertServerStateSnapshotPure();
 
   const port = await findFreePort();
   const { startServer } = await import("../src/server/index.js");
@@ -96,7 +112,10 @@ const main = async () => {
     await assertSshHosts(apiBase);
     console.log("ssh hosts ok");
 
-    await assertSshConnect(apiBase, port, fakeSshArgsPath, sshConfigPath);
+    await assertSshRemoteClientEndpoint(apiBase, remoteClient);
+    console.log("ssh remote client endpoint ok");
+
+    await assertSshConnect(apiBase, port, fakeSshArgsPath, sshConfigPath, remoteClient.hash);
     console.log("ssh connect ok");
 
     const open = await apiJson<ProjectOpenResponse>(apiBase, "/api/projects/open", {
@@ -105,19 +124,26 @@ const main = async () => {
       body: JSON.stringify({ machineId: machine.machineId, path: projectDir })
     });
     assertNoWorkerId(open, "/api/projects/open");
+    assertNoCurrentThread(open, "/api/projects/open");
     const sessionId = open.result?.sessionId;
     const threadId = open.result?.threadId;
     if (!sessionId || !threadId) throw new Error("project open did not return sessionId/threadId");
     console.log(`project ok: ${sessionId} ${threadId}`);
+    await assertSessionTurnRequiresThread(apiBase, sessionId);
+    console.log("session turn target validation ok");
 
-    await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input: "/status", source: "web" })
+    await assertWebRealtime(apiBase, threadId, async () => {
+      await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ threadId, input: "/status", source: "web" })
+      });
     });
+    console.log("web realtime ok");
 
     const sessions = await apiJson(apiBase, "/api/sessions");
     assertNoWorkerId(sessions, "/api/sessions");
+    assertNoCurrentThread(sessions, "/api/sessions");
     const thread = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
     assertNoWorkerId(thread, "/api/threads/:threadId");
     if ((thread.records ?? []).length < 2) throw new Error("/status did not write thread records");
@@ -159,7 +185,7 @@ const writeFakeSsh = async (root: string) => {
     "if [ -n \"$CODEXHUB_FAKE_SSH_ARGS_FILE\" ]; then",
     "  : > \"$CODEXHUB_FAKE_SSH_ARGS_FILE\"",
     "  for arg in \"$@\"; do",
-    "    printf '%s\\n' \"$arg\" >> \"$CODEXHUB_FAKE_SSH_ARGS_FILE\"",
+    "    printf '%s\\000' \"$arg\" >> \"$CODEXHUB_FAKE_SSH_ARGS_FILE\"",
     "  done",
     "fi",
     "echo 'fake ssh started'",
@@ -196,22 +222,57 @@ const writeSshConfigFixture = async (root: string) => {
   return path.join(root, "config");
 };
 
+const writeRemoteClientFixture = async (root: string) => {
+  const filePath = path.join(root, "remote-client.cjs");
+  const content = [
+    "#!/usr/bin/env node",
+    "console.error('codexhub remote client smoke fixture');",
+    ""
+  ].join("\n");
+  await writeFile(filePath, content, "utf8");
+  return {
+    path: filePath,
+    hash: createHash("sha256").update(content).digest("hex")
+  };
+};
+
 const assertSshHosts = async (apiBase: string) => {
-  const data = await apiJson<{ hosts?: SshHost[] }>(apiBase, "/api/ssh/hosts");
-  assertNoWorkerId(data, "/api/ssh/hosts");
-  const hosts = data.hosts ?? [];
-  const direct = hosts.find((host) => host.alias === "direct-host");
+  const configData = await apiJson<{ hosts?: SshHost[] }>(apiBase, "/api/ssh/config-hosts");
+  assertNoWorkerId(configData, "/api/ssh/config-hosts");
+  const configHosts = configData.hosts ?? [];
+  const direct = configHosts.find((host) => host.alias === "direct-host");
   if (!direct || direct.hostName !== "192.0.2.10" || direct.user !== "direct" || direct.port !== 2222) {
     throw new Error(`direct ssh host fixture was not parsed: ${JSON.stringify(direct)}`);
   }
-  const included = hosts.find((host) => host.alias === "included-host");
+  const included = configHosts.find((host) => host.alias === "included-host");
   if (!included || included.hostName !== "included.example.com" || included.user !== "ubuntu" || included.proxyJump !== "jump-host") {
     throw new Error(`included ssh host fixture was not parsed: ${JSON.stringify(included)}`);
   }
-  if (hosts.some((host) => host.alias === "*")) throw new Error("wildcard ssh host was exposed");
+  if (configHosts.some((host) => host.alias === "*")) throw new Error("wildcard ssh host was exposed");
+
+  const emptyData = await apiJson<{ hosts?: SshHost[] }>(apiBase, "/api/ssh/hosts");
+  assertNoWorkerId(emptyData, "/api/ssh/hosts");
+  if ((emptyData.hosts ?? []).length !== 0) throw new Error(`codexhub ssh hosts should start empty: ${JSON.stringify(emptyData.hosts)}`);
+
+  const added = await apiJson<{ hosts?: SshHost[] }>(apiBase, "/api/ssh/hosts", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ alias: "included-host" })
+  });
+  assertNoWorkerId(added, "POST /api/ssh/hosts");
+  const saved = added.hosts?.find((host) => host.alias === "included-host");
+  if (!saved || saved.hostName !== "included.example.com" || saved.user !== "ubuntu") {
+    throw new Error(`codexhub ssh host was not stored as an alias backed by ssh config: ${JSON.stringify(saved)}`);
+  }
 };
 
-const assertSshConnect = async (apiBase: string, serverPort: number, argsPath: string, sshConfigPath: string) => {
+const assertSshConnect = async (
+  apiBase: string,
+  serverPort: number,
+  argsPath: string,
+  sshConfigPath: string,
+  remoteClientHash: string
+) => {
   const remotePort = 19001;
   const started = await apiJson<{ connection?: SshConnection }>(apiBase, "/api/ssh/connect", {
     method: "POST",
@@ -226,6 +287,9 @@ const assertSshConnect = async (apiBase: string, serverPort: number, argsPath: s
   const connection = started.connection;
   if (!connection?.connectionId || connection.host !== "included-host" || connection.remotePort !== remotePort) {
     throw new Error(`ssh connect did not return expected connection: ${JSON.stringify(connection)}`);
+  }
+  if (connection.remoteMode !== "bootstrap" || connection.remoteClientHash !== remoteClientHash) {
+    throw new Error(`ssh connect did not use bootstrap remote client: ${JSON.stringify(connection)}`);
   }
 
   const args = await waitForFakeSshArgs(argsPath);
@@ -242,10 +306,15 @@ const assertSshConnect = async (apiBase: string, serverPort: number, argsPath: s
   if (!args.includes("ExitOnForwardFailure=yes")) throw new Error("ssh args missing ExitOnForwardFailure=yes");
   if (!args.includes("included-host")) throw new Error(`ssh args missing target host: ${JSON.stringify(args)}`);
   const remoteCommand = args.at(-1) ?? "";
-  if (!remoteCommand.includes("codexhub machine")
-    || !remoteCommand.includes("--server 'http://127.0.0.1:19001'")
+  if (remoteCommand.includes("codexhub machine")
+    || !remoteCommand.includes("sh -lc")
+    || !remoteCommand.includes(`/api/ssh/remote-client/${remoteClientHash}`)
+    || !remoteCommand.includes("CODEXHUB_REMOTE_CLIENT_HASH")
+    || !remoteCommand.includes("export CODEXHUB_REMOTE_CLIENT_HASH CODEXHUB_REMOTE_CLIENT_URL")
+    || !remoteCommand.includes("node \"$client\"")
+    || !remoteCommand.includes("http://127.0.0.1:19001")
     || !remoteCommand.includes("--type ssh")
-    || !remoteCommand.includes("--name 'Included Host'")) {
+    || !remoteCommand.includes("Included Host")) {
     throw new Error(`unexpected ssh remote command: ${remoteCommand}`);
   }
 
@@ -266,15 +335,83 @@ const assertSshConnect = async (apiBase: string, serverPort: number, argsPath: s
   }
 };
 
+const assertSshRemoteClientEndpoint = async (
+  apiBase: string,
+  remoteClient: { path: string; hash: string }
+) => {
+  const response = await fetch(new URL(`/api/ssh/remote-client/${remoteClient.hash}`, apiBase));
+  const text = await response.text();
+  if (!response.ok) throw new Error(`remote client endpoint returned HTTP ${response.status}: ${text}`);
+  const expected = await readFile(remoteClient.path, "utf8");
+  if (text !== expected) throw new Error("remote client endpoint returned unexpected content");
+  if (response.headers.get("x-codexhub-remote-client-sha256") !== remoteClient.hash) {
+    throw new Error("remote client endpoint returned unexpected checksum header");
+  }
+};
+
 const waitForFakeSshArgs = async (argsPath: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 2_000) {
     const text = await readFile(argsPath, "utf8").catch(() => "");
-    const args = text.split(/\r?\n/).filter(Boolean);
+    const args = text.split("\0").filter(Boolean);
     if (args.length) return args;
     await delay(50);
   }
   throw new Error("fake ssh did not receive arguments");
+};
+
+const assertWebRealtime = async (apiBase: string, threadId: string, trigger: () => Promise<void>) => {
+  const messages: RealtimeMessage[] = [];
+  const ws = new WebSocket(webRealtimeUrl(apiBase));
+  ws.addEventListener("message", (event) => {
+    messages.push(JSON.parse(String(event.data)) as RealtimeMessage);
+  });
+
+  try {
+    await waitForWebSocketOpen(ws, "web realtime websocket failed");
+    ws.send(JSON.stringify({ type: "hello", sessionsAfter: 0, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 }));
+    await waitForRealtimeMessage(messages, (message) => message.type === "ready", "web realtime ready");
+
+    ws.send(JSON.stringify({ type: "subscribe_thread", threadId, after: 0 }));
+    await waitForRealtimeMessage(
+      messages,
+      (message) => message.type === "thread_subscribed" && message.threadId === threadId,
+      "web realtime thread subscription"
+    );
+
+    const startIndex = messages.length;
+    await trigger();
+    await waitForRealtimeMessage(
+      messages,
+      (message) => (message.type ?? message.kind) === "record" && message.thread?.threadId === threadId,
+      "web realtime thread record",
+      startIndex
+    );
+    const controlSnapshot = messages
+      .slice(startIndex)
+      .find((message) => message.type === "sessions" || message.type === "projects");
+    if (controlSnapshot) {
+      throw new Error(`thread realtime emitted ${controlSnapshot.type} snapshot after record trigger`);
+    }
+  } finally {
+    await closeWebSocket(ws);
+  }
+};
+
+const waitForRealtimeMessage = async (
+  messages: RealtimeMessage[],
+  predicate: (message: RealtimeMessage) => boolean,
+  label: string,
+  startIndex = 0,
+  timeoutMs = 3_000
+) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const found = messages.slice(startIndex).find(predicate);
+    if (found) return found;
+    await delay(50);
+  }
+  throw new Error(`${label} did not arrive: ${JSON.stringify(messages.slice(startIndex))}`);
 };
 
 const createAndRunTask = async (
@@ -377,6 +514,54 @@ const waitForLocalMachine = async (apiBase: string) => {
   throw new Error("local machine did not register");
 };
 
+const assertServerStateSnapshotPure = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-pure."));
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const state = await CodexhubServerState.load({ dataDir });
+  state.upsertMachine({
+    machineId: "machine-pure-smoke",
+    type: "local",
+    hostname: "pure-smoke",
+    lastSeenAt: "2026-01-01T00:00:00.000Z",
+    capabilities: { projectLauncher: true }
+  });
+  state.upsertProject({
+    machineId: "machine-pure-smoke",
+    path: "/tmp/codexhub-pure-smoke",
+    now: "2026-01-01T00:00:00.000Z"
+  });
+  await state.flush();
+  const before = await readFile(state.path, "utf8");
+  state.snapshot({
+    machines: [{
+      machineId: "machine-pure-smoke",
+      type: "local",
+      hostname: "pure-smoke",
+      online: true,
+      status: "online",
+      lastSeenAt: "2026-01-01T00:10:00.000Z",
+      capabilities: { projectLauncher: true }
+    }],
+    runtimeSessions: [],
+    threads: []
+  });
+  await state.flush();
+  const after = await readFile(state.path, "utf8");
+  if (after !== before) throw new Error("CodexhubServerState.snapshot mutated server-state.yaml");
+};
+
+const assertSessionTurnRequiresThread = async (apiBase: string, sessionId: string) => {
+  const response = await fetch(new URL(`/api/sessions/${encodeURIComponent(sessionId)}/turn`, apiBase), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ input: "/status", source: "web" })
+  });
+  if (response.ok) throw new Error("/api/sessions/:sessionId/turn accepted a missing threadId");
+  if (response.status !== 400) {
+    throw new Error(`/api/sessions/:sessionId/turn missing threadId returned HTTP ${response.status}: ${await response.text()}`);
+  }
+};
+
 const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(new URL(pathname, apiBase), init);
   const text = await response.text();
@@ -388,6 +573,13 @@ const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: Re
 const assertNoWorkerId = (value: unknown, label: string) => {
   const path = findKey(value, "workerId");
   if (path) throw new Error(`${label} exposed workerId at ${path}`);
+};
+
+const assertNoCurrentThread = (value: unknown, label: string) => {
+  const currentThreadId = findKey(value, "currentThreadId");
+  if (currentThreadId) throw new Error(`${label} exposed currentThreadId at ${currentThreadId}`);
+  const currentThread = findKey(value, "currentThread");
+  if (currentThread) throw new Error(`${label} exposed currentThread at ${currentThread}`);
 };
 
 const findKey = (value: unknown, key: string, trail = "$"): string | null => {
@@ -500,6 +692,21 @@ const sendLegacySessionRegistration = async (port: number) => {
   await closeWebSocket(ws);
   return messages.join("\n");
 };
+
+const webRealtimeUrl = (apiBase: string) => {
+  const url = new URL("/api/events/ws", apiBase);
+  url.protocol = "ws:";
+  return url.toString();
+};
+
+const waitForWebSocketOpen = async (ws: WebSocket, label: string) => await new Promise<void>((resolve, reject) => {
+  if (ws.readyState === WebSocket.OPEN) {
+    resolve();
+    return;
+  }
+  ws.addEventListener("open", () => resolve(), { once: true });
+  ws.addEventListener("error", () => reject(new Error(label)), { once: true });
+});
 
 const closeWebSocket = async (ws: WebSocket) => {
   if (ws.readyState === WebSocket.CLOSED) return;

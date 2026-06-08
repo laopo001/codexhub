@@ -273,13 +273,12 @@ class FakeMachine {
       commandCursor: 0,
       registration: {
         machineId: this.options.machineId,
-        name: "Task Lock Fake Session",
-        workingDirectory: this.options.cwd,
-        appServerUrl: "ws://127.0.0.1:9",
-        hostname: "task-lock-host",
-        currentThreadId: this.options.threadId
-      }
-    });
+	        name: "Task Lock Fake Session",
+	        workingDirectory: this.options.cwd,
+	        appServerUrl: "ws://127.0.0.1:9",
+	        hostname: "task-lock-host"
+	      }
+	    });
   }
 
   private waitForTurn(timeoutMs = 5000) {

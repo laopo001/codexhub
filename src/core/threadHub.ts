@@ -43,8 +43,6 @@ export type RuntimeSessionSummary = {
   offlineReason?: WorkerOfflineReason;
   pid?: number;
   hostname?: string;
-  currentThreadId?: string;
-  currentThread?: ThreadSummary;
   threads: ThreadSummary[];
 };
 
@@ -74,7 +72,6 @@ export type WorkerRegistration = {
   appServerUrl?: string;
   pid?: number;
   hostname?: string;
-  currentThreadId?: string;
   transportId?: string;
 };
 
@@ -95,8 +92,6 @@ export type WorkerSummary = {
   offlineReason?: WorkerOfflineReason;
   pid?: number;
   hostname?: string;
-  currentThreadId?: string;
-  currentThread?: ThreadSummary;
   threads: ThreadSummary[];
 };
 
@@ -144,11 +139,6 @@ export type WorkerEventInput =
       commandId?: string;
       heartbeat?: boolean;
       message: unknown;
-    }
-  | {
-      type: "session_current_changed";
-      currentThreadId: string;
-      heartbeat?: boolean;
     }
   | {
       type: "thread_execution_changed";
@@ -214,7 +204,10 @@ export class ThreadHub {
   private lastWorkerSnapshotKey = "";
   private workerSeq = 0;
 
-  constructor(private readonly defaultThreadOptions: ThreadOptions = {}) {}
+  constructor(
+    private readonly defaultThreadOptions: ThreadOptions = {},
+    private readonly options: { onCatalogChange?: () => void; onThreadChange?: () => void } = {}
+  ) {}
 
   registerWorker(registration: WorkerRegistration): { workerId: string; worker: WorkerSummary } {
     const now = new Date().toISOString();
@@ -234,18 +227,12 @@ export class ThreadHub {
       lastSeenAt: now,
       pid: registration.pid,
       hostname: registration.hostname,
-      currentThreadId: registration.currentThreadId,
       threads: [],
       transportId: registration.transportId,
       commands: existing?.commands ?? [],
       waiters: existing?.waiters ?? new Set()
     };
     this.workers.set(workerId, worker);
-    if (registration.currentThreadId) {
-      this.ensureThread(registration.currentThreadId, worker, {
-        params: { threadId: registration.currentThreadId, cwd: worker.workingDirectory }
-      });
-    }
     for (const thread of this.threads.values()) {
       if (thread.workerId === workerId) {
         thread.workerId = workerId;
@@ -267,12 +254,6 @@ export class ThreadHub {
     worker.appServerUrl = registration.appServerUrl ?? worker.appServerUrl;
     worker.pid = registration.pid ?? worker.pid;
     worker.hostname = registration.hostname ?? worker.hostname;
-    if (registration.currentThreadId) {
-      worker.currentThreadId = registration.currentThreadId;
-      this.ensureThread(registration.currentThreadId, worker, {
-        params: { threadId: registration.currentThreadId, cwd: worker.workingDirectory }
-      }, false);
-    }
     worker.online = true;
     worker.status = "online";
     worker.lastSeenAt = now;
@@ -422,18 +403,10 @@ export class ThreadHub {
   applyWorkerEvent(workerId: string, input: WorkerEventInput) {
     if (input.heartbeat !== false) this.heartbeatWorker(workerId);
     const worker = this.requireWorker(workerId);
-    if (input.type === "session_current_changed") {
-      const thread = this.ensureThread(input.currentThreadId, worker, {
-        params: { threadId: input.currentThreadId, cwd: worker.workingDirectory }
-      }, false);
-      if (this.markWorkerCurrentThread(worker, thread)) this.publishWorkers();
-      return { ok: true, thread: this.summary(thread) };
-    }
-
     if (input.type === "thread_execution_changed") {
       const thread = this.ensureThread(input.threadId, worker, {
         params: { threadId: input.threadId, cwd: worker.workingDirectory }
-      }, false);
+      });
       this.applyThreadExecutionState(thread, input.running, input.turnId);
       return { ok: true, thread: this.summary(thread) };
     }
@@ -441,7 +414,7 @@ export class ThreadHub {
     if (input.type === "runtime_settings_changed") {
       const thread = this.ensureThread(input.threadId, worker, {
         params: { threadId: input.threadId, cwd: worker.workingDirectory }
-      }, false);
+      });
       this.applyRuntimeSettings(thread, input.model, input.modelReasoningEffort);
       return { ok: true, thread: this.summary(thread) };
     }
@@ -457,7 +430,7 @@ export class ThreadHub {
       return { ok: true };
     }
 
-    const thread = threadId ? this.ensureThread(threadId, worker, message, false) : null;
+    const thread = threadId ? this.ensureThread(threadId, worker, message) : null;
     const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
     if (thread && pending?.type === "rollback_thread" && asRecord(asRecord(message.result)?.thread)) {
       this.resetThreadRecords(thread);
@@ -474,8 +447,7 @@ export class ThreadHub {
     const thread = this.ensureThread(
       input.threadId,
       worker,
-      { params: { threadId: input.threadId } },
-      false
+      { params: { threadId: input.threadId } }
     );
     for (const record of input.records) {
       if (record.sourceThreadId && record.sourceThreadId !== input.threadId) continue;
@@ -494,6 +466,13 @@ export class ThreadHub {
   getThread(threadId: string): ThreadDetail | null {
     const thread = this.threads.get(threadId);
     return thread ? this.detail(thread) : null;
+  }
+
+  attachWorkerThread(workerId: string, threadId: string): ThreadSummary {
+    const worker = this.requireOnlineWorker(workerId);
+    return this.summary(this.ensureThread(threadId, worker, {
+      params: { threadId, cwd: worker.workingDirectory }
+    }));
   }
 
   getThreadUsage(threadId?: string): ThreadUsage {
@@ -589,10 +568,8 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     thread.running = false;
     this.threads.delete(threadId);
-    for (const worker of this.workers.values()) {
-      if (worker.currentThreadId === threadId) delete worker.currentThreadId;
-    }
     this.publish(thread, "done");
+    this.publishThreadCatalog();
     return { deleted: true };
   }
 
@@ -655,12 +632,10 @@ export class ThreadHub {
     return promise;
   }
 
-  runWorkerTurn(workerId: string, input: ProxyInput, source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
-    const worker = this.requireWorker(workerId);
-    if (!worker.online) throw new Error(`Session is offline: ${workerId}`);
-    if (!worker.currentThreadId) throw new Error(`Session has no current thread: ${workerId}`);
-    const thread = this.ensureThread(worker.currentThreadId, worker, {
-      params: { threadId: worker.currentThreadId, cwd: worker.workingDirectory }
+  runWorkerThreadTurn(workerId: string, threadId: string, input: ProxyInput, source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
+    const worker = this.requireOnlineWorker(workerId);
+    const thread = this.ensureThread(threadId, worker, {
+      params: { threadId, cwd: worker.workingDirectory }
     });
     const command = this.runLocalCommand(thread.threadId, input, source);
     if (command.handled) {
@@ -703,12 +678,6 @@ export class ThreadHub {
     return input.threadId ?? threadIdFromAppServerMessage(message);
   }
 
-  private markWorkerCurrentThread(worker: RuntimeWorker, thread: RuntimeThread) {
-    const changed = worker.currentThreadId !== thread.threadId;
-    worker.currentThreadId = thread.threadId;
-    return changed;
-  }
-
   private requireThread(threadId: string) {
     const thread = this.threads.get(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -734,6 +703,7 @@ export class ThreadHub {
     if (replacement) {
       thread.workerId = replacement.workerId;
       this.publish(thread, "thread");
+      this.publishThreadCatalog();
       return replacement;
     }
     if (workers.length > 1) {
@@ -865,14 +835,14 @@ export class ThreadHub {
     for (const command of worker.commands) this.rejectCommand(command.commandId, error);
   }
 
-  private ensureThread(threadId: string, worker: RuntimeWorker, message: Record<string, unknown>, markCurrent = true) {
+  private ensureThread(threadId: string, worker: RuntimeWorker, message: Record<string, unknown>) {
     const existing = this.threads.get(threadId);
     if (existing) {
       if (existing.workerId !== worker.workerId) {
         existing.workerId = worker.workerId;
         this.publish(existing, "thread");
+        this.publishThreadCatalog();
       }
-      if (markCurrent && this.markWorkerCurrentThread(worker, existing)) this.publishWorkers();
       return existing;
     }
 
@@ -897,8 +867,8 @@ export class ThreadHub {
       seq: 0
     };
     this.threads.set(thread.threadId, thread);
-    if (markCurrent) this.markWorkerCurrentThread(worker, thread);
     this.publish(thread, "thread");
+    this.publishThreadCatalog();
     return thread;
   }
 
@@ -1159,7 +1129,7 @@ export class ThreadHub {
     thread.events.push(streamEvent);
     if (thread.events.length > 1000) thread.events.splice(0, thread.events.length - 1000);
     for (const subscriber of thread.subscribers) subscriber(streamEvent);
-    this.publishWorkers();
+    this.options.onThreadChange?.();
   }
 
   private summary(thread: RuntimeThread): ThreadSummary {
@@ -1188,7 +1158,6 @@ export class ThreadHub {
   }
 
   private workerSummary(worker: RuntimeWorker): WorkerSummary {
-    const currentThread = worker.currentThreadId ? this.threads.get(worker.currentThreadId) : undefined;
     const threads = this.workerThreads(worker);
     return {
       workerId: worker.workerId,
@@ -1203,8 +1172,6 @@ export class ThreadHub {
       offlineReason: worker.offlineReason,
       pid: worker.pid,
       hostname: worker.hostname,
-      currentThreadId: currentThread?.threadId ?? worker.currentThreadId,
-      currentThread: currentThread ? this.summary(currentThread) : undefined,
       threads
     };
   }
@@ -1214,9 +1181,8 @@ export class ThreadHub {
       .filter((thread) => thread.workerId === worker.workerId)
       .map((thread) => this.summary(thread));
     return summaries.sort((left, right) => {
-      if (left.threadId === worker.currentThreadId) return -1;
-      if (right.threadId === worker.currentThreadId) return 1;
-      return right.updatedAt.localeCompare(left.updatedAt);
+      return Number(right.running) - Number(left.running)
+        || right.updatedAt.localeCompare(left.updatedAt);
     });
   }
 
@@ -1232,8 +1198,7 @@ export class ThreadHub {
       offlineSinceAt: worker.offlineSinceAt,
       offlineReason: worker.offlineReason,
       pid: worker.pid,
-      hostname: worker.hostname,
-      currentThreadId: worker.currentThreadId
+      hostname: worker.hostname
     });
   }
 
@@ -1262,6 +1227,11 @@ export class ThreadHub {
     this.workerEvents.push(event);
     if (this.workerEvents.length > 1000) this.workerEvents.splice(0, this.workerEvents.length - 1000);
     for (const subscriber of this.workerSubscribers) subscriber(event);
+  }
+
+  private publishThreadCatalog() {
+    this.publishWorkers();
+    this.options.onCatalogChange?.();
   }
 
   private runtimeSummary(thread: RuntimeThread): ThreadRuntimeSummary {
@@ -1308,8 +1278,6 @@ export const runtimeSessionFromWorker = (worker: WorkerSummary): RuntimeSessionS
   offlineReason: worker.offlineReason,
   pid: worker.pid,
   hostname: worker.hostname,
-  currentThreadId: worker.currentThreadId,
-  currentThread: worker.currentThread,
   threads: worker.threads
 });
 
@@ -1322,7 +1290,6 @@ const runtimeSessionEventFromWorkers = (event: WorkerStreamEvent): RuntimeSessio
 const workerSnapshotKey = (workers: WorkerSummary[]) => JSON.stringify(workers.map((worker) => ({
   ...worker,
   lastSeenAt: undefined,
-  currentThread: worker.currentThread ? threadSummarySnapshotKey(worker.currentThread) : undefined,
   threads: worker.threads.map(threadSummarySnapshotKey)
 })));
 

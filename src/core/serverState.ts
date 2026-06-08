@@ -54,6 +54,12 @@ export type StoredTask = {
   lastError?: string;
 };
 
+export type StoredSshHost = {
+  alias: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ServerStateData = {
   version: 1;
   updatedAt: string;
@@ -61,6 +67,7 @@ export type ServerStateData = {
   projects: StoredProject[];
   threads: StoredThreadSummary[];
   tasks: StoredTask[];
+  sshHosts: StoredSshHost[];
 };
 
 export type ProjectSummary = StoredProject & {
@@ -109,8 +116,45 @@ export class CodexhubServerState {
     return [...this.data.projects].sort(compareStoredProjects);
   }
 
+  deleteProject(projectId: string) {
+    const index = this.data.projects.findIndex((project) => project.projectId === projectId);
+    if (index === -1) return false;
+    this.data.projects.splice(index, 1);
+    this.data.threads = this.data.threads.filter((thread) => thread.projectId !== projectId);
+    this.touch();
+    return true;
+  }
+
   listTasks() {
     return [...this.data.tasks].sort(compareTasks);
+  }
+
+  listSshHosts() {
+    return [...this.data.sshHosts].sort(compareStoredSshHosts);
+  }
+
+  upsertSshHost(input: { alias: string; createdAt?: string; updatedAt?: string }) {
+    const alias = input.alias.trim();
+    if (!alias) throw new Error("SSH host alias is required.");
+    const existing = this.data.sshHosts.find((host) => host.alias === alias);
+    if (existing) return existing;
+    const now = input.updatedAt ?? new Date().toISOString();
+    const host: StoredSshHost = {
+      alias,
+      createdAt: input.createdAt ?? now,
+      updatedAt: now
+    };
+    this.data.sshHosts.push(host);
+    this.touch();
+    return host;
+  }
+
+  deleteSshHost(alias: string) {
+    const index = this.data.sshHosts.findIndex((host) => host.alias === alias);
+    if (index === -1) return false;
+    this.data.sshHosts.splice(index, 1);
+    this.touch();
+    return true;
   }
 
   getTask(taskId: string) {
@@ -172,15 +216,32 @@ export class CodexhubServerState {
     name?: string;
     lastSeenAt?: string;
     capabilities?: Partial<MachineCapabilities>;
+    touchLastSeenAt?: boolean;
   }) {
     const now = input.lastSeenAt ?? new Date().toISOString();
     const existing = this.data.machines.find((machine) => machine.machineId === input.machineId);
     if (existing) {
-      existing.type = normalizeMachineType(input.type, existing.type);
-      existing.hostname = input.hostname || existing.hostname;
-      existing.name = input.name ?? existing.name;
-      existing.lastSeenAt = maxIso(existing.lastSeenAt, now);
-      existing.capabilities = normalizeMachineCapabilities(input.capabilities, existing.capabilities);
+      const next = {
+        type: normalizeMachineType(input.type, existing.type),
+        hostname: input.hostname || existing.hostname,
+        name: input.name ?? existing.name,
+        lastSeenAt: input.touchLastSeenAt === false ? existing.lastSeenAt : maxIso(existing.lastSeenAt, now),
+        capabilities: normalizeMachineCapabilities(input.capabilities, existing.capabilities)
+      };
+      if (
+        existing.type === next.type
+        && existing.hostname === next.hostname
+        && existing.name === next.name
+        && existing.lastSeenAt === next.lastSeenAt
+        && machineCapabilitiesEqual(existing.capabilities, next.capabilities)
+      ) {
+        return;
+      }
+      existing.type = next.type;
+      existing.hostname = next.hostname;
+      existing.name = next.name;
+      existing.lastSeenAt = next.lastSeenAt;
+      existing.capabilities = next.capabilities;
     } else {
       this.data.machines.push({
         machineId: input.machineId,
@@ -201,6 +262,7 @@ export class CodexhubServerState {
     now?: string;
     sessionId?: string;
     threadId?: string;
+    touchOpenedAt?: boolean;
   }) {
     const now = input.now ?? new Date().toISOString();
     const normalizedPath = input.path.trim();
@@ -208,10 +270,24 @@ export class CodexhubServerState {
     const projectId = projectIdFor(input.machineId, normalizedPath);
     const existing = this.data.projects.find((project) => project.projectId === projectId);
     if (existing) {
-      existing.name = input.name ?? existing.name;
-      existing.lastOpenedAt = maxIso(existing.lastOpenedAt, now);
-      existing.lastSessionId = input.sessionId ?? existing.lastSessionId;
-      existing.lastThreadId = input.threadId ?? existing.lastThreadId;
+      const next = {
+        name: input.name ?? existing.name,
+        lastOpenedAt: input.touchOpenedAt === false ? existing.lastOpenedAt : maxIso(existing.lastOpenedAt, now),
+        lastSessionId: input.sessionId ?? existing.lastSessionId,
+        lastThreadId: input.threadId ?? existing.lastThreadId
+      };
+      if (
+        existing.name === next.name
+        && existing.lastOpenedAt === next.lastOpenedAt
+        && existing.lastSessionId === next.lastSessionId
+        && existing.lastThreadId === next.lastThreadId
+      ) {
+        return existing;
+      }
+      existing.name = next.name;
+      existing.lastOpenedAt = next.lastOpenedAt;
+      existing.lastSessionId = next.lastSessionId;
+      existing.lastThreadId = next.lastThreadId;
       this.touch();
       return existing;
     }
@@ -239,14 +315,15 @@ export class CodexhubServerState {
         hostname: session.hostname ?? machineId,
         name: session.hostname,
         lastSeenAt: session.lastSeenAt,
+        touchLastSeenAt: false,
         capabilities: session.machineId ? undefined : { projectLauncher: false }
       });
       this.upsertProject({
         machineId,
         path: session.workingDirectory,
         sessionId: session.workerId,
-        threadId: session.currentThreadId,
-        now: session.lastSeenAt
+        now: session.lastSeenAt,
+        touchOpenedAt: false
       });
     }
 
@@ -267,18 +344,6 @@ export class CodexhubServerState {
   }
 
   snapshot(runtime: RuntimeSnapshot) {
-    for (const machine of runtime.machines) {
-      this.upsertMachine({
-        machineId: machine.machineId,
-        type: machine.type,
-        hostname: machine.hostname,
-        name: machine.name,
-        lastSeenAt: machine.lastSeenAt,
-        capabilities: machine.capabilities
-      });
-    }
-    this.captureRuntime({ runtimeSessions: runtime.runtimeSessions, threads: runtime.threads });
-
     const machinesById = new Map<string, MachineSummary | StoredMachine>();
     for (const machine of this.data.machines) machinesById.set(machine.machineId, machine);
     for (const machine of runtime.machines) machinesById.set(machine.machineId, machine);
@@ -321,7 +386,7 @@ export class CodexhubServerState {
         ...project,
         machine,
         online: sessions.some((session) => session.online) || Boolean(machine && "online" in machine && machine.online),
-        running: sessions.some((session) => session.currentThread?.running || session.currentThread?.status === "running"),
+        running: threads.some((thread) => thread.running || thread.status === "running"),
         sessions: sessions.map(runtimeSessionFromWorker),
         threads,
         storedThreads
@@ -363,14 +428,24 @@ export class CodexhubServerState {
       status: thread.status,
       messageCount: thread.messageCount
     };
-    if (existing) Object.assign(existing, summary);
-    else this.data.threads.push(summary);
+    let changed = false;
+    if (existing) {
+      changed = !storedThreadEqual(existing, summary);
+      if (changed) Object.assign(existing, summary);
+    } else {
+      this.data.threads.push(summary);
+      changed = true;
+    }
     const project = this.data.projects.find((item) => item.projectId === projectId);
     if (project) {
-      project.lastThreadId = thread.threadId;
-      project.lastOpenedAt = maxIso(project.lastOpenedAt, thread.updatedAt);
+      const nextLastOpenedAt = maxIso(project.lastOpenedAt, thread.updatedAt);
+      if (project.lastThreadId !== thread.threadId || project.lastOpenedAt !== nextLastOpenedAt) {
+        project.lastThreadId = thread.threadId;
+        project.lastOpenedAt = nextLastOpenedAt;
+        changed = true;
+      }
     }
-    this.touch();
+    if (changed) this.touch();
   }
 
   private touch() {
@@ -416,7 +491,8 @@ const readStateFile = async (filePath: string): Promise<ServerStateData> => {
       machines: Array.isArray(parsed.machines) ? parsed.machines.map(normalizeStoredMachine).filter(isStoredMachine) : [],
       projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
       threads: Array.isArray(parsed.threads) ? parsed.threads.filter(isStoredThread) : [],
-      tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : []
+      tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : [],
+      sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : []
     };
   } catch {
     return emptyState();
@@ -429,7 +505,8 @@ const emptyState = (): ServerStateData => ({
   machines: [],
   projects: [],
   threads: [],
-  tasks: []
+  tasks: [],
+  sshHosts: []
 });
 
 const projectIdFor = (machineId: string, projectPath: string) =>
@@ -456,6 +533,17 @@ const asMachineCapabilities = (value: unknown): Partial<MachineCapabilities> | u
     projectLauncher: typeof item.projectLauncher === "boolean" ? item.projectLauncher : undefined
   };
 };
+
+const machineCapabilitiesEqual = (left: MachineCapabilities, right: MachineCapabilities) =>
+  left.projectLauncher === right.projectLauncher;
+
+const storedThreadEqual = (left: StoredThreadSummary, right: StoredThreadSummary) =>
+  left.threadId === right.threadId
+  && left.projectId === right.projectId
+  && left.title === right.title
+  && left.updatedAt === right.updatedAt
+  && left.status === right.status
+  && left.messageCount === right.messageCount;
 
 const normalizeStoredProject = (value: unknown): unknown => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -485,6 +573,17 @@ const normalizeStoredTask = (value: unknown): unknown => {
   };
 };
 
+const normalizeStoredSshHost = (value: unknown): unknown => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const item = value as Record<string, unknown>;
+  const now = new Date().toISOString();
+  return {
+    alias: typeof item.alias === "string" ? item.alias.trim() : "",
+    createdAt: typeof item.createdAt === "string" ? item.createdAt : now,
+    updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : now
+  };
+};
+
 const compareStoredProjects = (left: StoredProject, right: StoredProject) => {
   if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1;
   const createdCompare = left.createdAt.localeCompare(right.createdAt);
@@ -500,6 +599,9 @@ const compareTasks = (left: StoredTask, right: StoredTask) => {
   if (nameCompare) return nameCompare;
   return left.createdAt.localeCompare(right.createdAt);
 };
+
+const compareStoredSshHosts = (left: StoredSshHost, right: StoredSshHost) =>
+  left.alias.localeCompare(right.alias, undefined, { sensitivity: "base" });
 
 const isStoredMachine = (value: unknown): value is StoredMachine => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -549,4 +651,13 @@ const isStoredTask = (value: unknown): value is StoredTask => {
     && (item.lastRunAt === undefined || typeof item.lastRunAt === "string")
     && (item.lastStatus === undefined || item.lastStatus === "queued" || item.lastStatus === "completed" || item.lastStatus === "failed" || item.lastStatus === "skipped")
     && (item.lastError === undefined || typeof item.lastError === "string");
+};
+
+const isStoredSshHost = (value: unknown): value is StoredSshHost => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Partial<StoredSshHost>;
+  return typeof item.alias === "string"
+    && item.alias.trim().length > 0
+    && typeof item.createdAt === "string"
+    && typeof item.updatedAt === "string";
 };

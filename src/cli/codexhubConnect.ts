@@ -390,8 +390,7 @@ class ProxyBridgeRunner {
               workingDirectory: this.options.cwd,
               appServerUrl: this.options.appServerUrl,
               pid: process.pid,
-              hostname: os.hostname(),
-              currentThreadId: this.bridgeState.currentThreadId
+              hostname: os.hostname()
             };
           },
           handleCommand: async (command) => {
@@ -1208,10 +1207,9 @@ class CodexAppServerBridge {
     }
   }
 
-  private async forwardCurrentThreadChanged(threadId: string, heartbeat = false) {
+  private async forwardCurrentThreadChanged(threadId: string, _heartbeat = false) {
     if (this.currentThreadId === threadId) return;
     this.currentThreadId = threadId;
-    this.hub.sendEvent({ type: "session_current_changed", currentThreadId: threadId, heartbeat });
   }
 
   private shouldForwardTuiResumeCurrent(method: string, threadId: string) {
@@ -1295,8 +1293,7 @@ class CodexAppServerBridge {
       workingDirectory: this.options.cwd,
       appServerUrl: this.options.appServerUrl,
       pid: process.pid,
-      hostname: os.hostname(),
-      currentThreadId: this.currentThreadId
+      hostname: os.hostname()
     });
   }
 }
@@ -1408,11 +1405,10 @@ type StatusRuntimeSessionSummary = {
   sessionId: string;
   workingDirectory: string;
   online: boolean;
-  currentThreadId?: string;
-  currentThread?: {
+  threads?: Array<{
     threadId: string;
     running: boolean;
-  };
+  }>;
 };
 
 class CodexhubStatusBar {
@@ -1496,11 +1492,11 @@ class CodexhubStatusBar {
     const sessionState = thisSession
       ? (thisSession.online ? "online" : "offline")
       : this.proxyState === "online" ? "connecting" : this.proxyState;
-    const currentThreadId = thisSession?.currentThreadId ?? thisSession?.currentThread?.threadId;
-    const running = thisSession?.currentThread?.running;
+    const latestThread = thisSession?.threads?.[0];
+    const running = Boolean(thisSession?.threads?.some((thread) => thread.running));
     return [
       `codexhub ${this.options.sessionId.slice(0, 14)} ${sessionState}`,
-      `thread ${currentThreadId ? currentThreadId : "none"}`,
+      `thread ${latestThread ? latestThread.threadId : "none"}`,
       `running ${running ? 1 : 0}`,
       `sessions ${onlineSessions}/${sessions.length}`
     ].join(" | ");

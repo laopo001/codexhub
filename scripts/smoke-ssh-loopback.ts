@@ -18,6 +18,8 @@ type SshConnection = {
   host: string;
   status: "starting" | "running" | "exited";
   remotePort: number;
+  remoteMode?: "bootstrap" | "installed" | "custom";
+  remoteClientHash?: string;
   lastOutput?: string;
 };
 
@@ -64,6 +66,8 @@ const main = async () => {
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "0";
   process.env.TELEGRAM_BOT_TOKEN = "";
 
+  await buildRemoteClient();
+
   const { startServer } = await import("../src/server/index.js");
   const server = await startServer({ host: "127.0.0.1", port: serverPort });
   const apiBase = `http://127.0.0.1:${serverPort}`;
@@ -73,21 +77,21 @@ const main = async () => {
     await ssh.start();
     console.log(`sshd ok: 127.0.0.1:${sshdPort}`);
 
-    const remoteApiBase = `http://127.0.0.1:${remotePort}`;
-    const remoteCommand = codexhubMachineCommand(remoteApiBase);
     const connected = await apiJson<{ connection?: SshConnection }>(apiBase, "/api/ssh/connect", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         host: ssh.hostAlias,
         name: machineName,
-        remotePort,
-        remoteCommand
+        remotePort
       })
     });
     assertNoWorkerId(connected, "POST /api/ssh/connect");
     const connection = connected.connection;
     if (!connection?.connectionId) throw new Error("ssh connect did not return a connection id");
+    if (connection.remoteMode !== "bootstrap" || !connection.remoteClientHash) {
+      throw new Error(`ssh loopback did not use bootstrap remote client: ${JSON.stringify(connection)}`);
+    }
     connectionId = connection.connectionId;
     console.log(`ssh tunnel ok: ${connectionId}`);
 
@@ -109,7 +113,7 @@ const main = async () => {
     const turn = await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input: "/status", source: "web" })
+      body: JSON.stringify({ threadId, input: "/status", source: "web" })
     });
     assertNoWorkerId(turn, "/api/sessions/:sessionId/turn");
 
@@ -230,28 +234,11 @@ const prepareLoopbackSsh = async (root: string, port: number) => {
   };
 };
 
-const codexhubMachineCommand = (apiBase: string) => {
-  const commandPath = `${path.join(repoRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH ?? ""}`;
-  return [
-    "cd",
-    shellQuote(repoRoot),
-    "&&",
-    "env",
-    `PATH=${shellQuote(commandPath)}`,
-    "CODEX_HUB_PLUGIN_TELEGRAM=0",
-    "CODEX_HUB_LOCAL_MACHINE=0",
-    "pnpm",
-    "exec",
-    "tsx",
-    "src/cli/codexhub.ts",
-    "machine",
-    "--server",
-    shellQuote(apiBase),
-    "--type",
-    "ssh",
-    "--name",
-    shellQuote(machineName)
-  ].join(" ");
+const buildRemoteClient = async () => {
+  await execFileAsync("pnpm", ["run", "build:remote-client"], {
+    cwd: repoRoot,
+    maxBuffer: 2 * 1024 * 1024
+  });
 };
 
 const waitForSshMachine = async (apiBase: string) => {
@@ -423,8 +410,6 @@ const findFreePort = async () => await new Promise<number>((resolve, reject) => 
     server.close(() => resolve(port));
   });
 });
-
-const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
 const delay = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms));
 

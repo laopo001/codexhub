@@ -86,9 +86,7 @@ class CodexhubMachineRunner {
 
   async stop() {
     this.stopped = true;
-    const sessions = [...this.sessionsByCwd.values()];
-    this.sessionsByCwd.clear();
-    await Promise.allSettled(sessions.map((item) => item.session.stop()));
+    await this.stopSessions();
     if (this.registered) {
       this.sendRaw({ type: "unregister" });
       await delay(50);
@@ -107,6 +105,10 @@ class CodexhubMachineRunner {
       } catch (error) {
         if (!this.stopped) console.error(`codexhub machine offline: ${errorText(error)}`);
       } finally {
+        if (!this.stopped && this.options.type === "ssh") {
+          this.stopped = true;
+          await this.stopSessions();
+        }
         this.registered = false;
         this.ws?.close();
         this.ws = null;
@@ -276,6 +278,12 @@ class CodexhubMachineRunner {
   private sendRaw(message: unknown) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(message));
+  }
+
+  private async stopSessions() {
+    const sessions = [...this.sessionsByCwd.values()];
+    this.sessionsByCwd.clear();
+    await Promise.allSettled(sessions.map((item) => item.session.stop()));
   }
 }
 

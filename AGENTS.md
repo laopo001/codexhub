@@ -2,37 +2,39 @@
 
 ## 总体方向
 
-codexhub 是本机 Node.js server + Web 控制面。server 负责 machines、projects、runtime sessions、threads、tasks、plugins 和 SSH connections 的控制面与事件镜像；真正的 Codex runtime 仍在官方 Codex app-server 进程里，由 machine 侧启动并上报。
+codexhub 是本机 Node.js server + Web 控制面。server 负责 machines、projects、threads、runtime session 状态、tasks、plugins 和 SSH connections 的控制面与事件镜像；真正的 Codex runtime 仍在官方 Codex app-server 进程里，由 machine 侧启动并上报。
 
-当前公开模型使用 `machineId`、`projectId`、`sessionId`、`threadId`。旧 `workerId` 只允许作为 `ThreadHub` 等内部实现细节继续存在，不能重新暴露成产品概念或公共 API。
+当前公开模型以 `machineId`、`projectId`、`threadId` 为主，`sessionId` 只表示 project 当前在线 runtime 能力。默认一个 project 对应一个 runtime session；不要为了少见的多 session per project 场景把公共模型复杂化。旧 `workerId` 只允许作为 `ThreadHub` 等内部实现细节继续存在，不能重新暴露成产品概念或公共 API。
 
 ## Machine / Session / Thread 模型
 
 1. `MachineType = "local" | "ssh" | "registered"`。
 2. `local` 表示本机 server 内嵌的 project launcher；普通本机启动默认启用，Docker 默认关闭。
-3. `ssh` 表示本机 server 通过系统 `ssh -R` reverse tunnel 拉起的远端 `codexhub machine --type ssh`。SSH 断开后，该 machine 和其下 runtime session 应进入 offline；先不做自动恢复或后台保活。
+3. `ssh` 表示本机 server 通过系统 `ssh -R` reverse tunnel 拉起远端 remote client。默认 remote client 由本机 server 下发，远端不要求预装 CodexHub。SSH 断开后，该 machine 和其下 runtime session 应进入 offline；先不做自动恢复或后台保活。
 4. `registered` 表示外部机器主动运行 `codexhub machine --server ... --type registered` 连接进来。它注册的是机器，不是 worker。
 5. machine 是 project launcher 和命令执行入口。server 不扫描远端文件系统；目录解析、权限检查和启动 session 都在 machine 所在机器执行。
-6. runtime session 是一次官方 Codex app-server/headless runtime。公开 ID 是 `sessionId`；一个 project 可以没有 session，也可以复用或启动新的 session。
+6. runtime session 是一次官方 Codex app-server/headless runtime。公开 ID 是 `sessionId`；它是 project 的在线运行能力，不是用户心智里的主对象。
 7. `threadId` 来自官方 Codex session。server/Web/TG/task 读取和展示 thread transcript，但 transcript 的权威来源仍是 runtime session 镜像的 records/jsonl。
-8. `session_current_changed` 才能更新 runtime session 的 current thread。Web 选择 tab、读取 thread、普通 records 或 task 输入都不能推断或改写 runtime current。
+8. server/runtime session 不维护 `currentThreadId` 或 `currentThread`。Web 当前 tab、Telegram chat 绑定、task `threadId` 都是客户端/任务自己的选择状态；所有发送入口最终必须显式知道目标 `threadId`。
 9. slash command 不按普通 Codex turn 透传。server 本地只处理明确支持的 `/status`、`/help`、`/model` 语义；其他 slash command 返回不支持说明。
 
 ## 公共 API 约定
 
-1. 公开 API 以这些入口为准：`/api/machines`、`/api/machines/connect`、`/api/projects`、`/api/projects/open`、`/api/sessions`、`/api/sessions/:sessionId/turn`、`/api/sessions/:sessionId/threads`、`/api/threads/*`、`/api/tasks`、`/api/plugins`、`/api/ssh/*`。
+1. 公开 API 以这些入口为准：`/api/machines`、`/api/machines/connect`、`/api/events/ws`、`/api/projects`、`/api/projects/open`、`/api/sessions`、`/api/sessions/:sessionId/turn`、`/api/sessions/:sessionId/threads`、`/api/threads/*`、`/api/tasks`、`/api/plugins`、`/api/ssh/*`。
 2. 不再恢复 `/api/workers` 作为公共入口，也不要添加 `/api/instances`、`.codexp/instances.yaml` 或 instance 兼容层。
 3. machine websocket 先发送 `register` 注册机器，再用 `session_register` 注册该机器下的 runtime session。`session_register.registration` 必须是 strict schema，不能接受旧 `workerId`。
 4. 公共 JSON 返回不应包含 `workerId`。如果内部代码仍使用 worker 命名，必须在 API 边界映射为 `sessionId`。
-5. Web/TG/task 发送对话时优先使用 `sessionId` 或 `threadId`。单上下文入口使用 `/api/sessions/:sessionId/turn`，多 thread UI 可以使用 `/api/threads/:threadId/turn`。
+5. Web/TG/task 发送对话时优先使用 `/api/threads/:threadId/turn`。`/api/sessions/:sessionId/turn` 只作为兼容/调试入口，body 必须包含 `threadId`，不能表示“当前 thread”。
 6. server 可以持久化轻量 machine/project/thread/task 摘要到 `CODEX_HUB_DATA_DIR` 下的 server state，但不能把这个状态当成 Codex runtime 或远端文件系统权限。
 
 ## SSH 模型
 
 1. server 读取 SSH config 用 `src/core/sshConfig.ts`，支持 `Include` 和简单 `*`/`?` glob；可用 `CODEX_HUB_SSH_CONFIG` 指向测试或自定义配置。
-2. `/api/ssh/connect` 通过系统 `ssh` 建立 `-R 127.0.0.1:<remotePort>:<localHost>:<localPort>`，远端默认执行 `codexhub machine --server http://127.0.0.1:<remotePort> --type ssh`。
-3. 如果 server 监听 `0.0.0.0` 或 `::`，reverse tunnel 的本机目标应映射到 `127.0.0.1`。
-4. SSH 是 connection/transport 方式，不需要把所有 transport 都抽象成插件系统。先保持直接、可验证、断开即结束。
+2. CodexHub state 只保存用户添加进 CodexHub 的 SSH config alias，不复制 `HostName`、`User`、`Port`、`ProxyJump` 等连接配置。`/api/ssh/config-hosts` 是本机 SSH config 候选来源，`/api/ssh/hosts` 是 CodexHub 收纳列表。
+3. `/api/ssh/connect` 通过系统 `ssh` 建立 `-R 127.0.0.1:<remotePort>:<localHost>:<localPort>`。默认远端命令是 bootstrap：用远端 `node` 经 reverse tunnel 下载本机 server 下发的 `dist-node/ssh/remote-client.cjs`，按 sha256 缓存到 `~/.cache/codexhub/remote-client/<hash>/client.cjs` 后运行，不要求远端预装 CodexHub。
+4. `CODEX_HUB_SSH_REMOTE_MODE=installed` 可临时退回旧模式，让远端执行全局 `codexhub machine --server http://127.0.0.1:<remotePort> --type ssh`。
+5. 如果 server 监听 `0.0.0.0` 或 `::`，reverse tunnel 的本机目标应映射到 `127.0.0.1`。
+6. SSH 是 connection/transport 方式，不需要把所有 transport 都抽象成插件系统。先保持直接、可验证、断开即结束。
 
 ## Project / Task 模型
 
@@ -51,10 +53,11 @@ codexhub 是本机 Node.js server + Web 控制面。server 负责 machines、pro
 
 ## Web / Electron / Docker
 
-1. Web 继续复用现有对话展示：右侧以 thread records 为准，左侧按 machines/projects/sessions 展示。
+1. Web 继续复用现有对话展示：右侧以 thread records 为准，左侧以 machines/projects/threads 为主，session 只作为 project 在线 runtime 状态展示。
 2. Web 本地选择状态使用 `activeSessionId`；兼容读取旧 localStorage 可以做迁移，但新写入不能再用 `activeWorkerId`。
-3. Docker 镜像运行 server/Web/API，默认 `CODEX_HUB_LOCAL_MACHINE=0`，由宿主机或远端通过 registered/ssh machine 接入 runtime。
-4. Electron 只包装同一个本机 server 和 Web UI。默认尝试 `127.0.0.1:18788`，未显式指定端口且被占用时可 fallback 到空闲端口。
+3. Web 页面实时更新使用单条 `/api/events/ws` WebSocket：`hello` 订阅 machines/projects/sessions/tasks/connections 控制面事件，页面内 thread tabs 通过 `subscribe_thread` / `unsubscribe_thread` 在同一条连接里多路复用；不要为每个 thread tab 新增独立 SSE/WS。Thread `record/done` 只更新 thread 增量，不应连带推送整份 projects/sessions snapshot。
+4. Docker 镜像运行 server/Web/API，默认 `CODEX_HUB_LOCAL_MACHINE=0`，由宿主机或远端通过 registered/ssh machine 接入 runtime。
+5. Electron 只包装同一个本机 server 和 Web UI。默认尝试 `127.0.0.1:18788`，未显式指定端口且被占用时可 fallback 到空闲端口。
 
 ## 发布和验证
 
@@ -74,6 +77,6 @@ pnpm build
 
 4. `smoke:machine-session` 覆盖 local machine、project open、session/thread `/status`、server-local task、plugin CSS、SSH 参数构造和旧 worker registration 拒绝。
 5. `smoke:registered-machine` 覆盖真实 `codexhub machine --type registered` CLI、项目打开、runtime session/thread 对话流和正常 unregister lifecycle。
-6. `smoke:ssh-loopback` 覆盖真实本机 sshd、`ssh -R` reverse tunnel、远端 `codexhub machine --type ssh`、项目打开、runtime session/thread 对话流和断开 lifecycle。
+6. `smoke:ssh-loopback` 覆盖真实本机 sshd、`ssh -R` reverse tunnel、SSH remote client、项目打开、runtime session/thread 对话流和断开 lifecycle。
 7. `smoke:task-lock` 覆盖同一 task queued/running 时的并发跳过，以及 turn 完成后的重新运行。
 8. `smoke:electron` 覆盖 Electron main process 启动内嵌 server、默认端口占用 fallback 和 `/api/health`。

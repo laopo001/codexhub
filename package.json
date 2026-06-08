@@ -44,7 +44,8 @@
     "smoke:electron": "pnpm build && tsx scripts/smoke-electron.ts",
     "clean": "node -e \"const fs=require('node:fs'); for (const path of ['dist','dist-node']) fs.rmSync(path,{recursive:true,force:true});\"",
     "check": "tsc --noEmit",
-    "build": "pnpm run clean && tsc --noEmit && tsc -p tsconfig.node.json && vite build",
+    "build:remote-client": "tsx scripts/build-remote-client.ts",
+    "build": "pnpm run clean && tsc --noEmit && tsc -p tsconfig.node.json && pnpm run build:remote-client && vite build",
     "prepack": "pnpm build",
     "publish:prod": "bash scripts/publish-prod.sh"
   },
@@ -74,6 +75,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^5.1.1",
     "electron": "^42.3.3",
+    "esbuild": "0.28.0",
     "typescript": "^5.9.3",
     "vite": "^7.2.4"
   },
