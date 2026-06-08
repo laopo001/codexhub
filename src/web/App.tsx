@@ -1875,33 +1875,43 @@ const App = () => {
               const projectKey = projectKeyForProject(project);
               const active = projectKey === activeProjectKey;
               const statusLabel = projectStatusLabel(project);
-              const threadTitle = project.threads[0]?.title ?? project.storedThreads[0]?.title ?? "No conversations";
               const deleting = deletingProjectId === project.projectId;
+              const openDisabled = openingProjectKey === projectKey || deleting;
               return (
                 <div
                   key={project.projectId}
                   className={`projectRow ${active ? "active" : ""} ${project.online ? "online" : "offline"}`}
                 >
+                  <div className="projectRowTop">
+                    <button
+                      type="button"
+                      className="projectOpenButton projectOpenNameButton"
+                      onClick={() => void selectProject(project)}
+                      disabled={openDisabled}
+                    >
+                      <span title={project.name}>{project.name}</span>
+                    </button>
+                    <div className="projectRowActions">
+                      <strong>{openingProjectKey === projectKey ? "opening" : statusLabel}</strong>
+                      <button
+                        type="button"
+                        className="projectDeleteButton"
+                        onClick={() => void deleteProject(project)}
+                        disabled={deleting}
+                        aria-label={`Remove ${project.name}`}
+                        title={`Remove ${project.name} from CodexHub`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
                   <button
                     type="button"
-                    className="projectOpenButton"
+                    className="projectOpenButton projectOpenPathButton"
                     onClick={() => void selectProject(project)}
-                    disabled={openingProjectKey === projectKey || deleting}
+                    disabled={openDisabled}
                   >
-                    <span title={project.name}>{project.name}</span>
-                    <strong>{openingProjectKey === projectKey ? "opening" : statusLabel}</strong>
                     <code title={project.path}>{project.path}</code>
-                    <em title={threadTitle}>{threadTitle}</em>
-                  </button>
-                  <button
-                    type="button"
-                    className="projectDeleteButton"
-                    onClick={() => void deleteProject(project)}
-                    disabled={deleting}
-                    aria-label={`Remove ${project.name}`}
-                    title={`Remove ${project.name} from CodexHub`}
-                  >
-                    ×
                   </button>
                 </div>
               );
