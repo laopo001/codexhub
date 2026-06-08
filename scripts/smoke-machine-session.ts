@@ -99,6 +99,7 @@ const main = async () => {
   process.env.TELEGRAM_BOT_TOKEN = "";
 
   await assertServerStateSnapshotPure();
+  await assertDeletedProjectSuppressesRuntimeCapture();
   await writeStartupSshHostState(dataDir, "included-host");
 
   const port = await findFreePort();
@@ -603,6 +604,55 @@ const assertServerStateSnapshotPure = async () => {
   await state.flush();
   const after = await readFile(state.path, "utf8");
   if (after !== before) throw new Error("CodexhubServerState.snapshot mutated server-state.yaml");
+};
+
+const assertDeletedProjectSuppressesRuntimeCapture = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-delete."));
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const state = await CodexhubServerState.load({ dataDir });
+  const machineId = "machine-delete-smoke";
+  const projectPath = "/tmp/codexhub-delete-smoke";
+  const now = "2026-01-01T00:00:00.000Z";
+  const project = state.upsertProject({ machineId, path: projectPath, now });
+  if (!project) throw new Error("explicit project upsert was suppressed");
+  if (!state.deleteProject(project.projectId)) throw new Error("project delete did not report success");
+
+  const machine = {
+    machineId,
+    type: "local" as const,
+    hostname: "delete-smoke",
+    online: true,
+    status: "online" as const,
+    lastSeenAt: "2026-01-01T00:01:00.000Z",
+    capabilities: { projectLauncher: true }
+  };
+  const runtimeSession = {
+    workerId: "session-delete-smoke",
+    machineId,
+    name: "delete-smoke",
+    workingDirectory: projectPath,
+    online: true,
+    status: "online" as const,
+    lastSeenAt: "2026-01-01T00:01:00.000Z",
+    hostname: "delete-smoke",
+    threads: []
+  };
+  state.captureRuntime({ runtimeSessions: [runtimeSession], threads: [] });
+  const deletedSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [runtimeSession], threads: [] });
+  if (deletedSnapshot.projects.some((item) => item.projectId === project.projectId)) {
+    throw new Error("deleted project was restored by runtime capture");
+  }
+
+  const restored = state.upsertProject({
+    machineId,
+    path: projectPath,
+    now: "2026-01-01T00:02:00.000Z"
+  });
+  if (!restored || restored.projectId !== project.projectId) throw new Error("explicit project reopen did not restore deleted project");
+  const restoredSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [runtimeSession], threads: [] });
+  if (!restoredSnapshot.projects.some((item) => item.projectId === project.projectId)) {
+    throw new Error("restored project was missing from snapshot");
+  }
 };
 
 const assertSessionTurnRequiresThread = async (apiBase: string, sessionId: string) => {

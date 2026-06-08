@@ -37,6 +37,13 @@ export type StoredThreadSummary = {
   messageCount: number;
 };
 
+export type DeletedProject = {
+  projectId: string;
+  machineId: string;
+  path: string;
+  deletedAt: string;
+};
+
 export type StoredTask = {
   taskId: string;
   name: string;
@@ -66,6 +73,7 @@ export type ServerStateData = {
   machines: StoredMachine[];
   projects: StoredProject[];
   threads: StoredThreadSummary[];
+  deletedProjects: DeletedProject[];
   tasks: StoredTask[];
   sshHosts: StoredSshHost[];
 };
@@ -119,8 +127,9 @@ export class CodexhubServerState {
   deleteProject(projectId: string) {
     const index = this.data.projects.findIndex((project) => project.projectId === projectId);
     if (index === -1) return false;
-    this.data.projects.splice(index, 1);
+    const [project] = this.data.projects.splice(index, 1);
     this.data.threads = this.data.threads.filter((thread) => thread.projectId !== projectId);
+    this.addDeletedProject(project);
     this.touch();
     return true;
   }
@@ -263,11 +272,16 @@ export class CodexhubServerState {
     sessionId?: string;
     threadId?: string;
     touchOpenedAt?: boolean;
+    restoreDeleted?: boolean;
   }) {
     const now = input.now ?? new Date().toISOString();
     const normalizedPath = input.path.trim();
     if (!normalizedPath) throw new Error("Project path is required.");
     const projectId = projectIdFor(input.machineId, normalizedPath);
+    const deletedProjectIndex = this.data.deletedProjects.findIndex((project) => project.projectId === projectId);
+    if (deletedProjectIndex !== -1 && input.restoreDeleted === false) return null;
+    const deletedProjectRestored = deletedProjectIndex !== -1;
+    if (deletedProjectIndex !== -1) this.data.deletedProjects.splice(deletedProjectIndex, 1);
     const existing = this.data.projects.find((project) => project.projectId === projectId);
     if (existing) {
       const next = {
@@ -282,6 +296,7 @@ export class CodexhubServerState {
         && existing.lastSessionId === next.lastSessionId
         && existing.lastThreadId === next.lastThreadId
       ) {
+        if (deletedProjectRestored) this.touch();
         return existing;
       }
       existing.name = next.name;
@@ -323,7 +338,8 @@ export class CodexhubServerState {
         path: session.workingDirectory,
         sessionId: session.workerId,
         now: session.lastSeenAt,
-        touchOpenedAt: false
+        touchOpenedAt: false,
+        restoreDeleted: false
       });
     }
 
@@ -335,7 +351,9 @@ export class CodexhubServerState {
           path: thread.workingDirectory,
           sessionId: session.workerId,
           threadId: thread.threadId,
-          now: thread.updatedAt
+          now: thread.updatedAt,
+          touchOpenedAt: false,
+          restoreDeleted: false
         })
         : this.uniqueProjectForPath(thread.workingDirectory);
       if (!project) continue;
@@ -448,6 +466,21 @@ export class CodexhubServerState {
     if (changed) this.touch();
   }
 
+  private addDeletedProject(project: Pick<StoredProject, "projectId" | "machineId" | "path">) {
+    const deletedAt = new Date().toISOString();
+    const existing = this.data.deletedProjects.find((item) => item.projectId === project.projectId);
+    if (existing) {
+      existing.deletedAt = deletedAt;
+      return;
+    }
+    this.data.deletedProjects.push({
+      projectId: project.projectId,
+      machineId: project.machineId,
+      path: project.path,
+      deletedAt
+    });
+  }
+
   private touch() {
     this.data.updatedAt = new Date().toISOString();
     this.scheduleSave();
@@ -491,6 +524,7 @@ const readStateFile = async (filePath: string): Promise<ServerStateData> => {
       machines: Array.isArray(parsed.machines) ? parsed.machines.map(normalizeStoredMachine).filter(isStoredMachine) : [],
       projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
       threads: Array.isArray(parsed.threads) ? parsed.threads.filter(isStoredThread) : [],
+      deletedProjects: Array.isArray(parsed.deletedProjects) ? parsed.deletedProjects.filter(isDeletedProject) : [],
       tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : [],
       sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : []
     };
@@ -505,6 +539,7 @@ const emptyState = (): ServerStateData => ({
   machines: [],
   projects: [],
   threads: [],
+  deletedProjects: [],
   tasks: [],
   sshHosts: []
 });
@@ -632,6 +667,15 @@ const isStoredThread = (value: unknown): value is StoredThreadSummary => {
     && typeof item.updatedAt === "string"
     && (item.status === "running" || item.status === "idle")
     && typeof item.messageCount === "number";
+};
+
+const isDeletedProject = (value: unknown): value is DeletedProject => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Partial<DeletedProject>;
+  return typeof item.projectId === "string"
+    && typeof item.machineId === "string"
+    && typeof item.path === "string"
+    && typeof item.deletedAt === "string";
 };
 
 const isStoredTask = (value: unknown): value is StoredTask => {
