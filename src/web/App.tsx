@@ -1776,7 +1776,7 @@ const App = () => {
   };
 
   const deleteProject = async (project: ProjectSummary) => {
-    if (!window.confirm(`Remove ${project.name} from CodexHub projects?\n\nThis does not delete files or stop running sessions.`)) return;
+    if (!window.confirm(`Remove ${project.name} from CodexHub projects?\n\nThis does not delete files. Active runtime sessions for this project will be stopped.`)) return;
     setDeletingProjectId(project.projectId);
     try {
       const payload = await apiJson<ProjectsPayload>(`/api/projects/${encodeURIComponent(project.projectId)}`, {
@@ -3194,32 +3194,15 @@ const mergeProjectsWithRuntimeSessions = (projects: ProjectSummary[], runtimeSes
   }]));
   for (const session of runtimeSessions) {
     const key = projectRuntimeKey(machineIdForSession(session), session.workingDirectory);
-    let project = projectsByKey.get(key);
-    if (!project) {
-      project = {
-        projectId: key,
-        machineId: machineIdForSession(session),
-        path: session.workingDirectory,
-        name: basename(session.workingDirectory),
-	        createdAt: session.lastSeenAt,
-	        lastOpenedAt: session.lastSeenAt,
-	        lastSessionId: session.sessionId,
-	        lastThreadId: session.threads?.[0]?.threadId,
-	        online: session.online,
-	        running: Boolean(session.threads?.some((thread) => thread.running || thread.status === "running")),
-	        sessions: [],
-	        threads: [],
-        storedThreads: []
-      };
-      projectsByKey.set(key, project);
-    }
+    const project = projectsByKey.get(key);
+    if (!project) continue;
     if (!project.sessions.some((item) => item.sessionId === session.sessionId)) project.sessions.push(session);
-	    for (const thread of session.threads ?? []) {
-	      if (!project.threads.some((item) => item.threadId === thread.threadId)) project.threads.push(thread);
-	    }
-	    project.online = project.online || session.online;
-	    project.running = project.running || Boolean(session.threads?.some((thread) => thread.running || thread.status === "running"));
-	  }
+    for (const thread of session.threads ?? []) {
+      if (!project.threads.some((item) => item.threadId === thread.threadId)) project.threads.push(thread);
+    }
+    project.online = project.online || session.online;
+    project.running = project.running || Boolean(session.threads?.some((thread) => thread.running || thread.status === "running"));
+  }
   return [...projectsByKey.values()].sort((left, right) => {
     return compareProjectRows(left, right);
   });

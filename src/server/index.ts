@@ -123,6 +123,12 @@ const machineDirectoryListingSchema = z.object({
   }))
 });
 
+const machineStopSessionResultSchema = z.object({
+  sessionId: z.string().min(1),
+  stopped: z.boolean(),
+  cwd: z.string().min(1).optional()
+});
+
 const machineTransportMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("register"),
@@ -139,7 +145,7 @@ const machineTransportMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("command_result"),
     commandId: z.string().min(1),
-    result: z.union([machineStartSessionResultSchema, machineDirectoryListingSchema])
+    result: z.union([machineStartSessionResultSchema, machineDirectoryListingSchema, machineStopSessionResultSchema])
   }),
   z.object({
     type: z.literal("command_error"),
@@ -422,6 +428,49 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     };
     for (const subscriber of projectSubscribers) subscriber(event);
   }
+
+  const runtimeSessionsForProject = (target: { machineId: string; path: string }) => {
+    const sessions = threads.listRuntimeSessions({ includeOffline: true })
+      .filter((session) => session.machineId === target.machineId && session.workingDirectory === target.path);
+    return [...new Map(sessions.map((session) => [session.sessionId, session])).values()];
+  };
+
+  const stopProjectRuntimeSessions = async (target: { machineId: string; path: string }) => {
+    const sessions = runtimeSessionsForProject(target);
+    return await Promise.all(sessions.map(async (session) => {
+      if (!session.online) {
+        threads.unregisterWorker(session.sessionId);
+        return {
+          machineId: target.machineId,
+          sessionId: session.sessionId,
+          stopped: false,
+          removed: true,
+          reason: "session_offline"
+        };
+      }
+      try {
+        const command = machines.stopSession(target.machineId, { sessionId: session.sessionId });
+        const result = await command.promise;
+        if (!result.stopped) threads.unregisterWorker(session.sessionId);
+        return {
+          machineId: target.machineId,
+          sessionId: session.sessionId,
+          stopped: result.stopped,
+          removed: true,
+          cwd: result.cwd,
+          reason: result.stopped ? undefined : "session_not_found"
+        };
+      } catch (error) {
+        return {
+          machineId: target.machineId,
+          sessionId: session.sessionId,
+          stopped: false,
+          removed: false,
+          error: error instanceof Error ? error.message : String(error)
+        };
+      }
+    }));
+  };
 
   function taskSnapshotEvent() {
     return {
@@ -1034,13 +1083,17 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.delete("/api/projects/:projectId", async (request, reply) => {
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
+    const target = state.projectDeleteTarget(params.projectId);
     const deleted = state.deleteProject(params.projectId);
-    if (!deleted) {
+    const existingSessions = target ? runtimeSessionsForProject(target) : [];
+    if (!deleted && existingSessions.length === 0) {
       reply.code(404);
       return { error: `Project not found: ${params.projectId}` };
     }
+    if (deleted) publishProjects();
+    const stoppedSessions = target ? await stopProjectRuntimeSessions(target) : [];
     publishProjects();
-    return { ok: true, deleted, ...projectSnapshot() };
+    return { ok: true, deleted, stoppedSessions, ...projectSnapshot() };
   });
 
   app.post("/api/projects/open", async (request, reply) => {

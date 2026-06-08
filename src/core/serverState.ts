@@ -125,13 +125,43 @@ export class CodexhubServerState {
   }
 
   deleteProject(projectId: string) {
-    const index = this.data.projects.findIndex((project) => project.projectId === projectId);
+    const resolvedProjectId = this.resolveProjectId(projectId);
+    const index = this.data.projects.findIndex((project) => project.projectId === resolvedProjectId);
+    if (index === -1 && this.data.deletedProjects.some((project) => project.projectId === resolvedProjectId)) return true;
     if (index === -1) return false;
     const [project] = this.data.projects.splice(index, 1);
-    this.data.threads = this.data.threads.filter((thread) => thread.projectId !== projectId);
+    this.data.threads = this.data.threads.filter((thread) => thread.projectId !== resolvedProjectId);
     this.addDeletedProject(project);
     this.touch();
     return true;
+  }
+
+  projectDeleteTarget(projectId: string): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
+    const resolvedProjectId = this.resolveProjectId(projectId);
+    const project = this.data.projects.find((item) => item.projectId === resolvedProjectId);
+    if (project) {
+      return {
+        projectId: project.projectId,
+        machineId: project.machineId,
+        path: project.path
+      };
+    }
+    const deletedProject = this.data.deletedProjects.find((item) => item.projectId === resolvedProjectId);
+    if (deletedProject) {
+      return {
+        projectId: deletedProject.projectId,
+        machineId: deletedProject.machineId,
+        path: deletedProject.path
+      };
+    }
+    const legacyProject = this.parseLegacyProjectId(projectId);
+    return legacyProject
+      ? {
+        projectId: projectIdFor(legacyProject.machineId, legacyProject.path),
+        machineId: legacyProject.machineId,
+        path: legacyProject.path
+      }
+      : null;
   }
 
   listTasks() {
@@ -479,6 +509,18 @@ export class CodexhubServerState {
       path: project.path,
       deletedAt
     });
+  }
+
+  private resolveProjectId(projectId: string) {
+    if (projectId.startsWith("project-")) return projectId;
+    const legacyProject = this.parseLegacyProjectId(projectId);
+    return legacyProject ? projectIdFor(legacyProject.machineId, legacyProject.path) : projectId;
+  }
+
+  private parseLegacyProjectId(projectId: string) {
+    const [machineId, projectPath, extra] = projectId.split("\0");
+    if (!machineId || !projectPath || extra !== undefined) return null;
+    return { machineId, path: projectPath };
   }
 
   private touch() {

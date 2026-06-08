@@ -8,6 +8,7 @@ import {
   type MachineDirectoryListing,
   type MachineRegistration,
   type MachineStartSessionResult,
+  type MachineStopSessionResult,
   type MachineType
 } from "../core/machineHub.js";
 import type { WorkerCommand } from "../core/threadHub.js";
@@ -191,9 +192,7 @@ class CodexhubMachineRunner {
     this.commandChain = this.commandChain.then(async () => {
       for (const command of commands) {
         try {
-          const result = command.type === "start_session"
-            ? await this.startSession(command)
-            : await this.listDirectory(command);
+          const result = await this.runCommand(command);
           this.sendRaw({ type: "command_result", commandId: command.commandId, result });
         } catch (error) {
           this.sendRaw({
@@ -208,6 +207,13 @@ class CodexhubMachineRunner {
     }).catch((error) => {
       console.error(`codexhub machine command queue failed: ${errorText(error)}`);
     });
+  }
+
+  private async runCommand(command: MachineCommand) {
+    if (command.type === "start_session") return await this.startSession(command);
+    if (command.type === "list_directory") return await this.listDirectory(command);
+    if (command.type === "stop_session") return await this.stopSession(command);
+    throw new Error(`Unexpected command: ${(command as { type?: string }).type ?? "unknown"}`);
   }
 
   private async startSession(command: MachineCommand): Promise<MachineStartSessionResult> {
@@ -251,6 +257,21 @@ class CodexhubMachineRunner {
       sessionId: session.sessionId,
       threadId: session.threadId,
       appServerUrl: session.appServerUrl,
+      cwd
+    };
+  }
+
+  private async stopSession(command: MachineCommand): Promise<MachineStopSessionResult> {
+    if (command.type !== "stop_session") throw new Error(`Unexpected command: ${command.type}`);
+    const entry = [...this.sessionsByCwd.entries()]
+      .find(([, item]) => item.session.sessionId === command.sessionId);
+    if (!entry) return { sessionId: command.sessionId, stopped: false };
+    const [cwd, item] = entry;
+    this.sessionsByCwd.delete(cwd);
+    await item.session.stop();
+    return {
+      sessionId: command.sessionId,
+      stopped: true,
       cwd
     };
   }

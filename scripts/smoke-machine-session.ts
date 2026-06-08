@@ -14,6 +14,9 @@ type MachineSummary = {
 };
 
 type ProjectOpenResponse = {
+  project?: {
+    projectId?: string;
+  };
   result?: {
     sessionId?: string;
     threadId?: string;
@@ -132,7 +135,8 @@ const main = async () => {
     assertNoCurrentThread(open, "/api/projects/open");
     const sessionId = open.result?.sessionId;
     const threadId = open.result?.threadId;
-    if (!sessionId || !threadId) throw new Error("project open did not return sessionId/threadId");
+    const projectId = open.project?.projectId;
+    if (!sessionId || !threadId || !projectId) throw new Error("project open did not return project/session/thread ids");
     console.log(`project ok: ${sessionId} ${threadId}`);
     await assertSessionTurnRequiresThread(apiBase, sessionId);
     console.log("session turn target validation ok");
@@ -172,6 +176,9 @@ const main = async () => {
     assertNoWorkerId(plugins, "/api/plugins");
     await assertPluginState(apiBase, plugins);
     console.log("plugins ok");
+
+    await assertProjectDeleteStopsSession(apiBase, projectId, sessionId);
+    console.log("project delete stopped session ok");
 
     const legacyError = await sendLegacySessionRegistration(port);
     if (!legacyError.includes("workerId") || !legacyError.includes("unrecognized_keys")) {
@@ -614,8 +621,10 @@ const assertDeletedProjectSuppressesRuntimeCapture = async () => {
   const projectPath = "/tmp/codexhub-delete-smoke";
   const now = "2026-01-01T00:00:00.000Z";
   const project = state.upsertProject({ machineId, path: projectPath, now });
+  const legacyProjectId = `${machineId}\0${projectPath}`;
   if (!project) throw new Error("explicit project upsert was suppressed");
-  if (!state.deleteProject(project.projectId)) throw new Error("project delete did not report success");
+  if (!state.deleteProject(legacyProjectId)) throw new Error("legacy project delete did not report success");
+  if (!state.deleteProject(legacyProjectId)) throw new Error("deleted project tombstone was not idempotent");
 
   const machine = {
     machineId,
@@ -665,6 +674,29 @@ const assertSessionTurnRequiresThread = async (apiBase: string, sessionId: strin
   if (response.status !== 400) {
     throw new Error(`/api/sessions/:sessionId/turn missing threadId returned HTTP ${response.status}: ${await response.text()}`);
   }
+};
+
+const assertProjectDeleteStopsSession = async (apiBase: string, projectId: string, sessionId: string) => {
+  const deleted = await apiJson<{ stoppedSessions?: unknown[] }>(apiBase, `/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "DELETE"
+  });
+  assertNoWorkerId(deleted, "DELETE /api/projects/:projectId");
+  const stoppedSession = (deleted.stoppedSessions ?? [])
+    .map(asRecord)
+    .find((item) => item.sessionId === sessionId);
+  if (!stoppedSession || (stoppedSession.stopped !== true && stoppedSession.removed !== true)) {
+    throw new Error(`DELETE /api/projects did not stop/remove session ${sessionId}: ${JSON.stringify(deleted.stoppedSessions)}`);
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
+    const session = (payload.sessions ?? []).map(asRecord).find((item) => item.sessionId === sessionId);
+    if (!session || session.online !== true) return;
+    await delay(100);
+  }
+  const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
+  throw new Error(`deleted project session remained online: ${JSON.stringify(payload.sessions)}`);
 };
 
 const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: RequestInit): Promise<T> => {

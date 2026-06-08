@@ -54,7 +54,13 @@ export type MachineDirectoryListing = {
   entries: MachineDirectoryEntry[];
 };
 
-export type MachineCommandResult = MachineStartSessionResult | MachineDirectoryListing;
+export type MachineStopSessionResult = {
+  sessionId: string;
+  stopped: boolean;
+  cwd?: string;
+};
+
+export type MachineCommandResult = MachineStartSessionResult | MachineDirectoryListing | MachineStopSessionResult;
 
 type MachineCommandBase = {
   seq: number;
@@ -69,6 +75,9 @@ type MachineCommandDetail = {
 } | {
   type: "list_directory";
   cwd?: string;
+} | {
+  type: "stop_session";
+  sessionId: string;
 };
 
 type MachineCommandInput = Omit<MachineCommandBase, "seq"> & MachineCommandDetail;
@@ -199,6 +208,22 @@ export class MachineHub {
     return {
       command,
       promise: this.waitForCommand<MachineDirectoryListing>(commandId, machine.machineId, "list_directory", timeoutMs)
+    };
+  }
+
+  stopSession(machineId: string, input: { sessionId: string }, timeoutMs = 30_000) {
+    const machine = this.requireMachine(machineId);
+    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
+    const commandId = randomUUID();
+    const command = this.enqueueMachineCommand(machine.machineId, {
+      commandId,
+      type: "stop_session",
+      createdAt: new Date().toISOString(),
+      sessionId: input.sessionId
+    });
+    return {
+      command,
+      promise: this.waitForCommand<MachineStopSessionResult>(commandId, machine.machineId, "stop_session", timeoutMs)
     };
   }
 
