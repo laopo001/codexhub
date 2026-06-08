@@ -555,13 +555,13 @@ const App = () => {
   );
   const activeRuntimeSessionThreadIdsKey = activeRuntimeSessionThreadIds.join("\n");
   const activeRuntimeSessionThreadTabs = useMemo(() => activeRuntimeSessionThreads.map((thread) => {
-    const title = thread.title || shortId(thread.threadId);
+    const title = threadDisplayTitle(thread);
     return {
       key: thread.threadId,
       label: (
         <span className="workspaceThreadTabLabel" title={`${title}\n${thread.threadId}`}>
           <span>{title}</span>
-          <code>{shortId(thread.threadId)}</code>
+          <code>{thread.threadId}</code>
         </span>
       )
     };
@@ -2211,7 +2211,7 @@ const App = () => {
                   <option value="">Current thread</option>
                   {taskThreadOptions.map((thread) => (
                     <option value={thread.threadId} key={thread.threadId}>
-                      {thread.title || shortId(thread.threadId)}
+                      {threadDisplayTitle(thread)}
                     </option>
                   ))}
                 </select>
@@ -2267,13 +2267,10 @@ const App = () => {
             {sidebarCollapsed ? "Menu" : "Hide"}
           </button>
           <div className="workspaceTitle">
-            <span title={activeRuntimeSession ? activeRuntimeSession.name ?? shortId(activeRuntimeSession.sessionId) : "No connected codexhub"}>
-              {activeRuntimeSession ? activeRuntimeSession.name ?? shortId(activeRuntimeSession.sessionId) : "No connected codexhub"}
+            <span className="workspacePath" title={activeRuntimeSession?.workingDirectory ?? activeWorkspacePath}>
+              {(activeRuntimeSession?.workingDirectory ?? activeWorkspacePath) || "No connected codexhub"}
             </span>
-            <code className="workspaceMeta">
-              <span className="workspacePath" title={activeRuntimeSession?.workingDirectory ?? activeWorkspacePath}>
-                {activeRuntimeSession?.workingDirectory ?? activeWorkspacePath}
-              </span>
+            <div className="workspaceMeta">
               {activeRuntimeSession ? (
                 <span
                   className={`workspaceRuntimeSessionState ${activeRuntimeSession.online ? "online" : "offline"}`}
@@ -2287,7 +2284,7 @@ const App = () => {
               ) : activeRuntimeSession ? (
                 <span className="workspaceThreadId" title="thread: none">thread: none</span>
               ) : null}
-            </code>
+            </div>
           </div>
           <div className="viewbar" aria-label="View settings">
               
@@ -3343,6 +3340,12 @@ const threadCandidateTitle = (candidate: CodexThreadCandidate) =>
 const formatThreadCandidateTime = (value: string) => relativeTime(value);
 
 const compactLine = (value: string) => value.replace(/\s+/g, " ").trim();
+
+const threadDisplayTitle = (thread: Pick<ThreadSummary, "threadId" | "title">) => {
+  const title = compactLine(thread.title);
+  const threadShortId = shortId(thread.threadId);
+  return title && title !== thread.threadId && title !== threadShortId ? title : "new";
+};
 
 const appendThreadOrder = (current: Record<string, string[]>, sessionId: string, threadId: string) => {
   const existing = current[sessionId] ?? [];

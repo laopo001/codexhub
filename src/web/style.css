@@ -1069,30 +1069,28 @@ textarea {
 
 .workspaceTitle {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 
-.workspaceTitle span {
+.workspaceTitle .workspacePath {
+  min-width: 0;
+  overflow: hidden;
+  color: #17211a;
   font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspaceTitle .workspaceMeta {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  overflow: visible;
+  overflow: hidden;
   color: #66715f;
   font-family: inherit;
   font-size: 12px;
-  white-space: nowrap;
-}
-
-.workspaceTitle .workspacePath {
-  flex: 0 0 auto;
-  overflow: visible;
-  text-overflow: clip;
   white-space: nowrap;
 }
 
@@ -1654,9 +1652,9 @@ textarea {
 }
 
 .workspaceThreadTabs .ant-tabs-tab {
-  min-height: 42px;
+  min-height: 50px;
   margin: 0 !important;
-  padding: 8px 12px !important;
+  padding: 7px 12px !important;
 }
 
 .workspaceThreadTabs .ant-tabs-tab:hover,
@@ -1715,11 +1713,9 @@ textarea {
 
 .workspaceThreadTabLabel {
   display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
-  align-items: baseline;
-  gap: 8px;
+  gap: 2px;
+  width: max-content;
   min-width: 0;
-  width: 100%;
 }
 
 .workspaceThreadTabLabel span,
@@ -1731,11 +1727,15 @@ textarea {
 }
 
 .workspaceThreadTabLabel span {
+  display: block;
   font-size: 12px;
   font-weight: 650;
+  max-width: 10em;
 }
 
 .workspaceThreadTabLabel code {
+  overflow: visible;
+  text-overflow: clip;
   color: #66715f;
   font-size: 11px;
 }
@@ -2592,7 +2592,7 @@ textarea {
   }
 
   .workspaceThreadTabs .ant-tabs-tab {
-    min-height: 38px;
+    min-height: 48px;
     padding: 7px 10px !important;
   }
 
