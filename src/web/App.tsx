@@ -1846,6 +1846,7 @@ const App = () => {
   const workspaceMachineOnline = selectedProject
     ? selectedProject.machineOnline
     : Boolean(workspaceRuntime ? machines.find((machine) => machine.machineId === workspaceRuntime.machineId)?.online : false);
+  const showWorkspaceMachineOffline = Boolean(selectedProject && !workspaceMachineOnline && !workspaceRuntime?.online);
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
@@ -2286,12 +2287,12 @@ const App = () => {
               {workspacePath || "No connected codexhub"}
             </span>
             <div className="workspaceMeta">
-              {selectedProject ? (
+              {showWorkspaceMachineOffline ? (
                 <span
-                  className={`workspaceRuntimeSessionState ${workspaceMachineOnline ? "online" : "offline"}`}
-                  title={workspaceMachineOnline ? "Machine online" : "Machine offline"}
+                  className="workspaceRuntimeSessionState offline"
+                  title="Machine offline"
                 >
-                  machine: {workspaceMachineOnline ? "online" : "offline"}
+                  machine: offline
                 </span>
               ) : null}
               {selectedProject || workspaceRuntime ? (
