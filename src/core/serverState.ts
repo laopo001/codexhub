@@ -80,6 +80,8 @@ export type ServerStateData = {
 
 export type ProjectSummary = StoredProject & {
   machine?: MachineSummary | StoredMachine;
+  machineOnline: boolean;
+  runtime: RuntimeSessionSummary | null;
   online: boolean;
   running: boolean;
   sessions: RuntimeSessionSummary[];
@@ -363,28 +365,22 @@ export class CodexhubServerState {
         touchLastSeenAt: false,
         capabilities: session.machineId ? undefined : { projectLauncher: false }
       });
-      this.upsertProject({
-        machineId,
-        path: session.workingDirectory,
-        sessionId: session.workerId,
-        now: session.lastSeenAt,
-        touchOpenedAt: false,
-        restoreDeleted: false
-      });
+      if (this.findProject(machineId, session.workingDirectory)) {
+        this.upsertProject({
+          machineId,
+          path: session.workingDirectory,
+          sessionId: session.workerId,
+          now: session.lastSeenAt,
+          touchOpenedAt: false,
+          restoreDeleted: false
+        });
+      }
     }
 
     for (const thread of snapshot.threads) {
       const session = thread.runtime.sessionId ? runtimeSessionsById.get(thread.runtime.sessionId) : undefined;
       const project = session
-        ? this.upsertProject({
-          machineId: machineIdForRuntimeSession(session),
-          path: thread.workingDirectory,
-          sessionId: session.workerId,
-          threadId: thread.threadId,
-          now: thread.updatedAt,
-          touchOpenedAt: false,
-          restoreDeleted: false
-        })
+        ? this.findProject(machineIdForRuntimeSession(session), thread.workingDirectory)
         : this.uniqueProjectForPath(thread.workingDirectory);
       if (!project) continue;
       this.upsertThread(project.projectId, thread);
@@ -425,17 +421,22 @@ export class CodexhubServerState {
     const projects: ProjectSummary[] = this.listStoredProjects().map((project) => {
       const sessions = (sessionsByProject.get(project.projectId) ?? [])
         .sort((left, right) => Number(right.online) - Number(left.online) || right.lastSeenAt.localeCompare(left.lastSeenAt));
+      const runtimeSessions = sessions.map(runtimeSessionFromWorker);
+      const runtime = runtimeSessions.find((session) => session.online) ?? null;
       const threads = (threadsByProject.get(project.projectId) ?? [])
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
       const storedThreads = (storedThreadsByProject.get(project.projectId) ?? [])
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
       const machine = machinesById.get(project.machineId);
+      const machineOnline = Boolean(machine && "online" in machine && machine.online);
       return {
         ...project,
         machine,
-        online: sessions.some((session) => session.online) || Boolean(machine && "online" in machine && machine.online),
+        machineOnline,
+        runtime,
+        online: Boolean(runtime) || machineOnline,
         running: threads.some((thread) => thread.running || thread.status === "running"),
-        sessions: sessions.map(runtimeSessionFromWorker),
+        sessions: runtimeSessions,
         threads,
         storedThreads
       };

@@ -1,8 +1,8 @@
 # codexhub
 
-一个 local-first 的 Codex 控制面。Web 按机器、项目、运行会话和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
+一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
-- 共享核心：API server 统一管理 machines、runtime sessions 和 threads，Web 左侧按项目优先展示，右侧跟随选中 thread。
+- 共享核心：API server 统一管理 machines、runtime sessions 和 threads，并把它们投影成 project-first 的 `/api/projects`；Web 左侧按项目优先展示，右侧跟随选中 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
 - Machine：server 默认内嵌一台 `local` machine；远端或宿主机也可以用 `codexhub machine` 主动注册，负责路径校验和按项目启动 runtime session。
@@ -93,7 +93,7 @@ pnpm codexhub threads --show 20
 
 server 在线时，前台 `codexhub` 会通过 machine websocket 注册一个 transient session host，再把当前 runtime session 挂到这台 session host 下；它只代表这个前台 Codex 进程，不作为项目浏览/启动器。Web 里打开本机任意项目优先使用内嵌 `local` machine；远端或宿主机项目使用 SSH / registered machine。
 
-server 在线时，runtime session 会同步 app-server event 和 JSONL transcript，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，后台 bridge 会持续重试。Web 主列表以 projects/threads 为主，runtime session 只是 project 当前在线运行能力；Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 JSONL `token_count` records 计算。
+server 在线时，runtime session 会同步 app-server event 和 JSONL transcript，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，后台 bridge 会持续重试。Web 主列表以 projects/threads 为主，runtime session 只是 project 当前在线运行能力，并通过 `/api/projects` 的 `runtime` 字段投影；`/api/sessions` 保留为 runtime/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 JSONL `token_count` records 计算。
 
 `codexhub list` 与 Web 左侧一致，显示当前 runtime sessions；`codexhub threads` 扫描本机官方 Codex session 历史，只显示当前目录的可 resume threads，并输出标题、更新时间和完整 threadId。`--show` 控制最近显示数量，默认 20。
 

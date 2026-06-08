@@ -584,6 +584,12 @@ textarea {
   color: #9daa98;
 }
 
+.projectRow.ready {
+  border-color: #3e5547;
+  background: #122017;
+  color: #c8d6c4;
+}
+
 .projectRowTop {
   display: flex;
   align-items: center;
@@ -647,6 +653,11 @@ textarea {
 .projectRow.online .projectRowActions strong {
   background: #1c4a34;
   color: #c9f1da;
+}
+
+.projectRow.ready .projectRowActions strong {
+  background: #263f2d;
+  color: #cdddc8;
 }
 
 .projectRow.offline .projectRowActions strong {

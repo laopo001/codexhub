@@ -4,7 +4,7 @@
 
 codexhub 是本机 Node.js server + Web 控制面。server 负责 machines、projects、threads、runtime session 状态、tasks、plugins 和 SSH connections 的控制面与事件镜像；真正的 Codex runtime 仍在官方 Codex app-server 进程里，由 machine 侧启动并上报。
 
-当前公开模型以 `machineId`、`projectId`、`threadId` 为主，`sessionId` 只表示 project 当前在线 runtime 能力。默认一个 project 对应一个 runtime session；不要为了少见的多 session per project 场景把公共模型复杂化。旧 `workerId` 只允许作为 `ThreadHub` 等内部实现细节继续存在，不能重新暴露成产品概念或公共 API。
+当前公开模型以 `machineId`、`projectId`、`threadId` 为主，`sessionId` 只表示 project 当前在线 runtime 能力。默认一个 project 对应一个 runtime session；不要为了少见的多 session per project 场景把公共模型复杂化。公开/Web 投影必须是 project-first：`/api/projects` 里的 project 带 `machineOnline` 和 `runtime`，其中 `runtime` 是当前在线 session 或 `null`；`/api/sessions` 只作为 runtime/debug 镜像。旧 `workerId` 只允许作为 `ThreadHub` 等内部实现细节继续存在，不能重新暴露成产品概念或公共 API。
 
 ## Machine / Session / Thread 模型
 
@@ -39,7 +39,7 @@ codexhub 是本机 Node.js server + Web 控制面。server 负责 machines、pro
 
 ## Project / Task 模型
 
-1. project 是 `machineId + path` 推导出的 server UI/路由元数据，不拥有 Codex runtime。
+1. project 是 `machineId + path` 推导出的 server UI/路由元数据。project 不持久拥有 Codex runtime 进程，但在公开投影里拥有 `runtime` 状态；runtime session 只能作为 project 的当前运行实例出现，不能反向创建 Web project。
 2. `POST /api/projects/open` 必须发给在线 machine，由 machine 在本机确认 path 是可进入目录，再启动或复用 runtime session。
 3. task 记录在本机 server state，选择 machine、project path、可选 thread 和 cron schedule，然后按计划投递一轮对话。
 4. 不再让 server 扫描 `.codexp/tasks`。旧本地 YAML task scheduler 不应恢复；如需离线 workspace task，以新的 CLI 设计另行加入。
@@ -54,7 +54,7 @@ codexhub 是本机 Node.js server + Web 控制面。server 负责 machines、pro
 
 ## Web / Electron / Docker
 
-1. Web 继续复用现有对话展示：右侧以 thread records 为准，左侧以 machines/projects/threads 为主，session 只作为 project 在线 runtime 状态展示。
+1. Web 继续复用现有对话展示：右侧以 thread records 为准，左侧以 machines/projects/threads 为主，session 只通过 `project.runtime` 作为 project 在线 runtime 状态展示，不能作为和 project 平行的 Web 主对象。
 2. Web 本地选择状态使用 `activeSessionId`；兼容读取旧 localStorage 可以做迁移，但新写入不能再用 `activeWorkerId`。
 3. Web 页面实时更新使用单条 `/api/events/ws` WebSocket：`hello` 订阅 machines/projects/sessions/tasks/connections 控制面事件，页面内 thread tabs 通过 `subscribe_thread` / `unsubscribe_thread` 在同一条连接里多路复用；不要为每个 thread tab 新增独立 SSE/WS。Thread `record/done` 只更新 thread 增量，不应连带推送整份 projects/sessions snapshot。
 4. Docker 镜像运行 server/Web/API，默认 `CODEX_HUB_LOCAL_MACHINE=0`，由宿主机或远端通过 registered/ssh machine 接入 runtime。

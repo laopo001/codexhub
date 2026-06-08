@@ -24,6 +24,10 @@ type ProjectOpenResponse = {
   };
 };
 
+type ProjectsPayload = {
+  projects?: unknown[];
+};
+
 type ThreadDetail = {
   threadId: string;
   records?: unknown[];
@@ -102,6 +106,7 @@ const main = async () => {
   process.env.TELEGRAM_BOT_TOKEN = "";
 
   await assertServerStateSnapshotPure();
+  await assertProjectRuntimeProjection();
   await assertDeletedProjectSuppressesRuntimeCapture();
   await writeStartupSshHostState(dataDir, "included-host");
 
@@ -137,6 +142,7 @@ const main = async () => {
     const threadId = open.result?.threadId;
     const projectId = open.project?.projectId;
     if (!sessionId || !threadId || !projectId) throw new Error("project open did not return project/session/thread ids");
+    await assertProjectRuntime(apiBase, projectId, sessionId);
     console.log(`project ok: ${sessionId} ${threadId}`);
     await assertSessionTurnRequiresThread(apiBase, sessionId);
     console.log("session turn target validation ok");
@@ -613,6 +619,64 @@ const assertServerStateSnapshotPure = async () => {
   if (after !== before) throw new Error("CodexhubServerState.snapshot mutated server-state.yaml");
 };
 
+const assertProjectRuntimeProjection = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-runtime."));
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const state = await CodexhubServerState.load({ dataDir });
+  const machineId = "machine-runtime-smoke";
+  const projectPath = "/tmp/codexhub-runtime-smoke";
+  const machine = {
+    machineId,
+    type: "local" as const,
+    hostname: "runtime-smoke",
+    online: true,
+    status: "online" as const,
+    lastSeenAt: "2026-01-01T00:01:00.000Z",
+    capabilities: { projectLauncher: true }
+  };
+  const runtimeSession = {
+    workerId: "session-runtime-smoke",
+    machineId,
+    name: "runtime-smoke",
+    workingDirectory: projectPath,
+    online: true,
+    status: "online" as const,
+    lastSeenAt: "2026-01-01T00:02:00.000Z",
+    hostname: "runtime-smoke",
+    threads: []
+  };
+
+  state.captureRuntime({ runtimeSessions: [runtimeSession], threads: [] });
+  const missingProjectSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [runtimeSession], threads: [] });
+  if (missingProjectSnapshot.projects.length !== 0) {
+    throw new Error("runtime session created a project without an explicit project");
+  }
+
+  const project = state.upsertProject({ machineId, path: projectPath, now: "2026-01-01T00:03:00.000Z" });
+  if (!project) throw new Error("runtime projection project upsert failed");
+  state.captureRuntime({ runtimeSessions: [runtimeSession], threads: [] });
+  const onlineSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [runtimeSession], threads: [] });
+  const onlineProject = onlineSnapshot.projects.find((item) => item.projectId === project.projectId);
+  if (!onlineProject?.machineOnline) throw new Error("project runtime projection did not expose machineOnline");
+  if (onlineProject.runtime?.sessionId !== runtimeSession.workerId || onlineProject.runtime.online !== true) {
+    throw new Error(`project runtime projection did not attach online runtime: ${JSON.stringify(onlineProject?.runtime)}`);
+  }
+
+  const offlineSession = {
+    ...runtimeSession,
+    online: false,
+    status: "offline" as const,
+    offlineSinceAt: "2026-01-01T00:04:00.000Z",
+    offlineReason: "unregistered" as const
+  };
+  const offlineSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [offlineSession], threads: [] });
+  const offlineProject = offlineSnapshot.projects.find((item) => item.projectId === project.projectId);
+  if (!offlineProject) throw new Error("project disappeared when runtime went offline");
+  if (offlineProject.runtime !== null) {
+    throw new Error(`offline runtime should not be projected as active runtime: ${JSON.stringify(offlineProject.runtime)}`);
+  }
+};
+
 const assertDeletedProjectSuppressesRuntimeCapture = async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-delete."));
   const { CodexhubServerState } = await import("../src/core/serverState.js");
@@ -673,6 +737,18 @@ const assertSessionTurnRequiresThread = async (apiBase: string, sessionId: strin
   if (response.ok) throw new Error("/api/sessions/:sessionId/turn accepted a missing threadId");
   if (response.status !== 400) {
     throw new Error(`/api/sessions/:sessionId/turn missing threadId returned HTTP ${response.status}: ${await response.text()}`);
+  }
+};
+
+const assertProjectRuntime = async (apiBase: string, projectId: string, sessionId: string) => {
+  const payload = await apiJson<ProjectsPayload>(apiBase, "/api/projects");
+  assertNoWorkerId(payload, "/api/projects");
+  const project = (payload.projects ?? []).map(asRecord).find((item) => item.projectId === projectId);
+  if (!project) throw new Error(`/api/projects missing opened project ${projectId}`);
+  if (project.machineOnline !== true) throw new Error(`/api/projects did not expose machineOnline for ${projectId}`);
+  const runtime = asRecord(project.runtime);
+  if (runtime.sessionId !== sessionId || runtime.online !== true) {
+    throw new Error(`/api/projects did not project active runtime for ${projectId}: ${JSON.stringify(project.runtime)}`);
   }
 };
 

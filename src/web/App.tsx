@@ -192,6 +192,8 @@ type ProjectSummary = {
   lastSessionId?: string;
   lastThreadId?: string;
   machine?: MachineSummary;
+  machineOnline: boolean;
+  runtime: RuntimeSession | null;
   online: boolean;
   running: boolean;
   sessions: RuntimeSession[];
@@ -502,9 +504,12 @@ const App = () => {
     () => sessions.find((session) => session.threadId === activeTabThreadId),
     [activeTabThreadId, sessions]
   );
+  const projectList = useMemo(() => projects, [projects]);
   const activeRuntimeSession = useMemo(
-    () => runtimeSessions.find((session) => session.sessionId === activeSessionId),
-    [activeSessionId, runtimeSessions]
+    () => runtimeSessions.find((session) => session.sessionId === activeSessionId)
+      ?? projectList.find((project) => project.runtime?.sessionId === activeSessionId)?.runtime
+      ?? undefined,
+    [activeSessionId, projectList, runtimeSessions]
   );
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
   const localMachines = useMemo(() => machines.filter((machine) => machine.type === "local"), [machines]);
@@ -517,7 +522,6 @@ const App = () => {
     const origin = window.location.origin;
     return `codexhub machine --server ${origin} --type registered`;
   }, []);
-  const projectList = useMemo(() => mergeProjectsWithRuntimeSessions(projects, runtimeSessions), [projects, runtimeSessions]);
   const projectGroups = useMemo(() => groupProjectsByMachine(projectList, machines), [projectList, machines]);
   const selectedProject = useMemo(() => {
     const explicitProject = selectedProjectKey
@@ -525,11 +529,11 @@ const App = () => {
       : undefined;
     if (explicitProject) return explicitProject;
     if (activeRuntimeSession) {
-      return projectList.find((project) => project.sessions.some((session) => session.sessionId === activeRuntimeSession.sessionId))
+      return projectList.find((project) => project.runtime?.sessionId === activeRuntimeSession.sessionId)
         ?? projectList.find((project) => project.machineId === activeRuntimeSession.machineId && project.path === activeRuntimeSession.workingDirectory);
     }
     if (activeSessionId) {
-      const sessionProject = projectList.find((project) => project.sessions.some((session) => session.sessionId === activeSessionId));
+      const sessionProject = projectList.find((project) => project.runtime?.sessionId === activeSessionId);
       if (sessionProject) return sessionProject;
     }
     return activeWorkspacePath ? projectList.find((project) => project.path === activeWorkspacePath) : undefined;
@@ -695,15 +699,15 @@ const App = () => {
 
   useEffect(() => {
     if (!initialized) return;
-    if (!runtimeSessions.length) {
+    const projectRuntimeSessions = projectList.flatMap((project) => project.runtime ? [project.runtime] : []);
+    if (!projectRuntimeSessions.length) {
       if (activeSessionId) setActiveSessionId("");
       if (activeTabThreadId) setActiveTabThreadId("");
       return;
     }
 
-    const selectedProjectSession = selectedProject?.sessions.find((session) => session.online)
-      ?? selectedProject?.sessions[0];
-    if (selectedProjectKey && selectedProject && activeRuntimeSession && !selectedProject.sessions.some((session) => session.sessionId === activeRuntimeSession.sessionId)) {
+    const selectedProjectSession = selectedProject?.runtime;
+    if (selectedProjectKey && selectedProject && activeRuntimeSession && selectedProject.runtime?.sessionId !== activeRuntimeSession.sessionId) {
       if (selectedProjectSession) setActiveSessionId(selectedProjectSession.sessionId);
       else {
         setActiveSessionId("");
@@ -717,7 +721,7 @@ const App = () => {
       return;
     }
 
-    const session = activeRuntimeSession ?? runtimeSessions[0];
+    const session = activeRuntimeSession ?? projectRuntimeSessions[0];
     if (!activeRuntimeSession) {
       setActiveSessionId(session.sessionId);
       return;
@@ -726,7 +730,7 @@ const App = () => {
     setActiveWorkspacePath(session.workingDirectory);
     const threadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
     const activeTabThreadIdForRuntimeSession = activeTabThreadBySession[session.sessionId];
-    const projectLastThreadId = selectedProject?.sessions.some((item) => item.sessionId === session.sessionId)
+    const projectLastThreadId = selectedProject?.runtime?.sessionId === session.sessionId
       ? selectedProject.lastThreadId
       : undefined;
     const desiredThreadId = activeTabThreadIdForRuntimeSession && threadIds.has(activeTabThreadIdForRuntimeSession)
@@ -746,7 +750,7 @@ const App = () => {
     if (activeTabThreadId !== desiredThreadId) {
       void openThread(desiredThreadId).catch(() => clearActiveThreadIfLatest(desiredThreadId));
     }
-  }, [activeTabThreadId, activeRuntimeSession, activeSessionId, initialized, activeTabThreadBySession, runtimeSessions, selectedProject]);
+  }, [activeTabThreadId, activeRuntimeSession, activeSessionId, initialized, activeTabThreadBySession, projectList, selectedProject]);
 
   useEffect(() => {
     if (!initialized) return;
@@ -852,11 +856,12 @@ const App = () => {
     const loadedRuntimeSessions = normalizeRuntimeSessions(sessionData.sessions);
     const loadedMachines = normalizeMachines(projectData.machines);
     const loadedProjects = normalizeProjects(projectData.projects);
+    const loadedProjectRuntimeSessions = loadedProjects.flatMap((project) => project.runtime ? [project.runtime] : []);
     const saved = readStoredUiState();
     const savedRuntimeSession = saved?.activeSessionId
-      ? loadedRuntimeSessions.find((session) => session.sessionId === saved.activeSessionId)
+      ? loadedProjectRuntimeSessions.find((session) => session.sessionId === saved.activeSessionId)
       : undefined;
-    const initialRuntimeSession = savedRuntimeSession ?? loadedRuntimeSessions[0];
+    const initialRuntimeSession = savedRuntimeSession ?? loadedProjectRuntimeSessions[0];
 
     setSystemStatus({
       model: health.model,
@@ -883,7 +888,7 @@ const App = () => {
     if (initialRuntimeSession) {
       setActiveSessionId(initialRuntimeSession.sessionId);
       setActiveWorkspacePath(initialRuntimeSession.workingDirectory);
-      const initialProject = loadedProjects.find((project) => project.sessions.some((session) => session.sessionId === initialRuntimeSession.sessionId))
+      const initialProject = loadedProjects.find((project) => project.runtime?.sessionId === initialRuntimeSession.sessionId)
         ?? loadedProjects.find((project) => project.machineId === initialRuntimeSession.machineId && project.path === initialRuntimeSession.workingDirectory);
       const initialThreadId = preferredThreadIdForRuntimeSession(initialRuntimeSession, initialProject);
       if (initialThreadId) {
@@ -1506,7 +1511,7 @@ const App = () => {
   const selectRuntimeSession = async (session: RuntimeSession) => {
     setActiveSessionId(session.sessionId);
     setActiveWorkspacePath(session.workingDirectory);
-    const project = projectList.find((item) => item.sessions.some((projectSession) => projectSession.sessionId === session.sessionId))
+    const project = projectList.find((item) => item.runtime?.sessionId === session.sessionId)
       ?? projectList.find((item) => item.machineId === session.machineId && item.path === session.workingDirectory);
     if (project) {
       setSelectedProjectKey(projectKeyForProject(project));
@@ -1530,9 +1535,8 @@ const App = () => {
     setTaskError("");
     setProjectOpenError("");
     setActiveWorkspacePath(project.path);
-    const session = project.sessions.find((item) => item.online) ?? project.sessions[0];
-    if (session?.online) {
-      await selectRuntimeSession(session);
+    if (project.runtime?.online) {
+      await selectRuntimeSession(project.runtime);
       return;
     }
     setActiveSessionId("");
@@ -1749,7 +1753,8 @@ const App = () => {
         body: JSON.stringify({ path: trimmedPath, machineId: machineId || undefined, reuse: true })
       });
       setMachines(normalizeMachines(payload.machines));
-      setProjects(normalizeProjects(payload.projects));
+      const freshProjects = normalizeProjects(payload.projects);
+      setProjects(freshProjects);
       setProjectOpenError("");
       setActiveWorkspacePath(payload.result?.cwd ?? trimmedPath);
       const freshRuntimeSessions = await apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions")
@@ -1758,8 +1763,11 @@ const App = () => {
       setRuntimeSessions(freshRuntimeSessions);
       setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, freshRuntimeSessions));
       const sessionId = payload.result?.sessionId;
+      const project = freshProjects.find((item) => item.path === (payload.result?.cwd ?? trimmedPath));
       const session = sessionId
-        ? freshRuntimeSessions.find((item) => item.sessionId === sessionId)
+        ? project?.runtime?.sessionId === sessionId
+          ? project.runtime
+          : freshRuntimeSessions.find((item) => item.sessionId === sessionId)
         : undefined;
       if (session && payload.result?.threadId) await activateRuntimeSessionThread(session.sessionId, payload.result.threadId);
       else if (session) await selectRuntimeSession(session);
@@ -1833,6 +1841,11 @@ const App = () => {
   const taskProjectOptions = projectList.filter((project) => !taskDraft.machineId || project.machineId === taskDraft.machineId);
   const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
   const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject);
+  const workspaceRuntime = selectedProject?.runtime ?? activeRuntimeSession ?? null;
+  const workspacePath = selectedProject?.path ?? workspaceRuntime?.workingDirectory ?? activeWorkspacePath;
+  const workspaceMachineOnline = selectedProject
+    ? selectedProject.machineOnline
+    : Boolean(workspaceRuntime ? machines.find((machine) => machine.machineId === workspaceRuntime.machineId)?.online : false);
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
@@ -1861,12 +1874,14 @@ const App = () => {
               const projectKey = projectKeyForProject(project);
               const active = projectKey === activeProjectKey;
               const statusLabel = projectStatusLabel(project);
+              const runtimeActive = Boolean(project.runtime?.online);
+              const projectReachable = runtimeActive || project.machineOnline;
               const deleting = deletingProjectId === project.projectId;
               const openDisabled = openingProjectKey === projectKey || deleting;
               return (
                 <div
                   key={project.projectId}
-                  className={`projectRow ${active ? "active" : ""} ${project.online ? "online" : "offline"}`}
+                  className={`projectRow ${active ? "active" : ""} ${runtimeActive ? "online" : projectReachable ? "ready" : "offline"}`}
                 >
                   <div className="projectRowTop">
                     <button
@@ -2267,21 +2282,29 @@ const App = () => {
             {sidebarCollapsed ? "Menu" : "Hide"}
           </button>
           <div className="workspaceTitle">
-            <span className="workspacePath" title={activeRuntimeSession?.workingDirectory ?? activeWorkspacePath}>
-              {(activeRuntimeSession?.workingDirectory ?? activeWorkspacePath) || "No connected codexhub"}
+            <span className="workspacePath" title={workspacePath}>
+              {workspacePath || "No connected codexhub"}
             </span>
             <div className="workspaceMeta">
-              {activeRuntimeSession ? (
+              {selectedProject ? (
                 <span
-                  className={`workspaceRuntimeSessionState ${activeRuntimeSession.online ? "online" : "offline"}`}
-                  title={runtimeSessionStatusTitle(activeRuntimeSession)}
+                  className={`workspaceRuntimeSessionState ${workspaceMachineOnline ? "online" : "offline"}`}
+                  title={workspaceMachineOnline ? "Machine online" : "Machine offline"}
                 >
-                  {activeRuntimeSession.online ? "online" : "offline"}
+                  machine: {workspaceMachineOnline ? "online" : "offline"}
+                </span>
+              ) : null}
+              {selectedProject || workspaceRuntime ? (
+                <span
+                  className={`workspaceRuntimeSessionState ${workspaceRuntime?.online ? "online" : "offline"}`}
+                  title={workspaceRuntime ? runtimeSessionStatusTitle(workspaceRuntime) : "Runtime not started"}
+                >
+                  runtime: {workspaceRuntime?.online ? "online" : "offline"}
                 </span>
               ) : null}
               {activeDisplayThreadId ? (
                 <span className="workspaceThreadId" title={`thread: ${activeDisplayThreadId}`}>thread: {activeDisplayThreadId}</span>
-              ) : activeRuntimeSession ? (
+              ) : workspaceRuntime ? (
                 <span className="workspaceThreadId" title="thread: none">thread: none</span>
               ) : null}
             </div>
@@ -3024,6 +3047,8 @@ const normalizeProjects = (projects: ProjectSummary[] | undefined) =>
   Array.isArray(projects)
     ? projects.map((project) => ({
       ...project,
+      machineOnline: Boolean(project.machineOnline ?? (project.machine && "online" in project.machine && project.machine.online)),
+      runtime: project.runtime ? normalizeRuntimeSessions([project.runtime])[0] ?? null : null,
       sessions: normalizeRuntimeSessions(project.sessions),
       threads: Array.isArray(project.threads) ? project.threads : [],
       storedThreads: Array.isArray(project.storedThreads) ? project.storedThreads : []
@@ -3139,7 +3164,7 @@ const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSum
     const label = machine
       ? machine.name ?? machine.hostname
       : project.machineId;
-    const online = Boolean(machine && "online" in machine ? machine.online : project.online);
+    const online = Boolean(machine && "online" in machine ? machine.online : project.machineOnline);
     let group = groups.get(project.machineId);
     if (!group) {
       group = {
@@ -3169,7 +3194,7 @@ const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSum
 };
 
 const projectMachineStatus = (group: Pick<ProjectMachineGroup, "online" | "projectLauncher" | "projects">) => {
-  const onlineProjects = group.projects.filter((project) => project.online).length;
+  const onlineProjects = group.projects.filter((project) => project.runtime?.online).length;
   if (!group.online) return "offline";
   if (!group.projectLauncher) return "session";
   if (onlineProjects) return `${onlineProjects}/${group.projects.length} active`;
@@ -3185,31 +3210,6 @@ type StoredMachineLike = {
   };
 };
 
-const mergeProjectsWithRuntimeSessions = (projects: ProjectSummary[], runtimeSessions: RuntimeSession[]) => {
-  const projectsByKey = new Map(projects.map((project) => [projectRuntimeKey(project.machineId, project.path), {
-    ...project,
-    sessions: [...(project.sessions ?? [])],
-    threads: [...(project.threads ?? [])],
-    storedThreads: [...(project.storedThreads ?? [])]
-  }]));
-  for (const session of runtimeSessions) {
-    const key = projectRuntimeKey(machineIdForSession(session), session.workingDirectory);
-    const project = projectsByKey.get(key);
-    if (!project) continue;
-    if (!project.sessions.some((item) => item.sessionId === session.sessionId)) project.sessions.push(session);
-    for (const thread of session.threads ?? []) {
-      if (!project.threads.some((item) => item.threadId === thread.threadId)) project.threads.push(thread);
-    }
-    project.online = project.online || session.online;
-    project.running = project.running || Boolean(session.threads?.some((thread) => thread.running || thread.status === "running"));
-  }
-  return [...projectsByKey.values()].sort((left, right) => {
-    return compareProjectRows(left, right);
-  });
-};
-
-const projectRuntimeKey = (machineId: string, projectPath: string) => `${machineId}\0${projectPath}`;
-
 const compareProjectRows = (left: ProjectSummary, right: ProjectSummary) => {
   if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1;
   const createdCompare = left.createdAt.localeCompare(right.createdAt);
@@ -3218,11 +3218,6 @@ const compareProjectRows = (left: ProjectSummary, right: ProjectSummary) => {
   if (nameCompare) return nameCompare;
   return left.path.localeCompare(right.path, undefined, { sensitivity: "base" });
 };
-
-const machineIdForSession = (session: RuntimeSession) => session.machineId ?? `machine-${safeMachinePart(session.hostname ?? "local")}`;
-
-const safeMachinePart = (value: string) =>
-  value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
 
 const projectKeyFor = (machineId: string, projectPath: string) => `${machineId}:${projectPath}`;
 
@@ -3233,8 +3228,8 @@ const basename = (projectPath: string) => projectPath.split(/[\\/]/).filter(Bool
 
 const projectStatusLabel = (project: ProjectSummary) => {
   if (project.running) return "running";
-  if (project.sessions.some((session) => session.online)) return "online";
-  if (project.machine && "online" in project.machine && project.machine.online) return "ready";
+  if (project.runtime?.online) return "runtime";
+  if (project.machineOnline || (project.machine && "online" in project.machine && project.machine.online)) return "ready";
   return "offline";
 };
 
@@ -3378,14 +3373,21 @@ const patchRuntimeSessionsThread = (runtimeSessions: RuntimeSession[], thread: T
 
 const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) =>
   projects.map((project) => {
-    const matchesSession = Boolean(thread.runtime.sessionId && project.sessions.some((session) => session.sessionId === thread.runtime.sessionId));
+    const matchesSession = Boolean(thread.runtime.sessionId && project.runtime?.sessionId === thread.runtime.sessionId);
     const matchesPath = project.path === thread.workingDirectory;
     if (!matchesSession && !matchesPath) return project;
     const threads = upsertThreadSummary(project.threads ?? [], thread);
+    const runtime = matchesSession && project.runtime
+      ? {
+        ...project.runtime,
+        threads: upsertThreadSummary(project.runtime.threads ?? [], thread)
+      }
+      : project.runtime;
     return {
       ...project,
       lastThreadId: thread.threadId,
       running: threads.some((item) => item.running || item.status === "running"),
+      runtime,
       threads
     };
   });
