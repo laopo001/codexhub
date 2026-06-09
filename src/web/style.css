@@ -1160,8 +1160,19 @@ textarea {
   background: rgba(255, 255, 255, 0.9);
   box-shadow: 0 8px 24px rgba(49, 55, 65, 0.08);
   color: #26342a;
-  pointer-events: none;
+  pointer-events: auto;
   backdrop-filter: blur(8px);
+}
+
+.runtimeStatusRows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+}
+
+.runtimeStatusRows.expanded {
+  gap: 8px;
 }
 
 .runtimeStatusOverlay.pending {
@@ -1187,7 +1198,16 @@ textarea {
   border: 1px solid rgba(104, 115, 145, 0.12);
   border-radius: 6px;
   background: rgba(248, 250, 247, 0.86);
+  color: inherit;
   overflow: hidden;
+  padding: 0;
+  text-align: left;
+}
+
+.runtimeStatusItem:hover,
+.runtimeStatusItem:focus-visible {
+  background: #ffffff;
+  border-color: rgba(104, 115, 145, 0.24);
 }
 
 .runtimeStatusLabel {
@@ -1220,6 +1240,40 @@ textarea {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 28px;
+}
+
+.runtimeStatusMinimize {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  min-height: 22px;
+  border: 1px solid #d8e0d5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #66715f;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 4px 14px rgb(18 32 24 / 0.14);
+}
+
+.runtimeStatusMinimize:hover {
+  background: #f4f6f1;
+  color: #17211a;
+}
+
+.runtimeStatusFiles {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid rgba(104, 115, 145, 0.12);
+  background: #fbfcf8;
 }
 
 .empty {
@@ -1939,6 +1993,29 @@ textarea {
   background: #f4f6f1;
   padding: 4px 8px;
   white-space: nowrap;
+}
+
+.statusPill {
+  min-height: 27px;
+  color: #66715f;
+  font: inherit;
+  cursor: pointer;
+}
+
+.statusPill.available {
+  border-color: #cbded1;
+  background: #ffffff;
+  color: #26342a;
+  font-weight: 750;
+}
+
+.statusPill:hover:not(:disabled) {
+  background: #eef3eb;
+}
+
+.statusPill:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .composerRuntimeMenuHost {

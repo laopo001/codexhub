@@ -338,6 +338,12 @@ type RuntimeStatusView = {
   text: string;
   at?: string;
   status?: CodexRecordView["status"];
+  files?: RuntimeStatusFile[];
+};
+type RuntimeStatusFile = {
+  path: string;
+  added?: number;
+  removed?: number;
 };
 type InspectDetail = {
   inputMeta: string;
@@ -507,6 +513,8 @@ const App = () => {
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
+  const [hiddenStatusTurns, setHiddenStatusTurns] = useState<Record<string, string>>({});
+  const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
   const realtimeSocket = useRef<WebSocket | null>(null);
   const runtimeSessionsLastSeq = useRef(0);
   const projectsLastSeq = useRef(0);
@@ -610,9 +618,27 @@ const App = () => {
     () => recordsToDetailedViews(displayRecords),
     [displayRecords]
   );
+  const latestTurnStatusScope = useMemo(
+    () => latestUserTurnStatusScope(displayRecords),
+    [displayRecords]
+  );
   const simpleStatuses = useMemo(
-    () => messageDisplayMode === "compact" ? runtimeStatusesFromRecords(displayRecords) : [],
-    [displayRecords, messageDisplayMode]
+    () => messageDisplayMode === "compact" ? runtimeStatusesFromRecords(latestTurnStatusScope.records) : [],
+    [latestTurnStatusScope.records, messageDisplayMode]
+  );
+  const statusPanelHidden = Boolean(
+    activeSession?.threadId
+    && latestTurnStatusScope.key
+    && hiddenStatusTurns[activeSession.threadId] === latestTurnStatusScope.key
+  );
+  const showInlineStatusPanel = Boolean(simpleStatuses.length && !statusPanelHidden);
+  const statusButtonLabel = simpleStatuses.length ? `Status ${simpleStatuses.length}` : "Status";
+  const statusScopeKey = activeSession?.threadId && latestTurnStatusScope.key
+    ? `${activeSession.threadId}:${latestTurnStatusScope.key}`
+    : "";
+  const activeExpandedStatusKeys = useMemo(
+    () => new Set(statusScopeKey ? expandedStatusKeys[statusScopeKey] ?? [] : []),
+    [expandedStatusKeys, statusScopeKey]
   );
   const activeViews = useMemo<WebRecordView[]>(
     () => messageDisplayMode === "compact" ? compactToolViews(baseViews) : detailedViews,
@@ -643,9 +669,27 @@ const App = () => {
   const renderComposerRuntimeControls = (mode: "inline" | "popover") => (
     <div className={`composerRuntimeControls ${mode}`} aria-label="Runtime usage and model">
       <div className="composerUsagePills" aria-label="Runtime usage">
+        <button
+          type="button"
+          className={`usagePill statusPill${simpleStatuses.length ? " available" : ""}`}
+          disabled={!simpleStatuses.length}
+          title={simpleStatuses.length ? "Show latest turn status" : "No status for the latest turn"}
+          onClick={() => {
+            if (!activeSession?.threadId) return;
+            setHiddenStatusTurns((current) => {
+              if (!(activeSession.threadId in current)) return current;
+              const next = { ...current };
+              delete next[activeSession.threadId];
+              return next;
+            });
+          }}
+        >
+          {statusButtonLabel}
+        </button>
         <span className="usagePill" title={formatContextTitle(activeThreadUsage)}>
           Context {formatContextUsage(activeThreadUsage)}
         </span>
+
         <span className="usagePill" title={formatResetTitle(activeThreadUsage?.primaryRateLimit)}>5h {formatRateLimitRemaining(activeThreadUsage?.primaryRateLimit)}</span>
         <span className="usagePill" title={formatResetTitle(activeThreadUsage?.secondaryRateLimit)}>weekly {formatRateLimitRemaining(activeThreadUsage?.secondaryRateLimit)}</span>
       </div>
@@ -775,9 +819,9 @@ const App = () => {
     const desiredThreadId = activeTabThreadIdForRuntimeSession && threadIds.has(activeTabThreadIdForRuntimeSession)
       ? activeTabThreadIdForRuntimeSession
       : currentThreadId
-        ?? (projectLastThreadId && threadIds.has(projectLastThreadId)
-          ? projectLastThreadId
-          : session.threads?.[0]?.threadId);
+      ?? (projectLastThreadId && threadIds.has(projectLastThreadId)
+        ? projectLastThreadId
+        : session.threads?.[0]?.threadId);
 
     if (activeTabThreadIdForRuntimeSession && !threadIds.has(activeTabThreadIdForRuntimeSession)) {
       setActiveTabThreadBySession(({ [session.sessionId]: _removed, ...rest }) => rest);
@@ -2442,7 +2486,7 @@ const App = () => {
             </div>
           </div>
           <div className="viewbar" aria-label="View settings">
-              
+
           </div>
         </header>
 
@@ -2507,7 +2551,28 @@ const App = () => {
                       );
                     }}
                   />
-                  {simpleStatuses.length ? <RuntimeStatusOverlay statuses={simpleStatuses} /> : null}
+                  {showInlineStatusPanel ? (
+                    <RuntimeStatusOverlay
+                      statuses={simpleStatuses}
+                      expandedKeys={activeExpandedStatusKeys}
+                      onMinimize={() => {
+                        if (!activeSession?.threadId || !latestTurnStatusScope.key) return;
+                        setHiddenStatusTurns((current) => ({
+                          ...current,
+                          [activeSession.threadId]: latestTurnStatusScope.key
+                        }));
+                      }}
+                      onToggle={(key) => {
+                        if (!statusScopeKey) return;
+                        setExpandedStatusKeys((current) => {
+                          const keys = new Set(current[statusScopeKey] ?? []);
+                          if (keys.has(key)) keys.delete(key);
+                          else keys.add(key);
+                          return { ...current, [statusScopeKey]: [...keys] };
+                        });
+                      }}
+                    />
+                  ) : null}
 
                   <form
                     className="composer"
@@ -2718,10 +2783,10 @@ const App = () => {
                   >
                     <span className="threadPickerRowTitle">{threadCandidateTitle(candidate)}</span>
                     <span className="threadPickerRowMeta">
-	                      <code>{shortId(candidate.threadId)}</code>
-	                      <span>{formatThreadCandidateTime(candidate.updatedAt)}</span>
-	                      {isOpen ? <strong>open</strong> : null}
-	                      {acting ? <strong>restoring</strong> : null}
+                      <code>{shortId(candidate.threadId)}</code>
+                      <span>{formatThreadCandidateTime(candidate.updatedAt)}</span>
+                      {isOpen ? <strong>open</strong> : null}
+                      {acting ? <strong>restoring</strong> : null}
                     </span>
                   </button>
                 );
@@ -2840,6 +2905,7 @@ const App = () => {
           </section>
         </div>
       ) : null}
+
     </main>
   );
 };
@@ -3195,15 +3261,72 @@ const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
 );
 
-const RuntimeStatusOverlay = ({ statuses }: { statuses: RuntimeStatusView[] }) => (
+const RuntimeStatusOverlay = ({
+  statuses,
+  expandedKeys,
+  onMinimize,
+  onToggle
+}: {
+  statuses: RuntimeStatusView[];
+  expandedKeys: Set<string>;
+  onMinimize: () => void;
+  onToggle: (key: string) => void;
+}) => (
   <div className={`runtimeStatusOverlay ${runtimeStatusOverlayClass(statuses)}`} aria-live="polite" title={runtimeStatusTitle(statuses)}>
-    {statuses.map((status) => (
-      <span className="runtimeStatusItem" key={status.key}>
-        <span className="runtimeStatusLabel">{status.label}</span>
-        <span className="runtimeStatusViewport">
-          <span className="runtimeStatusTrack">{status.text}</span>
-        </span>
-      </span>
+    <RuntimeStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} />
+    <button type="button" className="runtimeStatusMinimize" onClick={onMinimize} aria-label="Minimize status" title="Minimize status">−</button>
+  </div>
+);
+
+const RuntimeStatusRows = ({
+  statuses,
+  expandedKeys,
+  onToggle
+}: {
+  statuses: RuntimeStatusView[];
+  expandedKeys?: Set<string>;
+  onToggle?: (key: string) => void;
+}) => (
+  <div className={`runtimeStatusRows${expandedKeys?.size ? " expanded" : ""}`}>
+    {statuses.map((status) => {
+      const expandable = Boolean(status.files?.length && onToggle);
+      const expanded = Boolean(expandedKeys?.has(status.key));
+      const content = (
+        <>
+          <span className="runtimeStatusLabel">{status.label}</span>
+          <span className="runtimeStatusViewport">
+            <span className="runtimeStatusTrack">{status.text}</span>
+          </span>
+          {expanded && status.files?.length ? <RuntimeStatusFiles files={status.files} /> : null}
+        </>
+      );
+      return expandable ? (
+        <button
+          type="button"
+          className={`runtimeStatusItem hasFiles${expanded ? " expanded" : ""}`}
+          key={status.key}
+          onClick={() => onToggle?.(status.key)}
+          aria-expanded={expanded}
+        >
+          {content}
+        </button>
+      ) : (
+        <div className="runtimeStatusItem" key={status.key}>
+          {content}
+        </div>
+      );
+    })}
+  </div>
+);
+
+const RuntimeStatusFiles = ({ files }: { files: RuntimeStatusFile[] }) => (
+  <div className="runtimeStatusFiles">
+    {files.map((file, index) => (
+      <div className="fileChangeRow" key={`${file.path}:${index}`} title={file.path}>
+        <span className="fileChangePath">{file.path}</span>
+        <span className="fileChangeStat added">+{file.added ?? "?"}</span>
+        <span className="fileChangeStat removed">-{file.removed ?? "?"}</span>
+      </div>
     ))}
   </div>
 );
@@ -3850,21 +3973,52 @@ const isSimpleMainView = (view: CodexRecordView) => {
   return payload.role === "user" || payload.role === "assistant";
 };
 
+const latestUserTurnStatusScope = (records: CodexRecord[]) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (!isUserInputRecord(records[index])) continue;
+    const record = records[index];
+    return {
+      key: record.id,
+      label: `after ${formatStatusScopeTime(record.timestamp)}`,
+      records: records.slice(index + 1)
+    };
+  }
+  return {
+    key: "thread",
+    label: "thread status",
+    records
+  };
+};
+
+const isUserInputRecord = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  if (!payload) return false;
+  if (record.type === "event_msg") return payload.type === "user_message";
+  return record.type === "response_item" && payload.type === "message" && payload.role === "user";
+};
+
+const formatStatusScopeTime = (timestamp: string | undefined) =>
+  timestamp ? `user message at ${formatDate(timestamp)}` : "latest user message";
+
 const runtimeStatusesFromRecords = (records: CodexRecord[]): RuntimeStatusView[] => {
   const statuses = new Map<string, RuntimeStatusView>();
+  let fileStatus: RuntimeStatusView | null = null;
   for (const record of records) {
+    const payload = asRecord(record.payload);
+    if (record.type === "response_item" && payload?.type === "file_change") {
+      fileStatus = mergeFileChangeStatus(fileStatus, fileChangeRuntimeStatus(record, payload));
+      continue;
+    }
     const status = runtimeStatusFromRecord(record);
     if (status) statuses.set(status.key, status);
   }
+  if (fileStatus) statuses.set(fileStatus.key, fileStatus);
   return [...statuses.values()].sort((left, right) => runtimeStatusPriority(left.key) - runtimeStatusPriority(right.key));
 };
 
 const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null => {
   const payload = asRecord(record.payload);
   const type = typeof payload?.type === "string" ? payload.type : "";
-  if (record.type === "response_item" && type === "file_change" && payload) {
-    return fileChangeRuntimeStatus(record, payload);
-  }
   if (record.type !== "event_msg") return null;
   if (!payload || type === "user_message" || type === "agent_message" || type === "patch_apply_end") return null;
   if (type === "session_meta" || type === "turn_context") return null;
@@ -3976,8 +4130,6 @@ const fileChangeRuntimeStatus = (record: CodexRecord, payload: Record<string, un
   const changed = files.length;
   const added = files.reduce((total, file) => total + (file.added ?? 0), 0);
   const removed = files.reduce((total, file) => total + (file.removed ?? 0), 0);
-  const firstFile = files[0];
-  const firstFileStats = firstFile ? fileChangeStatsText(firstFile) : "";
   return {
     key: "files",
     label: "Files",
@@ -3986,20 +4138,45 @@ const fileChangeRuntimeStatus = (record: CodexRecord, payload: Record<string, un
     text: [
       typeof payload.status === "string" ? payload.status : "completed",
       changed ? `${changed} file${changed === 1 ? "" : "s"}` : "files changed",
-      changed > 1 ? fileChangeTotalsText(added, removed) : null,
-      firstFile ? `${firstFile.path}${firstFileStats ? ` ${firstFileStats}` : ""}` : null
-    ].filter(Boolean).join(" · ")
+      fileChangeTotalsText(added, removed)
+    ].filter(Boolean).join(" · "),
+    files
   };
 };
 
-const fileChangeStatsText = (file: { added?: number; removed?: number }) => [
-  typeof file.added === "number" ? `+${file.added}` : null,
-  typeof file.removed === "number" ? `-${file.removed}` : null
-].filter(Boolean).join(" ");
+const mergeFileChangeStatus = (
+  current: RuntimeStatusView | null,
+  incoming: RuntimeStatusView
+): RuntimeStatusView => {
+  if (!current) return incoming;
+  const filesByPath = new Map<string, RuntimeStatusFile>();
+  for (const file of [...current.files ?? [], ...incoming.files ?? []]) {
+    const existing = filesByPath.get(file.path);
+    filesByPath.set(file.path, {
+      path: file.path,
+      added: (existing?.added ?? 0) + (file.added ?? 0),
+      removed: (existing?.removed ?? 0) + (file.removed ?? 0)
+    });
+  }
+  const files = [...filesByPath.values()];
+  const added = files.reduce((total, file) => total + (file.added ?? 0), 0);
+  const removed = files.reduce((total, file) => total + (file.removed ?? 0), 0);
+  const failed = current.status === "failed" || incoming.status === "failed";
+  return {
+    ...incoming,
+    status: failed ? "failed" : "completed",
+    text: [
+      failed ? "failed" : "completed",
+      files.length ? `${files.length} file${files.length === 1 ? "" : "s"}` : "files changed",
+      fileChangeTotalsText(added, removed)
+    ].filter(Boolean).join(" · "),
+    files
+  };
+};
 
 const fileChangeTotalsText = (added: number, removed: number) => [
-  added ? `+${added}` : null,
-  removed ? `-${removed}` : null
+  `+${added}`,
+  `-${removed}`
 ].filter(Boolean).join(" ");
 
 const runtimeStatusPriority = (key: string) => {
