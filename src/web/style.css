@@ -2522,6 +2522,115 @@ textarea {
   padding: 10px 12px;
 }
 
+.app.vscodeSurface {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  background: #f4f6f1;
+}
+
+.app.vscodeSurface .workspace {
+  grid-column: 1;
+}
+
+.app.vscodeSurface .topbar {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 8px 10px;
+}
+
+.app.vscodeSurface .viewbar {
+  display: none;
+}
+
+.app.vscodeSurface .workspaceTitle {
+  gap: 3px;
+}
+
+.app.vscodeSurface .workspaceTitle .workspacePath {
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.app.vscodeSurface .workspaceTitle .workspaceMeta {
+  gap: 6px;
+  font-size: 10px;
+}
+
+.app.vscodeSurface .workspaceTitle .workspaceRuntimeSessionState {
+  padding: 1px 5px;
+  font-size: 10px;
+}
+
+.app.vscodeSurface .workspaceTitle .workspaceThreadId {
+  font-size: 10px;
+}
+
+.app.vscodeSurface .workspaceThreadTabs.ant-tabs > .ant-tabs-nav {
+  padding: 0 8px;
+}
+
+.app.vscodeSurface .workspaceThreadTabs .ant-tabs-tab {
+  min-height: 40px;
+  padding: 5px 8px !important;
+}
+
+.app.vscodeSurface .workspaceThreadTabLabel span {
+  max-width: 8em;
+  font-size: 11px;
+}
+
+.app.vscodeSurface .workspaceThreadTabLabel code {
+  font-size: 10px;
+}
+
+.app.vscodeSurface .threadTabActions {
+  gap: 4px;
+}
+
+.app.vscodeSurface .threadTabActions .switchControl {
+  display: none;
+}
+
+.app.vscodeSurface .threadTabAddButton {
+  width: 28px;
+  min-height: 28px;
+}
+
+.app.vscodeSurface .messages {
+  padding: 12px 10px 10px;
+}
+
+.app.vscodeSurface .messages > div {
+  max-width: 100%;
+}
+
+.app.vscodeSurface .message {
+  margin-bottom: 10px;
+  border-left-width: 3px;
+  padding: 9px 10px 16px;
+}
+
+.app.vscodeSurface .message.user {
+  min-width: 0;
+  max-width: min(94%, 520px);
+  border-right-width: 3px;
+}
+
+.app.vscodeSurface .messageHeader,
+.app.vscodeSurface .messageStatus,
+.app.vscodeSurface .messageMeta,
+.app.vscodeSurface .toolPreviewMeta,
+.app.vscodeSurface .toolPreviewBody,
+.app.vscodeSurface .toolCommandLine,
+.app.vscodeSurface .updatePlanExplanation,
+.app.vscodeSurface .updatePlanStep {
+  font-size: 11px;
+}
+
+.app.vscodeSurface .messageMarkdown {
+  font-size: 13px;
+}
+
 @media (max-width: 860px) {
   .app {
     grid-template-columns: 1fr;

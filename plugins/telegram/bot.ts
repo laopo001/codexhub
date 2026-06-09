@@ -1,10 +1,10 @@
 import { Telegraf } from "telegraf";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CodexRecord } from "../core/codexRecord.js";
-import { recordToView, type CodexRecordView } from "../core/codexRecordView.js";
-import { loadDotEnv } from "../core/dotenv.js";
-import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../shared/compactRecordViews.js";
+import type { CodexRecord } from "../../src/core/codexRecord.js";
+import { recordToView, type CodexRecordView } from "../../src/core/codexRecordView.js";
+import { loadDotEnv } from "../../src/core/dotenv.js";
+import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../../src/shared/compactRecordViews.js";
 
 type ThreadSummary = {
   threadId: string;
@@ -684,12 +684,26 @@ export const startTelegramBotFromEnv = async (options: {
 
 const isCliEntrypoint = () => {
   const entrypoint = process.argv[1];
-  return Boolean(entrypoint && path.resolve(entrypoint) === fileURLToPath(import.meta.url));
+  const modulePath = moduleFilePath();
+  return Boolean(entrypoint && modulePath && path.resolve(entrypoint) === modulePath);
+};
+
+const moduleFilePath = () => {
+  try {
+    return fileURLToPath(import.meta.url);
+  } catch {
+    return "";
+  }
 };
 
 if (isCliEntrypoint()) {
-  await loadDotEnv();
-  const handle = await startTelegramBotFromEnv();
-  process.once("SIGINT", () => handle?.stop("SIGINT"));
-  process.once("SIGTERM", () => handle?.stop("SIGTERM"));
+  void (async () => {
+    await loadDotEnv();
+    const handle = await startTelegramBotFromEnv();
+    process.once("SIGINT", () => handle?.stop("SIGINT"));
+    process.once("SIGTERM", () => handle?.stop("SIGTERM"));
+  })().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
 }

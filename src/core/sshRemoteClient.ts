@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,13 +38,26 @@ export const readSshRemoteClientBundle = async (expectedHash: string) => {
 const candidateRemoteClientPaths = () => {
   const configured = process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH?.trim();
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const packageRoot = findPackageRoot(moduleDir);
   return [
     ...(configured ? [path.resolve(configured)] : []),
     path.resolve(moduleDir, "../ssh/remote-client.cjs"),
+    path.resolve(packageRoot, "dist-node/ssh/remote-client.cjs"),
     path.resolve(process.cwd(), "dist-node/ssh/remote-client.cjs"),
     path.resolve(moduleDir, "../ssh/remote-client.mjs"),
+    path.resolve(packageRoot, "dist-node/ssh/remote-client.mjs"),
     path.resolve(process.cwd(), "dist-node/ssh/remote-client.mjs")
   ];
+};
+
+const findPackageRoot = (start: string) => {
+  let current = path.resolve(start);
+  while (true) {
+    if (existsSync(path.join(current, "package.json"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return path.resolve(start);
+    current = parent;
+  }
 };
 
 const readBundle = async (filePath: string): Promise<SshRemoteClientBundle | null> => {

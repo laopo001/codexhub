@@ -368,7 +368,9 @@ type ThreadUsage = {
   observedAt: string | null;
 };
 
-const storageKey = "codexhub-ui-state-v5";
+const webSurface = new URLSearchParams(window.location.search).get("surface") === "vscode" ? "vscode" : "default";
+const isVscodeSurface = webSurface === "vscode";
+const storageKey = isVscodeSurface ? "codexhub-ui-state-vscode-v1" : "codexhub-ui-state-v5";
 const legacyStorageKey = "codexhub-ui-state-v4";
 const modelOptions: Array<{ value: ModelSelection; label: string }> = [
   { value: "auto", label: "Auto" },
@@ -487,7 +489,7 @@ const App = () => {
   const [composerMode, setComposerMode] = useState<ComposerMode>("chat");
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(isVscodeSurface);
   const [collapsedProjectMachineKeys, setCollapsedProjectMachineKeys] = useState<string[]>([]);
   const [offlineProjectsCollapsed, setOfflineProjectsCollapsed] = useState(true);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
@@ -853,11 +855,11 @@ const App = () => {
       apiJson<{ defaultWorkingDirectory?: string | null } & SystemStatus>("/api/health"),
       apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions"),
       apiJson<ProjectsPayload>("/api/projects"),
-      apiJson<{ hosts?: SshHost[] }>("/api/ssh/hosts").catch(() => ({ hosts: [] })),
-      apiJson<{ hosts?: SshHost[] }>("/api/ssh/config-hosts").catch(() => ({ hosts: [] })),
-      apiJson<{ connections?: SshConnection[] }>("/api/ssh/connections").catch(() => ({ connections: [] })),
-      apiJson<{ plugins?: PluginSummary[] }>("/api/plugins").catch(() => ({ plugins: [] })),
-      apiJson<{ tasks?: LocalTask[] }>("/api/tasks").catch(() => ({ tasks: [] }))
+      isVscodeSurface ? Promise.resolve({ hosts: [] }) : apiJson<{ hosts?: SshHost[] }>("/api/ssh/hosts").catch(() => ({ hosts: [] })),
+      isVscodeSurface ? Promise.resolve({ hosts: [] }) : apiJson<{ hosts?: SshHost[] }>("/api/ssh/config-hosts").catch(() => ({ hosts: [] })),
+      isVscodeSurface ? Promise.resolve({ connections: [] }) : apiJson<{ connections?: SshConnection[] }>("/api/ssh/connections").catch(() => ({ connections: [] })),
+      isVscodeSurface ? Promise.resolve({ plugins: [] }) : apiJson<{ plugins?: PluginSummary[] }>("/api/plugins").catch(() => ({ plugins: [] })),
+      isVscodeSurface ? Promise.resolve({ tasks: [] }) : apiJson<{ tasks?: LocalTask[] }>("/api/tasks").catch(() => ({ tasks: [] }))
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
     const loadedRuntimeSessions = normalizeRuntimeSessions(sessionData.sessions);
@@ -880,7 +882,7 @@ const App = () => {
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     setComposerMode("chat");
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
-    setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
+    setSidebarCollapsed(isVscodeSurface ? true : window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     setSelectedProjectKey(saved?.selectedProjectKey ?? "");
     setCollapsedProjectMachineKeys(saved?.collapsedProjectMachineKeys ?? []);
     setMachines(loadedMachines);
@@ -1937,8 +1939,8 @@ const App = () => {
   };
 
   return (
-    <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
-      {!sidebarCollapsed ? (
+    <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""} ${isVscodeSurface ? "vscodeSurface" : ""}`}>
+      {!isVscodeSurface && !sidebarCollapsed ? (
         <button
           type="button"
           className="sidebarScrim"
@@ -1946,7 +1948,7 @@ const App = () => {
           aria-label="Hide menu"
         />
       ) : null}
-      <aside className="sidebar">
+      {!isVscodeSurface ? <aside className="sidebar">
         <div className="brand">
           <div>
             <h1>Codex Hub</h1>
@@ -2281,19 +2283,21 @@ const App = () => {
           {taskError ? <div className="projectOpenError">{taskError}</div> : null}
         </section>
 
-      </aside>
+      </aside> : null}
 
       <section className="workspace">
         <header className="topbar">
-          <button
-            type="button"
-            className="sidebarPanelToggle"
-            onClick={() => setSidebarCollapsed((current) => !current)}
-            aria-label={sidebarCollapsed ? "Show menu" : "Hide menu"}
-            title={sidebarCollapsed ? "Show menu" : "Hide menu"}
-          >
-            {sidebarCollapsed ? "Menu" : "Hide"}
-          </button>
+          {!isVscodeSurface ? (
+            <button
+              type="button"
+              className="sidebarPanelToggle"
+              onClick={() => setSidebarCollapsed((current) => !current)}
+              aria-label={sidebarCollapsed ? "Show menu" : "Hide menu"}
+              title={sidebarCollapsed ? "Show menu" : "Hide menu"}
+            >
+              {sidebarCollapsed ? "Menu" : "Hide"}
+            </button>
+          ) : null}
           <div className="workspaceTitle">
             <span className="workspacePath" title={workspacePath}>
               {workspacePath || "No connected codexhub"}
@@ -3842,7 +3846,8 @@ const readStoredUiState = (): {
   collapsedProjectMachineKeys?: string[];
 } | null => {
   try {
-    const parsed = JSON.parse(localStorage.getItem(storageKey) ?? localStorage.getItem(legacyStorageKey) ?? "null");
+    const fallback = isVscodeSurface ? null : localStorage.getItem(legacyStorageKey);
+    const parsed = JSON.parse(localStorage.getItem(storageKey) ?? fallback ?? "null");
     if (!parsed || typeof parsed !== "object") return null;
     return {
       activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,

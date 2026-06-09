@@ -3,16 +3,15 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": "dist-node",
-    "rootDir": "src",
+    "rootDir": ".",
     "sourceMap": false,
     "declaration": false
   },
   "include": [
     "src/cli/**/*.ts",
     "src/core/**/*.ts",
-    "src/electron/**/*.ts",
     "src/server/**/*.ts",
     "src/shared/**/*.ts",
-    "src/telegram/**/*.ts"
+    "plugins/**/*.ts"
   ]
 }

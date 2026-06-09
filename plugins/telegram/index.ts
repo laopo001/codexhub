@@ -1,5 +1,7 @@
-import type { BuiltinPluginDefinition, PluginIntegrationRuntimeState } from "../core/pluginHub.js";
-import { startTelegramBotFromEnv, type TelegramBotHandle } from "../telegram/index.js";
+import type { BuiltinPluginDefinition, PluginIntegrationRuntimeState } from "../../src/core/pluginHub.js";
+import { startTelegramBotFromEnv, type TelegramBotHandle } from "./bot.js";
+
+export type { TelegramBotHandle };
 
 export const telegramPluginId = "codexhub.telegram";
 export const telegramIntegrationType = "telegram";

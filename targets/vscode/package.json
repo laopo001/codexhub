@@ -1,0 +1,63 @@
+{
+  "name": "codexhub",
+  "displayName": "Codex Hub",
+  "description": "Local Codex Hub workspace chat inside VS Code.",
+  "version": "0.0.0",
+  "publisher": "dadigua",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/laopo001/codexhub.git"
+  },
+  "files": [
+    "extension.cjs",
+    "dist",
+    "media",
+    "README.md"
+  ],
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onView:codexhub.workspaceView",
+    "onCommand:codexhub.refresh",
+    "onCommand:codexhub.openInBrowser"
+  ],
+  "main": "./extension.cjs",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexhub.refresh",
+        "title": "Codex Hub: Refresh"
+      },
+      {
+        "command": "codexhub.openInBrowser",
+        "title": "Codex Hub: Open in Browser"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codexhub",
+          "title": "Codex Hub",
+          "icon": "media/codexhub.svg"
+        }
+      ]
+    },
+    "views": {
+      "codexhub": [
+        {
+          "id": "codexhub.workspaceView",
+          "name": "Workspace",
+          "type": "webview"
+        }
+      ]
+    }
+  }
+}

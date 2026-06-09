@@ -2,7 +2,7 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,9 +22,9 @@ import {
   startTelegramPlugin,
   telegramBuiltinPlugin,
   telegramIntegrationType,
-  telegramPluginRuntimeState
-} from "../plugins/telegram.js";
-import type { TelegramBotHandle } from "../telegram/index.js";
+  telegramPluginRuntimeState,
+  type TelegramBotHandle
+} from "../../plugins/telegram/index.js";
 
 const inputSchema = z.union([
   z.string(),
@@ -306,10 +306,9 @@ const startSse = (raw: SseStream) => {
   };
 };
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
-  : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? path.join(packageRoot, "dist"));
+  : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? path.join(packageRoot(), "dist"));
 const sessionOfflineTimeoutMs = () =>
   envMs("CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS", envMs("CODEX_HUB_WORKER_OFFLINE_TIMEOUT_MS", 45_000));
 const sessionOfflineRetentionMs = () =>
@@ -321,11 +320,38 @@ const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
 };
+const packageRoot = () => findPackageRoot(moduleFilePath() ? path.dirname(moduleFilePath()) : process.cwd());
+const findPackageRoot = (start: string) => {
+  let current = path.resolve(start);
+  while (true) {
+    if (existsSync(path.join(current, "package.json"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return path.resolve(start);
+    current = parent;
+  }
+};
+const moduleFilePath = () => {
+  try {
+    return fileURLToPath(import.meta.url);
+  } catch {
+    return "";
+  }
+};
+const parseSurface = (value: string | undefined): "default" | "vscode" =>
+  value === "vscode" ? "vscode" : "default";
+const resolveServerFeatures = (overrides: Partial<ServerFeatureOptions> = {}): ServerFeatureOptions => ({
+  localMachine: overrides.localMachine ?? localMachineEnabled(),
+  ssh: overrides.ssh ?? true,
+  tasks: overrides.tasks ?? true,
+  integrations: overrides.integrations ?? true
+});
 
 export type ServerStartOptions = {
   host?: string;
   port?: number;
   staticDirectory?: string;
+  surface?: "default" | "vscode";
+  features?: Partial<ServerFeatureOptions>;
 };
 
 export type ServerHandle = {
@@ -335,8 +361,17 @@ export type ServerHandle = {
   stop: () => Promise<void>;
 };
 
+export type ServerFeatureOptions = {
+  localMachine: boolean;
+  ssh: boolean;
+  tasks: boolean;
+  integrations: boolean;
+};
+
 export const startServer = async (options: ServerStartOptions = {}): Promise<ServerHandle> => {
   const config = loadConfig({ host: options.host, port: options.port });
+  const surface = options.surface ?? parseSurface(process.env.CODEX_HUB_SURFACE);
+  const features = resolveServerFeatures(options.features);
   const state = await CodexhubServerState.load();
   let threads: ThreadHub;
   const captureRuntimeState = () => {
@@ -357,7 +392,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let taskSeq = 0;
   let connectionSeq = 0;
   const machines = new MachineHub({ onChange: () => publishProjects() });
-  const sshRemoteClient = await resolveSshRemoteClientBundle();
+  const sshRemoteClient = features.ssh ? await resolveSshRemoteClientBundle() : null;
   const sshMachines = new SshMachineManager({
     localHost: config.host,
     localPort: config.port,
@@ -392,12 +427,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   sessionSweep.unref?.();
   const runningTasks = new Set<string>();
   const triggeredTaskMinutes = new Map<string, string>();
-  const taskSweep = setInterval(() => void scanLocalTasks(new Date()), taskScanIntervalMs());
-  taskSweep.unref?.();
+  const taskSweep = features.tasks
+    ? setInterval(() => void scanLocalTasks(new Date()), taskScanIntervalMs())
+    : null;
+  taskSweep?.unref?.();
 
   app.addHook("onClose", async () => {
     clearInterval(sessionSweep);
-    clearInterval(taskSweep);
+    if (taskSweep) clearInterval(taskSweep);
     await sshMachines.stopAll();
     await localMachine?.stop();
     telegramBot?.stop("server closing");
@@ -497,7 +534,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return {
       seq: connectionSeq,
       kind: "connections" as const,
-      connections: sshMachines.listConnections()
+      connections: features.ssh ? sshMachines.listConnections() : []
     };
   }
 
@@ -511,10 +548,12 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   async function localSshConfigHostsByAlias() {
+    if (!features.ssh) return new Map();
     return new Map((await listSshHosts()).map((host) => [host.alias, host]));
   }
 
   async function listCodexhubSshHosts() {
+    if (!features.ssh) return [];
     const configHostsByAlias = await localSshConfigHostsByAlias();
     return state.listSshHosts().map((storedHost) => {
       const configHost = configHostsByAlias.get(storedHost.alias);
@@ -533,6 +572,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   async function autoConnectSavedSshHosts(reason: string) {
+    if (!features.ssh) return;
     if (!sshAutoConnectEnabled()) return;
     const hosts = await listCodexhubSshHosts();
     for (const host of hosts) {
@@ -541,6 +581,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   async function autoConnectSavedSshHost(alias: string, reason: string) {
+    if (!features.ssh) return;
     if (!sshAutoConnectEnabled()) return;
     if (sshMachines.listConnections().some((connection) => connection.host === alias && connection.status !== "exited")) return;
     const configHostsByAlias = await localSshConfigHostsByAlias();
@@ -572,6 +613,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   async function runLocalTask(taskId: string) {
+    if (!features.tasks) throw new Error("Tasks are disabled for this codexhub surface.");
     const task = state.getTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
     if (runningTasks.has(task.taskId)) {
@@ -660,6 +702,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   async function scanLocalTasks(now: Date) {
+    if (!features.tasks) return;
     for (const task of state.listTasks()) {
       if (!task.enabled) continue;
       if (!cronMatches(task.schedule, now, defaultTaskTimezone)) continue;
@@ -674,6 +717,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   async function startBuiltinIntegrations() {
+    if (!features.integrations) {
+      plugins.setIntegrationState(telegramIntegrationType, telegramPluginRuntimeState(false));
+      return;
+    }
     plugins.setIntegrationState(telegramIntegrationType, telegramPluginRuntimeState(false));
     if (await plugins.hasEnabledBuiltinIntegration(telegramIntegrationType)) {
       telegramBot = await startTelegramPlugin({
@@ -690,6 +737,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     build: process.env.CODEX_HUB_BUILD_ID ?? null,
     host: config.host,
     port: config.port,
+    surface,
+    features,
     staticDirectory,
     statePath: state.path,
     model: config.defaultThreadOptions.model ?? null,
@@ -945,7 +994,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }));
 
   app.get("/api/ssh/config-hosts", async () => ({
-    hosts: await listSshHosts()
+    hosts: features.ssh ? await listSshHosts() : []
   }));
 
   app.get("/api/ssh/hosts", async () => ({
@@ -953,6 +1002,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }));
 
   app.post("/api/ssh/hosts", async (request, reply) => {
+    if (!features.ssh) {
+      reply.code(404);
+      return { error: "ssh_disabled" };
+    }
     const payload = sshHostAliasSchema.parse(request.body);
     const alias = payload.alias.trim();
     const configHostsByAlias = await localSshConfigHostsByAlias();
@@ -969,7 +1022,11 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     };
   });
 
-  app.delete("/api/ssh/hosts/:alias", async (request) => {
+  app.delete("/api/ssh/hosts/:alias", async (request, reply) => {
+    if (!features.ssh) {
+      reply.code(404);
+      return { error: "ssh_disabled" };
+    }
     const params = sshHostAliasSchema.parse(request.params);
     await stopSshConnectionsForHost(params.alias);
     return {
@@ -980,10 +1037,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
 
   app.get("/api/ssh/connections", async () => ({
-    connections: sshMachines.listConnections()
+    connections: features.ssh ? sshMachines.listConnections() : []
   }));
 
   app.get("/api/ssh/remote-client/:hash", async (request, reply) => {
+    if (!features.ssh) {
+      reply.code(404);
+      return { error: "ssh_disabled" };
+    }
     const params = z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(request.params);
     const bundle = await readSshRemoteClientBundle(params.hash);
     if (!bundle) {
@@ -1031,6 +1092,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
 
   app.post("/api/ssh/connect", async (request, reply) => {
+    if (!features.ssh) {
+      reply.code(404);
+      return { error: "ssh_disabled" };
+    }
     const payload = sshConnectSchema.parse(request.body);
     try {
       return {
@@ -1044,6 +1109,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
 
   app.delete("/api/ssh/connections/:connectionId", async (request, reply) => {
+    if (!features.ssh) {
+      reply.code(404);
+      return { error: "ssh_disabled" };
+    }
     const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
     try {
       return {
@@ -1536,9 +1605,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   await app.listen({ host: config.host, port: config.port });
 
-  await autoConnectSavedSshHosts("startup");
+  if (features.ssh) await autoConnectSavedSshHosts("startup");
 
-  if (localMachineEnabled()) {
+  if (features.localMachine) {
     localMachine = startCodexhubMachine({
       apiBase: localApiBaseUrl(config.host, config.port),
       machineId: process.env.CODEX_HUB_LOCAL_MACHINE_ID,
@@ -1642,12 +1711,14 @@ const sshAutoConnectEnabled = () => process.env.CODEX_HUB_SSH_AUTOCONNECT !== "0
 
 const isDirectEntryPoint = () => {
   const entrypoint = process.argv[1];
-  return Boolean(entrypoint && path.resolve(entrypoint) === fileURLToPath(import.meta.url));
+  return Boolean(entrypoint && path.resolve(entrypoint) === moduleFilePath());
 };
 
 if (isDirectEntryPoint()) {
-  await loadDotEnv();
-  startServer().catch((error) => {
+  void (async () => {
+    await loadDotEnv();
+    await startServer();
+  })().catch((error) => {
     console.error(error);
     process.exit(1);
   });

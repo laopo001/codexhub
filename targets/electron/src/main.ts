@@ -1,7 +1,6 @@
 import { app as electronApp, BrowserWindow, shell } from "electron";
-import net from "node:net";
-import { loadDotEnv } from "../core/dotenv.js";
-import { startServer, type ServerHandle } from "../server/index.js";
+import type { ServerHandle } from "../../../src/server/index.js";
+import { localServerUrl, parseEmbeddedPort, startEmbeddedServer as startSharedEmbeddedServer } from "../../../src/server/embedded.js";
 
 let mainWindow: BrowserWindow | null = null;
 let server: ServerHandle | null = null;
@@ -9,7 +8,7 @@ let allowQuit = false;
 let stoppingServer: Promise<void> | null = null;
 
 const createWindow = async () => {
-  if (!server) server = await startEmbeddedServer();
+  if (!server) server = await startElectronServer();
 
   const window = new BrowserWindow({
     width: 1280,
@@ -42,19 +41,15 @@ const createWindow = async () => {
   }
 };
 
-const startEmbeddedServer = async () => {
-  await loadDotEnv();
+const startElectronServer = async () => {
   const host = process.env.CODEX_HUB_ELECTRON_HOST ?? "127.0.0.1";
   const explicitPort = process.env.CODEX_HUB_ELECTRON_PORT ?? process.env.CODEX_HUB_PORT;
-  const preferredPort = parsePort(explicitPort ?? "18788");
-  try {
-    return await startServer({ host, port: preferredPort });
-  } catch (error) {
-    if (explicitPort || !isAddressInUse(error)) throw error;
-    const fallbackPort = await findFreePort(host);
-    console.error(`codexhub electron port ${preferredPort} is busy; using ${fallbackPort}`);
-    return await startServer({ host, port: fallbackPort });
-  }
+  return await startSharedEmbeddedServer({
+    host,
+    preferredPort: parseEmbeddedPort(explicitPort ?? "18788", "Electron server port"),
+    explicitPort: Boolean(explicitPort),
+    logPrefix: "codexhub electron"
+  });
 };
 
 const stopServer = async () => {
@@ -71,38 +66,8 @@ const stopServer = async () => {
   return stoppingServer;
 };
 
-const localServerUrl = (handle: ServerHandle) => {
-  const host = handle.host === "0.0.0.0" || handle.host === "::" ? "127.0.0.1" : handle.host;
-  return `http://${host}:${handle.port}`;
-};
-
-const parsePort = (value: string) => {
-  const port = Number(value);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw new Error(`Invalid Electron server port: ${value}`);
-  }
-  return port;
-};
-
-const isAddressInUse = (error: unknown) =>
-  error instanceof Error && (error as NodeJS.ErrnoException).code === "EADDRINUSE";
-
-const findFreePort = async (host: string) => await new Promise<number>((resolve, reject) => {
-  const server = net.createServer();
-  server.once("error", reject);
-  server.listen(0, host, () => {
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      server.close(() => reject(new Error("Could not allocate Electron server port.")));
-      return;
-    }
-    const port = address.port;
-    server.close(() => resolve(port));
-  });
-});
-
 const runSmoke = async () => {
-  server = await startEmbeddedServer();
+  server = await startElectronServer();
   const url = localServerUrl(server);
   const response = await fetch(new URL("/api/health", url));
   if (!response.ok) throw new Error(`Electron smoke health failed: HTTP ${response.status}`);
