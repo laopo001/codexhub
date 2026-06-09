@@ -2451,6 +2451,7 @@ const App = () => {
                         <MessageCard
                           message={message}
                           showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
+                          showTimestamp={!(messageDisplayMode === "compact" && message.role === "tool")}
                           renderToolPreview={messageDisplayMode === "compact"}
                           renderMode={renderMode}
                           markdownEnabled={markdownEnabled}
@@ -2801,6 +2802,7 @@ const App = () => {
 const MessageCard = ({
   message,
   showStatus = true,
+  showTimestamp = true,
   renderToolPreview = true,
   renderMode,
   markdownEnabled,
@@ -2811,6 +2813,7 @@ const MessageCard = ({
 }: {
   message: WebRecordView;
   showStatus?: boolean;
+  showTimestamp?: boolean;
   renderToolPreview?: boolean;
   renderMode: MessageRenderMode;
   markdownEnabled: boolean;
@@ -2821,6 +2824,7 @@ const MessageCard = ({
 }) => {
   const toolBody = renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined) : null;
   const hasToolBody = toolBody !== null;
+  const hasMessageMeta = (showTimestamp && message.at) || message.usage || markdownEnabled || onFork || onRollback;
   return (
     <article
       className={`message ${message.role} ${hasToolBody ? "richTool" : ""} ${onInspect ? "inspectable" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
@@ -2861,9 +2865,9 @@ const MessageCard = ({
           ) : null)}
         </div>
       ) : null}
-      {message.at || message.usage || markdownEnabled || onFork || onRollback ? (
-        <footer className="messageMeta" title={formatMessageMetaTitle(message)} onClick={(event) => event.stopPropagation()}>
-          <span>{formatMessageMeta(message)}</span>
+      {hasMessageMeta ? (
+        <footer className="messageMeta" title={formatMessageMetaTitle(message, { showTimestamp })} onClick={(event) => event.stopPropagation()}>
+          <span>{formatMessageMeta(message, { showTimestamp })}</span>
           {markdownEnabled && onRenderModeChange ? (
             <Switch
               size="small"
@@ -3591,15 +3595,16 @@ const formatCompactNumber = (value: number) => {
   return String(value);
 };
 
-const formatMessageMeta = (message: CodexRecordView) => [
-  message.at ? formatMessageTime(message.at) : null,
+const formatMessageMeta = (message: CodexRecordView, options: { showTimestamp?: boolean } = {}) => [
+  options.showTimestamp === false ? null : message.at ? formatMessageTime(message.at) : null,
   message.usage ? `${formatCompactNumber(usageTotal(message.usage))} tokens` : null
 ].filter(Boolean).join(" · ");
 
-const formatMessageMetaTitle = (message: CodexRecordView) => {
-  if (!message.usage) return message.at ? formatDate(message.at) : undefined;
+const formatMessageMetaTitle = (message: CodexRecordView, options: { showTimestamp?: boolean } = {}) => {
+  const timestamp = options.showTimestamp === false ? null : message.at;
+  if (!message.usage) return timestamp ? formatDate(timestamp) : undefined;
   return [
-    message.at ? formatDate(message.at) : null,
+    timestamp ? formatDate(timestamp) : null,
     `input ${formatCompactNumber(message.usage.input_tokens)}`,
     `cached ${formatCompactNumber(message.usage.cached_input_tokens)}`,
     `output ${formatCompactNumber(message.usage.output_tokens)}`,
