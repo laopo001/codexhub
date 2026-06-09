@@ -42,7 +42,11 @@ const inputSchema = z.union([
 
 const threadRunOptionsSchema = z.object({
   model: z.string().min(1).nullable().optional(),
-  modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional()
+  modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
+  collaborationMode: z.enum(["default", "plan"]).nullable().optional(),
+  goalMode: z.boolean().nullable().optional(),
+  goalObjective: z.string().min(1).nullable().optional(),
+  goalTokenBudget: z.number().int().positive().nullable().optional()
 });
 
 const sessionRegistrationSchema = z.object({

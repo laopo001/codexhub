@@ -324,6 +324,7 @@ type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 type ThreadStatus = "running" | "idle";
 type ModelSelection = string;
 type ReasoningSelection = "auto" | ReasoningEffort;
+type ComposerMode = "chat" | "plan" | "goal";
 type MessageDisplayMode = "compact" | "detailed";
 type MessageRenderMode = "markdown" | "raw";
 type ConnectionMode = "local" | "ssh" | "registered";
@@ -385,6 +386,11 @@ const reasoningOptions: Array<{ value: ReasoningSelection; label: string }> = [
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
   { value: "xhigh", label: "XHigh" }
+];
+const composerModeOptions: Array<{ value: ComposerMode; label: string }> = [
+  { value: "chat", label: "Chat" },
+  { value: "plan", label: "Plan" },
+  { value: "goal", label: "Goal" }
 ];
 
 SyntaxHighlighter.registerLanguage("bash", bash);
@@ -478,6 +484,7 @@ const App = () => {
   });
   const [selectedModel, setSelectedModel] = useState<ModelSelection>("auto");
   const [selectedReasoning, setSelectedReasoning] = useState<ReasoningSelection>("auto");
+  const [composerMode, setComposerMode] = useState<ComposerMode>("chat");
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -871,6 +878,7 @@ const App = () => {
     setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
     setSelectedModel(saved?.selectedModel ?? "auto");
     setSelectedReasoning(saved?.selectedReasoning ?? "auto");
+    setComposerMode("chat");
     setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     setSelectedProjectKey(saved?.selectedProjectKey ?? "");
@@ -1443,7 +1451,11 @@ const App = () => {
     const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input, source: "web", options: selectedThreadOptions(selectedModel, selectedReasoning) })
+      body: JSON.stringify({
+        input,
+        source: "web",
+        options: selectedThreadOptions(selectedModel, selectedReasoning, composerMode)
+      })
     });
     if (!response.ok) {
       const text = await response.text();
@@ -2449,6 +2461,20 @@ const App = () => {
                                 </div>
                               ) : null}
                             </div>
+                            <div className="composerModeSegmented" role="radiogroup" aria-label="Composer mode">
+                              {composerModeOptions.map((option) => (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  className={`composerModeOption${composerMode === option.value ? " active" : ""}`}
+                                  role="radio"
+                                  aria-checked={composerMode === option.value}
+                                  onClick={() => setComposerMode(option.value)}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                           <div className="composerRightActions">
                             {renderComposerRuntimeControls("inline")}
@@ -3402,9 +3428,15 @@ const upsertThreadSummary = (threads: ThreadSummary[], thread: ThreadSummary) =>
   });
 };
 
-const selectedThreadOptions = (model: ModelSelection, reasoning: ReasoningSelection) => ({
+const selectedThreadOptions = (
+  model: ModelSelection,
+  reasoning: ReasoningSelection,
+  composerMode: ComposerMode
+) => ({
   model: model === "auto" ? null : model,
-  modelReasoningEffort: reasoning === "auto" ? null : reasoning
+  modelReasoningEffort: reasoning === "auto" ? null : reasoning,
+  ...(composerMode === "plan" ? { collaborationMode: "plan" as const } : {}),
+  ...(composerMode === "goal" ? { goalMode: true } : {})
 });
 
 const isModelCommand = (text: string) => /^\/model\s*$/i.test(text);

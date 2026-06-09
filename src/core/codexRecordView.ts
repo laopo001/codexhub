@@ -100,6 +100,17 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
     } : null;
   }
 
+  if (typeof payload.message === "string") {
+    return {
+      id: record.id,
+      role: "event",
+      label: typeof payload.type === "string" ? payload.type : "event",
+      text: payload.message,
+      at: record.timestamp,
+      record
+    };
+  }
+
   return null;
 };
 

@@ -49,6 +49,10 @@ export type RuntimeSessionSummary = {
 export type ThreadRunOptions = {
   model?: string | null;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
+  collaborationMode?: "default" | "plan" | null;
+  goalMode?: boolean | null;
+  goalObjective?: string | null;
+  goalTokenBudget?: number | null;
 };
 
 export type ThreadDetail = ThreadSummary & {
@@ -900,6 +904,23 @@ export class ThreadHub {
       return;
     }
 
+    if (method === "thread/goal/updated") {
+      const goal = asRecord(params.goal);
+      this.appendRuntimeRecord(thread, "event_msg", {
+        type: "thread_goal_updated",
+        message: formatThreadGoalMessage(goal)
+      });
+      return;
+    }
+
+    if (method === "thread/goal/cleared") {
+      this.appendRuntimeRecord(thread, "event_msg", {
+        type: "thread_goal_cleared",
+        message: "Goal cleared"
+      });
+      return;
+    }
+
     if (method === "turn/started") {
       return;
     }
@@ -1461,6 +1482,15 @@ const slashHelpMessage = () => [
 ].join("\n");
 
 const formatModel = (options: ThreadOptions) => options.model ?? "auto";
+
+const formatThreadGoalMessage = (goal: Record<string, unknown> | null) => {
+  const status = typeof goal?.status === "string" ? goal.status : "active";
+  const objective = typeof goal?.objective === "string" && goal.objective.trim()
+    ? goal.objective.trim()
+    : "Untitled goal";
+  const budget = typeof goal?.tokenBudget === "number" ? ` (budget ${goal.tokenBudget} tokens)` : "";
+  return `Goal ${status}: ${objective}${budget}`;
+};
 
 const formatRuntime = (runtime: ThreadRuntimeSummary) => {
   const state = runtime.runnable ? "runnable" : runtime.online ? "online" : "offline";

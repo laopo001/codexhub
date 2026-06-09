@@ -44,6 +44,13 @@ type SessionCommand = {
   commandId: string;
   type: string;
   threadId?: string;
+  input?: unknown;
+  options?: {
+    collaborationMode?: "default" | "plan" | null;
+    goalMode?: boolean | null;
+    goalObjective?: string | null;
+    goalTokenBudget?: number | null;
+  };
 };
 
 const main = async () => {
@@ -83,6 +90,45 @@ const main = async () => {
     if (open.result?.sessionId !== fake.sessionId || open.result?.threadId !== fake.threadId) {
       throw new Error(`project open returned unexpected session/thread: ${JSON.stringify(open)}`);
     }
+
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        input: "plan and pursue this smoke task",
+        source: "web",
+        options: {
+          collaborationMode: "plan",
+          goalMode: true,
+          goalObjective: "finish the plan and goal smoke",
+          goalTokenBudget: 1234
+        }
+      })
+    });
+    const modeTurn = await fake.nextTurn();
+    if (modeTurn.options?.collaborationMode !== "plan" || modeTurn.options?.goalMode !== true) {
+      throw new Error(`web turn mode options were not forwarded: ${JSON.stringify(modeTurn.options)}`);
+    }
+    if (modeTurn.options.goalObjective !== "finish the plan and goal smoke" || modeTurn.options.goalTokenBudget !== 1234) {
+      throw new Error(`web turn goal options were not forwarded: ${JSON.stringify(modeTurn.options)}`);
+    }
+    fake.completeTurn(modeTurn);
+    console.log("web turn mode options ok");
+
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        input: "default follow-up should not inherit composer modes",
+        source: "web"
+      })
+    });
+    const defaultTurn = await fake.nextTurn();
+    if (defaultTurn.options?.collaborationMode || defaultTurn.options?.goalMode) {
+      throw new Error(`composer mode options leaked into default turn: ${JSON.stringify(defaultTurn.options)}`);
+    }
+    fake.completeTurn(defaultTurn);
+    console.log("web turn mode one-shot ok");
 
     const created = await apiJson<{ task?: LocalTask }>(apiBase, "/api/tasks", {
       method: "POST",
@@ -189,6 +235,14 @@ class FakeMachine {
 
   async completeNextTurn() {
     const command = await this.waitForTurn();
+    this.completeTurn(command);
+  }
+
+  async nextTurn() {
+    return await this.waitForTurn();
+  }
+
+  completeTurn(command: SessionCommand) {
     this.send({
       type: "session_event",
       sessionId: this.options.sessionId,

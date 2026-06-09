@@ -1568,6 +1568,7 @@ textarea {
 .composerSendButton,
 .composerModelButton,
 .composerMenuItem,
+.composerModeOption,
 .imageAttachment button,
 .iconButton {
   cursor: pointer;
@@ -1580,6 +1581,7 @@ textarea {
 .composerSendButton:disabled,
 .composerModelButton:disabled,
 .composerMenuItem:disabled,
+.composerModeOption:disabled,
 .imageAttachment button:disabled,
 .iconButton:disabled {
   cursor: not-allowed;
@@ -1839,6 +1841,43 @@ textarea {
 
 .composerMenuHost {
   position: relative;
+}
+
+.composerModeSegmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(50px, 1fr));
+  width: min(180px, 38vw);
+  min-width: 162px;
+  height: 32px;
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.composerModeOption {
+  min-width: 0;
+  border: 0;
+  border-left: 1px solid #dfe5dc;
+  background: transparent;
+  color: #3c4738;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.composerModeOption:first-child {
+  border-left: 0;
+}
+
+.composerModeOption:hover:not(.active) {
+  background: #f4f6f1;
+}
+
+.composerModeOption.active {
+  background: #1f6feb;
+  color: #ffffff;
 }
 
 .composerIconButton,
@@ -2626,6 +2665,17 @@ textarea {
   .composerRightActions {
     flex: 1 1 auto;
     flex-wrap: wrap;
+  }
+
+  .composerModeSegmented {
+    flex: 1 1 162px;
+    width: min(180px, calc(100vw - 116px));
+    min-width: 156px;
+  }
+
+  .composerModeOption {
+    padding: 0 6px;
+    font-size: 11px;
   }
 
   .composerRuntimeControls.inline {
