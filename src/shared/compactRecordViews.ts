@@ -103,7 +103,7 @@ const compactEventView = (
   const payload = asRecord(view.record.payload);
   if (!payload) return null;
 
-  if (view.record.type === "response_item" && payload.type === "message") {
+  if (view.record.type === "response_item" && payload.type === "message" && isRuntimeMessage(payload)) {
     return compactRuntimeMessage(state, view, payload);
   }
 
@@ -235,6 +235,9 @@ const compactTurnId = (view: CodexRecordView) => {
   const parts = view.record.id.split(":");
   return parts[0] === "app" && parts.length >= 3 ? parts[2] : undefined;
 };
+
+const isRuntimeMessage = (payload: Record<string, unknown>) =>
+  payload.role !== "user" && payload.role !== "assistant";
 
 const formatCompactToolCall = (view: CodexRecordView) => {
   const payload = asRecord(view.record.payload);

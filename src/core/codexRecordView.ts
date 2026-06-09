@@ -122,10 +122,34 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
 
 const responseItemToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
   if (payload.type === "message") {
+    const role = typeof payload.role === "string" ? payload.role : "unknown";
+    const text = responseMessageText(payload);
+    if (role === "user") {
+      return {
+        id: record.id,
+        role: "user",
+        label: "user",
+        text,
+        at: record.timestamp,
+        record
+      };
+    }
+    if (role === "assistant") {
+      const phase = typeof payload.phase === "string" ? payload.phase : "assistant";
+      return {
+        id: record.id,
+        role: "codex",
+        label: phase,
+        text,
+        at: record.timestamp,
+        canFork: phase === "final_answer",
+        record
+      };
+    }
     return {
       id: record.id,
       role: "event",
-      label: `message: ${typeof payload.role === "string" ? payload.role : "unknown"}`,
+      label: `message: ${role}`,
       text: responseMessageSummary(payload),
       at: record.timestamp,
       record
@@ -298,12 +322,17 @@ const mcpToolText = (payload: Record<string, unknown>) => {
 
 const responseMessageSummary = (payload: Record<string, unknown>) => {
   const content = Array.isArray(payload.content) ? payload.content : [];
-  const text = contentText(content);
+  const text = responseMessageText(payload);
   const blocks = content.length ? `${content.length} block${content.length === 1 ? "" : "s"}` : "no content blocks";
   const phase = typeof payload.phase === "string" ? ` · ${payload.phase}` : "";
   return text
     ? `${blocks}${phase}\n${textPreview(text)}`
     : `${blocks}${phase}`;
+};
+
+const responseMessageText = (payload: Record<string, unknown>) => {
+  const content = Array.isArray(payload.content) ? payload.content : [];
+  return contentText(content) || responseItemSummary(payload);
 };
 
 const responseItemSummary = (payload: Record<string, unknown>) => {

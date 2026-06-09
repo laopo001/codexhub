@@ -332,6 +332,12 @@ type MessageDisplayMode = "compact" | "detailed";
 type MessageRenderMode = "markdown" | "raw";
 type ConnectionMode = "local" | "ssh" | "registered";
 type WebRecordView = CompactRecordView;
+type RuntimeStatusView = {
+  label: string;
+  text: string;
+  at?: string;
+  status?: CodexRecordView["status"];
+};
 type InspectDetail = {
   inputMeta: string;
   inputBlockLabel?: string;
@@ -591,13 +597,21 @@ const App = () => {
       : activeSession?.records ?? [],
     [activeSession?.jsonl, activeSession?.records, activeSession?.threadId]
   );
-  const baseViews = useMemo<CodexRecordView[]>(
-    () => recordsToViews(displayRecords),
+  const simpleRecords = useMemo(
+    () => displayRecords.filter(isSimpleRecord),
     [displayRecords]
+  );
+  const baseViews = useMemo<CodexRecordView[]>(
+    () => recordsToViews(simpleRecords).filter(isSimpleMainView),
+    [simpleRecords]
   );
   const detailedViews = useMemo<CodexRecordView[]>(
     () => recordsToDetailedViews(displayRecords),
     [displayRecords]
+  );
+  const simpleStatus = useMemo(
+    () => messageDisplayMode === "compact" ? latestRuntimeStatus(displayRecords) : null,
+    [displayRecords, messageDisplayMode]
   );
   const activeViews = useMemo<WebRecordView[]>(
     () => messageDisplayMode === "compact" ? compactToolViews(baseViews) : detailedViews,
@@ -2461,27 +2475,28 @@ const App = () => {
                     initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
                     increaseViewportBy={{ top: 360, bottom: 720 }}
                     computeItemKey={(_, message) => message.id}
-	                    components={{ EmptyPlaceholder: EmptyMessages }}
-	                    itemContent={(_, message) => {
-	                      const markdownEnabled = canRenderMarkdown(message);
-	                      const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
-	                      const inspectable = message.record.rawJsonl != null || (messageDisplayMode === "compact" && message.role === "tool");
-	                      return (
-	                        <MessageCard
-	                          message={message}
+                    components={{ EmptyPlaceholder: EmptyMessages }}
+                    itemContent={(_, message) => {
+                      const markdownEnabled = canRenderMarkdown(message);
+                      const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
+                      const inspectable = message.record.rawJsonl != null || (messageDisplayMode === "compact" && message.role === "tool");
+                      return (
+                        <MessageCard
+                          message={message}
                           showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
                           showTimestamp={!(messageDisplayMode === "compact" && message.role === "tool")}
                           renderToolPreview={messageDisplayMode === "compact"}
-	                          renderMode={renderMode}
-	                          markdownEnabled={markdownEnabled}
-	                          onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
-	                          onInspect={inspectable ? () => setInspectMessage(message) : undefined}
-	                          onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
-	                          onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
-	                        />
+                          renderMode={renderMode}
+                          markdownEnabled={markdownEnabled}
+                          onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
+                          onInspect={inspectable ? () => setInspectMessage(message) : undefined}
+                          onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
+                          onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
+                        />
                       );
                     }}
                   />
+                  {simpleStatus ? <RuntimeStatusOverlay status={simpleStatus} /> : null}
 
                   <form
                     className="composer"
@@ -2995,6 +3010,39 @@ const ToolPreview = ({
   </div>
 );
 
+const FileChangePreview = ({
+  payload,
+  status
+}: {
+  payload: Record<string, unknown>;
+  status?: CodexRecordView["status"];
+}) => {
+  const files = fileChangePreviewFiles(payload);
+  const visibleFiles = files.slice(0, 5);
+  const hiddenCount = files.length - visibleFiles.length;
+  const title = status === "failed" ? "Patch failed" : "Files changed";
+  return (
+    <ToolPreview title={title} status={status} meta={appServerToolMeta(payload)} className="fileChangePreview">
+      {visibleFiles.length ? (
+        <div className="fileChangeList">
+          {visibleFiles.map((file, index) => (
+            <div className="fileChangeRow" key={`${file.path}:${index}`} title={file.path}>
+              <span className="fileChangePath">{file.path}</span>
+              <span className="fileChangeStat added">+{file.added ?? "?"}</span>
+              <span className="fileChangeStat removed">-{file.removed ?? "?"}</span>
+            </div>
+          ))}
+          {hiddenCount > 0 ? (
+            <div className="fileChangeMore">+ {hiddenCount} more file{hiddenCount === 1 ? "" : "s"}</div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="toolPreviewBody">No file changes</p>
+      )}
+    </ToolPreview>
+  );
+};
+
 const webToolPresenters: Record<string, WebToolPresenter> = {
   exec_command: {
     render: (args, status) => <CommandToolPreview args={args} status={status} />,
@@ -3082,6 +3130,18 @@ const markdownComponents: Components = {
 
 const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
+);
+
+const RuntimeStatusOverlay = ({ status }: { status: RuntimeStatusView }) => (
+  <div className={`runtimeStatusOverlay ${status.status ?? "idle"}`} aria-live="polite" title={status.text}>
+    <span className="runtimeStatusLabel">{status.label}</span>
+    <span className="runtimeStatusViewport">
+      <span className="runtimeStatusTrack">
+        <span>{status.text}</span>
+        <span aria-hidden="true">{status.text}</span>
+      </span>
+    </span>
+  </div>
 );
 
 const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
@@ -3712,6 +3772,153 @@ const normalizeThreadJsonl = (jsonl: ThreadJsonl | undefined): ThreadJsonl | und
   };
 };
 
+const isSimpleRecord = (record: CodexRecord) => {
+  if (record.type === "response_item") return true;
+  const payload = asRecord(record.payload);
+  return record.type === "event_msg" && payload?.type === "token_count";
+};
+
+const isSimpleMainView = (view: CodexRecordView) => {
+  const payload = asRecord(view.record.payload);
+  if (view.record.type !== "response_item") return false;
+  if (payload?.type !== "message") return true;
+  return payload.role === "user" || payload.role === "assistant";
+};
+
+const latestRuntimeStatus = (records: CodexRecord[]): RuntimeStatusView | null => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const status = runtimeStatusFromRecord(records[index]);
+    if (status) return status;
+  }
+  return null;
+};
+
+const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null => {
+  if (record.type !== "event_msg") return null;
+  const payload = asRecord(record.payload);
+  const type = typeof payload?.type === "string" ? payload.type : "";
+  if (!payload || type === "user_message" || type === "agent_message" || type === "patch_apply_end") return null;
+
+  if (type === "task_started") {
+    return {
+      label: "Running",
+      status: "pending",
+      at: record.timestamp,
+      text: [
+        stringField(payload, "turn_id") ? `turn ${shortId(stringField(payload, "turn_id") ?? "")}` : null,
+        typeof payload.collaboration_mode_kind === "string" ? payload.collaboration_mode_kind : null,
+        typeof payload.model_context_window === "number" ? `context ${formatCompactNumber(payload.model_context_window)}` : null
+      ].filter(Boolean).join(" · ") || "Codex is running"
+    };
+  }
+
+  if (type === "task_complete") {
+    return {
+      label: "Done",
+      status: "completed",
+      at: record.timestamp,
+      text: [
+        typeof payload.duration_ms === "number" ? `duration ${formatStatusDuration(payload.duration_ms)}` : null,
+        typeof payload.time_to_first_token_ms === "number" ? `first token ${formatStatusDuration(payload.time_to_first_token_ms)}` : null
+      ].filter(Boolean).join(" · ") || "Turn completed"
+    };
+  }
+
+  if (type === "turn_aborted") {
+    return {
+      label: "Aborted",
+      status: "failed",
+      at: record.timestamp,
+      text: [
+        typeof payload.reason === "string" ? payload.reason : null,
+        typeof payload.duration_ms === "number" ? `duration ${formatStatusDuration(payload.duration_ms)}` : null
+      ].filter(Boolean).join(" · ") || "Turn aborted"
+    };
+  }
+
+  if (type === "token_count") {
+    return {
+      label: "Usage",
+      status: "completed",
+      at: record.timestamp,
+      text: formatTokenStatus(payload)
+    };
+  }
+
+  if (type === "thread_goal_updated") {
+    const goal = asRecord(payload.goal);
+    return {
+      label: "Goal",
+      status: goal?.status === "complete" ? "completed" : "pending",
+      at: record.timestamp,
+      text: [
+        typeof goal?.status === "string" ? goal.status : "active",
+        typeof goal?.objective === "string" ? goal.objective : null
+      ].filter(Boolean).join(" · ") || "Goal updated"
+    };
+  }
+
+  if (type === "thread_goal_cleared") {
+    return { label: "Goal", status: "completed", at: record.timestamp, text: "Goal cleared" };
+  }
+
+  if (type === "context_compaction" || type === "context_compacted" || type === "compacted") {
+    return { label: "Context", status: "completed", at: record.timestamp, text: "Context compacted" };
+  }
+
+  if (type === "thread_rolled_back") {
+    const turns = typeof payload.num_turns === "number" ? payload.num_turns : undefined;
+    return {
+      label: "Rollback",
+      status: "completed",
+      at: record.timestamp,
+      text: turns ? `Rolled back ${turns} turn${turns === 1 ? "" : "s"}` : "Thread rolled back"
+    };
+  }
+
+  if (type === "item_completed") {
+    const item = asRecord(payload.item);
+    return {
+      label: "Item",
+      status: "completed",
+      at: record.timestamp,
+      text: `Completed ${typeof item?.type === "string" ? item.type : "item"}`
+    };
+  }
+
+  return {
+    label: type || "Event",
+    at: record.timestamp,
+    text: typeof payload.message === "string" ? payload.message : stringifyInspectJson(payload)
+  };
+};
+
+const formatTokenStatus = (payload: Record<string, unknown>) => {
+  const info = asRecord(payload.info);
+  const usage = asRecord(info?.last_token_usage);
+  if (!usage) return "Token usage updated";
+  const total = typeof usage.total_tokens === "number" ? `total ${formatCompactNumber(usage.total_tokens)}` : null;
+  const input = typeof usage.input_tokens === "number" ? `input ${formatCompactNumber(usage.input_tokens)}` : null;
+  const output = typeof usage.output_tokens === "number" ? `output ${formatCompactNumber(usage.output_tokens)}` : null;
+  const context = typeof info?.model_context_window === "number" ? `window ${formatCompactNumber(info.model_context_window)}` : null;
+  return [total, input, output, context].filter(Boolean).join(" · ") || "Token usage updated";
+};
+
+const formatStatusDuration = (value: number) => {
+  if (value >= 60_000) {
+    const minutes = Math.floor(value / 60_000);
+    const seconds = Math.round((value % 60_000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  }
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
+  return `${value}ms`;
+};
+
+const stringField = (record: Record<string, unknown>, key: string) => {
+  const value = record[key];
+  return typeof value === "string" && value ? value : undefined;
+};
+
 const isMatchingOptimisticUserRecord = (record: CodexRecord, incoming: CodexRecord) => {
   if (!record.id.startsWith("proxy:user:")) return false;
   const recordPayload = asRecord(record.payload);
@@ -3798,11 +4005,8 @@ const renderAppServerToolPreview = (message: WebRecordView, status?: CodexRecord
   }
 
   if (payload.type === "file_change") {
-    const changes = fileChangePreviewLines(payload);
     return (
-      <ToolPreview title="tool: file_change" status={status} meta={appServerToolMeta(payload)}>
-        <pre className="toolCommandLine">{changes.length ? changes.join("\n") : "No file changes"}</pre>
-      </ToolPreview>
+      <FileChangePreview payload={payload} status={status} />
     );
   }
 
@@ -3962,14 +4166,31 @@ const appServerToolMeta = (payload: Record<string, unknown>) => [
   Array.isArray(payload.changes) ? `${payload.changes.length} files` : null
 ].filter((item): item is string => Boolean(item));
 
-const fileChangePreviewLines = (payload: Record<string, unknown>) => {
+const fileChangePreviewFiles = (payload: Record<string, unknown>) => {
   if (!Array.isArray(payload.changes)) return [];
   return payload.changes.map((change) => {
     const record = asRecord(change);
-    const kind = typeof record?.kind === "string" ? record.kind : "update";
     const filePath = typeof record?.path === "string" ? record.path : "<unknown>";
-    return `${kind}: ${filePath}`;
+    const stats = diffStats(typeof record?.diff === "string"
+      ? record.diff
+      : typeof record?.unified_diff === "string" ? record.unified_diff : "");
+    return {
+      path: filePath,
+      ...stats
+    };
   });
+};
+
+const diffStats = (diffText: string): { added?: number; removed?: number } => {
+  if (!diffText) return {};
+  let added = 0;
+  let removed = 0;
+  for (const line of diffText.split(/\r?\n/)) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
 };
 
 const mcpToolPreviewName = (payload: Record<string, unknown>) => [

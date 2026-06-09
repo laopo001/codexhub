@@ -1142,6 +1142,86 @@ textarea {
   max-width: calc(100% - 44px);
 }
 
+.runtimeStatusOverlay {
+  position: absolute;
+  z-index: 8;
+  top: 10px;
+  left: 22px;
+  right: 22px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 1080px;
+  min-height: 30px;
+  border: 1px solid rgba(104, 115, 145, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 24px rgba(49, 55, 65, 0.08);
+  color: #26342a;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+
+.runtimeStatusOverlay.pending {
+  border-color: rgba(47, 111, 159, 0.28);
+}
+
+.runtimeStatusOverlay.completed {
+  border-color: rgba(47, 125, 90, 0.26);
+}
+
+.runtimeStatusOverlay.failed {
+  border-color: rgba(181, 55, 55, 0.28);
+}
+
+.runtimeStatusLabel {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  min-width: 88px;
+  padding: 0 10px;
+  border-right: 1px solid rgba(104, 115, 145, 0.16);
+  color: #5f6a78;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.runtimeStatusViewport {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.runtimeStatusTrack {
+  display: inline-flex;
+  gap: 40px;
+  min-width: max-content;
+  padding-right: 40px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 30px;
+  animation: runtimeStatusScroll 28s linear infinite;
+}
+
+@keyframes runtimeStatusScroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-50% - 20px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtimeStatusTrack {
+    animation: none;
+  }
+}
+
 .empty {
   display: grid;
   align-content: center;
@@ -1276,6 +1356,61 @@ textarea {
   color: #26342a;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
+}
+
+.fileChangePreview {
+  gap: 8px;
+}
+
+.fileChangeList {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin-left: 26px;
+  padding: 8px 10px;
+  border: 1px solid rgba(104, 115, 145, 0.16);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.fileChangeRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(44px, auto) minmax(44px, auto);
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.85;
+}
+
+.fileChangePath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #26342a;
+}
+
+.fileChangeStat {
+  justify-self: end;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.fileChangeStat.added {
+  color: #0a9a58;
+}
+
+.fileChangeStat.removed {
+  color: #c63f3f;
+}
+
+.fileChangeMore {
+  min-width: 0;
+  padding-top: 4px;
+  color: #6d7783;
+  font-size: 12px;
 }
 
 .updatePlanExplanation {
@@ -1656,6 +1791,7 @@ textarea {
 .threadWorkspacePane {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
+  position: relative;
   height: 100%;
   min-height: 0;
   min-width: 0;
