@@ -85,7 +85,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     if (!CodexHubWorkspaceViewProvider.currentServerStart) {
       CodexHubWorkspaceViewProvider.currentServerStart = startEmbeddedServer({
         host: "127.0.0.1",
-        preferredPort: 18789,
+        portMode: "random",
         explicitPort: false,
         staticDirectory: this.context.asAbsolutePath("dist"),
         surface: "vscode",

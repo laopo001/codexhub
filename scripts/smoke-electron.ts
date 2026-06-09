@@ -10,11 +10,11 @@ const main = async () => {
   const pluginDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-plugins."));
   try {
     const output = await runElectronSmoke(dataDir, pluginDir);
-    if (!output.includes("codexhub electron port 18788 is busy; using ")) {
-      throw new Error(`Electron smoke did not exercise fallback port:\n${output}`);
+    if (output.includes("codexhub electron port 18788 is busy; using ")) {
+      throw new Error(`Electron smoke used preferred-port fallback instead of random port:\n${output}`);
     }
     const payload = parseSmokePayload(output);
-    if (payload.health.port === 18788) throw new Error("Electron smoke reused occupied default port.");
+    if (payload.health.port === 18788) throw new Error("Electron smoke reused occupied legacy default port.");
     if (payload.health.statePath !== path.join(dataDir, "server-state.yaml")) {
       throw new Error(`Electron smoke used unexpected state path: ${payload.health.statePath}`);
     }
@@ -45,7 +45,6 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string) => await new
     CODEX_HUB_ELECTRON_SMOKE: "1"
   };
   delete env.CODEX_HUB_PORT;
-  delete env.CODEX_HUB_ELECTRON_PORT;
 
   const child = spawn(electronBin, [
     "--no-sandbox",

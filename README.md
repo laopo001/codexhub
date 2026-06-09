@@ -231,7 +231,7 @@ pnpm build
 
 `smoke:task-lock` 会用假的 registered machine/session 走真实 websocket 协议，验证同一个 task 在已有 queued/running turn 时第二次运行会 `skipped`，且 turn 完成后可以再次运行。
 
-`smoke:electron` 会以 headless Electron 启动桌面入口的内嵌 server，验证默认端口 `18788` 被占用时会自动 fallback 到空闲端口，并检查 `/api/health` 可用；它不创建真实桌面窗口。
+`smoke:electron` 会以 headless Electron 启动桌面入口的内嵌 server，验证它会使用随机空闲端口，并检查 `/api/health` 可用；它不创建真实桌面窗口。
 
 ## 生产发布
 
@@ -299,7 +299,7 @@ codexhub machine --server http://127.0.0.1:8788 --type registered
 
 ## Electron
 
-Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认优先使用 `127.0.0.1:18788`，如果默认端口已被占用会自动换到空闲端口，然后打开该地址；Codex runtime 仍然由本机/SSH/registered machine session 提供。
+Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex runtime 仍然由本机/SSH/registered machine session 提供。
 
 ```bash
 pnpm electron:start
@@ -309,15 +309,11 @@ pnpm electron:start
 
 可选环境变量：
 
-- `CODEX_HUB_ELECTRON_PORT`: Electron 内嵌 server 端口；显式设置后端口被占用会直接报错，未设置时默认尝试 `18788` 并可 fallback
+- `CODEX_HUB_PORT`: Electron 内嵌 server 端口；显式设置后端口被占用会直接报错，未设置时使用随机空闲端口
 - `CODEX_HUB_ELECTRON_HOST`: Electron 内嵌 server host，默认 `127.0.0.1`
 - `CODEX_HUB_ELECTRON_DEVTOOLS=1`: 启动后打开 DevTools
 
-在 Electron 里连接宿主机 project launcher 的方式和 Web 相同；也可以从 Connections / Registered 复制命令：
-
-```bash
-codexhub machine --server http://127.0.0.1:18788 --type registered
-```
+在 Electron 里连接宿主机 project launcher 的方式和 Web 相同；也可以从 Connections / Registered 复制包含当前实际端口的命令。
 
 ## API
 

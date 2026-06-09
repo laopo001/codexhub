@@ -1629,60 +1629,21 @@ textarea {
   font-size: 12px;
 }
 
-.workspaceThreadTabs.ant-tabs {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+.workspaceThreadTabs {
   width: 100%;
   height: 100%;
   min-height: 0;
 }
 
-.workspaceThreadTabs.ant-tabs > .ant-tabs-nav {
-  min-width: 0;
-  margin: 0;
-  border-bottom: 1px solid #dfe5dc;
-  background: #ffffff;
-  padding: 0 22px;
-}
-
-.workspaceThreadTabs.ant-tabs > .ant-tabs-content-holder {
-  min-width: 0;
-  min-height: 0;
-}
-
-.workspaceThreadTabs .ant-tabs-content,
-.workspaceThreadTabs .ant-tabs-tabpane {
+/* Keep the tab pane body full-height without restyling Ant Design tabs. */
+.workspaceThreadTabs > .ant-tabs-content-holder > .ant-tabs-content,
+.workspaceThreadTabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
   height: 100%;
   min-height: 0;
 }
 
-.workspaceThreadTabs .ant-tabs-tabpane {
+.workspaceThreadTabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
   overflow: hidden;
-}
-
-.workspaceThreadTabs .ant-tabs-nav-list {
-  min-width: 0;
-}
-
-.workspaceThreadTabs .ant-tabs-tab {
-  min-height: 50px;
-  margin: 0 !important;
-  padding: 7px 12px !important;
-}
-
-.workspaceThreadTabs .ant-tabs-tab:hover,
-.workspaceThreadTabs .ant-tabs-tab-active {
-  background: #eef6ef;
-}
-
-.workspaceThreadTabs .ant-tabs-tab-btn {
-  min-width: 0;
-  width: 100%;
-  color: #17211a;
-}
-
-.workspaceThreadTabs .ant-tabs-ink-bar {
-  background: #2f7d5a;
 }
 
 .threadTabActions {
@@ -1690,30 +1651,6 @@ textarea {
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.threadTabAddButton {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  min-height: 30px;
-  border: 1px solid #dfe5dc;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #17211a;
-  padding: 0;
-  font-size: 18px;
-  font-weight: 650;
-  line-height: 1;
-}
-
-.threadTabAddButton:hover {
-  background: #eef6ef;
-}
-
-.threadTabAddButton:disabled {
-  background: #edf1ea;
-  color: #8a9586;
 }
 
 .threadWorkspacePane {
@@ -2565,15 +2502,6 @@ textarea {
   font-size: 10px;
 }
 
-.app.vscodeSurface .workspaceThreadTabs.ant-tabs > .ant-tabs-nav {
-  padding: 0 8px;
-}
-
-.app.vscodeSurface .workspaceThreadTabs .ant-tabs-tab {
-  min-height: 40px;
-  padding: 5px 8px !important;
-}
-
 .app.vscodeSurface .workspaceThreadTabLabel span {
   max-width: 8em;
   font-size: 11px;
@@ -2589,11 +2517,6 @@ textarea {
 
 .app.vscodeSurface .threadTabActions .switchControl {
   display: none;
-}
-
-.app.vscodeSurface .threadTabAddButton {
-  width: 28px;
-  min-height: 28px;
 }
 
 .app.vscodeSurface .messages {
@@ -2742,17 +2665,6 @@ textarea {
 
   .composerLayout {
     width: 100%;
-  }
-
-  .workspaceThreadTabs.ant-tabs > .ant-tabs-nav {
-    width: 100%;
-    overflow-x: auto;
-    padding: 0 12px;
-  }
-
-  .workspaceThreadTabs .ant-tabs-tab {
-    min-height: 48px;
-    padding: 7px 10px !important;
   }
 
   .composerSurface {

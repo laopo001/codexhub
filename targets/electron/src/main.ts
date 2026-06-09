@@ -43,10 +43,11 @@ const createWindow = async () => {
 
 const startElectronServer = async () => {
   const host = process.env.CODEX_HUB_ELECTRON_HOST ?? "127.0.0.1";
-  const explicitPort = process.env.CODEX_HUB_ELECTRON_PORT ?? process.env.CODEX_HUB_PORT;
+  const explicitPort = process.env.CODEX_HUB_PORT;
   return await startSharedEmbeddedServer({
     host,
-    preferredPort: parseEmbeddedPort(explicitPort ?? "18788", "Electron server port"),
+    portMode: explicitPort ? "preferred" : "random",
+    preferredPort: explicitPort ? parseEmbeddedPort(explicitPort, "Electron server port") : undefined,
     explicitPort: Boolean(explicitPort),
     logPrefix: "codexhub electron"
   });

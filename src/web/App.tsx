@@ -505,6 +505,7 @@ const App = () => {
   const threadLastSeqs = useRef(new Map<string, number>());
   const openingThreads = useRef(new Map<string, Promise<void>>());
   const latestRequestedThreadId = useRef("");
+  const closedThreadIds = useRef(new Set<string>());
   const messagesRef = useRef<VirtuosoHandle>(null);
   const messagesScrollerRef = useRef<HTMLElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
@@ -1115,6 +1116,13 @@ const App = () => {
     return freshRuntimeSessions;
   };
 
+  const refreshProjects = async () => {
+    const payload = await apiJson<ProjectsPayload>("/api/projects");
+    setMachines(normalizeMachines(payload.machines));
+    setProjects(normalizeProjects(payload.projects));
+    return payload;
+  };
+
   const refreshTasks = async () => {
     const payload = await apiJson<{ tasks?: LocalTask[] }>("/api/tasks");
     setTasks(normalizeTasks(payload.tasks));
@@ -1263,6 +1271,7 @@ const App = () => {
   };
 
   const openThread = async (threadId: string) => {
+    closedThreadIds.current.delete(threadId);
     latestRequestedThreadId.current = threadId;
     setActiveTabThreadId(threadId);
 
@@ -1319,6 +1328,67 @@ const App = () => {
     if (latestRequestedThreadId.current === threadId) setActiveTabThreadId("");
   };
 
+  const closeThread = async (threadId: string) => {
+    if (closedThreadIds.current.has(threadId)) return;
+    const threadIds = activeRuntimeSessionThreads.map((thread) => thread.threadId);
+    const closingThread = activeRuntimeSessionThreads.find((thread) => thread.threadId === threadId)
+      ?? sessions.find((session) => session.threadId === threadId);
+    const sessionId = closingThread?.runtime.sessionId ?? activeRuntimeSession?.sessionId ?? "";
+    const nextThreadId = activeTabThreadId === threadId
+      ? adjacentThreadId(threadIds, threadId)
+      : activeTabThreadId;
+
+    closedThreadIds.current.add(threadId);
+    removeThreadFromUi(threadId, sessionId, nextThreadId);
+    try {
+      await deleteThread(threadId);
+      if (activeTabThreadId === threadId && nextThreadId) {
+        await openThread(nextThreadId).catch(() => clearActiveThreadIfLatest(nextThreadId));
+      }
+    } catch (error) {
+      closedThreadIds.current.delete(threadId);
+      window.alert(error instanceof Error ? error.message : String(error));
+      await Promise.all([
+        refreshRuntimeSessions().catch(() => undefined),
+        refreshProjects().catch(() => undefined)
+      ]);
+    }
+  };
+
+  function removeThreadFromUi(threadId: string, sessionId: string, nextThreadId: string) {
+    openingThreads.current.delete(threadId);
+    threadLastSeqs.current.delete(threadId);
+    unsubscribeThread(threadId);
+    setSessions((current) => {
+      for (const session of current) {
+        if (session.threadId !== threadId) continue;
+        for (const image of session.imageAttachments) URL.revokeObjectURL(image.previewUrl);
+      }
+      return current.filter((session) => session.threadId !== threadId);
+    });
+    setRuntimeSessions((current) => removeRuntimeSessionsThread(current, threadId));
+    setProjects((current) => removeProjectsThread(current, threadId));
+    setThreadOrderBySession((current) => removeThreadOrder(current, threadId));
+    setActiveTabThreadBySession((current) => {
+      const next = { ...current };
+      for (const [key, value] of Object.entries(current)) {
+        if (value === threadId) delete next[key];
+      }
+      if (sessionId && nextThreadId) next[sessionId] = nextThreadId;
+      return next;
+    });
+    if (activeTabThreadId === threadId) {
+      latestRequestedThreadId.current = nextThreadId;
+      setActiveTabThreadId(nextThreadId);
+    }
+  }
+
+  const deleteThread = async (threadId: string) => {
+    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" });
+    if (response.ok || response.status === 404) return;
+    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  };
+
   function subscribeThread(threadId: string, after: number) {
     const subscribedAfter = Math.max(after, threadLastSeqs.current.get(threadId) ?? 0);
     threadLastSeqs.current.set(threadId, subscribedAfter);
@@ -1348,6 +1418,7 @@ const App = () => {
   }
 
   function applyThreadStreamEvent(payload: StreamEvent) {
+    if (closedThreadIds.current.has(payload.thread.threadId)) return;
     threadLastSeqs.current.set(
       payload.thread.threadId,
       Math.max(threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
@@ -1667,6 +1738,7 @@ const App = () => {
   };
 
   const activateRuntimeSessionThread = async (sessionId: string, threadId: string) => {
+    closedThreadIds.current.delete(threadId);
     const session = runtimeSessions.find((item) => item.sessionId === sessionId);
     if (session) {
       setActiveSessionId(session.sessionId);
@@ -2337,16 +2409,6 @@ const App = () => {
             tabBarExtraContent={{
               right: (
                 <div className="threadTabActions">
-                  <button
-                    type="button"
-                    className="threadTabAddButton"
-                    onClick={() => openThreadPicker(activeRuntimeSession)}
-                    disabled={!activeRuntimeSession.online}
-                    aria-label="Add thread tab"
-                    title="Add thread tab"
-                  >
-                    +
-                  </button>
                   <label className="switchControl">
                     <span>View</span>
                     <button
@@ -2362,9 +2424,11 @@ const App = () => {
               )
             }}
             size="small"
+            type="editable-card"
             activeKey={activeSession.threadId}
             items={activeRuntimeSessionThreadTabs.map((item) => ({
               ...item,
+              closable: true,
               children: item.key === activeSession.threadId ? (
                 <div className="threadWorkspacePane">
                   <Virtuoso
@@ -2521,6 +2585,15 @@ const App = () => {
               ) : null
             }))}
             onChange={(threadId) => void switchRuntimeSessionThread(threadId)}
+            onEdit={(targetKey, action) => {
+              if (action === "add") {
+                if (activeRuntimeSession.online) openThreadPicker(activeRuntimeSession);
+                return;
+              }
+              if (action === "remove" && typeof targetKey === "string") {
+                void closeThread(targetKey);
+              }
+            }}
           />
         ) : (
           <div className="empty">
@@ -3362,6 +3435,15 @@ const appendThreadOrder = (current: Record<string, string[]>, sessionId: string,
   return { ...current, [sessionId]: [...existing, threadId] };
 };
 
+const removeThreadOrder = (current: Record<string, string[]>, threadId: string) => {
+  const next: Record<string, string[]> = {};
+  for (const [sessionId, threadIds] of Object.entries(current)) {
+    const filtered = threadIds.filter((item) => item !== threadId);
+    if (filtered.length) next[sessionId] = filtered;
+  }
+  return next;
+};
+
 const mergeThreadOrderByRuntimeSession = (current: Record<string, string[]>, runtimeSessions: RuntimeSession[]) => {
   const next: Record<string, string[]> = {};
   for (const session of runtimeSessions) {
@@ -3393,6 +3475,12 @@ const preferredThreadIdForRuntimeSession = (session: RuntimeSession, project?: P
     ?? "";
 };
 
+const adjacentThreadId = (threadIds: string[], threadId: string) => {
+  const index = threadIds.indexOf(threadId);
+  if (index === -1) return threadIds.find((item) => item !== threadId) ?? "";
+  return threadIds[index + 1] ?? threadIds[index - 1] ?? "";
+};
+
 const patchRuntimeSessionsThread = (runtimeSessions: RuntimeSession[], thread: ThreadSummary) =>
   runtimeSessions.map((session) => {
     if (session.sessionId !== thread.runtime.sessionId) return session;
@@ -3419,6 +3507,35 @@ const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) 
       lastThreadId: thread.threadId,
       running: threads.some((item) => item.running || item.status === "running"),
       runtime,
+      threads
+    };
+  });
+
+const removeRuntimeSessionsThread = (runtimeSessions: RuntimeSession[], threadId: string) =>
+  runtimeSessions.map((session) => ({
+    ...session,
+    threads: (session.threads ?? []).filter((thread) => thread.threadId !== threadId)
+  }));
+
+const removeProjectsThread = (projects: ProjectSummary[], threadId: string) =>
+  projects.map((project) => {
+    const threads = (project.threads ?? []).filter((thread) => thread.threadId !== threadId);
+    const runtime = project.runtime
+      ? {
+        ...project.runtime,
+        threads: (project.runtime.threads ?? []).filter((thread) => thread.threadId !== threadId)
+      }
+      : project.runtime;
+    const sessions = (project.sessions ?? []).map((session) => ({
+      ...session,
+      threads: (session.threads ?? []).filter((thread) => thread.threadId !== threadId)
+    }));
+    return {
+      ...project,
+      lastThreadId: project.lastThreadId === threadId ? threads[0]?.threadId : project.lastThreadId,
+      running: threads.some((thread) => thread.running || thread.status === "running"),
+      runtime,
+      sessions,
       threads
     };
   });

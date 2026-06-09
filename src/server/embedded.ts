@@ -4,6 +4,7 @@ import { startServer, type ServerFeatureOptions, type ServerHandle } from "./ind
 
 export type EmbeddedServerOptions = {
   host?: string;
+  portMode?: "preferred" | "random";
   preferredPort?: number;
   explicitPort?: boolean;
   staticDirectory?: string;
@@ -15,7 +16,9 @@ export type EmbeddedServerOptions = {
 export const startEmbeddedServer = async (options: EmbeddedServerOptions = {}) => {
   await loadDotEnv();
   const host = options.host ?? "127.0.0.1";
-  const preferredPort = options.preferredPort ?? 18788;
+  const preferredPort = options.portMode === "random"
+    ? await findFreePort(host)
+    : options.preferredPort ?? 18788;
   try {
     return await startServer({
       host,
