@@ -766,14 +766,18 @@ const App = () => {
     setActiveWorkspacePath(session.workingDirectory);
     const threadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
     const activeTabThreadIdForRuntimeSession = activeTabThreadBySession[session.sessionId];
+    const currentThreadId = activeTabThreadId && threadIds.has(activeTabThreadId)
+      ? activeTabThreadId
+      : undefined;
     const projectLastThreadId = selectedProject?.runtime?.sessionId === session.sessionId
       ? selectedProject.lastThreadId
       : undefined;
     const desiredThreadId = activeTabThreadIdForRuntimeSession && threadIds.has(activeTabThreadIdForRuntimeSession)
       ? activeTabThreadIdForRuntimeSession
-      : projectLastThreadId && threadIds.has(projectLastThreadId)
-        ? projectLastThreadId
-        : session.threads?.[0]?.threadId;
+      : currentThreadId
+        ?? (projectLastThreadId && threadIds.has(projectLastThreadId)
+          ? projectLastThreadId
+          : session.threads?.[0]?.threadId);
 
     if (activeTabThreadIdForRuntimeSession && !threadIds.has(activeTabThreadIdForRuntimeSession)) {
       setActiveTabThreadBySession(({ [session.sessionId]: _removed, ...rest }) => rest);
@@ -1311,6 +1315,9 @@ const App = () => {
     if (existingSession) {
       subscribeThread(threadId, existingSession.lastSeq);
       setActiveWorkspacePath(existingSession.workingDirectory);
+      if (existingSession.runtime.sessionId) {
+        setActiveTabThreadBySession((current) => ({ ...current, [existingSession.runtime.sessionId!]: threadId }));
+      }
       return;
     }
 
@@ -1336,6 +1343,9 @@ const App = () => {
           : [...current, nextSession];
       });
       if (latestRequestedThreadId.current !== thread.threadId) return;
+      if (sessionId) {
+        setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
+      }
       setActiveWorkspacePath(thread.workingDirectory);
       setActiveTabThreadId(thread.threadId);
       threadLastSeqs.current.set(
@@ -3044,6 +3054,51 @@ const FileChangePreview = ({
   );
 };
 
+const ApplyPatchPreview = ({
+  args,
+  status
+}: {
+  args: Record<string, unknown>;
+  status?: CodexRecordView["status"];
+}) => {
+  const patch = applyPatchInput(args);
+  const files = parseApplyPatchFiles(patch);
+  const visibleFiles = files.slice(0, 5);
+  const hiddenCount = files.length - visibleFiles.length;
+  const added = files.reduce((total, file) => total + file.added, 0);
+  const removed = files.reduce((total, file) => total + file.removed, 0);
+  return (
+    <ToolPreview
+      title="tool: apply_patch"
+      status={status}
+      meta={[
+        files.length ? `${files.length} file${files.length === 1 ? "" : "s"}` : null,
+        added ? `+${added}` : null,
+        removed ? `-${removed}` : null
+      ].filter((item): item is string => Boolean(item))}
+      className="fileChangePreview applyPatchPreview"
+    >
+      {visibleFiles.length ? (
+        <div className="fileChangeList">
+          {visibleFiles.map((file, index) => (
+            <div className="fileChangeRow applyPatchRow" key={`${file.path}:${index}`} title={file.path}>
+              <span className={`patchKind ${file.kind}`}>{file.kind}</span>
+              <span className="fileChangePath">{file.path}</span>
+              <span className="fileChangeStat added">+{file.added}</span>
+              <span className="fileChangeStat removed">-{file.removed}</span>
+            </div>
+          ))}
+          {hiddenCount > 0 ? (
+            <div className="fileChangeMore">+ {hiddenCount} more file{hiddenCount === 1 ? "" : "s"}</div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="toolPreviewBody">{patch ? "Patch" : "Empty patch"}</p>
+      )}
+    </ToolPreview>
+  );
+};
+
 const webToolPresenters: Record<string, WebToolPresenter> = {
   exec_command: {
     render: (args, status) => <CommandToolPreview args={args} status={status} />,
@@ -3069,6 +3124,13 @@ const webToolPresenters: Record<string, WebToolPresenter> = {
     render: (args, status) => <WriteStdinToolPreview args={args} status={status} />,
     inspect: (args, output) => ({
       ...formatToolInput("write_stdin", args),
+      ...formatRawToolOutput(output)
+    })
+  },
+  apply_patch: {
+    render: (args, status) => <ApplyPatchPreview args={args} status={status} />,
+    inspect: (args, output) => ({
+      ...formatApplyPatchInspect(args),
       ...formatRawToolOutput(output)
     })
   }
@@ -3783,6 +3845,7 @@ const isSimpleRecord = (record: CodexRecord) => {
 const isSimpleMainView = (view: CodexRecordView) => {
   const payload = asRecord(view.record.payload);
   if (view.record.type !== "response_item") return false;
+  if (payload?.type === "file_change") return false;
   if (payload?.type !== "message") return true;
   return payload.role === "user" || payload.role === "assistant";
 };
@@ -3797,9 +3860,12 @@ const runtimeStatusesFromRecords = (records: CodexRecord[]): RuntimeStatusView[]
 };
 
 const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null => {
-  if (record.type !== "event_msg") return null;
   const payload = asRecord(record.payload);
   const type = typeof payload?.type === "string" ? payload.type : "";
+  if (record.type === "response_item" && type === "file_change" && payload) {
+    return fileChangeRuntimeStatus(record, payload);
+  }
+  if (record.type !== "event_msg") return null;
   if (!payload || type === "user_message" || type === "agent_message" || type === "patch_apply_end") return null;
   if (type === "session_meta" || type === "turn_context") return null;
 
@@ -3905,14 +3971,46 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
   };
 };
 
+const fileChangeRuntimeStatus = (record: CodexRecord, payload: Record<string, unknown>): RuntimeStatusView => {
+  const files = fileChangePreviewFiles(payload);
+  const changed = files.length;
+  const added = files.reduce((total, file) => total + (file.added ?? 0), 0);
+  const removed = files.reduce((total, file) => total + (file.removed ?? 0), 0);
+  const firstFile = files[0];
+  const firstFileStats = firstFile ? fileChangeStatsText(firstFile) : "";
+  return {
+    key: "files",
+    label: "Files",
+    status: payload.status === "failed" ? "failed" : "completed",
+    at: record.timestamp,
+    text: [
+      typeof payload.status === "string" ? payload.status : "completed",
+      changed ? `${changed} file${changed === 1 ? "" : "s"}` : "files changed",
+      changed > 1 ? fileChangeTotalsText(added, removed) : null,
+      firstFile ? `${firstFile.path}${firstFileStats ? ` ${firstFileStats}` : ""}` : null
+    ].filter(Boolean).join(" · ")
+  };
+};
+
+const fileChangeStatsText = (file: { added?: number; removed?: number }) => [
+  typeof file.added === "number" ? `+${file.added}` : null,
+  typeof file.removed === "number" ? `-${file.removed}` : null
+].filter(Boolean).join(" ");
+
+const fileChangeTotalsText = (added: number, removed: number) => [
+  added ? `+${added}` : null,
+  removed ? `-${removed}` : null
+].filter(Boolean).join(" ");
+
 const runtimeStatusPriority = (key: string) => {
   const order: Record<string, number> = {
     turn: 0,
     goal: 1,
     usage: 2,
-    context: 3,
-    rollback: 4,
-    item: 5
+    files: 3,
+    context: 4,
+    rollback: 5,
+    item: 6
   };
   return order[key] ?? 10;
 };
@@ -4199,6 +4297,85 @@ const appServerToolMeta = (payload: Record<string, unknown>) => [
   typeof payload.call_id === "string" ? payload.call_id : null,
   Array.isArray(payload.changes) ? `${payload.changes.length} files` : null
 ].filter((item): item is string => Boolean(item));
+
+type ApplyPatchFile = {
+  path: string;
+  kind: "add" | "update" | "delete" | "move";
+  added: number;
+  removed: number;
+};
+
+const applyPatchInput = (args: Record<string, unknown>) =>
+  typeof args.input === "string"
+    ? args.input
+    : typeof args.patch === "string"
+      ? args.patch
+      : "";
+
+const parseApplyPatchFiles = (patch: string): ApplyPatchFile[] => {
+  const files: ApplyPatchFile[] = [];
+  let current: ApplyPatchFile | null = null;
+  const flush = () => {
+    if (current) files.push(current);
+    current = null;
+  };
+
+  for (const line of patch.split(/\r?\n/)) {
+    const fileMatch = line.match(/^\*\*\* (Add|Update|Delete) File: (.+)$/);
+    if (fileMatch) {
+      flush();
+      current = {
+        path: fileMatch[2] ?? "<unknown>",
+        kind: applyPatchKind(fileMatch[1]),
+        added: 0,
+        removed: 0
+      };
+      continue;
+    }
+
+    const moveMatch = line.match(/^\*\*\* Move to: (.+)$/);
+    if (moveMatch && current) {
+      current = {
+        ...current,
+        path: `${current.path} -> ${moveMatch[1]}`,
+        kind: "move"
+      };
+      continue;
+    }
+
+    if (!current) continue;
+    if (line.startsWith("+") && !line.startsWith("+++")) current.added += 1;
+    else if (line.startsWith("-") && !line.startsWith("---")) current.removed += 1;
+  }
+
+  flush();
+  return files;
+};
+
+const applyPatchKind = (kind: string | undefined): ApplyPatchFile["kind"] => {
+  if (kind === "Add") return "add";
+  if (kind === "Delete") return "delete";
+  return "update";
+};
+
+const formatApplyPatchInspect = (args: Record<string, unknown>): InspectDetail => {
+  const patch = applyPatchInput(args);
+  const files = parseApplyPatchFiles(patch);
+  const added = files.reduce((total, file) => total + file.added, 0);
+  const removed = files.reduce((total, file) => total + file.removed, 0);
+  return {
+    inputMeta: [
+      "tool: apply_patch",
+      files.length ? `files: ${files.length}` : null,
+      added ? `added: ${added}` : null,
+      removed ? `removed: ${removed}` : null,
+      ...files.slice(0, 12).map((file) => `${file.kind}: ${file.path} +${file.added} -${file.removed}`),
+      files.length > 12 ? `... ${files.length - 12} more files` : null
+    ].filter((line): line is string => Boolean(line)).join("\n"),
+    inputBlockLabel: "Patch",
+    inputBlock: patch || "<empty>"
+  };
+};
 
 const fileChangePreviewFiles = (payload: Record<string, unknown>) => {
   if (!Array.isArray(payload.changes)) return [];
