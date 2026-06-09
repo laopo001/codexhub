@@ -1148,10 +1148,9 @@ textarea {
   top: 10px;
   left: 22px;
   right: 22px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
   min-width: 0;
   max-width: 1080px;
   min-height: 32px;
@@ -1181,8 +1180,8 @@ textarea {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  flex: 1 1 260px;
-  min-width: min(260px, 100%);
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
   min-height: 28px;
   border: 1px solid rgba(104, 115, 145, 0.12);
