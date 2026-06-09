@@ -127,7 +127,7 @@ export type RuntimeSessionStreamEvent = {
 export type WorkerCommand = {
   seq: number;
   commandId: string;
-  type: "fork_thread" | "rollback_thread" | "turn" | "stop" | "list_threads" | "start_thread" | "resume_thread";
+  type: "fork_thread" | "rollback_thread" | "turn" | "steer" | "stop" | "list_threads" | "start_thread" | "resume_thread";
   workingDirectory: string;
   createdAt: string;
   threadId?: string;
@@ -214,6 +214,14 @@ type PendingCommand = {
   timer?: NodeJS.Timeout;
 };
 
+type QueuedTurn = {
+  input: ProxyInput;
+  source: "web" | "telegram" | "task";
+  options?: ThreadRunOptions;
+  resolve: () => void;
+  reject: (error: Error) => void;
+};
+
 type WorkerWaiter = () => void;
 
 export class ThreadHub {
@@ -221,6 +229,7 @@ export class ThreadHub {
   private readonly workers = new Map<string, RuntimeWorker>();
   private readonly pendingCommands = new Map<string, PendingCommand>();
   private readonly activeTurnCommands = new Map<string, string>();
+  private readonly queuedTurns = new Map<string, QueuedTurn[]>();
   private readonly workerEvents: WorkerStreamEvent[] = [];
   private readonly workerSubscribers = new Set<(event: WorkerStreamEvent) => void>();
   private lastWorkerSnapshotKey = "";
@@ -610,6 +619,7 @@ export class ThreadHub {
   async deleteThread(threadId: string) {
     const thread = this.requireThread(threadId);
     thread.running = false;
+    this.rejectQueuedTurns(thread.threadId, new Error(`Thread deleted: ${thread.threadId}`));
     this.threads.delete(threadId);
     this.publish(thread, "done");
     this.publishThreadCatalog();
@@ -648,7 +658,15 @@ export class ThreadHub {
 
   runTurn(threadId: string, input: ProxyInput, _source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
     const thread = this.requireThread(threadId);
-    if (thread.running) throw new Error(`Thread is already running: ${threadId}`);
+    if (thread.running && _source === "web" && thread.appServerTurnId) {
+      return this.steerTurn(thread, input, thread.appServerTurnId);
+    }
+    if (thread.running) return this.queueTurn(thread, input, _source, options);
+    return this.startTurn(thread, input, _source, options);
+  }
+
+  private startTurn(thread: RuntimeThread, input: ProxyInput, _source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
+    if (thread.running) throw new Error(`Thread is already running: ${thread.threadId}`);
     const worker = this.requireThreadWorker(thread);
     const commandOptions = options ? { ...options } : { ...thread.threadOptions };
     if (options) thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
@@ -672,6 +690,40 @@ export class ThreadHub {
       options: commandOptions
     });
     return promise;
+  }
+
+  private steerTurn(thread: RuntimeThread, input: ProxyInput, turnId: string) {
+    const worker = this.requireThreadWorker(thread);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<void>(commandId, "steer", thread.threadId);
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+    this.enqueueWorkerCommand(worker.workerId, {
+      commandId,
+      type: "steer",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      input,
+      threadId: thread.threadId,
+      turnId
+    });
+    return promise;
+  }
+
+  private queueTurn(thread: RuntimeThread, input: ProxyInput, source: "web" | "telegram" | "task", options?: ThreadRunOptions) {
+    return new Promise<void>((resolve, reject) => {
+      const queue = this.queuedTurns.get(thread.threadId) ?? [];
+      queue.push({
+        input,
+        source,
+        options: options ? { ...options } : undefined,
+        resolve,
+        reject
+      });
+      this.queuedTurns.set(thread.threadId, queue);
+      thread.updatedAt = new Date().toISOString();
+      this.publish(thread, "thread");
+    });
   }
 
   runWorkerThreadTurn(workerId: string, threadId: string, input: ProxyInput, source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
@@ -838,6 +890,7 @@ export class ThreadHub {
     for (const waiter of [...worker.waiters]) waiter();
     for (const thread of this.threads.values()) {
       if (thread.workerId !== worker.workerId) continue;
+      this.rejectQueuedTurns(thread.threadId, new Error(message));
       if (thread.running) {
         this.finishWorkerTurnByThread(thread.threadId, new Error(message));
       } else if (wasOnline) {
@@ -864,6 +917,7 @@ export class ThreadHub {
     this.workers.delete(worker.workerId);
     for (const thread of this.threads.values()) {
       if (thread.workerId !== worker.workerId) continue;
+      this.rejectQueuedTurns(thread.threadId, error);
       if (thread.running) {
         this.finishWorkerTurnByThread(thread.threadId, error);
       } else {
@@ -1046,19 +1100,30 @@ export class ThreadHub {
   }
 
   private applyThreadExecutionState(thread: RuntimeThread, running: boolean, turnId?: string) {
+    if (!running) {
+      if (thread.running || this.activeTurnCommands.has(thread.threadId)) {
+        this.finishWorkerTurn(thread);
+        return;
+      }
+      if (thread.appServerTurnId !== undefined) {
+        thread.appServerTurnId = undefined;
+        thread.updatedAt = new Date().toISOString();
+        this.publish(thread, "thread");
+      }
+      return;
+    }
     let changed = false;
     if (thread.running !== running) {
       thread.running = running;
       changed = true;
     }
-    const nextTurnId = running ? turnId : undefined;
-    if (thread.appServerTurnId !== nextTurnId) {
-      thread.appServerTurnId = nextTurnId;
+    if (thread.appServerTurnId !== turnId) {
+      thread.appServerTurnId = turnId;
       changed = true;
     }
     if (!changed) return;
     thread.updatedAt = new Date().toISOString();
-    this.publish(thread, running ? "thread" : "done");
+    this.publish(thread, "thread");
   }
 
   private appendRuntimeRecord(thread: RuntimeThread, type: string, payload: unknown) {
@@ -1176,6 +1241,31 @@ export class ThreadHub {
     thread.appServerTurnId = undefined;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, wasRunning ? "done" : "thread");
+    this.startNextQueuedTurn(thread);
+  }
+
+  private startNextQueuedTurn(thread: RuntimeThread) {
+    if (thread.running) return;
+    const queue = this.queuedTurns.get(thread.threadId);
+    const next = queue?.shift();
+    if (!queue || !next) {
+      this.queuedTurns.delete(thread.threadId);
+      return;
+    }
+    if (!queue.length) this.queuedTurns.delete(thread.threadId);
+    try {
+      this.startTurn(thread, next.input, next.source, next.options).then(next.resolve, next.reject);
+    } catch (error) {
+      next.reject(error instanceof Error ? error : new Error(String(error)));
+      this.startNextQueuedTurn(thread);
+    }
+  }
+
+  private rejectQueuedTurns(threadId: string, error: Error) {
+    const queue = this.queuedTurns.get(threadId);
+    if (!queue?.length) return;
+    this.queuedTurns.delete(threadId);
+    for (const item of queue) item.reject(error);
   }
 
   private publish(

@@ -45,6 +45,7 @@ type SessionCommand = {
   type: string;
   threadId?: string;
   input?: unknown;
+  turnId?: string;
   options?: {
     collaborationMode?: "default" | "plan" | null;
     goalMode?: boolean | null;
@@ -130,6 +131,33 @@ const main = async () => {
     fake.completeTurn(defaultTurn);
     console.log("web turn mode one-shot ok");
 
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        input: "hold this web turn open",
+        source: "web"
+      })
+    });
+    const activeWebTurn = await fake.nextTurn();
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        input: "steered web follow-up",
+        source: "web"
+      })
+    });
+    const steer = await fake.nextSteer();
+    if (steer.input !== "steered web follow-up") {
+      throw new Error(`web steer input mismatch: ${JSON.stringify(steer.input)}`);
+    }
+    if (steer.turnId !== activeWebTurn.turnId) {
+      throw new Error(`web steer used wrong turnId: ${JSON.stringify({ expected: activeWebTurn.turnId, actual: steer.turnId })}`);
+    }
+    fake.completeTurn(activeWebTurn);
+    console.log("web running turn steer ok");
+
     const created = await apiJson<{ task?: LocalTask }>(apiBase, "/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -182,7 +210,9 @@ class FakeMachine {
   private ws: WebSocket | null = null;
   private sessionRegistered = false;
   private pendingTurns: SessionCommand[] = [];
+  private pendingSteers: SessionCommand[] = [];
   private turnWaiters: Array<(command: SessionCommand) => void> = [];
+  private steerWaiters: Array<(command: SessionCommand) => void> = [];
 
   constructor(
     private readonly apiBase: string,
@@ -240,6 +270,10 @@ class FakeMachine {
 
   async nextTurn() {
     return await this.waitForTurn();
+  }
+
+  async nextSteer() {
+    return await this.waitForSteer();
   }
 
   completeTurn(command: SessionCommand) {
@@ -305,6 +339,18 @@ class FakeMachine {
       return;
     }
     if (command.type !== "turn") {
+      if (command.type === "steer") {
+        this.pendingSteers.push(command);
+        const waiter = this.steerWaiters.shift();
+        if (waiter) waiter(this.pendingSteers.shift()!);
+        this.send({
+          type: "session_command_result",
+          sessionId: this.options.sessionId,
+          commandId: command.commandId,
+          result: { turnId: command.turnId }
+        });
+        return;
+      }
       this.send({
         type: "session_command_error",
         sessionId: this.options.sessionId,
@@ -313,7 +359,19 @@ class FakeMachine {
       });
       return;
     }
-    this.pendingTurns.push(command);
+    const turn = { ...command, turnId: `fake-turn-${command.commandId}` };
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "thread_execution_changed",
+        threadId: command.threadId ?? this.options.threadId,
+        running: true,
+        turnId: turn.turnId,
+        heartbeat: false
+      }
+    });
+    this.pendingTurns.push(turn);
     const waiter = this.turnWaiters.shift();
     if (waiter) waiter(this.pendingTurns.shift()!);
   }
@@ -341,6 +399,18 @@ class FakeMachine {
     return new Promise<SessionCommand>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("timed out waiting for fake session turn command")), timeoutMs);
       this.turnWaiters.push((command) => {
+        clearTimeout(timer);
+        resolve(command);
+      });
+    });
+  }
+
+  private waitForSteer(timeoutMs = 5000) {
+    const existing = this.pendingSteers.shift();
+    if (existing) return Promise.resolve(existing);
+    return new Promise<SessionCommand>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out waiting for fake session steer command")), timeoutMs);
+      this.steerWaiters.push((command) => {
         clearTimeout(timer);
         resolve(command);
       });

@@ -668,12 +668,13 @@ const App = () => {
     : "";
   const activeDisplayThreadId = activeSession?.threadId ?? activeTabThreadId;
   const activeThreadBelongsToSession = Boolean(activeSession && activeRuntimeSessionThreads.some((thread) => thread.threadId === activeSession.threadId));
+  const activeHasDraft = Boolean(activeSession?.input.trim() || activeSession?.imageAttachments.length);
   const activeCanSend = Boolean(
     activeSession
     && activeThreadBelongsToSession
     && activeRuntimeSession?.online
-    && (activeSession.input.trim() || activeSession.imageAttachments.length)
-  ) && !activeSession?.running;
+    && activeHasDraft
+  );
   const activeCanSubmit = Boolean(activeThreadBelongsToSession && (activeSession?.running || activeCanSend));
   const workspaceEmptyMessage = activeRuntimeSession
     ? activeRuntimeSession.online
@@ -1634,7 +1635,7 @@ const App = () => {
 
   const send = async (threadId: string) => {
     const session = sessions.find((item) => item.threadId === threadId);
-    if (!session || session.running) return;
+    if (!session) return;
     const text = session.input.trim();
     const imageAttachments = session.imageAttachments;
     if (!text && !imageAttachments.length) return;
@@ -2635,8 +2636,8 @@ const App = () => {
                     className="composer"
                     onSubmit={(event) => {
                       event.preventDefault();
-                      if (activeSession.running) void stopTurn(activeSession.threadId);
-                      else void send(activeSession.threadId);
+                      if (activeCanSend) void send(activeSession.threadId);
+                      else if (activeSession.running) void stopTurn(activeSession.threadId);
                     }}
                   >
                     <div className="composerLayout">
@@ -2730,8 +2731,8 @@ const App = () => {
                                 </div>
                               ) : null}
                             </div>
-                            <button type="submit" className="composerSendButton" disabled={!activeCanSubmit} aria-label={activeSession.running ? "Stop current turn" : "Send message"}>
-                              {activeSession.running ? <span className="composerStopIcon" aria-hidden="true" /> : "↑"}
+                            <button type="submit" className="composerSendButton" disabled={!activeCanSubmit} aria-label={activeCanSend ? "Send message" : activeSession.running ? "Stop current turn" : "Send message"}>
+                              {activeCanSend ? "↑" : <span className="composerStopIcon" aria-hidden="true" />}
                             </button>
                           </div>
                         </div>

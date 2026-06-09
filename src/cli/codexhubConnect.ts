@@ -899,6 +899,25 @@ class CodexAppServerBridge {
       return;
     }
 
+    if (command.type === "steer") {
+      if (!command.threadId) throw new Error("steer command requires threadId");
+      if (!command.turnId) throw new Error("steer command requires active turnId");
+      if (!command.input) throw new Error("steer command requires input");
+      const threadId = await this.ensureThreadLoaded(
+        command.threadId,
+        command.workingDirectory,
+        commandModel(command.options, this.options.model),
+        undefined,
+        { markBridgeStarted: true }
+      );
+      await this.request("turn/steer", {
+        threadId,
+        expectedTurnId: command.turnId,
+        input: toAppServerInput(command.input)
+      }, command);
+      return;
+    }
+
     if (command.type === "fork_thread") {
       if (!command.threadId) throw new Error("fork_thread command requires threadId");
       const model = commandModel(command.options, this.options.model);
