@@ -97,8 +97,14 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
 
 const responseStatus = (payload: Record<string, unknown>): CodexRecordView["status"] | undefined => {
   if (payload.type === "error" || payload.status === "failed") return "failed";
-  if (payload.type === "function_call_output" || payload.type === "web_search_call" || payload.type === "file_change" || payload.status === "completed") return "completed";
-  if (payload.type === "function_call" || payload.status === "in_progress" || payload.status === "pending") return "pending";
+  if (
+    payload.type === "function_call_output"
+    || payload.type === "web_search_call"
+    || payload.type === "file_change"
+    || (payload.type === "image_generation_call" && payload.status === "completed")
+    || payload.status === "completed"
+  ) return "completed";
+  if (payload.type === "function_call" || payload.type === "image_generation_call" || payload.status === "in_progress" || payload.status === "pending") return "pending";
   return undefined;
 };
 

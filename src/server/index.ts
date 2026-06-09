@@ -61,15 +61,6 @@ const sessionRegistrationSchema = z.object({
 
 const sessionHeartbeatSchema = sessionRegistrationSchema.partial();
 
-const codexRecordSchema = z.object({
-  id: z.string().min(1),
-  timestamp: z.string().optional(),
-  type: z.string().min(1),
-  payload: z.unknown(),
-  line: z.number().int().optional(),
-  sourceThreadId: z.string().optional()
-});
-
 const sessionEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("thread_event"),
@@ -93,6 +84,20 @@ const sessionEventSchema = z.discriminatedUnion("type", [
     heartbeat: z.boolean().optional()
   })
 ]);
+
+const jsonlLineSchema = z.object({
+  line: z.number().int().min(1),
+  text: z.string()
+}).strict();
+
+const sessionRecordsSchema = z.object({
+  threadId: z.string().min(1),
+  mode: z.enum(["replace", "append"]),
+  path: z.string().min(1).optional(),
+  lastLine: z.number().int().min(0),
+  lines: z.array(jsonlLineSchema),
+  heartbeat: z.boolean().optional()
+}).strict();
 
 const machineRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
@@ -179,9 +184,7 @@ const machineTransportMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("session_records"),
     sessionId: z.string().min(1),
-    threadId: z.string().min(1),
-    heartbeat: z.boolean().optional(),
-    records: z.array(codexRecordSchema)
+    records: sessionRecordsSchema
   }),
   z.object({
     type: z.literal("session_command_result"),
@@ -1458,11 +1461,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         }
 
         if (parsed.type === "session_records") {
-          threads.applyWorkerRecords(parsed.sessionId, {
-            threadId: parsed.threadId,
-            records: parsed.records,
-            heartbeat: parsed.heartbeat
-          });
+          threads.applyWorkerRecords(parsed.sessionId, parsed.records);
           return;
         }
 

@@ -76,7 +76,7 @@ server 的轻量状态默认保存到：
 ~/.local/share/codexhub/server-state.yaml
 ```
 
-可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects 和 thread summaries，完整 transcript 仍来自 runtime session 镜像的 Codex session/jsonl。
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects 和 thread summaries，完整 transcript 来自 runtime session 从官方 Codex app-server 同步的 thread/read 和实时事件镜像。
 
 官方 Codex TUI + codexhub runtime session：
 
@@ -93,7 +93,7 @@ pnpm codexhub threads --show 20
 
 server 在线时，前台 `codexhub` 会通过 machine websocket 注册一个 transient session host，再把当前 runtime session 挂到这台 session host 下；它只代表这个前台 Codex 进程，不作为项目浏览/启动器。Web 里打开本机任意项目优先使用内嵌 `local` machine；远端或宿主机项目使用 SSH / registered machine。
 
-server 在线时，runtime session 会同步 app-server event 和 JSONL transcript，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，后台 bridge 会持续重试。Web 主列表以 projects/threads 为主，runtime session 只是 project 当前在线运行能力，并通过 `/api/projects` 的 `runtime` 字段投影；`/api/sessions` 保留为 runtime/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 JSONL `token_count` records 计算。
+server 在线时，runtime session 会同步官方 app-server 的 thread/read、item、rawResponseItem 和 tokenUsage 事件，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地官方 Codex TUI 仍然正常可用，后台 bridge 会持续重试。Web 主列表以 projects/threads 为主，runtime session 只是 project 当前在线运行能力，并通过 `/api/projects` 的 `runtime` 字段投影；`/api/sessions` 保留为 runtime/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 app-server tokenUsage 事件计算。
 
 `codexhub list` 与 Web 左侧一致，显示当前 runtime sessions；`codexhub threads` 扫描本机官方 Codex session 历史，只显示当前目录的可 resume threads，并输出标题、更新时间和完整 threadId。`--show` 控制最近显示数量，默认 20。
 
@@ -368,4 +368,4 @@ curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
 
 Slash command 会在转发给 Codex 前先处理。`/status` 和 `/help` 返回本地代理状态/帮助记录；Web 里的 `/model` 是客户端命令，会打开 Runtime 选择器，下一次普通 turn 再把选中的 model/reasoning 发给 app-server。如果官方 TUI 在本地改了 model/reasoning，`codexhub` / `codexhub resume` 会从 `thread/settings/updated` 或有效的 `config/read` 结果镜像回 Web。不支持的 slash command 不会作为普通 user turn 发给 Codex app-server，因为官方 TUI 的 slash command 是本地 UI 命令，不是 app-server turn。
 
-Server 不读取运行机器上的 `~/.codex` session、远端 `.codexp/tasks` 或上传临时图片目录。历史 session 通过 `codexhub resume` 或官方 TUI/app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；thread usage 由 server 从镜像的 `token_count` records 计算；新定时任务由本机 server state 调度。
+Server 不读取运行机器上的 `~/.codex` session、远端 `.codexp/tasks` 或上传临时图片目录。历史 session 通过 `codexhub resume` 或官方 TUI/app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；thread usage 由 server 从 app-server tokenUsage 事件镜像计算；新定时任务由本机 server state 调度。

@@ -202,6 +202,23 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
+  if (payload.type === "image_generation_call") {
+    const prompt = typeof payload.prompt === "string"
+      ? payload.prompt
+      : typeof payload.revised_prompt === "string"
+        ? payload.revised_prompt
+        : stringify(payload);
+    return {
+      id: record.id,
+      role: "tool",
+      label: "image generation",
+      text: prompt,
+      at: record.timestamp,
+      status: payload.status === "failed" ? "failed" : payload.status === "completed" ? "completed" : "pending",
+      record
+    };
+  }
+
   if (payload.type === "error") {
     return {
       id: record.id,
@@ -219,9 +236,10 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
 
 const localShellText = (payload: Record<string, unknown>) => {
   const action = asRecord(payload.action);
-  const command = Array.isArray(action?.command)
-    ? action.command.filter((part): part is string => typeof part === "string").join(" ")
-    : "";
+  const commandValue = action?.command ?? payload.command ?? payload.cmd;
+  const command = Array.isArray(commandValue)
+    ? commandValue.filter((part): part is string => typeof part === "string").join(" ")
+    : typeof commandValue === "string" ? commandValue : "";
   const output = typeof payload.aggregated_output === "string" ? payload.aggregated_output.trimEnd() : "";
   return [`$ ${command}`.trim(), output].filter(Boolean).join("\n");
 };

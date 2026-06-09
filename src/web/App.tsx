@@ -24,6 +24,7 @@ import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
 import { compactToolViews, type CompactRecordView } from "../shared/compactRecordViews.js";
 import { recordsToDetailedViews } from "./detailedRecordViews.js";
+import { jsonlLinesToRecords, type JsonlLine, type ThreadJsonl } from "./jsonlRecordViews.js";
 import {
   normalizeUpdatePlanStatus,
   parseUpdatePlanArguments,
@@ -60,6 +61,7 @@ type ThreadRuntimeSummary =
 
 type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
+  jsonl?: ThreadJsonl;
   lastSeq: number;
 };
 
@@ -279,9 +281,10 @@ type ImageAttachment = {
 
 type StreamEvent = {
   seq: number;
-  kind: "thread" | "record" | "done";
+  kind: "thread" | "record" | "done" | "jsonl_snapshot" | "jsonl_append";
   thread: ThreadSummary;
   record?: CodexRecord;
+  jsonl?: ThreadJsonl;
 };
 
 type RuntimeSessionStreamEvent = {
@@ -307,7 +310,7 @@ type RealtimeMessage =
   | ({ type: "projects" } & ProjectsPayload)
   | ({ type: "tasks" } & TasksStreamEvent)
   | ({ type: "connections" } & ConnectionsStreamEvent)
-  | ({ type: "thread" | "record" | "done" } & StreamEvent)
+  | ({ type: "thread" | "record" | "done" | "jsonl_snapshot" | "jsonl_append" } & StreamEvent)
   | { type: "ready" }
   | { type: "thread_subscribed" | "thread_unsubscribed"; threadId: string }
   | { type: "error"; message: string; scope?: string; threadId?: string };
@@ -336,6 +339,8 @@ type InspectDetail = {
   outputMeta?: string;
   outputBlockLabel?: string;
   outputBlock?: string;
+  rawBlockLabel?: string;
+  rawBlock?: string;
 };
 type WebToolPresenter = {
   render?: (args: Record<string, unknown>, status?: CodexRecordView["status"]) => React.ReactNode | null;
@@ -580,13 +585,19 @@ const App = () => {
       )
     };
   }), [activeRuntimeSessionThreads]);
+  const displayRecords = useMemo(
+    () => activeSession?.jsonl?.lines.length
+      ? jsonlLinesToRecords(activeSession.threadId, activeSession.jsonl)
+      : activeSession?.records ?? [],
+    [activeSession?.jsonl, activeSession?.records, activeSession?.threadId]
+  );
   const baseViews = useMemo<CodexRecordView[]>(
-    () => recordsToViews(activeSession?.records ?? []),
-    [activeSession?.records]
+    () => recordsToViews(displayRecords),
+    [displayRecords]
   );
   const detailedViews = useMemo<CodexRecordView[]>(
-    () => recordsToDetailedViews(activeSession?.records ?? []),
-    [activeSession?.records]
+    () => recordsToDetailedViews(displayRecords),
+    [displayRecords]
   );
   const activeViews = useMemo<WebRecordView[]>(
     () => messageDisplayMode === "compact" ? compactToolViews(baseViews) : detailedViews,
@@ -1006,7 +1017,13 @@ const App = () => {
       setSshConnections(Array.isArray(payload.connections) ? payload.connections : []);
       return;
     }
-    if (message.type === "thread" || message.type === "record" || message.type === "done") {
+    if (
+      message.type === "thread"
+      || message.type === "record"
+      || message.type === "done"
+      || message.type === "jsonl_snapshot"
+      || message.type === "jsonl_append"
+    ) {
       applyThreadStreamEvent(message);
     }
   }
@@ -1426,7 +1443,8 @@ const App = () => {
     setSessions((current) => current.map((session) => {
       if (session.threadId !== payload.thread.threadId) return session;
       const records = payload.record ? mergeRecord(session.records, payload.record) : session.records;
-      return { ...session, ...payload.thread, records };
+      const jsonl = mergeThreadJsonl(session.jsonl, payload);
+      return { ...session, ...payload.thread, records, jsonl };
     }));
     if (payload.thread.runtime.sessionId) {
       setThreadOrderBySession((current) => appendThreadOrder(current, payload.thread.runtime.sessionId!, payload.thread.threadId));
@@ -3091,6 +3109,15 @@ const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
           ) : null}
         </section>
       ) : null}
+      {detail.rawBlock ? (
+        <section className="detailSection">
+          <h3>Raw</h3>
+          <div className="detailCodeBlock">
+            <h4>{detail.rawBlockLabel ?? "JSONL"}</h4>
+            <pre>{detail.rawBlock}</pre>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 };
@@ -3132,7 +3159,7 @@ const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
   const rest = recordId.slice(prefix.length);
   const [turnId, kind] = rest.split(":");
   if (!turnId || !kind) return null;
-  return kind === "user" || kind === "agent" || kind === "usage" ? turnId : null;
+  return turnId;
 };
 
 const normalizeRuntimeSessions = (sessions: RuntimeSessionSummary[] | undefined): RuntimeSession[] =>
@@ -3645,7 +3672,6 @@ const formatResetTitle = (window: RateLimitWindow | null | undefined) => {
 };
 
 const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
-  if (hasMatchingJsonlTranscriptRecord(records, incoming)) return records;
   const existingIndex = records.findIndex((record) => record.id === incoming.id);
   if (existingIndex === -1) {
     return [
@@ -3654,6 +3680,35 @@ const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
     ];
   }
   return records.map((record, index) => index === existingIndex ? incoming : record);
+};
+
+const mergeThreadJsonl = (current: ThreadJsonl | undefined, event: StreamEvent): ThreadJsonl | undefined => {
+  if (event.kind === "jsonl_snapshot") return normalizeThreadJsonl(event.jsonl);
+  if (event.kind !== "jsonl_append" || !event.jsonl) return current;
+  const append = normalizeThreadJsonl(event.jsonl);
+  if (!append) return current;
+  const byLine = new Map<number, JsonlLine>();
+  for (const line of current?.lines ?? []) byLine.set(line.line, line);
+  for (const line of append.lines) byLine.set(line.line, line);
+  return {
+    path: append.path ?? current?.path,
+    lastLine: append.lastLine,
+    lines: [...byLine.values()].sort((left, right) => left.line - right.line)
+  };
+};
+
+const normalizeThreadJsonl = (jsonl: ThreadJsonl | undefined): ThreadJsonl | undefined => {
+  if (!jsonl) return undefined;
+  const lines = new Map<number, JsonlLine>();
+  for (const line of jsonl.lines ?? []) {
+    if (!Number.isInteger(line.line) || line.line < 1 || typeof line.text !== "string") continue;
+    lines.set(line.line, { line: line.line, text: line.text });
+  }
+  return {
+    path: jsonl.path,
+    lastLine: Number.isInteger(jsonl.lastLine) ? jsonl.lastLine : [...lines.keys()].at(-1) ?? 0,
+    lines: [...lines.values()].sort((left, right) => left.line - right.line)
+  };
 };
 
 const isMatchingOptimisticUserRecord = (record: CodexRecord, incoming: CodexRecord) => {
@@ -3667,38 +3722,24 @@ const isMatchingOptimisticUserRecord = (record: CodexRecord, incoming: CodexReco
     && recordPayload.message === incomingPayload.message;
 };
 
-const hasMatchingJsonlTranscriptRecord = (records: CodexRecord[], incoming: CodexRecord) => {
-  if (incoming.line) return false;
-  if (!incoming.id.startsWith("app:") || incoming.type !== "event_msg") return false;
-  const incomingPayload = asRecord(incoming.payload);
-  if (!incomingPayload) return false;
-  const incomingType = incomingPayload?.type;
-  if (incomingType !== "user_message" && incomingType !== "agent_message") return false;
-  const incomingTurnId = turnIdFromAppRecordId(String(incoming.sourceThreadId ?? ""), incoming.id);
-  return records.some((record) => {
-    if (!record.line || record.type !== "event_msg") return false;
-    const threadId = String(record.sourceThreadId ?? incoming.sourceThreadId ?? "");
-    const recordTurnId = turnIdFromAppRecordId(threadId, record.id);
-    if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
-    const payload = asRecord(record.payload);
-    if (payload?.type !== incomingType || payload.message !== incomingPayload.message) return false;
-    if (incomingType === "agent_message") return payload.phase === incomingPayload.phase;
-    return JSON.stringify(payload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
-  });
-};
-
 const isMatchingAppServerTranscriptRecord = (record: CodexRecord, incoming: CodexRecord) => {
-  if (!incoming.line || incoming.type !== "event_msg" || !record.id.startsWith("app:") || record.line) return false;
+  if (
+    incoming.type !== "event_msg"
+    || record.type !== "event_msg"
+    || !incoming.id.startsWith("app:")
+    || !record.id.startsWith("app:")
+  ) return false;
   const recordPayload = asRecord(record.payload);
   const incomingPayload = asRecord(incoming.payload);
   if (!incomingPayload) return false;
   const incomingType = incomingPayload?.type;
   if (incomingType !== "user_message" && incomingType !== "agent_message") return false;
+  if (recordPayload?.type !== incomingType) return false;
   const threadId = String(incoming.sourceThreadId ?? record.sourceThreadId ?? "");
   const incomingTurnId = turnIdFromAppRecordId(threadId, incoming.id);
   const recordTurnId = turnIdFromAppRecordId(threadId, record.id);
   if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
-  if (recordPayload?.type !== incomingType || recordPayload.message !== incomingPayload.message) return false;
+  if (recordPayload.message !== incomingPayload.message) return false;
   if (incomingType === "agent_message") return recordPayload.phase === incomingPayload.phase;
   return JSON.stringify(recordPayload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
 };
@@ -3711,12 +3752,14 @@ const formatInspectDetail = (message: WebRecordView): InspectDetail => {
   const presenterInspect = toolCall
     ? webToolPresenters[toolCall.name]?.inspect?.(toolCall.args, output)
     : null;
-  if (presenterInspect) return presenterInspect;
+  const raw = formatRawJsonlInspect(inspectRecord);
+  if (presenterInspect) return { ...presenterInspect, ...raw };
 
   const callText = message.inspectCallText ?? message.text;
   return {
     ...formatInspectInput(message.record, callText.trimEnd()),
-    ...formatInspectOutput(message.record, output)
+    ...formatInspectOutput(message.record, output),
+    ...raw
   };
 };
 
@@ -3727,8 +3770,8 @@ const formatInspectTitle = (message: WebRecordView) => {
 
 const renderToolMessageBody = (message: WebRecordView, status?: CodexRecordView["status"]) => {
   const toolCall = parseToolCallMessage(message);
-  if (!toolCall) return null;
-  return webToolPresenters[toolCall.name]?.render?.(toolCall.args, status) ?? null;
+  if (toolCall) return webToolPresenters[toolCall.name]?.render?.(toolCall.args, status) ?? null;
+  return renderAppServerToolPreview(message, status);
 };
 
 const parseToolCallMessage = (message: WebRecordView): ParsedToolCall | null => {
@@ -3738,6 +3781,63 @@ const parseToolCallMessage = (message: WebRecordView): ParsedToolCall | null => 
   const name = typeof payload.name === "string" ? payload.name : "tool";
   const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");
   return { name, args: args ?? {} };
+};
+
+const renderAppServerToolPreview = (message: WebRecordView, status?: CodexRecordView["status"]) => {
+  if (message.role !== "tool") return null;
+  const payload = asRecord(message.record.payload);
+  if (!payload) return null;
+
+  if (payload.type === "local_shell_call") {
+    return (
+      <ToolPreview title="tool: shell" status={status} meta={appServerToolMeta(payload)}>
+        <pre className="toolCommandLine">{message.text || "$ <empty>"}</pre>
+      </ToolPreview>
+    );
+  }
+
+  if (payload.type === "file_change") {
+    const changes = fileChangePreviewLines(payload);
+    return (
+      <ToolPreview title="tool: file_change" status={status} meta={appServerToolMeta(payload)}>
+        <pre className="toolCommandLine">{changes.length ? changes.join("\n") : "No file changes"}</pre>
+      </ToolPreview>
+    );
+  }
+
+  if (payload.type === "web_search_call") {
+    return (
+      <ToolPreview title="tool: web_search" status={status} meta={appServerToolMeta(payload)}>
+        <p className="toolPreviewBody">{typeof payload.query === "string" && payload.query ? payload.query : message.text}</p>
+      </ToolPreview>
+    );
+  }
+
+  if (payload.type === "mcp_tool_call") {
+    return (
+      <ToolPreview title={`tool: ${mcpToolPreviewName(payload)}`} status={status} meta={appServerToolMeta(payload)}>
+        <p className="toolPreviewBody">{message.text || "MCP tool call"}</p>
+      </ToolPreview>
+    );
+  }
+
+  if (payload.type === "image_generation_call") {
+    return (
+      <ToolPreview title="tool: image_generation" status={status} meta={appServerToolMeta(payload)}>
+        <p className="toolPreviewBody">{message.text || "Image generation"}</p>
+      </ToolPreview>
+    );
+  }
+
+  if (payload.type === "function_call_output") {
+    return (
+      <ToolPreview title="tool result" status={status} meta={appServerToolMeta(payload)}>
+        <p className="toolPreviewBody">{message.text || "Completed"}</p>
+      </ToolPreview>
+    );
+  }
+
+  return null;
 };
 
 const normalizeWebToolOutput = (output: string) => {
@@ -3758,6 +3858,14 @@ const formatInspectOutput = (record: CodexRecord, output: string): Pick<InspectD
   if (!text) return {};
   if (shouldShowRawToolOutput(record)) return formatStructuredToolOutput(text);
   return { outputMeta: formatToolOutputFields(text) ?? text };
+};
+
+const formatRawJsonlInspect = (record: CodexRecord): Pick<InspectDetail, "rawBlockLabel" | "rawBlock"> => {
+  if (record.rawJsonl == null) return {};
+  return {
+    rawBlockLabel: record.line ? `JSONL line ${record.line}` : "JSONL",
+    rawBlock: stringifyInspectJson(record.rawJsonl)
+  };
 };
 
 const formatToolOutputFields = (output: string) => {
@@ -3846,6 +3954,28 @@ const toolPreviewMeta = (args: Record<string, unknown>) => [
   typeof args.max_output_tokens === "number" ? `max ${formatCompactNumber(args.max_output_tokens)} tokens` : null
 ].filter((item): item is string => Boolean(item));
 
+const appServerToolMeta = (payload: Record<string, unknown>) => [
+  typeof payload.status === "string" ? payload.status : null,
+  typeof payload.exit_code === "number" ? `exit ${payload.exit_code}` : null,
+  typeof payload.call_id === "string" ? payload.call_id : null,
+  Array.isArray(payload.changes) ? `${payload.changes.length} files` : null
+].filter((item): item is string => Boolean(item));
+
+const fileChangePreviewLines = (payload: Record<string, unknown>) => {
+  if (!Array.isArray(payload.changes)) return [];
+  return payload.changes.map((change) => {
+    const record = asRecord(change);
+    const kind = typeof record?.kind === "string" ? record.kind : "update";
+    const filePath = typeof record?.path === "string" ? record.path : "<unknown>";
+    return `${kind}: ${filePath}`;
+  });
+};
+
+const mcpToolPreviewName = (payload: Record<string, unknown>) => [
+  typeof payload.server === "string" ? payload.server : null,
+  typeof payload.tool === "string" ? payload.tool : null
+].filter(Boolean).join(".") || "mcp";
+
 const formatUpdatePlanInspectInput = (plan: UpdatePlanViewModel) => [
   "tool: update_plan",
   plan.explanation ? `explanation: ${plan.explanation}` : null,
@@ -3901,6 +4031,14 @@ const parseJsonObject = (value: string): Record<string, unknown> | null => {
     return asRecord(JSON.parse(value));
   } catch {
     return null;
+  }
+};
+
+const stringifyInspectJson = (value: unknown) => {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
   }
 };
 

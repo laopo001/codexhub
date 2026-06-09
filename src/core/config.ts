@@ -1,4 +1,4 @@
-import type { ThreadOptions } from "@openai/codex-sdk";
+import type { ThreadOptions } from "./threadOptions.js";
 
 export type ProxyConfig = {
   host: string;

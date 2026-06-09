@@ -1,15 +1,19 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access } from "node:fs/promises";
+import { watch, type FSWatcher } from "node:fs";
+import { access, stat } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Command } from "commander";
 import { spawn as spawnPty, type IPty } from "node-pty";
-import { listLoadableCodexThreads } from "../core/codexhubLog.js";
-import { readCodexSessionRecordsAfter } from "../core/codexSession.js";
-import { asRecord as asCodexRecord, codexRecordFromSession, type CodexRecord } from "../core/codexRecord.js";
+import {
+  findCodexSessionFile,
+  listCodexSessionsForCwd,
+  readCodexSessionJsonlLinesFromFile,
+  type CodexSessionSummary
+} from "../core/codexSession.js";
 import type { MachineCommand, MachineRegistration } from "../core/machineHub.js";
 import type { ProxyInput } from "../core/proxyInput.js";
 import type {
@@ -51,9 +55,15 @@ type PendingRequest = {
 
 type SyncedThread = {
   jsonlPath?: string;
-  jsonlLine?: number;
-  jsonlSyncing?: boolean;
-  jsonlReplayKeepTurns?: number;
+  jsonlLine: number;
+  jsonlKnownSize?: number;
+  jsonlFileKey?: string;
+  jsonlReplayFull: boolean;
+  jsonlSyncing: boolean;
+  jsonlPending: boolean;
+  jsonlWatcher?: FSWatcher;
+  jsonlWatcherPath?: string;
+  jsonlDebounceTimer?: NodeJS.Timeout;
 };
 
 type BridgeState = {
@@ -339,6 +349,7 @@ class ProxyBridgeRunner {
   private lastReadyThreadId: string | null = null;
   private readonly ready = new Deferred<{ sessionId: string; threadId: string }>();
   private readonly localAppBridgeReady = new Deferred<void>();
+  private readonly stopped = new Deferred<void>();
   private bridgeState: BridgeState = { threadIds: [] };
 
   constructor(private readonly options: ProxyBridgeRunnerOptions) {}
@@ -353,6 +364,7 @@ class ProxyBridgeRunner {
     this.stopping = true;
     this.transport?.stop({ unregister: true });
     this.bridge?.close();
+    await Promise.race([this.stopped.promise, delay(2000)]);
   }
 
   waitForReady() {
@@ -380,72 +392,76 @@ class ProxyBridgeRunner {
   }
 
   private async runLoop() {
-    while (!this.stopping) {
-      this.options.statusBar?.setProxyState("connecting");
-      try {
-        const sink: HubTransportSink = {
-          sendEvent: (event) => this.transport?.sendEvent(event),
-          sendRecords: (records) => this.transport?.sendRecords(records),
-          sendHeartbeat: (registration) => this.transport?.sendHeartbeat(registration)
-        };
-        this.bridge = await CodexAppServerBridge.connect(this.options, this.bridgeState, sink);
-        const callbacks: HeadlessSessionTransportCallbacks = {
-          registration: () => {
-            this.bridgeState = this.bridge?.snapshotState() ?? this.bridgeState;
-            return {
-              machineId: this.options.machineId,
-              name: sessionDisplayName(this.options.sessionId),
-              workingDirectory: this.options.cwd,
-              appServerUrl: this.options.appServerUrl,
-              pid: process.pid,
-              hostname: os.hostname()
-            };
-          },
-          handleCommand: async (command) => {
-            if (!this.bridge) throw new Error("codexhub bridge is not connected.");
-            const result = await this.bridge.runCommand(command);
-            this.bridgeState = this.bridge.snapshotState();
-            return result;
-          },
-          onState: (state, message) => this.setTransportState(state, message)
-        };
-        const transportContext: HeadlessSessionTransportContext = {
-          sessionId: this.options.sessionId,
-          apiBase: this.options.apiBase,
-          machineId: this.options.machineId,
-          cwd: this.options.cwd,
-          appServerUrl: this.options.appServerUrl
-        };
-        this.transport = this.options.transportFactory
-          ? this.options.transportFactory(transportContext, callbacks)
-          : new MachineBackedSessionTransport({
-            apiBase: this.options.apiBase,
+    try {
+      while (!this.stopping) {
+        this.options.statusBar?.setProxyState("connecting");
+        try {
+          const sink: HubTransportSink = {
+            sendEvent: (event) => this.transport?.sendEvent(event),
+            sendRecords: (records) => this.transport?.sendRecords(records),
+            sendHeartbeat: (registration) => this.transport?.sendHeartbeat(registration)
+          };
+          this.bridge = await CodexAppServerBridge.connect(this.options, this.bridgeState, sink);
+          const callbacks: HeadlessSessionTransportCallbacks = {
+            registration: () => {
+              this.bridgeState = this.bridge?.snapshotState() ?? this.bridgeState;
+              return {
+                machineId: this.options.machineId,
+                name: sessionDisplayName(this.options.sessionId),
+                workingDirectory: this.options.cwd,
+                appServerUrl: this.options.appServerUrl,
+                pid: process.pid,
+                hostname: os.hostname()
+              };
+            },
+            handleCommand: async (command) => {
+              if (!this.bridge) throw new Error("codexhub bridge is not connected.");
+              const result = await this.bridge.runCommand(command);
+              this.bridgeState = this.bridge.snapshotState();
+              return result;
+            },
+            onState: (state, message) => this.setTransportState(state, message)
+          };
+          const transportContext: HeadlessSessionTransportContext = {
             sessionId: this.options.sessionId,
-            machineId: this.options.machineId ?? createSessionMachineId(this.options.sessionId),
-            machineName: `codexhub session ${this.options.sessionId.slice(-8)}`,
-            cwd: this.options.cwd
-          }, callbacks);
-        this.localAppBridgeReady.resolve();
-        if (this.options.ensureCurrentThread) {
-          const threadId = await this.bridge.ensureCurrentThread();
-          this.bridgeState = this.bridge.snapshotState();
-          this.logHeadlessReady(threadId);
-          this.ready.resolve({ sessionId: this.options.sessionId, threadId });
+            apiBase: this.options.apiBase,
+            machineId: this.options.machineId,
+            cwd: this.options.cwd,
+            appServerUrl: this.options.appServerUrl
+          };
+          this.transport = this.options.transportFactory
+            ? this.options.transportFactory(transportContext, callbacks)
+            : new MachineBackedSessionTransport({
+              apiBase: this.options.apiBase,
+              sessionId: this.options.sessionId,
+              machineId: this.options.machineId ?? createSessionMachineId(this.options.sessionId),
+              machineName: `codexhub session ${this.options.sessionId.slice(-8)}`,
+              cwd: this.options.cwd
+            }, callbacks);
+          this.localAppBridgeReady.resolve();
+          if (this.options.ensureCurrentThread) {
+            const threadId = await this.bridge.ensureCurrentThread();
+            this.bridgeState = this.bridge.snapshotState();
+            this.logHeadlessReady(threadId);
+            this.ready.resolve({ sessionId: this.options.sessionId, threadId });
+          }
+          this.transport.start();
+          await this.runBridge(this.bridge);
+        } catch (error) {
+          if (this.stopping) return;
+          this.options.statusBar?.setProxyState("offline");
+          this.logState("offline", `codexhub local bridge offline: ${errorText(error)}`);
+        } finally {
+          if (this.bridge) this.bridgeState = this.bridge.snapshotState();
+          this.transport?.stop({ unregister: this.stopping });
+          this.transport = null;
+          this.bridge?.close();
+          this.bridge = null;
         }
-        this.transport.start();
-        await this.runBridge(this.bridge);
-      } catch (error) {
-        if (this.stopping) return;
-        this.options.statusBar?.setProxyState("offline");
-        this.logState("offline", `codexhub local bridge offline: ${errorText(error)}`);
-      } finally {
-        if (this.bridge) this.bridgeState = this.bridge.snapshotState();
-        this.transport?.stop({ unregister: this.stopping });
-        this.transport = null;
-        this.bridge?.close();
-        this.bridge = null;
+        if (!this.stopping) await delay(5000);
       }
-      if (!this.stopping) await delay(5000);
+    } finally {
+      this.stopped.resolve();
     }
   }
 
@@ -455,7 +471,7 @@ class ProxyBridgeRunner {
       if (!this.stopping) stopped.reject(new Error(`${label}: ${errorText(error)}`));
     };
     void bridge.runThreadSyncLoop().catch(fail("thread sync"));
-    void bridge.runJsonlRecordSyncLoop().catch(fail("jsonl record sync"));
+    void bridge.runJsonlRecordSyncLoop().catch(fail("jsonl sync"));
     void bridge.runHeartbeatLoop().catch(fail("heartbeat"));
     void bridge.waitForClose().then(() => stopped.reject(new Error("app-server bridge closed")));
     await stopped.promise;
@@ -529,7 +545,7 @@ class MachineBackedSessionTransport implements HeadlessSessionTransport {
   }
 
   sendRecords(records: WorkerRecordsInput) {
-    this.sendOrQueue({ type: "session_records", sessionId: this.sessionId, ...records });
+    this.sendOrQueue({ type: "session_records", sessionId: this.sessionId, records });
   }
 
   sendHeartbeat(registration: Partial<SessionRegistration>) {
@@ -798,6 +814,7 @@ class CodexAppServerBridge {
       input: toAppServerInput(input),
       ...this.turnRuntimeParams(targetThreadId, undefined)
     }, { threadId: targetThreadId });
+    this.scheduleJsonlSync(targetThreadId);
     return targetThreadId;
   }
 
@@ -817,14 +834,10 @@ class CodexAppServerBridge {
     }
   }
 
-  async runJsonlRecordSyncLoop() {
+  async runJsonlRecordSyncLoop(intervalMs = 2000) {
     while (!this.closed) {
-      await delay(1000);
-      if (this.closed) return;
-      for (const [threadId, state] of [...this.syncedThreads]) {
-        if (this.closed) return;
-        await this.syncJsonlRecords(threadId, state);
-      }
+      await this.syncJsonlRecords();
+      await delay(intervalMs);
     }
   }
 
@@ -840,13 +853,14 @@ class CodexAppServerBridge {
   private markClosed() {
     if (this.closed) return;
     this.closed = true;
+    for (const state of this.syncedThreads.values()) this.closeJsonlWatcher(state);
     this.closeSignal.resolve();
   }
 
   private async handleCommand(command: WorkerCommand) {
     if (command.type === "list_threads") {
       return {
-        threads: await listLoadableCodexThreads(command.workingDirectory, { limit: command.limit })
+        threads: await listCodexSessionsForCwd(command.workingDirectory, { limit: command.limit })
       };
     }
 
@@ -918,7 +932,7 @@ class CodexAppServerBridge {
         numTurns: command.numTurns
       }, command);
       this.bindThread(command.threadId);
-      this.resetJsonlCursor(command.threadId, command.keepTurns);
+      this.resetJsonlCursor(command.threadId);
       return;
     }
 
@@ -935,6 +949,7 @@ class CodexAppServerBridge {
       input: toAppServerInput(inputForCollaborationMode(command.input, command.options)),
       ...this.turnRuntimeParams(loadedThreadId, command.options)
     }, command);
+    this.scheduleJsonlSync(loadedThreadId);
   }
 
   private async applyGoalMode(threadId: string, input: ProxyInput, options: ThreadRunOptions | undefined) {
@@ -1043,14 +1058,31 @@ class CodexAppServerBridge {
   }
 
   private bindThread(threadId: string) {
-    if (!this.syncedThreads.has(threadId)) {
-      this.syncedThreads.set(threadId, {});
-    }
+    if (this.syncedThreads.has(threadId)) return;
+    this.syncedThreads.set(threadId, {
+      jsonlLine: 0,
+      jsonlReplayFull: true,
+      jsonlSyncing: false,
+      jsonlPending: false
+    });
+    this.scheduleJsonlSync(threadId, { replayFull: true });
   }
 
   private markThreadLoaded(threadId: string) {
     this.bindThread(threadId);
     this.loadedThreads.add(threadId);
+  }
+
+  private resetJsonlCursor(threadId: string) {
+    const state = this.syncedThreads.get(threadId);
+    if (!state) return;
+    state.jsonlPath = undefined;
+    state.jsonlLine = 0;
+    state.jsonlKnownSize = undefined;
+    state.jsonlFileKey = undefined;
+    state.jsonlReplayFull = true;
+    this.closeJsonlWatcher(state);
+    this.scheduleJsonlSync(threadId, { replayFull: true });
   }
 
   private rememberThreadSandboxFromResult(threadId: string, message: JsonRecord) {
@@ -1088,67 +1120,120 @@ class CodexAppServerBridge {
     return loadedThreadId;
   }
 
-  private resetJsonlCursor(threadId: string, keepTurns?: number) {
-    const state = this.syncedThreads.get(threadId) ?? {};
-    state.jsonlPath = undefined;
-    state.jsonlLine = 0;
-    state.jsonlReplayKeepTurns = keepTurns;
-    this.syncedThreads.set(threadId, state);
+  private async syncJsonlRecords() {
+    await Promise.all([...this.syncedThreads.keys()].map((threadId) => this.syncThreadJsonl(threadId)));
   }
 
-  resetServerMirrorState() {
-    const threadIds = new Set(this.syncedThreads.keys());
-    if (this.currentThreadId) threadIds.add(this.currentThreadId);
-    for (const threadId of threadIds) this.resetJsonlCursor(threadId);
-    this.forwardedRuntimeSettings.clear();
+  private scheduleJsonlSync(
+    threadId: string,
+    options: { replayFull?: boolean; delayMs?: number } = {}
+  ) {
+    const state = this.syncedThreads.get(threadId);
+    if (!state || this.closed) return;
+    if (options.replayFull) state.jsonlReplayFull = true;
+    if (state.jsonlDebounceTimer) clearTimeout(state.jsonlDebounceTimer);
+    state.jsonlDebounceTimer = setTimeout(() => {
+      state.jsonlDebounceTimer = undefined;
+      void this.syncThreadJsonl(threadId).catch((error) => {
+        console.error(`codexhub bridge failed to sync JSONL for ${threadId}: ${errorText(error)}`);
+      });
+    }, options.delayMs ?? 75);
+    state.jsonlDebounceTimer.unref?.();
   }
 
-  private async syncJsonlRecords(threadId: string, state: SyncedThread) {
-    if (state.jsonlSyncing) return;
+  private async syncThreadJsonl(threadId: string) {
+    const state = this.syncedThreads.get(threadId);
+    if (!state || this.closed) return;
+    if (state.jsonlSyncing) {
+      state.jsonlPending = true;
+      return;
+    }
+
     state.jsonlSyncing = true;
+    state.jsonlPending = false;
     try {
-      const batch = await readCodexSessionRecordsAfter(threadId, state.jsonlLine ?? 0);
-      if (!batch) return;
-      if (state.jsonlPath && state.jsonlPath !== batch.path) {
-        state.jsonlLine = 0;
-        const resetBatch = await readCodexSessionRecordsAfter(threadId, 0);
-        if (!resetBatch) return;
-        state.jsonlPath = resetBatch.path;
-        state.jsonlLine = resetBatch.lastLine;
-        const records = this.recordsForJsonlSync(resetBatch.records, state)
-          .filter(shouldMirrorJsonlRecord)
-          .map((record) => codexRecordFromSession(record, threadId));
-        if (records.length) await this.forwardRecords(threadId, records);
-        return;
+      const filePath = await findCodexSessionFile(threadId);
+      if (!filePath) return;
+      const currentStat = await stat(filePath).catch(() => null);
+      const fileKey = currentStat ? `${currentStat.dev}:${currentStat.ino}` : undefined;
+      const pathChanged = Boolean(state.jsonlPath && state.jsonlPath !== filePath);
+      const fileReplaced = Boolean(state.jsonlFileKey && fileKey && state.jsonlFileKey !== fileKey);
+      const truncated = typeof state.jsonlKnownSize === "number"
+        && currentStat
+        && currentStat.size < state.jsonlKnownSize;
+      const replace = !state.jsonlPath || pathChanged || fileReplaced || truncated || state.jsonlReplayFull;
+      const afterLine = replace ? 0 : state.jsonlLine;
+      const batch = await readCodexSessionJsonlLinesFromFile(filePath, { afterLine });
+      if (replace || batch.lines.length) {
+        this.hub.sendRecords({
+          threadId,
+          mode: replace ? "replace" : "append",
+          path: batch.path,
+          lastLine: batch.lastLine,
+          lines: batch.lines,
+          heartbeat: false
+        });
       }
       state.jsonlPath = batch.path;
       state.jsonlLine = batch.lastLine;
-
-      const records = this.recordsForJsonlSync(batch.records, state)
-        .filter(shouldMirrorJsonlRecord)
-        .map((record) => codexRecordFromSession(record, threadId));
-      if (records.length) await this.forwardRecords(threadId, records);
-    } catch (error) {
-      console.error(`codexhub bridge failed to sync jsonl records for ${threadId}: ${errorText(error)}`);
+      state.jsonlKnownSize = currentStat?.size;
+      state.jsonlFileKey = fileKey;
+      state.jsonlReplayFull = false;
+      this.ensureJsonlWatcher(threadId, batch.path);
     } finally {
       state.jsonlSyncing = false;
+      if (state.jsonlPending && !this.closed) this.scheduleJsonlSync(threadId);
     }
   }
 
-  private recordsForJsonlSync<T extends { turnId?: string }>(
-    records: T[],
-    state: SyncedThread
-  ): T[] {
-    if (!state.jsonlReplayKeepTurns) return records;
-    const keepTurnIds: string[] = [];
-    for (const record of records) {
-      if (!record.turnId || keepTurnIds.includes(record.turnId)) continue;
-      if (keepTurnIds.length >= state.jsonlReplayKeepTurns) continue;
-      keepTurnIds.push(record.turnId);
+  private ensureJsonlWatcher(threadId: string, filePath: string) {
+    const state = this.syncedThreads.get(threadId);
+    if (!state || state.jsonlWatcherPath === filePath && state.jsonlWatcher) return;
+    this.closeJsonlWatcher(state);
+    try {
+      state.jsonlWatcher = watch(filePath, { persistent: false }, () => this.scheduleJsonlSync(threadId));
+      state.jsonlWatcherPath = filePath;
+      state.jsonlWatcher.on("error", () => {
+        this.closeJsonlWatcher(state);
+        this.scheduleJsonlSync(threadId, { replayFull: true, delayMs: 250 });
+      });
+    } catch {
+      state.jsonlWatcher = undefined;
     }
-    const allowed = new Set(keepTurnIds);
-    state.jsonlReplayKeepTurns = undefined;
-    return records.filter((record) => !record.turnId || allowed.has(record.turnId));
+  }
+
+  private closeJsonlWatcher(state: SyncedThread) {
+    if (state.jsonlDebounceTimer) clearTimeout(state.jsonlDebounceTimer);
+    state.jsonlDebounceTimer = undefined;
+    state.jsonlWatcher?.close();
+    state.jsonlWatcher = undefined;
+    state.jsonlWatcherPath = undefined;
+  }
+
+  private async listAppServerThreads(workingDirectory: string, limit?: number): Promise<CodexSessionSummary[]> {
+    const result = asRecord(await this.request("thread/list", {
+      cwd: workingDirectory,
+      limit: Number.isInteger(limit) && limit !== undefined && limit > 0 ? limit : null,
+      sortKey: "updated_at",
+      sortDirection: "desc"
+    }));
+    const data = Array.isArray(result?.data) ? result.data : [];
+    return data
+      .map((thread) => appServerThreadSummary(asRecord(thread), workingDirectory))
+      .filter((thread): thread is CodexSessionSummary => Boolean(thread));
+  }
+
+  resetServerMirrorState() {
+    this.forwardedRuntimeSettings.clear();
+    for (const [threadId, state] of this.syncedThreads) {
+      state.jsonlPath = undefined;
+      state.jsonlLine = 0;
+      state.jsonlKnownSize = undefined;
+      state.jsonlFileKey = undefined;
+      state.jsonlReplayFull = true;
+      this.closeJsonlWatcher(state);
+      this.scheduleJsonlSync(threadId, { replayFull: true });
+    }
   }
 
   private async syncRuntimeSettings(threadIds: string[]) {
@@ -1294,10 +1379,6 @@ class CodexAppServerBridge {
       modelReasoningEffort: settings.modelReasoningEffort,
       heartbeat: false
     });
-  }
-
-  private async forwardRecords(threadId: string, records: CodexRecord[]) {
-    this.hub.sendRecords({ threadId, records, heartbeat: false });
   }
 
   private respondToServerRequest(message: JsonRecord) {
@@ -1774,15 +1855,29 @@ const threadIdForPendingMessage = (pending: Pick<PendingRequest, "method" | "thr
   return threadIdForMessage(message) ?? pending.threadId;
 };
 
-const shouldMirrorJsonlRecord = (record: { type: string; payload: unknown }) => {
-  const payload = asCodexRecord(record.payload);
-  if (!payload) return false;
-  if (record.type === "response_item") return payload.type !== "message";
-  if (record.type !== "event_msg") return false;
-  return payload.type === "user_message"
-    || payload.type === "agent_message"
-    || payload.type === "image_generation_end"
-    || payload.type === "token_count";
+const appServerThreadSummary = (
+  thread: JsonRecord | null,
+  workingDirectory: string
+): CodexSessionSummary | null => {
+  const threadId = typeof thread?.id === "string" ? thread.id : "";
+  const cwd = typeof thread?.cwd === "string" ? thread.cwd : workingDirectory;
+  if (!threadId || cwd !== workingDirectory) return null;
+  return {
+    threadId,
+    cwd,
+    path: typeof thread?.path === "string" ? thread.path : "",
+    updatedAt: appServerTimestamp(thread?.updatedAt),
+    firstUserMessage: typeof thread?.preview === "string" ? thread.preview : "",
+    lastAssistantMessage: "",
+    artifactCount: 0,
+    messageCount: 0
+  };
+};
+
+const appServerTimestamp = (value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value)) return new Date(value * 1000).toISOString();
+  if (typeof value === "string" && value) return value;
+  return new Date(0).toISOString();
 };
 
 const resultThreadIdForMessage = (message: JsonRecord) => {

@@ -14,7 +14,7 @@ codexhub 是本机 Node.js server + Web 控制面。server 负责 machines、pro
 4. `registered` 表示外部机器主动运行 `codexhub machine --server ... --type registered` 连接进来。它注册的是机器，不是 worker。
 5. machine 是 project launcher 和命令执行入口。server 不扫描远端文件系统；目录解析、权限检查和启动 session 都在 machine 所在机器执行。
 6. runtime session 是一次官方 Codex app-server/headless runtime。公开 ID 是 `sessionId`；它是 project 的在线运行能力，不是用户心智里的主对象。
-7. `threadId` 来自官方 Codex session。server/Web/TG/task 读取和展示 thread transcript，但 transcript 的权威来源仍是 runtime session 镜像的 records/jsonl。
+7. `threadId` 来自官方 Codex session。server/Web/TG/task 读取和展示 thread transcript，但 transcript 的权威来源是 runtime session 从官方 app-server 同步的 thread/read、item、rawResponseItem 和 tokenUsage 事件镜像。
 8. server/runtime session 不维护 `currentThreadId` 或 `currentThread`。Web 当前 tab、Telegram chat 绑定、task `threadId` 都是客户端/任务自己的选择状态；所有发送入口最终必须显式知道目标 `threadId`。
 9. slash command 不按普通 Codex turn 透传。server 本地只处理明确支持的 `/status`、`/help`、`/model` 语义；其他 slash command 返回不支持说明。
 

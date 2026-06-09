@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { ThreadOptions, Usage } from "@openai/codex-sdk";
 import type { CodexSessionSummary } from "./codexSession.js";
 import { asRecord, type CodexRecord } from "./codexRecord.js";
 import { recordsToViews } from "./codexRecordView.js";
 import type { ProxyInput } from "./proxyInput.js";
+import type { ThreadOptions, Usage } from "./threadOptions.js";
 import { emptyThreadUsage, threadUsageFromRecords, type ThreadUsage } from "./threadUsage.js";
 
 export type ThreadSummary = {
@@ -57,15 +57,28 @@ export type ThreadRunOptions = {
 
 export type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
+  jsonl?: ThreadJsonl;
   lastSeq: number;
+};
+
+export type JsonlLine = {
+  line: number;
+  text: string;
+};
+
+export type ThreadJsonl = {
+  path?: string;
+  lastLine: number;
+  lines: JsonlLine[];
 };
 
 export type ThreadStreamEvent = {
   seq: number;
   threadId: string;
-  kind: "thread" | "record" | "done";
+  kind: "thread" | "record" | "done" | "jsonl_snapshot" | "jsonl_append";
   thread: ThreadSummary;
   record?: CodexRecord;
+  jsonl?: ThreadJsonl;
 };
 
 export type WorkerRegistration = {
@@ -134,6 +147,15 @@ export type WorkerThreadCommandResult = {
   threadId: string;
 };
 
+export type WorkerRecordsInput = {
+  threadId: string;
+  mode: "replace" | "append";
+  path?: string;
+  lastLine: number;
+  lines: JsonlLine[];
+  heartbeat?: boolean;
+};
+
 export type WorkerCommandResult = WorkerThreadCandidatesResult | WorkerThreadCommandResult | ThreadDetail;
 
 export type WorkerEventInput =
@@ -159,12 +181,6 @@ export type WorkerEventInput =
       heartbeat?: boolean;
     };
 
-export type WorkerRecordsInput = {
-  threadId: string;
-  records: CodexRecord[];
-  heartbeat?: boolean;
-};
-
 type RuntimeWorker = WorkerSummary & {
   transportId?: string;
   commands: WorkerCommand[];
@@ -181,6 +197,8 @@ type RuntimeThread = {
   title: string;
   updatedAt: string;
   records: CodexRecord[];
+  jsonl?: ThreadJsonl;
+  recordSeq: number;
   threadUsage: ThreadUsage;
   events: ThreadStreamEvent[];
   subscribers: Set<(event: ThreadStreamEvent) => void>;
@@ -448,19 +466,40 @@ export class ThreadHub {
   applyWorkerRecords(workerId: string, input: WorkerRecordsInput) {
     if (input.heartbeat !== false) this.heartbeatWorker(workerId);
     const worker = this.requireWorker(workerId);
-    const thread = this.ensureThread(
-      input.threadId,
-      worker,
-      { params: { threadId: input.threadId } }
-    );
-    for (const record of input.records) {
-      if (record.sourceThreadId && record.sourceThreadId !== input.threadId) continue;
-      this.upsertRecord(thread, {
-        ...record,
-        sourceThreadId: record.sourceThreadId ?? input.threadId
-      });
+    const thread = this.ensureThread(input.threadId, worker, {
+      params: { threadId: input.threadId, cwd: worker.workingDirectory }
+    });
+    const nextLines = normalizeJsonlLines(input.lines);
+    if (input.mode === "replace") {
+      thread.jsonl = {
+        path: input.path,
+        lastLine: input.lastLine,
+        lines: nextLines
+      };
+      thread.updatedAt = new Date().toISOString();
+      this.publish(thread, "jsonl_snapshot", undefined, { jsonl: thread.jsonl });
+      return { ok: true, thread: this.summary(thread) };
     }
-    return { ok: true, thread: this.summary(thread), records: input.records.length };
+
+    const current = thread.jsonl;
+    const merged = mergeJsonlLines(current?.lines ?? [], nextLines);
+    const changed = merged.changed || current?.path !== input.path || current?.lastLine !== input.lastLine;
+    if (!changed) return { ok: true, thread: this.summary(thread) };
+
+    thread.jsonl = {
+      path: input.path ?? current?.path,
+      lastLine: input.lastLine,
+      lines: merged.lines
+    };
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "jsonl_append", undefined, {
+      jsonl: {
+        path: thread.jsonl.path,
+        lastLine: thread.jsonl.lastLine,
+        lines: nextLines
+      }
+    });
+    return { ok: true, thread: this.summary(thread) };
   }
 
   listThreads(): ThreadSummary[] {
@@ -618,7 +657,6 @@ export class ThreadHub {
     this.activeTurnCommands.set(thread.threadId, commandId);
 
     const userText = summarizeInput(input);
-    this.appendUserInputRecord(thread, input);
     if (userText && thread.title === thread.threadId) thread.title = userText.slice(0, 80);
     thread.running = true;
     thread.updatedAt = new Date().toISOString();
@@ -865,6 +903,7 @@ export class ThreadHub {
       title,
       updatedAt: now,
       records: [],
+      recordSeq: 0,
       threadUsage: emptyThreadUsage(),
       events: [],
       subscribers: new Set(),
@@ -905,19 +944,10 @@ export class ThreadHub {
     }
 
     if (method === "thread/goal/updated") {
-      const goal = asRecord(params.goal);
-      this.appendRuntimeRecord(thread, "event_msg", {
-        type: "thread_goal_updated",
-        message: formatThreadGoalMessage(goal)
-      });
       return;
     }
 
     if (method === "thread/goal/cleared") {
-      this.appendRuntimeRecord(thread, "event_msg", {
-        type: "thread_goal_cleared",
-        message: "Goal cleared"
-      });
       return;
     }
 
@@ -942,9 +972,36 @@ export class ThreadHub {
 
     if (method === "item/agentMessage/delta") return;
 
-    if (method === "item/started" || method === "item/completed") return;
+    if (method === "item/started" || method === "item/completed") {
+      return;
+    }
 
-    if (method === "thread/tokenUsage/updated") return;
+    if (method === "rawResponseItem/completed") {
+      return;
+    }
+
+    if (method === "thread/tokenUsage/updated") {
+      return;
+    }
+  }
+
+  private applyAppServerThreadTurns(thread: RuntimeThread, appThread: Record<string, unknown>) {
+    if (!Array.isArray(appThread.turns)) return;
+    for (const turn of appThread.turns) {
+      const turnRecord = asRecord(turn);
+      if (turnRecord) this.applyAppServerTurn(thread, turnRecord);
+    }
+  }
+
+  private applyAppServerTurn(thread: RuntimeThread, turn: Record<string, unknown>) {
+    const turnId = typeof turn.id === "string" ? turn.id : "";
+    if (!turnId || !Array.isArray(turn.items)) return;
+    const timestamp = timestampFromSeconds(turn.completedAt) ?? timestampFromSeconds(turn.startedAt);
+    for (const item of turn.items) {
+      const itemRecord = asRecord(item);
+      const record = itemRecord ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp) : null;
+      if (record) this.upsertRecord(thread, record);
+    }
   }
 
   private applyAppServerThread(thread: RuntimeThread, appThread: Record<string, unknown>) {
@@ -1010,6 +1067,7 @@ export class ThreadHub {
       timestamp: new Date().toISOString(),
       type,
       payload,
+      order: ++thread.recordSeq,
       sourceThreadId: thread.threadId
     };
     thread.records.push(record);
@@ -1028,6 +1086,7 @@ export class ThreadHub {
         images: imageUrls(input),
         text_elements: []
       },
+      order: ++thread.recordSeq,
       sourceThreadId: thread.threadId
     };
     thread.records.push(record);
@@ -1037,6 +1096,8 @@ export class ThreadHub {
 
   private resetThreadRecords(thread: RuntimeThread) {
     thread.records = [];
+    thread.jsonl = undefined;
+    thread.recordSeq = 0;
     thread.lastUsage = undefined;
     thread.threadUsage = emptyThreadUsage();
   }
@@ -1055,18 +1116,18 @@ export class ThreadHub {
   }
 
   private removeMatchingAppServerTranscriptRecord(thread: RuntimeThread, incoming: CodexRecord) {
-    if (!incoming.line || incoming.type !== "event_msg") return;
+    if (!incoming.type || incoming.type !== "event_msg") return;
     const incomingPayload = asRecord(incoming.payload);
     if (!incomingPayload) return;
     const incomingType = incomingPayload?.type;
     if (incomingType !== "user_message" && incomingType !== "agent_message") return;
     const incomingTurnId = turnIdFromAppRecordId(thread.threadId, incoming.id);
     const index = thread.records.findIndex((record) => {
-      if (!record.id.startsWith("app:") || record.line) return false;
+      if (!record.id.startsWith("app:")) return false;
       const recordTurnId = turnIdFromAppRecordId(thread.threadId, record.id);
-      if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
       const payload = asRecord(record.payload);
       if (payload?.type !== incomingType) return false;
+      if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
       if (payload.message !== incomingPayload.message) return false;
       if (incomingType === "agent_message" && payload.phase !== incomingPayload.phase) return false;
       if (incomingType === "user_message") {
@@ -1077,33 +1138,15 @@ export class ThreadHub {
     if (index !== -1) thread.records.splice(index, 1);
   }
 
-  private hasMatchingJsonlTranscriptRecord(thread: RuntimeThread, incoming: CodexRecord) {
-    if (incoming.line) return false;
-    if (!incoming.id.startsWith("app:") || incoming.type !== "event_msg") return false;
-    const incomingPayload = asRecord(incoming.payload);
-    if (!incomingPayload) return false;
-    const incomingType = incomingPayload?.type;
-    if (incomingType !== "user_message" && incomingType !== "agent_message") return false;
-    const incomingTurnId = turnIdFromAppRecordId(thread.threadId, incoming.id);
-    return thread.records.some((record) => {
-      if (!record.line || record.type !== "event_msg") return false;
-      const recordTurnId = turnIdFromAppRecordId(thread.threadId, record.id);
-      if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
-      const payload = asRecord(record.payload);
-      if (payload?.type !== incomingType || payload.message !== incomingPayload.message) return false;
-      if (incomingType === "agent_message") return payload.phase === incomingPayload.phase;
-      return JSON.stringify(payload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
-    });
-  }
-
   private upsertRecord(thread: RuntimeThread, record: CodexRecord) {
-    if (this.hasMatchingJsonlTranscriptRecord(thread, record)) return;
     const existingIndex = thread.records.findIndex((item) => item.id === record.id);
     if (existingIndex === -1) {
+      if (typeof record.order !== "number") record = { ...record, order: ++thread.recordSeq };
       this.removeOptimisticUserRecord(thread, record);
       this.removeMatchingAppServerTranscriptRecord(thread, record);
       thread.records.push(record);
     } else {
+      if (typeof record.order !== "number") record = { ...record, order: thread.records[existingIndex].order };
       if (recordsEqual(thread.records[existingIndex], record)) return;
       thread.records[existingIndex] = record;
     }
@@ -1138,14 +1181,16 @@ export class ThreadHub {
   private publish(
     thread: RuntimeThread,
     kind: ThreadStreamEvent["kind"],
-    record?: CodexRecord
+    record?: CodexRecord,
+    extra: Pick<ThreadStreamEvent, "jsonl"> = {}
   ) {
     const streamEvent: ThreadStreamEvent = {
       seq: ++thread.seq,
       threadId: thread.threadId,
       kind,
       thread: this.summary(thread),
-      record
+      record,
+      ...extra
     };
     thread.events.push(streamEvent);
     if (thread.events.length > 1000) thread.events.splice(0, thread.events.length - 1000);
@@ -1164,7 +1209,7 @@ export class ThreadHub {
       running: thread.running,
       title: thread.title,
       updatedAt: thread.updatedAt,
-      messageCount: recordsToViews(thread.records).length,
+      messageCount: thread.jsonl?.lines.length ?? recordsToViews(thread.records).length,
       lastUsage: thread.lastUsage,
       threadUsage: thread.threadUsage
     };
@@ -1174,6 +1219,7 @@ export class ThreadHub {
     return {
       ...this.summary(thread),
       records: thread.records,
+      jsonl: thread.jsonl,
       lastSeq: thread.seq
     };
   }
@@ -1325,6 +1371,345 @@ const threadSummarySnapshotKey = (thread: ThreadSummary) => ({
 const workerCommandsAfter = (worker: RuntimeWorker, after: number) =>
   worker.commands.filter((command) => command.seq > after);
 
+const normalizeJsonlLines = (lines: JsonlLine[]) => {
+  const byLine = new Map<number, JsonlLine>();
+  for (const line of lines) {
+    if (!Number.isInteger(line.line) || line.line < 1 || typeof line.text !== "string") continue;
+    byLine.set(line.line, { line: line.line, text: line.text });
+  }
+  return [...byLine.values()].sort((left, right) => left.line - right.line);
+};
+
+const mergeJsonlLines = (current: JsonlLine[], incoming: JsonlLine[]) => {
+  const byLine = new Map(current.map((line) => [line.line, line]));
+  let changed = false;
+  for (const line of incoming) {
+    const existing = byLine.get(line.line);
+    if (existing?.text === line.text) continue;
+    byLine.set(line.line, line);
+    changed = true;
+  }
+  return {
+    changed,
+    lines: [...byLine.values()].sort((left, right) => left.line - right.line)
+  };
+};
+
+const codexRecordFromAppServerItem = (
+  threadId: string,
+  turnId: string,
+  item: Record<string, unknown>,
+  timestamp?: string
+): CodexRecord | null => {
+  const itemType = typeof item.type === "string" ? item.type : "";
+  const itemId = typeof item.id === "string" && item.id ? item.id : stablePayloadKey(item);
+  const base = {
+    id: `app:${threadId}:${turnId}:item:${itemType}:${itemId}`,
+    timestamp,
+    sourceThreadId: threadId
+  };
+
+  if (itemType === "userMessage") {
+    return {
+      ...base,
+      id: `app:${threadId}:${turnId}:user:${itemId}`,
+      type: "event_msg",
+      payload: {
+        type: "user_message",
+        message: userMessageText(item.content),
+        images: userMessageImages(item.content),
+        text_elements: userMessageTextElements(item.content)
+      }
+    };
+  }
+
+  if (itemType === "agentMessage") {
+    if (typeof item.text !== "string") return null;
+    return {
+      ...base,
+      id: `app:${threadId}:${turnId}:agent:${itemId}`,
+      type: "event_msg",
+      payload: {
+        type: "agent_message",
+        message: item.text,
+        phase: typeof item.phase === "string" ? item.phase : "assistant"
+      }
+    };
+  }
+
+  if (itemType === "reasoning") {
+    return {
+      ...base,
+      type: "response_item",
+      payload: {
+        type: "reasoning",
+        summary: stringArray(item.summary),
+        content: stringArray(item.content).join("\n")
+      }
+    };
+  }
+
+  if (itemType === "commandExecution") {
+    return {
+      ...base,
+      type: "response_item",
+      payload: {
+        type: "local_shell_call",
+        call_id: itemId,
+        status: appServerStatus(item.status),
+        action: {
+          type: "exec",
+          command: commandExecutionCommand(item)
+        },
+        aggregated_output: commandExecutionOutput(item),
+        exit_code: commandExecutionExitCode(item)
+      }
+    };
+  }
+
+  if (itemType === "fileChange") {
+    return {
+      ...base,
+      type: "response_item",
+      payload: {
+        type: "file_change",
+        changes: fileChanges(item.changes),
+        status: appServerStatus(item.status)
+      }
+    };
+  }
+
+  if (itemType === "mcpToolCall") {
+    return {
+      ...base,
+      type: "response_item",
+      payload: {
+        type: "mcp_tool_call",
+        server: typeof item.server === "string" ? item.server : "",
+        tool: typeof item.tool === "string" ? item.tool : "",
+        arguments: item.arguments,
+        result: item.result,
+        error: item.error,
+        status: appServerStatus(item.status)
+      }
+    };
+  }
+
+  if (itemType === "dynamicToolCall") {
+    return {
+      ...base,
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        call_id: itemId,
+        name: typeof item.tool === "string" ? item.tool : "tool",
+        namespace: typeof item.namespace === "string" ? item.namespace : undefined,
+        arguments: JSON.stringify(item.arguments ?? {})
+      }
+    };
+  }
+
+  if (itemType === "webSearch") {
+    const query = typeof item.query === "string" ? item.query : webSearchQuery(item.action);
+    return {
+      ...base,
+      type: "response_item",
+      payload: {
+        type: "web_search_call",
+        query,
+        action: item.action,
+        status: "completed"
+      }
+    };
+  }
+
+  if (itemType === "imageGeneration") {
+    return {
+      ...base,
+      type: "event_msg",
+      payload: {
+        type: "image_generation_end",
+        call_id: itemId,
+        status: typeof item.status === "string" ? item.status : undefined,
+        revised_prompt: typeof item.revisedPrompt === "string" ? item.revisedPrompt : undefined,
+        saved_path: typeof item.savedPath === "string" ? item.savedPath : undefined,
+        result_length: typeof item.result === "string" ? item.result.length : undefined
+      }
+    };
+  }
+
+  if (itemType === "plan") {
+    return {
+      ...base,
+      type: "event_msg",
+      payload: {
+        type: "plan",
+        message: typeof item.text === "string" ? item.text : stringify(item)
+      }
+    };
+  }
+
+  if (itemType === "contextCompaction") {
+    return {
+      ...base,
+      type: "event_msg",
+      payload: {
+        type: "context_compaction",
+        message: "Context compacted"
+      }
+    };
+  }
+
+  return null;
+};
+
+const codexRecordFromRawResponseItem = (
+  threadId: string,
+  turnId: string,
+  item: Record<string, unknown>
+): CodexRecord | null => {
+  const itemType = typeof item.type === "string" ? item.type : "";
+  if (!itemType || itemType === "message" || itemType === "agent_message") return null;
+  const key = rawResponseItemKey(item);
+  return {
+    id: `app:${threadId}:${turnId}:raw:${itemType}:${key}`,
+    timestamp: new Date().toISOString(),
+    type: "response_item",
+    payload: normalizeRawResponseItem(item),
+    sourceThreadId: threadId
+  };
+};
+
+const codexRecordFromAppServerUsage = (
+  threadId: string,
+  turnId: string,
+  usage: Record<string, unknown>
+): CodexRecord | null => {
+  const last = asRecord(usage.last);
+  if (!last) return null;
+  return {
+    id: `app:${threadId}:${turnId}:usage`,
+    timestamp: new Date().toISOString(),
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      info: {
+        last_token_usage: tokenUsageBreakdown(last),
+        model_context_window: typeof usage.modelContextWindow === "number" ? usage.modelContextWindow : undefined
+      }
+    },
+    sourceThreadId: threadId
+  };
+};
+
+const normalizeRawResponseItem = (item: Record<string, unknown>) => {
+  if (item.type !== "web_search_call") return item;
+  const action = asRecord(item.action);
+  return {
+    ...item,
+    query: webSearchQuery(action)
+  };
+};
+
+const tokenUsageBreakdown = (value: Record<string, unknown>) => ({
+  input_tokens: tokenUsageNumber(value.inputTokens),
+  cached_input_tokens: tokenUsageNumber(value.cachedInputTokens),
+  output_tokens: tokenUsageNumber(value.outputTokens),
+  reasoning_output_tokens: tokenUsageNumber(value.reasoningOutputTokens),
+  total_tokens: tokenUsageNumber(value.totalTokens)
+});
+
+const userMessageText = (content: unknown) =>
+  userMessageContent(content)
+    .map((item) => typeof item.text === "string" ? item.text : null)
+    .filter((text): text is string => Boolean(text))
+    .join("\n");
+
+const userMessageImages = (content: unknown) =>
+  userMessageContent(content)
+    .map((item) => typeof item.url === "string" ? item.url : typeof item.path === "string" ? item.path : null)
+    .filter((url): url is string => Boolean(url));
+
+const userMessageTextElements = (content: unknown) =>
+  userMessageContent(content).flatMap((item) => Array.isArray(item.text_elements) ? item.text_elements : []);
+
+const userMessageContent = (content: unknown) =>
+  Array.isArray(content) ? content.map(asRecord).filter((item): item is Record<string, unknown> => Boolean(item)) : [];
+
+const stringArray = (value: unknown) =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+
+const commandExecutionCommand = (item: Record<string, unknown>) => {
+  const action = asRecord(item.action);
+  const value = item.command ?? item.cmd ?? action?.command ?? action?.cmd;
+  if (Array.isArray(value)) return value.filter((part): part is string => typeof part === "string" && Boolean(part));
+  return typeof value === "string" && value ? [value] : [];
+};
+
+const commandExecutionOutput = (item: Record<string, unknown>) => {
+  const direct = item.aggregatedOutput ?? item.aggregated_output ?? item.output;
+  if (typeof direct === "string") return direct;
+  const output = [
+    typeof item.stdout === "string" ? item.stdout : "",
+    typeof item.stderr === "string" ? item.stderr : ""
+  ].filter(Boolean);
+  return output.join("\n");
+};
+
+const commandExecutionExitCode = (item: Record<string, unknown>) => {
+  const value = item.exitCode ?? item.exit_code;
+  return typeof value === "number" ? value : null;
+};
+
+const fileChanges = (value: unknown) =>
+  Array.isArray(value)
+    ? value.map((item) => {
+      const record = asRecord(item);
+      const kind = asRecord(record?.kind);
+      return {
+        path: typeof record?.path === "string" ? record.path : "",
+        kind: typeof kind?.type === "string" ? kind.type : typeof record?.kind === "string" ? record.kind : "update",
+        diff: typeof record?.diff === "string" ? record.diff : undefined
+      };
+    })
+    : [];
+
+const appServerStatus = (status: unknown) =>
+  status === "inProgress" ? "in_progress" : typeof status === "string" ? status : undefined;
+
+const webSearchQuery = (action: unknown) => {
+  const record = asRecord(action);
+  if (typeof record?.query === "string") return record.query;
+  if (Array.isArray(record?.queries)) return record.queries.filter((item): item is string => typeof item === "string").join("\n");
+  return "";
+};
+
+const rawResponseItemKey = (item: Record<string, unknown>) => {
+  for (const key of ["call_id", "id", "name"]) {
+    const value = item[key];
+    if (typeof value === "string" && value) return value;
+  }
+  return stablePayloadKey(item);
+};
+
+const stablePayloadKey = (value: unknown) => {
+  const text = stringify(value);
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(16);
+};
+
+const timestampFromMillis = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? new Date(value).toISOString() : undefined;
+
+const timestampFromSeconds = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? new Date(value * 1000).toISOString() : undefined;
+
+const tokenUsageNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : 0;
+
 const latestUsage = (records: CodexRecord[]) => {
   const views = recordsToViews(records);
   for (let i = views.length - 1; i >= 0; i -= 1) {
@@ -1353,17 +1738,16 @@ const latestRecordTimestamp = (records: CodexRecord[]) => {
 };
 
 const compareThreadRecords = (left: CodexRecord, right: CodexRecord) => {
-  if (typeof left.line === "number" && typeof right.line === "number" && left.line !== right.line) {
-    return left.line - right.line;
-  }
-  if (typeof left.line === "number" && typeof right.line !== "number") return -1;
-  if (typeof left.line !== "number" && typeof right.line === "number") return 1;
-
   const leftTime = Date.parse(left.timestamp ?? "");
   const rightTime = Date.parse(right.timestamp ?? "");
   if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
     return leftTime - rightTime;
   }
+  if (typeof left.order === "number" && typeof right.order === "number" && left.order !== right.order) {
+    return left.order - right.order;
+  }
+  if (typeof left.order === "number" && typeof right.order !== "number") return -1;
+  if (typeof left.order !== "number" && typeof right.order === "number") return 1;
   return left.id.localeCompare(right.id);
 };
 
@@ -1415,6 +1799,10 @@ const rollbackPlanAfterRecord = (thread: RuntimeThread, recordId: string) => {
 
 const appServerTurnIds = (thread: RuntimeThread) => {
   const turnIds: string[] = [];
+  for (const line of thread.jsonl?.lines ?? []) {
+    const turnId = turnIdFromJsonlLine(line.text);
+    if (turnId && !turnIds.includes(turnId)) turnIds.push(turnId);
+  }
   for (const record of thread.records) {
     const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
     if (turnId && !turnIds.includes(turnId)) turnIds.push(turnId);
@@ -1428,7 +1816,18 @@ const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
   const rest = recordId.slice(prefix.length);
   const [turnId, kind] = rest.split(":");
   if (!turnId || !kind) return null;
-  return kind === "user" || kind === "agent" || kind === "usage" ? turnId : null;
+  return turnId;
+};
+
+const turnIdFromJsonlLine = (text: string) => {
+  try {
+    const parsed = asRecord(JSON.parse(text));
+    if (parsed?.type !== "turn_context") return null;
+    const payload = asRecord(parsed.payload);
+    return typeof payload?.turn_id === "string" ? payload.turn_id : null;
+  } catch {
+    return null;
+  }
 };
 
 const summarizeInput = (input: ProxyInput) => {
