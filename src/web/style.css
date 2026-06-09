@@ -1148,14 +1148,15 @@ textarea {
   top: 10px;
   left: 22px;
   right: 22px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px;
   min-width: 0;
   max-width: 1080px;
-  min-height: 30px;
-  border: 1px solid rgba(104, 115, 145, 0.2);
+  min-height: 32px;
+  padding: 4px;
+  border: 1px solid rgba(104, 115, 145, 0.18);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
   box-shadow: 0 8px 24px rgba(49, 55, 65, 0.08);
@@ -1176,11 +1177,25 @@ textarea {
   border-color: rgba(181, 55, 55, 0.28);
 }
 
+.runtimeStatusItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  flex: 1 1 260px;
+  min-width: min(260px, 100%);
+  max-width: 100%;
+  min-height: 28px;
+  border: 1px solid rgba(104, 115, 145, 0.12);
+  border-radius: 6px;
+  background: rgba(248, 250, 247, 0.86);
+  overflow: hidden;
+}
+
 .runtimeStatusLabel {
   align-self: stretch;
   display: grid;
   place-items: center;
-  min-width: 88px;
+  min-width: 74px;
   padding: 0 10px;
   border-right: 1px solid rgba(104, 115, 145, 0.16);
   color: #5f6a78;
@@ -1197,29 +1212,15 @@ textarea {
 }
 
 .runtimeStatusTrack {
-  display: inline-flex;
-  gap: 40px;
-  min-width: max-content;
-  padding-right: 40px;
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
-  line-height: 30px;
-  animation: runtimeStatusScroll 28s linear infinite;
-}
-
-@keyframes runtimeStatusScroll {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(calc(-50% - 20px));
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .runtimeStatusTrack {
-    animation: none;
-  }
+  line-height: 28px;
 }
 
 .empty {

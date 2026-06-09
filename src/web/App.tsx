@@ -333,6 +333,7 @@ type MessageRenderMode = "markdown" | "raw";
 type ConnectionMode = "local" | "ssh" | "registered";
 type WebRecordView = CompactRecordView;
 type RuntimeStatusView = {
+  key: string;
   label: string;
   text: string;
   at?: string;
@@ -609,8 +610,8 @@ const App = () => {
     () => recordsToDetailedViews(displayRecords),
     [displayRecords]
   );
-  const simpleStatus = useMemo(
-    () => messageDisplayMode === "compact" ? latestRuntimeStatus(displayRecords) : null,
+  const simpleStatuses = useMemo(
+    () => messageDisplayMode === "compact" ? runtimeStatusesFromRecords(displayRecords) : [],
     [displayRecords, messageDisplayMode]
   );
   const activeViews = useMemo<WebRecordView[]>(
@@ -2496,7 +2497,7 @@ const App = () => {
                       );
                     }}
                   />
-                  {simpleStatus ? <RuntimeStatusOverlay status={simpleStatus} /> : null}
+                  {simpleStatuses.length ? <RuntimeStatusOverlay statuses={simpleStatuses} /> : null}
 
                   <form
                     className="composer"
@@ -3132,15 +3133,16 @@ const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
 );
 
-const RuntimeStatusOverlay = ({ status }: { status: RuntimeStatusView }) => (
-  <div className={`runtimeStatusOverlay ${status.status ?? "idle"}`} aria-live="polite" title={status.text}>
-    <span className="runtimeStatusLabel">{status.label}</span>
-    <span className="runtimeStatusViewport">
-      <span className="runtimeStatusTrack">
-        <span>{status.text}</span>
-        <span aria-hidden="true">{status.text}</span>
+const RuntimeStatusOverlay = ({ statuses }: { statuses: RuntimeStatusView[] }) => (
+  <div className={`runtimeStatusOverlay ${runtimeStatusOverlayClass(statuses)}`} aria-live="polite" title={runtimeStatusTitle(statuses)}>
+    {statuses.map((status) => (
+      <span className="runtimeStatusItem" key={status.key}>
+        <span className="runtimeStatusLabel">{status.label}</span>
+        <span className="runtimeStatusViewport">
+          <span className="runtimeStatusTrack">{status.text}</span>
+        </span>
       </span>
-    </span>
+    ))}
   </div>
 );
 
@@ -3785,12 +3787,13 @@ const isSimpleMainView = (view: CodexRecordView) => {
   return payload.role === "user" || payload.role === "assistant";
 };
 
-const latestRuntimeStatus = (records: CodexRecord[]): RuntimeStatusView | null => {
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    const status = runtimeStatusFromRecord(records[index]);
-    if (status) return status;
+const runtimeStatusesFromRecords = (records: CodexRecord[]): RuntimeStatusView[] => {
+  const statuses = new Map<string, RuntimeStatusView>();
+  for (const record of records) {
+    const status = runtimeStatusFromRecord(record);
+    if (status) statuses.set(status.key, status);
   }
-  return null;
+  return [...statuses.values()].sort((left, right) => runtimeStatusPriority(left.key) - runtimeStatusPriority(right.key));
 };
 
 const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null => {
@@ -3798,9 +3801,11 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
   const payload = asRecord(record.payload);
   const type = typeof payload?.type === "string" ? payload.type : "";
   if (!payload || type === "user_message" || type === "agent_message" || type === "patch_apply_end") return null;
+  if (type === "session_meta" || type === "turn_context") return null;
 
   if (type === "task_started") {
     return {
+      key: "turn",
       label: "Running",
       status: "pending",
       at: record.timestamp,
@@ -3814,6 +3819,7 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
 
   if (type === "task_complete") {
     return {
+      key: "turn",
       label: "Done",
       status: "completed",
       at: record.timestamp,
@@ -3826,6 +3832,7 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
 
   if (type === "turn_aborted") {
     return {
+      key: "turn",
       label: "Aborted",
       status: "failed",
       at: record.timestamp,
@@ -3838,6 +3845,7 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
 
   if (type === "token_count") {
     return {
+      key: "usage",
       label: "Usage",
       status: "completed",
       at: record.timestamp,
@@ -3848,6 +3856,7 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
   if (type === "thread_goal_updated") {
     const goal = asRecord(payload.goal);
     return {
+      key: "goal",
       label: "Goal",
       status: goal?.status === "complete" ? "completed" : "pending",
       at: record.timestamp,
@@ -3859,16 +3868,17 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
   }
 
   if (type === "thread_goal_cleared") {
-    return { label: "Goal", status: "completed", at: record.timestamp, text: "Goal cleared" };
+    return { key: "goal", label: "Goal", status: "completed", at: record.timestamp, text: "Goal cleared" };
   }
 
   if (type === "context_compaction" || type === "context_compacted" || type === "compacted") {
-    return { label: "Context", status: "completed", at: record.timestamp, text: "Context compacted" };
+    return { key: "context", label: "Context", status: "completed", at: record.timestamp, text: "Context compacted" };
   }
 
   if (type === "thread_rolled_back") {
     const turns = typeof payload.num_turns === "number" ? payload.num_turns : undefined;
     return {
+      key: "rollback",
       label: "Rollback",
       status: "completed",
       at: record.timestamp,
@@ -3879,6 +3889,7 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
   if (type === "item_completed") {
     const item = asRecord(payload.item);
     return {
+      key: "item",
       label: "Item",
       status: "completed",
       at: record.timestamp,
@@ -3887,11 +3898,34 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
   }
 
   return {
+    key: `event:${type || "unknown"}`,
     label: type || "Event",
     at: record.timestamp,
     text: typeof payload.message === "string" ? payload.message : stringifyInspectJson(payload)
   };
 };
+
+const runtimeStatusPriority = (key: string) => {
+  const order: Record<string, number> = {
+    turn: 0,
+    goal: 1,
+    usage: 2,
+    context: 3,
+    rollback: 4,
+    item: 5
+  };
+  return order[key] ?? 10;
+};
+
+const runtimeStatusOverlayClass = (statuses: RuntimeStatusView[]) => {
+  if (statuses.some((status) => status.status === "failed")) return "failed";
+  if (statuses.some((status) => status.status === "pending")) return "pending";
+  if (statuses.some((status) => status.status === "completed")) return "completed";
+  return "idle";
+};
+
+const runtimeStatusTitle = (statuses: RuntimeStatusView[]) =>
+  statuses.map((status) => `${status.label}: ${status.text}`).join("\n");
 
 const formatTokenStatus = (payload: Record<string, unknown>) => {
   const info = asRecord(payload.info);
