@@ -22,6 +22,7 @@ import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light";
 import remarkGfm from "remark-gfm";
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
+import { threadUsageFromRecord } from "../core/threadUsage.js";
 import { compactToolViews, type CompactRecordView } from "../shared/compactRecordViews.js";
 import { recordsToDetailedViews } from "./detailedRecordViews.js";
 import { jsonlLinesToRecords, type JsonlLine, type ThreadJsonl } from "./jsonlRecordViews.js";
@@ -587,6 +588,10 @@ const App = () => {
     () => activeRuntimeSessionThreads.map((thread) => thread.threadId),
     [activeRuntimeSessionThreads]
   );
+  const activeThreadSummary = useMemo(
+    () => activeRuntimeSessionThreads.find((thread) => thread.threadId === activeTabThreadId) ?? null,
+    [activeRuntimeSessionThreads, activeTabThreadId]
+  );
   const activeRuntimeSessionThreadIdsKey = activeRuntimeSessionThreadIds.join("\n");
   const activeRuntimeSessionThreadTabs = useMemo(() => activeRuntimeSessionThreads.map((thread) => {
     const title = threadDisplayTitle(thread);
@@ -662,10 +667,48 @@ const App = () => {
       ? activeRuntimeSessionThreads.length ? "Select a thread" : "No threads"
       : "Runtime session disconnected"
     : "No runtime session";
-  const runtimeModelOptions = useMemo(() => modelOptionsForSelection(selectedModel), [selectedModel]);
-  const activeThreadUsage = activeSession?.threadUsage
-    ?? activeRuntimeSessionThreads.find((thread) => thread.threadId === activeTabThreadId)?.threadUsage
+  const latestThreadUsage = useMemo(
+    () => latestThreadUsageFromRecords(latestTurnStatusScope.records) ?? latestThreadUsageFromRecords(displayRecords),
+    [displayRecords, latestTurnStatusScope.records]
+  );
+  const summaryThreadUsage = activeSession?.threadUsage
+    ?? activeThreadSummary?.threadUsage
     ?? null;
+  const activeThreadUsage = mergeThreadUsage(latestThreadUsage, summaryThreadUsage);
+  const latestRuntimeConfig = useMemo(
+    () => latestRuntimeConfigFromRecords(latestTurnStatusScope.records) ?? latestRuntimeConfigFromRecords(displayRecords),
+    [displayRecords, latestTurnStatusScope.records]
+  );
+  const activeRuntimeModel = latestRuntimeConfig?.model
+    ?? activeSession?.model
+    ?? activeThreadSummary?.model
+    ?? systemStatus.model
+    ?? null;
+  const activeRuntimeReasoning = latestRuntimeConfig?.reasoning
+    ?? activeSession?.modelReasoningEffort
+    ?? activeThreadSummary?.modelReasoningEffort
+    ?? normalizeReasoningEffort(systemStatus.modelReasoningEffort)
+    ?? null;
+  const effectiveModelSelection = selectedModel === "auto" && activeRuntimeModel ? activeRuntimeModel : selectedModel;
+  const effectiveReasoningSelection: ReasoningSelection = selectedReasoning === "auto" && activeRuntimeReasoning
+    ? activeRuntimeReasoning
+    : selectedReasoning;
+  const runtimeModelOptions = useMemo(
+    () => modelOptionsForSelection(effectiveModelSelection),
+    [effectiveModelSelection]
+  );
+  const composerModelButtonLabel = formatComposerModelButtonLabel(
+    selectedModel,
+    selectedReasoning,
+    activeRuntimeModel,
+    activeRuntimeReasoning
+  );
+  const composerModelButtonTitle = formatComposerModelTitle(
+    selectedModel,
+    selectedReasoning,
+    activeRuntimeModel,
+    activeRuntimeReasoning
+  );
   const renderComposerRuntimeControls = (mode: "inline" | "popover") => (
     <div className={`composerRuntimeControls ${mode}`} aria-label="Runtime usage and model">
       <div className="composerUsagePills" aria-label="Runtime usage">
@@ -696,12 +739,13 @@ const App = () => {
       <button
         type="button"
         className="composerModelButton"
+        title={composerModelButtonTitle}
         onClick={() => {
           setRuntimeMenuOpen(false);
           setRuntimeDialogOpen(true);
         }}
       >
-        {modelLabel(selectedModel)}
+        {composerModelButtonLabel}
       </button>
     </div>
   );
@@ -2729,14 +2773,14 @@ const App = () => {
             </header>
             <label className="runtimeDialogField">
               <span>Model</span>
-              <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value as ModelSelection)}>
-                {runtimeModelOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+              <select value={effectiveModelSelection} onChange={(event) => setSelectedModel(event.target.value as ModelSelection)}>
+                {runtimeModelOptions.map((option) => <option value={option.value} key={option.value}>{modelOptionLabel(option)}</option>)}
               </select>
             </label>
             <label className="runtimeDialogField">
               <span>Thinking</span>
-              <select value={selectedReasoning} onChange={(event) => setSelectedReasoning(event.target.value as ReasoningSelection)}>
-                {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+              <select value={effectiveReasoningSelection} onChange={(event) => setSelectedReasoning(event.target.value as ReasoningSelection)}>
+                {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{reasoningOptionLabel(option)}</option>)}
               </select>
             </label>
           </section>
@@ -3841,12 +3885,93 @@ const selectedThreadOptions = (
 
 const isModelCommand = (text: string) => /^\/model\s*$/i.test(text);
 
-const modelLabel = (model: ModelSelection) =>
-  model === "auto" ? "Auto" : modelOptions.find((option) => option.value === model)?.label ?? model;
+const rawModelLabel = (model: ModelSelection) => model === "auto" ? "Auto" : model;
+
+const modelOptionLabel = (option: { value: ModelSelection; label: string }) =>
+  option.value === "auto" ? option.label : option.value;
+
+const reasoningOptionLabel = (option: { value: ReasoningSelection; label: string }) =>
+  option.value === "auto" ? option.label : option.value;
 
 const modelOptionsForSelection = (model: ModelSelection) => {
   if (!model || modelOptions.some((option) => option.value === model)) return modelOptions;
   return [...modelOptions, { value: model, label: model }];
+};
+
+const latestThreadUsageFromRecords = (records: CodexRecord[]): ThreadUsage | null => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const usage = threadUsageFromRecord(records[index]);
+    if (usage) return usage;
+  }
+  return null;
+};
+
+const mergeThreadUsage = (latest: ThreadUsage | null, fallback: ThreadUsage | null): ThreadUsage | null => {
+  if (!latest) return fallback;
+  if (!fallback) return latest;
+  return {
+    context: latest.context ?? fallback.context,
+    primaryRateLimit: latest.primaryRateLimit ?? fallback.primaryRateLimit,
+    secondaryRateLimit: latest.secondaryRateLimit ?? fallback.secondaryRateLimit,
+    observedAt: latest.observedAt ?? fallback.observedAt
+  };
+};
+
+const latestRuntimeConfigFromRecords = (records: CodexRecord[]) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const config = runtimeConfigFromRecord(records[index]);
+    if (config.model || config.reasoning) return config;
+  }
+  return null;
+};
+
+const runtimeConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort } => {
+  const raw = asRecord(record.rawJsonl);
+  const payload = asRecord(raw?.payload) ?? asRecord(record.payload);
+  const settings = asRecord(asRecord(payload?.collaboration_mode)?.settings);
+  return {
+    model: stringField(payload, "model")
+      ?? stringField(settings, "model")
+      ?? stringField(raw, "model"),
+    reasoning: normalizeReasoningEffort(
+      stringField(payload, "effort")
+      ?? stringField(payload, "reasoning_effort")
+      ?? stringField(payload, "model_reasoning_effort")
+      ?? stringField(settings, "reasoning_effort")
+      ?? stringField(settings, "model_reasoning_effort")
+    )
+  };
+};
+
+const normalizeReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
+  if (typeof value !== "string") return undefined;
+  return reasoningOptions.some((option) => option.value === value && option.value !== "auto")
+    ? value as ReasoningEffort
+    : undefined;
+};
+
+const formatComposerModelTitle = (
+  selectedModel: ModelSelection,
+  selectedReasoning: ReasoningSelection,
+  runtimeModel: string | null,
+  runtimeReasoning: ReasoningEffort | null
+) => [
+  `selected model ${rawModelLabel(selectedModel)}`,
+  runtimeModel ? `runtime model ${rawModelLabel(runtimeModel)}` : null,
+  `selected thinking ${selectedReasoning === "auto" ? "Auto" : selectedReasoning}`,
+  runtimeReasoning ? `runtime thinking ${runtimeReasoning}` : null
+].filter(Boolean).join(" · ");
+
+const formatComposerModelButtonLabel = (
+  selectedModel: ModelSelection,
+  selectedReasoning: ReasoningSelection,
+  runtimeModel: string | null,
+  runtimeReasoning: ReasoningEffort | null
+) => {
+  const model = selectedModel === "auto" && runtimeModel ? runtimeModel : selectedModel;
+  const reasoning = runtimeReasoning ?? (selectedReasoning === "auto" ? null : selectedReasoning);
+  const label = rawModelLabel(model);
+  return reasoning ? `${label}:${reasoning}` : label;
 };
 
 const formatContextUsage = (threadUsage: ThreadUsage | null) => {
@@ -4223,8 +4348,8 @@ const formatStatusDuration = (value: number) => {
   return `${value}ms`;
 };
 
-const stringField = (record: Record<string, unknown>, key: string) => {
-  const value = record[key];
+const stringField = (record: Record<string, unknown> | null | undefined, key: string) => {
+  const value = record?.[key];
   return typeof value === "string" && value ? value : undefined;
 };
 
