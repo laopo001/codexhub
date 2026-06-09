@@ -346,10 +346,23 @@ type RuntimeStatusFile = {
   added?: number;
   removed?: number;
 };
+type MemoryCitationEntry = {
+  source: string;
+  lineStart?: number;
+  lineEnd?: number;
+  note?: string;
+  raw: string;
+};
+type MemoryCitationView = {
+  text: string;
+  entries: MemoryCitationEntry[];
+  rolloutIds: string[];
+};
 type InspectDetail = {
   inputMeta: string;
   inputBlockLabel?: string;
   inputBlock?: string;
+  memoryCitation?: MemoryCitationView;
   outputMeta?: string;
   outputBlockLabel?: string;
   outputBlock?: string;
@@ -2979,6 +2992,11 @@ const MessageCard = ({
 }) => {
   const toolBody = renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined) : null;
   const hasToolBody = toolBody !== null;
+  const memoryCitation = useMemo(
+    () => shouldExtractMemoryCitation(message) ? parseMemoryCitationText(message.text) : emptyMemoryCitation(message.text),
+    [message]
+  );
+  const messageText = memoryCitation.text;
   const hasMessageMeta = (showTimestamp && message.at) || message.usage || markdownEnabled || onFork || onRollback;
   return (
     <article
@@ -3001,8 +3019,11 @@ const MessageCard = ({
       )}
       {hasToolBody ? (
         toolBody
-      ) : message.text ? (
-        <MessageText text={message.text} mode={renderMode} markdownEnabled={markdownEnabled} />
+      ) : messageText ? (
+        <MessageText text={messageText} mode={renderMode} markdownEnabled={markdownEnabled} />
+      ) : null}
+      {memoryCitation.entries.length || memoryCitation.rolloutIds.length ? (
+        <MemoryCitationPanel citation={memoryCitation} />
       ) : null}
       {message.attachments?.length ? (
         <div className="messageAttachments">
@@ -3049,6 +3070,114 @@ const MessageCard = ({
       ) : null}
     </article>
   );
+};
+
+const MemoryCitationPanel = ({ citation }: { citation: MemoryCitationView }) => (
+  <details className="memoryCitation" open>
+    <summary>
+      <span>{formatMemoryCitationCount(citation.entries.length)}</span>
+    </summary>
+    <div className="memoryCitationBody">
+      {citation.entries.map((entry, index) => (
+        <div className="memoryCitationEntry" key={`${entry.raw}:${index}`}>
+          <div className="memoryCitationSource">
+            <strong>{entry.source}</strong>
+            {entry.lineStart ? <span>{formatMemoryCitationLines(entry)}</span> : null}
+          </div>
+          {entry.note ? <p>{entry.note}</p> : null}
+        </div>
+      ))}
+      {citation.rolloutIds.length ? (
+        <div className="memoryCitationEntry">
+          <div className="memoryCitationSource">
+            <strong>rollout_ids</strong>
+          </div>
+          <p>{citation.rolloutIds.join(", ")}</p>
+        </div>
+      ) : null}
+    </div>
+  </details>
+);
+
+const memoryCitationBlockPattern = /<oai-mem-citation>[\s\S]*?<\/oai-mem-citation>/g;
+
+const emptyMemoryCitation = (text: string): MemoryCitationView => ({ text, entries: [], rolloutIds: [] });
+
+const shouldExtractMemoryCitation = (message: WebRecordView) =>
+  message.role === "codex" && message.label === "final_answer";
+
+const parseMemoryCitationText = (text: string): MemoryCitationView => {
+  const blocks = text.match(memoryCitationBlockPattern) ?? [];
+  if (!blocks.length) return { text, entries: [], rolloutIds: [] };
+  const entries = blocks.flatMap(parseMemoryCitationEntries);
+  const rolloutIds = [...new Set(blocks.flatMap(parseMemoryCitationRolloutIds))];
+  return {
+    text: text.replace(memoryCitationBlockPattern, "").trimEnd(),
+    entries,
+    rolloutIds
+  };
+};
+
+const parseMemoryCitationEntries = (block: string): MemoryCitationEntry[] =>
+  xmlSectionLines(block, "citation_entries").flatMap((line) => {
+    const parsed = parseMemoryCitationEntry(line);
+    return parsed ? [parsed] : [];
+  });
+
+const parseMemoryCitationRolloutIds = (block: string) =>
+  xmlSectionLines(block, "rollout_ids").filter((line) => line.trim().length > 0);
+
+const parseMemoryCitationEntry = (line: string): MemoryCitationEntry | null => {
+  const raw = line.trim();
+  if (!raw) return null;
+  const [location, notePart] = splitMemoryCitationNote(raw);
+  const match = /^(.*?)(?::(\d+)(?:-(\d+))?)?$/.exec(location.trim());
+  if (!match) return { source: location.trim() || raw, note: notePart, raw };
+  const source = match[1]?.trim() || raw;
+  const lineStart = match[2] ? Number(match[2]) : undefined;
+  const lineEnd = match[3] ? Number(match[3]) : lineStart;
+  return {
+    source,
+    lineStart,
+    lineEnd,
+    note: notePart,
+    raw
+  };
+};
+
+const splitMemoryCitationNote = (line: string): [string, string | undefined] => {
+  const marker = "|note=";
+  const index = line.indexOf(marker);
+  if (index === -1) return [line, undefined];
+  const note = line.slice(index + marker.length).trim();
+  return [
+    line.slice(0, index),
+    note.startsWith("[") && note.endsWith("]") ? note.slice(1, -1) : note
+  ];
+};
+
+const xmlSectionLines = (block: string, tag: string) => {
+  const match = new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*</${tag}>`).exec(block);
+  if (!match) return [];
+  return match[1]
+    .split(/\r?\n/)
+    .map((line) => decodeXmlText(line.trim()))
+    .filter(Boolean);
+};
+
+const decodeXmlText = (text: string) => text
+  .replace(/&lt;/g, "<")
+  .replace(/&gt;/g, ">")
+  .replace(/&amp;/g, "&")
+  .replace(/&quot;/g, "\"")
+  .replace(/&#39;/g, "'");
+
+const formatMemoryCitationCount = (count: number) => `${count} 条记忆引用`;
+
+const formatMemoryCitationLines = (entry: MemoryCitationEntry) => {
+  if (!entry.lineStart) return "";
+  if (!entry.lineEnd || entry.lineEnd === entry.lineStart) return `${entry.lineStart} 行`;
+  return `${entry.lineStart}-${entry.lineEnd} 行`;
 };
 
 const UpdatePlanPreview = ({
@@ -3389,6 +3518,12 @@ const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
           </div>
         ) : null}
       </section>
+      {detail.memoryCitation?.entries.length || detail.memoryCitation?.rolloutIds.length ? (
+        <section className="detailSection">
+          <h3>Memory</h3>
+          <MemoryCitationPanel citation={detail.memoryCitation} />
+        </section>
+      ) : null}
       {detail.outputMeta || detail.outputBlock ? (
         <section className="detailSection">
           <h3>Output</h3>
@@ -4397,9 +4532,13 @@ const formatInspectDetail = (message: WebRecordView): InspectDetail => {
   const raw = formatRawJsonlInspect(inspectRecord);
   if (presenterInspect) return { ...presenterInspect, ...raw };
 
-  const callText = message.inspectCallText ?? message.text;
+  const parsedMessageText = shouldExtractMemoryCitation(message)
+    ? parseMemoryCitationText(message.inspectCallText ?? message.text)
+    : emptyMemoryCitation(message.inspectCallText ?? message.text);
+  const callText = parsedMessageText.text;
   return {
     ...formatInspectInput(message.record, callText.trimEnd()),
+    memoryCitation: parsedMessageText.entries.length || parsedMessageText.rolloutIds.length ? parsedMessageText : undefined,
     ...formatInspectOutput(message.record, output),
     ...raw
   };

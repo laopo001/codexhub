@@ -1758,6 +1758,64 @@ textarea {
   margin: 10px 0;
 }
 
+.memoryCitation {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dfe5dc;
+  border-radius: 8px;
+  background: #f8faf6;
+  padding: 8px 10px;
+  color: #405244;
+  font-size: 12px;
+}
+
+.memoryCitation summary {
+  cursor: pointer;
+  color: #51604f;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.memoryCitationBody {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.memoryCitationEntry {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.memoryCitationEntry + .memoryCitationEntry {
+  border-top: 1px solid #e4eadf;
+  padding-top: 8px;
+}
+
+.memoryCitationSource {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.memoryCitationSource strong {
+  color: #26342a;
+  overflow-wrap: anywhere;
+}
+
+.memoryCitationSource span {
+  color: #66715f;
+}
+
+.memoryCitationEntry p {
+  margin: 0;
+  color: #5f6a5d;
+  overflow-wrap: anywhere;
+}
+
 .messageMeta {
   display: inline-flex;
   align-items: center;

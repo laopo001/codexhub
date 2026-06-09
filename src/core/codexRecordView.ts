@@ -125,12 +125,14 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     const role = typeof payload.role === "string" ? payload.role : "unknown";
     const text = responseMessageText(payload);
     if (role === "user") {
+      const attachments = imageAttachments(payload);
       return {
         id: record.id,
         role: "user",
         label: "user",
-        text,
+        text: text || (attachments.length ? "[image]" : ""),
         at: record.timestamp,
+        attachments,
         record
       };
     }
@@ -385,10 +387,29 @@ const tokenUsageFromRecord = (record: CodexRecord): RecordUsage | null => {
 };
 
 const imageAttachments = (payload: Record<string, unknown>): Array<{ type: "image"; url: string }> => {
-  if (!Array.isArray(payload.images)) return [];
-  return payload.images
-    .filter((url): url is string => typeof url === "string" && url.trim().length > 0)
-    .map((url) => ({ type: "image", url }));
+  const urls = new Set<string>();
+  if (Array.isArray(payload.images)) {
+    for (const url of payload.images) {
+      if (typeof url === "string" && url.trim()) urls.add(url);
+    }
+  }
+  if (Array.isArray(payload.content)) {
+    for (const item of payload.content) {
+      const record = asRecord(item);
+      if (!record || record.type !== "input_image") continue;
+      const imageUrl = imageUrlFromContent(record);
+      if (imageUrl) urls.add(imageUrl);
+    }
+  }
+  return [...urls].map((url) => ({ type: "image", url }));
+};
+
+const imageUrlFromContent = (content: Record<string, unknown>) => {
+  if (typeof content.image_url === "string" && content.image_url.trim()) return content.image_url;
+  const imageUrl = asRecord(content.image_url);
+  if (typeof imageUrl?.url === "string" && imageUrl.url.trim()) return imageUrl.url;
+  if (typeof content.url === "string" && content.url.trim()) return content.url;
+  return null;
 };
 
 const reasoningText = (payload: Record<string, unknown>): string | null => {
