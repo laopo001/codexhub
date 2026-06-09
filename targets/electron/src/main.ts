@@ -1,4 +1,5 @@
 import { app as electronApp, BrowserWindow, shell } from "electron";
+import { loadDotEnv } from "../../../src/core/dotenv.js";
 import type { ServerHandle } from "../../../src/server/index.js";
 import { localServerUrl, parseEmbeddedPort, startEmbeddedServer as startSharedEmbeddedServer } from "../../../src/server/embedded.js";
 
@@ -42,8 +43,10 @@ const createWindow = async () => {
 };
 
 const startElectronServer = async () => {
-  const host = process.env.CODEX_HUB_ELECTRON_HOST ?? "127.0.0.1";
+  // Keep Electron's random-port default unless the launch environment explicitly sets a port.
   const explicitPort = process.env.CODEX_HUB_PORT;
+  await loadDotEnv();
+  const host = process.env.CODEX_HUB_HOST ?? "127.0.0.1";
   return await startSharedEmbeddedServer({
     host,
     portMode: explicitPort ? "preferred" : "random",

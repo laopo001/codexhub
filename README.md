@@ -310,7 +310,7 @@ pnpm electron:start
 可选环境变量：
 
 - `CODEX_HUB_PORT`: Electron 内嵌 server 端口；显式设置后端口被占用会直接报错，未设置时使用随机空闲端口
-- `CODEX_HUB_ELECTRON_HOST`: Electron 内嵌 server host，默认 `127.0.0.1`
+- `CODEX_HUB_HOST`: Electron 内嵌 server host，默认 `127.0.0.1`
 - `CODEX_HUB_ELECTRON_DEVTOOLS=1`: 启动后打开 DevTools
 
 在 Electron 里连接宿主机 project launcher 的方式和 Web 相同；也可以从 Connections / Registered 复制包含当前实际端口的命令。
