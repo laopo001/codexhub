@@ -24,9 +24,6 @@ export const jsonlLinesToRecords = (threadId: string, jsonl: ThreadJsonl | undef
     .sort((left, right) => left.line - right.line)
     .map(parseJsonlLine)
     .filter((line): line is ParsedJsonlLine => Boolean(line));
-  const contextCompactedLines = new Set(parsedLines
-    .filter((line) => line.object.type === "event_msg" && line.payload?.type === "context_compacted")
-    .map((line) => line.line.line));
 
   const records: CodexRecord[] = [];
   let currentTurnId: string | undefined;
@@ -35,6 +32,7 @@ export const jsonlLinesToRecords = (threadId: string, jsonl: ThreadJsonl | undef
     const topType = typeof parsed.object.type === "string" ? parsed.object.type : "";
     if (topType === "turn_context") {
       currentTurnId = stringField(parsed.payload, "turn_id") ?? currentTurnId;
+      records.push(topLevelRecord(recordBase(threadId, parsed, currentTurnId, topType), parsed, topType));
       continue;
     }
 
@@ -57,16 +55,18 @@ export const jsonlLinesToRecords = (threadId: string, jsonl: ThreadJsonl | undef
     }
 
     if (topType === "compacted") {
-      if (hasNearbyContextCompacted(parsed.line.line, contextCompactedLines)) continue;
       records.push({
         ...base,
         type: "event_msg",
         payload: {
-          type: "context_compaction",
+          type: "compacted",
           message: "Context compacted"
         }
       });
+      continue;
     }
+
+    records.push(topLevelRecord(base, parsed, topType || "jsonl"));
   }
 
   return records;
@@ -130,6 +130,7 @@ const eventMsgRecord = (
       ...base,
       type: "event_msg",
       payload: {
+        ...parsed.payload,
         type: "context_compaction",
         message: "Context compacted"
       }
@@ -141,6 +142,7 @@ const eventMsgRecord = (
       ...base,
       type: "event_msg",
       payload: {
+        ...parsed.payload,
         type: "thread_goal_updated",
         message: formatThreadGoalMessage(asRecord(parsed.payload.goal))
       }
@@ -152,13 +154,21 @@ const eventMsgRecord = (
       ...base,
       type: "event_msg",
       payload: {
+        ...parsed.payload,
         type: "thread_goal_cleared",
         message: typeof parsed.payload.message === "string" ? parsed.payload.message : "Goal cleared"
       }
     };
   }
 
-  return null;
+  return {
+    ...base,
+    type: "event_msg",
+    payload: {
+      ...parsed.payload,
+      message: formatEventMessage(parsed.payload, payloadType)
+    }
+  };
 };
 
 const responseItemRecord = (
@@ -202,8 +212,25 @@ const responseItemRecord = (
     };
   }
 
-  return null;
+  return {
+    ...base,
+    type: "response_item",
+    payload: { ...parsed.payload }
+  };
 };
+
+const topLevelRecord = (
+  base: Omit<CodexRecord, "type" | "payload">,
+  parsed: ParsedJsonlLine,
+  topType: string
+): CodexRecord => ({
+  ...base,
+  type: "event_msg",
+  payload: {
+    type: topType,
+    message: formatTopLevelMessage(parsed.payload, topType)
+  }
+});
 
 const customToolCallPayload = (payload: Record<string, unknown>) => {
   const name = stringField(payload, "name") ?? "tool";
@@ -248,16 +275,76 @@ const formatThreadGoalMessage = (goal: Record<string, unknown> | null) => {
   return `Goal ${status}: ${objective}${budget}`;
 };
 
-const hasNearbyContextCompacted = (line: number, contextCompactedLines: Set<number>) => {
-  for (let offset = 1; offset <= 5; offset += 1) {
-    if (contextCompactedLines.has(line + offset)) return true;
-  }
-  return false;
-};
-
 const stringField = (record: Record<string, unknown> | null | undefined, key: string) => {
   const value = record?.[key];
   return typeof value === "string" && value ? value : undefined;
+};
+
+const formatEventMessage = (payload: Record<string, unknown>, payloadType: string) => {
+  if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
+  if (payloadType === "task_started") {
+    return [
+      "Turn started",
+      stringField(payload, "turn_id") ? `turn: ${stringField(payload, "turn_id")}` : null,
+      typeof payload.model_context_window === "number" ? `context: ${payload.model_context_window}` : null,
+      typeof payload.collaboration_mode_kind === "string" ? `mode: ${payload.collaboration_mode_kind}` : null
+    ].filter(Boolean).join("\n");
+  }
+  if (payloadType === "task_complete") {
+    return [
+      "Turn completed",
+      typeof payload.duration_ms === "number" ? `duration: ${formatMilliseconds(payload.duration_ms)}` : null,
+      typeof payload.time_to_first_token_ms === "number" ? `first token: ${formatMilliseconds(payload.time_to_first_token_ms)}` : null
+    ].filter(Boolean).join("\n");
+  }
+  if (payloadType === "turn_aborted") {
+    return [
+      "Turn aborted",
+      typeof payload.reason === "string" ? `reason: ${payload.reason}` : null,
+      typeof payload.duration_ms === "number" ? `duration: ${formatMilliseconds(payload.duration_ms)}` : null
+    ].filter(Boolean).join("\n");
+  }
+  if (payloadType === "thread_rolled_back") {
+    const count = typeof payload.num_turns === "number" ? payload.num_turns : undefined;
+    return count ? `Rolled back ${count} turn${count === 1 ? "" : "s"}` : "Thread rolled back";
+  }
+  if (payloadType === "item_completed") {
+    const item = asRecord(payload.item);
+    const itemType = typeof item?.type === "string" ? item.type : "item";
+    return `Item completed: ${itemType}`;
+  }
+  return payloadType || "event";
+};
+
+const formatTopLevelMessage = (payload: Record<string, unknown> | null, topType: string) => {
+  if (topType === "session_meta") {
+    return [
+      "Session metadata",
+      typeof payload?.id === "string" ? `id: ${payload.id}` : null,
+      typeof payload?.cwd === "string" ? `cwd: ${payload.cwd}` : null,
+      typeof payload?.cli_version === "string" ? `cli: ${payload.cli_version}` : null,
+      typeof payload?.source === "string" ? `source: ${payload.source}` : null
+    ].filter(Boolean).join("\n");
+  }
+  if (topType === "turn_context") {
+    return [
+      "Turn context",
+      stringField(payload, "turn_id") ? `turn: ${stringField(payload, "turn_id")}` : null,
+      typeof payload?.cwd === "string" ? `cwd: ${payload.cwd}` : null,
+      typeof payload?.model === "string" ? `model: ${payload.model}` : null
+    ].filter(Boolean).join("\n");
+  }
+  return topType || "JSONL record";
+};
+
+const formatMilliseconds = (value: number) => {
+  if (value >= 60_000) {
+    const minutes = Math.floor(value / 60_000);
+    const seconds = Math.round((value % 60_000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  }
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
+  return `${value}ms`;
 };
 
 const safeRecordKind = (value: string) => value.replace(/[^A-Za-z0-9_.-]/g, "_") || "jsonl";

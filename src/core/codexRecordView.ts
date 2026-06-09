@@ -26,8 +26,7 @@ export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
   for (const record of records) {
     const usage = tokenUsageFromRecord(record);
     if (usage) {
-      attachUsageToLatestCodexView(views, usage);
-      continue;
+      if (attachUsageToLatestCodexView(views, usage)) continue;
     }
 
     const view = recordToView(record);
@@ -111,20 +110,38 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
-  return null;
+  return {
+    id: record.id,
+    role: "event",
+    label: typeof payload.type === "string" ? payload.type : "event",
+    text: stringify(payload),
+    at: record.timestamp,
+    record
+  };
 };
 
 const responseItemToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
+  if (payload.type === "message") {
+    return {
+      id: record.id,
+      role: "event",
+      label: `message: ${typeof payload.role === "string" ? payload.role : "unknown"}`,
+      text: responseMessageSummary(payload),
+      at: record.timestamp,
+      record
+    };
+  }
+
   if (payload.type === "reasoning") {
     const text = reasoningText(payload);
-    return text ? {
+    return {
       id: record.id,
       role: "thinking",
       label: "thinking",
-      text,
+      text: text ?? "Reasoning",
       at: record.timestamp,
       record
-    } : null;
+    };
   }
 
   if (payload.type === "function_call") {
@@ -231,7 +248,29 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
-  return null;
+  return {
+    id: record.id,
+    role: responseItemRole(payload),
+    label: typeof payload.type === "string" ? payload.type : "response_item",
+    text: responseItemSummary(payload),
+    at: record.timestamp,
+    status: responseItemStatus(payload),
+    record
+  };
+};
+
+const responseItemRole = (payload: Record<string, unknown>): CodexRecordView["role"] => {
+  if (payload.type === "error" || payload.status === "failed") return "error";
+  if (payload.type === "reasoning") return "thinking";
+  const type = typeof payload.type === "string" ? payload.type : "";
+  return type.includes("call") || type.includes("tool") || type.includes("output") ? "tool" : "event";
+};
+
+const responseItemStatus = (payload: Record<string, unknown>): CodexRecordView["status"] | undefined => {
+  if (payload.type === "error" || payload.status === "failed") return "failed";
+  if (payload.status === "completed" || payload.type === "function_call_output" || payload.type === "custom_tool_call_output") return "completed";
+  if (payload.status === "pending" || payload.status === "in_progress" || String(payload.type ?? "").endsWith("_call")) return "pending";
+  return undefined;
 };
 
 const localShellText = (payload: Record<string, unknown>) => {
@@ -257,13 +296,48 @@ const mcpToolText = (payload: Record<string, unknown>) => {
   return `${label}: ${status}`.trim();
 };
 
+const responseMessageSummary = (payload: Record<string, unknown>) => {
+  const content = Array.isArray(payload.content) ? payload.content : [];
+  const text = contentText(content);
+  const blocks = content.length ? `${content.length} block${content.length === 1 ? "" : "s"}` : "no content blocks";
+  const phase = typeof payload.phase === "string" ? ` · ${payload.phase}` : "";
+  return text
+    ? `${blocks}${phase}\n${textPreview(text)}`
+    : `${blocks}${phase}`;
+};
+
+const responseItemSummary = (payload: Record<string, unknown>) => {
+  const type = typeof payload.type === "string" ? payload.type : "response_item";
+  if (typeof payload.name === "string") return `${type}: ${payload.name}`;
+  if (typeof payload.call_id === "string") return `${type}: ${payload.call_id}`;
+  return stringify(payload);
+};
+
+const contentText = (content: unknown[]) => content
+  .map((item) => {
+    const record = asRecord(item);
+    if (!record) return null;
+    if (typeof record.text === "string") return record.text;
+    if (typeof record.input_text === "string") return record.input_text;
+    if (typeof record.output_text === "string") return record.output_text;
+    return null;
+  })
+  .filter((text): text is string => Boolean(text?.trim()))
+  .join("\n\n");
+
+const textPreview = (text: string) => {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > 280 ? `${normalized.slice(0, 280)}...` : normalized;
+};
+
 const attachUsageToLatestCodexView = (views: CodexRecordView[], usage: RecordUsage) => {
   for (let i = views.length - 1; i >= 0; i -= 1) {
     if (views[i].role === "codex") {
       views[i] = { ...views[i], usage };
-      return;
+      return true;
     }
   }
+  return false;
 };
 
 const tokenUsageFromRecord = (record: CodexRecord): RecordUsage | null => {

@@ -2461,23 +2461,24 @@ const App = () => {
                     initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
                     increaseViewportBy={{ top: 360, bottom: 720 }}
                     computeItemKey={(_, message) => message.id}
-                    components={{ EmptyPlaceholder: EmptyMessages }}
-                    itemContent={(_, message) => {
-                      const markdownEnabled = canRenderMarkdown(message);
-                      const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
-                      return (
-                        <MessageCard
-                          message={message}
+	                    components={{ EmptyPlaceholder: EmptyMessages }}
+	                    itemContent={(_, message) => {
+	                      const markdownEnabled = canRenderMarkdown(message);
+	                      const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
+	                      const inspectable = message.record.rawJsonl != null || (messageDisplayMode === "compact" && message.role === "tool");
+	                      return (
+	                        <MessageCard
+	                          message={message}
                           showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
                           showTimestamp={!(messageDisplayMode === "compact" && message.role === "tool")}
                           renderToolPreview={messageDisplayMode === "compact"}
-                          renderMode={renderMode}
-                          markdownEnabled={markdownEnabled}
-                          onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
-                          onInspect={messageDisplayMode === "compact" && message.role === "tool" ? () => setInspectMessage(message) : undefined}
-                          onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
-                          onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
-                        />
+	                          renderMode={renderMode}
+	                          markdownEnabled={markdownEnabled}
+	                          onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
+	                          onInspect={inspectable ? () => setInspectMessage(message) : undefined}
+	                          onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
+	                          onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
+	                        />
                       );
                     }}
                   />

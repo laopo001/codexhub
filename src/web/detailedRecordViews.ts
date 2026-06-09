@@ -17,6 +17,8 @@ const detailedRecordToView = (record: CodexRecord): CodexRecordView | null => {
   const payload = asRecord(record.payload);
   if (!payload) return null;
 
+  if (record.rawJsonl != null) return rawJsonlRecordToView(record, payload);
+
   if (record.type === "error") {
     return {
       id: record.id,
@@ -52,6 +54,40 @@ const detailedRecordToView = (record: CodexRecord): CodexRecordView | null => {
     at: record.timestamp,
     record
   };
+};
+
+const rawJsonlRecordToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView => ({
+  id: record.id,
+  role: rawJsonlRole(record, payload),
+  label: rawJsonlLabel(record, payload),
+  text: stringify(record.rawJsonl),
+  at: record.timestamp,
+  status: record.type === "response_item" ? responseStatus(payload) : payload.type === "turn_aborted" ? "failed" : undefined,
+  canFork: payload.type === "agent_message" && payload.phase === "final_answer",
+  record
+});
+
+const rawJsonlRole = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView["role"] => {
+  if (record.type === "error" || payload.type === "error" || payload.type === "turn_aborted") return "error";
+  if (record.type === "event_msg" && payload.type === "user_message") return "user";
+  if (record.type === "event_msg" && payload.type === "agent_message") return "codex";
+  if (record.type === "response_item" && payload.type === "reasoning") return "thinking";
+  if (record.type === "response_item" && rawJsonlIsToolPayload(payload)) return "tool";
+  return "event";
+};
+
+const rawJsonlLabel = (record: CodexRecord, payload: Record<string, unknown>) => [
+  record.line ? `line ${record.line}` : null,
+  record.type,
+  typeof payload.type === "string" ? payload.type : null
+].filter(Boolean).join(" · ");
+
+const rawJsonlIsToolPayload = (payload: Record<string, unknown>) => {
+  const type = typeof payload.type === "string" ? payload.type : "";
+  return type.includes("call")
+    || type.includes("tool")
+    || type.includes("output")
+    || type === "file_change";
 };
 
 const userMessageToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
