@@ -124,8 +124,8 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
   if (payload.type === "message") {
     const role = typeof payload.role === "string" ? payload.role : "unknown";
     const text = responseMessageText(payload);
+    const attachments = imageAttachments(payload);
     if (role === "user") {
-      const attachments = imageAttachments(payload);
       return {
         id: record.id,
         role: "user",
@@ -142,8 +142,9 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
         id: record.id,
         role: "codex",
         label: phase,
-        text,
+        text: text || (attachments.length ? "[image]" : ""),
         at: record.timestamp,
+        attachments,
         canFork: phase === "final_answer",
         record
       };
@@ -152,8 +153,9 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
       id: record.id,
       role: "event",
       label: `message: ${role}`,
-      text: responseMessageSummary(payload),
+      text: responseMessageSummary(payload) || (attachments.length ? "[image]" : ""),
       at: record.timestamp,
+      attachments,
       record
     };
   }
@@ -396,13 +398,16 @@ const imageAttachments = (payload: Record<string, unknown>): Array<{ type: "imag
   if (Array.isArray(payload.content)) {
     for (const item of payload.content) {
       const record = asRecord(item);
-      if (!record || record.type !== "input_image") continue;
+      if (!record || !isImageContentType(record.type)) continue;
       const imageUrl = imageUrlFromContent(record);
       if (imageUrl) urls.add(imageUrl);
     }
   }
   return [...urls].map((url) => ({ type: "image", url }));
 };
+
+const isImageContentType = (value: unknown) =>
+  value === "input_image" || value === "output_image" || value === "image";
 
 const imageUrlFromContent = (content: Record<string, unknown>) => {
   if (typeof content.image_url === "string" && content.image_url.trim()) return content.image_url;
