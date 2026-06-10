@@ -13,7 +13,8 @@
     "extension.cjs",
     "dist",
     "media",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "vscode": "^1.96.0"

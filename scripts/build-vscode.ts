@@ -28,6 +28,7 @@ await cp("dist", path.join(outDir, "dist"), { recursive: true });
 await cp("targets/vscode/media", path.join(outDir, "media"), { recursive: true });
 await writeFile(path.join(outDir, "package.json"), `${JSON.stringify(await extensionManifest(), null, 2)}\n`);
 await cp("README.md", path.join(outDir, "README.md"));
+await cp("LICENSE", path.join(outDir, "LICENSE"));
 
 const info = await stat(extensionOutfile);
 console.error(`built VSCode extension staging: ${outDir} (${info.size} byte bundle)`);
