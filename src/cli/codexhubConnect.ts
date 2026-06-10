@@ -76,12 +76,9 @@ type RuntimeSettings = {
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
 };
 
-type AppServerSandboxPolicy = JsonRecord & { type?: unknown };
-
 type TurnRuntimeParams = {
   model?: string | null;
   effort?: ThreadRunOptions["modelReasoningEffort"];
-  sandboxPolicy?: AppServerSandboxPolicy;
 };
 
 type MachineTransportMessage =
@@ -729,9 +726,6 @@ class CodexAppServerBridge {
   private closed = false;
   private currentThreadId: string | undefined;
   private readonly forwardedRuntimeSettings = new Map<string, string>();
-  private readonly threadSandboxPolicies = new Map<string, AppServerSandboxPolicy>();
-  private readonly threadWritableSandboxPolicies = new Map<string, AppServerSandboxPolicy>();
-  private readonly planReadOnlyThreads = new Set<string>();
   private readonly bridgeStartedThreads = new Set<string>();
   private bridgeStartedUnknownCount = 0;
   private initialTuiResumeCurrentPending: boolean;
@@ -811,7 +805,7 @@ class CodexAppServerBridge {
     await this.request("turn/start", {
       threadId: targetThreadId,
       input: toAppServerInput(input),
-      ...this.turnRuntimeParams(targetThreadId, undefined)
+      ...turnRuntimeParams(undefined)
     }, { threadId: targetThreadId });
     return targetThreadId;
   }
@@ -974,7 +968,7 @@ class CodexAppServerBridge {
     await this.request("turn/start", {
       threadId: loadedThreadId,
       input: toAppServerInput(inputForCollaborationMode(command.input, command.options)),
-      ...this.turnRuntimeParams(loadedThreadId, command.options)
+      ...turnRuntimeParams(command.options)
     }, command);
   }
 
@@ -1071,7 +1065,6 @@ class CodexAppServerBridge {
     const threadId = resultThreadIdForMessage(message) ?? pending.threadId;
     if (threadId) {
       this.markThreadLoaded(threadId);
-      this.rememberThreadSandboxFromResult(threadId, message);
     }
   }
 
@@ -1114,20 +1107,6 @@ class CodexAppServerBridge {
     state.jsonlReplayFull = true;
     this.closeJsonlWatcher(state);
     this.scheduleJsonlSync(threadId, { replayFull: true });
-  }
-
-  private rememberThreadSandboxFromResult(threadId: string, message: JsonRecord) {
-    const result = asRecord(message.result);
-    this.rememberThreadSandboxPolicy(threadId, result?.sandbox);
-  }
-
-  private rememberThreadSandboxPolicy(threadId: string, policy: unknown) {
-    const sandboxPolicy = asSandboxPolicy(policy);
-    if (!sandboxPolicy) return;
-    this.threadSandboxPolicies.set(threadId, sandboxPolicy);
-    if (!isReadOnlySandboxPolicy(sandboxPolicy)) {
-      this.threadWritableSandboxPolicies.set(threadId, sandboxPolicy);
-    }
   }
 
   private async ensureThreadLoaded(
@@ -1330,7 +1309,6 @@ class CodexAppServerBridge {
     const params = asRecord(message.params);
     const settings = asRecord(params?.threadSettings) ?? asRecord(params?.settings);
     if (!settings) return;
-    this.rememberThreadSandboxPolicy(threadId, settings.sandboxPolicy);
     await this.forwardRuntimeSettings(threadId, {
       model: typeof settings.model === "string" && settings.model ? settings.model : null,
       modelReasoningEffort: isModelReasoningEffort(settings.effort)
@@ -1461,24 +1439,6 @@ class CodexAppServerBridge {
     });
   }
 
-  private turnRuntimeParams(threadId: string, options: ThreadRunOptions | undefined): TurnRuntimeParams {
-    const params = turnRuntimeParams(options);
-    if (options?.collaborationMode === "plan") {
-      this.planReadOnlyThreads.add(threadId);
-      params.sandboxPolicy = readOnlySandboxPolicy();
-      return params;
-    }
-
-    if (this.planReadOnlyThreads.has(threadId)) {
-      const observedPolicy = this.threadSandboxPolicies.get(threadId);
-      const restorePolicy = this.threadWritableSandboxPolicies.get(threadId)
-        ?? (observedPolicy && !isReadOnlySandboxPolicy(observedPolicy) ? observedPolicy : undefined)
-        ?? sandboxPolicyFromMode(this.options.sandbox, this.options.cwd);
-      if (restorePolicy) params.sandboxPolicy = restorePolicy;
-      this.planReadOnlyThreads.delete(threadId);
-    }
-    return params;
-  }
 }
 
 class CodexTuiPty {
@@ -1815,35 +1775,6 @@ const turnRuntimeParams = (options: ThreadRunOptions | undefined): TurnRuntimePa
   if (hasOwn(options, "model")) params.model = options.model;
   if (hasOwn(options, "modelReasoningEffort")) params.effort = options.modelReasoningEffort;
   return params;
-};
-
-const asSandboxPolicy = (value: unknown): AppServerSandboxPolicy | null => {
-  const record = asRecord(value);
-  return typeof record?.type === "string" ? record as AppServerSandboxPolicy : null;
-};
-
-const isReadOnlySandboxPolicy = (policy: AppServerSandboxPolicy) => policy.type === "readOnly";
-
-const readOnlySandboxPolicy = (): AppServerSandboxPolicy => ({
-  type: "readOnly",
-  networkAccess: true
-});
-
-const sandboxPolicyFromMode = (
-  mode: BridgeOptions["sandbox"],
-  cwd: string
-): AppServerSandboxPolicy | undefined => {
-  if (mode === "danger-full-access") return { type: "dangerFullAccess" };
-  if (mode === "workspace-write") {
-    return {
-      type: "workspaceWrite",
-      writableRoots: [cwd],
-      networkAccess: true,
-      excludeTmpdirEnvVar: false,
-      excludeSlashTmp: false
-    };
-  }
-  return undefined;
 };
 
 const goalObjective = (input: ProxyInput, options: ThreadRunOptions) => {

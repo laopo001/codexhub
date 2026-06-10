@@ -364,7 +364,7 @@ curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
   -d '{"action":"new"}'
 ```
 
-`options` 可随 turn 传递 Web 运行选择：`model`、`modelReasoningEffort`、`collaborationMode:"plan"`、`goalMode:true`、`goalObjective` 和 `goalTokenBudget`。Plan mode 会把本轮输入标记为只规划不实施，并在 app-server `turn/start` 上强制使用 read-only sandbox；下一次普通 turn 会恢复之前观察到的非只读 sandbox。Goal mode 会先通过 app-server `thread/goal/set` 为该 thread 建立 active goal，再启动 turn。
+`options` 可随 turn 传递 Web 运行选择：`model`、`modelReasoningEffort`、`collaborationMode:"plan"`、`goalMode:true`、`goalObjective` 和 `goalTokenBudget`。Plan mode 只会把本轮输入标记为只规划不实施，不覆盖 app-server sandbox；权限仍由当前 Codex runtime 配置或显式 `--sandbox` 决定。Goal mode 会先通过 app-server `thread/goal/set` 为该 thread 建立 active goal，再启动 turn。
 
 Slash command 会在转发给 Codex 前先处理。`/status` 和 `/help` 返回本地代理状态/帮助记录；Web 里的 `/model` 是客户端命令，会打开 Runtime 选择器，下一次普通 turn 再把选中的 model/reasoning 发给 app-server。如果官方 TUI 在本地改了 model/reasoning，`codexhub` / `codexhub resume` 会从 `thread/settings/updated` 或有效的 `config/read` 结果镜像回 Web。不支持的 slash command 不会作为普通 user turn 发给 Codex app-server，因为官方 TUI 的 slash command 是本地 UI 命令，不是 app-server turn。
 
