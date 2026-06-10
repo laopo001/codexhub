@@ -15,7 +15,7 @@ import { CodexhubServerState } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
-import { cronMatches, cronMinuteKey, defaultTaskTimezone, isCronExpression } from "../core/taskCron.js";
+import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, isCronExpression } from "../core/taskCron.js";
 import { runtimeSessionFromWorker, ThreadHub } from "../core/threadHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
 import {
@@ -226,6 +226,8 @@ const webEventsMessageSchema = z.discriminatedUnion("type", [
     threadId: z.string().min(1)
   }).strict()
 ]);
+
+type WebEventsMessage = z.infer<typeof webEventsMessageSchema>;
 
 const sshConnectSchema = z.object({
   host: z.string().min(1),
@@ -688,7 +690,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   async function waitForRuntimeSession(sessionId: string, timeoutMs = 10_000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() <= deadline) {
-      const session = threads.listWorkers({ includeOffline: true }).find((worker) => worker.workerId === sessionId);
+      const session = threads.listRuntimeSessions({ includeOffline: true }).find((item) => item.sessionId === sessionId);
       if (session?.online) return session;
       await delay(50);
     }
@@ -791,6 +793,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       if (!cronMatches(task.schedule, now, defaultTaskTimezone)) continue;
       const minuteKey = cronMinuteKey(now, defaultTaskTimezone);
       if (triggeredTaskMinutes.get(task.taskId) === minuteKey) continue;
+      if (cronMinuteKeyFromIso(task.lastRunAt, defaultTaskTimezone) === minuteKey) {
+        triggeredTaskMinutes.set(task.taskId, minuteKey);
+        continue;
+      }
       triggeredTaskMinutes.set(task.taskId, minuteKey);
       void runLocalTask(task.taskId)
         .catch((error: unknown) => {
@@ -933,7 +939,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       connectionSubscriber = null;
     };
 
-    const subscribeControl = (input: Extract<z.infer<typeof webEventsMessageSchema>, { type: "hello" }>) => {
+    const subscribeControl = (input: Extract<WebEventsMessage, { type: "hello" }>) => {
       unsubscribeControl();
       threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
 
@@ -1001,7 +1007,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     };
 
     const handleMessage = (data: unknown) => {
-      let parsed: z.infer<typeof webEventsMessageSchema>;
+      let parsed: WebEventsMessage;
       try {
         parsed = webEventsMessageSchema.parse(JSON.parse(String(data)));
       } catch (error) {

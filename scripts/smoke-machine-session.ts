@@ -105,6 +105,7 @@ const main = async () => {
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "1";
   process.env.TELEGRAM_BOT_TOKEN = "";
 
+  await assertTaskCronSemantics();
   await assertServerStateSnapshotPure();
   await assertProjectRuntimeProjection();
   await assertDeletedProjectSuppressesRuntimeCapture();
@@ -193,6 +194,27 @@ const main = async () => {
     console.log("legacy registration rejected");
   } finally {
     await server.stop();
+  }
+};
+
+const assertTaskCronSemantics = async () => {
+  const { cronMatches, cronMinuteKey, cronMinuteKeyFromIso } = await import("../src/core/taskCron.js");
+  const mondayNotFirst = new Date("2026-06-08T09:00:00.000Z");
+  const mondayFirst = new Date("2026-06-01T09:00:00.000Z");
+  if (!cronMatches("0 9 1 * 1", mondayNotFirst, "UTC")) {
+    throw new Error("cron day-of-month/day-of-week should match when day-of-week matches");
+  }
+  if (!cronMatches("0 9 1 * 2", mondayFirst, "UTC")) {
+    throw new Error("cron day-of-month/day-of-week should match when day-of-month matches");
+  }
+  if (cronMatches("0 9 1 * *", mondayNotFirst, "UTC")) {
+    throw new Error("cron day-of-month with wildcard day-of-week matched the wrong date");
+  }
+  if (!cronMatches("0 9 * * 1", mondayNotFirst, "UTC")) {
+    throw new Error("cron day-of-week with wildcard day-of-month did not match");
+  }
+  if (cronMinuteKeyFromIso(mondayNotFirst.toISOString(), "UTC") !== cronMinuteKey(mondayNotFirst, "UTC")) {
+    throw new Error("cron lastRunAt minute key did not match date minute key");
   }
 };
 

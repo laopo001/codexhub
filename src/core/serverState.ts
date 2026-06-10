@@ -5,7 +5,7 @@ import path from "node:path";
 import YAML from "yaml";
 import type { MachineCapabilities, MachineSummary, MachineType } from "./machineHub.js";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
-import { runtimeSessionFromWorker, type RuntimeSessionSummary, type ThreadSummary, type WorkerSummary as InternalWorkerSummary } from "./threadHub.js";
+import { runtimeSessionFromWorker, type RuntimeSessionSummary, type ThreadSummary, type WorkerSummary as InternalRuntimeSessionSummary } from "./threadHub.js";
 
 export type StoredMachine = {
   machineId: string;
@@ -91,7 +91,7 @@ export type ProjectSummary = StoredProject & {
 
 type RuntimeSnapshot = {
   machines: MachineSummary[];
-  runtimeSessions: InternalWorkerSummary[];
+  runtimeSessions: InternalRuntimeSessionSummary[];
   threads: ThreadSummary[];
 };
 
@@ -391,7 +391,7 @@ export class CodexhubServerState {
     const machinesById = new Map<string, MachineSummary | StoredMachine>();
     for (const machine of this.data.machines) machinesById.set(machine.machineId, machine);
     for (const machine of runtime.machines) machinesById.set(machine.machineId, machine);
-    const sessionsByProject = new Map<string, InternalWorkerSummary[]>();
+    const sessionsByProject = new Map<string, InternalRuntimeSessionSummary[]>();
     for (const session of runtime.runtimeSessions) {
       const projectId = projectIdFor(machineIdForRuntimeSession(session), session.workingDirectory);
       const sessions = sessionsByProject.get(projectId) ?? [];
@@ -551,7 +551,7 @@ export class CodexhubServerState {
   }
 }
 
-export const machineIdForRuntimeSession = (session: Pick<InternalWorkerSummary, "machineId" | "hostname">) =>
+export const machineIdForRuntimeSession = (session: Pick<InternalRuntimeSessionSummary, "machineId" | "hostname">) =>
   session.machineId ?? createMachineId(session.hostname ?? "local");
 
 const defaultDataDir = () =>

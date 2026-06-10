@@ -4,11 +4,15 @@ export function cronMatches(expression: string, now = new Date(), timezone = def
   const parts = cronParts(expression);
   if (!parts) return false;
   const local = localDateParts(now, timezone);
-  return parts.minute.has(local.minute)
-    && parts.hour.has(local.hour)
-    && parts.dayOfMonth.has(local.dayOfMonth)
-    && parts.month.has(local.month)
-    && parts.dayOfWeek.has(local.dayOfWeek);
+  const dayOfMonthMatches = parts.dayOfMonth.values.has(local.dayOfMonth);
+  const dayOfWeekMatches = parts.dayOfWeek.values.has(local.dayOfWeek);
+  const dayMatches = parts.dayOfMonth.wildcard || parts.dayOfWeek.wildcard
+    ? dayOfMonthMatches && dayOfWeekMatches
+    : dayOfMonthMatches || dayOfWeekMatches;
+  return parts.minute.values.has(local.minute)
+    && parts.hour.values.has(local.hour)
+    && parts.month.values.has(local.month)
+    && dayMatches;
 }
 
 export function isCronExpression(expression: string) {
@@ -20,6 +24,12 @@ export function cronMinuteKey(date: Date, timezone = defaultTaskTimezone) {
   return `${local.year}-${local.month}-${local.dayOfMonth}-${local.hour}-${local.minute}`;
 }
 
+export function cronMinuteKeyFromIso(value: string | undefined, timezone = defaultTaskTimezone) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? cronMinuteKey(date, timezone) : null;
+}
+
 function cronParts(expression: string) {
   const fields = expression.trim().split(/\s+/);
   if (fields.length !== 5) return null;
@@ -29,7 +39,7 @@ function cronParts(expression: string) {
   const parsedDayOfMonth = parseCronField(dayOfMonth, 1, 31);
   const parsedMonth = parseCronField(month, 1, 12);
   const parsedDayOfWeek = parseCronField(dayOfWeek, 0, 7, (value) => value === 7 ? 0 : value);
-  if (!parsedMinute?.size || !parsedHour?.size || !parsedDayOfMonth?.size || !parsedMonth?.size || !parsedDayOfWeek?.size) {
+  if (!parsedMinute?.values.size || !parsedHour?.values.size || !parsedDayOfMonth?.values.size || !parsedMonth?.values.size || !parsedDayOfWeek?.values.size) {
     return null;
   }
   return {
@@ -43,6 +53,10 @@ function cronParts(expression: string) {
 
 function parseCronField(field: string, min: number, max: number, normalize: (value: number) => number = (value) => value) {
   const values = new Set<number>();
+  const fullValues = new Set<number>();
+  for (let value = min; value <= max; value += 1) {
+    fullValues.add(normalize(value));
+  }
   for (const rawPart of field.split(",")) {
     const [rangePart, stepPart] = rawPart.split("/");
     const step = stepPart ? Number(stepPart) : 1;
@@ -53,7 +67,10 @@ function parseCronField(field: string, min: number, max: number, normalize: (val
       if (value >= min && value <= max) values.add(normalize(value));
     }
   }
-  return values;
+  return {
+    values,
+    wildcard: values.size === fullValues.size && [...fullValues].every((value) => values.has(value))
+  };
 }
 
 function rangeBounds(value: string, min: number, max: number): [number | null, number | null] {

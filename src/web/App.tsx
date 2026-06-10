@@ -1,24 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { ConfigProvider, Switch, Tabs } from "antd";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
-import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
-import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
-import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
-import css from "react-syntax-highlighter/dist/esm/languages/prism/css";
-import diff from "react-syntax-highlighter/dist/esm/languages/prism/diff";
-import javascript from "react-syntax-highlighter/dist/esm/languages/prism/javascript";
-import json from "react-syntax-highlighter/dist/esm/languages/prism/json";
-import jsx from "react-syntax-highlighter/dist/esm/languages/prism/jsx";
-import markdown from "react-syntax-highlighter/dist/esm/languages/prism/markdown";
-import markup from "react-syntax-highlighter/dist/esm/languages/prism/markup";
-import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
-import sql from "react-syntax-highlighter/dist/esm/languages/prism/sql";
-import tsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
-import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
-import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
-import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light";
 import remarkGfm from "remark-gfm";
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
@@ -475,29 +459,8 @@ const composerModeOptions: Array<{ value: ComposerMode; label: string }> = [
   { value: "goal", label: "Goal" }
 ];
 
-SyntaxHighlighter.registerLanguage("bash", bash);
-SyntaxHighlighter.registerLanguage("css", css);
-SyntaxHighlighter.registerLanguage("diff", diff);
-SyntaxHighlighter.registerLanguage("javascript", javascript);
-SyntaxHighlighter.registerLanguage("json", json);
-SyntaxHighlighter.registerLanguage("jsx", jsx);
-SyntaxHighlighter.registerLanguage("markdown", markdown);
-SyntaxHighlighter.registerLanguage("markup", markup);
-SyntaxHighlighter.registerLanguage("python", python);
-SyntaxHighlighter.registerLanguage("sql", sql);
-SyntaxHighlighter.registerLanguage("tsx", tsx);
-SyntaxHighlighter.registerLanguage("typescript", typescript);
-SyntaxHighlighter.registerLanguage("yaml", yaml);
+const SyntaxCodeBlock = lazy(() => import("./SyntaxCodeBlock.js"));
 
-const syntaxHighlighterStyle = oneLight as SyntaxHighlighterProps["style"];
-const syntaxHighlighterCustomStyle: React.CSSProperties = {
-  margin: 0,
-  overflow: "visible",
-  background: "transparent",
-  padding: 0,
-  fontSize: "12px",
-  lineHeight: 1.55
-};
 const languageAliases: Record<string, string> = {
   console: "bash",
   html: "markup",
@@ -1227,7 +1190,8 @@ const App = () => {
       resubscribeRealtimeThreads();
     });
     socket.addEventListener("message", (event: MessageEvent) => {
-      const message = JSON.parse(event.data) as RealtimeMessage;
+      const message = parseRealtimeMessage(event.data);
+      if (!message) return;
       handleRealtimeMessage(message);
     });
     socket.addEventListener("error", () => {
@@ -3927,19 +3891,11 @@ const markdownComponents: Components = {
   code: ({ children, className, ...props }) => {
     const language = markdownCodeLanguage(className);
     if (!language) return <code className={className} {...props}>{children}</code>;
+    const code = String(children).replace(/\n$/, "");
     return (
-      <SyntaxHighlighter
-        PreTag="div"
-        CodeTag="code"
-        language={language}
-        style={syntaxHighlighterStyle}
-        customStyle={syntaxHighlighterCustomStyle}
-        codeTagProps={{ className: "markdownHighlightedCode" }}
-        showLineNumbers={false}
-        wrapLongLines={false}
-      >
-        {String(children).replace(/\n$/, "")}
-      </SyntaxHighlighter>
+      <Suspense fallback={<code className="markdownHighlightedCode">{code}</code>}>
+        <SyntaxCodeBlock language={language}>{code}</SyntaxCodeBlock>
+      </Suspense>
     );
   },
   table: ({ children }) => (
@@ -4072,6 +4028,37 @@ const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, init);
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
   return await response.json() as T;
+};
+
+const realtimeMessageTypes = new Set([
+  "sessions",
+  "projects",
+  "tasks",
+  "connections",
+  "thread",
+  "record",
+  "done",
+  "jsonl_snapshot",
+  "jsonl_append",
+  "ready",
+  "thread_subscribed",
+  "thread_unsubscribed",
+  "error"
+]);
+
+const parseRealtimeMessage = (data: unknown): RealtimeMessage | null => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(data));
+  } catch {
+    return null;
+  }
+  const record = asRecord(parsed);
+  const type = typeof record?.type === "string"
+    ? record.type
+    : typeof record?.kind === "string" ? record.kind : "";
+  if (!realtimeMessageTypes.has(type)) return null;
+  return { ...record, type } as RealtimeMessage;
 };
 
 const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
