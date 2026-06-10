@@ -3426,14 +3426,15 @@ const MessageCard = ({
   onFork?: () => void;
   onRollback?: () => void;
 }) => {
+  const isThinkingMessage = message.role === "thinking";
   const toolBody = renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined) : null;
   const hasToolBody = toolBody !== null;
-  const memoryCitation = useMemo(
-    () => shouldExtractMemoryCitation(message) ? parseMemoryCitationText(message.text) : emptyMemoryCitation(message.text),
-    [message]
-  );
+  const memoryCitation = useMemo(() => {
+    if (isThinkingMessage) return emptyMemoryCitation("");
+    return shouldExtractMemoryCitation(message) ? parseMemoryCitationText(message.text) : emptyMemoryCitation(message.text);
+  }, [message, isThinkingMessage]);
   const messageText = memoryCitation.text;
-  const hasMessageMeta = (showTimestamp && message.at) || message.usage || markdownEnabled || onFork || onRollback;
+  const hasMessageMeta = !isThinkingMessage && ((showTimestamp && message.at) || message.usage || markdownEnabled || onFork || onRollback);
   return (
     <article
       className={`message ${message.role} ${hasToolBody ? "richTool" : ""} ${onContextMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
@@ -3450,10 +3451,10 @@ const MessageCard = ({
       ) : messageText ? (
         <MessageText text={messageText} mode={renderMode} markdownEnabled={markdownEnabled} />
       ) : null}
-      {memoryCitation.entries.length || memoryCitation.rolloutIds.length ? (
+      {!isThinkingMessage && (memoryCitation.entries.length || memoryCitation.rolloutIds.length) ? (
         <MemoryCitationPanel citation={memoryCitation} />
       ) : null}
-      {message.attachments?.length ? (
+      {!isThinkingMessage && message.attachments?.length ? (
         <div className="messageAttachments">
           {message.attachments.map((attachment) => attachment.type === "image" ? (
             <a

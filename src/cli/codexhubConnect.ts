@@ -1783,9 +1783,7 @@ const inputForCollaborationMode = (input: ProxyInput, options: ThreadRunOptions 
 };
 
 const planModePrefix = () => [
-  "Plan mode is active for this turn.",
-  "Do not modify files, apply patches, commit, install packages, or run mutating commands.",
-  "Inspect and reason as needed, then produce a concrete plan or ask the minimum clarifying question needed before implementation."
+  "Plan mode is active for this turn."
 ].join(" ");
 
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);

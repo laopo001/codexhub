@@ -1633,6 +1633,10 @@ textarea {
   line-height: 1.5;
 }
 
+.message.user > pre {
+  font-family: inherit;
+}
+
 .messageMarkdown {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1961,7 +1965,7 @@ textarea {
   display: block;
   font-size: 12px;
   font-weight: 650;
-  max-width: 20em;
+  max-width: 16em;
 }
 
 .workspaceThreadTabLabel code {
