@@ -786,7 +786,6 @@ class CodexAppServerBridge {
     const thread = asRecord(result?.thread);
     const threadId = typeof thread?.id === "string" ? thread.id : undefined;
     if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
-    this.bindThread(threadId);
     this.markThreadLoaded(threadId);
     await this.forwardCurrentThreadChanged(threadId);
     return threadId;
@@ -814,7 +813,6 @@ class CodexAppServerBridge {
       input: toAppServerInput(input),
       ...this.turnRuntimeParams(targetThreadId, undefined)
     }, { threadId: targetThreadId });
-    this.scheduleJsonlSync(targetThreadId);
     return targetThreadId;
   }
 
@@ -947,7 +945,6 @@ class CodexAppServerBridge {
       const thread = asRecord(result?.thread);
       const threadId = typeof thread?.id === "string" ? thread.id : undefined;
       if (!threadId) throw new Error("Codex app-server thread/fork did not return thread.id");
-      this.bindThread(threadId);
       this.markThreadLoaded(threadId);
       return;
     }
@@ -962,7 +959,6 @@ class CodexAppServerBridge {
         threadId: command.threadId,
         numTurns: command.numTurns
       }, command);
-      this.bindThread(command.threadId);
       this.resetJsonlCursor(command.threadId);
       return;
     }
@@ -980,7 +976,6 @@ class CodexAppServerBridge {
       input: toAppServerInput(inputForCollaborationMode(command.input, command.options)),
       ...this.turnRuntimeParams(loadedThreadId, command.options)
     }, command);
-    this.scheduleJsonlSync(loadedThreadId);
   }
 
   private async applyGoalMode(threadId: string, input: ProxyInput, options: ThreadRunOptions | undefined) {
@@ -1007,7 +1002,6 @@ class CodexAppServerBridge {
     const thread = asRecord(result?.thread);
     const threadId = typeof thread?.id === "string" ? thread.id : undefined;
     if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
-    this.bindThread(threadId);
     this.markThreadLoaded(threadId);
     await this.forwardCurrentThreadChanged(threadId);
     return threadId;
@@ -1069,7 +1063,7 @@ class CodexAppServerBridge {
   private rememberThreads(message: JsonRecord) {
     const result = asRecord(message.result);
     const resultThread = asRecord(result?.thread);
-    if (typeof resultThread?.id === "string") this.bindThread(resultThread.id);
+    if (typeof resultThread?.id === "string") this.loadedThreads.add(resultThread.id);
   }
 
   private rememberLoadedThread(pending: PendingRequest, message: JsonRecord) {
@@ -1084,7 +1078,6 @@ class CodexAppServerBridge {
   private threadIdForMessage(message: JsonRecord) {
     const threadId = threadIdForMessage(message);
     if (!threadId) return undefined;
-    this.bindThread(threadId);
     return threadId;
   }
 
@@ -1108,7 +1101,6 @@ class CodexAppServerBridge {
   }
 
   private markThreadLoaded(threadId: string) {
-    this.bindThread(threadId);
     this.loadedThreads.add(threadId);
   }
 
@@ -1145,10 +1137,7 @@ class CodexAppServerBridge {
     command?: { threadId?: string; commandId?: string },
     options: { markBridgeStarted?: boolean } = {}
   ) {
-    if (this.loadedThreads.has(threadId)) {
-      this.bindThread(threadId);
-      return threadId;
-    }
+    if (this.loadedThreads.has(threadId)) return threadId;
     if (options.markBridgeStarted) this.markBridgeStartedThread(threadId);
     const result = asRecord(await this.request("thread/resume", {
       threadId,
@@ -1186,6 +1175,7 @@ class CodexAppServerBridge {
   private async syncThreadJsonl(threadId: string) {
     const state = this.syncedThreads.get(threadId);
     if (!state || this.closed) return;
+    const stillObserved = () => this.syncedThreads.get(threadId) === state && !this.closed;
     if (state.jsonlSyncing) {
       state.jsonlPending = true;
       return;
@@ -1195,8 +1185,10 @@ class CodexAppServerBridge {
     state.jsonlPending = false;
     try {
       const filePath = await findCodexSessionFile(threadId);
+      if (!stillObserved()) return;
       if (!filePath) return;
       const currentStat = await stat(filePath).catch(() => null);
+      if (!stillObserved()) return;
       const fileKey = currentStat ? `${currentStat.dev}:${currentStat.ino}` : undefined;
       const pathChanged = Boolean(state.jsonlPath && state.jsonlPath !== filePath);
       const fileReplaced = Boolean(state.jsonlFileKey && fileKey && state.jsonlFileKey !== fileKey);
@@ -1206,6 +1198,7 @@ class CodexAppServerBridge {
       const replace = !state.jsonlPath || pathChanged || fileReplaced || truncated || state.jsonlReplayFull;
       const afterLine = replace ? 0 : state.jsonlLine;
       const batch = await readCodexSessionJsonlLinesFromFile(filePath, { afterLine });
+      if (!stillObserved()) return;
       if (replace || batch.lines.length) {
         this.hub.sendRecords({
           threadId,

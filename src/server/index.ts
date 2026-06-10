@@ -535,10 +535,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       if ((threadRecordObservationCounts.get(threadId) ?? 0) > 0) return;
       const thread = threads.getThread(threadId);
       if (!thread) return;
-      if (thread.running) {
-        scheduleThreadRecordObservationIdle(threadId);
-        return;
-      }
       try {
         threads.unobserveThreadRecords(threadId);
       } catch {

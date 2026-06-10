@@ -34,6 +34,11 @@ type TaskRunResponse = {
   threadId?: string;
 };
 
+type RealtimeMessage = {
+  type?: string;
+  threadId?: string;
+};
+
 type MachineCommand = {
   commandId: string;
   type: "start_session" | "list_directory";
@@ -64,6 +69,7 @@ const main = async () => {
   process.env.CODEX_HUB_DATA_DIR = dataDir;
   process.env.CODEX_HUB_LOCAL_MACHINE = "0";
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "0";
+  process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS = "25";
   process.env.TELEGRAM_BOT_TOKEN = "";
 
   const port = await findFreePort();
@@ -91,6 +97,9 @@ const main = async () => {
     if (open.result?.sessionId !== fake.sessionId || open.result?.threadId !== fake.threadId) {
       throw new Error(`project open returned unexpected session/thread: ${JSON.stringify(open)}`);
     }
+    await fake.expectNoSessionCommand("observe_thread_records", 100);
+    await assertThreadRecordObservation(apiBase, fake.threadId, fake);
+    console.log("thread record observation subscription ok");
 
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
       method: "POST",
@@ -107,6 +116,7 @@ const main = async () => {
       })
     });
     const modeTurn = await fake.nextTurn();
+    await fake.expectNoSessionCommand("observe_thread_records", 100);
     if (modeTurn.options?.collaborationMode !== "plan" || modeTurn.options?.goalMode !== true) {
       throw new Error(`web turn mode options were not forwarded: ${JSON.stringify(modeTurn.options)}`);
     }
@@ -211,8 +221,10 @@ class FakeMachine {
   private sessionRegistered = false;
   private pendingTurns: SessionCommand[] = [];
   private pendingSteers: SessionCommand[] = [];
+  private pendingSessionCommandsByType = new Map<string, SessionCommand[]>();
   private turnWaiters: Array<(command: SessionCommand) => void> = [];
   private steerWaiters: Array<(command: SessionCommand) => void> = [];
+  private sessionCommandWaitersByType = new Map<string, Array<(command: SessionCommand) => void>>();
 
   constructor(
     private readonly apiBase: string,
@@ -276,6 +288,31 @@ class FakeMachine {
     return await this.waitForSteer();
   }
 
+  async nextSessionCommand(type: string, timeoutMs = 5000) {
+    return await this.waitForSessionCommand(type, timeoutMs);
+  }
+
+  async expectNoSessionCommand(type: string, timeoutMs = 100) {
+    const existing = this.pendingSessionCommandsByType.get(type)?.shift();
+    if (existing) throw new Error(`unexpected ${type} command: ${JSON.stringify(existing)}`);
+    let resolved = false;
+    await new Promise<void>((resolve, reject) => {
+      const waiter = (command: SessionCommand) => {
+        resolved = true;
+        reject(new Error(`unexpected ${type} command: ${JSON.stringify(command)}`));
+      };
+      const waiters = this.sessionCommandWaitersByType.get(type) ?? [];
+      waiters.push(waiter);
+      this.sessionCommandWaitersByType.set(type, waiters);
+      setTimeout(() => {
+        if (resolved) return;
+        const current = this.sessionCommandWaitersByType.get(type) ?? [];
+        this.sessionCommandWaitersByType.set(type, current.filter((item) => item !== waiter));
+        resolve();
+      }, timeoutMs);
+    });
+  }
+
   completeTurn(command: SessionCommand) {
     this.send({
       type: "session_event",
@@ -329,12 +366,22 @@ class FakeMachine {
   }
 
   private handleSessionCommand(command: SessionCommand) {
+    this.recordSessionCommand(command);
     if (command.type === "resume_thread" || command.type === "start_thread") {
       this.send({
         type: "session_command_result",
         sessionId: this.options.sessionId,
         commandId: command.commandId,
         result: { threadId: command.threadId ?? this.options.threadId }
+      });
+      return;
+    }
+    if (command.type === "observe_thread_records" || command.type === "unobserve_thread_records") {
+      this.send({
+        type: "session_command_result",
+        sessionId: this.options.sessionId,
+        commandId: command.commandId,
+        result: { ok: true }
       });
       return;
     }
@@ -374,6 +421,19 @@ class FakeMachine {
     this.pendingTurns.push(turn);
     const waiter = this.turnWaiters.shift();
     if (waiter) waiter(this.pendingTurns.shift()!);
+  }
+
+  private recordSessionCommand(command: SessionCommand) {
+    const waiters = this.sessionCommandWaitersByType.get(command.type) ?? [];
+    const waiter = waiters.shift();
+    if (waiter) {
+      this.sessionCommandWaitersByType.set(command.type, waiters);
+      waiter(command);
+      return;
+    }
+    const pending = this.pendingSessionCommandsByType.get(command.type) ?? [];
+    pending.push(command);
+    this.pendingSessionCommandsByType.set(command.type, pending);
   }
 
   private registerSession() {
@@ -417,6 +477,20 @@ class FakeMachine {
     });
   }
 
+  private waitForSessionCommand(type: string, timeoutMs = 5000) {
+    const existing = this.pendingSessionCommandsByType.get(type)?.shift();
+    if (existing) return Promise.resolve(existing);
+    return new Promise<SessionCommand>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`timed out waiting for fake session ${type} command`)), timeoutMs);
+      const waiters = this.sessionCommandWaitersByType.get(type) ?? [];
+      waiters.push((command) => {
+        clearTimeout(timer);
+        resolve(command);
+      });
+      this.sessionCommandWaitersByType.set(type, waiters);
+    });
+  }
+
   private send(message: unknown) {
     if (this.ws?.readyState !== WebSocket.OPEN) throw new Error("fake machine websocket is not open");
     this.ws.send(JSON.stringify(message));
@@ -447,6 +521,59 @@ const waitForTaskStatus = async (
     await delay(100);
   }
   throw new Error(`task ${taskId} did not reach status ${status}`);
+};
+
+const assertThreadRecordObservation = async (apiBase: string, threadId: string, fake: FakeMachine) => {
+  const first = await subscribeThread(apiBase, threadId);
+  try {
+    const observe = await fake.nextSessionCommand("observe_thread_records");
+    if (observe.threadId !== threadId) throw new Error(`observe command used wrong thread: ${JSON.stringify(observe)}`);
+
+    const second = await subscribeThread(apiBase, threadId);
+    try {
+      await fake.expectNoSessionCommand("observe_thread_records", 100);
+      first.ws.send(JSON.stringify({ type: "unsubscribe_thread", threadId }));
+      await fake.expectNoSessionCommand("unobserve_thread_records", 100);
+      second.ws.send(JSON.stringify({ type: "unsubscribe_thread", threadId }));
+      const unobserve = await fake.nextSessionCommand("unobserve_thread_records");
+      if (unobserve.threadId !== threadId) throw new Error(`unobserve command used wrong thread: ${JSON.stringify(unobserve)}`);
+    } finally {
+      second.ws.close();
+    }
+  } finally {
+    first.ws.close();
+  }
+};
+
+const subscribeThread = async (apiBase: string, threadId: string) => {
+  const messages: RealtimeMessage[] = [];
+  const ws = new WebSocket(webRealtimeUrl(apiBase));
+  ws.addEventListener("message", (event) => {
+    messages.push(JSON.parse(String(event.data)) as RealtimeMessage);
+  });
+  await waitForWebSocketOpen(ws);
+  ws.send(JSON.stringify({ type: "subscribe_thread", threadId, after: 0 }));
+  await waitForRealtimeMessage(
+    messages,
+    (message) => message.type === "thread_subscribed" && message.threadId === threadId,
+    "thread subscription acknowledgement"
+  );
+  return { ws };
+};
+
+const waitForRealtimeMessage = async (
+  messages: RealtimeMessage[],
+  predicate: (message: RealtimeMessage) => boolean,
+  label: string,
+  timeoutMs = 5000
+) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const message = messages.find(predicate);
+    if (message) return message;
+    await delay(25);
+  }
+  throw new Error(`timed out waiting for ${label}`);
 };
 
 const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: RequestInit): Promise<T> => {
@@ -485,6 +612,12 @@ const findKey = (value: unknown, key: string, trail = "$"): string | null => {
 
 const machineTransportUrl = (apiBase: string) => {
   const url = new URL("/api/machines/connect", apiBase);
+  url.protocol = "ws:";
+  return url.toString();
+};
+
+const webRealtimeUrl = (apiBase: string) => {
+  const url = new URL("/api/events/ws", apiBase);
   url.protocol = "ws:";
   return url.toString();
 };
