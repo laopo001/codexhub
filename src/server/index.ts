@@ -49,6 +49,14 @@ const threadRunOptionsSchema = z.object({
   goalTokenBudget: z.number().int().positive().nullable().optional()
 });
 
+const threadGoalStatusSchema = z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]);
+
+const threadGoalUpdateSchema = z.object({
+  objective: z.string().min(1).nullable().optional(),
+  status: threadGoalStatusSchema.nullable().optional(),
+  tokenBudget: z.number().int().positive().nullable().optional()
+});
+
 const sessionRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
@@ -1640,6 +1648,31 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       const command = threads.runLocalCommand(params.threadId, payload.input, payload.source ?? "web");
       if (command.handled) return { ok: true, command: command.command };
       threads.runTurn(params.threadId, payload.input, payload.source ?? "web", payload.options).catch(() => undefined);
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.post("/api/threads/:threadId/goal", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const payload = threadGoalUpdateSchema.parse(request.body);
+    try {
+      await threads.setGoal(params.threadId, payload);
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.delete("/api/threads/:threadId/goal", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    try {
+      await threads.clearGoal(params.threadId);
       return { ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

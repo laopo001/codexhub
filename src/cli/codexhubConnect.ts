@@ -18,6 +18,7 @@ import type { MachineCommand, MachineRegistration } from "../core/machineHub.js"
 import type { ProxyInput } from "../core/proxyInput.js";
 import type {
   SessionRegistration,
+  ThreadGoalUpdate,
   ThreadRunOptions,
   WorkerCommand,
   WorkerEventInput,
@@ -922,6 +923,35 @@ class CodexAppServerBridge {
       return;
     }
 
+    if (command.type === "set_goal") {
+      if (!command.threadId) throw new Error("set_goal command requires threadId");
+      const threadId = await this.ensureThreadLoaded(
+        command.threadId,
+        command.workingDirectory,
+        commandModel(command.options, this.options.model),
+        command,
+        { markBridgeStarted: true }
+      );
+      await this.request("thread/goal/set", {
+        threadId,
+        ...goalUpdateParams(command.goal, command.input, command.options)
+      }, command);
+      return;
+    }
+
+    if (command.type === "clear_goal") {
+      if (!command.threadId) throw new Error("clear_goal command requires threadId");
+      const threadId = await this.ensureThreadLoaded(
+        command.threadId,
+        command.workingDirectory,
+        commandModel(command.options, this.options.model),
+        command,
+        { markBridgeStarted: true }
+      );
+      await this.request("thread/goal/clear", { threadId }, command);
+      return;
+    }
+
     if (command.type === "fork_thread") {
       if (!command.threadId) throw new Error("fork_thread command requires threadId");
       const model = commandModel(command.options, this.options.model);
@@ -976,9 +1006,7 @@ class CodexAppServerBridge {
     if (!options?.goalMode) return;
     await this.request("thread/goal/set", {
       threadId,
-      objective: goalObjective(input, options),
-      status: "active",
-      ...(hasOwn(options, "goalTokenBudget") ? { tokenBudget: options.goalTokenBudget } : {})
+      ...goalUpdateParams(undefined, input, options)
     }, { threadId });
   }
 
@@ -1789,6 +1817,20 @@ const goalObjective = (input: ProxyInput, options: ThreadRunOptions) => {
       .join("\n\n");
   const objective = text.trim();
   return objective ? objective.slice(0, 4000) : "Pursue the attached user request.";
+};
+
+const goalUpdateParams = (
+  goal: ThreadGoalUpdate | undefined,
+  input: ProxyInput | undefined,
+  options: ThreadRunOptions | undefined
+) => {
+  const params: ThreadGoalUpdate = { ...(goal ?? {}) };
+  if (params.objective === undefined && input && options) params.objective = goalObjective(input, options);
+  if (params.status === undefined && options?.goalMode) params.status = "active";
+  if (params.tokenBudget === undefined && options && hasOwn(options, "goalTokenBudget")) {
+    params.tokenBudget = options.goalTokenBudget;
+  }
+  return params;
 };
 
 const isModelReasoningEffort = (value: unknown): value is ThreadRunOptions["modelReasoningEffort"] =>

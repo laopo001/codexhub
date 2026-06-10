@@ -66,6 +66,20 @@ type ThreadDetail = ThreadSummary & {
   lastSeq: number;
 };
 
+type ThreadGoalView = {
+  objective: string;
+  status: string;
+  tokenBudget?: number;
+  updatedAt?: string;
+};
+
+type GoalDialogState = {
+  threadId: string;
+  objective: string;
+  saving: boolean;
+  error: string;
+};
+
 type RuntimeSessionSummary = {
   sessionId: string;
   machineId?: string;
@@ -543,6 +557,7 @@ const App = () => {
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
+  const [goalDialog, setGoalDialog] = useState<GoalDialogState | null>(null);
   const [hiddenStatusTurns, setHiddenStatusTurns] = useState<Record<string, string>>({});
   const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
   const realtimeSocket = useRef<WebSocket | null>(null);
@@ -640,6 +655,10 @@ const App = () => {
       : activeSession?.records ?? [],
     [activeSession?.jsonl, activeSession?.records, activeSession?.threadId]
   );
+  const goalRecords = useMemo(
+    () => combineRecordSources(displayRecords, activeSession?.records ?? []),
+    [activeSession?.records, displayRecords]
+  );
   const simpleRecords = useMemo(
     () => displayRecords.filter(isSimpleRecord),
     [displayRecords]
@@ -659,6 +678,10 @@ const App = () => {
   const simpleStatuses = useMemo(
     () => messageDisplayMode === "compact" ? runtimeStatusesFromRecords(latestTurnStatusScope.records) : [],
     [latestTurnStatusScope.records, messageDisplayMode]
+  );
+  const activeGoal = useMemo(
+    () => latestThreadGoalFromRecords(goalRecords),
+    [goalRecords]
   );
   const statusPanelHidden = Boolean(
     activeSession?.threadId
@@ -1732,6 +1755,51 @@ const App = () => {
     }
   };
 
+  const updateThreadGoal = async (
+    threadId: string,
+    goal: { objective?: string; status?: string; tokenBudget?: number | null },
+    options: { dialog?: boolean } = {}
+  ) => {
+    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(goal)
+    });
+    if (response.ok) return true;
+    const text = await response.text();
+    if (options.dialog) {
+      setGoalDialog((current) => current && current.threadId === threadId
+        ? { ...current, saving: false, error: text || "保存失败" }
+        : current);
+    } else {
+      setSessions((current) => current.map((item) => item.threadId === threadId
+        ? { ...item, records: [...item.records, errorRecord("goal update failed", text)] }
+        : item));
+    }
+    return false;
+  };
+
+  const clearThreadGoal = async (threadId: string) => {
+    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" });
+    if (response.ok) return;
+    const text = await response.text();
+    setSessions((current) => current.map((item) => item.threadId === threadId
+      ? { ...item, records: [...item.records, errorRecord("goal clear failed", text)] }
+      : item));
+  };
+
+  const saveGoalDialog = async () => {
+    if (!goalDialog) return;
+    const objective = goalDialog.objective.trim();
+    if (!objective) {
+      setGoalDialog((current) => current ? { ...current, error: "目标不能为空" } : current);
+      return;
+    }
+    setGoalDialog((current) => current ? { ...current, saving: true, error: "" } : current);
+    const saved = await updateThreadGoal(goalDialog.threadId, { objective, status: "active" }, { dialog: true });
+    if (saved) setGoalDialog(null);
+  };
+
   const updateSessionInput = (threadId: string, input: string) => {
     setSessions((current) => current.map((session) => session.threadId === threadId ? { ...session, input } : session));
   };
@@ -2735,6 +2803,54 @@ const App = () => {
                   >
                     <div className="composerLayout">
                       <div className="composerSurface">
+                        {activeGoal && activeSession ? (
+                          <div className={`goalStrip ${goalStatusClass(activeGoal.status)}`}>
+                            <div className="goalStripMain">
+                              <span className="goalStripIcon" aria-hidden="true">◎</span>
+                              <span className="goalStripLabel">{goalStatusLabel(activeGoal.status)}</span>
+                              <span className="goalStripObjective" title={activeGoal.objective}>{activeGoal.objective}</span>
+                              {activeGoal.updatedAt ? <span className="goalStripAge">{formatGoalAge(activeGoal.updatedAt)}</span> : null}
+                            </div>
+                            <div className="goalStripActions">
+                              <button
+                                type="button"
+                                className="goalIconButton"
+                                title="编辑目标"
+                                aria-label="编辑目标"
+                                onClick={() => setGoalDialog({
+                                  threadId: activeSession.threadId,
+                                  objective: activeGoal.objective,
+                                  saving: false,
+                                  error: ""
+                                })}
+                              >
+                                ✎
+                              </button>
+                              {activeGoal.status !== "complete" ? (
+                                <button
+                                  type="button"
+                                  className="goalIconButton"
+                                  title={activeGoal.status === "paused" ? "继续目标" : "暂停目标"}
+                                  aria-label={activeGoal.status === "paused" ? "继续目标" : "暂停目标"}
+                                  onClick={() => void updateThreadGoal(activeSession.threadId, {
+                                    status: activeGoal.status === "paused" ? "active" : "paused"
+                                  })}
+                                >
+                                  {activeGoal.status === "paused" ? "▶" : "Ⅱ"}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="goalIconButton danger"
+                                title="清除目标"
+                                aria-label="清除目标"
+                                onClick={() => void clearThreadGoal(activeSession.threadId)}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                         <div className="composerInput">
                           {activeSession.textAttachments.length || activeSession.imageAttachments.length ? (
                             <div className="composerAttachmentList">
@@ -2897,6 +3013,48 @@ const App = () => {
                 {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{reasoningOptionLabel(option)}</option>)}
               </select>
             </label>
+          </section>
+        </div>
+      ) : null}
+
+      {goalDialog ? (
+        <div className="modalOverlay goalDialogOverlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !goalDialog.saving) setGoalDialog(null);
+        }}>
+          <section className="goalDialog" role="dialog" aria-modal="true" aria-labelledby="goalDialogTitle">
+            <header className="goalDialogHeader">
+              <div className="goalDialogMark" aria-hidden="true">◎</div>
+              <button
+                type="button"
+                className="goalDialogClose"
+                onClick={() => setGoalDialog(null)}
+                disabled={goalDialog.saving}
+                aria-label="关闭"
+              >
+                ×
+              </button>
+            </header>
+            <h2 id="goalDialogTitle">编辑目标</h2>
+            <textarea
+              value={goalDialog.objective}
+              onChange={(event) => setGoalDialog((current) => current
+                ? { ...current, objective: event.target.value, error: "" }
+                : current)}
+              rows={7}
+              autoFocus
+            />
+            {goalDialog.error ? <div className="goalDialogError">{goalDialog.error}</div> : null}
+            <footer className="goalDialogActions">
+              <button type="button" onClick={() => setGoalDialog(null)} disabled={goalDialog.saving}>取消</button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void saveGoalDialog()}
+                disabled={goalDialog.saving || !goalDialog.objective.trim()}
+              >
+                {goalDialog.saving ? "保存中" : "保存"}
+              </button>
+            </footer>
           </section>
         </div>
       ) : null}
@@ -4003,6 +4161,34 @@ const relativeTime = (iso: string | undefined) => {
   return `${Math.round(hours / 24)}d ago`;
 };
 
+const formatGoalAge = (iso: string) => {
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${Math.max(1, seconds)}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+};
+
+const goalStatusLabel = (status: string) => {
+  if (status === "paused") return "暂停的目标";
+  if (status === "complete") return "完成的目标";
+  if (status === "blocked") return "阻塞的目标";
+  if (status === "usageLimited") return "受限的目标";
+  if (status === "budgetLimited") return "预算受限的目标";
+  return "进行中的目标";
+};
+
+const goalStatusClass = (status: string) => {
+  if (status === "paused") return "paused";
+  if (status === "complete") return "complete";
+  if (status === "blocked" || status === "usageLimited" || status === "budgetLimited") return "blocked";
+  return "active";
+};
+
 const threadCandidateTitle = (candidate: CodexThreadCandidate) =>
   compactLine(candidate.firstUserMessage || candidate.lastAssistantMessage || shortId(candidate.threadId));
 
@@ -4189,6 +4375,30 @@ const latestRuntimeConfigFromRecords = (records: CodexRecord[]) => {
   return null;
 };
 
+const latestThreadGoalFromRecords = (records: CodexRecord[]): ThreadGoalView | null => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const payload = asRecord(records[index].payload);
+    const type = typeof payload?.type === "string" ? payload.type : "";
+    if (type === "thread_goal_cleared") return null;
+    if (type !== "thread_goal_updated") continue;
+    if (!payload) return null;
+    const goal = asRecord(payload.goal);
+    const objective = typeof goal?.objective === "string" ? compactLine(goal.objective) : "";
+    if (!objective) return null;
+    const status = typeof goal?.status === "string" ? goal.status : "active";
+    const tokenBudget = typeof goal?.tokenBudget === "number"
+      ? goal.tokenBudget
+      : typeof goal?.token_budget === "number"
+        ? goal.token_budget
+        : undefined;
+    const updatedAt = records[index].timestamp
+      ?? (typeof goal?.updatedAt === "number" ? new Date(goal.updatedAt * 1000).toISOString() : undefined)
+      ?? (typeof goal?.updated_at === "number" ? new Date(goal.updated_at * 1000).toISOString() : undefined);
+    return { objective, status, tokenBudget, updatedAt };
+  }
+  return null;
+};
+
 const runtimeConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort } => {
   const raw = asRecord(record.rawJsonl);
   const payload = asRecord(raw?.payload) ?? asRecord(record.payload);
@@ -4317,6 +4527,23 @@ const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
     ];
   }
   return records.map((record, index) => index === existingIndex ? incoming : record);
+};
+
+const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) => {
+  if (!left.length) return right;
+  if (!right.length) return left;
+  const byId = new Map<string, CodexRecord>();
+  for (const record of left) byId.set(record.id, record);
+  for (const record of right) byId.set(record.id, record);
+  return [...byId.values()].sort((a, b) => recordSortValue(a) - recordSortValue(b));
+};
+
+const recordSortValue = (record: CodexRecord) => {
+  const timestamp = Date.parse(record.timestamp ?? "");
+  if (Number.isFinite(timestamp)) return timestamp;
+  if (typeof record.order === "number") return record.order;
+  if (typeof record.line === "number") return record.line;
+  return 0;
 };
 
 const mergeThreadJsonl = (current: ThreadJsonl | undefined, event: StreamEvent): ThreadJsonl | undefined => {

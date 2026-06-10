@@ -51,6 +51,11 @@ type SessionCommand = {
   threadId?: string;
   input?: unknown;
   turnId?: string;
+  goal?: {
+    objective?: string | null;
+    status?: string | null;
+    tokenBudget?: number | null;
+  };
   options?: {
     collaborationMode?: "default" | "plan" | null;
     goalMode?: boolean | null;
@@ -167,6 +172,48 @@ const main = async () => {
     }
     fake.completeTurn(activeWebTurn);
     console.log("web running turn steer ok");
+
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        input: "hold goal web turn open",
+        source: "web"
+      })
+    });
+    const activeGoalTurn = await fake.nextTurn();
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        input: "replace the active goal",
+        source: "web",
+        options: { goalMode: true }
+      })
+    });
+    const setGoal = await fake.nextSessionCommand("set_goal");
+    if (setGoal.options?.goalMode) {
+      throw new Error(`web goal update command mismatch: ${JSON.stringify(setGoal)}`);
+    }
+    if (setGoal.goal?.objective !== "replace the active goal" || setGoal.goal.status !== "active") {
+      throw new Error(`web goal update payload mismatch: ${JSON.stringify(setGoal.goal)}`);
+    }
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "paused" })
+    });
+    const pausedGoal = await fake.nextSessionCommand("set_goal");
+    if (pausedGoal.goal?.status !== "paused") {
+      throw new Error(`web goal pause payload mismatch: ${JSON.stringify(pausedGoal.goal)}`);
+    }
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, { method: "DELETE" });
+    const clearedGoal = await fake.nextSessionCommand("clear_goal");
+    if (clearedGoal.threadId !== fake.threadId) {
+      throw new Error(`web goal clear command mismatch: ${JSON.stringify(clearedGoal)}`);
+    }
+    fake.completeTurn(activeGoalTurn);
+    console.log("web running goal update ok");
 
     const created = await apiJson<{ task?: LocalTask }>(apiBase, "/api/tasks", {
       method: "POST",
@@ -386,6 +433,24 @@ class FakeMachine {
       return;
     }
     if (command.type !== "turn") {
+      if (command.type === "set_goal") {
+        this.send({
+          type: "session_command_result",
+          sessionId: this.options.sessionId,
+          commandId: command.commandId,
+          result: { ok: true }
+        });
+        return;
+      }
+      if (command.type === "clear_goal") {
+        this.send({
+          type: "session_command_result",
+          sessionId: this.options.sessionId,
+          commandId: command.commandId,
+          result: { cleared: true }
+        });
+        return;
+      }
       if (command.type === "steer") {
         this.pendingSteers.push(command);
         const waiter = this.steerWaiters.shift();

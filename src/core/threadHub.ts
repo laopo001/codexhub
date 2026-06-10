@@ -55,6 +55,14 @@ export type ThreadRunOptions = {
   goalTokenBudget?: number | null;
 };
 
+export type ThreadGoalStatus = "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
+
+export type ThreadGoalUpdate = {
+  objective?: string | null;
+  status?: ThreadGoalStatus | null;
+  tokenBudget?: number | null;
+};
+
 export type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
   jsonl?: ThreadJsonl;
@@ -132,6 +140,8 @@ export type WorkerCommand = {
     | "rollback_thread"
     | "turn"
     | "steer"
+    | "set_goal"
+    | "clear_goal"
     | "stop"
     | "list_threads"
     | "start_thread"
@@ -146,6 +156,7 @@ export type WorkerCommand = {
   numTurns?: number;
   keepTurns?: number;
   limit?: number;
+  goal?: ThreadGoalUpdate;
   options?: ThreadRunOptions;
 };
 
@@ -694,6 +705,9 @@ export class ThreadHub {
 
   runTurn(threadId: string, input: ProxyInput, _source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
     const thread = this.requireThread(threadId);
+    if (thread.running && _source === "web" && options?.goalMode) {
+      return this.setThreadGoal(thread, goalUpdateFromInput(input, options));
+    }
     if (thread.running && _source === "web" && thread.appServerTurnId) {
       return this.steerTurn(thread, input, thread.appServerTurnId);
     }
@@ -742,6 +756,44 @@ export class ThreadHub {
       input,
       threadId: thread.threadId,
       turnId
+    });
+    return promise;
+  }
+
+  setGoal(threadId: string, goal: ThreadGoalUpdate) {
+    return this.setThreadGoal(this.requireThread(threadId), goal);
+  }
+
+  clearGoal(threadId: string) {
+    const thread = this.requireThread(threadId);
+    const worker = this.requireThreadWorker(thread);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<void>(commandId, "clear_goal", thread.threadId);
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+    this.enqueueWorkerCommand(worker.workerId, {
+      commandId,
+      type: "clear_goal",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId
+    });
+    return promise;
+  }
+
+  private setThreadGoal(thread: RuntimeThread, goal: ThreadGoalUpdate) {
+    const worker = this.requireThreadWorker(thread);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<void>(commandId, "set_goal", thread.threadId);
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+    this.enqueueWorkerCommand(worker.workerId, {
+      commandId,
+      type: "set_goal",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId,
+      goal
     });
     return promise;
   }
@@ -1962,6 +2014,16 @@ const summarizeInput = (input: ProxyInput) => {
     .filter((item) => item.type === "text")
     .map((item) => item.text)
     .join("\n");
+};
+
+const goalUpdateFromInput = (input: ProxyInput, options: ThreadRunOptions): ThreadGoalUpdate => {
+  const configuredObjective = typeof options.goalObjective === "string" ? options.goalObjective.trim() : "";
+  const objective = configuredObjective || summarizeInput(input).trim();
+  return {
+    objective: objective ? objective.slice(0, 4000) : "Pursue the attached user request.",
+    status: "active",
+    ...(hasOwn(options, "goalTokenBudget") ? { tokenBudget: options.goalTokenBudget } : {})
+  };
 };
 
 const imageUrls = (input: ProxyInput) => {
