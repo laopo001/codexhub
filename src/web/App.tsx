@@ -288,6 +288,12 @@ type ChatSession = ThreadDetail & {
   textAttachments: TextAttachment[];
 };
 
+type ComposerHistoryState = {
+  threadId: string;
+  draft: string;
+  offsetFromEnd: number;
+};
+
 type ImageAttachment = {
   id: string;
   file: File;
@@ -597,6 +603,7 @@ const App = () => {
   const messagesScrollerRef = useRef<HTMLElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerHistoryRef = useRef<ComposerHistoryState | null>(null);
   const notificationRecordsByThread = useRef(new Map<string, CodexRecord[]>());
   const notifiedTaskCompletions = useRef(new Set<string>());
   const notificationAudioContext = useRef<AudioContext | null>(null);
@@ -705,6 +712,10 @@ const App = () => {
     () => latestUserTurnStatusScope(displayRecords),
     [displayRecords]
   );
+  const latestGoalScope = useMemo(
+    () => latestUserTurnStatusScope(goalRecords),
+    [goalRecords]
+  );
   const latestTurnStatuses = useMemo(
     () => runtimeStatusesFromRecords(latestTurnStatusScope.records),
     [latestTurnStatusScope.records]
@@ -718,8 +729,8 @@ const App = () => {
     [latestTurnStatuses, messageDisplayMode]
   );
   const activeGoal = useMemo(
-    () => latestThreadGoalFromRecords(goalRecords),
-    [goalRecords]
+    () => latestThreadGoalFromRecords(latestGoalScope.records, activeSession?.threadId),
+    [activeSession?.threadId, latestGoalScope.records]
   );
   const turnUiState = useMemo(
     () => turnUiStateFromStatus(latestTurnStatus, Boolean(activeSession?.running)),
@@ -745,6 +756,10 @@ const App = () => {
   const activeViews = useMemo<WebRecordView[]>(
     () => messageDisplayMode === "compact" ? compactToolViews(baseViews) : detailedViews,
     [baseViews, detailedViews, messageDisplayMode]
+  );
+  const activeUserMessageHistory = useMemo(
+    () => userMessageHistoryFromRecords(displayRecords),
+    [displayRecords]
   );
   const latestView = activeViews.at(-1);
   const latestViewKey = latestView
@@ -1804,10 +1819,12 @@ const App = () => {
     const imageAttachments = session.imageAttachments;
     if (!text && !imageAttachments.length) return;
     if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {
+      resetComposerHistory(threadId);
       setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "" } : item));
       setRuntimeDialogOpen(true);
       return;
     }
+    resetComposerHistory(threadId);
     setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [], textAttachments: [] } : item));
     let encodedImages: Array<{ url: string }>;
     try {
@@ -1888,6 +1905,10 @@ const App = () => {
   };
 
   const clearThreadGoal = async (threadId: string) => {
+    const clearedRecord = threadGoalClearedRecord(threadId);
+    setSessions((current) => current.map((item) => item.threadId === threadId
+      ? { ...item, records: mergeRecord(item.records, clearedRecord) }
+      : item));
     const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" });
     if (response.ok) return;
     const text = await response.text();
@@ -1910,6 +1931,78 @@ const App = () => {
 
   const updateSessionInput = (threadId: string, input: string) => {
     setSessions((current) => current.map((session) => session.threadId === threadId ? { ...session, input } : session));
+  };
+
+  const resetComposerHistory = (threadId: string) => {
+    if (composerHistoryRef.current?.threadId === threadId) composerHistoryRef.current = null;
+  };
+
+  const setComposerHistoryInput = (threadId: string, textarea: HTMLTextAreaElement, input: string) => {
+    updateSessionInput(threadId, input);
+    window.requestAnimationFrame(() => {
+      resizeComposerTextarea(textarea);
+      textarea.focus();
+      textarea.setSelectionRange(input.length, input.length);
+    });
+  };
+
+  const navigateComposerHistory = (
+    threadId: string,
+    textarea: HTMLTextAreaElement,
+    history: string[],
+    direction: "previous" | "next"
+  ) => {
+    const current = composerHistoryRef.current?.threadId === threadId
+      ? composerHistoryRef.current
+      : { threadId, draft: textarea.value, offsetFromEnd: 0 };
+    const offsetFromEnd = Math.min(current.offsetFromEnd, history.length);
+    const nextOffset = direction === "previous"
+      ? Math.min(history.length, offsetFromEnd + 1)
+      : Math.max(0, offsetFromEnd - 1);
+    if (nextOffset === offsetFromEnd) return;
+
+    const input = nextOffset === 0
+      ? current.draft
+      : history[history.length - nextOffset] ?? current.draft;
+    composerHistoryRef.current = { ...current, offsetFromEnd: nextOffset };
+    setComposerHistoryInput(threadId, textarea, input);
+  };
+
+  const handleComposerKeyDown = (
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+    threadId: string,
+    history: string[]
+  ) => {
+    if (
+      (event.key === "ArrowUp" || event.key === "ArrowDown")
+      && !event.altKey
+      && !event.ctrlKey
+      && !event.metaKey
+      && !event.shiftKey
+      && !event.nativeEvent.isComposing
+      && event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+    ) {
+      const textarea = event.currentTarget;
+      if (event.key === "ArrowUp" && history.length && composerCursorOnFirstLine(textarea)) {
+        event.preventDefault();
+        navigateComposerHistory(threadId, textarea, history, "previous");
+        return;
+      }
+      if (
+        event.key === "ArrowDown"
+        && composerHistoryRef.current?.threadId === threadId
+        && composerHistoryRef.current.offsetFromEnd > 0
+        && composerCursorOnLastLine(textarea)
+      ) {
+        event.preventDefault();
+        navigateComposerHistory(threadId, textarea, history, "next");
+        return;
+      }
+    }
+
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (activeCanSend) void send(threadId);
   };
 
   const addSessionTextAttachment = (threadId: string, text: string) => {
@@ -2984,6 +3077,7 @@ const App = () => {
                             ref={composerTextareaRef}
                             value={activeSession.input}
                             onChange={(event) => {
+                              resetComposerHistory(activeSession.threadId);
                               resizeComposerTextarea(event.currentTarget);
                               updateSessionInput(activeSession.threadId, event.target.value);
                             }}
@@ -2991,11 +3085,7 @@ const App = () => {
                               if (!pasteSessionImages(activeSession.threadId, event.clipboardData)) return;
                               event.preventDefault();
                             }}
-                            onKeyDown={(event) => {
-                              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-                              event.preventDefault();
-                              if (activeCanSend) void send(activeSession.threadId);
-                            }}
+                            onKeyDown={(event) => handleComposerKeyDown(event, activeSession.threadId, activeUserMessageHistory)}
                             placeholder="例如：检查这个 repo 的结构并给我下一步建议"
                             rows={2}
                           />
@@ -4517,14 +4607,25 @@ const latestRuntimeConfigFromRecords = (records: CodexRecord[]) => {
   return null;
 };
 
-const latestThreadGoalFromRecords = (records: CodexRecord[]): ThreadGoalView | null => {
+const latestThreadGoalFromRecords = (records: CodexRecord[], threadId?: string): ThreadGoalView | null => {
+  const clearedAt = latestThreadGoalClearedAt(records, threadId);
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const payload = asRecord(records[index].payload);
     const type = typeof payload?.type === "string" ? payload.type : "";
-    if (type === "thread_goal_cleared") return null;
+    if (type === "thread_goal_cleared") {
+      if (goalRecordMatchesThread(payload, null, threadId)) return null;
+      continue;
+    }
     if (type !== "thread_goal_updated") continue;
     if (!payload) return null;
     const goal = asRecord(payload.goal);
+    if (!goalRecordMatchesThread(payload, goal, threadId)) continue;
+    if (clearedAt !== null) {
+      const goalCreatedAt = goalTimeMs(goal?.createdAt) ?? goalTimeMs(goal?.created_at);
+      const recordTime = recordTimestampMs(records[index]);
+      const isOldGoal = goalCreatedAt !== null ? goalCreatedAt <= clearedAt : recordTime !== null && recordTime <= clearedAt;
+      if (isOldGoal) continue;
+    }
     const objective = typeof goal?.objective === "string" ? compactLine(goal.objective) : "";
     if (!objective) return null;
     const status = typeof goal?.status === "string" ? goal.status : "active";
@@ -4538,6 +4639,44 @@ const latestThreadGoalFromRecords = (records: CodexRecord[]): ThreadGoalView | n
       ?? (typeof goal?.updatedAt === "number" ? new Date(goal.updatedAt * 1000).toISOString() : undefined)
       ?? (typeof goal?.updated_at === "number" ? new Date(goal.updated_at * 1000).toISOString() : undefined);
     return { objective, status, tokenBudget, updatedAt };
+  }
+  return null;
+};
+
+const latestThreadGoalClearedAt = (records: CodexRecord[], threadId?: string) => {
+  let latest: number | null = null;
+  for (const record of records) {
+    const payload = asRecord(record.payload);
+    if (payload?.type !== "thread_goal_cleared" || !goalRecordMatchesThread(payload, null, threadId)) continue;
+    const time = recordTimestampMs(record);
+    if (time !== null && (latest === null || time > latest)) latest = time;
+  }
+  return latest;
+};
+
+const goalRecordMatchesThread = (
+  payload: Record<string, unknown> | null,
+  goal: Record<string, unknown> | null,
+  threadId: string | undefined
+) => {
+  if (!threadId) return true;
+  const payloadThreadId = stringField(payload, "threadId") ?? stringField(payload, "thread_id");
+  const goalThreadId = stringField(goal, "threadId") ?? stringField(goal, "thread_id");
+  return payloadThreadId === threadId || goalThreadId === threadId || (!payloadThreadId && !goalThreadId);
+};
+
+const recordTimestampMs = (record: CodexRecord) => {
+  const timestamp = Date.parse(record.timestamp ?? "");
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const goalTimeMs = (value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1_000_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === "string" && value) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
 };
@@ -5659,6 +5798,29 @@ const composeUserInputText = (typedText: string, textAttachments: TextAttachment
 const normalizeSelectedText = (value: string) =>
   value.replace(/\r\n/g, "\n").split("\n").map((line) => line.trimEnd()).join("\n").trim();
 
+const userMessageHistoryFromRecords = (records: CodexRecord[]) => {
+  const history: string[] = [];
+  for (const view of recordsToViews(records)) {
+    if (view.role !== "user") continue;
+    const text = normalizeHistoryMessageText(view);
+    if (!text || history.at(-1) === text) continue;
+    history.push(text);
+  }
+  return history;
+};
+
+const normalizeHistoryMessageText = (view: CodexRecordView) => {
+  const text = normalizeSelectedText(view.text);
+  if (text === "[image]" && view.attachments?.length) return "";
+  return text;
+};
+
+const composerCursorOnFirstLine = (textarea: HTMLTextAreaElement) =>
+  !textarea.value.slice(0, textarea.selectionStart).includes("\n");
+
+const composerCursorOnLastLine = (textarea: HTMLTextAreaElement) =>
+  !textarea.value.slice(textarea.selectionEnd).includes("\n");
+
 const selectedTextWithin = (element: HTMLElement) => {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return "";
@@ -5717,6 +5879,18 @@ const errorRecord = (label: string, error: unknown): CodexRecord => ({
   payload: {
     type: label,
     message: error instanceof Error ? error.message : String(error)
+  }
+});
+
+const threadGoalClearedRecord = (threadId: string): CodexRecord => ({
+  id: `web:goal-cleared:${threadId}:${browserId()}`,
+  timestamp: new Date().toISOString(),
+  type: "event_msg",
+  sourceThreadId: threadId,
+  payload: {
+    type: "thread_goal_cleared",
+    threadId,
+    message: "Goal cleared"
   }
 });
 

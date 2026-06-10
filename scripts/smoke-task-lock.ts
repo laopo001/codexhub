@@ -212,6 +212,13 @@ const main = async () => {
     if (clearedGoal.threadId !== fake.threadId) {
       throw new Error(`web goal clear command mismatch: ${JSON.stringify(clearedGoal)}`);
     }
+    const clearedDetail = await apiJson<{ records?: Array<{ payload?: { type?: string } }> }>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (!clearedDetail.records?.some((record) => record.payload?.type === "thread_goal_cleared")) {
+      throw new Error(`web goal clear record missing: ${JSON.stringify(clearedDetail.records)}`);
+    }
     fake.completeTurn(activeGoalTurn);
     console.log("web running goal update ok");
 
@@ -444,10 +451,15 @@ class FakeMachine {
       }
       if (command.type === "clear_goal") {
         this.send({
-          type: "session_command_result",
+          type: "session_event",
           sessionId: this.options.sessionId,
-          commandId: command.commandId,
-          result: { cleared: true }
+          event: {
+            type: "thread_event",
+            threadId: command.threadId ?? this.options.threadId,
+            commandId: command.commandId,
+            message: { id: command.commandId, result: { cleared: true } },
+            heartbeat: false
+          }
         });
         return;
       }

@@ -942,6 +942,11 @@ export class ThreadHub {
     if (!pending) return;
     if ((pending.type === "fork_thread" || pending.type === "rollback_thread") && thread) {
       this.resolveCommand(commandId, this.detail(thread));
+      return;
+    }
+    if (pending.type === "set_goal" || pending.type === "clear_goal") {
+      if (pending.type === "clear_goal" && thread) this.appendThreadGoalClearedRecord(thread);
+      this.resolveCommand(commandId);
     }
   }
 
@@ -1090,6 +1095,7 @@ export class ThreadHub {
     }
 
     if (method === "thread/goal/cleared") {
+      this.appendThreadGoalClearedRecord(thread, params);
       return;
     }
 
@@ -1226,6 +1232,15 @@ export class ThreadHub {
     thread.records.push(record);
     thread.updatedAt = record.timestamp ?? thread.updatedAt;
     this.publish(thread, "record", record);
+  }
+
+  private appendThreadGoalClearedRecord(thread: RuntimeThread, payload: Record<string, unknown> = {}) {
+    this.appendRuntimeRecord(thread, "event_msg", {
+      ...payload,
+      type: "thread_goal_cleared",
+      threadId: typeof payload.threadId === "string" ? payload.threadId : thread.threadId,
+      message: typeof payload.message === "string" ? payload.message : "Goal cleared"
+    });
   }
 
   private appendUserInputRecord(thread: RuntimeThread, input: ProxyInput) {
