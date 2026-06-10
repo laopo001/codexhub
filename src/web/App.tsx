@@ -370,6 +370,12 @@ type RuntimeStatusView = {
   status?: CodexRecordView["status"];
   files?: RuntimeStatusFile[];
 };
+type TurnUiStateKind = "idle" | "running" | "completed" | "aborted" | "failed";
+type TurnUiState = {
+  kind: TurnUiStateKind;
+  label: string;
+  title: string;
+};
 type RuntimeStatusFile = {
   path: string;
   added?: number;
@@ -675,13 +681,25 @@ const App = () => {
     () => latestUserTurnStatusScope(displayRecords),
     [displayRecords]
   );
+  const latestTurnStatuses = useMemo(
+    () => runtimeStatusesFromRecords(latestTurnStatusScope.records),
+    [latestTurnStatusScope.records]
+  );
+  const latestTurnStatus = useMemo(
+    () => latestTurnStatusFromRecords(displayRecords),
+    [displayRecords]
+  );
   const simpleStatuses = useMemo(
-    () => messageDisplayMode === "compact" ? runtimeStatusesFromRecords(latestTurnStatusScope.records) : [],
-    [latestTurnStatusScope.records, messageDisplayMode]
+    () => messageDisplayMode === "compact" ? latestTurnStatuses : [],
+    [latestTurnStatuses, messageDisplayMode]
   );
   const activeGoal = useMemo(
     () => latestThreadGoalFromRecords(goalRecords),
     [goalRecords]
+  );
+  const turnUiState = useMemo(
+    () => turnUiStateFromStatus(latestTurnStatus, Boolean(activeSession?.running)),
+    [activeSession?.running, latestTurnStatus]
   );
   const statusPanelHidden = Boolean(
     activeSession?.threadId
@@ -690,6 +708,9 @@ const App = () => {
   );
   const showInlineStatusPanel = Boolean(simpleStatuses.length && !statusPanelHidden);
   const statusButtonLabel = simpleStatuses.length ? `Status ${simpleStatuses.length}` : "Status";
+  const statusButtonTitle = simpleStatuses.length
+    ? `Show latest turn status\n${runtimeStatusTitle(simpleStatuses)}`
+    : turnUiState.title;
   const statusScopeKey = activeSession?.threadId && latestTurnStatusScope.key
     ? `${activeSession.threadId}:${latestTurnStatusScope.key}`
     : "";
@@ -714,7 +735,8 @@ const App = () => {
     && activeRuntimeSession?.online
     && activeHasDraft
   );
-  const activeCanSubmit = Boolean(activeThreadBelongsToSession && (activeSession?.running || activeCanSend));
+  const activeCanStop = Boolean(activeThreadBelongsToSession && activeSession?.running);
+  const activeCanSubmit = activeCanSend;
   const workspaceEmptyMessage = activeRuntimeSession
     ? activeRuntimeSession.online
       ? activeRuntimeSessionThreads.length ? "Select a thread" : "No threads"
@@ -769,7 +791,7 @@ const App = () => {
           type="button"
           className={`usagePill statusPill${simpleStatuses.length ? " available" : ""}`}
           disabled={!simpleStatuses.length}
-          title={simpleStatuses.length ? "Show latest turn status" : "No status for the latest turn"}
+          title={statusButtonTitle}
           onClick={() => {
             if (!activeSession?.threadId) return;
             setHiddenStatusTurns((current) => {
@@ -2798,13 +2820,16 @@ const App = () => {
                     onSubmit={(event) => {
                       event.preventDefault();
                       if (activeCanSend) void send(activeSession.threadId);
-                      else if (activeSession.running) void stopTurn(activeSession.threadId);
                     }}
                   >
                     <div className="composerLayout">
                       <div className="composerSurface">
                         {activeGoal && activeSession ? (
-                          <div className={`goalStrip ${goalStatusClass(activeGoal.status)}`}>
+                          <div
+                            className={`goalStrip ${goalStatusClass(activeGoal.status)}`}
+                            title={`${goalStatusLabel(activeGoal.status)} · ${activeGoal.objective}`}
+                            aria-label={`${goalStatusLabel(activeGoal.status)}: ${activeGoal.objective}`}
+                          >
                             <div className="goalStripMain">
                               <span className="goalStripIcon" aria-hidden="true">◎</span>
                               <span className="goalStripLabel">{goalStatusLabel(activeGoal.status)}</span>
@@ -2947,9 +2972,33 @@ const App = () => {
                                 </div>
                               ) : null}
                             </div>
-                            <button type="submit" className="composerSendButton" disabled={!activeCanSubmit} aria-label={activeCanSend ? "Send message" : activeSession.running ? "Stop current turn" : "Send message"}>
-                              {activeCanSend ? "↑" : <span className="composerStopIcon" aria-hidden="true" />}
-                            </button>
+                            <div
+                              className={`composerActionButtons status-${turnUiState.kind}`}
+                              title={turnUiState.title}
+                              aria-label={`Turn status: ${turnUiState.label}`}
+                            >
+                              <button
+                                type="submit"
+                                className="composerSendButton composerActionButton"
+                                disabled={!activeCanSubmit}
+                                aria-label={activeSession.running ? "Send follow-up to current turn" : "Send message"}
+                                title={`${activeSession.running ? "Send follow-up" : "Send message"} · ${turnUiState.title}`}
+                              >
+                                ↑
+                              </button>
+                              {activeSession.running ? (
+                                <button
+                                  type="button"
+                                  className="composerStopButton composerActionButton"
+                                  disabled={!activeCanStop}
+                                  aria-label="Stop current turn"
+                                  title={`Stop current turn · ${turnUiState.title}`}
+                                  onClick={() => void stopTurn(activeSession.threadId)}
+                                >
+                                  ■
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
                         </div>
                         <input
@@ -4632,6 +4681,14 @@ const runtimeStatusesFromRecords = (records: CodexRecord[]): RuntimeStatusView[]
   return [...statuses.values()].sort((left, right) => runtimeStatusPriority(left.key) - runtimeStatusPriority(right.key));
 };
 
+const latestTurnStatusFromRecords = (records: CodexRecord[]): RuntimeStatusView | null => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const status = runtimeStatusFromRecord(records[index]);
+    if (status?.key === "turn") return status;
+  }
+  return null;
+};
+
 const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null => {
   const payload = asRecord(record.payload);
   const type = typeof payload?.type === "string" ? payload.type : "";
@@ -4817,6 +4874,58 @@ const runtimeStatusOverlayClass = (statuses: RuntimeStatusView[]) => {
 
 const runtimeStatusTitle = (statuses: RuntimeStatusView[]) =>
   statuses.map((status) => `${status.label}: ${status.text}`).join("\n");
+
+const turnUiStateFromStatus = (
+  turnStatus: RuntimeStatusView | null,
+  running: boolean
+): TurnUiState => {
+  if (running) {
+    return {
+      kind: "running",
+      label: "Running",
+      title: turnStatus
+        ? `Running · ${turnStatus.text}`
+        : "Running current turn"
+    };
+  }
+
+  if (turnStatus) {
+    if (turnStatus.label.toLowerCase().includes("abort")) {
+      return {
+        kind: "aborted",
+        label: "Aborted",
+        title: `${turnStatus.label} · ${turnStatus.text}`
+      };
+    }
+    if (turnStatus.status === "failed") {
+      return {
+        kind: "failed",
+        label: turnStatus.label || "Failed",
+        title: `${turnStatus.label || "Failed"} · ${turnStatus.text}`
+      };
+    }
+    if (turnStatus.status === "pending") {
+      return {
+        kind: "running",
+        label: turnStatus.label || "Running",
+        title: `${turnStatus.label || "Running"} · ${turnStatus.text}`
+      };
+    }
+    if (turnStatus.status === "completed") {
+      return {
+        kind: "completed",
+        label: turnStatus.label || "Done",
+        title: `${turnStatus.label || "Done"} · ${turnStatus.text}`
+      };
+    }
+  }
+
+  return {
+    kind: "idle",
+    label: "Idle",
+    title: "Idle"
+  };
+};
 
 const formatTokenStatus = (payload: Record<string, unknown>) => {
   const info = asRecord(payload.info);

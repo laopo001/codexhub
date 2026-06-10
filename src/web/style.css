@@ -2132,6 +2132,29 @@ textarea {
   justify-content: flex-end;
 }
 
+.composerActionButtons {
+  --composer-status-ring: #cbd6c7;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composerActionButtons.status-running {
+  --composer-status-ring: #1f6feb;
+}
+
+.composerActionButtons.status-completed {
+  --composer-status-ring: #2f7d4a;
+}
+
+.composerActionButtons.status-aborted {
+  --composer-status-ring: #b86b17;
+}
+
+.composerActionButtons.status-failed {
+  --composer-status-ring: #c4362f;
+}
+
 .composerRuntimeControls {
   display: flex;
   align-items: center;
@@ -2229,7 +2252,8 @@ textarea {
 
 .composerIconButton,
 .composerMoreButton,
-.composerSendButton {
+.composerSendButton,
+.composerStopButton {
   display: grid;
   place-items: center;
   width: 36px;
@@ -2296,22 +2320,35 @@ textarea {
   background: #f4f6f1;
 }
 
+.composerActionButton {
+  box-shadow: 0 0 0 3px var(--composer-status-ring);
+}
+
+.composerActionButton:not(:disabled):hover {
+  filter: brightness(1.04);
+}
+
+.composerActionButton:disabled {
+  cursor: default;
+}
+
 .composerSendButton {
   background: #17211a;
   color: #ffffff;
   font-size: 20px;
 }
 
-.composerSendButton:disabled {
-  background: #dfe5dc;
-  color: #8a9584;
+.composerStopButton {
+  background: #ffffff;
+  color: #17211a;
+  font-size: 15px;
+  line-height: 1;
 }
 
-.composerStopIcon {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  background: currentColor;
+.composerSendButton:disabled,
+.composerStopButton:disabled {
+  background: #dfe5dc;
+  color: #8a9584;
 }
 
 .composerMenu {
