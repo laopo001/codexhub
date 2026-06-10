@@ -25,6 +25,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   private static currentServer: ServerHandle | null = null;
   private static currentServerStart: Promise<ServerHandle> | null = null;
   private view: vscode.WebviewView | null = null;
+  private webviewMessageSubscription: vscode.Disposable | null = null;
   private disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
@@ -40,6 +41,10 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   resolveWebviewView(view: vscode.WebviewView) {
     this.view = view;
+    this.webviewMessageSubscription?.dispose();
+    this.webviewMessageSubscription = view.webview.onDidReceiveMessage((message) => {
+      void this.handleWebviewMessage(message);
+    });
     view.webview.options = {
       enableScripts: true
     };
@@ -49,6 +54,8 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   dispose() {
     this.disposed = true;
+    this.webviewMessageSubscription?.dispose();
+    this.webviewMessageSubscription = null;
   }
 
   async refresh() {
@@ -60,6 +67,20 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   async openInBrowser() {
     const server = await this.ensureServer();
     await vscode.env.openExternal(vscode.Uri.parse(localServerUrl(server)));
+  }
+
+  private async handleWebviewMessage(message: unknown) {
+    const record = asRecord(message);
+    if (record?.type !== "codexhub.taskCompleteNotification") return;
+    const notification = asRecord(record.notification);
+    const title = stringValue(notification?.title) ?? "Codex task complete";
+    const body = stringValue(notification?.body) ?? "";
+    const text = truncateNotificationText(body ? `${title}: ${body}` : title);
+    const open = "Open";
+    const selected = await vscode.window.showInformationMessage(text, open);
+    if (selected !== open) return;
+    if (this.view) this.view.show(false);
+    else await vscode.commands.executeCommand(`${viewId}.focus`);
   }
 
   private async render() {
@@ -135,6 +156,7 @@ const iframeHtml = (src: string, workspacePath: string) => {
   const nonce = randomNonce();
   const escapedSource = escapeHtml(src);
   const escapedOrigin = escapeHtml(new URL(src).origin);
+  const sourceOriginJson = scriptJson(new URL(src).origin);
   const escapedTitle = escapeHtml(`Codex Hub: ${path.basename(workspacePath) || workspacePath}`);
   return [
     "<!doctype html>",
@@ -142,7 +164,7 @@ const iframeHtml = (src: string, workspacePath: string) => {
     "<head>",
     '<meta charset="UTF-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
-    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src ${escapedOrigin}; style-src 'nonce-${nonce}';">`,
+    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src ${escapedOrigin}; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">`,
     `<title>${escapedTitle}</title>`,
     `<style nonce="${nonce}">`,
     "html, body, iframe { width: 100%; height: 100%; margin: 0; padding: 0; }",
@@ -152,6 +174,16 @@ const iframeHtml = (src: string, workspacePath: string) => {
     "</head>",
     "<body>",
     `<iframe src="${escapedSource}" title="${escapedTitle}" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></iframe>`,
+    `<script nonce="${nonce}">`,
+    "const vscode = acquireVsCodeApi();",
+    `const expectedOrigin = ${sourceOriginJson};`,
+    "window.addEventListener('message', (event) => {",
+    "  if (event.origin !== expectedOrigin) return;",
+    "  const data = event.data;",
+    "  if (!data || data.type !== 'codexhub.taskCompleteNotification') return;",
+    "  vscode.postMessage(data);",
+    "});",
+    "</script>",
     "</body>",
     "</html>"
   ].join("");
@@ -186,6 +218,18 @@ const escapeHtml = (value: string) => value
   .replaceAll("<", "&lt;")
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;");
+
+const scriptJson = (value: string) => JSON.stringify(value).replaceAll("<", "\\u003c");
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+const stringValue = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : undefined;
+
+const truncateNotificationText = (value: string) => {
+  const text = value.replace(/\s+/g, " ").trim();
+  return text.length > 500 ? `${text.slice(0, 497)}...` : text;
+};
 
 const delay = async (ms: number) => await new Promise<void>((resolve) => {
   const timer = setTimeout(resolve, ms);

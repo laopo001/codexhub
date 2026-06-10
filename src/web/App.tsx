@@ -317,6 +317,13 @@ type StreamEvent = {
   jsonl?: ThreadJsonl;
 };
 
+type TaskCompleteNotification = {
+  title: string;
+  body: string;
+  threadId: string;
+  duration?: string;
+};
+
 type RuntimeSessionStreamEvent = {
   seq: number;
   kind: "sessions";
@@ -580,6 +587,9 @@ const App = () => {
   const messagesRef = useRef<VirtuosoHandle>(null);
   const messagesScrollerRef = useRef<HTMLElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const notificationRecordsByThread = useRef(new Map<string, CodexRecord[]>());
+  const notifiedTaskCompletions = useRef(new Set<string>());
+  const notificationAudioContext = useRef<AudioContext | null>(null);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.threadId === activeTabThreadId),
@@ -834,6 +844,16 @@ const App = () => {
         controlReconnectTimer.current = null;
       }
       realtimeThreadSubscriptions.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const primeSound = () => primeTaskCompletionSound(notificationAudioContext);
+    window.addEventListener("pointerdown", primeSound, { capture: true, once: true });
+    window.addEventListener("keydown", primeSound, { capture: true, once: true });
+    return () => {
+      window.removeEventListener("pointerdown", primeSound, true);
+      window.removeEventListener("keydown", primeSound, true);
     };
   }, []);
 
@@ -1379,6 +1399,7 @@ const App = () => {
 
   const createTask = async (event: React.FormEvent) => {
     event.preventDefault();
+    primeTaskCompletionFeedback();
     const name = taskDraft.name.trim() || "Scheduled task";
     const schedule = taskDraft.schedule.trim();
     const machineId = taskDraft.machineId.trim();
@@ -1462,6 +1483,7 @@ const App = () => {
   };
 
   const runTaskNow = async (task: LocalTask) => {
+    primeTaskCompletionFeedback();
     setTaskBusyId(task.taskId);
     setTaskError("");
     try {
@@ -1516,6 +1538,7 @@ const App = () => {
       }
       setRuntimeSessions((current) => patchRuntimeSessionsThread(current, thread));
       setProjects((current) => patchProjectsThread(current, thread));
+      notificationRecordsByThread.current.set(thread.threadId, threadRecordsForNotifications(thread.threadId, thread));
       setSessions((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
         const nextSession = existing
@@ -1644,6 +1667,7 @@ const App = () => {
 
   function applyThreadStreamEvent(payload: StreamEvent) {
     if (closedThreadIds.current.has(payload.thread.threadId)) return;
+    notifyTaskCompletionsFromStreamEvent(payload);
     threadLastSeqs.current.set(
       payload.thread.threadId,
       Math.max(threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
@@ -1659,6 +1683,47 @@ const App = () => {
     }
     setRuntimeSessions((current) => patchRuntimeSessionsThread(current, payload.thread));
     setProjects((current) => patchProjectsThread(current, payload.thread));
+  }
+
+  function notifyTaskCompletionsFromStreamEvent(event: StreamEvent) {
+    const threadId = event.thread.threadId;
+    const incomingRecords = streamEventRecords(event);
+    if (!incomingRecords.length) return;
+
+    const previousRecords = notificationRecordsByThread.current.get(threadId) ?? [];
+    const nextRecords = mergeNotificationRecords(previousRecords, event, incomingRecords);
+    notificationRecordsByThread.current.set(threadId, nextRecords);
+    if (event.kind !== "record" && event.kind !== "jsonl_append") return;
+
+    for (const record of incomingRecords) {
+      if (!isTaskCompleteRecord(record)) continue;
+      const key = taskCompletionNotificationKey(threadId, record);
+      if (notifiedTaskCompletions.current.has(key)) continue;
+      notifiedTaskCompletions.current.add(key);
+      dispatchTaskCompleteNotification(taskCompleteNotification(event.thread, record, nextRecords));
+    }
+  }
+
+  function dispatchTaskCompleteNotification(notification: TaskCompleteNotification) {
+    playTaskCompletionSound(notificationAudioContext);
+    if (isVscodeSurface) {
+      window.parent?.postMessage({
+        type: "codexhub.taskCompleteNotification",
+        notification
+      }, "*");
+      return;
+    }
+
+    const NotificationApi = window.Notification;
+    if (!NotificationApi || NotificationApi.permission !== "granted") return;
+    const browserNotification = new NotificationApi(notification.title, {
+      body: notification.body,
+      tag: `codexhub-task-complete:${notification.threadId}`
+    });
+    browserNotification.onclick = () => {
+      window.focus();
+      browserNotification.close();
+    };
   }
 
   const forkMessage = async (threadId: string, messageId: string) => {
@@ -1715,6 +1780,7 @@ const App = () => {
   };
 
   const send = async (threadId: string) => {
+    primeTaskCompletionFeedback();
     const session = sessions.find((item) => item.threadId === threadId);
     if (!session) return;
     const typedText = session.input.trim();
@@ -1766,6 +1832,11 @@ const App = () => {
         : item));
     }
   };
+
+  function primeTaskCompletionFeedback() {
+    primeTaskNotificationPermission();
+    primeTaskCompletionSound(notificationAudioContext);
+  }
 
   const stopTurn = async (threadId: string) => {
     const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/stop`, { method: "POST" });
@@ -4622,6 +4693,176 @@ const normalizeThreadJsonl = (jsonl: ThreadJsonl | undefined): ThreadJsonl | und
     lastLine: Number.isInteger(jsonl.lastLine) ? jsonl.lastLine : [...lines.keys()].at(-1) ?? 0,
     lines: [...lines.values()].sort((left, right) => left.line - right.line)
   };
+};
+
+const threadRecordsForNotifications = (threadId: string, thread: ThreadDetail) =>
+  thread.jsonl?.lines.length ? jsonlLinesToRecords(threadId, thread.jsonl) : thread.records;
+
+const streamEventRecords = (event: StreamEvent): CodexRecord[] => {
+  if (event.record) return [event.record];
+  if (!event.jsonl || (event.kind !== "jsonl_append" && event.kind !== "jsonl_snapshot")) return [];
+  return jsonlLinesToRecords(event.thread.threadId, event.jsonl);
+};
+
+const mergeNotificationRecords = (
+  current: CodexRecord[],
+  event: StreamEvent,
+  incomingRecords: CodexRecord[]
+) => {
+  if (event.kind === "jsonl_snapshot") return incomingRecords;
+  return incomingRecords.reduce((records, record) => mergeRecord(records, record), current);
+};
+
+const isTaskCompleteRecord = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  return record.type === "event_msg" && payload?.type === "task_complete";
+};
+
+const taskCompletionNotificationKey = (threadId: string, record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  const turnId = stringField(payload, "turn_id") ?? stringField(payload, "turnId");
+  return turnId ? `${threadId}:${turnId}` : `${threadId}:${record.id}`;
+};
+
+const taskCompleteNotification = (
+  thread: ThreadSummary,
+  record: CodexRecord,
+  records: CodexRecord[]
+): TaskCompleteNotification => {
+  const payload = asRecord(record.payload);
+  const durationMs = typeof payload?.duration_ms === "number" ? payload.duration_ms : undefined;
+  const duration = typeof durationMs === "number" ? formatStatusDuration(durationMs) : undefined;
+  const message = usefulTaskCompleteMessage(payload)
+    ?? latestFinalAnswerText(records, record)
+    ?? "Task completed.";
+  return {
+    title: "Codex task complete",
+    body: [
+      notificationText(message),
+      duration ? `运行时间 ${duration}` : null
+    ].filter(Boolean).join("\n"),
+    threadId: thread.threadId,
+    duration
+  };
+};
+
+const usefulTaskCompleteMessage = (payload: Record<string, unknown> | null | undefined) => {
+  const lastAgentMessage = stringField(payload, "last_agent_message") ?? stringField(payload, "lastAgentMessage");
+  if (lastAgentMessage) return lastAgentMessage;
+  const message = stringField(payload, "message");
+  if (!message || /^(task|turn)?\s*completed\.?$/i.test(message.trim())) return null;
+  return message;
+};
+
+const latestFinalAnswerText = (records: CodexRecord[], taskRecord: CodexRecord) => {
+  const taskPayload = asRecord(taskRecord.payload);
+  const taskTurnId = stringField(taskPayload, "turn_id") ?? stringField(taskPayload, "turnId");
+  const taskOrder = recordSortValue(taskRecord);
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    const recordTurnId = turnIdFromRecord(record);
+    if (recordSortValue(record) > taskOrder) continue;
+    if (taskTurnId && recordTurnId && recordTurnId !== taskTurnId) continue;
+    const text = finalAnswerTextFromRecord(record);
+    if (text) return text;
+  }
+  return null;
+};
+
+const finalAnswerTextFromRecord = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  if (!payload) return null;
+  if (
+    record.type === "event_msg"
+    && payload.type === "agent_message"
+    && payload.phase === "final_answer"
+  ) {
+    return stringField(payload, "message") ?? null;
+  }
+  if (
+    record.type === "response_item"
+    && payload.type === "message"
+    && payload.role === "assistant"
+    && payload.phase === "final_answer"
+  ) {
+    return messageTextFromPayload(payload);
+  }
+  return null;
+};
+
+const messageTextFromPayload = (payload: Record<string, unknown>) => {
+  const direct = stringField(payload, "message") ?? stringField(payload, "text");
+  if (direct) return direct;
+  const content = Array.isArray(payload.content) ? payload.content : [];
+  const parts = content.flatMap((item) => {
+    const record = asRecord(item);
+    return stringField(record, "text")
+      ?? stringField(record, "input_text")
+      ?? stringField(record, "output_text")
+      ?? [];
+  });
+  return parts.length ? parts.join("\n") : null;
+};
+
+const turnIdFromRecord = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  return stringField(payload, "turn_id")
+    ?? stringField(payload, "turnId")
+    ?? (typeof record.id === "string" ? record.id.match(/^app:[^:]+:([^:]+):/)?.[1] : undefined);
+};
+
+const notificationText = (value: string) => {
+  const text = compactLine(value);
+  return text.length > 220 ? `${text.slice(0, 217)}...` : text;
+};
+
+const primeTaskCompletionSound = (audioContextRef: React.MutableRefObject<AudioContext | null>) => {
+  const context = ensureNotificationAudioContext(audioContextRef);
+  if (!context || context.state === "closed") return;
+  if (context.state === "suspended") void context.resume().catch(() => undefined);
+};
+
+const playTaskCompletionSound = (audioContextRef: React.MutableRefObject<AudioContext | null>) => {
+  const context = ensureNotificationAudioContext(audioContextRef);
+  if (!context || context.state === "closed") return;
+  const play = () => {
+    const now = context.currentTime;
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.08, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+
+    const oscillator = context.createOscillator();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, now);
+    oscillator.frequency.setValueAtTime(1174.66, now + 0.13);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.36);
+  };
+
+  if (context.state === "suspended") {
+    void context.resume().then(play).catch(() => undefined);
+    return;
+  }
+  play();
+};
+
+const ensureNotificationAudioContext = (audioContextRef: React.MutableRefObject<AudioContext | null>) => {
+  if (audioContextRef.current && audioContextRef.current.state !== "closed") return audioContextRef.current;
+  const AudioContextConstructor = window.AudioContext
+    ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextConstructor) return null;
+  audioContextRef.current = new AudioContextConstructor();
+  return audioContextRef.current;
+};
+
+const primeTaskNotificationPermission = () => {
+  if (isVscodeSurface) return;
+  const NotificationApi = window.Notification;
+  if (!NotificationApi || NotificationApi.permission !== "default") return;
+  void NotificationApi.requestPermission().catch(() => undefined);
 };
 
 const isSimpleRecord = (record: CodexRecord) => {
