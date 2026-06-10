@@ -5,7 +5,7 @@ import path from "node:path";
 import YAML from "yaml";
 import type { MachineCapabilities, MachineSummary, MachineType } from "./machineHub.js";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
-import { runtimeSessionFromWorker, type RuntimeSessionSummary, type ThreadSummary, type WorkerSummary as InternalRuntimeSessionSummary } from "./threadHub.js";
+import type { SessionSummary, ThreadSummary } from "./threadHub.js";
 
 export type StoredMachine = {
   machineId: string;
@@ -81,17 +81,17 @@ export type ServerStateData = {
 export type ProjectSummary = StoredProject & {
   machine?: MachineSummary | StoredMachine;
   machineOnline: boolean;
-  runtime: RuntimeSessionSummary | null;
+  session: SessionSummary | null;
   online: boolean;
   running: boolean;
-  sessions: RuntimeSessionSummary[];
+  sessions: SessionSummary[];
   threads: ThreadSummary[];
   storedThreads: StoredThreadSummary[];
 };
 
-type RuntimeSnapshot = {
+type SessionSnapshot = {
   machines: MachineSummary[];
-  runtimeSessions: InternalRuntimeSessionSummary[];
+  sessions: SessionSummary[];
   threads: ThreadSummary[];
 };
 
@@ -353,10 +353,10 @@ export class CodexhubServerState {
     return project;
   }
 
-  captureRuntime(snapshot: Pick<RuntimeSnapshot, "runtimeSessions" | "threads">) {
-    const runtimeSessionsById = new Map(snapshot.runtimeSessions.map((session) => [session.workerId, session]));
-    for (const session of snapshot.runtimeSessions) {
-      const machineId = machineIdForRuntimeSession(session);
+  captureSessions(snapshot: Pick<SessionSnapshot, "sessions" | "threads">) {
+    const sessionsById = new Map(snapshot.sessions.map((session) => [session.sessionId, session]));
+    for (const session of snapshot.sessions) {
+      const machineId = machineIdForSession(session);
       this.upsertMachine({
         machineId,
         hostname: session.hostname ?? machineId,
@@ -369,7 +369,7 @@ export class CodexhubServerState {
         this.upsertProject({
           machineId,
           path: session.workingDirectory,
-          sessionId: session.workerId,
+          sessionId: session.sessionId,
           now: session.lastSeenAt,
           touchOpenedAt: false,
           restoreDeleted: false
@@ -378,33 +378,33 @@ export class CodexhubServerState {
     }
 
     for (const thread of snapshot.threads) {
-      const session = thread.runtime.sessionId ? runtimeSessionsById.get(thread.runtime.sessionId) : undefined;
+      const session = thread.session.sessionId ? sessionsById.get(thread.session.sessionId) : undefined;
       const project = session
-        ? this.findProject(machineIdForRuntimeSession(session), thread.workingDirectory)
+        ? this.findProject(machineIdForSession(session), thread.workingDirectory)
         : this.uniqueProjectForPath(thread.workingDirectory);
       if (!project) continue;
       this.upsertThread(project.projectId, thread);
     }
   }
 
-  snapshot(runtime: RuntimeSnapshot) {
+  snapshot(snapshot: SessionSnapshot) {
     const machinesById = new Map<string, MachineSummary | StoredMachine>();
     for (const machine of this.data.machines) machinesById.set(machine.machineId, machine);
-    for (const machine of runtime.machines) machinesById.set(machine.machineId, machine);
-    const sessionsByProject = new Map<string, InternalRuntimeSessionSummary[]>();
-    for (const session of runtime.runtimeSessions) {
-      const projectId = projectIdFor(machineIdForRuntimeSession(session), session.workingDirectory);
+    for (const machine of snapshot.machines) machinesById.set(machine.machineId, machine);
+    const sessionsByProject = new Map<string, SessionSummary[]>();
+    for (const session of snapshot.sessions) {
+      const projectId = projectIdFor(machineIdForSession(session), session.workingDirectory);
       const sessions = sessionsByProject.get(projectId) ?? [];
       sessions.push(session);
       sessionsByProject.set(projectId, sessions);
     }
     const threadsByProject = new Map<string, ThreadSummary[]>();
-    for (const thread of runtime.threads) {
-      const session = thread.runtime.sessionId
-        ? runtime.runtimeSessions.find((item) => item.workerId === thread.runtime.sessionId)
+    for (const thread of snapshot.threads) {
+      const session = thread.session.sessionId
+        ? snapshot.sessions.find((item) => item.sessionId === thread.session.sessionId)
         : undefined;
       const project = session
-        ? this.findProject(machineIdForRuntimeSession(session), thread.workingDirectory)
+        ? this.findProject(machineIdForSession(session), thread.workingDirectory)
         : this.uniqueProjectForPath(thread.workingDirectory);
       if (!project) continue;
       const threads = threadsByProject.get(project.projectId) ?? [];
@@ -421,8 +421,7 @@ export class CodexhubServerState {
     const projects: ProjectSummary[] = this.listStoredProjects().map((project) => {
       const sessions = (sessionsByProject.get(project.projectId) ?? [])
         .sort((left, right) => Number(right.online) - Number(left.online) || right.lastSeenAt.localeCompare(left.lastSeenAt));
-      const runtimeSessions = sessions.map(runtimeSessionFromWorker);
-      const runtime = runtimeSessions.find((session) => session.online) ?? null;
+      const session = sessions.find((session) => session.online) ?? null;
       const threads = (threadsByProject.get(project.projectId) ?? [])
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
       const storedThreads = (storedThreadsByProject.get(project.projectId) ?? [])
@@ -433,10 +432,10 @@ export class CodexhubServerState {
         ...project,
         machine,
         machineOnline,
-        runtime,
-        online: Boolean(runtime) || machineOnline,
+        session,
+        online: Boolean(session) || machineOnline,
         running: threads.some((thread) => thread.running || thread.status === "running"),
-        sessions: runtimeSessions,
+        sessions,
         threads,
         storedThreads
       };
@@ -551,7 +550,7 @@ export class CodexhubServerState {
   }
 }
 
-export const machineIdForRuntimeSession = (session: Pick<InternalRuntimeSessionSummary, "machineId" | "hostname">) =>
+export const machineIdForSession = (session: Pick<SessionSummary, "machineId" | "hostname">) =>
   session.machineId ?? createMachineId(session.hostname ?? "local");
 
 const defaultDataDir = () =>

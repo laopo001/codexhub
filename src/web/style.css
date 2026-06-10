@@ -1014,7 +1014,7 @@ textarea {
   font-size: 12px;
 }
 
-.runtimeSelect {
+.modelSelect {
   display: inline-grid;
   grid-template-columns: auto auto;
   align-items: center;
@@ -1027,13 +1027,13 @@ textarea {
   white-space: nowrap;
 }
 
-.runtimeSelect span {
+.modelSelect span {
   border: 0;
   background: transparent;
   padding: 0;
 }
 
-.runtimeSelect select {
+.modelSelect select {
   width: auto;
   min-height: 22px;
   border: 0;
@@ -1116,7 +1116,7 @@ textarea {
   white-space: nowrap;
 }
 
-.workspaceTitle .workspaceRuntimeSessionState {
+.workspaceTitle .workspaceSessionSessionState {
   flex: 0 0 auto;
   border-radius: 999px;
   background: #dfeade;
@@ -1126,7 +1126,7 @@ textarea {
   font-weight: 700;
 }
 
-.workspaceTitle .workspaceRuntimeSessionState.offline {
+.workspaceTitle .workspaceSessionSessionState.offline {
   background: #f6e0cf;
   color: #a14a26;
 }
@@ -1142,7 +1142,7 @@ textarea {
   max-width: calc(100% - 44px);
 }
 
-.runtimeStatusOverlay {
+.activityStatusOverlay {
   position: absolute;
   z-index: 8;
   top: 10px;
@@ -1164,30 +1164,30 @@ textarea {
   backdrop-filter: blur(8px);
 }
 
-.runtimeStatusRows {
+.activityStatusRows {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 4px;
   min-width: 0;
 }
 
-.runtimeStatusRows.expanded {
+.activityStatusRows.expanded {
   gap: 8px;
 }
 
-.runtimeStatusOverlay.pending {
+.activityStatusOverlay.pending {
   border-color: rgba(47, 111, 159, 0.28);
 }
 
-.runtimeStatusOverlay.completed {
+.activityStatusOverlay.completed {
   border-color: rgba(47, 125, 90, 0.26);
 }
 
-.runtimeStatusOverlay.failed {
+.activityStatusOverlay.failed {
   border-color: rgba(181, 55, 55, 0.28);
 }
 
-.runtimeStatusItem {
+.activityStatusItem {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -1204,13 +1204,13 @@ textarea {
   text-align: left;
 }
 
-.runtimeStatusItem:hover,
-.runtimeStatusItem:focus-visible {
+.activityStatusItem:hover,
+.activityStatusItem:focus-visible {
   background: #ffffff;
   border-color: rgba(104, 115, 145, 0.24);
 }
 
-.runtimeStatusLabel {
+.activityStatusLabel {
   align-self: stretch;
   display: grid;
   place-items: center;
@@ -1224,13 +1224,13 @@ textarea {
   text-transform: uppercase;
 }
 
-.runtimeStatusViewport {
+.activityStatusViewport {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
 
-.runtimeStatusTrack {
+.activityStatusTrack {
   display: block;
   min-width: 0;
   max-width: 100%;
@@ -1242,7 +1242,7 @@ textarea {
   line-height: 28px;
 }
 
-.runtimeStatusMinimize {
+.activityStatusMinimize {
   position: absolute;
   top: -9px;
   right: -9px;
@@ -1260,12 +1260,12 @@ textarea {
   box-shadow: 0 4px 14px rgb(18 32 24 / 0.14);
 }
 
-.runtimeStatusMinimize:hover {
+.activityStatusMinimize:hover {
   background: #f4f6f1;
   color: #17211a;
 }
 
-.runtimeStatusFiles {
+.activityStatusFiles {
   grid-column: 1 / -1;
   display: grid;
   gap: 2px;
@@ -2160,7 +2160,7 @@ textarea {
   --composer-status-ring: #c4362f;
 }
 
-.composerRuntimeControls {
+.composerSessionControls {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -2209,7 +2209,7 @@ textarea {
   opacity: 0.55;
 }
 
-.composerRuntimeMenuHost {
+.composerSessionMenuHost {
   position: relative;
   display: none;
 }
@@ -2292,7 +2292,7 @@ textarea {
   background: #f4f6f1;
 }
 
-.composerRuntimePopover {
+.composerSessionPopover {
   position: absolute;
   right: 0;
   bottom: calc(100% + 10px);
@@ -2305,7 +2305,7 @@ textarea {
   box-shadow: 0 16px 40px rgb(18 32 24 / 0.18);
 }
 
-.composerRuntimePopover .composerRuntimeControls {
+.composerSessionPopover .composerSessionControls {
   justify-content: flex-start;
 }
 
@@ -2395,7 +2395,7 @@ textarea {
   font-size: 13px;
 }
 
-.runtimeDialogOverlay {
+.sessionDialogOverlay {
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -2405,7 +2405,7 @@ textarea {
   padding: 24px;
 }
 
-.runtimeDialog {
+.sessionDialog {
   display: grid;
   gap: 14px;
   width: min(360px, 100%);
@@ -2416,25 +2416,25 @@ textarea {
   box-shadow: 0 24px 80px rgb(18 32 24 / 0.26);
 }
 
-.runtimeDialogHeader {
+.sessionDialogHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.runtimeDialogHeader h2 {
+.sessionDialogHeader h2 {
   margin: 0;
   font-size: 16px;
   letter-spacing: 0;
 }
 
-.runtimeDialogField {
+.sessionDialogField {
   display: grid;
   gap: 6px;
 }
 
-.runtimeDialogField span {
+.sessionDialogField span {
   color: #51604f;
   font-size: 12px;
   font-weight: 700;
@@ -3160,17 +3160,17 @@ textarea {
     grid-column: 1 / -1;
   }
 
-  .runtimeSelect,
+  .modelSelect,
   .switchControl,
   .usagePill {
     max-width: 100%;
   }
 
-  .runtimeSelect {
+  .modelSelect {
     grid-template-columns: auto minmax(0, auto);
   }
 
-  .runtimeSelect select {
+  .modelSelect select {
     min-width: 0;
   }
 
@@ -3255,15 +3255,15 @@ textarea {
     font-size: 11px;
   }
 
-  .composerRuntimeControls.inline {
+  .composerSessionControls.inline {
     display: none;
   }
 
-  .composerRuntimeMenuHost {
+  .composerSessionMenuHost {
     display: block;
   }
 
-  .composerRuntimePopover .composerRuntimeControls {
+  .composerSessionPopover .composerSessionControls {
     align-items: center;
     flex-wrap: nowrap;
     gap: 8px;
@@ -3275,7 +3275,7 @@ textarea {
     font-size: 11px;
   }
 
-  .composerRuntimePopover .usagePill {
+  .composerSessionPopover .usagePill {
     padding: 4px 7px;
   }
 
@@ -3287,7 +3287,7 @@ textarea {
     padding: 12px;
   }
 
-  .runtimeDialogOverlay {
+  .sessionDialogOverlay {
     padding: 12px;
   }
 }

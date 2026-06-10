@@ -9,7 +9,7 @@ import { compactRecordView, createCompactRecordViewState, type CompactRecordView
 type ThreadSummary = {
   threadId: string;
   workingDirectory: string;
-  runtime: ThreadRuntimeSummary;
+  session: ThreadSessionSummary;
   status: ThreadStatus;
   running: boolean;
   title: string;
@@ -18,7 +18,7 @@ type ThreadSummary = {
   threadUsage: ThreadUsage;
 };
 
-type ThreadRuntimeSummary = {
+type ThreadSessionSummary = {
   sessionId?: string;
   name?: string;
   online: boolean;
@@ -35,7 +35,7 @@ type SessionTurnResponse = {
   command?: string;
 };
 
-type RuntimeSessionSummary = {
+type SessionSummary = {
   sessionId: string;
   machineId?: string;
   name?: string;
@@ -86,7 +86,7 @@ type ChatMirror = {
 type SessionStreamEvent = {
   seq: number;
   kind: "sessions";
-  sessions: RuntimeSessionSummary[];
+  sessions: SessionSummary[];
 };
 
 export type TelegramBotOptions = {
@@ -183,7 +183,7 @@ const registerHandlers = () => {
         `当前 thread：${thread ? displayThreadId(thread) : "(none)"}`,
         current ? `文件夹：${current.workingDirectory}` : null,
         thread ? `thread：${shortId(thread.threadId)}` : null,
-        thread ? `runtime：${runtimeLabel(thread)}` : null,
+        thread ? `session：${sessionLabel(thread)}` : null,
         `usage：${formatThreadUsage(usage)}`,
         "",
         sessions.length
@@ -265,7 +265,7 @@ const registerHandlers = () => {
   });
 };
 
-const showThreadSelection = async (ctx: any, session: RuntimeSessionSummary) => {
+const showThreadSelection = async (ctx: any, session: SessionSummary) => {
   const threads = [...(session.threads ?? [])]
     .sort((left, right) => Number(right.running) - Number(left.running) || right.updatedAt.localeCompare(left.updatedAt));
   await ctx.editMessageText([
@@ -368,12 +368,12 @@ const detachSession = (chatId: number) => {
   return hadState || hadMirror;
 };
 
-const listSessions = async (): Promise<RuntimeSessionSummary[]> => {
-  const data = await apiJson<{ sessions?: RuntimeSessionSummary[] }>("/api/sessions");
+const listSessions = async (): Promise<SessionSummary[]> => {
+  const data = await apiJson<{ sessions?: SessionSummary[] }>("/api/sessions");
   return normalizeSessions(data.sessions);
 };
 
-const listRunnableSessions = async (): Promise<RuntimeSessionSummary[]> =>
+const listRunnableSessions = async (): Promise<SessionSummary[]> =>
   (await listSessions()).filter((session) => session.online);
 
 const resolveSession = async (sessionId: string) => {
@@ -554,23 +554,23 @@ const rememberSelection = (chatId: number, state: ChatState) => {
   selectionOptions.set(selectionKey(chatId, token), state);
   return token;
 };
-const normalizeSessions = (sessions: RuntimeSessionSummary[] | undefined) =>
+const normalizeSessions = (sessions: SessionSummary[] | undefined) =>
   Array.isArray(sessions) ? sessions.filter((session) => session.online) : [];
 const displayThreadId = (thread: Pick<ThreadSummary, "threadId">) => shortId(thread.threadId);
-const displaySessionId = (session: Pick<RuntimeSessionSummary, "sessionId" | "name">) => session.name ?? shortId(session.sessionId);
-const sessionThreads = (session: Pick<RuntimeSessionSummary, "threads">) => session.threads ?? [];
-const sessionStatusLabel = (session: Pick<RuntimeSessionSummary, "threads">) =>
+const displaySessionId = (session: Pick<SessionSummary, "sessionId" | "name">) => session.name ?? shortId(session.sessionId);
+const sessionThreads = (session: Pick<SessionSummary, "threads">) => session.threads ?? [];
+const sessionStatusLabel = (session: Pick<SessionSummary, "threads">) =>
   sessionThreads(session).some((thread) => thread.running || thread.status === "running") ? "running" : "idle";
-const sessionThreadCountLabel = (session: Pick<RuntimeSessionSummary, "threads">) => {
+const sessionThreadCountLabel = (session: Pick<SessionSummary, "threads">) => {
   const count = sessionThreads(session).length;
   return `${count} thread${count === 1 ? "" : "s"}`;
 };
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const isAbortError = (error: unknown) => error instanceof Error && error.name === "AbortError";
-const runtimeLabel = (thread: Pick<ThreadSummary, "runtime">) => {
-  const state = thread.runtime.runnable ? "runnable" : "unavailable";
-  const session = thread.runtime.sessionId;
-  return `${state}${session ? `:${thread.runtime.name ?? shortId(session)}` : ""}`;
+const sessionLabel = (thread: Pick<ThreadSummary, "session">) => {
+  const state = thread.session.runnable ? "runnable" : "unavailable";
+  const session = thread.session.sessionId;
+  return `${state}${session ? `:${thread.session.name ?? shortId(session)}` : ""}`;
 };
 const shortPath = (value: string) => {
   const home = process.env.HOME;

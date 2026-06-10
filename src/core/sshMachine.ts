@@ -30,7 +30,7 @@ export type SshMachineConnectInput = {
   remoteCommand?: string;
 };
 
-type RuntimeSshMachineConnection = SshMachineConnection & {
+type SshMachineConnectionState = SshMachineConnection & {
   child: ChildProcess;
 };
 
@@ -45,6 +45,8 @@ type SshMachineManagerOptions = {
 
 const outputLimit = 12_000;
 const defaultRemotePath = [
+  "$HOME/.nvm/current/bin",
+  "$HOME/.nvm/versions/node/v24.15.0/bin",
   "$HOME/.nvm/versions/node/v22.22.1/bin",
   "$HOME/.nvm/versions/node/v20.18.0/bin",
   "$HOME/Library/pnpm",
@@ -59,7 +61,7 @@ const defaultRemotePath = [
 ].join(":");
 
 export class SshMachineManager {
-  private readonly connections = new Map<string, RuntimeSshMachineConnection>();
+  private readonly connections = new Map<string, SshMachineConnectionState>();
 
   constructor(private readonly options: SshMachineManagerOptions) {}
 
@@ -100,7 +102,7 @@ export class SshMachineManager {
       stdio: ["ignore", "pipe", "pipe"]
     });
 
-    const connection: RuntimeSshMachineConnection = {
+    const connection: SshMachineConnectionState = {
       connectionId,
       host,
       name: input.name,
@@ -158,7 +160,7 @@ export class SshMachineManager {
     await Promise.allSettled([...this.connections.values()].map((connection) => this.terminate(connection)));
   }
 
-  private async terminate(connection: RuntimeSshMachineConnection) {
+  private async terminate(connection: SshMachineConnectionState) {
     if (connection.status !== "exited" && connection.child.exitCode === null && connection.child.signalCode === null) {
       connection.child.kill("SIGTERM");
       if (!await waitForChildExit(connection.child, 3000)) {
@@ -189,7 +191,7 @@ export class SshMachineManager {
   }
 }
 
-const publicConnection = (connection: RuntimeSshMachineConnection): SshMachineConnection => {
+const publicConnection = (connection: SshMachineConnectionState): SshMachineConnection => {
   const { child: _child, ...summary } = connection;
   return summary;
 };

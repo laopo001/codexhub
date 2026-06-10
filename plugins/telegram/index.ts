@@ -1,4 +1,4 @@
-import type { BuiltinPluginDefinition, PluginIntegrationRuntimeState } from "../../src/core/pluginHub.js";
+import type { BuiltinPluginDefinition, PluginIntegrationState } from "../../src/core/pluginHub.js";
 import { startTelegramBotFromEnv, type TelegramBotHandle } from "./bot.js";
 
 export type { TelegramBotHandle };
@@ -17,7 +17,7 @@ export const telegramBuiltinPlugin = (): BuiltinPluginDefinition => ({
       integrations: [
         {
           type: telegramIntegrationType,
-          runtime: "builtin",
+          runner: "builtin",
           label: "Telegram bot",
           requiredEnv: ["TELEGRAM_BOT_TOKEN"]
         }
@@ -26,7 +26,7 @@ export const telegramBuiltinPlugin = (): BuiltinPluginDefinition => ({
   }
 });
 
-export const telegramPluginRuntimeState = (started: boolean): PluginIntegrationRuntimeState => ({
+export const telegramPluginState = (started: boolean): PluginIntegrationState => ({
   configured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
   started
 });

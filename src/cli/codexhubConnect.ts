@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Command } from "commander";
-import { spawn as spawnPty, type IPty } from "node-pty";
 import {
   findCodexSessionFile,
   listCodexSessionsForCwd,
@@ -20,29 +19,19 @@ import type {
   SessionRegistration,
   ThreadGoalUpdate,
   ThreadRunOptions,
-  WorkerCommand,
-  WorkerEventInput,
-  WorkerRecordsInput
+  SessionCommand,
+  SessionEventInput,
+  SessionRecordsInput
 } from "../core/threadHub.js";
 
 type ConnectOptions = {
   server?: string;
   cd?: string;
   port?: string;
-  headless?: boolean;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
 };
-
-type ResumeOptions = Omit<ConnectOptions, "headless"> & {
-  last?: boolean;
-  all?: boolean;
-};
-
-type TuiLaunch =
-  | { type: "start"; prompt?: string }
-  | { type: "resume"; sessionId?: string; prompt?: string; last?: boolean; all?: boolean };
 
 type JsonRecord = Record<string, unknown>;
 
@@ -72,12 +61,12 @@ type BridgeState = {
   currentThreadId?: string;
 };
 
-type RuntimeSettings = {
+type SessionSettings = {
   model?: string | null;
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
 };
 
-type TurnRuntimeParams = {
+type TurnRequestParams = {
   model?: string | null;
   effort?: ThreadRunOptions["modelReasoningEffort"];
 };
@@ -86,13 +75,13 @@ type MachineTransportMessage =
   | { type: "registered"; machineId: string; machine?: unknown }
   | { type: "commands"; cursor: number; commands: MachineCommand[] }
   | { type: "session_registered"; sessionId: string; session?: unknown }
-  | { type: "session_commands"; sessionId: string; cursor: number; commands: WorkerCommand[] }
+  | { type: "session_commands"; sessionId: string; cursor: number; commands: SessionCommand[] }
   | { type: "session_error"; sessionId: string; message: string }
   | { type: "error"; message: string };
 
 type HubTransportSink = {
-  sendEvent: (event: WorkerEventInput) => void;
-  sendRecords: (records: WorkerRecordsInput) => void;
+  sendEvent: (event: SessionEventInput) => void;
+  sendRecords: (records: SessionRecordsInput) => void;
   sendHeartbeat: (registration: Partial<SessionRegistration>) => void;
 };
 
@@ -106,7 +95,7 @@ export type HeadlessSessionTransportContext = {
 
 export type HeadlessSessionTransportCallbacks = {
   registration: () => SessionRegistration;
-  handleCommand: (command: WorkerCommand) => Promise<unknown>;
+  handleCommand: (command: SessionCommand) => Promise<unknown>;
   onState: (state: "connecting" | "online" | "offline", message: string) => void;
 };
 
@@ -127,8 +116,6 @@ type BridgeOptions = {
   machineId?: string;
   cwd: string;
   ensureCurrentThread?: boolean;
-  initialTuiResume?: { threadId?: string };
-  acceptTuiCurrentThreadEvents?: boolean;
   readyLabel?: string;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
@@ -168,39 +155,15 @@ export const registerCodexHubSessionCommands = (program: Command) => {
     .argument("[prompt]", "optional prompt to start the Codex session")
     .option("-C, --cd <dir>", "Codex working directory")
     .option("--port <port>", "local Codex app-server websocket port")
-    .option("--headless", "do not launch the official Codex TUI")
     .option("-m, --model <model>", "model for remote turns")
     .option("-s, --sandbox <mode>", "sandbox mode for remote turns")
     .option("-a, --approval-policy <policy>", "approval policy for remote turns")
     .action(async (prompt: string | undefined) => {
-      await runCodexhubSession(program, program.opts<ConnectOptions>(), { type: "start", prompt });
-    });
-
-  program
-    .command("resume")
-    .argument("[session]", "Codex session/thread id or thread name")
-    .argument("[prompt]", "optional prompt to send after resuming")
-    .description("Resume an official Codex session with the codexhub runtime bridge")
-    .option("--server <url>", "codexhub server URL")
-    .option("-C, --cd <dir>", "Codex working directory")
-    .option("--port <port>", "local Codex app-server websocket port")
-    .option("--last", "resume the most recent Codex session")
-    .option("--all", "show all Codex sessions in the picker")
-    .option("-m, --model <model>", "model for remote turns")
-    .option("-s, --sandbox <mode>", "sandbox mode for remote turns")
-    .option("-a, --approval-policy <policy>", "approval policy for remote turns")
-    .action(async (sessionId: string | undefined, prompt: string | undefined, options: ResumeOptions) => {
-      await runCodexhubSession(program, options, {
-        type: "resume",
-        sessionId,
-        prompt,
-        last: options.last,
-        all: options.all
-      });
+      await runCodexhubSession(program, program.opts<ConnectOptions>(), prompt);
     });
 };
 
-async function runCodexhubSession(program: Command, options: ConnectOptions, launch: TuiLaunch) {
+async function runCodexhubSession(program: Command, options: ConnectOptions, prompt?: string) {
   const rootOptions = program.opts<{ server: string }>();
   const apiBase = options.server ?? rootOptions.server;
   const cwd = path.resolve(options.cd ?? process.cwd());
@@ -212,7 +175,6 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, lau
   const machineId = createSessionMachineId(sessionId);
   const appServer = await startCodexAppServer(cwd, appServerUrl, port);
   let bridgeRunner: ProxyBridgeRunner | null = null;
-  let tui: CodexTuiPty | null = null;
   let statusBar: CodexhubStatusBar | null = null;
   let cleanedUp = false;
   const appServerStopped = waitForChild(appServer).then(({ code, signal }) => {
@@ -221,7 +183,6 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, lau
   });
   const cleanup = cleanupOnce(async () => {
     cleanedUp = true;
-    tui?.kill();
     statusBar?.stop();
     await bridgeRunner?.stop();
     await terminateChild(appServer, appServerStopped);
@@ -248,9 +209,7 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, lau
       sessionId,
       machineId,
       cwd,
-      ensureCurrentThread: Boolean(options.headless),
-      initialTuiResume: launch.type === "resume" ? { threadId: launch.sessionId } : undefined,
-      acceptTuiCurrentThreadEvents: !options.headless,
+      ensureCurrentThread: true,
       model: options.model,
       sandbox: options.sandbox,
       approvalPolicy: options.approvalPolicy,
@@ -264,20 +223,16 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, lau
       statusBar
     });
     bridgeRunner.start();
-
-    if (options.headless) {
-      await Promise.race([waitForShutdown(), appServerStopped]);
-      return;
+    const ready = await Promise.race([
+      bridgeRunner.waitForReady(),
+      appServerStopped.then(({ code, signal }) => {
+        throw new Error(`codex app-server exited before session was ready: code=${code ?? ""} signal=${signal ?? ""}`);
+      })
+    ]);
+    if (prompt) {
+      await bridgeRunner.runTurn(prompt, ready.threadId);
     }
-
-    // Resume emits one-shot thread notifications. Wait only for the local app-server bridge,
-    // never for the optional codexhub server transport, so offline/local-first TUI startup still works.
-    await Promise.race([bridgeRunner.waitForLocalAppBridgeReady(), delay(1500)]);
-    tui = CodexTuiPty.start(cwd, appServerUrl, launch, statusBar ? {
-      reservedRows: () => statusBar?.reservedRows() ?? 0,
-      onOutput: () => statusBar?.redrawSoon()
-    } : undefined);
-    await Promise.race([tui.waitForExit().then(applyPtyExitCode), appServerStopped]);
+    await Promise.race([waitForShutdown(), appServerStopped]);
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
@@ -346,7 +301,6 @@ class ProxyBridgeRunner {
   private lastState: "offline" | "online" | null = null;
   private lastReadyThreadId: string | null = null;
   private readonly ready = new Deferred<{ sessionId: string; threadId: string }>();
-  private readonly localAppBridgeReady = new Deferred<void>();
   private readonly stopped = new Deferred<void>();
   private bridgeState: BridgeState = { threadIds: [] };
 
@@ -367,10 +321,6 @@ class ProxyBridgeRunner {
 
   waitForReady() {
     return this.ready.promise;
-  }
-
-  waitForLocalAppBridgeReady() {
-    return this.localAppBridgeReady.promise;
   }
 
   async ensureThread(threadId: string) {
@@ -435,8 +385,7 @@ class ProxyBridgeRunner {
               machineId: this.options.machineId ?? createSessionMachineId(this.options.sessionId),
               machineName: `codexhub session ${this.options.sessionId.slice(-8)}`,
               cwd: this.options.cwd
-            }, callbacks);
-          this.localAppBridgeReady.resolve();
+          }, callbacks);
           if (this.options.ensureCurrentThread) {
             const threadId = await this.bridge.ensureCurrentThread();
             this.bridgeState = this.bridge.snapshotState();
@@ -538,11 +487,11 @@ class MachineBackedSessionTransport implements HeadlessSessionTransport {
     this.pendingOutgoing = [];
   }
 
-  sendEvent(event: WorkerEventInput) {
+  sendEvent(event: SessionEventInput) {
     this.sendOrQueue({ type: "session_event", sessionId: this.sessionId, event });
   }
 
-  sendRecords(records: WorkerRecordsInput) {
+  sendRecords(records: SessionRecordsInput) {
     this.sendOrQueue({ type: "session_records", sessionId: this.sessionId, records });
   }
 
@@ -664,13 +613,13 @@ class MachineBackedSessionTransport implements HeadlessSessionTransport {
       this.sendRaw({
         type: "command_error",
         commandId: command.commandId,
-        message: "This foreground Codex session is not a project launcher. Run `codexhub machine` for project browsing."
+        message: "This transient Codex session is not a project launcher. Run `codexhub machine` for project browsing."
       });
       this.machineCursor = Math.max(this.machineCursor, command.seq);
     }
   }
 
-  private enqueueSessionCommands(commands: WorkerCommand[]) {
+  private enqueueSessionCommands(commands: SessionCommand[]) {
     this.sessionCommandChain = this.sessionCommandChain.then(async () => {
       for (const command of commands) {
         try {
@@ -726,10 +675,9 @@ class CodexAppServerBridge {
   private nextId = 1;
   private closed = false;
   private currentThreadId: string | undefined;
-  private readonly forwardedRuntimeSettings = new Map<string, string>();
+  private readonly forwardedSessionSettings = new Map<string, string>();
   private readonly bridgeStartedThreads = new Set<string>();
   private bridgeStartedUnknownCount = 0;
-  private initialTuiResumeCurrentPending: boolean;
   private readonly closeSignal = new Deferred<void>();
 
   private constructor(
@@ -739,7 +687,6 @@ class CodexAppServerBridge {
     private readonly hub: HubTransportSink
   ) {
     this.currentThreadId = initialState.currentThreadId;
-    this.initialTuiResumeCurrentPending = Boolean(options.initialTuiResume);
     for (const threadId of initialState.threadIds) this.bindThread(threadId);
   }
 
@@ -775,7 +722,7 @@ class CodexAppServerBridge {
     const result = asRecord(await this.request("thread/start", {
       cwd: this.options.cwd,
       ...(this.options.model === undefined ? {} : { model: this.options.model }),
-      ...runtimePermissionParams(this.options),
+      ...codexPermissionParams(this.options),
       threadSource: "user"
     }));
     const thread = asRecord(result?.thread);
@@ -792,7 +739,7 @@ class CodexAppServerBridge {
     return currentThreadId;
   }
 
-  async runCommand(command: WorkerCommand) {
+  async runCommand(command: SessionCommand) {
     return await this.handleCommand(command);
   }
 
@@ -806,7 +753,7 @@ class CodexAppServerBridge {
     await this.request("turn/start", {
       threadId: targetThreadId,
       input: toAppServerInput(input),
-      ...turnRuntimeParams(undefined)
+      ...turnRequestParams(undefined)
     }, { threadId: targetThreadId });
     return targetThreadId;
   }
@@ -823,7 +770,7 @@ class CodexAppServerBridge {
       await delay(1500);
       if (this.closed) return;
       const entries = [...this.syncedThreads];
-      await this.syncRuntimeSettings(entries.map(([threadId]) => threadId));
+      await this.syncSessionSettings(entries.map(([threadId]) => threadId));
     }
   }
 
@@ -850,7 +797,7 @@ class CodexAppServerBridge {
     this.closeSignal.resolve();
   }
 
-  private async handleCommand(command: WorkerCommand) {
+  private async handleCommand(command: SessionCommand) {
     if (command.type === "list_threads") {
       return {
         threads: await listCodexSessionsForCwd(command.workingDirectory, {
@@ -966,7 +913,7 @@ class CodexAppServerBridge {
         threadId: command.threadId,
         cwd: command.workingDirectory,
         ...(model === undefined ? {} : { model }),
-        ...runtimePermissionParams(this.options),
+        ...codexPermissionParams(this.options),
         threadSource: "user"
       }, command));
       const thread = asRecord(result?.thread);
@@ -1001,7 +948,7 @@ class CodexAppServerBridge {
     await this.request("turn/start", {
       threadId: loadedThreadId,
       input: toAppServerInput(inputForCollaborationMode(command.input, command.options)),
-      ...turnRuntimeParams(command.options)
+      ...turnRequestParams(command.options)
     }, command);
   }
 
@@ -1021,7 +968,7 @@ class CodexAppServerBridge {
     const result = asRecord(await this.request("thread/start", {
       cwd,
       ...(model === undefined ? {} : { model }),
-      ...runtimePermissionParams(this.options),
+      ...codexPermissionParams(this.options),
       threadSource: "user"
     }, command));
     const thread = asRecord(result?.thread);
@@ -1121,7 +1068,7 @@ class CodexAppServerBridge {
     if (!state) return;
     this.closeJsonlWatcher(state);
     this.syncedThreads.delete(threadId);
-    this.forwardedRuntimeSettings.delete(threadId);
+    this.forwardedSessionSettings.delete(threadId);
   }
 
   private markThreadLoaded(threadId: string) {
@@ -1153,7 +1100,7 @@ class CodexAppServerBridge {
       threadId,
       cwd,
       ...(model === undefined ? {} : { model }),
-      ...runtimePermissionParams(this.options)
+      ...codexPermissionParams(this.options)
     }, command));
     const thread = asRecord(result?.thread);
     const loadedThreadId = typeof thread?.id === "string" ? thread.id : threadId;
@@ -1269,7 +1216,7 @@ class CodexAppServerBridge {
   }
 
   resetServerMirrorState() {
-    this.forwardedRuntimeSettings.clear();
+    this.forwardedSessionSettings.clear();
     for (const [threadId, state] of this.syncedThreads) {
       state.jsonlPath = undefined;
       state.jsonlLine = 0;
@@ -1281,22 +1228,22 @@ class CodexAppServerBridge {
     }
   }
 
-  private async syncRuntimeSettings(threadIds: string[]) {
+  private async syncSessionSettings(threadIds: string[]) {
     if (!threadIds.length) return;
     try {
-      const settings = await this.readRuntimeSettings();
+      const settings = await this.readSessionSettings();
       const snapshot = JSON.stringify(settings);
       await Promise.all(threadIds.map(async (threadId) => {
-        if (this.forwardedRuntimeSettings.get(threadId) === snapshot) return;
-        this.forwardedRuntimeSettings.set(threadId, snapshot);
-        await this.forwardRuntimeSettings(threadId, settings);
+        if (this.forwardedSessionSettings.get(threadId) === snapshot) return;
+        this.forwardedSessionSettings.set(threadId, snapshot);
+        await this.forwardSessionSettings(threadId, settings);
       }));
     } catch (error) {
-      console.error(`codexhub bridge failed to sync runtime settings: ${errorText(error)}`);
+      console.error(`codexhub bridge failed to sync session settings: ${errorText(error)}`);
     }
   }
 
-  private async readRuntimeSettings(): Promise<RuntimeSettings> {
+  private async readSessionSettings(): Promise<SessionSettings> {
     const result = asRecord(await this.request("config/read", {
       cwd: this.options.cwd,
       includeLayers: false
@@ -1331,16 +1278,13 @@ class CodexAppServerBridge {
         await this.forwardCurrentThreadChanged(threadId);
       }
     }
-    if (this.shouldForwardTuiResumeCurrent(method, threadId)) {
-      await this.forwardCurrentThreadChanged(threadId);
-    }
     await this.forwardExecutionStateFromMessage(threadId, message);
 
     if (method !== "thread/settings/updated") return;
     const params = asRecord(message.params);
     const settings = asRecord(params?.threadSettings) ?? asRecord(params?.settings);
     if (!settings) return;
-    await this.forwardRuntimeSettings(threadId, {
+    await this.forwardSessionSettings(threadId, {
       model: typeof settings.model === "string" && settings.model ? settings.model : null,
       modelReasoningEffort: isModelReasoningEffort(settings.effort)
         ? settings.effort
@@ -1381,22 +1325,6 @@ class CodexAppServerBridge {
     this.currentThreadId = threadId;
   }
 
-  private shouldForwardTuiResumeCurrent(method: string, threadId: string) {
-    if (!this.options.acceptTuiCurrentThreadEvents) return false;
-    if (this.bridgeStartedThreads.has(threadId) || this.bridgeStartedUnknownCount > 0) return false;
-
-    if (this.initialTuiResumeCurrentPending && isInitialTuiResumeCurrentMethod(method)) {
-      const hintedThreadId = this.options.initialTuiResume?.threadId?.trim();
-      if (hintedThreadId && hintedThreadId !== threadId) return false;
-      this.initialTuiResumeCurrentPending = false;
-      return true;
-    }
-
-    return Boolean(this.currentThreadId)
-      && this.currentThreadId !== threadId
-      && isTuiResumeCurrentMethod(method);
-  }
-
   private markBridgeStartedThread(threadId: string) {
     this.bridgeStartedThreads.add(threadId);
     const timer = setTimeout(() => this.bridgeStartedThreads.delete(threadId), 30_000);
@@ -1415,9 +1343,9 @@ class CodexAppServerBridge {
     this.hub.sendEvent({ type: "thread_execution_changed", threadId, running, turnId, heartbeat: false });
   }
 
-  private async forwardRuntimeSettings(threadId: string, settings: RuntimeSettings) {
+  private async forwardSessionSettings(threadId: string, settings: SessionSettings) {
     this.hub.sendEvent({
-      type: "runtime_settings_changed",
+      type: "session_settings_changed",
       threadId,
       model: settings.model,
       modelReasoningEffort: settings.modelReasoningEffort,
@@ -1472,110 +1400,7 @@ class CodexAppServerBridge {
 
 }
 
-class CodexTuiPty {
-  private readonly exitSignal = new Deferred<PtyExit>();
-  private readonly disposables: Array<{ dispose: () => void }> = [];
-  private rawModeEnabled = false;
-  private exited = false;
-
-  private constructor(
-    private readonly pty: IPty,
-    private readonly chrome?: PtyChrome
-  ) {}
-
-  static start(cwd: string, appServerUrl: string, launch: TuiLaunch, chrome?: PtyChrome) {
-    const term = terminalName();
-    const pty = spawnPty("codex", codexTuiArgs(cwd, appServerUrl, launch), {
-      cwd,
-      name: term,
-      cols: process.stdout.columns ?? 80,
-      rows: terminalRows(chrome?.reservedRows() ?? 0),
-      env: { ...process.env, TERM: term }
-    });
-    const wrapper = new CodexTuiPty(pty, chrome);
-    wrapper.attach();
-    return wrapper;
-  }
-
-  waitForExit() {
-    return this.exitSignal.promise;
-  }
-
-  kill() {
-    this.restoreTerminal();
-    if (!this.exited) {
-      try {
-        this.pty.kill();
-      } catch {
-        // The child may already be gone; cleanup must still unregister the session.
-      }
-    }
-  }
-
-  private attach() {
-    this.disposables.push(this.pty.onData((data) => {
-      process.stdout.write(data);
-      this.chrome?.onOutput();
-    }));
-    this.disposables.push(this.pty.onExit((event) => {
-      this.exited = true;
-      this.restoreTerminal();
-      this.exitSignal.resolve(event);
-    }));
-
-    const onInput = (data: Buffer) => {
-      this.pty.write(data);
-    };
-    process.stdin.on("data", onInput);
-    this.disposables.push({ dispose: () => process.stdin.off("data", onInput) });
-
-    const onResize = () => {
-      this.resize();
-    };
-    process.stdout.on("resize", onResize);
-    this.disposables.push({ dispose: () => process.stdout.off("resize", onResize) });
-
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-      this.rawModeEnabled = true;
-    }
-    process.stdin.resume();
-    this.resize();
-  }
-
-  private resize() {
-    this.pty.resize(Math.max(process.stdout.columns ?? 80, 2), terminalRows(this.chrome?.reservedRows() ?? 0));
-  }
-
-  private restoreTerminal() {
-    for (const disposable of this.disposables.splice(0)) disposable.dispose();
-    if (this.rawModeEnabled && process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
-      this.rawModeEnabled = false;
-    }
-  }
-}
-
-function codexTuiArgs(cwd: string, appServerUrl: string, launch: TuiLaunch) {
-  if (launch.type === "start") {
-    const args = ["--remote", appServerUrl, "-C", cwd];
-    if (launch.prompt) args.push(launch.prompt);
-    return args;
-  }
-  const args = ["resume", "--remote", appServerUrl, "-C", cwd];
-  if (launch.last) args.push("--last");
-  if (launch.all) args.push("--all");
-  if (launch.sessionId) args.push(launch.sessionId);
-  if (launch.prompt) args.push(launch.prompt);
-  return args;
-}
-
-type PtyChrome = {
-  reservedRows: () => number;
-  onOutput: () => void;
-};
-
-type StatusRuntimeSessionSummary = {
+type StatusSessionSummary = {
   sessionId: string;
   workingDirectory: string;
   online: boolean;
@@ -1650,7 +1475,7 @@ class CodexhubStatusBar {
   private async refresh() {
     if (this.stopped) return;
     try {
-      const sessionData = await apiJson<{ sessions?: StatusRuntimeSessionSummary[] }>(this.options.apiBase, "/api/sessions");
+      const sessionData = await apiJson<{ sessions?: StatusSessionSummary[] }>(this.options.apiBase, "/api/sessions");
       this.proxyState = "online";
       this.text = this.renderText(sessionData.sessions ?? []);
     } catch {
@@ -1660,7 +1485,7 @@ class CodexhubStatusBar {
     this.draw();
   }
 
-  private renderText(sessions: StatusRuntimeSessionSummary[] = []) {
+  private renderText(sessions: StatusSessionSummary[] = []) {
     const onlineSessions = sessions.filter((session) => session.online).length;
     const thisSession = sessions.find((session) => session.sessionId === this.options.sessionId);
     const sessionState = thisSession
@@ -1696,7 +1521,8 @@ const startCodexAppServer = async (cwd: string, appServerUrl: string, port: numb
   const launch = await codexAppServerLaunch(appServerUrl);
   const child = spawn(launch.command, launch.args, {
     cwd,
-    stdio: ["ignore", "ignore", "pipe"]
+    stdio: ["ignore", "ignore", "pipe"],
+    detached: process.platform !== "win32"
   });
   child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
   await waitForReady(port, child);
@@ -1793,13 +1619,13 @@ const commandModel = (options: ThreadRunOptions | undefined, fallback?: string) 
   return fallback;
 };
 
-const runtimePermissionParams = (options: Pick<BridgeOptions, "sandbox" | "approvalPolicy">) => ({
+const codexPermissionParams = (options: Pick<BridgeOptions, "sandbox" | "approvalPolicy">) => ({
   ...(options.approvalPolicy === undefined ? {} : { approvalPolicy: options.approvalPolicy }),
   ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox })
 });
 
-const turnRuntimeParams = (options: ThreadRunOptions | undefined): TurnRuntimeParams => {
-  const params: TurnRuntimeParams = {};
+const turnRequestParams = (options: ThreadRunOptions | undefined): TurnRequestParams => {
+  const params: TurnRequestParams = {};
   if (!options) return params;
   if (hasOwn(options, "model")) params.model = options.model;
   if (hasOwn(options, "modelReasoningEffort")) params.effort = options.modelReasoningEffort;
@@ -1836,12 +1662,6 @@ const goalUpdateParams = (
 
 const isModelReasoningEffort = (value: unknown): value is ThreadRunOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
-
-const isInitialTuiResumeCurrentMethod = (method: string) =>
-  method === "thread/status/changed" || isTuiResumeCurrentMethod(method);
-
-const isTuiResumeCurrentMethod = (method: string) =>
-  method === "thread/goal/cleared" || method === "thread/goal/updated";
 
 const threadIdForMessage = (message: JsonRecord) => {
   const params = asRecord(message.params);
@@ -1931,7 +1751,7 @@ const parseMachineTransportMessage = (data: unknown): MachineTransportMessage | 
     const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
     const cursor = typeof message.cursor === "number" ? message.cursor : NaN;
     return sessionId && Number.isFinite(cursor) && Array.isArray(message.commands)
-      ? { type: "session_commands", sessionId, cursor, commands: message.commands as WorkerCommand[] }
+      ? { type: "session_commands", sessionId, cursor, commands: message.commands as SessionCommand[] }
       : null;
   }
   if (type === "session_error") {
@@ -2003,7 +1823,6 @@ const asRecord = (value: unknown): JsonRecord | null => {
 };
 
 type ChildExit = { code: number | null; signal: NodeJS.Signals | null };
-type PtyExit = { exitCode: number; signal?: number };
 
 const waitForChild = async (child: ChildProcess) => await new Promise<ChildExit>((resolve, reject) => {
   child.once("error", reject);
@@ -2017,35 +1836,39 @@ const terminateChild = async (
   killTimeoutMs = 3000
 ) => {
   if (child.exitCode !== null || child.signalCode !== null) return await stopped;
-  child.kill("SIGTERM");
+  signalChildProcess(child, "SIGTERM");
   const graceful = await Promise.race([
     stopped,
     delay(gracefulTimeoutMs).then(() => null)
   ]);
   if (graceful) return graceful;
 
-  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  if (child.exitCode === null && child.signalCode === null) signalChildProcess(child, "SIGKILL");
   return await Promise.race([
     stopped,
     delay(killTimeoutMs).then(() => ({ code: child.exitCode, signal: child.signalCode }))
   ]);
 };
 
+const signalChildProcess = (child: ChildProcess, signal: NodeJS.Signals) => {
+  if (process.platform !== "win32" && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to signalling the direct child below.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // The process may already have exited between the status check and signal.
+  }
+};
+
 const applyChildExitCode = ({ code, signal }: ChildExit) => {
   process.exitCode = code ?? (signal ? 1 : 0);
 };
-
-const applyPtyExitCode = ({ exitCode, signal }: PtyExit) => {
-  process.exitCode = exitCode || (signal ? 1 : 0);
-};
-
-const terminalName = () => {
-  const term = process.env.TERM;
-  return term && term !== "dumb" ? term : "xterm-256color";
-};
-
-const terminalRows = (reservedRows: number) =>
-  Math.max((process.stdout.rows ?? 24) - reservedRows, 2);
 
 const fitStatusText = (text: string, columns: number) => {
   if (columns <= 0) return "";

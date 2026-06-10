@@ -11,7 +11,7 @@ export type ThreadSummary = {
   workingDirectory: string;
   model?: string;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"];
-  runtime: ThreadRuntimeSummary;
+  session: ThreadSessionSummary;
   status: "running" | "idle";
   running: boolean;
   title: string;
@@ -21,7 +21,7 @@ export type ThreadSummary = {
   threadUsage: ThreadUsage;
 };
 
-export type ThreadRuntimeSummary = {
+export type ThreadSessionSummary = {
   sessionId?: string;
   name?: string;
   appServerUrl?: string;
@@ -30,7 +30,7 @@ export type ThreadRuntimeSummary = {
   lastSeenAt?: string;
 };
 
-export type RuntimeSessionSummary = {
+export type SessionSummary = {
   sessionId: string;
   machineId?: string;
   name?: string;
@@ -40,7 +40,7 @@ export type RuntimeSessionSummary = {
   status: "online" | "offline";
   lastSeenAt: string;
   offlineSinceAt?: string;
-  offlineReason?: WorkerOfflineReason;
+  offlineReason?: SessionOfflineReason;
   pid?: number;
   hostname?: string;
   threads: ThreadSummary[];
@@ -89,50 +89,29 @@ export type ThreadStreamEvent = {
   jsonl?: ThreadJsonl;
 };
 
-export type WorkerRegistration = {
-  workerId?: string;
+export type SessionRegistration = {
   machineId?: string;
   name?: string;
   workingDirectory: string;
   appServerUrl?: string;
   pid?: number;
   hostname?: string;
+};
+
+type InternalSessionRegistration = SessionRegistration & {
+  sessionId?: string;
   transportId?: string;
 };
 
-export type SessionRegistration = Omit<WorkerRegistration, "workerId" | "transportId">;
+export type SessionOfflineReason = "heartbeat_timeout" | "transport_disconnected" | "unregistered";
 
-export type WorkerOfflineReason = "heartbeat_timeout" | "transport_disconnected" | "unregistered";
-
-export type WorkerSummary = {
-  workerId: string;
-  machineId?: string;
-  name?: string;
-  workingDirectory: string;
-  appServerUrl?: string;
-  online: boolean;
-  status: "online" | "offline";
-  lastSeenAt: string;
-  offlineSinceAt?: string;
-  offlineReason?: WorkerOfflineReason;
-  pid?: number;
-  hostname?: string;
-  threads: ThreadSummary[];
-};
-
-export type WorkerStreamEvent = {
-  seq: number;
-  kind: "workers";
-  workers: WorkerSummary[];
-};
-
-export type RuntimeSessionStreamEvent = {
+export type SessionStreamEvent = {
   seq: number;
   kind: "sessions";
-  sessions: RuntimeSessionSummary[];
+  sessions: SessionSummary[];
 };
 
-export type WorkerCommand = {
+export type SessionCommand = {
   seq: number;
   commandId: string;
   type:
@@ -160,15 +139,15 @@ export type WorkerCommand = {
   options?: ThreadRunOptions;
 };
 
-export type WorkerThreadCandidatesResult = {
+export type SessionThreadCandidatesResult = {
   threads: CodexSessionSummary[];
 };
 
-export type WorkerThreadCommandResult = {
+export type SessionThreadCommandResult = {
   threadId: string;
 };
 
-export type WorkerRecordsInput = {
+export type SessionRecordsInput = {
   threadId: string;
   mode: "replace" | "append";
   path?: string;
@@ -177,9 +156,9 @@ export type WorkerRecordsInput = {
   heartbeat?: boolean;
 };
 
-export type WorkerCommandResult = WorkerThreadCandidatesResult | WorkerThreadCommandResult | ThreadDetail;
+export type SessionCommandResult = SessionThreadCandidatesResult | SessionThreadCommandResult | ThreadDetail;
 
-export type WorkerEventInput =
+export type SessionEventInput =
   | {
       type: "thread_event";
       threadId: string;
@@ -195,23 +174,23 @@ export type WorkerEventInput =
       heartbeat?: boolean;
     }
   | {
-      type: "runtime_settings_changed";
+      type: "session_settings_changed";
       threadId: string;
       model?: string | null;
       modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
       heartbeat?: boolean;
     };
 
-type RuntimeWorker = WorkerSummary & {
+type SessionState = SessionSummary & {
   transportId?: string;
-  commands: WorkerCommand[];
-  waiters: Set<WorkerWaiter>;
+  commands: SessionCommand[];
+  waiters: Set<SessionCommandWaiter>;
 };
 
-type RuntimeThread = {
+type ThreadState = {
   threadId: string;
   workingDirectory: string;
-  workerId?: string;
+  sessionId?: string;
   appServerTurnId?: string;
   threadOptions: ThreadOptions;
   running: boolean;
@@ -228,7 +207,7 @@ type RuntimeThread = {
 };
 
 type PendingCommand = {
-  type: WorkerCommand["type"];
+  type: SessionCommand["type"];
   threadId?: string;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;
@@ -243,33 +222,33 @@ type QueuedTurn = {
   reject: (error: Error) => void;
 };
 
-type WorkerWaiter = () => void;
+type SessionCommandWaiter = () => void;
 
 export class ThreadHub {
-  private readonly threads = new Map<string, RuntimeThread>();
-  private readonly workers = new Map<string, RuntimeWorker>();
+  private readonly threads = new Map<string, ThreadState>();
+  private readonly sessions = new Map<string, SessionState>();
   private readonly pendingCommands = new Map<string, PendingCommand>();
   private readonly activeTurnCommands = new Map<string, string>();
   private readonly queuedTurns = new Map<string, QueuedTurn[]>();
-  private readonly workerEvents: WorkerStreamEvent[] = [];
-  private readonly workerSubscribers = new Set<(event: WorkerStreamEvent) => void>();
-  private lastWorkerSnapshotKey = "";
-  private workerSeq = 0;
+  private readonly sessionEvents: SessionStreamEvent[] = [];
+  private readonly sessionSubscribers = new Set<(event: SessionStreamEvent) => void>();
+  private lastSessionSnapshotKey = "";
+  private sessionSeq = 0;
 
   constructor(
     private readonly defaultThreadOptions: ThreadOptions = {},
     private readonly options: { onCatalogChange?: () => void; onThreadChange?: () => void } = {}
   ) {}
 
-  registerWorker(registration: WorkerRegistration): { workerId: string; worker: WorkerSummary } {
+  registerSession(registration: InternalSessionRegistration): { sessionId: string; session: SessionSummary } {
     const now = new Date().toISOString();
-    const workerId = registration.workerId?.trim() || randomUUID();
-    const existing = this.workers.get(workerId);
+    const sessionId = registration.sessionId?.trim() || randomUUID();
+    const existing = this.sessions.get(sessionId);
     if (existing) {
       for (const waiter of [...existing.waiters]) waiter();
     }
-    const worker: RuntimeWorker = {
-      workerId,
+    const session: SessionState = {
+      sessionId,
       machineId: registration.machineId,
       name: registration.name,
       workingDirectory: registration.workingDirectory,
@@ -284,205 +263,189 @@ export class ThreadHub {
       commands: existing?.commands ?? [],
       waiters: existing?.waiters ?? new Set()
     };
-    this.workers.set(workerId, worker);
+    this.sessions.set(sessionId, session);
     for (const thread of this.threads.values()) {
-      if (thread.workerId === workerId) {
-        thread.workerId = workerId;
+      if (thread.sessionId === sessionId) {
+        thread.sessionId = sessionId;
         this.publish(thread, "thread");
       }
     }
-    this.publishWorkers();
-    return { workerId, worker: this.workerSummary(worker) };
+    this.publishSessions();
+    return { sessionId, session: this.sessionSummary(session) };
   }
 
-  heartbeatWorker(workerId: string, registration: Partial<WorkerRegistration> = {}) {
-    const worker = this.workers.get(workerId);
-    if (!worker) return { ok: false };
-    const previousState = this.workerVisibleState(worker);
+  heartbeatSession(sessionId: string, registration: Partial<SessionRegistration> = {}) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false };
+    const previousState = this.sessionVisibleState(session);
     const now = new Date().toISOString();
-    worker.name = registration.name ?? worker.name;
-    worker.machineId = registration.machineId ?? worker.machineId;
-    worker.workingDirectory = registration.workingDirectory ?? worker.workingDirectory;
-    worker.appServerUrl = registration.appServerUrl ?? worker.appServerUrl;
-    worker.pid = registration.pid ?? worker.pid;
-    worker.hostname = registration.hostname ?? worker.hostname;
-    worker.online = true;
-    worker.status = "online";
-    worker.lastSeenAt = now;
-    delete worker.offlineSinceAt;
-    delete worker.offlineReason;
-    if (previousState !== this.workerVisibleState(worker)) {
+    session.name = registration.name ?? session.name;
+    session.machineId = registration.machineId ?? session.machineId;
+    session.workingDirectory = registration.workingDirectory ?? session.workingDirectory;
+    session.appServerUrl = registration.appServerUrl ?? session.appServerUrl;
+    session.pid = registration.pid ?? session.pid;
+    session.hostname = registration.hostname ?? session.hostname;
+    session.online = true;
+    session.status = "online";
+    session.lastSeenAt = now;
+    delete session.offlineSinceAt;
+    delete session.offlineReason;
+    if (previousState !== this.sessionVisibleState(session)) {
       for (const thread of this.threads.values()) {
-        if (thread.workerId === workerId) this.publish(thread, "thread");
+        if (thread.sessionId === sessionId) this.publish(thread, "thread");
       }
-      this.publishWorkers();
+      this.publishSessions();
     }
-    return { ok: true, workerId };
+    return { ok: true, sessionId };
   }
 
-  unregisterWorker(workerId: string, transportId?: string) {
-    const worker = this.workers.get(workerId);
-    if (!worker) return { ok: false };
-    if (transportId && worker.transportId && worker.transportId !== transportId) return { ok: true, workerId };
-    this.removeWorker(worker, `Session unregistered: ${workerId}`, "unregistered");
-    return { ok: true, workerId };
+  unregisterSession(sessionId: string, transportId?: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false };
+    if (transportId && session.transportId && session.transportId !== transportId) return { ok: true, sessionId };
+    this.removeSession(session, `Session unregistered: ${sessionId}`, "unregistered");
+    return { ok: true, sessionId };
   }
 
-  disconnectWorker(workerId: string, transportId?: string) {
-    const worker = this.workers.get(workerId);
-    if (!worker) return { ok: false };
-    if (transportId && worker.transportId && worker.transportId !== transportId) return { ok: true, workerId };
-    this.markWorkerOffline(worker, `Session transport disconnected: ${workerId}`, "transport_disconnected");
-    return { ok: true, workerId };
+  disconnectSession(sessionId: string, transportId?: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false };
+    if (transportId && session.transportId && session.transportId !== transportId) return { ok: true, sessionId };
+    this.markSessionOffline(session, `Session transport disconnected: ${sessionId}`, "transport_disconnected");
+    return { ok: true, sessionId };
   }
 
-  failWorkerCommand(workerId: string, commandId: string, message: string) {
-    const worker = this.workers.get(workerId);
-    if (!worker) return { ok: false };
+  failSessionCommand(sessionId: string, commandId: string, message: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false };
     const pending = this.pendingCommands.get(commandId);
     const error = new Error(message || `Session command failed: ${commandId}`);
     if (pending?.threadId && this.activeTurnCommands.get(pending.threadId) === commandId) {
-      this.finishWorkerTurnByThread(pending.threadId, error);
+      this.finishSessionTurnByThread(pending.threadId, error);
     } else {
       this.rejectCommand(commandId, error);
     }
-    return { ok: true, workerId, commandId };
+    return { ok: true, sessionId, commandId };
   }
 
-  resolveWorkerCommand(workerId: string, commandId: string, result: unknown) {
-    const worker = this.workers.get(workerId);
-    if (!worker) return { ok: false };
+  resolveSessionCommand(sessionId: string, commandId: string, result: unknown) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false };
     const pending = this.pendingCommands.get(commandId);
     if (!pending) return { ok: false };
     if (pending.type === "start_thread" || pending.type === "resume_thread") {
       const threadId = commandResultThreadId(result);
       if (!threadId) {
         this.rejectCommand(commandId, new Error(`Session command did not return threadId: ${pending.type}`));
-        return { ok: false, workerId, commandId };
+        return { ok: false, sessionId, commandId };
       }
-      const thread = this.ensureThread(threadId, worker, {
-        result: { thread: { id: threadId, cwd: worker.workingDirectory } }
+      const thread = this.ensureThread(threadId, session, {
+        result: { thread: { id: threadId, cwd: session.workingDirectory } }
       });
       this.resolveCommand(commandId, this.detail(thread));
-      return { ok: true, workerId, commandId };
+      return { ok: true, sessionId, commandId };
     }
     this.resolveCommand(commandId, result);
-    return { ok: true, workerId, commandId };
+    return { ok: true, sessionId, commandId };
   }
 
-  markStaleWorkersOffline(timeoutMs: number, now = Date.now(), offlineRetentionMs = Number.POSITIVE_INFINITY) {
+  markStaleSessionsOffline(timeoutMs: number, now = Date.now(), offlineRetentionMs = Number.POSITIVE_INFINITY) {
     let offline = 0;
     let removed = 0;
-    for (const worker of this.workers.values()) {
-      if (worker.online) {
-        const lastSeenAt = Date.parse(worker.lastSeenAt);
+    for (const session of this.sessions.values()) {
+      if (session.online) {
+        const lastSeenAt = Date.parse(session.lastSeenAt);
         if (Number.isFinite(lastSeenAt) && now - lastSeenAt <= timeoutMs) continue;
-        this.markWorkerOffline(worker, `Session heartbeat timed out: ${worker.workerId}`, "heartbeat_timeout", now);
+        this.markSessionOffline(session, `Session heartbeat timed out: ${session.sessionId}`, "heartbeat_timeout", now);
         offline += 1;
         continue;
       }
 
-      const offlineSinceAt = Date.parse(worker.offlineSinceAt ?? worker.lastSeenAt);
+      const offlineSinceAt = Date.parse(session.offlineSinceAt ?? session.lastSeenAt);
       if (!Number.isFinite(offlineSinceAt) || now - offlineSinceAt < offlineRetentionMs) continue;
-      this.removeWorker(worker, `Session offline retention expired: ${worker.workerId}`, worker.offlineReason ?? "heartbeat_timeout", now);
+      this.removeSession(session, `Session offline retention expired: ${session.sessionId}`, session.offlineReason ?? "heartbeat_timeout", now);
       removed += 1;
     }
     return { offline, removed };
   }
 
-  listWorkers(options: { includeOffline?: boolean } = {}): WorkerSummary[] {
-    return [...this.workers.values()]
-      .filter((worker) => options.includeOffline || worker.online || Boolean(worker.offlineSinceAt))
-      .map((worker) => this.workerSummary(worker));
+  listSessions(options: { includeOffline?: boolean } = {}): SessionSummary[] {
+    return [...this.sessions.values()]
+      .filter((session) => options.includeOffline || session.online || Boolean(session.offlineSinceAt))
+      .map((session) => this.sessionSummary(session));
   }
 
-  listRuntimeSessions(options: { includeOffline?: boolean } = {}): RuntimeSessionSummary[] {
-    return this.listWorkers(options).map(runtimeSessionFromWorker);
-  }
-
-  subscribeWorkers(after: number, callback: (event: WorkerStreamEvent) => void) {
-    const events = after > 0 ? this.workerEvents.filter((item) => item.seq > after) : [];
+  subscribeSessions(after: number, callback: (event: SessionStreamEvent) => void) {
+    const events = after > 0 ? this.sessionEvents.filter((item) => item.seq > after) : [];
     if (events.length) {
       for (const event of events) callback(event);
     } else {
-      callback(this.workerSnapshotEvent());
+      callback(this.sessionSnapshotEvent());
     }
-    this.workerSubscribers.add(callback);
-    return () => this.workerSubscribers.delete(callback);
+    this.sessionSubscribers.add(callback);
+    return () => this.sessionSubscribers.delete(callback);
   }
 
-  subscribeRuntimeSessions(after: number, callback: (event: RuntimeSessionStreamEvent) => void) {
-    const publish = (event: WorkerStreamEvent) => callback(runtimeSessionEventFromWorkers(event));
-    const events = after > 0 ? this.workerEvents.filter((item) => item.seq > after) : [];
-    if (events.length) {
-      for (const event of events) publish(event);
-    } else {
-      callback(this.runtimeSessionSnapshotEvent());
-    }
-    this.workerSubscribers.add(publish);
-    return () => this.workerSubscribers.delete(publish);
-  }
-
-  async waitWorkerCommands(workerId: string, after: number, timeoutMs = 25000) {
-    const worker = this.workers.get(workerId);
-    if (!worker) return { workerId, cursor: after, commands: [] };
-    if (workerCommandsAfter(worker, after).length === 0) {
+  async waitSessionCommands(sessionId: string, after: number, timeoutMs = 25000) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { sessionId, cursor: after, commands: [] };
+    if (sessionCommandsAfter(session, after).length === 0) {
       await new Promise<void>((resolve) => {
         let timer: NodeJS.Timeout;
         const waiter = () => {
           clearTimeout(timer);
-          worker.waiters.delete(waiter);
+          session.waiters.delete(waiter);
           resolve();
         };
         timer = setTimeout(waiter, timeoutMs);
-        worker.waiters.add(waiter);
+        session.waiters.add(waiter);
       });
     }
-    const commands = workerCommandsAfter(worker, after);
+    const commands = sessionCommandsAfter(session, after);
     return {
-      workerId,
+      sessionId,
       cursor: commands.at(-1)?.seq ?? after,
       commands
     };
   }
 
-  clampWorkerCommandCursor(workerId: string, requestedCursor: number) {
-    const worker = this.workers.get(workerId);
-    const maxCursor = worker?.commands.at(-1)?.seq ?? 0;
+  clampSessionCommandCursor(sessionId: string, requestedCursor: number) {
+    const session = this.sessions.get(sessionId);
+    const maxCursor = session?.commands.at(-1)?.seq ?? 0;
     return Math.min(requestedCursor, maxCursor);
   }
 
-  applyWorkerEvent(workerId: string, input: WorkerEventInput) {
-    if (input.heartbeat !== false) this.heartbeatWorker(workerId);
-    const worker = this.requireWorker(workerId);
+  applySessionEvent(sessionId: string, input: SessionEventInput) {
+    if (input.heartbeat !== false) this.heartbeatSession(sessionId);
+    const session = this.requireSession(sessionId);
     if (input.type === "thread_execution_changed") {
-      const thread = this.ensureThread(input.threadId, worker, {
-        params: { threadId: input.threadId, cwd: worker.workingDirectory }
+      const thread = this.ensureThread(input.threadId, session, {
+        params: { threadId: input.threadId, cwd: session.workingDirectory }
       });
       this.applyThreadExecutionState(thread, input.running, input.turnId);
       return { ok: true, thread: this.summary(thread) };
     }
 
-    if (input.type === "runtime_settings_changed") {
-      const thread = this.ensureThread(input.threadId, worker, {
-        params: { threadId: input.threadId, cwd: worker.workingDirectory }
+    if (input.type === "session_settings_changed") {
+      const thread = this.ensureThread(input.threadId, session, {
+        params: { threadId: input.threadId, cwd: session.workingDirectory }
       });
-      this.applyRuntimeSettings(thread, input.model, input.modelReasoningEffort);
+      this.applySessionSettings(thread, input.model, input.modelReasoningEffort);
       return { ok: true, thread: this.summary(thread) };
     }
 
     const message = asRecord(input.message);
     if (!message) return { ok: true };
 
-    const threadId = this.threadIdForWorkerEvent(input, message);
+    const threadId = this.threadIdForSessionEvent(input, message);
     const error = asRecord(message.error);
     if (error) {
       this.rejectCommand(input.commandId, new Error(stringify(error)));
-      if (threadId) this.finishWorkerTurnByThread(threadId, new Error(stringify(error)));
+      if (threadId) this.finishSessionTurnByThread(threadId, new Error(stringify(error)));
       return { ok: true };
     }
 
-    const thread = threadId ? this.ensureThread(threadId, worker, message) : null;
+    const thread = threadId ? this.ensureThread(threadId, session, message) : null;
     const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
     if (thread && pending?.type === "rollback_thread" && asRecord(asRecord(message.result)?.thread)) {
       this.resetThreadRecords(thread);
@@ -493,11 +456,11 @@ export class ThreadHub {
     return { ok: true, thread: thread ? this.summary(thread) : undefined };
   }
 
-  applyWorkerRecords(workerId: string, input: WorkerRecordsInput) {
-    if (input.heartbeat !== false) this.heartbeatWorker(workerId);
-    const worker = this.requireWorker(workerId);
-    const thread = this.ensureThread(input.threadId, worker, {
-      params: { threadId: input.threadId, cwd: worker.workingDirectory }
+  applySessionRecords(sessionId: string, input: SessionRecordsInput) {
+    if (input.heartbeat !== false) this.heartbeatSession(sessionId);
+    const session = this.requireSession(sessionId);
+    const thread = this.ensureThread(input.threadId, session, {
+      params: { threadId: input.threadId, cwd: session.workingDirectory }
     });
     const nextLines = normalizeJsonlLines(input.lines);
     if (input.mode === "replace") {
@@ -541,17 +504,17 @@ export class ThreadHub {
     return thread ? this.detail(thread) : null;
   }
 
-  attachWorkerThread(workerId: string, threadId: string): ThreadSummary {
-    const worker = this.requireOnlineWorker(workerId);
-    return this.summary(this.ensureThread(threadId, worker, {
-      params: { threadId, cwd: worker.workingDirectory }
+  attachSessionThread(sessionId: string, threadId: string): ThreadSummary {
+    const session = this.requireOnlineSession(sessionId);
+    return this.summary(this.ensureThread(threadId, session, {
+      params: { threadId, cwd: session.workingDirectory }
     }));
   }
 
   observeThreadRecords(threadId: string) {
     const thread = this.requireThread(threadId);
-    const worker = this.requireThreadWorker(thread);
-    this.enqueueWorkerCommand(worker.workerId, {
+    const session = this.requireThreadSession(thread);
+    this.enqueueSessionCommand(session.sessionId, {
       commandId: randomUUID(),
       type: "observe_thread_records",
       workingDirectory: thread.workingDirectory,
@@ -563,8 +526,8 @@ export class ThreadHub {
 
   unobserveThreadRecords(threadId: string) {
     const thread = this.requireThread(threadId);
-    const worker = this.requireThreadWorker(thread);
-    this.enqueueWorkerCommand(worker.workerId, {
+    const session = this.requireThreadSession(thread);
+    this.enqueueSessionCommand(session.sessionId, {
       commandId: randomUUID(),
       type: "unobserve_thread_records",
       workingDirectory: thread.workingDirectory,
@@ -579,41 +542,41 @@ export class ThreadHub {
     return this.threads.get(threadId)?.threadUsage ?? emptyThreadUsage();
   }
 
-  async listWorkerThreadCandidates(workerId: string, limit = 50): Promise<WorkerThreadCandidatesResult> {
-    const worker = this.requireOnlineWorker(workerId);
+  async listSessionThreadCandidates(sessionId: string, limit = 50): Promise<SessionThreadCandidatesResult> {
+    const session = this.requireOnlineSession(sessionId);
     const commandId = randomUUID();
-    const promise = this.waitForCommand<WorkerThreadCandidatesResult>(commandId, "list_threads", undefined, 60_000);
-    this.enqueueWorkerCommand(worker.workerId, {
+    const promise = this.waitForCommand<SessionThreadCandidatesResult>(commandId, "list_threads", undefined, 60_000);
+    this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "list_threads",
-      workingDirectory: worker.workingDirectory,
+      workingDirectory: session.workingDirectory,
       createdAt: new Date().toISOString(),
       limit
     });
     return await promise;
   }
 
-  async startWorkerThread(workerId: string): Promise<ThreadDetail> {
-    const worker = this.requireOnlineWorker(workerId);
+  async startSessionThread(sessionId: string): Promise<ThreadDetail> {
+    const session = this.requireOnlineSession(sessionId);
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "start_thread", undefined, 60_000);
-    this.enqueueWorkerCommand(worker.workerId, {
+    this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "start_thread",
-      workingDirectory: worker.workingDirectory,
+      workingDirectory: session.workingDirectory,
       createdAt: new Date().toISOString()
     });
     return await promise;
   }
 
-  async resumeWorkerThread(workerId: string, threadId: string): Promise<ThreadDetail> {
-    const worker = this.requireOnlineWorker(workerId);
+  async resumeSessionThread(sessionId: string, threadId: string): Promise<ThreadDetail> {
+    const session = this.requireOnlineSession(sessionId);
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "resume_thread", threadId, 60_000);
-    this.enqueueWorkerCommand(worker.workerId, {
+    this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "resume_thread",
-      workingDirectory: worker.workingDirectory,
+      workingDirectory: session.workingDirectory,
       createdAt: new Date().toISOString(),
       threadId
     });
@@ -622,11 +585,11 @@ export class ThreadHub {
 
   async forkThread(threadId: string, recordId?: string): Promise<ThreadDetail> {
     const source = this.requireThread(threadId);
-    const worker = this.requireThreadWorker(source);
+    const session = this.requireThreadSession(source);
     const rollbackPlan = recordId ? rollbackPlanAfterRecord(source, recordId) : { rollbackTurns: 0, keepTurns: 0 };
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId);
-    this.enqueueWorkerCommand(worker.workerId, {
+    this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "fork_thread",
       workingDirectory: source.workingDirectory,
@@ -648,10 +611,10 @@ export class ThreadHub {
 
   private async rollbackThread(threadId: string, numTurns: number, keepTurns?: number): Promise<ThreadDetail> {
     const thread = this.requireThread(threadId);
-    const worker = this.requireThreadWorker(thread);
+    const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "rollback_thread", thread.threadId);
-    this.enqueueWorkerCommand(worker.workerId, {
+    this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "rollback_thread",
       workingDirectory: thread.workingDirectory,
@@ -676,8 +639,8 @@ export class ThreadHub {
   stopTurn(threadId: string) {
     const thread = this.requireThread(threadId);
     if (!thread.running) return { stopped: false };
-    const worker = this.requireThreadWorker(thread);
-    this.enqueueWorkerCommand(worker.workerId, {
+    const session = this.requireThreadSession(thread);
+    this.enqueueSessionCommand(session.sessionId, {
       commandId: randomUUID(),
       type: "stop",
       workingDirectory: thread.workingDirectory,
@@ -693,9 +656,9 @@ export class ThreadHub {
     if (!command) return { handled: false };
 
     const thread = this.requireThread(threadId);
-    const worker = thread.workerId ? this.workers.get(thread.workerId) : null;
+    const session = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
     this.appendUserInputRecord(thread, input);
-    this.appendRuntimeRecord(thread, "event_msg", {
+    this.appendHubRecord(thread, "event_msg", {
       type: "agent_message",
       message: this.localCommandMessage(thread, command),
       phase: "final_answer"
@@ -715,9 +678,9 @@ export class ThreadHub {
     return this.startTurn(thread, input, _source, options);
   }
 
-  private startTurn(thread: RuntimeThread, input: ProxyInput, _source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
+  private startTurn(thread: ThreadState, input: ProxyInput, _source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
     if (thread.running) throw new Error(`Thread is already running: ${thread.threadId}`);
-    const worker = this.requireThreadWorker(thread);
+    const session = this.requireThreadSession(thread);
     const commandOptions = options ? { ...options } : { ...thread.threadOptions };
     if (options) thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
     const commandId = randomUUID();
@@ -730,7 +693,7 @@ export class ThreadHub {
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
 
-    this.enqueueWorkerCommand(worker.workerId, {
+    this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "turn",
       workingDirectory: thread.workingDirectory,
@@ -742,13 +705,13 @@ export class ThreadHub {
     return promise;
   }
 
-  private steerTurn(thread: RuntimeThread, input: ProxyInput, turnId: string) {
-    const worker = this.requireThreadWorker(thread);
+  private steerTurn(thread: ThreadState, input: ProxyInput, turnId: string) {
+    const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "steer", thread.threadId);
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
-    this.enqueueWorkerCommand(worker.workerId, {
+    this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "steer",
       workingDirectory: thread.workingDirectory,
@@ -766,12 +729,12 @@ export class ThreadHub {
 
   clearGoal(threadId: string) {
     const thread = this.requireThread(threadId);
-    const worker = this.requireThreadWorker(thread);
+    const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "clear_goal", thread.threadId);
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
-    this.enqueueWorkerCommand(worker.workerId, {
+    this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "clear_goal",
       workingDirectory: thread.workingDirectory,
@@ -781,13 +744,13 @@ export class ThreadHub {
     return promise;
   }
 
-  private setThreadGoal(thread: RuntimeThread, goal: ThreadGoalUpdate) {
-    const worker = this.requireThreadWorker(thread);
+  private setThreadGoal(thread: ThreadState, goal: ThreadGoalUpdate) {
+    const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "set_goal", thread.threadId);
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
-    this.enqueueWorkerCommand(worker.workerId, {
+    this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "set_goal",
       workingDirectory: thread.workingDirectory,
@@ -798,7 +761,7 @@ export class ThreadHub {
     return promise;
   }
 
-  private queueTurn(thread: RuntimeThread, input: ProxyInput, source: "web" | "telegram" | "task", options?: ThreadRunOptions) {
+  private queueTurn(thread: ThreadState, input: ProxyInput, source: "web" | "telegram" | "task", options?: ThreadRunOptions) {
     return new Promise<void>((resolve, reject) => {
       const queue = this.queuedTurns.get(thread.threadId) ?? [];
       queue.push({
@@ -814,10 +777,10 @@ export class ThreadHub {
     });
   }
 
-  runWorkerThreadTurn(workerId: string, threadId: string, input: ProxyInput, source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
-    const worker = this.requireOnlineWorker(workerId);
-    const thread = this.ensureThread(threadId, worker, {
-      params: { threadId, cwd: worker.workingDirectory }
+  runSessionThreadTurn(sessionId: string, threadId: string, input: ProxyInput, source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
+    const session = this.requireOnlineSession(sessionId);
+    const thread = this.ensureThread(threadId, session, {
+      params: { threadId, cwd: session.workingDirectory }
     });
     const command = this.runLocalCommand(thread.threadId, input, source);
     if (command.handled) {
@@ -838,19 +801,19 @@ export class ThreadHub {
     return () => thread.subscribers.delete(callback);
   }
 
-  private requireWorker(workerId: string) {
-    const worker = this.workers.get(workerId);
-    if (!worker) throw new Error(`Session not found: ${workerId}`);
-    return worker;
+  private requireSession(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+    return session;
   }
 
-  private requireOnlineWorker(workerId: string) {
-    const worker = this.requireWorker(workerId);
-    if (!worker.online) throw new Error(`Session is offline: ${workerId}`);
-    return worker;
+  private requireOnlineSession(sessionId: string) {
+    const session = this.requireSession(sessionId);
+    if (!session.online) throw new Error(`Session is offline: ${sessionId}`);
+    return session;
   }
 
-  private threadIdForWorkerEvent(input: Extract<WorkerEventInput, { type: "thread_event" }>, message: Record<string, unknown>) {
+  private threadIdForSessionEvent(input: Extract<SessionEventInput, { type: "thread_event" }>, message: Record<string, unknown>) {
     const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
     if (pending?.type === "fork_thread") {
       return resultThreadIdFromAppServerMessage(message)
@@ -866,49 +829,49 @@ export class ThreadHub {
     return thread;
   }
 
-  private onlineWorkersForWorkspace(workingDirectory: string) {
-    return [...this.workers.values()]
-      .filter((worker) => worker.online && worker.workingDirectory === workingDirectory)
+  private onlineSessionsForWorkspace(workingDirectory: string) {
+    return [...this.sessions.values()]
+      .filter((session) => session.online && session.workingDirectory === workingDirectory)
       .sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt));
   }
 
-  private uniqueOnlineWorkerForWorkspace(workingDirectory: string) {
-    const workers = this.onlineWorkersForWorkspace(workingDirectory);
-    return workers.length === 1 ? workers[0] : null;
+  private uniqueOnlineSessionForWorkspace(workingDirectory: string) {
+    const sessions = this.onlineSessionsForWorkspace(workingDirectory);
+    return sessions.length === 1 ? sessions[0] : null;
   }
 
-  private requireThreadWorker(thread: RuntimeThread) {
-    const current = thread.workerId ? this.workers.get(thread.workerId) : null;
+  private requireThreadSession(thread: ThreadState) {
+    const current = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
     if (current?.online) return current;
-    const workers = this.onlineWorkersForWorkspace(thread.workingDirectory);
-    const replacement = workers.length === 1 ? workers[0] : null;
+    const sessions = this.onlineSessionsForWorkspace(thread.workingDirectory);
+    const replacement = sessions.length === 1 ? sessions[0] : null;
     if (replacement) {
-      thread.workerId = replacement.workerId;
+      thread.sessionId = replacement.sessionId;
       this.publish(thread, "thread");
       this.publishThreadCatalog();
       return replacement;
     }
-    if (workers.length > 1) {
+    if (sessions.length > 1) {
       throw new Error(`Multiple online sessions for workspace. Resume this thread in one codexhub instance before sending: ${thread.threadId}`);
     }
     throw new Error(`No online session for thread: ${thread.threadId}`);
   }
 
-  private enqueueWorkerCommand(workerId: string, command: Omit<WorkerCommand, "seq">) {
-    const worker = this.requireWorker(workerId);
-    const next: WorkerCommand = {
+  private enqueueSessionCommand(sessionId: string, command: Omit<SessionCommand, "seq">) {
+    const session = this.requireSession(sessionId);
+    const next: SessionCommand = {
       ...command,
-      seq: (worker.commands.at(-1)?.seq ?? 0) + 1
+      seq: (session.commands.at(-1)?.seq ?? 0) + 1
     };
-    worker.commands.push(next);
-    if (worker.commands.length > 500) worker.commands.splice(0, worker.commands.length - 500);
-    for (const waiter of [...worker.waiters]) waiter();
+    session.commands.push(next);
+    if (session.commands.length > 500) session.commands.splice(0, session.commands.length - 500);
+    for (const waiter of [...session.waiters]) waiter();
     return next;
   }
 
   private waitForCommand<T>(
     commandId: string,
-    type: WorkerCommand["type"],
+    type: SessionCommand["type"],
     threadId?: string,
     timeoutMs: number | null | undefined = 30000
   ): Promise<T> {
@@ -937,7 +900,7 @@ export class ThreadHub {
     });
   }
 
-  private resolveCommandFromMessage(commandId: string, thread: RuntimeThread | null) {
+  private resolveCommandFromMessage(commandId: string, thread: ThreadState | null) {
     const pending = this.pendingCommands.get(commandId);
     if (!pending) return;
     if ((pending.type === "fork_thread" || pending.type === "rollback_thread") && thread) {
@@ -967,68 +930,68 @@ export class ThreadHub {
     pending.reject(error);
   }
 
-  private markWorkerOffline(
-    worker: RuntimeWorker,
+  private markSessionOffline(
+    session: SessionState,
     message: string,
-    reason: WorkerOfflineReason,
+    reason: SessionOfflineReason,
     now = Date.now()
   ) {
-    const wasOnline = worker.online;
+    const wasOnline = session.online;
     const offlineSinceAt = new Date(now).toISOString();
-    worker.online = false;
-    worker.status = "offline";
-    worker.offlineSinceAt = worker.offlineSinceAt ?? offlineSinceAt;
-    worker.offlineReason = reason;
-    this.rejectPendingWorkerCommands(worker, new Error(message));
-    for (const waiter of [...worker.waiters]) waiter();
+    session.online = false;
+    session.status = "offline";
+    session.offlineSinceAt = session.offlineSinceAt ?? offlineSinceAt;
+    session.offlineReason = reason;
+    this.rejectPendingSessionCommands(session, new Error(message));
+    for (const waiter of [...session.waiters]) waiter();
     for (const thread of this.threads.values()) {
-      if (thread.workerId !== worker.workerId) continue;
+      if (thread.sessionId !== session.sessionId) continue;
       this.rejectQueuedTurns(thread.threadId, new Error(message));
       if (thread.running) {
-        this.finishWorkerTurnByThread(thread.threadId, new Error(message));
+        this.finishSessionTurnByThread(thread.threadId, new Error(message));
       } else if (wasOnline) {
         this.publish(thread, "thread");
       }
     }
-    if (wasOnline) this.publishWorkers();
+    if (wasOnline) this.publishSessions();
   }
 
-  private removeWorker(
-    worker: RuntimeWorker,
+  private removeSession(
+    session: SessionState,
     message: string,
-    reason: WorkerOfflineReason,
+    reason: SessionOfflineReason,
     now = Date.now()
   ) {
     const error = new Error(message);
     const offlineSinceAt = new Date(now).toISOString();
-    worker.online = false;
-    worker.status = "offline";
-    worker.offlineSinceAt = worker.offlineSinceAt ?? offlineSinceAt;
-    worker.offlineReason = reason;
-    this.rejectPendingWorkerCommands(worker, error);
-    for (const waiter of [...worker.waiters]) waiter();
-    this.workers.delete(worker.workerId);
+    session.online = false;
+    session.status = "offline";
+    session.offlineSinceAt = session.offlineSinceAt ?? offlineSinceAt;
+    session.offlineReason = reason;
+    this.rejectPendingSessionCommands(session, error);
+    for (const waiter of [...session.waiters]) waiter();
+    this.sessions.delete(session.sessionId);
     for (const thread of this.threads.values()) {
-      if (thread.workerId !== worker.workerId) continue;
+      if (thread.sessionId !== session.sessionId) continue;
       this.rejectQueuedTurns(thread.threadId, error);
       if (thread.running) {
-        this.finishWorkerTurnByThread(thread.threadId, error);
+        this.finishSessionTurnByThread(thread.threadId, error);
       } else {
         this.publish(thread, "thread");
       }
     }
-    this.publishWorkers();
+    this.publishSessions();
   }
 
-  private rejectPendingWorkerCommands(worker: RuntimeWorker, error: Error) {
-    for (const command of worker.commands) this.rejectCommand(command.commandId, error);
+  private rejectPendingSessionCommands(session: SessionState, error: Error) {
+    for (const command of session.commands) this.rejectCommand(command.commandId, error);
   }
 
-  private ensureThread(threadId: string, worker: RuntimeWorker, message: Record<string, unknown>) {
+  private ensureThread(threadId: string, session: SessionState, message: Record<string, unknown>) {
     const existing = this.threads.get(threadId);
     if (existing) {
-      if (existing.workerId !== worker.workerId) {
-        existing.workerId = worker.workerId;
+      if (existing.sessionId !== session.sessionId) {
+        existing.sessionId = session.sessionId;
         this.publish(existing, "thread");
         this.publishThreadCatalog();
       }
@@ -1037,14 +1000,14 @@ export class ThreadHub {
 
     const appThread = appServerThreadFromMessage(message);
     const now = new Date().toISOString();
-    const workingDirectory = typeof appThread?.cwd === "string" ? appThread.cwd : worker.workingDirectory;
+    const workingDirectory = typeof appThread?.cwd === "string" ? appThread.cwd : session.workingDirectory;
     const title = typeof appThread?.preview === "string" && appThread.preview.trim()
       ? appThread.preview.slice(0, 80)
       : threadId;
-    const thread: RuntimeThread = {
+    const thread: ThreadState = {
       threadId,
       workingDirectory,
-      workerId: worker.workerId,
+      sessionId: session.sessionId,
       threadOptions: { ...this.defaultThreadOptions },
       running: false,
       title,
@@ -1062,7 +1025,7 @@ export class ThreadHub {
     return thread;
   }
 
-  private applyAppServerMessage(thread: RuntimeThread, message: unknown) {
+  private applyAppServerMessage(thread: ThreadState, message: unknown) {
     const record = asRecord(message);
     if (!record) return;
 
@@ -1104,17 +1067,17 @@ export class ThreadHub {
     }
 
     if (method === "turn/completed") {
-      this.finishWorkerTurn(thread);
+      this.finishSessionTurn(thread);
       return;
     }
 
     if (method === "error") {
       const error = asRecord(params.error);
-      this.appendRuntimeRecord(thread, "error", {
+      this.appendHubRecord(thread, "error", {
         type: "app_server_error",
         message: typeof error?.message === "string" ? error.message : stringify(params)
       });
-      this.finishWorkerTurn(thread);
+      this.finishSessionTurn(thread);
       return;
     }
 
@@ -1133,7 +1096,7 @@ export class ThreadHub {
     }
   }
 
-  private applyAppServerThreadTurns(thread: RuntimeThread, appThread: Record<string, unknown>) {
+  private applyAppServerThreadTurns(thread: ThreadState, appThread: Record<string, unknown>) {
     if (!Array.isArray(appThread.turns)) return;
     for (const turn of appThread.turns) {
       const turnRecord = asRecord(turn);
@@ -1141,7 +1104,7 @@ export class ThreadHub {
     }
   }
 
-  private applyAppServerTurn(thread: RuntimeThread, turn: Record<string, unknown>) {
+  private applyAppServerTurn(thread: ThreadState, turn: Record<string, unknown>) {
     const turnId = typeof turn.id === "string" ? turn.id : "";
     if (!turnId || !Array.isArray(turn.items)) return;
     const timestamp = timestampFromSeconds(turn.completedAt) ?? timestampFromSeconds(turn.startedAt);
@@ -1152,7 +1115,7 @@ export class ThreadHub {
     }
   }
 
-  private applyAppServerThread(thread: RuntimeThread, appThread: Record<string, unknown>) {
+  private applyAppServerThread(thread: ThreadState, appThread: Record<string, unknown>) {
     let changed = false;
     if (typeof appThread.cwd === "string" && thread.workingDirectory !== appThread.cwd) {
       thread.workingDirectory = appThread.cwd;
@@ -1170,8 +1133,8 @@ export class ThreadHub {
     this.publish(thread, "thread");
   }
 
-  private applyRuntimeSettings(
-    thread: RuntimeThread,
+  private applySessionSettings(
+    thread: ThreadState,
     model: string | null | undefined,
     modelReasoningEffort: ThreadOptions["modelReasoningEffort"] | null | undefined
   ) {
@@ -1193,10 +1156,10 @@ export class ThreadHub {
     this.publish(thread, "thread");
   }
 
-  private applyThreadExecutionState(thread: RuntimeThread, running: boolean, turnId?: string) {
+  private applyThreadExecutionState(thread: ThreadState, running: boolean, turnId?: string) {
     if (!running) {
       if (thread.running || this.activeTurnCommands.has(thread.threadId)) {
-        this.finishWorkerTurn(thread);
+        this.finishSessionTurn(thread);
         return;
       }
       if (thread.appServerTurnId !== undefined) {
@@ -1220,7 +1183,7 @@ export class ThreadHub {
     this.publish(thread, "thread");
   }
 
-  private appendRuntimeRecord(thread: RuntimeThread, type: string, payload: unknown) {
+  private appendHubRecord(thread: ThreadState, type: string, payload: unknown) {
     const record: CodexRecord = {
       id: `proxy:${randomUUID()}`,
       timestamp: new Date().toISOString(),
@@ -1234,8 +1197,8 @@ export class ThreadHub {
     this.publish(thread, "record", record);
   }
 
-  private appendThreadGoalClearedRecord(thread: RuntimeThread, payload: Record<string, unknown> = {}) {
-    this.appendRuntimeRecord(thread, "event_msg", {
+  private appendThreadGoalClearedRecord(thread: ThreadState, payload: Record<string, unknown> = {}) {
+    this.appendHubRecord(thread, "event_msg", {
       ...payload,
       type: "thread_goal_cleared",
       threadId: typeof payload.threadId === "string" ? payload.threadId : thread.threadId,
@@ -1243,7 +1206,7 @@ export class ThreadHub {
     });
   }
 
-  private appendUserInputRecord(thread: RuntimeThread, input: ProxyInput) {
+  private appendUserInputRecord(thread: ThreadState, input: ProxyInput) {
     const record: CodexRecord = {
       id: `proxy:user:${randomUUID()}`,
       timestamp: new Date().toISOString(),
@@ -1262,7 +1225,7 @@ export class ThreadHub {
     this.publish(thread, "record", record);
   }
 
-  private resetThreadRecords(thread: RuntimeThread) {
+  private resetThreadRecords(thread: ThreadState) {
     thread.records = [];
     thread.jsonl = undefined;
     thread.recordSeq = 0;
@@ -1270,7 +1233,7 @@ export class ThreadHub {
     thread.threadUsage = emptyThreadUsage();
   }
 
-  private removeOptimisticUserRecord(thread: RuntimeThread, incoming: CodexRecord) {
+  private removeOptimisticUserRecord(thread: ThreadState, incoming: CodexRecord) {
     const incomingPayload = asRecord(incoming.payload);
     if (incoming.type !== "event_msg" || incomingPayload?.type !== "user_message") return;
     const index = thread.records.findIndex((record) => {
@@ -1283,7 +1246,7 @@ export class ThreadHub {
     if (index !== -1) thread.records.splice(index, 1);
   }
 
-  private removeMatchingAppServerTranscriptRecord(thread: RuntimeThread, incoming: CodexRecord) {
+  private removeMatchingAppServerTranscriptRecord(thread: ThreadState, incoming: CodexRecord) {
     if (!incoming.type || incoming.type !== "event_msg") return;
     const incomingPayload = asRecord(incoming.payload);
     if (!incomingPayload) return;
@@ -1306,7 +1269,7 @@ export class ThreadHub {
     if (index !== -1) thread.records.splice(index, 1);
   }
 
-  private upsertRecord(thread: RuntimeThread, record: CodexRecord) {
+  private upsertRecord(thread: ThreadState, record: CodexRecord) {
     const existingIndex = thread.records.findIndex((item) => item.id === record.id);
     if (existingIndex === -1) {
       if (typeof record.order !== "number") record = { ...record, order: ++thread.recordSeq };
@@ -1325,14 +1288,14 @@ export class ThreadHub {
     this.publish(thread, "record", record);
   }
 
-  private finishWorkerTurnByThread(threadId: string, error?: Error) {
+  private finishSessionTurnByThread(threadId: string, error?: Error) {
     const thread = this.threads.get(threadId);
     if (!thread) return;
-    if (error) this.appendRuntimeRecord(thread, "error", { type: "error", message: error.message });
-    this.finishWorkerTurn(thread, error);
+    if (error) this.appendHubRecord(thread, "error", { type: "error", message: error.message });
+    this.finishSessionTurn(thread, error);
   }
 
-  private finishWorkerTurn(thread: RuntimeThread, error?: Error) {
+  private finishSessionTurn(thread: ThreadState, error?: Error) {
     const commandId = this.activeTurnCommands.get(thread.threadId);
     if (commandId) {
       this.activeTurnCommands.delete(thread.threadId);
@@ -1347,7 +1310,7 @@ export class ThreadHub {
     this.startNextQueuedTurn(thread);
   }
 
-  private startNextQueuedTurn(thread: RuntimeThread) {
+  private startNextQueuedTurn(thread: ThreadState) {
     if (thread.running) return;
     const queue = this.queuedTurns.get(thread.threadId);
     const next = queue?.shift();
@@ -1372,7 +1335,7 @@ export class ThreadHub {
   }
 
   private publish(
-    thread: RuntimeThread,
+    thread: ThreadState,
     kind: ThreadStreamEvent["kind"],
     record?: CodexRecord,
     extra: Pick<ThreadStreamEvent, "jsonl"> = {}
@@ -1391,13 +1354,13 @@ export class ThreadHub {
     this.options.onThreadChange?.();
   }
 
-  private summary(thread: RuntimeThread): ThreadSummary {
+  private summary(thread: ThreadState): ThreadSummary {
     return {
       threadId: thread.threadId,
       workingDirectory: thread.workingDirectory,
       model: thread.threadOptions.model,
       modelReasoningEffort: thread.threadOptions.modelReasoningEffort,
-      runtime: this.runtimeSummary(thread),
+      session: this.threadSessionSummary(thread),
       status: thread.running ? "running" : "idle",
       running: thread.running,
       title: thread.title,
@@ -1408,7 +1371,7 @@ export class ThreadHub {
     };
   }
 
-  private detail(thread: RuntimeThread): ThreadDetail {
+  private detail(thread: ThreadState): ThreadDetail {
     return {
       ...this.summary(thread),
       records: thread.records,
@@ -1417,28 +1380,28 @@ export class ThreadHub {
     };
   }
 
-  private workerSummary(worker: RuntimeWorker): WorkerSummary {
-    const threads = this.workerThreads(worker);
+  private sessionSummary(session: SessionState): SessionSummary {
+    const threads = this.sessionThreads(session);
     return {
-      workerId: worker.workerId,
-      machineId: worker.machineId,
-      name: worker.name,
-      workingDirectory: worker.workingDirectory,
-      appServerUrl: worker.appServerUrl,
-      online: worker.online,
-      status: worker.online ? "online" : "offline",
-      lastSeenAt: worker.lastSeenAt,
-      offlineSinceAt: worker.offlineSinceAt,
-      offlineReason: worker.offlineReason,
-      pid: worker.pid,
-      hostname: worker.hostname,
+      sessionId: session.sessionId,
+      machineId: session.machineId,
+      name: session.name,
+      workingDirectory: session.workingDirectory,
+      appServerUrl: session.appServerUrl,
+      online: session.online,
+      status: session.online ? "online" : "offline",
+      lastSeenAt: session.lastSeenAt,
+      offlineSinceAt: session.offlineSinceAt,
+      offlineReason: session.offlineReason,
+      pid: session.pid,
+      hostname: session.hostname,
       threads
     };
   }
 
-  private workerThreads(worker: RuntimeWorker): ThreadSummary[] {
+  private sessionThreads(session: SessionState): ThreadSummary[] {
     const summaries = [...this.threads.values()]
-      .filter((thread) => thread.workerId === worker.workerId)
+      .filter((thread) => thread.sessionId === session.sessionId)
       .map((thread) => this.summary(thread));
     return summaries.sort((left, right) => {
       return Number(right.running) - Number(left.running)
@@ -1446,123 +1409,97 @@ export class ThreadHub {
     });
   }
 
-  private workerVisibleState(worker: RuntimeWorker) {
+  private sessionVisibleState(session: SessionState) {
     return JSON.stringify({
-      workerId: worker.workerId,
-      machineId: worker.machineId,
-      name: worker.name,
-      workingDirectory: worker.workingDirectory,
-      appServerUrl: worker.appServerUrl,
-      online: worker.online,
-      status: worker.online ? "online" : "offline",
-      offlineSinceAt: worker.offlineSinceAt,
-      offlineReason: worker.offlineReason,
-      pid: worker.pid,
-      hostname: worker.hostname
+      sessionId: session.sessionId,
+      machineId: session.machineId,
+      name: session.name,
+      workingDirectory: session.workingDirectory,
+      appServerUrl: session.appServerUrl,
+      online: session.online,
+      status: session.online ? "online" : "offline",
+      offlineSinceAt: session.offlineSinceAt,
+      offlineReason: session.offlineReason,
+      pid: session.pid,
+      hostname: session.hostname
     });
   }
 
-  private workerSnapshotEvent(): WorkerStreamEvent {
+  private sessionSnapshotEvent(): SessionStreamEvent {
     return {
-      seq: this.workerSeq,
-      kind: "workers",
-      workers: this.listWorkers()
+      seq: this.sessionSeq,
+      kind: "sessions",
+      sessions: this.listSessions()
     };
   }
 
-  private runtimeSessionSnapshotEvent(): RuntimeSessionStreamEvent {
-    return runtimeSessionEventFromWorkers(this.workerSnapshotEvent());
-  }
-
-  private publishWorkers() {
-    const workers = this.listWorkers();
-    const snapshotKey = workerSnapshotKey(workers);
-    if (snapshotKey === this.lastWorkerSnapshotKey) return;
-    this.lastWorkerSnapshotKey = snapshotKey;
-    const event: WorkerStreamEvent = {
-      seq: ++this.workerSeq,
-      kind: "workers",
-      workers
+  private publishSessions() {
+    const sessions = this.listSessions();
+    const snapshotKey = sessionSnapshotKey(sessions);
+    if (snapshotKey === this.lastSessionSnapshotKey) return;
+    this.lastSessionSnapshotKey = snapshotKey;
+    const event: SessionStreamEvent = {
+      seq: ++this.sessionSeq,
+      kind: "sessions",
+      sessions
     };
-    this.workerEvents.push(event);
-    if (this.workerEvents.length > 1000) this.workerEvents.splice(0, this.workerEvents.length - 1000);
-    for (const subscriber of this.workerSubscribers) subscriber(event);
+    this.sessionEvents.push(event);
+    if (this.sessionEvents.length > 1000) this.sessionEvents.splice(0, this.sessionEvents.length - 1000);
+    for (const subscriber of this.sessionSubscribers) subscriber(event);
   }
 
   private publishThreadCatalog() {
-    this.publishWorkers();
+    this.publishSessions();
     this.options.onCatalogChange?.();
   }
 
-  private runtimeSummary(thread: RuntimeThread): ThreadRuntimeSummary {
-    const worker = thread.workerId ? this.workers.get(thread.workerId) : null;
-    if (worker?.online) return workerRuntimeSummary(worker);
-    const replacement = this.uniqueOnlineWorkerForWorkspace(thread.workingDirectory);
-    if (replacement) return workerRuntimeSummary(replacement);
-    if (worker) return workerRuntimeSummary(worker);
+  private threadSessionSummary(thread: ThreadState): ThreadSessionSummary {
+    const session = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
+    if (session?.online) return threadSessionSummary(session);
+    const replacement = this.uniqueOnlineSessionForWorkspace(thread.workingDirectory);
+    if (replacement) return threadSessionSummary(replacement);
+    if (session) return threadSessionSummary(session);
     return { online: false, runnable: false };
   }
 
-  private localCommandMessage(thread: RuntimeThread, command: string) {
-    if (command === "status") return threadStatusMessage(thread, this.runtimeSummary(thread));
+  private localCommandMessage(thread: ThreadState, command: string) {
+    if (command === "status") return threadStatusMessage(thread, this.threadSessionSummary(thread));
     if (command === "help") return slashHelpMessage();
     if (command === "model") return modelCommandMessage(thread);
     return [
       `Unsupported slash command: /${command}`,
       "",
-      "Official Codex TUI slash commands are local UI commands. The app-server protocol accepts turn requests and setting overrides, but it does not expose a key event for submitting the TUI composer.",
+      "Codex slash commands are local UI commands. codexhub handles only the supported commands listed below and does not forward unsupported slash commands as user turns.",
       slashHelpMessage()
     ].join("\n");
   }
 }
 
-const workerRuntimeSummary = (worker: RuntimeWorker): ThreadRuntimeSummary => ({
-  sessionId: worker.workerId,
-  name: worker.name,
-  appServerUrl: worker.appServerUrl,
-  online: worker.online,
-  runnable: worker.online,
-  lastSeenAt: worker.lastSeenAt
+const threadSessionSummary = (session: SessionState): ThreadSessionSummary => ({
+  sessionId: session.sessionId,
+  name: session.name,
+  appServerUrl: session.appServerUrl,
+  online: session.online,
+  runnable: session.online,
+  lastSeenAt: session.lastSeenAt
 });
 
-export const runtimeSessionFromWorker = (worker: WorkerSummary): RuntimeSessionSummary => ({
-  sessionId: worker.workerId,
-  machineId: worker.machineId,
-  name: worker.name,
-  workingDirectory: worker.workingDirectory,
-  appServerUrl: worker.appServerUrl,
-  online: worker.online,
-  status: worker.status,
-  lastSeenAt: worker.lastSeenAt,
-  offlineSinceAt: worker.offlineSinceAt,
-  offlineReason: worker.offlineReason,
-  pid: worker.pid,
-  hostname: worker.hostname,
-  threads: worker.threads
-});
-
-const runtimeSessionEventFromWorkers = (event: WorkerStreamEvent): RuntimeSessionStreamEvent => ({
-  seq: event.seq,
-  kind: "sessions",
-  sessions: event.workers.map(runtimeSessionFromWorker)
-});
-
-const workerSnapshotKey = (workers: WorkerSummary[]) => JSON.stringify(workers.map((worker) => ({
-  ...worker,
+const sessionSnapshotKey = (sessions: SessionSummary[]) => JSON.stringify(sessions.map((session) => ({
+  ...session,
   lastSeenAt: undefined,
-  threads: worker.threads.map(threadSummarySnapshotKey)
+  threads: session.threads.map(threadSummarySnapshotKey)
 })));
 
 const threadSummarySnapshotKey = (thread: ThreadSummary) => ({
   ...thread,
-  runtime: {
-    ...thread.runtime,
+  session: {
+    ...thread.session,
     lastSeenAt: undefined
   }
 });
 
-const workerCommandsAfter = (worker: RuntimeWorker, after: number) =>
-  worker.commands.filter((command) => command.seq > after);
+const sessionCommandsAfter = (session: SessionState, after: number) =>
+  session.commands.filter((command) => command.seq > after);
 
 const normalizeJsonlLines = (lines: JsonlLine[]) => {
   const byLine = new Map<number, JsonlLine>();
@@ -1978,7 +1915,7 @@ const appServerThreadFromMessage = (message: Record<string, unknown>) => {
   return asRecord(result?.thread) ?? asRecord(params?.thread);
 };
 
-const rollbackPlanAfterRecord = (thread: RuntimeThread, recordId: string) => {
+const rollbackPlanAfterRecord = (thread: ThreadState, recordId: string) => {
   const targetTurnId = turnIdFromAppRecordId(thread.threadId, recordId);
   if (!targetTurnId) throw new Error(`Cannot fork from record without app-server turn id: ${recordId}`);
   const turnIds = appServerTurnIds(thread);
@@ -1990,7 +1927,7 @@ const rollbackPlanAfterRecord = (thread: RuntimeThread, recordId: string) => {
   };
 };
 
-const appServerTurnIds = (thread: RuntimeThread) => {
+const appServerTurnIds = (thread: ThreadState) => {
   const turnIds: string[] = [];
   for (const line of thread.jsonl?.lines ?? []) {
     const turnId = turnIdFromJsonlLine(line.text);
@@ -2054,12 +1991,12 @@ const parseLocalSlashCommand = (input: ProxyInput) => {
   return match?.[1].toLowerCase() ?? null;
 };
 
-const threadStatusMessage = (thread: RuntimeThread, runtime: ThreadRuntimeSummary) => [
+const threadStatusMessage = (thread: ThreadState, session: ThreadSessionSummary) => [
   "Codex Hub status",
   `thread: ${thread.threadId}`,
   `folder: ${thread.workingDirectory}`,
   `state: ${thread.running ? "running" : "idle"}`,
-  `runtime: ${formatRuntime(runtime)}`,
+  `session: ${formatSession(session)}`,
   `model: ${formatModel(thread.threadOptions)}`,
   `reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
   `records: ${thread.records.length}`,
@@ -2067,19 +2004,19 @@ const threadStatusMessage = (thread: RuntimeThread, runtime: ThreadRuntimeSummar
   `usage: ${formatUsage(thread.lastUsage)}`
 ].join("\n");
 
-const modelCommandMessage = (thread: RuntimeThread) => [
+const modelCommandMessage = (thread: ThreadState) => [
   "Model control",
   `current model: ${formatModel(thread.threadOptions)}`,
   `current reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
   "",
-  "In Web, use the Runtime selector. The selected model and reasoning are sent with the next Web turn.",
-  "In the official TUI, run /model locally; codexhub cannot press Enter inside the TUI composer through app-server."
+  "In Web, use the Model selector. The selected model and reasoning are sent with the next Web turn.",
+  "For API, Telegram, task, and session turns, pass model options with the next turn request."
 ].join("\n");
 
 const slashHelpMessage = () => [
   "Supported codexhub slash commands:",
-  "/status - show this thread runtime status",
-  "/model - explain model control for Web and TUI",
+  "/status - show this thread session status",
+  "/model - explain model control",
   "/help - show supported proxy commands"
 ].join("\n");
 
@@ -2094,9 +2031,9 @@ const formatThreadGoalMessage = (goal: Record<string, unknown> | null) => {
   return `Goal ${status}: ${objective}${budget}`;
 };
 
-const formatRuntime = (runtime: ThreadRuntimeSummary) => {
-  const state = runtime.runnable ? "runnable" : runtime.online ? "online" : "offline";
-  const session = runtime.sessionId ? ` session:${runtime.name ?? runtime.sessionId.slice(0, 8)}` : "";
+const formatSession = (summary: ThreadSessionSummary) => {
+  const state = summary.runnable ? "runnable" : summary.online ? "online" : "offline";
+  const session = summary.sessionId ? ` session:${summary.name ?? summary.sessionId.slice(0, 8)}` : "";
   return `${state}${session}`;
 };
 

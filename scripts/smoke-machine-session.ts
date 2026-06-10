@@ -107,8 +107,8 @@ const main = async () => {
 
   await assertTaskCronSemantics();
   await assertServerStateSnapshotPure();
-  await assertProjectRuntimeProjection();
-  await assertDeletedProjectSuppressesRuntimeCapture();
+  await assertProjectSessionProjection();
+  await assertDeletedProjectSuppressesSessionCapture();
   await writeStartupSshHostState(dataDir, "included-host");
 
   const port = await findFreePort();
@@ -143,7 +143,7 @@ const main = async () => {
     const threadId = open.result?.threadId;
     const projectId = open.project?.projectId;
     if (!sessionId || !threadId || !projectId) throw new Error("project open did not return project/session/thread ids");
-    await assertProjectRuntime(apiBase, projectId, sessionId);
+    await assertProjectSession(apiBase, projectId, sessionId);
     console.log(`project ok: ${sessionId} ${threadId}`);
     await assertSessionTurnRequiresThread(apiBase, sessionId);
     console.log("session turn target validation ok");
@@ -633,7 +633,7 @@ const assertServerStateSnapshotPure = async () => {
       lastSeenAt: "2026-01-01T00:10:00.000Z",
       capabilities: { projectLauncher: true }
     }],
-    runtimeSessions: [],
+    sessions: [],
     threads: []
   });
   await state.flush();
@@ -641,65 +641,65 @@ const assertServerStateSnapshotPure = async () => {
   if (after !== before) throw new Error("CodexhubServerState.snapshot mutated server-state.yaml");
 };
 
-const assertProjectRuntimeProjection = async () => {
-  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-runtime."));
+const assertProjectSessionProjection = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-session."));
   const { CodexhubServerState } = await import("../src/core/serverState.js");
   const state = await CodexhubServerState.load({ dataDir });
-  const machineId = "machine-runtime-smoke";
-  const projectPath = "/tmp/codexhub-runtime-smoke";
+  const machineId = "machine-session-smoke";
+  const projectPath = "/tmp/codexhub-session-smoke";
   const machine = {
     machineId,
     type: "local" as const,
-    hostname: "runtime-smoke",
+    hostname: "session-smoke",
     online: true,
     status: "online" as const,
     lastSeenAt: "2026-01-01T00:01:00.000Z",
     capabilities: { projectLauncher: true }
   };
-  const runtimeSession = {
-    workerId: "session-runtime-smoke",
+  const session = {
+    sessionId: "session-projection-smoke",
     machineId,
-    name: "runtime-smoke",
+    name: "session-smoke",
     workingDirectory: projectPath,
     online: true,
     status: "online" as const,
     lastSeenAt: "2026-01-01T00:02:00.000Z",
-    hostname: "runtime-smoke",
+    hostname: "session-smoke",
     threads: []
   };
 
-  state.captureRuntime({ runtimeSessions: [runtimeSession], threads: [] });
-  const missingProjectSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [runtimeSession], threads: [] });
+  state.captureSessions({ sessions: [session], threads: [] });
+  const missingProjectSnapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [] });
   if (missingProjectSnapshot.projects.length !== 0) {
-    throw new Error("runtime session created a project without an explicit project");
+    throw new Error("session created a project without an explicit project");
   }
 
   const project = state.upsertProject({ machineId, path: projectPath, now: "2026-01-01T00:03:00.000Z" });
-  if (!project) throw new Error("runtime projection project upsert failed");
-  state.captureRuntime({ runtimeSessions: [runtimeSession], threads: [] });
-  const onlineSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [runtimeSession], threads: [] });
+  if (!project) throw new Error("session projection project upsert failed");
+  state.captureSessions({ sessions: [session], threads: [] });
+  const onlineSnapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [] });
   const onlineProject = onlineSnapshot.projects.find((item) => item.projectId === project.projectId);
-  if (!onlineProject?.machineOnline) throw new Error("project runtime projection did not expose machineOnline");
-  if (onlineProject.runtime?.sessionId !== runtimeSession.workerId || onlineProject.runtime.online !== true) {
-    throw new Error(`project runtime projection did not attach online runtime: ${JSON.stringify(onlineProject?.runtime)}`);
+  if (!onlineProject?.machineOnline) throw new Error("project session projection did not expose machineOnline");
+  if (onlineProject.session?.sessionId !== session.sessionId || onlineProject.session.online !== true) {
+    throw new Error(`project session projection did not attach online session: ${JSON.stringify(onlineProject?.session)}`);
   }
 
   const offlineSession = {
-    ...runtimeSession,
+    ...session,
     online: false,
     status: "offline" as const,
     offlineSinceAt: "2026-01-01T00:04:00.000Z",
     offlineReason: "unregistered" as const
   };
-  const offlineSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [offlineSession], threads: [] });
+  const offlineSnapshot = state.snapshot({ machines: [machine], sessions: [offlineSession], threads: [] });
   const offlineProject = offlineSnapshot.projects.find((item) => item.projectId === project.projectId);
-  if (!offlineProject) throw new Error("project disappeared when runtime went offline");
-  if (offlineProject.runtime !== null) {
-    throw new Error(`offline runtime should not be projected as active runtime: ${JSON.stringify(offlineProject.runtime)}`);
+  if (!offlineProject) throw new Error("project disappeared when session went offline");
+  if (offlineProject.session !== null) {
+    throw new Error(`offline session should not be projected as active session: ${JSON.stringify(offlineProject.session)}`);
   }
 };
 
-const assertDeletedProjectSuppressesRuntimeCapture = async () => {
+const assertDeletedProjectSuppressesSessionCapture = async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-delete."));
   const { CodexhubServerState } = await import("../src/core/serverState.js");
   const state = await CodexhubServerState.load({ dataDir });
@@ -721,8 +721,8 @@ const assertDeletedProjectSuppressesRuntimeCapture = async () => {
     lastSeenAt: "2026-01-01T00:01:00.000Z",
     capabilities: { projectLauncher: true }
   };
-  const runtimeSession = {
-    workerId: "session-delete-smoke",
+  const session = {
+    sessionId: "session-delete-smoke",
     machineId,
     name: "delete-smoke",
     workingDirectory: projectPath,
@@ -732,10 +732,10 @@ const assertDeletedProjectSuppressesRuntimeCapture = async () => {
     hostname: "delete-smoke",
     threads: []
   };
-  state.captureRuntime({ runtimeSessions: [runtimeSession], threads: [] });
-  const deletedSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [runtimeSession], threads: [] });
+  state.captureSessions({ sessions: [session], threads: [] });
+  const deletedSnapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [] });
   if (deletedSnapshot.projects.some((item) => item.projectId === project.projectId)) {
-    throw new Error("deleted project was restored by runtime capture");
+    throw new Error("deleted project was restored by session capture");
   }
 
   const restored = state.upsertProject({
@@ -744,7 +744,7 @@ const assertDeletedProjectSuppressesRuntimeCapture = async () => {
     now: "2026-01-01T00:02:00.000Z"
   });
   if (!restored || restored.projectId !== project.projectId) throw new Error("explicit project reopen did not restore deleted project");
-  const restoredSnapshot = state.snapshot({ machines: [machine], runtimeSessions: [runtimeSession], threads: [] });
+  const restoredSnapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [] });
   if (!restoredSnapshot.projects.some((item) => item.projectId === project.projectId)) {
     throw new Error("restored project was missing from snapshot");
   }
@@ -762,15 +762,15 @@ const assertSessionTurnRequiresThread = async (apiBase: string, sessionId: strin
   }
 };
 
-const assertProjectRuntime = async (apiBase: string, projectId: string, sessionId: string) => {
+const assertProjectSession = async (apiBase: string, projectId: string, sessionId: string) => {
   const payload = await apiJson<ProjectsPayload>(apiBase, "/api/projects");
   assertNoWorkerId(payload, "/api/projects");
   const project = (payload.projects ?? []).map(asRecord).find((item) => item.projectId === projectId);
   if (!project) throw new Error(`/api/projects missing opened project ${projectId}`);
   if (project.machineOnline !== true) throw new Error(`/api/projects did not expose machineOnline for ${projectId}`);
-  const runtime = asRecord(project.runtime);
-  if (runtime.sessionId !== sessionId || runtime.online !== true) {
-    throw new Error(`/api/projects did not project active runtime for ${projectId}: ${JSON.stringify(project.runtime)}`);
+  const session = asRecord(project.session);
+  if (session.sessionId !== sessionId || session.online !== true) {
+    throw new Error(`/api/projects did not project active session for ${projectId}: ${JSON.stringify(project.session)}`);
   }
 };
 
@@ -843,7 +843,7 @@ const assertPluginState = async (apiBase: string, value: unknown) => {
   const telegramIntegration = integrationsOf(telegram).find((integration) => asRecord(integration).type === "telegram");
   if (!telegramIntegration) throw new Error("Telegram integration missing");
   const telegramRecord = asRecord(telegramIntegration);
-  if (telegramRecord.runtime !== "builtin") throw new Error("Telegram integration is not builtin");
+  if (telegramRecord.runner !== "builtin") throw new Error("Telegram integration is not builtin");
   if (telegramRecord.configured !== false || telegramRecord.started !== false) {
     throw new Error("Telegram integration should be unconfigured and stopped without TELEGRAM_BOT_TOKEN");
   }
@@ -851,7 +851,7 @@ const assertPluginState = async (apiBase: string, value: unknown) => {
   const external = plugins.find((plugin) => asRecord(plugin).pluginId === "external-channel");
   if (!external) throw new Error("external integration fixture missing");
   const externalIntegration = integrationsOf(external).find((integration) => asRecord(integration).type === "external-channel");
-  if (!externalIntegration || asRecord(externalIntegration).runtime !== "external") {
+  if (!externalIntegration || asRecord(externalIntegration).runner !== "external") {
     throw new Error("external integration fixture was not reported as external");
   }
   const style = stylesOf(external).find((item) => asRecord(item).path === "style.css");

@@ -13,9 +13,9 @@ export type CompactRecordViewState = {
   views: CompactRecordView[];
   toolIndexes: Map<string, number>;
   turnIndexes: Map<string, number>;
-  runtimeMessageIndexes: Map<string, number>;
-  runtimeMessageCounts: Map<string, number>;
-  runtimeMessageRoles: Map<string, Set<string>>;
+  internalMessageIndexes: Map<string, number>;
+  internalMessageCounts: Map<string, number>;
+  internalMessageRoles: Map<string, Set<string>>;
   eventRun?: {
     key: string;
     index: number;
@@ -33,9 +33,9 @@ export const createCompactRecordViewState = (): CompactRecordViewState => ({
   views: [],
   toolIndexes: new Map(),
   turnIndexes: new Map(),
-  runtimeMessageIndexes: new Map(),
-  runtimeMessageCounts: new Map(),
-  runtimeMessageRoles: new Map()
+  internalMessageIndexes: new Map(),
+  internalMessageCounts: new Map(),
+  internalMessageRoles: new Map()
 });
 
 export const compactToolViews = (views: CodexRecordView[]): CompactRecordView[] => {
@@ -103,8 +103,8 @@ const compactEventView = (
   const payload = asRecord(view.record.payload);
   if (!payload) return null;
 
-  if (view.record.type === "response_item" && payload.type === "message" && isRuntimeMessage(payload)) {
-    return compactRuntimeMessage(state, view, payload);
+  if (view.record.type === "response_item" && payload.type === "message" && isInternalMessage(payload)) {
+    return compactInternalMessage(state, view, payload);
   }
 
   if (view.record.type !== "event_msg") return null;
@@ -187,37 +187,37 @@ const compactRepeatedEvent = (
   return { view: compactView, appended: false, previousId: previous.id };
 };
 
-const compactRuntimeMessage = (
+const compactInternalMessage = (
   state: CompactRecordViewState,
   view: CodexRecordView,
   payload: Record<string, unknown>
 ): CompactRecordViewChange => {
   state.eventRun = undefined;
   const turnId = compactTurnId(view) ?? "unscoped";
-  const index = state.runtimeMessageIndexes.get(turnId);
+  const index = state.internalMessageIndexes.get(turnId);
   const role = typeof payload.role === "string" ? payload.role : "unknown";
-  const roles = state.runtimeMessageRoles.get(turnId) ?? new Set<string>();
+  const roles = state.internalMessageRoles.get(turnId) ?? new Set<string>();
   roles.add(role);
-  state.runtimeMessageRoles.set(turnId, roles);
+  state.internalMessageRoles.set(turnId, roles);
 
   if (index == null) {
-    state.runtimeMessageIndexes.set(turnId, state.views.length);
-    state.runtimeMessageCounts.set(turnId, 1);
+    state.internalMessageIndexes.set(turnId, state.views.length);
+    state.internalMessageCounts.set(turnId, 1);
     const compactView: CompactRecordView = {
       ...view,
-      id: `compact-runtime-message:${turnId}`,
-      label: "runtime messages"
+      id: `compact-internal-message:${turnId}`,
+      label: "internal messages"
     };
     state.views.push(compactView);
     return { view: compactView, appended: true };
   }
 
   const previous = state.views[index];
-  const count = (state.runtimeMessageCounts.get(turnId) ?? 1) + 1;
-  state.runtimeMessageCounts.set(turnId, count);
+  const count = (state.internalMessageCounts.get(turnId) ?? 1) + 1;
+  state.internalMessageCounts.set(turnId, count);
   const compactView: CompactRecordView = {
     ...previous,
-    text: `${count} runtime messages\nroles: ${[...roles].join(", ")}`,
+    text: `${count} internal messages\nroles: ${[...roles].join(", ")}`,
     at: view.at ?? previous.at,
     inspectRecord: view.record,
     inspectText: view.text
@@ -236,7 +236,7 @@ const compactTurnId = (view: CodexRecordView) => {
   return parts[0] === "app" && parts.length >= 3 ? parts[2] : undefined;
 };
 
-const isRuntimeMessage = (payload: Record<string, unknown>) =>
+const isInternalMessage = (payload: Record<string, unknown>) =>
   payload.role !== "user" && payload.role !== "assistant";
 
 const formatCompactToolCall = (view: CodexRecordView) => {

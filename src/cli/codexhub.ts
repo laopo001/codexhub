@@ -1,10 +1,6 @@
 #!/usr/bin/env tsx
 import { Command } from "commander";
-import path from "node:path";
 import { loadDotEnv } from "../core/dotenv.js";
-import { listLoadableCodexThreads } from "../core/codexhubLog.js";
-import type { CodexSessionSummary } from "../core/codexSession.js";
-import type { ThreadSummary } from "../core/threadHub.js";
 import { runCodexhubMachine } from "./codexhubMachine.js";
 import { registerCodexHubSessionCommands } from "./codexhubConnect.js";
 
@@ -19,10 +15,6 @@ type MachineCommandOptions = {
   machineId?: string;
   type?: "local" | "ssh" | "registered";
   name?: string;
-};
-
-type ThreadsCommandOptions = {
-  show?: string;
 };
 
 type SshConnectCommandOptions = {
@@ -56,26 +48,16 @@ type LocalTask = {
   lastError?: string;
 };
 
-type RuntimeSessionSummary = {
-  sessionId: string;
-  name?: string;
-  workingDirectory: string;
-  online: boolean;
-  lastSeenAt: string;
-  offlineReason?: "heartbeat_timeout" | "transport_disconnected" | "unregistered";
-  threads?: ThreadSummary[];
-};
-
 await loadDotEnv();
 
 const program = new Command()
   .name("codexhub")
-  .description("Run Codex through codexhub")
+  .description("Start and manage CodexHub")
   .option("--server <url>", "codexhub server URL", defaultServerUrl());
 
 program
   .command("server")
-  .description("Start the codexhub API server")
+  .description("Start the CodexHub web/API server")
   .option("--host <host>", "listen host (overrides CODEX_HUB_HOST)")
   .option("--port <port>", "listen port (overrides CODEX_HUB_PORT)")
   .option("--serve-static <dir>", "serve built web assets from this directory")
@@ -93,16 +75,8 @@ program
   });
 
 program
-  .command("list")
-  .description("List codexhub runtime sessions")
-  .action(async () => {
-    const data = await apiJson<{ sessions?: RuntimeSessionSummary[] }>("/api/sessions");
-    printRuntimeSessions(data.sessions ?? []);
-  });
-
-program
   .command("machine")
-  .description("Run one machine that can start project runtime sessions")
+  .description("Register this machine so it can start project sessions")
   .option("--server <url>", "codexhub server URL")
   .option("--machine-id <id>", "stable machine id")
   .option("--type <type>", "machine connection type: local, ssh, or registered", "registered")
@@ -204,26 +178,10 @@ sshCommand
     console.log(`SSH connection ${connection.status}: ${connection.host} (${connection.connectionId}, remote port ${connection.remotePort})`);
   });
 
-program
-  .command("threads")
-  .description("List local Codex threads for the current directory")
-  .option("--show <count>", "number of recent threads to show", "20")
-  .action(async (options: ThreadsCommandOptions = {}) => {
-    const limit = parsePositiveIntegerOption(options.show, "show");
-    const threads = await listLoadableCodexThreads(commandCwd(), { limit });
-    printCodexSessions(threads);
-  });
-
-program
-  .command("delete")
-  .argument("<target>", "thread index, full id, or unique id prefix to delete")
-  .description("Delete a thread")
-  .action(async (target: string) => {
-    const { threads } = await listSessionThreads();
-    const thread = resolveThreadTarget(target, threads);
-    await apiJson(`/api/threads/${encodeURIComponent(thread.threadId)}`, { method: "DELETE" });
-    console.log(`Deleted ${formatThread(thread)}`);
-  });
+registerRemovedTopLevelCommand("list", "codexhub list was removed. Use the Web UI or /api/projects for project/session state.");
+registerRemovedTopLevelCommand("delete", "codexhub delete was removed. Delete threads from the Web UI when needed.");
+registerRemovedTopLevelCommand("threads", "codexhub threads was removed. Use the Web thread picker to select or resume local Codex threads.");
+registerRemovedTopLevelCommand("resume", "codexhub resume was removed. Start a session with codexhub, then select or resume the thread from Web/API.");
 
 registerCodexHubSessionCommands(program);
 
@@ -321,17 +279,14 @@ async function apiJson<T = unknown>(path: string, init?: RequestInit): Promise<T
   return await response.json() as T;
 }
 
-async function listSessionThreads() {
-  const data = await apiJson<{ sessions?: RuntimeSessionSummary[] }>("/api/sessions");
-  return { threads: sessionThreads(data.sessions) };
-}
-
-function sessionThreads(sessions: RuntimeSessionSummary[] | undefined) {
-  const byId = new Map<string, ThreadSummary>();
-  for (const session of sessions ?? []) {
-    for (const thread of session.threads ?? []) byId.set(thread.threadId, thread);
-  }
-  return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+function registerRemovedTopLevelCommand(name: string, message: string) {
+  program
+    .command(name, { hidden: true })
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(() => {
+      throw new Error(message);
+    });
 }
 
 async function listLocalTasks() {
@@ -401,94 +356,6 @@ function apiBase() {
   return options.server;
 }
 
-function printRuntimeSessions(sessions: RuntimeSessionSummary[]) {
-  if (!sessions.length) {
-    console.log("No runtime sessions.");
-    return;
-  }
-  console.table(sessions.map((session) => ({
-    ...runtimeSessionDisplay(session),
-    session: session.name ?? session.sessionId.slice(0, 8),
-    state: session.online ? "online" : "offline",
-  })));
-}
-
-function runtimeSessionDisplay(session: RuntimeSessionSummary) {
-  const threads = session.threads ?? [];
-  const runningThread = threads.find((thread) => thread.running || thread.status === "running");
-  const latestThread = runningThread ?? threads[0];
-  return {
-    status: session.online ? runningThread ? "running" : "idle" : sessionOfflineReason(session),
-    folder: session.workingDirectory,
-    thread: session.online && latestThread ? latestThread.threadId.slice(0, 8) : "",
-    lastSeen: session.online ? "" : relativeTime(session.lastSeenAt),
-    title: session.online ? latestThread?.title ?? "" : "recently disconnected"
-  };
-}
-
-function printCodexSessions(threads: CodexSessionSummary[]) {
-  if (!threads.length) {
-    console.log("No Codex threads for this directory.");
-    return;
-  }
-  console.table(threads.map((thread) => ({
-    updated: formatLocalTime(thread.updatedAt),
-    threadId: thread.threadId,
-    title: truncate(singleLine(thread.firstUserMessage) || "(untitled)", 96),
-    messages: thread.messageCount,
-    artifacts: thread.artifactCount
-  })));
-}
-
-function resolveThreadTarget(target: string, threads: ThreadSummary[]) {
-  const trimmed = target.trim();
-  if (!trimmed) throw new Error("Missing thread target.");
-
-  if (/^\d+$/.test(trimmed)) {
-    const index = Number(trimmed);
-    const thread = threads[index];
-    if (!thread) {
-      throw new Error(`No server-mirrored thread at index ${index}.`);
-    }
-    return thread;
-  }
-
-  const matches = threads.filter((thread) => thread.threadId.startsWith(trimmed));
-  if (matches.length === 1) return matches[0];
-  if (matches.length > 1) {
-    throw new Error([
-      `Thread target "${trimmed}" is ambiguous. Matching threads:`,
-      ...matches.map((thread) => `  ${formatThread(thread)}`)
-    ].join("\n"));
-  }
-
-  throw new Error(`Server-mirrored thread not found: ${trimmed}.`);
-}
-
-function formatThread(thread: ThreadSummary) {
-  return `${thread.threadId.slice(0, 8)} (${thread.workingDirectory}, ${thread.title})`;
-}
-
-function sessionOfflineReason(session: RuntimeSessionSummary) {
-  if (session.offlineReason === "heartbeat_timeout") return "heartbeat timeout";
-  if (session.offlineReason === "transport_disconnected") return "connection lost";
-  return "recently disconnected";
-}
-
-function relativeTime(iso: string | undefined) {
-  if (!iso) return "unknown";
-  const timestamp = Date.parse(iso);
-  if (!Number.isFinite(timestamp)) return "unknown";
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-  if (seconds < 5) return "just now";
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
 function formatLocalTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -519,10 +386,6 @@ function pad2(value: number) {
   return String(value).padStart(2, "0");
 }
 
-function commandCwd() {
-  return path.resolve(process.cwd());
-}
-
 function parsePortOption(value: string | undefined) {
   if (!value) return undefined;
   const parsed = Number(value);
@@ -536,14 +399,6 @@ function parseMachineType(value: string | undefined): "local" | "ssh" | "registe
   if (!value) return undefined;
   if (value === "local" || value === "ssh" || value === "registered") return value;
   throw new Error(`Invalid machine type: ${value}`);
-}
-
-function parsePositiveIntegerOption(value: string | undefined, name: string) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`Invalid ${name}: ${value}`);
-  }
-  return parsed;
 }
 
 function serverUrl(host: string, port: number) {

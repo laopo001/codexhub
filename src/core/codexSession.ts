@@ -495,14 +495,14 @@ const mapWithConcurrency = async <T, R>(
 ): Promise<R[]> => {
   const results: R[] = [];
   let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     while (nextIndex < items.length) {
       const index = nextIndex;
       nextIndex += 1;
       results[index] = await mapper(items[index]);
     }
   });
-  await Promise.all(workers);
+  await Promise.all(runners);
   return results;
 };
 

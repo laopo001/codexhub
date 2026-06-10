@@ -11,7 +11,7 @@ import {
   type MachineStopSessionResult,
   type MachineType
 } from "../core/machineHub.js";
-import type { WorkerCommand } from "../core/threadHub.js";
+import type { SessionCommand } from "../core/threadHub.js";
 import {
   startHeadlessCodexhubSession,
   type HeadlessCodexhubSessionHandle,
@@ -35,11 +35,11 @@ type MachineTransportMessage =
   | { type: "registered"; machineId: string; machine?: unknown }
   | { type: "commands"; cursor: number; commands: MachineCommand[] }
   | { type: "session_registered"; sessionId: string; session?: unknown }
-  | { type: "session_commands"; sessionId: string; cursor: number; commands: WorkerCommand[] }
+  | { type: "session_commands"; sessionId: string; cursor: number; commands: SessionCommand[] }
   | { type: "session_error"; sessionId: string; message: string }
   | { type: "error"; message: string };
 
-type ManagedRuntimeSession = {
+type ManagedSession = {
   session: HeadlessCodexhubSessionHandle;
   cwd: string;
 };
@@ -67,7 +67,7 @@ class CodexhubMachineRunner {
   private loopStarted = false;
   private commandCursor = 0;
   private commandChain = Promise.resolve();
-  private readonly sessionsByCwd = new Map<string, ManagedRuntimeSession>();
+  private readonly sessionsByCwd = new Map<string, ManagedSession>();
   private readonly sessionTransports = new Map<string, MachineSessionTransport>();
 
   constructor(private readonly options: MachineRunnerOptions) {
@@ -395,7 +395,7 @@ class MachineSessionTransport implements HeadlessSessionTransport {
     });
   }
 
-  private enqueueCommands(commands: WorkerCommand[]) {
+  private enqueueCommands(commands: SessionCommand[]) {
     this.commandChain = this.commandChain.then(async () => {
       for (const command of commands) {
         try {
@@ -490,7 +490,7 @@ const parseMachineTransportMessage = (data: unknown): MachineTransportMessage | 
     const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
     const cursor = typeof message.cursor === "number" ? message.cursor : NaN;
     return sessionId && Number.isFinite(cursor) && Array.isArray(message.commands)
-      ? { type: "session_commands", sessionId, cursor, commands: message.commands as WorkerCommand[] }
+      ? { type: "session_commands", sessionId, cursor, commands: message.commands as SessionCommand[] }
       : null;
   }
   if (type === "session_error") {

@@ -16,13 +16,13 @@ import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, isCronExpression } from "../core/taskCron.js";
-import { runtimeSessionFromWorker, ThreadHub } from "../core/threadHub.js";
+import { ThreadHub } from "../core/threadHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
 import {
   startTelegramPlugin,
   telegramBuiltinPlugin,
   telegramIntegrationType,
-  telegramPluginRuntimeState,
+  telegramPluginState,
   type TelegramBotHandle
 } from "../../plugins/telegram/index.js";
 
@@ -85,7 +85,7 @@ const sessionEventSchema = z.discriminatedUnion("type", [
     heartbeat: z.boolean().optional()
   }),
   z.object({
-    type: z.literal("runtime_settings_changed"),
+    type: z.literal("session_settings_changed"),
     threadId: z.string().min(1),
     model: z.string().min(1).nullable().optional(),
     modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
@@ -323,11 +323,11 @@ const staticRoot = (override?: string) => override
   ? path.resolve(override)
   : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? path.join(packageRoot(), "dist"));
 const sessionOfflineTimeoutMs = () =>
-  envMs("CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS", envMs("CODEX_HUB_WORKER_OFFLINE_TIMEOUT_MS", 45_000));
+  envMs("CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS", 45_000);
 const sessionOfflineRetentionMs = () =>
-  envMs("CODEX_HUB_SESSION_OFFLINE_RETENTION_MS", envMs("CODEX_HUB_WORKER_OFFLINE_RETENTION_MS", 30 * 60_000));
+  envMs("CODEX_HUB_SESSION_OFFLINE_RETENTION_MS", 30 * 60_000);
 const sessionSweepIntervalMs = () =>
-  envMs("CODEX_HUB_SESSION_SWEEP_INTERVAL_MS", envMs("CODEX_HUB_WORKER_SWEEP_INTERVAL_MS", 5_000));
+  envMs("CODEX_HUB_SESSION_SWEEP_INTERVAL_MS", 5_000);
 const taskScanIntervalMs = () => envMs("CODEX_HUB_TASK_SCAN_INTERVAL_MS", 30_000);
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
@@ -387,15 +387,15 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const features = resolveServerFeatures(options.features);
   const state = await CodexhubServerState.load();
   let threads: ThreadHub;
-  const captureRuntimeState = () => {
-    state.captureRuntime({
-      runtimeSessions: threads.listWorkers({ includeOffline: true }),
+  const captureSessionState = () => {
+    state.captureSessions({
+      sessions: threads.listSessions({ includeOffline: true }),
       threads: threads.listThreads()
     });
   };
   threads = new ThreadHub(config.defaultThreadOptions, {
     onCatalogChange: () => publishProjects(),
-    onThreadChange: () => captureRuntimeState()
+    onThreadChange: () => captureSessionState()
   });
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const projectSubscribers = new Set<(event: ReturnType<typeof projectSnapshotEvent>) => void>();
@@ -437,7 +437,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
 
   const sessionSweep = setInterval(() => {
-    threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
+    threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
   }, sessionSweepIntervalMs());
   sessionSweep.unref?.();
   const runningTasks = new Set<string>();
@@ -455,7 +455,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     await sshMachines.stopAll();
     await localMachine?.stop();
     telegramBot?.stop("server closing");
-    plugins.setIntegrationState(telegramIntegrationType, telegramPluginRuntimeState(false));
+    plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
     await state.flush();
   });
   await app.register(cors, { origin: true });
@@ -464,7 +464,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   function projectSnapshot() {
     return state.snapshot({
       machines: machines.listMachines(),
-      runtimeSessions: threads.listWorkers({ includeOffline: true }),
+      sessions: threads.listSessions({ includeOffline: true }),
       threads: threads.listThreads()
     });
   }
@@ -478,7 +478,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   function publishProjects() {
-    captureRuntimeState();
+    captureSessionState();
     const event = {
       seq: ++projectSeq,
       kind: "projects" as const,
@@ -503,7 +503,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     try {
       threads.observeThreadRecords(threadId);
     } catch {
-      // A thread subscription can still serve the in-memory snapshot when its runtime is offline.
+      // A thread subscription can still serve the in-memory snapshot when its session is offline.
     }
   };
 
@@ -524,7 +524,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     try {
       threads.unobserveThreadRecords(threadId);
     } catch {
-      // Thread deletion should not be blocked by a stale or offline runtime session.
+      // Thread deletion should not be blocked by a stale or offline session.
     }
   };
 
@@ -548,24 +548,24 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       try {
         threads.unobserveThreadRecords(threadId);
       } catch {
-        // Runtime may have gone offline while the thread tab was idle.
+        // Session may have gone offline while the thread tab was idle.
       }
     }, threadRecordObservationIdleMs());
     timer.unref?.();
     threadRecordObservationTimers.set(threadId, timer);
   }
 
-  const runtimeSessionsForProject = (target: { machineId: string; path: string }) => {
-    const sessions = threads.listRuntimeSessions({ includeOffline: true })
+  const sessionsForProject = (target: { machineId: string; path: string }) => {
+    const sessions = threads.listSessions({ includeOffline: true })
       .filter((session) => session.machineId === target.machineId && session.workingDirectory === target.path);
     return [...new Map(sessions.map((session) => [session.sessionId, session])).values()];
   };
 
-  const stopProjectRuntimeSessions = async (target: { machineId: string; path: string }) => {
-    const sessions = runtimeSessionsForProject(target);
+  const stopProjectSessions = async (target: { machineId: string; path: string }) => {
+    const sessions = sessionsForProject(target);
     return await Promise.all(sessions.map(async (session) => {
       if (!session.online) {
-        threads.unregisterWorker(session.sessionId);
+        threads.unregisterSession(session.sessionId);
         return {
           machineId: target.machineId,
           sessionId: session.sessionId,
@@ -577,7 +577,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       try {
         const command = machines.stopSession(target.machineId, { sessionId: session.sessionId });
         const result = await command.promise;
-        if (!result.stopped) threads.unregisterWorker(session.sessionId);
+        if (!result.stopped) threads.unregisterSession(session.sessionId);
         return {
           machineId: target.machineId,
           sessionId: session.sessionId,
@@ -687,10 +687,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     await Promise.allSettled(connections.map((connection) => sshMachines.stop(connection.connectionId)));
   }
 
-  async function waitForRuntimeSession(sessionId: string, timeoutMs = 10_000) {
+  async function waitForSession(sessionId: string, timeoutMs = 10_000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() <= deadline) {
-      const session = threads.listRuntimeSessions({ includeOffline: true }).find((item) => item.sessionId === sessionId);
+      const session = threads.listSessions({ includeOffline: true }).find((item) => item.sessionId === sessionId);
       if (session?.online) return session;
       await delay(50);
     }
@@ -722,13 +722,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       });
       const session = await started.promise;
       const sessionId = session.sessionId;
-      await waitForRuntimeSession(sessionId);
+      await waitForSession(sessionId);
       let threadId = task.threadId ?? session.threadId;
       if (task.threadId) {
-        const resumed = await threads.resumeWorkerThread(sessionId, task.threadId);
+        const resumed = await threads.resumeSessionThread(sessionId, task.threadId);
         threadId = resumed.threadId;
       } else {
-        threads.attachWorkerThread(sessionId, threadId);
+        threads.attachSessionThread(sessionId, threadId);
       }
       const localCommand = threads.runLocalCommand(threadId, task.input, "task");
       if (localCommand.handled) {
@@ -807,16 +807,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   async function startBuiltinIntegrations() {
     if (!features.integrations) {
-      plugins.setIntegrationState(telegramIntegrationType, telegramPluginRuntimeState(false));
+      plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
       return;
     }
-    plugins.setIntegrationState(telegramIntegrationType, telegramPluginRuntimeState(false));
+    plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
     if (await plugins.hasEnabledBuiltinIntegration(telegramIntegrationType)) {
       telegramBot = await startTelegramPlugin({
         apiBaseUrl: localApiBaseUrl(config.host, config.port),
         requireToken: false
       });
-      plugins.setIntegrationState(telegramIntegrationType, telegramPluginRuntimeState(Boolean(telegramBot)));
+      plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(Boolean(telegramBot)));
     }
   }
 
@@ -842,25 +842,25 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }));
 
   app.get("/api/threads", async () => ({
-    ...threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
+    ...threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
     threads: threads.listThreads()
   }));
 
   app.get("/api/sessions", async (request) => {
     const query = z.object({ includeOffline: z.string().optional() }).parse(request.query);
     return {
-      ...threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
-      sessions: threads.listRuntimeSessions({ includeOffline: query.includeOffline === "true" })
+      ...threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
+      sessions: threads.listSessions({ includeOffline: query.includeOffline === "true" })
     };
   });
 
   app.get("/api/sessions/events", async (request, reply) => {
     const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
-    threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
+    threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
 
     const stopSse = startSse(reply.raw);
 
-    const unsubscribe = threads.subscribeRuntimeSessions(query.after ?? 0, (event) => {
+    const unsubscribe = threads.subscribeSessions(query.after ?? 0, (event) => {
       sendSse(reply.raw, event.kind, event);
     });
     reply.raw.on("close", () => {
@@ -876,7 +876,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       tasksAfter: z.coerce.number().optional(),
       connectionsAfter: z.coerce.number().optional()
     }).parse(request.query);
-    threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
+    threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
 
     const stopSse = startSse(reply.raw);
     const sessionsAfter = query.sessionsAfter ?? 0;
@@ -884,7 +884,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const tasksAfter = query.tasksAfter ?? 0;
     const connectionsAfter = query.connectionsAfter ?? 0;
 
-    const unsubscribeSessions = threads.subscribeRuntimeSessions(sessionsAfter, (event) => {
+    const unsubscribeSessions = threads.subscribeSessions(sessionsAfter, (event) => {
       sendSse(reply.raw, event.kind, event);
     });
     if (projectsAfter <= 0 || projectSeq > projectsAfter) sendSse(reply.raw, "projects", projectSnapshotEvent());
@@ -941,14 +941,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
     const subscribeControl = (input: Extract<WebEventsMessage, { type: "hello" }>) => {
       unsubscribeControl();
-      threads.markStaleWorkersOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
+      threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
 
       const sessionsAfter = input.sessionsAfter ?? 0;
       const projectsAfter = input.projectsAfter ?? 0;
       const tasksAfter = input.tasksAfter ?? 0;
       const connectionsAfter = input.connectionsAfter ?? 0;
 
-      unsubscribeSessions = threads.subscribeRuntimeSessions(sessionsAfter, (event) => {
+      unsubscribeSessions = threads.subscribeSessions(sessionsAfter, (event) => {
         sendEvent(event);
       });
       if (projectsAfter <= 0 || projectSeq > projectsAfter) sendEvent(projectSnapshotEvent());
@@ -1036,7 +1036,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
     const query = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() }).parse(request.query);
     try {
-      return await threads.listWorkerThreadCandidates(params.sessionId, query.limit ?? 50);
+      return await threads.listSessionThreadCandidates(params.sessionId, query.limit ?? 50);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Session not found:") ? 404 : 409);
@@ -1052,8 +1052,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     ]).parse(request.body);
     try {
       const thread = payload.action === "new"
-        ? await threads.startWorkerThread(params.sessionId)
-        : await threads.resumeWorkerThread(params.sessionId, payload.threadId);
+        ? await threads.startSessionThread(params.sessionId)
+        : await threads.resumeSessionThread(params.sessionId, payload.threadId);
       publishProjects();
       return thread;
     } catch (error) {
@@ -1073,7 +1073,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }).parse(request.body);
 
     try {
-      const result = threads.runWorkerThreadTurn(params.sessionId, payload.threadId, payload.input, payload.source ?? "web", payload.options);
+      const result = threads.runSessionThreadTurn(params.sessionId, payload.threadId, payload.input, payload.source ?? "web", payload.options);
       result.promise.catch(() => undefined);
       return { ok: true, thread: result.thread, command: result.command };
     } catch (error) {
@@ -1252,13 +1252,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
     const target = state.projectDeleteTarget(params.projectId);
     const deleted = state.deleteProject(params.projectId);
-    const existingSessions = target ? runtimeSessionsForProject(target) : [];
+    const existingSessions = target ? sessionsForProject(target) : [];
     if (!deleted && existingSessions.length === 0) {
       reply.code(404);
       return { error: `Project not found: ${params.projectId}` };
     }
     if (deleted) publishProjects();
-    const stoppedSessions = target ? await stopProjectRuntimeSessions(target) : [];
+    const stoppedSessions = target ? await stopProjectSessions(target) : [];
     publishProjects();
     return { ok: true, deleted, stoppedSessions, ...projectSnapshot() };
   });
@@ -1278,8 +1278,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       });
       const result = await started.promise;
       const sessionId = result.sessionId;
-      await waitForRuntimeSession(sessionId);
-      threads.attachWorkerThread(sessionId, result.threadId);
+      await waitForSession(sessionId);
+      threads.attachSessionThread(sessionId, result.threadId);
       const project = state.upsertProject({
         machineId: machine.machineId,
         path: result.cwd,
@@ -1442,7 +1442,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
     const sessionCommandPump = async (sessionId: string) => {
       while (!closed && sessionIds.has(sessionId)) {
-        const response = await threads.waitWorkerCommands(sessionId, sessionCursors.get(sessionId) ?? 0, 60_000);
+        const response = await threads.waitSessionCommands(sessionId, sessionCursors.get(sessionId) ?? 0, 60_000);
         if (closed || !sessionIds.has(sessionId)) return;
         sessionCursors.set(sessionId, Math.max(sessionCursors.get(sessionId) ?? 0, response.cursor));
         if (response.commands.length) {
@@ -1458,7 +1458,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
     const disconnectSessions = () => {
       for (const sessionId of [...sessionIds]) {
-        threads.disconnectWorker(sessionId, sessionTransportId(sessionId));
+        threads.disconnectSession(sessionId, sessionTransportId(sessionId));
       }
       sessionIds.clear();
       sessionCursors.clear();
@@ -1500,7 +1500,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         if (parsed.type === "unregister") {
           machines.unregisterMachine(machineId!, transportId);
           for (const sessionId of [...sessionIds]) {
-            threads.unregisterWorker(sessionId, sessionTransportId(sessionId));
+            threads.unregisterSession(sessionId, sessionTransportId(sessionId));
           }
           sessionIds.clear();
           sessionCursors.clear();
@@ -1518,23 +1518,24 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
         if (parsed.type === "session_register") {
           const { currentThreadId: _legacyCurrentThreadId, ...registration } = parsed.registration;
-          const result = threads.registerWorker({
+          const registered = threads.registerSession({
             ...registration,
-            workerId: parsed.sessionId,
+            sessionId: parsed.sessionId,
             machineId: machineId!,
             transportId: sessionTransportId(parsed.sessionId)
           });
-          sessionIds.add(result.workerId);
-          sessionCursors.set(result.workerId, threads.clampWorkerCommandCursor(result.workerId, parsed.commandCursor ?? 0));
-          send({ type: "session_registered", sessionId: result.workerId, session: runtimeSessionFromWorker(result.worker) });
+          const sessionId = registered.sessionId;
+          sessionIds.add(sessionId);
+          sessionCursors.set(sessionId, threads.clampSessionCommandCursor(sessionId, parsed.commandCursor ?? 0));
+          send({ type: "session_registered", sessionId, session: registered.session });
           refreshRetainedThreadRecordObservations();
           publishProjects();
-          startSessionCommandPump(result.workerId);
+          startSessionCommandPump(sessionId);
           return;
         }
 
         if (parsed.type === "session_unregister") {
-          threads.unregisterWorker(parsed.sessionId, sessionTransportId(parsed.sessionId));
+          threads.unregisterSession(parsed.sessionId, sessionTransportId(parsed.sessionId));
           sessionIds.delete(parsed.sessionId);
           sessionCursors.delete(parsed.sessionId);
           publishProjects();
@@ -1543,27 +1544,27 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
         if (parsed.type === "session_heartbeat") {
           const { currentThreadId: _legacyCurrentThreadId, ...registration } = parsed.registration ?? {};
-          threads.heartbeatWorker(parsed.sessionId, registration);
+          threads.heartbeatSession(parsed.sessionId, registration);
           return;
         }
 
         if (parsed.type === "session_event") {
-          threads.applyWorkerEvent(parsed.sessionId, parsed.event);
+          threads.applySessionEvent(parsed.sessionId, parsed.event);
           return;
         }
 
         if (parsed.type === "session_records") {
-          threads.applyWorkerRecords(parsed.sessionId, parsed.records);
+          threads.applySessionRecords(parsed.sessionId, parsed.records);
           return;
         }
 
         if (parsed.type === "session_command_result") {
-          threads.resolveWorkerCommand(parsed.sessionId, parsed.commandId, parsed.result);
+          threads.resolveSessionCommand(parsed.sessionId, parsed.commandId, parsed.result);
           return;
         }
 
         if (parsed.type === "session_command_error") {
-          threads.failWorkerCommand(parsed.sessionId, parsed.commandId, parsed.message);
+          threads.failSessionCommand(parsed.sessionId, parsed.commandId, parsed.message);
           return;
         }
 

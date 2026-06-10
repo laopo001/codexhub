@@ -23,7 +23,7 @@ import "./style.css";
 type ThreadSummary = {
   threadId: string;
   workingDirectory: string;
-  runtime: ThreadRuntimeSummary;
+  session: ThreadSessionSummary;
   model?: string;
   modelReasoningEffort?: ReasoningEffort;
   status: ThreadStatus;
@@ -35,7 +35,7 @@ type ThreadSummary = {
   threadUsage: ThreadUsage;
 };
 
-type ThreadRuntimeSummary =
+type ThreadSessionSummary =
   {
     sessionId?: string;
     name?: string;
@@ -64,7 +64,7 @@ type GoalDialogState = {
   error: string;
 };
 
-type RuntimeSessionSummary = {
+type SessionSummary = {
   sessionId: string;
   machineId?: string;
   name?: string;
@@ -80,7 +80,7 @@ type RuntimeSessionSummary = {
   threads?: ThreadSummary[];
 };
 
-type RuntimeSession = RuntimeSessionSummary & {
+type SessionView = SessionSummary & {
   sessionId: string;
 };
 
@@ -152,7 +152,7 @@ type PluginSummary = {
     };
     integrations?: Array<{
       type: string;
-      runtime: "builtin" | "external";
+      runner: "builtin" | "external";
       enabled: boolean;
       label?: string;
       requiredEnv?: string[];
@@ -194,10 +194,10 @@ type ProjectSummary = {
   lastThreadId?: string;
   machine?: MachineSummary;
   machineOnline: boolean;
-  runtime: RuntimeSession | null;
+  session: SessionView | null;
   online: boolean;
   running: boolean;
-  sessions: RuntimeSession[];
+  sessions: SessionView[];
   threads: ThreadSummary[];
   storedThreads: StoredProjectThread[];
 };
@@ -314,10 +314,10 @@ type TaskCompleteNotification = {
   duration?: string;
 };
 
-type RuntimeSessionStreamEvent = {
+type SessionStreamEvent = {
   seq: number;
   kind: "sessions";
-  sessions: RuntimeSession[];
+  sessions: SessionView[];
 };
 
 type TasksStreamEvent = {
@@ -333,7 +333,7 @@ type ConnectionsStreamEvent = {
 };
 
 type RealtimeMessage =
-  | ({ type: "sessions" } & RuntimeSessionStreamEvent)
+  | ({ type: "sessions" } & SessionStreamEvent)
   | ({ type: "projects" } & ProjectsPayload)
   | ({ type: "tasks" } & TasksStreamEvent)
   | ({ type: "connections" } & ConnectionsStreamEvent)
@@ -359,13 +359,13 @@ type MessageDisplayMode = "compact" | "detailed";
 type MessageRenderMode = "markdown" | "raw";
 type ConnectionMode = "local" | "ssh" | "registered";
 type WebRecordView = CompactRecordView;
-type RuntimeStatusView = {
+type ActivityStatusView = {
   key: string;
   label: string;
   text: string;
   at?: string;
   status?: CodexRecordView["status"];
-  files?: RuntimeStatusFile[];
+  files?: ActivityStatusFile[];
 };
 type TurnUiStateKind = "idle" | "running" | "completed" | "aborted" | "failed";
 type TurnUiState = {
@@ -373,7 +373,7 @@ type TurnUiState = {
   label: string;
   title: string;
 };
-type RuntimeStatusFile = {
+type ActivityStatusFile = {
   path: string;
   added?: number;
   removed?: number;
@@ -502,7 +502,7 @@ const App = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
-  const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
+  const [sessionList, setSessionList] = useState<SessionView[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>("local");
@@ -546,13 +546,13 @@ const App = () => {
   const [collapsedProjectMachineKeys, setCollapsedProjectMachineKeys] = useState<string[]>([]);
   const [offlineProjectsCollapsed, setOfflineProjectsCollapsed] = useState(true);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
-  const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
-  const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+  const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
   const [goalDialog, setGoalDialog] = useState<GoalDialogState | null>(null);
   const [hiddenStatusTurns, setHiddenStatusTurns] = useState<Record<string, string>>({});
   const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
   const realtimeSocket = useRef<WebSocket | null>(null);
-  const runtimeSessionsLastSeq = useRef(0);
+  const sessionsLastSeq = useRef(0);
   const projectsLastSeq = useRef(0);
   const tasksLastSeq = useRef(0);
   const connectionsLastSeq = useRef(0);
@@ -580,11 +580,11 @@ const App = () => {
   }, [activeSession?.threadId, activeSession?.input]);
 
   const projectList = useMemo(() => projects, [projects]);
-  const activeRuntimeSession = useMemo(
-    () => runtimeSessions.find((session) => session.sessionId === activeSessionId)
-      ?? projectList.find((project) => project.runtime?.sessionId === activeSessionId)?.runtime
+  const activeProjectSession = useMemo(
+    () => sessionList.find((session) => session.sessionId === activeSessionId)
+      ?? projectList.find((project) => project.session?.sessionId === activeSessionId)?.session
       ?? undefined,
-    [activeSessionId, projectList, runtimeSessions]
+    [activeSessionId, projectList, sessionList]
   );
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
   const localMachines = useMemo(() => machines.filter((machine) => machine.type === "local"), [machines]);
@@ -603,21 +603,21 @@ const App = () => {
       ? projectList.find((project) => projectKeyForProject(project) === selectedProjectKey)
       : undefined;
     if (explicitProject) return explicitProject;
-    if (activeRuntimeSession) {
-      return projectList.find((project) => project.runtime?.sessionId === activeRuntimeSession.sessionId)
-        ?? projectList.find((project) => project.machineId === activeRuntimeSession.machineId && project.path === activeRuntimeSession.workingDirectory);
+    if (activeProjectSession) {
+      return projectList.find((project) => project.session?.sessionId === activeProjectSession.sessionId)
+        ?? projectList.find((project) => project.machineId === activeProjectSession.machineId && project.path === activeProjectSession.workingDirectory);
     }
     if (activeSessionId) {
-      const sessionProject = projectList.find((project) => project.runtime?.sessionId === activeSessionId);
+      const sessionProject = projectList.find((project) => project.session?.sessionId === activeSessionId);
       if (sessionProject) return sessionProject;
     }
     return activeWorkspacePath ? projectList.find((project) => project.path === activeWorkspacePath) : undefined;
-  }, [activeRuntimeSession, activeSessionId, activeWorkspacePath, projectList, selectedProjectKey]);
+  }, [activeProjectSession, activeSessionId, activeWorkspacePath, projectList, selectedProjectKey]);
   const activeProjectKey = selectedProject ? projectKeyForProject(selectedProject) : "";
-  const activeRuntimeSessionThreads = useMemo(() => {
+  const activeProjectSessionThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
-    for (const thread of activeRuntimeSession?.threads ?? []) byId.set(thread.threadId, thread);
-    const orderedIds = threadOrderBySession[activeRuntimeSession?.sessionId ?? ""] ?? [];
+    for (const thread of activeProjectSession?.threads ?? []) byId.set(thread.threadId, thread);
+    const orderedIds = threadOrderBySession[activeProjectSession?.sessionId ?? ""] ?? [];
     return [
       ...orderedIds.flatMap((threadId) => {
         const thread = byId.get(threadId);
@@ -627,17 +627,17 @@ const App = () => {
       }),
       ...byId.values()
     ];
-  }, [activeRuntimeSession, threadOrderBySession]);
-  const activeRuntimeSessionThreadIds = useMemo(
-    () => activeRuntimeSessionThreads.map((thread) => thread.threadId),
-    [activeRuntimeSessionThreads]
+  }, [activeProjectSession, threadOrderBySession]);
+  const activeProjectSessionThreadIds = useMemo(
+    () => activeProjectSessionThreads.map((thread) => thread.threadId),
+    [activeProjectSessionThreads]
   );
   const activeThreadSummary = useMemo(
-    () => activeRuntimeSessionThreads.find((thread) => thread.threadId === activeTabThreadId) ?? null,
-    [activeRuntimeSessionThreads, activeTabThreadId]
+    () => activeProjectSessionThreads.find((thread) => thread.threadId === activeTabThreadId) ?? null,
+    [activeProjectSessionThreads, activeTabThreadId]
   );
-  const activeRuntimeSessionThreadIdsKey = activeRuntimeSessionThreadIds.join("\n");
-  const activeRuntimeSessionThreadTabs = useMemo(() => activeRuntimeSessionThreads.map((thread) => {
+  const activeProjectSessionThreadIdsKey = activeProjectSessionThreadIds.join("\n");
+  const activeProjectSessionThreadTabs = useMemo(() => activeProjectSessionThreads.map((thread) => {
     const title = threadDisplayTitle(thread);
     return {
       key: thread.threadId,
@@ -648,7 +648,7 @@ const App = () => {
         </span>
       )
     };
-  }), [activeRuntimeSessionThreads]);
+  }), [activeProjectSessionThreads]);
   const displayRecords = useMemo(
     () => activeSession?.jsonl?.lines.length
       ? jsonlLinesToRecords(activeSession.threadId, activeSession.jsonl)
@@ -680,7 +680,7 @@ const App = () => {
     [goalRecords]
   );
   const latestTurnStatuses = useMemo(
-    () => runtimeStatusesFromRecords(latestTurnStatusScope.records),
+    () => activityStatusesFromRecords(latestTurnStatusScope.records),
     [latestTurnStatusScope.records]
   );
   const latestTurnStatus = useMemo(
@@ -707,7 +707,7 @@ const App = () => {
   const showInlineStatusPanel = Boolean(simpleStatuses.length && !statusPanelHidden);
   const statusButtonLabel = simpleStatuses.length ? `Status ${simpleStatuses.length}` : "Status";
   const statusButtonTitle = simpleStatuses.length
-    ? `Show latest turn status\n${runtimeStatusTitle(simpleStatuses)}`
+    ? `Show latest turn status\n${activityStatusTitle(simpleStatuses)}`
     : turnUiState.title;
   const statusScopeKey = activeSession?.threadId && latestTurnStatusScope.key
     ? `${activeSession.threadId}:${latestTurnStatusScope.key}`
@@ -729,22 +729,22 @@ const App = () => {
     ? `${latestView.id}:${latestView.status ?? ""}:${latestView.text.length}:${latestView.usage ? usageTotal(latestView.usage) : ""}`
     : "";
   const activeDisplayThreadId = activeSession?.threadId ?? activeTabThreadId;
-  const activeThreadBelongsToSession = Boolean(activeSession && activeRuntimeSessionThreads.some((thread) => thread.threadId === activeSession.threadId));
+  const activeThreadBelongsToSession = Boolean(activeSession && activeProjectSessionThreads.some((thread) => thread.threadId === activeSession.threadId));
   const activeHasDraft = Boolean(activeSession?.input.trim() || activeSession?.imageAttachments.length || activeSession?.textAttachments.length);
   const activeCanSend = Boolean(
     activeSession
     && activeThreadBelongsToSession
-    && activeRuntimeSession?.online
+    && activeProjectSession?.online
     && activeHasDraft
   );
   const activeCanStop = Boolean(activeThreadBelongsToSession && activeSession?.running);
   const activeCanSubmit = activeCanSend;
   const showComposerSendButton = Boolean(activeSession && !activeSession.running);
-  const workspaceEmptyMessage = activeRuntimeSession
-    ? activeRuntimeSession.online
-      ? activeRuntimeSessionThreads.length ? "Select a thread" : "No threads"
-      : "Runtime session disconnected"
-    : "No runtime session";
+  const workspaceEmptyMessage = activeProjectSession
+    ? activeProjectSession.online
+      ? activeProjectSessionThreads.length ? "Select a thread" : "No threads"
+      : "Session disconnected"
+    : "No session";
   const latestThreadUsage = useMemo(
     () => latestThreadUsageFromRecords(latestTurnStatusScope.records) ?? latestThreadUsageFromRecords(displayRecords),
     [displayRecords, latestTurnStatusScope.records]
@@ -753,43 +753,43 @@ const App = () => {
     ?? activeThreadSummary?.threadUsage
     ?? null;
   const activeThreadUsage = mergeThreadUsage(latestThreadUsage, summaryThreadUsage);
-  const latestRuntimeConfig = useMemo(
-    () => latestRuntimeConfigFromRecords(latestTurnStatusScope.records) ?? latestRuntimeConfigFromRecords(displayRecords),
+  const latestSessionConfig = useMemo(
+    () => latestSessionConfigFromRecords(latestTurnStatusScope.records) ?? latestSessionConfigFromRecords(displayRecords),
     [displayRecords, latestTurnStatusScope.records]
   );
-  const activeRuntimeModel = latestRuntimeConfig?.model
+  const activeSessionModel = latestSessionConfig?.model
     ?? activeSession?.model
     ?? activeThreadSummary?.model
     ?? systemStatus.model
     ?? null;
-  const activeRuntimeReasoning = latestRuntimeConfig?.reasoning
+  const activeSessionReasoning = latestSessionConfig?.reasoning
     ?? activeSession?.modelReasoningEffort
     ?? activeThreadSummary?.modelReasoningEffort
     ?? normalizeReasoningEffort(systemStatus.modelReasoningEffort)
     ?? null;
-  const effectiveModelSelection = selectedModel === "auto" && activeRuntimeModel ? activeRuntimeModel : selectedModel;
-  const effectiveReasoningSelection: ReasoningSelection = selectedReasoning === "auto" && activeRuntimeReasoning
-    ? activeRuntimeReasoning
+  const effectiveModelSelection = selectedModel === "auto" && activeSessionModel ? activeSessionModel : selectedModel;
+  const effectiveReasoningSelection: ReasoningSelection = selectedReasoning === "auto" && activeSessionReasoning
+    ? activeSessionReasoning
     : selectedReasoning;
-  const runtimeModelOptions = useMemo(
+  const modelOptions = useMemo(
     () => modelOptionsForSelection(effectiveModelSelection),
     [effectiveModelSelection]
   );
   const composerModelButtonLabel = formatComposerModelButtonLabel(
     selectedModel,
     selectedReasoning,
-    activeRuntimeModel,
-    activeRuntimeReasoning
+    activeSessionModel,
+    activeSessionReasoning
   );
   const composerModelButtonTitle = formatComposerModelTitle(
     selectedModel,
     selectedReasoning,
-    activeRuntimeModel,
-    activeRuntimeReasoning
+    activeSessionModel,
+    activeSessionReasoning
   );
-  const renderComposerRuntimeControls = (mode: "inline" | "popover") => (
-    <div className={`composerRuntimeControls ${mode}`} aria-label="Runtime usage and model">
-      <div className="composerUsagePills" aria-label="Runtime usage">
+  const renderComposerSessionControls = (mode: "inline" | "popover") => (
+    <div className={`composerSessionControls ${mode}`} aria-label="Session usage and model">
+      <div className="composerUsagePills" aria-label="Session usage">
         <button
           type="button"
           className={`usagePill statusPill${simpleStatuses.length ? " available" : ""}`}
@@ -819,8 +819,8 @@ const App = () => {
         className="composerModelButton"
         title={composerModelButtonTitle}
         onClick={() => {
-          setRuntimeMenuOpen(false);
-          setRuntimeDialogOpen(true);
+          setSessionMenuOpen(false);
+          setSessionDialogOpen(true);
         }}
       >
         {composerModelButtonLabel}
@@ -911,15 +911,15 @@ const App = () => {
 
   useEffect(() => {
     if (!initialized) return;
-    const projectRuntimeSessions = projectList.flatMap((project) => project.runtime ? [project.runtime] : []);
-    if (!projectRuntimeSessions.length) {
+    const projectSessions = projectList.flatMap((project) => project.session ? [project.session] : []);
+    if (!projectSessions.length) {
       if (activeSessionId) setActiveSessionId("");
       if (activeTabThreadId) setActiveTabThreadId("");
       return;
     }
 
-    const selectedProjectSession = selectedProject?.runtime;
-    if (selectedProjectKey && selectedProject && activeRuntimeSession && selectedProject.runtime?.sessionId !== activeRuntimeSession.sessionId) {
+    const selectedProjectSession = selectedProject?.session;
+    if (selectedProjectKey && selectedProject && activeProjectSession && selectedProject.session?.sessionId !== activeProjectSession.sessionId) {
       if (selectedProjectSession) setActiveSessionId(selectedProjectSession.sessionId);
       else {
         setActiveSessionId("");
@@ -927,35 +927,36 @@ const App = () => {
       }
       return;
     }
-    if (!activeRuntimeSession && selectedProjectKey && selectedProject) {
+    if (!activeProjectSession && selectedProjectKey && selectedProject) {
       if (selectedProjectSession) setActiveSessionId(selectedProjectSession.sessionId);
       else if (activeTabThreadId) setActiveTabThreadId("");
       return;
     }
 
-    const session = activeRuntimeSession ?? projectRuntimeSessions[0];
-    if (!activeRuntimeSession) {
+    const session = activeProjectSession ?? projectSessions[0];
+    if (!session) return;
+    if (!activeProjectSession) {
       setActiveSessionId(session.sessionId);
       return;
     }
 
     setActiveWorkspacePath(session.workingDirectory);
     const threadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
-    const activeTabThreadIdForRuntimeSession = activeTabThreadBySession[session.sessionId];
+    const activeTabThreadIdForSession = activeTabThreadBySession[session.sessionId];
     const currentThreadId = activeTabThreadId && threadIds.has(activeTabThreadId)
       ? activeTabThreadId
       : undefined;
-    const projectLastThreadId = selectedProject?.runtime?.sessionId === session.sessionId
-      ? selectedProject.lastThreadId
+    const projectLastThreadId = selectedProject?.session?.sessionId === session.sessionId
+      ? selectedProject?.lastThreadId
       : undefined;
-    const desiredThreadId = activeTabThreadIdForRuntimeSession && threadIds.has(activeTabThreadIdForRuntimeSession)
-      ? activeTabThreadIdForRuntimeSession
+    const desiredThreadId = activeTabThreadIdForSession && threadIds.has(activeTabThreadIdForSession)
+      ? activeTabThreadIdForSession
       : currentThreadId
       ?? (projectLastThreadId && threadIds.has(projectLastThreadId)
         ? projectLastThreadId
         : session.threads?.[0]?.threadId);
 
-    if (activeTabThreadIdForRuntimeSession && !threadIds.has(activeTabThreadIdForRuntimeSession)) {
+    if (activeTabThreadIdForSession && !threadIds.has(activeTabThreadIdForSession)) {
       setActiveTabThreadBySession(({ [session.sessionId]: _removed, ...rest }) => rest);
     }
 
@@ -966,12 +967,12 @@ const App = () => {
     if (activeTabThreadId !== desiredThreadId) {
       void openThread(desiredThreadId).catch(() => clearActiveThreadIfLatest(desiredThreadId));
     }
-  }, [activeTabThreadId, activeRuntimeSession, activeSessionId, initialized, activeTabThreadBySession, projectList, selectedProject]);
+  }, [activeTabThreadId, activeProjectSession, activeSessionId, initialized, activeTabThreadBySession, projectList, selectedProject]);
 
   useEffect(() => {
     if (!initialized) return;
-    syncThreadSubscriptions(activeRuntimeSessionThreadIds);
-  }, [activeRuntimeSessionThreadIdsKey, initialized]);
+    syncThreadSubscriptions(activeProjectSessionThreadIds);
+  }, [activeProjectSessionThreadIdsKey, initialized]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -1014,8 +1015,8 @@ const App = () => {
   }, [composerMenuOpen]);
 
   useEffect(() => {
-    if (!runtimeMenuOpen) return undefined;
-    const close = () => setRuntimeMenuOpen(false);
+    if (!sessionMenuOpen) return undefined;
+    const close = () => setSessionMenuOpen(false);
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
@@ -1025,7 +1026,7 @@ const App = () => {
       window.removeEventListener("click", close);
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [runtimeMenuOpen]);
+  }, [sessionMenuOpen]);
 
   useEffect(() => {
     if (!messageContextMenu) return undefined;
@@ -1080,7 +1081,7 @@ const App = () => {
   const initialize = async () => {
     const [health, sessionData, projectData, sshHostData, sshConfigHostData, sshConnectionData, pluginData, taskData] = await Promise.all([
       apiJson<{ defaultWorkingDirectory?: string | null } & SystemStatus>("/api/health"),
-      apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions"),
+      apiJson<{ sessions?: SessionView[] }>("/api/sessions"),
       apiJson<ProjectsPayload>("/api/projects"),
       isVscodeSurface ? Promise.resolve({ hosts: [] }) : apiJson<{ hosts?: SshHost[] }>("/api/ssh/hosts").catch(() => ({ hosts: [] })),
       isVscodeSurface ? Promise.resolve({ hosts: [] }) : apiJson<{ hosts?: SshHost[] }>("/api/ssh/config-hosts").catch(() => ({ hosts: [] })),
@@ -1089,15 +1090,15 @@ const App = () => {
       isVscodeSurface ? Promise.resolve({ tasks: [] }) : apiJson<{ tasks?: LocalTask[] }>("/api/tasks").catch(() => ({ tasks: [] }))
     ]);
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
-    const loadedRuntimeSessions = normalizeRuntimeSessions(sessionData.sessions);
+    const loadedSessions = normalizeSessions(sessionData.sessions);
     const loadedMachines = normalizeMachines(projectData.machines);
     const loadedProjects = normalizeProjects(projectData.projects);
-    const loadedProjectRuntimeSessions = loadedProjects.flatMap((project) => project.runtime ? [project.runtime] : []);
+    const loadedProjectSessions = loadedProjects.flatMap((project) => project.session ? [project.session] : []);
     const saved = readStoredUiState();
-    const savedRuntimeSession = saved?.activeSessionId
-      ? loadedProjectRuntimeSessions.find((session) => session.sessionId === saved.activeSessionId)
+    const savedSession = saved?.activeSessionId
+      ? loadedProjectSessions.find((session) => session.sessionId === saved.activeSessionId)
       : undefined;
-    const initialRuntimeSession = savedRuntimeSession ?? loadedProjectRuntimeSessions[0];
+    const initialSession = savedSession ?? loadedProjectSessions[0];
 
     setSystemStatus({
       model: health.model,
@@ -1119,15 +1120,15 @@ const App = () => {
     setSshConnections(Array.isArray(sshConnectionData.connections) ? sshConnectionData.connections : []);
     setPlugins(normalizePlugins(pluginData.plugins));
     setTasks(normalizeTasks(taskData.tasks));
-    setRuntimeSessions(loadedRuntimeSessions);
-    setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, loadedRuntimeSessions));
+    setSessionList(loadedSessions);
+    setThreadOrderBySession((current) => mergeThreadOrderBySession(current, loadedSessions));
     connectRealtimeEvents();
-    if (initialRuntimeSession) {
-      setActiveSessionId(initialRuntimeSession.sessionId);
-      setActiveWorkspacePath(initialRuntimeSession.workingDirectory);
-      const initialProject = loadedProjects.find((project) => project.runtime?.sessionId === initialRuntimeSession.sessionId)
-        ?? loadedProjects.find((project) => project.machineId === initialRuntimeSession.machineId && project.path === initialRuntimeSession.workingDirectory);
-      const initialThreadId = preferredThreadIdForRuntimeSession(initialRuntimeSession, initialProject);
+    if (initialSession) {
+      setActiveSessionId(initialSession.sessionId);
+      setActiveWorkspacePath(initialSession.workingDirectory);
+      const initialProject = loadedProjects.find((project) => project.session?.sessionId === initialSession.sessionId)
+        ?? loadedProjects.find((project) => project.machineId === initialSession.machineId && project.path === initialSession.workingDirectory);
+      const initialThreadId = preferredThreadIdForSession(initialSession, initialProject);
       if (initialThreadId) {
         await openThread(initialThreadId).catch(() => clearActiveThreadIfLatest(initialThreadId));
       }
@@ -1164,7 +1165,7 @@ const App = () => {
   function sendRealtimeHello() {
     sendRealtime({
       type: "hello",
-      sessionsAfter: runtimeSessionsLastSeq.current,
+      sessionsAfter: sessionsLastSeq.current,
       projectsAfter: projectsLastSeq.current,
       tasksAfter: tasksLastSeq.current,
       connectionsAfter: connectionsLastSeq.current
@@ -1208,10 +1209,10 @@ const App = () => {
   function handleRealtimeMessage(message: RealtimeMessage) {
     if (message.type === "sessions") {
       const payload = message;
-      runtimeSessionsLastSeq.current = Math.max(runtimeSessionsLastSeq.current, payload.seq);
-      const nextRuntimeSessions = normalizeRuntimeSessions(payload.sessions);
-      setRuntimeSessions(nextRuntimeSessions);
-      setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, nextRuntimeSessions));
+      sessionsLastSeq.current = Math.max(sessionsLastSeq.current, payload.seq);
+      const nextSessions = normalizeSessions(payload.sessions);
+      setSessionList(nextSessions);
+      setThreadOrderBySession((current) => mergeThreadOrderBySession(current, nextSessions));
       return;
     }
     if (message.type === "projects") {
@@ -1341,12 +1342,12 @@ const App = () => {
     window.setTimeout(() => setRegisteredCommandCopied(false), 1200);
   };
 
-  const refreshRuntimeSessions = async () => {
-    const freshRuntimeSessions = await apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions")
-      .then((data) => normalizeRuntimeSessions(data.sessions));
-    setRuntimeSessions(freshRuntimeSessions);
-    setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, freshRuntimeSessions));
-    return freshRuntimeSessions;
+  const refreshSessions = async () => {
+    const freshSessions = await apiJson<{ sessions?: SessionView[] }>("/api/sessions")
+      .then((data) => normalizeSessions(data.sessions));
+    setSessionList(freshSessions);
+    setThreadOrderBySession((current) => mergeThreadOrderBySession(current, freshSessions));
+    return freshSessions;
   };
 
   const refreshProjects = async () => {
@@ -1489,9 +1490,9 @@ const App = () => {
         setTasks((current) => normalizeTasks(current.map((item) => item.taskId === task.taskId ? payload.task! : item)));
       }
       await refreshTasks().catch(() => undefined);
-      const freshRuntimeSessions = await refreshRuntimeSessions().catch(() => runtimeSessions);
+      const freshSessions = await refreshSessions().catch(() => sessionList);
       if (payload.sessionId) {
-        const session = freshRuntimeSessions.find((item) => item.sessionId === payload.sessionId);
+        const session = freshSessions.find((item) => item.sessionId === payload.sessionId);
         if (session) setActiveSessionId(session.sessionId);
       }
       if (payload.threadId) {
@@ -1514,8 +1515,8 @@ const App = () => {
     if (existingSession) {
       subscribeThread(threadId, existingSession.lastSeq);
       setActiveWorkspacePath(existingSession.workingDirectory);
-      if (existingSession.runtime.sessionId) {
-        setActiveTabThreadBySession((current) => ({ ...current, [existingSession.runtime.sessionId!]: threadId }));
+      if (existingSession.session.sessionId) {
+        setActiveTabThreadBySession((current) => ({ ...current, [existingSession.session.sessionId!]: threadId }));
       }
       return;
     }
@@ -1526,11 +1527,11 @@ const App = () => {
     const open = (async () => {
       const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
       const session: ChatSession = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
-      const sessionId = thread.runtime.sessionId;
+      const sessionId = thread.session.sessionId;
       if (sessionId) {
         setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
       }
-      setRuntimeSessions((current) => patchRuntimeSessionsThread(current, thread));
+      setSessionList((current) => patchSessionsThread(current, thread));
       setProjects((current) => patchProjectsThread(current, thread));
       notificationRecordsByThread.current.set(thread.threadId, threadRecordsForNotifications(thread.threadId, thread));
       setSessions((current) => {
@@ -1572,10 +1573,10 @@ const App = () => {
 
   const closeThread = async (threadId: string) => {
     if (closedThreadIds.current.has(threadId)) return;
-    const threadIds = activeRuntimeSessionThreads.map((thread) => thread.threadId);
-    const closingThread = activeRuntimeSessionThreads.find((thread) => thread.threadId === threadId)
+    const threadIds = activeProjectSessionThreads.map((thread) => thread.threadId);
+    const closingThread = activeProjectSessionThreads.find((thread) => thread.threadId === threadId)
       ?? sessions.find((session) => session.threadId === threadId);
-    const sessionId = closingThread?.runtime.sessionId ?? activeRuntimeSession?.sessionId ?? "";
+    const sessionId = closingThread?.session.sessionId ?? activeProjectSession?.sessionId ?? "";
     const nextThreadId = activeTabThreadId === threadId
       ? adjacentThreadId(threadIds, threadId)
       : activeTabThreadId;
@@ -1591,7 +1592,7 @@ const App = () => {
       closedThreadIds.current.delete(threadId);
       window.alert(error instanceof Error ? error.message : String(error));
       await Promise.all([
-        refreshRuntimeSessions().catch(() => undefined),
+        refreshSessions().catch(() => undefined),
         refreshProjects().catch(() => undefined)
       ]);
     }
@@ -1608,7 +1609,7 @@ const App = () => {
       }
       return current.filter((session) => session.threadId !== threadId);
     });
-    setRuntimeSessions((current) => removeRuntimeSessionsThread(current, threadId));
+    setSessionList((current) => removeSessionsThread(current, threadId));
     setProjects((current) => removeProjectsThread(current, threadId));
     setThreadOrderBySession((current) => removeThreadOrder(current, threadId));
     setActiveTabThreadBySession((current) => {
@@ -1672,10 +1673,10 @@ const App = () => {
       const jsonl = mergeThreadJsonl(session.jsonl, payload);
       return { ...session, ...payload.thread, records, jsonl };
     }));
-    if (payload.thread.runtime.sessionId) {
-      setThreadOrderBySession((current) => appendThreadOrder(current, payload.thread.runtime.sessionId!, payload.thread.threadId));
+    if (payload.thread.session.sessionId) {
+      setThreadOrderBySession((current) => appendThreadOrder(current, payload.thread.session.sessionId!, payload.thread.threadId));
     }
-    setRuntimeSessions((current) => patchRuntimeSessionsThread(current, payload.thread));
+    setSessionList((current) => patchSessionsThread(current, payload.thread));
     setProjects((current) => patchProjectsThread(current, payload.thread));
   }
 
@@ -1727,7 +1728,7 @@ const App = () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId })
       });
-      const sessionId = thread.runtime.sessionId ?? activeRuntimeSession?.sessionId;
+      const sessionId = thread.session.sessionId ?? activeProjectSession?.sessionId;
       if (sessionId) {
         setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
         setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
@@ -1785,7 +1786,7 @@ const App = () => {
     if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {
       resetComposerHistory(threadId);
       setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "" } : item));
-      setRuntimeDialogOpen(true);
+      setSessionDialogOpen(true);
       return;
     }
     resetComposerHistory(threadId);
@@ -2035,7 +2036,7 @@ const App = () => {
     event.preventDefault();
     event.stopPropagation();
     setComposerMenuOpen(false);
-    setRuntimeMenuOpen(false);
+    setSessionMenuOpen(false);
     setMessageContextMenu({
       ...contextMenuPosition(event.clientX, event.clientY),
       threadId,
@@ -2064,20 +2065,20 @@ const App = () => {
     setMessageContextMenu(null);
   };
 
-  const selectRuntimeSession = async (session: RuntimeSession) => {
+  const selectProjectSession = async (session: SessionView) => {
     setActiveSessionId(session.sessionId);
     setActiveWorkspacePath(session.workingDirectory);
-    const project = projectList.find((item) => item.runtime?.sessionId === session.sessionId)
+    const project = projectList.find((item) => item.session?.sessionId === session.sessionId)
       ?? projectList.find((item) => item.machineId === session.machineId && item.path === session.workingDirectory);
     if (project) {
       setSelectedProjectKey(projectKeyForProject(project));
       focusTaskDraftProject(project);
     }
-    const activeTabThreadIdForRuntimeSession = activeTabThreadBySession[session.sessionId];
+    const activeTabThreadIdForSession = activeTabThreadBySession[session.sessionId];
     const sessionThreadIds = new Set(session.threads?.map((thread) => thread.threadId) ?? []);
-    const targetThreadId = activeTabThreadIdForRuntimeSession && sessionThreadIds.has(activeTabThreadIdForRuntimeSession)
-      ? activeTabThreadIdForRuntimeSession
-      : preferredThreadIdForRuntimeSession(session, project);
+    const targetThreadId = activeTabThreadIdForSession && sessionThreadIds.has(activeTabThreadIdForSession)
+      ? activeTabThreadIdForSession
+      : preferredThreadIdForSession(session, project);
     if (targetThreadId) {
       await openThread(targetThreadId).catch(() => clearActiveThreadIfLatest(targetThreadId));
     } else {
@@ -2091,8 +2092,8 @@ const App = () => {
     setTaskError("");
     setProjectOpenError("");
     setActiveWorkspacePath(project.path);
-    if (project.runtime?.online) {
-      await selectRuntimeSession(project.runtime);
+    if (project.session?.online) {
+      await selectProjectSession(project.session);
       return;
     }
     setActiveSessionId("");
@@ -2195,7 +2196,7 @@ const App = () => {
     }
   };
 
-  const openThreadPicker = (session: RuntimeSession) => {
+  const openThreadPicker = (session: SessionView) => {
     setActiveSessionId(session.sessionId);
     setActiveWorkspacePath(session.workingDirectory);
     setThreadPicker({
@@ -2208,9 +2209,9 @@ const App = () => {
     void loadThreadPickerCandidates(session.sessionId);
   };
 
-  const activateRuntimeSessionThread = async (sessionId: string, threadId: string) => {
+  const activateSessionThread = async (sessionId: string, threadId: string) => {
     closedThreadIds.current.delete(threadId);
-    const session = runtimeSessions.find((item) => item.sessionId === sessionId);
+    const session = sessionList.find((item) => item.sessionId === sessionId);
     if (session) {
       setActiveSessionId(session.sessionId);
       setActiveWorkspacePath(session.workingDirectory);
@@ -2227,7 +2228,7 @@ const App = () => {
   };
 
   const threadIsOpenForSession = (sessionId: string, threadId: string) => {
-    const session = runtimeSessions.find((item) => item.sessionId === sessionId);
+    const session = sessionList.find((item) => item.sessionId === sessionId);
     return Boolean(
       session?.threads?.some((thread) => thread.threadId === threadId)
       || (threadOrderBySession[sessionId] ?? []).includes(threadId)
@@ -2235,7 +2236,7 @@ const App = () => {
     );
   };
 
-  const createRuntimeSessionThread = async () => {
+  const createSessionThread = async () => {
     if (!threadPicker) return;
     const sessionId = threadPicker.sessionId;
     setThreadPicker((current) => current && current.sessionId === sessionId ? { ...current, acting: "new", error: "" } : current);
@@ -2246,7 +2247,7 @@ const App = () => {
         body: JSON.stringify({ action: "new" })
       });
       setThreadPicker(null);
-      await activateRuntimeSessionThread(sessionId, thread.threadId);
+      await activateSessionThread(sessionId, thread.threadId);
     } catch (error) {
       setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
@@ -2261,7 +2262,7 @@ const App = () => {
     const sessionId = threadPicker.sessionId;
     if (threadIsOpenForSession(sessionId, candidate.threadId)) {
       setThreadPicker(null);
-      await activateRuntimeSessionThread(sessionId, candidate.threadId);
+      await activateSessionThread(sessionId, candidate.threadId);
       return;
     }
     setThreadPicker((current) => current && current.sessionId === sessionId ? {
@@ -2276,7 +2277,7 @@ const App = () => {
         body: JSON.stringify({ action: "resume", threadId: candidate.threadId })
       });
       setThreadPicker(null);
-      await activateRuntimeSessionThread(sessionId, thread.threadId);
+      await activateSessionThread(sessionId, thread.threadId);
     } catch (error) {
       setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
@@ -2314,20 +2315,20 @@ const App = () => {
       setProjects(freshProjects);
       setProjectOpenError("");
       setActiveWorkspacePath(payload.result?.cwd ?? trimmedPath);
-      const freshRuntimeSessions = await apiJson<{ sessions?: RuntimeSession[] }>("/api/sessions")
-        .then((data) => normalizeRuntimeSessions(data.sessions))
-        .catch(() => runtimeSessions);
-      setRuntimeSessions(freshRuntimeSessions);
-      setThreadOrderBySession((current) => mergeThreadOrderByRuntimeSession(current, freshRuntimeSessions));
+      const freshSessions = await apiJson<{ sessions?: SessionView[] }>("/api/sessions")
+        .then((data) => normalizeSessions(data.sessions))
+        .catch(() => sessionList);
+      setSessionList(freshSessions);
+      setThreadOrderBySession((current) => mergeThreadOrderBySession(current, freshSessions));
       const sessionId = payload.result?.sessionId;
       const project = freshProjects.find((item) => item.path === (payload.result?.cwd ?? trimmedPath));
       const session = sessionId
-        ? project?.runtime?.sessionId === sessionId
-          ? project.runtime
-          : freshRuntimeSessions.find((item) => item.sessionId === sessionId)
+        ? project?.session?.sessionId === sessionId
+          ? project.session
+          : freshSessions.find((item) => item.sessionId === sessionId)
         : undefined;
-      if (session && payload.result?.threadId) await activateRuntimeSessionThread(session.sessionId, payload.result.threadId);
-      else if (session) await selectRuntimeSession(session);
+      if (session && payload.result?.threadId) await activateSessionThread(session.sessionId, payload.result.threadId);
+      else if (session) await selectProjectSession(session);
       else if (payload.result?.threadId) await openThread(payload.result.threadId).catch(() => clearActiveThreadIfLatest(payload.result!.threadId));
       return true;
     } catch (error) {
@@ -2341,7 +2342,7 @@ const App = () => {
   };
 
   const deleteProject = async (project: ProjectSummary) => {
-    if (!window.confirm(`Remove ${project.name} from CodexHub projects?\n\nThis does not delete files. Active runtime sessions for this project will be stopped.`)) return;
+    if (!window.confirm(`Remove ${project.name} from CodexHub projects?\n\nThis does not delete files. Active sessions for this project will be stopped.`)) return;
     setDeletingProjectId(project.projectId);
     try {
       const payload = await apiJson<ProjectsPayload>(`/api/projects/${encodeURIComponent(project.projectId)}`, {
@@ -2365,9 +2366,9 @@ const App = () => {
     );
   };
 
-  const switchRuntimeSessionThread = async (threadId: string) => {
-    if (!activeRuntimeSession || threadId === activeTabThreadId) return;
-    setActiveTabThreadBySession((current) => ({ ...current, [activeRuntimeSession.sessionId]: threadId }));
+  const switchSessionThread = async (threadId: string) => {
+    if (!activeProjectSession || threadId === activeTabThreadId) return;
+    setActiveTabThreadBySession((current) => ({ ...current, [activeProjectSession.sessionId]: threadId }));
     await openThread(threadId).catch(() => clearActiveThreadIfLatest(threadId));
   };
 
@@ -2377,11 +2378,11 @@ const App = () => {
   const projectPickerOpening = projectPicker
     ? openingProjectKey === `${projectPicker.machineId}:${projectPicker.path.trim()}`
     : false;
-  const threadPickerRuntimeSession = threadPicker
-    ? runtimeSessions.find((session) => session.sessionId === threadPicker.sessionId)
+  const threadPickerSession = threadPicker
+    ? sessionList.find((session) => session.sessionId === threadPicker.sessionId)
     : undefined;
   const threadPickerOpenThreadIds = new Set<string>([
-    ...(threadPickerRuntimeSession?.threads?.map((thread) => thread.threadId) ?? []),
+    ...(threadPickerSession?.threads?.map((thread) => thread.threadId) ?? []),
     ...(threadPicker ? threadOrderBySession[threadPicker.sessionId] ?? [] : []),
     ...sessions.map((session) => session.threadId)
   ]);
@@ -2398,12 +2399,12 @@ const App = () => {
   const taskProjectOptions = projectList.filter((project) => !taskDraft.machineId || project.machineId === taskDraft.machineId);
   const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
   const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject);
-  const workspaceRuntime = selectedProject?.runtime ?? activeRuntimeSession ?? null;
-  const workspacePath = selectedProject?.path ?? workspaceRuntime?.workingDirectory ?? activeWorkspacePath;
+  const workspaceSession = selectedProject?.session ?? activeProjectSession ?? null;
+  const workspacePath = selectedProject?.path ?? workspaceSession?.workingDirectory ?? activeWorkspacePath;
   const workspaceMachineOnline = selectedProject
     ? selectedProject.machineOnline
-    : Boolean(workspaceRuntime ? machines.find((machine) => machine.machineId === workspaceRuntime.machineId)?.online : false);
-  const showWorkspaceMachineOffline = Boolean(selectedProject && !workspaceMachineOnline && !workspaceRuntime?.online);
+    : Boolean(workspaceSession ? machines.find((machine) => machine.machineId === workspaceSession.machineId)?.online : false);
+  const showWorkspaceMachineOffline = Boolean(selectedProject && !workspaceMachineOnline && !workspaceSession?.online);
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
@@ -2432,14 +2433,14 @@ const App = () => {
               const projectKey = projectKeyForProject(project);
               const active = projectKey === activeProjectKey;
               const statusLabel = projectStatusLabel(project);
-              const runtimeActive = Boolean(project.runtime?.online);
-              const projectReachable = runtimeActive || project.machineOnline;
+              const sessionActive = Boolean(project.session?.online);
+              const projectReachable = sessionActive || project.machineOnline;
               const deleting = deletingProjectId === project.projectId;
               const openDisabled = openingProjectKey === projectKey || deleting;
               return (
                 <div
                   key={project.projectId}
-                  className={`projectRow ${active ? "active" : ""} ${runtimeActive ? "online" : projectReachable ? "ready" : "offline"}`}
+                  className={`projectRow ${active ? "active" : ""} ${sessionActive ? "online" : projectReachable ? "ready" : "offline"}`}
                 >
                   <div className="projectRowTop">
                     <button
@@ -2848,23 +2849,23 @@ const App = () => {
             <div className="workspaceMeta">
               {showWorkspaceMachineOffline ? (
                 <span
-                  className="workspaceRuntimeSessionState offline"
+                  className="workspaceSessionSessionState offline"
                   title="Machine offline"
                 >
                   machine: offline
                 </span>
               ) : null}
-              {selectedProject || workspaceRuntime ? (
+              {selectedProject || workspaceSession ? (
                 <span
-                  className={`workspaceRuntimeSessionState ${workspaceRuntime?.online ? "online" : "offline"}`}
-                  title={workspaceRuntime ? runtimeSessionStatusTitle(workspaceRuntime) : "Runtime not started"}
+                  className={`workspaceSessionSessionState ${workspaceSession?.online ? "online" : "offline"}`}
+                  title={workspaceSession ? sessionStatusTitle(workspaceSession) : "Session not started"}
                 >
-                  runtime: {workspaceRuntime?.online ? "online" : "offline"}
+                  session: {workspaceSession?.online ? "online" : "offline"}
                 </span>
               ) : null}
               {activeDisplayThreadId ? (
                 <span className="workspaceThreadId" title={`thread: ${activeDisplayThreadId}`}>thread: {activeDisplayThreadId}</span>
-              ) : workspaceRuntime ? (
+              ) : workspaceSession ? (
                 <span className="workspaceThreadId" title="thread: none">thread: none</span>
               ) : null}
             </div>
@@ -2874,7 +2875,7 @@ const App = () => {
           </div>
         </header>
 
-        {activeRuntimeSession && activeSession && activeThreadBelongsToSession ? (
+        {activeProjectSession && activeSession && activeThreadBelongsToSession ? (
           <Tabs
             className="workspaceThreadTabs"
             tabBarExtraContent={{
@@ -2897,7 +2898,7 @@ const App = () => {
             size="small"
             type="editable-card"
             activeKey={activeSession.threadId}
-            items={activeRuntimeSessionThreadTabs.map((item) => ({
+            items={activeProjectSessionThreadTabs.map((item) => ({
               ...item,
               closable: true,
               children: item.key === activeSession.threadId ? (
@@ -2936,7 +2937,7 @@ const App = () => {
                     }}
                   />
                   {showInlineStatusPanel ? (
-                    <RuntimeStatusOverlay
+                    <ActivityStatusOverlay
                       statuses={simpleStatuses}
                       expandedKeys={activeExpandedStatusKeys}
                       onMinimize={() => {
@@ -3099,20 +3100,20 @@ const App = () => {
                             </div>
                           </div>
                           <div className="composerRightActions">
-                            {renderComposerRuntimeControls("inline")}
-                            <div className="composerRuntimeMenuHost" onClick={(event) => event.stopPropagation()}>
+                            {renderComposerSessionControls("inline")}
+                            <div className="composerSessionMenuHost" onClick={(event) => event.stopPropagation()}>
                               <button
                                 type="button"
                                 className="composerMoreButton"
-                                aria-label="Show runtime usage and model"
-                                aria-expanded={runtimeMenuOpen}
-                                onClick={() => setRuntimeMenuOpen((open) => !open)}
+                                aria-label="Show session usage and model"
+                                aria-expanded={sessionMenuOpen}
+                                onClick={() => setSessionMenuOpen((open) => !open)}
                               >
                                 ...
                               </button>
-                              {runtimeMenuOpen ? (
-                                <div className="composerRuntimePopover">
-                                  {renderComposerRuntimeControls("popover")}
+                              {sessionMenuOpen ? (
+                                <div className="composerSessionPopover">
+                                  {renderComposerSessionControls("popover")}
                                 </div>
                               ) : null}
                             </div>
@@ -3164,10 +3165,10 @@ const App = () => {
                 </div>
               ) : null
             }))}
-            onChange={(threadId) => void switchRuntimeSessionThread(threadId)}
+            onChange={(threadId) => void switchSessionThread(threadId)}
             onEdit={(targetKey, action) => {
               if (action === "add") {
-                if (activeRuntimeSession.online) openThreadPicker(activeRuntimeSession);
+                if (activeProjectSession.online) openThreadPicker(activeProjectSession);
                 return;
               }
               if (action === "remove" && typeof targetKey === "string") {
@@ -3178,8 +3179,8 @@ const App = () => {
         ) : (
           <div className="empty">
             <span>{workspaceEmptyMessage}</span>
-            {activeRuntimeSession?.online ? (
-              <button type="button" className="emptyActionButton" onClick={() => openThreadPicker(activeRuntimeSession)}>
+            {activeProjectSession?.online ? (
+              <button type="button" className="emptyActionButton" onClick={() => openThreadPicker(activeProjectSession)}>
                 Add Thread
               </button>
             ) : null}
@@ -3187,22 +3188,22 @@ const App = () => {
         )}
       </section>
 
-      {runtimeDialogOpen ? (
-        <div className="runtimeDialogOverlay" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setRuntimeDialogOpen(false);
+      {sessionDialogOpen ? (
+        <div className="sessionDialogOverlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setSessionDialogOpen(false);
         }}>
-          <section className="runtimeDialog" role="dialog" aria-modal="true" aria-labelledby="runtimeDialogTitle">
-            <header className="runtimeDialogHeader">
-              <h2 id="runtimeDialogTitle">Runtime</h2>
-              <button type="button" className="iconButton" onClick={() => setRuntimeDialogOpen(false)} aria-label="Close">x</button>
+          <section className="sessionDialog" role="dialog" aria-modal="true" aria-labelledby="sessionDialogTitle">
+            <header className="sessionDialogHeader">
+              <h2 id="sessionDialogTitle">Session</h2>
+              <button type="button" className="iconButton" onClick={() => setSessionDialogOpen(false)} aria-label="Close">x</button>
             </header>
-            <label className="runtimeDialogField">
+            <label className="sessionDialogField">
               <span>Model</span>
               <select value={effectiveModelSelection} onChange={(event) => setSelectedModel(event.target.value as ModelSelection)}>
-                {runtimeModelOptions.map((option) => <option value={option.value} key={option.value}>{modelOptionLabel(option)}</option>)}
+                {modelOptions.map((option) => <option value={option.value} key={option.value}>{modelOptionLabel(option)}</option>)}
               </select>
             </label>
-            <label className="runtimeDialogField">
+            <label className="sessionDialogField">
               <span>Thinking</span>
               <select value={effectiveReasoningSelection} onChange={(event) => setSelectedReasoning(event.target.value as ReasoningSelection)}>
                 {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{reasoningOptionLabel(option)}</option>)}
@@ -3262,7 +3263,7 @@ const App = () => {
             <header className="threadPickerHeader">
               <div>
                 <h2 id="threadPickerTitle">Add Thread</h2>
-                <p>{threadPickerRuntimeSession?.name ?? shortId(threadPicker.sessionId)}</p>
+                <p>{threadPickerSession?.name ?? shortId(threadPicker.sessionId)}</p>
               </div>
               <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
             </header>
@@ -3270,7 +3271,7 @@ const App = () => {
               <button
                 type="button"
                 className="threadPickerRow newThread"
-                onClick={() => void createRuntimeSessionThread()}
+                onClick={() => void createSessionThread()}
                 disabled={threadPicker.acting !== null}
               >
                 <span className="threadPickerRowTitle">New thread</span>
@@ -3909,49 +3910,49 @@ const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
 );
 
-const RuntimeStatusOverlay = ({
+const ActivityStatusOverlay = ({
   statuses,
   expandedKeys,
   onMinimize,
   onToggle
 }: {
-  statuses: RuntimeStatusView[];
+  statuses: ActivityStatusView[];
   expandedKeys: Set<string>;
   onMinimize: () => void;
   onToggle: (key: string) => void;
 }) => (
-  <div className={`runtimeStatusOverlay ${runtimeStatusOverlayClass(statuses)}`} aria-live="polite" title={runtimeStatusTitle(statuses)}>
-    <RuntimeStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} />
-    <button type="button" className="runtimeStatusMinimize" onClick={onMinimize} aria-label="Minimize status" title="Minimize status">−</button>
+  <div className={`activityStatusOverlay ${activityStatusOverlayClass(statuses)}`} aria-live="polite" title={activityStatusTitle(statuses)}>
+    <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} />
+    <button type="button" className="activityStatusMinimize" onClick={onMinimize} aria-label="Minimize status" title="Minimize status">−</button>
   </div>
 );
 
-const RuntimeStatusRows = ({
+const ActivityStatusRows = ({
   statuses,
   expandedKeys,
   onToggle
 }: {
-  statuses: RuntimeStatusView[];
+  statuses: ActivityStatusView[];
   expandedKeys?: Set<string>;
   onToggle?: (key: string) => void;
 }) => (
-  <div className={`runtimeStatusRows${expandedKeys?.size ? " expanded" : ""}`}>
+  <div className={`activityStatusRows${expandedKeys?.size ? " expanded" : ""}`}>
     {statuses.map((status) => {
       const expandable = Boolean(status.files?.length && onToggle);
       const expanded = Boolean(expandedKeys?.has(status.key));
       const content = (
         <>
-          <span className="runtimeStatusLabel">{status.label}</span>
-          <span className="runtimeStatusViewport">
-            <span className="runtimeStatusTrack">{status.text}</span>
+          <span className="activityStatusLabel">{status.label}</span>
+          <span className="activityStatusViewport">
+            <span className="activityStatusTrack">{status.text}</span>
           </span>
-          {expanded && status.files?.length ? <RuntimeStatusFiles files={status.files} /> : null}
+          {expanded && status.files?.length ? <ActivityStatusFiles files={status.files} /> : null}
         </>
       );
       return expandable ? (
         <button
           type="button"
-          className={`runtimeStatusItem hasFiles${expanded ? " expanded" : ""}`}
+          className={`activityStatusItem hasFiles${expanded ? " expanded" : ""}`}
           key={status.key}
           onClick={() => onToggle?.(status.key)}
           aria-expanded={expanded}
@@ -3959,7 +3960,7 @@ const RuntimeStatusRows = ({
           {content}
         </button>
       ) : (
-        <div className="runtimeStatusItem" key={status.key}>
+        <div className="activityStatusItem" key={status.key}>
           {content}
         </div>
       );
@@ -3967,8 +3968,8 @@ const RuntimeStatusRows = ({
   </div>
 );
 
-const RuntimeStatusFiles = ({ files }: { files: RuntimeStatusFile[] }) => (
-  <div className="runtimeStatusFiles">
+const ActivityStatusFiles = ({ files }: { files: ActivityStatusFile[] }) => (
+  <div className="activityStatusFiles">
     {files.map((file, index) => (
       <div className="fileChangeRow" key={`${file.path}:${index}`} title={file.path}>
         <span className="fileChangePath">{file.path}</span>
@@ -4095,7 +4096,7 @@ const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
   return turnId;
 };
 
-const normalizeRuntimeSessions = (sessions: RuntimeSessionSummary[] | undefined): RuntimeSession[] =>
+const normalizeSessions = (sessions: SessionSummary[] | undefined): SessionView[] =>
   Array.isArray(sessions)
     ? sessions
       .filter((session) => typeof session.sessionId === "string" && Boolean(session.sessionId))
@@ -4116,8 +4117,8 @@ const normalizeProjects = (projects: ProjectSummary[] | undefined) =>
     ? projects.map((project) => ({
       ...project,
       machineOnline: Boolean(project.machineOnline ?? (project.machine && "online" in project.machine && project.machine.online)),
-      runtime: project.runtime ? normalizeRuntimeSessions([project.runtime])[0] ?? null : null,
-      sessions: normalizeRuntimeSessions(project.sessions),
+      session: project.session ? normalizeSessions([project.session])[0] ?? null : null,
+      sessions: normalizeSessions(project.sessions),
       threads: Array.isArray(project.threads) ? project.threads : [],
       storedThreads: Array.isArray(project.storedThreads) ? project.storedThreads : []
     }))
@@ -4262,7 +4263,7 @@ const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSum
 };
 
 const projectMachineStatus = (group: Pick<ProjectMachineGroup, "online" | "projectLauncher" | "projects">) => {
-  const onlineProjects = group.projects.filter((project) => project.runtime?.online).length;
+  const onlineProjects = group.projects.filter((project) => project.session?.online).length;
   if (!group.online) return "offline";
   if (!group.projectLauncher) return "session";
   if (onlineProjects) return `${onlineProjects}/${group.projects.length} active`;
@@ -4296,7 +4297,7 @@ const basename = (projectPath: string) => projectPath.split(/[\\/]/).filter(Bool
 
 const projectStatusLabel = (project: ProjectSummary) => {
   if (project.running) return "running";
-  if (project.runtime?.online) return "runtime";
+  if (project.session?.online) return "session";
   if (project.machineOnline || (project.machine && "online" in project.machine && project.machine.online)) return "ready";
   return "offline";
 };
@@ -4355,8 +4356,8 @@ const sshConnectionTitle = (host: SshHost, connection: SshConnection | undefined
 const compactSshOutput = (value: string | undefined) =>
   value?.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)?.slice(0, 180) ?? "";
 
-const runtimeSessionStatusTitle = (session: RuntimeSession) => {
-  if (session.online) return "Runtime session online";
+const sessionStatusTitle = (session: SessionView) => {
+  if (session.online) return "Session online";
   const reason = session.offlineReason === "heartbeat_timeout"
     ? "heartbeat timeout"
     : session.offlineReason === "transport_disconnected"
@@ -4436,9 +4437,9 @@ const removeThreadOrder = (current: Record<string, string[]>, threadId: string) 
   return next;
 };
 
-const mergeThreadOrderByRuntimeSession = (current: Record<string, string[]>, runtimeSessions: RuntimeSession[]) => {
+const mergeThreadOrderBySession = (current: Record<string, string[]>, sessionList: SessionView[]) => {
   const next: Record<string, string[]> = {};
-  for (const session of runtimeSessions) {
+  for (const session of sessionList) {
     const threadIds = sessionThreadIds(session);
     const liveThreadIds = new Set(threadIds);
     const existing = (current[session.sessionId] ?? []).filter((threadId) => liveThreadIds.has(threadId));
@@ -4448,7 +4449,7 @@ const mergeThreadOrderByRuntimeSession = (current: Record<string, string[]>, run
   return next;
 };
 
-const sessionThreadIds = (session: RuntimeSession) => {
+const sessionThreadIds = (session: SessionView) => {
   const threadIds: string[] = [];
   const pushThreadId = (threadId?: string) => {
     if (threadId && !threadIds.includes(threadId)) threadIds.push(threadId);
@@ -4457,7 +4458,7 @@ const sessionThreadIds = (session: RuntimeSession) => {
   return threadIds;
 };
 
-const preferredThreadIdForRuntimeSession = (session: RuntimeSession, project?: ProjectSummary) => {
+const preferredThreadIdForSession = (session: SessionView, project?: ProjectSummary) => {
   const sessionThreadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
   if (project?.lastThreadId && sessionThreadIds.has(project.lastThreadId)) return project.lastThreadId;
   return session.threads?.[0]?.threadId
@@ -4473,9 +4474,9 @@ const adjacentThreadId = (threadIds: string[], threadId: string) => {
   return threadIds[index + 1] ?? threadIds[index - 1] ?? "";
 };
 
-const patchRuntimeSessionsThread = (runtimeSessions: RuntimeSession[], thread: ThreadSummary) =>
-  runtimeSessions.map((session) => {
-    if (session.sessionId !== thread.runtime.sessionId) return session;
+const patchSessionsThread = (sessionList: SessionView[], thread: ThreadSummary) =>
+  sessionList.map((session) => {
+    if (session.sessionId !== thread.session.sessionId) return session;
     return {
       ...session,
       threads: upsertThreadSummary(session.threads ?? [], thread)
@@ -4484,27 +4485,27 @@ const patchRuntimeSessionsThread = (runtimeSessions: RuntimeSession[], thread: T
 
 const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) =>
   projects.map((project) => {
-    const matchesSession = Boolean(thread.runtime.sessionId && project.runtime?.sessionId === thread.runtime.sessionId);
+    const matchesSession = Boolean(thread.session.sessionId && project.session?.sessionId === thread.session.sessionId);
     const matchesPath = project.path === thread.workingDirectory;
     if (!matchesSession && !matchesPath) return project;
     const threads = upsertThreadSummary(project.threads ?? [], thread);
-    const runtime = matchesSession && project.runtime
+    const session = matchesSession && project.session
       ? {
-        ...project.runtime,
-        threads: upsertThreadSummary(project.runtime.threads ?? [], thread)
+        ...project.session,
+        threads: upsertThreadSummary(project.session.threads ?? [], thread)
       }
-      : project.runtime;
+      : project.session;
     return {
       ...project,
       lastThreadId: thread.threadId,
       running: threads.some((item) => item.running || item.status === "running"),
-      runtime,
+      session,
       threads
     };
   });
 
-const removeRuntimeSessionsThread = (runtimeSessions: RuntimeSession[], threadId: string) =>
-  runtimeSessions.map((session) => ({
+const removeSessionsThread = (sessionList: SessionView[], threadId: string) =>
+  sessionList.map((session) => ({
     ...session,
     threads: (session.threads ?? []).filter((thread) => thread.threadId !== threadId)
   }));
@@ -4512,12 +4513,12 @@ const removeRuntimeSessionsThread = (runtimeSessions: RuntimeSession[], threadId
 const removeProjectsThread = (projects: ProjectSummary[], threadId: string) =>
   projects.map((project) => {
     const threads = (project.threads ?? []).filter((thread) => thread.threadId !== threadId);
-    const runtime = project.runtime
+    const session = project.session
       ? {
-        ...project.runtime,
-        threads: (project.runtime.threads ?? []).filter((thread) => thread.threadId !== threadId)
+        ...project.session,
+        threads: (project.session.threads ?? []).filter((thread) => thread.threadId !== threadId)
       }
-      : project.runtime;
+      : project.session;
     const sessions = (project.sessions ?? []).map((session) => ({
       ...session,
       threads: (session.threads ?? []).filter((thread) => thread.threadId !== threadId)
@@ -4526,7 +4527,7 @@ const removeProjectsThread = (projects: ProjectSummary[], threadId: string) =>
       ...project,
       lastThreadId: project.lastThreadId === threadId ? threads[0]?.threadId : project.lastThreadId,
       running: threads.some((thread) => thread.running || thread.status === "running"),
-      runtime,
+      session,
       sessions,
       threads
     };
@@ -4586,9 +4587,9 @@ const mergeThreadUsage = (latest: ThreadUsage | null, fallback: ThreadUsage | nu
   };
 };
 
-const latestRuntimeConfigFromRecords = (records: CodexRecord[]) => {
+const latestSessionConfigFromRecords = (records: CodexRecord[]) => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
-    const config = runtimeConfigFromRecord(records[index]);
+    const config = sessionConfigFromRecord(records[index]);
     if (config.model || config.reasoning) return config;
   }
   return null;
@@ -4668,7 +4669,7 @@ const goalTimeMs = (value: unknown) => {
   return null;
 };
 
-const runtimeConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort } => {
+const sessionConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort } => {
   const raw = asRecord(record.rawJsonl);
   const payload = asRecord(raw?.payload) ?? asRecord(record.payload);
   const settings = asRecord(asRecord(payload?.collaboration_mode)?.settings);
@@ -4696,23 +4697,23 @@ const normalizeReasoningEffort = (value: unknown): ReasoningEffort | undefined =
 const formatComposerModelTitle = (
   selectedModel: ModelSelection,
   selectedReasoning: ReasoningSelection,
-  runtimeModel: string | null,
-  runtimeReasoning: ReasoningEffort | null
+  sessionModel: string | null,
+  sessionReasoning: ReasoningEffort | null
 ) => [
   `selected model ${rawModelLabel(selectedModel)}`,
-  runtimeModel ? `runtime model ${rawModelLabel(runtimeModel)}` : null,
+  sessionModel ? `session model ${rawModelLabel(sessionModel)}` : null,
   `selected thinking ${selectedReasoning === "auto" ? "Auto" : selectedReasoning}`,
-  runtimeReasoning ? `runtime thinking ${runtimeReasoning}` : null
+  sessionReasoning ? `session thinking ${sessionReasoning}` : null
 ].filter(Boolean).join(" · ");
 
 const formatComposerModelButtonLabel = (
   selectedModel: ModelSelection,
   selectedReasoning: ReasoningSelection,
-  runtimeModel: string | null,
-  runtimeReasoning: ReasoningEffort | null
+  sessionModel: string | null,
+  sessionReasoning: ReasoningEffort | null
 ) => {
-  const model = selectedModel === "auto" && runtimeModel ? runtimeModel : selectedModel;
-  const reasoning = runtimeReasoning ?? (selectedReasoning === "auto" ? null : selectedReasoning);
+  const model = selectedModel === "auto" && sessionModel ? sessionModel : selectedModel;
+  const reasoning = sessionReasoning ?? (selectedReasoning === "auto" ? null : selectedReasoning);
   const label = rawModelLabel(model);
   return reasoning ? `${label}:${reasoning}` : label;
 };
@@ -5052,31 +5053,31 @@ const isUserInputRecord = (record: CodexRecord) => {
 const formatStatusScopeTime = (timestamp: string | undefined) =>
   timestamp ? `user message at ${formatDate(timestamp)}` : "latest user message";
 
-const runtimeStatusesFromRecords = (records: CodexRecord[]): RuntimeStatusView[] => {
-  const statuses = new Map<string, RuntimeStatusView>();
-  let fileStatus: RuntimeStatusView | null = null;
+const activityStatusesFromRecords = (records: CodexRecord[]): ActivityStatusView[] => {
+  const statuses = new Map<string, ActivityStatusView>();
+  let fileStatus: ActivityStatusView | null = null;
   for (const record of records) {
     const payload = asRecord(record.payload);
     if (record.type === "response_item" && payload?.type === "file_change") {
-      fileStatus = mergeFileChangeStatus(fileStatus, fileChangeRuntimeStatus(record, payload));
+      fileStatus = mergeFileChangeStatus(fileStatus, fileChangeActivityStatus(record, payload));
       continue;
     }
-    const status = runtimeStatusFromRecord(record);
+    const status = activityStatusFromRecord(record);
     if (status) statuses.set(status.key, status);
   }
   if (fileStatus) statuses.set(fileStatus.key, fileStatus);
-  return [...statuses.values()].sort((left, right) => runtimeStatusPriority(left.key) - runtimeStatusPriority(right.key));
+  return [...statuses.values()].sort((left, right) => activityStatusPriority(left.key) - activityStatusPriority(right.key));
 };
 
-const latestTurnStatusFromRecords = (records: CodexRecord[]): RuntimeStatusView | null => {
+const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivityStatusView | null => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
-    const status = runtimeStatusFromRecord(records[index]);
+    const status = activityStatusFromRecord(records[index]);
     if (status?.key === "turn") return status;
   }
   return null;
 };
 
-const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null => {
+const activityStatusFromRecord = (record: CodexRecord): ActivityStatusView | null => {
   const payload = asRecord(record.payload);
   const type = typeof payload?.type === "string" ? payload.type : "";
   if (record.type !== "event_msg") return null;
@@ -5185,7 +5186,7 @@ const runtimeStatusFromRecord = (record: CodexRecord): RuntimeStatusView | null 
   };
 };
 
-const fileChangeRuntimeStatus = (record: CodexRecord, payload: Record<string, unknown>): RuntimeStatusView => {
+const fileChangeActivityStatus = (record: CodexRecord, payload: Record<string, unknown>): ActivityStatusView => {
   const files = fileChangePreviewFiles(payload);
   const changed = files.length;
   const added = files.reduce((total, file) => total + (file.added ?? 0), 0);
@@ -5205,11 +5206,11 @@ const fileChangeRuntimeStatus = (record: CodexRecord, payload: Record<string, un
 };
 
 const mergeFileChangeStatus = (
-  current: RuntimeStatusView | null,
-  incoming: RuntimeStatusView
-): RuntimeStatusView => {
+  current: ActivityStatusView | null,
+  incoming: ActivityStatusView
+): ActivityStatusView => {
   if (!current) return incoming;
-  const filesByPath = new Map<string, RuntimeStatusFile>();
+  const filesByPath = new Map<string, ActivityStatusFile>();
   for (const file of [...current.files ?? [], ...incoming.files ?? []]) {
     const existing = filesByPath.get(file.path);
     filesByPath.set(file.path, {
@@ -5239,7 +5240,7 @@ const fileChangeTotalsText = (added: number, removed: number) => [
   `-${removed}`
 ].filter(Boolean).join(" ");
 
-const runtimeStatusPriority = (key: string) => {
+const activityStatusPriority = (key: string) => {
   const order: Record<string, number> = {
     turn: 0,
     goal: 1,
@@ -5252,18 +5253,18 @@ const runtimeStatusPriority = (key: string) => {
   return order[key] ?? 10;
 };
 
-const runtimeStatusOverlayClass = (statuses: RuntimeStatusView[]) => {
+const activityStatusOverlayClass = (statuses: ActivityStatusView[]) => {
   if (statuses.some((status) => status.status === "failed")) return "failed";
   if (statuses.some((status) => status.status === "pending")) return "pending";
   if (statuses.some((status) => status.status === "completed")) return "completed";
   return "idle";
 };
 
-const runtimeStatusTitle = (statuses: RuntimeStatusView[]) =>
+const activityStatusTitle = (statuses: ActivityStatusView[]) =>
   statuses.map((status) => `${status.label}: ${status.text}`).join("\n");
 
 const turnUiStateFromStatus = (
-  turnStatus: RuntimeStatusView | null,
+  turnStatus: ActivityStatusView | null,
   running: boolean
 ): TurnUiState => {
   if (running) {
@@ -5931,9 +5932,7 @@ const readStoredUiState = (): {
     if (!parsed || typeof parsed !== "object") return null;
     return {
       activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,
-      activeSessionId: typeof parsed.activeSessionId === "string"
-        ? parsed.activeSessionId
-        : typeof parsed.activeWorkerId === "string" ? parsed.activeWorkerId : undefined,
+      activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : undefined,
       selectedProjectKey: typeof parsed.selectedProjectKey === "string" ? parsed.selectedProjectKey : undefined,
       selectedModel: isModelSelection(parsed.selectedModel) ? parsed.selectedModel : undefined,
       selectedReasoning: isReasoningSelection(parsed.selectedReasoning) ? parsed.selectedReasoning : undefined,

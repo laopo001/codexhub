@@ -31,7 +31,7 @@ type ProjectOpenResponse = {
   };
 };
 
-type RuntimeSession = {
+type SessionState = {
   sessionId: string;
   online?: boolean;
   offlineReason?: string;
@@ -266,7 +266,7 @@ const waitForMachineOffline = async (apiBase: string, machineId: string) => {
 const waitForSessionOffline = async (apiBase: string, sessionId: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 15_000) {
-    const data = await apiJson<{ sessions?: RuntimeSession[] }>(apiBase, "/api/sessions?includeOffline=true").catch(() => ({ sessions: [] }));
+    const data = await apiJson<{ sessions?: SessionState[] }>(apiBase, "/api/sessions?includeOffline=true").catch(() => ({ sessions: [] }));
     const session = data.sessions?.find((item) => item.sessionId === sessionId);
     if (session && !session.online && session.offlineReason === "transport_disconnected") return session;
     await delay(250);

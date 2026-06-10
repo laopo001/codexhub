@@ -9,11 +9,11 @@ export type PluginAssetContribution = {
 };
 
 export type PluginOrigin = "builtin" | "local";
-export type PluginIntegrationRuntime = "builtin" | "external";
+export type PluginIntegrationRunner = "builtin" | "external";
 
 export type PluginIntegrationContribution = {
   type: string;
-  runtime: PluginIntegrationRuntime;
+  runner: PluginIntegrationRunner;
   enabled: boolean;
   label?: string;
   requiredEnv: string[];
@@ -38,7 +38,7 @@ export type PluginSummary = {
 
 export type PluginIntegrationManifest = string | {
   type?: string;
-  runtime?: PluginIntegrationRuntime;
+  runner?: PluginIntegrationRunner;
   label?: string;
   enabled?: boolean;
   requiredEnv?: string[];
@@ -62,7 +62,7 @@ export type BuiltinPluginDefinition = {
   manifest: PluginManifest;
 };
 
-export type PluginIntegrationRuntimeState = {
+export type PluginIntegrationState = {
   configured?: boolean;
   started?: boolean;
 };
@@ -81,7 +81,7 @@ type PluginHubOptions = {
 export class PluginHub {
   private readonly roots: string[];
   private readonly builtins: BuiltinPluginDefinition[];
-  private readonly integrationStates = new Map<string, PluginIntegrationRuntimeState>();
+  private readonly integrationStates = new Map<string, PluginIntegrationState>();
 
   constructor(options: PluginHubOptions = {}) {
     this.roots = options.roots ?? defaultPluginRoots();
@@ -96,7 +96,7 @@ export class PluginHub {
       .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
   }
 
-  setIntegrationState(type: string, state: PluginIntegrationRuntimeState) {
+  setIntegrationState(type: string, state: PluginIntegrationState) {
     this.integrationStates.set(type, {
       ...this.integrationStates.get(type),
       ...state
@@ -108,7 +108,7 @@ export class PluginHub {
     return plugins.some((plugin) => {
       if (plugin.origin !== "builtin" || plugin.manifest.enabled === false) return false;
       return safeIntegrationList(plugin.manifest.contributes?.integrations, plugin.origin, true, this.integrationStates)
-        .some((integration) => integration.type === type && integration.runtime === "builtin" && integration.enabled);
+        .some((integration) => integration.type === type && integration.runner === "builtin" && integration.enabled);
     });
   }
 
@@ -242,11 +242,11 @@ const safeIntegrationList = (
   values: unknown,
   origin: PluginOrigin,
   pluginEnabled: boolean,
-  runtimeStates: Map<string, PluginIntegrationRuntimeState>
+  integrationStates: Map<string, PluginIntegrationState>
 ): PluginIntegrationContribution[] => {
   if (!Array.isArray(values)) return [];
   return values
-    .map((value) => normalizeIntegration(value, origin, pluginEnabled, runtimeStates))
+    .map((value) => normalizeIntegration(value, origin, pluginEnabled, integrationStates))
     .filter((value): value is PluginIntegrationContribution => Boolean(value));
 };
 
@@ -254,7 +254,7 @@ const normalizeIntegration = (
   value: unknown,
   origin: PluginOrigin,
   pluginEnabled: boolean,
-  runtimeStates: Map<string, PluginIntegrationRuntimeState>
+  integrationStates: Map<string, PluginIntegrationState>
 ): PluginIntegrationContribution | null => {
   const rawType = typeof value === "string"
     ? value
@@ -266,24 +266,24 @@ const normalizeIntegration = (
 
   const record = value && typeof value === "object" && !Array.isArray(value)
     ? value as {
-      runtime?: unknown;
+      runner?: unknown;
       label?: unknown;
       enabled?: unknown;
       requiredEnv?: unknown;
     }
     : {};
-  const runtime = origin === "builtin" && record.runtime === "builtin" ? "builtin" : "external";
+  const runner = origin === "builtin" && record.runner === "builtin" ? "builtin" : "external";
   const requiredEnv = safeStringList(record.requiredEnv);
-  const state = runtimeStates.get(type);
+  const state = integrationStates.get(type);
   const enabled = pluginEnabled && record.enabled !== false;
   return {
     type,
-    runtime,
+    runner,
     enabled,
     label: typeof record.label === "string" && record.label.trim() ? record.label.trim() : undefined,
     requiredEnv,
     configured: state?.configured ?? (requiredEnv.length ? requiredEnv.every((name) => Boolean(process.env[name])) : undefined),
-    started: runtime === "builtin" ? state?.started ?? false : undefined
+    started: runner === "builtin" ? state?.started ?? false : undefined
   };
 };
 

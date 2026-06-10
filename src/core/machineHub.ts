@@ -84,7 +84,7 @@ type MachineCommandInput = Omit<MachineCommandBase, "seq"> & MachineCommandDetai
 
 export type MachineCommand = MachineCommandBase & MachineCommandDetail;
 
-type RuntimeMachine = MachineSummary & {
+type MachineState = MachineSummary & {
   transportId?: string;
   commands: MachineCommand[];
   waiters: Set<MachineWaiter>;
@@ -101,7 +101,7 @@ type PendingMachineCommand = {
 type MachineWaiter = () => void;
 
 export class MachineHub {
-  private readonly machines = new Map<string, RuntimeMachine>();
+  private readonly machines = new Map<string, MachineState>();
   private readonly pendingCommands = new Map<string, PendingMachineCommand>();
 
   constructor(private readonly options: { onChange?: () => void } = {}) {}
@@ -113,7 +113,7 @@ export class MachineHub {
     if (existing) {
       for (const waiter of [...existing.waiters]) waiter();
     }
-    const machine: RuntimeMachine = {
+    const machine: MachineState = {
       machineId,
       type: normalizeMachineType(registration.type, existing?.type),
       name: registration.name,
@@ -312,7 +312,7 @@ export class MachineHub {
   }
 
   private markMachineOffline(
-    machine: RuntimeMachine,
+    machine: MachineState,
     reason: NonNullable<MachineSummary["offlineReason"]>,
     message: string
   ) {
@@ -332,7 +332,7 @@ export const createMachineId = (hostname: string) => `machine-${safeMachinePart(
 const safeMachinePart = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
 
-const machineSummary = (machine: RuntimeMachine): MachineSummary => ({
+const machineSummary = (machine: MachineState): MachineSummary => ({
   machineId: machine.machineId,
   type: machine.type,
   name: machine.name,
@@ -348,10 +348,10 @@ const machineSummary = (machine: RuntimeMachine): MachineSummary => ({
   capabilities: machine.capabilities
 });
 
-const machineCommandsAfter = (machine: RuntimeMachine, after: number) =>
+const machineCommandsAfter = (machine: MachineState, after: number) =>
   machine.commands.filter((command) => command.seq > after);
 
-const machineVisibleState = (machine: RuntimeMachine) => JSON.stringify({
+const machineVisibleState = (machine: MachineState) => JSON.stringify({
   machineId: machine.machineId,
   type: machine.type,
   name: machine.name,

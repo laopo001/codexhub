@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile, cp, stat } from "node:fs/promises";
 import path from "node:path";
-import { build, type Plugin } from "esbuild";
+import { build } from "esbuild";
 
 const outDir = "dist-vscode";
 const extensionOutfile = path.join(outDir, "extension.cjs");
@@ -19,7 +19,6 @@ await build({
   sourcemap: false,
   minify: false,
   treeShaking: true,
-  plugins: [nodePtyStubPlugin()],
   logLevel: "silent"
 });
 
@@ -55,24 +54,4 @@ async function assertDirectory(dir: string, message: string) {
     // fall through to the explicit error below
   }
   throw new Error(message);
-}
-
-function nodePtyStubPlugin(): Plugin {
-  return {
-    name: "codexhub-vscode-node-pty-stub",
-    setup(builder) {
-      builder.onResolve({ filter: /^node-pty$/ }, () => ({
-        path: "node-pty",
-        namespace: "codexhub-vscode-stub"
-      }));
-      builder.onLoad({ filter: /.*/, namespace: "codexhub-vscode-stub" }, () => ({
-        loader: "js",
-        contents: [
-          "export const spawn = () => {",
-          "  throw new Error('node-pty is not available in the CodexHub VSCode extension target');",
-          "};"
-        ].join("\n")
-      }));
-    }
-  };
 }
