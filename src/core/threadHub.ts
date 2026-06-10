@@ -127,7 +127,17 @@ export type RuntimeSessionStreamEvent = {
 export type WorkerCommand = {
   seq: number;
   commandId: string;
-  type: "fork_thread" | "rollback_thread" | "turn" | "steer" | "stop" | "list_threads" | "start_thread" | "resume_thread";
+  type:
+    | "fork_thread"
+    | "rollback_thread"
+    | "turn"
+    | "steer"
+    | "stop"
+    | "list_threads"
+    | "start_thread"
+    | "resume_thread"
+    | "observe_thread_records"
+    | "unobserve_thread_records";
   workingDirectory: string;
   createdAt: string;
   threadId?: string;
@@ -525,6 +535,32 @@ export class ThreadHub {
     return this.summary(this.ensureThread(threadId, worker, {
       params: { threadId, cwd: worker.workingDirectory }
     }));
+  }
+
+  observeThreadRecords(threadId: string) {
+    const thread = this.requireThread(threadId);
+    const worker = this.requireThreadWorker(thread);
+    this.enqueueWorkerCommand(worker.workerId, {
+      commandId: randomUUID(),
+      type: "observe_thread_records",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId
+    });
+    return { observed: true };
+  }
+
+  unobserveThreadRecords(threadId: string) {
+    const thread = this.requireThread(threadId);
+    const worker = this.requireThreadWorker(thread);
+    this.enqueueWorkerCommand(worker.workerId, {
+      commandId: randomUUID(),
+      type: "unobserve_thread_records",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId
+    });
+    return { observed: false };
   }
 
   getThreadUsage(threadId?: string): ThreadUsage {

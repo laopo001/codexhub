@@ -864,6 +864,18 @@ class CodexAppServerBridge {
       };
     }
 
+    if (command.type === "observe_thread_records") {
+      if (!command.threadId) throw new Error("observe_thread_records command requires threadId");
+      this.bindThread(command.threadId);
+      return;
+    }
+
+    if (command.type === "unobserve_thread_records") {
+      if (!command.threadId) throw new Error("unobserve_thread_records command requires threadId");
+      this.unbindThread(command.threadId);
+      return;
+    }
+
     if (command.type === "start_thread") {
       const threadId = await this.startNewThread(
         command.workingDirectory,
@@ -1087,6 +1099,14 @@ class CodexAppServerBridge {
     this.scheduleJsonlSync(threadId, { replayFull: true });
   }
 
+  private unbindThread(threadId: string) {
+    const state = this.syncedThreads.get(threadId);
+    if (!state) return;
+    this.closeJsonlWatcher(state);
+    this.syncedThreads.delete(threadId);
+    this.forwardedRuntimeSettings.delete(threadId);
+  }
+
   private markThreadLoaded(threadId: string) {
     this.bindThread(threadId);
     this.loadedThreads.add(threadId);
@@ -1125,7 +1145,10 @@ class CodexAppServerBridge {
     command?: { threadId?: string; commandId?: string },
     options: { markBridgeStarted?: boolean } = {}
   ) {
-    if (this.loadedThreads.has(threadId)) return threadId;
+    if (this.loadedThreads.has(threadId)) {
+      this.bindThread(threadId);
+      return threadId;
+    }
     if (options.markBridgeStarted) this.markBridgeStartedThread(threadId);
     const result = asRecord(await this.request("thread/resume", {
       threadId,

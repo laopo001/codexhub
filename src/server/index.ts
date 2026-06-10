@@ -412,6 +412,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
   let localMachine: CodexhubMachineHandle | null = null;
+  const threadRecordObservationCounts = new Map<string, number>();
+  const threadRecordObservationTimers = new Map<string, NodeJS.Timeout>();
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
@@ -438,6 +440,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.addHook("onClose", async () => {
     clearInterval(sessionSweep);
     if (taskSweep) clearInterval(taskSweep);
+    for (const timer of threadRecordObservationTimers.values()) clearTimeout(timer);
+    threadRecordObservationTimers.clear();
     await sshMachines.stopAll();
     await localMachine?.stop();
     telegramBot?.stop("server closing");
@@ -471,6 +475,78 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       ...projectSnapshot()
     };
     for (const subscriber of projectSubscribers) subscriber(event);
+  }
+
+  const cancelThreadRecordObservationIdle = (threadId: string) => {
+    const timer = threadRecordObservationTimers.get(threadId);
+    if (!timer) return false;
+    clearTimeout(timer);
+    threadRecordObservationTimers.delete(threadId);
+    return true;
+  };
+
+  const retainThreadRecordObservation = (threadId: string) => {
+    const current = threadRecordObservationCounts.get(threadId) ?? 0;
+    const hadIdleTimer = cancelThreadRecordObservationIdle(threadId);
+    threadRecordObservationCounts.set(threadId, current + 1);
+    if (current > 0 || hadIdleTimer) return;
+    try {
+      threads.observeThreadRecords(threadId);
+    } catch {
+      // A thread subscription can still serve the in-memory snapshot when its runtime is offline.
+    }
+  };
+
+  const releaseThreadRecordObservation = (threadId: string) => {
+    const current = threadRecordObservationCounts.get(threadId) ?? 0;
+    if (current <= 0) return;
+    if (current > 1) {
+      threadRecordObservationCounts.set(threadId, current - 1);
+      return;
+    }
+    threadRecordObservationCounts.delete(threadId);
+    scheduleThreadRecordObservationIdle(threadId);
+  };
+
+  const forceReleaseThreadRecordObservation = (threadId: string) => {
+    threadRecordObservationCounts.delete(threadId);
+    cancelThreadRecordObservationIdle(threadId);
+    try {
+      threads.unobserveThreadRecords(threadId);
+    } catch {
+      // Thread deletion should not be blocked by a stale or offline runtime session.
+    }
+  };
+
+  const refreshRetainedThreadRecordObservations = () => {
+    for (const threadId of threadRecordObservationCounts.keys()) {
+      try {
+        threads.observeThreadRecords(threadId);
+      } catch {
+        // Observation is best-effort; Web subscriptions still receive stored thread events.
+      }
+    }
+  };
+
+  function scheduleThreadRecordObservationIdle(threadId: string) {
+    if (threadRecordObservationTimers.has(threadId)) return;
+    const timer = setTimeout(() => {
+      threadRecordObservationTimers.delete(threadId);
+      if ((threadRecordObservationCounts.get(threadId) ?? 0) > 0) return;
+      const thread = threads.getThread(threadId);
+      if (!thread) return;
+      if (thread.running) {
+        scheduleThreadRecordObservationIdle(threadId);
+        return;
+      }
+      try {
+        threads.unobserveThreadRecords(threadId);
+      } catch {
+        // Runtime may have gone offline while the thread tab was idle.
+      }
+    }, threadRecordObservationIdleMs());
+    timer.unref?.();
+    threadRecordObservationTimers.set(threadId, timer);
   }
 
   const runtimeSessionsForProject = (target: { machineId: string; path: string }) => {
@@ -888,9 +964,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       threadUnsubscribers.get(threadId)?.();
       threadUnsubscribers.delete(threadId);
       try {
-        const unsubscribe = threads.subscribe(threadId, after, (event) => {
+        const unsubscribeStream = threads.subscribe(threadId, after, (event) => {
           sendEvent(event);
         });
+        retainThreadRecordObservation(threadId);
+        const unsubscribe = () => {
+          unsubscribeStream();
+          releaseThreadRecordObservation(threadId);
+        };
         threadUnsubscribers.set(threadId, unsubscribe);
         send({ type: "thread_subscribed", threadId });
       } catch (error) {
@@ -1436,6 +1517,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           sessionIds.add(result.workerId);
           sessionCursors.set(result.workerId, threads.clampWorkerCommandCursor(result.workerId, parsed.commandCursor ?? 0));
           send({ type: "session_registered", sessionId: result.workerId, session: runtimeSessionFromWorker(result.worker) });
+          refreshRetainedThreadRecordObservations();
           publishProjects();
           startSessionCommandPump(result.workerId);
           return;
@@ -1520,6 +1602,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.delete("/api/threads/:threadId", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     try {
+      forceReleaseThreadRecordObservation(params.threadId);
       return await threads.deleteThread(params.threadId);
     } catch (error) {
       reply.code(404);
@@ -1707,6 +1790,11 @@ const contentType = (filePath: string) => {
 const sshRemoteMode = () => process.env.CODEX_HUB_SSH_REMOTE_MODE === "installed" ? "installed" : "bootstrap";
 
 const sshAutoConnectEnabled = () => process.env.CODEX_HUB_SSH_AUTOCONNECT !== "0";
+
+const threadRecordObservationIdleMs = () => {
+  const value = Number(process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS);
+  return Number.isFinite(value) && value >= 0 ? value : 120_000;
+};
 
 const isDirectEntryPoint = () => {
   const entrypoint = process.argv[1];
