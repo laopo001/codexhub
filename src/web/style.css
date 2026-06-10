@@ -2097,13 +2097,14 @@ textarea {
 }
 
 .composer textarea {
-  min-height: 28px;
+  min-height: calc(2 * 1.55em);
   max-height: 180px;
   border: 0;
   border-radius: 0;
   background: transparent;
   padding: 0 6px;
-  resize: vertical;
+  resize: none;
+  overflow-y: hidden;
   box-shadow: none;
   line-height: 1.55;
 }
@@ -3224,7 +3225,7 @@ textarea {
   }
 
   .composer textarea {
-    min-height: 28px;
+    min-height: calc(2 * 1.55em);
     max-height: 132px;
     padding: 0 4px;
   }

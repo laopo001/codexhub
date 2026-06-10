@@ -520,6 +520,15 @@ const highlightedLanguages = new Set([
   "yaml"
 ]);
 
+const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  const maxHeight = Number.parseFloat(window.getComputedStyle(textarea).maxHeight);
+  const shouldScroll = Number.isFinite(maxHeight) && textarea.scrollHeight > maxHeight;
+  textarea.style.height = `${shouldScroll ? maxHeight : textarea.scrollHeight}px`;
+  textarea.style.overflowY = shouldScroll ? "auto" : "hidden";
+};
+
 const App = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -587,6 +596,7 @@ const App = () => {
   const messagesRef = useRef<VirtuosoHandle>(null);
   const messagesScrollerRef = useRef<HTMLElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notificationRecordsByThread = useRef(new Map<string, CodexRecord[]>());
   const notifiedTaskCompletions = useRef(new Set<string>());
   const notificationAudioContext = useRef<AudioContext | null>(null);
@@ -595,6 +605,10 @@ const App = () => {
     () => sessions.find((session) => session.threadId === activeTabThreadId),
     [activeTabThreadId, sessions]
   );
+  useEffect(() => {
+    resizeComposerTextarea(composerTextareaRef.current);
+  }, [activeSession?.threadId, activeSession?.input]);
+
   const projectList = useMemo(() => projects, [projects]);
   const activeRuntimeSession = useMemo(
     () => runtimeSessions.find((session) => session.sessionId === activeSessionId)
@@ -2967,8 +2981,12 @@ const App = () => {
                             </div>
                           ) : null}
                           <textarea
+                            ref={composerTextareaRef}
                             value={activeSession.input}
-                            onChange={(event) => updateSessionInput(activeSession.threadId, event.target.value)}
+                            onChange={(event) => {
+                              resizeComposerTextarea(event.currentTarget);
+                              updateSessionInput(activeSession.threadId, event.target.value);
+                            }}
                             onPaste={(event) => {
                               if (!pasteSessionImages(activeSession.threadId, event.clipboardData)) return;
                               event.preventDefault();
@@ -2979,7 +2997,7 @@ const App = () => {
                               if (activeCanSend) void send(activeSession.threadId);
                             }}
                             placeholder="例如：检查这个 repo 的结构并给我下一步建议"
-                            rows={1}
+                            rows={2}
                           />
                         </div>
                         <div className="composerActions">
@@ -4509,6 +4527,7 @@ const latestThreadGoalFromRecords = (records: CodexRecord[]): ThreadGoalView | n
     const objective = typeof goal?.objective === "string" ? compactLine(goal.objective) : "";
     if (!objective) return null;
     const status = typeof goal?.status === "string" ? goal.status : "active";
+    if (status === "complete") return null;
     const tokenBudget = typeof goal?.tokenBudget === "number"
       ? goal.tokenBudget
       : typeof goal?.token_budget === "number"
