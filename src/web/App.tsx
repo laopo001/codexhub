@@ -2121,7 +2121,7 @@ const App = () => {
     } : current);
     try {
       const payload = await apiJson<{ threads?: CodexThreadCandidate[] }>(
-        `/api/sessions/${encodeURIComponent(sessionId)}/thread-candidates?limit=50`
+        `/api/sessions/${encodeURIComponent(sessionId)}/thread-candidates?limit=20`
       );
       setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
@@ -3217,7 +3217,7 @@ const App = () => {
                 type="button"
                 className="threadPickerRow newThread"
                 onClick={() => void createRuntimeSessionThread()}
-                disabled={threadPicker.loading || threadPicker.acting !== null}
+                disabled={threadPicker.acting !== null}
               >
                 <span className="threadPickerRowTitle">New thread</span>
                 <span className="threadPickerRowMeta">{threadPicker.acting === "new" ? "creating" : "Start a new Codex thread"}</span>

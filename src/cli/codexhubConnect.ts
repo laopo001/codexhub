@@ -853,7 +853,10 @@ class CodexAppServerBridge {
   private async handleCommand(command: WorkerCommand) {
     if (command.type === "list_threads") {
       return {
-        threads: await listCodexSessionsForCwd(command.workingDirectory, { limit: command.limit })
+        threads: await listCodexSessionsForCwd(command.workingDirectory, {
+          limit: command.limit,
+          summaryMode: "candidate"
+        })
       };
     }
 

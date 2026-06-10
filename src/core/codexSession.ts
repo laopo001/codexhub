@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, type Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -121,6 +121,10 @@ const turnIdFromPayload = (payload: unknown) => {
 
 type CodexSessionListOptions = {
   limit?: number;
+  summaryMode?: "full" | "candidate";
+  maxScanDays?: number;
+  maxScanFiles?: number;
+  maxScanMs?: number;
 };
 
 type SessionFileInfo = {
@@ -128,8 +132,13 @@ type SessionFileInfo = {
   mtimeMs: number;
 };
 
+const DEFAULT_CANDIDATE_SCAN_DAYS = 90;
+const DEFAULT_CANDIDATE_SCAN_FILES = 1000;
+const DEFAULT_CANDIDATE_SCAN_MS = 3000;
+const SESSION_META_SCAN_LINE_LIMIT = 64;
+
 export const listCodexSessionFiles = async (): Promise<string[]> => {
-  const root = path.join(os.homedir(), ".codex", "sessions");
+  const root = codexSessionRoot();
   const files: string[] = [];
   await visitSessionFiles(root, (filePath) => {
     files.push(filePath);
@@ -138,7 +147,7 @@ export const listCodexSessionFiles = async (): Promise<string[]> => {
 };
 
 const listCodexSessionFileInfos = async (): Promise<SessionFileInfo[]> => {
-  const root = path.join(os.homedir(), ".codex", "sessions");
+  const root = codexSessionRoot();
   const files: SessionFileInfo[] = [];
   await visitSessionFiles(root, async (filePath) => {
     let mtimeMs = 0;
@@ -166,10 +175,9 @@ export const listCodexSessionsForCwd = async (
   options: CodexSessionListOptions = {}
 ): Promise<CodexSessionSummary[]> => {
   const limit = normalizeLimit(options.limit);
-  const files = await listCodexSessionFileInfos();
-  const summaries = limit
-    ? await readRecentSessionSummariesForCwd(files, workingDirectory, limit)
-    : await mapWithConcurrency(files.map((file) => file.path), 16, (filePath) => readSessionSummaryForCwd(filePath, workingDirectory));
+  const summaries = options.summaryMode === "candidate" && limit
+    ? await readRecentCandidateSessionSummariesForCwd(workingDirectory, limit, options)
+    : await readFullSessionSummariesForCwd(workingDirectory, limit);
 
   const byThreadId = summaries
     .filter((summary): summary is CodexSessionSummary => Boolean(summary))
@@ -186,29 +194,76 @@ export const listCodexSessionsForCwd = async (
   return limit ? sorted.slice(0, limit) : sorted;
 };
 
-const readRecentSessionSummariesForCwd = async (
-  files: SessionFileInfo[],
+const readFullSessionSummariesForCwd = async (
+  workingDirectory: string,
+  limit: number | undefined
+) => {
+  if (limit) return await readRecentFullSessionSummariesForCwd(workingDirectory, limit);
+
+  const files = await listCodexSessionFileInfos();
+  return await mapWithConcurrency(files.map((file) => file.path), 16, (filePath) => readSessionSummaryForCwd(filePath, workingDirectory));
+};
+
+const readRecentFullSessionSummariesForCwd = async (
   workingDirectory: string,
   limit: number
 ) => {
   const byThreadId = new Map<string, CodexSessionSummary>();
-  const batchSize = 16;
-  for (let index = 0; index < files.length && byThreadId.size < limit; index += batchSize) {
-    const batch = files.slice(index, index + batchSize);
-    const summaries = await Promise.all(batch.map((file) => readSessionSummaryForCwd(file.path, workingDirectory)));
-    for (const summary of summaries) {
-      if (!summary) continue;
+
+  await visitSessionFilesByPathDesc(codexSessionRoot(), async (filePath) => {
+    if (byThreadId.size >= limit) return false;
+
+    const summary = await readSessionSummaryForCwd(filePath, workingDirectory);
+    if (summary) {
       const existing = byThreadId.get(summary.threadId);
       if (!existing || Date.parse(summary.updatedAt) > Date.parse(existing.updatedAt)) {
         byThreadId.set(summary.threadId, summary);
       }
     }
-  }
+
+    return byThreadId.size < limit;
+  });
+
+  return [...byThreadId.values()];
+};
+
+const readRecentCandidateSessionSummariesForCwd = async (
+  workingDirectory: string,
+  limit: number,
+  options: CodexSessionListOptions
+): Promise<CodexSessionSummary[]> => {
+  const byThreadId = new Map<string, CodexSessionSummary>();
+  const maxFiles = normalizePositiveInteger(options.maxScanFiles, DEFAULT_CANDIDATE_SCAN_FILES);
+  const maxScanMs = normalizePositiveInteger(options.maxScanMs, DEFAULT_CANDIDATE_SCAN_MS);
+  const scanStartedAt = Date.now();
+  const deadline = scanStartedAt + maxScanMs;
+  let scannedFiles = 0;
+
+  await visitSessionFilesByPathDesc(codexSessionRoot(), async (filePath) => {
+    if (byThreadId.size >= limit || scannedFiles >= maxFiles || Date.now() >= deadline) return false;
+    scannedFiles += 1;
+
+    const summary = await readCandidateSessionSummaryForCwd(filePath, workingDirectory);
+    if (summary) {
+      const existing = byThreadId.get(summary.threadId);
+      if (!existing || Date.parse(summary.updatedAt) > Date.parse(existing.updatedAt)) {
+        byThreadId.set(summary.threadId, summary);
+      }
+    }
+
+    return byThreadId.size < limit && scannedFiles < maxFiles && Date.now() < deadline;
+  }, {
+    maxDays: normalizePositiveInteger(options.maxScanDays, DEFAULT_CANDIDATE_SCAN_DAYS)
+  });
+
   return [...byThreadId.values()];
 };
 
 const normalizeLimit = (value: number | undefined) =>
   Number.isInteger(value) && value !== undefined && value > 0 ? value : undefined;
+
+const normalizePositiveInteger = (value: number | undefined, fallback: number) =>
+  Number.isInteger(value) && value !== undefined && value > 0 ? value : fallback;
 
 export const summarizeCodexSession = async (
   snapshot: CodexSessionSnapshot,
@@ -358,6 +413,81 @@ const readSessionSummaryForCwd = async (
   };
 };
 
+const readCandidateSessionSummaryForCwd = async (
+  filePath: string,
+  workingDirectory: string
+): Promise<CodexSessionSummary | null> => {
+  const reader = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity
+  });
+
+  let threadId = "";
+  let cwd = "";
+  let firstUserMessage = "";
+  let lastAssistant = "";
+  let lastTimestamp = "";
+  let linesBeforeMeta = 0;
+
+  try {
+    for await (const line of reader) {
+      if (!line.trim()) continue;
+      let parsed: { timestamp?: string; type: string; payload: unknown };
+      try {
+        parsed = JSON.parse(line) as { timestamp?: string; type: string; payload: unknown };
+      } catch {
+        reader.close();
+        return null;
+      }
+
+      if (parsed.timestamp) lastTimestamp = parsed.timestamp;
+
+      if (parsed.type === "session_meta") {
+        const payload = asRecord(parsed.payload);
+        threadId = typeof payload?.id === "string" ? payload.id : "";
+        cwd = typeof payload?.cwd === "string" ? payload.cwd : "";
+        if (cwd !== workingDirectory) {
+          reader.close();
+          return null;
+        }
+        continue;
+      }
+
+      if (!cwd) {
+        linesBeforeMeta += 1;
+        if (linesBeforeMeta >= SESSION_META_SCAN_LINE_LIMIT) {
+          reader.close();
+          return null;
+        }
+        continue;
+      }
+
+      const payload = asRecord(parsed.payload);
+      if (!payload) continue;
+      if (payload.type === "user_message") {
+        if (!firstUserMessage && typeof payload.message === "string") firstUserMessage = payload.message;
+      } else if (payload.type === "agent_message" && typeof payload.message === "string") {
+        lastAssistant = payload.message;
+      }
+    }
+  } catch {
+    reader.close();
+    return null;
+  }
+
+  if (!threadId || cwd !== workingDirectory) return null;
+  return {
+    threadId,
+    cwd,
+    path: filePath,
+    updatedAt: lastTimestamp || sessionPathUpdatedAt(filePath),
+    firstUserMessage,
+    lastAssistantMessage: lastAssistant,
+    artifactCount: 0,
+    messageCount: 0
+  };
+};
+
 const mapWithConcurrency = async <T, R>(
   items: T[],
   concurrency: number,
@@ -382,6 +512,13 @@ const fileUpdatedAt = async (filePath: string): Promise<string> => {
   } catch {
     return new Date(0).toISOString();
   }
+};
+
+const sessionPathUpdatedAt = (filePath: string): string => {
+  const match = path.basename(filePath).match(/(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/);
+  if (!match) return new Date(0).toISOString();
+  const date = new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}`);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : new Date(0).toISOString();
 };
 
 const firstPayloadMessage = (snapshot: CodexSessionSnapshot, type: string): string => {
@@ -410,12 +547,43 @@ const waitForSessionFile = async (threadId: string): Promise<string | null> => {
 };
 
 export const findCodexSessionFile = async (threadId: string): Promise<string | null> => {
-  const root = path.join(os.homedir(), ".codex", "sessions");
+  const root = codexSessionRoot();
   const matches: string[] = [];
   await visitSessionFiles(root, (filePath) => {
     if (path.basename(filePath).includes(threadId)) matches.push(filePath);
   });
   return matches.sort().at(-1) ?? null;
+};
+
+const codexSessionRoot = () => path.join(os.homedir(), ".codex", "sessions");
+
+const visitSessionFilesByPathDesc = async (
+  root: string,
+  onFile: (filePath: string) => boolean | void | Promise<boolean | void>,
+  options: { maxDays?: number } = {}
+) => {
+  const cutoffTime = sessionDirectoryCutoffTime(options.maxDays);
+  const years = await sortedEntries(root, (entry) => entry.isDirectory() && /^\d{4}$/.test(entry.name));
+
+  for (const year of years) {
+    const yearPath = path.join(root, year.name);
+    const months = await sortedEntries(yearPath, (entry) => entry.isDirectory() && /^\d{2}$/.test(entry.name));
+    for (const month of months) {
+      const monthPath = path.join(yearPath, month.name);
+      const days = await sortedEntries(monthPath, (entry) => entry.isDirectory() && /^\d{2}$/.test(entry.name));
+      for (const day of days) {
+        const dayTime = sessionDirectoryTime(year.name, month.name, day.name);
+        if (dayTime !== null && dayTime < cutoffTime) continue;
+
+        const dayPath = path.join(monthPath, day.name);
+        const files = await sortedEntries(dayPath, (entry) => entry.isFile() && entry.name.endsWith(".jsonl"));
+        for (const file of files) {
+          const result = await onFile(path.join(dayPath, file.name));
+          if (result === false) return;
+        }
+      }
+    }
+  }
 };
 
 const visitSessionFiles = async (root: string, onFile: (filePath: string) => void | Promise<void>) => {
@@ -438,6 +606,33 @@ const visitSessionFiles = async (root: string, onFile: (filePath: string) => voi
   };
 
   await visit(root);
+};
+
+const sortedEntries = async (
+  directory: string,
+  filter: (entry: Dirent) => boolean
+) => {
+  try {
+    return (await readdir(directory, { withFileTypes: true }))
+      .filter(filter)
+      .sort((left, right) => right.name.localeCompare(left.name));
+  } catch {
+    return [];
+  }
+};
+
+const sessionDirectoryCutoffTime = (maxDays: number | undefined) => {
+  if (!maxDays) return Number.NEGATIVE_INFINITY;
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - maxDays + 1);
+  return cutoff.getTime();
+};
+
+const sessionDirectoryTime = (year: string, month: string, day: string) => {
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  const time = date.getTime();
+  return Number.isFinite(time) ? time : null;
 };
 
 const sanitizePayload = (value: unknown): unknown => {
