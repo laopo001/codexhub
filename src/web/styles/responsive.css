@@ -1,0 +1,199 @@
+@media (max-width: 860px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 70;
+    width: min(320px, 86vw);
+    max-height: none;
+    box-shadow: 18px 0 42px rgb(0 0 0 / 0.32);
+  }
+
+  .sidebarScrim {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: block;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(0 0 0 / 0.42);
+    padding: 0;
+  }
+
+  .app.sidebarCollapsed .sidebar {
+    display: none;
+  }
+
+  .app:not(.sidebarCollapsed) .workspace {
+    grid-column: 1;
+  }
+
+  .workspace {
+    min-height: 0;
+  }
+
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  }
+
+  .workspaceTitle {
+    max-width: none;
+  }
+
+  .workspaceTitle .workspaceMeta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+    overflow: hidden;
+    white-space: normal;
+  }
+
+  .workspaceTitle .workspacePath {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .workspaceTitle .workspaceThreadId {
+    grid-column: 1 / -1;
+  }
+
+  .modelSelect,
+  .switchControl,
+  .usagePill {
+    max-width: 100%;
+  }
+
+  .modelSelect {
+    grid-template-columns: auto minmax(0, auto);
+  }
+
+  .modelSelect select {
+    min-width: 0;
+  }
+
+  .messages {
+    padding: 14px 12px 12px;
+  }
+
+  .messages > div {
+    max-width: calc(100% - 24px);
+  }
+
+  .message {
+    padding: 10px 10px 22px;
+  }
+
+  .message.user {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .messageMeta {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .composer {
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .composerLayout {
+    width: 100%;
+  }
+
+  .composerSurface {
+    border-radius: 18px;
+    padding: 12px 12px 10px;
+  }
+
+  .goalStrip {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .goalStripActions {
+    justify-content: flex-end;
+  }
+
+  .goalStripLabel {
+    font-size: 11px;
+  }
+
+  .goalStripObjective,
+  .goalStripAge {
+    font-size: 11px;
+  }
+
+  .composer textarea {
+    min-height: calc(2 * 1.55em);
+    max-height: 132px;
+    padding: 0 4px;
+  }
+
+  .composerActions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .composerRightActions {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+  }
+
+  .composerModeSegmented {
+    flex: 1 1 162px;
+    width: min(180px, calc(100vw - 116px));
+    min-width: 156px;
+  }
+
+  .composerModeOption {
+    padding: 0 6px;
+    font-size: 11px;
+  }
+
+  .composerSessionControls.inline {
+    display: none;
+  }
+
+  .composerSessionMenuHost {
+    display: block;
+  }
+
+  .composerSessionPopover .composerSessionControls {
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .composerUsagePills {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    font-size: 11px;
+  }
+
+  .composerSessionPopover .usagePill {
+    padding: 4px 7px;
+  }
+
+  .composerMenu {
+    min-width: min(204px, calc(100vw - 48px));
+  }
+
+  .modalOverlay {
+    padding: 12px;
+  }
+
+  .sessionDialogOverlay {
+    padding: 12px;
+  }
+}

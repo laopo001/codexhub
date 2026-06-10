@@ -1,0 +1,271 @@
+.taskPanel {
+  display: grid;
+  align-content: start;
+  flex: 0 0 auto;
+  gap: 10px;
+  min-width: 0;
+}
+
+.taskPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.taskPanelTitle {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.taskPanelHeader h2 {
+  margin: 0;
+  color: #d8e2d5;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.taskPanelTitle span {
+  min-width: 0;
+  overflow: hidden;
+  color: #91a090;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskPanelHeader button {
+  flex: 0 0 auto;
+  min-height: 26px;
+  border: 1px solid #405244;
+  border-radius: 8px;
+  background: #203526;
+  color: #f8fbf4;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.taskList {
+  display: grid;
+  gap: 6px;
+  max-height: 170px;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.taskEmpty,
+.taskRow {
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #111811;
+  color: #91a090;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.taskRow {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.taskRow.enabled {
+  border-color: #405244;
+  background: #0f1b14;
+  color: #d8e2d5;
+}
+
+.taskRowHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.taskRowHeader span,
+.taskRow code,
+.taskRow em,
+.taskRow small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskRowHeader span {
+  font-weight: 800;
+}
+
+.taskStatus {
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 10px;
+  font-weight: 750;
+  padding: 1px 6px;
+}
+
+.taskStatus.completed {
+  background: #1c4a34;
+  color: #c9f1da;
+}
+
+.taskStatus.queued {
+  background: #2f3d52;
+  color: #cdddf6;
+}
+
+.taskStatus.paused {
+  background: #2d332e;
+  color: #9daa98;
+}
+
+.taskStatus.failed,
+.taskStatus.skipped {
+  background: #39271d;
+  color: #f0b58d;
+}
+
+.taskRow code,
+.taskRow em,
+.taskRow small {
+  color: #91a090;
+  font-family: inherit;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.taskRow small {
+  color: #f0b58d;
+}
+
+.taskRow.paused .taskLastError {
+  color: #9daa98;
+}
+
+.taskActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.taskRunButton,
+.taskDeleteButton {
+  min-height: 26px;
+  border: 1px solid #405244;
+  border-radius: 8px;
+  background: #203526;
+  color: #f8fbf4;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.taskRunButton {
+  border-color: #d95f36;
+  background: #d95f36;
+  color: #fff8f2;
+}
+
+.taskDeleteButton {
+  margin-left: auto;
+  width: 28px;
+  padding: 0;
+}
+
+.taskRunButton:disabled,
+.taskDeleteButton:disabled {
+  border-color: #405244;
+  background: #203526;
+  color: #7e8c7b;
+}
+
+.taskForm {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #0f1b14;
+  padding: 10px;
+}
+
+.taskField {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.taskField span {
+  color: #b8c5b4;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.taskField input,
+.taskField select,
+.taskField textarea {
+  min-height: 32px;
+  border-color: #334238;
+  background: #111811;
+  color: #f8fbf4;
+  padding: 7px 8px;
+  font-size: 12px;
+}
+
+.taskField textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.taskFormActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.taskEnabledControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #b8c5b4;
+  font-size: 12px;
+}
+
+.taskPanel .ant-switch {
+  background: #405244;
+}
+
+.taskPanel .ant-switch.ant-switch-checked {
+  background: #2f7d5a;
+}
+
+.taskFormActions button {
+  min-height: 32px;
+  border: 1px solid #d95f36;
+  border-radius: 8px;
+  background: #d95f36;
+  color: #fff8f2;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.taskFormActions button:disabled {
+  border-color: #405244;
+  background: #203526;
+  color: #7e8c7b;
+}
+

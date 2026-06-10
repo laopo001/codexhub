@@ -1,0 +1,501 @@
+.composer {
+  border-top: 1px solid #dfe5dc;
+  padding: 14px 22px calc(18px + env(safe-area-inset-bottom));
+  background: #f4f6f1;
+}
+
+.composerLayout {
+  width: min(1522px, 100%);
+  margin: 0 auto;
+}
+
+.composerThreadEmpty {
+  display: grid;
+  min-height: 42px;
+  place-items: center;
+  color: #8a9584;
+  font-size: 12px;
+}
+
+.workspaceThreadTabs {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Keep the tab pane body full-height without restyling Ant Design tabs. */
+.workspaceThreadTabs > .ant-tabs-content-holder > .ant-tabs-content,
+.workspaceThreadTabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
+  height: 100%;
+  min-height: 0;
+}
+
+.workspaceThreadTabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
+  overflow: hidden;
+}
+
+.threadTabActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.threadWorkspacePane {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.workspaceThreadTabLabel {
+  display: grid;
+  gap: 2px;
+  width: max-content;
+  min-width: 0;
+}
+
+.workspaceThreadTabLabel span,
+.workspaceThreadTabLabel code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspaceThreadTabLabel span {
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+  max-width: 16em;
+}
+
+.workspaceThreadTabLabel code {
+  overflow: visible;
+  text-overflow: clip;
+  color: #66715f;
+  font-size: 11px;
+}
+
+.composerSurface {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #c6d0c2;
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 14px 16px 12px;
+  box-shadow: 0 10px 28px rgb(18 32 24 / 0.08);
+}
+
+.goalStrip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid #d9dfd5;
+  border-radius: 14px;
+  background: #f8faf5;
+  padding: 5px 7px 5px 9px;
+  color: #17211a;
+}
+
+.goalStrip.active {
+  border-color: #cad8ca;
+  background: #f6faf4;
+}
+
+.goalStrip.paused {
+  border-color: #d9d4c7;
+  background: #faf8f0;
+}
+
+.goalStrip.blocked {
+  border-color: #ead0c8;
+  background: #fff5f2;
+}
+
+.goalStrip.complete {
+  border-color: #d7ded4;
+  background: #f7f9f5;
+  color: #66715f;
+}
+
+.goalStripMain {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.goalStripIcon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: #7c8778;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.goalStripLabel {
+  flex: 0 0 auto;
+  color: #3f4c3b;
+  font-size: 12px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.goalStripObjective {
+  min-width: 0;
+  overflow: hidden;
+  color: #17211a;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goalStripAge {
+  flex: 0 0 auto;
+  color: #8a9586;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.goalStripActions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.goalIconButton {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #66715f;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.goalIconButton:hover {
+  background: #e8eee4;
+  color: #17211a;
+}
+
+.goalIconButton.danger:hover {
+  background: #f6dfd7;
+  color: #8b3f31;
+}
+
+.composerInput {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composer textarea {
+  min-height: calc(2 * 1.55em);
+  max-height: 180px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 6px;
+  resize: none;
+  overflow-y: hidden;
+  box-shadow: none;
+  line-height: 1.55;
+}
+
+.composer textarea:focus {
+  outline: none;
+}
+
+.composerActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+}
+
+.composerLeftActions,
+.composerRightActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composerRightActions {
+  justify-content: flex-end;
+}
+
+.composerActionButtons {
+  --composer-status-ring: #cbd6c7;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composerActionButtons.status-running {
+  --composer-status-ring: #f28c28;
+}
+
+.composerActionButtons.status-completed {
+  --composer-status-ring: #2f7d4a;
+}
+
+.composerActionButtons.status-aborted {
+  --composer-status-ring: #b86b17;
+}
+
+.composerActionButtons.status-failed {
+  --composer-status-ring: #c4362f;
+}
+
+.composerSessionControls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composerUsagePills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  color: #66715f;
+  font-size: 12px;
+}
+
+.usagePill {
+  border: 1px solid #dfe5dc;
+  border-radius: 999px;
+  background: #f4f6f1;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.statusPill {
+  min-height: 27px;
+  color: #66715f;
+  font: inherit;
+  cursor: pointer;
+}
+
+.statusPill.available {
+  border-color: #cbded1;
+  background: #ffffff;
+  color: #26342a;
+  font-weight: 750;
+}
+
+.statusPill:hover:not(:disabled) {
+  background: #eef3eb;
+}
+
+.statusPill:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.composerSessionMenuHost {
+  position: relative;
+  display: none;
+}
+
+.composerMenuHost {
+  position: relative;
+}
+
+.composerModeSegmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(50px, 1fr));
+  width: min(180px, 38vw);
+  min-width: 162px;
+  height: 32px;
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.composerModeOption {
+  min-width: 0;
+  border: 0;
+  border-left: 1px solid #dfe5dc;
+  background: transparent;
+  color: #3c4738;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.composerModeOption:first-child {
+  border-left: 0;
+}
+
+.composerModeOption:hover:not(.active) {
+  background: #f4f6f1;
+}
+
+.composerModeOption.active {
+  background: #1f6feb;
+  color: #ffffff;
+}
+
+.composerIconButton,
+.composerMoreButton,
+.composerSendButton,
+.composerStopButton {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+}
+
+.composerIconButton {
+  border: 1px solid #cbd6c7;
+  background: transparent;
+  color: #17211a;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.composerMoreButton {
+  border: 1px solid #cbd6c7;
+  background: #ffffff;
+  color: #66715f;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.composerIconButton:hover,
+.composerMoreButton:hover {
+  background: #f4f6f1;
+}
+
+.composerSessionPopover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 60;
+  max-width: calc(100vw - 32px);
+  border: 1px solid #dfe5dc;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 10px;
+  box-shadow: 0 16px 40px rgb(18 32 24 / 0.18);
+}
+
+.composerSessionPopover .composerSessionControls {
+  justify-content: flex-start;
+}
+
+.composerModelButton {
+  min-height: 32px;
+  border: 1px solid #cbd6c7;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #66715f;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.composerModelButton:hover {
+  background: #f4f6f1;
+}
+
+.composerActionButton {
+  box-shadow: 0 0 0 3px var(--composer-status-ring);
+}
+
+.composerActionButton:not(:disabled):hover {
+  filter: brightness(1.04);
+}
+
+.composerActionButton:disabled {
+  cursor: default;
+}
+
+.composerSendButton {
+  background: #17211a;
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.composerStopButton {
+  background: #ffffff;
+  color: #17211a;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.composerSendButton:disabled,
+.composerStopButton:disabled {
+  background: #dfe5dc;
+  color: #8a9584;
+}
+
+.composerMenu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 50;
+  display: grid;
+  min-width: 204px;
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 6px;
+  box-shadow: 0 18px 46px rgb(18 32 24 / 0.18);
+}
+
+.composerMenuItem {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #17211a;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.composerMenuItem:hover:not(:disabled) {
+  background: #f4f6f1;
+}
+
+.composerMenuIcon {
+  color: #66715f;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+

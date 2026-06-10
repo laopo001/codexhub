@@ -1,0 +1,57 @@
+import type { ComposerMode, ModelSelection, ReasoningSelection } from "./types.js";
+
+export const webSurface = new URLSearchParams(window.location.search).get("surface") === "vscode" ? "vscode" : "default";
+export const isVscodeSurface = webSurface === "vscode";
+export const storageKey = isVscodeSurface ? "codexhub-ui-state-vscode-v1" : "codexhub-ui-state-v5";
+export const legacyStorageKey = "codexhub-ui-state-v4";
+export const modelOptions: Array<{ value: ModelSelection; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "gpt-5.5", label: "GPT-5.5" },
+  { value: "gpt-5.4", label: "GPT-5.4" },
+  { value: "gpt-5.4-mini", label: "GPT-5.4-Mini" },
+  { value: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
+  { value: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark" },
+  { value: "gpt-5.2", label: "GPT-5.2" }
+];
+export const reasoningOptions: Array<{ value: ReasoningSelection; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "XHigh" }
+];
+export const composerModeOptions: Array<{ value: ComposerMode; label: string }> = [
+  { value: "chat", label: "Chat" },
+  { value: "plan", label: "Plan" },
+  { value: "goal", label: "Goal" }
+];
+
+export const languageAliases: Record<string, string> = {
+  console: "bash",
+  html: "markup",
+  js: "javascript",
+  md: "markdown",
+  sh: "bash",
+  shell: "bash",
+  ts: "typescript",
+  xml: "markup",
+  yml: "yaml",
+  zsh: "bash"
+};
+export const highlightedLanguages = new Set([
+  "bash",
+  "css",
+  "diff",
+  "javascript",
+  "json",
+  "jsx",
+  "markdown",
+  "markup",
+  "python",
+  "sql",
+  "tsx",
+  "typescript",
+  "yaml"
+]);
+

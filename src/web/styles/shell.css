@@ -1,0 +1,70 @@
+.app {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  height: 100svh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app.sidebarCollapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app.sidebarCollapsed .workspace {
+  grid-column: 1;
+  width: 100%;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 22px;
+  background: #122018;
+  color: #f8fbf4;
+}
+
+.sidebarCollapsed .sidebar {
+  display: none;
+}
+
+.sidebarScrim {
+  display: none;
+}
+
+.brand {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.brand p {
+  margin: 8px 0 0;
+  color: #b8c5b4;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #fcfdf9;
+  color: #17211a;
+  padding: 10px 12px;
+}
+

@@ -1,0 +1,341 @@
+.projectPanel {
+  display: grid;
+  align-content: start;
+  flex: 0 0 auto;
+  gap: 10px;
+  min-height: 0;
+}
+
+.projectPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.projectPanel h2,
+.projectPanelHeader h2 {
+  margin: 0;
+  color: #d8e2d5;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.projectPanelHeader span {
+  overflow: hidden;
+  color: #91a090;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectAddButton {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #d95f36;
+  border-radius: 8px;
+  background: #d95f36;
+  color: #fff8f2;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.projectAddButton:disabled {
+  border-color: #405244;
+  background: #203526;
+  color: #7e8c7b;
+}
+
+.projectOpenError {
+  overflow-wrap: anywhere;
+  border: 1px solid #6d3523;
+  border-radius: 8px;
+  background: #211813;
+  color: #f0b58d;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.projectList {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.projectMachineGroup {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.projectOfflineSection {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 6px;
+}
+
+.projectOfflineHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #91a090;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 0;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.projectOfflineHeader:hover {
+  color: #d8e2d5;
+}
+
+.projectOfflineArrow {
+  display: inline-block;
+  color: #71806f;
+  font-size: 10px;
+  transform: rotate(90deg);
+}
+
+.projectOfflineArrow.collapsed {
+  transform: rotate(0deg);
+}
+
+.projectOfflineHeader span:not(.projectOfflineArrow) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectOfflineHeader strong {
+  border-radius: 999px;
+  background: #2d4033;
+  color: #b9c6b4;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+}
+
+.projectOfflineMachines {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.projectMachineHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: #f8fbf4;
+  cursor: pointer;
+  text-align: left;
+}
+
+.projectMachineHeader:hover {
+  color: #d8e2d5;
+}
+
+.projectMachineHeader span:not(.projectOfflineArrow) {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectMachineHeader strong {
+  border-radius: 999px;
+  background: #1c4a34;
+  color: #c9f1da;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+}
+
+.projectMachineHeader.offline {
+  color: #91a090;
+}
+
+.projectMachineHeader.offline strong {
+  background: #39271d;
+  color: #f0b58d;
+}
+
+.projectMachineRows {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border-left: 1px solid #2d4033;
+  padding-left: 8px;
+}
+
+.projectEmptyRow {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #111811;
+  color: #91a090;
+  padding: 9px 11px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectRow {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #405244;
+  border-radius: 8px;
+  background: #0f1b14;
+  color: #d8e2d5;
+  padding: 9px 7px 9px 11px;
+}
+
+.projectRow.active {
+  border-color: #d95f36;
+  background: #183222;
+}
+
+.projectRow.offline {
+  border-color: #334238;
+  background: #111811;
+  color: #9daa98;
+}
+
+.projectRow.ready {
+  border-color: #3e5547;
+  background: #122017;
+  color: #c8d6c4;
+}
+
+.projectRowTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.projectOpenButton {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.projectOpenButton:disabled {
+  cursor: default;
+}
+
+.projectOpenButton span,
+.projectOpenButton code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectOpenButton span {
+  font-weight: 800;
+}
+
+.projectOpenNameButton {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.projectOpenPathButton {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.projectRowActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.projectRowActions strong {
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.projectRow.online .projectRowActions strong {
+  background: #1c4a34;
+  color: #c9f1da;
+}
+
+.projectRow.ready .projectRowActions strong {
+  background: #263f2d;
+  color: #cdddc8;
+}
+
+.projectRow.offline .projectRowActions strong {
+  background: #39271d;
+  color: #f0b58d;
+}
+
+.projectOpenButton code {
+  display: block;
+  color: #91a090;
+  font-family: inherit;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.projectDeleteButton {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #91a090;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.projectDeleteButton:hover,
+.projectDeleteButton:focus-visible {
+  border-color: #8b3f31;
+  background: #2a1713;
+  color: #ffb9a8;
+}
+
+.projectDeleteButton:disabled {
+  color: #586458;
+  cursor: default;
+}
+

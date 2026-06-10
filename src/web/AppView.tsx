@@ -1,0 +1,543 @@
+// @ts-nocheck
+import React from "react";
+import { Tabs } from "antd";
+import { Virtuoso } from "react-virtuoso";
+import { composerModeOptions, isVscodeSurface } from "./appConfig.js";
+import { AppDialogs } from "./AppDialogs.js";
+import { AppSidebar } from "./AppSidebar.js";
+import {
+  ActivityStatusOverlay,
+  canForkAtMessage,
+  canRenderMarkdown,
+  EmptyMessages,
+  formatGoalAge,
+  goalStatusClass,
+  goalStatusLabel,
+  MessageCard,
+  sessionStatusTitle,
+} from "./appHelpers.js";
+
+type AppViewProps = {
+  viewModel: Record<string, any>;
+};
+
+export const AppView = ({ viewModel }: AppViewProps) => {
+  const {
+    activeCanSend,
+    activeCanStop,
+    activeCanSubmit,
+    activeDisplayThreadId,
+    activeExpandedStatusKeys,
+    activeGoal,
+    activeProjectKey,
+    activeProjectSession,
+    activeProjectSessionThreadTabs,
+    activeSession,
+    activeThreadBelongsToSession,
+    activeUserMessageHistory,
+    activeViews,
+    activeWorkspacePath,
+    addContextSelectionToConversation,
+    addSessionImages,
+    addSshHost,
+    changeProjectPickerMachine,
+    chooseThreadCandidate,
+    clearThreadGoal,
+    closeThread,
+    collapsedProjectMachineKeys,
+    composerMenuOpen,
+    composerMode,
+    composerTextareaRef,
+    confirmProjectPicker,
+    connectionMode,
+    connectSshHost,
+    copyContextSelection,
+    copyRegisteredCommand,
+    createSessionThread,
+    createTask,
+    deleteProject,
+    deleteTask,
+    deletingProjectId,
+    effectiveModelSelection,
+    effectiveReasoningSelection,
+    focusTaskDraftProject,
+    forkMessage,
+    goalDialog,
+    handleComposerKeyDown,
+    imageFileInputRef,
+    inspectContextMessage,
+    inspectMessage,
+    latestTurnStatusScope,
+    loadProjectPickerDirectory,
+    localMachines,
+    machines,
+    messageContextMenu,
+    messageDisplayMode,
+    messageRenderModes,
+    messagesRef,
+    messagesScrollerRef,
+    modelOptions,
+    offlineProjectsCollapsed,
+    onlineMachines,
+    openingProjectKey,
+    openMessageContextMenu,
+    openProjectPicker,
+    openThreadPicker,
+    pasteSessionImages,
+    patchTask,
+    projectGroups,
+    projectList,
+    projectOpenError,
+    projectPicker,
+    registeredCommand,
+    registeredCommandCopied,
+    registeredMachines,
+    removeSessionImage,
+    removeSessionTextAttachment,
+    removeSshHost,
+    renderComposerSessionControls,
+    resetComposerHistory,
+    resizeComposerTextarea,
+    rollbackMessage,
+    runTaskNow,
+    saveGoalDialog,
+    selectedProject,
+    selectProject,
+    send,
+    sessionDialogOpen,
+    sessionList,
+    sessionMenuOpen,
+    setComposerMenuOpen,
+    setComposerMode,
+    setConnectionMode,
+    setExpandedStatusKeys,
+    setGoalDialog,
+    setHiddenStatusTurns,
+    setInspectMessage,
+    setMessageContextMenu,
+    setMessageDisplayMode,
+    setOfflineProjectsCollapsed,
+    setProjectPicker,
+    setSelectedModel,
+    setSelectedReasoning,
+    setSessionDialogOpen,
+    setSessionMenuOpen,
+    setSidebarCollapsed,
+    setSshHostDraft,
+    setTaskDraft,
+    setTaskFormOpen,
+    setThreadPicker,
+    showComposerSendButton,
+    showInlineStatusPanel,
+    sidebarCollapsed,
+    simpleStatuses,
+    sshConfigHostOptions,
+    sshConfigHosts,
+    sshConnectingHost,
+    sshConnections,
+    sshError,
+    sshHostBusy,
+    sshHostDraft,
+    sshHosts,
+    statusScopeKey,
+    stopTurn,
+    submitProjectPickerPath,
+    switchSessionThread,
+    taskBusyId,
+    taskDraft,
+    taskError,
+    taskFormOpen,
+    tasks,
+    threadOrderBySession,
+    threadPicker,
+    toggleProjectMachineGroup,
+    turnUiState,
+    updateMessageRenderMode,
+    updateSessionInput,
+    updateTaskDraftMachine,
+    updateTaskDraftProject,
+    updateThreadGoal,
+    workspaceEmptyMessage
+    } = viewModel;
+  const workspaceSession = selectedProject?.session ?? activeProjectSession ?? null;
+  const workspacePath = selectedProject?.path ?? workspaceSession?.workingDirectory ?? activeWorkspacePath;
+  const workspaceMachineOnline = selectedProject
+    ? selectedProject.machineOnline
+    : Boolean(workspaceSession ? machines.find((machine) => machine.machineId === workspaceSession.machineId)?.online : false);
+  const showWorkspaceMachineOffline = Boolean(selectedProject && !workspaceMachineOnline && !workspaceSession?.online);
+  return (
+    <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""} ${isVscodeSurface ? "vscodeSurface" : ""}`}>
+      {!isVscodeSurface && !sidebarCollapsed ? (
+        <button
+          type="button"
+          className="sidebarScrim"
+          onClick={() => setSidebarCollapsed(true)}
+          aria-label="Hide menu"
+        />
+      ) : null}
+      {!isVscodeSurface ? <AppSidebar viewModel={viewModel} /> : null}
+
+      <section className="workspace">
+        <header className="topbar">
+          {!isVscodeSurface ? (
+            <button
+              type="button"
+              className="sidebarPanelToggle"
+              onClick={() => setSidebarCollapsed((current) => !current)}
+              aria-label={sidebarCollapsed ? "Show menu" : "Hide menu"}
+              title={sidebarCollapsed ? "Show menu" : "Hide menu"}
+            >
+              {sidebarCollapsed ? "Menu" : "Hide"}
+            </button>
+          ) : null}
+          <div className="workspaceTitle">
+            <span className="workspacePath" title={workspacePath}>
+              {workspacePath || "No connected codexhub"}
+            </span>
+            <div className="workspaceMeta">
+              {showWorkspaceMachineOffline ? (
+                <span
+                  className="workspaceSessionSessionState offline"
+                  title="Machine offline"
+                >
+                  machine: offline
+                </span>
+              ) : null}
+              {selectedProject || workspaceSession ? (
+                <span
+                  className={`workspaceSessionSessionState ${workspaceSession?.online ? "online" : "offline"}`}
+                  title={workspaceSession ? sessionStatusTitle(workspaceSession) : "Session not started"}
+                >
+                  session: {workspaceSession?.online ? "online" : "offline"}
+                </span>
+              ) : null}
+              {activeDisplayThreadId ? (
+                <span className="workspaceThreadId" title={`thread: ${activeDisplayThreadId}`}>thread: {activeDisplayThreadId}</span>
+              ) : workspaceSession ? (
+                <span className="workspaceThreadId" title="thread: none">thread: none</span>
+              ) : null}
+            </div>
+          </div>
+          <div className="viewbar" aria-label="View settings">
+
+          </div>
+        </header>
+
+        {activeProjectSession && activeSession && activeThreadBelongsToSession ? (
+          <Tabs
+            className="workspaceThreadTabs"
+            tabBarExtraContent={{
+              right: (
+                <div className="threadTabActions">
+                  <label className="switchControl">
+                    <span>View</span>
+                    <button
+                      type="button"
+                      className={`switchButton ${messageDisplayMode === "compact" ? "active" : ""}`}
+                      aria-pressed={messageDisplayMode === "compact"}
+                      onClick={() => setMessageDisplayMode((current) => current === "compact" ? "detailed" : "compact")}
+                    >
+                      {messageDisplayMode === "compact" ? "Simple" : "Detailed"}
+                    </button>
+                  </label>
+                </div>
+              )
+            }}
+            size="small"
+            type="editable-card"
+            activeKey={activeSession.threadId}
+            items={activeProjectSessionThreadTabs.map((item) => ({
+              ...item,
+              closable: true,
+              children: item.key === activeSession.threadId ? (
+                <div className="threadWorkspacePane">
+                  <Virtuoso
+                    key={activeSession.threadId}
+                    ref={messagesRef}
+                    scrollerRef={(ref) => {
+                      messagesScrollerRef.current = ref instanceof HTMLElement ? ref : null;
+                    }}
+                    className="messages"
+                    data={activeViews}
+                    followOutput={() => "smooth"}
+                    initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
+                    increaseViewportBy={{ top: 360, bottom: 720 }}
+                    computeItemKey={(_, message) => message.id}
+                    components={{ EmptyPlaceholder: EmptyMessages }}
+                    itemContent={(_, message) => {
+                      const markdownEnabled = canRenderMarkdown(message);
+                      const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
+                      const inspectable = message.record.rawJsonl != null || (messageDisplayMode === "compact" && message.role === "tool");
+                      return (
+                        <MessageCard
+                          message={message}
+                          showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
+                          showTimestamp={!(messageDisplayMode === "compact" && message.role === "tool")}
+                          renderToolPreview={messageDisplayMode === "compact"}
+                          renderMode={renderMode}
+                          markdownEnabled={markdownEnabled}
+                          onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
+                          onContextMenu={(event) => openMessageContextMenu(event, activeSession.threadId, message, inspectable)}
+                          onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
+                          onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
+                        />
+                      );
+                    }}
+                  />
+                  {showInlineStatusPanel ? (
+                    <ActivityStatusOverlay
+                      statuses={simpleStatuses}
+                      expandedKeys={activeExpandedStatusKeys}
+                      onMinimize={() => {
+                        if (!activeSession?.threadId || !latestTurnStatusScope.key) return;
+                        setHiddenStatusTurns((current) => ({
+                          ...current,
+                          [activeSession.threadId]: latestTurnStatusScope.key
+                        }));
+                      }}
+                      onToggle={(key) => {
+                        if (!statusScopeKey) return;
+                        setExpandedStatusKeys((current) => {
+                          const keys = new Set(current[statusScopeKey] ?? []);
+                          if (keys.has(key)) keys.delete(key);
+                          else keys.add(key);
+                          return { ...current, [statusScopeKey]: [...keys] };
+                        });
+                      }}
+                    />
+                  ) : null}
+
+                  <form
+                    className="composer"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (activeCanSend) void send(activeSession.threadId);
+                    }}
+                  >
+                    <div className="composerLayout">
+                      <div className="composerSurface">
+                        {activeGoal && activeSession ? (
+                          <div
+                            className={`goalStrip ${goalStatusClass(activeGoal.status)}`}
+                            title={`${goalStatusLabel(activeGoal.status)} · ${activeGoal.objective}`}
+                            aria-label={`${goalStatusLabel(activeGoal.status)}: ${activeGoal.objective}`}
+                          >
+                            <div className="goalStripMain">
+                              <span className="goalStripIcon" aria-hidden="true">◎</span>
+                              <span className="goalStripLabel">{goalStatusLabel(activeGoal.status)}</span>
+                              <span className="goalStripObjective" title={activeGoal.objective}>{activeGoal.objective}</span>
+                              {activeGoal.updatedAt ? <span className="goalStripAge">{formatGoalAge(activeGoal.updatedAt)}</span> : null}
+                            </div>
+                            <div className="goalStripActions">
+                              <button
+                                type="button"
+                                className="goalIconButton"
+                                title="编辑目标"
+                                aria-label="编辑目标"
+                                onClick={() => setGoalDialog({
+                                  threadId: activeSession.threadId,
+                                  objective: activeGoal.objective,
+                                  saving: false,
+                                  error: ""
+                                })}
+                              >
+                                ✎
+                              </button>
+                              {activeGoal.status !== "complete" ? (
+                                <button
+                                  type="button"
+                                  className="goalIconButton"
+                                  title={activeGoal.status === "paused" ? "继续目标" : "暂停目标"}
+                                  aria-label={activeGoal.status === "paused" ? "继续目标" : "暂停目标"}
+                                  onClick={() => void updateThreadGoal(activeSession.threadId, {
+                                    status: activeGoal.status === "paused" ? "active" : "paused"
+                                  })}
+                                >
+                                  {activeGoal.status === "paused" ? "▶" : "Ⅱ"}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="goalIconButton danger"
+                                title="清除目标"
+                                aria-label="清除目标"
+                                onClick={() => void clearThreadGoal(activeSession.threadId)}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="composerInput">
+                          {activeSession.textAttachments.length || activeSession.imageAttachments.length ? (
+                            <div className="composerAttachmentList">
+                              {activeSession.textAttachments.map((item) => (
+                                <div className="textAttachment" key={item.id} title={item.text}>
+                                  <span className="textAttachmentLabel">文本</span>
+                                  <p>{item.text}</p>
+                                  <button type="button" onClick={() => removeSessionTextAttachment(activeSession.threadId, item.id)} aria-label="Remove selected text">x</button>
+                                </div>
+                              ))}
+                              {activeSession.imageAttachments.map((image) => (
+                                <div className="imageAttachment" key={image.id}>
+                                  <img src={image.previewUrl} alt={image.name} />
+                                  <button type="button" onClick={() => removeSessionImage(activeSession.threadId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          <textarea
+                            ref={composerTextareaRef}
+                            value={activeSession.input}
+                            onChange={(event) => {
+                              resetComposerHistory(activeSession.threadId);
+                              resizeComposerTextarea(event.currentTarget);
+                              updateSessionInput(activeSession.threadId, event.target.value);
+                            }}
+                            onPaste={(event) => {
+                              if (!pasteSessionImages(activeSession.threadId, event.clipboardData)) return;
+                              event.preventDefault();
+                            }}
+                            onKeyDown={(event) => handleComposerKeyDown(event, activeSession.threadId, activeUserMessageHistory)}
+                            placeholder="例如：检查这个 repo 的结构并给我下一步建议"
+                            rows={2}
+                          />
+                        </div>
+                        <div className="composerActions">
+                          <div className="composerLeftActions">
+                            <div className="composerMenuHost" onClick={(event) => event.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="composerIconButton"
+                                aria-label="Open composer menu"
+                                aria-expanded={composerMenuOpen}
+                                onClick={() => setComposerMenuOpen((open) => !open)}
+                              >
+                                +
+                              </button>
+                              {composerMenuOpen ? (
+                                <div className="composerMenu" role="menu">
+                                  <button
+                                    type="button"
+                                    className="composerMenuItem"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setComposerMenuOpen(false);
+                                      imageFileInputRef.current?.click();
+                                    }}
+                                  >
+                                    <span className="composerMenuIcon" aria-hidden="true">[]</span>
+                                    <span>添加照片和文件</span>
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="composerModeSegmented" role="radiogroup" aria-label="Composer mode">
+                              {composerModeOptions.map((option) => (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  className={`composerModeOption${composerMode === option.value ? " active" : ""}`}
+                                  role="radio"
+                                  aria-checked={composerMode === option.value}
+                                  onClick={() => setComposerMode(option.value)}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="composerRightActions">
+                            {renderComposerSessionControls("inline")}
+                            <div className="composerSessionMenuHost" onClick={(event) => event.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="composerMoreButton"
+                                aria-label="Show session usage and model"
+                                aria-expanded={sessionMenuOpen}
+                                onClick={() => setSessionMenuOpen((open) => !open)}
+                              >
+                                ...
+                              </button>
+                              {sessionMenuOpen ? (
+                                <div className="composerSessionPopover">
+                                  {renderComposerSessionControls("popover")}
+                                </div>
+                              ) : null}
+                            </div>
+                            <div
+                              className={`composerActionButtons status-${turnUiState.kind}`}
+                              title={turnUiState.title}
+                              aria-label={`Turn status: ${turnUiState.label}`}
+                            >
+                              {showComposerSendButton ? (
+                                <button
+                                  type="submit"
+                                  className="composerSendButton composerActionButton"
+                                  disabled={!activeCanSubmit}
+                                  aria-label="Send message"
+                                  title={`Send message · ${turnUiState.title}`}
+                                >
+                                  ↑
+                                </button>
+                              ) : null}
+                              {activeSession.running ? (
+                                <button
+                                  type="button"
+                                  className="composerStopButton composerActionButton"
+                                  disabled={!activeCanStop}
+                                  aria-label="Stop current turn"
+                                  title={`Stop current turn · ${turnUiState.title}`}
+                                  onClick={() => void stopTurn(activeSession.threadId)}
+                                >
+                                  ■
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                        <input
+                          ref={imageFileInputRef}
+                          className="imageUploadInput"
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          onChange={(event) => {
+                            addSessionImages(activeSession.threadId, event.currentTarget.files);
+                            event.currentTarget.value = "";
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              ) : null
+            }))}
+            onChange={(threadId) => void switchSessionThread(threadId)}
+            onEdit={(targetKey, action) => {
+              if (action === "add") {
+                if (activeProjectSession.online) openThreadPicker(activeProjectSession);
+                return;
+              }
+              if (action === "remove" && typeof targetKey === "string") {
+                void closeThread(targetKey);
+              }
+            }}
+          />
+        ) : (
+          <div className="empty">
+            <span>{workspaceEmptyMessage}</span>
+            {activeProjectSession?.online ? (
+              <button type="button" className="emptyActionButton" onClick={() => openThreadPicker(activeProjectSession)}>
+                Add Thread
+              </button>
+            ) : null}
+          </div>
+        )}
+      </section>
+
+      <AppDialogs viewModel={viewModel} />
+
+    </main>
+  );
+};
