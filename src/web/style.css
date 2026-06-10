@@ -2140,7 +2140,7 @@ textarea {
 }
 
 .composerActionButtons.status-running {
-  --composer-status-ring: #1f6feb;
+  --composer-status-ring: #f28c28;
 }
 
 .composerActionButtons.status-completed {

@@ -747,6 +747,7 @@ const App = () => {
   );
   const activeCanStop = Boolean(activeThreadBelongsToSession && activeSession?.running);
   const activeCanSubmit = activeCanSend;
+  const showComposerSendButton = Boolean(activeSession && !activeSession.running);
   const workspaceEmptyMessage = activeRuntimeSession
     ? activeRuntimeSession.online
       ? activeRuntimeSessionThreads.length ? "Select a thread" : "No threads"
@@ -3048,15 +3049,17 @@ const App = () => {
                               title={turnUiState.title}
                               aria-label={`Turn status: ${turnUiState.label}`}
                             >
-                              <button
-                                type="submit"
-                                className="composerSendButton composerActionButton"
-                                disabled={!activeCanSubmit}
-                                aria-label={activeSession.running ? "Send follow-up to current turn" : "Send message"}
-                                title={`${activeSession.running ? "Send follow-up" : "Send message"} · ${turnUiState.title}`}
-                              >
-                                ↑
-                              </button>
+                              {showComposerSendButton ? (
+                                <button
+                                  type="submit"
+                                  className="composerSendButton composerActionButton"
+                                  disabled={!activeCanSubmit}
+                                  aria-label="Send message"
+                                  title={`Send message · ${turnUiState.title}`}
+                                >
+                                  ↑
+                                </button>
+                              ) : null}
                               {activeSession.running ? (
                                 <button
                                   type="button"
@@ -4736,11 +4739,8 @@ const taskCompleteNotification = (
     ?? latestFinalAnswerText(records, record)
     ?? "Task completed.";
   return {
-    title: "Codex task complete",
-    body: [
-      notificationText(message),
-      duration ? `运行时间 ${duration}` : null
-    ].filter(Boolean).join("\n"),
+    title: duration ? `Codex task complete · 运行时间 ${duration}` : "Codex task complete",
+    body: notificationText(message),
     threadId: thread.threadId,
     duration
   };
