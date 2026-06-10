@@ -271,6 +271,7 @@ type ProjectsPayload = {
 type ChatSession = ThreadDetail & {
   input: string;
   imageAttachments: ImageAttachment[];
+  textAttachments: TextAttachment[];
 };
 
 type ImageAttachment = {
@@ -278,6 +279,20 @@ type ImageAttachment = {
   file: File;
   name: string;
   previewUrl: string;
+};
+
+type TextAttachment = {
+  id: string;
+  text: string;
+};
+
+type MessageContextMenuState = {
+  x: number;
+  y: number;
+  threadId: string;
+  message: WebRecordView;
+  selectedText: string;
+  canInspect: boolean;
 };
 
 type StreamEvent = {
@@ -511,6 +526,7 @@ const App = () => {
   const [threadOrderBySession, setThreadOrderBySession] = useState<Record<string, string[]>>({});
   const [initialized, setInitialized] = useState(false);
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
+  const [messageContextMenu, setMessageContextMenu] = useState<MessageContextMenuState | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     model: null,
     modelReasoningEffort: null,
@@ -668,7 +684,7 @@ const App = () => {
     : "";
   const activeDisplayThreadId = activeSession?.threadId ?? activeTabThreadId;
   const activeThreadBelongsToSession = Boolean(activeSession && activeRuntimeSessionThreads.some((thread) => thread.threadId === activeSession.threadId));
-  const activeHasDraft = Boolean(activeSession?.input.trim() || activeSession?.imageAttachments.length);
+  const activeHasDraft = Boolean(activeSession?.input.trim() || activeSession?.imageAttachments.length || activeSession?.textAttachments.length);
   const activeCanSend = Boolean(
     activeSession
     && activeThreadBelongsToSession
@@ -952,6 +968,26 @@ const App = () => {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [runtimeMenuOpen]);
+
+  useEffect(() => {
+    if (!messageContextMenu) return undefined;
+    const close = () => setMessageContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [messageContextMenu]);
+
+  useEffect(() => {
+    setMessageContextMenu(null);
+  }, [activeTabThreadId]);
 
   useEffect(() => {
     const stopOnEscape = (event: KeyboardEvent) => {
@@ -1428,7 +1464,7 @@ const App = () => {
 
     const open = (async () => {
       const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
-      const session: ChatSession = { ...thread, input: "", imageAttachments: [] };
+      const session: ChatSession = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
       const sessionId = thread.runtime.sessionId;
       if (sessionId) {
         setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
@@ -1438,7 +1474,7 @@ const App = () => {
       setSessions((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
         const nextSession = existing
-          ? { ...session, input: existing.input, imageAttachments: existing.imageAttachments }
+          ? { ...session, input: existing.input, imageAttachments: existing.imageAttachments, textAttachments: existing.textAttachments ?? [] }
           : session;
         return current.some((item) => item.threadId === thread.threadId)
           ? current.map((item) => item.threadId === thread.threadId ? nextSession : item)
@@ -1610,11 +1646,11 @@ const App = () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId })
       });
-      const session: ChatSession = { ...thread, input: "", imageAttachments: [] };
+      const session: ChatSession = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
       setSessions((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
         const nextSession = existing
-          ? { ...session, input: existing.input, imageAttachments: existing.imageAttachments }
+          ? { ...session, input: existing.input, imageAttachments: existing.imageAttachments, textAttachments: existing.textAttachments ?? [] }
           : session;
         return current.some((item) => item.threadId === thread.threadId)
           ? current.map((item) => item.threadId === thread.threadId ? nextSession : item)
@@ -1636,15 +1672,17 @@ const App = () => {
   const send = async (threadId: string) => {
     const session = sessions.find((item) => item.threadId === threadId);
     if (!session) return;
-    const text = session.input.trim();
+    const typedText = session.input.trim();
+    const textAttachments = session.textAttachments;
+    const text = composeUserInputText(typedText, textAttachments);
     const imageAttachments = session.imageAttachments;
     if (!text && !imageAttachments.length) return;
-    if (!imageAttachments.length && isModelCommand(text)) {
+    if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {
       setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "" } : item));
       setRuntimeDialogOpen(true);
       return;
     }
-    setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [] } : item));
+    setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [], textAttachments: [] } : item));
     let encodedImages: Array<{ url: string }>;
     try {
       encodedImages = await Promise.all(imageAttachments.map(async (image) => ({ url: await fileToDataUrl(image.file) })));
@@ -1653,8 +1691,9 @@ const App = () => {
       setSessions((current) => current.map((item) => item.threadId === threadId
         ? {
           ...item,
-          input: text,
+          input: typedText,
           imageAttachments,
+          textAttachments,
           records: [...item.records, errorRecord("image encode failed", error)]
         }
         : item));
@@ -1697,6 +1736,14 @@ const App = () => {
     setSessions((current) => current.map((session) => session.threadId === threadId ? { ...session, input } : session));
   };
 
+  const addSessionTextAttachment = (threadId: string, text: string) => {
+    const normalizedText = normalizeSelectedText(text);
+    if (!normalizedText) return;
+    setSessions((current) => current.map((session) => session.threadId === threadId
+      ? { ...session, textAttachments: [...session.textAttachments, { id: browserId(), text: normalizedText }] }
+      : session));
+  };
+
   const addSessionImageFiles = (threadId: string, files: File[]) => {
     if (!files.length) return;
     const images = files
@@ -1736,6 +1783,52 @@ const App = () => {
       if (image) URL.revokeObjectURL(image.previewUrl);
       return { ...session, imageAttachments: session.imageAttachments.filter((item) => item.id !== imageId) };
     }));
+  };
+
+  const removeSessionTextAttachment = (threadId: string, textId: string) => {
+    setSessions((current) => current.map((session) => session.threadId === threadId
+      ? { ...session, textAttachments: session.textAttachments.filter((item) => item.id !== textId) }
+      : session));
+  };
+
+  const openMessageContextMenu = (
+    event: React.MouseEvent<HTMLElement>,
+    threadId: string,
+    message: WebRecordView,
+    canInspect: boolean
+  ) => {
+    const selectedText = selectedTextWithin(event.currentTarget);
+    if (!canInspect && !selectedText) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setComposerMenuOpen(false);
+    setRuntimeMenuOpen(false);
+    setMessageContextMenu({
+      ...contextMenuPosition(event.clientX, event.clientY),
+      threadId,
+      message,
+      selectedText,
+      canInspect
+    });
+  };
+
+  const inspectContextMessage = () => {
+    if (!messageContextMenu?.canInspect) return;
+    setInspectMessage(messageContextMenu.message);
+    setMessageContextMenu(null);
+  };
+
+  const addContextSelectionToConversation = () => {
+    if (!messageContextMenu?.selectedText) return;
+    addSessionTextAttachment(messageContextMenu.threadId, messageContextMenu.selectedText);
+    setMessageContextMenu(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const copyContextSelection = async () => {
+    if (!messageContextMenu?.selectedText) return;
+    await writeTextToClipboard(messageContextMenu.selectedText);
+    setMessageContextMenu(null);
   };
 
   const selectRuntimeSession = async (session: RuntimeSession) => {
@@ -2602,7 +2695,7 @@ const App = () => {
                           renderMode={renderMode}
                           markdownEnabled={markdownEnabled}
                           onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
-                          onInspect={inspectable ? () => setInspectMessage(message) : undefined}
+                          onContextMenu={(event) => openMessageContextMenu(event, activeSession.threadId, message, inspectable)}
                           onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
                           onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
                         />
@@ -2643,8 +2736,15 @@ const App = () => {
                     <div className="composerLayout">
                       <div className="composerSurface">
                         <div className="composerInput">
-                          {activeSession.imageAttachments.length ? (
-                            <div className="imageAttachmentList">
+                          {activeSession.textAttachments.length || activeSession.imageAttachments.length ? (
+                            <div className="composerAttachmentList">
+                              {activeSession.textAttachments.map((item) => (
+                                <div className="textAttachment" key={item.id} title={item.text}>
+                                  <span className="textAttachmentLabel">文本</span>
+                                  <p>{item.text}</p>
+                                  <button type="button" onClick={() => removeSessionTextAttachment(activeSession.threadId, item.id)} aria-label="Remove selected text">x</button>
+                                </div>
+                              ))}
                               {activeSession.imageAttachments.map((image) => (
                                 <div className="imageAttachment" key={image.id}>
                                   <img src={image.previewUrl} alt={image.name} />
@@ -2949,6 +3049,42 @@ const App = () => {
         </div>
       ) : null}
 
+      {messageContextMenu ? (
+        <div
+          className="messageContextMenuLayer"
+          role="presentation"
+          onMouseDown={() => setMessageContextMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setMessageContextMenu(null);
+          }}
+        >
+          <div
+            className="messageContextMenu"
+            role="menu"
+            style={{ left: messageContextMenu.x, top: messageContextMenu.y }}
+            onMouseDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            {messageContextMenu.selectedText ? (
+              <>
+                <button type="button" role="menuitem" onClick={() => void copyContextSelection()}>
+                  复制
+                </button>
+                <button type="button" role="menuitem" onClick={addContextSelectionToConversation}>
+                  添加到对话
+                </button>
+              </>
+            ) : null}
+            {messageContextMenu.canInspect ? (
+              <button type="button" role="menuitem" onClick={inspectContextMessage}>
+                查看详细
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {inspectMessage ? (
         <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setInspectMessage(null)}>
           <section className="modal detailModal" onClick={(event) => event.stopPropagation()}>
@@ -2976,7 +3112,7 @@ const MessageCard = ({
   renderMode,
   markdownEnabled,
   onRenderModeChange,
-  onInspect,
+  onContextMenu,
   onFork,
   onRollback
 }: {
@@ -2987,7 +3123,7 @@ const MessageCard = ({
   renderMode: MessageRenderMode;
   markdownEnabled: boolean;
   onRenderModeChange?: (mode: MessageRenderMode) => void;
-  onInspect?: () => void;
+  onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
   onFork?: () => void;
   onRollback?: () => void;
 }) => {
@@ -3001,16 +3137,8 @@ const MessageCard = ({
   const hasMessageMeta = (showTimestamp && message.at) || message.usage || markdownEnabled || onFork || onRollback;
   return (
     <article
-      className={`message ${message.role} ${hasToolBody ? "richTool" : ""} ${onInspect ? "inspectable" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
-      onClick={onInspect}
-      role={onInspect ? "button" : undefined}
-      tabIndex={onInspect ? 0 : undefined}
-      onKeyDown={onInspect ? (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onInspect();
-        }
-      } : undefined}
+      className={`message ${message.role} ${hasToolBody ? "richTool" : ""} ${onContextMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
+      onContextMenu={onContextMenu}
     >
       {hasToolBody ? null : (
         <span className="messageHeader">
@@ -4924,6 +5052,65 @@ const clipboardImageFiles = (clipboardData: DataTransfer) => {
     .filter((file): file is File => Boolean(file));
   if (itemFiles.length) return itemFiles;
   return [...clipboardData.files].filter((file) => file.type.startsWith("image/"));
+};
+
+const composeUserInputText = (typedText: string, textAttachments: TextAttachment[]) => [
+  typedText.trim(),
+  ...textAttachments.map((item) => normalizeSelectedText(item.text))
+].filter(Boolean).join("\n\n");
+
+const normalizeSelectedText = (value: string) =>
+  value.replace(/\r\n/g, "\n").split("\n").map((line) => line.trimEnd()).join("\n").trim();
+
+const selectedTextWithin = (element: HTMLElement) => {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return "";
+  const selectedText = normalizeSelectedText(selection.toString());
+  if (!selectedText) return "";
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    if (rangeIntersectsElement(selection.getRangeAt(index), element)) return selectedText;
+  }
+  return "";
+};
+
+const rangeIntersectsElement = (range: Range, element: HTMLElement) => {
+  try {
+    return range.intersectsNode(element);
+  } catch {
+    const container = range.commonAncestorContainer;
+    return element.contains(container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement);
+  }
+};
+
+const writeTextToClipboard = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the legacy textarea copy path.
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-1000px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+};
+
+const contextMenuPosition = (clientX: number, clientY: number) => {
+  const padding = 8;
+  const estimatedWidth = 190;
+  const estimatedHeight = 128;
+  return {
+    x: Math.max(padding, Math.min(clientX, window.innerWidth - estimatedWidth - padding)),
+    y: Math.max(padding, Math.min(clientY, window.innerHeight - estimatedHeight - padding))
+  };
 };
 
 const errorRecord = (label: string, error: unknown): CodexRecord => ({

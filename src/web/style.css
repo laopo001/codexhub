@@ -1563,17 +1563,12 @@ textarea {
   color: #9aa39c;
 }
 
-.message.inspectable {
-  cursor: pointer;
+.message.hasContextMenu {
+  user-select: text;
 }
 
-.message.inspectable:hover {
+.message.hasContextMenu:hover {
   background: #f2f8fb;
-}
-
-.message.inspectable:focus-visible {
-  outline: 2px solid #2f6f9f;
-  outline-offset: 2px;
 }
 
 .message.thinking {
@@ -1851,6 +1846,8 @@ textarea {
 .composerMenuItem,
 .composerModeOption,
 .imageAttachment button,
+.textAttachment button,
+.messageContextMenu button,
 .iconButton {
   cursor: pointer;
 }
@@ -1864,6 +1861,8 @@ textarea {
 .composerMenuItem:disabled,
 .composerModeOption:disabled,
 .imageAttachment button:disabled,
+.textAttachment button:disabled,
+.messageContextMenu button:disabled,
 .iconButton:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -2301,10 +2300,44 @@ textarea {
   pointer-events: none;
 }
 
+.composerAttachmentList,
 .imageAttachmentList {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.textAttachment {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  width: min(220px, 100%);
+  min-height: 72px;
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px 34px 8px 10px;
+}
+
+.textAttachmentLabel {
+  color: #2f6f9f;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.textAttachment p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #26342a;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .imageAttachment {
@@ -2323,7 +2356,8 @@ textarea {
   object-fit: cover;
 }
 
-.imageAttachment button {
+.imageAttachment button,
+.textAttachment button {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -2337,6 +2371,42 @@ textarea {
   background: rgb(23 33 26 / 0.82);
   color: #ffffff;
   font-size: 12px;
+}
+
+.messageContextMenuLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: transparent;
+}
+
+.messageContextMenu {
+  position: fixed;
+  display: grid;
+  min-width: 168px;
+  overflow: hidden;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 6px;
+  box-shadow: 0 14px 40px rgb(18 32 24 / 0.22);
+}
+
+.messageContextMenu button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #17211a;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.messageContextMenu button:hover,
+.messageContextMenu button:focus-visible {
+  background: #eef3eb;
 }
 
 .secondaryButton {
