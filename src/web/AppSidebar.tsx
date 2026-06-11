@@ -1,18 +1,29 @@
-// @ts-nocheck
 import React from "react";
 import { Switch } from "antd";
+import { History, Pin, PinOff, Play, RefreshCw, Square, Trash2 } from "lucide-react";
+import type { ProjectMachineGroup } from "./types.js";
+import type { AppSidebarViewModel } from "./viewModel.js";
 import {
   activeSshConnectionForHost,
   latestSshConnectionForHost,
   machineProjectLauncher,
+  pluginIntegrationStatusLabel,
+  pluginStatusClass,
   projectKeyForProject,
+  projectSearchMatches,
   projectStatusLabel,
+  sshConnectionDoctorLines,
   sshConnectionDetail,
   sshConnectionStatusClass,
   sshConnectionStatusLabel,
   sshConnectionTitle,
   sshHostMeta,
   taskBelongsToProject,
+  taskRunDetailTitle,
+  taskRunLine,
+  taskRunSummary,
+  taskRunTitle,
+  taskScheduleLine,
   taskStatusClass,
   taskStatusLabel,
   taskTargetLabel,
@@ -23,8 +34,14 @@ import {
 } from "./appHelpers.js";
 
 type AppSidebarProps = {
-  viewModel: Record<string, any>;
+  viewModel: AppSidebarViewModel;
 };
+
+const taskSchedulePresets = [
+  { label: "Hourly", value: "0 * * * *" },
+  { label: "Daily", value: "0 9 * * *" },
+  { label: "Weekdays", value: "0 9 * * 1-5" }
+] as const;
 
 export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const {
@@ -46,18 +63,23 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     openingProjectKey,
     openProjectPicker,
     patchTask,
+    plugins,
     projectGroups,
     projectList,
+    projectSearch,
     projectOpenError,
     registeredCommand,
+    registeredCommandIncludesToken,
     registeredCommandCopied,
     registeredMachines,
     removeSshHost,
+    restartProjectSession,
     runTaskNow,
     selectedProject,
     selectProject,
     setConnectionMode,
     setOfflineProjectsCollapsed,
+    setProjectSearch,
     setSshHostDraft,
     setTaskDraft,
     setTaskFormOpen,
@@ -74,14 +96,23 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     taskError,
     taskFormOpen,
     tasks,
+    stopProjectSession,
     toggleProjectMachineGroup,
+    toggleProjectPinned,
     updateTaskDraftMachine,
     updateTaskDraftProject
   } = viewModel;
 
-  const onlineProjectGroups = projectGroups.filter((machine) => machine.online);
-  const offlineProjectGroups = projectGroups.filter((machine) => !machine.online);
-  const projectAddMachine = onlineProjectGroups.find((machine) => machine.projectLauncher);
+  const projectQuery = projectSearch.trim();
+  const visibleProjectGroups = projectGroups
+    .map((machine) => ({
+      ...machine,
+      projects: machine.projects.filter((project) => projectSearchMatches(project, projectQuery))
+    }))
+    .filter((machine) => !projectQuery || machine.projects.length || machine.label.toLowerCase().includes(projectQuery.toLowerCase()));
+  const onlineProjectGroups = visibleProjectGroups.filter((machine) => machine.online);
+  const offlineProjectGroups = visibleProjectGroups.filter((machine) => !machine.online);
+  const projectAddMachine = projectGroups.filter((machine) => machine.online).find((machine) => machine.projectLauncher);
   const visibleTasks = selectedProject
     ? tasks.filter((task) => taskBelongsToProject(task, selectedProject))
     : tasks;
@@ -99,7 +130,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     && taskDraft.input.trim()
   );
 
-  const renderProjectMachineGroup = (machine) => {
+  const renderProjectMachineGroup = (machine: ProjectMachineGroup) => {
     const collapsed = collapsedProjectMachineKeys.includes(machine.key);
     return (
       <section className="projectMachineGroup" key={machine.key}>
@@ -124,11 +155,12 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               const sessionActive = Boolean(project.session?.online);
               const projectReachable = sessionActive || project.machineOnline;
               const deleting = deletingProjectId === project.projectId;
-              const openDisabled = openingProjectKey === projectKey || deleting;
+              const busy = openingProjectKey === projectKey || deleting;
+              const openDisabled = busy;
               return (
                 <div
                   key={project.projectId}
-                  className={`projectRow ${active ? "active" : ""} ${sessionActive ? "online" : projectReachable ? "ready" : "offline"}`}
+                  className={`projectRow ${active ? "active" : ""} ${project.pinned ? "pinned" : ""} ${sessionActive ? "online" : projectReachable ? "ready" : "offline"}`}
                 >
                   <div className="projectRowTop">
                     <button
@@ -143,13 +175,43 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                       <strong>{openingProjectKey === projectKey ? "opening" : statusLabel}</strong>
                       <button
                         type="button"
+                        className={`projectMiniButton ${project.pinned ? "active" : ""}`}
+                        onClick={() => void toggleProjectPinned(project)}
+                        disabled={busy}
+                        aria-label={project.pinned ? `Unpin ${project.name}` : `Pin ${project.name}`}
+                        title={project.pinned ? "Unpin project" : "Pin project"}
+                      >
+                        {project.pinned ? <PinOff size={13} strokeWidth={2.1} aria-hidden="true" /> : <Pin size={13} strokeWidth={2.1} aria-hidden="true" />}
+                      </button>
+                      <button
+                        type="button"
+                        className="projectMiniButton"
+                        onClick={() => void restartProjectSession(project)}
+                        disabled={busy || !projectReachable}
+                        aria-label={`Restart ${project.name}`}
+                        title="Restart session"
+                      >
+                        <RefreshCw size={13} strokeWidth={2.1} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="projectMiniButton"
+                        onClick={() => void stopProjectSession(project)}
+                        disabled={busy || !sessionActive}
+                        aria-label={`Stop ${project.name}`}
+                        title="Stop session"
+                      >
+                        <Square size={12} strokeWidth={2.2} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
                         className="projectDeleteButton"
                         onClick={() => void deleteProject(project)}
                         disabled={deleting}
                         aria-label={`Remove ${project.name}`}
                         title={`Remove ${project.name} from CodexHub`}
                       >
-                        x
+                        <Trash2 size={13} strokeWidth={2.1} aria-hidden="true" />
                       </button>
                     </div>
                   </div>
@@ -280,6 +342,10 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   >
                     x
                   </button>
+                  <details className="connectionDoctor">
+                    <summary>Doctor</summary>
+                    <pre>{sshConnectionDoctorLines(host, latestConnection)}</pre>
+                  </details>
                 </div>
               );
             })}
@@ -288,7 +354,10 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         ) : (
           <div className="connectionList">
             <div className="registeredCommand">
-              <code title={registeredCommand}>{registeredCommand}</code>
+              <div className="registeredCommandText">
+                <code title={registeredCommand}>{registeredCommand}</code>
+                {registeredCommandIncludesToken ? <span>auth token included</span> : null}
+              </div>
               <button type="button" onClick={() => void copyRegisteredCommand()}>
                 {registeredCommandCopied ? "Copied" : "Copy"}
               </button>
@@ -320,8 +389,15 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         >
           Add Project
         </button>
-        {projectGroups.length === 0 ? (
-          <div className="projectEmptyRow">No machines</div>
+        <input
+          className="projectSearchInput"
+          value={projectSearch}
+          onChange={(event) => setProjectSearch(event.target.value)}
+          placeholder="Search projects"
+          spellCheck={false}
+        />
+        {visibleProjectGroups.length === 0 ? (
+          <div className="projectEmptyRow">{projectQuery ? "No matching projects" : "No machines"}</div>
         ) : (
           <div className="projectList">
             {onlineProjectGroups.map(renderProjectMachineGroup)}
@@ -349,6 +425,33 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         {projectOpenError ? <div className="projectOpenError">{projectOpenError}</div> : null}
       </section>
 
+      <section className="pluginPanel">
+        <div className="pluginPanelHeader">
+          <h2>Plugins</h2>
+          <span>{plugins.length}</span>
+        </div>
+        {plugins.length === 0 ? (
+          <div className="pluginEmpty">No plugins</div>
+        ) : (
+          <div className="pluginList">
+            {plugins.map((plugin) => {
+              const integrations = plugin.contributions?.integrations ?? [];
+              const styles = plugin.contributions?.web?.styles ?? [];
+              return (
+                <div className={`pluginRow ${pluginStatusClass(plugin)}`} key={plugin.pluginId}>
+                  <div className="pluginRowHeader">
+                    <span title={plugin.name}>{plugin.name}</span>
+                    <strong>{pluginIntegrationStatusLabel(plugin)}</strong>
+                  </div>
+                  <code title={plugin.root}>{plugin.origin ?? "local"} · {plugin.pluginId}</code>
+                  <small>{styles.length} styles · {integrations.length} integrations</small>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       <section className="taskPanel">
         <div className="taskPanelHeader">
           <div className="taskPanelTitle">
@@ -372,6 +475,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             {visibleTasks.map((task) => {
               const busy = taskBusyId === task.taskId;
               const taskRunError = task.lastError ? `Last run failed: ${task.lastError}` : "";
+              const recentRuns = (task.runs ?? []).slice(0, 5);
               return (
                 <div className={`taskRow ${task.enabled ? "enabled" : "paused"}`} key={task.taskId}>
                   <div className="taskRowHeader">
@@ -380,17 +484,37 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                       {taskStatusLabel(task)}
                     </strong>
                   </div>
-                  <code title={task.schedule}>{task.schedule}</code>
+                  <code title={taskTargetTitle(task, projectList, machines)}>{taskScheduleLine(task)}</code>
                   <em title={taskTargetTitle(task, projectList, machines)}>{taskTargetLabel(task, projectList, machines)}</em>
+                  <small className="taskRunSummary" title={taskRunTitle(task)}>{taskRunSummary(task)}</small>
                   {taskRunError ? <small className="taskLastError" title={taskRunError}>{taskRunError}</small> : null}
+                  {recentRuns.length ? (
+                    <details className="taskRunHistory">
+                      <summary>
+                        <History size={12} strokeWidth={2.1} aria-hidden="true" />
+                        <span>Recent runs</span>
+                        <strong>{recentRuns.length}</strong>
+                      </summary>
+                      <ol>
+                        {recentRuns.map((run) => (
+                          <li className={`taskRunItem ${run.status}`} key={run.runId} title={taskRunDetailTitle(run)}>
+                            <span>{taskRunLine(run)}</span>
+                            {run.error ? <em>{run.error}</em> : null}
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  ) : null}
                   <div className="taskActions">
                     <button
                       type="button"
                       className="taskRunButton"
                       onClick={() => void runTaskNow(task)}
                       disabled={busy}
+                      aria-label={`Run ${task.name}`}
+                      title="Run now"
                     >
-                      {busy ? "..." : "Run"}
+                      {busy ? "..." : <Play size={13} strokeWidth={2.2} aria-hidden="true" />}
                     </button>
                     <Switch
                       size="small"
@@ -405,8 +529,9 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                       onClick={() => void deleteTask(task.taskId)}
                       disabled={busy}
                       aria-label={`Delete ${task.name}`}
+                      title={`Delete ${task.name}`}
                     >
-                      x
+                      <Trash2 size={13} strokeWidth={2.1} aria-hidden="true" />
                     </button>
                   </div>
                 </div>
@@ -477,6 +602,18 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                 placeholder="0 9 * * *"
                 spellCheck={false}
               />
+              <div className="taskSchedulePresets" aria-label="Schedule presets">
+                {taskSchedulePresets.map((preset) => (
+                  <button
+                    type="button"
+                    className={taskDraft.schedule === preset.value ? "active" : ""}
+                    onClick={() => setTaskDraft((current) => ({ ...current, schedule: preset.value }))}
+                    key={preset.value}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
             </label>
             <label className="taskField">
               <span>Prompt</span>

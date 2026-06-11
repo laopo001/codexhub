@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React from "react";
 import { reasoningOptions } from "./appConfig.js";
 import {
@@ -11,9 +10,11 @@ import {
   threadCandidateTitle,
   ToolInspectBody
 } from "./appHelpers.js";
+import type { ModelSelection, ReasoningSelection } from "./types.js";
+import type { AppViewModel } from "./viewModel.js";
 
 type AppDialogsProps = {
-  viewModel: Record<string, any>;
+  viewModel: AppViewModel;
 };
 
 export const AppDialogs = ({ viewModel }: AppDialogsProps) => {

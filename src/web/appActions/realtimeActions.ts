@@ -1,7 +1,10 @@
-// @ts-nocheck
+import type React from "react";
+import type { CodexRecord } from "../../core/codexRecord.js";
 import { isVscodeSurface } from "../appConfig.js";
 import {
   apiJson,
+  authToken,
+  authWebSocketUrl,
   appendThreadOrder,
   isTaskCompleteRecord,
   mergeNotificationRecords,
@@ -24,19 +27,161 @@ import {
   taskCompletionNotificationKey,
   threadRecordsForNotifications
 } from "../appHelpers.js";
+import type {
+  ChatSession,
+  ComposerMode,
+  ConnectionsStreamEvent,
+  LocalTask,
+  MachineSummary,
+  MessageDisplayMode,
+  ModelSelection,
+  PluginSummary,
+  ProjectSummary,
+  ProjectsPayload,
+  ReasoningSelection,
+  RealtimeMessage,
+  SessionSummary,
+  SessionView,
+  SshConnection,
+  SshHost,
+  StreamEvent,
+  SystemStatus,
+  TaskCompleteNotification,
+  TasksStreamEvent
+} from "../types.js";
 
-export const createRealtimeActions = (ctx, actions) => {
+type HealthPayload = Partial<SystemStatus> & {
+  authRequired?: boolean;
+  authenticated?: boolean;
+  defaultWorkingDirectory?: string;
+};
+
+type SessionsPayload = {
+  sessions?: SessionSummary[];
+};
+
+type SshHostsPayload = {
+  hosts?: SshHost[];
+};
+
+type PluginsPayload = {
+  plugins?: PluginSummary[];
+};
+
+type TasksPayload = {
+  tasks?: LocalTask[];
+};
+
+type SshConnectionsPayload = {
+  connections?: SshConnection[];
+};
+
+type RealtimeOutgoingMessage =
+  | {
+    type: "hello";
+    sessionsAfter: number;
+    projectsAfter: number;
+    tasksAfter: number;
+    connectionsAfter: number;
+  }
+  | { type: "subscribe_thread"; threadId: string; after: number }
+  | { type: "unsubscribe_thread"; threadId: string };
+
+type RealtimeActionsContext = {
+  closedThreadIds: React.MutableRefObject<Set<string>>;
+  connectionsLastSeq: React.MutableRefObject<number>;
+  controlReconnectTimer: React.MutableRefObject<number | null>;
+  notificationAudioContext: React.MutableRefObject<AudioContext | null>;
+  notificationRecordsByThread: React.MutableRefObject<Map<string, CodexRecord[]>>;
+  notifiedTaskCompletions: React.MutableRefObject<Set<string>>;
+  projectsLastSeq: React.MutableRefObject<number>;
+  realtimeSocket: React.MutableRefObject<WebSocket | null>;
+  realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
+  sessionsLastSeq: React.MutableRefObject<number>;
+  tasksLastSeq: React.MutableRefObject<number>;
+  threadLastSeqs: React.MutableRefObject<Map<string, number>>;
+  setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
+  setActiveWorkspacePath: React.Dispatch<React.SetStateAction<string>>;
+  setAuthError: React.Dispatch<React.SetStateAction<string>>;
+  setAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
+  setCollapsedProjectMachineKeys: React.Dispatch<React.SetStateAction<string[]>>;
+  setComposerMode: React.Dispatch<React.SetStateAction<ComposerMode>>;
+  setInitialized: React.Dispatch<React.SetStateAction<boolean>>;
+  setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
+  setMessageDisplayMode: React.Dispatch<React.SetStateAction<MessageDisplayMode>>;
+  setPlugins: React.Dispatch<React.SetStateAction<PluginSummary[]>>;
+  setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
+  setProjectSearch: React.Dispatch<React.SetStateAction<string>>;
+  setSelectedModel: React.Dispatch<React.SetStateAction<ModelSelection>>;
+  setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
+  setSelectedReasoning: React.Dispatch<React.SetStateAction<ReasoningSelection>>;
+  setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
+  setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
+  setSessions: React.Dispatch<React.SetStateAction<ChatSession[]>>;
+  setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  setSshConfigHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
+  setSshConnections: React.Dispatch<React.SetStateAction<SshConnection[]>>;
+  setSshHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
+  setSystemStatus: React.Dispatch<React.SetStateAction<SystemStatus>>;
+  setTasks: React.Dispatch<React.SetStateAction<LocalTask[]>>;
+  setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+};
+
+type RealtimeActionsDependencies = {
+  clearActiveThreadIfLatest: (threadId: string) => void;
+  openThread: (threadId: string) => Promise<void>;
+};
+
+export type RealtimeActions = {
+  initialize: () => Promise<void>;
+  clearControlReconnectTimer: () => void;
+  scheduleControlReconnect: () => void;
+  sendRealtime: (message: RealtimeOutgoingMessage) => boolean;
+  connectRealtimeEvents: () => void;
+  handleRealtimeMessage: (message: RealtimeMessage) => void;
+  applyThreadStreamEvent: (payload: StreamEvent) => void;
+  notifyTaskCompletionsFromStreamEvent: (event: StreamEvent) => void;
+  dispatchTaskCompleteNotification: (notification: TaskCompleteNotification) => void;
+};
+
+export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Record<string, any>): RealtimeActions => {
+  const deps = actions as RealtimeActionsDependencies;
+
   const initialize = async () => {
-    const [health, sessionData, projectData, sshHostData, sshConfigHostData, sshConnectionData, pluginData, taskData] = await Promise.all([
-      apiJson("/api/health"),
-      apiJson("/api/sessions"),
-      apiJson("/api/projects"),
-      isVscodeSurface ? Promise.resolve({ hosts: [] }) : apiJson("/api/ssh/hosts").catch(() => ({ hosts: [] })),
-      isVscodeSurface ? Promise.resolve({ hosts: [] }) : apiJson("/api/ssh/config-hosts").catch(() => ({ hosts: [] })),
-      isVscodeSurface ? Promise.resolve({ connections: [] }) : apiJson("/api/ssh/connections").catch(() => ({ connections: [] })),
-      isVscodeSurface ? Promise.resolve({ plugins: [] }) : apiJson("/api/plugins").catch(() => ({ plugins: [] })),
-      isVscodeSurface ? Promise.resolve({ tasks: [] }) : apiJson("/api/tasks").catch(() => ({ tasks: [] }))
-    ]);
+    const health = await apiJson<HealthPayload>("/api/health");
+    ctx.setServerAuthRequired(Boolean(health.authRequired));
+    if (health.authRequired && !health.authenticated && !authToken()) {
+      ctx.setAuthRequired(true);
+      ctx.setInitialized(true);
+      return;
+    }
+
+    let sessionData: SessionsPayload;
+    let projectData: ProjectsPayload;
+    let sshHostData: SshHostsPayload;
+    let sshConfigHostData: SshHostsPayload;
+    let sshConnectionData: SshConnectionsPayload;
+    let pluginData: PluginsPayload;
+    let taskData: TasksPayload;
+    try {
+      [sessionData, projectData, sshHostData, sshConfigHostData, sshConnectionData, pluginData, taskData] = await Promise.all([
+        apiJson<SessionsPayload>("/api/sessions"),
+        apiJson<ProjectsPayload>("/api/projects"),
+        isVscodeSurface ? Promise.resolve({ hosts: [] }) : apiJson<SshHostsPayload>("/api/ssh/hosts").catch(() => ({ hosts: [] })),
+        isVscodeSurface ? Promise.resolve({ hosts: [] }) : apiJson<SshHostsPayload>("/api/ssh/config-hosts").catch(() => ({ hosts: [] })),
+        isVscodeSurface ? Promise.resolve({ connections: [] }) : apiJson<SshConnectionsPayload>("/api/ssh/connections").catch(() => ({ connections: [] })),
+        isVscodeSurface ? Promise.resolve({ plugins: [] }) : apiJson<PluginsPayload>("/api/plugins").catch(() => ({ plugins: [] })),
+        isVscodeSurface ? Promise.resolve({ tasks: [] }) : apiJson<TasksPayload>("/api/tasks").catch(() => ({ tasks: [] }))
+      ]);
+    } catch (error) {
+      if (String(error).includes("HTTP 401")) {
+        ctx.setAuthRequired(true);
+        ctx.setAuthError("Invalid or missing access token.");
+        ctx.setInitialized(true);
+        return;
+      }
+      throw error;
+    }
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
     const loadedSessions = normalizeSessions(sessionData.sessions);
     const loadedMachines = normalizeMachines(projectData.machines);
@@ -49,10 +194,12 @@ export const createRealtimeActions = (ctx, actions) => {
     const initialSession = savedSession ?? loadedProjectSessions[0];
 
     ctx.setSystemStatus({
-      model: health.model,
-      modelReasoningEffort: health.modelReasoningEffort,
-      contextWindowTokens: health.contextWindowTokens
+      model: health.model ?? null,
+      modelReasoningEffort: health.modelReasoningEffort ?? null,
+      contextWindowTokens: health.contextWindowTokens ?? null
     });
+    ctx.setAuthRequired(false);
+    ctx.setAuthError("");
     ctx.setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
     ctx.setSelectedModel(saved?.selectedModel ?? "auto");
     ctx.setSelectedReasoning(saved?.selectedReasoning ?? "auto");
@@ -60,6 +207,7 @@ export const createRealtimeActions = (ctx, actions) => {
     ctx.setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     ctx.setSidebarCollapsed(isVscodeSurface ? true : window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     ctx.setSelectedProjectKey(saved?.selectedProjectKey ?? "");
+    ctx.setProjectSearch(saved?.projectSearch ?? "");
     ctx.setCollapsedProjectMachineKeys(saved?.collapsedProjectMachineKeys ?? []);
     ctx.setMachines(loadedMachines);
     ctx.setProjects(loadedProjects);
@@ -78,7 +226,7 @@ export const createRealtimeActions = (ctx, actions) => {
         ?? loadedProjects.find((project) => project.machineId === initialSession.machineId && project.path === initialSession.workingDirectory);
       const initialThreadId = preferredThreadIdForSession(initialSession, initialProject);
       if (initialThreadId) {
-        await actions.openThread(initialThreadId).catch(() => actions.clearActiveThreadIfLatest(initialThreadId));
+        await deps.openThread(initialThreadId).catch(() => deps.clearActiveThreadIfLatest(initialThreadId));
       }
     }
     ctx.setInitialized(true);
@@ -99,11 +247,10 @@ export const createRealtimeActions = (ctx, actions) => {
   }
 
   function realtimeUrl() {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${window.location.host}/api/events/ws`;
+    return authWebSocketUrl("/api/events/ws");
   }
 
-  function sendRealtime(message) {
+  function sendRealtime(message: RealtimeOutgoingMessage) {
     const socket = ctx.realtimeSocket.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify(message));
@@ -154,7 +301,7 @@ export const createRealtimeActions = (ctx, actions) => {
     ctx.realtimeSocket.current = socket;
   }
 
-  function handleRealtimeMessage(message) {
+  function handleRealtimeMessage(message: RealtimeMessage) {
     if (message.type === "sessions") {
       const payload = message;
       ctx.sessionsLastSeq.current = Math.max(ctx.sessionsLastSeq.current, payload.seq);
@@ -193,7 +340,7 @@ export const createRealtimeActions = (ctx, actions) => {
     }
   }
 
-  function applyThreadStreamEvent(payload) {
+  function applyThreadStreamEvent(payload: StreamEvent) {
     if (ctx.closedThreadIds.current.has(payload.thread.threadId)) return;
     notifyTaskCompletionsFromStreamEvent(payload);
     ctx.threadLastSeqs.current.set(
@@ -206,14 +353,15 @@ export const createRealtimeActions = (ctx, actions) => {
       const jsonl = mergeThreadJsonl(session.jsonl, payload);
       return { ...session, ...payload.thread, records, jsonl };
     }));
-    if (payload.thread.session.sessionId) {
-      ctx.setThreadOrderBySession((current) => appendThreadOrder(current, payload.thread.session.sessionId, payload.thread.threadId));
+    const sessionId = payload.thread.session.sessionId;
+    if (sessionId) {
+      ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, payload.thread.threadId));
     }
     ctx.setSessionList((current) => patchSessionsThread(current, payload.thread));
     ctx.setProjects((current) => patchProjectsThread(current, payload.thread));
   }
 
-  function notifyTaskCompletionsFromStreamEvent(event) {
+  function notifyTaskCompletionsFromStreamEvent(event: StreamEvent) {
     const threadId = event.thread.threadId;
     const incomingRecords = streamEventRecords(event);
     if (!incomingRecords.length) return;
@@ -232,7 +380,7 @@ export const createRealtimeActions = (ctx, actions) => {
     }
   }
 
-  function dispatchTaskCompleteNotification(notification) {
+  function dispatchTaskCompleteNotification(notification: TaskCompleteNotification) {
     playTaskCompletionSound(ctx.notificationAudioContext);
     if (isVscodeSurface) {
       window.parent?.postMessage({

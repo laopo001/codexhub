@@ -53,7 +53,7 @@
 .taskList {
   display: grid;
   gap: 6px;
-  max-height: 170px;
+  max-height: 230px;
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -133,6 +133,11 @@
   color: #f0b58d;
 }
 
+.taskStatus.completed {
+  background: #1c4a34;
+  color: #c9f1da;
+}
+
 .taskRow code,
 .taskRow em,
 .taskRow small {
@@ -146,8 +151,100 @@
   color: #f0b58d;
 }
 
+.taskRow .taskRunSummary {
+  color: #b8c5b4;
+}
+
 .taskRow.paused .taskLastError {
   color: #9daa98;
+}
+
+.taskRunHistory {
+  min-width: 0;
+  border-top: 1px solid #243427;
+  padding-top: 5px;
+}
+
+.taskRunHistory summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #9daa98;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+  list-style: none;
+}
+
+.taskRunHistory summary::-webkit-details-marker {
+  display: none;
+}
+
+.taskRunHistory summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskRunHistory summary strong {
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 10px;
+  font-weight: 750;
+  padding: 1px 6px;
+}
+
+.taskRunHistory ol {
+  display: grid;
+  gap: 3px;
+  margin: 6px 0 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.taskRunItem {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border-left: 2px solid #405244;
+  padding-left: 7px;
+}
+
+.taskRunItem.completed {
+  border-left-color: #2f7d5a;
+}
+
+.taskRunItem.queued {
+  border-left-color: #6d83ad;
+}
+
+.taskRunItem.failed,
+.taskRunItem.skipped {
+  border-left-color: #d95f36;
+}
+
+.taskRunItem span,
+.taskRunItem em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskRunItem span {
+  color: #b8c5b4;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.taskRunItem em {
+  color: #f0b58d;
+  font-size: 10px;
+  font-style: normal;
 }
 
 .taskActions {
@@ -160,14 +257,19 @@
 
 .taskRunButton,
 .taskDeleteButton {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
   min-height: 26px;
   border: 1px solid #405244;
   border-radius: 8px;
   background: #203526;
   color: #f8fbf4;
-  padding: 0 9px;
+  padding: 0;
   font-size: 12px;
   font-weight: 750;
+  line-height: 0;
 }
 
 .taskRunButton {
@@ -178,8 +280,11 @@
 
 .taskDeleteButton {
   margin-left: auto;
-  width: 28px;
-  padding: 0;
+}
+
+.taskRunButton svg,
+.taskDeleteButton svg {
+  pointer-events: none;
 }
 
 .taskRunButton:disabled,
@@ -227,6 +332,34 @@
   resize: vertical;
 }
 
+.taskSchedulePresets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+
+.taskSchedulePresets button {
+  min-width: 0;
+  min-height: 26px;
+  overflow: hidden;
+  border: 1px solid #334238;
+  border-radius: 7px;
+  background: #151d17;
+  color: #9daa98;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskSchedulePresets button.active {
+  border-color: #d95f36;
+  background: #3a2319;
+  color: #ffd0bd;
+}
+
 .taskFormActions {
   display: flex;
   align-items: center;
@@ -268,4 +401,3 @@
   background: #203526;
   color: #7e8c7b;
 }
-

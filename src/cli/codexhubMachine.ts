@@ -21,6 +21,7 @@ import {
 
 export type MachineRunnerOptions = {
   apiBase: string;
+  authToken?: string;
   machineId?: string;
   type?: MachineType;
   name?: string;
@@ -119,7 +120,7 @@ class CodexhubMachineRunner {
   }
 
   private async connectOnce() {
-    const ws = await openWebSocket(machineTransportUrl(this.options.apiBase));
+    const ws = await openWebSocket(machineTransportUrl(this.options.apiBase, this.options.authToken));
     this.ws = ws;
     const closed = new Deferred<void>();
     const heartbeat = setInterval(() => this.sendHeartbeat(), 10_000);
@@ -453,9 +454,10 @@ const expandHome = (input: string) => {
   return input;
 };
 
-const machineTransportUrl = (apiBase: string) => {
+const machineTransportUrl = (apiBase: string, authToken?: string) => {
   const url = new URL("/api/machines/connect", apiBase);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  if (authToken?.trim()) url.searchParams.set("codexhub_token", authToken.trim());
   return url.toString();
 };
 

@@ -1,10 +1,56 @@
 import { asRecord } from "../../core/codexRecord.js";
 import { modelOptions } from "../appConfig.js";
-import type { CodexThreadCandidate, ComposerMode, LocalTask, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, SessionSummary, SessionView, SshConnection, SshHost, StoredProjectThread, TaskDraft, ThreadSummary } from "../types.js";
+import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
+const authStorageKey = "codexhub.authToken";
+
+export const initAuthTokenFromUrl = () => {
+  if (typeof window === "undefined") return "";
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get("codexhub_token")?.trim() || url.searchParams.get("token")?.trim() || "";
+  if (!token) return authToken();
+  window.localStorage.setItem(authStorageKey, token);
+  url.searchParams.delete("codexhub_token");
+  url.searchParams.delete("token");
+  window.history.replaceState(window.history.state, "", url);
+  return token;
+};
+
+export const authToken = () => {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(authStorageKey)?.trim() ?? "";
+};
+
+export const setAuthToken = (token: string) => {
+  if (typeof window === "undefined") return;
+  const trimmed = token.trim();
+  if (trimmed) window.localStorage.setItem(authStorageKey, trimmed);
+  else window.localStorage.removeItem(authStorageKey);
+};
+
+export const clearAuthToken = () => {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(authStorageKey);
+};
+
+export const authFetch = (path: string, init: RequestInit = {}) => {
+  const token = authToken();
+  const headers = new Headers(init.headers);
+  if (token && !headers.has("authorization")) headers.set("authorization", `Bearer ${token}`);
+  return fetch(path, { ...init, headers });
+};
+
+export const authWebSocketUrl = (path: string) => {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const url = new URL(path, `${protocol}//${window.location.host}`);
+  const token = authToken();
+  if (token) url.searchParams.set("codexhub_token", token);
+  return url.toString();
+};
+
 export const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(path, init);
+  const response = await authFetch(path, init);
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
   return await response.json() as T;
 };
@@ -75,8 +121,7 @@ export const normalizeProjects = (projects: ProjectSummary[] | undefined) =>
       machineOnline: Boolean(project.machineOnline ?? (project.machine && "online" in project.machine && project.machine.online)),
       session: project.session ? normalizeSessions([project.session])[0] ?? null : null,
       sessions: normalizeSessions(project.sessions),
-      threads: Array.isArray(project.threads) ? project.threads : [],
-      storedThreads: Array.isArray(project.storedThreads) ? project.storedThreads : []
+      threads: Array.isArray(project.threads) ? project.threads : []
     }))
     : [];
 
@@ -95,7 +140,12 @@ export const normalizePlugins = (plugins: PluginSummary[] | undefined) =>
 
 export const normalizeTasks = (tasks: LocalTask[] | undefined) =>
   Array.isArray(tasks)
-    ? [...tasks].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    ? tasks
+      .map((task) => ({
+        ...task,
+        runs: Array.isArray(task.runs) ? task.runs : []
+      }))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     : [];
 
 export const defaultTaskDraft = (): TaskDraft => ({
@@ -110,7 +160,7 @@ export const defaultTaskDraft = (): TaskDraft => ({
 
 export const taskThreadOptionsFor = (project: ProjectSummary | undefined) => {
   const threads = new Map<string, Pick<ThreadSummary, "threadId" | "title" | "updatedAt">>();
-  const pushThread = (thread: Pick<ThreadSummary, "threadId" | "title" | "updatedAt"> | StoredProjectThread) => {
+  const pushThread = (thread: Pick<ThreadSummary, "threadId" | "title" | "updatedAt">) => {
     if (!thread.threadId) return;
     const existing = threads.get(thread.threadId);
     if (existing && existing.updatedAt >= thread.updatedAt) return;
@@ -121,7 +171,6 @@ export const taskThreadOptionsFor = (project: ProjectSummary | undefined) => {
     });
   };
   for (const thread of project?.threads ?? []) pushThread(thread);
-  for (const thread of project?.storedThreads ?? []) pushThread(thread);
   return [...threads.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 };
 
@@ -156,8 +205,79 @@ export const taskTargetTitle = (task: LocalTask, projects: ProjectSummary[], mac
     `machine: ${machine?.name ?? machine?.hostname ?? task.machineId}`,
     `project: ${project?.path ?? task.projectPath}`,
     `thread: ${task.threadId ?? "project default"}`,
-    task.lastRunAt ? `last run: ${formatDate(task.lastRunAt)}` : null
+    task.lastRunAt ? `last run: ${formatDate(task.lastRunAt)}` : null,
+    task.nextRunAt ? `next run: ${formatDate(task.nextRunAt)}` : null
   ].filter(Boolean).join("\n");
+};
+
+export const taskScheduleLine = (task: LocalTask) =>
+  task.nextRunAt && task.enabled
+    ? `${task.schedule} · next ${relativeTimeFuture(task.nextRunAt)}`
+    : task.schedule;
+
+export const taskRunSummary = (task: LocalTask) => {
+  const run = task.runs?.[0];
+  if (!run) return task.lastRunAt ? `last ${relativeTime(task.lastRunAt)}` : "not run yet";
+  const status = run.status === "completed" ? "done" : run.status;
+  const duration = run.durationMs != null ? ` · ${formatDuration(run.durationMs)}` : "";
+  const when = run.finishedAt ?? run.startedAt;
+  return `${status} ${relativeTime(when)}${duration}`;
+};
+
+export const taskRunTitle = (task: LocalTask) => {
+  const runs = task.runs ?? [];
+  if (!runs.length) return "No task runs yet";
+  return runs.slice(0, 5).map((run) => {
+    const duration = run.durationMs != null ? `, ${formatDuration(run.durationMs)}` : "";
+    const thread = run.threadId ? `, thread ${shortId(run.threadId)}` : "";
+    const error = run.error ? `, ${run.error}` : "";
+    return `${run.status}: ${formatDate(run.finishedAt ?? run.startedAt)}${duration}${thread}${error}`;
+  }).join("\n");
+};
+
+export const taskRunStatusLabel = (run: LocalTaskRun) => run.status === "completed" ? "done" : run.status;
+
+export const taskRunLine = (run: LocalTaskRun) => {
+  const status = taskRunStatusLabel(run);
+  const when = relativeTime(run.finishedAt ?? run.startedAt);
+  const duration = run.durationMs != null ? ` · ${formatDuration(run.durationMs)}` : "";
+  const thread = run.threadId ? ` · ${shortId(run.threadId)}` : "";
+  return `${status} · ${when}${duration}${thread}`;
+};
+
+export const taskRunDetailTitle = (run: LocalTaskRun) => [
+  `status: ${run.status}`,
+  `started: ${formatDate(run.startedAt)}`,
+  run.finishedAt ? `finished: ${formatDate(run.finishedAt)}` : null,
+  run.durationMs != null ? `duration: ${formatDuration(run.durationMs)}` : null,
+  run.sessionId ? `session: ${run.sessionId}` : null,
+  run.threadId ? `thread: ${run.threadId}` : null,
+  run.error ? `error: ${run.error}` : null
+].filter(Boolean).join("\n");
+
+export const formatDuration = (durationMs: number | undefined) => {
+  if (durationMs == null || !Number.isFinite(durationMs)) return "";
+  const seconds = Math.round(durationMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const minuteRemainder = minutes % 60;
+  return minuteRemainder ? `${hours}h ${minuteRemainder}m` : `${hours}h`;
+};
+
+export const relativeTimeFuture = (iso: string | undefined) => {
+  if (!iso) return "unknown";
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) return "unknown";
+  const seconds = Math.max(0, Math.round((timestamp - Date.now()) / 1000));
+  if (seconds < 60) return `${Math.max(1, seconds)}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
 };
 
 export const uniqueMachines = (machines: MachineSummary[]) => {
@@ -258,6 +378,18 @@ export const projectStatusLabel = (project: ProjectSummary) => {
   return "offline";
 };
 
+export const projectSearchMatches = (project: ProjectSummary, query: string) => {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    project.name,
+    project.path,
+    project.machineId,
+    project.session?.sessionId,
+    ...project.threads.map((thread) => thread.title)
+  ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalized));
+};
+
 export const sshHostMeta = (host: SshHost) => [
   host.user,
   host.hostName,
@@ -307,6 +439,38 @@ export const sshConnectionTitle = (host: SshHost, connection: SshConnection | un
   const lastLine = compactSshOutput(connection.lastOutput);
   const updated = connection.updatedAt ? `updated ${relativeTime(connection.updatedAt)}` : "";
   return [status, updated, lastLine ? `last output: ${lastLine}` : ""].filter(Boolean).join("; ");
+};
+
+export const sshConnectionDoctorLines = (host: SshHost, connection: SshConnection | undefined) => [
+  `alias: ${host.alias}`,
+  host.hostName ? `host: ${host.hostName}` : null,
+  host.user ? `user: ${host.user}` : null,
+  host.port ? `port: ${host.port}` : null,
+  host.proxyJump ? `proxy: ${host.proxyJump}` : null,
+  connection ? `status: ${connection.status}` : "status: ready",
+  connection ? `remote port: ${connection.remotePort}` : null,
+  connection?.exitCode != null ? `exit: ${connection.exitCode}` : null,
+  connection?.signal ? `signal: ${connection.signal}` : null,
+  connection?.updatedAt ? `updated: ${formatDate(connection.updatedAt)}` : null,
+  connection?.lastOutput ? `last output:\n${connection.lastOutput}` : null
+].filter(Boolean).join("\n");
+
+export const pluginIntegrationStatusLabel = (plugin: PluginSummary) => {
+  const integrations = plugin.contributions?.integrations ?? [];
+  if (!integrations.length) return plugin.contributions?.web?.styles?.length ? "style" : "metadata";
+  const started = integrations.filter((integration) => integration.started).length;
+  const configured = integrations.filter((integration) => integration.configured).length;
+  if (started) return `${started}/${integrations.length} running`;
+  if (configured) return `${configured}/${integrations.length} configured`;
+  return "not configured";
+};
+
+export const pluginStatusClass = (plugin: PluginSummary) => {
+  if (!plugin.enabled) return "disabled";
+  const integrations = plugin.contributions?.integrations ?? [];
+  if (integrations.some((integration) => integration.started)) return "running";
+  if (integrations.some((integration) => integration.configured)) return "configured";
+  return "idle";
 };
 
 export const compactSshOutput = (value: string | undefined) =>
@@ -418,9 +582,7 @@ export const preferredThreadIdForSession = (session: SessionView, project?: Proj
   const sessionThreadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
   if (project?.lastThreadId && sessionThreadIds.has(project.lastThreadId)) return project.lastThreadId;
   return session.threads?.[0]?.threadId
-    ?? project?.lastThreadId
     ?? project?.threads?.[0]?.threadId
-    ?? project?.storedThreads?.[0]?.threadId
     ?? "";
 };
 
@@ -523,4 +685,3 @@ export const modelOptionsForSelection = (model: ModelSelection) => {
   if (!model || modelOptions.some((option) => option.value === model)) return modelOptions;
   return [...modelOptions, { value: model, label: model }];
 };
-

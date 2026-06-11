@@ -33,6 +33,7 @@ export const telegramPluginState = (started: boolean): PluginIntegrationState =>
 
 export const startTelegramPlugin = async (options: {
   apiBaseUrl?: string;
+  apiAuthToken?: string | null;
   requireToken?: boolean;
   logger?: Pick<Console, "error" | "log">;
 } = {}): Promise<TelegramBotHandle | null> => {

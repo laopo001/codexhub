@@ -191,6 +191,36 @@
   cursor: default;
 }
 
+.connectionDoctor {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border-top: 1px solid #26342b;
+  padding-top: 6px;
+}
+
+.connectionDoctor summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #aab7a8;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.connectionDoctor pre {
+  overflow: auto;
+  max-height: 140px;
+  margin: 7px 0 0;
+  border: 1px solid #29352d;
+  border-radius: 6px;
+  background: #0d100e;
+  color: #d8e2d5;
+  padding: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 .registeredCommand {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -203,12 +233,28 @@
   padding: 8px;
 }
 
+.registeredCommandText {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .registeredCommand code {
   min-width: 0;
   overflow: hidden;
   color: #d8e2d5;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registeredCommandText span {
+  min-width: 0;
+  overflow: hidden;
+  color: #f0b58d;
+  font-size: 10px;
+  font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -255,4 +301,3 @@
   background: #203526;
   color: #7e8c7b;
 }
-

@@ -20,7 +20,6 @@ export type StoredProject = {
   projectId: string;
   machineId: string;
   path: string;
-  name: string;
   pinned?: boolean;
   createdAt: string;
   lastOpenedAt: string;
@@ -28,13 +27,17 @@ export type StoredProject = {
   lastThreadId?: string;
 };
 
-export type StoredThreadSummary = {
-  threadId: string;
-  projectId: string;
-  title: string;
-  updatedAt: string;
-  status: "running" | "idle";
-  messageCount: number;
+export type TaskRunStatus = "queued" | "completed" | "failed" | "skipped";
+
+export type StoredTaskRun = {
+  runId: string;
+  status: TaskRunStatus;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  sessionId?: string;
+  threadId?: string;
+  error?: string;
 };
 
 export type DeletedProject = {
@@ -57,8 +60,10 @@ export type StoredTask = {
   createdAt: string;
   updatedAt: string;
   lastRunAt?: string;
-  lastStatus?: "queued" | "completed" | "failed" | "skipped";
+  lastStatus?: TaskRunStatus;
   lastError?: string;
+  lastDurationMs?: number;
+  runs?: StoredTaskRun[];
 };
 
 export type StoredSshHost = {
@@ -72,13 +77,13 @@ export type ServerStateData = {
   updatedAt: string;
   machines: StoredMachine[];
   projects: StoredProject[];
-  threads: StoredThreadSummary[];
   deletedProjects: DeletedProject[];
   tasks: StoredTask[];
   sshHosts: StoredSshHost[];
 };
 
 export type ProjectSummary = StoredProject & {
+  name: string;
   machine?: MachineSummary | StoredMachine;
   machineOnline: boolean;
   session: SessionSummary | null;
@@ -86,7 +91,6 @@ export type ProjectSummary = StoredProject & {
   running: boolean;
   sessions: SessionSummary[];
   threads: ThreadSummary[];
-  storedThreads: StoredThreadSummary[];
 };
 
 type SessionSnapshot = {
@@ -108,9 +112,11 @@ export class CodexhubServerState {
     const filePath = options.filePath
       ? path.resolve(options.filePath)
       : path.join(options.dataDir ? path.resolve(options.dataDir) : defaultDataDir(), "server-state.yaml");
-    const data = await readStateFile(filePath);
-    const state = new CodexhubServerState(filePath, data);
-    state.lastSavedText = YAML.stringify(data);
+    const result = await readStateFile(filePath);
+    const state = new CodexhubServerState(filePath, result.data);
+    const legacyStateFields = result.legacyThreads || result.legacyProjectNames;
+    state.lastSavedText = legacyStateFields ? result.rawText ?? "" : YAML.stringify(result.data);
+    if (legacyStateFields) await state.save();
     return state;
   }
 
@@ -132,13 +138,16 @@ export class CodexhubServerState {
     if (index === -1 && this.data.deletedProjects.some((project) => project.projectId === resolvedProjectId)) return true;
     if (index === -1) return false;
     const [project] = this.data.projects.splice(index, 1);
-    this.data.threads = this.data.threads.filter((thread) => thread.projectId !== resolvedProjectId);
     this.addDeletedProject(project);
     this.touch();
     return true;
   }
 
   projectDeleteTarget(projectId: string): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
+    return this.projectTarget(projectId, true);
+  }
+
+  projectTarget(projectId: string, includeDeleted = false): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
     const resolvedProjectId = this.resolveProjectId(projectId);
     const project = this.data.projects.find((item) => item.projectId === resolvedProjectId);
     if (project) {
@@ -148,7 +157,9 @@ export class CodexhubServerState {
         path: project.path
       };
     }
-    const deletedProject = this.data.deletedProjects.find((item) => item.projectId === resolvedProjectId);
+    const deletedProject = includeDeleted
+      ? this.data.deletedProjects.find((item) => item.projectId === resolvedProjectId)
+      : undefined;
     if (deletedProject) {
       return {
         projectId: deletedProject.projectId,
@@ -164,6 +175,19 @@ export class CodexhubServerState {
         path: legacyProject.path
       }
       : null;
+  }
+
+  updateProject(projectId: string, input: { pinned?: boolean | null }) {
+    const resolvedProjectId = this.resolveProjectId(projectId);
+    const project = this.data.projects.find((item) => item.projectId === resolvedProjectId);
+    if (!project) return null;
+    let changed = false;
+    if (input.pinned !== undefined && input.pinned !== null && project.pinned !== input.pinned) {
+      project.pinned = input.pinned;
+      changed = true;
+    }
+    if (changed) this.touch();
+    return project;
   }
 
   listTasks() {
@@ -230,6 +254,7 @@ export class CodexhubServerState {
     lastRunAt?: string;
     threadId?: string;
     lastError?: string;
+    lastDurationMs?: number;
   }) {
     const task = this.data.tasks.find((item) => item.taskId === taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -237,7 +262,71 @@ export class CodexhubServerState {
     task.lastRunAt = input.lastRunAt ?? new Date().toISOString();
     task.threadId = input.threadId ?? task.threadId;
     task.lastError = input.lastError;
+    task.lastDurationMs = input.lastDurationMs;
     task.updatedAt = new Date().toISOString();
+    this.touch();
+    return task;
+  }
+
+  startTaskRun(taskId: string, input: { runId: string; sessionId?: string; threadId?: string; startedAt?: string }) {
+    const task = this.data.tasks.find((item) => item.taskId === taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const startedAt = input.startedAt ?? new Date().toISOString();
+    const run: StoredTaskRun = {
+      runId: input.runId,
+      status: "queued",
+      startedAt,
+      sessionId: input.sessionId,
+      threadId: input.threadId
+    };
+    task.runs = [run, ...(task.runs ?? []).filter((item) => item.runId !== input.runId)].slice(0, 20);
+    task.lastStatus = "queued";
+    task.lastRunAt = startedAt;
+    task.lastError = undefined;
+    task.lastDurationMs = undefined;
+    task.threadId = input.threadId ?? task.threadId;
+    task.updatedAt = startedAt;
+    this.touch();
+    return task;
+  }
+
+  finishTaskRun(taskId: string, runId: string, input: {
+    status: Exclude<TaskRunStatus, "queued">;
+    sessionId?: string;
+    threadId?: string;
+    error?: string;
+    finishedAt?: string;
+  }) {
+    const task = this.data.tasks.find((item) => item.taskId === taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const finishedAt = input.finishedAt ?? new Date().toISOString();
+    const runs = task.runs ?? [];
+    let run = runs.find((item) => item.runId === runId);
+    if (!run) {
+      run = {
+        runId,
+        status: input.status,
+        startedAt: task.lastRunAt ?? finishedAt
+      };
+      runs.unshift(run);
+    }
+    run.status = input.status;
+    run.sessionId = input.sessionId ?? run.sessionId;
+    run.threadId = input.threadId ?? run.threadId;
+    run.error = input.error;
+    run.finishedAt = finishedAt;
+    const started = Date.parse(run.startedAt);
+    const finished = Date.parse(finishedAt);
+    run.durationMs = Number.isFinite(started) && Number.isFinite(finished)
+      ? Math.max(0, finished - started)
+      : undefined;
+    task.runs = runs.slice(0, 20);
+    task.lastStatus = input.status;
+    task.lastRunAt = finishedAt;
+    task.lastError = input.error;
+    task.lastDurationMs = run.durationMs;
+    task.threadId = input.threadId ?? task.threadId;
+    task.updatedAt = finishedAt;
     this.touch();
     return task;
   }
@@ -299,7 +388,6 @@ export class CodexhubServerState {
   upsertProject(input: {
     machineId: string;
     path: string;
-    name?: string;
     now?: string;
     sessionId?: string;
     threadId?: string;
@@ -317,21 +405,18 @@ export class CodexhubServerState {
     const existing = this.data.projects.find((project) => project.projectId === projectId);
     if (existing) {
       const next = {
-        name: input.name ?? existing.name,
         lastOpenedAt: input.touchOpenedAt === false ? existing.lastOpenedAt : maxIso(existing.lastOpenedAt, now),
         lastSessionId: input.sessionId ?? existing.lastSessionId,
         lastThreadId: input.threadId ?? existing.lastThreadId
       };
       if (
-        existing.name === next.name
-        && existing.lastOpenedAt === next.lastOpenedAt
+        existing.lastOpenedAt === next.lastOpenedAt
         && existing.lastSessionId === next.lastSessionId
         && existing.lastThreadId === next.lastThreadId
       ) {
         if (deletedProjectRestored) this.touch();
         return existing;
       }
-      existing.name = next.name;
       existing.lastOpenedAt = next.lastOpenedAt;
       existing.lastSessionId = next.lastSessionId;
       existing.lastThreadId = next.lastThreadId;
@@ -342,7 +427,6 @@ export class CodexhubServerState {
       projectId,
       machineId: input.machineId,
       path: normalizedPath,
-      name: input.name ?? projectName(normalizedPath),
       createdAt: now,
       lastOpenedAt: now,
       lastSessionId: input.sessionId,
@@ -354,7 +438,6 @@ export class CodexhubServerState {
   }
 
   captureSessions(snapshot: Pick<SessionSnapshot, "sessions" | "threads">) {
-    const sessionsById = new Map(snapshot.sessions.map((session) => [session.sessionId, session]));
     for (const session of snapshot.sessions) {
       const machineId = machineIdForSession(session);
       this.upsertMachine({
@@ -375,15 +458,6 @@ export class CodexhubServerState {
           restoreDeleted: false
         });
       }
-    }
-
-    for (const thread of snapshot.threads) {
-      const session = thread.session.sessionId ? sessionsById.get(thread.session.sessionId) : undefined;
-      const project = session
-        ? this.findProject(machineIdForSession(session), thread.workingDirectory)
-        : this.uniqueProjectForPath(thread.workingDirectory);
-      if (!project) continue;
-      this.upsertThread(project.projectId, thread);
     }
   }
 
@@ -411,33 +485,24 @@ export class CodexhubServerState {
       threads.push(thread);
       threadsByProject.set(project.projectId, threads);
     }
-    const storedThreadsByProject = new Map<string, StoredThreadSummary[]>();
-    for (const thread of this.data.threads) {
-      const threads = storedThreadsByProject.get(thread.projectId) ?? [];
-      threads.push(thread);
-      storedThreadsByProject.set(thread.projectId, threads);
-    }
-
     const projects: ProjectSummary[] = this.listStoredProjects().map((project) => {
       const sessions = (sessionsByProject.get(project.projectId) ?? [])
         .sort((left, right) => Number(right.online) - Number(left.online) || right.lastSeenAt.localeCompare(left.lastSeenAt));
       const session = sessions.find((session) => session.online) ?? null;
       const threads = (threadsByProject.get(project.projectId) ?? [])
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-      const storedThreads = (storedThreadsByProject.get(project.projectId) ?? [])
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
       const machine = machinesById.get(project.machineId);
       const machineOnline = Boolean(machine && "online" in machine && machine.online);
       return {
         ...project,
+        name: projectName(project.path),
         machine,
         machineOnline,
         session,
         online: Boolean(session) || machineOnline,
         running: threads.some((thread) => thread.running || thread.status === "running"),
         sessions,
-        threads,
-        storedThreads
+        threads
       };
     });
 
@@ -464,36 +529,6 @@ export class CodexhubServerState {
   private uniqueProjectForPath(projectPath: string) {
     const projects = this.data.projects.filter((project) => project.path === projectPath);
     return projects.length === 1 ? projects[0] : null;
-  }
-
-  private upsertThread(projectId: string, thread: ThreadSummary) {
-    const existing = this.data.threads.find((item) => item.threadId === thread.threadId);
-    const summary: StoredThreadSummary = {
-      threadId: thread.threadId,
-      projectId,
-      title: thread.title,
-      updatedAt: thread.updatedAt,
-      status: thread.status,
-      messageCount: thread.messageCount
-    };
-    let changed = false;
-    if (existing) {
-      changed = !storedThreadEqual(existing, summary);
-      if (changed) Object.assign(existing, summary);
-    } else {
-      this.data.threads.push(summary);
-      changed = true;
-    }
-    const project = this.data.projects.find((item) => item.projectId === projectId);
-    if (project) {
-      const nextLastOpenedAt = maxIso(project.lastOpenedAt, thread.updatedAt);
-      if (project.lastThreadId !== thread.threadId || project.lastOpenedAt !== nextLastOpenedAt) {
-        project.lastThreadId = thread.threadId;
-        project.lastOpenedAt = nextLastOpenedAt;
-        changed = true;
-      }
-    }
-    if (changed) this.touch();
   }
 
   private addDeletedProject(project: Pick<StoredProject, "projectId" | "machineId" | "path">) {
@@ -556,22 +591,35 @@ export const machineIdForSession = (session: Pick<SessionSummary, "machineId" | 
 const defaultDataDir = () =>
   path.resolve(process.env.CODEX_HUB_DATA_DIR ?? path.join(os.homedir(), ".local", "share", "codexhub"));
 
-const readStateFile = async (filePath: string): Promise<ServerStateData> => {
+type StateFileReadResult = {
+  data: ServerStateData;
+  legacyThreads: boolean;
+  legacyProjectNames: boolean;
+  rawText?: string;
+};
+
+const readStateFile = async (filePath: string): Promise<StateFileReadResult> => {
   try {
-    const parsed = YAML.parse(await readFile(filePath, "utf8")) as Partial<ServerStateData> | null;
-    if (parsed?.version !== 1) return emptyState();
+    const rawText = await readFile(filePath, "utf8");
+    const parsed = YAML.parse(rawText) as (Partial<ServerStateData> & { threads?: unknown }) | null;
+    if (parsed?.version !== 1) return { data: emptyState(), legacyThreads: false, legacyProjectNames: false, rawText };
     return {
-      version: 1,
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
-      machines: Array.isArray(parsed.machines) ? parsed.machines.map(normalizeStoredMachine).filter(isStoredMachine) : [],
-      projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
-      threads: Array.isArray(parsed.threads) ? parsed.threads.filter(isStoredThread) : [],
-      deletedProjects: Array.isArray(parsed.deletedProjects) ? parsed.deletedProjects.filter(isDeletedProject) : [],
-      tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : [],
-      sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : []
+      data: {
+        version: 1,
+        updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+        machines: Array.isArray(parsed.machines) ? parsed.machines.map(normalizeStoredMachine).filter(isStoredMachine) : [],
+        projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
+        deletedProjects: Array.isArray(parsed.deletedProjects) ? parsed.deletedProjects.filter(isDeletedProject) : [],
+        tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : [],
+        sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : []
+      },
+      legacyThreads: Array.isArray(parsed.threads),
+      legacyProjectNames: Array.isArray(parsed.projects)
+        && parsed.projects.some((project) => Boolean(project && typeof project === "object" && !Array.isArray(project) && "name" in project)),
+      rawText
     };
   } catch {
-    return emptyState();
+    return { data: emptyState(), legacyThreads: false, legacyProjectNames: false };
   }
 };
 
@@ -580,7 +628,6 @@ const emptyState = (): ServerStateData => ({
   updatedAt: new Date().toISOString(),
   machines: [],
   projects: [],
-  threads: [],
   deletedProjects: [],
   tasks: [],
   sshHosts: []
@@ -614,14 +661,6 @@ const asMachineCapabilities = (value: unknown): Partial<MachineCapabilities> | u
 const machineCapabilitiesEqual = (left: MachineCapabilities, right: MachineCapabilities) =>
   left.projectLauncher === right.projectLauncher;
 
-const storedThreadEqual = (left: StoredThreadSummary, right: StoredThreadSummary) =>
-  left.threadId === right.threadId
-  && left.projectId === right.projectId
-  && left.title === right.title
-  && left.updatedAt === right.updatedAt
-  && left.status === right.status
-  && left.messageCount === right.messageCount;
-
 const normalizeStoredProject = (value: unknown): unknown => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const item = value as Record<string, unknown>;
@@ -629,7 +668,6 @@ const normalizeStoredProject = (value: unknown): unknown => {
     projectId: item.projectId,
     machineId: item.machineId,
     path: item.path,
-    name: item.name,
     pinned: item.pinned,
     createdAt: item.createdAt,
     lastOpenedAt: item.lastOpenedAt,
@@ -643,10 +681,29 @@ const normalizeStoredTask = (value: unknown): unknown => {
   const item = value as Record<string, unknown>;
   const machineId = typeof item.machineId === "string" ? item.machineId : "";
   const projectPath = typeof item.projectPath === "string" ? item.projectPath : "";
+  const runs = Array.isArray(item.runs)
+    ? item.runs.map(normalizeStoredTaskRun).filter(isStoredTaskRun).slice(0, 20)
+    : [];
   return {
     ...item,
     projectPath,
-    projectId: typeof item.projectId === "string" ? item.projectId : machineId && projectPath ? projectIdFor(machineId, projectPath) : undefined
+    projectId: typeof item.projectId === "string" ? item.projectId : machineId && projectPath ? projectIdFor(machineId, projectPath) : undefined,
+    runs
+  };
+};
+
+const normalizeStoredTaskRun = (value: unknown): unknown => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const item = value as Record<string, unknown>;
+  return {
+    runId: item.runId,
+    status: item.status,
+    startedAt: item.startedAt,
+    finishedAt: item.finishedAt,
+    durationMs: item.durationMs,
+    sessionId: item.sessionId,
+    threadId: item.threadId,
+    error: item.error
   };
 };
 
@@ -665,7 +722,7 @@ const compareStoredProjects = (left: StoredProject, right: StoredProject) => {
   if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1;
   const createdCompare = left.createdAt.localeCompare(right.createdAt);
   if (createdCompare) return createdCompare;
-  const nameCompare = left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+  const nameCompare = projectName(left.path).localeCompare(projectName(right.path), undefined, { sensitivity: "base" });
   if (nameCompare) return nameCompare;
   return left.path.localeCompare(right.path, undefined, { sensitivity: "base" });
 };
@@ -695,20 +752,8 @@ const isStoredProject = (value: unknown): value is StoredProject => {
   return typeof item.projectId === "string"
     && typeof item.machineId === "string"
     && typeof item.path === "string"
-    && typeof item.name === "string"
     && typeof item.createdAt === "string"
     && typeof item.lastOpenedAt === "string";
-};
-
-const isStoredThread = (value: unknown): value is StoredThreadSummary => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const item = value as Partial<StoredThreadSummary>;
-  return typeof item.threadId === "string"
-    && typeof item.projectId === "string"
-    && typeof item.title === "string"
-    && typeof item.updatedAt === "string"
-    && (item.status === "running" || item.status === "idle")
-    && typeof item.messageCount === "number";
 };
 
 const isDeletedProject = (value: unknown): value is DeletedProject => {
@@ -736,7 +781,22 @@ const isStoredTask = (value: unknown): value is StoredTask => {
     && (item.threadId === undefined || typeof item.threadId === "string")
     && (item.lastRunAt === undefined || typeof item.lastRunAt === "string")
     && (item.lastStatus === undefined || item.lastStatus === "queued" || item.lastStatus === "completed" || item.lastStatus === "failed" || item.lastStatus === "skipped")
-    && (item.lastError === undefined || typeof item.lastError === "string");
+    && (item.lastError === undefined || typeof item.lastError === "string")
+    && (item.lastDurationMs === undefined || typeof item.lastDurationMs === "number")
+    && (item.runs === undefined || (Array.isArray(item.runs) && item.runs.every(isStoredTaskRun)));
+};
+
+const isStoredTaskRun = (value: unknown): value is StoredTaskRun => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Partial<StoredTaskRun>;
+  return typeof item.runId === "string"
+    && (item.status === "queued" || item.status === "completed" || item.status === "failed" || item.status === "skipped")
+    && typeof item.startedAt === "string"
+    && (item.finishedAt === undefined || typeof item.finishedAt === "string")
+    && (item.durationMs === undefined || typeof item.durationMs === "number")
+    && (item.sessionId === undefined || typeof item.sessionId === "string")
+    && (item.threadId === undefined || typeof item.threadId === "string")
+    && (item.error === undefined || typeof item.error === "string");
 };
 
 const isStoredSshHost = (value: unknown): value is StoredSshHost => {

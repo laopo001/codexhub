@@ -1,4 +1,4 @@
-// @ts-nocheck
+import type React from "react";
 import {
   browserId,
   clipboardImageFiles,
@@ -9,17 +9,71 @@ import {
   selectedTextWithin,
   writeTextToClipboard
 } from "../appHelpers.js";
+import type { ChatSession, ComposerHistoryState, MessageContextMenuState, MessageRenderMode, WebRecordView } from "../types.js";
 
-export const createComposerActions = (ctx, actions) => {
-  const updateSessionInput = (threadId, input) => {
+type ComposerActionsContext = {
+  activeCanSend: boolean;
+  composerHistoryRef: React.MutableRefObject<ComposerHistoryState | null>;
+  messageContextMenu: MessageContextMenuState | null;
+  resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
+  setComposerMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
+  setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
+  setMessageRenderModes: React.Dispatch<React.SetStateAction<Record<string, MessageRenderMode>>>;
+  setSessionMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setSessions: React.Dispatch<React.SetStateAction<ChatSession[]>>;
+};
+
+type ComposerActionsDependencies = {
+  send: (threadId: string) => Promise<void>;
+};
+
+type ComposerHistoryDirection = "previous" | "next";
+
+export type ComposerActions = {
+  updateSessionInput: (threadId: string, input: string) => void;
+  resetComposerHistory: (threadId: string) => void;
+  setComposerHistoryInput: (threadId: string, textarea: HTMLTextAreaElement, input: string) => void;
+  navigateComposerHistory: (
+    threadId: string,
+    textarea: HTMLTextAreaElement,
+    history: string[],
+    direction: ComposerHistoryDirection
+  ) => void;
+  handleComposerKeyDown: (
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+    threadId: string,
+    history: string[]
+  ) => void;
+  addSessionTextAttachment: (threadId: string, text: string) => void;
+  addSessionImageFiles: (threadId: string, files: File[]) => void;
+  addSessionImages: (threadId: string, files: FileList | null) => void;
+  addSessionFiles: (threadId: string, files: FileList | null) => Promise<void>;
+  pasteSessionImages: (threadId: string, clipboardData: DataTransfer) => boolean;
+  updateMessageRenderMode: (messageId: string, mode: MessageRenderMode) => void;
+  removeSessionImage: (threadId: string, imageId: string) => void;
+  removeSessionTextAttachment: (threadId: string, textId: string) => void;
+  openMessageContextMenu: (
+    event: React.MouseEvent<HTMLElement>,
+    threadId: string,
+    message: WebRecordView,
+    canInspect: boolean
+  ) => void;
+  inspectContextMessage: () => void;
+  addContextSelectionToConversation: () => void;
+  copyContextSelection: () => Promise<void>;
+};
+
+export const createComposerActions = (ctx: ComposerActionsContext, actions: Record<string, any>): ComposerActions => {
+  const updateSessionInput = (threadId: string, input: string) => {
     ctx.setSessions((current) => current.map((session) => session.threadId === threadId ? { ...session, input } : session));
   };
 
-  const resetComposerHistory = (threadId) => {
+  const resetComposerHistory = (threadId: string) => {
     if (ctx.composerHistoryRef.current?.threadId === threadId) ctx.composerHistoryRef.current = null;
   };
 
-  const setComposerHistoryInput = (threadId, textarea, input) => {
+  const setComposerHistoryInput = (threadId: string, textarea: HTMLTextAreaElement, input: string) => {
     updateSessionInput(threadId, input);
     window.requestAnimationFrame(() => {
       ctx.resizeComposerTextarea(textarea);
@@ -29,10 +83,10 @@ export const createComposerActions = (ctx, actions) => {
   };
 
   const navigateComposerHistory = (
-    threadId,
-    textarea,
-    history,
-    direction
+    threadId: string,
+    textarea: HTMLTextAreaElement,
+    history: string[],
+    direction: ComposerHistoryDirection
   ) => {
     const current = ctx.composerHistoryRef.current?.threadId === threadId
       ? ctx.composerHistoryRef.current
@@ -51,9 +105,9 @@ export const createComposerActions = (ctx, actions) => {
   };
 
   const handleComposerKeyDown = (
-    event,
-    threadId,
-    history
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+    threadId: string,
+    history: string[]
   ) => {
     if (
       (event.key === "ArrowUp" || event.key === "ArrowDown")
@@ -84,10 +138,10 @@ export const createComposerActions = (ctx, actions) => {
 
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    if (ctx.activeCanSend) void actions.send(threadId);
+    if (ctx.activeCanSend) void (actions as ComposerActionsDependencies).send(threadId);
   };
 
-  const addSessionTextAttachment = (threadId, text) => {
+  const addSessionTextAttachment = (threadId: string, text: string) => {
     const normalizedText = normalizeSelectedText(text);
     if (!normalizedText) return;
     ctx.setSessions((current) => current.map((session) => session.threadId === threadId
@@ -95,7 +149,7 @@ export const createComposerActions = (ctx, actions) => {
       : session));
   };
 
-  const addSessionImageFiles = (threadId, files) => {
+  const addSessionImageFiles = (threadId: string, files: File[]) => {
     if (!files.length) return;
     const images = files
       .filter((file) => file.type.startsWith("image/"))
@@ -111,23 +165,53 @@ export const createComposerActions = (ctx, actions) => {
       : session));
   };
 
-  const addSessionImages = (threadId, files) => {
+  const addSessionImages = (threadId: string, files: FileList | null) => {
     if (!files?.length) return;
     addSessionImageFiles(threadId, [...files]);
   };
 
-  const pasteSessionImages = (threadId, clipboardData) => {
+  const addSessionFiles = async (threadId: string, files: FileList | null) => {
+    if (!files?.length) return;
+    const fileList = [...files];
+    addSessionImageFiles(threadId, fileList);
+    const textFiles = fileList.filter((file) => !file.type.startsWith("image/") && isTextLikeFile(file));
+    const skipped = fileList.filter((file) => !file.type.startsWith("image/") && !isTextLikeFile(file));
+    const maxBytes = 512 * 1024;
+    const tooLarge = textFiles.filter((file) => file.size > maxBytes);
+    const readable = textFiles.filter((file) => file.size <= maxBytes);
+    const textAttachments = await Promise.all(readable.map(async (file) => ({
+      id: browserId(),
+      text: normalizeSelectedText([
+        `File: ${file.name}`,
+        "",
+        await file.text()
+      ].join("\n"))
+    })));
+    const normalized = textAttachments.filter((item) => item.text);
+    if (normalized.length) {
+      ctx.setSessions((current) => current.map((session) => session.threadId === threadId
+        ? { ...session, textAttachments: [...session.textAttachments, ...normalized] }
+        : session));
+    }
+    const rejected = [
+      ...tooLarge.map((file) => `${file.name} is larger than 512KB`),
+      ...skipped.map((file) => `${file.name} is not a supported text or image file`)
+    ];
+    if (rejected.length) window.alert(rejected.join("\n"));
+  };
+
+  const pasteSessionImages = (threadId: string, clipboardData: DataTransfer) => {
     const images = clipboardImageFiles(clipboardData);
     if (!images.length) return false;
     addSessionImageFiles(threadId, images);
     return true;
   };
 
-  const updateMessageRenderMode = (messageId, mode) => {
+  const updateMessageRenderMode = (messageId: string, mode: MessageRenderMode) => {
     ctx.setMessageRenderModes((current) => current[messageId] === mode ? current : { ...current, [messageId]: mode });
   };
 
-  const removeSessionImage = (threadId, imageId) => {
+  const removeSessionImage = (threadId: string, imageId: string) => {
     ctx.setSessions((current) => current.map((session) => {
       if (session.threadId !== threadId) return session;
       const image = session.imageAttachments.find((item) => item.id === imageId);
@@ -136,17 +220,17 @@ export const createComposerActions = (ctx, actions) => {
     }));
   };
 
-  const removeSessionTextAttachment = (threadId, textId) => {
+  const removeSessionTextAttachment = (threadId: string, textId: string) => {
     ctx.setSessions((current) => current.map((session) => session.threadId === threadId
       ? { ...session, textAttachments: session.textAttachments.filter((item) => item.id !== textId) }
       : session));
   };
 
   const openMessageContextMenu = (
-    event,
-    threadId,
-    message,
-    canInspect
+    event: React.MouseEvent<HTMLElement>,
+    threadId: string,
+    message: WebRecordView,
+    canInspect: boolean
   ) => {
     const selectedText = selectedTextWithin(event.currentTarget);
     if (!canInspect && !selectedText) return;
@@ -191,6 +275,7 @@ export const createComposerActions = (ctx, actions) => {
     addSessionTextAttachment,
     addSessionImageFiles,
     addSessionImages,
+    addSessionFiles,
     pasteSessionImages,
     updateMessageRenderMode,
     removeSessionImage,
@@ -200,4 +285,32 @@ export const createComposerActions = (ctx, actions) => {
     addContextSelectionToConversation,
     copyContextSelection
   };
+};
+
+const textFileExtensions = new Set([
+  ".css",
+  ".csv",
+  ".html",
+  ".js",
+  ".json",
+  ".jsx",
+  ".log",
+  ".md",
+  ".py",
+  ".sh",
+  ".sql",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml"
+]);
+
+const isTextLikeFile = (file: File) => {
+  if (file.type.startsWith("text/")) return true;
+  if (file.type === "application/json" || file.type === "application/xml" || file.type === "application/yaml") return true;
+  const lowerName = file.name.toLowerCase();
+  return [...textFileExtensions].some((extension) => lowerName.endsWith(extension));
 };

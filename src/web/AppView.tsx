@@ -1,10 +1,10 @@
-// @ts-nocheck
 import React from "react";
 import { Tabs } from "antd";
 import { Virtuoso } from "react-virtuoso";
 import { composerModeOptions, isVscodeSurface } from "./appConfig.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
+import type { AppViewModel } from "./viewModel.js";
 import {
   ActivityStatusOverlay,
   canForkAtMessage,
@@ -18,7 +18,7 @@ import {
 } from "./appHelpers.js";
 
 type AppViewProps = {
-  viewModel: Record<string, any>;
+  viewModel: AppViewModel;
 };
 
 export const AppView = ({ viewModel }: AppViewProps) => {
@@ -37,7 +37,11 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeUserMessageHistory,
     activeViews,
     activeWorkspacePath,
+    authError,
+    authRequired,
+    authTokenDraft,
     addContextSelectionToConversation,
+    addSessionFiles,
     addSessionImages,
     addSshHost,
     changeProjectPickerMachine,
@@ -118,6 +122,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setMessageDisplayMode,
     setOfflineProjectsCollapsed,
     setProjectPicker,
+    setAuthTokenDraft,
     setSelectedModel,
     setSelectedReasoning,
     setSessionDialogOpen,
@@ -141,6 +146,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     sshHosts,
     statusScopeKey,
     stopTurn,
+    submitAuthToken,
     submitProjectPickerPath,
     switchSessionThread,
     taskBusyId,
@@ -159,6 +165,30 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     updateThreadGoal,
     workspaceEmptyMessage
     } = viewModel;
+  if (authRequired) {
+    return (
+      <main className="authShell">
+        <form className="authPanel" onSubmit={submitAuthToken}>
+          <div className="authPanelHeader">
+            <h1>Codex Hub</h1>
+            <span>Access token required</span>
+          </div>
+          <label>
+            <span>Token</span>
+            <input
+              type="password"
+              value={authTokenDraft}
+              onChange={(event) => setAuthTokenDraft(event.target.value)}
+              autoFocus
+              autoComplete="current-password"
+            />
+          </label>
+          {authError ? <div className="authError">{authError}</div> : null}
+          <button type="submit">Unlock</button>
+        </form>
+      </main>
+    );
+  }
   const workspaceSession = selectedProject?.session ?? activeProjectSession ?? null;
   const workspacePath = selectedProject?.path ?? workspaceSession?.workingDirectory ?? activeWorkspacePath;
   const workspaceMachineOnline = selectedProject
@@ -500,10 +530,10 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           ref={imageFileInputRef}
                           className="imageUploadInput"
                           type="file"
-                          accept="image/*"
+                          accept="image/*,.css,.csv,.html,.js,.json,.jsx,.log,.md,.py,.sh,.sql,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml"
                           multiple
                           onChange={(event) => {
-                            addSessionImages(activeSession.threadId, event.currentTarget.files);
+                            void addSessionFiles(activeSession.threadId, event.currentTarget.files);
                             event.currentTarget.value = "";
                           }}
                         />

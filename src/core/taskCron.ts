@@ -30,6 +30,19 @@ export function cronMinuteKeyFromIso(value: string | undefined, timezone = defau
   return Number.isFinite(date.getTime()) ? cronMinuteKey(date, timezone) : null;
 }
 
+export function nextCronRun(expression: string, from = new Date(), timezone = defaultTaskTimezone) {
+  if (!cronParts(expression)) return null;
+  const start = new Date(from.getTime());
+  start.setSeconds(0, 0);
+  start.setMinutes(start.getMinutes() + 1);
+  const maxMinutes = 366 * 24 * 60;
+  for (let offset = 0; offset < maxMinutes; offset += 1) {
+    const candidate = new Date(start.getTime() + offset * 60_000);
+    if (cronMatches(expression, candidate, timezone)) return candidate;
+  }
+  return null;
+}
+
 function cronParts(expression: string) {
   const fields = expression.trim().split(/\s+/);
   if (fields.length !== 5) return null;

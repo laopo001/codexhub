@@ -127,6 +127,7 @@ export type PluginSummary = {
   version?: string;
   enabled: boolean;
   origin?: "builtin" | "local";
+  root?: string;
   contributions?: {
     web?: {
       styles?: Array<{
@@ -144,15 +145,6 @@ export type PluginSummary = {
       started?: boolean;
     }>;
   };
-};
-
-export type StoredProjectThread = {
-  threadId: string;
-  projectId: string;
-  title: string;
-  updatedAt: string;
-  status: ThreadStatus;
-  messageCount: number;
 };
 
 export type CodexThreadCandidate = {
@@ -183,10 +175,20 @@ export type ProjectSummary = {
   running: boolean;
   sessions: SessionView[];
   threads: ThreadSummary[];
-  storedThreads: StoredProjectThread[];
 };
 
 export type LocalTaskStatus = "queued" | "completed" | "failed" | "skipped";
+
+export type LocalTaskRun = {
+  runId: string;
+  status: LocalTaskStatus;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  sessionId?: string;
+  threadId?: string;
+  error?: string;
+};
 
 export type LocalTask = {
   taskId: string;
@@ -203,6 +205,9 @@ export type LocalTask = {
   lastRunAt?: string;
   lastStatus?: LocalTaskStatus;
   lastError?: string;
+  lastDurationMs?: number;
+  nextRunAt?: string | null;
+  runs?: LocalTaskRun[];
 };
 
 export type TaskDraft = {
@@ -415,4 +420,3 @@ export type ThreadUsage = {
   secondaryRateLimit: RateLimitWindow | null;
   observedAt: string | null;
 };
-

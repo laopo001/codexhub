@@ -92,6 +92,7 @@ type SessionStreamEvent = {
 export type TelegramBotOptions = {
   token: string;
   apiBaseUrl?: string;
+  apiAuthToken?: string | null;
   allowedChatIds?: Set<number>;
   logger?: Pick<Console, "error" | "log">;
 };
@@ -103,6 +104,7 @@ export type TelegramBotHandle = {
 
 let bot: Telegraf;
 let apiBaseUrl = "http://127.0.0.1:8788";
+let apiAuthToken: string | null = null;
 let allowedChatIds = new Set<number>();
 let logger: Pick<Console, "error" | "log"> = console;
 let startedBot: TelegramBotHandle | null = null;
@@ -397,7 +399,7 @@ const createSessionThread = async (sessionId: string) =>
   });
 
 const postThreadTurn = async (threadId: string, input: TurnInput) => {
-  const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/turn`), {
+  const response = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ input, source: "telegram" })
@@ -504,14 +506,14 @@ const forwardRecordToChat = async (chatId: number, mirror: ChatMirror, record: C
 };
 
 const openSessionEventStream = async (after: number, signal?: AbortSignal): Promise<AsyncGenerator<SessionStreamEvent>> => {
-  const response = await fetch(apiUrl(`/api/sessions/events?after=${after}`), { signal });
+  const response = await apiFetch(`/api/sessions/events?after=${after}`, { signal });
   if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
 
   return streamSseEvents<SessionStreamEvent>(response.body.getReader());
 };
 
 const openThreadEventStream = async (threadId: string, after: number, signal?: AbortSignal): Promise<AsyncGenerator<any>> => {
-  const response = await fetch(apiUrl(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`), { signal });
+  const response = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`, { signal });
   if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
 
   return streamSseEvents(response.body.getReader());
@@ -541,12 +543,17 @@ const streamSseEvents = async function* <T>(reader: ReadableStreamDefaultReader<
 };
 
 const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(apiUrl(path), init);
+  const response = await apiFetch(path, init);
   if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
   return await response.json() as T;
 };
 
 const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
+const apiFetch = (path: string, init: RequestInit = {}) => {
+  const headers = new Headers(init.headers);
+  if (apiAuthToken && !headers.has("authorization")) headers.set("authorization", `Bearer ${apiAuthToken}`);
+  return fetch(apiUrl(path), { ...init, headers });
+};
 const shortId = (id: string) => id.slice(0, 8);
 const selectionKey = (chatId: number, token: string) => `${chatId}:${token}`;
 const rememberSelection = (chatId: number, state: ChatState) => {
@@ -634,6 +641,7 @@ export const startTelegramBot = async (options: TelegramBotOptions): Promise<Tel
   const currentBot = new Telegraf(options.token);
   bot = currentBot;
   apiBaseUrl = options.apiBaseUrl ?? "http://127.0.0.1:8788";
+  apiAuthToken = options.apiAuthToken ?? process.env.CODEX_HUB_AUTH_TOKEN?.trim() ?? null;
   allowedChatIds = options.allowedChatIds ?? new Set<number>();
   logger = options.logger ?? console;
   chatStates.clear();
@@ -665,6 +673,7 @@ export const startTelegramBot = async (options: TelegramBotOptions): Promise<Tel
 
 export const startTelegramBotFromEnv = async (options: {
   apiBaseUrl?: string;
+  apiAuthToken?: string | null;
   requireToken?: boolean;
   logger?: Pick<Console, "error" | "log">;
 } = {}): Promise<TelegramBotHandle | null> => {
@@ -677,6 +686,7 @@ export const startTelegramBotFromEnv = async (options: {
   return startTelegramBot({
     token,
     apiBaseUrl: process.env.CODEX_HUB_SERVER_URL ?? options.apiBaseUrl,
+    apiAuthToken: options.apiAuthToken ?? process.env.CODEX_HUB_AUTH_TOKEN,
     allowedChatIds: parseAllowedChatIds(process.env.TELEGRAM_ALLOWED_CHAT_IDS),
     logger: options.logger
   });

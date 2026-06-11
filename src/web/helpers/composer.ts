@@ -130,6 +130,7 @@ export const readStoredUiState = (): {
   activeWorkspacePath?: string;
   activeSessionId?: string;
   selectedProjectKey?: string;
+  projectSearch?: string;
   selectedModel?: ModelSelection;
   selectedReasoning?: ReasoningSelection;
   messageDisplayMode?: MessageDisplayMode;
@@ -144,6 +145,7 @@ export const readStoredUiState = (): {
       activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,
       activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : undefined,
       selectedProjectKey: typeof parsed.selectedProjectKey === "string" ? parsed.selectedProjectKey : undefined,
+      projectSearch: typeof parsed.projectSearch === "string" ? parsed.projectSearch : undefined,
       selectedModel: isModelSelection(parsed.selectedModel) ? parsed.selectedModel : undefined,
       selectedReasoning: isReasoningSelection(parsed.selectedReasoning) ? parsed.selectedReasoning : undefined,
       messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)

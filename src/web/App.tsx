@@ -44,6 +44,7 @@ import type {
 
 import { isVscodeSurface, storageKey } from "./appConfig.js";
 import {
+  authToken,
   activityStatusesFromRecords,
   activityStatusTitle,
   combineRecordSources,
@@ -55,6 +56,7 @@ import {
   formatRateLimitRemaining,
   formatResetTitle,
   groupProjectsByMachine,
+  initAuthTokenFromUrl,
   isSimpleMainView,
   isSimpleRecord,
   latestSessionConfigFromRecords,
@@ -68,6 +70,7 @@ import {
   normalizeReasoningEffort,
   primeTaskCompletionSound,
   projectKeyForProject,
+  setAuthToken,
   threadDisplayTitle,
   turnUiStateFromStatus,
   usageTotal,
@@ -82,7 +85,17 @@ const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
   textarea.style.overflowY = shouldScroll ? "auto" : "hidden";
 };
 
+const registeredMachineCommand = (origin: string, token: string) => {
+  const command = `codexhub machine --server ${shellQuote(origin)} --type registered`;
+  return token.trim()
+    ? `CODEX_HUB_AUTH_TOKEN=${shellQuote(token.trim())} ${command}`
+    : command;
+};
+
+const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+
 const App = () => {
+  useState(() => initAuthTokenFromUrl());
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
@@ -108,6 +121,11 @@ const App = () => {
   const [selectedProjectKey, setSelectedProjectKey] = useState("");
   const [openingProjectKey, setOpeningProjectKey] = useState("");
   const [projectOpenError, setProjectOpenError] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
+  const [authRequired, setAuthRequired] = useState(false);
+  const [serverAuthRequired, setServerAuthRequired] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authTokenDraft, setAuthTokenDraft] = useState("");
   const [deletingProjectId, setDeletingProjectId] = useState("");
   const [projectPicker, setProjectPicker] = useState<ProjectPickerState | null>(null);
   const [threadPicker, setThreadPicker] = useState<ThreadPickerState | null>(null);
@@ -177,10 +195,8 @@ const App = () => {
     const savedAliases = new Set(sshHosts.map((host) => host.alias));
     return sshConfigHosts.filter((host) => !savedAliases.has(host.alias));
   }, [sshConfigHosts, sshHosts]);
-  const registeredCommand = useMemo(() => {
-    const origin = window.location.origin;
-    return `codexhub machine --server ${origin} --type registered`;
-  }, []);
+  const registeredCommand = useMemo(() => registeredMachineCommand(window.location.origin, serverAuthRequired ? authToken() : ""), [serverAuthRequired, authRequired]);
+  const registeredCommandIncludesToken = serverAuthRequired && registeredCommand.includes("CODEX_HUB_AUTH_TOKEN=");
   const projectGroups = useMemo(() => groupProjectsByMachine(projectList, machines), [projectList, machines]);
   const selectedProject = useMemo(() => {
     const explicitProject = selectedProjectKey
@@ -440,6 +456,7 @@ const App = () => {
       activeWorkspacePath,
       activeSessionId,
       selectedProjectKey,
+      projectSearch,
       selectedModel,
       selectedReasoning,
       messageDisplayMode,
@@ -450,6 +467,7 @@ const App = () => {
     activeWorkspacePath,
     activeSessionId,
     selectedProjectKey,
+    projectSearch,
     selectedModel,
     selectedReasoning,
     messageDisplayMode,
@@ -684,6 +702,7 @@ const App = () => {
     openingThreads,
     projectList,
     projectPicker,
+    projectSearch,
     projectsLastSeq,
     realtimeSocket,
     realtimeThreadSubscriptions,
@@ -699,6 +718,9 @@ const App = () => {
     setActiveTabThreadBySession,
     setActiveTabThreadId,
     setActiveWorkspacePath,
+    setAuthError,
+    setAuthRequired,
+    setServerAuthRequired,
     setCollapsedProjectMachineKeys,
     setComposerMenuOpen,
     setComposerMode,
@@ -715,6 +737,7 @@ const App = () => {
     setProjectOpenError,
     setProjectPicker,
     setProjects,
+    setProjectSearch,
     setRegisteredCommandCopied,
     setSelectedModel,
     setSelectedProjectKey,
@@ -759,6 +782,7 @@ const App = () => {
   );
   const {
     addContextSelectionToConversation,
+    addSessionFiles,
     addSessionImages,
     addSshHost,
     changeProjectPickerMachine,
@@ -790,22 +814,39 @@ const App = () => {
     removeSessionTextAttachment,
     removeSshHost,
     resetComposerHistory,
+    restartProjectSession,
     rollbackMessage,
     runTaskNow,
     saveGoalDialog,
     selectProject,
     send,
+    stopProjectSession,
     stopTurn,
     submitProjectPickerPath,
     switchSessionThread,
     syncThreadSubscriptions,
     toggleProjectMachineGroup,
+    toggleProjectPinned,
     updateMessageRenderMode,
     updateSessionInput,
     updateTaskDraftMachine,
     updateTaskDraftProject,
     updateThreadGoal
   } = actions;
+
+  const submitAuthToken = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const token = authTokenDraft.trim();
+    if (!token) {
+      setAuthError("Access token is required.");
+      return;
+    }
+    setAuthToken(token);
+    setAuthError("");
+    setAuthRequired(false);
+    setInitialized(false);
+    void initialize();
+  };
 
   const viewModel = {
     activeCanSend,
@@ -822,7 +863,11 @@ const App = () => {
     activeUserMessageHistory,
     activeViews,
     activeWorkspacePath,
+    authError,
+    authRequired,
+    authTokenDraft,
     addContextSelectionToConversation,
+    addSessionFiles,
     addSessionImages,
     addSshHost,
     changeProjectPickerMachine,
@@ -870,11 +915,14 @@ const App = () => {
     openThreadPicker,
     pasteSessionImages,
     patchTask,
+    plugins,
     projectGroups,
     projectList,
     projectOpenError,
     projectPicker,
+    projectSearch,
     registeredCommand,
+    registeredCommandIncludesToken,
     registeredCommandCopied,
     registeredMachines,
     removeSessionImage,
@@ -883,6 +931,7 @@ const App = () => {
     renderComposerSessionControls,
     resetComposerHistory,
     resizeComposerTextarea,
+    restartProjectSession,
     rollbackMessage,
     runTaskNow,
     saveGoalDialog,
@@ -904,6 +953,8 @@ const App = () => {
     setMessageDisplayMode,
     setOfflineProjectsCollapsed,
     setProjectPicker,
+    setProjectSearch,
+    setAuthTokenDraft,
     setSelectedModel,
     setSelectedReasoning,
     setSessionDialogOpen,
@@ -926,7 +977,9 @@ const App = () => {
     sshHostDraft,
     sshHosts,
     statusScopeKey,
+    stopProjectSession,
     stopTurn,
+    submitAuthToken,
     submitProjectPickerPath,
     switchSessionThread,
     taskBusyId,
@@ -937,6 +990,7 @@ const App = () => {
     threadOrderBySession,
     threadPicker,
     toggleProjectMachineGroup,
+    toggleProjectPinned,
     turnUiState,
     updateMessageRenderMode,
     updateSessionInput,

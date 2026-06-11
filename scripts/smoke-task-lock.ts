@@ -24,6 +24,15 @@ type LocalTask = {
   lastStatus?: "queued" | "completed" | "failed" | "skipped";
   threadId?: string;
   lastError?: string;
+  nextRunAt?: string | null;
+  runs?: Array<{
+    runId: string;
+    status: "queued" | "completed" | "failed" | "skipped";
+    startedAt: string;
+    finishedAt?: string;
+    durationMs?: number;
+    threadId?: string;
+  }>;
 };
 
 type TaskRunResponse = {
@@ -235,8 +244,12 @@ const main = async () => {
       })
     });
     assertNoWorkerId(created, "POST /api/tasks");
-    const taskId = created.task?.taskId;
+    const task = created.task;
+    const taskId = task?.taskId;
     if (!taskId) throw new Error("task create did not return taskId");
+    if (task.nextRunAt !== null) {
+      throw new Error(`disabled task should not expose nextRunAt: ${JSON.stringify(task)}`);
+    }
 
     const firstRun = apiJson<TaskRunResponse>(apiBase, `/api/tasks/${encodeURIComponent(taskId)}/run`, { method: "POST" });
     const secondRun = apiJson<TaskRunResponse>(apiBase, `/api/tasks/${encodeURIComponent(taskId)}/run`, { method: "POST" });
@@ -247,13 +260,23 @@ const main = async () => {
     if (!queued || queued.task?.lastStatus !== "queued") {
       throw new Error(`one concurrent task run should be queued: ${JSON.stringify(results)}`);
     }
+    if (!queued.task.runs?.some((run) => run.status === "queued")) {
+      throw new Error(`queued task run summary missing: ${JSON.stringify(queued.task)}`);
+    }
     if (!skipped || skipped.task?.lastStatus !== "skipped") {
       throw new Error(`one concurrent task run should be skipped: ${JSON.stringify(results)}`);
+    }
+    if (!skipped.task.runs?.some((run) => run.status === "skipped")) {
+      throw new Error(`skipped task run summary missing: ${JSON.stringify(skipped.task)}`);
     }
     console.log("task duplicate skip ok");
 
     await fake.completeNextTurn();
-    await waitForTaskStatus(apiBase, taskId, "completed");
+    const completed = await waitForTaskStatus(apiBase, taskId, "completed");
+    const completedRun = completed.runs?.find((run) => run.status === "completed");
+    if (!completedRun || completedRun.durationMs == null) {
+      throw new Error(`completed task run summary missing duration: ${JSON.stringify(completed)}`);
+    }
     console.log("task completion unlock ok");
 
     const third = await apiJson<TaskRunResponse>(apiBase, `/api/tasks/${encodeURIComponent(taskId)}/run`, { method: "POST" });
@@ -262,7 +285,10 @@ const main = async () => {
       throw new Error(`task lock did not release after completion: ${JSON.stringify(third)}`);
     }
     await fake.completeNextTurn();
-    await waitForTaskStatus(apiBase, taskId, "completed");
+    const rerun = await waitForTaskStatus(apiBase, taskId, "completed");
+    if ((rerun.runs ?? []).filter((run) => run.status === "completed").length < 2) {
+      throw new Error(`task rerun history missing completed runs: ${JSON.stringify(rerun)}`);
+    }
     console.log("task rerun ok");
   } finally {
     fake.stop();

@@ -40,6 +40,7 @@ type SshMachineManagerOptions = {
   sshConfigPath?: string;
   remoteMode?: SshMachineRemoteMode;
   remoteClient?: Pick<SshRemoteClientBundle, "hash" | "endpointPath">;
+  authToken?: string | null;
   onChange?: () => void;
 };
 
@@ -84,8 +85,8 @@ export class SshMachineManager {
     const remoteClientHash = remoteMode === "bootstrap" ? this.options.remoteClient?.hash : undefined;
     const remoteCommand = input.remoteCommand ?? (
       remoteMode === "bootstrap"
-        ? sshBootstrapRemoteCommand(remoteApiBase, this.requireRemoteClient(), input)
-        : installedRemoteCommand(remoteApiBase, input)
+        ? sshBootstrapRemoteCommand(remoteApiBase, this.requireRemoteClient(), input, this.options.authToken)
+        : installedRemoteCommand(remoteApiBase, input, this.options.authToken)
     );
 
     const args = [
@@ -203,8 +204,9 @@ const randomRemotePort = () => 18_000 + Math.floor(Math.random() * 30_000);
 const trimOutput = (value: string) =>
   value.length <= outputLimit ? value : value.slice(value.length - outputLimit);
 
-const installedRemoteCommand = (remoteApiBase: string, input: Pick<SshMachineConnectInput, "name">) => [
+const installedRemoteCommand = (remoteApiBase: string, input: Pick<SshMachineConnectInput, "name">, authToken?: string | null) => [
   `PATH=${shellDoubleQuote(defaultRemotePath)}`,
+  ...(authToken ? [`CODEX_HUB_AUTH_TOKEN=${shellQuote(authToken)}`] : []),
   "codexhub",
   "machine",
   "--server",
@@ -217,7 +219,8 @@ const installedRemoteCommand = (remoteApiBase: string, input: Pick<SshMachineCon
 const sshBootstrapRemoteCommand = (
   remoteApiBase: string,
   remoteClient: Pick<SshRemoteClientBundle, "hash" | "endpointPath">,
-  input: Pick<SshMachineConnectInput, "name">
+  input: Pick<SshMachineConnectInput, "name">,
+  authToken?: string | null
 ) => {
   const clientUrl = `${remoteApiBase}${remoteClient.endpointPath}`;
   const script = [
@@ -226,7 +229,8 @@ const sshBootstrapRemoteCommand = (
     "export PATH",
     `CODEXHUB_REMOTE_CLIENT_HASH=${shellQuote(remoteClient.hash)}`,
     `CODEXHUB_REMOTE_CLIENT_URL=${shellQuote(clientUrl)}`,
-    "export CODEXHUB_REMOTE_CLIENT_HASH CODEXHUB_REMOTE_CLIENT_URL",
+    ...(authToken ? [`CODEX_HUB_AUTH_TOKEN=${shellQuote(authToken)}`] : []),
+    `export CODEXHUB_REMOTE_CLIENT_HASH CODEXHUB_REMOTE_CLIENT_URL${authToken ? " CODEX_HUB_AUTH_TOKEN" : ""}`,
     "cache_root=\"${XDG_CACHE_HOME:-$HOME/.cache}/codexhub/remote-client\"",
     "cache_dir=\"$cache_root/$CODEXHUB_REMOTE_CLIENT_HASH\"",
     "client=\"$cache_dir/client.cjs\"",

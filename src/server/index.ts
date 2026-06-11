@@ -1,7 +1,7 @@
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
-import Fastify, { type FastifyInstance } from "fastify";
-import { randomUUID } from "node:crypto";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -12,10 +12,11 @@ import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
 import { CodexhubServerState } from "../core/serverState.js";
+import type { StoredTask } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
-import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, isCronExpression } from "../core/taskCron.js";
+import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, isCronExpression, nextCronRun } from "../core/taskCron.js";
 import { ThreadHub } from "../core/threadHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
 import {
@@ -257,6 +258,10 @@ const taskCreateSchema = z.object({
 
 const taskUpdateSchema = taskCreateSchema.partial();
 
+const projectUpdateSchema = z.object({
+  pinned: z.boolean().nullable().optional()
+}).strict();
+
 type SseStream = NodeJS.WritableStream & {
   destroyed?: boolean;
   flushHeaders?: () => void;
@@ -333,6 +338,41 @@ const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
 };
+const normalizedAuthToken = (value: string | null | undefined) => {
+  const token = value?.trim();
+  return token ? token : null;
+};
+const requestPath = (request: FastifyRequest) => new URL(request.url, "http://codexhub.local").pathname;
+const isPublicRequest = (request: FastifyRequest) => {
+  const pathname = requestPath(request);
+  if (!pathname.startsWith("/api/")) return true;
+  if (pathname === "/api/health" || pathname === "/api/auth/status") return true;
+  if (pathname.startsWith("/api/ssh/remote-client/")) return request.method === "GET";
+  if (pathname.startsWith("/api/plugins/") && pathname.includes("/assets/")) return request.method === "GET";
+  return false;
+};
+const isAuthorizedRequest = (request: FastifyRequest, expectedToken: string) => {
+  const token = requestAuthToken(request);
+  return token ? safeTokenEqual(token, expectedToken) : false;
+};
+const requestAuthToken = (request: FastifyRequest) => {
+  const authorization = request.headers.authorization;
+  if (typeof authorization === "string") {
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    if (match?.[1]) return match[1].trim();
+  }
+  const headerToken = request.headers["x-codexhub-token"];
+  if (typeof headerToken === "string" && headerToken.trim()) return headerToken.trim();
+  const url = new URL(request.url, "http://codexhub.local");
+  return url.searchParams.get("codexhub_token")?.trim()
+    || url.searchParams.get("token")?.trim()
+    || "";
+};
+const safeTokenEqual = (actual: string, expected: string) => {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+};
 const packageRoot = () => findPackageRoot(moduleFilePath() ? path.dirname(moduleFilePath()) : process.cwd());
 const findPackageRoot = (start: string) => {
   let current = path.resolve(start);
@@ -364,6 +404,7 @@ export type ServerStartOptions = {
   port?: number;
   staticDirectory?: string;
   surface?: "default" | "vscode";
+  authToken?: string | null;
   features?: Partial<ServerFeatureOptions>;
 };
 
@@ -385,6 +426,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const config = loadConfig({ host: options.host, port: options.port });
   const surface = options.surface ?? parseSurface(process.env.CODEX_HUB_SURFACE);
   const features = resolveServerFeatures(options.features);
+  const serverAuthToken = normalizedAuthToken(options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN);
   const state = await CodexhubServerState.load();
   let threads: ThreadHub;
   const captureSessionState = () => {
@@ -412,6 +454,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     sshConfigPath: process.env.CODEX_HUB_SSH_CONFIG,
     remoteMode: sshRemoteMode(),
     remoteClient: sshRemoteClient ?? undefined,
+    authToken: serverAuthToken,
     onChange: () => {
       publishConnections();
       publishProjects();
@@ -460,6 +503,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
   await app.register(cors, { origin: true });
   await app.register(websocket);
+  app.addHook("onRequest", async (request, reply) => {
+    if (!serverAuthToken || isPublicRequest(request)) return;
+    if (isAuthorizedRequest(request, serverAuthToken)) return;
+    reply
+      .code(401)
+      .header("www-authenticate", "Bearer realm=\"codexhub\"")
+      .send({ error: "unauthorized", authRequired: true });
+  });
 
   function projectSnapshot() {
     return state.snapshot({
@@ -602,15 +653,26 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return {
       seq: taskSeq,
       kind: "tasks" as const,
-      tasks: state.listTasks()
+      tasks: localTaskViews()
     };
+  }
+
+  function localTaskView(task: StoredTask) {
+    return {
+      ...task,
+      nextRunAt: task.enabled ? nextCronRun(task.schedule, new Date(), defaultTaskTimezone)?.toISOString() ?? null : null
+    };
+  }
+
+  function localTaskViews() {
+    return state.listTasks().map(localTaskView);
   }
 
   function publishTasks() {
     const event = {
       seq: ++taskSeq,
       kind: "tasks" as const,
-      tasks: state.listTasks()
+      tasks: localTaskViews()
     };
     for (const subscriber of taskSubscribers) subscriber(event);
   }
@@ -701,20 +763,24 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     if (!features.tasks) throw new Error("Tasks are disabled for this codexhub surface.");
     const task = state.getTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
+    const runId = randomUUID();
     if (runningTasks.has(task.taskId)) {
-      const skippedTask = state.updateTaskRun(task.taskId, {
-        lastStatus: "skipped",
-        lastError: "Task already running"
+      state.startTaskRun(task.taskId, { runId });
+      const skippedTask = state.finishTaskRun(task.taskId, runId, {
+        status: "skipped",
+        error: "Task already running"
       });
       publishTasks();
       return {
         ok: true,
         skipped: true,
-        task: skippedTask
+        task: localTaskView(skippedTask)
       };
     }
     let releaseOnReturn = true;
     runningTasks.add(task.taskId);
+    state.startTaskRun(task.taskId, { runId });
+    publishTasks();
     try {
       const started = machines.startSession(task.machineId, {
         cwd: task.projectPath,
@@ -732,14 +798,15 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       }
       const localCommand = threads.runLocalCommand(threadId, task.input, "task");
       if (localCommand.handled) {
-        const completedTask = state.updateTaskRun(task.taskId, {
-          lastStatus: "completed",
+        const completedTask = state.finishTaskRun(task.taskId, runId, {
+          status: "completed",
+          sessionId,
           threadId
         });
         publishTasks();
         return {
           ok: true,
-          task: completedTask,
+          task: localTaskView(completedTask),
           sessionId,
           threadId,
           command: localCommand.command
@@ -753,16 +820,18 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       publishTasks();
       releaseOnReturn = false;
       turn.then(() => {
-        state.updateTaskRun(task.taskId, {
-          lastStatus: "completed",
+        state.finishTaskRun(task.taskId, runId, {
+          status: "completed",
+          sessionId,
           threadId
         });
         publishTasks();
       }).catch((error: unknown) => {
-        state.updateTaskRun(task.taskId, {
-          lastStatus: "failed",
+        state.finishTaskRun(task.taskId, runId, {
+          status: "failed",
+          sessionId,
           threadId,
-          lastError: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error)
         });
         publishTasks();
       }).finally(() => {
@@ -770,14 +839,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       });
       return {
         ok: true,
-        task: queuedTask,
+        task: localTaskView(queuedTask),
         sessionId,
         threadId
       };
     } catch (error) {
-      state.updateTaskRun(task.taskId, {
-        lastStatus: "failed",
-        lastError: error instanceof Error ? error.message : String(error)
+      state.finishTaskRun(task.taskId, runId, {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error)
       });
       publishTasks();
       throw error;
@@ -814,14 +883,22 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     if (await plugins.hasEnabledBuiltinIntegration(telegramIntegrationType)) {
       telegramBot = await startTelegramPlugin({
         apiBaseUrl: localApiBaseUrl(config.host, config.port),
+        apiAuthToken: serverAuthToken,
         requireToken: false
       });
       plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(Boolean(telegramBot)));
     }
   }
 
-  app.get("/api/health", async () => ({
+  app.get("/api/auth/status", async (request) => ({
+    authRequired: Boolean(serverAuthToken),
+    authenticated: !serverAuthToken || isAuthorizedRequest(request, serverAuthToken)
+  }));
+
+  app.get("/api/health", async (request) => ({
     ok: true,
+    authRequired: Boolean(serverAuthToken),
+    authenticated: !serverAuthToken || isAuthorizedRequest(request, serverAuthToken),
     env: process.env.CODEX_HUB_ENV ?? process.env.NODE_ENV ?? "development",
     build: process.env.CODEX_HUB_BUILD_ID ?? null,
     host: config.host,
@@ -1263,6 +1340,62 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return { ok: true, deleted, stoppedSessions, ...projectSnapshot() };
   });
 
+  app.patch("/api/projects/:projectId", async (request, reply) => {
+    const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
+    const payload = projectUpdateSchema.parse(request.body);
+    const project = state.updateProject(params.projectId, payload);
+    if (!project) {
+      reply.code(404);
+      return { error: `Project not found: ${params.projectId}` };
+    }
+    publishProjects();
+    return { ok: true, project, ...projectSnapshot() };
+  });
+
+  app.post("/api/projects/:projectId/session/stop", async (request, reply) => {
+    const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
+    const target = state.projectTarget(params.projectId);
+    if (!target) {
+      reply.code(404);
+      return { error: `Project not found: ${params.projectId}` };
+    }
+    const stoppedSessions = await stopProjectSessions(target);
+    publishProjects();
+    return { ok: true, stoppedSessions, ...projectSnapshot() };
+  });
+
+  app.post("/api/projects/:projectId/session/restart", async (request, reply) => {
+    const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
+    const target = state.projectTarget(params.projectId);
+    if (!target) {
+      reply.code(404);
+      return { error: `Project not found: ${params.projectId}` };
+    }
+    try {
+      const stoppedSessions = await stopProjectSessions(target);
+      publishProjects();
+      const machine = resolveTargetMachine(machines.listMachines(), target.machineId);
+      const started = machines.startSession(machine.machineId, {
+        cwd: target.path,
+        reuse: false
+      });
+      const result = await started.promise;
+      await waitForSession(result.sessionId);
+      threads.attachSessionThread(result.sessionId, result.threadId);
+      const project = state.upsertProject({
+        machineId: machine.machineId,
+        path: result.cwd,
+        sessionId: result.sessionId,
+        threadId: result.threadId
+      });
+      publishProjects();
+      return { ok: true, machine, project, result, stoppedSessions, ...projectSnapshot() };
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   app.post("/api/projects/open", async (request, reply) => {
     const payload = z.object({
       machineId: z.string().min(1).optional(),
@@ -1295,7 +1428,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
 
   app.get("/api/tasks", async () => ({
-    tasks: state.listTasks()
+    tasks: localTaskViews()
   }));
 
   app.get("/api/tasks/events", async (request, reply) => {
@@ -1328,7 +1461,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         input: payload.input
       });
       publishTasks();
-      return { ok: true, task };
+      return { ok: true, task: localTaskView(task) };
     } catch (error) {
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -1359,7 +1492,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         createdAt: existing.createdAt
       });
       publishTasks();
-      return { ok: true, task };
+      return { ok: true, task: localTaskView(task) };
     } catch (error) {
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -1728,6 +1861,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   if (features.localMachine) {
     localMachine = startCodexhubMachine({
       apiBase: localApiBaseUrl(config.host, config.port),
+      authToken: serverAuthToken ?? undefined,
       machineId: process.env.CODEX_HUB_LOCAL_MACHINE_ID,
       type: "local",
       name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "This Computer"

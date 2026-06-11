@@ -1,0 +1,108 @@
+.pluginPanel {
+  display: grid;
+  align-content: start;
+  flex: 0 0 auto;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pluginPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pluginPanelHeader h2 {
+  margin: 0;
+  color: #d8e2d5;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pluginPanelHeader span {
+  color: #91a090;
+  font-size: 11px;
+}
+
+.pluginList {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pluginEmpty,
+.pluginRow {
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #111811;
+  color: #91a090;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.pluginRow {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pluginRow.running {
+  border-color: #315d52;
+  background: #111d1b;
+}
+
+.pluginRow.configured {
+  border-color: #405244;
+  background: #121b14;
+}
+
+.pluginRow.disabled {
+  opacity: 0.64;
+}
+
+.pluginRowHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pluginRowHeader span,
+.pluginRow code,
+.pluginRow small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pluginRowHeader span {
+  color: #d8e2d5;
+  font-weight: 800;
+}
+
+.pluginRowHeader strong {
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 10px;
+  font-weight: 750;
+  padding: 1px 6px;
+}
+
+.pluginRow.running .pluginRowHeader strong {
+  background: #17433b;
+  color: #bcf0e4;
+}
+
+.pluginRow code,
+.pluginRow small {
+  color: #91a090;
+  font-family: inherit;
+  font-size: 11px;
+  font-style: normal;
+}

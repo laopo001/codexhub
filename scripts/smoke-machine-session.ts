@@ -107,6 +107,8 @@ const main = async () => {
 
   await assertTaskCronSemantics();
   await assertServerStateSnapshotPure();
+  await assertServerStateDoesNotPersistThreadHistory();
+  await assertProjectNamesArePathBasenames();
   await assertProjectSessionProjection();
   await assertDeletedProjectSuppressesSessionCapture();
   await writeStartupSshHostState(dataDir, "included-host");
@@ -639,6 +641,125 @@ const assertServerStateSnapshotPure = async () => {
   await state.flush();
   const after = await readFile(state.path, "utf8");
   if (after !== before) throw new Error("CodexhubServerState.snapshot mutated server-state.yaml");
+};
+
+const assertServerStateDoesNotPersistThreadHistory = async () => {
+  const legacyDataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-thread-history-legacy."));
+  await writeFile(path.join(legacyDataDir, "server-state.yaml"), [
+    "version: 1",
+    "updatedAt: 2026-01-01T00:00:00.000Z",
+    "machines: []",
+    "projects: []",
+    "threads:",
+    "  - threadId: legacy-thread",
+    "    projectId: legacy-project",
+    "    title: legacy",
+    "    updatedAt: 2026-01-01T00:00:00.000Z",
+    "    status: idle",
+    "    messageCount: 1",
+    "deletedProjects: []",
+    "tasks: []",
+    "sshHosts: []",
+    ""
+  ].join("\n"), "utf8");
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const legacyState = await CodexhubServerState.load({ dataDir: legacyDataDir });
+  const migrated = await readFile(legacyState.path, "utf8");
+  if (migrated.includes("\nthreads:")) throw new Error(`legacy thread history was not migrated out:\n${migrated}`);
+
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-thread-history."));
+  const state = await CodexhubServerState.load({ dataDir });
+  const machineId = "machine-thread-history-smoke";
+  const projectPath = "/tmp/codexhub-thread-history-smoke";
+  const machine = {
+    machineId,
+    type: "local" as const,
+    hostname: "thread-history-smoke",
+    online: true,
+    status: "online" as const,
+    lastSeenAt: "2026-01-01T00:01:00.000Z",
+    capabilities: { projectLauncher: true }
+  };
+  const session = {
+    sessionId: "session-thread-history-smoke",
+    machineId,
+    name: "thread-history-smoke",
+    workingDirectory: projectPath,
+    online: true,
+    status: "online" as const,
+    lastSeenAt: "2026-01-01T00:02:00.000Z",
+    hostname: "thread-history-smoke",
+    threads: []
+  };
+  const thread = {
+    threadId: "thread-history-smoke",
+    workingDirectory: projectPath,
+    session: {
+      sessionId: session.sessionId,
+      name: session.name,
+      online: true,
+      runnable: true,
+      lastSeenAt: session.lastSeenAt
+    },
+    status: "idle" as const,
+    running: false,
+    title: "external codex thread",
+    updatedAt: "2026-01-01T00:03:00.000Z",
+    messageCount: 3,
+    threadUsage: {
+      context: null,
+      primaryRateLimit: null,
+      secondaryRateLimit: null,
+      observedAt: null
+    }
+  };
+  const project = state.upsertProject({ machineId, path: projectPath, now: "2026-01-01T00:00:00.000Z" });
+  if (!project) throw new Error("thread history smoke project upsert failed");
+  state.captureSessions({ sessions: [session], threads: [thread] });
+  const snapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [thread] });
+  const projected = snapshot.projects.find((item) => item.projectId === project.projectId);
+  if (!projected) throw new Error("thread history smoke project missing from snapshot");
+  if (projected.threads.length !== 1) throw new Error("runtime project threads should still be projected");
+  if ("storedThreads" in asRecord(projected)) throw new Error("project snapshot exposed persisted thread history");
+  await state.flush();
+  const saved = await readFile(state.path, "utf8");
+  if (saved.includes("\nthreads:")) throw new Error(`server state persisted thread history:\n${saved}`);
+};
+
+const assertProjectNamesArePathBasenames = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-project-name."));
+  const projectPath = "/tmp/codexhub-custom-name-smoke";
+  await writeFile(path.join(dataDir, "server-state.yaml"), [
+    "version: 1",
+    "updatedAt: 2026-01-01T00:00:00.000Z",
+    "machines: []",
+    "projects:",
+    "  - projectId: project-custom-name-smoke",
+    "    machineId: machine-custom-name-smoke",
+    `    path: ${projectPath}`,
+    "    name: Custom Project Label",
+    "    createdAt: 2026-01-01T00:00:00.000Z",
+    "    lastOpenedAt: 2026-01-01T00:00:00.000Z",
+    "deletedProjects: []",
+    "tasks: []",
+    "sshHosts: []",
+    ""
+  ].join("\n"), "utf8");
+
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const state = await CodexhubServerState.load({ dataDir });
+  const snapshot = state.snapshot({ machines: [], sessions: [], threads: [] });
+  const project = snapshot.projects.find((item) => item.projectId === "project-custom-name-smoke");
+  if (project?.name !== "codexhub-custom-name-smoke") {
+    throw new Error(`project name should be the folder basename: ${JSON.stringify(project)}`);
+  }
+  const migrated = await readFile(state.path, "utf8");
+  if (migrated.includes("Custom Project Label")) {
+    throw new Error(`custom project name was not migrated out:\n${migrated}`);
+  }
+  if (migrated.includes("\n    name:")) {
+    throw new Error(`project name should not be persisted separately:\n${migrated}`);
+  }
 };
 
 const assertProjectSessionProjection = async () => {

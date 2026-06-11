@@ -1,29 +1,65 @@
-// @ts-nocheck
+import type React from "react";
 import { apiJson } from "../appHelpers.js";
+import type { SshConnection, SshHost } from "../types.js";
 
-export const createSshActions = (ctx, _actions) => {
+type SshHostsPayload = {
+  hosts?: SshHost[];
+};
+
+type SshConnectionsPayload = {
+  connections?: SshConnection[];
+};
+
+type SshConnectionPayload = {
+  connection?: SshConnection;
+};
+
+type SshActionsContext = {
+  registeredCommand: string;
+  sshHostDraft: string;
+  setRegisteredCommandCopied: React.Dispatch<React.SetStateAction<boolean>>;
+  setSshConfigHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
+  setSshConnectingHost: React.Dispatch<React.SetStateAction<string>>;
+  setSshConnections: React.Dispatch<React.SetStateAction<SshConnection[]>>;
+  setSshError: React.Dispatch<React.SetStateAction<string>>;
+  setSshHostBusy: React.Dispatch<React.SetStateAction<string>>;
+  setSshHostDraft: React.Dispatch<React.SetStateAction<string>>;
+  setSshHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
+};
+
+export type SshActions = {
+  refreshSshHosts: () => Promise<void>;
+  refreshSshConnections: () => Promise<void>;
+  addSshHost: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
+  connectSshHost: (host: string, name?: string) => Promise<void>;
+  stopSshConnection: (connectionId: string) => Promise<void>;
+  removeSshHost: (host: SshHost, activeConnection?: SshConnection) => Promise<void>;
+  copyRegisteredCommand: () => Promise<void>;
+};
+
+export const createSshActions = (ctx: SshActionsContext, _actions: unknown): SshActions => {
   const refreshSshHosts = async () => {
     const [hostData, configHostData] = await Promise.all([
-      apiJson("/api/ssh/hosts"),
-      apiJson("/api/ssh/config-hosts")
+      apiJson<SshHostsPayload>("/api/ssh/hosts"),
+      apiJson<SshHostsPayload>("/api/ssh/config-hosts")
     ]);
     ctx.setSshHosts(Array.isArray(hostData.hosts) ? hostData.hosts : []);
     ctx.setSshConfigHosts(Array.isArray(configHostData.hosts) ? configHostData.hosts : []);
   };
 
   const refreshSshConnections = async () => {
-    const payload = await apiJson("/api/ssh/connections");
+    const payload = await apiJson<SshConnectionsPayload>("/api/ssh/connections");
     ctx.setSshConnections(Array.isArray(payload.connections) ? payload.connections : []);
   };
 
-  const addSshHost = async (event) => {
+  const addSshHost = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const alias = ctx.sshHostDraft.trim();
     if (!alias) return;
     ctx.setSshError("");
     ctx.setSshHostBusy(alias);
     try {
-      const payload = await apiJson("/api/ssh/hosts", {
+      const payload = await apiJson<SshHostsPayload>("/api/ssh/hosts", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ alias })
@@ -38,19 +74,20 @@ export const createSshActions = (ctx, _actions) => {
     }
   };
 
-  const connectSshHost = async (host, name) => {
+  const connectSshHost = async (host: string, name?: string) => {
     const trimmedHost = host.trim();
     if (!trimmedHost) return;
     ctx.setSshError("");
     ctx.setSshConnectingHost(trimmedHost);
     try {
-      const payload = await apiJson("/api/ssh/connect", {
+      const payload = await apiJson<SshConnectionPayload>("/api/ssh/connect", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ host: trimmedHost, name })
       });
-      if (payload.connection) {
-        ctx.setSshConnections((current) => [payload.connection, ...current.filter((item) => item.connectionId !== payload.connection.connectionId)]);
+      const connection = payload.connection;
+      if (connection) {
+        ctx.setSshConnections((current) => [connection, ...current.filter((item) => item.connectionId !== connection.connectionId)]);
       }
       await refreshSshConnections().catch(() => undefined);
     } catch (error) {
@@ -60,13 +97,14 @@ export const createSshActions = (ctx, _actions) => {
     }
   };
 
-  const stopSshConnection = async (connectionId) => {
+  const stopSshConnection = async (connectionId: string) => {
     try {
-      const payload = await apiJson(`/api/ssh/connections/${encodeURIComponent(connectionId)}`, {
+      const payload = await apiJson<SshConnectionPayload>(`/api/ssh/connections/${encodeURIComponent(connectionId)}`, {
         method: "DELETE"
       });
-      if (payload.connection) {
-        ctx.setSshConnections((current) => [payload.connection, ...current.filter((item) => item.connectionId !== connectionId)]);
+      const connection = payload.connection;
+      if (connection) {
+        ctx.setSshConnections((current) => [connection, ...current.filter((item) => item.connectionId !== connectionId)]);
       }
       await refreshSshConnections().catch(() => undefined);
     } catch (error) {
@@ -74,13 +112,13 @@ export const createSshActions = (ctx, _actions) => {
     }
   };
 
-  const removeSshHost = async (host, activeConnection) => {
+  const removeSshHost = async (host: SshHost, activeConnection?: SshConnection) => {
     const suffix = activeConnection ? " and stop the current connection" : "";
     if (!window.confirm(`Remove ${host.alias} from CodexHub SSH hosts${suffix}?`)) return;
     ctx.setSshError("");
     ctx.setSshHostBusy(host.alias);
     try {
-      const payload = await apiJson(`/api/ssh/hosts/${encodeURIComponent(host.alias)}`, {
+      const payload = await apiJson<SshHostsPayload>(`/api/ssh/hosts/${encodeURIComponent(host.alias)}`, {
         method: "DELETE"
       });
       ctx.setSshHosts(Array.isArray(payload.hosts) ? payload.hosts : []);

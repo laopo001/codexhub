@@ -50,6 +50,15 @@
   color: #7e8c7b;
 }
 
+.projectSearchInput {
+  min-height: 34px;
+  border-color: #334238;
+  background: #101410;
+  color: #f8fbf4;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
 .projectOpenError {
   overflow-wrap: anywhere;
   border: 1px solid #6d3523;
@@ -204,7 +213,7 @@
 
 .projectRow {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   width: 100%;
   min-width: 0;
   border: 1px solid #405244;
@@ -217,6 +226,10 @@
 .projectRow.active {
   border-color: #d95f36;
   background: #183222;
+}
+
+.projectRow.pinned {
+  border-color: #64705b;
 }
 
 .projectRow.offline {
@@ -232,7 +245,8 @@
 }
 
 .projectRowTop {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -274,10 +288,11 @@
 }
 
 .projectRowActions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, auto);
   flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -314,6 +329,43 @@
   font-style: normal;
 }
 
+.projectMiniButton {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #334238;
+  border-radius: 6px;
+  background: #172019;
+  color: #b8c5b4;
+  padding: 0;
+  line-height: 0;
+}
+
+.projectMiniButton.active {
+  border-color: #d95f36;
+  background: #3a2319;
+  color: #ffd0bd;
+}
+
+.projectMiniButton:hover,
+.projectMiniButton:focus-visible {
+  border-color: #64705b;
+  color: #f8fbf4;
+}
+
+.projectMiniButton:disabled {
+  border-color: #2d332f;
+  background: #151a16;
+  color: #586458;
+  cursor: default;
+}
+
+.projectMiniButton svg,
+.projectDeleteButton svg {
+  pointer-events: none;
+}
+
 .projectDeleteButton {
   display: grid;
   place-items: center;
@@ -323,7 +375,6 @@
   border-radius: 6px;
   background: transparent;
   color: #91a090;
-  font-size: 16px;
   line-height: 1;
 }
 
@@ -338,4 +389,3 @@
   color: #586458;
   cursor: default;
 }
-

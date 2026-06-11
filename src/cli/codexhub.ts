@@ -12,6 +12,7 @@ type ServerCommandOptions = {
 
 type MachineCommandOptions = {
   server?: string;
+  authToken?: string;
   machineId?: string;
   type?: "local" | "ssh" | "registered";
   name?: string;
@@ -78,12 +79,14 @@ program
   .command("machine")
   .description("Register this machine so it can start project sessions")
   .option("--server <url>", "codexhub server URL")
+  .option("--auth-token <token>", "codexhub API auth token (defaults to CODEX_HUB_AUTH_TOKEN)")
   .option("--machine-id <id>", "stable machine id")
   .option("--type <type>", "machine connection type: local, ssh, or registered", "registered")
   .option("--name <name>", "display name")
   .action(async (options: MachineCommandOptions = {}) => {
     await runCodexhubMachine({
       apiBase: options.server ?? apiBase(),
+      authToken: options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN,
       machineId: options.machineId,
       type: parseMachineType(options.type),
       name: options.name
@@ -274,9 +277,17 @@ program.parseAsync(process.argv).catch((error: unknown) => {
 });
 
 async function apiJson<T = unknown>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiUrl(path), init);
+  const response = await fetch(apiUrl(path), withAuth(init));
   if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
   return await response.json() as T;
+}
+
+function withAuth(init: RequestInit = {}): RequestInit {
+  const token = process.env.CODEX_HUB_AUTH_TOKEN?.trim();
+  if (!token) return init;
+  const headers = new Headers(init.headers);
+  if (!headers.has("authorization")) headers.set("authorization", `Bearer ${token}`);
+  return { ...init, headers };
 }
 
 function registerRemovedTopLevelCommand(name: string, message: string) {

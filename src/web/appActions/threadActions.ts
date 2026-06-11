@@ -1,7 +1,9 @@
-// @ts-nocheck
+import type React from "react";
+import type { CodexRecord } from "../../core/codexRecord.js";
 import {
   adjacentThreadId,
   apiJson,
+  authFetch,
   appendThreadOrder,
   composeUserInputText,
   errorRecord,
@@ -17,9 +19,90 @@ import {
   threadGoalClearedRecord,
   threadRecordsForNotifications
 } from "../appHelpers.js";
+import type {
+  ChatSession,
+  ComposerMode,
+  GoalDialogState,
+  ModelSelection,
+  ProjectSummary,
+  ProjectsPayload,
+  ReasoningSelection,
+  SessionView,
+  ThreadDetail,
+  ThreadGoalView,
+  ThreadSummary
+} from "../types.js";
 
-export const createThreadActions = (ctx, actions) => {
-  const openThread = async (threadId) => {
+type ThreadGoalUpdateInput = Partial<Pick<ThreadGoalView, "objective" | "status" | "tokenBudget">>;
+
+type RealtimeThreadMessage =
+  | { type: "subscribe_thread"; threadId: string; after: number }
+  | { type: "unsubscribe_thread"; threadId: string };
+
+type ThreadActionsContext = {
+  activeProjectSession?: SessionView | null;
+  activeProjectSessionThreads: ThreadSummary[];
+  activeTabThreadId: string;
+  closedThreadIds: React.MutableRefObject<Set<string>>;
+  composerMode: ComposerMode;
+  goalDialog: GoalDialogState | null;
+  latestRequestedThreadId: React.MutableRefObject<string>;
+  notificationRecordsByThread: React.MutableRefObject<Map<string, CodexRecord[]>>;
+  openingThreads: React.MutableRefObject<Map<string, Promise<void>>>;
+  realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
+  selectedModel: ModelSelection;
+  selectedReasoning: ReasoningSelection;
+  sessions: ChatSession[];
+  threadLastSeqs: React.MutableRefObject<Map<string, number>>;
+  setActiveTabThreadBySession: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setActiveTabThreadId: React.Dispatch<React.SetStateAction<string>>;
+  setActiveWorkspacePath: React.Dispatch<React.SetStateAction<string>>;
+  setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
+  setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
+  setSessionDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
+  setSessions: React.Dispatch<React.SetStateAction<ChatSession[]>>;
+  setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+};
+
+type ThreadActionsDependencies = {
+  primeTaskCompletionFeedback: () => void;
+  refreshProjects: () => Promise<ProjectsPayload>;
+  refreshSessions: () => Promise<SessionView[]>;
+  resetComposerHistory: (threadId: string) => void;
+  sendRealtime: (message: RealtimeThreadMessage) => boolean;
+};
+
+type ThreadGoalUpdateOptions = {
+  dialog?: boolean;
+};
+
+type TurnInputPart =
+  | { type: "text"; text: string }
+  | { type: "image"; url: string };
+
+export type ThreadActions = {
+  openThread: (threadId: string) => Promise<void>;
+  clearActiveThreadIfLatest: (threadId: string) => void;
+  closeThread: (threadId: string) => Promise<void>;
+  removeThreadFromUi: (threadId: string, sessionId: string, nextThreadId: string) => void;
+  deleteThread: (threadId: string) => Promise<void>;
+  subscribeThread: (threadId: string, after: number) => void;
+  unsubscribeThread: (threadId: string) => void;
+  syncThreadSubscriptions: (threadIds: string[]) => void;
+  forkMessage: (threadId: string, messageId: string) => Promise<void>;
+  rollbackMessage: (threadId: string, messageId: string) => Promise<void>;
+  send: (threadId: string) => Promise<void>;
+  stopTurn: (threadId: string) => Promise<void>;
+  updateThreadGoal: (threadId: string, goal: ThreadGoalUpdateInput, options?: ThreadGoalUpdateOptions) => Promise<boolean>;
+  clearThreadGoal: (threadId: string) => Promise<void>;
+  saveGoalDialog: () => Promise<void>;
+};
+
+export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<string, any>): ThreadActions => {
+  const deps = actions as ThreadActionsDependencies;
+
+  const openThread = async (threadId: string) => {
     ctx.closedThreadIds.current.delete(threadId);
     ctx.latestRequestedThreadId.current = threadId;
     ctx.setActiveTabThreadId(threadId);
@@ -28,8 +111,9 @@ export const createThreadActions = (ctx, actions) => {
     if (existingSession) {
       subscribeThread(threadId, existingSession.lastSeq);
       ctx.setActiveWorkspacePath(existingSession.workingDirectory);
-      if (existingSession.session.sessionId) {
-        ctx.setActiveTabThreadBySession((current) => ({ ...current, [existingSession.session.sessionId]: threadId }));
+      const sessionId = existingSession.session.sessionId;
+      if (sessionId) {
+        ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
       }
       return;
     }
@@ -38,8 +122,8 @@ export const createThreadActions = (ctx, actions) => {
     if (existingOpen) return existingOpen;
 
     const open = (async () => {
-      const thread = await apiJson(`/api/threads/${encodeURIComponent(threadId)}`);
-      const session = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
+      const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
+      const session: ChatSession = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
       const sessionId = thread.session.sessionId;
       if (sessionId) {
         ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
@@ -80,11 +164,11 @@ export const createThreadActions = (ctx, actions) => {
     }
   };
 
-  const clearActiveThreadIfLatest = (threadId) => {
+  const clearActiveThreadIfLatest = (threadId: string) => {
     if (ctx.latestRequestedThreadId.current === threadId) ctx.setActiveTabThreadId("");
   };
 
-  const closeThread = async (threadId) => {
+  const closeThread = async (threadId: string) => {
     if (ctx.closedThreadIds.current.has(threadId)) return;
     const threadIds = ctx.activeProjectSessionThreads.map((thread) => thread.threadId);
     const closingThread = ctx.activeProjectSessionThreads.find((thread) => thread.threadId === threadId)
@@ -105,13 +189,13 @@ export const createThreadActions = (ctx, actions) => {
       ctx.closedThreadIds.current.delete(threadId);
       window.alert(error instanceof Error ? error.message : String(error));
       await Promise.all([
-        actions.refreshSessions().catch(() => undefined),
-        actions.refreshProjects().catch(() => undefined)
+        deps.refreshSessions().catch(() => undefined),
+        deps.refreshProjects().catch(() => undefined)
       ]);
     }
   };
 
-  function removeThreadFromUi(threadId, sessionId, nextThreadId) {
+  function removeThreadFromUi(threadId: string, sessionId: string, nextThreadId: string) {
     ctx.openingThreads.current.delete(threadId);
     ctx.threadLastSeqs.current.delete(threadId);
     unsubscribeThread(threadId);
@@ -139,31 +223,31 @@ export const createThreadActions = (ctx, actions) => {
     }
   }
 
-  const deleteThread = async (threadId) => {
-    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" });
+  const deleteThread = async (threadId: string) => {
+    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" });
     if (response.ok || response.status === 404) return;
     throw new Error(`HTTP ${response.status}: ${await response.text()}`);
   };
 
-  function subscribeThread(threadId, after) {
+  function subscribeThread(threadId: string, after: number) {
     const subscribedAfter = Math.max(after, ctx.threadLastSeqs.current.get(threadId) ?? 0);
     ctx.threadLastSeqs.current.set(threadId, subscribedAfter);
     const alreadySubscribed = ctx.realtimeThreadSubscriptions.current.has(threadId);
     ctx.realtimeThreadSubscriptions.current.add(threadId);
     if (alreadySubscribed) return;
-    actions.sendRealtime({
+    deps.sendRealtime({
       type: "subscribe_thread",
       threadId,
       after: subscribedAfter
     });
   }
 
-  function unsubscribeThread(threadId) {
+  function unsubscribeThread(threadId: string) {
     if (!ctx.realtimeThreadSubscriptions.current.delete(threadId)) return;
-    actions.sendRealtime({ type: "unsubscribe_thread", threadId });
+    deps.sendRealtime({ type: "unsubscribe_thread", threadId });
   }
 
-  function syncThreadSubscriptions(threadIds) {
+  function syncThreadSubscriptions(threadIds: string[]) {
     const desired = new Set(threadIds);
     for (const threadId of [...ctx.realtimeThreadSubscriptions.current]) {
       if (!desired.has(threadId)) unsubscribeThread(threadId);
@@ -173,9 +257,9 @@ export const createThreadActions = (ctx, actions) => {
     }
   }
 
-  const forkMessage = async (threadId, messageId) => {
+  const forkMessage = async (threadId: string, messageId: string) => {
     try {
-      const thread = await apiJson(`/api/threads/${encodeURIComponent(threadId)}/fork`, {
+      const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/fork`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId })
@@ -196,14 +280,14 @@ export const createThreadActions = (ctx, actions) => {
     }
   };
 
-  const rollbackMessage = async (threadId, messageId) => {
+  const rollbackMessage = async (threadId: string, messageId: string) => {
     try {
-      const thread = await apiJson(`/api/threads/${encodeURIComponent(threadId)}/rollback`, {
+      const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/rollback`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId })
       });
-      const session = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
+      const session: ChatSession = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
       ctx.setSessions((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
         const nextSession = existing
@@ -226,8 +310,8 @@ export const createThreadActions = (ctx, actions) => {
     }
   };
 
-  const send = async (threadId) => {
-    actions.primeTaskCompletionFeedback();
+  const send = async (threadId: string) => {
+    deps.primeTaskCompletionFeedback();
     const session = ctx.sessions.find((item) => item.threadId === threadId);
     if (!session) return;
     const typedText = session.input.trim();
@@ -236,14 +320,14 @@ export const createThreadActions = (ctx, actions) => {
     const imageAttachments = session.imageAttachments;
     if (!text && !imageAttachments.length) return;
     if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {
-      actions.resetComposerHistory(threadId);
+      deps.resetComposerHistory(threadId);
       ctx.setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "" } : item));
       ctx.setSessionDialogOpen(true);
       return;
     }
-    actions.resetComposerHistory(threadId);
+    deps.resetComposerHistory(threadId);
     ctx.setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [], textAttachments: [] } : item));
-    let encodedImages;
+    let encodedImages: Array<{ url: string }>;
     try {
       encodedImages = await Promise.all(imageAttachments.map(async (image) => ({ url: await fileToDataUrl(image.file) })));
       for (const image of imageAttachments) URL.revokeObjectURL(image.previewUrl);
@@ -259,13 +343,13 @@ export const createThreadActions = (ctx, actions) => {
         : item));
       return;
     }
-    const input = encodedImages.length
+    const input: string | TurnInputPart[] = encodedImages.length
       ? [
-        ...(text ? [{ type: "text", text }] : []),
-        ...encodedImages.map((image) => ({ type: "image", url: image.url }))
+        ...(text ? [{ type: "text" as const, text }] : []),
+        ...encodedImages.map((image) => ({ type: "image" as const, url: image.url }))
       ]
       : text;
-    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
+    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -282,8 +366,8 @@ export const createThreadActions = (ctx, actions) => {
     }
   };
 
-  const stopTurn = async (threadId) => {
-    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/stop`, { method: "POST" });
+  const stopTurn = async (threadId: string) => {
+    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/stop`, { method: "POST" });
     if (!response.ok) {
       const text = await response.text();
       ctx.setSessions((current) => current.map((item) => item.threadId === threadId
@@ -293,11 +377,11 @@ export const createThreadActions = (ctx, actions) => {
   };
 
   const updateThreadGoal = async (
-    threadId,
-    goal,
-    options = {}
+    threadId: string,
+    goal: ThreadGoalUpdateInput,
+    options: ThreadGoalUpdateOptions = {}
   ) => {
-    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, {
+    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(goal)
@@ -316,12 +400,12 @@ export const createThreadActions = (ctx, actions) => {
     return false;
   };
 
-  const clearThreadGoal = async (threadId) => {
+  const clearThreadGoal = async (threadId: string) => {
     const clearedRecord = threadGoalClearedRecord(threadId);
     ctx.setSessions((current) => current.map((item) => item.threadId === threadId
       ? { ...item, records: mergeRecord(item.records, clearedRecord) }
       : item));
-    const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" });
+    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" });
     if (response.ok) return;
     const text = await response.text();
     ctx.setSessions((current) => current.map((item) => item.threadId === threadId
@@ -330,14 +414,15 @@ export const createThreadActions = (ctx, actions) => {
   };
 
   const saveGoalDialog = async () => {
-    if (!ctx.goalDialog) return;
-    const objective = ctx.goalDialog.objective.trim();
+    const dialog = ctx.goalDialog;
+    if (!dialog) return;
+    const objective = dialog.objective.trim();
     if (!objective) {
       ctx.setGoalDialog((current) => current ? { ...current, error: "目标不能为空" } : current);
       return;
     }
     ctx.setGoalDialog((current) => current ? { ...current, saving: true, error: "" } : current);
-    const saved = await updateThreadGoal(ctx.goalDialog.threadId, { objective, status: "active" }, { dialog: true });
+    const saved = await updateThreadGoal(dialog.threadId, { objective, status: "active" }, { dialog: true });
     if (saved) ctx.setGoalDialog(null);
   };
 
