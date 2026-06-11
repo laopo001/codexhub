@@ -60,6 +60,7 @@ export const realtimeMessageTypes = new Set([
   "projects",
   "tasks",
   "connections",
+  "server_connections",
   "thread",
   "record",
   "done",

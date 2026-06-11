@@ -11,6 +11,7 @@ import { MachineHub } from "../core/machineHub.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
+import { ServerMachineBridgeManager } from "../core/serverMachineBridge.js";
 import { CodexhubServerState } from "../core/serverState.js";
 import type { StoredTask } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
@@ -110,7 +111,7 @@ const sessionRecordsSchema = z.object({
 
 const machineRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
-  type: z.enum(["local", "ssh", "registered"]).optional(),
+  type: z.enum(["local", "ssh", "registered", "server"]).optional(),
   name: z.string().min(1).optional(),
   hostname: z.string().min(1),
   pid: z.number().int().optional(),
@@ -196,6 +197,16 @@ const machineTransportMessageSchema = z.discriminatedUnion("type", [
     records: sessionRecordsSchema
   }),
   z.object({
+    type: z.literal("session_thread_snapshot"),
+    sessionId: z.string().min(1),
+    thread: z.unknown()
+  }),
+  z.object({
+    type: z.literal("session_thread_event"),
+    sessionId: z.string().min(1),
+    event: z.unknown()
+  }),
+  z.object({
     type: z.literal("session_command_result"),
     sessionId: z.string().min(1),
     commandId: z.string().min(1),
@@ -215,7 +226,8 @@ const webEventsMessageSchema = z.discriminatedUnion("type", [
     sessionsAfter: z.number().int().min(0).optional(),
     projectsAfter: z.number().int().min(0).optional(),
     tasksAfter: z.number().int().min(0).optional(),
-    connectionsAfter: z.number().int().min(0).optional()
+    connectionsAfter: z.number().int().min(0).optional(),
+    serverConnectionsAfter: z.number().int().min(0).optional()
   }).strict(),
   z.object({
     type: z.literal("subscribe_thread"),
@@ -241,6 +253,20 @@ const sshHostAliasSchema = z.object({
   alias: z.string().min(1)
 }).strict();
 
+const serverConnectionCreateSchema = z.object({
+  name: z.string().min(1).optional(),
+  url: z.string().url(),
+  authToken: z.string().optional(),
+  enabled: z.boolean().optional()
+}).strict();
+
+const serverConnectionUpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  url: z.string().url().optional(),
+  authToken: z.string().nullable().optional(),
+  enabled: z.boolean().optional()
+}).strict();
+
 const cronScheduleSchema = z.string().min(1).refine(isCronExpression, {
   message: "Invalid cron schedule. Use five fields such as \"0 9 * * *\"."
 });
@@ -262,13 +288,6 @@ const projectUpdateSchema = z.object({
   pinned: z.boolean().nullable().optional()
 }).strict();
 
-type SseStream = NodeJS.WritableStream & {
-  destroyed?: boolean;
-  flushHeaders?: () => void;
-  writableEnded?: boolean;
-  writeHead?: (statusCode: number, headers: Record<string, string>) => void;
-};
-
 const envMs = (name: string, fallback: number) => {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
@@ -276,7 +295,6 @@ const envMs = (name: string, fallback: number) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 };
 
-const sseHeartbeatMs = () => envMs("CODEX_HUB_SSE_HEARTBEAT_MS", 20_000);
 const envFlag = (name: string, fallback: boolean) => {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
@@ -286,43 +304,6 @@ const envFlag = (name: string, fallback: boolean) => {
   return fallback;
 };
 const localMachineEnabled = () => envFlag("CODEX_HUB_LOCAL_MACHINE", true);
-
-const sseEventId = (data: unknown) => {
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  const seq = (data as { seq?: unknown }).seq;
-  return typeof seq === "number" && Number.isFinite(seq) ? String(seq) : null;
-};
-
-const sendSse = (raw: SseStream, event: string, data: unknown) => {
-  const id = sseEventId(data);
-  if (id) raw.write(`id: ${id}\n`);
-  raw.write(`event: ${event}\n`);
-  raw.write(`data: ${JSON.stringify(data)}\n\n`);
-};
-
-const sendSseComment = (raw: SseStream, comment: string) => {
-  if (raw.destroyed || raw.writableEnded) return;
-  raw.write(`: ${comment}\n\n`);
-};
-
-const startSse = (raw: SseStream) => {
-  raw.writeHead?.(200, {
-    "content-type": "text/event-stream; charset=utf-8",
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-    "x-accel-buffering": "no"
-  });
-  raw.flushHeaders?.();
-  sendSseComment(raw, "connected");
-
-  const intervalMs = sseHeartbeatMs();
-  const heartbeat = intervalMs > 0
-    ? setInterval(() => sendSseComment(raw, "ping"), intervalMs)
-    : null;
-  return () => {
-    if (heartbeat) clearInterval(heartbeat);
-  };
-};
 
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
@@ -413,6 +394,7 @@ export type ServerStartOptions = {
   staticDirectory?: string;
   surface?: "default" | "vscode";
   authToken?: string | null;
+  buildId?: string | null;
   features?: Partial<ServerFeatureOptions>;
 };
 
@@ -435,8 +417,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const surface = options.surface ?? parseSurface(process.env.CODEX_HUB_SURFACE);
   const features = resolveServerFeatures(options.features);
   const serverAuthToken = normalizedAuthToken(options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN);
+  const buildId = options.buildId ?? process.env.CODEX_HUB_BUILD_ID ?? null;
   const state = await CodexhubServerState.load();
   let threads: ThreadHub;
+  let serverMachines: ServerMachineBridgeManager | null = null;
   const captureSessionState = () => {
     state.captureSessions({
       sessions: threads.listSessions({ includeOffline: true }),
@@ -445,16 +429,33 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   };
   threads = new ThreadHub(config.defaultThreadOptions, {
     onCatalogChange: () => publishProjects(),
-    onThreadChange: () => captureSessionState()
+    onThreadChange: () => {
+      captureSessionState();
+      serverMachines?.notifyThreadChange();
+    }
   });
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const projectSubscribers = new Set<(event: ReturnType<typeof projectSnapshotEvent>) => void>();
   const taskSubscribers = new Set<(event: ReturnType<typeof taskSnapshotEvent>) => void>();
   const connectionSubscribers = new Set<(event: ReturnType<typeof connectionSnapshotEvent>) => void>();
+  const serverConnectionSubscribers = new Set<(event: ReturnType<typeof serverConnectionSnapshotEvent>) => void>();
   let projectSeq = 0;
   let taskSeq = 0;
   let connectionSeq = 0;
+  let serverConnectionSeq = 0;
   const machines = new MachineHub({ onChange: () => publishProjects() });
+  serverMachines = new ServerMachineBridgeManager({
+    machines,
+    threads,
+    listConnections: () => state.listServerConnections(),
+    updateConnection: (connectionId, input) => {
+      state.updateServerConnection(connectionId, input);
+    },
+    localMachineId: () => localMachine?.machineId
+      ?? machines.listMachines().find((machine) => machine.type === "local" && machine.online && machine.capabilities.projectLauncher)?.machineId
+      ?? null,
+    onChange: () => publishServerConnections()
+  });
   const sshRemoteClient = features.ssh ? await resolveSshRemoteClientBundle() : null;
   const sshMachines = new SshMachineManager({
     localHost: config.host,
@@ -505,6 +506,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     if (taskSweep) clearInterval(taskSweep);
     for (const timer of threadRecordObservationTimers.values()) clearTimeout(timer);
     threadRecordObservationTimers.clear();
+    await serverMachines?.stopAll();
     await sshMachines.stopAll();
     await localMachine?.stop();
     telegramBot?.stop("server closing");
@@ -744,6 +746,27 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     for (const subscriber of connectionSubscribers) subscriber(event);
   }
 
+  function serverConnectionSnapshotEvent() {
+    return {
+      seq: serverConnectionSeq,
+      kind: "server_connections" as const,
+      connections: serverMachines?.list() ?? []
+    };
+  }
+
+  function publishServerConnections() {
+    const event = {
+      seq: ++serverConnectionSeq,
+      kind: "server_connections" as const,
+      connections: serverMachines?.list() ?? []
+    };
+    for (const subscriber of serverConnectionSubscribers) subscriber(event);
+  }
+
+  function serverConnectionView(connectionId: string) {
+    return (serverMachines?.list() ?? []).find((connection) => connection.connectionId === connectionId) ?? null;
+  }
+
   async function localSshConfigHostsByAlias() {
     if (!features.ssh) return new Map();
     return new Map((await listSshHosts()).map((host) => [host.alias, host]));
@@ -950,7 +973,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     authRequired: Boolean(serverAuthToken),
     authenticated: !serverAuthToken || isAuthorizedRequest(request, serverAuthToken),
     env: process.env.CODEX_HUB_ENV ?? process.env.NODE_ENV ?? "development",
-    build: process.env.CODEX_HUB_BUILD_ID ?? null,
+    build: buildId,
     host: config.host,
     port: config.port,
     surface,
@@ -962,6 +985,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     contextWindowTokens,
     ssh: {
       connections: sshMachines.listConnections()
+    },
+    serverConnections: {
+      connections: serverMachines?.list() ?? []
     },
     telegram: {
       started: Boolean(telegramBot)
@@ -981,70 +1007,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     };
   });
 
-  app.get("/api/sessions/events", async (request, reply) => {
-    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
-    threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
-
-    const stopSse = startSse(reply.raw);
-
-    const unsubscribe = threads.subscribeSessions(query.after ?? 0, (event) => {
-      sendSse(reply.raw, event.kind, event);
-    });
-    reply.raw.on("close", () => {
-      stopSse();
-      unsubscribe();
-    });
-  });
-
-  app.get("/api/events", async (request, reply) => {
-    const query = z.object({
-      sessionsAfter: z.coerce.number().optional(),
-      projectsAfter: z.coerce.number().optional(),
-      tasksAfter: z.coerce.number().optional(),
-      connectionsAfter: z.coerce.number().optional()
-    }).parse(request.query);
-    threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
-
-    const stopSse = startSse(reply.raw);
-    const sessionsAfter = query.sessionsAfter ?? 0;
-    const projectsAfter = query.projectsAfter ?? 0;
-    const tasksAfter = query.tasksAfter ?? 0;
-    const connectionsAfter = query.connectionsAfter ?? 0;
-
-    const unsubscribeSessions = threads.subscribeSessions(sessionsAfter, (event) => {
-      sendSse(reply.raw, event.kind, event);
-    });
-    if (projectsAfter <= 0 || projectSeq > projectsAfter) sendSse(reply.raw, "projects", projectSnapshotEvent());
-    if (tasksAfter <= 0 || taskSeq > tasksAfter) sendSse(reply.raw, "tasks", taskSnapshotEvent());
-    if (connectionsAfter <= 0 || connectionSeq > connectionsAfter) sendSse(reply.raw, "connections", connectionSnapshotEvent());
-
-    const projectSubscriber = (event: ReturnType<typeof projectSnapshotEvent>) => {
-      if (event.seq > projectsAfter) sendSse(reply.raw, event.kind, event);
-    };
-    const taskSubscriber = (event: ReturnType<typeof taskSnapshotEvent>) => {
-      if (event.seq > tasksAfter) sendSse(reply.raw, event.kind, event);
-    };
-    const connectionSubscriber = (event: ReturnType<typeof connectionSnapshotEvent>) => {
-      if (event.seq > connectionsAfter) sendSse(reply.raw, event.kind, event);
-    };
-    projectSubscribers.add(projectSubscriber);
-    taskSubscribers.add(taskSubscriber);
-    connectionSubscribers.add(connectionSubscriber);
-    reply.raw.on("close", () => {
-      stopSse();
-      unsubscribeSessions();
-      projectSubscribers.delete(projectSubscriber);
-      taskSubscribers.delete(taskSubscriber);
-      connectionSubscribers.delete(connectionSubscriber);
-    });
-  });
-
   app.get("/api/events/ws", { websocket: true }, (socket) => {
     const threadUnsubscribers = new Map<string, () => void>();
     let unsubscribeSessions: (() => void) | null = null;
     let projectSubscriber: ((event: ReturnType<typeof projectSnapshotEvent>) => void) | null = null;
     let taskSubscriber: ((event: ReturnType<typeof taskSnapshotEvent>) => void) | null = null;
     let connectionSubscriber: ((event: ReturnType<typeof connectionSnapshotEvent>) => void) | null = null;
+    let serverConnectionSubscriber: ((event: ReturnType<typeof serverConnectionSnapshotEvent>) => void) | null = null;
 
     const send = (message: unknown) => {
       if (socket.readyState !== 1) return;
@@ -1061,9 +1030,11 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       if (projectSubscriber) projectSubscribers.delete(projectSubscriber);
       if (taskSubscriber) taskSubscribers.delete(taskSubscriber);
       if (connectionSubscriber) connectionSubscribers.delete(connectionSubscriber);
+      if (serverConnectionSubscriber) serverConnectionSubscribers.delete(serverConnectionSubscriber);
       projectSubscriber = null;
       taskSubscriber = null;
       connectionSubscriber = null;
+      serverConnectionSubscriber = null;
     };
 
     const subscribeControl = (input: Extract<WebEventsMessage, { type: "hello" }>) => {
@@ -1074,6 +1045,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       const projectsAfter = input.projectsAfter ?? 0;
       const tasksAfter = input.tasksAfter ?? 0;
       const connectionsAfter = input.connectionsAfter ?? 0;
+      const serverConnectionsAfter = input.serverConnectionsAfter ?? 0;
 
       unsubscribeSessions = threads.subscribeSessions(sessionsAfter, (event) => {
         sendEvent(event);
@@ -1081,6 +1053,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       if (projectsAfter <= 0 || projectSeq > projectsAfter) sendEvent(projectSnapshotEvent());
       if (tasksAfter <= 0 || taskSeq > tasksAfter) sendEvent(taskSnapshotEvent());
       if (connectionsAfter <= 0 || connectionSeq > connectionsAfter) sendEvent(connectionSnapshotEvent());
+      if (serverConnectionsAfter <= 0 || serverConnectionSeq > serverConnectionsAfter) sendEvent(serverConnectionSnapshotEvent());
 
       projectSubscriber = (event) => {
         if (event.seq > projectsAfter) sendEvent(event);
@@ -1091,9 +1064,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       connectionSubscriber = (event) => {
         if (event.seq > connectionsAfter) sendEvent(event);
       };
+      serverConnectionSubscriber = (event) => {
+        if (event.seq > serverConnectionsAfter) sendEvent(event);
+      };
       projectSubscribers.add(projectSubscriber);
       taskSubscribers.add(taskSubscriber);
       connectionSubscribers.add(connectionSubscriber);
+      serverConnectionSubscribers.add(serverConnectionSubscriber);
       send({ type: "ready" });
     };
 
@@ -1278,21 +1255,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return reply.send(bundle.content);
   });
 
-  app.get("/api/ssh/connections/events", async (request, reply) => {
-    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
-    const stopSse = startSse(reply.raw);
-    const after = query.after ?? 0;
-    if (after <= 0 || connectionSeq > after) sendSse(reply.raw, "connections", connectionSnapshotEvent());
-    const subscriber = (event: ReturnType<typeof connectionSnapshotEvent>) => {
-      if (event.seq > after) sendSse(reply.raw, event.kind, event);
-    };
-    connectionSubscribers.add(subscriber);
-    reply.raw.on("close", () => {
-      stopSse();
-      connectionSubscribers.delete(subscriber);
-    });
-  });
-
   app.get("/api/plugins", async () => ({
     plugins: await plugins.listPlugins()
   }));
@@ -1346,6 +1308,79 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   });
 
+  app.get("/api/server-connections", async () => ({
+    connections: serverMachines?.list() ?? []
+  }));
+
+  app.post("/api/server-connections", async (request, reply) => {
+    const payload = serverConnectionCreateSchema.parse(request.body);
+    try {
+      const connection = state.upsertServerConnection(payload);
+      await serverMachines?.disconnect(connection.connectionId);
+      if (connection.enabled) serverMachines?.connect(connection);
+      publishServerConnections();
+      return { ok: true, connection: serverConnectionView(connection.connectionId) };
+    } catch (error) {
+      reply.code(400);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.patch("/api/server-connections/:connectionId", async (request, reply) => {
+    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
+    const payload = serverConnectionUpdateSchema.parse(request.body);
+    try {
+      const connection = state.updateServerConnection(params.connectionId, payload);
+      if (!connection) {
+        reply.code(404);
+        return { error: "server_connection_not_found" };
+      }
+      await serverMachines?.disconnect(connection.connectionId);
+      if (connection.enabled) serverMachines?.connect(connection);
+      publishServerConnections();
+      return { ok: true, connection: serverConnectionView(connection.connectionId) };
+    } catch (error) {
+      reply.code(400);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.post("/api/server-connections/:connectionId/connect", async (request, reply) => {
+    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
+    const connection = state.getServerConnection(params.connectionId);
+    if (!connection) {
+      reply.code(404);
+      return { error: "server_connection_not_found" };
+    }
+    serverMachines?.connect(connection);
+    publishServerConnections();
+    return { ok: true, connection: serverConnectionView(connection.connectionId) };
+  });
+
+  app.post("/api/server-connections/:connectionId/disconnect", async (request, reply) => {
+    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
+    const connection = state.getServerConnection(params.connectionId);
+    if (!connection) {
+      reply.code(404);
+      return { error: "server_connection_not_found" };
+    }
+    await serverMachines?.disconnect(connection.connectionId);
+    publishServerConnections();
+    return { ok: true, connection: serverConnectionView(connection.connectionId) };
+  });
+
+  app.delete("/api/server-connections/:connectionId", async (request, reply) => {
+    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
+    await serverMachines?.remove(params.connectionId);
+    const deleted = state.deleteServerConnection(params.connectionId);
+    if (!deleted) {
+      reply.code(404);
+      return { error: "server_connection_not_found" };
+    }
+    publishServerConnections();
+    return { ok: true, connections: serverMachines?.list() ?? [] };
+  });
+
   app.get("/api/machines/:machineId/directories", async (request, reply) => {
     const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const query = z.object({ path: z.string().optional() }).parse(request.query);
@@ -1359,21 +1394,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
 
   app.get("/api/projects", async () => projectSnapshot());
-
-  app.get("/api/projects/events", async (request, reply) => {
-    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
-    const stopSse = startSse(reply.raw);
-    const after = query.after ?? 0;
-    if (after <= 0) sendSse(reply.raw, "projects", projectSnapshotEvent());
-    const subscriber = (event: ReturnType<typeof projectSnapshotEvent>) => {
-      if (event.seq > after) sendSse(reply.raw, event.kind, event);
-    };
-    projectSubscribers.add(subscriber);
-    reply.raw.on("close", () => {
-      stopSse();
-      projectSubscribers.delete(subscriber);
-    });
-  });
 
   app.delete("/api/projects/:projectId", async (request, reply) => {
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
@@ -1436,21 +1456,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.get("/api/tasks", async () => ({
     tasks: localTaskViews()
   }));
-
-  app.get("/api/tasks/events", async (request, reply) => {
-    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
-    const stopSse = startSse(reply.raw);
-    const after = query.after ?? 0;
-    if (after <= 0 || taskSeq > after) sendSse(reply.raw, "tasks", taskSnapshotEvent());
-    const subscriber = (event: ReturnType<typeof taskSnapshotEvent>) => {
-      if (event.seq > after) sendSse(reply.raw, event.kind, event);
-    };
-    taskSubscribers.add(subscriber);
-    reply.raw.on("close", () => {
-      stopSse();
-      taskSubscribers.delete(subscriber);
-    });
-  });
 
   app.post("/api/tasks", async (request, reply) => {
     const payload = taskCreateSchema.parse(request.body);
@@ -1697,6 +1702,18 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           return;
         }
 
+        if (parsed.type === "session_thread_snapshot") {
+          threads.applyMirroredThreadSnapshot(parsed.sessionId, parsed.thread);
+          publishProjects();
+          return;
+        }
+
+        if (parsed.type === "session_thread_event") {
+          threads.applyMirroredThreadEvent(parsed.sessionId, parsed.event);
+          publishProjects();
+          return;
+        }
+
         if (parsed.type === "session_command_result") {
           threads.resolveSessionCommand(parsed.sessionId, parsed.commandId, parsed.result);
           return;
@@ -1837,32 +1854,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   });
 
-  app.get("/api/threads/:threadId/events", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const query = z.object({ after: z.coerce.number().optional() }).parse(request.query);
-
-    const stopSse = startSse(reply.raw);
-
-    try {
-      const unsubscribe = threads.subscribe(params.threadId, query.after ?? 0, (event) => {
-        sendSse(reply.raw, event.kind, event);
-      });
-      reply.raw.on("close", () => {
-        stopSse();
-        unsubscribe();
-      });
-    } catch (error) {
-      stopSse();
-      sendSse(reply.raw, "error", { error: error instanceof Error ? error.message : String(error) });
-      reply.raw.end();
-    }
-  });
-
   if (staticDirectory) registerStaticRoutes(app, staticDirectory);
 
   await app.listen({ host: config.host, port: config.port });
-
-  if (features.ssh) await autoConnectSavedSshHosts("startup");
 
   if (features.localMachine) {
     localMachine = startCodexhubMachine({
@@ -1873,6 +1867,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "This Computer"
     });
   }
+
+  await serverMachines?.autoConnectEnabled();
+
+  if (features.ssh) await autoConnectSavedSshHosts("startup");
 
   try {
     await startBuiltinIntegrations();

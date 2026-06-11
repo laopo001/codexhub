@@ -29,7 +29,7 @@
 
 .connectionTabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   border: 1px solid #334238;
   border-radius: 8px;
@@ -82,6 +82,11 @@
   padding-right: 7px;
 }
 
+.connectionRow.server {
+  grid-template-columns: minmax(0, 1fr) auto auto 26px;
+  padding-right: 7px;
+}
+
 .connectionRow.online {
   border-color: #405244;
   background: #0f1b14;
@@ -94,14 +99,27 @@
   color: #d8e2d5;
 }
 
+.connectionRow.server.connecting {
+  border-color: #4a563d;
+  background: #141a12;
+  color: #d8e2d5;
+}
+
 .connectionRow.ssh.failed {
   border-color: #8b3f31;
   background: #1c1210;
   color: #f0c9bf;
 }
 
+.connectionRow.server.failed {
+  border-color: #8b3f31;
+  background: #1c1210;
+  color: #f0c9bf;
+}
+
 .connectionRow.ssh.stopped,
-.connectionRow.ssh.missing {
+.connectionRow.ssh.missing,
+.connectionRow.server.offline {
   border-color: #4a4f45;
   background: #131712;
   color: #b8c5b4;
@@ -140,13 +158,24 @@
   color: #ffb9a8;
 }
 
+.connectionRow.server.failed strong {
+  background: #4a221b;
+  color: #ffb9a8;
+}
+
 .connectionRow.ssh.starting strong {
   background: #344022;
   color: #d9e5a6;
 }
 
+.connectionRow.server.connecting strong {
+  background: #344022;
+  color: #d9e5a6;
+}
+
 .connectionRow.ssh.stopped strong,
-.connectionRow.ssh.missing strong {
+.connectionRow.ssh.missing strong,
+.connectionRow.server.offline strong {
   background: #252d25;
   color: #aab7a8;
 }
@@ -189,6 +218,94 @@
 .connectionDeleteButton:disabled {
   color: #586458;
   cursor: default;
+}
+
+.connectionSmallButton {
+  min-width: 48px;
+  height: 26px;
+  border: 1px solid #334238;
+  border-radius: 6px;
+  background: #132018;
+  color: #b8c5b4;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.connectionSmallButton:disabled {
+  color: #586458;
+  cursor: default;
+}
+
+.connectionErrorLine {
+  grid-column: 1 / -1;
+  color: #ffb9a8 !important;
+  white-space: normal !important;
+}
+
+.connectionSubList {
+  display: grid;
+  gap: 6px;
+}
+
+.serverConnectionForm {
+  display: grid;
+  grid-template-columns: minmax(86px, 0.7fr) minmax(0, 1.5fr) auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.serverConnectionForm input {
+  min-width: 0;
+  height: 32px;
+  border: 1px solid #334238;
+  border-radius: 7px;
+  background: #0f1b14;
+  color: #d8e2d5;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.serverConnectionForm button {
+  height: 32px;
+  border: 0;
+  border-radius: 7px;
+  background: #2a6041;
+  color: #f8fbf4;
+  padding: 0 11px;
+  font-weight: 800;
+}
+
+.serverConnectionForm button:disabled {
+  background: #26342b;
+  color: #687467;
+}
+
+.serverSharePanel {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin-top: auto;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #111811;
+  padding: 9px 10px;
+}
+
+.serverSharePanel span {
+  color: #91a090;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.serverSharePanel code {
+  min-width: 0;
+  overflow: hidden;
+  color: #d8e2d5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .connectionDoctor {

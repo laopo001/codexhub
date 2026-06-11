@@ -1,6 +1,6 @@
 # codexhub
 
-一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
+一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为四类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来，`server` 表示另一个 CodexHub server 作为一台本地 machine 注册进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
 - 共享核心：API server 统一管理 machines、sessions 和 threads，并把它们投影成 project-first 的 `/api/projects`；Web 左侧按项目优先展示，点击 project 打开或复用 session，右侧跟随选中 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
@@ -92,7 +92,28 @@ pnpm codexhub --server http://127.0.0.1:8788 -C /path/to/project
 
 server 在线时，`codexhub` 会通过 machine websocket 注册一个 transient session host，再把当前 session 挂到这台 session host 下；它只代表这个 headless Codex 进程，不作为项目浏览/启动器。Web 里打开本机任意项目优先使用内嵌 `local` machine；远端或宿主机项目使用 SSH / registered machine。
 
-server 在线时，session 会同步官方 app-server 的 thread/read、item、rawResponseItem 和 tokenUsage 事件，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地 headless bridge 会持续重试，直到进程退出。Web 主列表以 projects/threads 为主，session 只是 project 当前在线运行能力，并通过 `/api/projects` 的 `session` 字段投影；`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 app-server tokenUsage 事件计算。
+server 在线时，session 会同步官方 app-server 的 thread/read、item、rawResponseItem 和 tokenUsage 事件，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地 headless bridge 会持续重试，直到进程退出。Web 主列表以 projects/threads 为主，session 只是 project 当前在线运行能力，并通过 `/api/projects` 的 `session` 字段投影；`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections/server_connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 app-server tokenUsage 事件计算。
+
+## Server Bridge
+
+一个 CodexHub server 可以动态注册到另一个 CodexHub server。父 server 会把这个连接看成一台 `type=server` machine，project 会直接合并进父 server 的 Projects 列表，分组名来自保存的连接名称。
+
+子 server 仍然是真实 owner：路径解析、session 启动、thread turn、JSONL observation 和输出都在子 server 本地执行；父 server 只是把 machine/session command 代理过去，并接收子 server 镜像回来的 normalized thread snapshot/event。因此在父 server 输入消息，子 server UI 也能看到同一个输入输出；在子 server 本地继续对话，父 server 订阅同一 thread 后也会看到输出。
+
+Web 的 Connections / Servers tab 可保存父 server URL、可选 token 和自动连接开关。也可以直接调用 API：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8788/api/server-connections \
+  -H 'content-type: application/json' \
+  -d '{
+    "name": "public group",
+    "url": "https://hub.example.com",
+    "authToken": "optional-token",
+    "enabled": true
+  }'
+```
+
+`enabled: true` 表示本地 server 下次启动会自动连接。返回给 Web/API 的 connection view 不包含 token，只包含 `hasAuthToken`。
 
 当前在线 project/session 状态以 Web 和 `/api/projects` 为准；历史 thread 选择以 Web 的 thread picker 和 `/api/sessions/:sessionId/threads` 为准。
 
@@ -208,6 +229,7 @@ SSH 继续保留为 machine transport 类型；Telegram 是内建 integration pl
 pnpm check
 pnpm run smoke:machine-session
 pnpm run smoke:registered-machine
+pnpm run smoke:server-bridge
 pnpm run smoke:ssh-loopback
 pnpm run smoke:task-lock
 pnpm run smoke:electron
@@ -217,6 +239,8 @@ pnpm build
 `smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证 `/api/projects/open`、`/api/sessions`、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。
 
 `smoke:registered-machine` 会启动一个真实 `codexhub machine --type registered` CLI 子进程，验证 registered machine 注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期。
+
+`smoke:server-bridge` 会启动父/子两个临时 server 和一个 fake local machine/session，验证子 server 作为 `type=server` machine 注册到父 server，父端 project open 会转发到子 server 本地 launcher，父端 turn 会在子 server owner 执行，并把 normalized thread event 镜像回父端。
 
 `smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、项目打开、session 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
 
@@ -290,7 +314,9 @@ codexhub machine --server http://127.0.0.1:8788 --type registered
 
 ## Electron
 
-Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex app-server/headless 进程仍然由本机/SSH/registered machine session 提供。
+Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex app-server/headless 进程仍然由本机/SSH/registered/server machine session 提供。
+
+VSCode extension 优先复用 `127.0.0.1:18788` 的本地 CodexHub daemon；只有该 daemon 的 `/api/health` 显示 `surface/staticDirectory/build` 都匹配当前插件构建时才复用。如果端口上是旧插件启动的 stale daemon，新插件会启动当前构建的嵌入 server，避免重载/升级插件后仍然加载旧 UI 或旧 server 代码。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/server connections 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。这样多个同版本 VSCode 窗口会共享同一个本地 daemon/server，而不是每个窗口各自随机起一个 server。可用 `CODEX_HUB_VSCODE_DAEMON_PORT` 改端口；`CODEX_HUB_VSCODE_STOP_ON_DEACTIVATE=1` 仅用于调试时强制 deactivate 停掉扩展自己启动的 server。
 
 ```bash
 pnpm electron:start
@@ -332,7 +358,7 @@ curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/turn" \
   -d "{\"threadId\":\"$THREAD_ID\",\"input\":\"继续这个 thread\",\"source\":\"telegram\"}"
 ```
 
-Web 这类多 thread UI 可以直接针对选中的 thread 投递，或让在线 session start/resume 一个 thread tab。Web 前端使用单条 `/api/events/ws` WebSocket 实时流，连接后发送 `hello` 订阅控制面事件，再用 `subscribe_thread` / `unsubscribe_thread` 在同一条连接里维护页面 thread tabs；`/api/threads/:threadId/events` SSE 仍保留给简单脚本和兼容客户端：
+Web 这类多 thread UI 可以直接针对选中的 thread 投递，或让在线 session start/resume 一个 thread tab。Web 前端使用单条 `/api/events/ws` WebSocket 实时流，连接后发送 `hello` 订阅控制面事件，再用 `subscribe_thread` / `unsubscribe_thread` 在同一条连接里维护页面 thread tabs：
 
 ```bash
 SESSION_ID=$(curl -sS http://127.0.0.1:8788/api/sessions | jq -r '.sessions[0].sessionId')
@@ -343,10 +369,8 @@ curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
   -d '{"input":"看一下这个项目结构","source":"web"}'
 
 # /api/events/ws messages:
-# {"type":"hello","sessionsAfter":0,"projectsAfter":0,"tasksAfter":0,"connectionsAfter":0}
+# {"type":"hello","sessionsAfter":0,"projectsAfter":0,"tasksAfter":0,"connectionsAfter":0,"serverConnectionsAfter":0}
 # {"type":"subscribe_thread","threadId":"<threadId>","after":0}
-
-curl -N "http://127.0.0.1:8788/api/threads/$THREAD_ID/events?after=0"
 
 curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
   -H 'content-type: application/json' \

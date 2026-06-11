@@ -12,6 +12,7 @@
   "files": [
     "extension.cjs",
     "dist",
+    "dist-node",
     "media",
     "README.md",
     "LICENSE"

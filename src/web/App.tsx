@@ -10,6 +10,7 @@ import { AppView } from "./AppView.js";
 import { createComposerActions } from "./appActions/composerActions.js";
 import { createProjectActions } from "./appActions/projectActions.js";
 import { createRealtimeActions } from "./appActions/realtimeActions.js";
+import { createServerConnectionActions } from "./appActions/serverConnectionActions.js";
 import { createSshActions } from "./appActions/sshActions.js";
 import { createTaskActions } from "./appActions/taskActions.js";
 import { createThreadActions } from "./appActions/threadActions.js";
@@ -32,6 +33,8 @@ import type {
   ProjectPickerState,
   ProjectSummary,
   ReasoningSelection,
+  ServerConnection,
+  ServerConnectionDraft,
   SessionView,
   SshConnection,
   SshHost,
@@ -42,7 +45,7 @@ import type {
   WebRecordView
 } from "./types.js";
 
-import { isVscodeSurface, storageKey } from "./appConfig.js";
+import { storageKey } from "./appConfig.js";
 import {
   authToken,
   activityStatusesFromRecords,
@@ -110,6 +113,10 @@ const App = () => {
   const [sshConnectingHost, setSshConnectingHost] = useState("");
   const [sshHostBusy, setSshHostBusy] = useState("");
   const [sshError, setSshError] = useState("");
+  const [serverConnections, setServerConnections] = useState<ServerConnection[]>([]);
+  const [serverConnectionDraft, setServerConnectionDraft] = useState<ServerConnectionDraft>({ name: "", url: "" });
+  const [serverConnectionBusyId, setServerConnectionBusyId] = useState("");
+  const [serverConnectionError, setServerConnectionError] = useState("");
   const [registeredCommandCopied, setRegisteredCommandCopied] = useState(false);
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [tasks, setTasks] = useState<LocalTask[]>([]);
@@ -144,7 +151,7 @@ const App = () => {
   const [composerMode, setComposerMode] = useState<ComposerMode>("chat");
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(isVscodeSurface);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [collapsedProjectMachineKeys, setCollapsedProjectMachineKeys] = useState<string[]>([]);
   const [offlineProjectsCollapsed, setOfflineProjectsCollapsed] = useState(true);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
@@ -158,6 +165,7 @@ const App = () => {
   const projectsLastSeq = useRef(0);
   const tasksLastSeq = useRef(0);
   const connectionsLastSeq = useRef(0);
+  const serverConnectionsLastSeq = useRef(0);
   const controlReconnectTimer = useRef<number | null>(null);
   const realtimeThreadSubscriptions = useRef(new Set<string>());
   const threadLastSeqs = useRef(new Map<string, number>());
@@ -190,6 +198,7 @@ const App = () => {
   );
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
   const localMachines = useMemo(() => machines.filter((machine) => machine.type === "local"), [machines]);
+  const serverMachines = useMemo(() => machines.filter((machine) => machine.type === "server"), [machines]);
   const registeredMachines = useMemo(() => machines.filter((machine) => machine.type === "registered"), [machines]);
   const sshConfigHostOptions = useMemo(() => {
     const savedAliases = new Set(sshHosts.map((host) => host.alias));
@@ -197,6 +206,10 @@ const App = () => {
   }, [sshConfigHosts, sshHosts]);
   const registeredCommand = useMemo(() => registeredMachineCommand(window.location.origin, serverAuthRequired ? authToken() : ""), [serverAuthRequired, authRequired]);
   const registeredCommandIncludesToken = serverAuthRequired && registeredCommand.includes("CODEX_HUB_AUTH_TOKEN=");
+  const currentServerShareUrl = useMemo(
+    () => currentPageUrlWithToken(serverAuthRequired),
+    [authRequired, authTokenDraft, initialized, serverAuthRequired]
+  );
   const projectGroups = useMemo(() => groupProjectsByMachine(projectList, machines), [projectList, machines]);
   const selectedProject = useMemo(() => {
     const explicitProject = selectedProjectKey
@@ -711,6 +724,8 @@ const App = () => {
     selectedModel,
     selectedProjectKey,
     selectedReasoning,
+    serverConnectionDraft,
+    serverConnectionsLastSeq,
     sessionList,
     sessions,
     sessionsLastSeq,
@@ -739,6 +754,10 @@ const App = () => {
     setProjects,
     setProjectSearch,
     setRegisteredCommandCopied,
+    setServerConnectionBusyId,
+    setServerConnectionDraft,
+    setServerConnectionError,
+    setServerConnections,
     setSelectedModel,
     setSelectedProjectKey,
     setSelectedReasoning,
@@ -762,6 +781,9 @@ const App = () => {
     setTasks,
     setThreadOrderBySession,
     setThreadPicker,
+    serverConnections,
+    serverConnectionBusyId,
+    serverConnectionError,
     sshHostDraft,
     sshHosts,
     taskDraft,
@@ -774,6 +796,7 @@ const App = () => {
   Object.assign(
     actions,
     createRealtimeActions(actionContext, actions),
+    createServerConnectionActions(actionContext, actions),
     createSshActions(actionContext, actions),
     createTaskActions(actionContext, actions),
     createThreadActions(actionContext, actions),
@@ -784,6 +807,7 @@ const App = () => {
     addContextSelectionToConversation,
     addSessionFiles,
     addSessionImages,
+    addServerConnection,
     addSshHost,
     changeProjectPickerMachine,
     chooseThreadCandidate,
@@ -791,6 +815,7 @@ const App = () => {
     clearThreadGoal,
     closeThread,
     confirmProjectPicker,
+    connectServerConnection,
     connectSshHost,
     copyContextSelection,
     copyRegisteredCommand,
@@ -798,6 +823,7 @@ const App = () => {
     createTask,
     deleteProject,
     deleteTask,
+    disconnectServerConnection,
     focusTaskDraftProject,
     forkMessage,
     handleComposerKeyDown,
@@ -812,6 +838,7 @@ const App = () => {
     patchTask,
     removeSessionImage,
     removeSessionTextAttachment,
+    removeServerConnection,
     removeSshHost,
     resetComposerHistory,
     rollbackMessage,
@@ -825,6 +852,7 @@ const App = () => {
     syncThreadSubscriptions,
     toggleProjectMachineGroup,
     toggleProjectPinned,
+    toggleServerConnectionEnabled,
     updateMessageRenderMode,
     updateSessionInput,
     updateTaskDraftMachine,
@@ -867,6 +895,7 @@ const App = () => {
     addContextSelectionToConversation,
     addSessionFiles,
     addSessionImages,
+    addServerConnection,
     addSshHost,
     changeProjectPickerMachine,
     chooseThreadCandidate,
@@ -878,14 +907,17 @@ const App = () => {
     composerTextareaRef,
     confirmProjectPicker,
     connectionMode,
+    connectServerConnection,
     connectSshHost,
     copyContextSelection,
     copyRegisteredCommand,
     createSessionThread,
     createTask,
+    currentServerShareUrl,
     deleteProject,
     deleteTask,
     deletingProjectId,
+    disconnectServerConnection,
     effectiveModelSelection,
     effectiveReasoningSelection,
     focusTaskDraftProject,
@@ -925,6 +957,7 @@ const App = () => {
     registeredMachines,
     removeSessionImage,
     removeSessionTextAttachment,
+    removeServerConnection,
     removeSshHost,
     renderComposerSessionControls,
     resetComposerHistory,
@@ -938,6 +971,11 @@ const App = () => {
     sessionDialogOpen,
     sessionList,
     sessionMenuOpen,
+    serverConnectionBusyId,
+    serverConnectionDraft,
+    serverConnectionError,
+    serverConnections,
+    serverMachines,
     sessions,
     setComposerMenuOpen,
     setComposerMode,
@@ -954,6 +992,7 @@ const App = () => {
     setAuthTokenDraft,
     setSelectedModel,
     setSelectedReasoning,
+    setServerConnectionDraft,
     setSessionDialogOpen,
     setSessionMenuOpen,
     setSidebarCollapsed,
@@ -987,6 +1026,7 @@ const App = () => {
     threadPicker,
     toggleProjectMachineGroup,
     toggleProjectPinned,
+    toggleServerConnectionEnabled,
     turnUiState,
     updateMessageRenderMode,
     updateSessionInput,
@@ -1006,3 +1046,15 @@ createRoot(root).render(
     <App />
   </ConfigProvider>
 );
+
+function currentPageUrlWithToken(includeToken: boolean) {
+  if (typeof window === "undefined") return "";
+  const url = new URL(window.location.href);
+  url.searchParams.delete("codexhub_token");
+  url.searchParams.delete("token");
+  const token = authToken();
+  if (includeToken && token) url.searchParams.set("token", token);
+  const pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+  const search = url.searchParams.toString();
+  return `${url.origin}${pathname}${search ? `?${search}` : ""}${url.hash}`;
+}

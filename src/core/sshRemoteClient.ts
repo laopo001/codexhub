@@ -37,17 +37,28 @@ export const readSshRemoteClientBundle = async (expectedHash: string) => {
 
 const candidateRemoteClientPaths = () => {
   const configured = process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH?.trim();
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const moduleDir = moduleDirectory();
   const packageRoot = findPackageRoot(moduleDir);
   return [
     ...(configured ? [path.resolve(configured)] : []),
+    path.resolve(moduleDir, "ssh/remote-client.cjs"),
     path.resolve(moduleDir, "../ssh/remote-client.cjs"),
     path.resolve(packageRoot, "dist-node/ssh/remote-client.cjs"),
     path.resolve(process.cwd(), "dist-node/ssh/remote-client.cjs"),
+    path.resolve(moduleDir, "ssh/remote-client.mjs"),
     path.resolve(moduleDir, "../ssh/remote-client.mjs"),
     path.resolve(packageRoot, "dist-node/ssh/remote-client.mjs"),
     path.resolve(process.cwd(), "dist-node/ssh/remote-client.mjs")
   ];
+};
+
+const moduleDirectory = () => {
+  try {
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    if (typeof __dirname === "string") return __dirname;
+    return process.cwd();
+  }
 };
 
 const findPackageRoot = (start: string) => {

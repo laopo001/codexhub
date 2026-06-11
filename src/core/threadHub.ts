@@ -497,6 +497,62 @@ export class ThreadHub {
     return { ok: true, thread: this.summary(thread) };
   }
 
+  applyMirroredThreadSnapshot(sessionId: string, input: unknown) {
+    const session = this.requireSession(sessionId);
+    const detail = mirroredThreadDetail(input);
+    const thread = this.ensureThread(detail.threadId, session, {
+      params: { threadId: detail.threadId, cwd: detail.workingDirectory }
+    });
+    this.applyMirroredThreadSummary(thread, session, detail);
+    thread.records = detail.records;
+    sortThreadRecords(thread.records);
+    thread.recordSeq = Math.max(0, ...thread.records.map((record) => typeof record.order === "number" ? record.order : 0));
+    thread.lastUsage = latestUsage(thread.records);
+    thread.threadUsage = threadUsageFromRecords(thread.records);
+    thread.jsonl = detail.jsonl;
+    this.publish(thread, "thread");
+    return { ok: true, thread: this.summary(thread) };
+  }
+
+  applyMirroredThreadEvent(sessionId: string, input: unknown) {
+    const session = this.requireSession(sessionId);
+    const event = mirroredThreadEvent(input);
+    const thread = this.ensureThread(event.thread.threadId, session, {
+      params: { threadId: event.thread.threadId, cwd: event.thread.workingDirectory }
+    });
+    this.applyMirroredThreadSummary(thread, session, event.thread);
+    if (event.kind === "record" && event.record) {
+      this.upsertRecord(thread, event.record);
+      return { ok: true, thread: this.summary(thread) };
+    }
+    if (event.kind === "jsonl_snapshot" && event.jsonl) {
+      thread.jsonl = event.jsonl;
+      thread.updatedAt = event.thread.updatedAt;
+      this.publish(thread, "jsonl_snapshot", undefined, { jsonl: thread.jsonl });
+      return { ok: true, thread: this.summary(thread) };
+    }
+    if (event.kind === "jsonl_append" && event.jsonl) {
+      const merged = mergeJsonlLines(thread.jsonl?.lines ?? [], event.jsonl.lines);
+      thread.jsonl = {
+        path: event.jsonl.path ?? thread.jsonl?.path,
+        lastLine: event.jsonl.lastLine,
+        lines: merged.lines
+      };
+      thread.updatedAt = event.thread.updatedAt;
+      this.publish(thread, "jsonl_append", undefined, { jsonl: event.jsonl });
+      return { ok: true, thread: this.summary(thread) };
+    }
+    if (event.kind === "done") {
+      thread.running = false;
+      thread.appServerTurnId = undefined;
+      thread.updatedAt = event.thread.updatedAt;
+      this.publish(thread, "done");
+      return { ok: true, thread: this.summary(thread) };
+    }
+    this.publish(thread, "thread");
+    return { ok: true, thread: this.summary(thread) };
+  }
+
   listThreads(): ThreadSummary[] {
     return [...this.threads.values()].map((thread) => this.summary(thread));
   }
@@ -612,6 +668,10 @@ export class ThreadHub {
     const rollbackPlan = rollbackPlanAfterRecord(thread, recordId);
     if (rollbackPlan.rollbackTurns <= 0) return this.detail(thread);
     return await this.rollbackThread(thread.threadId, rollbackPlan.rollbackTurns, rollbackPlan.keepTurns);
+  }
+
+  async rollbackThreadTurns(threadId: string, numTurns: number, keepTurns?: number): Promise<ThreadDetail> {
+    return await this.rollbackThread(threadId, numTurns, keepTurns);
   }
 
   private async rollbackThread(threadId: string, numTurns: number, keepTurns?: number): Promise<ThreadDetail> {
@@ -1159,6 +1219,23 @@ export class ThreadHub {
     if (!changed) return;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
+  }
+
+  private applyMirroredThreadSummary(thread: ThreadState, session: SessionState, summary: ThreadSummary) {
+    thread.workingDirectory = summary.workingDirectory || session.workingDirectory;
+    thread.sessionId = session.sessionId;
+    thread.running = Boolean(summary.running || summary.status === "running");
+    thread.title = summary.title || thread.title;
+    thread.updatedAt = summary.updatedAt || thread.updatedAt;
+    thread.threadOptions = {
+      ...thread.threadOptions,
+      model: summary.model,
+      modelReasoningEffort: summary.modelReasoningEffort
+    };
+    if (summary.model === undefined) delete thread.threadOptions.model;
+    if (summary.modelReasoningEffort === undefined) delete thread.threadOptions.modelReasoningEffort;
+    thread.lastUsage = summary.lastUsage;
+    thread.threadUsage = summary.threadUsage ?? threadUsageFromRecords(thread.records);
   }
 
   private applyThreadExecutionState(thread: ThreadState, running: boolean, turnId?: string) {
@@ -2083,6 +2160,108 @@ const applyThreadRunOptions = (current: ThreadOptions, options: ThreadRunOptions
 
 const isThreadReasoningEffort = (value: unknown): value is ThreadOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
+
+const mirroredThreadDetail = (value: unknown): ThreadDetail => {
+  const item = asRecord(value);
+  if (!item) throw new Error("Mirrored thread snapshot must be an object.");
+  const summary = mirroredThreadSummary(item);
+  return {
+    ...summary,
+    records: mirroredRecords(item.records),
+    jsonl: mirroredJsonl(item.jsonl),
+    lastSeq: numberValue(item.lastSeq) ?? 0
+  };
+};
+
+const mirroredThreadEvent = (value: unknown): ThreadStreamEvent => {
+  const item = asRecord(value);
+  if (!item) throw new Error("Mirrored thread event must be an object.");
+  const kind = item.kind;
+  if (kind !== "thread" && kind !== "record" && kind !== "done" && kind !== "jsonl_snapshot" && kind !== "jsonl_append") {
+    throw new Error("Mirrored thread event has an invalid kind.");
+  }
+  const thread = mirroredThreadSummary(item.thread);
+  const threadId = typeof item.threadId === "string" && item.threadId ? item.threadId : thread.threadId;
+  return {
+    seq: numberValue(item.seq) ?? 0,
+    threadId,
+    kind,
+    thread: { ...thread, threadId },
+    record: mirroredRecord(item.record),
+    jsonl: mirroredJsonl(item.jsonl)
+  };
+};
+
+const mirroredThreadSummary = (value: unknown): ThreadSummary => {
+  const item = asRecord(value);
+  if (!item) throw new Error("Mirrored thread summary must be an object.");
+  const threadId = typeof item.threadId === "string" && item.threadId ? item.threadId : "";
+  const workingDirectory = typeof item.workingDirectory === "string" && item.workingDirectory ? item.workingDirectory : "";
+  if (!threadId || !workingDirectory) throw new Error("Mirrored thread summary requires threadId and workingDirectory.");
+  const running = Boolean(item.running || item.status === "running");
+  const threadUsage = asRecord(item.threadUsage) as ThreadUsage | null;
+  return {
+    threadId,
+    workingDirectory,
+    model: typeof item.model === "string" && item.model ? item.model : undefined,
+    modelReasoningEffort: isThreadReasoningEffort(item.modelReasoningEffort) ? item.modelReasoningEffort : undefined,
+    session: mirroredThreadSession(item.session),
+    status: running ? "running" : "idle",
+    running,
+    title: typeof item.title === "string" && item.title ? item.title : threadId,
+    updatedAt: typeof item.updatedAt === "string" && item.updatedAt ? item.updatedAt : new Date().toISOString(),
+    messageCount: numberValue(item.messageCount) ?? 0,
+    lastUsage: asRecord(item.lastUsage) as Usage | undefined,
+    threadUsage: threadUsage ?? emptyThreadUsage()
+  };
+};
+
+const mirroredThreadSession = (value: unknown): ThreadSessionSummary => {
+  const item = asRecord(value);
+  return {
+    sessionId: typeof item?.sessionId === "string" ? item.sessionId : undefined,
+    name: typeof item?.name === "string" ? item.name : undefined,
+    appServerUrl: typeof item?.appServerUrl === "string" ? item.appServerUrl : undefined,
+    online: item ? item.online !== false : true,
+    runnable: item ? item.runnable !== false : true,
+    lastSeenAt: typeof item?.lastSeenAt === "string" ? item.lastSeenAt : undefined
+  };
+};
+
+const mirroredRecords = (value: unknown): CodexRecord[] =>
+  Array.isArray(value)
+    ? value.map(mirroredRecord).filter((record): record is CodexRecord => Boolean(record))
+    : [];
+
+const mirroredRecord = (value: unknown): CodexRecord | undefined => {
+  const item = asRecord(value);
+  if (!item || typeof item.id !== "string" || typeof item.type !== "string") return undefined;
+  return item as CodexRecord;
+};
+
+const mirroredJsonl = (value: unknown): ThreadJsonl | undefined => {
+  const item = asRecord(value);
+  if (!item) return undefined;
+  const lastLine = numberValue(item.lastLine);
+  if (lastLine == null) return undefined;
+  const lines = Array.isArray(item.lines)
+    ? item.lines.map(mirroredJsonlLine).filter((line): line is JsonlLine => Boolean(line))
+    : [];
+  return {
+    path: typeof item.path === "string" ? item.path : undefined,
+    lastLine,
+    lines
+  };
+};
+
+const mirroredJsonlLine = (value: unknown): JsonlLine | undefined => {
+  const item = asRecord(value);
+  if (!item) return undefined;
+  const line = numberValue(item.line);
+  return typeof line === "number" && typeof item.text === "string"
+    ? { line, text: item.text }
+    : undefined;
+};
 
 const stringify = (value: unknown) => {
   try {

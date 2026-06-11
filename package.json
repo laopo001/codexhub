@@ -44,6 +44,7 @@
     "smoke:machine-session": "tsx scripts/smoke-machine-session.ts",
     "smoke:auth": "tsx scripts/smoke-auth.ts",
     "smoke:registered-machine": "tsx scripts/smoke-registered-machine.ts",
+    "smoke:server-bridge": "tsx scripts/smoke-server-bridge.ts",
     "smoke:ssh-loopback": "tsx scripts/smoke-ssh-loopback.ts",
     "smoke:task-lock": "tsx scripts/smoke-task-lock.ts",
     "smoke:electron": "pnpm build && tsx scripts/smoke-electron.ts",

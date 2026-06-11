@@ -1,7 +1,7 @@
 import React from "react";
 import { Tabs } from "antd";
 import { Virtuoso } from "react-virtuoso";
-import { composerModeOptions, isVscodeSurface } from "./appConfig.js";
+import { composerModeOptions } from "./appConfig.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import type { AppViewModel } from "./viewModel.js";
@@ -196,8 +196,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     : Boolean(workspaceSession ? machines.find((machine) => machine.machineId === workspaceSession.machineId)?.online : false);
   const showWorkspaceMachineOffline = Boolean(selectedProject && !workspaceMachineOnline && !workspaceSession?.online);
   return (
-    <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""} ${isVscodeSurface ? "vscodeSurface" : ""}`}>
-      {!isVscodeSurface && !sidebarCollapsed ? (
+    <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
+      {!sidebarCollapsed ? (
         <button
           type="button"
           className="sidebarScrim"
@@ -205,21 +205,19 @@ export const AppView = ({ viewModel }: AppViewProps) => {
           aria-label="Hide menu"
         />
       ) : null}
-      {!isVscodeSurface ? <AppSidebar viewModel={viewModel} /> : null}
+      <AppSidebar viewModel={viewModel} />
 
       <section className="workspace">
         <header className="topbar">
-          {!isVscodeSurface ? (
-            <button
-              type="button"
-              className="sidebarPanelToggle"
-              onClick={() => setSidebarCollapsed((current) => !current)}
-              aria-label={sidebarCollapsed ? "Show menu" : "Hide menu"}
-              title={sidebarCollapsed ? "Show menu" : "Hide menu"}
-            >
-              {sidebarCollapsed ? "Menu" : "Hide"}
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="sidebarPanelToggle"
+            onClick={() => setSidebarCollapsed((current) => !current)}
+            aria-label={sidebarCollapsed ? "Show menu" : "Hide menu"}
+            title={sidebarCollapsed ? "Show menu" : "Hide menu"}
+          >
+            {sidebarCollapsed ? "Menu" : "Hide"}
+          </button>
           <div className="workspaceTitle">
             <span className="workspacePath" title={workspacePath}>
               {workspacePath || "No connected codexhub"}

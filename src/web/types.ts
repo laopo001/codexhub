@@ -71,7 +71,7 @@ export type SessionView = SessionSummary & {
 
 export type MachineSummary = {
   machineId: string;
-  type?: "local" | "ssh" | "registered";
+  type?: "local" | "ssh" | "registered" | "server";
   name?: string;
   hostname: string;
   online: boolean;
@@ -120,6 +120,28 @@ export type SshConnection = {
   exitCode?: number | null;
   signal?: string | null;
   lastOutput?: string;
+};
+
+export type ServerConnection = {
+  connectionId: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  machineId: string;
+  status: "offline" | "connecting" | "online" | "failed";
+  online: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastConnectedAt?: string;
+  connectedAt?: string;
+  remoteMachineId?: string;
+  lastError?: string;
+  hasAuthToken: boolean;
+};
+
+export type ServerConnectionDraft = {
+  name: string;
+  url: string;
 };
 
 export type PluginSummary = {
@@ -322,11 +344,18 @@ export type ConnectionsStreamEvent = {
   connections: SshConnection[];
 };
 
+export type ServerConnectionsStreamEvent = {
+  seq: number;
+  kind: "server_connections";
+  connections: ServerConnection[];
+};
+
 export type RealtimeMessage =
   | ({ type: "sessions" } & SessionStreamEvent)
   | ({ type: "projects" } & ProjectsPayload)
   | ({ type: "tasks" } & TasksStreamEvent)
   | ({ type: "connections" } & ConnectionsStreamEvent)
+  | ({ type: "server_connections" } & ServerConnectionsStreamEvent)
   | ({ type: "thread" | "record" | "done" | "jsonl_snapshot" | "jsonl_append" } & StreamEvent)
   | { type: "ready" }
   | { type: "thread_subscribed" | "thread_unsubscribed"; threadId: string }
@@ -347,7 +376,7 @@ export type ReasoningSelection = "auto" | ReasoningEffort;
 export type ComposerMode = "chat" | "plan" | "goal";
 export type MessageDisplayMode = "compact" | "detailed";
 export type MessageRenderMode = "markdown" | "raw";
-export type ConnectionMode = "local" | "ssh" | "registered";
+export type ConnectionMode = "local" | "ssh" | "servers" | "registered";
 export type WebRecordView = CompactRecordView;
 export type ActivityStatusView = {
   key: string;

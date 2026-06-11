@@ -23,7 +23,9 @@ await build({
 });
 
 await assertDirectory("dist", "Run `pnpm build` before `pnpm build:vscode`.");
+await assertDirectory("dist-node/ssh", "Run `pnpm build` before `pnpm build:vscode`.");
 await cp("dist", path.join(outDir, "dist"), { recursive: true });
+await cp("dist-node/ssh", path.join(outDir, "dist-node", "ssh"), { recursive: true });
 await cp("targets/vscode/media", path.join(outDir, "media"), { recursive: true });
 await writeFile(path.join(outDir, "package.json"), `${JSON.stringify(await extensionManifest(), null, 2)}\n`);
 await cp("README.md", path.join(outDir, "README.md"));

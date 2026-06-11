@@ -1,7 +1,7 @@
 import React from "react";
 import { Switch } from "antd";
 import { History, Pin, PinOff, Play, Trash2 } from "lucide-react";
-import type { ProjectMachineGroup } from "./types.js";
+import type { ProjectMachineGroup, ServerConnection } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
   activeSshConnectionForHost,
@@ -46,15 +46,19 @@ const taskSchedulePresets = [
 export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const {
     activeProjectKey,
+    addServerConnection,
     addSshHost,
     collapsedProjectMachineKeys,
     connectionMode,
+    connectServerConnection,
     connectSshHost,
     copyRegisteredCommand,
     createTask,
+    currentServerShareUrl,
     deleteProject,
     deleteTask,
     deletingProjectId,
+    disconnectServerConnection,
     focusTaskDraftProject,
     localMachines,
     machines,
@@ -72,6 +76,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     registeredCommandIncludesToken,
     registeredCommandCopied,
     registeredMachines,
+    removeServerConnection,
     removeSshHost,
     runTaskNow,
     selectedProject,
@@ -79,9 +84,15 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     setConnectionMode,
     setOfflineProjectsCollapsed,
     setProjectSearch,
+    setServerConnectionDraft,
     setSshHostDraft,
     setTaskDraft,
     setTaskFormOpen,
+    serverConnectionBusyId,
+    serverConnectionDraft,
+    serverConnectionError,
+    serverConnections,
+    serverMachines,
     sshConfigHostOptions,
     sshConfigHosts,
     sshConnectingHost,
@@ -97,6 +108,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     tasks,
     toggleProjectMachineGroup,
     toggleProjectPinned,
+    toggleServerConnectionEnabled,
     updateTaskDraftMachine,
     updateTaskDraftProject
   } = viewModel;
@@ -241,6 +253,13 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           </button>
           <button
             type="button"
+            className={connectionMode === "servers" ? "active" : ""}
+            onClick={() => setConnectionMode("servers")}
+          >
+            Servers
+          </button>
+          <button
+            type="button"
             className={connectionMode === "registered" ? "active" : ""}
             onClick={() => setConnectionMode("registered")}
           >
@@ -328,6 +347,80 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               );
             })}
             {sshError ? <div className="projectOpenError">{sshError}</div> : null}
+          </div>
+        ) : connectionMode === "servers" ? (
+          <div className="connectionList">
+            <form className="serverConnectionForm" onSubmit={(event) => void addServerConnection(event)}>
+              <input
+                value={serverConnectionDraft.name}
+                onChange={(event) => setServerConnectionDraft((draft) => ({ ...draft, name: event.target.value }))}
+                placeholder="Name (optional)"
+                spellCheck={false}
+              />
+              <input
+                value={serverConnectionDraft.url}
+                onChange={(event) => setServerConnectionDraft((draft) => ({ ...draft, url: event.target.value }))}
+                placeholder="https://hub.example.com?token=..."
+                spellCheck={false}
+              />
+              <button type="submit" disabled={!serverConnectionDraft.url.trim() || serverConnectionBusyId === "new"}>
+                {serverConnectionBusyId === "new" ? "..." : "Add"}
+              </button>
+            </form>
+            {serverConnections.length === 0 ? (
+              <div className="connectionEmpty">No server connections</div>
+            ) : serverConnections.map((connection) => {
+              const busy = serverConnectionBusyId === connection.connectionId;
+              const detail = serverConnectionDetail(connection);
+              return (
+                <div className={`connectionRow server ${connection.status}`} key={connection.connectionId} title={detail}>
+                  <button
+                    type="button"
+                    className="connectionHostButton"
+                    onClick={() => void (connection.online
+                      ? disconnectServerConnection(connection.connectionId)
+                      : connectServerConnection(connection.connectionId))}
+                    disabled={busy || connection.status === "connecting"}
+                  >
+                    <span>{connection.name}</span>
+                    <code title={connection.url}>{connection.url}</code>
+                  </button>
+                  <strong>{serverConnectionStatusLabel(connection.status)}</strong>
+                  <button
+                    type="button"
+                    className="connectionSmallButton"
+                    onClick={() => void toggleServerConnectionEnabled(connection)}
+                    disabled={busy}
+                    title={connection.enabled ? "Disable startup auto connect" : "Enable startup auto connect"}
+                  >
+                    {connection.enabled ? "Auto" : "Manual"}
+                  </button>
+                  <button
+                    type="button"
+                    className="connectionDeleteButton"
+                    onClick={() => void removeServerConnection(connection)}
+                    disabled={busy}
+                    aria-label={`Remove ${connection.name}`}
+                    title={`Remove ${connection.name}`}
+                  >
+                    x
+                  </button>
+                  {connection.lastError ? <code className="connectionErrorLine">{connection.lastError}</code> : null}
+                </div>
+              );
+            })}
+            {serverMachines.length ? (
+              <div className="connectionSubList">
+                {serverMachines.map((machine) => (
+                  <div className={`connectionRow ${machine.online ? "online" : "offline"}`} key={machine.machineId}>
+                    <span title={machine.name ?? machine.hostname}>{machine.name ?? machine.hostname}</span>
+                    <strong>{machine.online ? "online" : "offline"}</strong>
+                    <code title={machine.machineId}>{machine.machineId}</code>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {serverConnectionError ? <div className="projectOpenError">{serverConnectionError}</div> : null}
           </div>
         ) : (
           <div className="connectionList">
@@ -620,6 +713,24 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         ) : null}
         {taskError ? <div className="projectOpenError">{taskError}</div> : null}
       </section>
+      {currentServerShareUrl ? (
+        <section className="serverSharePanel" aria-label="Current server URL">
+          <span>Current server URL</span>
+          <code title={currentServerShareUrl}>{currentServerShareUrl}</code>
+        </section>
+      ) : null}
     </aside>
   );
 };
+
+const serverConnectionStatusLabel = (status: ServerConnection["status"]) =>
+  status === "online" ? "online" : status === "connecting" ? "connecting" : status === "failed" ? "failed" : "offline";
+
+const serverConnectionDetail = (connection: ServerConnection) => [
+  connection.url,
+  connection.enabled ? "auto connect enabled" : "manual connect",
+  connection.hasAuthToken ? "auth token saved" : "no auth token",
+  connection.connectedAt ? `connected ${connection.connectedAt}` : null,
+  connection.lastConnectedAt ? `last connected ${connection.lastConnectedAt}` : null,
+  connection.lastError ? `last error ${connection.lastError}` : null
+].filter(Boolean).join("\n");

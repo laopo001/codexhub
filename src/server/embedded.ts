@@ -9,6 +9,7 @@ export type EmbeddedServerOptions = {
   explicitPort?: boolean;
   staticDirectory?: string;
   surface?: "default" | "vscode";
+  buildId?: string | null;
   features?: Partial<ServerFeatureOptions>;
   logPrefix?: string;
 };
@@ -25,6 +26,7 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions = {}) =
       port: preferredPort,
       staticDirectory: options.staticDirectory,
       surface: options.surface,
+      buildId: options.buildId,
       features: options.features
     });
   } catch (error) {
@@ -37,6 +39,7 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions = {}) =
       port: fallbackPort,
       staticDirectory: options.staticDirectory,
       surface: options.surface,
+      buildId: options.buildId,
       features: options.features
     });
   }
