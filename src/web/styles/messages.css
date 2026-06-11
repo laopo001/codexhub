@@ -144,6 +144,7 @@
 }
 
 .empty {
+  position: relative;
   display: grid;
   align-content: center;
   gap: 12px;
@@ -153,6 +154,11 @@
   overflow-wrap: anywhere;
   text-align: center;
   color: #6a7467;
+}
+
+.emptySidebarToggle {
+  position: absolute;
+  inset: 16px auto auto 16px;
 }
 
 .emptyActionButton {
@@ -760,4 +766,3 @@
   max-height: 220px;
   object-fit: contain;
 }
-

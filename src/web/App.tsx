@@ -72,6 +72,7 @@ import {
   modelOptionsForSelection,
   normalizeReasoningEffort,
   primeTaskCompletionSound,
+  preferredThreadIdForSession,
   projectKeyForProject,
   setAuthToken,
   threadDisplayRecords,
@@ -198,14 +199,16 @@ const App = () => {
     [projectList, selectedProjectKey]
   );
   const activeProjectSession = useMemo(
-    () => selectedProjectByKey?.session
-      ?? projectList.find((project) =>
+    () => {
+      if (selectedProjectByKey) return selectedProjectByKey.session ?? undefined;
+      return projectList.find((project) =>
         project.session?.sessionId === activeSessionId
         && (!activeWorkspacePath || project.path === activeWorkspacePath)
       )?.session
       ?? projectList.find((project) => project.session?.sessionId === activeSessionId)?.session
       ?? sessionList.find((session) => session.sessionId === activeSessionId)
-      ?? undefined,
+      ?? undefined;
+    },
     [activeSessionId, activeWorkspacePath, projectList, selectedProjectByKey, sessionList]
   );
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
@@ -294,9 +297,9 @@ const App = () => {
     return {
       key: thread.threadId,
       label: (
-        <span className="workspaceThreadTabLabel" title={`${title}\n${thread.workingDirectory}\n${thread.threadId}`}>
-          <span>{title}</span>
-          <code>{thread.threadId}</code>
+        <span className="workspaceThreadTabLabel" title={`${thread.workingDirectory}\n${title}\n${thread.threadId}`}>
+          <span>{thread.workingDirectory}</span>
+          <code>{title} · {thread.threadId}</code>
         </span>
       )
     };
@@ -567,62 +570,45 @@ const App = () => {
   useEffect(() => {
     if (!initialized) return;
     const projectSessions = projectList.flatMap((project) => project.session ? [project.session] : []);
-    if (!projectSessions.length && !sessionList.length) {
+    const availableSessions = [...projectSessions, ...sessionList];
+    if (!availableSessions.length) {
       if (activeSessionId) setActiveSessionId("");
       if (activeTabThreadId) setActiveTabThreadId("");
       return;
     }
 
     const selectedProjectSession = selectedProject?.session;
-    if (selectedProjectKey && selectedProject && activeProjectSession && selectedProject.session?.sessionId !== activeProjectSession.sessionId) {
-      if (selectedProjectSession) setActiveSessionId(selectedProjectSession.sessionId);
-      else {
+    if (selectedProjectKey && selectedProject) {
+      if (selectedProjectSession && activeSessionId !== selectedProjectSession.sessionId) {
+        setActiveSessionId(selectedProjectSession.sessionId);
+      } else if (!selectedProjectSession && !selectedProject.machineOnline && activeSessionId) {
         setActiveSessionId("");
-        if (activeTabThreadId) setActiveTabThreadId("");
       }
       return;
     }
-    if (!activeProjectSession && selectedProjectKey && selectedProject) {
-      if (selectedProjectSession) setActiveSessionId(selectedProjectSession.sessionId);
-      else if (activeTabThreadId) setActiveTabThreadId("");
-      return;
-    }
 
-    const session = activeProjectSession ?? projectSessions[0] ?? sessionList[0];
-    if (!session) return;
-    if (!activeProjectSession) {
-      setActiveSessionId(session.sessionId);
-      return;
-    }
-
-    setActiveWorkspacePath(session.workingDirectory);
-    const threadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
-    const activeTabThreadIdForSession = activeTabThreadBySession[session.sessionId];
-    const currentThreadId = activeTabThreadId && threadIds.has(activeTabThreadId)
-      ? activeTabThreadId
+    const activeTabSessionId = activeSession?.session.sessionId;
+    const preferredSession = activeTabSessionId
+      ? availableSessions.find((session) => session.sessionId === activeTabSessionId)
       : undefined;
-    const projectLastThreadId = selectedProject?.session?.sessionId === session.sessionId
-      ? selectedProject?.lastThreadId
+    const session = preferredSession ?? activeProjectSession ?? projectSessions[0] ?? sessionList[0];
+    if (session && !activeSessionId) setActiveSessionId(session.sessionId);
+
+    if (activeTabThreadId || sessions.length) return;
+
+    const initialThreadId = session
+      ? preferredThreadIdForSession(
+        session,
+        projectList.find((project) =>
+          project.session?.sessionId === session.sessionId
+          && project.path === session.workingDirectory
+        )
+      )
       : undefined;
-    const desiredThreadId = activeTabThreadIdForSession && threadIds.has(activeTabThreadIdForSession)
-      ? activeTabThreadIdForSession
-      : currentThreadId
-      ?? (projectLastThreadId && threadIds.has(projectLastThreadId)
-        ? projectLastThreadId
-        : session.threads?.[0]?.threadId);
-
-    if (activeTabThreadIdForSession && !threadIds.has(activeTabThreadIdForSession)) {
-      setActiveTabThreadBySession(({ [session.sessionId]: _removed, ...rest }) => rest);
+    if (initialThreadId) {
+      void openThread(initialThreadId).catch(() => clearActiveThreadIfLatest(initialThreadId));
     }
-
-    if (!desiredThreadId) {
-      if (activeTabThreadId) setActiveTabThreadId("");
-      return;
-    }
-    if (activeTabThreadId !== desiredThreadId) {
-      void openThread(desiredThreadId).catch(() => clearActiveThreadIfLatest(desiredThreadId));
-    }
-  }, [activeTabThreadId, activeProjectSession, activeSessionId, initialized, activeTabThreadBySession, projectList, selectedProject, sessionList]);
+  }, [activeSession?.session.sessionId, activeSessionId, activeTabThreadId, activeProjectSession, initialized, projectList, selectedProject, selectedProjectKey, sessionList, sessions.length]);
 
   useEffect(() => {
     if (!initialized) return;

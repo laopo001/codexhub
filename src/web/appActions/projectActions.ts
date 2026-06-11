@@ -153,12 +153,9 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     ctx.setProjectOpenError("");
     ctx.setActiveWorkspacePath(project.path);
     if (project.session?.online) {
-      await selectProjectSession(project.session);
+      ctx.setActiveSessionId(project.session.sessionId);
       return;
     }
-    ctx.setActiveSessionId("");
-    ctx.setActiveTabThreadId("");
-    ctx.latestRequestedThreadId.current = "";
     await openProject(project.path, project.machineId);
   };
 
@@ -369,9 +366,6 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     }
     ctx.setProjectOpenError("");
     ctx.setActiveWorkspacePath(trimmedPath);
-    ctx.setActiveSessionId("");
-    ctx.setActiveTabThreadId("");
-    ctx.latestRequestedThreadId.current = "";
     ctx.setProjectPicker((current) => current && current.machineId === machineId ? { ...current, error: "" } : current);
     ctx.setOpeningProjectKey(key);
     try {
@@ -397,12 +391,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
           ? project.session
           : freshSessions.find((item) => item.sessionId === sessionId)
         : undefined;
-      if (session && payload.result?.threadId) await activateSessionThread(session.sessionId, payload.result.threadId);
-      else if (session) await selectProjectSession(session);
-      else if (payload.result?.threadId) {
-        const threadId = payload.result.threadId;
-        await deps.openThread(threadId).catch(() => deps.clearActiveThreadIfLatest(threadId));
-      }
+      if (session) ctx.setActiveSessionId(session.sessionId);
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -415,7 +404,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
   };
 
   const deleteProject = async (project: ProjectSummary) => {
-    if (!window.confirm(`Remove ${project.name} from CodexHub projects?\n\nThis does not delete files. Active sessions for this project will be stopped.`)) return;
+    if (!window.confirm(`Remove ${project.name} from CodexHub projects?\n\nThis does not delete files or close open thread tabs.`)) return;
     ctx.setDeletingProjectId(project.projectId);
     try {
       const payload = await apiJson<ProjectsPayload>(`/api/projects/${encodeURIComponent(project.projectId)}`, {
@@ -469,15 +458,11 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     const thread = ctx.sessions.find((item) => item.threadId === threadId);
     const sessionId = thread?.session.sessionId ?? ctx.activeProjectSession?.sessionId ?? "";
     if (sessionId) {
-      ctx.setActiveSessionId(sessionId);
+      if (!ctx.selectedProjectKey) ctx.setActiveSessionId(sessionId);
       ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
     }
     if (thread) {
-      ctx.setActiveWorkspacePath(thread.workingDirectory);
-      const session = sessionId ? ctx.sessionList.find((item) => item.sessionId === sessionId) : undefined;
-      const project = ctx.projectList.find((item) => item.session?.sessionId === sessionId)
-        ?? (session ? ctx.projectList.find((item) => item.machineId === session.machineId && item.path === session.workingDirectory) : undefined);
-      ctx.setSelectedProjectKey(project ? projectKeyForProject(project) : "");
+      if (!ctx.selectedProjectKey) ctx.setActiveWorkspacePath(thread.workingDirectory);
     }
     await deps.openThread(threadId).catch(() => deps.clearActiveThreadIfLatest(threadId));
   };

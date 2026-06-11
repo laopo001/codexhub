@@ -14,7 +14,6 @@ import {
   goalStatusClass,
   goalStatusLabel,
   MessageCard,
-  sessionStatusTitle,
 } from "./appHelpers.js";
 
 type AppViewProps = {
@@ -26,7 +25,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeCanSend,
     activeCanStop,
     activeCanSubmit,
-    activeDisplayThreadId,
     activeExpandedStatusKeys,
     activeGoal,
     activeProjectKey,
@@ -35,7 +33,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeThreadBelongsToSession,
     activeUserMessageHistory,
     activeViews,
-    activeWorkspacePath,
     authError,
     authRequired,
     authTokenDraft,
@@ -73,7 +70,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     latestTurnStatusScope,
     loadProjectPickerDirectory,
     localMachines,
-    machines,
     messageContextMenu,
     messageDisplayMode,
     messageRenderModes,
@@ -104,7 +100,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     rollbackMessage,
     runTaskNow,
     saveGoalDialog,
-    selectedProject,
     selectProject,
     send,
     sessionDialogOpen,
@@ -189,12 +184,17 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       </main>
     );
   }
-  const workspaceSession = selectedProject?.session ?? activeProjectSession ?? null;
-  const workspacePath = selectedProject?.path ?? workspaceSession?.workingDirectory ?? activeWorkspacePath;
-  const workspaceMachineOnline = selectedProject
-    ? selectedProject.machineOnline
-    : Boolean(workspaceSession ? machines.find((machine) => machine.machineId === workspaceSession.machineId)?.online : false);
-  const showWorkspaceMachineOffline = Boolean(selectedProject && !workspaceMachineOnline && !workspaceSession?.online);
+  const sidebarToggle = (
+    <button
+      type="button"
+      className="sidebarPanelToggle"
+      onClick={() => setSidebarCollapsed((current) => !current)}
+      aria-label={sidebarCollapsed ? "Show menu" : "Hide menu"}
+      title={sidebarCollapsed ? "Show menu" : "Hide menu"}
+    >
+      {sidebarCollapsed ? "Menu" : "Hide"}
+    </button>
+  );
   return (
     <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
       {!sidebarCollapsed ? (
@@ -208,53 +208,11 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       <AppSidebar viewModel={viewModel} />
 
       <section className="workspace">
-        <header className="topbar">
-          <button
-            type="button"
-            className="sidebarPanelToggle"
-            onClick={() => setSidebarCollapsed((current) => !current)}
-            aria-label={sidebarCollapsed ? "Show menu" : "Hide menu"}
-            title={sidebarCollapsed ? "Show menu" : "Hide menu"}
-          >
-            {sidebarCollapsed ? "Menu" : "Hide"}
-          </button>
-          <div className="workspaceTitle">
-            <span className="workspacePath" title={workspacePath}>
-              {workspacePath || "No connected codexhub"}
-            </span>
-            <div className="workspaceMeta">
-              {showWorkspaceMachineOffline ? (
-                <span
-                  className="workspaceSessionSessionState offline"
-                  title="Machine offline"
-                >
-                  machine: offline
-                </span>
-              ) : null}
-              {selectedProject || workspaceSession ? (
-                <span
-                  className={`workspaceSessionSessionState ${workspaceSession?.online ? "online" : "offline"}`}
-                  title={workspaceSession ? sessionStatusTitle(workspaceSession) : "Session not started"}
-                >
-                  session: {workspaceSession?.online ? "online" : "offline"}
-                </span>
-              ) : null}
-              {activeDisplayThreadId ? (
-                <span className="workspaceThreadId" title={`thread: ${activeDisplayThreadId}`}>thread: {activeDisplayThreadId}</span>
-              ) : workspaceSession ? (
-                <span className="workspaceThreadId" title="thread: none">thread: none</span>
-              ) : null}
-            </div>
-          </div>
-          <div className="viewbar" aria-label="View settings">
-
-          </div>
-        </header>
-
         {activeSession && activeThreadBelongsToSession ? (
           <Tabs
             className="workspaceThreadTabs"
             tabBarExtraContent={{
+              left: sidebarToggle,
               right: (
                 <div className="threadTabActions">
                   <label className="switchControl">
@@ -554,6 +512,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
           />
         ) : (
           <div className="empty">
+            <div className="emptySidebarToggle">{sidebarToggle}</div>
             <span>{workspaceEmptyMessage}</span>
             {activeProjectSession?.online ? (
               <button type="button" className="emptyActionButton" onClick={() => openThreadPicker(activeProjectSession)}>

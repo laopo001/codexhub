@@ -41,6 +41,10 @@
   min-width: 0;
 }
 
+.workspaceThreadTabs > .ant-tabs-nav .sidebarPanelToggle {
+  margin: 0 8px 0 12px;
+}
+
 .threadWorkspacePane {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
@@ -69,12 +73,11 @@
   display: block;
   font-size: 12px;
   font-weight: 650;
-  max-width: 16em;
+  max-width: min(52vw, 56em);
 }
 
 .workspaceThreadTabLabel code {
-  overflow: visible;
-  text-overflow: clip;
+  max-width: min(52vw, 56em);
   color: #66715f;
   font-size: 11px;
 }
@@ -498,4 +501,3 @@
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
 }
-

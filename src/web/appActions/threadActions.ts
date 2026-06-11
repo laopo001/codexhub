@@ -48,6 +48,7 @@ type ThreadActionsContext = {
   notificationRecordsByThread: React.MutableRefObject<Map<string, CodexRecord[]>>;
   openingThreads: React.MutableRefObject<Map<string, Promise<void>>>;
   realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
+  selectedProjectKey: string;
   selectedModel: ModelSelection;
   selectedReasoning: ReasoningSelection;
   sessions: ChatSession[];
@@ -105,16 +106,17 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
     ctx.closedThreadIds.current.delete(threadId);
     ctx.latestRequestedThreadId.current = threadId;
     ctx.setActiveTabThreadId(threadId);
+    const updateWorkspaceContext = !ctx.selectedProjectKey;
 
     const existingSession = ctx.sessions.find((session) => session.threadId === threadId);
     if (existingSession) {
       subscribeThread(threadId, existingSession.lastSeq);
-      ctx.setActiveWorkspacePath(existingSession.workingDirectory);
       const sessionId = existingSession.session.sessionId;
       if (sessionId) {
-        ctx.setActiveSessionId(sessionId);
+        if (updateWorkspaceContext) ctx.setActiveSessionId(sessionId);
         ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
       }
+      if (updateWorkspaceContext) ctx.setActiveWorkspacePath(existingSession.workingDirectory);
       return;
     }
 
@@ -142,10 +144,10 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
       });
       if (ctx.latestRequestedThreadId.current !== thread.threadId) return;
       if (sessionId) {
-        ctx.setActiveSessionId(sessionId);
+        if (updateWorkspaceContext) ctx.setActiveSessionId(sessionId);
         ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
       }
-      ctx.setActiveWorkspacePath(thread.workingDirectory);
+      if (updateWorkspaceContext) ctx.setActiveWorkspacePath(thread.workingDirectory);
       ctx.setActiveTabThreadId(thread.threadId);
       ctx.threadLastSeqs.current.set(
         thread.threadId,

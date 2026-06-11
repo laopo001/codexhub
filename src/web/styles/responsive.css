@@ -38,46 +38,9 @@
     min-height: 0;
   }
 
-  .topbar {
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 10px;
-    padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
-  }
-
-  .workspaceTitle {
-    max-width: none;
-  }
-
-  .workspaceTitle .workspaceMeta {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px 8px;
-    overflow: hidden;
-    white-space: normal;
-  }
-
-  .workspaceTitle .workspacePath {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .workspaceTitle .workspaceThreadId {
-    grid-column: 1 / -1;
-  }
-
-  .modelSelect,
   .switchControl,
   .usagePill {
     max-width: 100%;
-  }
-
-  .modelSelect {
-    grid-template-columns: auto minmax(0, auto);
-  }
-
-  .modelSelect select {
-    min-width: 0;
   }
 
   .messages {
