@@ -106,7 +106,8 @@ const sessionRecordsSchema = z.object({
   path: z.string().min(1).optional(),
   lastLine: z.number().int().min(0),
   lines: z.array(jsonlLineSchema),
-  heartbeat: z.boolean().optional()
+  heartbeat: z.boolean().optional(),
+  replay: z.boolean().optional()
 }).strict();
 
 const machineRegistrationSchema = z.object({

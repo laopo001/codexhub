@@ -388,6 +388,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     const previousRecords = ctx.notificationRecordsByThread.current.get(threadId) ?? [];
     const nextRecords = mergeNotificationRecords(previousRecords, event, incomingRecords);
     ctx.notificationRecordsByThread.current.set(threadId, nextRecords);
+    if (event.jsonl?.replay === true) return;
     if (event.kind !== "record" && event.kind !== "jsonl_append") return;
 
     for (const record of incomingRecords) {

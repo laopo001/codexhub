@@ -46,6 +46,11 @@ type TaskRunResponse = {
 type RealtimeMessage = {
   type?: string;
   threadId?: string;
+  jsonl?: {
+    replay?: boolean;
+    lastLine?: number;
+    lines?: unknown[];
+  };
 };
 
 type MachineCommand = {
@@ -114,6 +119,8 @@ const main = async () => {
     await fake.expectNoSessionCommand("observe_thread_records", 100);
     await assertThreadRecordObservation(apiBase, fake.threadId, fake);
     console.log("thread record observation subscription ok");
+    await assertReplayJsonlEvents(apiBase, fake.threadId, fake);
+    console.log("jsonl replay event marker ok");
 
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
       method: "POST",
@@ -412,6 +419,14 @@ class FakeMachine {
     });
   }
 
+  sendRecords(records: unknown) {
+    this.send({
+      type: "session_records",
+      sessionId: this.options.sessionId,
+      records
+    });
+  }
+
   private handleMessage(data: unknown) {
     const message = JSON.parse(String(data)) as {
       type: string;
@@ -648,6 +663,72 @@ const assertThreadRecordObservation = async (apiBase: string, threadId: string, 
   }
 };
 
+const assertReplayJsonlEvents = async (apiBase: string, threadId: string, fake: FakeMachine) => {
+  const subscription = await subscribeThread(apiBase, threadId);
+  try {
+    const observe = await fake.nextSessionCommand("observe_thread_records");
+    if (observe.threadId !== threadId) throw new Error(`observe command used wrong thread: ${JSON.stringify(observe)}`);
+
+    fake.sendRecords({
+      threadId,
+      mode: "replace",
+      lastLine: 1,
+      replay: true,
+      heartbeat: false,
+      lines: [jsonlLine(1, "old-turn-a")]
+    });
+    await waitForRealtimeMessage(
+      subscription.messages,
+      (message) => message.type === "jsonl_snapshot" && message.jsonl?.replay === true && message.jsonl.lastLine === 1,
+      "replay jsonl snapshot"
+    );
+
+    fake.sendRecords({
+      threadId,
+      mode: "append",
+      lastLine: 2,
+      replay: true,
+      heartbeat: false,
+      lines: [jsonlLine(2, "old-turn-b")]
+    });
+    await waitForRealtimeMessage(
+      subscription.messages,
+      (message) => message.type === "jsonl_append" && message.jsonl?.replay === true && message.jsonl.lastLine === 2,
+      "replay jsonl append"
+    );
+
+    const detail = await apiJson<{ jsonl?: { replay?: boolean; lines?: unknown[] } }>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(threadId)}`
+    );
+    if (detail.jsonl?.replay) {
+      throw new Error(`thread detail should not persist transient replay marker: ${JSON.stringify(detail.jsonl)}`);
+    }
+    if (detail.jsonl?.lines?.length !== 2) {
+      throw new Error(`thread detail did not merge replay chunks: ${JSON.stringify(detail.jsonl)}`);
+    }
+
+    subscription.ws.send(JSON.stringify({ type: "unsubscribe_thread", threadId }));
+    const unobserve = await fake.nextSessionCommand("unobserve_thread_records");
+    if (unobserve.threadId !== threadId) throw new Error(`unobserve command used wrong thread: ${JSON.stringify(unobserve)}`);
+  } finally {
+    subscription.ws.close();
+  }
+};
+
+const jsonlLine = (line: number, turnId: string) => ({
+  line,
+  text: JSON.stringify({
+    timestamp: new Date(0).toISOString(),
+    type: "event_msg",
+    payload: {
+      type: "task_complete",
+      turn_id: turnId,
+      message: "Task completed."
+    }
+  })
+});
+
 const subscribeThread = async (apiBase: string, threadId: string) => {
   const messages: RealtimeMessage[] = [];
   const ws = new WebSocket(webRealtimeUrl(apiBase));
@@ -661,7 +742,7 @@ const subscribeThread = async (apiBase: string, threadId: string) => {
     (message) => message.type === "thread_subscribed" && message.threadId === threadId,
     "thread subscription acknowledgement"
   );
-  return { ws };
+  return { ws, messages };
 };
 
 const waitForRealtimeMessage = async (

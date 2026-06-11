@@ -79,6 +79,7 @@ export type ThreadJsonl = {
   path?: string;
   lastLine: number;
   lines: JsonlLine[];
+  replay?: boolean;
 };
 
 export type ThreadStreamEvent = {
@@ -155,6 +156,7 @@ export type SessionRecordsInput = {
   lastLine: number;
   lines: JsonlLine[];
   heartbeat?: boolean;
+  replay?: boolean;
 };
 
 export type SessionCommandResult = SessionThreadCandidatesResult | SessionThreadCommandResult | ThreadDetail;
@@ -473,7 +475,9 @@ export class ThreadHub {
         lines: nextLines
       };
       thread.updatedAt = new Date().toISOString();
-      this.publish(thread, "jsonl_snapshot", undefined, { jsonl: thread.jsonl });
+      this.publish(thread, "jsonl_snapshot", undefined, {
+        jsonl: input.replay ? { ...thread.jsonl, replay: true } : thread.jsonl
+      });
       return { ok: true, thread: this.summary(thread) };
     }
 
@@ -492,7 +496,8 @@ export class ThreadHub {
       jsonl: {
         path: thread.jsonl.path,
         lastLine: thread.jsonl.lastLine,
-        lines: nextLines
+        lines: nextLines,
+        ...(input.replay ? { replay: true } : {})
       }
     });
     return { ok: true, thread: this.summary(thread) };
@@ -527,9 +532,9 @@ export class ThreadHub {
       return { ok: true, thread: this.summary(thread) };
     }
     if (event.kind === "jsonl_snapshot" && event.jsonl) {
-      thread.jsonl = event.jsonl;
+      thread.jsonl = threadJsonlWithoutReplay(event.jsonl);
       thread.updatedAt = event.thread.updatedAt;
-      this.publish(thread, "jsonl_snapshot", undefined, { jsonl: thread.jsonl });
+      this.publish(thread, "jsonl_snapshot", undefined, { jsonl: event.jsonl });
       return { ok: true, thread: this.summary(thread) };
     }
     if (event.kind === "jsonl_append" && event.jsonl) {
@@ -2268,9 +2273,16 @@ const mirroredJsonl = (value: unknown): ThreadJsonl | undefined => {
   return {
     path: typeof item.path === "string" ? item.path : undefined,
     lastLine,
-    lines
+    lines,
+    ...(item.replay === true ? { replay: true } : {})
   };
 };
+
+const threadJsonlWithoutReplay = (jsonl: ThreadJsonl): ThreadJsonl => ({
+  path: jsonl.path,
+  lastLine: jsonl.lastLine,
+  lines: jsonl.lines
+});
 
 const mirroredJsonlLine = (value: unknown): JsonlLine | undefined => {
   const item = asRecord(value);

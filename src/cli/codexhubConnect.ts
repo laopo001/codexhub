@@ -67,10 +67,17 @@ type SessionSettings = {
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
 };
 
+type SessionJsonlLine = SessionRecordsInput["lines"][number];
+
 type TurnRequestParams = {
   model?: string | null;
   effort?: ThreadRunOptions["modelReasoningEffort"];
 };
+
+const jsonlRecordsMessageTargetBytes = () =>
+  envPositiveInt("CODEX_HUB_JSONL_RECORDS_MESSAGE_BYTES", 4 * 1024 * 1024);
+const jsonlRecordLineMaxBytes = () =>
+  envPositiveInt("CODEX_HUB_JSONL_RECORD_LINE_BYTES", 4 * 1024 * 1024);
 
 type MachineTransportMessage =
   | { type: "registered"; machineId: string; machine?: unknown }
@@ -1199,13 +1206,14 @@ class CodexAppServerBridge {
       const batch = await readCodexSessionJsonlLinesFromFile(filePath, { afterLine });
       if (!stillObserved()) return;
       if (replace || batch.lines.length) {
-        this.hub.sendRecords({
+        this.sendJsonlRecords({
           threadId,
           mode: replace ? "replace" : "append",
           path: batch.path,
           lastLine: batch.lastLine,
           lines: batch.lines,
-          heartbeat: false
+          heartbeat: false,
+          replay: replace || undefined
         });
       }
       state.jsonlPath = batch.path;
@@ -1217,6 +1225,20 @@ class CodexAppServerBridge {
     } finally {
       state.jsonlSyncing = false;
       if (state.jsonlPending && !this.closed) this.scheduleJsonlSync(threadId);
+    }
+  }
+
+  private sendJsonlRecords(records: SessionRecordsInput) {
+    let chunkIndex = 0;
+    for (const chunk of chunkSessionJsonlRecords(records)) {
+      this.hub.sendRecords({
+        ...records,
+        mode: chunkIndex === 0 ? records.mode : "append",
+        lastLine: chunk.lastLine,
+        lines: chunk.lines,
+        heartbeat: chunkIndex === 0 ? records.heartbeat : false
+      });
+      chunkIndex += 1;
     }
   }
 
@@ -1672,6 +1694,58 @@ const turnRequestParams = (options: ThreadRunOptions | undefined): TurnRequestPa
   if (hasOwn(options, "model")) params.model = options.model;
   if (hasOwn(options, "modelReasoningEffort")) params.effort = options.modelReasoningEffort;
   return params;
+};
+
+const chunkSessionJsonlRecords = (records: SessionRecordsInput) => {
+  const targetBytes = jsonlRecordsMessageTargetBytes();
+  const maxLineBytes = Math.min(jsonlRecordLineMaxBytes(), targetBytes);
+  const chunks: Array<{ lastLine: number; lines: SessionJsonlLine[] }> = [];
+  let lines: SessionJsonlLine[] = [];
+  let bytes = 0;
+
+  const flush = () => {
+    chunks.push({ lastLine: lines.at(-1)?.line ?? records.lastLine, lines });
+    lines = [];
+    bytes = 0;
+  };
+
+  for (const line of records.lines) {
+    const transportLine = jsonlLineForTransport(line, records.path, maxLineBytes);
+    const lineBytes = jsonlLinePayloadBytes(transportLine);
+    if (lines.length && bytes + lineBytes > targetBytes) flush();
+    lines.push(transportLine);
+    bytes += lineBytes;
+  }
+
+  if (lines.length) flush();
+  if (!chunks.length) chunks.push({ lastLine: records.lastLine, lines: [] });
+  return chunks;
+};
+
+const jsonlLineForTransport = (line: SessionJsonlLine, filePath: string | undefined, maxBytes: number) => {
+  const payloadBytes = jsonlLinePayloadBytes(line);
+  if (payloadBytes <= maxBytes) return line;
+  const textBytes = Buffer.byteLength(line.text, "utf8");
+  return {
+    line: line.line,
+    text: JSON.stringify({
+      timestamp: new Date().toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "codexhub_jsonl_line_omitted",
+        message: `CodexHub omitted oversized JSONL line ${line.line} (${textBytes} bytes) to keep websocket payload bounded.`,
+        ...(filePath ? { path: filePath } : {})
+      }
+    })
+  };
+};
+
+const jsonlLinePayloadBytes = (line: SessionJsonlLine) =>
+  Buffer.byteLength(JSON.stringify(line), "utf8") + 2;
+
+const envPositiveInt = (name: string, fallback: number) => {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
 };
 
 const goalObjective = (input: ProxyInput, options: ThreadRunOptions) => {

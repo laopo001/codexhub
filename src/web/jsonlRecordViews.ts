@@ -9,6 +9,7 @@ export type ThreadJsonl = {
   path?: string;
   lastLine: number;
   lines: JsonlLine[];
+  replay?: boolean;
 };
 
 type ParsedJsonlLine = {
