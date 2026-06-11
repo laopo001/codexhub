@@ -189,6 +189,9 @@ const main = async () => {
     await assertProjectDeleteStopsSession(apiBase, projectId, sessionId);
     console.log("project delete stopped session ok");
 
+    await assertSessionIdleTimeout(apiBase, machine.machineId);
+    console.log("session idle timeout ok");
+
     const legacyError = await sendLegacySessionRegistration(port);
     if (!legacyError.includes("workerId") || !legacyError.includes("unrecognized_keys")) {
       throw new Error(`legacy session registration was not rejected as expected: ${legacyError}`);
@@ -916,6 +919,57 @@ const assertProjectDeleteStopsSession = async (apiBase: string, projectId: strin
   }
   const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
   throw new Error(`deleted project session remained online: ${JSON.stringify(payload.sessions)}`);
+};
+
+const assertSessionIdleTimeout = async (apiBase: string, machineId: string) => {
+  const previousTimeout = process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS;
+  process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS = "25";
+  try {
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-idle-project."));
+    const open = await apiJson<ProjectOpenResponse>(apiBase, "/api/projects/open", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ machineId, path: projectDir })
+    });
+    const sessionId = open.result?.sessionId;
+    const threadId = open.result?.threadId;
+    if (!sessionId || !threadId) throw new Error(`idle project open did not return session/thread ids: ${JSON.stringify(open)}`);
+    await subscribeThreadOnce(apiBase, threadId);
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 8000) {
+      const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
+      const session = (payload.sessions ?? []).map(asRecord).find((item) => item.sessionId === sessionId);
+      if (!session || session.online !== true) return;
+      await delay(100);
+    }
+    const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
+    throw new Error(`idle session remained online: ${JSON.stringify(payload.sessions)}`);
+  } finally {
+    if (previousTimeout === undefined) delete process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS;
+    else process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS = previousTimeout;
+  }
+};
+
+const subscribeThreadOnce = async (apiBase: string, threadId: string) => {
+  const messages: RealtimeMessage[] = [];
+  const ws = new WebSocket(webRealtimeUrl(apiBase));
+  ws.addEventListener("message", (event) => {
+    messages.push(JSON.parse(String(event.data)) as RealtimeMessage);
+  });
+  try {
+    await waitForWebSocketOpen(ws, "idle websocket failed");
+    ws.send(JSON.stringify({ type: "hello", sessionsAfter: 0, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 }));
+    await waitForRealtimeMessage(messages, (message) => message.type === "ready", "idle websocket ready");
+    ws.send(JSON.stringify({ type: "subscribe_thread", threadId, after: 0 }));
+    await waitForRealtimeMessage(
+      messages,
+      (message) => message.type === "thread_subscribed" && message.threadId === threadId,
+      "idle thread subscription"
+    );
+  } finally {
+    await closeWebSocket(ws);
+  }
 };
 
 const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: RequestInit): Promise<T> => {

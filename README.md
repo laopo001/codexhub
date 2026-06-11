@@ -76,7 +76,7 @@ server 的轻量状态默认保存到：
 ~/.local/share/codexhub/server-state.yaml
 ```
 
-可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects 和 thread summaries，完整 transcript 来自 session 从官方 Codex app-server 同步的 thread/read 和实时事件镜像。
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects、tasks、SSH hosts 等控制面状态，不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 thread/read、JSONL observation 和实时事件镜像。
 
 本机 codexhub session：
 
@@ -143,7 +143,7 @@ server 每 30 秒扫描一次本地 task 状态，间隔可用 `CODEX_HUB_TASK_S
 
 Codex turn 默认不设等待超时，适合长任务和定时任务持续运行。需要在特定部署里限制单次 turn 时，可以设置 `CODEX_HUB_TURN_TIMEOUT_MS` 为正整数毫秒；不设置或设为 `0` 表示不启用 turn 超时。
 
-session 的断线判定和 recently disconnected 保留时间可以用 `CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS`、`CODEX_HUB_SESSION_OFFLINE_RETENTION_MS`、`CODEX_HUB_SESSION_SWEEP_INTERVAL_MS` 调整。
+session 的断线判定和 recently disconnected 保留时间可以用 `CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS`、`CODEX_HUB_SESSION_OFFLINE_RETENTION_MS`、`CODEX_HUB_SESSION_SWEEP_INTERVAL_MS` 调整。project session 的空闲回收复用 thread JSONL observation 的 idle 逻辑：一个 session 下所有 thread 的 JSONL watcher 都 idle-close 且没有 running thread 后，server 会自动结束 session；watcher idle 时间可用 `CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS` 调整，设为 `0` 表示禁用 watcher idle 和 session 空闲自动结束。
 
 ## 插件
 

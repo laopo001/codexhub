@@ -1,6 +1,6 @@
 import React from "react";
 import { Switch } from "antd";
-import { History, Pin, PinOff, Play, RefreshCw, Square, Trash2 } from "lucide-react";
+import { History, Pin, PinOff, Play, Trash2 } from "lucide-react";
 import type { ProjectMachineGroup } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
@@ -73,7 +73,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     registeredCommandCopied,
     registeredMachines,
     removeSshHost,
-    restartProjectSession,
     runTaskNow,
     selectedProject,
     selectProject,
@@ -96,7 +95,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     taskError,
     taskFormOpen,
     tasks,
-    stopProjectSession,
     toggleProjectMachineGroup,
     toggleProjectPinned,
     updateTaskDraftMachine,
@@ -182,26 +180,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                         title={project.pinned ? "Unpin project" : "Pin project"}
                       >
                         {project.pinned ? <PinOff size={13} strokeWidth={2.1} aria-hidden="true" /> : <Pin size={13} strokeWidth={2.1} aria-hidden="true" />}
-                      </button>
-                      <button
-                        type="button"
-                        className="projectMiniButton"
-                        onClick={() => void restartProjectSession(project)}
-                        disabled={busy || !projectReachable}
-                        aria-label={`Restart ${project.name}`}
-                        title="Restart session"
-                      >
-                        <RefreshCw size={13} strokeWidth={2.1} aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        className="projectMiniButton"
-                        onClick={() => void stopProjectSession(project)}
-                        disabled={busy || !sessionActive}
-                        aria-label={`Stop ${project.name}`}
-                        title="Stop session"
-                      >
-                        <Square size={12} strokeWidth={2.2} aria-hidden="true" />
                       </button>
                       <button
                         type="button"

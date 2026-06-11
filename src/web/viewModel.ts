@@ -79,7 +79,6 @@ export type AppSidebarViewModel = {
   registeredCommandCopied: boolean;
   registeredMachines: MachineSummary[];
   removeSshHost: (host: SshHost, activeConnection?: SshConnection) => MaybePromise;
-  restartProjectSession: (project: ProjectSummary) => MaybePromise;
   runTaskNow: (task: LocalTask) => MaybePromise;
   selectedProject?: ProjectSummary | null;
   selectProject: (project: ProjectSummary) => MaybePromise;
@@ -97,7 +96,6 @@ export type AppSidebarViewModel = {
   sshHostBusy: string;
   sshHostDraft: string;
   sshHosts: SshHost[];
-  stopProjectSession: (project: ProjectSummary) => MaybePromise;
   taskBusyId: string;
   taskDraft: TaskDraft;
   taskError: string;

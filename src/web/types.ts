@@ -56,6 +56,7 @@ export type SessionSummary = {
   appServerUrl?: string;
   online: boolean;
   status?: "online" | "offline";
+  createdAt?: string;
   lastSeenAt: string;
   offlineSinceAt?: string;
   offlineReason?: "heartbeat_timeout" | "transport_disconnected" | "unregistered";

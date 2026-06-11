@@ -334,6 +334,14 @@ const sessionOfflineRetentionMs = () =>
 const sessionSweepIntervalMs = () =>
   envMs("CODEX_HUB_SESSION_SWEEP_INTERVAL_MS", 5_000);
 const taskScanIntervalMs = () => envMs("CODEX_HUB_TASK_SCAN_INTERVAL_MS", 30_000);
+const sessionLastActivityAt = (session: { createdAt?: string; threads: Array<{ updatedAt: string }> }) => {
+  const times = session.threads
+    .map((thread) => Date.parse(thread.updatedAt))
+    .filter(Number.isFinite);
+  const createdAt = Date.parse(session.createdAt ?? "");
+  if (Number.isFinite(createdAt)) times.push(createdAt);
+  return times.length ? Math.max(...times) : Number.NaN;
+};
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
@@ -467,6 +475,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let localMachine: CodexhubMachineHandle | null = null;
   const threadRecordObservationCounts = new Map<string, number>();
   const threadRecordObservationTimers = new Map<string, NodeJS.Timeout>();
+  const idleStoppingSessions = new Set<string>();
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
@@ -481,6 +490,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   const sessionSweep = setInterval(() => {
     threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
+    void stopIdleSessions();
   }, sessionSweepIntervalMs());
   sessionSweep.unref?.();
   const runningTasks = new Set<string>();
@@ -589,8 +599,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   };
 
+  const threadRecordObservationActive = (threadId: string) =>
+    (threadRecordObservationCounts.get(threadId) ?? 0) > 0 || threadRecordObservationTimers.has(threadId);
+
+  const sessionRecordObservationsIdleClosed = (session: { threads: Array<{ threadId: string }> }) =>
+    session.threads.length > 0 && session.threads.every((thread) => !threadRecordObservationActive(thread.threadId));
+
   function scheduleThreadRecordObservationIdle(threadId: string) {
     if (threadRecordObservationTimers.has(threadId)) return;
+    const idleMs = threadRecordObservationIdleMs();
+    if (idleMs <= 0) return;
     const timer = setTimeout(() => {
       threadRecordObservationTimers.delete(threadId);
       if ((threadRecordObservationCounts.get(threadId) ?? 0) > 0) return;
@@ -601,7 +619,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       } catch {
         // Session may have gone offline while the thread tab was idle.
       }
-    }, threadRecordObservationIdleMs());
+    }, idleMs);
     timer.unref?.();
     threadRecordObservationTimers.set(threadId, timer);
   }
@@ -647,6 +665,38 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         };
       }
     }));
+  };
+
+  const stopIdleSessions = async () => {
+    const timeoutMs = threadRecordObservationIdleMs();
+    if (timeoutMs <= 0) return;
+    const now = Date.now();
+    const sessions = threads.listSessions()
+      .filter((session) => session.online)
+      .filter((session) => session.machineId)
+      .filter((session) => !idleStoppingSessions.has(session.sessionId))
+      .filter((session) => !session.threads.some((thread) => thread.running || thread.status === "running"))
+      .filter(sessionRecordObservationsIdleClosed)
+      .filter((session) => {
+        const lastActivityAt = sessionLastActivityAt(session);
+        return Number.isFinite(lastActivityAt) && now - lastActivityAt >= timeoutMs;
+      });
+    if (!sessions.length) return;
+
+    await Promise.all(sessions.map(async (session) => {
+      if (!session.machineId) return;
+      idleStoppingSessions.add(session.sessionId);
+      try {
+        const command = machines.stopSession(session.machineId, { sessionId: session.sessionId });
+        const result = await command.promise;
+        if (!result.stopped) threads.unregisterSession(session.sessionId);
+      } catch {
+        // The normal heartbeat sweep will mark unreachable sessions offline.
+      } finally {
+        idleStoppingSessions.delete(session.sessionId);
+      }
+    }));
+    publishProjects();
   };
 
   function taskSnapshotEvent() {
@@ -1350,50 +1400,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
     publishProjects();
     return { ok: true, project, ...projectSnapshot() };
-  });
-
-  app.post("/api/projects/:projectId/session/stop", async (request, reply) => {
-    const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
-    const target = state.projectTarget(params.projectId);
-    if (!target) {
-      reply.code(404);
-      return { error: `Project not found: ${params.projectId}` };
-    }
-    const stoppedSessions = await stopProjectSessions(target);
-    publishProjects();
-    return { ok: true, stoppedSessions, ...projectSnapshot() };
-  });
-
-  app.post("/api/projects/:projectId/session/restart", async (request, reply) => {
-    const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
-    const target = state.projectTarget(params.projectId);
-    if (!target) {
-      reply.code(404);
-      return { error: `Project not found: ${params.projectId}` };
-    }
-    try {
-      const stoppedSessions = await stopProjectSessions(target);
-      publishProjects();
-      const machine = resolveTargetMachine(machines.listMachines(), target.machineId);
-      const started = machines.startSession(machine.machineId, {
-        cwd: target.path,
-        reuse: false
-      });
-      const result = await started.promise;
-      await waitForSession(result.sessionId);
-      threads.attachSessionThread(result.sessionId, result.threadId);
-      const project = state.upsertProject({
-        machineId: machine.machineId,
-        path: result.cwd,
-        sessionId: result.sessionId,
-        threadId: result.threadId
-      });
-      publishProjects();
-      return { ok: true, machine, project, result, stoppedSessions, ...projectSnapshot() };
-    } catch (error) {
-      reply.code(409);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
   });
 
   app.post("/api/projects/open", async (request, reply) => {

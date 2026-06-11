@@ -103,8 +103,6 @@ export type ProjectActions = {
   deleteProject: (project: ProjectSummary) => Promise<void>;
   patchProject: (project: ProjectSummary, patch: ProjectPatchInput) => Promise<void>;
   toggleProjectPinned: (project: ProjectSummary) => Promise<void>;
-  stopProjectSession: (project: ProjectSummary) => Promise<void>;
-  restartProjectSession: (project: ProjectSummary) => Promise<void>;
   toggleProjectMachineGroup: (machineKey: string) => void;
   switchSessionThread: (threadId: string) => Promise<void>;
 };
@@ -431,54 +429,6 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     await patchProject(project, { pinned: !project.pinned });
   };
 
-  const stopProjectSession = async (project: ProjectSummary) => {
-    if (!project.session?.online && !project.sessions?.some((session) => session.online)) return;
-    if (!window.confirm(`Stop active Codex session for ${project.name}?`)) return;
-    ctx.setOpeningProjectKey(projectKeyForProject(project));
-    try {
-      const payload = await apiJson<ProjectsPayload>(`/api/projects/${encodeURIComponent(project.projectId)}/session/stop`, {
-        method: "POST"
-      });
-      applyProjectPayload(payload);
-      if (ctx.selectedProjectKey === projectKeyForProject(project)) {
-        ctx.setActiveSessionId("");
-        ctx.setActiveTabThreadId("");
-      }
-    } catch (error) {
-      ctx.setProjectOpenError(error instanceof Error ? error.message : String(error));
-    } finally {
-      ctx.setOpeningProjectKey((current) => current === projectKeyForProject(project) ? "" : current);
-    }
-  };
-
-  const restartProjectSession = async (project: ProjectSummary) => {
-    if (!window.confirm(`Restart Codex session for ${project.name}?`)) return;
-    ctx.setOpeningProjectKey(projectKeyForProject(project));
-    ctx.setProjectOpenError("");
-    try {
-      const payload = await apiJson<ProjectOpenPayload>(`/api/projects/${encodeURIComponent(project.projectId)}/session/restart`, {
-        method: "POST"
-      });
-      const freshProjects = applyProjectPayload(payload);
-      const sessionId = payload.result?.sessionId;
-      const projectAfterRestart = freshProjects.find((item) => item.projectId === project.projectId);
-      const session = sessionId
-        ? projectAfterRestart?.session?.sessionId === sessionId
-          ? projectAfterRestart.session
-          : projectAfterRestart?.sessions?.find((item) => item.sessionId === sessionId)
-        : projectAfterRestart?.session;
-      if (session) ctx.setActiveSessionId(session.sessionId);
-      if (payload.result?.threadId) {
-        const threadId = payload.result.threadId;
-        await deps.openThread(threadId).catch(() => deps.clearActiveThreadIfLatest(threadId));
-      }
-    } catch (error) {
-      ctx.setProjectOpenError(error instanceof Error ? error.message : String(error));
-    } finally {
-      ctx.setOpeningProjectKey((current) => current === projectKeyForProject(project) ? "" : current);
-    }
-  };
-
   const toggleProjectMachineGroup = (machineKey: string) => {
     ctx.setCollapsedProjectMachineKeys((current) =>
       current.includes(machineKey)
@@ -512,8 +462,6 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     deleteProject,
     patchProject,
     toggleProjectPinned,
-    stopProjectSession,
-    restartProjectSession,
     toggleProjectMachineGroup,
     switchSessionThread
   };

@@ -38,6 +38,7 @@ export type SessionSummary = {
   appServerUrl?: string;
   online: boolean;
   status: "online" | "offline";
+  createdAt?: string;
   lastSeenAt: string;
   offlineSinceAt?: string;
   offlineReason?: SessionOfflineReason;
@@ -255,6 +256,7 @@ export class ThreadHub {
       appServerUrl: registration.appServerUrl,
       online: true,
       status: "online",
+      createdAt: existing?.createdAt ?? now,
       lastSeenAt: now,
       pid: registration.pid,
       hostname: registration.hostname,
@@ -506,9 +508,12 @@ export class ThreadHub {
 
   attachSessionThread(sessionId: string, threadId: string): ThreadSummary {
     const session = this.requireOnlineSession(sessionId);
-    return this.summary(this.ensureThread(threadId, session, {
+    const thread = this.ensureThread(threadId, session, {
       params: { threadId, cwd: session.workingDirectory }
-    }));
+    });
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+    return this.summary(thread);
   }
 
   observeThreadRecords(threadId: string) {
@@ -1390,6 +1395,7 @@ export class ThreadHub {
       appServerUrl: session.appServerUrl,
       online: session.online,
       status: session.online ? "online" : "offline",
+      createdAt: session.createdAt,
       lastSeenAt: session.lastSeenAt,
       offlineSinceAt: session.offlineSinceAt,
       offlineReason: session.offlineReason,
