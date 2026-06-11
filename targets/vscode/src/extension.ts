@@ -196,7 +196,7 @@ const openWorkspaceProject = async (serverUrl: string, workspacePath: string, gr
       if (response.ok) return;
       const body = await response.text();
       lastError = new Error(`HTTP ${response.status}: ${body}`);
-      if (!body.includes("No online codexhub machine")) break;
+      if (!isTransientProjectLauncherOpenError(response.status, body)) break;
     } catch (error) {
       lastError = error;
     }
@@ -204,6 +204,13 @@ const openWorkspaceProject = async (serverUrl: string, workspacePath: string, gr
   }
   throw lastError instanceof Error ? lastError : new Error(errorText(lastError));
 };
+
+const isTransientProjectLauncherOpenError = (status: number, body: string) =>
+  status === 409 && (
+    body.includes("No online codexhub project launcher")
+    || body.includes("No online codexhub machine")
+    || body.includes("Project launcher is offline or not found")
+  );
 
 const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[]) => {
   const workspaceName = vscode.workspace.name?.trim();
