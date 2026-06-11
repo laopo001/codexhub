@@ -29,16 +29,16 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeGoal,
     activeProjectKey,
     activeProjectSession,
-    activeSession,
-    activeThreadBelongsToSession,
+    activeThread,
+    activeThreadIsOpen,
     activeUserMessageHistory,
     activeViews,
     authError,
     authRequired,
     authTokenDraft,
     addContextSelectionToConversation,
-    addSessionFiles,
-    addSessionImages,
+    addThreadFiles,
+    addThreadImages,
     addSshHost,
     changeProjectPickerMachine,
     chooseThreadCandidate,
@@ -82,7 +82,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     openMessageContextMenu,
     openProjectPicker,
     openThreadPicker,
-    pasteSessionImages,
+    pasteThreadImages,
     patchTask,
     projectGroups,
     projectList,
@@ -91,8 +91,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     registeredCommand,
     registeredCommandCopied,
     registeredMachines,
-    removeSessionImage,
-    removeSessionTextAttachment,
+    removeThreadImage,
+    removeThreadTextAttachment,
     removeSshHost,
     renderComposerSessionControls,
     resetComposerHistory,
@@ -153,12 +153,12 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     toggleProjectMachineGroup,
     turnUiState,
     updateMessageRenderMode,
-    updateSessionInput,
+    updateThreadInput,
     updateTaskDraftMachine,
     updateTaskDraftProject,
     updateThreadGoal,
-    workspaceEmptyMessage,
-    workspaceThreadTabs
+    openThreadEmptyMessage,
+    openThreadTabs
   } = viewModel;
   if (authRequired) {
     return (
@@ -208,9 +208,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       <AppSidebar viewModel={viewModel} />
 
       <section className="workspace">
-        {activeSession && activeThreadBelongsToSession ? (
+        {activeThread && activeThreadIsOpen ? (
           <Tabs
-            className="workspaceThreadTabs"
+            className="openThreadTabs"
             tabBarExtraContent={{
               left: sidebarToggle,
               right: (
@@ -231,14 +231,14 @@ export const AppView = ({ viewModel }: AppViewProps) => {
             }}
             size="small"
             type="editable-card"
-            activeKey={activeSession.threadId}
-            items={workspaceThreadTabs.map((item) => ({
+            activeKey={activeThread.threadId}
+            items={openThreadTabs.map((item) => ({
               ...item,
               closable: true,
-              children: item.key === activeSession.threadId ? (
+              children: item.key === activeThread.threadId ? (
                 <div className="threadWorkspacePane">
                   <Virtuoso
-                    key={activeSession.threadId}
+                    key={activeThread.threadId}
                     ref={messagesRef}
                     scrollerRef={(ref) => {
                       messagesScrollerRef.current = ref instanceof HTMLElement ? ref : null;
@@ -263,9 +263,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           renderMode={renderMode}
                           markdownEnabled={markdownEnabled}
                           onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
-                          onContextMenu={(event) => openMessageContextMenu(event, activeSession.threadId, message, inspectable)}
-                          onFork={canForkAtMessage(activeSession.threadId, message) ? () => void forkMessage(activeSession.threadId, message.record.id) : undefined}
-                          onRollback={canForkAtMessage(activeSession.threadId, message) ? () => void rollbackMessage(activeSession.threadId, message.record.id) : undefined}
+                          onContextMenu={(event) => openMessageContextMenu(event, activeThread.threadId, message, inspectable)}
+                          onFork={canForkAtMessage(activeThread.threadId, message) ? () => void forkMessage(activeThread.threadId, message.record.id) : undefined}
+                          onRollback={canForkAtMessage(activeThread.threadId, message) ? () => void rollbackMessage(activeThread.threadId, message.record.id) : undefined}
                         />
                       );
                     }}
@@ -275,10 +275,10 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                       statuses={simpleStatuses}
                       expandedKeys={activeExpandedStatusKeys}
                       onMinimize={() => {
-                        if (!activeSession?.threadId || !latestTurnStatusScope.key) return;
+                        if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
                         setHiddenStatusTurns((current) => ({
                           ...current,
-                          [activeSession.threadId]: latestTurnStatusScope.key
+                          [activeThread.threadId]: latestTurnStatusScope.key
                         }));
                       }}
                       onToggle={(key) => {
@@ -297,12 +297,12 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                     className="composer"
                     onSubmit={(event) => {
                       event.preventDefault();
-                      if (activeCanSend) void send(activeSession.threadId);
+                      if (activeCanSend) void send(activeThread.threadId);
                     }}
                   >
                     <div className="composerLayout">
                       <div className="composerSurface">
-                        {activeGoal && activeSession ? (
+                        {activeGoal && activeThread ? (
                           <div
                             className={`goalStrip ${goalStatusClass(activeGoal.status)}`}
                             title={`${goalStatusLabel(activeGoal.status)} · ${activeGoal.objective}`}
@@ -321,7 +321,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                 title="编辑目标"
                                 aria-label="编辑目标"
                                 onClick={() => setGoalDialog({
-                                  threadId: activeSession.threadId,
+                                  threadId: activeThread.threadId,
                                   objective: activeGoal.objective,
                                   saving: false,
                                   error: ""
@@ -335,7 +335,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                   className="goalIconButton"
                                   title={activeGoal.status === "paused" ? "继续目标" : "暂停目标"}
                                   aria-label={activeGoal.status === "paused" ? "继续目标" : "暂停目标"}
-                                  onClick={() => void updateThreadGoal(activeSession.threadId, {
+                                  onClick={() => void updateThreadGoal(activeThread.threadId, {
                                     status: activeGoal.status === "paused" ? "active" : "paused"
                                   })}
                                 >
@@ -347,7 +347,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                 className="goalIconButton danger"
                                 title="清除目标"
                                 aria-label="清除目标"
-                                onClick={() => void clearThreadGoal(activeSession.threadId)}
+                                onClick={() => void clearThreadGoal(activeThread.threadId)}
                               >
                                 ×
                               </button>
@@ -355,36 +355,36 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           </div>
                         ) : null}
                         <div className="composerInput">
-                          {activeSession.textAttachments.length || activeSession.imageAttachments.length ? (
+                          {activeThread.textAttachments.length || activeThread.imageAttachments.length ? (
                             <div className="composerAttachmentList">
-                              {activeSession.textAttachments.map((item) => (
+                              {activeThread.textAttachments.map((item) => (
                                 <div className="textAttachment" key={item.id} title={item.text}>
                                   <span className="textAttachmentLabel">文本</span>
                                   <p>{item.text}</p>
-                                  <button type="button" onClick={() => removeSessionTextAttachment(activeSession.threadId, item.id)} aria-label="Remove selected text">x</button>
+                                  <button type="button" onClick={() => removeThreadTextAttachment(activeThread.threadId, item.id)} aria-label="Remove selected text">x</button>
                                 </div>
                               ))}
-                              {activeSession.imageAttachments.map((image) => (
+                              {activeThread.imageAttachments.map((image) => (
                                 <div className="imageAttachment" key={image.id}>
                                   <img src={image.previewUrl} alt={image.name} />
-                                  <button type="button" onClick={() => removeSessionImage(activeSession.threadId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
+                                  <button type="button" onClick={() => removeThreadImage(activeThread.threadId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
                                 </div>
                               ))}
                             </div>
                           ) : null}
                           <textarea
                             ref={composerTextareaRef}
-                            value={activeSession.input}
+                            value={activeThread.input}
                             onChange={(event) => {
-                              resetComposerHistory(activeSession.threadId);
+                              resetComposerHistory(activeThread.threadId);
                               resizeComposerTextarea(event.currentTarget);
-                              updateSessionInput(activeSession.threadId, event.target.value);
+                              updateThreadInput(activeThread.threadId, event.target.value);
                             }}
                             onPaste={(event) => {
-                              if (!pasteSessionImages(activeSession.threadId, event.clipboardData)) return;
+                              if (!pasteThreadImages(activeThread.threadId, event.clipboardData)) return;
                               event.preventDefault();
                             }}
-                            onKeyDown={(event) => handleComposerKeyDown(event, activeSession.threadId, activeUserMessageHistory)}
+                            onKeyDown={(event) => handleComposerKeyDown(event, activeThread.threadId, activeUserMessageHistory)}
                             placeholder="例如：检查这个 repo 的结构并给我下一步建议"
                             rows={2}
                           />
@@ -467,14 +467,14 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                   ↑
                                 </button>
                               ) : null}
-                              {activeSession.running ? (
+                              {activeThread.running ? (
                                 <button
                                   type="button"
                                   className="composerStopButton composerActionButton"
                                   disabled={!activeCanStop}
                                   aria-label="Stop current turn"
                                   title={`Stop current turn · ${turnUiState.title}`}
-                                  onClick={() => void stopTurn(activeSession.threadId)}
+                                  onClick={() => void stopTurn(activeThread.threadId)}
                                 >
                                   ■
                                 </button>
@@ -489,7 +489,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           accept="image/*,.css,.csv,.html,.js,.json,.jsx,.log,.md,.py,.sh,.sql,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml"
                           multiple
                           onChange={(event) => {
-                            void addSessionFiles(activeSession.threadId, event.currentTarget.files);
+                            void addThreadFiles(activeThread.threadId, event.currentTarget.files);
                             event.currentTarget.value = "";
                           }}
                         />
@@ -513,7 +513,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
         ) : (
           <div className="empty">
             <div className="emptySidebarToggle">{sidebarToggle}</div>
-            <span>{workspaceEmptyMessage}</span>
+            <span>{openThreadEmptyMessage}</span>
             {activeProjectSession?.online ? (
               <button type="button" className="emptyActionButton" onClick={() => openThreadPicker(activeProjectSession)}>
                 Add Thread

@@ -40,7 +40,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     saveGoalDialog,
     sessionDialogOpen,
     sessionList,
-    sessions,
+    openThreads,
     setGoalDialog,
     setInspectMessage,
     setMessageContextMenu,
@@ -68,7 +68,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
       ?.filter((thread) => !threadPicker?.workingDirectory || thread.workingDirectory === threadPicker.workingDirectory)
       .map((thread) => thread.threadId) ?? []),
     ...(threadPicker ? threadOrderBySession[threadPicker.sessionId] ?? [] : []),
-    ...sessions.map((session) => session.threadId)
+    ...openThreads.map((thread) => thread.threadId)
   ]);
 
   return (

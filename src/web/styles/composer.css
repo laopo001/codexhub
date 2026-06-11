@@ -17,20 +17,20 @@
   font-size: 12px;
 }
 
-.workspaceThreadTabs {
+.openThreadTabs {
   width: 100%;
   height: 100%;
   min-height: 0;
 }
 
 /* Keep the tab pane body full-height without restyling Ant Design tabs. */
-.workspaceThreadTabs > .ant-tabs-content-holder > .ant-tabs-content,
-.workspaceThreadTabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
+.openThreadTabs > .ant-tabs-content-holder > .ant-tabs-content,
+.openThreadTabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
   height: 100%;
   min-height: 0;
 }
 
-.workspaceThreadTabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
+.openThreadTabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
   overflow: hidden;
 }
 
@@ -41,7 +41,7 @@
   min-width: 0;
 }
 
-.workspaceThreadTabs > .ant-tabs-nav .sidebarPanelToggle {
+.openThreadTabs > .ant-tabs-nav .sidebarPanelToggle {
   margin: 0 8px 0 12px;
 }
 
@@ -54,29 +54,29 @@
   min-width: 0;
 }
 
-.workspaceThreadTabLabel {
+.openThreadTabLabel {
   display: grid;
   gap: 2px;
   width: max-content;
   min-width: 0;
 }
 
-.workspaceThreadTabLabel span,
-.workspaceThreadTabLabel code {
+.openThreadTabLabel span,
+.openThreadTabLabel code {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.workspaceThreadTabLabel span {
+.openThreadTabLabel span {
   display: block;
   font-size: 12px;
   font-weight: 650;
   max-width: min(52vw, 56em);
 }
 
-.workspaceThreadTabLabel code {
+.openThreadTabLabel code {
   max-width: min(52vw, 56em);
   color: #66715f;
   font-size: 11px;

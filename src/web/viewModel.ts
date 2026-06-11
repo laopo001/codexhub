@@ -3,7 +3,7 @@ import type { VirtuosoHandle } from "react-virtuoso";
 import type { CodexRecord } from "../core/codexRecord.js";
 import type {
   ActivityStatusView,
-  ChatSession,
+  OpenThreadState,
   CodexThreadCandidate,
   ComposerMode,
   ConnectionMode,
@@ -133,14 +133,14 @@ export type AppViewModel = AppSidebarViewModel & {
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
   activeProjectSession?: SessionView;
-  activeSession?: ChatSession;
-  activeThreadBelongsToSession: boolean;
+  activeThread?: OpenThreadState;
+  activeThreadIsOpen: boolean;
   activeUserMessageHistory: string[];
   activeViews: WebRecordView[];
   activeWorkspacePath: string;
   addContextSelectionToConversation: () => void;
-  addSessionFiles: (threadId: string, files: FileList | null) => MaybePromise;
-  addSessionImages: (threadId: string, files: FileList | null) => MaybePromise;
+  addThreadFiles: (threadId: string, files: FileList | null) => MaybePromise;
+  addThreadImages: (threadId: string, files: FileList | null) => MaybePromise;
   authError: string;
   authRequired: boolean;
   authTokenDraft: string;
@@ -181,10 +181,10 @@ export type AppViewModel = AppSidebarViewModel & {
     canInspect: boolean
   ) => void;
   openThreadPicker: (session: SessionView) => MaybePromise;
-  pasteSessionImages: (threadId: string, clipboardData: DataTransfer) => boolean;
+  pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   projectPicker: ProjectPickerState | null;
-  removeSessionImage: (threadId: string, attachmentId: string) => void;
-  removeSessionTextAttachment: (threadId: string, attachmentId: string) => void;
+  removeThreadImage: (threadId: string, attachmentId: string) => void;
+  removeThreadTextAttachment: (threadId: string, attachmentId: string) => void;
   renderComposerSessionControls: (mode: "inline" | "popover") => React.ReactNode;
   resetComposerHistory: (threadId: string) => void;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
@@ -194,7 +194,7 @@ export type AppViewModel = AppSidebarViewModel & {
   sessionDialogOpen: boolean;
   sessionList: SessionView[];
   sessionMenuOpen: boolean;
-  sessions: ChatSession[];
+  openThreads: OpenThreadState[];
   setAuthTokenDraft: React.Dispatch<React.SetStateAction<string>>;
   setComposerMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setComposerMode: React.Dispatch<React.SetStateAction<ComposerMode>>;
@@ -224,8 +224,8 @@ export type AppViewModel = AppSidebarViewModel & {
   threadPicker: ThreadPickerState | null;
   turnUiState: TurnUiState;
   updateMessageRenderMode: (messageId: string, mode: MessageRenderMode) => void;
-  updateSessionInput: (threadId: string, input: string) => void;
+  updateThreadInput: (threadId: string, input: string) => void;
   updateThreadGoal: (threadId: string, goal: ThreadGoalUpdateInput) => MaybePromise<boolean>;
-  workspaceEmptyMessage: string;
-  workspaceThreadTabs: ThreadTabItem[];
+  openThreadEmptyMessage: string;
+  openThreadTabs: ThreadTabItem[];
 };

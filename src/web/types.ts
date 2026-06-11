@@ -290,7 +290,7 @@ export type ProjectsPayload = {
   projects?: ProjectSummary[];
 };
 
-export type ChatSession = ThreadDetail & {
+export type OpenThreadState = ThreadDetail & {
   input: string;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];

@@ -9,7 +9,7 @@ import {
   selectedTextWithin,
   writeTextToClipboard
 } from "../appHelpers.js";
-import type { ChatSession, ComposerHistoryState, MessageContextMenuState, MessageRenderMode, WebRecordView } from "../types.js";
+import type { OpenThreadState, ComposerHistoryState, MessageContextMenuState, MessageRenderMode, WebRecordView } from "../types.js";
 
 type ComposerActionsContext = {
   activeCanSend: boolean;
@@ -21,7 +21,7 @@ type ComposerActionsContext = {
   setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
   setMessageRenderModes: React.Dispatch<React.SetStateAction<Record<string, MessageRenderMode>>>;
   setSessionMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setSessions: React.Dispatch<React.SetStateAction<ChatSession[]>>;
+  setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
 };
 
 type ComposerActionsDependencies = {
@@ -31,7 +31,7 @@ type ComposerActionsDependencies = {
 type ComposerHistoryDirection = "previous" | "next";
 
 export type ComposerActions = {
-  updateSessionInput: (threadId: string, input: string) => void;
+  updateThreadInput: (threadId: string, input: string) => void;
   resetComposerHistory: (threadId: string) => void;
   setComposerHistoryInput: (threadId: string, textarea: HTMLTextAreaElement, input: string) => void;
   navigateComposerHistory: (
@@ -45,14 +45,14 @@ export type ComposerActions = {
     threadId: string,
     history: string[]
   ) => void;
-  addSessionTextAttachment: (threadId: string, text: string) => void;
-  addSessionImageFiles: (threadId: string, files: File[]) => void;
-  addSessionImages: (threadId: string, files: FileList | null) => void;
-  addSessionFiles: (threadId: string, files: FileList | null) => Promise<void>;
-  pasteSessionImages: (threadId: string, clipboardData: DataTransfer) => boolean;
+  addThreadTextAttachment: (threadId: string, text: string) => void;
+  addThreadImageFiles: (threadId: string, files: File[]) => void;
+  addThreadImages: (threadId: string, files: FileList | null) => void;
+  addThreadFiles: (threadId: string, files: FileList | null) => Promise<void>;
+  pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   updateMessageRenderMode: (messageId: string, mode: MessageRenderMode) => void;
-  removeSessionImage: (threadId: string, imageId: string) => void;
-  removeSessionTextAttachment: (threadId: string, textId: string) => void;
+  removeThreadImage: (threadId: string, imageId: string) => void;
+  removeThreadTextAttachment: (threadId: string, textId: string) => void;
   openMessageContextMenu: (
     event: React.MouseEvent<HTMLElement>,
     threadId: string,
@@ -65,8 +65,8 @@ export type ComposerActions = {
 };
 
 export const createComposerActions = (ctx: ComposerActionsContext, actions: Record<string, any>): ComposerActions => {
-  const updateSessionInput = (threadId: string, input: string) => {
-    ctx.setSessions((current) => current.map((session) => session.threadId === threadId ? { ...session, input } : session));
+  const updateThreadInput = (threadId: string, input: string) => {
+    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId ? { ...thread, input } : thread));
   };
 
   const resetComposerHistory = (threadId: string) => {
@@ -74,7 +74,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
   };
 
   const setComposerHistoryInput = (threadId: string, textarea: HTMLTextAreaElement, input: string) => {
-    updateSessionInput(threadId, input);
+    updateThreadInput(threadId, input);
     window.requestAnimationFrame(() => {
       ctx.resizeComposerTextarea(textarea);
       textarea.focus();
@@ -141,15 +141,15 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
     if (ctx.activeCanSend) void (actions as ComposerActionsDependencies).send(threadId);
   };
 
-  const addSessionTextAttachment = (threadId: string, text: string) => {
+  const addThreadTextAttachment = (threadId: string, text: string) => {
     const normalizedText = normalizeSelectedText(text);
     if (!normalizedText) return;
-    ctx.setSessions((current) => current.map((session) => session.threadId === threadId
-      ? { ...session, textAttachments: [...session.textAttachments, { id: browserId(), text: normalizedText }] }
-      : session));
+    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
+      ? { ...thread, textAttachments: [...thread.textAttachments, { id: browserId(), text: normalizedText }] }
+      : thread));
   };
 
-  const addSessionImageFiles = (threadId: string, files: File[]) => {
+  const addThreadImageFiles = (threadId: string, files: File[]) => {
     if (!files.length) return;
     const images = files
       .filter((file) => file.type.startsWith("image/"))
@@ -160,20 +160,20 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
         previewUrl: URL.createObjectURL(file)
       }));
     if (!images.length) return;
-    ctx.setSessions((current) => current.map((session) => session.threadId === threadId
-      ? { ...session, imageAttachments: [...session.imageAttachments, ...images] }
-      : session));
+    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
+      ? { ...thread, imageAttachments: [...thread.imageAttachments, ...images] }
+      : thread));
   };
 
-  const addSessionImages = (threadId: string, files: FileList | null) => {
+  const addThreadImages = (threadId: string, files: FileList | null) => {
     if (!files?.length) return;
-    addSessionImageFiles(threadId, [...files]);
+    addThreadImageFiles(threadId, [...files]);
   };
 
-  const addSessionFiles = async (threadId: string, files: FileList | null) => {
+  const addThreadFiles = async (threadId: string, files: FileList | null) => {
     if (!files?.length) return;
     const fileList = [...files];
-    addSessionImageFiles(threadId, fileList);
+    addThreadImageFiles(threadId, fileList);
     const textFiles = fileList.filter((file) => !file.type.startsWith("image/") && isTextLikeFile(file));
     const skipped = fileList.filter((file) => !file.type.startsWith("image/") && !isTextLikeFile(file));
     const maxBytes = 512 * 1024;
@@ -189,9 +189,9 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
     })));
     const normalized = textAttachments.filter((item) => item.text);
     if (normalized.length) {
-      ctx.setSessions((current) => current.map((session) => session.threadId === threadId
-        ? { ...session, textAttachments: [...session.textAttachments, ...normalized] }
-        : session));
+      ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
+        ? { ...thread, textAttachments: [...thread.textAttachments, ...normalized] }
+        : thread));
     }
     const rejected = [
       ...tooLarge.map((file) => `${file.name} is larger than 512KB`),
@@ -200,10 +200,10 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
     if (rejected.length) window.alert(rejected.join("\n"));
   };
 
-  const pasteSessionImages = (threadId: string, clipboardData: DataTransfer) => {
+  const pasteThreadImages = (threadId: string, clipboardData: DataTransfer) => {
     const images = clipboardImageFiles(clipboardData);
     if (!images.length) return false;
-    addSessionImageFiles(threadId, images);
+    addThreadImageFiles(threadId, images);
     return true;
   };
 
@@ -211,19 +211,19 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
     ctx.setMessageRenderModes((current) => current[messageId] === mode ? current : { ...current, [messageId]: mode });
   };
 
-  const removeSessionImage = (threadId: string, imageId: string) => {
-    ctx.setSessions((current) => current.map((session) => {
-      if (session.threadId !== threadId) return session;
-      const image = session.imageAttachments.find((item) => item.id === imageId);
+  const removeThreadImage = (threadId: string, imageId: string) => {
+    ctx.setOpenThreads((current) => current.map((thread) => {
+      if (thread.threadId !== threadId) return thread;
+      const image = thread.imageAttachments.find((item) => item.id === imageId);
       if (image) URL.revokeObjectURL(image.previewUrl);
-      return { ...session, imageAttachments: session.imageAttachments.filter((item) => item.id !== imageId) };
+      return { ...thread, imageAttachments: thread.imageAttachments.filter((item) => item.id !== imageId) };
     }));
   };
 
-  const removeSessionTextAttachment = (threadId: string, textId: string) => {
-    ctx.setSessions((current) => current.map((session) => session.threadId === threadId
-      ? { ...session, textAttachments: session.textAttachments.filter((item) => item.id !== textId) }
-      : session));
+  const removeThreadTextAttachment = (threadId: string, textId: string) => {
+    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
+      ? { ...thread, textAttachments: thread.textAttachments.filter((item) => item.id !== textId) }
+      : thread));
   };
 
   const openMessageContextMenu = (
@@ -255,7 +255,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
 
   const addContextSelectionToConversation = () => {
     if (!ctx.messageContextMenu?.selectedText) return;
-    addSessionTextAttachment(ctx.messageContextMenu.threadId, ctx.messageContextMenu.selectedText);
+    addThreadTextAttachment(ctx.messageContextMenu.threadId, ctx.messageContextMenu.selectedText);
     ctx.setMessageContextMenu(null);
     window.getSelection()?.removeAllRanges();
   };
@@ -267,19 +267,19 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
   };
 
   return {
-    updateSessionInput,
+    updateThreadInput,
     resetComposerHistory,
     setComposerHistoryInput,
     navigateComposerHistory,
     handleComposerKeyDown,
-    addSessionTextAttachment,
-    addSessionImageFiles,
-    addSessionImages,
-    addSessionFiles,
-    pasteSessionImages,
+    addThreadTextAttachment,
+    addThreadImageFiles,
+    addThreadImages,
+    addThreadFiles,
+    pasteThreadImages,
     updateMessageRenderMode,
-    removeSessionImage,
-    removeSessionTextAttachment,
+    removeThreadImage,
+    removeThreadTextAttachment,
     openMessageContextMenu,
     inspectContextMessage,
     addContextSelectionToConversation,

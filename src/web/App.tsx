@@ -17,7 +17,7 @@ import { createThreadActions } from "./appActions/threadActions.js";
 import "antd/dist/antd.css";
 import "./style.css";
 import type {
-  ChatSession,
+  OpenThreadState,
   ComposerHistoryState,
   ComposerMode,
   ConnectionMode,
@@ -102,7 +102,7 @@ const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 const App = () => {
   useState(() => initAuthTokenFromUrl());
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [openThreads, setOpenThreads] = useState<OpenThreadState[]>([]);
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
   const [sessionList, setSessionList] = useState<SessionView[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
@@ -183,13 +183,13 @@ const App = () => {
   const notifiedTaskCompletions = useRef(new Set<string>());
   const notificationAudioContext = useRef<AudioContext | null>(null);
 
-  const activeSession = useMemo(
-    () => sessions.find((session) => session.threadId === activeTabThreadId),
-    [activeTabThreadId, sessions]
+  const activeThread = useMemo(
+    () => openThreads.find((thread) => thread.threadId === activeTabThreadId),
+    [activeTabThreadId, openThreads]
   );
   useEffect(() => {
     resizeComposerTextarea(composerTextareaRef.current);
-  }, [activeSession?.threadId, activeSession?.input]);
+  }, [activeThread?.threadId, activeThread?.input]);
 
   const projectList = useMemo(() => projects, [projects]);
   const selectedProjectByKey = useMemo(
@@ -276,41 +276,41 @@ const App = () => {
       ...byId.values()
     ];
   }, [activeProjectSession, threadOrderBySession]);
-  const workspaceThreadIds = useMemo(
-    () => sessions.map((session) => session.threadId),
-    [sessions]
+  const openThreadIds = useMemo(
+    () => openThreads.map((thread) => thread.threadId),
+    [openThreads]
   );
   const activeThreadSummary = useMemo(
     () => {
-      if (activeSession) return activeSession;
+      if (activeThread) return activeThread;
       for (const session of sessionList) {
         const thread = session.threads?.find((item) => item.threadId === activeTabThreadId);
         if (thread) return thread;
       }
       return null;
     },
-    [activeSession, activeTabThreadId, sessionList]
+    [activeThread, activeTabThreadId, sessionList]
   );
-  const workspaceThreadIdsKey = workspaceThreadIds.join("\n");
-  const workspaceThreadTabs = useMemo(() => sessions.map((thread) => {
+  const openThreadIdsKey = openThreadIds.join("\n");
+  const openThreadTabs = useMemo(() => openThreads.map((thread) => {
     const title = threadDisplayTitle(thread);
     return {
       key: thread.threadId,
       label: (
-        <span className="workspaceThreadTabLabel" title={`${thread.workingDirectory}\n${title}\n${thread.threadId}`}>
+        <span className="openThreadTabLabel" title={`${thread.workingDirectory}\n${title}\n${thread.threadId}`}>
           <span>{thread.workingDirectory}</span>
           <code>{title} · {thread.threadId}</code>
         </span>
       )
     };
-  }), [sessions]);
+  }), [openThreads]);
   const displayRecords = useMemo(
-    () => activeSession ? threadDisplayRecords(activeSession.threadId, activeSession) : [],
-    [activeSession?.jsonl, activeSession?.records, activeSession?.threadId]
+    () => activeThread ? threadDisplayRecords(activeThread.threadId, activeThread) : [],
+    [activeThread?.jsonl, activeThread?.records, activeThread?.threadId]
   );
   const goalRecords = useMemo(
-    () => combineRecordSources(displayRecords, activeSession?.records ?? []),
-    [activeSession?.records, displayRecords]
+    () => combineRecordSources(displayRecords, activeThread?.records ?? []),
+    [activeThread?.records, displayRecords]
   );
   const simpleRecords = useMemo(
     () => displayRecords.filter(isSimpleRecord),
@@ -345,25 +345,25 @@ const App = () => {
     [latestTurnStatuses, messageDisplayMode]
   );
   const activeGoal = useMemo(
-    () => latestThreadGoalFromRecords(latestGoalScope.records, activeSession?.threadId),
-    [activeSession?.threadId, latestGoalScope.records]
+    () => latestThreadGoalFromRecords(latestGoalScope.records, activeThread?.threadId),
+    [activeThread?.threadId, latestGoalScope.records]
   );
   const turnUiState = useMemo(
-    () => turnUiStateFromStatus(latestTurnStatus, Boolean(activeSession?.running)),
-    [activeSession?.running, latestTurnStatus]
+    () => turnUiStateFromStatus(latestTurnStatus, Boolean(activeThread?.running)),
+    [activeThread?.running, latestTurnStatus]
   );
   const statusPanelHidden = Boolean(
-    activeSession?.threadId
+    activeThread?.threadId
     && latestTurnStatusScope.key
-    && hiddenStatusTurns[activeSession.threadId] === latestTurnStatusScope.key
+    && hiddenStatusTurns[activeThread.threadId] === latestTurnStatusScope.key
   );
   const showInlineStatusPanel = Boolean(simpleStatuses.length && !statusPanelHidden);
   const statusButtonLabel = simpleStatuses.length ? `Status ${simpleStatuses.length}` : "Status";
   const statusButtonTitle = simpleStatuses.length
     ? `Show latest turn status\n${activityStatusTitle(simpleStatuses)}`
     : turnUiState.title;
-  const statusScopeKey = activeSession?.threadId && latestTurnStatusScope.key
-    ? `${activeSession.threadId}:${latestTurnStatusScope.key}`
+  const statusScopeKey = activeThread?.threadId && latestTurnStatusScope.key
+    ? `${activeThread.threadId}:${latestTurnStatusScope.key}`
     : "";
   const activeExpandedStatusKeys = useMemo(
     () => new Set(statusScopeKey ? expandedStatusKeys[statusScopeKey] ?? [] : []),
@@ -381,20 +381,20 @@ const App = () => {
   const latestViewKey = latestView
     ? `${latestView.id}:${latestView.status ?? ""}:${latestView.text.length}:${latestView.usage ? usageTotal(latestView.usage) : ""}`
     : "";
-  const activeDisplayThreadId = activeSession?.threadId ?? activeTabThreadId;
-  const activeThreadBelongsToSession = Boolean(activeSession && workspaceThreadIds.includes(activeSession.threadId));
-  const activeHasDraft = Boolean(activeSession?.input.trim() || activeSession?.imageAttachments.length || activeSession?.textAttachments.length);
-  const activeRuntimeOnline = Boolean(activeSession?.session.online && activeSession.session.runnable !== false);
+  const activeDisplayThreadId = activeThread?.threadId ?? activeTabThreadId;
+  const activeThreadIsOpen = Boolean(activeThread && openThreadIds.includes(activeThread.threadId));
+  const activeHasDraft = Boolean(activeThread?.input.trim() || activeThread?.imageAttachments.length || activeThread?.textAttachments.length);
+  const activeRuntimeOnline = Boolean(activeThread?.session.online && activeThread.session.runnable !== false);
   const activeCanSend = Boolean(
-    activeSession
-    && activeThreadBelongsToSession
+    activeThread
+    && activeThreadIsOpen
     && activeRuntimeOnline
     && activeHasDraft
   );
-  const activeCanStop = Boolean(activeThreadBelongsToSession && activeRuntimeOnline && activeSession?.running);
+  const activeCanStop = Boolean(activeThreadIsOpen && activeRuntimeOnline && activeThread?.running);
   const activeCanSubmit = activeCanSend;
-  const showComposerSendButton = Boolean(activeSession && !activeSession.running);
-  const workspaceEmptyMessage = workspaceThreadTabs.length
+  const showComposerSendButton = Boolean(activeThread && !activeThread.running);
+  const openThreadEmptyMessage = openThreadTabs.length
     ? "Select a thread"
     : activeProjectSession
     ? activeProjectSession.online
@@ -405,7 +405,7 @@ const App = () => {
     () => latestThreadUsageFromRecords(latestTurnStatusScope.records) ?? latestThreadUsageFromRecords(displayRecords),
     [displayRecords, latestTurnStatusScope.records]
   );
-  const summaryThreadUsage = activeSession?.threadUsage
+  const summaryThreadUsage = activeThread?.threadUsage
     ?? activeThreadSummary?.threadUsage
     ?? null;
   const activeThreadUsage = mergeThreadUsage(latestThreadUsage, summaryThreadUsage);
@@ -413,19 +413,19 @@ const App = () => {
     () => latestSessionConfigFromRecords(latestTurnStatusScope.records) ?? latestSessionConfigFromRecords(displayRecords),
     [displayRecords, latestTurnStatusScope.records]
   );
-  const activeSessionModel = latestSessionConfig?.model
-    ?? activeSession?.model
+  const activeThreadModel = latestSessionConfig?.model
+    ?? activeThread?.model
     ?? activeThreadSummary?.model
     ?? systemStatus.model
     ?? null;
-  const activeSessionReasoning = latestSessionConfig?.reasoning
-    ?? activeSession?.modelReasoningEffort
+  const activeThreadReasoning = latestSessionConfig?.reasoning
+    ?? activeThread?.modelReasoningEffort
     ?? activeThreadSummary?.modelReasoningEffort
     ?? normalizeReasoningEffort(systemStatus.modelReasoningEffort)
     ?? null;
-  const effectiveModelSelection = selectedModel === "auto" && activeSessionModel ? activeSessionModel : selectedModel;
-  const effectiveReasoningSelection: ReasoningSelection = selectedReasoning === "auto" && activeSessionReasoning
-    ? activeSessionReasoning
+  const effectiveModelSelection = selectedModel === "auto" && activeThreadModel ? activeThreadModel : selectedModel;
+  const effectiveReasoningSelection: ReasoningSelection = selectedReasoning === "auto" && activeThreadReasoning
+    ? activeThreadReasoning
     : selectedReasoning;
   const modelOptions = useMemo(
     () => modelOptionsForSelection(effectiveModelSelection),
@@ -434,14 +434,14 @@ const App = () => {
   const composerModelButtonLabel = formatComposerModelButtonLabel(
     selectedModel,
     selectedReasoning,
-    activeSessionModel,
-    activeSessionReasoning
+    activeThreadModel,
+    activeThreadReasoning
   );
   const composerModelButtonTitle = formatComposerModelTitle(
     selectedModel,
     selectedReasoning,
-    activeSessionModel,
-    activeSessionReasoning
+    activeThreadModel,
+    activeThreadReasoning
   );
   const renderComposerSessionControls = (mode: "inline" | "popover") => (
     <div className={`composerSessionControls ${mode}`} aria-label="Session usage and model">
@@ -452,11 +452,11 @@ const App = () => {
           disabled={!simpleStatuses.length}
           title={statusButtonTitle}
           onClick={() => {
-            if (!activeSession?.threadId) return;
+            if (!activeThread?.threadId) return;
             setHiddenStatusTurns((current) => {
-              if (!(activeSession.threadId in current)) return current;
+              if (!(activeThread.threadId in current)) return current;
               const next = { ...current };
-              delete next[activeSession.threadId];
+              delete next[activeThread.threadId];
               return next;
             });
           }}
@@ -587,14 +587,14 @@ const App = () => {
       return;
     }
 
-    const activeTabSessionId = activeSession?.session.sessionId;
+    const activeTabSessionId = activeThread?.session.sessionId;
     const preferredSession = activeTabSessionId
       ? availableSessions.find((session) => session.sessionId === activeTabSessionId)
       : undefined;
     const session = preferredSession ?? activeProjectSession ?? projectSessions[0] ?? sessionList[0];
     if (session && !activeSessionId) setActiveSessionId(session.sessionId);
 
-    if (activeTabThreadId || sessions.length) return;
+    if (activeTabThreadId || openThreads.length) return;
 
     const initialThreadId = session
       ? preferredThreadIdForSession(
@@ -608,18 +608,18 @@ const App = () => {
     if (initialThreadId) {
       void openThread(initialThreadId).catch(() => clearActiveThreadIfLatest(initialThreadId));
     }
-  }, [activeSession?.session.sessionId, activeSessionId, activeTabThreadId, activeProjectSession, initialized, projectList, selectedProject, selectedProjectKey, sessionList, sessions.length]);
+  }, [activeThread?.session.sessionId, activeSessionId, activeTabThreadId, activeProjectSession, initialized, projectList, selectedProject, selectedProjectKey, sessionList, openThreads.length]);
 
   useEffect(() => {
     if (!initialized) return;
-    syncThreadSubscriptions(workspaceThreadIds);
-  }, [workspaceThreadIdsKey, initialized]);
+    syncThreadSubscriptions(openThreadIds);
+  }, [openThreadIdsKey, initialized]);
 
   useEffect(() => {
-    if (!activeSession) return;
-    setSelectedModel(activeSession.model ?? "auto");
-    setSelectedReasoning(activeSession.modelReasoningEffort ?? "auto");
-  }, [activeSession?.threadId, activeSession?.model, activeSession?.modelReasoningEffort]);
+    if (!activeThread) return;
+    setSelectedModel(activeThread.model ?? "auto");
+    setSelectedReasoning(activeThread.modelReasoningEffort ?? "auto");
+  }, [activeThread?.threadId, activeThread?.model, activeThread?.modelReasoningEffort]);
 
   useEffect(() => {
     if (!activeViews.length) return;
@@ -635,11 +635,11 @@ const App = () => {
       }
     };
     const firstFrame = window.requestAnimationFrame(() => {
-      scrollToBottom(activeSession?.running ? "auto" : "smooth");
+      scrollToBottom(activeThread?.running ? "auto" : "smooth");
       window.setTimeout(() => scrollToBottom("auto"), 80);
     });
     return () => window.cancelAnimationFrame(firstFrame);
-  }, [activeTabThreadId, activeViews.length, latestViewKey, activeSession?.running]);
+  }, [activeTabThreadId, activeViews.length, latestViewKey, activeThread?.running]);
 
   useEffect(() => {
     if (!composerMenuOpen) return undefined;
@@ -691,13 +691,13 @@ const App = () => {
 
   useEffect(() => {
     const stopOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !activeSession?.running) return;
+      if (event.key !== "Escape" || !activeThread?.running) return;
       event.preventDefault();
-      void stopTurn(activeSession.threadId);
+      void stopTurn(activeThread.threadId);
     };
     window.addEventListener("keydown", stopOnEscape);
     return () => window.removeEventListener("keydown", stopOnEscape);
-  }, [activeSession?.threadId, activeSession?.running]);
+  }, [activeThread?.threadId, activeThread?.running]);
 
   useEffect(() => {
     const links: HTMLLinkElement[] = [];
@@ -752,7 +752,7 @@ const App = () => {
     serverConnectionDraft,
     serverConnectionsLastSeq,
     sessionList,
-    sessions,
+    openThreads,
     sessionsLastSeq,
     setActiveSessionId,
     setActiveTabThreadBySession,
@@ -789,7 +789,7 @@ const App = () => {
     setSessionDialogOpen,
     setSessionList,
     setSessionMenuOpen,
-    setSessions,
+    setOpenThreads,
     setSidebarCollapsed,
     setSshConfigHosts,
     setSshConnectingHost,
@@ -830,8 +830,8 @@ const App = () => {
   );
   const {
     addContextSelectionToConversation,
-    addSessionFiles,
-    addSessionImages,
+    addThreadFiles,
+    addThreadImages,
     addServerConnection,
     addSshHost,
     changeProjectPickerMachine,
@@ -859,10 +859,10 @@ const App = () => {
     openProjectPicker,
     openThread,
     openThreadPicker,
-    pasteSessionImages,
+    pasteThreadImages,
     patchTask,
-    removeSessionImage,
-    removeSessionTextAttachment,
+    removeThreadImage,
+    removeThreadTextAttachment,
     removeServerConnection,
     removeSshHost,
     resetComposerHistory,
@@ -881,7 +881,7 @@ const App = () => {
     toggleProjectPinned,
     toggleServerConnectionEnabled,
     updateMessageRenderMode,
-    updateSessionInput,
+    updateThreadInput,
     updateTaskDraftMachine,
     updateTaskDraftProject,
     updateThreadGoal
@@ -910,8 +910,8 @@ const App = () => {
     activeGoal,
     activeProjectKey,
     activeProjectSession,
-    activeSession,
-    activeThreadBelongsToSession,
+    activeThread,
+    activeThreadIsOpen,
     activeUserMessageHistory,
     activeViews,
     activeWorkspacePath,
@@ -919,8 +919,8 @@ const App = () => {
     authRequired,
     authTokenDraft,
     addContextSelectionToConversation,
-    addSessionFiles,
-    addSessionImages,
+    addThreadFiles,
+    addThreadImages,
     addServerConnection,
     addSshHost,
     changeProjectPickerMachine,
@@ -969,7 +969,7 @@ const App = () => {
     openMessageContextMenu,
     openProjectPicker,
     openThreadPicker,
-    pasteSessionImages,
+    pasteThreadImages,
     patchTask,
     plugins,
     projectGroups,
@@ -981,8 +981,8 @@ const App = () => {
     registeredCommandIncludesToken,
     registeredCommandCopied,
     registeredMachines,
-    removeSessionImage,
-    removeSessionTextAttachment,
+    removeThreadImage,
+    removeThreadTextAttachment,
     removeServerConnection,
     removeSshHost,
     renderComposerSessionControls,
@@ -1005,7 +1005,7 @@ const App = () => {
     serverConnections,
     serverMachines,
     serverThreadGroups,
-    sessions,
+    openThreads,
     setComposerMenuOpen,
     setComposerMode,
     setConnectionMode,
@@ -1058,12 +1058,12 @@ const App = () => {
     toggleServerConnectionEnabled,
     turnUiState,
     updateMessageRenderMode,
-    updateSessionInput,
+    updateThreadInput,
     updateTaskDraftMachine,
     updateTaskDraftProject,
     updateThreadGoal,
-    workspaceEmptyMessage,
-    workspaceThreadTabs,
+    openThreadEmptyMessage,
+    openThreadTabs,
   };
   return <AppView viewModel={viewModel} />;
 };

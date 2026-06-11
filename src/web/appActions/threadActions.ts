@@ -19,7 +19,7 @@ import {
   threadRecordsForNotifications
 } from "../appHelpers.js";
 import type {
-  ChatSession,
+  OpenThreadState,
   ComposerMode,
   GoalDialogState,
   ModelSelection,
@@ -50,7 +50,7 @@ type ThreadActionsContext = {
   selectedProjectKey: string;
   selectedModel: ModelSelection;
   selectedReasoning: ReasoningSelection;
-  sessions: ChatSession[];
+  openThreads: OpenThreadState[];
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
   setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
   setActiveTabThreadBySession: React.Dispatch<React.SetStateAction<Record<string, string>>>;
@@ -60,7 +60,7 @@ type ThreadActionsContext = {
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setSessionDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
-  setSessions: React.Dispatch<React.SetStateAction<ChatSession[]>>;
+  setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
   setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
 
@@ -107,15 +107,15 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
     ctx.setActiveTabThreadId(threadId);
     const updateWorkspaceContext = !ctx.selectedProjectKey;
 
-    const existingSession = ctx.sessions.find((session) => session.threadId === threadId);
-    if (existingSession) {
-      subscribeThread(threadId, existingSession.lastSeq);
-      const sessionId = existingSession.session.sessionId;
+    const existingThread = ctx.openThreads.find((thread) => thread.threadId === threadId);
+    if (existingThread) {
+      subscribeThread(threadId, existingThread.lastSeq);
+      const sessionId = existingThread.session.sessionId;
       if (sessionId) {
         if (updateWorkspaceContext) ctx.setActiveSessionId(sessionId);
         ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
       }
-      if (updateWorkspaceContext) ctx.setActiveWorkspacePath(existingSession.workingDirectory);
+      if (updateWorkspaceContext) ctx.setActiveWorkspacePath(existingThread.workingDirectory);
       return;
     }
 
@@ -124,7 +124,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
 
     const open = (async () => {
       const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
-      const session: ChatSession = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
+      const openThread: OpenThreadState = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
       const sessionId = thread.session.sessionId;
       if (sessionId) {
         ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
@@ -132,14 +132,14 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
       ctx.setSessionList((current) => patchSessionsThread(current, thread));
       ctx.setProjects((current) => patchProjectsThread(current, thread));
       ctx.notificationRecordsByThread.current.set(thread.threadId, threadRecordsForNotifications(thread.threadId, thread));
-      ctx.setSessions((current) => {
+      ctx.setOpenThreads((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
-        const nextSession = existing
-          ? { ...session, input: existing.input, imageAttachments: existing.imageAttachments, textAttachments: existing.textAttachments ?? [] }
-          : session;
+        const nextThread = existing
+          ? { ...openThread, input: existing.input, imageAttachments: existing.imageAttachments, textAttachments: existing.textAttachments ?? [] }
+          : openThread;
         return current.some((item) => item.threadId === thread.threadId)
-          ? current.map((item) => item.threadId === thread.threadId ? nextSession : item)
-          : [...current, nextSession];
+          ? current.map((item) => item.threadId === thread.threadId ? nextThread : item)
+          : [...current, nextThread];
       });
       if (ctx.latestRequestedThreadId.current !== thread.threadId) return;
       if (sessionId) {
@@ -172,8 +172,8 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
 
   const closeThread = async (threadId: string) => {
     if (ctx.closedThreadIds.current.has(threadId)) return;
-    const threadIds = ctx.sessions.map((session) => session.threadId);
-    const closingThread = ctx.sessions.find((session) => session.threadId === threadId);
+    const threadIds = ctx.openThreads.map((thread) => thread.threadId);
+    const closingThread = ctx.openThreads.find((thread) => thread.threadId === threadId);
     const sessionId = closingThread?.session.sessionId ?? ctx.activeProjectSession?.sessionId ?? "";
     const nextThreadId = ctx.activeTabThreadId === threadId
       ? adjacentThreadId(threadIds, threadId)
@@ -200,12 +200,12 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
     ctx.openingThreads.current.delete(threadId);
     ctx.threadLastSeqs.current.delete(threadId);
     unsubscribeThread(threadId);
-    ctx.setSessions((current) => {
-      for (const session of current) {
-        if (session.threadId !== threadId) continue;
-        for (const image of session.imageAttachments) URL.revokeObjectURL(image.previewUrl);
+    ctx.setOpenThreads((current) => {
+      for (const thread of current) {
+        if (thread.threadId !== threadId) continue;
+        for (const image of thread.imageAttachments) URL.revokeObjectURL(image.previewUrl);
       }
-      return current.filter((session) => session.threadId !== threadId);
+      return current.filter((thread) => thread.threadId !== threadId);
     });
     ctx.setSessionList((current) => removeSessionsThread(current, threadId));
     ctx.setProjects((current) => removeProjectsThread(current, threadId));
@@ -272,7 +272,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
       }
       await openThread(thread.threadId);
     } catch (error) {
-      ctx.setSessions((current) => current.map((item) => item.threadId === threadId
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
         ? {
           ...item,
           records: [...item.records, errorRecord("fork failed", error)]
@@ -288,22 +288,22 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId })
       });
-      const session: ChatSession = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
-      ctx.setSessions((current) => {
+      const openThread: OpenThreadState = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
+      ctx.setOpenThreads((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
-        const nextSession = existing
-          ? { ...session, input: existing.input, imageAttachments: existing.imageAttachments, textAttachments: existing.textAttachments ?? [] }
-          : session;
+        const nextThread = existing
+          ? { ...openThread, input: existing.input, imageAttachments: existing.imageAttachments, textAttachments: existing.textAttachments ?? [] }
+          : openThread;
         return current.some((item) => item.threadId === thread.threadId)
-          ? current.map((item) => item.threadId === thread.threadId ? nextSession : item)
-          : [...current, nextSession];
+          ? current.map((item) => item.threadId === thread.threadId ? nextThread : item)
+          : [...current, nextThread];
       });
       if (thread.session.sessionId) ctx.setActiveSessionId(thread.session.sessionId);
       ctx.setActiveWorkspacePath(thread.workingDirectory);
       ctx.setActiveTabThreadId(thread.threadId);
       subscribeThread(thread.threadId, thread.lastSeq);
     } catch (error) {
-      ctx.setSessions((current) => current.map((item) => item.threadId === threadId
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
         ? {
           ...item,
           records: [...item.records, errorRecord("rollback failed", error)]
@@ -314,27 +314,27 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
 
   const send = async (threadId: string) => {
     deps.primeTaskCompletionFeedback();
-    const session = ctx.sessions.find((item) => item.threadId === threadId);
-    if (!session) return;
-    const typedText = session.input.trim();
-    const textAttachments = session.textAttachments;
+    const openThread = ctx.openThreads.find((item) => item.threadId === threadId);
+    if (!openThread) return;
+    const typedText = openThread.input.trim();
+    const textAttachments = openThread.textAttachments;
     const text = composeUserInputText(typedText, textAttachments);
-    const imageAttachments = session.imageAttachments;
+    const imageAttachments = openThread.imageAttachments;
     if (!text && !imageAttachments.length) return;
     if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {
       deps.resetComposerHistory(threadId);
-      ctx.setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "" } : item));
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "" } : item));
       ctx.setSessionDialogOpen(true);
       return;
     }
     deps.resetComposerHistory(threadId);
-    ctx.setSessions((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [], textAttachments: [] } : item));
+    ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [], textAttachments: [] } : item));
     let encodedImages: Array<{ url: string }>;
     try {
       encodedImages = await Promise.all(imageAttachments.map(async (image) => ({ url: await fileToDataUrl(image.file) })));
       for (const image of imageAttachments) URL.revokeObjectURL(image.previewUrl);
     } catch (error) {
-      ctx.setSessions((current) => current.map((item) => item.threadId === threadId
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
         ? {
           ...item,
           input: typedText,
@@ -362,7 +362,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
     });
     if (!response.ok) {
       const text = await response.text();
-      ctx.setSessions((current) => current.map((item) => item.threadId === threadId
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
         ? { ...item, records: [...item.records, errorRecord("error", text)] }
         : item));
     }
@@ -372,7 +372,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
     const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/stop`, { method: "POST" });
     if (!response.ok) {
       const text = await response.text();
-      ctx.setSessions((current) => current.map((item) => item.threadId === threadId
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
         ? { ...item, records: [...item.records, errorRecord("stop failed", text)] }
         : item));
     }
@@ -395,7 +395,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
         ? { ...current, saving: false, error: text || "保存失败" }
         : current);
     } else {
-      ctx.setSessions((current) => current.map((item) => item.threadId === threadId
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
         ? { ...item, records: [...item.records, errorRecord("goal update failed", text)] }
         : item));
     }
@@ -406,7 +406,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
     const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" });
     if (response.ok) return;
     const text = await response.text();
-    ctx.setSessions((current) => current.map((item) => item.threadId === threadId
+    ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
       ? { ...item, records: [...item.records, errorRecord("goal clear failed", text)] }
       : item));
   };

@@ -28,7 +28,7 @@ import {
   threadRecordsForNotifications
 } from "../appHelpers.js";
 import type {
-  ChatSession,
+  OpenThreadState,
   ComposerMode,
   ConnectionsStreamEvent,
   LocalTask,
@@ -126,7 +126,7 @@ type RealtimeActionsContext = {
   setServerConnections: React.Dispatch<React.SetStateAction<ServerConnection[]>>;
   setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
-  setSessions: React.Dispatch<React.SetStateAction<ChatSession[]>>;
+  setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSshConfigHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
   setSshConnections: React.Dispatch<React.SetStateAction<SshConnection[]>>;
@@ -366,11 +366,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
       payload.thread.threadId,
       Math.max(ctx.threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
     );
-    ctx.setSessions((current) => current.map((session) => {
-      if (session.threadId !== payload.thread.threadId) return session;
-      const records = payload.record ? mergeRecord(session.records, payload.record) : session.records;
-      const jsonl = mergeThreadJsonl(session.jsonl, payload);
-      return { ...session, ...payload.thread, records, jsonl };
+    ctx.setOpenThreads((current) => current.map((thread) => {
+      if (thread.threadId !== payload.thread.threadId) return thread;
+      const records = payload.record ? mergeRecord(thread.records, payload.record) : thread.records;
+      const jsonl = mergeThreadJsonl(thread.jsonl, payload);
+      return { ...thread, ...payload.thread, records, jsonl };
     }));
     const sessionId = payload.thread.session.sessionId;
     if (sessionId) {

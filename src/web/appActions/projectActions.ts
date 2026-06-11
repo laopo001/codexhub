@@ -11,7 +11,7 @@ import {
   projectKeyForProject
 } from "../appHelpers.js";
 import type {
-  ChatSession,
+  OpenThreadState,
   CodexThreadCandidate,
   MachineDirectoryListing,
   MachineSummary,
@@ -56,7 +56,7 @@ type ProjectActionsContext = {
   projectPicker: ProjectPickerState | null;
   selectedProjectKey: string;
   sessionList: SessionView[];
-  sessions: ChatSession[];
+  openThreads: OpenThreadState[];
   threadOrderBySession: Record<string, string[]>;
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
   threadPicker: ThreadPickerState | null;
@@ -283,7 +283,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     }
     ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
     ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, threadId));
-    if (ctx.sessions.some((session) => session.threadId === threadId)) {
+    if (ctx.openThreads.some((thread) => thread.threadId === threadId)) {
       ctx.latestRequestedThreadId.current = threadId;
       deps.subscribeThread(threadId, ctx.threadLastSeqs.current.get(threadId) ?? 0);
       ctx.setActiveTabThreadId(threadId);
@@ -297,7 +297,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     return Boolean(
       session?.threads?.some((thread) => thread.threadId === threadId)
       || (ctx.threadOrderBySession[sessionId] ?? []).includes(threadId)
-      || ctx.sessions.some((session) => session.threadId === threadId)
+      || ctx.openThreads.some((thread) => thread.threadId === threadId)
     );
   };
 
@@ -455,7 +455,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
 
   const switchSessionThread = async (threadId: string) => {
     if (threadId === ctx.activeTabThreadId) return;
-    const thread = ctx.sessions.find((item) => item.threadId === threadId);
+    const thread = ctx.openThreads.find((item) => item.threadId === threadId);
     const sessionId = thread?.session.sessionId ?? ctx.activeProjectSession?.sessionId ?? "";
     if (sessionId) {
       if (!ctx.selectedProjectKey) ctx.setActiveSessionId(sessionId);
