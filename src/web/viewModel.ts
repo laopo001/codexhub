@@ -21,6 +21,7 @@ import type {
   ReasoningSelection,
   ServerConnection,
   ServerConnectionDraft,
+  ServerThreadGroup,
   SessionView,
   SshConnection,
   SshHost,
@@ -89,6 +90,8 @@ export type AppSidebarViewModel = {
   runTaskNow: (task: LocalTask) => MaybePromise;
   selectedProject?: ProjectSummary | null;
   selectProject: (project: ProjectSummary) => MaybePromise;
+  selectProjectSession: (session: SessionView) => MaybePromise;
+  selectSessionThread: (session: SessionView, threadId: string) => MaybePromise;
   setConnectionMode: React.Dispatch<React.SetStateAction<ConnectionMode>>;
   setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setProjectSearch: React.Dispatch<React.SetStateAction<string>>;
@@ -101,6 +104,7 @@ export type AppSidebarViewModel = {
   serverConnectionError: string;
   serverConnections: ServerConnection[];
   serverMachines: MachineSummary[];
+  serverThreadGroups: ServerThreadGroup[];
   sshConfigHostOptions: SshHost[];
   sshConfigHosts: SshHost[];
   sshConnectingHost: string;
@@ -129,7 +133,6 @@ export type AppViewModel = AppSidebarViewModel & {
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
   activeProjectSession?: SessionView;
-  activeProjectSessionThreadTabs: ThreadTabItem[];
   activeSession?: ChatSession;
   activeThreadBelongsToSession: boolean;
   activeUserMessageHistory: string[];
@@ -224,4 +227,5 @@ export type AppViewModel = AppSidebarViewModel & {
   updateSessionInput: (threadId: string, input: string) => void;
   updateThreadGoal: (threadId: string, goal: ThreadGoalUpdateInput) => MaybePromise<boolean>;
   workspaceEmptyMessage: string;
+  workspaceThreadTabs: ThreadTabItem[];
 };

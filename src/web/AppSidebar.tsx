@@ -81,6 +81,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     runTaskNow,
     selectedProject,
     selectProject,
+    selectProjectSession,
+    selectSessionThread,
     setConnectionMode,
     setOfflineProjectsCollapsed,
     setProjectSearch,
@@ -92,7 +94,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     serverConnectionDraft,
     serverConnectionError,
     serverConnections,
-    serverMachines,
+    serverThreadGroups,
     sshConfigHostOptions,
     sshConfigHosts,
     sshConnectingHost,
@@ -367,7 +369,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                 {serverConnectionBusyId === "new" ? "..." : "Add"}
               </button>
             </form>
-            {serverConnections.length === 0 ? (
+            {serverConnections.length === 0 && serverThreadGroups.length === 0 ? (
               <div className="connectionEmpty">No server connections</div>
             ) : serverConnections.map((connection) => {
               const busy = serverConnectionBusyId === connection.connectionId;
@@ -409,17 +411,75 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                 </div>
               );
             })}
-            {serverMachines.length ? (
-              <div className="connectionSubList">
-                {serverMachines.map((machine) => (
-                  <div className={`connectionRow ${machine.online ? "online" : "offline"}`} key={machine.machineId}>
-                    <span title={machine.name ?? machine.hostname}>{machine.name ?? machine.hostname}</span>
+            {serverThreadGroups.map((group) => {
+              const machine = group.machine;
+              const machineLabel = machine.name ?? machine.hostname;
+              return (
+                <React.Fragment key={machine.machineId}>
+                  <div className={`connectionRow ${machine.online ? "online" : "offline"}`} title={`${machineLabel}\n${machine.machineId}`}>
+                    <span>{machineLabel}</span>
                     <strong>{machine.online ? "online" : "offline"}</strong>
-                    <code title={machine.machineId}>{machine.machineId}</code>
+                    <code title={machine.machineId}>{`${group.sessions.length} sessions · ${group.threads.length} threads · ${machine.machineId}`}</code>
                   </div>
-                ))}
-              </div>
-            ) : null}
+                  {group.sessions.length ? (
+                    <div className="serverThreadList" aria-label={`${machineLabel} sessions`}>
+                      {group.sessions.map((session) => {
+                        const sessionThreads = [...(session.threads ?? [])].sort((left, right) =>
+                          Number(right.running) - Number(left.running) || right.updatedAt.localeCompare(left.updatedAt)
+                        );
+                        const targetThread = sessionThreads[0];
+                        const sessionLabel = session.name ?? session.sessionId;
+                        return (
+                          <React.Fragment key={session.sessionId}>
+                            <button
+                              type="button"
+                              className={`serverSessionRow ${session.online ? "online" : "offline"}`}
+                              onClick={() => void (targetThread
+                                ? selectSessionThread(session, targetThread.threadId)
+                                : selectProjectSession(session))}
+                              disabled={!session.online}
+                              title={`${sessionLabel}\n${session.workingDirectory}\n${session.sessionId}`}
+                            >
+                              <History size={13} strokeWidth={2.1} aria-hidden="true" />
+                              <span className="serverThreadMain">
+                                <span className="serverThreadTitle">{sessionLabel}</span>
+                                <code>{session.workingDirectory}</code>
+                              </span>
+                              <strong>{session.online ? `${sessionThreads.length} threads` : "offline"}</strong>
+                            </button>
+                            {sessionThreads.length ? sessionThreads.map((thread) => {
+                              const title = threadDisplayTitle(thread);
+                              const runnable = session.online && thread.session.runnable !== false;
+                              return (
+                                <button
+                                  type="button"
+                                  className={`serverThreadRow ${thread.running ? "running" : ""}`}
+                                  key={`${session.sessionId}:${thread.threadId}`}
+                                  onClick={() => void selectSessionThread(session, thread.threadId)}
+                                  disabled={!runnable}
+                                  title={`${title}\n${thread.workingDirectory}\n${thread.threadId}`}
+                                >
+                                  <History size={13} strokeWidth={2.1} aria-hidden="true" />
+                                  <span className="serverThreadMain">
+                                    <span className="serverThreadTitle">{title}</span>
+                                    <code>{thread.threadId}</code>
+                                  </span>
+                                  <strong>{thread.running ? "running" : runnable ? "ready" : "offline"}</strong>
+                                </button>
+                              );
+                            }) : (
+                              <div className="serverThreadEmpty">No threads</div>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  ) : machine.online ? (
+                    <div className="serverThreadEmpty">No remote sessions</div>
+                  ) : null}
+                </React.Fragment>
+              );
+            })}
             {serverConnectionError ? <div className="projectOpenError">{serverConnectionError}</div> : null}
           </div>
         ) : (

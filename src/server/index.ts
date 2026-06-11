@@ -13,7 +13,7 @@ import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
 import { ServerMachineBridgeManager } from "../core/serverMachineBridge.js";
 import { CodexhubServerState } from "../core/serverState.js";
-import type { StoredTask } from "../core/serverState.js";
+import type { StoredServerConnection, StoredTask } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
@@ -202,7 +202,17 @@ const machineTransportMessageSchema = z.discriminatedUnion("type", [
     thread: z.unknown()
   }),
   z.object({
+    type: z.literal("thread_snapshot"),
+    sessionId: z.string().min(1),
+    thread: z.unknown()
+  }),
+  z.object({
     type: z.literal("session_thread_event"),
+    sessionId: z.string().min(1),
+    event: z.unknown()
+  }),
+  z.object({
+    type: z.literal("thread_event"),
     sessionId: z.string().min(1),
     event: z.unknown()
   }),
@@ -315,14 +325,6 @@ const sessionOfflineRetentionMs = () =>
 const sessionSweepIntervalMs = () =>
   envMs("CODEX_HUB_SESSION_SWEEP_INTERVAL_MS", 5_000);
 const taskScanIntervalMs = () => envMs("CODEX_HUB_TASK_SCAN_INTERVAL_MS", 30_000);
-const sessionLastActivityAt = (session: { createdAt?: string; threads: Array<{ updatedAt: string }> }) => {
-  const times = session.threads
-    .map((thread) => Date.parse(thread.updatedAt))
-    .filter(Number.isFinite);
-  const createdAt = Date.parse(session.createdAt ?? "");
-  if (Number.isFinite(createdAt)) times.push(createdAt);
-  return times.length ? Math.max(...times) : Number.NaN;
-};
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
@@ -419,6 +421,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const serverAuthToken = normalizedAuthToken(options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN);
   const buildId = options.buildId ?? process.env.CODEX_HUB_BUILD_ID ?? null;
   const state = await CodexhubServerState.load();
+  const serverInstanceId = randomUUID();
   let threads: ThreadHub;
   let serverMachines: ServerMachineBridgeManager | null = null;
   const captureSessionState = () => {
@@ -444,13 +447,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let connectionSeq = 0;
   let serverConnectionSeq = 0;
   const machines = new MachineHub({ onChange: () => publishProjects() });
+  const listUsableServerConnections = () =>
+    state.listServerConnections().filter((connection) => !isLocalServerConnectionUrl(connection.url, config.host, config.port));
   serverMachines = new ServerMachineBridgeManager({
     machines,
     threads,
-    listConnections: () => state.listServerConnections(),
+    listConnections: listUsableServerConnections,
     updateConnection: (connectionId, input) => {
       state.updateServerConnection(connectionId, input);
     },
+    validateConnection: (connection) => validateServerConnectionTarget(connection, serverInstanceId),
     localMachineId: () => localMachine?.machineId
       ?? machines.listMachines().find((machine) => machine.type === "local" && machine.online && machine.capabilities.projectLauncher)?.machineId
       ?? null,
@@ -476,7 +482,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let localMachine: CodexhubMachineHandle | null = null;
   const threadRecordObservationCounts = new Map<string, number>();
   const threadRecordObservationTimers = new Map<string, NodeJS.Timeout>();
-  const idleStoppingSessions = new Set<string>();
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
@@ -491,7 +496,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   const sessionSweep = setInterval(() => {
     threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
-    void stopIdleSessions();
   }, sessionSweepIntervalMs());
   sessionSweep.unref?.();
   const runningTasks = new Set<string>();
@@ -601,12 +605,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   };
 
-  const threadRecordObservationActive = (threadId: string) =>
-    (threadRecordObservationCounts.get(threadId) ?? 0) > 0 || threadRecordObservationTimers.has(threadId);
-
-  const sessionRecordObservationsIdleClosed = (session: { threads: Array<{ threadId: string }> }) =>
-    session.threads.length > 0 && session.threads.every((thread) => !threadRecordObservationActive(thread.threadId));
-
   function scheduleThreadRecordObservationIdle(threadId: string) {
     if (threadRecordObservationTimers.has(threadId)) return;
     const idleMs = threadRecordObservationIdleMs();
@@ -628,77 +626,25 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   const sessionsForProject = (target: { machineId: string; path: string }) => {
     const sessions = threads.listSessions({ includeOffline: true })
-      .filter((session) => session.machineId === target.machineId && session.workingDirectory === target.path);
+      .filter((session) =>
+        session.machineId === target.machineId
+        && (
+          session.workingDirectory === target.path
+          || session.threads.some((thread) => thread.workingDirectory === target.path)
+        )
+      );
     return [...new Map(sessions.map((session) => [session.sessionId, session])).values()];
   };
 
   const stopProjectSessions = async (target: { machineId: string; path: string }) => {
     const sessions = sessionsForProject(target);
-    return await Promise.all(sessions.map(async (session) => {
-      if (!session.online) {
-        threads.unregisterSession(session.sessionId);
-        return {
-          machineId: target.machineId,
-          sessionId: session.sessionId,
-          stopped: false,
-          removed: true,
-          reason: "session_offline"
-        };
-      }
-      try {
-        const command = machines.stopSession(target.machineId, { sessionId: session.sessionId });
-        const result = await command.promise;
-        if (!result.stopped) threads.unregisterSession(session.sessionId);
-        return {
-          machineId: target.machineId,
-          sessionId: session.sessionId,
-          stopped: result.stopped,
-          removed: true,
-          cwd: result.cwd,
-          reason: result.stopped ? undefined : "session_not_found"
-        };
-      } catch (error) {
-        return {
-          machineId: target.machineId,
-          sessionId: session.sessionId,
-          stopped: false,
-          removed: false,
-          error: error instanceof Error ? error.message : String(error)
-        };
-      }
+    return sessions.map((session) => ({
+      machineId: target.machineId,
+      sessionId: session.sessionId,
+      stopped: false,
+      removed: true,
+      reason: session.online ? "shared_session" : "session_offline"
     }));
-  };
-
-  const stopIdleSessions = async () => {
-    const timeoutMs = threadRecordObservationIdleMs();
-    if (timeoutMs <= 0) return;
-    const now = Date.now();
-    const sessions = threads.listSessions()
-      .filter((session) => session.online)
-      .filter((session) => session.machineId)
-      .filter((session) => !idleStoppingSessions.has(session.sessionId))
-      .filter((session) => !session.threads.some((thread) => thread.running || thread.status === "running"))
-      .filter(sessionRecordObservationsIdleClosed)
-      .filter((session) => {
-        const lastActivityAt = sessionLastActivityAt(session);
-        return Number.isFinite(lastActivityAt) && now - lastActivityAt >= timeoutMs;
-      });
-    if (!sessions.length) return;
-
-    await Promise.all(sessions.map(async (session) => {
-      if (!session.machineId) return;
-      idleStoppingSessions.add(session.sessionId);
-      try {
-        const command = machines.stopSession(session.machineId, { sessionId: session.sessionId });
-        const result = await command.promise;
-        if (!result.stopped) threads.unregisterSession(session.sessionId);
-      } catch {
-        // The normal heartbeat sweep will mark unreachable sessions offline.
-      } finally {
-        idleStoppingSessions.delete(session.sessionId);
-      }
-    }));
-    publishProjects();
   };
 
   function taskSnapshotEvent() {
@@ -864,10 +810,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       await waitForSession(sessionId);
       let threadId = task.threadId ?? session.threadId;
       if (task.threadId) {
-        const resumed = await threads.resumeSessionThread(sessionId, task.threadId);
+        const resumed = await threads.resumeSessionThread(sessionId, task.threadId, task.projectPath);
         threadId = resumed.threadId;
       } else {
-        threads.attachSessionThread(sessionId, threadId);
+        threads.attachSessionThread(sessionId, threadId, session.cwd);
       }
       const localCommand = threads.runLocalCommand(threadId, task.input, "task");
       if (localCommand.handled) {
@@ -970,6 +916,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.get("/api/health", async (request) => ({
     ok: true,
+    serverInstanceId,
     authRequired: Boolean(serverAuthToken),
     authenticated: !serverAuthToken || isAuthorizedRequest(request, serverAuthToken),
     env: process.env.CODEX_HUB_ENV ?? process.env.NODE_ENV ?? "development",
@@ -1138,9 +1085,12 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.get("/api/sessions/:sessionId/thread-candidates", async (request, reply) => {
     const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
-    const query = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() }).parse(request.query);
+    const query = z.object({
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+      cwd: z.string().min(1).optional()
+    }).parse(request.query);
     try {
-      return await threads.listSessionThreadCandidates(params.sessionId, query.limit ?? 50);
+      return await threads.listSessionThreadCandidates(params.sessionId, query.limit ?? 50, query.cwd);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Session not found:") ? 404 : 409);
@@ -1151,13 +1101,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.post("/api/sessions/:sessionId/threads", async (request, reply) => {
     const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
     const payload = z.discriminatedUnion("action", [
-      z.object({ action: z.literal("new") }),
-      z.object({ action: z.literal("resume"), threadId: z.string().min(1) })
+      z.object({ action: z.literal("new"), cwd: z.string().min(1).optional() }),
+      z.object({ action: z.literal("resume"), threadId: z.string().min(1), cwd: z.string().min(1).optional() })
     ]).parse(request.body);
     try {
       const thread = payload.action === "new"
-        ? await threads.startSessionThread(params.sessionId)
-        : await threads.resumeSessionThread(params.sessionId, payload.threadId);
+        ? await threads.startSessionThread(params.sessionId, payload.cwd)
+        : await threads.resumeSessionThread(params.sessionId, payload.threadId, payload.cwd);
       publishProjects();
       return thread;
     } catch (error) {
@@ -1173,11 +1123,19 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       threadId: z.string().min(1),
       input: inputSchema,
       source: z.enum(["web", "telegram", "task"]).optional(),
-      options: threadRunOptionsSchema.optional()
+      options: threadRunOptionsSchema.optional(),
+      cwd: z.string().min(1).optional()
     }).parse(request.body);
 
     try {
-      const result = threads.runSessionThreadTurn(params.sessionId, payload.threadId, payload.input, payload.source ?? "web", payload.options);
+      const result = threads.runSessionThreadTurn(
+        params.sessionId,
+        payload.threadId,
+        payload.input,
+        payload.source ?? "web",
+        payload.options,
+        payload.cwd
+      );
       result.promise.catch(() => undefined);
       return { ok: true, thread: result.thread, command: result.command };
     } catch (error) {
@@ -1315,6 +1273,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.post("/api/server-connections", async (request, reply) => {
     const payload = serverConnectionCreateSchema.parse(request.body);
     try {
+      if (payload.enabled !== false) await assertServerConnectionTarget(payload, serverInstanceId);
       const connection = state.upsertServerConnection(payload);
       await serverMachines?.disconnect(connection.connectionId);
       if (connection.enabled) serverMachines?.connect(connection);
@@ -1330,11 +1289,23 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
     const payload = serverConnectionUpdateSchema.parse(request.body);
     try {
-      const connection = state.updateServerConnection(params.connectionId, payload);
-      if (!connection) {
+      const existing = state.getServerConnection(params.connectionId);
+      if (!existing) {
         reply.code(404);
         return { error: "server_connection_not_found" };
       }
+      const nextEnabled = payload.enabled ?? existing.enabled;
+      if (nextEnabled) {
+        await assertServerConnectionTarget({
+          ...existing,
+          ...payload,
+          url: payload.url ?? existing.url,
+          authToken: payload.authToken === undefined
+            ? existing.authToken
+            : payload.authToken ?? undefined
+        }, serverInstanceId);
+      }
+      const connection = state.updateServerConnection(params.connectionId, payload)!;
       await serverMachines?.disconnect(connection.connectionId);
       if (connection.enabled) serverMachines?.connect(connection);
       publishServerConnections();
@@ -1351,6 +1322,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     if (!connection) {
       reply.code(404);
       return { error: "server_connection_not_found" };
+    }
+    const targetError = await validateServerConnectionTarget(connection, serverInstanceId);
+    if (targetError) {
+      state.updateServerConnection(connection.connectionId, { lastError: targetError });
+      publishServerConnections();
+      reply.code(409);
+      return { error: targetError, connection: serverConnectionView(connection.connectionId) };
     }
     serverMachines?.connect(connection);
     publishServerConnections();
@@ -1438,7 +1416,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       const result = await started.promise;
       const sessionId = result.sessionId;
       await waitForSession(sessionId);
-      threads.attachSessionThread(sessionId, result.threadId);
+      threads.attachSessionThread(sessionId, result.threadId, result.cwd);
       const project = state.upsertProject({
         machineId: machine.machineId,
         path: result.cwd,
@@ -1702,13 +1680,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           return;
         }
 
-        if (parsed.type === "session_thread_snapshot") {
+        if (parsed.type === "session_thread_snapshot" || parsed.type === "thread_snapshot") {
           threads.applyMirroredThreadSnapshot(parsed.sessionId, parsed.thread);
           publishProjects();
           return;
         }
 
-        if (parsed.type === "session_thread_event") {
+        if (parsed.type === "session_thread_event" || parsed.type === "thread_event") {
           threads.applyMirroredThreadEvent(parsed.sessionId, parsed.event);
           publishProjects();
           return;
@@ -1888,19 +1866,86 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 };
 
 const resolveTargetMachine = (
-  allMachines: Array<{ machineId: string; online: boolean }>,
+  allMachines: Array<{ machineId: string; online: boolean; capabilities?: { projectLauncher?: boolean } }>,
   requestedMachineId: string | undefined
 ) => {
-  const onlineMachines = allMachines.filter((machine) => machine.online);
+  const onlineMachines = allMachines.filter((machine) => machine.online && machine.capabilities?.projectLauncher !== false);
   if (requestedMachineId) {
     const machine = onlineMachines.find((item) => item.machineId === requestedMachineId);
-    if (!machine) throw new Error(`Machine is offline or not found: ${requestedMachineId}`);
+    if (!machine) throw new Error(`Project launcher is offline or not found: ${requestedMachineId}`);
     return machine;
   }
   if (onlineMachines.length === 1) return onlineMachines[0];
-  if (onlineMachines.length === 0) throw new Error("No online codexhub machine.");
-  throw new Error("Multiple online machines. Choose one before opening a project.");
+  if (onlineMachines.length === 0) throw new Error("No online codexhub project launcher.");
+  throw new Error("Multiple online project launchers. Choose one before opening a project.");
 };
+
+const assertServerConnectionTarget = async (
+  connection: Pick<StoredServerConnection, "url" | "authToken">,
+  serverInstanceId: string
+) => {
+  const error = await validateServerConnectionTarget(connection, serverInstanceId);
+  if (error) throw new Error(error);
+};
+
+const validateServerConnectionTarget = async (
+  connection: Pick<StoredServerConnection, "url" | "authToken">,
+  serverInstanceId: string
+) => {
+  let url: URL;
+  try {
+    url = new URL(connection.url);
+  } catch {
+    return `Invalid server connection URL: ${connection.url}`;
+  }
+  const path = url.pathname.replace(/\/+$/, "");
+  if (path) {
+    return `Server connection URL must not include a path: ${url.pathname}. Use host:port for ports, for example http://localhost:8788.`;
+  }
+
+  try {
+    const healthUrl = new URL("/api/health", url);
+    const headers = connection.authToken ? { authorization: `Bearer ${connection.authToken}` } : undefined;
+    const response = await fetch(healthUrl, {
+      headers,
+      signal: AbortSignal.timeout(2500)
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as { serverInstanceId?: unknown };
+    if (payload.serverInstanceId === serverInstanceId) {
+      return `Cannot connect CodexHub server to itself: ${connection.url}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+const isLocalServerConnectionUrl = (value: string, localHost: string, localPort: number) => {
+  try {
+    const url = new URL(value);
+    if (serverUrlPort(url) !== localPort) return false;
+    const targetHost = normalizeServerUrlHostname(url.hostname);
+    const host = normalizeServerUrlHostname(localHost);
+    if (targetHost === host) return true;
+    return isLoopbackServerHost(targetHost) && isLocalBindHost(host);
+  } catch {
+    return false;
+  }
+};
+
+const serverUrlPort = (url: URL) => {
+  if (url.port) return Number(url.port);
+  return url.protocol === "https:" ? 443 : 80;
+};
+
+const normalizeServerUrlHostname = (value: string) => value.trim().toLowerCase().replace(/^\[|\]$/g, "");
+
+const isLoopbackServerHost = (host: string) =>
+  host === "localhost" || host === "127.0.0.1" || host === "::1";
+
+const isLocalBindHost = (host: string) =>
+  host === "0.0.0.0" || host === "::" || isLoopbackServerHost(host);
 
 const registerStaticRoutes = (app: FastifyInstance, root: string) => {
   const sendIndex = async (_request: unknown, reply: any) => {

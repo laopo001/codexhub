@@ -181,6 +181,7 @@ export class MachineHub {
   startSession(machineId: string, input: { cwd: string; reuse?: boolean }, timeoutMs = 90_000) {
     const machine = this.requireMachine(machineId);
     if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
+    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot launch projects: ${machineId}`);
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,
@@ -198,6 +199,7 @@ export class MachineHub {
   listDirectory(machineId: string, input: { cwd?: string }, timeoutMs = 30_000) {
     const machine = this.requireMachine(machineId);
     if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
+    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot browse projects: ${machineId}`);
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,

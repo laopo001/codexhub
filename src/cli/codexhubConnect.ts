@@ -59,6 +59,7 @@ type SyncedThread = {
 type BridgeState = {
   threadIds: string[];
   currentThreadId?: string;
+  threadCwds?: Record<string, string>;
 };
 
 type SessionSettings = {
@@ -145,6 +146,7 @@ export type HeadlessCodexhubSessionHandle = {
   appServerUrl: string;
   cwd: string;
   ensureThread: (threadId: string) => Promise<string>;
+  startThread: (cwd: string) => Promise<string>;
   runTurn: (input: ProxyInput, threadId?: string) => Promise<string>;
   stop: () => Promise<void>;
   wait: () => Promise<ChildExit>;
@@ -283,6 +285,7 @@ export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSess
       appServerUrl,
       cwd,
       ensureThread: (threadId: string) => bridgeRunner.ensureThread(threadId),
+      startThread: (cwd: string) => bridgeRunner.startThread(cwd),
       runTurn: (input: ProxyInput, threadId?: string) => bridgeRunner.runTurn(input, threadId),
       stop: cleanup,
       wait: () => appServerStopped
@@ -330,6 +333,13 @@ class ProxyBridgeRunner {
     const currentThreadId = await this.bridge.ensureThreadCurrent(trimmed);
     this.bridgeState = this.bridge.snapshotState();
     return currentThreadId;
+  }
+
+  async startThread(cwd: string) {
+    if (!this.bridge) throw new Error("codexhub bridge is not connected.");
+    const threadId = await this.bridge.startThread(cwd, this.options.model);
+    this.bridgeState = this.bridge.snapshotState();
+    return threadId;
   }
 
   async runTurn(input: ProxyInput, threadId?: string) {
@@ -672,6 +682,7 @@ class CodexAppServerBridge {
   private readonly pending = new Map<string | number, PendingRequest>();
   private readonly syncedThreads = new Map<string, SyncedThread>();
   private readonly loadedThreads = new Set<string>();
+  private readonly threadCwds = new Map<string, string>();
   private nextId = 1;
   private closed = false;
   private currentThreadId: string | undefined;
@@ -687,7 +698,10 @@ class CodexAppServerBridge {
     private readonly hub: HubTransportSink
   ) {
     this.currentThreadId = initialState.currentThreadId;
-    for (const threadId of initialState.threadIds) this.bindThread(threadId);
+    for (const [threadId, cwd] of Object.entries(initialState.threadCwds ?? {})) {
+      this.threadCwds.set(threadId, cwd);
+    }
+    for (const threadId of initialState.threadIds) this.bindThread(threadId, this.threadCwds.get(threadId));
   }
 
   static async connect(options: BridgeOptions, initialState: BridgeState = { threadIds: [] }, hub: HubTransportSink) {
@@ -709,7 +723,8 @@ class CodexAppServerBridge {
   snapshotState(): BridgeState {
     return {
       threadIds: [...this.syncedThreads.keys()],
-      currentThreadId: this.currentThreadId
+      currentThreadId: this.currentThreadId,
+      threadCwds: Object.fromEntries(this.threadCwds)
     };
   }
 
@@ -737,6 +752,10 @@ class CodexAppServerBridge {
     const currentThreadId = await this.ensureThreadLoaded(threadId, this.options.cwd, this.options.model, { threadId });
     await this.forwardCurrentThreadChanged(currentThreadId);
     return currentThreadId;
+  }
+
+  async startThread(cwd: string, model?: string | null) {
+    return await this.startNewThread(cwd, model, {});
   }
 
   async runCommand(command: SessionCommand) {
@@ -809,7 +828,7 @@ class CodexAppServerBridge {
 
     if (command.type === "observe_thread_records") {
       if (!command.threadId) throw new Error("observe_thread_records command requires threadId");
-      this.bindThread(command.threadId);
+      this.bindThread(command.threadId, command.workingDirectory);
       return;
     }
 
@@ -947,6 +966,7 @@ class CodexAppServerBridge {
     this.markBridgeStartedThread(loadedThreadId);
     await this.request("turn/start", {
       threadId: loadedThreadId,
+      cwd: command.workingDirectory,
       input: toAppServerInput(inputForCollaborationMode(command.input, command.options)),
       ...turnRequestParams(command.options)
     }, command);
@@ -974,6 +994,7 @@ class CodexAppServerBridge {
     const thread = asRecord(result?.thread);
     const threadId = typeof thread?.id === "string" ? thread.id : undefined;
     if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
+    this.rememberThreadCwd(threadId, cwd);
     this.markThreadLoaded(threadId);
     await this.forwardCurrentThreadChanged(threadId);
     return threadId;
@@ -1001,11 +1022,11 @@ class CodexAppServerBridge {
   private async handleMessage(data: unknown) {
     const message = parseJsonRecord(data);
     if (!message) return;
+    this.rememberThreads(message);
 
     if ((typeof message.id === "string" || typeof message.id === "number") && this.pending.has(message.id)) {
       const pending = this.pending.get(message.id)!;
       this.pending.delete(message.id);
-      this.rememberThreads(message);
       const error = asRecord(message.error);
       const threadId = threadIdForPendingMessage(pending, message);
       if (threadId && (!error || pending.method !== "thread/read")) {
@@ -1035,7 +1056,13 @@ class CodexAppServerBridge {
   private rememberThreads(message: JsonRecord) {
     const result = asRecord(message.result);
     const resultThread = asRecord(result?.thread);
-    if (typeof resultThread?.id === "string") this.loadedThreads.add(resultThread.id);
+    if (typeof resultThread?.id === "string") {
+      this.loadedThreads.add(resultThread.id);
+      this.rememberThreadCwdFromThread(resultThread);
+    }
+    const params = asRecord(message.params);
+    const paramsThread = asRecord(params?.thread);
+    if (paramsThread) this.rememberThreadCwdFromThread(paramsThread);
   }
 
   private rememberLoadedThread(pending: PendingRequest, message: JsonRecord) {
@@ -1052,7 +1079,8 @@ class CodexAppServerBridge {
     return threadId;
   }
 
-  private bindThread(threadId: string) {
+  private bindThread(threadId: string, cwd?: string) {
+    if (cwd) this.rememberThreadCwd(threadId, cwd);
     if (this.syncedThreads.has(threadId)) return;
     this.syncedThreads.set(threadId, {
       jsonlLine: 0,
@@ -1075,6 +1103,18 @@ class CodexAppServerBridge {
     this.loadedThreads.add(threadId);
   }
 
+  private rememberThreadCwd(threadId: string, cwd: string | undefined | null) {
+    const value = typeof cwd === "string" && cwd ? cwd : undefined;
+    if (!threadId || !value) return;
+    this.threadCwds.set(threadId, value);
+  }
+
+  private rememberThreadCwdFromThread(thread: JsonRecord) {
+    const threadId = typeof thread.id === "string" ? thread.id : "";
+    const cwd = typeof thread.cwd === "string" ? thread.cwd : undefined;
+    this.rememberThreadCwd(threadId, cwd);
+  }
+
   private resetJsonlCursor(threadId: string) {
     const state = this.syncedThreads.get(threadId);
     if (!state) return;
@@ -1095,6 +1135,7 @@ class CodexAppServerBridge {
     options: { markBridgeStarted?: boolean } = {}
   ) {
     if (this.loadedThreads.has(threadId)) return threadId;
+    this.rememberThreadCwd(threadId, cwd);
     if (options.markBridgeStarted) this.markBridgeStartedThread(threadId);
     const result = asRecord(await this.request("thread/resume", {
       threadId,
@@ -1104,6 +1145,7 @@ class CodexAppServerBridge {
     }, command));
     const thread = asRecord(result?.thread);
     const loadedThreadId = typeof thread?.id === "string" ? thread.id : threadId;
+    this.rememberThreadCwd(loadedThreadId, typeof thread?.cwd === "string" ? thread.cwd : cwd);
     this.markThreadLoaded(loadedThreadId);
     return loadedThreadId;
   }
@@ -1231,9 +1273,9 @@ class CodexAppServerBridge {
   private async syncSessionSettings(threadIds: string[]) {
     if (!threadIds.length) return;
     try {
-      const settings = await this.readSessionSettings();
-      const snapshot = JSON.stringify(settings);
       await Promise.all(threadIds.map(async (threadId) => {
+        const settings = await this.readSessionSettings(this.threadCwds.get(threadId) ?? this.options.cwd);
+        const snapshot = JSON.stringify(settings);
         if (this.forwardedSessionSettings.get(threadId) === snapshot) return;
         this.forwardedSessionSettings.set(threadId, snapshot);
         await this.forwardSessionSettings(threadId, settings);
@@ -1243,9 +1285,9 @@ class CodexAppServerBridge {
     }
   }
 
-  private async readSessionSettings(): Promise<SessionSettings> {
+  private async readSessionSettings(cwd: string): Promise<SessionSettings> {
     const result = asRecord(await this.request("config/read", {
-      cwd: this.options.cwd,
+      cwd,
       includeLayers: false
     }));
     const config = asRecord(result?.config);

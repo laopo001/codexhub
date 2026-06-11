@@ -248,6 +248,25 @@ export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) 
   return [...byId.values()].sort((a, b) => recordSortValue(a) - recordSortValue(b));
 };
 
+export const threadDisplayRecords = (
+  threadId: string,
+  thread: Pick<ThreadDetail, "jsonl" | "records"> | undefined
+) => {
+  const liveRecords = thread?.records ?? [];
+  if (!thread?.jsonl?.lines.length) return liveRecords;
+  const jsonlRecords = jsonlLinesToRecords(threadId, thread.jsonl);
+  const supplementalLiveRecords = liveRecords.filter(isSupplementalLiveRecord);
+  return supplementalLiveRecords.length
+    ? combineRecordSources(jsonlRecords, supplementalLiveRecords)
+    : jsonlRecords;
+};
+
+const isSupplementalLiveRecord = (record: CodexRecord) => {
+  if (record.type !== "error") return false;
+  const payload = asRecord(record.payload);
+  return payload?.type === "app_server_error" || payload?.type === "session_command_error" || payload?.type === "error";
+};
+
 export const recordSortValue = (record: CodexRecord) => {
   const timestamp = Date.parse(record.timestamp ?? "");
   if (Number.isFinite(timestamp)) return timestamp;
@@ -453,12 +472,14 @@ export const primeTaskNotificationPermission = () => {
 };
 
 export const isSimpleRecord = (record: CodexRecord) => {
+  if (record.type === "error") return true;
   if (record.type === "response_item") return true;
   const payload = asRecord(record.payload);
   return record.type === "event_msg" && payload?.type === "token_count";
 };
 
 export const isSimpleMainView = (view: CodexRecordView) => {
+  if (view.role === "error") return true;
   const payload = asRecord(view.record.payload);
   if (view.record.type !== "response_item") return false;
   if (payload?.type === "file_change") return false;
@@ -813,4 +834,3 @@ export const isMatchingAppServerTranscriptRecord = (record: CodexRecord, incomin
   if (incomingType === "agent_message") return recordPayload.phase === incomingPayload.phase;
   return JSON.stringify(recordPayload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
 };
-

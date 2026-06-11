@@ -74,27 +74,49 @@ const main = async () => {
 
     const serverMachine = await waitFor(
       async () => {
-        const payload = await apiJson<{ machines?: Array<{ machineId: string; type?: string; name?: string; online?: boolean }> }>(
+        const payload = await apiJson<{ machines?: Array<{ machineId: string; type?: string; name?: string; online?: boolean; capabilities?: { projectLauncher?: boolean } }> }>(
           parentApi,
           "/api/machines"
         );
-        return payload.machines?.find((machine) => machine.type === "server" && machine.name === "Child Group" && machine.online) ?? null;
+        return payload.machines?.find((machine) =>
+          machine.type === "server"
+          && machine.name === "Child Group"
+          && machine.online
+          && machine.capabilities?.projectLauncher === false
+        ) ?? null;
       },
       "server machine registration"
     );
-    console.log(`server machine ok: ${serverMachine.machineId}`);
+    console.log(`server connection ok: ${serverMachine.machineId}`);
 
-    const opened = await apiJson<{ result?: { sessionId?: string; threadId?: string; cwd?: string } }>(parentApi, "/api/projects/open", {
+    const rejectedOpen = await fetch(new URL("/api/projects/open", parentApi), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machineId: serverMachine.machineId, path: projectDir, reuse: true })
     });
-    const sessionId = opened.result?.sessionId;
-    const threadId = opened.result?.threadId;
-    if (sessionId !== fakeMachine.sessionId || threadId !== fakeMachine.threadId) {
-      throw new Error(`unexpected bridged session/thread: ${JSON.stringify(opened)}`);
-    }
-    console.log(`server bridge project ok: ${sessionId} ${threadId}`);
+    if (rejectedOpen.ok) throw new Error("server machine unexpectedly accepted project open");
+    console.log("server connection project launcher rejected ok");
+
+    const remoteSession = await waitFor(
+      async () => {
+        const payload = await apiJson<{
+          sessions?: Array<{
+            sessionId: string;
+            machineId?: string;
+            threads?: Array<{ threadId: string; title?: string }>;
+          }>;
+        }>(parentApi, "/api/sessions");
+        return payload.sessions?.find((session) =>
+          session.sessionId === fakeMachine.sessionId
+          && session.machineId === serverMachine.machineId
+          && session.threads?.some((thread) => thread.threadId === fakeMachine.threadId)
+        ) ?? null;
+      },
+      "remote thread broadcast"
+    );
+    const sessionId = remoteSession.sessionId;
+    const threadId = fakeMachine.threadId;
+    console.log(`server bridge thread ok: ${sessionId} ${threadId}`);
 
     await apiJson(parentApi, `/api/threads/${encodeURIComponent(threadId)}/turn`, {
       method: "POST",
@@ -165,6 +187,11 @@ class FakeLocalMachine {
   private handleMessage(data: unknown) {
     const message = parseMessage(data);
     if (!message) return;
+    if (message.type === "registered") {
+      this.registerSession();
+      this.sendThreadSnapshot();
+      return;
+    }
     if (message.type === "commands") {
       this.commandCursor = Math.max(this.commandCursor, message.cursor);
       for (const command of message.commands) this.handleMachineCommand(command);
@@ -257,7 +284,7 @@ class FakeLocalMachine {
 
   private sendThreadSnapshot() {
     this.send({
-      type: "session_thread_snapshot",
+      type: "thread_snapshot",
       sessionId: this.sessionId,
       thread: threadDetail(this.threadId, this.cwd, [])
     });
@@ -265,7 +292,7 @@ class FakeLocalMachine {
 
   private sendThreadEvent(kind: "record" | "done", record?: unknown) {
     this.send({
-      type: "session_thread_event",
+      type: "thread_event",
       sessionId: this.sessionId,
       event: {
         seq: Date.now(),

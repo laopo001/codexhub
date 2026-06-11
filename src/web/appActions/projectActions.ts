@@ -87,6 +87,7 @@ type ProjectActionsDependencies = {
 
 export type ProjectActions = {
   selectProjectSession: (session: SessionView) => Promise<void>;
+  selectSessionThread: (session: SessionView, threadId: string) => Promise<void>;
   selectProject: (project: ProjectSummary) => Promise<void>;
   loadProjectPickerDirectory: (machineId: string, targetPath?: string) => Promise<void>;
   openProjectPicker: (machine: ProjectMachineGroup) => void;
@@ -112,9 +113,14 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
 
   const selectProjectSession = async (session: SessionView) => {
     ctx.setActiveSessionId(session.sessionId);
-    ctx.setActiveWorkspacePath(session.workingDirectory);
-    const project = ctx.projectList.find((item) => item.session?.sessionId === session.sessionId)
+    const selectedProject = ctx.selectedProjectKey
+      ? ctx.projectList.find((item) => projectKeyForProject(item) === ctx.selectedProjectKey)
+      : undefined;
+    const project = selectedProject?.session?.sessionId === session.sessionId
+      ? selectedProject
+      : ctx.projectList.find((item) => item.session?.sessionId === session.sessionId && item.path === session.workingDirectory)
       ?? ctx.projectList.find((item) => item.machineId === session.machineId && item.path === session.workingDirectory);
+    ctx.setActiveWorkspacePath(project?.path ?? session.workingDirectory);
     if (project) {
       ctx.setSelectedProjectKey(projectKeyForProject(project));
       deps.focusTaskDraftProject(project);
@@ -129,6 +135,15 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     } else {
       ctx.setActiveTabThreadId("");
     }
+  };
+
+  const selectSessionThread = async (session: SessionView, threadId: string) => {
+    ctx.setSelectedProjectKey("");
+    ctx.setTaskError("");
+    ctx.setProjectOpenError("");
+    ctx.setThreadPicker(null);
+    ctx.setActiveWorkspacePath(session.workingDirectory);
+    await activateSessionThread(session.sessionId, threadId);
   };
 
   const selectProject = async (project: ProjectSummary) => {
@@ -216,15 +231,18 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     if (opened) ctx.setProjectPicker(null);
   };
 
-  const loadThreadPickerCandidates = async (sessionId: string) => {
+  const loadThreadPickerCandidates = async (sessionId: string, workingDirectory?: string) => {
     ctx.setThreadPicker((current) => current && current.sessionId === sessionId ? {
       ...current,
       loading: true,
       error: ""
     } : current);
     try {
+      const cwd = workingDirectory ?? ctx.threadPicker?.workingDirectory;
+      const query = new URLSearchParams({ limit: "20" });
+      if (cwd) query.set("cwd", cwd);
       const payload = await apiJson<ThreadCandidatesPayload>(
-        `/api/sessions/${encodeURIComponent(sessionId)}/thread-candidates?limit=20`
+        `/api/sessions/${encodeURIComponent(sessionId)}/thread-candidates?${query.toString()}`
       );
       ctx.setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
@@ -246,20 +264,25 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     ctx.setActiveWorkspacePath(session.workingDirectory);
     ctx.setThreadPicker({
       sessionId: session.sessionId,
+      workingDirectory: session.workingDirectory,
       loading: true,
       error: "",
       candidates: [],
       acting: null
     });
-    void loadThreadPickerCandidates(session.sessionId);
+    void loadThreadPickerCandidates(session.sessionId, session.workingDirectory);
   };
 
   const activateSessionThread = async (sessionId: string, threadId: string) => {
     ctx.closedThreadIds.current.delete(threadId);
     const session = ctx.sessionList.find((item) => item.sessionId === sessionId);
+    const thread = session?.threads?.find((item) => item.threadId === threadId)
+      ?? ctx.projectList
+        .flatMap((project) => project.session?.sessionId === sessionId ? project.session.threads ?? [] : [])
+        .find((item) => item.threadId === threadId);
     if (session) {
       ctx.setActiveSessionId(session.sessionId);
-      ctx.setActiveWorkspacePath(session.workingDirectory);
+      ctx.setActiveWorkspacePath(thread?.workingDirectory ?? session.workingDirectory);
     }
     ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
     ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, threadId));
@@ -289,7 +312,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
       const thread = await apiJson<ThreadDetail>(`/api/sessions/${encodeURIComponent(sessionId)}/threads`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "new" })
+        body: JSON.stringify({ action: "new", cwd: ctx.threadPicker.workingDirectory })
       });
       ctx.setThreadPicker(null);
       await activateSessionThread(sessionId, thread.threadId);
@@ -319,7 +342,11 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
       const thread = await apiJson<ThreadDetail>(`/api/sessions/${encodeURIComponent(sessionId)}/threads`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "resume", threadId: candidate.threadId })
+        body: JSON.stringify({
+          action: "resume",
+          threadId: candidate.threadId,
+          cwd: ctx.threadPicker.workingDirectory
+        })
       });
       ctx.setThreadPicker(null);
       await activateSessionThread(sessionId, thread.threadId);
@@ -438,14 +465,26 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
   };
 
   const switchSessionThread = async (threadId: string) => {
-    const session = ctx.activeProjectSession;
-    if (!session || threadId === ctx.activeTabThreadId) return;
-    ctx.setActiveTabThreadBySession((current) => ({ ...current, [session.sessionId]: threadId }));
+    if (threadId === ctx.activeTabThreadId) return;
+    const thread = ctx.sessions.find((item) => item.threadId === threadId);
+    const sessionId = thread?.session.sessionId ?? ctx.activeProjectSession?.sessionId ?? "";
+    if (sessionId) {
+      ctx.setActiveSessionId(sessionId);
+      ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
+    }
+    if (thread) {
+      ctx.setActiveWorkspacePath(thread.workingDirectory);
+      const session = sessionId ? ctx.sessionList.find((item) => item.sessionId === sessionId) : undefined;
+      const project = ctx.projectList.find((item) => item.session?.sessionId === sessionId)
+        ?? (session ? ctx.projectList.find((item) => item.machineId === session.machineId && item.path === session.workingDirectory) : undefined);
+      ctx.setSelectedProjectKey(project ? projectKeyForProject(project) : "");
+    }
     await deps.openThread(threadId).catch(() => deps.clearActiveThreadIfLatest(threadId));
   };
 
   return {
     selectProjectSession,
+    selectSessionThread,
     selectProject,
     loadProjectPickerDirectory,
     openProjectPicker,

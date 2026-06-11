@@ -31,7 +31,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeGoal,
     activeProjectKey,
     activeProjectSession,
-    activeProjectSessionThreadTabs,
     activeSession,
     activeThreadBelongsToSession,
     activeUserMessageHistory,
@@ -163,8 +162,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     updateTaskDraftMachine,
     updateTaskDraftProject,
     updateThreadGoal,
-    workspaceEmptyMessage
-    } = viewModel;
+    workspaceEmptyMessage,
+    workspaceThreadTabs
+  } = viewModel;
   if (authRequired) {
     return (
       <main className="authShell">
@@ -251,7 +251,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
           </div>
         </header>
 
-        {activeProjectSession && activeSession && activeThreadBelongsToSession ? (
+        {activeSession && activeThreadBelongsToSession ? (
           <Tabs
             className="workspaceThreadTabs"
             tabBarExtraContent={{
@@ -274,7 +274,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
             size="small"
             type="editable-card"
             activeKey={activeSession.threadId}
-            items={activeProjectSessionThreadTabs.map((item) => ({
+            items={workspaceThreadTabs.map((item) => ({
               ...item,
               closable: true,
               children: item.key === activeSession.threadId ? (
@@ -544,7 +544,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
             onChange={(threadId) => void switchSessionThread(threadId)}
             onEdit={(targetKey, action) => {
               if (action === "add") {
-                if (activeProjectSession.online) openThreadPicker(activeProjectSession);
+                if (activeProjectSession?.online) openThreadPicker(activeProjectSession);
                 return;
               }
               if (action === "remove" && typeof targetKey === "string") {

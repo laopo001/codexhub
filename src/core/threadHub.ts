@@ -210,6 +210,7 @@ type ThreadState = {
 type PendingCommand = {
   type: SessionCommand["type"];
   threadId?: string;
+  workingDirectory?: string;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;
   timer?: NodeJS.Timeout;
@@ -342,7 +343,7 @@ export class ThreadHub {
         return { ok: false, sessionId, commandId };
       }
       const thread = this.ensureThread(threadId, session, {
-        result: { thread: { id: threadId, cwd: session.workingDirectory } }
+        result: { thread: { id: threadId, cwd: pending.workingDirectory ?? session.workingDirectory } }
       });
       this.resolveCommand(commandId, this.detail(thread));
       return { ok: true, sessionId, commandId };
@@ -562,10 +563,10 @@ export class ThreadHub {
     return thread ? this.detail(thread) : null;
   }
 
-  attachSessionThread(sessionId: string, threadId: string): ThreadSummary {
+  attachSessionThread(sessionId: string, threadId: string, workingDirectory?: string): ThreadSummary {
     const session = this.requireOnlineSession(sessionId);
     const thread = this.ensureThread(threadId, session, {
-      params: { threadId, cwd: session.workingDirectory }
+      params: { threadId, cwd: workingDirectory ?? session.workingDirectory }
     });
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
@@ -603,41 +604,48 @@ export class ThreadHub {
     return this.threads.get(threadId)?.threadUsage ?? emptyThreadUsage();
   }
 
-  async listSessionThreadCandidates(sessionId: string, limit = 50): Promise<SessionThreadCandidatesResult> {
+  async listSessionThreadCandidates(
+    sessionId: string,
+    limit = 50,
+    workingDirectory?: string
+  ): Promise<SessionThreadCandidatesResult> {
     const session = this.requireOnlineSession(sessionId);
+    const cwd = workingDirectory || session.workingDirectory;
     const commandId = randomUUID();
-    const promise = this.waitForCommand<SessionThreadCandidatesResult>(commandId, "list_threads", undefined, 60_000);
+    const promise = this.waitForCommand<SessionThreadCandidatesResult>(commandId, "list_threads", undefined, 60_000, cwd);
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "list_threads",
-      workingDirectory: session.workingDirectory,
+      workingDirectory: cwd,
       createdAt: new Date().toISOString(),
       limit
     });
     return await promise;
   }
 
-  async startSessionThread(sessionId: string): Promise<ThreadDetail> {
+  async startSessionThread(sessionId: string, workingDirectory?: string): Promise<ThreadDetail> {
     const session = this.requireOnlineSession(sessionId);
+    const cwd = workingDirectory || session.workingDirectory;
     const commandId = randomUUID();
-    const promise = this.waitForCommand<ThreadDetail>(commandId, "start_thread", undefined, 60_000);
+    const promise = this.waitForCommand<ThreadDetail>(commandId, "start_thread", undefined, 60_000, cwd);
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "start_thread",
-      workingDirectory: session.workingDirectory,
+      workingDirectory: cwd,
       createdAt: new Date().toISOString()
     });
     return await promise;
   }
 
-  async resumeSessionThread(sessionId: string, threadId: string): Promise<ThreadDetail> {
+  async resumeSessionThread(sessionId: string, threadId: string, workingDirectory?: string): Promise<ThreadDetail> {
     const session = this.requireOnlineSession(sessionId);
+    const cwd = workingDirectory || this.threads.get(threadId)?.workingDirectory || session.workingDirectory;
     const commandId = randomUUID();
-    const promise = this.waitForCommand<ThreadDetail>(commandId, "resume_thread", threadId, 60_000);
+    const promise = this.waitForCommand<ThreadDetail>(commandId, "resume_thread", threadId, 60_000, cwd);
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "resume_thread",
-      workingDirectory: session.workingDirectory,
+      workingDirectory: cwd,
       createdAt: new Date().toISOString(),
       threadId
     });
@@ -649,7 +657,7 @@ export class ThreadHub {
     const session = this.requireThreadSession(source);
     const rollbackPlan = recordId ? rollbackPlanAfterRecord(source, recordId) : { rollbackTurns: 0, keepTurns: 0 };
     const commandId = randomUUID();
-    const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId);
+    const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId, undefined, source.workingDirectory);
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "fork_thread",
@@ -678,7 +686,7 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
-    const promise = this.waitForCommand<ThreadDetail>(commandId, "rollback_thread", thread.threadId);
+    const promise = this.waitForCommand<ThreadDetail>(commandId, "rollback_thread", thread.threadId, undefined, thread.workingDirectory);
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "rollback_thread",
@@ -749,7 +757,7 @@ export class ThreadHub {
     const commandOptions = options ? { ...options } : { ...thread.threadOptions };
     if (options) thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
     const commandId = randomUUID();
-    const promise = this.waitForCommand<void>(commandId, "turn", thread.threadId, turnCommandTimeoutMs());
+    const promise = this.waitForCommand<void>(commandId, "turn", thread.threadId, turnCommandTimeoutMs(), thread.workingDirectory);
     this.activeTurnCommands.set(thread.threadId, commandId);
 
     const userText = summarizeInput(input);
@@ -773,7 +781,7 @@ export class ThreadHub {
   private steerTurn(thread: ThreadState, input: ProxyInput, turnId: string) {
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
-    const promise = this.waitForCommand<void>(commandId, "steer", thread.threadId);
+    const promise = this.waitForCommand<void>(commandId, "steer", thread.threadId, undefined, thread.workingDirectory);
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
     this.enqueueSessionCommand(session.sessionId, {
@@ -796,7 +804,7 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
-    const promise = this.waitForCommand<void>(commandId, "clear_goal", thread.threadId);
+    const promise = this.waitForCommand<void>(commandId, "clear_goal", thread.threadId, undefined, thread.workingDirectory);
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
     this.enqueueSessionCommand(session.sessionId, {
@@ -812,7 +820,7 @@ export class ThreadHub {
   private setThreadGoal(thread: ThreadState, goal: ThreadGoalUpdate) {
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
-    const promise = this.waitForCommand<void>(commandId, "set_goal", thread.threadId);
+    const promise = this.waitForCommand<void>(commandId, "set_goal", thread.threadId, undefined, thread.workingDirectory);
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
     this.enqueueSessionCommand(session.sessionId, {
@@ -842,10 +850,18 @@ export class ThreadHub {
     });
   }
 
-  runSessionThreadTurn(sessionId: string, threadId: string, input: ProxyInput, source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
+  runSessionThreadTurn(
+    sessionId: string,
+    threadId: string,
+    input: ProxyInput,
+    source: "web" | "telegram" | "task" = "web",
+    options?: ThreadRunOptions,
+    workingDirectory?: string
+  ) {
     const session = this.requireOnlineSession(sessionId);
+    const existing = this.threads.get(threadId);
     const thread = this.ensureThread(threadId, session, {
-      params: { threadId, cwd: session.workingDirectory }
+      params: { threadId, cwd: workingDirectory ?? existing?.workingDirectory ?? session.workingDirectory }
     });
     const command = this.runLocalCommand(thread.threadId, input, source);
     if (command.handled) {
@@ -938,7 +954,8 @@ export class ThreadHub {
     commandId: string,
     type: SessionCommand["type"],
     threadId?: string,
-    timeoutMs: number | null | undefined = 30000
+    timeoutMs: number | null | undefined = 30000,
+    workingDirectory?: string
   ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = typeof timeoutMs === "number" && timeoutMs > 0
@@ -958,6 +975,7 @@ export class ThreadHub {
       this.pendingCommands.set(commandId, {
         type,
         threadId,
+        workingDirectory,
         resolve: resolve as (value?: unknown) => void,
         reject,
         timer

@@ -43,6 +43,7 @@ type MachineTransportMessage =
 type ManagedSession = {
   session: HeadlessCodexhubSessionHandle;
   cwd: string;
+  projectsByCwd: Map<string, MachineStartSessionResult>;
 };
 
 export const runCodexhubMachine = async (options: MachineRunnerOptions) => {
@@ -68,7 +69,7 @@ class CodexhubMachineRunner {
   private loopStarted = false;
   private commandCursor = 0;
   private commandChain = Promise.resolve();
-  private readonly sessionsByCwd = new Map<string, ManagedSession>();
+  private runtimeSession: ManagedSession | null = null;
   private readonly sessionTransports = new Map<string, MachineSessionTransport>();
 
   constructor(private readonly options: MachineRunnerOptions) {
@@ -220,23 +221,37 @@ class CodexhubMachineRunner {
   private async startSession(command: MachineCommand): Promise<MachineStartSessionResult> {
     if (command.type !== "start_session") throw new Error(`Unexpected command: ${command.type}`);
     const cwd = await resolveDirectory(command.cwd);
-    const existing = command.reuse !== false ? this.sessionsByCwd.get(cwd) : undefined;
+    const existing = command.reuse !== false ? this.runtimeSession?.projectsByCwd.get(cwd) : undefined;
     if (existing) {
       return {
-        sessionId: existing.session.sessionId,
-        threadId: existing.session.threadId,
-        appServerUrl: existing.session.appServerUrl,
+        ...existing,
         cwd,
         reused: true
       };
     }
 
-    console.error(`codexhub machine session starting: ${cwd}`);
+    const runtime = await this.ensureRuntimeSession(cwd);
+    const threadId = runtime.projectsByCwd.size === 0 && runtime.cwd === cwd
+      ? runtime.session.threadId
+      : await runtime.session.startThread(cwd);
+    const result = {
+      sessionId: runtime.session.sessionId,
+      threadId,
+      appServerUrl: runtime.session.appServerUrl,
+      cwd
+    };
+    runtime.projectsByCwd.set(cwd, result);
+    return result;
+  }
+
+  private async ensureRuntimeSession(cwd: string): Promise<ManagedSession> {
+    if (this.runtimeSession) return this.runtimeSession;
+    console.error(`codexhub machine app-server starting: ${cwd}`);
     const session = await startHeadlessCodexhubSession({
       apiBase: this.options.apiBase,
       machineId: this.machineId,
       cwd,
-      readyLabel: "codexhub machine session ready",
+      readyLabel: "codexhub machine app-server ready",
       transportFactory: (context, callbacks) => {
         const transport = new MachineSessionTransport({
           sessionId: context.sessionId,
@@ -248,32 +263,38 @@ class CodexhubMachineRunner {
         return transport;
       }
     });
-    this.sessionsByCwd.set(cwd, { session, cwd });
+    const runtime = { session, cwd, projectsByCwd: new Map<string, MachineStartSessionResult>() };
+    this.runtimeSession = runtime;
     void session.wait().then(() => {
-      if (this.sessionsByCwd.get(cwd)?.session.sessionId === session.sessionId) this.sessionsByCwd.delete(cwd);
+      if (this.runtimeSession?.session.sessionId === session.sessionId) this.runtimeSession = null;
     }).catch(() => {
-      if (this.sessionsByCwd.get(cwd)?.session.sessionId === session.sessionId) this.sessionsByCwd.delete(cwd);
+      if (this.runtimeSession?.session.sessionId === session.sessionId) this.runtimeSession = null;
     });
+    return runtime;
+  }
+
+  private findRuntimeProject(sessionId: string) {
+    const runtime = this.runtimeSession;
+    if (!runtime || runtime.session.sessionId !== sessionId) return null;
+    for (const [cwd, result] of runtime.projectsByCwd) {
+      if (result.sessionId === sessionId) return { runtime, cwd };
+    }
     return {
-      sessionId: session.sessionId,
-      threadId: session.threadId,
-      appServerUrl: session.appServerUrl,
-      cwd
+      runtime,
+      cwd: runtime.cwd
     };
   }
 
   private async stopSession(command: MachineCommand): Promise<MachineStopSessionResult> {
     if (command.type !== "stop_session") throw new Error(`Unexpected command: ${command.type}`);
-    const entry = [...this.sessionsByCwd.entries()]
-      .find(([, item]) => item.session.sessionId === command.sessionId);
+    const entry = this.findRuntimeProject(command.sessionId);
     if (!entry) return { sessionId: command.sessionId, stopped: false };
-    const [cwd, item] = entry;
-    this.sessionsByCwd.delete(cwd);
-    await item.session.stop();
+    this.runtimeSession = null;
+    await entry.runtime.session.stop();
     return {
       sessionId: command.sessionId,
       stopped: true,
-      cwd
+      cwd: entry.cwd
     };
   }
 
@@ -303,9 +324,9 @@ class CodexhubMachineRunner {
   }
 
   private async stopSessions() {
-    const sessions = [...this.sessionsByCwd.values()];
-    this.sessionsByCwd.clear();
-    await Promise.allSettled(sessions.map((item) => item.session.stop()));
+    const runtime = this.runtimeSession;
+    this.runtimeSession = null;
+    if (runtime) await runtime.session.stop();
   }
 }
 

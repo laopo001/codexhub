@@ -296,6 +296,7 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
   const groups = new Map<string, ProjectMachineGroup>();
   for (const machine of machines) {
     if (!machine.online) continue;
+    if (!machineProjectLauncher(machine)) continue;
     groups.set(machine.machineId, {
       key: machine.machineId,
       label: machine.name ?? machine.hostname,

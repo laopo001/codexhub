@@ -87,6 +87,7 @@ const main = async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state."));
   const pluginDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-plugins."));
   const projectDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-project."));
+  const secondProjectDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-project-shared."));
   const sshDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-ssh."));
   const fakeSshDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-bin."));
   const fakeSshArgsPath = path.join(fakeSshDir, "ssh-args.txt");
@@ -107,6 +108,7 @@ const main = async () => {
 
   await assertTaskCronSemantics();
   await assertServerStateSnapshotPure();
+  await assertServerConnectionStateMerge();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertProjectNamesArePathBasenames();
   await assertProjectSessionProjection();
@@ -186,11 +188,30 @@ const main = async () => {
     await assertPluginState(apiBase, plugins);
     console.log("plugins ok");
 
-    await assertProjectDeleteStopsSession(apiBase, projectId, sessionId);
-    console.log("project delete stopped session ok");
+    const secondOpen = await apiJson<ProjectOpenResponse>(apiBase, "/api/projects/open", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ machineId: machine.machineId, path: secondProjectDir })
+    });
+    const secondProjectId = secondOpen.project?.projectId;
+    const secondThreadId = secondOpen.result?.threadId;
+    if (secondOpen.result?.sessionId !== sessionId || !secondProjectId || !secondThreadId) {
+      throw new Error(`second project did not reuse runtime session: ${JSON.stringify(secondOpen)}`);
+    }
+    if (secondOpen.result?.cwd !== secondProjectDir) {
+      throw new Error(`second project opened unexpected cwd: ${secondOpen.result?.cwd}`);
+    }
+    if (secondThreadId === threadId) {
+      throw new Error("second project reused the first project thread");
+    }
+    await assertProjectSession(apiBase, secondProjectId, sessionId);
+    console.log("shared project session ok");
 
-    await assertSessionIdleTimeout(apiBase, machine.machineId);
-    console.log("session idle timeout ok");
+    await assertProjectDeleteKeepsSharedSession(apiBase, projectId, sessionId);
+    console.log("project delete kept shared session ok");
+
+    await assertSessionStaysOnlineAfterWatcherIdle(apiBase, machine.machineId);
+    console.log("session stays online after watcher idle ok");
 
     const legacyError = await sendLegacySessionRegistration(port);
     if (!legacyError.includes("workerId") || !legacyError.includes("unrecognized_keys")) {
@@ -646,6 +667,45 @@ const assertServerStateSnapshotPure = async () => {
   if (after !== before) throw new Error("CodexhubServerState.snapshot mutated server-state.yaml");
 };
 
+const assertServerConnectionStateMerge = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-server-connections."));
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const first = await CodexhubServerState.load({ dataDir });
+  const second = await CodexhubServerState.load({ dataDir });
+  const connection = second.upsertServerConnection({
+    name: "parent",
+    url: "http://127.0.0.1:8788",
+    enabled: true
+  });
+  await second.flush();
+
+  first.upsertProject({
+    machineId: "machine-state-merge-smoke",
+    path: "/tmp/codexhub-state-merge-smoke",
+    now: "2026-01-01T00:00:00.000Z"
+  });
+  await first.flush();
+  const saved = await readFile(first.path, "utf8");
+  if (!saved.includes("\nserverConnections:") || !saved.includes("http://127.0.0.1:8788")) {
+    throw new Error(`concurrent state save dropped server connections:\n${saved}`);
+  }
+
+  const stale = await CodexhubServerState.load({ dataDir });
+  const remover = await CodexhubServerState.load({ dataDir });
+  if (!remover.deleteServerConnection(connection.connectionId)) throw new Error("server connection delete smoke setup failed");
+  await remover.flush();
+  stale.upsertProject({
+    machineId: "machine-state-merge-stale-smoke",
+    path: "/tmp/codexhub-state-merge-stale-smoke",
+    now: "2026-01-01T00:01:00.000Z"
+  });
+  await stale.flush();
+  const afterDelete = await readFile(stale.path, "utf8");
+  if (afterDelete.includes("http://127.0.0.1:8788")) {
+    throw new Error(`stale state save resurrected deleted server connection:\n${afterDelete}`);
+  }
+};
+
 const assertServerStateDoesNotPersistThreadHistory = async () => {
   const legacyDataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-thread-history-legacy."));
   await writeFile(path.join(legacyDataDir, "server-state.yaml"), [
@@ -771,6 +831,7 @@ const assertProjectSessionProjection = async () => {
   const state = await CodexhubServerState.load({ dataDir });
   const machineId = "machine-session-smoke";
   const projectPath = "/tmp/codexhub-session-smoke";
+  const runtimePath = "/tmp/codexhub-runtime-smoke";
   const machine = {
     machineId,
     type: "local" as const,
@@ -784,7 +845,7 @@ const assertProjectSessionProjection = async () => {
     sessionId: "session-projection-smoke",
     machineId,
     name: "session-smoke",
-    workingDirectory: projectPath,
+    workingDirectory: runtimePath,
     online: true,
     status: "online" as const,
     lastSeenAt: "2026-01-01T00:02:00.000Z",
@@ -798,7 +859,12 @@ const assertProjectSessionProjection = async () => {
     throw new Error("session created a project without an explicit project");
   }
 
-  const project = state.upsertProject({ machineId, path: projectPath, now: "2026-01-01T00:03:00.000Z" });
+  const project = state.upsertProject({
+    machineId,
+    path: projectPath,
+    sessionId: session.sessionId,
+    now: "2026-01-01T00:03:00.000Z"
+  });
   if (!project) throw new Error("session projection project upsert failed");
   state.captureSessions({ sessions: [session], threads: [] });
   const onlineSnapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [] });
@@ -806,6 +872,9 @@ const assertProjectSessionProjection = async () => {
   if (!onlineProject?.machineOnline) throw new Error("project session projection did not expose machineOnline");
   if (onlineProject.session?.sessionId !== session.sessionId || onlineProject.session.online !== true) {
     throw new Error(`project session projection did not attach online session: ${JSON.stringify(onlineProject?.session)}`);
+  }
+  if (onlineProject.session.workingDirectory !== projectPath) {
+    throw new Error(`project session projection did not expose project cwd: ${JSON.stringify(onlineProject.session)}`);
   }
 
   const offlineSession = {
@@ -898,7 +967,7 @@ const assertProjectSession = async (apiBase: string, projectId: string, sessionI
   }
 };
 
-const assertProjectDeleteStopsSession = async (apiBase: string, projectId: string, sessionId: string) => {
+const assertProjectDeleteKeepsSharedSession = async (apiBase: string, projectId: string, sessionId: string) => {
   const deleted = await apiJson<{ stoppedSessions?: unknown[] }>(apiBase, `/api/projects/${encodeURIComponent(projectId)}`, {
     method: "DELETE"
   });
@@ -906,22 +975,22 @@ const assertProjectDeleteStopsSession = async (apiBase: string, projectId: strin
   const stoppedSession = (deleted.stoppedSessions ?? [])
     .map(asRecord)
     .find((item) => item.sessionId === sessionId);
-  if (!stoppedSession || (stoppedSession.stopped !== true && stoppedSession.removed !== true)) {
-    throw new Error(`DELETE /api/projects did not stop/remove session ${sessionId}: ${JSON.stringify(deleted.stoppedSessions)}`);
+  if (!stoppedSession || stoppedSession.stopped !== false || stoppedSession.reason !== "shared_session") {
+    throw new Error(`DELETE /api/projects did not preserve shared session ${sessionId}: ${JSON.stringify(deleted.stoppedSessions)}`);
   }
 
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 5000) {
+  while (Date.now() - startedAt < 2000) {
     const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
     const session = (payload.sessions ?? []).map(asRecord).find((item) => item.sessionId === sessionId);
-    if (!session || session.online !== true) return;
+    if (session?.online === true) return;
     await delay(100);
   }
   const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
-  throw new Error(`deleted project session remained online: ${JSON.stringify(payload.sessions)}`);
+  throw new Error(`shared project session went offline after delete: ${JSON.stringify(payload.sessions)}`);
 };
 
-const assertSessionIdleTimeout = async (apiBase: string, machineId: string) => {
+const assertSessionStaysOnlineAfterWatcherIdle = async (apiBase: string, machineId: string) => {
   const previousTimeout = process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS;
   process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS = "25";
   try {
@@ -937,14 +1006,14 @@ const assertSessionIdleTimeout = async (apiBase: string, machineId: string) => {
     await subscribeThreadOnce(apiBase, threadId);
 
     const startedAt = Date.now();
-    while (Date.now() - startedAt < 8000) {
+    while (Date.now() - startedAt < 6000) {
       const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
       const session = (payload.sessions ?? []).map(asRecord).find((item) => item.sessionId === sessionId);
-      if (!session || session.online !== true) return;
+      if (!session || session.online !== true) {
+        throw new Error(`runtime session went offline after watcher idle: ${JSON.stringify(payload.sessions)}`);
+      }
       await delay(100);
     }
-    const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
-    throw new Error(`idle session remained online: ${JSON.stringify(payload.sessions)}`);
   } finally {
     if (previousTimeout === undefined) delete process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS;
     else process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS = previousTimeout;

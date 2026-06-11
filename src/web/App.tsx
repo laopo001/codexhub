@@ -14,7 +14,6 @@ import { createServerConnectionActions } from "./appActions/serverConnectionActi
 import { createSshActions } from "./appActions/sshActions.js";
 import { createTaskActions } from "./appActions/taskActions.js";
 import { createThreadActions } from "./appActions/threadActions.js";
-import { jsonlLinesToRecords } from "./jsonlRecordViews.js";
 import "antd/dist/antd.css";
 import "./style.css";
 import type {
@@ -35,6 +34,7 @@ import type {
   ReasoningSelection,
   ServerConnection,
   ServerConnectionDraft,
+  ServerThreadGroup,
   SessionView,
   SshConnection,
   SshHost,
@@ -74,6 +74,7 @@ import {
   primeTaskCompletionSound,
   projectKeyForProject,
   setAuthToken,
+  threadDisplayRecords,
   threadDisplayTitle,
   turnUiStateFromStatus,
   usageTotal,
@@ -190,15 +191,41 @@ const App = () => {
   }, [activeSession?.threadId, activeSession?.input]);
 
   const projectList = useMemo(() => projects, [projects]);
+  const selectedProjectByKey = useMemo(
+    () => selectedProjectKey
+      ? projectList.find((project) => projectKeyForProject(project) === selectedProjectKey)
+      : undefined,
+    [projectList, selectedProjectKey]
+  );
   const activeProjectSession = useMemo(
-    () => sessionList.find((session) => session.sessionId === activeSessionId)
+    () => selectedProjectByKey?.session
+      ?? projectList.find((project) =>
+        project.session?.sessionId === activeSessionId
+        && (!activeWorkspacePath || project.path === activeWorkspacePath)
+      )?.session
       ?? projectList.find((project) => project.session?.sessionId === activeSessionId)?.session
+      ?? sessionList.find((session) => session.sessionId === activeSessionId)
       ?? undefined,
-    [activeSessionId, projectList, sessionList]
+    [activeSessionId, activeWorkspacePath, projectList, selectedProjectByKey, sessionList]
   );
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
   const localMachines = useMemo(() => machines.filter((machine) => machine.type === "local"), [machines]);
   const serverMachines = useMemo(() => machines.filter((machine) => machine.type === "server"), [machines]);
+  const serverThreadGroups = useMemo<ServerThreadGroup[]>(() => serverMachines.map((machine) => {
+    const connectionSessions = sessionList.filter((session) => session.machineId === machine.machineId);
+    const threads = connectionSessions
+      .flatMap((session) => (session.threads ?? []).map((thread) => ({
+        session,
+        thread
+      })))
+      .sort((left, right) => Number(right.thread.running) - Number(left.thread.running)
+        || right.thread.updatedAt.localeCompare(left.thread.updatedAt));
+    return {
+      machine,
+      sessions: connectionSessions,
+      threads
+    };
+  }), [serverMachines, sessionList]);
   const registeredMachines = useMemo(() => machines.filter((machine) => machine.type === "registered"), [machines]);
   const sshConfigHostOptions = useMemo(() => {
     const savedAliases = new Set(sshHosts.map((host) => host.alias));
@@ -212,12 +239,17 @@ const App = () => {
   );
   const projectGroups = useMemo(() => groupProjectsByMachine(projectList, machines), [projectList, machines]);
   const selectedProject = useMemo(() => {
-    const explicitProject = selectedProjectKey
-      ? projectList.find((project) => projectKeyForProject(project) === selectedProjectKey)
-      : undefined;
-    if (explicitProject) return explicitProject;
+    if (selectedProjectByKey) return selectedProjectByKey;
     if (activeProjectSession) {
-      return projectList.find((project) => project.session?.sessionId === activeProjectSession.sessionId)
+      return projectList.find((project) =>
+        project.session?.sessionId === activeProjectSession.sessionId
+        && project.path === activeProjectSession.workingDirectory
+      )
+        ?? projectList.find((project) =>
+          project.session?.sessionId === activeProjectSession.sessionId
+          && (!activeWorkspacePath || project.path === activeWorkspacePath)
+        )
+        ?? projectList.find((project) => project.session?.sessionId === activeProjectSession.sessionId)
         ?? projectList.find((project) => project.machineId === activeProjectSession.machineId && project.path === activeProjectSession.workingDirectory);
     }
     if (activeSessionId) {
@@ -225,7 +257,7 @@ const App = () => {
       if (sessionProject) return sessionProject;
     }
     return activeWorkspacePath ? projectList.find((project) => project.path === activeWorkspacePath) : undefined;
-  }, [activeProjectSession, activeSessionId, activeWorkspacePath, projectList, selectedProjectKey]);
+  }, [activeProjectSession, activeSessionId, activeWorkspacePath, projectList, selectedProjectByKey]);
   const activeProjectKey = selectedProject ? projectKeyForProject(selectedProject) : "";
   const activeProjectSessionThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
@@ -241,31 +273,36 @@ const App = () => {
       ...byId.values()
     ];
   }, [activeProjectSession, threadOrderBySession]);
-  const activeProjectSessionThreadIds = useMemo(
-    () => activeProjectSessionThreads.map((thread) => thread.threadId),
-    [activeProjectSessionThreads]
+  const workspaceThreadIds = useMemo(
+    () => sessions.map((session) => session.threadId),
+    [sessions]
   );
   const activeThreadSummary = useMemo(
-    () => activeProjectSessionThreads.find((thread) => thread.threadId === activeTabThreadId) ?? null,
-    [activeProjectSessionThreads, activeTabThreadId]
+    () => {
+      if (activeSession) return activeSession;
+      for (const session of sessionList) {
+        const thread = session.threads?.find((item) => item.threadId === activeTabThreadId);
+        if (thread) return thread;
+      }
+      return null;
+    },
+    [activeSession, activeTabThreadId, sessionList]
   );
-  const activeProjectSessionThreadIdsKey = activeProjectSessionThreadIds.join("\n");
-  const activeProjectSessionThreadTabs = useMemo(() => activeProjectSessionThreads.map((thread) => {
+  const workspaceThreadIdsKey = workspaceThreadIds.join("\n");
+  const workspaceThreadTabs = useMemo(() => sessions.map((thread) => {
     const title = threadDisplayTitle(thread);
     return {
       key: thread.threadId,
       label: (
-        <span className="workspaceThreadTabLabel" title={`${title}\n${thread.threadId}`}>
+        <span className="workspaceThreadTabLabel" title={`${title}\n${thread.workingDirectory}\n${thread.threadId}`}>
           <span>{title}</span>
           <code>{thread.threadId}</code>
         </span>
       )
     };
-  }), [activeProjectSessionThreads]);
+  }), [sessions]);
   const displayRecords = useMemo(
-    () => activeSession?.jsonl?.lines.length
-      ? jsonlLinesToRecords(activeSession.threadId, activeSession.jsonl)
-      : activeSession?.records ?? [],
+    () => activeSession ? threadDisplayRecords(activeSession.threadId, activeSession) : [],
     [activeSession?.jsonl, activeSession?.records, activeSession?.threadId]
   );
   const goalRecords = useMemo(
@@ -342,18 +379,21 @@ const App = () => {
     ? `${latestView.id}:${latestView.status ?? ""}:${latestView.text.length}:${latestView.usage ? usageTotal(latestView.usage) : ""}`
     : "";
   const activeDisplayThreadId = activeSession?.threadId ?? activeTabThreadId;
-  const activeThreadBelongsToSession = Boolean(activeSession && activeProjectSessionThreads.some((thread) => thread.threadId === activeSession.threadId));
+  const activeThreadBelongsToSession = Boolean(activeSession && workspaceThreadIds.includes(activeSession.threadId));
   const activeHasDraft = Boolean(activeSession?.input.trim() || activeSession?.imageAttachments.length || activeSession?.textAttachments.length);
+  const activeRuntimeOnline = Boolean(activeSession?.session.online && activeSession.session.runnable !== false);
   const activeCanSend = Boolean(
     activeSession
     && activeThreadBelongsToSession
-    && activeProjectSession?.online
+    && activeRuntimeOnline
     && activeHasDraft
   );
-  const activeCanStop = Boolean(activeThreadBelongsToSession && activeSession?.running);
+  const activeCanStop = Boolean(activeThreadBelongsToSession && activeRuntimeOnline && activeSession?.running);
   const activeCanSubmit = activeCanSend;
   const showComposerSendButton = Boolean(activeSession && !activeSession.running);
-  const workspaceEmptyMessage = activeProjectSession
+  const workspaceEmptyMessage = workspaceThreadTabs.length
+    ? "Select a thread"
+    : activeProjectSession
     ? activeProjectSession.online
       ? activeProjectSessionThreads.length ? "Select a thread" : "No threads"
       : "Session disconnected"
@@ -527,7 +567,7 @@ const App = () => {
   useEffect(() => {
     if (!initialized) return;
     const projectSessions = projectList.flatMap((project) => project.session ? [project.session] : []);
-    if (!projectSessions.length) {
+    if (!projectSessions.length && !sessionList.length) {
       if (activeSessionId) setActiveSessionId("");
       if (activeTabThreadId) setActiveTabThreadId("");
       return;
@@ -548,7 +588,7 @@ const App = () => {
       return;
     }
 
-    const session = activeProjectSession ?? projectSessions[0];
+    const session = activeProjectSession ?? projectSessions[0] ?? sessionList[0];
     if (!session) return;
     if (!activeProjectSession) {
       setActiveSessionId(session.sessionId);
@@ -582,12 +622,12 @@ const App = () => {
     if (activeTabThreadId !== desiredThreadId) {
       void openThread(desiredThreadId).catch(() => clearActiveThreadIfLatest(desiredThreadId));
     }
-  }, [activeTabThreadId, activeProjectSession, activeSessionId, initialized, activeTabThreadBySession, projectList, selectedProject]);
+  }, [activeTabThreadId, activeProjectSession, activeSessionId, initialized, activeTabThreadBySession, projectList, selectedProject, sessionList]);
 
   useEffect(() => {
     if (!initialized) return;
-    syncThreadSubscriptions(activeProjectSessionThreadIds);
-  }, [activeProjectSessionThreadIdsKey, initialized]);
+    syncThreadSubscriptions(workspaceThreadIds);
+  }, [workspaceThreadIdsKey, initialized]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -696,7 +736,6 @@ const App = () => {
   const actionContext = {
     activeCanSend,
     activeProjectSession,
-    activeProjectSessionThreads,
     activeTabThreadBySession,
     activeTabThreadId,
     closedThreadIds,
@@ -845,6 +884,8 @@ const App = () => {
     runTaskNow,
     saveGoalDialog,
     selectProject,
+    selectProjectSession,
+    selectSessionThread,
     send,
     stopTurn,
     submitProjectPickerPath,
@@ -883,7 +924,6 @@ const App = () => {
     activeGoal,
     activeProjectKey,
     activeProjectSession,
-    activeProjectSessionThreadTabs,
     activeSession,
     activeThreadBelongsToSession,
     activeUserMessageHistory,
@@ -967,6 +1007,8 @@ const App = () => {
     saveGoalDialog,
     selectedProject,
     selectProject,
+    selectProjectSession,
+    selectSessionThread,
     send,
     sessionDialogOpen,
     sessionList,
@@ -976,6 +1018,7 @@ const App = () => {
     serverConnectionError,
     serverConnections,
     serverMachines,
+    serverThreadGroups,
     sessions,
     setComposerMenuOpen,
     setComposerMode,
@@ -1033,8 +1076,9 @@ const App = () => {
     updateTaskDraftMachine,
     updateTaskDraftProject,
     updateThreadGoal,
-    workspaceEmptyMessage
-    };
+    workspaceEmptyMessage,
+    workspaceThreadTabs,
+  };
   return <AppView viewModel={viewModel} />;
 };
 

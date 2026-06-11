@@ -30,7 +30,6 @@ import type {
   SessionView,
   ThreadDetail,
   ThreadGoalView,
-  ThreadSummary
 } from "../types.js";
 
 type ThreadGoalUpdateInput = Partial<Pick<ThreadGoalView, "objective" | "status" | "tokenBudget">>;
@@ -41,7 +40,6 @@ type RealtimeThreadMessage =
 
 type ThreadActionsContext = {
   activeProjectSession?: SessionView | null;
-  activeProjectSessionThreads: ThreadSummary[];
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   composerMode: ComposerMode;
@@ -54,6 +52,7 @@ type ThreadActionsContext = {
   selectedReasoning: ReasoningSelection;
   sessions: ChatSession[];
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
+  setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
   setActiveTabThreadBySession: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setActiveTabThreadId: React.Dispatch<React.SetStateAction<string>>;
   setActiveWorkspacePath: React.Dispatch<React.SetStateAction<string>>;
@@ -113,6 +112,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
       ctx.setActiveWorkspacePath(existingSession.workingDirectory);
       const sessionId = existingSession.session.sessionId;
       if (sessionId) {
+        ctx.setActiveSessionId(sessionId);
         ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
       }
       return;
@@ -142,6 +142,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
       });
       if (ctx.latestRequestedThreadId.current !== thread.threadId) return;
       if (sessionId) {
+        ctx.setActiveSessionId(sessionId);
         ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
       }
       ctx.setActiveWorkspacePath(thread.workingDirectory);
@@ -170,9 +171,8 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
 
   const closeThread = async (threadId: string) => {
     if (ctx.closedThreadIds.current.has(threadId)) return;
-    const threadIds = ctx.activeProjectSessionThreads.map((thread) => thread.threadId);
-    const closingThread = ctx.activeProjectSessionThreads.find((thread) => thread.threadId === threadId)
-      ?? ctx.sessions.find((session) => session.threadId === threadId);
+    const threadIds = ctx.sessions.map((session) => session.threadId);
+    const closingThread = ctx.sessions.find((session) => session.threadId === threadId);
     const sessionId = closingThread?.session.sessionId ?? ctx.activeProjectSession?.sessionId ?? "";
     const nextThreadId = ctx.activeTabThreadId === threadId
       ? adjacentThreadId(threadIds, threadId)
@@ -297,6 +297,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
           ? current.map((item) => item.threadId === thread.threadId ? nextSession : item)
           : [...current, nextSession];
       });
+      if (thread.session.sessionId) ctx.setActiveSessionId(thread.session.sessionId);
       ctx.setActiveWorkspacePath(thread.workingDirectory);
       ctx.setActiveTabThreadId(thread.threadId);
       subscribeThread(thread.threadId, thread.lastSeq);

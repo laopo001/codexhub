@@ -35,6 +35,7 @@ export type ServerMachineBridgeManagerOptions = {
     lastConnectedAt?: string;
     lastError?: string | null;
   }) => void;
+  validateConnection?: (connection: StoredServerConnection) => Promise<string | null> | string | null;
   localMachineId: () => string | null;
   onChange?: () => void;
 };
@@ -192,6 +193,8 @@ class ServerMachineBridge {
   }
 
   private async connectOnce() {
+    const validationError = await this.options.validateConnection?.(this.connection);
+    if (validationError) throw new Error(validationError);
     const ws = await openWebSocket(machineTransportUrl(this.connection.url, this.connection.authToken));
     this.ws = ws;
     const closed = new Deferred<void>();
@@ -223,7 +226,7 @@ class ServerMachineBridge {
       pid: process.pid,
       platform: `${process.platform}-${process.arch}`,
       cwd: process.cwd(),
-      capabilities: { projectLauncher: true }
+      capabilities: { projectLauncher: false }
     };
   }
 
@@ -344,7 +347,7 @@ class ServerMachineBridge {
 
   private async runSessionCommand(sessionId: string, command: SessionCommand) {
     const threads = this.options.threads;
-    if (command.type === "list_threads") return await threads.listSessionThreadCandidates(sessionId, command.limit);
+    if (command.type === "list_threads") return await threads.listSessionThreadCandidates(sessionId, command.limit, command.workingDirectory);
     if (command.type === "observe_thread_records") {
       if (!command.threadId) throw new Error("observe_thread_records requires threadId");
       threads.observeThreadRecords(command.threadId);
@@ -356,13 +359,13 @@ class ServerMachineBridge {
       return;
     }
     if (command.type === "start_thread") {
-      const detail = await threads.startSessionThread(sessionId);
+      const detail = await threads.startSessionThread(sessionId, command.workingDirectory);
       this.sendThreadSnapshot(sessionId, detail.threadId);
       return detail;
     }
     if (command.type === "resume_thread") {
       if (!command.threadId) throw new Error("resume_thread requires threadId");
-      const detail = await threads.resumeSessionThread(sessionId, command.threadId);
+      const detail = await threads.resumeSessionThread(sessionId, command.threadId, command.workingDirectory);
       this.sendThreadSnapshot(sessionId, detail.threadId);
       return detail;
     }
@@ -395,7 +398,7 @@ class ServerMachineBridge {
     }
     if (command.type === "turn" || command.type === "steer") {
       if (!command.threadId || !command.input) throw new Error(`${command.type} requires threadId and input`);
-      const result = threads.runSessionThreadTurn(sessionId, command.threadId, command.input, "web", command.options);
+      const result = threads.runSessionThreadTurn(sessionId, command.threadId, command.input, "web", command.options, command.workingDirectory);
       await result.promise;
       return { ok: true };
     }
@@ -445,7 +448,7 @@ class ServerMachineBridge {
         const unsubscribe = this.options.threads.subscribe(thread.threadId, 0, (event) => {
           const eventSessionId = mirroredSessionIdForThread(event.thread) ?? sessionId;
           if (!this.mirroredSessions.has(eventSessionId)) return;
-          this.sendRaw({ type: "session_thread_event", sessionId: eventSessionId, event });
+          this.sendRaw({ type: "thread_event", sessionId: eventSessionId, event });
         });
         this.threadUnsubscribers.set(thread.threadId, unsubscribe);
       }
@@ -460,7 +463,7 @@ class ServerMachineBridge {
   private sendThreadSnapshot(sessionId: string, threadId: string) {
     const thread = this.options.threads.getThread(threadId);
     if (!thread) return;
-    this.sendRaw({ type: "session_thread_snapshot", sessionId, thread });
+    this.sendRaw({ type: "thread_snapshot", sessionId, thread });
   }
 
   private unsubscribeThreadsForSession(sessionId: string) {

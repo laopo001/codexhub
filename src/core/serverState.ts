@@ -116,6 +116,8 @@ type SessionSnapshot = {
 export class CodexhubServerState {
   private saveTimer: NodeJS.Timeout | null = null;
   private lastSavedText = "";
+  private readonly dirtyServerConnectionIds = new Set<string>();
+  private readonly deletedServerConnectionIds = new Set<string>();
 
   private constructor(
     readonly filePath: string,
@@ -253,6 +255,7 @@ export class CodexhubServerState {
         else existing.lastError = input.lastError;
       }
       this.touch();
+      this.markServerConnectionDirty(existing.connectionId);
       return existing;
     }
     const connection: StoredServerConnection = {
@@ -268,6 +271,7 @@ export class CodexhubServerState {
       lastError: input.lastError || undefined
     };
     this.data.serverConnections.push(connection);
+    this.markServerConnectionDirty(connection.connectionId);
     this.touch();
     return connection;
   }
@@ -295,6 +299,7 @@ export class CodexhubServerState {
       else existing.lastError = input.lastError;
     }
     existing.updatedAt = new Date().toISOString();
+    this.markServerConnectionDirty(existing.connectionId);
     this.touch();
     return existing;
   }
@@ -303,6 +308,8 @@ export class CodexhubServerState {
     const index = this.data.serverConnections.findIndex((connection) => connection.connectionId === connectionId);
     if (index === -1) return false;
     this.data.serverConnections.splice(index, 1);
+    this.deletedServerConnectionIds.add(connectionId);
+    this.dirtyServerConnectionIds.delete(connectionId);
     this.touch();
     return true;
   }
@@ -574,17 +581,11 @@ export class CodexhubServerState {
     const machinesById = new Map<string, MachineSummary | StoredMachine>();
     for (const machine of this.data.machines) machinesById.set(machine.machineId, machine);
     for (const machine of snapshot.machines) machinesById.set(machine.machineId, machine);
-    const sessionsByProject = new Map<string, SessionSummary[]>();
-    for (const session of snapshot.sessions) {
-      const projectId = projectIdFor(machineIdForSession(session), session.workingDirectory);
-      const sessions = sessionsByProject.get(projectId) ?? [];
-      sessions.push(session);
-      sessionsByProject.set(projectId, sessions);
-    }
+    const sessionsById = new Map(snapshot.sessions.map((session) => [session.sessionId, session]));
     const threadsByProject = new Map<string, ThreadSummary[]>();
     for (const thread of snapshot.threads) {
       const session = thread.session.sessionId
-        ? snapshot.sessions.find((item) => item.sessionId === thread.session.sessionId)
+        ? sessionsById.get(thread.session.sessionId)
         : undefined;
       const project = session
         ? this.findProject(machineIdForSession(session), thread.workingDirectory)
@@ -595,11 +596,23 @@ export class CodexhubServerState {
       threadsByProject.set(project.projectId, threads);
     }
     const projects: ProjectSummary[] = this.listStoredProjects().map((project) => {
-      const sessions = (sessionsByProject.get(project.projectId) ?? [])
-        .sort((left, right) => Number(right.online) - Number(left.online) || right.lastSeenAt.localeCompare(left.lastSeenAt));
-      const session = sessions.find((session) => session.online) ?? null;
       const threads = (threadsByProject.get(project.projectId) ?? [])
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      const sessionIds = new Set<string>();
+      if (project.lastSessionId) sessionIds.add(project.lastSessionId);
+      for (const thread of threads) {
+        if (thread.session.sessionId) sessionIds.add(thread.session.sessionId);
+      }
+      for (const session of snapshot.sessions) {
+        if (machineIdForSession(session) !== project.machineId) continue;
+        if (session.workingDirectory === project.path) sessionIds.add(session.sessionId);
+      }
+      const sessions = [...sessionIds]
+        .map((sessionId) => sessionsById.get(sessionId))
+        .filter((session): session is SessionSummary => Boolean(session))
+        .map((session) => projectSessionSummary(session, project.path, threads))
+        .sort((left, right) => Number(right.online) - Number(left.online) || right.lastSeenAt.localeCompare(left.lastSeenAt));
+      const session = sessions.find((session) => session.online) ?? null;
       const machine = machinesById.get(project.machineId);
       const machineOnline = Boolean(machine && "online" in machine && machine.online);
       return {
@@ -684,13 +697,34 @@ export class CodexhubServerState {
   }
 
   private async save() {
-    const text = YAML.stringify(this.data);
+    const data = await this.dataForSave();
+    const text = YAML.stringify(data);
     if (text === this.lastSavedText) return;
     await mkdir(path.dirname(this.filePath), { recursive: true });
     const tmpPath = `${this.filePath}.${process.pid}.tmp`;
     await writeFile(tmpPath, text, "utf8");
     await rename(tmpPath, this.filePath);
     this.lastSavedText = text;
+    this.dirtyServerConnectionIds.clear();
+    this.deletedServerConnectionIds.clear();
+  }
+
+  private async dataForSave(): Promise<ServerStateData> {
+    const currentFile = await readStateFile(this.filePath);
+    return {
+      ...this.data,
+      serverConnections: mergeServerConnectionsForSave({
+        memory: this.data.serverConnections,
+        file: currentFile.data.serverConnections,
+        dirtyIds: this.dirtyServerConnectionIds,
+        deletedIds: this.deletedServerConnectionIds
+      })
+    };
+  }
+
+  private markServerConnectionDirty(connectionId: string) {
+    this.dirtyServerConnectionIds.add(connectionId);
+    this.deletedServerConnectionIds.delete(connectionId);
   }
 }
 
@@ -746,10 +780,43 @@ const emptyState = (): ServerStateData => ({
   serverConnections: []
 });
 
+const mergeServerConnectionsForSave = (input: {
+  memory: StoredServerConnection[];
+  file: StoredServerConnection[];
+  dirtyIds: ReadonlySet<string>;
+  deletedIds: ReadonlySet<string>;
+}) => {
+  const memoryById = new Map(input.memory.map((connection) => [connection.connectionId, connection]));
+  const fileById = new Map(input.file.map((connection) => [connection.connectionId, connection]));
+  const connectionIds = new Set([...fileById.keys(), ...memoryById.keys()]);
+  const merged: StoredServerConnection[] = [];
+  for (const connectionId of connectionIds) {
+    if (input.deletedIds.has(connectionId)) continue;
+    const memoryConnection = memoryById.get(connectionId);
+    if (input.dirtyIds.has(connectionId)) {
+      if (memoryConnection) merged.push(memoryConnection);
+      continue;
+    }
+    const fileConnection = fileById.get(connectionId);
+    if (fileConnection) merged.push(fileConnection);
+  }
+  return merged;
+};
+
 const projectIdFor = (machineId: string, projectPath: string) =>
   `project-${createHash("sha256").update(`${machineId}\0${projectPath}`).digest("hex").slice(0, 16)}`;
 
 const projectName = (projectPath: string) => path.basename(projectPath) || projectPath;
+
+const projectSessionSummary = (
+  session: SessionSummary,
+  projectPath: string,
+  threads: ThreadSummary[]
+): SessionSummary => ({
+  ...session,
+  workingDirectory: projectPath,
+  threads: threads.filter((thread) => thread.session.sessionId === session.sessionId)
+});
 
 const maxIso = (left: string, right: string) => left.localeCompare(right) >= 0 ? left : right;
 

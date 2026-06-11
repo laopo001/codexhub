@@ -139,6 +139,17 @@ export type ServerConnection = {
   hasAuthToken: boolean;
 };
 
+export type ServerThreadRef = {
+  session: SessionView;
+  thread: ThreadSummary;
+};
+
+export type ServerThreadGroup = {
+  machine: MachineSummary;
+  sessions: SessionView[];
+  threads: ServerThreadRef[];
+};
+
 export type ServerConnectionDraft = {
   name: string;
   url: string;
@@ -264,6 +275,7 @@ export type ProjectPickerState = {
 
 export type ThreadPickerState = {
   sessionId: string;
+  workingDirectory: string;
   loading: boolean;
   error: string;
   candidates: CodexThreadCandidate[];

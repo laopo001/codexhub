@@ -64,7 +64,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     ? sessionList.find((session) => session.sessionId === threadPicker.sessionId)
     : undefined;
   const threadPickerOpenThreadIds = new Set([
-    ...(threadPickerSession?.threads?.map((thread) => thread.threadId) ?? []),
+    ...(threadPickerSession?.threads
+      ?.filter((thread) => !threadPicker?.workingDirectory || thread.workingDirectory === threadPicker.workingDirectory)
+      .map((thread) => thread.threadId) ?? []),
     ...(threadPicker ? threadOrderBySession[threadPicker.sessionId] ?? [] : []),
     ...sessions.map((session) => session.threadId)
   ]);

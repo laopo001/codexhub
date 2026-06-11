@@ -247,6 +247,126 @@
   gap: 6px;
 }
 
+.serverThreadList {
+  display: grid;
+  gap: 4px;
+  margin: -2px 0 6px 12px;
+  padding-left: 8px;
+  border-left: 1px solid #334238;
+}
+
+.serverSessionRow,
+.serverThreadRow,
+.serverThreadEmpty {
+  min-width: 0;
+  border: 1px solid #28362d;
+  border-radius: 7px;
+  background: #0d150f;
+  color: #b8c5b4;
+  font-size: 11px;
+}
+
+.serverSessionRow,
+.serverThreadRow {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.serverSessionRow {
+  border-color: #334238;
+  background: #101a13;
+  color: #b8c5b4;
+}
+
+.serverSessionRow.offline {
+  color: #657064;
+}
+
+.serverSessionRow:disabled {
+  color: #657064;
+  cursor: default;
+}
+
+.serverSessionRow:not(:disabled):hover,
+.serverSessionRow:not(:disabled):focus-visible,
+.serverThreadRow:not(:disabled):hover,
+.serverThreadRow:not(:disabled):focus-visible {
+  border-color: #5a765f;
+  background: #122117;
+}
+
+.serverSessionRow + .serverThreadRow {
+  margin-left: 12px;
+}
+
+.serverThreadRow.running {
+  border-color: #725128;
+  background: #18140d;
+}
+
+.serverThreadRow:disabled {
+  color: #657064;
+  cursor: default;
+}
+
+.serverThreadMain {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.serverThreadTitle,
+.serverThreadMain code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serverThreadTitle {
+  color: #e5eee1;
+  font-weight: 750;
+}
+
+.serverThreadMain code {
+  color: #91a090;
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.serverThreadRow strong {
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 10px;
+  font-weight: 750;
+  padding: 1px 6px;
+}
+
+.serverSessionRow strong {
+  border-radius: 999px;
+  background: #203526;
+  color: #b8c5b4;
+  font-size: 10px;
+  font-weight: 750;
+  padding: 1px 6px;
+}
+
+.serverThreadRow.running strong {
+  background: #40301b;
+  color: #ffd294;
+}
+
+.serverThreadEmpty {
+  margin: -2px 0 6px 12px;
+  padding: 7px 8px;
+  color: #91a090;
+}
+
 .serverConnectionForm {
   display: grid;
   grid-template-columns: minmax(86px, 0.7fr) minmax(0, 1.5fr) auto;
