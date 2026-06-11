@@ -2,7 +2,7 @@
 
 一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
-- 共享核心：API server 统一管理 machines、sessions 和 threads，并把它们投影成 project-first 的 `/api/projects`；Web 左侧按项目优先展示，右侧跟随选中 thread。
+- 共享核心：API server 统一管理 machines、sessions 和 threads，并把它们投影成 project-first 的 `/api/projects`；Web 左侧按项目优先展示，点击 project 打开或复用 session，右侧跟随选中 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
 - Machine：server 默认内嵌一台 `local` machine；远端或宿主机也可以用 `codexhub machine` 主动注册，负责路径校验和按项目启动 session。
@@ -44,6 +44,8 @@ pnpm codexhub machine --server http://127.0.0.1:8788 --type registered
 ```
 
 也可以在 Web 的 Connections / Registered 里复制同等命令。随后在 Web 左侧通过弹窗选择项目路径。server 会把打开项目请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用该目录下的 session。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
+
+Project 名称来自目录 basename，不单独持久化展示名或提供重命名入口。Web project 卡片点击即打开或复用该 project 的 session；卡片不展示 open、history 或 thread 数量，也不提供手动重启/结束 session 按钮。project session 会在没有 running thread 且所有 thread JSONL watcher 都 idle-close 后由 server 自动结束。
 
 也可以让本机 server 主动通过 SSH 管理远端机器。SSH host 发现默认读取本机 `~/.ssh/config`，支持 `Include` 引入的配置文件；需要覆盖路径时设置 `CODEX_HUB_SSH_CONFIG=/path/to/config`。连接和认证交给系统 `ssh`、`ssh-agent`、`known_hosts`、ProxyJump 等已有配置：
 
@@ -316,6 +318,8 @@ curl -sS -X POST http://127.0.0.1:8788/api/projects/open \
   -H 'content-type: application/json' \
   -d '{"machineId":"machine-example","path":"/path/to/project"}'
 ```
+
+Project session 的公开生命周期入口只保留 `/api/projects/open`，不提供 project session stop/restart API；结束由 watcher idle、machine 断开或 project 删除等内部流程处理。
 
 单上下文入口（例如 Telegram 或脚本）可以绑定 session，但发送时仍然必须显式指定 `threadId`：
 
