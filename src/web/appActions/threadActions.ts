@@ -16,7 +16,6 @@ import {
   removeSessionsThread,
   removeThreadOrder,
   selectedThreadOptions,
-  threadGoalClearedRecord,
   threadRecordsForNotifications
 } from "../appHelpers.js";
 import type {
@@ -404,10 +403,6 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
   };
 
   const clearThreadGoal = async (threadId: string) => {
-    const clearedRecord = threadGoalClearedRecord(threadId);
-    ctx.setSessions((current) => current.map((item) => item.threadId === threadId
-      ? { ...item, records: mergeRecord(item.records, clearedRecord) }
-      : item));
     const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" });
     if (response.ok) return;
     const text = await response.text();

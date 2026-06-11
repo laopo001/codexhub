@@ -105,18 +105,6 @@ export const errorRecord = (label: string, error: unknown): CodexRecord => ({
   }
 });
 
-export const threadGoalClearedRecord = (threadId: string): CodexRecord => ({
-  id: `web:goal-cleared:${threadId}:${browserId()}`,
-  timestamp: new Date().toISOString(),
-  type: "event_msg",
-  sourceThreadId: threadId,
-  payload: {
-    type: "thread_goal_cleared",
-    threadId,
-    message: "Goal cleared"
-  }
-});
-
 export const isModelSelection = (value: unknown): value is ModelSelection =>
   typeof value === "string" && value.trim().length > 0;
 
