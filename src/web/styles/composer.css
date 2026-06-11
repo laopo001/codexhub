@@ -71,7 +71,7 @@
 .openThreadTabLabel {
   display: grid;
   gap: 3px;
-  width: clamp(220px, 30vw, 360px);
+  width: clamp(180px, 25vw, 250px);
   min-width: 0;
   cursor: pointer;
   line-height: 1.18;
