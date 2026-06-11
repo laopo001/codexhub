@@ -9,7 +9,6 @@ import {
   machineProjectLauncher,
   projectKeyForProject,
   projectSearchMatches,
-  projectStatusLabel,
   sshConnectionDoctorLines,
   sshConnectionDetail,
   sshConnectionStatusClass,
@@ -160,9 +159,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             ) : machine.projects.map((project) => {
               const projectKey = projectKeyForProject(project);
               const active = projectKey === activeProjectKey;
-              const statusLabel = projectStatusLabel(project);
-              const sessionActive = Boolean(project.session?.online);
-              const projectReachable = sessionActive || project.machineOnline;
               const deleting = deletingProjectId === project.projectId;
               const busy = openingProjectKey === projectKey || deleting;
               const openDisabled = busy;
@@ -175,7 +171,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               return (
                 <div
                   key={project.projectId}
-                  className={`projectRow ${active ? "active" : ""} ${project.pinned ? "pinned" : ""} ${vscodeSource ? "transient" : ""} ${sessionActive ? "online" : projectReachable ? "ready" : "offline"}`}
+                  className={`projectRow ${active ? "active" : ""} ${project.pinned ? "pinned" : ""} ${vscodeSource ? "transient" : ""}`}
                 >
                   <button
                     type="button"
@@ -189,7 +185,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   <div className="projectRowTop">
                     <span className="projectOpenButton projectOpenNameButton" title={project.name}>{project.name}</span>
                     <div className="projectRowActions">
-                      <strong>{openingProjectKey === projectKey ? "opening" : statusLabel}</strong>
                       <button
                         type="button"
                         className={`projectMiniButton ${project.pinned ? "active" : ""}`}

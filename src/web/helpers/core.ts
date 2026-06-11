@@ -383,13 +383,6 @@ export const projectKeyForProject = (project: Pick<ProjectSummary, "machineId" |
 
 export const basename = (projectPath: string) => projectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? projectPath;
 
-export const projectStatusLabel = (project: ProjectSummary) => {
-  if (project.running) return "running";
-  if (project.session?.online) return "session";
-  if (project.machineOnline || (project.machine && "online" in project.machine && project.machine.online)) return "ready";
-  return "offline";
-};
-
 export const projectSearchMatches = (project: ProjectSummary, query: string) => {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
@@ -551,7 +544,7 @@ export const compactLine = (value: string) => value.replace(/\s+/g, " ").trim();
 export const threadDisplayTitle = (thread: Pick<ThreadSummary, "threadId" | "title">) => {
   const title = compactLine(thread.title);
   const threadShortId = shortId(thread.threadId);
-  return title && title !== thread.threadId && title !== threadShortId ? title : "new";
+  return title && title !== thread.threadId && title !== threadShortId ? title : "New thread";
 };
 
 export const appendThreadOrder = (current: Record<string, string[]>, sessionId: string, threadId: string) => {

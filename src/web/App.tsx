@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ConfigProvider } from "antd";
+import { ConfigProvider, Popover } from "antd";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
@@ -17,6 +17,7 @@ import { createThreadActions } from "./appActions/threadActions.js";
 import "antd/dist/antd.css";
 import "./style.css";
 import type {
+  ActivityStatusView,
   OpenThreadState,
   ComposerHistoryState,
   ComposerMode,
@@ -99,10 +100,124 @@ const registeredMachineCommand = (origin: string, token: string) => {
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
+type ThreadTabTurnMeta = {
+  status: "running" | "idle";
+  duration: string;
+};
+
+const OpenThreadTabLabel = ({ thread, nowMs }: { thread: OpenThreadState; nowMs: number }) => {
+  const title = threadDisplayTitle(thread);
+  const records = threadDisplayRecords(thread.threadId, thread);
+  const turnStatus = latestTurnStatusFromRecords(records);
+  const turnMeta = threadTabTurnMeta(thread, records, turnStatus, nowMs);
+  const badgeText = turnMeta.duration
+    ? `${turnMeta.status} | ${turnMeta.duration}`
+    : turnMeta.status;
+  const details = (
+    <div className="openThreadTabDetails">
+      <div>
+        <span>Path</span>
+        <code>{thread.workingDirectory}</code>
+      </div>
+      <div>
+        <span>Title</span>
+        <code>{title}</code>
+      </div>
+      <div>
+        <span>Thread</span>
+        <code>{thread.threadId}</code>
+      </div>
+      <div>
+        <span>Status</span>
+        <code>{badgeText}</code>
+      </div>
+      {thread.session.sessionId ? (
+        <div>
+          <span>Session</span>
+          <code>{thread.session.sessionId}</code>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <Popover
+      content={details}
+      placement="bottomLeft"
+      trigger="click"
+      overlayClassName="openThreadTabDetailsPopover"
+    >
+      <span
+        className="openThreadTabLabel"
+        title={`${thread.workingDirectory}\n${title}\n${thread.threadId}`}
+      >
+        <code className="openThreadTabPath">{thread.workingDirectory}</code>
+        <span className="openThreadTabTitle">{title}</span>
+        <span className="openThreadTabMeta">
+          <code>{thread.threadId}</code>
+          <em className={`openThreadTabBadge ${turnMeta.status}`}>{badgeText}</em>
+        </span>
+      </span>
+    </Popover>
+  );
+};
+
+const threadTabTurnMeta = (
+  thread: OpenThreadState,
+  records: CodexRecord[],
+  turnStatus: ActivityStatusView | null,
+  nowMs: number
+): ThreadTabTurnMeta => {
+  const running = Boolean(thread.running || turnStatus?.status === "pending");
+  if (running) {
+    const startedAt = latestTurnStartedAt(records) ?? (turnStatus?.status === "pending" ? turnStatus.at : undefined);
+    const startedMs = startedAt ? Date.parse(startedAt) : NaN;
+    return {
+      status: "running",
+      duration: Number.isFinite(startedMs) ? formatThreadTabDuration(nowMs - startedMs) : ""
+    };
+  }
+  const durationMs = latestCompletedTurnDurationMs(records);
+  return {
+    status: "idle",
+    duration: durationMs == null ? "" : formatThreadTabDuration(durationMs)
+  };
+};
+
+const latestTurnStartedAt = (records: CodexRecord[]) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    const payload = asRecord(record.payload);
+    if (record.type === "event_msg" && payload?.type === "task_started") return record.timestamp;
+  }
+  return undefined;
+};
+
+const latestCompletedTurnDurationMs = (records: CodexRecord[]) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const payload = asRecord(records[index].payload);
+    if (!payload || (payload.type !== "task_complete" && payload.type !== "turn_aborted")) continue;
+    const duration = payload.duration_ms;
+    return typeof duration === "number" && Number.isFinite(duration) ? Math.max(0, duration) : undefined;
+  }
+  return undefined;
+};
+
+const formatThreadTabDuration = (durationMs: number) => {
+  const seconds = Math.max(0, Math.round(durationMs / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  if (hours) return `${hours}h${minutes}m${remainder}s`;
+  if (minutes) return `${minutes}m${remainder}s`;
+  return `${remainder}s`;
+};
+
 const App = () => {
   useState(() => initAuthTokenFromUrl());
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [openThreads, setOpenThreads] = useState<OpenThreadState[]>([]);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
   const [sessionList, setSessionList] = useState<SessionView[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
@@ -280,6 +395,16 @@ const App = () => {
     () => openThreads.map((thread) => thread.threadId),
     [openThreads]
   );
+  const runningOpenThreadIds = useMemo(
+    () => openThreads.filter((thread) => thread.running).map((thread) => thread.threadId).join("\n"),
+    [openThreads]
+  );
+  useEffect(() => {
+    if (!runningOpenThreadIds) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [runningOpenThreadIds]);
   const activeThreadSummary = useMemo(
     () => {
       if (activeThread) return activeThread;
@@ -293,17 +418,11 @@ const App = () => {
   );
   const openThreadIdsKey = openThreadIds.join("\n");
   const openThreadTabs = useMemo(() => openThreads.map((thread) => {
-    const title = threadDisplayTitle(thread);
     return {
       key: thread.threadId,
-      label: (
-        <span className="openThreadTabLabel" title={`${thread.workingDirectory}\n${title}\n${thread.threadId}`}>
-          <span>{thread.workingDirectory}</span>
-          <code>{title} · {thread.threadId}</code>
-        </span>
-      )
+      label: <OpenThreadTabLabel thread={thread} nowMs={nowMs} />
     };
-  }), [openThreads]);
+  }), [nowMs, openThreads]);
   const displayRecords = useMemo(
     () => activeThread ? threadDisplayRecords(activeThread.threadId, activeThread) : [],
     [activeThread?.jsonl, activeThread?.records, activeThread?.threadId]

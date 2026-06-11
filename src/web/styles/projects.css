@@ -265,18 +265,6 @@
   border-color: #64705b;
 }
 
-.projectRow.offline {
-  border-color: #334238;
-  background: #111811;
-  color: #9daa98;
-}
-
-.projectRow.ready {
-  border-color: #3e5547;
-  background: #122017;
-  color: #c8d6c4;
-}
-
 .projectRowTop {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -312,37 +300,12 @@
 
 .projectRowActions {
   display: grid;
-  grid-template-columns: repeat(3, auto);
+  grid-template-columns: repeat(2, auto);
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
   min-width: 0;
   pointer-events: none;
-}
-
-.projectRowActions strong {
-  border-radius: 999px;
-  background: #203526;
-  color: #b8c5b4;
-  font-size: 11px;
-  font-weight: 650;
-  padding: 2px 7px;
-  white-space: nowrap;
-}
-
-.projectRow.online .projectRowActions strong {
-  background: #1c4a34;
-  color: #c9f1da;
-}
-
-.projectRow.ready .projectRowActions strong {
-  background: #263f2d;
-  color: #cdddc8;
-}
-
-.projectRow.offline .projectRowActions strong {
-  background: #39271d;
-  color: #f0b58d;
 }
 
 .projectMiniButton {
