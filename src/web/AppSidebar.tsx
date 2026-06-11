@@ -7,8 +7,6 @@ import {
   activeSshConnectionForHost,
   latestSshConnectionForHost,
   machineProjectLauncher,
-  pluginIntegrationStatusLabel,
-  pluginStatusClass,
   projectKeyForProject,
   projectSearchMatches,
   projectStatusLabel,
@@ -67,7 +65,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     openingProjectKey,
     openProjectPicker,
     patchTask,
-    plugins,
     projectGroups,
     projectList,
     projectSearch,
@@ -169,20 +166,28 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               const deleting = deletingProjectId === project.projectId;
               const busy = openingProjectKey === projectKey || deleting;
               const openDisabled = busy;
+              const vscodeSource = project.source?.kind === "vscode";
+              const saveTitle = project.transient ? "Save project to CodexHub" : project.pinned ? "Unpin project" : "Pin project";
+              const saveAria = project.transient
+                ? `Save ${project.name} to CodexHub`
+                : project.pinned ? `Unpin ${project.name}` : `Pin ${project.name}`;
+              const removeTitle = vscodeSource ? `Hide ${project.name} from this VSCode workspace` : `Remove ${project.name} from CodexHub`;
               return (
                 <div
                   key={project.projectId}
-                  className={`projectRow ${active ? "active" : ""} ${project.pinned ? "pinned" : ""} ${sessionActive ? "online" : projectReachable ? "ready" : "offline"}`}
+                  className={`projectRow ${active ? "active" : ""} ${project.pinned ? "pinned" : ""} ${vscodeSource ? "transient" : ""} ${sessionActive ? "online" : projectReachable ? "ready" : "offline"}`}
                 >
+                  <button
+                    type="button"
+                    className="projectRowSelectButton"
+                    onClick={() => void selectProject(project)}
+                    disabled={openDisabled}
+                    aria-label={`Select ${project.name}`}
+                    aria-current={active ? "true" : undefined}
+                    title={`Select ${project.name}`}
+                  />
                   <div className="projectRowTop">
-                    <button
-                      type="button"
-                      className="projectOpenButton projectOpenNameButton"
-                      onClick={() => void selectProject(project)}
-                      disabled={openDisabled}
-                    >
-                      <span title={project.name}>{project.name}</span>
-                    </button>
+                    <span className="projectOpenButton projectOpenNameButton" title={project.name}>{project.name}</span>
                     <div className="projectRowActions">
                       <strong>{openingProjectKey === projectKey ? "opening" : statusLabel}</strong>
                       <button
@@ -190,8 +195,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                         className={`projectMiniButton ${project.pinned ? "active" : ""}`}
                         onClick={() => void toggleProjectPinned(project)}
                         disabled={busy}
-                        aria-label={project.pinned ? `Unpin ${project.name}` : `Pin ${project.name}`}
-                        title={project.pinned ? "Unpin project" : "Pin project"}
+                        aria-label={saveAria}
+                        title={saveTitle}
                       >
                         {project.pinned ? <PinOff size={13} strokeWidth={2.1} aria-hidden="true" /> : <Pin size={13} strokeWidth={2.1} aria-hidden="true" />}
                       </button>
@@ -201,20 +206,13 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                         onClick={() => void deleteProject(project)}
                         disabled={deleting}
                         aria-label={`Remove ${project.name}`}
-                        title={`Remove ${project.name} from CodexHub`}
+                        title={removeTitle}
                       >
                         <Trash2 size={13} strokeWidth={2.1} aria-hidden="true" />
                       </button>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="projectOpenButton projectOpenPathButton"
-                    onClick={() => void selectProject(project)}
-                    disabled={openDisabled}
-                  >
-                    <code title={project.path}>{project.path}</code>
-                  </button>
+                  <code className="projectOpenButton projectOpenPathButton" title={project.path}>{project.path}</code>
                 </div>
               );
             })}
@@ -509,7 +507,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
       <section className="projectPanel">
         <div className="projectPanelHeader">
           <h2>Projects</h2>
-          <span>{projectGroups.length} machines</span>
+          <span>{projectGroups.length} groups</span>
         </div>
         <button
           type="button"
@@ -528,7 +526,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           spellCheck={false}
         />
         {visibleProjectGroups.length === 0 ? (
-          <div className="projectEmptyRow">{projectQuery ? "No matching projects" : "No machines"}</div>
+          <div className="projectEmptyRow">{projectQuery ? "No matching projects" : "No project groups"}</div>
         ) : (
           <div className="projectList">
             {onlineProjectGroups.map(renderProjectMachineGroup)}
@@ -554,33 +552,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           </div>
         )}
         {projectOpenError ? <div className="projectOpenError">{projectOpenError}</div> : null}
-      </section>
-
-      <section className="pluginPanel">
-        <div className="pluginPanelHeader">
-          <h2>Plugins</h2>
-          <span>{plugins.length}</span>
-        </div>
-        {plugins.length === 0 ? (
-          <div className="pluginEmpty">No plugins</div>
-        ) : (
-          <div className="pluginList">
-            {plugins.map((plugin) => {
-              const integrations = plugin.contributions?.integrations ?? [];
-              const styles = plugin.contributions?.web?.styles ?? [];
-              return (
-                <div className={`pluginRow ${pluginStatusClass(plugin)}`} key={plugin.pluginId}>
-                  <div className="pluginRowHeader">
-                    <span title={plugin.name}>{plugin.name}</span>
-                    <strong>{pluginIntegrationStatusLabel(plugin)}</strong>
-                  </div>
-                  <code title={plugin.root}>{plugin.origin ?? "local"} · {plugin.pluginId}</code>
-                  <small>{styles.length} styles · {integrations.length} integrations</small>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </section>
 
       <section className="taskPanel">

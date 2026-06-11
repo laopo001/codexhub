@@ -212,6 +212,7 @@
 }
 
 .projectRow {
+  position: relative;
   display: grid;
   gap: 6px;
   width: 100%;
@@ -221,6 +222,38 @@
   background: #0f1b14;
   color: #d8e2d5;
   padding: 9px 7px 9px 11px;
+}
+
+.projectRow:hover,
+.projectRow:focus-within {
+  border-color: #64705b;
+}
+
+.projectRowSelectButton:focus-visible {
+  outline: 2px solid #d95f36;
+  outline-offset: 2px;
+}
+
+.projectRowSelectButton {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.projectRowSelectButton:disabled {
+  cursor: default;
+}
+
+.projectRowTop,
+.projectOpenPathButton {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
 }
 
 .projectRow.active {
@@ -253,38 +286,28 @@
 }
 
 .projectOpenButton {
-  border: 0;
-  background: transparent;
   color: inherit;
-  padding: 0;
   text-align: left;
-}
-
-.projectOpenButton:disabled {
-  cursor: default;
-}
-
-.projectOpenButton span,
-.projectOpenButton code {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.projectOpenButton span {
-  font-weight: 800;
-}
-
 .projectOpenNameButton {
-  flex: 1 1 auto;
+  display: block;
   min-width: 0;
+  font-weight: 800;
 }
 
 .projectOpenPathButton {
   display: block;
   width: 100%;
   min-width: 0;
+  color: #91a090;
+  font-family: inherit;
+  font-size: 12px;
+  font-style: normal;
 }
 
 .projectRowActions {
@@ -294,6 +317,7 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+  pointer-events: none;
 }
 
 .projectRowActions strong {
@@ -321,14 +345,6 @@
   color: #f0b58d;
 }
 
-.projectOpenButton code {
-  display: block;
-  color: #91a090;
-  font-family: inherit;
-  font-size: 12px;
-  font-style: normal;
-}
-
 .projectMiniButton {
   display: grid;
   place-items: center;
@@ -340,6 +356,7 @@
   color: #b8c5b4;
   padding: 0;
   line-height: 0;
+  pointer-events: auto;
 }
 
 .projectMiniButton.active {
@@ -376,6 +393,7 @@
   background: transparent;
   color: #91a090;
   line-height: 1;
+  pointer-events: auto;
 }
 
 .projectDeleteButton:hover,

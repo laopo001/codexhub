@@ -110,6 +110,7 @@ const main = async () => {
   await assertServerStateSnapshotPure();
   await assertServerConnectionStateMerge();
   await assertServerStateDoesNotPersistThreadHistory();
+  await assertTransientProjectsStayInMemory();
   await assertProjectNamesArePathBasenames();
   await assertProjectSessionProjection();
   await assertDeletedProjectSuppressesSessionCapture();
@@ -787,6 +788,75 @@ const assertServerStateDoesNotPersistThreadHistory = async () => {
   await state.flush();
   const saved = await readFile(state.path, "utf8");
   if (saved.includes("\nthreads:")) throw new Error(`server state persisted thread history:\n${saved}`);
+};
+
+const assertTransientProjectsStayInMemory = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-transient-project."));
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const state = await CodexhubServerState.load({ dataDir });
+  const machineId = "machine-transient-project-smoke";
+  const transientPath = "/tmp/codexhub-transient-project-smoke";
+  const persistedPath = "/tmp/codexhub-persisted-project-smoke";
+  const machine = {
+    machineId,
+    type: "local" as const,
+    hostname: "transient-project-smoke",
+    online: true,
+    status: "online" as const,
+    lastSeenAt: "2026-01-01T00:01:00.000Z",
+    capabilities: { projectLauncher: true }
+  };
+  state.upsertTransientProject({
+    machineId,
+    path: transientPath,
+    sessionId: "session-transient-project-smoke",
+    threadId: "thread-transient-project-smoke",
+    source: {
+      kind: "vscode",
+      groupId: "workspace",
+      label: "VSCode: smoke"
+    }
+  });
+  const transientSnapshot = state.snapshot({ machines: [machine], sessions: [], threads: [] });
+  const transientProject = transientSnapshot.projects.find((project) => project.path === transientPath);
+  if (!transientProject?.transient) throw new Error(`transient project missing from snapshot: ${JSON.stringify(transientSnapshot.projects)}`);
+  if (transientProject.source?.kind !== "vscode") throw new Error(`transient project source missing: ${JSON.stringify(transientProject)}`);
+  await state.flush();
+  const statePath = path.join(dataDir, "server-state.yaml");
+  const transientSaved = await readFile(statePath, "utf8").catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  });
+  if (transientSaved.includes(transientPath)) throw new Error(`transient project was persisted:\n${transientSaved}`);
+
+  state.upsertProject({ machineId, path: persistedPath, now: "2026-01-01T00:02:00.000Z" });
+  await state.flush();
+  const persistedSaved = await readFile(statePath, "utf8");
+  if (!persistedSaved.includes(persistedPath)) throw new Error(`persisted project was not saved:\n${persistedSaved}`);
+  if (persistedSaved.includes(transientPath)) throw new Error(`transient project leaked into state after persistent save:\n${persistedSaved}`);
+
+  state.upsertTransientProject({
+    machineId,
+    path: persistedPath,
+    sessionId: "session-persisted-vscode-overlay-smoke",
+    threadId: "thread-persisted-vscode-overlay-smoke",
+    source: {
+      kind: "vscode",
+      groupId: "workspace",
+      label: "VSCode: smoke"
+    }
+  });
+  const overlaySnapshot = state.snapshot({ machines: [machine], sessions: [], threads: [] });
+  const overlayProject = overlaySnapshot.projects.find((project) => project.path === persistedPath);
+  if (overlayProject?.source?.kind !== "vscode") {
+    throw new Error(`persisted project missing VSCode overlay source: ${JSON.stringify(overlayProject)}`);
+  }
+  if (overlayProject.transient) throw new Error(`persisted project should not become transient: ${JSON.stringify(overlayProject)}`);
+  await state.flush();
+  const overlaySaved = await readFile(statePath, "utf8");
+  if (overlaySaved.includes("VSCode: smoke") || overlaySaved.includes("source:")) {
+    throw new Error(`VSCode overlay was persisted:\n${overlaySaved}`);
+  }
 };
 
 const assertProjectNamesArePathBasenames = async () => {

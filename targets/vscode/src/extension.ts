@@ -5,7 +5,7 @@ import type { ServerHandle } from "../../../src/server/index.js";
 import { startEmbeddedServer } from "../../../src/server/embedded.js";
 
 const viewId = "codexhub.workspaceView";
-const defaultDaemonPort = 18788;
+const vscodeWorkspaceGroupId = "workspace";
 
 type VscodeCodexHubServer = {
   url: string;
@@ -25,7 +25,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export async function deactivate() {
-  await CodexHubWorkspaceViewProvider.stopCurrentServer({ force: process.env.CODEX_HUB_VSCODE_STOP_ON_DEACTIVATE === "1" });
+  await CodexHubWorkspaceViewProvider.stopCurrentServer({ force: true });
 }
 
 class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -93,17 +93,21 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   private async render() {
     if (!this.view || this.disposed) return;
-    const workspacePath = activeWorkspacePath();
-    if (!workspacePath) {
+    const workspaceFolders = fileWorkspaceFolders();
+    if (!workspaceFolders.length) {
       this.view.webview.html = statusHtml("Open a folder or workspace to use Codex Hub.");
       return;
     }
+    const activeFolder = activeWorkspaceFolder(workspaceFolders) ?? workspaceFolders[0];
 
     try {
       const server = await this.ensureServer();
       const url = server.url;
-      await openWorkspaceProject(url, workspacePath);
-      this.view.webview.html = iframeHtml(`${url}/?surface=vscode`, workspacePath);
+      await openWorkspaceProjects(url, workspaceFolders, activeFolder.path);
+      const iframeUrl = new URL("/", url);
+      iframeUrl.searchParams.set("surface", "vscode");
+      iframeUrl.searchParams.set("workspacePath", activeFolder.path);
+      this.view.webview.html = iframeHtml(iframeUrl.toString(), activeFolder.path);
     } catch (error) {
       this.view.webview.html = statusHtml(`Codex Hub failed to start: ${errorText(error)}`);
     }
@@ -112,50 +116,82 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   private async ensureServer() {
     if (CodexHubWorkspaceViewProvider.currentServer) return CodexHubWorkspaceViewProvider.currentServer;
     if (!CodexHubWorkspaceViewProvider.currentServerStart) {
-      CodexHubWorkspaceViewProvider.currentServerStart = this.startOrReuseSharedServer();
+      CodexHubWorkspaceViewProvider.currentServerStart = this.startWindowServer();
     }
     CodexHubWorkspaceViewProvider.currentServer = await CodexHubWorkspaceViewProvider.currentServerStart;
     return CodexHubWorkspaceViewProvider.currentServer;
   }
 
-  private async startOrReuseSharedServer(): Promise<VscodeCodexHubServer> {
-    const preferredPort = parsePort(process.env.CODEX_HUB_VSCODE_DAEMON_PORT) ?? defaultDaemonPort;
-    const sharedUrl = `http://127.0.0.1:${preferredPort}`;
+  private async startWindowServer(): Promise<VscodeCodexHubServer> {
     const staticDirectory = this.context.asAbsolutePath("dist");
-    const buildId = await vscodeDaemonBuildId(this.context, staticDirectory);
-    if (await isReusableCodexHubServer(sharedUrl, { staticDirectory, buildId })) return { url: sharedUrl };
+    const buildId = await vscodeWindowBuildId(this.context, staticDirectory);
+    const explicitPort = parsePort(process.env.CODEX_HUB_PORT);
     const owned = await startEmbeddedServer({
       host: "127.0.0.1",
-      portMode: "preferred",
-      preferredPort,
-      explicitPort: false,
+      portMode: explicitPort ? "preferred" : "random",
+      preferredPort: explicitPort,
+      explicitPort: Boolean(explicitPort),
       staticDirectory,
       surface: "vscode",
       buildId,
       features: {
         localMachine: true
       },
-      logPrefix: "codexhub vscode daemon"
+      logPrefix: "codexhub vscode window"
     });
     return { url: serverUrl(owned.host, owned.port), owned };
   }
 }
 
-const activeWorkspacePath = () => {
-  const activeUri = vscode.window.activeTextEditor?.document.uri;
-  const activeFolder = activeUri ? vscode.workspace.getWorkspaceFolder(activeUri) : undefined;
-  const folder = activeFolder ?? vscode.workspace.workspaceFolders?.[0];
-  return folder?.uri.scheme === "file" ? folder.uri.fsPath : "";
+type VscodeWorkspaceFolder = {
+  path: string;
+  name: string;
 };
 
-const openWorkspaceProject = async (serverUrl: string, workspacePath: string) => {
+const fileWorkspaceFolders = (): VscodeWorkspaceFolder[] =>
+  (vscode.workspace.workspaceFolders ?? [])
+    .filter((folder) => folder.uri.scheme === "file")
+    .map((folder) => ({
+      path: folder.uri.fsPath,
+      name: folder.name
+    }));
+
+const activeWorkspaceFolder = (folders: VscodeWorkspaceFolder[]) => {
+  const activeUri = vscode.window.activeTextEditor?.document.uri;
+  const activeFolder = activeUri ? vscode.workspace.getWorkspaceFolder(activeUri) : undefined;
+  return activeFolder?.uri.scheme === "file"
+    ? folders.find((folder) => folder.path === activeFolder.uri.fsPath)
+    : undefined;
+};
+
+const openWorkspaceProjects = async (serverUrl: string, folders: VscodeWorkspaceFolder[], activePath: string) => {
+  const orderedFolders = [
+    ...folders.filter((folder) => folder.path === activePath),
+    ...folders.filter((folder) => folder.path !== activePath)
+  ];
+  const label = vscodeWorkspaceGroupLabel(folders);
+  for (const folder of orderedFolders) {
+    await openWorkspaceProject(serverUrl, folder.path, label);
+  }
+};
+
+const openWorkspaceProject = async (serverUrl: string, workspacePath: string, groupLabel: string) => {
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
       const response = await fetch(new URL("/api/projects/open", serverUrl), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path: workspacePath, reuse: true })
+        body: JSON.stringify({
+          path: workspacePath,
+          reuse: true,
+          persist: false,
+          source: {
+            kind: "vscode",
+            groupId: vscodeWorkspaceGroupId,
+            label: groupLabel
+          }
+        })
       });
       if (response.ok) return;
       const body = await response.text();
@@ -167,6 +203,13 @@ const openWorkspaceProject = async (serverUrl: string, workspacePath: string) =>
     await delay(500);
   }
   throw lastError instanceof Error ? lastError : new Error(errorText(lastError));
+};
+
+const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[]) => {
+  const workspaceName = vscode.workspace.name?.trim();
+  if (workspaceName && (folders.length > 1 || workspaceName !== folders[0]?.name)) return `VSCode: ${workspaceName}`;
+  const folderName = folders[0]?.name?.trim();
+  return folderName ? `VSCode: ${folderName}` : "VSCode Workspace";
 };
 
 const iframeHtml = (src: string, workspacePath: string) => {
@@ -253,24 +296,7 @@ const delay = async (ms: number) => await new Promise<void>((resolve) => {
   timer.unref?.();
 });
 
-const isReusableCodexHubServer = async (
-  serverUrl: string,
-  expected: { staticDirectory: string; buildId: string }
-) => {
-  try {
-    const response = await fetch(new URL("/api/health", serverUrl));
-    if (!response.ok) return false;
-    const health = asRecord(await response.json());
-    if (health?.ok !== true) return false;
-    if (health.surface !== "vscode") return false;
-    if (typeof health.staticDirectory !== "string" || !samePath(health.staticDirectory, expected.staticDirectory)) return false;
-    return health.build === expected.buildId;
-  } catch {
-    return false;
-  }
-};
-
-const vscodeDaemonBuildId = async (context: vscode.ExtensionContext, staticDirectory: string) => {
+const vscodeWindowBuildId = async (context: vscode.ExtensionContext, staticDirectory: string) => {
   const packageJson = asRecord(context.extension.packageJSON);
   const version = stringValue(packageJson?.version) ?? "0.0.0";
   const id = context.extension.id || "codexhub";
@@ -288,14 +314,6 @@ const fileFingerprint = async (filePath: string) => {
   } catch {
     return `${path.basename(filePath)}-missing`;
   }
-};
-
-const samePath = (left: string, right: string) => {
-  const normalize = (value: string) => {
-    const resolved = path.resolve(value);
-    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-  };
-  return normalize(left) === normalize(right);
 };
 
 const serverUrl = (host: string, port: number) => {

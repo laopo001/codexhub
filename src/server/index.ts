@@ -59,6 +59,12 @@ const threadGoalUpdateSchema = z.object({
   tokenBudget: z.number().int().positive().nullable().optional()
 });
 
+const projectSourceSchema = z.object({
+  kind: z.literal("vscode"),
+  groupId: z.string().min(1),
+  label: z.string().min(1).optional()
+}).strict();
+
 const sessionRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
@@ -1376,6 +1382,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.delete("/api/projects/:projectId", async (request, reply) => {
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
+    if (state.deleteTransientProject(params.projectId)) {
+      publishProjects();
+      return { ok: true, deleted: true, transient: true, stoppedSessions: [], ...projectSnapshot() };
+    }
     const target = state.projectDeleteTarget(params.projectId);
     const deleted = state.deleteProject(params.projectId);
     const existingSessions = target ? sessionsForProject(target) : [];
@@ -1392,7 +1402,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.patch("/api/projects/:projectId", async (request, reply) => {
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
     const payload = projectUpdateSchema.parse(request.body);
-    const project = state.updateProject(params.projectId, payload);
+    const project = state.isTransientProject(params.projectId) && !state.hasStoredProject(params.projectId) && payload.pinned
+      ? state.persistTransientProject(params.projectId, { pinned: true })
+      : state.updateProject(params.projectId, payload);
     if (!project) {
       reply.code(404);
       return { error: `Project not found: ${params.projectId}` };
@@ -1405,7 +1417,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const payload = z.object({
       machineId: z.string().min(1).optional(),
       path: z.string().min(1),
-      reuse: z.boolean().optional()
+      reuse: z.boolean().optional(),
+      persist: z.boolean().optional(),
+      source: projectSourceSchema.optional()
     }).parse(request.body);
 
     try {
@@ -1418,12 +1432,20 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       const sessionId = result.sessionId;
       await waitForSession(sessionId);
       threads.attachSessionThread(sessionId, result.threadId, result.cwd);
-      const project = state.upsertProject({
-        machineId: machine.machineId,
-        path: result.cwd,
-        sessionId,
-        threadId: result.threadId
-      });
+      const project = payload.persist === false
+        ? state.upsertTransientProject({
+          machineId: machine.machineId,
+          path: result.cwd,
+          sessionId,
+          threadId: result.threadId,
+          source: payload.source
+        })
+        : state.upsertProject({
+          machineId: machine.machineId,
+          path: result.cwd,
+          sessionId,
+          threadId: result.threadId
+        });
       publishProjects();
       return { ok: true, machine, project, result, ...projectSnapshot() };
     } catch (error) {

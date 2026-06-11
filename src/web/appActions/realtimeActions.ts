@@ -1,6 +1,6 @@
 import type React from "react";
 import type { CodexRecord } from "../../core/codexRecord.js";
-import { isVscodeSurface } from "../appConfig.js";
+import { initialWorkspacePath, isVscodeSurface } from "../appConfig.js";
 import {
   apiJson,
   authToken,
@@ -21,6 +21,7 @@ import {
   patchSessionsThread,
   playTaskCompletionSound,
   preferredThreadIdForSession,
+  projectKeyForProject,
   readStoredUiState,
   streamEventRecords,
   taskCompleteNotification,
@@ -199,10 +200,14 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     const loadedProjects = normalizeProjects(projectData.projects);
     const loadedProjectSessions = loadedProjects.flatMap((project) => project.session ? [project.session] : []);
     const saved = readStoredUiState();
+    const initialProjectFromUrl = initialWorkspacePath
+      ? loadedProjects.find((project) => project.path === initialWorkspacePath)
+      : undefined;
     const savedSession = saved?.activeSessionId
       ? loadedProjectSessions.find((session) => session.sessionId === saved.activeSessionId)
       : undefined;
-    const initialSession = savedSession ?? loadedProjectSessions[0];
+    const initialSession = initialProjectFromUrl?.session ?? savedSession ?? loadedProjectSessions[0];
+    const initialWorkspace = initialWorkspacePath || saved?.activeWorkspacePath || defaultDirectory;
 
     ctx.setSystemStatus({
       model: health.model ?? null,
@@ -211,13 +216,13 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     });
     ctx.setAuthRequired(false);
     ctx.setAuthError("");
-    ctx.setActiveWorkspacePath(saved?.activeWorkspacePath ?? defaultDirectory);
+    ctx.setActiveWorkspacePath(initialWorkspace);
     ctx.setSelectedModel(saved?.selectedModel ?? "auto");
     ctx.setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     ctx.setComposerMode("chat");
     ctx.setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     ctx.setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
-    ctx.setSelectedProjectKey(saved?.selectedProjectKey ?? "");
+    ctx.setSelectedProjectKey(initialProjectFromUrl ? projectKeyForProject(initialProjectFromUrl) : saved?.selectedProjectKey ?? "");
     ctx.setProjectSearch(saved?.projectSearch ?? "");
     ctx.setCollapsedProjectMachineKeys(saved?.collapsedProjectMachineKeys ?? []);
     ctx.setMachines(loadedMachines);

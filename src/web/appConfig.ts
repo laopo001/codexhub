@@ -1,7 +1,10 @@
 import type { ComposerMode, ModelSelection, ReasoningSelection } from "./types.js";
 
-export const webSurface = new URLSearchParams(window.location.search).get("surface") === "vscode" ? "vscode" : "default";
+const searchParams = new URLSearchParams(window.location.search);
+
+export const webSurface = searchParams.get("surface") === "vscode" ? "vscode" : "default";
 export const isVscodeSurface = webSurface === "vscode";
+export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ?? "";
 export const storageKey = isVscodeSurface ? "codexhub-ui-state-vscode-v1" : "codexhub-ui-state-v5";
 export const legacyStorageKey = "codexhub-ui-state-v4";
 export const modelOptions: Array<{ value: ModelSelection; label: string }> = [
@@ -54,4 +57,3 @@ export const highlightedLanguages = new Set([
   "typescript",
   "yaml"
 ]);
-

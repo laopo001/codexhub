@@ -316,7 +316,7 @@ codexhub machine --server http://127.0.0.1:8788 --type registered
 
 Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex app-server/headless 进程仍然由本机/SSH/registered/server machine session 提供。
 
-VSCode extension 优先复用 `127.0.0.1:18788` 的本地 CodexHub daemon；只有该 daemon 的 `/api/health` 显示 `surface/staticDirectory/build` 都匹配当前插件构建时才复用。如果端口上是旧插件启动的 stale daemon，新插件会启动当前构建的嵌入 server，避免重载/升级插件后仍然加载旧 UI 或旧 server 代码。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/server connections 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。这样多个同版本 VSCode 窗口会共享同一个本地 daemon/server，而不是每个窗口各自随机起一个 server。可用 `CODEX_HUB_VSCODE_DAEMON_PORT` 改端口；`CODEX_HUB_VSCODE_STOP_ON_DEACTIVATE=1` 仅用于调试时强制 deactivate 停掉扩展自己启动的 server。
+VSCode extension 每个窗口默认启动自己的随机端口嵌入 server；显式设置 `CODEX_HUB_PORT` 时才固定端口，端口被占用会直接失败。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/server connections 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。extension 会把当前窗口的 file workspace folders 通过 `/api/projects/open` 以 `persist:false` 打开成 VSCode workspace project group；这些项目只存在于该窗口 server 的内存中，不写入 `server-state.yaml`。用户在 UI 中显式保存 transient project 后，它才会进入普通 CodexHub project list。
 
 ```bash
 pnpm electron:start

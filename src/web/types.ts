@@ -197,6 +197,12 @@ export type ProjectSummary = {
   machineId: string;
   path: string;
   name: string;
+  transient?: boolean;
+  source?: {
+    kind: "vscode";
+    groupId: string;
+    label?: string;
+  };
   pinned?: boolean;
   createdAt: string;
   lastOpenedAt: string;
@@ -256,6 +262,8 @@ export type TaskDraft = {
 
 export type ProjectMachineGroup = {
   key: string;
+  kind?: "machine" | "vscodeWorkspace";
+  machineId?: string;
   label: string;
   online: boolean;
   projectLauncher: boolean;

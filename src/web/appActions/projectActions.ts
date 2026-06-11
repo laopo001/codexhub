@@ -191,16 +191,17 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
   };
 
   const openProjectPicker = (machine: ProjectMachineGroup) => {
-    const summary = ctx.machines.find((item) => item.machineId === machine.key);
+    const browseMachineId = machine.machineId ?? machine.key;
+    const summary = ctx.machines.find((item) => item.machineId === browseMachineId);
     const initialPath = summary?.cwd ?? machine.projects[0]?.path ?? "";
     ctx.setProjectPicker({
-      machineId: machine.key,
+      machineId: browseMachineId,
       path: initialPath,
       entries: [],
       loading: true,
       error: ""
     });
-    void loadProjectPickerDirectory(machine.key, initialPath);
+    void loadProjectPickerDirectory(browseMachineId, initialPath);
   };
 
   const changeProjectPickerMachine = (machineId: string) => {
@@ -404,7 +405,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
   };
 
   const deleteProject = async (project: ProjectSummary) => {
-    if (!window.confirm(`Remove ${project.name} from CodexHub projects?\n\nThis does not delete files or close open thread tabs.`)) return;
+    const prompt = project.source?.kind === "vscode"
+      ? `Hide ${project.name} from this VSCode workspace?\n\nThis does not delete files or close open thread tabs.`
+      : `Remove ${project.name} from CodexHub projects?\n\nThis does not delete files or close open thread tabs.`;
+    if (!window.confirm(prompt)) return;
     ctx.setDeletingProjectId(project.projectId);
     try {
       const payload = await apiJson<ProjectsPayload>(`/api/projects/${encodeURIComponent(project.projectId)}`, {

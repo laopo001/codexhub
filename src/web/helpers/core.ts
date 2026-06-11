@@ -299,6 +299,8 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
     if (!machineProjectLauncher(machine)) continue;
     groups.set(machine.machineId, {
       key: machine.machineId,
+      kind: "machine",
+      machineId: machine.machineId,
       label: machine.name ?? machine.hostname,
       online: machine.online,
       projectLauncher: machineProjectLauncher(machine),
@@ -308,21 +310,25 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
   }
   for (const project of projects) {
     const machine = machinesById.get(project.machineId) ?? project.machine;
+    const sourceGroupKey = project.source?.kind === "vscode" ? `vscode:${project.source.groupId}` : "";
+    const groupKey = sourceGroupKey || project.machineId;
     const label = machine
       ? machine.name ?? machine.hostname
       : project.machineId;
     const online = Boolean(machine && "online" in machine ? machine.online : project.machineOnline);
-    let group = groups.get(project.machineId);
+    let group = groups.get(groupKey);
     if (!group) {
       group = {
-        key: project.machineId,
-        label,
+        key: groupKey,
+        kind: sourceGroupKey ? "vscodeWorkspace" : "machine",
+        machineId: project.machineId,
+        label: project.source?.label ?? label,
         online,
         projectLauncher: machineProjectLauncher(machine),
         statusLabel: online ? "online" : "offline",
         projects: []
       };
-      groups.set(project.machineId, group);
+      groups.set(groupKey, group);
     }
     group.online = group.online || online;
     group.projectLauncher = group.projectLauncher || machineProjectLauncher(machine);
@@ -337,7 +343,11 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
         return compareProjectRows(left, right);
       })
     }))
-    .sort((left, right) => Number(right.online) - Number(left.online) || left.label.localeCompare(right.label));
+    .sort((left, right) =>
+      Number(right.kind === "vscodeWorkspace") - Number(left.kind === "vscodeWorkspace")
+      || Number(right.online) - Number(left.online)
+      || left.label.localeCompare(right.label)
+    );
 };
 
 export const projectMachineStatus = (group: Pick<ProjectMachineGroup, "online" | "projectLauncher" | "projects">) => {

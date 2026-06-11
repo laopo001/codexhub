@@ -27,6 +27,17 @@ export type StoredProject = {
   lastThreadId?: string;
 };
 
+export type ProjectSource = {
+  kind: "vscode";
+  groupId: string;
+  label?: string;
+};
+
+type RuntimeProject = StoredProject & {
+  transient?: boolean;
+  source?: ProjectSource;
+};
+
 export type TaskRunStatus = "queued" | "completed" | "failed" | "skipped";
 
 export type StoredTaskRun = {
@@ -98,6 +109,8 @@ export type ServerStateData = {
 
 export type ProjectSummary = StoredProject & {
   name: string;
+  transient?: boolean;
+  source?: ProjectSource;
   machine?: MachineSummary | StoredMachine;
   machineOnline: boolean;
   session: SessionSummary | null;
@@ -118,6 +131,7 @@ export class CodexhubServerState {
   private lastSavedText = "";
   private readonly dirtyServerConnectionIds = new Set<string>();
   private readonly deletedServerConnectionIds = new Set<string>();
+  private readonly transientProjects = new Map<string, RuntimeProject>();
 
   private constructor(
     readonly filePath: string,
@@ -148,6 +162,11 @@ export class CodexhubServerState {
     return [...this.data.projects].sort(compareStoredProjects);
   }
 
+  hasStoredProject(projectId: string) {
+    const resolvedProjectId = this.resolveProjectId(projectId);
+    return this.data.projects.some((project) => project.projectId === resolvedProjectId);
+  }
+
   deleteProject(projectId: string) {
     const resolvedProjectId = this.resolveProjectId(projectId);
     const index = this.data.projects.findIndex((project) => project.projectId === resolvedProjectId);
@@ -157,6 +176,35 @@ export class CodexhubServerState {
     this.addDeletedProject(project);
     this.touch();
     return true;
+  }
+
+  deleteTransientProject(projectId: string) {
+    const resolvedProjectId = this.resolveProjectId(projectId);
+    return this.transientProjects.delete(resolvedProjectId);
+  }
+
+  isTransientProject(projectId: string) {
+    return this.transientProjects.has(this.resolveProjectId(projectId));
+  }
+
+  persistTransientProject(projectId: string, input: { pinned?: boolean | null } = {}) {
+    const resolvedProjectId = this.resolveProjectId(projectId);
+    const transient = this.transientProjects.get(resolvedProjectId);
+    if (!transient) return null;
+    const project = this.upsertProject({
+      machineId: transient.machineId,
+      path: transient.path,
+      sessionId: transient.lastSessionId,
+      threadId: transient.lastThreadId,
+      touchOpenedAt: false
+    });
+    if (!project) return null;
+    if (input.pinned !== undefined && input.pinned !== null) {
+      project.pinned = input.pinned;
+      this.touch();
+    }
+    this.transientProjects.delete(resolvedProjectId);
+    return project;
   }
 
   projectDeleteTarget(projectId: string): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
@@ -553,6 +601,41 @@ export class CodexhubServerState {
     return project;
   }
 
+  upsertTransientProject(input: {
+    machineId: string;
+    path: string;
+    now?: string;
+    sessionId?: string;
+    threadId?: string;
+    source?: ProjectSource;
+  }) {
+    const now = input.now ?? new Date().toISOString();
+    const normalizedPath = input.path.trim();
+    if (!normalizedPath) throw new Error("Project path is required.");
+    const projectId = projectIdFor(input.machineId, normalizedPath);
+    const existing = this.transientProjects.get(projectId);
+    if (existing) {
+      existing.lastOpenedAt = maxIso(existing.lastOpenedAt, now);
+      existing.lastSessionId = input.sessionId ?? existing.lastSessionId;
+      existing.lastThreadId = input.threadId ?? existing.lastThreadId;
+      existing.source = input.source ?? existing.source;
+      return existing;
+    }
+    const project: RuntimeProject = {
+      projectId,
+      machineId: input.machineId,
+      path: normalizedPath,
+      createdAt: now,
+      lastOpenedAt: now,
+      lastSessionId: input.sessionId,
+      lastThreadId: input.threadId,
+      transient: true,
+      source: input.source
+    };
+    this.transientProjects.set(projectId, project);
+    return project;
+  }
+
   captureSessions(snapshot: Pick<SessionSnapshot, "sessions" | "threads">) {
     for (const session of snapshot.sessions) {
       const machineId = machineIdForSession(session);
@@ -588,14 +671,14 @@ export class CodexhubServerState {
         ? sessionsById.get(thread.session.sessionId)
         : undefined;
       const project = session
-        ? this.findProject(machineIdForSession(session), thread.workingDirectory)
+        ? this.findRuntimeProject(machineIdForSession(session), thread.workingDirectory)
         : this.uniqueProjectForPath(thread.workingDirectory);
       if (!project) continue;
       const threads = threadsByProject.get(project.projectId) ?? [];
       threads.push(thread);
       threadsByProject.set(project.projectId, threads);
     }
-    const projects: ProjectSummary[] = this.listStoredProjects().map((project) => {
+    const projects: ProjectSummary[] = this.listRuntimeProjects().map((project) => {
       const threads = (threadsByProject.get(project.projectId) ?? [])
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
       const sessionIds = new Set<string>();
@@ -648,9 +731,32 @@ export class CodexhubServerState {
     return this.data.projects.find((project) => project.projectId === projectId);
   }
 
+  private findRuntimeProject(machineId: string, projectPath: string) {
+    const projectId = projectIdFor(machineId, projectPath);
+    return this.findProject(machineId, projectPath) ?? this.transientProjects.get(projectId);
+  }
+
   private uniqueProjectForPath(projectPath: string) {
-    const projects = this.data.projects.filter((project) => project.path === projectPath);
+    const projects = this.listRuntimeProjects().filter((project) => project.path === projectPath);
     return projects.length === 1 ? projects[0] : null;
+  }
+
+  private listRuntimeProjects() {
+    const transientById = new Map(this.transientProjects);
+    const stored = this.listStoredProjects().map((project): RuntimeProject => {
+      const overlay = transientById.get(project.projectId);
+      if (!overlay) return project;
+      return {
+        ...project,
+        lastOpenedAt: maxIso(project.lastOpenedAt, overlay.lastOpenedAt),
+        lastSessionId: overlay.lastSessionId ?? project.lastSessionId,
+        lastThreadId: overlay.lastThreadId ?? project.lastThreadId,
+        source: overlay.source
+      };
+    });
+    const storedIds = new Set(stored.map((project) => project.projectId));
+    const transient = [...this.transientProjects.values()].filter((project) => !storedIds.has(project.projectId));
+    return [...stored, ...transient].sort(compareStoredProjects);
   }
 
   private addDeletedProject(project: Pick<StoredProject, "projectId" | "machineId" | "path">) {

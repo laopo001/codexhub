@@ -16,7 +16,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 4. `codexhub [prompt]` 是 legacy/transient headless 入口：它启动一条 transient Codex session 并通过 machine websocket 接入 server；它的 transient machine `projectLauncher: false`，不能用于项目浏览或远端目录选择。
 5. `codexhub machine --type registered` 注册一台可启动 project runtime 的 machine；内嵌 local machine 也走同一套 machine command 协议。
 6. `codexhub ssh ...` 是 server-side SSH 管理入口；SSH remote client 默认由本机 server bootstrap 下发，不要求远端预装 codexhub。
-7. VSCode 和 Electron 都调用 `src/server/embedded.ts` 复用同一套 server/Web。VSCode 优先连接 `127.0.0.1:18788` 本地 daemon，未发现健康 server 时才启动同端口嵌入 server；Electron 默认随机端口，只有显式 `CODEX_HUB_PORT` 时才固定端口。
+7. VSCode 和 Electron 都调用 `src/server/embedded.ts` 复用同一套 server/Web。VSCode 默认每个窗口启动自己的随机端口嵌入 server，窗口自动 workspace projects 只作为 transient project group 进入内存，不写入 server state；Electron 默认随机端口，只有显式 `CODEX_HUB_PORT` 时才固定端口。
 
 ## Machine / Session / Thread
 
@@ -140,9 +140,9 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 1. Electron main process 只包装同一个 server 和 Web UI。窗口使用隔离/sandbox WebPreferences，外链用系统浏览器打开。
 2. Electron 默认随机端口；显式设置 `CODEX_HUB_PORT` 后端口被占用应直接失败，不再 fallback。
-3. VSCode extension 注册 sidebar webview，优先复用 `CODEX_HUB_VSCODE_DAEMON_PORT` 或默认 `18788` 的本地 daemon；只有 `/api/health` 的 `surface`、`staticDirectory` 和 VSCode extension build id 都匹配当前插件时才复用。没有健康/兼容 daemon 时才启动当前插件构建的嵌入 server。多窗口应共享同一个兼容本地 server，而不是各自随机端口。
-4. VSCode extension 自动 `POST /api/projects/open` 当前 workspace path，并在 iframe 里加载 `/?surface=vscode`。
-5. VSCode extension 启用和普通 Web 相同的 SSH/tasks/integrations/server connections 能力；server connection autoconnect 属于本地 daemon 状态，可以由普通 Web/daemon 配置保存后被 VSCode 复用。
+3. VSCode extension 注册 sidebar webview，每个 VSCode 窗口默认启动自己的随机端口嵌入 server；只有显式 `CODEX_HUB_PORT` 时才固定端口，端口占用应直接失败。
+4. VSCode extension 自动 `POST /api/projects/open` 当前窗口的 file workspace folders，body 使用 `persist:false` 和 `source.kind="vscode"`；这些项目以 VSCode workspace group 显示在内存中，不写入 `server-state.yaml`，用户显式保存后才变成普通 project。
+5. VSCode extension 启用和普通 Web 相同的 SSH/tasks/integrations/server connections 能力；这些配置仍属于对应窗口 server/state，窗口自动 workspace project 不应污染全局持久 project list。
 6. Docker 镜像运行 server/Web/API，默认应关闭内嵌 local machine，由宿主机、registered machine、server bridge 或 SSH 接入真实 project session。
 
 ## 发布和验证
