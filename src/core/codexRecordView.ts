@@ -253,13 +253,15 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
       : typeof payload.revised_prompt === "string"
         ? payload.revised_prompt
         : stringify(payload);
+    const attachments = imageGenerationAttachments(payload);
     return {
       id: record.id,
       role: "tool",
       label: "image generation",
-      text: prompt,
+      text: prompt || (attachments.length ? "[image]" : ""),
       at: record.timestamp,
-      status: payload.status === "failed" ? "failed" : payload.status === "completed" ? "completed" : "pending",
+      status: imageGenerationStatus(payload),
+      attachments,
       record
     };
   }
@@ -299,6 +301,33 @@ const responseItemStatus = (payload: Record<string, unknown>): CodexRecordView["
   if (payload.status === "completed" || payload.type === "function_call_output" || payload.type === "custom_tool_call_output") return "completed";
   if (payload.status === "pending" || payload.status === "in_progress" || String(payload.type ?? "").endsWith("_call")) return "pending";
   return undefined;
+};
+
+export const imageGenerationStatus = (payload: Record<string, unknown>): NonNullable<CodexRecordView["status"]> => {
+  if (payload.status === "failed") return "failed";
+  if (payload.status === "completed" || imageGenerationResultUrl(payload)) return "completed";
+  return "pending";
+};
+
+export const imageGenerationAttachments = (payload: Record<string, unknown>): Array<{ type: "image"; url: string }> => {
+  const url = imageGenerationResultUrl(payload);
+  return url ? [{ type: "image", url }] : [];
+};
+
+export const imageGenerationResultUrl = (payload: Record<string, unknown>): string | null => {
+  if (payload.type !== "image_generation_call" || typeof payload.result !== "string") return null;
+  const result = payload.result.trim();
+  if (!result) return null;
+  if (/^(?:https?:|blob:)/i.test(result) || /^data:image\//i.test(result)) return result;
+  return `data:${imageMimeTypeFromBase64(result)};base64,${result}`;
+};
+
+const imageMimeTypeFromBase64 = (value: string) => {
+  if (value.startsWith("iVBOR")) return "image/png";
+  if (value.startsWith("/9j/")) return "image/jpeg";
+  if (value.startsWith("UklGR")) return "image/webp";
+  if (value.startsWith("R0lGOD")) return "image/gif";
+  return "image/png";
 };
 
 const localShellText = (payload: Record<string, unknown>) => {

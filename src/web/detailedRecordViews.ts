@@ -1,5 +1,5 @@
 import { asRecord, type CodexRecord } from "../core/codexRecord.js";
-import type { CodexRecordView, RecordUsage } from "../core/codexRecordView.js";
+import { imageGenerationAttachments, imageGenerationStatus, type CodexRecordView, type RecordUsage } from "../core/codexRecordView.js";
 
 export const recordsToDetailedViews = (records: CodexRecord[]): CodexRecordView[] => {
   const views: CodexRecordView[] = [];
@@ -63,6 +63,7 @@ const rawJsonlRecordToView = (record: CodexRecord, payload: Record<string, unkno
   text: stringify(record.rawJsonl),
   at: record.timestamp,
   status: record.type === "response_item" ? responseStatus(payload) : payload.type === "turn_aborted" ? "failed" : undefined,
+  attachments: payload.type === "image_generation_call" ? imageGenerationAttachments(payload) : undefined,
   canFork: payload.type === "agent_message" && payload.phase === "final_answer",
   record
 });
@@ -120,6 +121,7 @@ const agentMessageToView = (record: CodexRecord, payload: Record<string, unknown
 
 const responseItemToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
   const status = responseStatus(payload);
+  const attachments = payload.type === "image_generation_call" ? imageGenerationAttachments(payload) : undefined;
   return {
     id: record.id,
     role: payload.type === "error" ? "error" : payload.type === "reasoning" ? "thinking" : "tool",
@@ -127,6 +129,7 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     text: stringify(payload),
     at: record.timestamp,
     status,
+    attachments,
     record
   };
 };
@@ -137,10 +140,12 @@ const responseStatus = (payload: Record<string, unknown>): CodexRecordView["stat
     payload.type === "function_call_output"
     || payload.type === "web_search_call"
     || payload.type === "file_change"
-    || (payload.type === "image_generation_call" && payload.status === "completed")
+    || (payload.type === "image_generation_call" && imageGenerationStatus(payload) === "completed")
     || payload.status === "completed"
   ) return "completed";
-  if (payload.type === "function_call" || payload.type === "image_generation_call" || payload.status === "in_progress" || payload.status === "pending") return "pending";
+  if (payload.type === "function_call" || payload.type === "image_generation_call" || payload.status === "in_progress" || payload.status === "pending") {
+    return payload.type === "image_generation_call" ? imageGenerationStatus(payload) : "pending";
+  }
   return undefined;
 };
 

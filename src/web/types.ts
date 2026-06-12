@@ -433,6 +433,7 @@ export type InspectDetail = {
   inputMeta: string;
   inputBlockLabel?: string;
   inputBlock?: string;
+  imageUrls?: string[];
   memoryCitation?: MemoryCitationView;
   outputMeta?: string;
   outputBlockLabel?: string;

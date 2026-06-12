@@ -212,7 +212,8 @@ export const formatInspectDetail = (message: WebRecordView): InspectDetail => {
     ? webToolPresenters[toolCall.name]?.inspect?.(toolCall.args, output)
     : null;
   const raw = formatRawJsonlInspect(inspectRecord);
-  if (presenterInspect) return { ...presenterInspect, ...raw };
+  const images = formatInspectImages(message);
+  if (presenterInspect) return { ...presenterInspect, ...images, ...raw };
 
   const parsedMessageText = shouldExtractMemoryCitation(message)
     ? parseMemoryCitationText(message.inspectCallText ?? message.text)
@@ -220,10 +221,18 @@ export const formatInspectDetail = (message: WebRecordView): InspectDetail => {
   const callText = parsedMessageText.text;
   return {
     ...formatInspectInput(message.record, callText.trimEnd()),
+    ...images,
     memoryCitation: parsedMessageText.entries.length || parsedMessageText.rolloutIds.length ? parsedMessageText : undefined,
     ...formatInspectOutput(message.record, output),
     ...raw
   };
+};
+
+const formatInspectImages = (message: WebRecordView): Pick<InspectDetail, "imageUrls"> => {
+  const imageUrls = message.attachments
+    ?.filter((attachment) => attachment.type === "image" && attachment.url)
+    .map((attachment) => attachment.url);
+  return imageUrls?.length ? { imageUrls } : {};
 };
 
 export const formatInspectTitle = (message: WebRecordView) => {
@@ -570,4 +579,3 @@ const stringifyInspectJson = (value: unknown) => {
     return String(value);
   }
 };
-

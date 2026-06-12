@@ -383,6 +383,18 @@ export const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
           ) : null}
         </section>
       ) : null}
+      {detail.imageUrls?.length ? (
+        <section className="detailSection">
+          <h3>Images</h3>
+          <div className="messageAttachments">
+            {detail.imageUrls.map((url) => (
+              <a href={url} target="_blank" rel="noreferrer" className="messageImage" key={url}>
+                <img src={url} alt="generated" />
+              </a>
+            ))}
+          </div>
+        </section>
+      ) : null}
       {detail.rawBlock ? (
         <section className="detailSection">
           <h3>Raw</h3>
@@ -395,4 +407,3 @@ export const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
     </div>
   );
 };
-
