@@ -243,10 +243,21 @@
 }
 
 .toolPreviewTitleMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
   color: #687391;
   font-size: 18px;
   line-height: 1;
+}
+
+.toolPreviewIcon {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .toolPreviewMeta {
@@ -279,10 +290,14 @@
 }
 
 .toolCommandLine {
+  min-width: 0;
+  margin: 0;
   padding-left: 26px;
   color: #26342a;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .fileChangePreview {
@@ -442,6 +457,15 @@
 
 .message.hasContextMenu:hover {
   background: #f2f8fb;
+}
+
+.message.inspectableTool {
+  cursor: pointer;
+}
+
+.message.inspectableTool:focus-visible {
+  outline: 2px solid rgba(47, 111, 159, 0.35);
+  outline-offset: 2px;
 }
 
 .message.thinking {

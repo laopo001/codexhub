@@ -181,7 +181,11 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
       label: `tool call: ${name}`,
       text: formatFunctionCall(name, args),
       at: record.timestamp,
-      status: "pending",
+      status: payload.status === "failed"
+        ? "failed"
+        : payload.status === "completed"
+          ? "completed"
+          : "pending",
       record
     };
   }
@@ -241,6 +245,30 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
       role: "tool",
       label: "web search",
       text: typeof payload.query === "string" ? payload.query : stringify(payload),
+      at: record.timestamp,
+      status: "completed",
+      record
+    };
+  }
+
+  if (payload.type === "collab_agent_tool_call") {
+    return {
+      id: record.id,
+      role: "tool",
+      label: "collab agent",
+      text: collabAgentToolText(payload),
+      at: record.timestamp,
+      status: payload.status === "failed" ? "failed" : payload.status === "completed" ? "completed" : "pending",
+      record
+    };
+  }
+
+  if (payload.type === "image_view") {
+    return {
+      id: record.id,
+      role: "tool",
+      label: "image view",
+      text: typeof payload.path === "string" ? payload.path : stringify(payload),
       at: record.timestamp,
       status: "completed",
       record
@@ -484,6 +512,14 @@ const fileChangeText = (payload: Record<string, unknown>) => {
     })
   ].join("\n");
 };
+
+const collabAgentToolText = (payload: Record<string, unknown>) => [
+  typeof payload.tool === "string" ? payload.tool : "agent",
+  typeof payload.prompt === "string" && payload.prompt.trim() ? payload.prompt : null,
+  Array.isArray(payload.receiver_thread_ids) && payload.receiver_thread_ids.length
+    ? `receivers: ${payload.receiver_thread_ids.join(", ")}`
+    : null
+].filter(Boolean).join("\n");
 
 const parseJsonObject = (value: string): Record<string, unknown> | null => {
   try {

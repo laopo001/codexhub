@@ -20,6 +20,7 @@ export const MessageCard = ({
   markdownEnabled,
   onRenderModeChange,
   onContextMenu,
+  onInspect,
   onFork,
   onRollback
 }: {
@@ -31,6 +32,7 @@ export const MessageCard = ({
   markdownEnabled: boolean;
   onRenderModeChange?: (mode: MessageRenderMode) => void;
   onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
+  onInspect?: () => void;
   onFork?: () => void;
   onRollback?: () => void;
 }) => {
@@ -43,10 +45,25 @@ export const MessageCard = ({
   }, [message, isThinkingMessage]);
   const messageText = memoryCitation.text;
   const hasMessageMeta = !isThinkingMessage && ((showTimestamp && message.at) || message.usage || markdownEnabled || onFork || onRollback);
+  const canClickInspect = Boolean(hasToolBody && onInspect);
+  const inspectOnKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (!canClickInspect || event.defaultPrevented) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onInspect?.();
+  };
+  const inspectOnClick = () => {
+    if (!canClickInspect || window.getSelection()?.toString()) return;
+    onInspect?.();
+  };
   return (
     <article
-      className={`message ${message.role} ${hasToolBody ? "richTool" : ""} ${onContextMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
+      className={`message ${message.role} ${hasToolBody ? "richTool" : ""} ${canClickInspect ? "inspectableTool" : ""} ${onContextMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
       onContextMenu={onContextMenu}
+      onClick={canClickInspect ? inspectOnClick : undefined}
+      onKeyDown={canClickInspect ? inspectOnKeyDown : undefined}
+      role={canClickInspect ? "button" : undefined}
+      tabIndex={canClickInspect ? 0 : undefined}
     >
       {hasToolBody ? null : (
         <span className="messageHeader">
@@ -392,15 +409,6 @@ export const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
                 <img src={url} alt="generated" />
               </a>
             ))}
-          </div>
-        </section>
-      ) : null}
-      {detail.rawBlock ? (
-        <section className="detailSection">
-          <h3>Raw</h3>
-          <div className="detailCodeBlock">
-            <h4>{detail.rawBlockLabel ?? "JSONL"}</h4>
-            <pre>{detail.rawBlock}</pre>
           </div>
         </section>
       ) : null}

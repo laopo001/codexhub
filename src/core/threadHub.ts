@@ -1868,9 +1868,31 @@ const codexRecordFromAppServerItem = (
       payload: {
         type: "function_call",
         call_id: itemId,
+        status: appServerStatus(item.status),
+        success: typeof item.success === "boolean" ? item.success : undefined,
         name: typeof item.tool === "string" ? item.tool : "tool",
         namespace: typeof item.namespace === "string" ? item.namespace : undefined,
-        arguments: JSON.stringify(item.arguments ?? {})
+        arguments: JSON.stringify(item.arguments ?? {}),
+        content_items: Array.isArray(item.contentItems) ? item.contentItems : undefined
+      }
+    };
+  }
+
+  if (itemType === "collabAgentToolCall") {
+    return {
+      ...base,
+      type: "response_item",
+      payload: {
+        type: "collab_agent_tool_call",
+        call_id: itemId,
+        tool: typeof item.tool === "string" ? item.tool : "agent",
+        status: appServerStatus(item.status),
+        sender_thread_id: typeof item.senderThreadId === "string" ? item.senderThreadId : undefined,
+        receiver_thread_ids: stringArray(item.receiverThreadIds),
+        prompt: typeof item.prompt === "string" ? item.prompt : undefined,
+        model: typeof item.model === "string" ? item.model : undefined,
+        reasoning_effort: typeof item.reasoningEffort === "string" ? item.reasoningEffort : undefined,
+        agents_states: item.agentsStates
       }
     };
   }
@@ -1889,17 +1911,30 @@ const codexRecordFromAppServerItem = (
     };
   }
 
+  if (itemType === "imageView") {
+    return {
+      ...base,
+      type: "response_item",
+      payload: {
+        type: "image_view",
+        path: typeof item.path === "string" ? item.path : "",
+        status: "completed"
+      }
+    };
+  }
+
   if (itemType === "imageGeneration") {
     return {
       ...base,
-      type: "event_msg",
+      type: "response_item",
       payload: {
-        type: "image_generation_end",
+        type: "image_generation_call",
         call_id: itemId,
         status: typeof item.status === "string" ? item.status : undefined,
+        prompt: typeof item.revisedPrompt === "string" ? item.revisedPrompt : undefined,
         revised_prompt: typeof item.revisedPrompt === "string" ? item.revisedPrompt : undefined,
         saved_path: typeof item.savedPath === "string" ? item.savedPath : undefined,
-        result_length: typeof item.result === "string" ? item.result.length : undefined
+        result: typeof item.result === "string" ? item.result : ""
       }
     };
   }
