@@ -48,6 +48,7 @@
     "smoke:ssh-loopback": "tsx scripts/smoke-ssh-loopback.ts",
     "smoke:task-lock": "tsx scripts/smoke-task-lock.ts",
     "smoke:electron": "pnpm build && tsx scripts/smoke-electron.ts",
+    "probe:app-server-transcript": "tsx scripts/probe-app-server-transcript.ts",
     "clean": "node -e \"const fs=require('node:fs'); for (const path of ['dist','dist-node']) fs.rmSync(path,{recursive:true,force:true});\"",
     "check": "tsc --noEmit",
     "build:electron": "tsx scripts/build-electron.ts",

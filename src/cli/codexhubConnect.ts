@@ -54,6 +54,9 @@ type SyncedThread = {
   jsonlWatcher?: FSWatcher;
   jsonlWatcherPath?: string;
   jsonlDebounceTimer?: NodeJS.Timeout;
+  appServerTurnsSyncing: boolean;
+  appServerTurnsPending: boolean;
+  appServerTurnsDebounceTimer?: NodeJS.Timeout;
 };
 
 type BridgeState = {
@@ -802,7 +805,6 @@ class CodexAppServerBridge {
 
   async runJsonlRecordSyncLoop(intervalMs = 2000) {
     while (!this.closed) {
-      await this.syncJsonlRecords();
       await delay(intervalMs);
     }
   }
@@ -819,23 +821,24 @@ class CodexAppServerBridge {
   private markClosed() {
     if (this.closed) return;
     this.closed = true;
-    for (const state of this.syncedThreads.values()) this.closeJsonlWatcher(state);
+    for (const state of this.syncedThreads.values()) {
+      this.closeJsonlWatcher(state);
+      this.closeAppServerTurnsSync(state);
+    }
     this.closeSignal.resolve();
   }
 
   private async handleCommand(command: SessionCommand) {
     if (command.type === "list_threads") {
       return {
-        threads: await listCodexSessionsForCwd(command.workingDirectory, {
-          limit: command.limit,
-          summaryMode: "candidate"
-        })
+        threads: await this.listAppServerThreads(command.workingDirectory, command.limit)
       };
     }
 
     if (command.type === "observe_thread_records") {
       if (!command.threadId) throw new Error("observe_thread_records command requires threadId");
       this.bindThread(command.threadId, command.workingDirectory);
+      await this.syncThreadAppServerTurns(command.threadId);
       return;
     }
 
@@ -1093,15 +1096,18 @@ class CodexAppServerBridge {
       jsonlLine: 0,
       jsonlReplayFull: true,
       jsonlSyncing: false,
-      jsonlPending: false
+      jsonlPending: false,
+      appServerTurnsSyncing: false,
+      appServerTurnsPending: false
     });
-    this.scheduleJsonlSync(threadId, { replayFull: true });
+    this.scheduleAppServerTurnsSync(threadId);
   }
 
   private unbindThread(threadId: string) {
     const state = this.syncedThreads.get(threadId);
     if (!state) return;
     this.closeJsonlWatcher(state);
+    this.closeAppServerTurnsSync(state);
     this.syncedThreads.delete(threadId);
     this.forwardedSessionSettings.delete(threadId);
   }
@@ -1131,7 +1137,7 @@ class CodexAppServerBridge {
     state.jsonlFileKey = undefined;
     state.jsonlReplayFull = true;
     this.closeJsonlWatcher(state);
-    this.scheduleJsonlSync(threadId, { replayFull: true });
+    this.scheduleAppServerTurnsSync(threadId);
   }
 
   private async ensureThreadLoaded(
@@ -1159,6 +1165,53 @@ class CodexAppServerBridge {
 
   private async syncJsonlRecords() {
     await Promise.all([...this.syncedThreads.keys()].map((threadId) => this.syncThreadJsonl(threadId)));
+  }
+
+  private scheduleAppServerTurnsSync(
+    threadId: string,
+    options: { delayMs?: number } = {}
+  ) {
+    const state = this.syncedThreads.get(threadId);
+    if (!state || this.closed) return;
+    if (state.appServerTurnsDebounceTimer) clearTimeout(state.appServerTurnsDebounceTimer);
+    state.appServerTurnsDebounceTimer = setTimeout(() => {
+      state.appServerTurnsDebounceTimer = undefined;
+      void this.syncThreadAppServerTurns(threadId).catch((error) => {
+        console.error(`codexhub bridge failed to sync app-server turns for ${threadId}: ${errorText(error)}`);
+      });
+    }, options.delayMs ?? 75);
+    state.appServerTurnsDebounceTimer.unref?.();
+  }
+
+  private async syncThreadAppServerTurns(threadId: string) {
+    const state = this.syncedThreads.get(threadId);
+    if (!state || this.closed) return;
+    const stillObserved = () => this.syncedThreads.get(threadId) === state && !this.closed;
+    if (state.appServerTurnsSyncing) {
+      state.appServerTurnsPending = true;
+      return;
+    }
+
+    state.appServerTurnsSyncing = true;
+    state.appServerTurnsPending = false;
+    try {
+      const cwd = this.threadCwds.get(threadId) ?? this.options.cwd;
+      const loadedThreadId = await this.ensureThreadLoaded(threadId, cwd, this.options.model, undefined, {
+        markBridgeStarted: true
+      });
+      if (!stillObserved()) return;
+      const turns = await this.listAppServerThreadTurnsOrEmpty(loadedThreadId);
+      if (!stillObserved()) return;
+      this.hub.sendEvent({
+        type: "thread_turns_snapshot",
+        threadId: loadedThreadId,
+        turns,
+        heartbeat: false
+      });
+    } finally {
+      state.appServerTurnsSyncing = false;
+      if (state.appServerTurnsPending && !this.closed) this.scheduleAppServerTurnsSync(threadId);
+    }
   }
 
   private scheduleJsonlSync(
@@ -1266,6 +1319,12 @@ class CodexAppServerBridge {
     state.jsonlWatcherPath = undefined;
   }
 
+  private closeAppServerTurnsSync(state: SyncedThread) {
+    if (state.appServerTurnsDebounceTimer) clearTimeout(state.appServerTurnsDebounceTimer);
+    state.appServerTurnsDebounceTimer = undefined;
+    state.appServerTurnsPending = false;
+  }
+
   private async listAppServerThreads(workingDirectory: string, limit?: number): Promise<CodexSessionSummary[]> {
     const result = asRecord(await this.request("thread/list", {
       cwd: workingDirectory,
@@ -1279,6 +1338,34 @@ class CodexAppServerBridge {
       .filter((thread): thread is CodexSessionSummary => Boolean(thread));
   }
 
+  private async listAppServerThreadTurns(threadId: string) {
+    const turns: unknown[] = [];
+    let cursor: string | null | undefined;
+    for (let page = 0; page < 100; page += 1) {
+      const result = asRecord(await this.request("thread/turns/list", {
+        threadId,
+        cursor,
+        limit: 50,
+        sortDirection: "asc",
+        itemsView: "full"
+      }));
+      const data = Array.isArray(result?.data) ? result.data : [];
+      turns.push(...data);
+      cursor = typeof result?.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
+      if (!cursor) break;
+    }
+    return turns;
+  }
+
+  private async listAppServerThreadTurnsOrEmpty(threadId: string) {
+    try {
+      return await this.listAppServerThreadTurns(threadId);
+    } catch (error) {
+      if (appServerTurnsListUnavailableBeforeFirstMessage(error)) return [];
+      throw error;
+    }
+  }
+
   resetServerMirrorState() {
     this.forwardedSessionSettings.clear();
     for (const [threadId, state] of this.syncedThreads) {
@@ -1288,7 +1375,7 @@ class CodexAppServerBridge {
       state.jsonlFileKey = undefined;
       state.jsonlReplayFull = true;
       this.closeJsonlWatcher(state);
-      this.scheduleJsonlSync(threadId, { replayFull: true });
+      this.scheduleAppServerTurnsSync(threadId);
     }
   }
 
@@ -1426,6 +1513,16 @@ class CodexAppServerBridge {
     }
     if (method === "item/fileChange/requestApproval") {
       this.ws.send(JSON.stringify({ id, result: { decision: "decline" } }));
+      return;
+    }
+    if (method === "item/tool/call") {
+      this.ws.send(JSON.stringify({
+        id,
+        result: {
+          contentItems: [{ type: "inputText", text: `codexhub bridge has no dynamic tool handler for ${method}` }],
+          success: false
+        }
+      }));
       return;
     }
     if (method === "execCommandApproval") {
@@ -2039,3 +2136,10 @@ const signalExitCode = (signal: NodeJS.Signals) => {
 };
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const appServerTurnsListUnavailableBeforeFirstMessage = (error: unknown) => {
+  const message = errorText(error);
+  return message.includes("thread/turns/list")
+    && message.includes("not materialized yet")
+    && message.includes("before first user message");
+};

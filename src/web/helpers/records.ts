@@ -245,7 +245,7 @@ export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) 
   const byId = new Map<string, CodexRecord>();
   for (const record of left) byId.set(record.id, record);
   for (const record of right) byId.set(record.id, record);
-  return [...byId.values()].sort((a, b) => recordSortValue(a) - recordSortValue(b));
+  return [...byId.values()];
 };
 
 export const threadDisplayRecords = (
@@ -475,11 +475,13 @@ export const isSimpleRecord = (record: CodexRecord) => {
   if (record.type === "error") return true;
   if (record.type === "response_item") return true;
   const payload = asRecord(record.payload);
-  return record.type === "event_msg" && payload?.type === "token_count";
+  return record.type === "event_msg"
+    && (payload?.type === "token_count" || payload?.type === "user_message" || payload?.type === "agent_message");
 };
 
 export const isSimpleMainView = (view: CodexRecordView) => {
   if (view.role === "error") return true;
+  if (view.role === "user" || view.role === "codex") return true;
   const payload = asRecord(view.record.payload);
   if (view.record.type !== "response_item") return false;
   if (payload?.type === "file_change") return false;

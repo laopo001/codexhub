@@ -86,6 +86,12 @@ const sessionEventSchema = z.discriminatedUnion("type", [
     message: z.unknown()
   }),
   z.object({
+    type: z.literal("thread_turns_snapshot"),
+    threadId: z.string().min(1),
+    heartbeat: z.boolean().optional(),
+    turns: z.array(z.unknown())
+  }),
+  z.object({
     type: z.literal("thread_execution_changed"),
     threadId: z.string().min(1),
     running: z.boolean(),

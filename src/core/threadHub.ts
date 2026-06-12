@@ -170,6 +170,12 @@ export type SessionEventInput =
       message: unknown;
     }
   | {
+      type: "thread_turns_snapshot";
+      threadId: string;
+      heartbeat?: boolean;
+      turns: unknown[];
+    }
+  | {
       type: "thread_execution_changed";
       threadId: string;
       running: boolean;
@@ -439,6 +445,14 @@ export class ThreadHub {
       return { ok: true, thread: this.summary(thread) };
     }
 
+    if (input.type === "thread_turns_snapshot") {
+      const thread = this.ensureThread(input.threadId, session, {
+        params: { threadId: input.threadId, cwd: session.workingDirectory }
+      });
+      this.applyAppServerTurnsSnapshot(thread, input.turns);
+      return { ok: true, thread: this.summary(thread) };
+    }
+
     const message = asRecord(input.message);
     if (!message) return { ok: true };
 
@@ -511,7 +525,6 @@ export class ThreadHub {
     });
     this.applyMirroredThreadSummary(thread, session, detail);
     thread.records = detail.records;
-    sortThreadRecords(thread.records);
     thread.recordSeq = Math.max(0, ...thread.records.map((record) => typeof record.order === "number" ? record.order : 0));
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
@@ -767,6 +780,7 @@ export class ThreadHub {
 
     const userText = summarizeInput(input);
     if (userText && thread.title === thread.threadId) thread.title = userText.slice(0, 80);
+    if (userText || imageUrls(input).length) this.appendUserInputRecord(thread, input);
     thread.running = true;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
@@ -1121,6 +1135,7 @@ export class ThreadHub {
     const resultThread = asRecord(result?.thread);
     if (resultThread) {
       this.applyAppServerThread(thread, resultThread);
+      this.applyAppServerThreadTurns(thread, resultThread);
     }
 
     const method = typeof record.method === "string" ? record.method : "";
@@ -1129,7 +1144,10 @@ export class ThreadHub {
 
     if (method === "thread/started") {
       const appThread = asRecord(params.thread);
-      if (appThread) this.applyAppServerThread(thread, appThread);
+      if (appThread) {
+        this.applyAppServerThread(thread, appThread);
+        this.applyAppServerThreadTurns(thread, appThread);
+      }
       return;
     }
 
@@ -1151,10 +1169,14 @@ export class ThreadHub {
     }
 
     if (method === "turn/started") {
+      const turn = asRecord(params.turn);
+      if (turn) this.applyAppServerTurn(thread, turn);
       return;
     }
 
     if (method === "turn/completed") {
+      const turn = asRecord(params.turn);
+      if (turn) this.applyAppServerTurn(thread, turn);
       this.finishSessionTurn(thread);
       return;
     }
@@ -1172,16 +1194,41 @@ export class ThreadHub {
     if (method === "item/agentMessage/delta") return;
 
     if (method === "item/started" || method === "item/completed") {
+      this.applyAppServerItemEvent(thread, params);
+      return;
+    }
+
+    if (method === "item/commandExecution/outputDelta") {
+      this.applyAppServerCommandExecutionOutputDelta(thread, params);
       return;
     }
 
     if (method === "rawResponseItem/completed") {
+      this.applyAppServerRawResponseItemEvent(thread, params);
       return;
     }
 
     if (method === "thread/tokenUsage/updated") {
+      this.applyAppServerTokenUsageEvent(thread, params);
       return;
     }
+  }
+
+  private applyAppServerTurnsSnapshot(thread: ThreadState, turns: unknown[]) {
+    const appRecordPrefix = `app:${thread.threadId}:`;
+    thread.records = thread.records.filter((record) => !record.id.startsWith(appRecordPrefix));
+    thread.jsonl = undefined;
+    thread.recordSeq = thread.records.reduce((max, record) => (
+      typeof record.order === "number" && record.order > max ? record.order : max
+    ), 0);
+    for (const turn of turns) {
+      const turnRecord = asRecord(turn);
+      if (turnRecord) this.applyAppServerTurn(thread, turnRecord);
+    }
+    thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
+    thread.lastUsage = latestUsage(thread.records);
+    thread.threadUsage = threadUsageFromRecords(thread.records);
+    this.publish(thread, "thread");
   }
 
   private applyAppServerThreadTurns(thread: ThreadState, appThread: Record<string, unknown>) {
@@ -1201,6 +1248,74 @@ export class ThreadHub {
       const record = itemRecord ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp) : null;
       if (record) this.upsertRecord(thread, record);
     }
+  }
+
+  private applyAppServerItemEvent(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const item = asRecord(params.item);
+    if (!turnId || !item) return;
+    const timestamp = timestampFromMillis(params.timestamp) ?? timestampFromSeconds(params.createdAt);
+    const record = codexRecordFromAppServerItem(thread.threadId, turnId, item, timestamp);
+    if (record) this.upsertRecord(thread, record);
+  }
+
+  private applyAppServerCommandExecutionOutputDelta(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const itemId = typeof params.itemId === "string"
+      ? params.itemId
+      : typeof params.callId === "string"
+        ? params.callId
+        : "";
+    const delta = typeof params.delta === "string"
+      ? params.delta
+      : typeof params.outputDelta === "string"
+        ? params.outputDelta
+        : "";
+    if (!turnId || !itemId || !delta) return;
+
+    const id = `app:${thread.threadId}:${turnId}:item:commandExecution:${itemId}`;
+    const existing = thread.records.find((item) => item.id === id);
+    const existingPayload = asRecord(existing?.payload);
+    const existingOutput = typeof existingPayload?.aggregated_output === "string" ? existingPayload.aggregated_output : "";
+    const payload = existingPayload && existing?.type === "response_item"
+      ? {
+          ...existingPayload,
+          type: "local_shell_call",
+          call_id: typeof existingPayload.call_id === "string" ? existingPayload.call_id : itemId,
+          status: existingPayload.status ?? "in_progress",
+          aggregated_output: existingOutput + delta
+        }
+      : {
+          type: "local_shell_call",
+          call_id: itemId,
+          status: "in_progress",
+          action: { type: "exec", command: [] },
+          aggregated_output: delta,
+          exit_code: null
+        };
+    this.upsertRecord(thread, {
+      id,
+      timestamp: existing?.timestamp ?? new Date().toISOString(),
+      type: "response_item",
+      payload,
+      sourceThreadId: thread.threadId
+    });
+  }
+
+  private applyAppServerRawResponseItemEvent(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const item = asRecord(params.item) ?? asRecord(params.rawResponseItem);
+    if (!turnId || !item) return;
+    const record = codexRecordFromRawResponseItem(thread.threadId, turnId, item);
+    if (record) this.upsertRecord(thread, record);
+  }
+
+  private applyAppServerTokenUsageEvent(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : thread.appServerTurnId ?? "";
+    const usage = asRecord(params.tokenUsage) ?? asRecord(params.usage);
+    if (!turnId || !usage) return;
+    const record = codexRecordFromAppServerUsage(thread.threadId, turnId, usage);
+    if (record) this.upsertRecord(thread, record);
   }
 
   private applyAppServerThread(thread: ThreadState, appThread: Record<string, unknown>) {
@@ -1339,26 +1454,35 @@ export class ThreadHub {
   }
 
   private removeOptimisticUserRecord(thread: ThreadState, incoming: CodexRecord) {
+    const index = this.optimisticUserRecordIndex(thread, incoming);
+    if (index !== -1) thread.records.splice(index, 1);
+  }
+
+  private optimisticUserRecordIndex(thread: ThreadState, incoming: CodexRecord) {
     const incomingPayload = asRecord(incoming.payload);
-    if (incoming.type !== "event_msg" || incomingPayload?.type !== "user_message") return;
-    const index = thread.records.findIndex((record) => {
+    if (incoming.type !== "event_msg" || incomingPayload?.type !== "user_message") return -1;
+    return thread.records.findIndex((record) => {
       if (!record.id.startsWith("proxy:user:")) return false;
       const payload = asRecord(record.payload);
       return payload?.type === "user_message"
         && payload.message === incomingPayload.message
         && JSON.stringify(payload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
     });
-    if (index !== -1) thread.records.splice(index, 1);
   }
 
   private removeMatchingAppServerTranscriptRecord(thread: ThreadState, incoming: CodexRecord) {
-    if (!incoming.type || incoming.type !== "event_msg") return;
+    const index = this.matchingAppServerTranscriptRecordIndex(thread, incoming);
+    if (index !== -1) thread.records.splice(index, 1);
+  }
+
+  private matchingAppServerTranscriptRecordIndex(thread: ThreadState, incoming: CodexRecord) {
+    if (!incoming.type || incoming.type !== "event_msg") return -1;
     const incomingPayload = asRecord(incoming.payload);
-    if (!incomingPayload) return;
+    if (!incomingPayload) return -1;
     const incomingType = incomingPayload?.type;
-    if (incomingType !== "user_message" && incomingType !== "agent_message") return;
+    if (incomingType !== "user_message" && incomingType !== "agent_message") return -1;
     const incomingTurnId = turnIdFromAppRecordId(thread.threadId, incoming.id);
-    const index = thread.records.findIndex((record) => {
+    return thread.records.findIndex((record) => {
       if (!record.id.startsWith("app:")) return false;
       const recordTurnId = turnIdFromAppRecordId(thread.threadId, record.id);
       const payload = asRecord(record.payload);
@@ -1371,22 +1495,28 @@ export class ThreadHub {
       }
       return true;
     });
-    if (index !== -1) thread.records.splice(index, 1);
   }
 
   private upsertRecord(thread: ThreadState, record: CodexRecord) {
     const existingIndex = thread.records.findIndex((item) => item.id === record.id);
     if (existingIndex === -1) {
-      if (typeof record.order !== "number") record = { ...record, order: ++thread.recordSeq };
-      this.removeOptimisticUserRecord(thread, record);
-      this.removeMatchingAppServerTranscriptRecord(thread, record);
-      thread.records.push(record);
+      const optimisticUserIndex = this.optimisticUserRecordIndex(thread, record);
+      const replacementIndex = optimisticUserIndex !== -1
+        ? optimisticUserIndex
+        : this.matchingAppServerTranscriptRecordIndex(thread, record);
+      if (replacementIndex !== -1) {
+        if (typeof record.order !== "number") record = { ...record, order: thread.records[replacementIndex].order };
+        if (recordsEqual(thread.records[replacementIndex], record)) return;
+        thread.records[replacementIndex] = record;
+      } else {
+        if (typeof record.order !== "number") record = { ...record, order: ++thread.recordSeq };
+        thread.records.push(record);
+      }
     } else {
       if (typeof record.order !== "number") record = { ...record, order: thread.records[existingIndex].order };
       if (recordsEqual(thread.records[existingIndex], record)) return;
       thread.records[existingIndex] = record;
     }
-    sortThreadRecords(thread.records);
     thread.updatedAt = latestRecordTimestamp(thread.records) ?? record.timestamp ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
@@ -1954,10 +2084,6 @@ const latestUsage = (records: CodexRecord[]) => {
   return undefined;
 };
 
-const sortThreadRecords = (records: CodexRecord[]) => {
-  records.sort((left, right) => compareThreadRecords(left, right));
-};
-
 const latestRecordTimestamp = (records: CodexRecord[]) => {
   let latest: { timestamp: string; time: number } | undefined;
   let fallback: string | undefined;
@@ -1971,20 +2097,6 @@ const latestRecordTimestamp = (records: CodexRecord[]) => {
     }
   }
   return latest?.timestamp ?? fallback;
-};
-
-const compareThreadRecords = (left: CodexRecord, right: CodexRecord) => {
-  const leftTime = Date.parse(left.timestamp ?? "");
-  const rightTime = Date.parse(right.timestamp ?? "");
-  if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
-    return leftTime - rightTime;
-  }
-  if (typeof left.order === "number" && typeof right.order === "number" && left.order !== right.order) {
-    return left.order - right.order;
-  }
-  if (typeof left.order === "number" && typeof right.order !== "number") return -1;
-  if (typeof left.order !== "number" && typeof right.order === "number") return 1;
-  return left.id.localeCompare(right.id);
 };
 
 const recordsEqual = (left: CodexRecord, right: CodexRecord) =>
