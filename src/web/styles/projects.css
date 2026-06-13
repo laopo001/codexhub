@@ -2,7 +2,7 @@
   display: grid;
   align-content: start;
   flex: 0 0 auto;
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
 }
 
@@ -33,7 +33,7 @@
 
 .projectAddButton {
   width: 100%;
-  min-height: 34px;
+  min-height: 32px;
   border: 1px solid #d95f36;
   border-radius: 8px;
   background: #d95f36;
@@ -51,7 +51,7 @@
 }
 
 .projectSearchInput {
-  min-height: 34px;
+  min-height: 32px;
   border-color: #334238;
   background: #101410;
   color: #f8fbf4;
@@ -71,7 +71,7 @@
 
 .projectList {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -79,15 +79,15 @@
 
 .projectMachineGroup {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
 .projectOfflineSection {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  padding-top: 6px;
+  padding-top: 4px;
 }
 
 .projectOfflineHeader {
@@ -141,7 +141,7 @@
 
 .projectOfflineMachines {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -153,7 +153,7 @@
   min-width: 0;
   border: 0;
   background: transparent;
-  padding: 2px 0;
+  padding: 1px 0;
   color: #f8fbf4;
   cursor: pointer;
   text-align: left;
@@ -192,10 +192,10 @@
 
 .projectMachineRows {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   border-left: 1px solid #2d4033;
-  padding-left: 8px;
+  padding-left: 7px;
 }
 
 .projectEmptyRow {
@@ -205,7 +205,7 @@
   border-radius: 8px;
   background: #111811;
   color: #91a090;
-  padding: 9px 11px;
+  padding: 7px 9px;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -214,14 +214,14 @@
 .projectRow {
   position: relative;
   display: grid;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
   min-width: 0;
   border: 1px solid #405244;
   border-radius: 8px;
   background: #0f1b14;
   color: #d8e2d5;
-  padding: 9px 7px 9px 11px;
+  padding: 7px 6px 7px 9px;
 }
 
 .projectRow:hover,
@@ -269,7 +269,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -303,7 +303,7 @@
   grid-template-columns: repeat(2, auto);
   flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
   pointer-events: none;
 }
@@ -311,8 +311,8 @@
 .projectMiniButton {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: 1px solid #334238;
   border-radius: 6px;
   background: #172019;
@@ -349,8 +349,8 @@
 .projectDeleteButton {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;

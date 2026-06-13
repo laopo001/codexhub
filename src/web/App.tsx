@@ -77,6 +77,7 @@ import {
   preferredThreadIdForSession,
   projectKeyForProject,
   setAuthToken,
+  shortId,
   threadDisplayRecords,
   threadDisplayTitle,
   turnUiStateFromStatus,
@@ -101,6 +102,11 @@ const registeredMachineCommand = (origin: string, token: string) => {
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
+const compactWorkspaceName = (value: string) => {
+  const parts = value.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) ?? (value || "workspace");
+};
+
 type ThreadTabTurnMeta = {
   status: "running" | "idle";
   duration: string;
@@ -108,6 +114,7 @@ type ThreadTabTurnMeta = {
 
 const OpenThreadTabLabel = ({ thread, nowMs }: { thread: OpenThreadState; nowMs: number }) => {
   const title = threadDisplayTitle(thread);
+  const workspaceName = compactWorkspaceName(thread.workingDirectory);
   const records = threadDisplayRecords(thread.threadId, thread);
   const turnStatus = latestTurnStatusFromRecords(records);
   const turnMeta = threadTabTurnMeta(thread, records, turnStatus, nowMs);
@@ -152,10 +159,9 @@ const OpenThreadTabLabel = ({ thread, nowMs }: { thread: OpenThreadState; nowMs:
         className="openThreadTabLabel"
         title={`${thread.workingDirectory}\n${title}\n${thread.threadId}`}
       >
-        <code className="openThreadTabPath">{thread.workingDirectory}</code>
         <span className="openThreadTabTitle">{title}</span>
         <span className="openThreadTabMeta">
-          <code>{thread.threadId}</code>
+          <code title={`${thread.workingDirectory}\n${thread.threadId}`}>{workspaceName} · {shortId(thread.threadId)}</code>
           <em className={`openThreadTabBadge ${turnMeta.status}`}>{badgeText}</em>
         </span>
       </span>

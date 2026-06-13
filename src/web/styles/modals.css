@@ -10,12 +10,12 @@
 
 .sessionDialog {
   display: grid;
-  gap: 14px;
+  gap: 10px;
   width: min(360px, 100%);
   border: 1px solid #cbd6c7;
-  border-radius: 16px;
+  border-radius: 12px;
   background: #ffffff;
-  padding: 16px;
+  padding: 14px;
   box-shadow: 0 24px 80px rgb(18 32 24 / 0.26);
 }
 
@@ -23,7 +23,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .sessionDialogHeader h2 {
@@ -34,7 +34,7 @@
 
 .sessionDialogField {
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .sessionDialogField span {
@@ -49,12 +49,12 @@
 
 .goalDialog {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   width: min(420px, 100%);
   border: 1px solid #d8dfd4;
-  border-radius: 18px;
+  border-radius: 14px;
   background: #ffffff;
-  padding: 20px;
+  padding: 16px;
   box-shadow: 0 24px 70px rgb(18 32 24 / 0.24);
 }
 
@@ -68,9 +68,9 @@
 .goalDialogMark {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   background: #f1f3ef;
   color: #51604f;
   font-size: 18px;
@@ -95,13 +95,13 @@
 
 .goalDialog h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.2;
   letter-spacing: 0;
 }
 
 .goalDialog textarea {
-  min-height: 240px;
+  min-height: 200px;
   border-color: #1f7bff;
   border-radius: 14px;
   background: #ffffff;
@@ -117,7 +117,7 @@
 .goalDialogActions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
 }
 
 .goalDialogActions button {
@@ -237,12 +237,12 @@
   border: 1px solid #cbd6c7;
   border-radius: 8px;
   background: #ffffff;
-  padding: 6px;
+  padding: 4px;
   box-shadow: 0 14px 40px rgb(18 32 24 / 0.22);
 }
 
 .messageContextMenu button {
-  min-height: 34px;
+  min-height: 30px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -270,21 +270,21 @@
   display: grid;
   place-items: center;
   background: rgb(18 32 24 / 0.58);
-  padding: 24px;
+  padding: 18px;
   z-index: 100;
 }
 
 .modal {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 16px;
+  gap: 12px;
   width: min(900px, 100%);
-  height: min(780px, calc(100vh - 48px));
-  max-height: min(780px, calc(100vh - 48px));
+  height: min(760px, calc(100vh - 36px));
+  max-height: min(760px, calc(100vh - 36px));
   border: 1px solid #cbd6c7;
   border-radius: 8px;
   background: #fcfdf9;
-  padding: 20px;
+  padding: 16px;
   box-shadow: 0 24px 80px rgb(18 32 24 / 0.28);
 }
 
@@ -295,13 +295,13 @@
 .projectPickerModal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 16px;
+  gap: 12px;
   width: min(520px, 100%);
-  max-height: min(640px, calc(100vh - 48px));
+  max-height: min(620px, calc(100vh - 36px));
   border: 1px solid #cbd6c7;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #ffffff;
-  padding: 18px 20px;
+  padding: 15px 16px;
   box-shadow: 0 24px 80px rgb(18 32 24 / 0.32);
 }
 
@@ -309,18 +309,18 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
+  gap: 10px;
 }
 
 .projectPickerHeader h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.2;
   letter-spacing: 0;
 }
 
 .projectPickerHeader p {
-  margin: 6px 0 0;
+  margin: 3px 0 0;
   color: #66715f;
   font-size: 13px;
   overflow-wrap: anywhere;
@@ -329,13 +329,13 @@
 .projectPickerBody {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 9px;
   min-height: 0;
 }
 
 .projectPickerField {
   display: grid;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -353,8 +353,8 @@
 }
 
 .projectPickerPathForm input {
-  min-height: 38px;
-  padding: 8px 10px;
+  min-height: 34px;
+  padding: 7px 9px;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
 }
@@ -362,7 +362,7 @@
 .projectPickerPathButton,
 .projectPickerGoButton,
 .projectPickerPrimaryButton {
-  min-height: 38px;
+  min-height: 34px;
   border: 1px solid #cbd6c7;
   border-radius: 8px;
   background: #f5f7f2;
@@ -396,27 +396,27 @@
 .projectPickerList {
   display: grid;
   gap: 2px;
-  min-height: 190px;
-  max-height: 290px;
+  min-height: 170px;
+  max-height: 280px;
   overflow: auto;
   border: 1px solid #dfe5dc;
   border-radius: 8px;
   background: #fbfcf8;
-  padding: 6px;
+  padding: 5px;
 }
 
 .projectPickerRow {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  min-height: 34px;
+  min-height: 30px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #17211a;
-  padding: 6px 8px;
+  padding: 5px 7px;
   text-align: left;
 }
 
@@ -455,7 +455,7 @@
 .projectPickerEmpty {
   display: grid;
   place-items: center;
-  min-height: 160px;
+  min-height: 132px;
   color: #66715f;
   font-size: 13px;
 }
@@ -463,12 +463,12 @@
 .projectPickerFooter {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
 }
 
 .projectPickerFooter button {
-  min-width: 92px;
-  min-height: 38px;
+  min-width: 84px;
+  min-height: 34px;
   border-radius: 8px;
   padding: 0 14px;
   font-size: 13px;
@@ -482,13 +482,13 @@
 .threadPickerModal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 14px;
-  width: min(560px, 100%);
-  max-height: min(650px, calc(100vh - 48px));
+  gap: 10px;
+  width: min(520px, 100%);
+  max-height: min(600px, calc(100vh - 40px));
   border: 1px solid #cbd6c7;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #ffffff;
-  padding: 18px 20px;
+  padding: 14px 16px;
   box-shadow: 0 24px 80px rgb(18 32 24 / 0.32);
 }
 
@@ -496,18 +496,18 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
+  gap: 10px;
 }
 
 .threadPickerHeader h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.2;
   letter-spacing: 0;
 }
 
 .threadPickerHeader p {
-  margin: 6px 0 0;
+  margin: 3px 0 0;
   color: #66715f;
   font-size: 13px;
   overflow-wrap: anywhere;
@@ -516,21 +516,21 @@
 .threadPickerList {
   display: grid;
   align-content: start;
-  gap: 6px;
-  min-height: 220px;
+  gap: 4px;
+  min-height: 180px;
   overflow: auto;
 }
 
 .threadPickerRow {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   width: 100%;
   min-width: 0;
   border: 1px solid #dfe5dc;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #fbfcf8;
   color: #17211a;
-  padding: 10px 12px;
+  padding: 7px 10px;
   text-align: left;
 }
 
@@ -562,7 +562,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
   color: #66715f;
   font-size: 12px;
@@ -577,7 +577,7 @@
   border-radius: 999px;
   background: #e1ece1;
   color: #2f7d5a;
-  padding: 1px 7px;
+  padding: 1px 6px;
   font-size: 10px;
   font-weight: 800;
 }
@@ -585,7 +585,7 @@
 .threadPickerEmpty {
   display: grid;
   place-items: center;
-  min-height: 120px;
+  min-height: 96px;
   color: #66715f;
   font-size: 13px;
 }
@@ -593,25 +593,25 @@
 .detailModal {
   grid-template-rows: auto minmax(0, 1fr);
   width: min(860px, 100%);
-  height: min(680px, calc(100vh - 48px));
+  height: min(660px, calc(100vh - 36px));
 }
 
 .modalHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .modalHeader h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.2;
   letter-spacing: 0;
 }
 
 .modalHeader p {
-  margin: 6px 0 0;
+  margin: 3px 0 0;
   color: #66715f;
   font-size: 13px;
   overflow-wrap: anywhere;
@@ -620,8 +620,8 @@
 .iconButton {
   display: grid;
   place-items: center;
-  width: 36px;
-  min-height: 36px;
+  width: 32px;
+  min-height: 32px;
   border: 0;
   border-radius: 8px;
   padding: 0;
@@ -634,19 +634,19 @@
 .detailBody {
   display: grid;
   align-content: start;
-  gap: 14px;
+  gap: 10px;
   min-height: 0;
   margin: 0;
   overflow: auto;
   border: 1px solid #dfe5dc;
   border-radius: 8px;
   background: #ffffff;
-  padding: 14px;
+  padding: 10px;
 }
 
 .detailSection {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .detailSection h3 {
@@ -680,6 +680,5 @@
 .detailCodeBlock pre {
   border-left: 3px solid #d85b34;
   background: #f8faf5;
-  padding: 10px 12px;
+  padding: 8px 10px;
 }
-

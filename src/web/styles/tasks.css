@@ -2,7 +2,7 @@
   display: grid;
   align-content: start;
   flex: 0 0 auto;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -52,7 +52,7 @@
 
 .taskList {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   max-height: 230px;
   min-width: 0;
   overflow-x: hidden;
@@ -65,13 +65,13 @@
   border-radius: 8px;
   background: #111811;
   color: #91a090;
-  padding: 9px 10px;
+  padding: 7px 9px;
   font-size: 12px;
 }
 
 .taskRow {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -85,7 +85,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -162,7 +162,7 @@
 .taskRunHistory {
   min-width: 0;
   border-top: 1px solid #243427;
-  padding-top: 5px;
+  padding-top: 4px;
 }
 
 .taskRunHistory summary {
@@ -200,8 +200,8 @@
 
 .taskRunHistory ol {
   display: grid;
-  gap: 3px;
-  margin: 6px 0 0;
+  gap: 2px;
+  margin: 5px 0 0;
   min-width: 0;
   padding: 0;
 }
@@ -250,7 +250,7 @@
 .taskActions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   padding-top: 2px;
 }
@@ -296,12 +296,12 @@
 
 .taskForm {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
   border: 1px solid #334238;
   border-radius: 8px;
   background: #0f1b14;
-  padding: 10px;
+  padding: 8px;
 }
 
 .taskField {

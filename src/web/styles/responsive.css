@@ -9,7 +9,7 @@
     position: fixed;
     inset: 0 auto 0 0;
     z-index: 70;
-    width: min(320px, 86vw);
+    width: min(306px, 86vw);
     max-height: none;
     box-shadow: 18px 0 42px rgb(0 0 0 / 0.32);
   }
@@ -44,15 +44,15 @@
   }
 
   .messages {
-    padding: 14px 12px 12px;
+    padding: 12px 10px 10px;
   }
 
   .messages > div {
-    max-width: calc(100% - 24px);
+    max-width: calc(100% - 20px);
   }
 
   .message {
-    padding: 10px 10px 22px;
+    padding: 8px 9px 18px;
   }
 
   .message.user {
@@ -67,7 +67,7 @@
   }
 
   .composer {
-    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    padding: 8px 9px calc(9px + env(safe-area-inset-bottom));
   }
 
   .composerLayout {
@@ -75,8 +75,8 @@
   }
 
   .composerSurface {
-    border-radius: 18px;
-    padding: 12px 12px 10px;
+    border-radius: 13px;
+    padding: 8px 9px;
   }
 
   .goalStrip {
@@ -98,14 +98,14 @@
   }
 
   .composer textarea {
-    min-height: calc(2 * 1.55em);
+    min-height: calc(2 * 1.4em);
     max-height: 132px;
     padding: 0 4px;
   }
 
   .composerActions {
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 5px;
   }
 
   .composerRightActions {
@@ -114,9 +114,9 @@
   }
 
   .composerModeSegmented {
-    flex: 1 1 162px;
-    width: min(180px, calc(100vw - 116px));
-    min-width: 156px;
+    flex: 1 1 144px;
+    width: min(160px, calc(100vw - 102px));
+    min-width: 142px;
   }
 
   .composerModeOption {
@@ -135,7 +135,7 @@
   .composerSessionPopover .composerSessionControls {
     align-items: center;
     flex-wrap: nowrap;
-    gap: 8px;
+    gap: 6px;
   }
 
   .composerUsagePills {
@@ -145,7 +145,7 @@
   }
 
   .composerSessionPopover .usagePill {
-    padding: 4px 7px;
+    padding: 3px 6px;
   }
 
   .composerMenu {
@@ -153,10 +153,30 @@
   }
 
   .modalOverlay {
-    padding: 12px;
+    padding: 8px;
   }
 
   .sessionDialogOverlay {
+    padding: 8px;
+  }
+
+  .threadPickerModal,
+  .projectPickerModal,
+  .goalDialog,
+  .modal {
+    max-height: calc(100svh - 16px);
     padding: 12px;
+  }
+
+  .threadPickerList {
+    min-height: 144px;
+  }
+
+  .threadPickerRow {
+    padding: 7px 9px;
+  }
+
+  .projectPickerPathForm {
+    grid-template-columns: 32px 32px minmax(0, 1fr) auto;
   }
 }

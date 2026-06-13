@@ -1,6 +1,6 @@
 .composer {
   border-top: 1px solid #dfe5dc;
-  padding: 14px 22px calc(18px + env(safe-area-inset-bottom));
+  padding: 8px 14px calc(10px + env(safe-area-inset-bottom));
   background: #f4f6f1;
 }
 
@@ -11,7 +11,7 @@
 
 .composerThreadEmpty {
   display: grid;
-  min-height: 42px;
+  min-height: 34px;
   place-items: center;
   color: #8a9584;
   font-size: 12px;
@@ -40,12 +40,24 @@
 .threadTabActions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
 .openThreadTabs > .ant-tabs-nav .sidebarPanelToggle {
-  margin: 0 8px 0 12px;
+  margin: 0 6px 0 10px;
+}
+
+.openThreadTabs > .ant-tabs-nav {
+  margin: 0;
+}
+
+.openThreadTabs > .ant-tabs-nav .ant-tabs-tab {
+  padding: 4px 8px;
+}
+
+.openThreadTabs > .ant-tabs-nav .ant-tabs-tab + .ant-tabs-tab {
+  margin-left: 2px;
 }
 
 .openThreadTabs > .ant-tabs-nav,
@@ -70,11 +82,11 @@
 
 .openThreadTabLabel {
   display: grid;
-  gap: 3px;
-  width: clamp(180px, 25vw, 250px);
+  gap: 2px;
+  width: clamp(158px, 20vw, 220px);
   min-width: 0;
   cursor: pointer;
-  line-height: 1.18;
+  line-height: 1.14;
 }
 
 .openThreadTabs > .ant-tabs-nav .ant-tabs-tab-btn {
@@ -85,7 +97,6 @@
   max-width: calc(100vw - 120px);
 }
 
-.openThreadTabPath,
 .openThreadTabTitle,
 .openThreadTabMeta code {
   min-width: 0;
@@ -94,43 +105,35 @@
   white-space: nowrap;
 }
 
-.openThreadTabPath {
-  display: block;
-  color: #1677ff;
-  font-size: 12px;
-  font-weight: 650;
-  font-family: inherit;
-}
-
 .openThreadTabTitle {
   display: block;
   color: #17211a;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .openThreadTabMeta {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
 .openThreadTabMeta code {
   color: #66715f;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .openThreadTabBadge {
   border-radius: 999px;
   background: #f0f4ed;
   color: #536050;
-  font-size: 11px;
+  font-size: 10px;
   font-style: normal;
   font-weight: 650;
   line-height: 1;
-  padding: 3px 7px;
+  padding: 2px 6px;
   white-space: nowrap;
 }
 
@@ -141,7 +144,7 @@
 
 .openThreadTabDetails {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   max-width: min(560px, 78vw);
 }
 
@@ -169,33 +172,33 @@
 
 @media (max-width: 700px) {
   .openThreadTabLabel {
-    width: min(62vw, 300px);
+    width: min(50vw, 240px);
   }
 }
 
 .composerSurface {
   position: relative;
   display: grid;
-  gap: 8px;
+  gap: 5px;
   width: 100%;
   min-width: 0;
   border: 1px solid #c6d0c2;
-  border-radius: 22px;
+  border-radius: 14px;
   background: #ffffff;
-  padding: 14px 16px 12px;
-  box-shadow: 0 10px 28px rgb(18 32 24 / 0.08);
+  padding: 8px 10px;
+  box-shadow: 0 8px 22px rgb(18 32 24 / 0.07);
 }
 
 .goalStrip {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
+  gap: 6px;
+  min-height: 30px;
   border: 1px solid #d9dfd5;
   border-radius: 14px;
   background: #f8faf5;
-  padding: 5px 7px 5px 9px;
+  padding: 4px 6px 4px 8px;
   color: #17211a;
 }
 
@@ -223,7 +226,7 @@
 .goalStripMain {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -271,8 +274,8 @@
 .goalIconButton {
   display: grid;
   place-items: center;
-  width: 28px;
-  min-height: 28px;
+  width: 26px;
+  min-height: 26px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -294,12 +297,12 @@
 
 .composerInput {
   display: grid;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
 }
 
 .composer textarea {
-  min-height: calc(2 * 1.55em);
+  min-height: calc(2 * 1.4em);
   max-height: 180px;
   border: 0;
   border-radius: 0;
@@ -308,7 +311,7 @@
   resize: none;
   overflow-y: hidden;
   box-shadow: none;
-  line-height: 1.55;
+  line-height: 1.4;
 }
 
 .composer textarea:focus {
@@ -319,15 +322,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-height: 36px;
+  gap: 5px;
+  min-height: 32px;
 }
 
 .composerLeftActions,
 .composerRightActions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -339,7 +342,7 @@
   --composer-status-ring: #cbd6c7;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
 }
 
 .composerActionButtons.status-running {
@@ -362,7 +365,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -370,7 +373,7 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   color: #66715f;
   font-size: 12px;
@@ -380,12 +383,12 @@
   border: 1px solid #dfe5dc;
   border-radius: 999px;
   background: #f4f6f1;
-  padding: 4px 8px;
+  padding: 3px 7px;
   white-space: nowrap;
 }
 
 .statusPill {
-  min-height: 27px;
+  min-height: 25px;
   color: #66715f;
   font: inherit;
   cursor: pointer;
@@ -419,9 +422,9 @@
 .composerModeSegmented {
   display: grid;
   grid-template-columns: repeat(3, minmax(50px, 1fr));
-  width: min(180px, 38vw);
-  min-width: 162px;
-  height: 32px;
+  width: min(160px, 34vw);
+  min-width: 144px;
+  height: 28px;
   overflow: hidden;
   border: 1px solid #cbd6c7;
   border-radius: 7px;
@@ -434,7 +437,7 @@
   border-left: 1px solid #dfe5dc;
   background: transparent;
   color: #3c4738;
-  padding: 0 8px;
+  padding: 0 6px;
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0;
@@ -459,9 +462,9 @@
 .composerStopButton {
   display: grid;
   place-items: center;
-  width: 36px;
-  min-width: 36px;
-  min-height: 36px;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
   border: 0;
   border-radius: 999px;
   padding: 0;
@@ -493,13 +496,13 @@
 .composerSessionPopover {
   position: absolute;
   right: 0;
-  bottom: calc(100% + 10px);
+  bottom: calc(100% + 8px);
   z-index: 60;
   max-width: calc(100vw - 32px);
   border: 1px solid #dfe5dc;
-  border-radius: 14px;
+  border-radius: 12px;
   background: #ffffff;
-  padding: 10px;
+  padding: 8px;
   box-shadow: 0 16px 40px rgb(18 32 24 / 0.18);
 }
 
@@ -508,12 +511,12 @@
 }
 
 .composerModelButton {
-  min-height: 32px;
+  min-height: 28px;
   border: 1px solid #cbd6c7;
   border-radius: 999px;
   background: #ffffff;
   color: #66715f;
-  padding: 0 12px;
+  padding: 0 9px;
   font-size: 13px;
   font-weight: 650;
   white-space: nowrap;
@@ -524,7 +527,7 @@
 }
 
 .composerActionButton {
-  box-shadow: 0 0 0 3px var(--composer-status-ring);
+  box-shadow: 0 0 0 2px var(--composer-status-ring);
 }
 
 .composerActionButton:not(:disabled):hover {
@@ -556,14 +559,14 @@
 
 .composerMenu {
   position: absolute;
-  bottom: calc(100% + 10px);
+  bottom: calc(100% + 8px);
   left: 0;
   z-index: 50;
   display: grid;
   min-width: 204px;
   overflow: hidden;
   border: 1px solid #cbd6c7;
-  border-radius: 14px;
+  border-radius: 12px;
   background: #ffffff;
   padding: 6px;
   box-shadow: 0 18px 46px rgb(18 32 24 / 0.18);
@@ -573,13 +576,13 @@
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
+  gap: 6px;
+  min-height: 32px;
   border: 0;
   border-radius: 10px;
   background: transparent;
   color: #17211a;
-  padding: 0 10px;
+  padding: 0 8px;
   text-align: left;
 }
 

@@ -1,6 +1,6 @@
 .app {
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-columns: 336px minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
   height: 100svh;
@@ -95,12 +95,12 @@
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 11px;
   min-width: 0;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 18px;
+  padding: 14px;
   background: #151815;
   color: #f8fbf4;
 }
@@ -117,18 +117,18 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .brand h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.1;
   letter-spacing: 0;
 }
 
 .brand p {
-  margin: 6px 0 0;
+  margin: 3px 0 0;
   color: #aab4aa;
   font-size: 12px;
 }
