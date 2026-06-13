@@ -15,8 +15,9 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 3. 开发时 API 用 `pnpm run dev:api`，Web 用 `pnpm run dev:web`，Vite 默认 `5173` 并代理 `/api` 到 `8788`。
 4. `codexhub [prompt]` 是 legacy/transient headless 入口：它启动一条 transient Codex session 并通过 machine websocket 接入 server；它的 transient machine `projectLauncher: false`，不能用于项目浏览或远端目录选择。
 5. `codexhub machine --type registered` 注册一台可启动 project runtime 的 machine；内嵌 local machine 也走同一套 machine command 协议。
-6. `codexhub ssh ...` 是 server-side SSH 管理入口；SSH remote client 默认由本机 server bootstrap 下发，不要求远端预装 codexhub。
-7. VSCode 和 Electron 都调用 `src/server/embedded.ts` 复用同一套 server/Web。VSCode 默认每个窗口启动自己的随机端口嵌入 server，窗口自动 workspace projects 只作为 transient project group 进入内存，不写入 server state；Electron 默认随机端口，只有显式 `CODEX_HUB_PORT` 时才固定端口。
+6. `codexhub server --register-to <parent>` 会启动当前 server，并额外把它作为一台 `registered` machine 接入父 server；这不是 server-to-server state bridge。
+7. `codexhub ssh ...` 是 server-side SSH 管理入口；SSH remote client 默认由本机 server bootstrap 下发，不要求远端预装 codexhub。
+8. VSCode 和 Electron 都调用 `src/server/embedded.ts` 复用同一套 server/Web。VSCode 默认每个窗口启动自己的随机端口嵌入 server，窗口自动 workspace projects 只作为 transient project group 进入内存，不写入 server state；Electron 默认随机端口，只有显式 `CODEX_HUB_PORT` 时才固定端口。
 
 ## Machine / Session / Thread
 
@@ -24,13 +25,14 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 2. machine 是路径解析、目录 listing、project session 启停的执行者。server 不扫描远端文件系统；`/api/machines/:machineId/directories` 和 `/api/projects/open` 都必须发给在线 machine，由 machine 在自身环境确认 path 是可进入目录。
 3. machine capability 里 `projectLauncher` 很重要。Web 只应把可启动 project 的 machine 用于 Add Project；transient session host 必须保持 `projectLauncher: false`。
 4. `local` 表示 server 内嵌的 project launcher，普通 server 默认启用，Docker/测试/嵌入 surface 可用 `CODEX_HUB_LOCAL_MACHINE=0` 或 feature override 关闭。
-5. `registered` 表示外部机器主动连接 `/api/machines/connect`。它注册的是 machine，不是 session；session 由 server 下发 `start_session` 后由 machine 启动并再注册。
+5. `registered` 表示外部机器主动连接 `/api/machines/connect`。它注册的是 machine，不是 session；session 由 server 下发 `start_session` 后由 machine 启动并再注册。外部机器可以是 `codexhub machine --type registered`，也可以是 `codexhub server --register-to` 或 Web Registered 面板发起的父 server 注册；后两者仍只暴露 machine/app-server 能力，不同步子 server state。
 6. `ssh` 表示 server 通过系统 `ssh -R` 建 reverse tunnel 后在远端启动 remote client。SSH 断开后该 connection 下的 machine/session 进入 offline；保存的 SSH host 可以按 autoconnect 策略重连，但不要把 SSH 抽象成插件运行器。
 7. 不再支持 `type=server` machine、CodexHub server-to-server bridge、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。
-8. session 是一次官方 Codex app-server/headless 进程。公开 ID 是 `sessionId`；它是 machine 级 runtime，能通过 app-server 的 per-thread/per-turn `cwd` 支持多个 project。Web 中点击 project 就是打开或复用该 machine 的 runtime，并为 project path 创建/复用 thread；不提供手动 restart/stop 或独立 session 管理入口。
-9. threadId 来自官方 Codex app-server。server/Web/TG/task 读取和展示 thread transcript，但 transcript 来源只能是 app-server turns snapshot、实时 item/rawResponseItem/tokenUsage 事件。
-10. server/session 不维护 `currentThreadId` 或 `currentThread`。Web 当前 tab、Telegram chat 绑定、task `threadId` 都是各自的客户端/任务选择状态；发送入口最终必须显式知道目标 `threadId`。
-11. `session_register.registration` 是 strict schema。旧 `workerId` 必须被拒绝；`currentThreadId` 只作为历史字段容忍并立即丢弃，不能重新进入公共模型。
+8. 父 server 注册必须防止自注册：同本机地址且同端口直接拒绝，目标 `/api/health` 返回的 `serverInstanceId` 与当前实例相同也拒绝；同一台电脑不同端口的多个 server 可以互相注册用于测试。
+9. session 是一次官方 Codex app-server/headless 进程。公开 ID 是 `sessionId`；它是 machine 级 runtime，能通过 app-server 的 per-thread/per-turn `cwd` 支持多个 project。Web 中点击 project 就是打开或复用该 machine 的 runtime，并为 project path 创建/复用 thread；不提供手动 restart/stop 或独立 session 管理入口。
+10. threadId 来自官方 Codex app-server。server/Web/TG/task 读取和展示 thread transcript，但 transcript 来源只能是 app-server turns snapshot、实时 item/rawResponseItem/tokenUsage 事件。
+11. server/session 不维护 `currentThreadId` 或 `currentThread`。Web 当前 tab、Telegram chat 绑定、task `threadId` 都是各自的客户端/任务选择状态；发送入口最终必须显式知道目标 `threadId`。
+12. `session_register.registration` 是 strict schema。旧 `workerId` 必须被拒绝；`currentThreadId` 只作为历史字段容忍并立即丢弃，不能重新进入公共模型。
 
 ## App-server Thread Sync 和实时流
 
@@ -47,15 +49,16 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 1. 基础和认证：`GET /api/health`、`GET /api/auth/status`。设置 `CODEX_HUB_AUTH_TOKEN` 后，除 health/auth/status、SSH remote-client、plugin assets 和静态页面外，API 都需要 token。token 支持 `Authorization: Bearer`、`x-codexhub-token`、`?codexhub_token=` 和 `?token=`。
 2. Machines：`GET /api/machines`、`GET /api/machines/:machineId/directories`、`GET /api/machines/connect` WebSocket。
-3. Realtime：`GET /api/events/ws` WebSocket。
-4. Projects：`GET /api/projects`、`POST /api/projects/open`、`PATCH /api/projects/:projectId`、`DELETE /api/projects/:projectId`。`PATCH` 目前只更新 `pinned`。
-5. Sessions：`GET /api/sessions`、`GET /api/sessions/:sessionId/thread-candidates`、`POST /api/sessions/:sessionId/threads`、`POST /api/sessions/:sessionId/turn`。
-6. Threads：`GET /api/threads`、`GET /api/threads/:threadId`、`POST /api/threads/:threadId/turn`、`POST /api/threads/:threadId/stop`、`POST /api/threads/:threadId/goal`、`DELETE /api/threads/:threadId/goal`、`POST /api/threads/:threadId/fork`、`POST /api/threads/:threadId/rollback`、`DELETE /api/threads/:threadId`。
-7. Tasks：`GET /api/tasks`、`POST /api/tasks`、`PATCH /api/tasks/:taskId`、`DELETE /api/tasks/:taskId`、`POST /api/tasks/:taskId/run`。
-8. SSH：`GET /api/ssh/config-hosts`、`GET /api/ssh/hosts`、`POST /api/ssh/hosts`、`DELETE /api/ssh/hosts/:alias`、`GET /api/ssh/connections`、`POST /api/ssh/connect`、`DELETE /api/ssh/connections/:connectionId`、`GET /api/ssh/remote-client/:hash`。
-9. Plugins：`GET /api/plugins`、`GET /api/plugins/:pluginId/assets/*`。
-10. Web/TG/task 发送对话时优先使用 `/api/threads/:threadId/turn`。`/api/sessions/:sessionId/turn` 只作为兼容/调试入口，body 必须包含 `threadId`，不能表示“当前 thread”。
-11. 对 project runtime 的公开生命周期入口只保留 `POST /api/projects/open`。不要新增公开的 project session stop/restart API；runtime session 不由 project delete 或 idle watcher 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
+3. Registered parent：`GET /api/registered/parent`、`POST /api/registered/parent`、`DELETE /api/registered/parent`、`GET /api/registered/bootstrap`。动态 parent 注册只保存在当前进程内，body `url` 可以携带 `?token=` / `?codexhub_token=`。
+4. Realtime：`GET /api/events/ws` WebSocket。
+5. Projects：`GET /api/projects`、`POST /api/projects/open`、`PATCH /api/projects/:projectId`、`DELETE /api/projects/:projectId`。`PATCH` 目前只更新 `pinned`。
+6. Sessions：`GET /api/sessions`、`GET /api/sessions/:sessionId/thread-candidates`、`POST /api/sessions/:sessionId/threads`、`POST /api/sessions/:sessionId/turn`。
+7. Threads：`GET /api/threads`、`GET /api/threads/:threadId`、`POST /api/threads/:threadId/turn`、`POST /api/threads/:threadId/stop`、`POST /api/threads/:threadId/goal`、`DELETE /api/threads/:threadId/goal`、`POST /api/threads/:threadId/fork`、`POST /api/threads/:threadId/rollback`、`DELETE /api/threads/:threadId`。
+8. Tasks：`GET /api/tasks`、`POST /api/tasks`、`PATCH /api/tasks/:taskId`、`DELETE /api/tasks/:taskId`、`POST /api/tasks/:taskId/run`。
+9. SSH：`GET /api/ssh/config-hosts`、`GET /api/ssh/hosts`、`POST /api/ssh/hosts`、`DELETE /api/ssh/hosts/:alias`、`GET /api/ssh/connections`、`POST /api/ssh/connect`、`DELETE /api/ssh/connections/:connectionId`、`GET /api/ssh/remote-client/:hash`。
+10. Plugins：`GET /api/plugins`、`GET /api/plugins/:pluginId/assets/*`。
+11. Web/TG/task 发送对话时优先使用 `/api/threads/:threadId/turn`。`/api/sessions/:sessionId/turn` 只作为兼容/调试入口，body 必须包含 `threadId`，不能表示“当前 thread”。
+12. 对 project runtime 的公开生命周期入口只保留 `POST /api/projects/open`。不要新增公开的 project session stop/restart API；runtime session 不由 project delete 或 idle watcher 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
 
 ## Server State
 
@@ -154,7 +157,7 @@ pnpm build
 
 4. `smoke:machine-session` 覆盖 local machine、project open、跨 project 共享 runtime session、session/thread `/status`、server-local task、plugin CSS、SSH 参数构造、project delete 和 watcher idle 不误停 runtime、旧 `workerId` registration 拒绝，以及不持久化 thread history/name。
 5. `smoke:auth` 覆盖 token 保护、Bearer token、WebSocket token query、machine websocket 授权。
-6. `smoke:registered-machine` 覆盖真实 `codexhub machine --type registered` CLI、项目打开、session/thread 对话流，以及 SIGTERM 后 machine/session unregister lifecycle 和 app-server 进程清理。
+6. `smoke:registered-machine` 覆盖真实 `codexhub machine --type registered` CLI、`codexhub server --register-to`、动态 parent 注册、Register URL token 提取、自注册拒绝、同机不同端口注册、项目打开、session/thread 对话流，以及 SIGTERM 后 machine/session unregister lifecycle 和 app-server 进程清理。
 7. `smoke:ssh-loopback` 覆盖真实本机 sshd、`ssh -R` reverse tunnel、SSH remote client、项目打开、session/thread 对话流和断开 lifecycle。
 8. `smoke:task-lock` 覆盖 task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn 和 idle-close。
 9. `smoke:electron` 覆盖 Electron main process、嵌入 server 随机端口和 `/api/health`。

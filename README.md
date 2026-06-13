@@ -45,7 +45,9 @@ codexhub server --register-to http://127.0.0.1:8788
 
 也可以在 Web 的 Connections / Registered 里复制当前 server 的 register 命令。远端只需要能从 `PATH` 找到 `codexhub`、`node` 和官方 `codex` 命令；远端 server 会在提供自身 Web/API 的同时，额外用 machine WebSocket 连回父 server。父 server 只把它看成一台 `registered` machine，不同步子 server 的 projects、tasks、server-state 或 thread transcript 权威数据。打开项目时，父 server 会把请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用 machine 级 runtime session。Registered machine 只启动远端官方 `codex app-server` 并通过同一条 machine WebSocket 反向多路复用 app-server WebSocket 帧；父 server 在本地消费官方 app-server 协议并为该目录创建或复用 thread。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
 
-已经打开远端 server 的 Web UI 时，也可以在 Connections / Registered 里粘贴父 server 左下角复制的 Register URL 并 Connect；Register URL 可以用 `?token=...` 携带父 server auth token。这个动态连接只保存在当前进程内，重启后如需自动连接仍使用 `codexhub server --register-to` 或 `CODEX_HUB_REGISTER_TO`。
+父 server Web 左下角会显示可一键复制的 Register URL；如果当前浏览器已经保存父 server auth token，它会生成 `http://host:port?token=...`，否则就是不带 token 的 base URL。已经打开远端 server 的 Web UI 时，可以在 Connections / Registered 里把这个 Register URL 粘贴到唯一的 Parent register URL 输入框并 Connect；动态连接只保存在当前进程内，重启后如需自动连接仍使用 `codexhub server --register-to` 或 `CODEX_HUB_REGISTER_TO`。CLI 和动态 API 都能从 `?token=` 或 `?codexhub_token=` 提取父 server auth token，也可以继续使用 `--register-auth-token` 或 `CODEX_HUB_REGISTER_AUTH_TOKEN`。
+
+CodexHub 会拒绝把一个 server 注册到它自己：同一本机地址且同端口会直接返回错误，目标 `/api/health` 的 `serverInstanceId` 与当前实例相同也会被拒绝。为了本机测试，同一台电脑上不同端口的多个 server 可以互相注册，例如 `127.0.0.1:8789` 注册到 `127.0.0.1:8788` 是允许的。
 
 如果远端不想预装或升级 CodexHub，`/api/registered/bootstrap` 仍保留为 one-shot bootstrap 入口，会下载父 server 当前 build 的 remote client 后以同样的 registered tunnel 模式连回。
 
@@ -106,7 +108,7 @@ CodexHub 只保留三种 machine 连接方式：
 2. `ssh`：本机 server 通过 `ssh -R` 把远端 machine 连接转发回来，让本机控制面调用 SSH 机器上的 Codex CLI/app-server。
 3. `registered`：外部机器主动连接当前 server 的 `/api/machines/connect`，把那台机器上的官方 `codex app-server` 通过反向 WebSocket tunnel 暴露给当前控制面；父 server 侧继续复用官方 app-server 协议。
 
-不再支持 CodexHub server 连接另一个 CodexHub server；也不再提供 `type=server` machine、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。
+不再支持 CodexHub server-to-server state bridge；也不再提供 `type=server` machine、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。`codexhub server --register-to` 只把当前 server 作为一台 `registered` machine 接入父 server，父 server 仍只通过 machine/app-server 协议操作它。
 
 当前在线 project/session 状态以 Web 和 `/api/projects` 为准；历史 thread 选择以 Web 的 thread picker 和 `/api/sessions/:sessionId/threads` 为准。
 
@@ -230,7 +232,7 @@ pnpm build
 
 `smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证跨 project 共享 runtime session、`/api/projects/open`、`/api/sessions`、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。
 
-`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，验证 registered machine 注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期。
+`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?token=` 提取、自注册拒绝、同机不同端口注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期。
 
 `smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、项目打开、session 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
 
