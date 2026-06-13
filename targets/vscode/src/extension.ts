@@ -107,6 +107,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       const iframeUrl = new URL("/", url);
       iframeUrl.searchParams.set("surface", "vscode");
       iframeUrl.searchParams.set("workspacePath", activeFolder.path);
+      for (const folder of workspaceFolders) iframeUrl.searchParams.append("workspaceFolder", folder.path);
       this.view.webview.html = iframeHtml(iframeUrl.toString(), activeFolder.path);
     } catch (error) {
       this.view.webview.html = statusHtml(`Codex Hub failed to start: ${errorText(error)}`);
@@ -127,7 +128,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     const buildId = await vscodeWindowBuildId(this.context, staticDirectory);
     const explicitPort = parsePort(process.env.CODEX_HUB_PORT);
     const owned = await startEmbeddedServer({
-      host: "127.0.0.1",
+      host: process.env.CODEX_HUB_HOST ?? "0.0.0.0",
       portMode: explicitPort ? "preferred" : "random",
       preferredPort: explicitPort,
       explicitPort: Boolean(explicitPort),

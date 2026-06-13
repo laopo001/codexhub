@@ -16,7 +16,7 @@ export type EmbeddedServerOptions = {
 
 export const startEmbeddedServer = async (options: EmbeddedServerOptions = {}) => {
   await loadDotEnv();
-  const host = options.host ?? "127.0.0.1";
+  const host = options.host ?? "0.0.0.0";
   const preferredPort = options.portMode === "random"
     ? await findFreePort(host)
     : options.preferredPort ?? 18788;

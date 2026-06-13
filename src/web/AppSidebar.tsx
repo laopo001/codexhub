@@ -78,6 +78,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     patchTask,
     projectGroups,
     projectList,
+    projectScopeLocked,
     projectSearch,
     projectOpenError,
     registeredCommand,
@@ -126,14 +127,21 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     .filter((machine) => !projectQuery || machine.projects.length || machine.label.toLowerCase().includes(projectQuery.toLowerCase()));
   const onlineProjectGroups = visibleProjectGroups.filter((machine) => machine.online);
   const offlineProjectGroups = visibleProjectGroups.filter((machine) => !machine.online);
-  const projectAddMachine = projectGroups.filter((machine) => machine.online).find((machine) => machine.projectLauncher);
+  const projectAddMachine = projectScopeLocked
+    ? undefined
+    : projectGroups.filter((machine) => machine.online).find((machine) => machine.projectLauncher);
+  const visibleProjectTaskTargets = new Set(projectList.map((project) => `${project.machineId}\0${project.path}`));
   const visibleTasks = selectedProject
     ? tasks.filter((task) => taskBelongsToProject(task, selectedProject))
+    : projectScopeLocked
+    ? tasks.filter((task) => visibleProjectTaskTargets.has(`${task.machineId}\0${task.projectPath}`))
     : tasks;
-  const taskPanelContextLabel = selectedProject?.name ?? "All projects";
-  const taskPanelContextTitle = selectedProject ? `${selectedProject.name}\n${selectedProject.path}` : "All projects";
+  const taskPanelContextLabel = selectedProject?.name ?? (projectScopeLocked ? "Workspace" : "All projects");
+  const taskPanelContextTitle = selectedProject ? `${selectedProject.name}\n${selectedProject.path}` : projectScopeLocked ? "VSCode workspace projects" : "All projects";
   const taskFormProjectLocked = Boolean(selectedProject);
-  const taskMachineOptions = uniqueMachines(machines).filter(machineProjectLauncher);
+  const taskMachineOptions = uniqueMachines(machines)
+    .filter(machineProjectLauncher)
+    .filter((machine) => !projectScopeLocked || visibleProjectTaskTargets.size === 0 || projectList.some((project) => project.machineId === machine.machineId));
   const taskProjectOptions = projectList.filter((project) => !taskDraft.machineId || project.machineId === taskDraft.machineId);
   const parentRegistrationStatus = parentRegistrationStatusLabel(parentRegistration.status);
   const parentRegistrationActive = parentRegistration.status !== "idle" && parentRegistration.status !== "stopped";
@@ -192,28 +200,30 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   />
                   <div className="projectRowTop">
                     <span className="projectOpenButton projectOpenNameButton" title={project.name}>{project.name}</span>
-                    <div className="projectRowActions">
-                      <button
-                        type="button"
-                        className={`projectMiniButton ${project.pinned ? "active" : ""}`}
-                        onClick={() => void toggleProjectPinned(project)}
-                        disabled={busy}
-                        aria-label={saveAria}
-                        title={saveTitle}
-                      >
-                        {project.pinned ? <PinOff size={13} strokeWidth={2.1} aria-hidden="true" /> : <Pin size={13} strokeWidth={2.1} aria-hidden="true" />}
-                      </button>
-                      <button
-                        type="button"
-                        className="projectDeleteButton"
-                        onClick={() => void deleteProject(project)}
-                        disabled={deleting}
-                        aria-label={`Remove ${project.name}`}
-                        title={removeTitle}
-                      >
-                        <Trash2 size={13} strokeWidth={2.1} aria-hidden="true" />
-                      </button>
-                    </div>
+                    {!projectScopeLocked ? (
+                      <div className="projectRowActions">
+                        <button
+                          type="button"
+                          className={`projectMiniButton ${project.pinned ? "active" : ""}`}
+                          onClick={() => void toggleProjectPinned(project)}
+                          disabled={busy}
+                          aria-label={saveAria}
+                          title={saveTitle}
+                        >
+                          {project.pinned ? <PinOff size={13} strokeWidth={2.1} aria-hidden="true" /> : <Pin size={13} strokeWidth={2.1} aria-hidden="true" />}
+                        </button>
+                        <button
+                          type="button"
+                          className="projectDeleteButton"
+                          onClick={() => void deleteProject(project)}
+                          disabled={deleting}
+                          aria-label={`Remove ${project.name}`}
+                          title={removeTitle}
+                        >
+                          <Trash2 size={13} strokeWidth={2.1} aria-hidden="true" />
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                   <code className="projectOpenButton projectOpenPathButton" title={project.path}>{project.path}</code>
                 </div>
@@ -420,15 +430,17 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           <h2>Projects</h2>
           <span>{projectGroups.length} groups</span>
         </div>
-        <button
-          type="button"
-          className="projectAddButton"
-          onClick={() => projectAddMachine ? openProjectPicker(projectAddMachine) : undefined}
-          disabled={!projectAddMachine}
-          title={projectAddMachine ? "Add a project" : "No online machines"}
-        >
-          Add Project
-        </button>
+        {!projectScopeLocked ? (
+          <button
+            type="button"
+            className="projectAddButton"
+            onClick={() => projectAddMachine ? openProjectPicker(projectAddMachine) : undefined}
+            disabled={!projectAddMachine}
+            title={projectAddMachine ? "Add a project" : "No online machines"}
+          >
+            Add Project
+          </button>
+        ) : null}
         <input
           className="projectSearchInput"
           value={projectSearch}
@@ -465,196 +477,198 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         {projectOpenError ? <div className="projectOpenError">{projectOpenError}</div> : null}
       </section>
 
-      <section className="taskPanel">
-        <div className="taskPanelHeader">
-          <div className="taskPanelTitle">
-            <h2>Tasks</h2>
-            <span title={taskPanelContextTitle}>{taskPanelContextLabel}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (selectedProject) focusTaskDraftProject(selectedProject);
-              setTaskFormOpen((open) => !open);
-            }}
-          >
-            {taskFormOpen ? "Close" : "New"}
-          </button>
-        </div>
-        {visibleTasks.length === 0 ? (
-          <div className="taskEmpty">{selectedProject ? "No tasks for this project" : "No tasks"}</div>
-        ) : (
-          <div className="taskList">
-            {visibleTasks.map((task) => {
-              const busy = taskBusyId === task.taskId;
-              const taskRunError = task.lastError ? `Last run failed: ${task.lastError}` : "";
-              const recentRuns = (task.runs ?? []).slice(0, 5);
-              return (
-                <div className={`taskRow ${task.enabled ? "enabled" : "paused"}`} key={task.taskId}>
-                  <div className="taskRowHeader">
-                    <span title={task.name}>{task.name}</span>
-                    <strong className={`taskStatus ${taskStatusClass(task)}`}>
-                      {taskStatusLabel(task)}
-                    </strong>
-                  </div>
-                  <code title={taskTargetTitle(task, projectList, machines)}>{taskScheduleLine(task)}</code>
-                  <em title={taskTargetTitle(task, projectList, machines)}>{taskTargetLabel(task, projectList, machines)}</em>
-                  <small className="taskRunSummary" title={taskRunTitle(task)}>{taskRunSummary(task)}</small>
-                  {taskRunError ? <small className="taskLastError" title={taskRunError}>{taskRunError}</small> : null}
-                  {recentRuns.length ? (
-                    <details className="taskRunHistory">
-                      <summary>
-                        <History size={12} strokeWidth={2.1} aria-hidden="true" />
-                        <span>Recent runs</span>
-                        <strong>{recentRuns.length}</strong>
-                      </summary>
-                      <ol>
-                        {recentRuns.map((run) => (
-                          <li className={`taskRunItem ${run.status}`} key={run.runId} title={taskRunDetailTitle(run)}>
-                            <span>{taskRunLine(run)}</span>
-                            {run.error ? <em>{run.error}</em> : null}
-                          </li>
-                        ))}
-                      </ol>
-                    </details>
-                  ) : null}
-                  <div className="taskActions">
-                    <button
-                      type="button"
-                      className="taskRunButton"
-                      onClick={() => void runTaskNow(task)}
-                      disabled={busy}
-                      aria-label={`Run ${task.name}`}
-                      title="Run now"
-                    >
-                      {busy ? "..." : <Play size={13} strokeWidth={2.2} aria-hidden="true" />}
-                    </button>
-                    <Switch
-                      size="small"
-                      checked={task.enabled}
-                      onChange={(checked) => void patchTask(task.taskId, { enabled: checked })}
-                      disabled={busy}
-                      aria-label={task.enabled ? "Disable task" : "Enable task"}
-                    />
-                    <button
-                      type="button"
-                      className="taskDeleteButton"
-                      onClick={() => void deleteTask(task.taskId)}
-                      disabled={busy}
-                      aria-label={`Delete ${task.name}`}
-                      title={`Delete ${task.name}`}
-                    >
-                      <Trash2 size={13} strokeWidth={2.1} aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {taskFormOpen ? (
-          <form className="taskForm" onSubmit={createTask}>
-            <label className="taskField">
-              <span>Name</span>
-              <input
-                value={taskDraft.name}
-                onChange={(event) => setTaskDraft((current) => ({ ...current, name: event.target.value }))}
-                placeholder="daily-summary"
-              />
-            </label>
-            <label className="taskField">
-              <span>Machine</span>
-              <select
-                value={taskDraft.machineId}
-                onChange={(event) => updateTaskDraftMachine(event.target.value)}
-                disabled={taskFormProjectLocked || !taskMachineOptions.length}
-              >
-                <option value="">Machine</option>
-                {taskMachineOptions.map((machine) => (
-                  <option value={machine.machineId} key={machine.machineId}>
-                    {machine.name ?? machine.hostname}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="taskField">
-              <span>Project</span>
-              <select
-                value={taskDraft.projectPath}
-                onChange={(event) => updateTaskDraftProject(event.target.value)}
-                disabled={taskFormProjectLocked || !taskProjectOptions.length}
-              >
-                <option value="">Project</option>
-                {taskProjectOptions.map((project) => (
-                  <option value={project.path} key={`${project.machineId}:${project.path}`}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="taskField">
-              <span>Thread</span>
-              <select
-                value={taskDraft.threadId}
-                onChange={(event) => setTaskDraft((current) => ({ ...current, threadId: event.target.value }))}
-                disabled={!selectedTaskProject}
-              >
-                <option value="">Current thread</option>
-                {taskThreadOptions.map((thread) => (
-                  <option value={thread.threadId} key={thread.threadId}>
-                    {threadDisplayTitle(thread)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="taskField">
-              <span>Schedule</span>
-              <input
-                value={taskDraft.schedule}
-                onChange={(event) => setTaskDraft((current) => ({ ...current, schedule: event.target.value }))}
-                placeholder="0 9 * * *"
-                spellCheck={false}
-              />
-              <div className="taskSchedulePresets" aria-label="Schedule presets">
-                {taskSchedulePresets.map((preset) => (
-                  <button
-                    type="button"
-                    className={taskDraft.schedule === preset.value ? "active" : ""}
-                    onClick={() => setTaskDraft((current) => ({ ...current, schedule: preset.value }))}
-                    key={preset.value}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-            </label>
-            <label className="taskField">
-              <span>Prompt</span>
-              <textarea
-                value={taskDraft.input}
-                onChange={(event) => setTaskDraft((current) => ({ ...current, input: event.target.value }))}
-                rows={3}
-                placeholder="检查这个项目最近的变更，给我总结风险和下一步。"
-              />
-            </label>
-            <div className="taskFormActions">
-              <label className="taskEnabledControl">
-                <Switch
-                  size="small"
-                  checked={taskDraft.enabled}
-                  onChange={(checked) => setTaskDraft((current) => ({ ...current, enabled: checked }))}
-                  aria-label={taskDraft.enabled ? "Disable new task" : "Enable new task"}
-                />
-                <span>Enabled</span>
-              </label>
-              <button type="submit" disabled={!canCreateTask || taskBusyId === "create"}>
-                {taskBusyId === "create" ? "Saving" : "Save"}
-              </button>
+      {!projectScopeLocked ? (
+        <section className="taskPanel">
+          <div className="taskPanelHeader">
+            <div className="taskPanelTitle">
+              <h2>Tasks</h2>
+              <span title={taskPanelContextTitle}>{taskPanelContextLabel}</span>
             </div>
-          </form>
-        ) : null}
-        {taskError ? <div className="projectOpenError">{taskError}</div> : null}
-      </section>
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedProject) focusTaskDraftProject(selectedProject);
+                setTaskFormOpen((open) => !open);
+              }}
+            >
+              {taskFormOpen ? "Close" : "New"}
+            </button>
+          </div>
+          {visibleTasks.length === 0 ? (
+            <div className="taskEmpty">{selectedProject ? "No tasks for this project" : "No tasks"}</div>
+          ) : (
+            <div className="taskList">
+              {visibleTasks.map((task) => {
+                const busy = taskBusyId === task.taskId;
+                const taskRunError = task.lastError ? `Last run failed: ${task.lastError}` : "";
+                const recentRuns = (task.runs ?? []).slice(0, 5);
+                return (
+                  <div className={`taskRow ${task.enabled ? "enabled" : "paused"}`} key={task.taskId}>
+                    <div className="taskRowHeader">
+                      <span title={task.name}>{task.name}</span>
+                      <strong className={`taskStatus ${taskStatusClass(task)}`}>
+                        {taskStatusLabel(task)}
+                      </strong>
+                    </div>
+                    <code title={taskTargetTitle(task, projectList, machines)}>{taskScheduleLine(task)}</code>
+                    <em title={taskTargetTitle(task, projectList, machines)}>{taskTargetLabel(task, projectList, machines)}</em>
+                    <small className="taskRunSummary" title={taskRunTitle(task)}>{taskRunSummary(task)}</small>
+                    {taskRunError ? <small className="taskLastError" title={taskRunError}>{taskRunError}</small> : null}
+                    {recentRuns.length ? (
+                      <details className="taskRunHistory">
+                        <summary>
+                          <History size={12} strokeWidth={2.1} aria-hidden="true" />
+                          <span>Recent runs</span>
+                          <strong>{recentRuns.length}</strong>
+                        </summary>
+                        <ol>
+                          {recentRuns.map((run) => (
+                            <li className={`taskRunItem ${run.status}`} key={run.runId} title={taskRunDetailTitle(run)}>
+                              <span>{taskRunLine(run)}</span>
+                              {run.error ? <em>{run.error}</em> : null}
+                            </li>
+                          ))}
+                        </ol>
+                      </details>
+                    ) : null}
+                    <div className="taskActions">
+                      <button
+                        type="button"
+                        className="taskRunButton"
+                        onClick={() => void runTaskNow(task)}
+                        disabled={busy}
+                        aria-label={`Run ${task.name}`}
+                        title="Run now"
+                      >
+                        {busy ? "..." : <Play size={13} strokeWidth={2.2} aria-hidden="true" />}
+                      </button>
+                      <Switch
+                        size="small"
+                        checked={task.enabled}
+                        onChange={(checked) => void patchTask(task.taskId, { enabled: checked })}
+                        disabled={busy}
+                        aria-label={task.enabled ? "Disable task" : "Enable task"}
+                      />
+                      <button
+                        type="button"
+                        className="taskDeleteButton"
+                        onClick={() => void deleteTask(task.taskId)}
+                        disabled={busy}
+                        aria-label={`Delete ${task.name}`}
+                        title={`Delete ${task.name}`}
+                      >
+                        <Trash2 size={13} strokeWidth={2.1} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {taskFormOpen ? (
+            <form className="taskForm" onSubmit={createTask}>
+              <label className="taskField">
+                <span>Name</span>
+                <input
+                  value={taskDraft.name}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="daily-summary"
+                />
+              </label>
+              <label className="taskField">
+                <span>Machine</span>
+                <select
+                  value={taskDraft.machineId}
+                  onChange={(event) => updateTaskDraftMachine(event.target.value)}
+                  disabled={taskFormProjectLocked || !taskMachineOptions.length}
+                >
+                  <option value="">Machine</option>
+                  {taskMachineOptions.map((machine) => (
+                    <option value={machine.machineId} key={machine.machineId}>
+                      {machine.name ?? machine.hostname}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="taskField">
+                <span>Project</span>
+                <select
+                  value={taskDraft.projectPath}
+                  onChange={(event) => updateTaskDraftProject(event.target.value)}
+                  disabled={taskFormProjectLocked || !taskProjectOptions.length}
+                >
+                  <option value="">Project</option>
+                  {taskProjectOptions.map((project) => (
+                    <option value={project.path} key={`${project.machineId}:${project.path}`}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="taskField">
+                <span>Thread</span>
+                <select
+                  value={taskDraft.threadId}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, threadId: event.target.value }))}
+                  disabled={!selectedTaskProject}
+                >
+                  <option value="">Current thread</option>
+                  {taskThreadOptions.map((thread) => (
+                    <option value={thread.threadId} key={thread.threadId}>
+                      {threadDisplayTitle(thread)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="taskField">
+                <span>Schedule</span>
+                <input
+                  value={taskDraft.schedule}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, schedule: event.target.value }))}
+                  placeholder="0 9 * * *"
+                  spellCheck={false}
+                />
+                <div className="taskSchedulePresets" aria-label="Schedule presets">
+                  {taskSchedulePresets.map((preset) => (
+                    <button
+                      type="button"
+                      className={taskDraft.schedule === preset.value ? "active" : ""}
+                      onClick={() => setTaskDraft((current) => ({ ...current, schedule: preset.value }))}
+                      key={preset.value}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </label>
+              <label className="taskField">
+                <span>Prompt</span>
+                <textarea
+                  value={taskDraft.input}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, input: event.target.value }))}
+                  rows={3}
+                  placeholder="检查这个项目最近的变更，给我总结风险和下一步。"
+                />
+              </label>
+              <div className="taskFormActions">
+                <label className="taskEnabledControl">
+                  <Switch
+                    size="small"
+                    checked={taskDraft.enabled}
+                    onChange={(checked) => setTaskDraft((current) => ({ ...current, enabled: checked }))}
+                    aria-label={taskDraft.enabled ? "Disable new task" : "Enable new task"}
+                  />
+                  <span>Enabled</span>
+                </label>
+                <button type="submit" disabled={!canCreateTask || taskBusyId === "create"}>
+                  {taskBusyId === "create" ? "Saving" : "Save"}
+                </button>
+              </div>
+            </form>
+          ) : null}
+          {taskError ? <div className="projectOpenError">{taskError}</div> : null}
+        </section>
+      ) : null}
       {currentServerShareUrl ? (
         <section className="serverSharePanel" aria-label="Current register URL">
           <div className="serverSharePanelHeader">

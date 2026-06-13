@@ -21,7 +21,7 @@ pnpm run dev:api
 
 `codexhub server` 是 API server 的启动入口，会固定读取当前目录的 `.env`。`CODEX_HUB_HOST` / `CODEX_HUB_PORT` 可以写在 `.env`，也可以用 CLI 覆盖；优先级是 CLI 参数 > 当前 shell 环境变量 > `.env` > 内置默认值。
 
-默认入口：
+默认监听 `0.0.0.0:8788`，本机访问入口：
 
 - Web/API: `http://127.0.0.1:8788`
 

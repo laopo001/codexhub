@@ -1,10 +1,15 @@
 import type { ComposerMode, ModelSelection, ReasoningSelection } from "./types.js";
 
 const searchParams = new URLSearchParams(window.location.search);
+const uniqueTrimmedParams = (names: string[]) => {
+  const values = names.flatMap((name) => searchParams.getAll(name));
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+};
 
 export const webSurface = searchParams.get("surface") === "vscode" ? "vscode" : "default";
 export const isVscodeSurface = webSurface === "vscode";
 export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ?? "";
+export const vscodeWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "workspacePath"]);
 export const storageKey = isVscodeSurface ? "codexhub-ui-state-vscode-v1" : "codexhub-ui-state-v5";
 export const legacyStorageKey = "codexhub-ui-state-v4";
 export const modelOptions: Array<{ value: ModelSelection; label: string }> = [

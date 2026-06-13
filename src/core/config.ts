@@ -13,7 +13,7 @@ export type ProxyConfigOverrides = {
 
 export const loadConfig = (overrides: ProxyConfigOverrides = {}): ProxyConfig => {
   return {
-    host: overrides.host ?? process.env.CODEX_HUB_HOST ?? "127.0.0.1",
+    host: overrides.host ?? process.env.CODEX_HUB_HOST ?? "0.0.0.0",
     port: overrides.port ?? parsePort(process.env.CODEX_HUB_PORT ?? "8788"),
     defaultThreadOptions: {}
   };

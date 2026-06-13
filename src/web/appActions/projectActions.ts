@@ -370,10 +370,20 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
     ctx.setProjectPicker((current) => current && current.machineId === machineId ? { ...current, error: "" } : current);
     ctx.setOpeningProjectKey(key);
     try {
+      const existingProject = machineId
+        ? ctx.projectList.find((project) => project.machineId === machineId && project.path === trimmedPath)
+        : undefined;
+      const vscodeSource = existingProject?.source?.kind === "vscode" ? existingProject.source : undefined;
       const payload = await apiJson<ProjectOpenPayload>("/api/projects/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path: trimmedPath, machineId: machineId || undefined, reuse: true })
+        body: JSON.stringify({
+          path: trimmedPath,
+          machineId: machineId || undefined,
+          reuse: true,
+          persist: vscodeSource ? false : undefined,
+          source: vscodeSource
+        })
       });
       ctx.setMachines(normalizeMachines(payload.machines));
       const freshProjects = normalizeProjects(payload.projects);

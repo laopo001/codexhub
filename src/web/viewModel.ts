@@ -82,6 +82,7 @@ export type AppSidebarViewModel = {
   plugins: PluginSummary[];
   projectGroups: ProjectMachineGroup[];
   projectList: ProjectSummary[];
+  projectScopeLocked: boolean;
   projectOpenError: string;
   projectSearch: string;
   registeredCommand: string;

@@ -44,7 +44,7 @@ import type {
   WebRecordView
 } from "./types.js";
 
-import { storageKey } from "./appConfig.js";
+import { isVscodeSurface, storageKey, vscodeWorkspacePaths } from "./appConfig.js";
 import {
   authToken,
   activityStatusesFromRecords,
@@ -224,6 +224,12 @@ const formatThreadTabDuration = (durationMs: number) => {
   return `${remainder}s`;
 };
 
+const currentVscodeWorkspacePaths = new Set(vscodeWorkspacePaths);
+
+const isCurrentVscodeWorkspaceProject = (project: ProjectSummary) =>
+  project.source?.kind === "vscode"
+  && (!currentVscodeWorkspacePaths.size || currentVscodeWorkspacePaths.has(project.path));
+
 const App = () => {
   useState(() => initAuthTokenFromUrl());
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
@@ -317,7 +323,12 @@ const App = () => {
     resizeComposerTextarea(composerTextareaRef.current);
   }, [activeThread?.threadId, activeThread?.input]);
 
-  const projectList = useMemo(() => projects, [projects]);
+  const projectList = useMemo(
+    () => isVscodeSurface
+      ? projects.filter(isCurrentVscodeWorkspaceProject)
+      : projects,
+    [projects]
+  );
   const selectedProjectByKey = useMemo(
     () => selectedProjectKey
       ? projectList.find((project) => projectKeyForProject(project) === selectedProjectKey)
@@ -350,7 +361,13 @@ const App = () => {
     () => currentServerRegisterUrlWithToken(),
     [authRequired, authTokenDraft, initialized, serverAuthRequired]
   );
-  const projectGroups = useMemo(() => groupProjectsByMachine(projectList, machines), [projectList, machines]);
+  const projectGroups = useMemo(
+    () => {
+      const groups = groupProjectsByMachine(projectList, machines);
+      return isVscodeSurface ? groups.filter((group) => group.projects.length > 0) : groups;
+    },
+    [projectList, machines]
+  );
   const selectedProject = useMemo(() => {
     if (selectedProjectByKey) return selectedProjectByKey;
     if (activeProjectSession) {
@@ -1099,6 +1116,7 @@ const App = () => {
     plugins,
     projectGroups,
     projectList,
+    projectScopeLocked: isVscodeSurface,
     projectOpenError,
     projectPicker,
     projectSearch,
