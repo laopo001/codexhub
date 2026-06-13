@@ -1,4 +1,4 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { Tag } from "antd";
 import { FileDiff, Image, Plug, Search, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
@@ -21,6 +21,8 @@ type ShellCommandDisplay = {
   display: string;
   wrapper?: string;
 };
+
+const SyntaxCodeBlock = lazy(() => import("../SyntaxCodeBlock.js"));
 
 export const UpdatePlanPreview = ({
   plan,
@@ -615,11 +617,29 @@ const appServerOutputMeta = (payload: Record<string, unknown>) => [
 ].filter((line): line is string => Boolean(line)).join("\n") || undefined;
 
 const ShellCommandPreview = ({ command }: { command: ShellCommandDisplay }) => {
+  const previewLine = shellCommandPreviewLine(command.display);
   return (
     <div className="shellCommandPreview">
-      <pre className="toolCommandLine shellCommandDisplayLine">{shellCommandPreviewLine(command.display)}</pre>
+      <div className="toolCommandLine shellCommandDisplayLine">
+        <Suspense fallback={<code className="shellCommandFallback">{previewLine}</code>}>
+          <SyntaxCodeBlock
+            language="shell-session"
+            className="shellCommandSyntax"
+            codeClassName="shellCommandSyntaxCode"
+            customStyle={shellCommandSyntaxStyle}
+            wrapLongLines
+          >
+            {previewLine}
+          </SyntaxCodeBlock>
+        </Suspense>
+      </div>
     </div>
   );
+};
+
+const shellCommandSyntaxStyle: React.CSSProperties = {
+  fontSize: "13px",
+  lineHeight: 1.35
 };
 
 const shellCommandPreviewLine = (command: string) => command ? `$ ${command}` : "$ <empty>";

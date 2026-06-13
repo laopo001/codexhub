@@ -10,6 +10,7 @@ import jsx from "react-syntax-highlighter/dist/esm/languages/prism/jsx";
 import markdown from "react-syntax-highlighter/dist/esm/languages/prism/markdown";
 import markup from "react-syntax-highlighter/dist/esm/languages/prism/markup";
 import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
+import shellSession from "react-syntax-highlighter/dist/esm/languages/prism/shell-session";
 import sql from "react-syntax-highlighter/dist/esm/languages/prism/sql";
 import tsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
 import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
@@ -25,6 +26,7 @@ SyntaxHighlighter.registerLanguage("jsx", jsx);
 SyntaxHighlighter.registerLanguage("markdown", markdown);
 SyntaxHighlighter.registerLanguage("markup", markup);
 SyntaxHighlighter.registerLanguage("python", python);
+SyntaxHighlighter.registerLanguage("shell-session", shellSession);
 SyntaxHighlighter.registerLanguage("sql", sql);
 SyntaxHighlighter.registerLanguage("tsx", tsx);
 SyntaxHighlighter.registerLanguage("typescript", typescript);
@@ -40,16 +42,33 @@ const syntaxHighlighterCustomStyle: CSSProperties = {
   lineHeight: 1.55
 };
 
-const SyntaxCodeBlock = ({ language, children }: { language: string; children: string }) => (
+type SyntaxCodeBlockProps = {
+  language: string;
+  children: string;
+  className?: string;
+  codeClassName?: string;
+  customStyle?: CSSProperties;
+  wrapLongLines?: boolean;
+};
+
+const SyntaxCodeBlock = ({
+  language,
+  children,
+  className,
+  codeClassName,
+  customStyle,
+  wrapLongLines = false
+}: SyntaxCodeBlockProps) => (
   <SyntaxHighlighter
+    className={className}
     PreTag="div"
     CodeTag="code"
     language={language}
     style={syntaxHighlighterStyle}
-    customStyle={syntaxHighlighterCustomStyle}
-    codeTagProps={{ className: "markdownHighlightedCode" }}
+    customStyle={customStyle ? { ...syntaxHighlighterCustomStyle, ...customStyle } : syntaxHighlighterCustomStyle}
+    codeTagProps={{ className: ["markdownHighlightedCode", codeClassName].filter(Boolean).join(" ") }}
     showLineNumbers={false}
-    wrapLongLines={false}
+    wrapLongLines={wrapLongLines}
   >
     {children}
   </SyntaxHighlighter>
