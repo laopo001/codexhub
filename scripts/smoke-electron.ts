@@ -8,8 +8,9 @@ const main = async () => {
   const blocker = await listenOnDefaultElectronPort();
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-state."));
   const pluginDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-plugins."));
+  const userDataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-user-data."));
   try {
-    const output = await runElectronSmoke(dataDir, pluginDir);
+    const output = await runElectronSmoke(dataDir, pluginDir, userDataDir);
     if (output.includes("codexhub electron port 18788 is busy; using ")) {
       throw new Error(`Electron smoke used preferred-port fallback instead of random port:\n${output}`);
     }
@@ -30,7 +31,7 @@ const listenOnDefaultElectronPort = async () => await new Promise<net.Server>((r
   server.listen(18788, "127.0.0.1", () => resolve(server));
 });
 
-const runElectronSmoke = async (dataDir: string, pluginDir: string) => await new Promise<string>((resolve, reject) => {
+const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir: string) => await new Promise<string>((resolve, reject) => {
   const electronBin = path.join(
     process.cwd(),
     "node_modules",
@@ -45,8 +46,10 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string) => await new
     CODEX_HUB_ELECTRON_SMOKE: "1"
   };
   delete env.CODEX_HUB_PORT;
+  delete env.ELECTRON_RUN_AS_NODE;
 
   const child = spawn(electronBin, [
+    `--user-data-dir=${userDataDir}`,
     "--no-sandbox",
     "--headless",
     "--disable-gpu",
