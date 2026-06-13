@@ -87,6 +87,7 @@ const main = async () => {
     const dynamicMachineName = "Registered Dynamic Server Smoke";
     const dynamicChild = await startDynamicRegisteredServer(dynamicServerDataDir);
     await waitForChildServer(dynamicChild.apiBase, dynamicChild);
+    await assertSelfRegistrationRejected(dynamicChild.apiBase);
     const parentRegistration = await apiJson<{ registration?: { status?: string } }>(dynamicChild.apiBase, "/api/registered/parent", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -110,6 +111,20 @@ const main = async () => {
   } finally {
     await server.stop();
   }
+};
+
+const assertSelfRegistrationRejected = async (apiBase: string) => {
+  const response = await fetch(new URL("/api/registered/parent", apiBase), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: apiBase }),
+    signal: AbortSignal.timeout(5000)
+  });
+  const text = await response.text();
+  if (response.status !== 400 || !text.includes("Cannot register this CodexHub server to itself.")) {
+    throw new Error(`self registration was not rejected: HTTP ${response.status}: ${text}`);
+  }
+  console.log("registered server self-registration rejection ok");
 };
 
 const runRegisteredScenario = async (input: {

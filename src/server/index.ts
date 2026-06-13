@@ -418,6 +418,7 @@ export type ServerHandle = {
   app: FastifyInstance;
   host: string;
   port: number;
+  serverInstanceId: string;
   stop: () => Promise<void>;
 };
 
@@ -712,8 +713,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   async function startParentRegistration(input: z.infer<typeof parentRegistrationConnectSchema>) {
-    await stopParentRegistration();
     const url = normalizeBaseUrl(input.url);
+    await assertNotSelfRegistrationTarget(input.url, {
+      host: config.host,
+      port: config.port,
+      serverInstanceId
+    });
+    await stopParentRegistration();
     const authToken = input.authToken?.trim()
       || authTokenFromUrl(input.url)
       || process.env.CODEX_HUB_REGISTER_AUTH_TOKEN;
@@ -1993,6 +1999,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     app,
     host: config.host,
     port: config.port,
+    serverInstanceId,
     stop: () => app.close()
   };
 };
@@ -2192,6 +2199,59 @@ const authTokenFromUrl = (value: string) => {
     || url.searchParams.get("token")?.trim()
     || undefined;
 };
+
+const assertNotSelfRegistrationTarget = async (
+  value: string,
+  current: { host: string; port: number; serverInstanceId: string }
+) => {
+  if (isSameLocalEndpoint(value, current.host, current.port)) {
+    throw selfRegistrationError();
+  }
+  const targetInstanceId = await fetchServerInstanceId(value);
+  if (targetInstanceId && targetInstanceId === current.serverInstanceId) {
+    throw selfRegistrationError();
+  }
+};
+
+const fetchServerInstanceId = async (value: string) => {
+  try {
+    const response = await fetch(new URL("/api/health", value), { signal: AbortSignal.timeout(1000) });
+    if (!response.ok) return undefined;
+    const data = await response.json() as { serverInstanceId?: unknown };
+    return typeof data.serverInstanceId === "string" ? data.serverInstanceId : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const isSameLocalEndpoint = (value: string, host: string, port: number) => {
+  const url = new URL(value);
+  if (urlPort(url) !== port) return false;
+  const targetHost = normalizedUrlHost(url.hostname);
+  const localHost = normalizedUrlHost(host);
+  if (isWildcardHost(targetHost)) return true;
+  if (targetHost === localHost) return true;
+  return isLoopbackHost(targetHost) && (isLoopbackHost(localHost) || isWildcardHost(localHost));
+};
+
+const urlPort = (url: URL) => url.port
+  ? Number(url.port)
+  : url.protocol === "https:" ? 443 : 80;
+
+const normalizedUrlHost = (value: string) => value.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+
+const isLoopbackHost = (host: string) =>
+  host === "localhost"
+  || host === "::1"
+  || host === "0:0:0:0:0:0:0:1"
+  || host.startsWith("127.");
+
+const isWildcardHost = (host: string) => host === "0.0.0.0" || host === "::";
+
+const selfRegistrationError = () => Object.assign(
+  new Error("Cannot register this CodexHub server to itself."),
+  { statusCode: 400 }
+);
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
