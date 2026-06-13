@@ -113,6 +113,9 @@ const main = async () => {
   await assertTransientProjectsStayInMemory();
   await assertProjectNamesArePathBasenames();
   await assertProjectSessionProjection();
+  await assertAppServerTurnLifecycleRecords();
+  await assertRollbackPreservesKeptTurnToolRecords();
+  await assertForkPreservesKeptTurnToolRecords();
   await assertDeletedProjectSuppressesSessionCapture();
   await writeStartupSshHostState(dataDir, "included-host");
 
@@ -959,6 +962,304 @@ const assertProjectSessionProjection = async () => {
   if (!offlineProject) throw new Error("project disappeared when session went offline");
   if (offlineProject.session !== null) {
     throw new Error(`offline session should not be projected as active session: ${JSON.stringify(offlineProject.session)}`);
+  }
+};
+
+const assertAppServerTurnLifecycleRecords = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const hub = new ThreadHub();
+  const sessionId = "app-server-lifecycle-session";
+  const threadId = "app-server-lifecycle-thread";
+  const turnId = "app-server-lifecycle-turn";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-app-server-lifecycle"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    heartbeat: false,
+    turns: [{
+      id: turnId,
+      startedAt: 1,
+      completedAt: 3.5,
+      timeToFirstTokenMs: 750,
+      items: [{
+        id: "user-1",
+        type: "userMessage",
+        content: [{ type: "text", text: "hello" }]
+      }, {
+        id: "agent-1",
+        type: "agentMessage",
+        text: "done"
+      }]
+    }]
+  });
+  const thread = hub.getThread(threadId);
+  const records = thread?.records ?? [];
+  const started = records.find((record) => asRecord(record).id === `app:${threadId}:${turnId}:event:task_started`);
+  const completed = records.find((record) => asRecord(record).id === `app:${threadId}:${turnId}:event:task_complete`);
+  const startedPayload = asRecord(asRecord(started).payload);
+  const completedPayload = asRecord(asRecord(completed).payload);
+  if (!started || startedPayload.type !== "task_started") {
+    throw new Error(`app-server turn snapshot did not create task_started: ${JSON.stringify(records)}`);
+  }
+  if (
+    !completed
+    || completedPayload.type !== "task_complete"
+    || completedPayload.duration_ms !== 2500
+    || completedPayload.time_to_first_token_ms !== 750
+  ) {
+    throw new Error(`app-server turn snapshot did not create task_complete duration: ${JSON.stringify(records)}`);
+  }
+};
+
+const assertRollbackPreservesKeptTurnToolRecords = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const hub = new ThreadHub();
+  const sessionId = "rollback-tool-session";
+  const threadId = "rollback-tool-thread";
+  const keptTurnId = "rollback-kept-turn";
+  const removedTurnId = "rollback-removed-turn";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-rollback-tool"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    heartbeat: false,
+    turns: [{
+      id: keptTurnId,
+      startedAt: 1,
+      completedAt: 2,
+      items: [{
+        id: "kept-user",
+        type: "userMessage",
+        content: [{ type: "text", text: "run tool" }]
+      }, {
+        id: "kept-tool",
+        type: "commandExecution",
+        command: "pwd",
+        status: "completed",
+        output: "/tmp/codexhub-rollback-tool",
+        exitCode: 0
+      }, {
+        id: "kept-agent",
+        type: "agentMessage",
+        text: "kept",
+        phase: "final_answer"
+      }]
+    }, {
+      id: removedTurnId,
+      startedAt: 3,
+      completedAt: 4,
+      items: [{
+        id: "removed-user",
+        type: "userMessage",
+        content: [{ type: "text", text: "remove me" }]
+      }, {
+        id: "removed-agent",
+        type: "agentMessage",
+        text: "removed",
+        phase: "final_answer"
+      }]
+    }]
+  });
+  const rollback = hub.rollbackThreadAfterRecord(threadId, `app:${threadId}:${keptTurnId}:agent:kept-agent`);
+  const commandBatch = await hub.waitSessionCommands(sessionId, 0, 1);
+  const command = commandBatch.commands[0];
+  if (!command || command.type !== "rollback_thread" || command.keepTurns !== 1 || command.numTurns !== 1) {
+    throw new Error(`rollback command did not preserve expected turn boundary: ${JSON.stringify(command)}`);
+  }
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    commandId: command.commandId,
+    heartbeat: false,
+    message: {
+      result: {
+        thread: {
+          id: threadId,
+          cwd: "/tmp/codexhub-rollback-tool",
+          turns: [{
+            id: keptTurnId,
+            startedAt: 1,
+            completedAt: 2,
+            items: [{
+              id: "kept-user",
+              type: "userMessage",
+              content: [{ type: "text", text: "run tool" }]
+            }, {
+              id: "kept-agent",
+              type: "agentMessage",
+              text: "kept",
+              phase: "final_answer"
+            }]
+          }]
+        }
+      }
+    }
+  });
+  const detail = await rollback;
+  const records = detail.records ?? [];
+  if (!records.some((record) => asRecord(record).id === `app:${threadId}:${keptTurnId}:item:commandExecution:kept-tool`)) {
+    throw new Error(`rollback dropped kept turn tool record: ${JSON.stringify(records)}`);
+  }
+  if (records.some((record) => String(asRecord(record).id).includes(removedTurnId))) {
+    throw new Error(`rollback kept records from removed turn: ${JSON.stringify(records)}`);
+  }
+};
+
+const assertForkPreservesKeptTurnToolRecords = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const hub = new ThreadHub();
+  const sessionId = "fork-tool-session";
+  const sourceThreadId = "fork-source-thread";
+  const forkedThreadId = "fork-child-thread";
+  const keptTurnId = "fork-kept-turn";
+  const removedTurnId = "fork-removed-turn";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-fork-tool"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId: sourceThreadId,
+    heartbeat: false,
+    turns: [{
+      id: keptTurnId,
+      startedAt: 1,
+      completedAt: 2,
+      items: [{
+        id: "kept-user",
+        type: "userMessage",
+        content: [{ type: "text", text: "run fork tool" }]
+      }, {
+        id: "kept-tool",
+        type: "commandExecution",
+        command: "pwd",
+        status: "completed",
+        output: "/tmp/codexhub-fork-tool",
+        exitCode: 0
+      }, {
+        id: "kept-agent",
+        type: "agentMessage",
+        text: "kept",
+        phase: "final_answer"
+      }]
+    }, {
+      id: removedTurnId,
+      startedAt: 3,
+      completedAt: 4,
+      items: [{
+        id: "removed-user",
+        type: "userMessage",
+        content: [{ type: "text", text: "remove me" }]
+      }, {
+        id: "removed-agent",
+        type: "agentMessage",
+        text: "removed",
+        phase: "final_answer"
+      }]
+    }]
+  });
+  const fork = hub.forkThread(sourceThreadId, `app:${sourceThreadId}:${keptTurnId}:agent:kept-agent`);
+  const forkBatch = await hub.waitSessionCommands(sessionId, 0, 1);
+  const forkCommand = forkBatch.commands[0];
+  if (!forkCommand || forkCommand.type !== "fork_thread" || forkCommand.threadId !== sourceThreadId) {
+    throw new Error(`fork command did not target source thread: ${JSON.stringify(forkCommand)}`);
+  }
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId: forkedThreadId,
+    commandId: forkCommand.commandId,
+    heartbeat: false,
+    message: {
+      result: {
+        thread: {
+          id: forkedThreadId,
+          cwd: "/tmp/codexhub-fork-tool",
+          turns: [{
+            id: keptTurnId,
+            startedAt: 1,
+            completedAt: 2,
+            items: [{
+              id: "kept-user",
+              type: "userMessage",
+              content: [{ type: "text", text: "run fork tool" }]
+            }, {
+              id: "kept-agent",
+              type: "agentMessage",
+              text: "kept",
+              phase: "final_answer"
+            }]
+          }, {
+            id: removedTurnId,
+            startedAt: 3,
+            completedAt: 4,
+            items: [{
+              id: "removed-user",
+              type: "userMessage",
+              content: [{ type: "text", text: "remove me" }]
+            }, {
+              id: "removed-agent",
+              type: "agentMessage",
+              text: "removed",
+              phase: "final_answer"
+            }]
+          }]
+        }
+      }
+    }
+  });
+  const rollbackBatch = await hub.waitSessionCommands(sessionId, forkCommand.seq, 1);
+  const rollbackCommand = rollbackBatch.commands[0];
+  if (!rollbackCommand || rollbackCommand.type !== "rollback_thread" || rollbackCommand.threadId !== forkedThreadId || rollbackCommand.keepTurns !== 1 || rollbackCommand.numTurns !== 1) {
+    throw new Error(`fork rollback command did not preserve expected boundary: ${JSON.stringify(rollbackCommand)}`);
+  }
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId: forkedThreadId,
+    commandId: rollbackCommand.commandId,
+    heartbeat: false,
+    message: {
+      result: {
+        thread: {
+          id: forkedThreadId,
+          cwd: "/tmp/codexhub-fork-tool",
+          turns: [{
+            id: keptTurnId,
+            startedAt: 1,
+            completedAt: 2,
+            items: [{
+              id: "kept-user",
+              type: "userMessage",
+              content: [{ type: "text", text: "run fork tool" }]
+            }, {
+              id: "kept-agent",
+              type: "agentMessage",
+              text: "kept",
+              phase: "final_answer"
+            }]
+          }]
+        }
+      }
+    }
+  });
+  const detail = await fork;
+  const records = detail.records ?? [];
+  if (!records.some((record) => asRecord(record).id === `app:${forkedThreadId}:${keptTurnId}:item:commandExecution:kept-tool`)) {
+    throw new Error(`fork dropped kept turn tool record: ${JSON.stringify(records)}`);
+  }
+  if (records.some((record) => String(asRecord(record).id).includes(removedTurnId))) {
+    throw new Error(`fork kept records from removed turn: ${JSON.stringify(records)}`);
+  }
+  if (records.some((record) => String(asRecord(record).id).startsWith(`app:${sourceThreadId}:`))) {
+    throw new Error(`fork leaked source thread record ids: ${JSON.stringify(records)}`);
   }
 };
 

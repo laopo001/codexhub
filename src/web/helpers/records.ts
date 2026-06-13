@@ -232,7 +232,7 @@ export const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
   const existingIndex = records.findIndex((record) => record.id === incoming.id);
   if (existingIndex === -1) {
     return [
-      ...records.filter((record) => !isMatchingOptimisticUserRecord(record, incoming) && !isMatchingAppServerTranscriptRecord(record, incoming)),
+      ...records.filter((record) => !isMatchingAppServerTranscriptRecord(record, incoming)),
       incoming
     ];
   }
@@ -487,6 +487,17 @@ export const isSimpleMainView = (view: CodexRecordView) => {
   if (payload?.type === "file_change") return false;
   if (payload?.type !== "message") return true;
   return payload.role === "user" || payload.role === "assistant";
+};
+
+export const hideSupersededSimpleThinkingViews = (views: CodexRecordView[]) => {
+  let hasLaterView = false;
+  const nextViews: CodexRecordView[] = [];
+  for (let index = views.length - 1; index >= 0; index -= 1) {
+    const view = views[index];
+    if (!(view.role === "thinking" && hasLaterView)) nextViews.push(view);
+    hasLaterView = true;
+  }
+  return nextViews.reverse();
 };
 
 export const latestUserTurnStatusScope = (records: CodexRecord[]) => {
@@ -802,17 +813,6 @@ export const formatStatusDuration = (value: number) => {
 export const stringField = (record: Record<string, unknown> | null | undefined, key: string) => {
   const value = record?.[key];
   return typeof value === "string" && value ? value : undefined;
-};
-
-export const isMatchingOptimisticUserRecord = (record: CodexRecord, incoming: CodexRecord) => {
-  if (!record.id.startsWith("proxy:user:")) return false;
-  const recordPayload = asRecord(record.payload);
-  const incomingPayload = asRecord(incoming.payload);
-  return record.type === "event_msg"
-    && incoming.type === "event_msg"
-    && recordPayload?.type === "user_message"
-    && incomingPayload?.type === "user_message"
-    && recordPayload.message === incomingPayload.message;
 };
 
 export const isMatchingAppServerTranscriptRecord = (record: CodexRecord, incoming: CodexRecord) => {

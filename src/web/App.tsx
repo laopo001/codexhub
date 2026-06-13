@@ -60,6 +60,7 @@ import {
   formatRateLimitRemaining,
   formatResetTitle,
   groupProjectsByMachine,
+  hideSupersededSimpleThinkingViews,
   initAuthTokenFromUrl,
   isSimpleMainView,
   isSimpleRecord,
@@ -436,7 +437,7 @@ const App = () => {
     [displayRecords]
   );
   const baseViews = useMemo<CodexRecordView[]>(
-    () => recordsToViews(simpleRecords).filter(isSimpleMainView),
+    () => hideSupersededSimpleThinkingViews(recordsToViews(simpleRecords).filter(isSimpleMainView)),
     [simpleRecords]
   );
   const detailedViews = useMemo<CodexRecordView[]>(

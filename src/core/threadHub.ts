@@ -219,6 +219,7 @@ type PendingCommand = {
   type: SessionCommand["type"];
   threadId?: string;
   workingDirectory?: string;
+  keepTurns?: number;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;
   timer?: NodeJS.Timeout;
@@ -466,8 +467,12 @@ export class ThreadHub {
 
     const thread = threadId ? this.ensureThread(threadId, session, message) : null;
     const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
+    if (thread && pending?.type === "fork_thread" && pending.threadId && pending.keepTurns) {
+      const source = this.threads.get(pending.threadId);
+      if (source && source.threadId !== thread.threadId) this.seedForkedThreadRecords(source, thread, pending.keepTurns);
+    }
     if (thread && pending?.type === "rollback_thread" && asRecord(asRecord(message.result)?.thread)) {
-      this.resetThreadRecords(thread);
+      this.applyRollbackRecordCrop(thread, pending.keepTurns);
     }
     if (thread) this.applyAppServerMessage(thread, message);
 
@@ -674,8 +679,11 @@ export class ThreadHub {
     const source = this.requireThread(threadId);
     const session = this.requireThreadSession(source);
     const rollbackPlan = recordId ? rollbackPlanAfterRecord(source, recordId) : { rollbackTurns: 0, keepTurns: 0 };
+    const forkSeedTurns = recordId ? rollbackPlan.keepTurns : appServerTurnIds(source).length;
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId, undefined, source.workingDirectory);
+    const pending = this.pendingCommands.get(commandId);
+    if (pending) pending.keepTurns = forkSeedTurns;
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "fork_thread",
@@ -704,7 +712,12 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
+    const effectiveKeepTurns = typeof keepTurns === "number" && Number.isFinite(keepTurns)
+      ? Math.max(0, Math.floor(keepTurns))
+      : Math.max(0, appServerTurnIds(thread).length - numTurns);
     const promise = this.waitForCommand<ThreadDetail>(commandId, "rollback_thread", thread.threadId, undefined, thread.workingDirectory);
+    const pending = this.pendingCommands.get(commandId);
+    if (pending) pending.keepTurns = effectiveKeepTurns;
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "rollback_thread",
@@ -712,7 +725,7 @@ export class ThreadHub {
       createdAt: new Date().toISOString(),
       threadId: thread.threadId,
       numTurns,
-      keepTurns
+      keepTurns: effectiveKeepTurns
     });
     return promise;
   }
@@ -780,7 +793,6 @@ export class ThreadHub {
 
     const userText = summarizeInput(input);
     if (userText && thread.title === thread.threadId) thread.title = userText.slice(0, 80);
-    if (userText || imageUrls(input).length) this.appendUserInputRecord(thread, input);
     thread.running = true;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
@@ -1215,16 +1227,17 @@ export class ThreadHub {
   }
 
   private applyAppServerTurnsSnapshot(thread: ThreadState, turns: unknown[]) {
-    const appRecordPrefix = `app:${thread.threadId}:`;
-    thread.records = thread.records.filter((record) => !record.id.startsWith(appRecordPrefix));
+    const turnRecords = turns.map(asRecord).filter((turn): turn is Record<string, unknown> => Boolean(turn));
+    const turnIds = new Set(turnRecords.map((turn) => typeof turn.id === "string" ? turn.id : "").filter(Boolean));
+    thread.records = thread.records.filter((record) => {
+      const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
+      return !turnId || turnIds.has(turnId);
+    });
     thread.jsonl = undefined;
     thread.recordSeq = thread.records.reduce((max, record) => (
       typeof record.order === "number" && record.order > max ? record.order : max
     ), 0);
-    for (const turn of turns) {
-      const turnRecord = asRecord(turn);
-      if (turnRecord) this.applyAppServerTurn(thread, turnRecord);
-    }
+    for (const turnRecord of turnRecords) this.applyAppServerTurn(thread, turnRecord);
     thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
@@ -1241,7 +1254,11 @@ export class ThreadHub {
 
   private applyAppServerTurn(thread: ThreadState, turn: Record<string, unknown>) {
     const turnId = typeof turn.id === "string" ? turn.id : "";
-    if (!turnId || !Array.isArray(turn.items)) return;
+    if (!turnId) return;
+    for (const record of codexRecordsFromAppServerTurnLifecycle(thread.threadId, turnId, turn)) {
+      this.upsertRecord(thread, record);
+    }
+    if (!Array.isArray(turn.items)) return;
     const timestamp = timestampFromSeconds(turn.completedAt) ?? timestampFromSeconds(turn.startedAt);
     for (const item of turn.items) {
       const itemRecord = asRecord(item);
@@ -1453,21 +1470,39 @@ export class ThreadHub {
     thread.threadUsage = emptyThreadUsage();
   }
 
-  private removeOptimisticUserRecord(thread: ThreadState, incoming: CodexRecord) {
-    const index = this.optimisticUserRecordIndex(thread, incoming);
-    if (index !== -1) thread.records.splice(index, 1);
+  private applyRollbackRecordCrop(thread: ThreadState, keepTurns: number | undefined) {
+    if (keepTurns == null || keepTurns <= 0) {
+      this.resetThreadRecords(thread);
+      return;
+    }
+    const keptTurnIds = new Set(appServerTurnIds(thread).slice(0, keepTurns));
+    thread.records = thread.records.filter((record) => {
+      const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
+      return !turnId || keptTurnIds.has(turnId);
+    });
+    thread.jsonl = undefined;
+    thread.recordSeq = thread.records.reduce((max, record) => (
+      typeof record.order === "number" && record.order > max ? record.order : max
+    ), 0);
+    thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
+    thread.lastUsage = latestUsage(thread.records);
+    thread.threadUsage = threadUsageFromRecords(thread.records);
   }
 
-  private optimisticUserRecordIndex(thread: ThreadState, incoming: CodexRecord) {
-    const incomingPayload = asRecord(incoming.payload);
-    if (incoming.type !== "event_msg" || incomingPayload?.type !== "user_message") return -1;
-    return thread.records.findIndex((record) => {
-      if (!record.id.startsWith("proxy:user:")) return false;
-      const payload = asRecord(record.payload);
-      return payload?.type === "user_message"
-        && payload.message === incomingPayload.message
-        && JSON.stringify(payload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
-    });
+  private seedForkedThreadRecords(source: ThreadState, forked: ThreadState, keepTurns: number) {
+    if (keepTurns <= 0) return;
+    const keptTurnIds = new Set(appServerTurnIds(source).slice(0, keepTurns));
+    for (const record of source.records) {
+      const turnId = turnIdFromAppRecordId(source.threadId, record.id);
+      if (!turnId || !keptTurnIds.has(turnId)) continue;
+      this.upsertRecord(forked, remapAppRecordThreadId(record, source.threadId, forked.threadId));
+    }
+    forked.recordSeq = forked.records.reduce((max, record) => (
+      typeof record.order === "number" && record.order > max ? record.order : max
+    ), 0);
+    forked.updatedAt = latestRecordTimestamp(forked.records) ?? new Date().toISOString();
+    forked.lastUsage = latestUsage(forked.records);
+    forked.threadUsage = threadUsageFromRecords(forked.records);
   }
 
   private removeMatchingAppServerTranscriptRecord(thread: ThreadState, incoming: CodexRecord) {
@@ -1500,10 +1535,7 @@ export class ThreadHub {
   private upsertRecord(thread: ThreadState, record: CodexRecord) {
     const existingIndex = thread.records.findIndex((item) => item.id === record.id);
     if (existingIndex === -1) {
-      const optimisticUserIndex = this.optimisticUserRecordIndex(thread, record);
-      const replacementIndex = optimisticUserIndex !== -1
-        ? optimisticUserIndex
-        : this.matchingAppServerTranscriptRecordIndex(thread, record);
+      const replacementIndex = this.matchingAppServerTranscriptRecordIndex(thread, record);
       if (replacementIndex !== -1) {
         if (typeof record.order !== "number") record = { ...record, order: thread.records[replacementIndex].order };
         if (recordsEqual(thread.records[replacementIndex], record)) return;
@@ -2108,6 +2140,60 @@ const timestampFromMillis = (value: unknown) =>
 const timestampFromSeconds = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? new Date(value * 1000).toISOString() : undefined;
 
+const codexRecordsFromAppServerTurnLifecycle = (
+  threadId: string,
+  turnId: string,
+  turn: Record<string, unknown>
+): CodexRecord[] => {
+  const startedAt = timestampFromSeconds(turn.startedAt);
+  const completedAt = timestampFromSeconds(turn.completedAt);
+  const durationMs = startedAt && completedAt ? timestampDeltaMs(startedAt, completedAt) : undefined;
+  const firstTokenMs = appServerFirstTokenMs(turn, startedAt);
+  const records: CodexRecord[] = [];
+  if (startedAt) {
+    records.push({
+      id: `app:${threadId}:${turnId}:event:task_started`,
+      timestamp: startedAt,
+      type: "event_msg",
+      payload: {
+        type: "task_started",
+        turn_id: turnId
+      },
+      sourceThreadId: threadId
+    });
+  }
+  if (completedAt) {
+    records.push({
+      id: `app:${threadId}:${turnId}:event:task_complete`,
+      timestamp: completedAt,
+      type: "event_msg",
+      payload: {
+        type: "task_complete",
+        turn_id: turnId,
+        ...(durationMs == null ? {} : { duration_ms: durationMs }),
+        ...(firstTokenMs == null ? {} : { time_to_first_token_ms: firstTokenMs })
+      },
+      sourceThreadId: threadId
+    });
+  }
+  return records;
+};
+
+const timestampDeltaMs = (startedAt: string, completedAt: string) => {
+  const startedMs = Date.parse(startedAt);
+  const completedMs = Date.parse(completedAt);
+  return Number.isFinite(startedMs) && Number.isFinite(completedMs)
+    ? Math.max(0, completedMs - startedMs)
+    : undefined;
+};
+
+const appServerFirstTokenMs = (turn: Record<string, unknown>, startedAt: string | undefined) => {
+  const direct = numberValue(turn.timeToFirstTokenMs) ?? numberValue(turn.time_to_first_token_ms);
+  if (direct != null && Number.isFinite(direct)) return Math.max(0, direct);
+  const firstTokenAt = timestampFromSeconds(turn.firstTokenAt) ?? timestampFromSeconds(turn.first_token_at);
+  return startedAt && firstTokenAt ? timestampDeltaMs(startedAt, firstTokenAt) : undefined;
+};
+
 const tokenUsageNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
 
@@ -2136,6 +2222,12 @@ const latestRecordTimestamp = (records: CodexRecord[]) => {
 
 const recordsEqual = (left: CodexRecord, right: CodexRecord) =>
   JSON.stringify(left) === JSON.stringify(right);
+
+const remapAppRecordThreadId = (record: CodexRecord, sourceThreadId: string, forkedThreadId: string): CodexRecord => ({
+  ...record,
+  id: record.id.replace(`app:${sourceThreadId}:`, `app:${forkedThreadId}:`),
+  sourceThreadId: forkedThreadId
+});
 
 const threadIdFromAppServerMessage = (message: Record<string, unknown>) => {
   const params = asRecord(message.params);
