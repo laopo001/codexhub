@@ -131,7 +131,6 @@ export type ParentRegistrationStatus = {
 
 export type ParentRegistrationDraft = {
   url: string;
-  authToken: string;
   machineId: string;
   name: string;
 };

@@ -100,7 +100,6 @@ const registeredMachineCommand = (origin: string, token: string) => {
 
 const defaultParentRegistrationDraft = (): ParentRegistrationDraft => ({
   url: "",
-  authToken: "",
   machineId: "",
   name: ""
 });
@@ -247,6 +246,7 @@ const App = () => {
   const [parentRegistrationBusy, setParentRegistrationBusy] = useState(false);
   const [parentRegistrationError, setParentRegistrationError] = useState("");
   const [registeredCommandCopied, setRegisteredCommandCopied] = useState(false);
+  const [serverShareCopied, setServerShareCopied] = useState(false);
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [tasks, setTasks] = useState<LocalTask[]>([]);
   const [taskDraft, setTaskDraft] = useState<TaskDraft>(() => defaultTaskDraft());
@@ -347,7 +347,7 @@ const App = () => {
   const registeredCommand = useMemo(() => registeredMachineCommand(window.location.origin, serverAuthRequired ? authToken() : ""), [serverAuthRequired, authRequired]);
   const registeredCommandIncludesToken = serverAuthRequired && registeredCommand.includes("--register-auth-token");
   const currentServerShareUrl = useMemo(
-    () => currentPageUrlWithToken(serverAuthRequired),
+    () => currentServerRegisterUrlWithToken(serverAuthRequired),
     [authRequired, authTokenDraft, initialized, serverAuthRequired]
   );
   const projectGroups = useMemo(() => groupProjectsByMachine(projectList, machines), [projectList, machines]);
@@ -1015,6 +1015,13 @@ const App = () => {
     void initialize();
   };
 
+  const copyCurrentServerShareUrl = async () => {
+    if (!currentServerShareUrl) return;
+    await navigator.clipboard?.writeText(currentServerShareUrl).catch(() => undefined);
+    setServerShareCopied(true);
+    window.setTimeout(() => setServerShareCopied(false), 1200);
+  };
+
   const viewModel = {
     activeCanSend,
     activeCanStop,
@@ -1048,6 +1055,7 @@ const App = () => {
     connectionMode,
     connectParentRegistration,
     connectSshHost,
+    copyCurrentServerShareUrl,
     copyContextSelection,
     copyRegisteredCommand,
     createSessionThread,
@@ -1112,6 +1120,7 @@ const App = () => {
     selectProjectSession,
     selectSessionThread,
     send,
+    serverShareCopied,
     sessionDialogOpen,
     sessionList,
     sessionMenuOpen,
@@ -1186,14 +1195,13 @@ createRoot(root).render(
   </ConfigProvider>
 );
 
-function currentPageUrlWithToken(includeToken: boolean) {
+function currentServerRegisterUrlWithToken(includeToken: boolean) {
   if (typeof window === "undefined") return "";
-  const url = new URL(window.location.href);
+  const url = new URL(window.location.origin);
   url.searchParams.delete("codexhub_token");
   url.searchParams.delete("token");
   const token = authToken();
   if (includeToken && token) url.searchParams.set("token", token);
-  const pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
   const search = url.searchParams.toString();
-  return `${url.origin}${pathname}${search ? `?${search}` : ""}${url.hash}`;
+  return `${url.origin}${search ? `?${search}` : ""}`;
 }

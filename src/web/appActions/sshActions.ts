@@ -156,9 +156,11 @@ export const createSshActions = (ctx: SshActionsContext, _actions: unknown): Ssh
 
   const connectParentRegistration = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const url = ctx.parentRegistrationDraft.url.trim();
-    if (!url) {
-      ctx.setParentRegistrationError("Parent URL is required.");
+    let parsed: ReturnType<typeof parseParentRegistrationInput>;
+    try {
+      parsed = parseParentRegistrationInput(ctx.parentRegistrationDraft.url);
+    } catch (error) {
+      ctx.setParentRegistrationError(error instanceof Error ? error.message : String(error));
       return;
     }
     ctx.setParentRegistrationBusy(true);
@@ -168,8 +170,8 @@ export const createSshActions = (ctx: SshActionsContext, _actions: unknown): Ssh
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          url,
-          authToken: ctx.parentRegistrationDraft.authToken.trim() || undefined,
+          url: parsed.url,
+          authToken: parsed.authToken,
           machineId: ctx.parentRegistrationDraft.machineId.trim() || undefined,
           name: ctx.parentRegistrationDraft.name.trim() || undefined
         })
@@ -206,5 +208,23 @@ export const createSshActions = (ctx: SshActionsContext, _actions: unknown): Ssh
     refreshParentRegistration,
     connectParentRegistration,
     disconnectParentRegistration
+  };
+};
+
+const parseParentRegistrationInput = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error("Parent register URL is required.");
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error("Parent register URL must be a valid URL.");
+  }
+  const authToken = url.searchParams.get("codexhub_token")?.trim()
+    || url.searchParams.get("token")?.trim()
+    || undefined;
+  return {
+    url: url.origin,
+    authToken
   };
 };

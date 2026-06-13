@@ -91,7 +91,7 @@ const main = async () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        url: apiBase,
+        url: `${apiBase}?token=dynamic-smoke-token`,
         machineId: dynamicMachineId,
         name: dynamicMachineName
       })

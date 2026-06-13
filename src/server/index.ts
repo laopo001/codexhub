@@ -714,6 +714,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   async function startParentRegistration(input: z.infer<typeof parentRegistrationConnectSchema>) {
     await stopParentRegistration();
     const url = normalizeBaseUrl(input.url);
+    const authToken = input.authToken?.trim()
+      || authTokenFromUrl(input.url)
+      || process.env.CODEX_HUB_REGISTER_AUTH_TOKEN;
     const machineId = input.machineId?.trim()
       || process.env.CODEX_HUB_REGISTER_MACHINE_ID
       || createMachineId(`${os.hostname()}-server-${config.port}`);
@@ -730,7 +733,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     };
     parentRegistration = startCodexhubMachine({
       apiBase: url,
-      authToken: input.authToken?.trim() || process.env.CODEX_HUB_REGISTER_AUTH_TOKEN,
+      authToken,
       machineId,
       type: "registered",
       name,
@@ -2181,6 +2184,13 @@ const normalizeBaseUrl = (value: string) => {
   url.search = "";
   url.hash = "";
   return url.toString().replace(/\/$/, "");
+};
+
+const authTokenFromUrl = (value: string) => {
+  const url = new URL(value);
+  return url.searchParams.get("codexhub_token")?.trim()
+    || url.searchParams.get("token")?.trim()
+    || undefined;
 };
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;

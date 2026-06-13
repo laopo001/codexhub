@@ -56,6 +56,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     connectionMode,
     connectParentRegistration,
     connectSshHost,
+    copyCurrentServerShareUrl,
     copyRegisteredCommand,
     createTask,
     currentServerShareUrl,
@@ -89,6 +90,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     selectProject,
     selectProjectSession,
     selectSessionThread,
+    serverShareCopied,
     setConnectionMode,
     setOfflineProjectsCollapsed,
     setParentRegistrationDraft,
@@ -352,16 +354,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               <input
                 value={parentRegistrationDraft.url}
                 onChange={(event) => setParentRegistrationDraft((current) => ({ ...current, url: event.target.value }))}
-                placeholder="Parent server URL"
+                placeholder="Parent register URL, with token if needed"
                 spellCheck={false}
-                disabled={parentRegistrationBusy}
-              />
-              <input
-                type="password"
-                value={parentRegistrationDraft.authToken}
-                onChange={(event) => setParentRegistrationDraft((current) => ({ ...current, authToken: event.target.value }))}
-                placeholder="Parent auth token"
-                autoComplete="off"
                 disabled={parentRegistrationBusy}
               />
               <details className="registeredParentOptions">
@@ -662,8 +656,13 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         {taskError ? <div className="projectOpenError">{taskError}</div> : null}
       </section>
       {currentServerShareUrl ? (
-        <section className="serverSharePanel" aria-label="Current server URL">
-          <span>Current server URL</span>
+        <section className="serverSharePanel" aria-label="Current register URL">
+          <div className="serverSharePanelHeader">
+            <span>Register URL</span>
+            <button type="button" onClick={() => void copyCurrentServerShareUrl()}>
+              {serverShareCopied ? "Copied" : "Copy"}
+            </button>
+          </div>
           <code title={currentServerShareUrl}>{currentServerShareUrl}</code>
         </section>
       ) : null}

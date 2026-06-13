@@ -59,6 +59,7 @@ export type AppSidebarViewModel = {
   connectionMode: ConnectionMode;
   connectParentRegistration: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   connectSshHost: (host: string, name?: string) => MaybePromise;
+  copyCurrentServerShareUrl: () => MaybePromise;
   copyRegisteredCommand: () => MaybePromise;
   createTask: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   currentServerShareUrl: string;
@@ -93,6 +94,7 @@ export type AppSidebarViewModel = {
   selectProject: (project: ProjectSummary) => MaybePromise;
   selectProjectSession: (session: SessionView) => MaybePromise;
   selectSessionThread: (session: SessionView, threadId: string) => MaybePromise;
+  serverShareCopied: boolean;
   setConnectionMode: React.Dispatch<React.SetStateAction<ConnectionMode>>;
   setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setParentRegistrationDraft: React.Dispatch<React.SetStateAction<ParentRegistrationDraft>>;

@@ -213,10 +213,29 @@
   padding: 9px 10px;
 }
 
-.serverSharePanel span {
+.serverSharePanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.serverSharePanelHeader span {
   color: #91a090;
   font-size: 11px;
   font-weight: 750;
+}
+
+.serverSharePanelHeader button {
+  border: 1px solid #37523e;
+  border-radius: 7px;
+  background: #1c3a27;
+  color: #f7fff4;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+  padding: 3px 8px;
 }
 
 .serverSharePanel code {

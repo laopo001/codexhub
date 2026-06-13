@@ -431,7 +431,8 @@ function parseMachineType(value: string | undefined): "local" | "ssh" | "registe
 }
 
 function startParentRegistration(options: ServerCommandOptions, localUrl: string, localPort: number) {
-  const registerTo = normalizedOptionalUrl(options.registerTo ?? process.env.CODEX_HUB_REGISTER_TO);
+  const registerToInput = options.registerTo ?? process.env.CODEX_HUB_REGISTER_TO;
+  const registerTo = normalizedOptionalUrl(registerToInput);
   if (!registerTo) return null;
   const machineId = options.registerMachineId
     ?? process.env.CODEX_HUB_REGISTER_MACHINE_ID
@@ -439,7 +440,7 @@ function startParentRegistration(options: ServerCommandOptions, localUrl: string
   const name = options.registerName
     ?? process.env.CODEX_HUB_REGISTER_NAME
     ?? `CodexHub Server ${localUrl}`;
-  const authToken = options.registerAuthToken ?? process.env.CODEX_HUB_REGISTER_AUTH_TOKEN;
+  const authToken = options.registerAuthToken ?? authTokenFromUrl(registerToInput) ?? process.env.CODEX_HUB_REGISTER_AUTH_TOKEN;
   console.error(`codexhub server registering to parent: ${registerTo}`);
   return startCodexhubMachine({
     apiBase: registerTo,
@@ -454,7 +455,19 @@ function normalizedOptionalUrl(value: string | undefined) {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
   const url = new URL(trimmed);
+  url.pathname = "";
+  url.search = "";
+  url.hash = "";
   return url.toString().replace(/\/$/, "");
+}
+
+function authTokenFromUrl(value: string | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const url = new URL(trimmed);
+  return url.searchParams.get("codexhub_token")?.trim()
+    || url.searchParams.get("token")?.trim()
+    || undefined;
 }
 
 function serverUrl(host: string, port: number) {
