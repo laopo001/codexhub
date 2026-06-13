@@ -3,6 +3,7 @@ import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import type { CodexRecord } from "../src/core/codexRecord.js";
 
 type MachineSummary = {
   machineId: string;
@@ -114,6 +115,7 @@ const main = async () => {
   await assertProjectSessionProjection();
   await assertAppServerTurnLifecycleRecords();
   await assertAppServerTurnSnapshotPreservesAgentMessages();
+  await assertAppServerAgentMessageDeltaStreams();
   await assertRollbackPreservesKeptTurnToolRecords();
   await assertForkPreservesKeptTurnToolRecords();
   await assertDeletedProjectSuppressesSessionCapture();
@@ -1037,6 +1039,105 @@ const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
   if (goalIndex !== records.length - 1 || startedIndex !== 0) {
     throw new Error(`thread records were not timestamp ordered after snapshot: ${JSON.stringify(records)}`);
   }
+};
+
+const assertAppServerAgentMessageDeltaStreams = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const { recordsToViews } = await import("../src/core/codexRecordView.js");
+  const hub = new ThreadHub();
+  const sessionId = "app-server-agent-delta-session";
+  const threadId = "app-server-agent-delta-thread";
+  const turnId = "app-server-agent-delta-turn";
+  const itemId = "agent-delta-1";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-app-server-agent-delta"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_execution_changed",
+    threadId,
+    running: true,
+    turnId,
+    heartbeat: false
+  });
+  const events: Array<{ kind: string; record?: unknown }> = [];
+  const unsubscribe = hub.subscribe(threadId, 0, (event) => {
+    events.push(event);
+  });
+  try {
+    for (const delta of ["你", "好"]) {
+      hub.applySessionEvent(sessionId, {
+        type: "thread_event",
+        threadId,
+        heartbeat: false,
+        message: {
+          method: "item/agentMessage/delta",
+          params: {
+            threadId,
+            turnId,
+            itemId,
+            delta,
+            phase: "final_answer"
+          }
+        }
+      });
+    }
+    const deltaRecord = agentMessageRecord(hub.getThread(threadId)?.records ?? [], itemId);
+    const deltaPayload = asRecord(asRecord(deltaRecord).payload);
+    if (!deltaRecord || deltaPayload.message !== "你好" || deltaPayload.status !== "in_progress") {
+      throw new Error(`agent message delta did not stream into record: ${JSON.stringify(hub.getThread(threadId)?.records)}`);
+    }
+    const deltaViews = recordsToViews([deltaRecord]);
+    if (deltaViews[0]?.canFork) {
+      throw new Error(`in-progress final_answer should not be forkable: ${JSON.stringify(deltaViews[0])}`);
+    }
+    const deltaRecordEvents = events.filter((event) => event.kind === "record" && asRecord(event.record)?.id === deltaRecord.id);
+    if (deltaRecordEvents.length < 2) {
+      throw new Error(`agent message delta did not publish record updates: ${JSON.stringify(events)}`);
+    }
+
+    hub.applySessionEvent(sessionId, {
+      type: "thread_event",
+      threadId,
+      heartbeat: false,
+      message: {
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            id: itemId,
+            type: "agentMessage",
+            text: "你好。",
+            phase: "final_answer"
+          }
+        }
+      }
+    });
+    const records = hub.getThread(threadId)?.records ?? [];
+    const agentRecords = records.filter((record) => asRecord(asRecord(record).payload).type === "agent_message");
+    const completedRecord = agentMessageRecord(records, itemId);
+    const completedPayload = asRecord(asRecord(completedRecord).payload);
+    if (!completedRecord || agentRecords.length !== 1 || completedPayload.message !== "你好。" || completedPayload.status !== "completed") {
+      throw new Error(`agent message completion did not replace streamed record: ${JSON.stringify(records)}`);
+    }
+    const completedViews = recordsToViews([completedRecord]);
+    if (!completedViews[0]?.canFork) {
+      throw new Error(`completed final_answer should be forkable: ${JSON.stringify(completedViews[0])}`);
+    }
+  } finally {
+    unsubscribe();
+  }
+};
+
+const agentMessageRecord = (records: unknown[], itemId: string): CodexRecord | undefined => {
+  const found = records.find((record) => {
+    const item = asRecord(record);
+    const payload = asRecord(item.payload);
+    return typeof item.id === "string" && item.id.endsWith(`:agent:${itemId}`) && payload.type === "agent_message";
+  });
+  return found as CodexRecord | undefined;
 };
 
 const assertRollbackPreservesKeptTurnToolRecords = async () => {

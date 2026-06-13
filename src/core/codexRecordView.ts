@@ -78,7 +78,7 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
       label: phase,
       text: payload.message,
       at: record.timestamp,
-      canFork: phase === "final_answer",
+      canFork: phase === "final_answer" && payload.status !== "in_progress",
       record
     };
   }

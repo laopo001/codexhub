@@ -1092,7 +1092,10 @@ export class ThreadHub {
       return;
     }
 
-    if (method === "item/agentMessage/delta") return;
+    if (method === "item/agentMessage/delta") {
+      this.applyAppServerAgentMessageDeltaEvent(thread, params);
+      return;
+    }
 
     if (method === "item/started" || method === "item/completed") {
       this.applyAppServerItemEvent(thread, params, method === "item/completed" ? "completed" : "inProgress");
@@ -1192,6 +1195,42 @@ export class ThreadHub {
     this.upsertRecord(thread, {
       ...record,
       timestamp: record.timestamp ?? existing?.timestamp ?? new Date().toISOString()
+    });
+  }
+
+  private applyAppServerAgentMessageDeltaEvent(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const item = asRecord(params.item);
+    const itemId = typeof params.itemId === "string" && params.itemId
+      ? params.itemId
+      : typeof item?.id === "string" && item.id ? item.id : "";
+    const delta = typeof params.delta === "string"
+      ? params.delta
+      : typeof params.textDelta === "string"
+        ? params.textDelta
+        : "";
+    if (!turnId || !itemId || !delta) return;
+
+    const id = `app:${thread.threadId}:${turnId}:agent:${itemId}`;
+    const existing = thread.records.find((record) => record.id === id);
+    const existingPayload = asRecord(existing?.payload);
+    const existingMessage = typeof existingPayload?.message === "string" ? existingPayload.message : "";
+    const phase = typeof params.phase === "string"
+      ? params.phase
+      : typeof item?.phase === "string"
+        ? item.phase
+        : typeof existingPayload?.phase === "string" ? existingPayload.phase : "assistant";
+    this.upsertRecord(thread, {
+      id,
+      timestamp: existing?.timestamp ?? timestampFromMillis(params.timestamp) ?? timestampFromSeconds(params.createdAt) ?? new Date().toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "agent_message",
+        message: existingMessage + delta,
+        phase,
+        status: "in_progress"
+      },
+      sourceThreadId: thread.threadId
     });
   }
 
@@ -1711,7 +1750,8 @@ const codexRecordFromAppServerItem = (
       payload: {
         type: "agent_message",
         message: item.text,
-        phase: typeof item.phase === "string" ? item.phase : "assistant"
+        phase: typeof item.phase === "string" ? item.phase : "assistant",
+        ...(status ? { status } : {})
       }
     };
   }
