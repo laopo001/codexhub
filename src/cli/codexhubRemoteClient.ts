@@ -2,6 +2,7 @@ import { runCodexhubMachine } from "./codexhubMachine.js";
 
 type RemoteClientOptions = {
   server?: string;
+  authToken?: string;
   machineId?: string;
   type?: "ssh" | "registered";
   name?: string;
@@ -12,6 +13,7 @@ const main = async () => {
   if (!options.server) throw new Error("Missing required --server <url>.");
   await runCodexhubMachine({
     apiBase: options.server,
+    authToken: options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN,
     machineId: options.machineId,
     type: options.type ?? "ssh",
     name: options.name
@@ -29,6 +31,11 @@ const parseArgs = (args: string[]): RemoteClientOptions => {
     }
     if (arg === "--machine-id") {
       options.machineId = readValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--auth-token") {
+      options.authToken = readValue(args, index, arg);
       index += 1;
       continue;
     }

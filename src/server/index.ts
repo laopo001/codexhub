@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { MachineHub } from "../core/machineHub.js";
+import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
@@ -17,8 +18,9 @@ import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, isCronExpression, nextCronRun } from "../core/taskCron.js";
-import { ThreadHub } from "../core/threadHub.js";
+import { ThreadHub, type SessionCommand, type SessionRegistration, type SessionEventInput } from "../core/threadHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
+import { startAttachedCodexhubSession, type HeadlessCodexhubSessionHandle, type HeadlessSessionTransport, type HeadlessSessionTransportCallbacks } from "../cli/codexhubConnect.js";
 import {
   startTelegramPlugin,
   telegramBuiltinPlugin,
@@ -145,6 +147,33 @@ const machineStopSessionResultSchema = z.object({
   cwd: z.string().min(1).optional()
 });
 
+const appServerTunnelFrameSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("app_server_tunnel_open"),
+    streamId: z.string().min(1),
+    appServerId: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("app_server_tunnel_opened"),
+    streamId: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("app_server_tunnel_message"),
+    streamId: z.string().min(1),
+    data: z.string()
+  }),
+  z.object({
+    type: z.literal("app_server_tunnel_close"),
+    streamId: z.string().min(1),
+    reason: z.string().optional()
+  }),
+  z.object({
+    type: z.literal("app_server_tunnel_error"),
+    streamId: z.string().min(1),
+    message: z.string().min(1)
+  })
+]);
+
 const machineTransportMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("register"),
@@ -199,7 +228,26 @@ const machineTransportMessageSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
     commandId: z.string().min(1),
     message: z.string().min(1)
-  })
+  }),
+  z.object({
+    type: z.literal("app_server_ready"),
+    commandId: z.string().min(1),
+    sessionId: z.string().min(1),
+    appServerId: z.string().min(1),
+    cwd: z.string().min(1),
+    appServerUrl: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("app_server_start_thread"),
+    commandId: z.string().min(1),
+    sessionId: z.string().min(1),
+    cwd: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("app_server_stopped"),
+    sessionId: z.string().min(1)
+  }),
+  ...appServerTunnelFrameSchema.options
 ]);
 
 const webEventsMessageSchema = z.discriminatedUnion("type", [
@@ -295,6 +343,7 @@ const isPublicRequest = (request: FastifyRequest) => {
   const pathname = requestPath(request);
   if (!pathname.startsWith("/api/")) return true;
   if (pathname === "/api/health" || pathname === "/api/auth/status") return true;
+  if (pathname.startsWith("/api/remote-client/")) return request.method === "GET";
   if (pathname.startsWith("/api/ssh/remote-client/")) return request.method === "GET";
   if (pathname.startsWith("/api/plugins/") && pathname.includes("/assets/")) return request.method === "GET";
   return false;
@@ -420,6 +469,12 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let localMachine: CodexhubMachineHandle | null = null;
   const threadRecordSubscriptionCounts = new Map<string, number>();
   const threadRecordSubscriptionTimers = new Map<string, NodeJS.Timeout>();
+  const tunneledAppServerSessions = new Map<string, {
+    transportId: string;
+    machineId: string;
+    appServerId: string;
+    handle: HeadlessCodexhubSessionHandle;
+  }>();
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
@@ -448,6 +503,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     if (taskSweep) clearInterval(taskSweep);
     for (const timer of threadRecordSubscriptionTimers.values()) clearTimeout(timer);
     threadRecordSubscriptionTimers.clear();
+    await Promise.allSettled([...tunneledAppServerSessions.values()].map((entry) => entry.handle.stop()));
+    tunneledAppServerSessions.clear();
     await sshMachines.stopAll();
     await localMachine?.stop();
     telegramBot?.stop("server closing");
@@ -1100,6 +1157,43 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     connections: features.ssh ? sshMachines.listConnections() : []
   }));
 
+  app.get("/api/registered/bootstrap", async (request, reply) => {
+    const query = z.object({
+      server: z.string().url().optional(),
+      name: z.string().min(1).optional()
+    }).parse(request.query);
+    const bundle = await resolveSshRemoteClientBundle();
+    if (!bundle) {
+      reply.code(404);
+      return { error: "remote_client_not_found" };
+    }
+    const serverBase = normalizeBaseUrl(query.server ?? requestBaseUrl(request, config.host, config.port));
+    const authToken = normalizedAuthToken(requestAuthToken(request));
+    const script = registeredBootstrapScript({
+      serverBase,
+      clientUrl: `${serverBase}/api/remote-client/${bundle.hash}`,
+      clientHash: bundle.hash,
+      authToken,
+      name: query.name
+    });
+    reply.type("text/x-shellscript; charset=utf-8");
+    reply.header("cache-control", "no-cache");
+    return reply.send(script);
+  });
+
+  app.get("/api/remote-client/:hash", async (request, reply) => {
+    const params = z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(request.params);
+    const bundle = await readSshRemoteClientBundle(params.hash);
+    if (!bundle) {
+      reply.code(404);
+      return { error: "remote_client_not_found" };
+    }
+    reply.type("text/javascript; charset=utf-8");
+    reply.header("cache-control", "public, max-age=31536000, immutable");
+    reply.header("x-codexhub-remote-client-sha256", bundle.hash);
+    return reply.send(bundle.content);
+  });
+
   app.get("/api/ssh/remote-client/:hash", async (request, reply) => {
     if (!features.ssh) {
       reply.code(404);
@@ -1336,6 +1430,82 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   });
 
+  const stopTunneledAppServerSession = async (sessionId: string, transportId?: string) => {
+    const entry = tunneledAppServerSessions.get(sessionId);
+    if (!entry) return;
+    if (transportId && entry.transportId !== transportId) return;
+    tunneledAppServerSessions.delete(sessionId);
+    await entry.handle.stop().catch(() => undefined);
+    publishProjects();
+  };
+
+  const stopTunneledAppServerSessionsForTransport = async (transportId: string) => {
+    const sessionIds = [...tunneledAppServerSessions.entries()]
+      .filter(([, entry]) => entry.transportId === transportId)
+      .map(([sessionId]) => sessionId);
+    await Promise.allSettled(sessionIds.map((sessionId) => stopTunneledAppServerSession(sessionId, transportId)));
+  };
+
+  const attachTunneledAppServer = async (input: {
+    machineId: string;
+    transportId: string;
+    commandId: string;
+    sessionId: string;
+    appServerId: string;
+    cwd: string;
+    appServerUrl: string;
+    tunnel: AppServerTunnelPeer;
+  }) => {
+    const existing = tunneledAppServerSessions.get(input.sessionId);
+    if (existing && existing.transportId !== input.transportId) {
+      await stopTunneledAppServerSession(input.sessionId);
+    }
+    if (existing && existing.transportId === input.transportId) return existing.handle.threadId;
+    const sessionTransportId = `${input.transportId}:app-server:${input.sessionId}`;
+    const handle = await startAttachedCodexhubSession({
+      apiBase: localApiBaseUrl(config.host, config.port),
+      appServerUrl: `tunnel://${input.appServerId}`,
+      appServerTransportFactory: () => input.tunnel.openStream(input.appServerId),
+      sessionId: input.sessionId,
+      machineId: input.machineId,
+      cwd: input.cwd,
+      readyLabel: "codexhub tunneled app-server ready",
+      transportFactory: (_context, callbacks) => new DirectThreadHubSessionTransport({
+        threads,
+        sessionId: input.sessionId,
+        machineId: input.machineId,
+        transportId: sessionTransportId,
+        onChange: () => {
+          captureSessionState();
+          publishProjects();
+        },
+        onRegister: () => refreshRetainedThreadRecordSubscriptions()
+      }, callbacks)
+    });
+    tunneledAppServerSessions.set(input.sessionId, {
+      transportId: input.transportId,
+      machineId: input.machineId,
+      appServerId: input.appServerId,
+      handle
+    });
+    publishProjects();
+    return handle.threadId;
+  };
+
+  const startTunneledAppServerThread = async (input: {
+    transportId: string;
+    sessionId: string;
+    cwd: string;
+  }) => {
+    const entry = tunneledAppServerSessions.get(input.sessionId);
+    if (!entry || entry.transportId !== input.transportId) {
+      throw new Error(`Tunneled app-server session not attached: ${input.sessionId}`);
+    }
+    const threadId = await entry.handle.startThread(input.cwd);
+    publishProjects();
+    return threadId;
+  };
+
   app.get("/api/machines/connect", { websocket: true }, (socket) => {
     const transportId = randomUUID();
     let machineId: string | null = null;
@@ -1350,6 +1520,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       if (socket.readyState !== 1) return;
       socket.send(JSON.stringify(message));
     };
+    const tunnel = new AppServerTunnelPeer({
+      send: (frame) => send(frame),
+      label: `codexhub server machine transport ${transportId}`
+    });
 
     const startCommandPump = () => {
       if (commandPumpStarted) return;
@@ -1428,6 +1602,11 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       }
 
       try {
+        if (isAppServerTunnelFrame(parsed)) {
+          tunnel.handleFrame(parsed);
+          return;
+        }
+
         if (parsed.type === "register") {
           const result = machines.registerMachine({ ...parsed.registration, transportId });
           state.upsertMachine({
@@ -1446,8 +1625,49 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           return;
         }
 
+        if (parsed.type === "app_server_ready") {
+          const threadId = await attachTunneledAppServer({
+            machineId: machineId!,
+            transportId,
+            commandId: parsed.commandId,
+            sessionId: parsed.sessionId,
+            appServerId: parsed.appServerId,
+            cwd: parsed.cwd,
+            appServerUrl: parsed.appServerUrl,
+            tunnel
+          });
+          send({
+            type: "app_server_attached",
+            commandId: parsed.commandId,
+            sessionId: parsed.sessionId,
+            threadId
+          });
+          return;
+        }
+
+        if (parsed.type === "app_server_start_thread") {
+          const threadId = await startTunneledAppServerThread({
+            transportId,
+            sessionId: parsed.sessionId,
+            cwd: parsed.cwd
+          });
+          send({
+            type: "app_server_attached",
+            commandId: parsed.commandId,
+            sessionId: parsed.sessionId,
+            threadId
+          });
+          return;
+        }
+
+        if (parsed.type === "app_server_stopped") {
+          await stopTunneledAppServerSession(parsed.sessionId, transportId);
+          return;
+        }
+
         if (parsed.type === "unregister") {
           machines.unregisterMachine(machineId!, transportId);
+          await stopTunneledAppServerSessionsForTransport(transportId);
           for (const sessionId of [...sessionIds]) {
             threads.unregisterSession(sessionId, sessionTransportId(sessionId));
           }
@@ -1521,6 +1741,15 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         machines.failCommand(machineId!, parsed.commandId, parsed.message);
         publishProjects();
       } catch (error) {
+        if (parsed.type === "app_server_ready" || parsed.type === "app_server_start_thread") {
+          send({
+            type: "app_server_attach_error",
+            commandId: parsed.commandId,
+            sessionId: parsed.sessionId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+          return;
+        }
         send({ type: "error", message: error instanceof Error ? error.message : String(error) });
       }
     };
@@ -1528,7 +1757,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     socket.on("message", (data: unknown) => void handleMessage(data));
     socket.on("close", () => {
       closed = true;
+      tunnel.closeAll();
       disconnectSessions();
+      void stopTunneledAppServerSessionsForTransport(transportId);
       if (machineId) {
         machines.disconnectMachine(machineId, transportId);
         publishProjects();
@@ -1536,7 +1767,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     });
     socket.on("error", () => {
       closed = true;
+      tunnel.closeAll();
       disconnectSessions();
+      void stopTunneledAppServerSessionsForTransport(transportId);
       if (machineId) {
         machines.disconnectMachine(machineId, transportId);
         publishProjects();
@@ -1672,6 +1905,197 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     stop: () => app.close()
   };
 };
+
+class DirectThreadHubSessionTransport implements HeadlessSessionTransport {
+  private stopped = false;
+  private registered = false;
+  private commandCursor = 0;
+  private commandLoopStarted = false;
+
+  constructor(
+    private readonly options: {
+      threads: ThreadHub;
+      sessionId: string;
+      machineId?: string;
+      transportId: string;
+      onChange: () => void;
+      onRegister?: () => void;
+    },
+    private readonly callbacks: HeadlessSessionTransportCallbacks
+  ) {}
+
+  start() {
+    if (this.stopped || this.registered) return;
+    this.callbacks.onState("connecting", `codexhub direct session registering: ${this.options.sessionId}`);
+    const { currentThreadId: _legacyCurrentThreadId, ...registration } = this.callbacks.registration() as SessionRegistration & { currentThreadId?: string };
+    this.options.threads.registerSession({
+      ...registration,
+      sessionId: this.options.sessionId,
+      machineId: this.options.machineId,
+      transportId: this.options.transportId
+    });
+    this.registered = true;
+    this.callbacks.onState("online", `codexhub direct session connected: ${this.options.sessionId}`);
+    this.options.onRegister?.();
+    this.options.onChange();
+    this.startCommandLoop();
+  }
+
+  stop(options: { unregister?: boolean } = {}) {
+    if (this.stopped) return;
+    this.stopped = true;
+    if (this.registered) {
+      if (options.unregister) this.options.threads.unregisterSession(this.options.sessionId, this.options.transportId);
+      else this.options.threads.disconnectSession(this.options.sessionId, this.options.transportId);
+    }
+    this.registered = false;
+    this.options.onChange();
+  }
+
+  sendEvent(event: SessionEventInput) {
+    if (this.stopped || !this.registered) return;
+    this.options.threads.applySessionEvent(this.options.sessionId, event);
+    this.options.onChange();
+  }
+
+  sendHeartbeat(registration: Partial<SessionRegistration>) {
+    if (this.stopped || !this.registered) return;
+    this.options.threads.heartbeatSession(this.options.sessionId, registration);
+  }
+
+  private startCommandLoop() {
+    if (this.commandLoopStarted) return;
+    this.commandLoopStarted = true;
+    void this.commandLoop().catch((error: unknown) => {
+      if (!this.stopped) this.callbacks.onState("offline", `codexhub direct session command loop failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
+  private async commandLoop() {
+    while (!this.stopped && this.registered) {
+      const response = await this.options.threads.waitSessionCommands(this.options.sessionId, this.commandCursor, 60_000);
+      if (this.stopped || !this.registered) return;
+      this.commandCursor = Math.max(this.commandCursor, response.cursor);
+      for (const command of response.commands) {
+        await this.handleCommand(command);
+      }
+    }
+  }
+
+  private async handleCommand(command: SessionCommand) {
+    try {
+      const result = await this.callbacks.handleCommand(command);
+      if (result !== undefined) {
+        this.options.threads.resolveSessionCommand(this.options.sessionId, command.commandId, result);
+      }
+    } catch (error) {
+      this.options.threads.failSessionCommand(this.options.sessionId, command.commandId, error instanceof Error ? error.message : String(error));
+    } finally {
+      this.commandCursor = Math.max(this.commandCursor, command.seq);
+      this.options.onChange();
+    }
+  }
+}
+
+const registeredBootstrapScript = (input: {
+  serverBase: string;
+  clientUrl: string;
+  clientHash: string;
+  authToken: string | null;
+  name?: string;
+}) => [
+  "#!/bin/sh",
+  "set -eu",
+  "PATH=\"/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$HOME/bin:/usr/bin:/bin:$PATH\"",
+  "export PATH",
+  `CODEXHUB_REMOTE_CLIENT_HASH=${shellQuote(input.clientHash)}`,
+  `CODEXHUB_REMOTE_CLIENT_URL=${shellQuote(input.clientUrl)}`,
+  ...(input.authToken ? [`CODEX_HUB_AUTH_TOKEN=${shellQuote(input.authToken)}`] : []),
+  `export CODEXHUB_REMOTE_CLIENT_HASH CODEXHUB_REMOTE_CLIENT_URL${input.authToken ? " CODEX_HUB_AUTH_TOKEN" : ""}`,
+  "cache_root=\"${XDG_CACHE_HOME:-$HOME/.cache}/codexhub/remote-client\"",
+  "cache_dir=\"$cache_root/$CODEXHUB_REMOTE_CLIENT_HASH\"",
+  "client=\"$cache_dir/client.cjs\"",
+  "mkdir -p \"$cache_dir\"",
+  "chmod 700 \"$cache_root\" \"$cache_dir\" 2>/dev/null || true",
+  "if [ ! -s \"$client\" ]; then",
+  "  tmp=\"$client.tmp.$$\"",
+  "  rm -f \"$tmp\"",
+  "  CODEXHUB_REMOTE_CLIENT_TMP=\"$tmp\" node - <<'CODEXHUB_REMOTE_CLIENT_BOOTSTRAP'",
+  remoteClientBootstrapNodeScript,
+  "CODEXHUB_REMOTE_CLIENT_BOOTSTRAP",
+  "  chmod 600 \"$tmp\"",
+  "  mv \"$tmp\" \"$client\"",
+  "fi",
+  [
+    "exec",
+    "node",
+    "\"$client\"",
+    "--server",
+    shellQuote(input.serverBase),
+    "--type",
+    "registered",
+    ...(input.name ? ["--name", shellQuote(input.name)] : [])
+  ].join(" "),
+  ""
+].join("\n");
+
+const remoteClientBootstrapNodeScript = [
+  "const fs = require('node:fs');",
+  "const { createHash } = require('node:crypto');",
+  "const http = require('node:http');",
+  "const https = require('node:https');",
+  "const url = process.env.CODEXHUB_REMOTE_CLIENT_URL;",
+  "const tmp = process.env.CODEXHUB_REMOTE_CLIENT_TMP;",
+  "const expectedHash = process.env.CODEXHUB_REMOTE_CLIENT_HASH;",
+  "if (!url || !tmp || !expectedHash) throw new Error('missing codexhub remote client bootstrap env');",
+  "const transport = url.startsWith('https:') ? https : http;",
+  "const fail = (error) => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); };",
+  "new Promise((resolve, reject) => {",
+  "  const file = fs.createWriteStream(tmp, { mode: 0o600 });",
+  "  const hash = createHash('sha256');",
+  "  const request = transport.get(url, (response) => {",
+  "    if (response.statusCode !== 200) {",
+  "      response.resume();",
+  "      reject(new Error(`remote client download failed: ${response.statusCode}`));",
+  "      return;",
+  "    }",
+  "    response.on('data', (chunk) => hash.update(chunk));",
+  "    response.on('error', reject);",
+  "    response.pipe(file);",
+  "  });",
+  "  request.on('error', reject);",
+  "  file.on('error', reject);",
+  "  file.on('finish', () => {",
+  "    file.close((error) => {",
+  "      if (error) { reject(error); return; }",
+  "      const actualHash = hash.digest('hex');",
+  "      if (actualHash !== expectedHash) {",
+  "        reject(new Error(`remote client checksum mismatch: ${actualHash}`));",
+  "        return;",
+  "      }",
+  "      resolve();",
+  "    });",
+  "  });",
+  "}).catch(fail);"
+].join("\n");
+
+const requestBaseUrl = (request: FastifyRequest, host: string, port: number) => {
+  const forwardedProto = request.headers["x-forwarded-proto"];
+  const proto = typeof forwardedProto === "string" && forwardedProto.trim()
+    ? forwardedProto.split(",")[0].trim()
+    : "http";
+  return `${proto}://${request.headers.host || `${host}:${port}`}`;
+};
+
+const normalizeBaseUrl = (value: string) => {
+  const url = new URL(value);
+  url.pathname = "";
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
+};
+
+const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
 const resolveTargetMachine = (
   allMachines: Array<{ machineId: string; online: boolean; capabilities?: { projectLauncher?: boolean } }>,

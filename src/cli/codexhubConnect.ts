@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { Command } from "commander";
 import type { MachineCommand, MachineRegistration } from "../core/machineHub.js";
 import type { ProxyInput } from "../core/proxyInput.js";
+import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import type {
   SessionRegistration,
   ThreadCandidateSummary,
@@ -71,6 +72,8 @@ type HubTransportSink = {
   sendHeartbeat: (registration: Partial<SessionRegistration>) => void;
 };
 
+export type AppServerTransportFactory = () => Promise<AppServerSocketLike>;
+
 export type HeadlessSessionTransportContext = {
   sessionId: string;
   apiBase: string;
@@ -98,6 +101,7 @@ export type HeadlessSessionTransportFactory = (
 type BridgeOptions = {
   apiBase: string;
   appServerUrl: string;
+  appServerTransportFactory?: AppServerTransportFactory;
   sessionId: string;
   machineId?: string;
   cwd: string;
@@ -133,6 +137,18 @@ export type HeadlessCodexhubSessionHandle = {
   ensureThread: (threadId: string) => Promise<string>;
   startThread: (cwd: string) => Promise<string>;
   runTurn: (input: ProxyInput, threadId?: string) => Promise<string>;
+  stop: () => Promise<void>;
+  wait: () => Promise<ChildExit>;
+};
+
+export type AttachedCodexhubSessionOptions = Omit<BridgeOptions, "sessionId" | "ensureCurrentThread"> & {
+  sessionId?: string;
+};
+
+export type CodexAppServerProcessHandle = {
+  cwd: string;
+  port: number;
+  appServerUrl: string;
   stop: () => Promise<void>;
   wait: () => Promise<ChildExit>;
 };
@@ -230,15 +246,11 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, pro
 
 export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSessionOptions): Promise<HeadlessCodexhubSessionHandle> {
   const cwd = path.resolve(options.cwd);
-  const port = options.port ?? await findFreePort();
-  if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
-
-  const appServerUrl = `ws://127.0.0.1:${port}`;
+  const appServer = await startCodexAppServerProcess(cwd, options.port);
   const sessionId = createSessionId();
-  const appServer = await startCodexAppServer(cwd, appServerUrl, port);
   const bridgeRunner = new ProxyBridgeRunner({
     apiBase: options.apiBase,
-    appServerUrl,
+    appServerUrl: appServer.appServerUrl,
     sessionId,
     machineId: options.machineId,
     cwd,
@@ -250,10 +262,10 @@ export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSess
     transportFactory: options.transportFactory,
     statusBar: null
   });
-  const appServerStopped = waitForChild(appServer);
+  const appServerStopped = appServer.wait();
   const cleanup = cleanupOnce(async () => {
     await bridgeRunner.stop();
-    await terminateChild(appServer, appServerStopped);
+    await appServer.stop();
   });
 
   bridgeRunner.start();
@@ -267,13 +279,47 @@ export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSess
     return {
       sessionId,
       threadId: ready.threadId,
-      appServerUrl,
+      appServerUrl: appServer.appServerUrl,
       cwd,
       ensureThread: (threadId: string) => bridgeRunner.ensureThread(threadId),
       startThread: (cwd: string) => bridgeRunner.startThread(cwd),
       runTurn: (input: ProxyInput, threadId?: string) => bridgeRunner.runTurn(input, threadId),
       stop: cleanup,
       wait: () => appServerStopped
+    };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
+export async function startAttachedCodexhubSession(options: AttachedCodexhubSessionOptions): Promise<HeadlessCodexhubSessionHandle> {
+  const cwd = path.resolve(options.cwd);
+  const sessionId = options.sessionId?.trim() || createSessionId();
+  const bridgeRunner = new ProxyBridgeRunner({
+    ...options,
+    sessionId,
+    cwd,
+    ensureCurrentThread: true,
+    statusBar: null
+  });
+  const cleanup = cleanupOnce(async () => {
+    await bridgeRunner.stop();
+  });
+
+  bridgeRunner.start();
+  try {
+    const ready = await bridgeRunner.waitForReady();
+    return {
+      sessionId,
+      threadId: ready.threadId,
+      appServerUrl: options.appServerUrl,
+      cwd,
+      ensureThread: (threadId: string) => bridgeRunner.ensureThread(threadId),
+      startThread: (nextCwd: string) => bridgeRunner.startThread(nextCwd),
+      runTurn: (input: ProxyInput, threadId?: string) => bridgeRunner.runTurn(input, threadId),
+      stop: cleanup,
+      wait: () => new Promise<ChildExit>(() => undefined)
     };
   } catch (error) {
     await cleanup();
@@ -672,7 +718,7 @@ class CodexAppServerBridge {
 
   private constructor(
     private readonly options: BridgeOptions,
-    private readonly ws: WebSocket,
+    private readonly ws: AppServerSocketLike,
     initialState: BridgeState,
     private readonly hub: HubTransportSink
   ) {
@@ -684,7 +730,9 @@ class CodexAppServerBridge {
   }
 
   static async connect(options: BridgeOptions, initialState: BridgeState = { threadIds: [] }, hub: HubTransportSink) {
-    const ws = await openWebSocket(options.appServerUrl);
+    const ws = options.appServerTransportFactory
+      ? await options.appServerTransportFactory()
+      : await openWebSocket(options.appServerUrl);
     const bridge = new CodexAppServerBridge(options, ws, initialState, hub);
     ws.addEventListener("message", (event) => void bridge.handleMessage(event.data));
     ws.addEventListener("error", () => {
@@ -1520,6 +1568,25 @@ const startCodexAppServer = async (cwd: string, appServerUrl: string, port: numb
   return child;
 };
 
+export const startCodexAppServerProcess = async (cwdInput: string, portInput?: number): Promise<CodexAppServerProcessHandle> => {
+  const cwd = path.resolve(cwdInput);
+  const port = portInput ?? await findFreePort();
+  if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${portInput}`);
+  const appServerUrl = `ws://127.0.0.1:${port}`;
+  const child = await startCodexAppServer(cwd, appServerUrl, port);
+  const stopped = waitForChild(child);
+  const stop = cleanupOnce(async () => {
+    await terminateChild(child, stopped);
+  });
+  return {
+    cwd,
+    port,
+    appServerUrl,
+    stop,
+    wait: () => stopped
+  };
+};
+
 const codexAppServerLaunch = async (appServerUrl: string) => {
   if (process.platform === "linux" && await fileExists("/usr/bin/setpriv")) {
     return {
@@ -1710,6 +1777,8 @@ const resultThreadIdForMessage = (message: JsonRecord) => {
   const resultThread = asRecord(result?.thread);
   return typeof resultThread?.id === "string" ? resultThread.id : undefined;
 };
+
+export const createCodexhubSessionId = () => createSessionId();
 
 const createSessionId = () => `local-${safeSessionPart(os.hostname())}-${process.pid}-${randomUUID().slice(0, 8)}`;
 

@@ -329,6 +329,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           <div className="connectionList">
             <div className="registeredCommand">
               <div className="registeredCommandText">
+                <span className="registeredCommandLabel">app-server tunnel bootstrap</span>
                 <code title={registeredCommand}>{registeredCommand}</code>
                 {registeredCommandIncludesToken ? <span>auth token included</span> : null}
               </div>

@@ -27,6 +27,7 @@ type SessionState = {
   sessionId: string;
   online?: boolean;
   offlineReason?: string;
+  appServerUrl?: string;
 };
 
 type ThreadDetail = {
@@ -70,6 +71,10 @@ const main = async () => {
     const threadId = open.result?.threadId;
     if (!sessionId || !threadId) throw new Error(`project open did not return session/thread: ${JSON.stringify(open)}`);
     if (open.result?.cwd !== projectDir) throw new Error(`registered machine opened unexpected cwd: ${open.result?.cwd}`);
+    const session = await waitForSessionOnline(apiBase, sessionId);
+    if (!session.appServerUrl?.startsWith("tunnel://")) {
+      throw new Error(`registered session did not use app-server tunnel: ${session.appServerUrl ?? ""}`);
+    }
     console.log(`project/session ok: ${sessionId} ${threadId}`);
 
     const turn = await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
@@ -129,6 +134,17 @@ const startRegisteredMachine = (apiBase: string, machineId: string, machineName:
   child.stdout?.on("data", append);
   child.stderr?.on("data", append);
   return Object.assign(child, { output: () => output });
+};
+
+const waitForSessionOnline = async (apiBase: string, sessionId: string) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 15_000) {
+    const data = await apiJson<{ sessions?: SessionState[] }>(apiBase, "/api/sessions?includeOffline=true").catch(() => ({ sessions: [] }));
+    const session = data.sessions?.find((item) => item.sessionId === sessionId);
+    if (session?.online) return session;
+    await delay(250);
+  }
+  throw new Error(`registered session did not come online: ${sessionId}`);
 };
 
 const waitForRegisteredMachine = async (

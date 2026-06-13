@@ -2,6 +2,7 @@ import { access, readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { AppServerTunnelPeer, isAppServerTunnelFrame, type AppServerTunnelFrame } from "../core/appServerTunnel.js";
 import {
   createMachineId,
   type MachineCommand,
@@ -13,6 +14,8 @@ import {
 } from "../core/machineHub.js";
 import type { SessionCommand } from "../core/threadHub.js";
 import {
+  createCodexhubSessionId,
+  startCodexAppServerProcess,
   startHeadlessCodexhubSession,
   type HeadlessCodexhubSessionHandle,
   type HeadlessSessionTransport,
@@ -38,12 +41,25 @@ type MachineTransportMessage =
   | { type: "session_registered"; sessionId: string; session?: unknown }
   | { type: "session_commands"; sessionId: string; cursor: number; commands: SessionCommand[] }
   | { type: "session_error"; sessionId: string; message: string }
+  | { type: "app_server_attached"; commandId: string; sessionId: string; threadId: string }
+  | { type: "app_server_attach_error"; commandId: string; sessionId?: string; message: string }
+  | AppServerTunnelFrame
   | { type: "error"; message: string };
 
 type ManagedSession = {
-  session: HeadlessCodexhubSessionHandle;
+  session: RuntimeSessionHandle;
   cwd: string;
   projectsByCwd: Map<string, MachineStartSessionResult>;
+};
+
+type RuntimeSessionHandle = Pick<HeadlessCodexhubSessionHandle, "sessionId" | "threadId" | "appServerUrl" | "cwd" | "stop" | "wait"> & {
+  startThread: (cwd: string, commandId?: string) => Promise<string>;
+};
+
+type PendingAppServerAttach = {
+  resolve: (value: { sessionId: string; threadId: string }) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
 };
 
 export const runCodexhubMachine = async (options: MachineRunnerOptions) => {
@@ -71,6 +87,8 @@ class CodexhubMachineRunner {
   private commandChain = Promise.resolve();
   private runtimeSession: ManagedSession | null = null;
   private readonly sessionTransports = new Map<string, MachineSessionTransport>();
+  private tunnel: AppServerTunnelPeer | null = null;
+  private readonly pendingAppServerAttaches = new Map<string, PendingAppServerAttach>();
 
   constructor(private readonly options: MachineRunnerOptions) {
     this.machineId = options.machineId?.trim() || createMachineId(os.hostname());
@@ -95,6 +113,9 @@ class CodexhubMachineRunner {
       await delay(50);
     }
     this.registered = false;
+    this.tunnel?.closeAll();
+    this.tunnel = null;
+    this.rejectPendingAppServerAttaches(new Error("codexhub machine stopped"));
     this.sessionTransports.clear();
     this.ws?.close();
   }
@@ -134,8 +155,15 @@ class CodexhubMachineRunner {
     ws.addEventListener("close", () => {
       clearInterval(heartbeat);
       for (const transport of this.sessionTransports.values()) transport.markDisconnected();
+      this.tunnel?.closeAll();
+      this.tunnel = null;
+      this.rejectPendingAppServerAttaches(new Error("codexhub machine websocket closed"));
       closed.resolve();
     }, { once: true });
+    this.tunnel = new AppServerTunnelPeer({
+      send: (frame) => this.sendRaw(frame),
+      label: `codexhub machine ${this.machineId}`
+    });
     this.sendRaw({
       type: "register",
       commandCursor: this.commandCursor,
@@ -167,6 +195,10 @@ class CodexhubMachineRunner {
       console.error("codexhub machine received invalid message");
       return;
     }
+    if (isAppServerTunnelFrame(message)) {
+      this.tunnel?.handleFrame(message);
+      return;
+    }
     if (message.type === "registered") {
       this.registered = true;
       console.error(`codexhub machine connected: ${message.machineId}`);
@@ -185,6 +217,17 @@ class CodexhubMachineRunner {
         return;
       }
       transport.handleServerMessage(message);
+      return;
+    }
+    if (message.type === "app_server_attached") {
+      this.resolvePendingAppServerAttach(message.commandId, {
+        sessionId: message.sessionId,
+        threadId: message.threadId
+      });
+      return;
+    }
+    if (message.type === "app_server_attach_error") {
+      this.rejectPendingAppServerAttach(message.commandId, new Error(message.message));
       return;
     }
     console.error(`codexhub machine server error: ${message.message}`);
@@ -230,10 +273,10 @@ class CodexhubMachineRunner {
       };
     }
 
-    const runtime = await this.ensureRuntimeSession(cwd);
+    const runtime = await this.ensureRuntimeSession(cwd, command.commandId);
     const threadId = runtime.projectsByCwd.size === 0 && runtime.cwd === cwd
       ? runtime.session.threadId
-      : await runtime.session.startThread(cwd);
+      : await runtime.session.startThread(cwd, command.commandId);
     const result = {
       sessionId: runtime.session.sessionId,
       threadId,
@@ -244,25 +287,27 @@ class CodexhubMachineRunner {
     return result;
   }
 
-  private async ensureRuntimeSession(cwd: string): Promise<ManagedSession> {
+  private async ensureRuntimeSession(cwd: string, commandId: string): Promise<ManagedSession> {
     if (this.runtimeSession) return this.runtimeSession;
     console.error(`codexhub machine app-server starting: ${cwd}`);
-    const session = await startHeadlessCodexhubSession({
-      apiBase: this.options.apiBase,
-      machineId: this.machineId,
-      cwd,
-      readyLabel: "codexhub machine app-server ready",
-      transportFactory: (context, callbacks) => {
-        const transport = new MachineSessionTransport({
-          sessionId: context.sessionId,
-          send: (message) => this.sendRaw(message),
-          callbacks,
-          onStop: () => this.sessionTransports.delete(context.sessionId)
-        });
-        this.sessionTransports.set(context.sessionId, transport);
-        return transport;
-      }
-    });
+    const session = this.useAppServerTunnel()
+      ? await this.startTunneledRuntimeSession(cwd, commandId)
+      : await startHeadlessCodexhubSession({
+        apiBase: this.options.apiBase,
+        machineId: this.machineId,
+        cwd,
+        readyLabel: "codexhub machine app-server ready",
+        transportFactory: (context, callbacks) => {
+          const transport = new MachineSessionTransport({
+            sessionId: context.sessionId,
+            send: (message) => this.sendRaw(message),
+            callbacks,
+            onStop: () => this.sessionTransports.delete(context.sessionId)
+          });
+          this.sessionTransports.set(context.sessionId, transport);
+          return transport;
+        }
+      });
     const runtime = { session, cwd, projectsByCwd: new Map<string, MachineStartSessionResult>() };
     this.runtimeSession = runtime;
     void session.wait().then(() => {
@@ -271,6 +316,104 @@ class CodexhubMachineRunner {
       if (this.runtimeSession?.session.sessionId === session.sessionId) this.runtimeSession = null;
     });
     return runtime;
+  }
+
+  private useAppServerTunnel() {
+    return this.options.type === "registered";
+  }
+
+  private async startTunneledRuntimeSession(cwd: string, commandId: string): Promise<RuntimeSessionHandle> {
+    const appServer = await startCodexAppServerProcess(cwd);
+    const sessionId = createCodexhubSessionId();
+    const appServerId = sessionId;
+    this.tunnel?.registerTarget(appServerId, appServer.appServerUrl);
+    try {
+      const attached = await this.requestParentAppServerAttach({
+        type: "app_server_ready",
+        commandId,
+        sessionId,
+        appServerId,
+        cwd,
+        appServerUrl: appServer.appServerUrl
+      });
+      return {
+        sessionId,
+        threadId: attached.threadId,
+        appServerUrl: `tunnel://${appServerId}`,
+        cwd,
+        startThread: async (nextCwd: string, nextCommandId?: string) => {
+          if (!nextCommandId) throw new Error("Tunneled app-server startThread requires a machine command id.");
+          const started = await this.requestParentAppServerAttach({
+            type: "app_server_start_thread",
+            commandId: nextCommandId,
+            sessionId,
+            cwd: nextCwd
+          });
+          return started.threadId;
+        },
+        stop: async () => {
+          this.tunnel?.unregisterTarget(appServerId);
+          this.sendRaw({ type: "app_server_stopped", sessionId });
+          await appServer.stop();
+        },
+        wait: appServer.wait
+      };
+    } catch (error) {
+      this.tunnel?.unregisterTarget(appServerId);
+      await appServer.stop();
+      throw error;
+    }
+  }
+
+  private async requestParentAppServerAttach(message: {
+    type: "app_server_ready";
+    commandId: string;
+    sessionId: string;
+    appServerId: string;
+    cwd: string;
+    appServerUrl: string;
+  } | {
+    type: "app_server_start_thread";
+    commandId: string;
+    sessionId: string;
+    cwd: string;
+  }) {
+    if (!this.registered) throw new Error("Cannot attach app-server before machine registration.");
+    const commandId = message.commandId;
+    const promise = new Promise<{ sessionId: string; threadId: string }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingAppServerAttaches.delete(commandId);
+        reject(new Error(`Timed out waiting for parent app-server attach: ${commandId}`));
+      }, 60_000);
+      timer.unref?.();
+      this.pendingAppServerAttaches.set(commandId, { resolve, reject, timer });
+    });
+    this.sendRaw(message);
+    return await promise;
+  }
+
+  private resolvePendingAppServerAttach(commandId: string, value: { sessionId: string; threadId: string }) {
+    const pending = this.pendingAppServerAttaches.get(commandId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingAppServerAttaches.delete(commandId);
+    pending.resolve(value);
+  }
+
+  private rejectPendingAppServerAttach(commandId: string, error: Error) {
+    const pending = this.pendingAppServerAttaches.get(commandId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingAppServerAttaches.delete(commandId);
+    pending.reject(error);
+  }
+
+  private rejectPendingAppServerAttaches(error: Error) {
+    for (const [commandId, pending] of this.pendingAppServerAttaches) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+      this.pendingAppServerAttaches.delete(commandId);
+    }
   }
 
   private findRuntimeProject(sessionId: string) {
@@ -490,6 +633,7 @@ const openWebSocket = async (url: string) => {
 const parseMachineTransportMessage = (data: unknown): MachineTransportMessage | null => {
   const message = parseJsonRecord(data);
   if (!message) return null;
+  if (isAppServerTunnelFrame(message)) return message;
   const type = typeof message.type === "string" ? message.type : "";
   if (type === "registered") {
     const machineId = typeof message.machineId === "string" ? message.machineId : "";
@@ -516,6 +660,18 @@ const parseMachineTransportMessage = (data: unknown): MachineTransportMessage | 
     const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
     const messageText = typeof message.message === "string" ? message.message : "machine session server error";
     return sessionId ? { type: "session_error", sessionId, message: messageText } : null;
+  }
+  if (type === "app_server_attached") {
+    const commandId = typeof message.commandId === "string" ? message.commandId : "";
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
+    const threadId = typeof message.threadId === "string" ? message.threadId : "";
+    return commandId && sessionId && threadId ? { type: "app_server_attached", commandId, sessionId, threadId } : null;
+  }
+  if (type === "app_server_attach_error") {
+    const commandId = typeof message.commandId === "string" ? message.commandId : "";
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : undefined;
+    const messageText = typeof message.message === "string" ? message.message : "app-server attach failed";
+    return commandId ? { type: "app_server_attach_error", commandId, sessionId, message: messageText } : null;
   }
   if (type === "error") {
     return { type: "error", message: typeof message.message === "string" ? message.message : "machine transport server error" };

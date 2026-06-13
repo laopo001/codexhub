@@ -40,10 +40,10 @@ pnpm codexhub server --host 0.0.0.0 --port 8788
 远端机器或容器外的宿主机可以主动注册：
 
 ```bash
-pnpm codexhub machine --server http://127.0.0.1:8788 --type registered
+curl -fsSL 'http://127.0.0.1:8788/api/registered/bootstrap' | sh
 ```
 
-也可以在 Web 的 Connections / Registered 里复制同等命令。随后在 Web 左侧通过弹窗选择项目路径。server 会把打开项目请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用 machine 级 runtime session，并为该目录创建或复用 thread。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
+也可以在 Web 的 Connections / Registered 里复制当前 server 的 bootstrap 命令。远端只需要能从 `PATH` 找到 `node` 和官方 `codex` 命令；bootstrap 会下载当前 server 提供的 remote client 并以 registered tunnel 模式连回。随后在 Web 左侧通过弹窗选择项目路径。server 会把打开项目请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用 machine 级 runtime session。Registered machine 只启动远端官方 `codex app-server` 并通过同一条 machine WebSocket 反向多路复用 app-server WebSocket 帧；父 server 在本地消费官方 app-server 协议并为该目录创建或复用 thread。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
 
 Project 名称来自目录 basename，不单独持久化展示名或提供重命名入口。Web project 卡片点击即打开或复用该 machine 的 runtime session，并为该 project path 创建或复用 thread；卡片不展示 open、history 或 thread 数量，也不提供手动重启/结束 session 按钮。runtime session 生命周期跟 machine/server 主进程走，project delete、watcher idle-close 和普通空闲都不会关闭它。
 
@@ -100,7 +100,7 @@ CodexHub 只保留三种 machine 连接方式：
 
 1. `local`：本机内嵌 launcher，直接在本机项目目录启动或复用官方 Codex app-server runtime。
 2. `ssh`：本机 server 通过 `ssh -R` 把远端 machine 连接转发回来，让本机控制面调用 SSH 机器上的 Codex CLI/app-server。
-3. `registered`：外部机器主动连接当前 server 的 `/api/machines/connect`，把那台机器上的 Codex CLI/app-server 暴露给当前控制面调用。
+3. `registered`：外部机器主动连接当前 server 的 `/api/machines/connect`，把那台机器上的官方 `codex app-server` 通过反向 WebSocket tunnel 暴露给当前控制面；父 server 侧继续复用官方 app-server 协议。
 
 不再支持 CodexHub server 连接另一个 CodexHub server；也不再提供 `type=server` machine、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。
 
@@ -295,7 +295,7 @@ docker run --rm \
 宿主机作为 registered machine 连接容器里的 server：
 
 ```bash
-codexhub machine --server http://127.0.0.1:8788 --type registered
+curl -fsSL 'http://127.0.0.1:8788/api/registered/bootstrap' | sh
 ```
 
 ## Electron

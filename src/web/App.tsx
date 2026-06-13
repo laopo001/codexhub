@@ -90,10 +90,9 @@ const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
 };
 
 const registeredMachineCommand = (origin: string, token: string) => {
-  const command = `codexhub machine --server ${shellQuote(origin)} --type registered`;
-  return token.trim()
-    ? `CODEX_HUB_AUTH_TOKEN=${shellQuote(token.trim())} ${command}`
-    : command;
+  const url = new URL("/api/registered/bootstrap", origin);
+  if (token.trim()) url.searchParams.set("token", token.trim());
+  return `curl -fsSL ${shellQuote(url.toString())} | sh`;
 };
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
@@ -332,7 +331,7 @@ const App = () => {
     return sshConfigHosts.filter((host) => !savedAliases.has(host.alias));
   }, [sshConfigHosts, sshHosts]);
   const registeredCommand = useMemo(() => registeredMachineCommand(window.location.origin, serverAuthRequired ? authToken() : ""), [serverAuthRequired, authRequired]);
-  const registeredCommandIncludesToken = serverAuthRequired && registeredCommand.includes("CODEX_HUB_AUTH_TOKEN=");
+  const registeredCommandIncludesToken = serverAuthRequired && registeredCommand.includes("token=");
   const currentServerShareUrl = useMemo(
     () => currentPageUrlWithToken(serverAuthRequired),
     [authRequired, authTokenDraft, initialized, serverAuthRequired]

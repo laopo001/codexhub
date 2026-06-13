@@ -297,6 +297,11 @@
   white-space: nowrap;
 }
 
+.registeredCommandText .registeredCommandLabel {
+  color: #a9c7af;
+  text-transform: uppercase;
+}
+
 .registeredCommand button {
   min-height: 28px;
   border: 1px solid #405244;
