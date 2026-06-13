@@ -1,13 +1,19 @@
 #!/usr/bin/env tsx
 import { Command } from "commander";
+import os from "node:os";
 import { loadDotEnv } from "../core/dotenv.js";
-import { runCodexhubMachine } from "./codexhubMachine.js";
+import { createMachineId } from "../core/machineHub.js";
+import { runCodexhubMachine, startCodexhubMachine, type CodexhubMachineHandle } from "./codexhubMachine.js";
 import { registerCodexHubSessionCommands } from "./codexhubConnect.js";
 
 type ServerCommandOptions = {
   host?: string;
   port?: string;
   serveStatic?: string;
+  registerTo?: string;
+  registerAuthToken?: string;
+  registerMachineId?: string;
+  registerName?: string;
 };
 
 type MachineCommandOptions = {
@@ -62,17 +68,29 @@ program
   .option("--host <host>", "listen host (overrides CODEX_HUB_HOST)")
   .option("--port <port>", "listen port (overrides CODEX_HUB_PORT)")
   .option("--serve-static <dir>", "serve built web assets from this directory")
+  .option("--register-to <url>", "also register this server as a machine with a parent CodexHub server")
+  .option("--register-auth-token <token>", "parent CodexHub auth token (defaults to CODEX_HUB_REGISTER_AUTH_TOKEN)")
+  .option("--register-machine-id <id>", "stable machine id for parent registration")
+  .option("--register-name <name>", "display name for parent registration")
   .action(async (options: ServerCommandOptions = {}) => {
     const rootOptions = program.opts<{ port?: string }>();
     const { startServer } = await import("../server/index.js");
-    const handle = await startServer({
-      host: options.host,
-      port: parsePortOption(options.port ?? rootOptions.port),
-      staticDirectory: options.serveStatic
-    });
-    console.error(`codexhub server listening: ${serverUrl(handle.host, handle.port)}`);
-    await waitForShutdown();
-    await handle.stop();
+    let handle: Awaited<ReturnType<typeof startServer>> | null = null;
+    let parentMachine: CodexhubMachineHandle | null = null;
+    try {
+      handle = await startServer({
+        host: options.host,
+        port: parsePortOption(options.port ?? rootOptions.port),
+        staticDirectory: options.serveStatic
+      });
+      const localUrl = serverUrl(handle.host, handle.port);
+      console.error(`codexhub server listening: ${localUrl}`);
+      parentMachine = startParentRegistration(options, localUrl, handle.port);
+      await waitForShutdown();
+    } finally {
+      await parentMachine?.stop();
+      await handle?.stop();
+    }
   });
 
 program
@@ -410,6 +428,33 @@ function parseMachineType(value: string | undefined): "local" | "ssh" | "registe
   if (!value) return undefined;
   if (value === "local" || value === "ssh" || value === "registered") return value;
   throw new Error(`Invalid machine type: ${value}`);
+}
+
+function startParentRegistration(options: ServerCommandOptions, localUrl: string, localPort: number) {
+  const registerTo = normalizedOptionalUrl(options.registerTo ?? process.env.CODEX_HUB_REGISTER_TO);
+  if (!registerTo) return null;
+  const machineId = options.registerMachineId
+    ?? process.env.CODEX_HUB_REGISTER_MACHINE_ID
+    ?? createMachineId(`${os.hostname()}-server-${localPort}`);
+  const name = options.registerName
+    ?? process.env.CODEX_HUB_REGISTER_NAME
+    ?? `CodexHub Server ${localUrl}`;
+  const authToken = options.registerAuthToken ?? process.env.CODEX_HUB_REGISTER_AUTH_TOKEN;
+  console.error(`codexhub server registering to parent: ${registerTo}`);
+  return startCodexhubMachine({
+    apiBase: registerTo,
+    authToken,
+    machineId,
+    type: "registered",
+    name
+  });
+}
+
+function normalizedOptionalUrl(value: string | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const url = new URL(trimmed);
+  return url.toString().replace(/\/$/, "");
 }
 
 function serverUrl(host: string, port: number) {

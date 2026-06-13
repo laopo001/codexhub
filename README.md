@@ -1,11 +1,11 @@
 # codexhub
 
-一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为四类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来，`server` 表示另一个 CodexHub server 作为一台本地 machine 注册进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
+一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
 - 共享核心：API server 统一管理 machines、runtime sessions 和 threads，并把它们投影成 project-first 的 `/api/projects`；Web 左侧按项目优先展示，点击 project 打开或复用 machine 级 Codex app-server runtime，右侧跟随选中 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
-- Machine：server 默认内嵌一台 `local` machine；远端或宿主机也可以用 `codexhub machine` 主动注册，负责路径校验和维护 machine 级 runtime session。
+- Machine：server 默认内嵌一台 `local` machine；远端或宿主机也可以用 `codexhub server --register-to` 主动注册成 `registered` machine，负责路径校验和维护 machine 级 runtime session。
 - SSH：本机 server 可读取 `~/.ssh/config` 的 host 列表，通过系统 `ssh` 建立 reverse tunnel，并默认下发当前 build 的 remote client 到远端运行。
 - Local session CLI：`codexhub [prompt]` 仅作为 legacy/transient headless 入口保留；project runtime 主路径是 server + machine。
 - Telegram bot：由 API server 内置启动，把 Telegram 消息转成 Codex turn。
@@ -37,13 +37,15 @@ CODEX_HUB_LOCAL_MACHINE=0 pnpm codexhub server
 pnpm codexhub server --host 0.0.0.0 --port 8788
 ```
 
-远端机器或容器外的宿主机可以主动注册：
+远端机器或容器外的宿主机可以主动注册。远端已经安装 CodexHub 时，直接让远端 server 注册到父 server：
 
 ```bash
-curl -fsSL 'http://127.0.0.1:8788/api/registered/bootstrap' | sh
+codexhub server --register-to http://127.0.0.1:8788
 ```
 
-也可以在 Web 的 Connections / Registered 里复制当前 server 的 bootstrap 命令。远端只需要能从 `PATH` 找到 `node` 和官方 `codex` 命令；bootstrap 会下载当前 server 提供的 remote client 并以 registered tunnel 模式连回。随后在 Web 左侧通过弹窗选择项目路径。server 会把打开项目请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用 machine 级 runtime session。Registered machine 只启动远端官方 `codex app-server` 并通过同一条 machine WebSocket 反向多路复用 app-server WebSocket 帧；父 server 在本地消费官方 app-server 协议并为该目录创建或复用 thread。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
+也可以在 Web 的 Connections / Registered 里复制当前 server 的 register 命令。远端只需要能从 `PATH` 找到 `codexhub`、`node` 和官方 `codex` 命令；远端 server 会在提供自身 Web/API 的同时，额外用 machine WebSocket 连回父 server。父 server 只把它看成一台 `registered` machine，不同步子 server 的 projects、tasks、server-state 或 thread transcript 权威数据。打开项目时，父 server 会把请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用 machine 级 runtime session。Registered machine 只启动远端官方 `codex app-server` 并通过同一条 machine WebSocket 反向多路复用 app-server WebSocket 帧；父 server 在本地消费官方 app-server 协议并为该目录创建或复用 thread。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
+
+如果远端不想预装或升级 CodexHub，`/api/registered/bootstrap` 仍保留为 one-shot bootstrap 入口，会下载父 server 当前 build 的 remote client 后以同样的 registered tunnel 模式连回。
 
 Project 名称来自目录 basename，不单独持久化展示名或提供重命名入口。Web project 卡片点击即打开或复用该 machine 的 runtime session，并为该 project path 创建或复用 thread；卡片不展示 open、history 或 thread 数量，也不提供手动重启/结束 session 按钮。runtime session 生命周期跟 machine/server 主进程走，project delete、watcher idle-close 和普通空闲都不会关闭它。
 
@@ -226,7 +228,7 @@ pnpm build
 
 `smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证跨 project 共享 runtime session、`/api/projects/open`、`/api/sessions`、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。
 
-`smoke:registered-machine` 会启动一个真实 `codexhub machine --type registered` CLI 子进程，验证 registered machine 注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期。
+`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，验证 registered machine 注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期。
 
 `smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、项目打开、session 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
 
@@ -260,7 +262,7 @@ pm2 restart codexhub-prod
 
 ## Docker
 
-容器镜像用于运行本机 Node.js server、Web 和 API。Codex app-server/headless 进程仍由连接进来的 machine/session 提供；也就是说，宿主机或远端机器继续用 `codexhub machine`、SSH 或 `codexhub` headless session 把项目接到这个 server。
+容器镜像用于运行本机 Node.js server、Web 和 API。Codex app-server/headless 进程仍由连接进来的 machine/session 提供；也就是说，宿主机或远端机器继续用 `codexhub server --register-to`、SSH 或 `codexhub` headless session 把项目接到这个 server。
 
 ```bash
 docker build -t codexhub .
@@ -295,12 +297,12 @@ docker run --rm \
 宿主机作为 registered machine 连接容器里的 server：
 
 ```bash
-curl -fsSL 'http://127.0.0.1:8788/api/registered/bootstrap' | sh
+codexhub server --register-to http://127.0.0.1:8788 --port 8789
 ```
 
 ## Electron
 
-Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex app-server/headless 进程仍然由本机/SSH/registered/server machine session 提供。
+Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex app-server/headless 进程仍然由本机/SSH/registered machine session 提供。
 
 VSCode extension 每个窗口默认启动自己的随机端口嵌入 server；显式设置 `CODEX_HUB_PORT` 时才固定端口，端口被占用会直接失败。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/server connections 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。extension 会把当前窗口的 file workspace folders 通过 `/api/projects/open` 以 `persist:false` 打开成 VSCode workspace project group；这些项目只存在于该窗口 server 的内存中，不写入 `server-state.yaml`。用户在 UI 中显式保存 transient project 后，它才会进入普通 CodexHub project list。
 

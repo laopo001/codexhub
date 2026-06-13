@@ -39,10 +39,14 @@ const repoRoot = process.cwd();
 
 const main = async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-registered-smoke."));
-  const dataDir = path.join(root, "state");
-  const projectDir = path.join(root, "project");
+  const dataDir = path.join(root, "parent-state");
+  const commandProjectDir = path.join(root, "project-machine-command");
+  const serverProjectDir = path.join(root, "project-server-register");
+  const childServerDataDir = path.join(root, "child-server-state");
   await mkdir(dataDir, { recursive: true });
-  await mkdir(projectDir, { recursive: true });
+  await mkdir(commandProjectDir, { recursive: true });
+  await mkdir(serverProjectDir, { recursive: true });
+  await mkdir(childServerDataDir, { recursive: true });
 
   process.env.CODEX_HUB_DATA_DIR = dataDir;
   process.env.CODEX_HUB_LOCAL_MACHINE = "0";
@@ -53,13 +57,45 @@ const main = async () => {
   const { startServer } = await import("../src/server/index.js");
   const server = await startServer({ host: "127.0.0.1", port });
   const apiBase = `http://127.0.0.1:${port}`;
-  const machineId = `registered-smoke-${process.pid}`;
-  const machineName = "Registered Machine Smoke";
-  const child = startRegisteredMachine(apiBase, machineId, machineName);
 
   try {
+    const commandMachineId = `registered-machine-smoke-${process.pid}`;
+    const commandMachineName = "Registered Machine Command Smoke";
+    await runRegisteredScenario({
+      label: "registered machine command",
+      apiBase,
+      machineId: commandMachineId,
+      machineName: commandMachineName,
+      projectDir: commandProjectDir,
+      child: startRegisteredMachine(apiBase, commandMachineId, commandMachineName)
+    });
+    const serverMachineId = `registered-server-smoke-${process.pid}`;
+    const serverMachineName = "Registered Server Smoke";
+    await runRegisteredScenario({
+      label: "registered server",
+      apiBase,
+      machineId: serverMachineId,
+      machineName: serverMachineName,
+      projectDir: serverProjectDir,
+      child: await startRegisteredServer(apiBase, serverMachineId, serverMachineName, childServerDataDir)
+    });
+  } finally {
+    await server.stop();
+  }
+};
+
+const runRegisteredScenario = async (input: {
+  label: string;
+  apiBase: string;
+  machineId: string;
+  machineName: string;
+  projectDir: string;
+  child: ChildProcess & { output: () => string };
+}) => {
+  const { label, apiBase, machineId, machineName, projectDir, child } = input;
+  try {
     const machine = await waitForRegisteredMachine(apiBase, machineId, machineName, child);
-    console.log(`registered machine ok: ${machine.machineId}`);
+    console.log(`${label} ok: ${machine.machineId}`);
 
     const open = await apiJson<ProjectOpenResponse>(apiBase, "/api/projects/open", {
       method: "POST",
@@ -75,7 +111,7 @@ const main = async () => {
     if (!session.appServerUrl?.startsWith("tunnel://")) {
       throw new Error(`registered session did not use app-server tunnel: ${session.appServerUrl ?? ""}`);
     }
-    console.log(`project/session ok: ${sessionId} ${threadId}`);
+    console.log(`${label} project/session ok: ${sessionId} ${threadId}`);
 
     const turn = await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
       method: "POST",
@@ -86,20 +122,19 @@ const main = async () => {
 
     const thread = await waitForThreadRecords(apiBase, threadId, 2);
     assertNoWorkerId(thread, "/api/threads/:threadId");
-    console.log("thread flow ok");
+    console.log(`${label} thread flow ok`);
 
     await stopChild(child);
     await waitForMachineUnregistered(apiBase, machine.machineId);
     await waitForSessionStopped(apiBase, sessionId);
     await waitForNoCodexAppServerForCwd(projectDir);
-    console.log("registered lifecycle ok");
+    console.log(`${label} lifecycle ok`);
   } catch (error) {
     const output = child.output();
-    if (output.trim()) console.error(`registered machine output:\n${output}`);
+    if (output.trim()) console.error(`${label} output:\n${output}`);
     throw error;
   } finally {
     await stopChild(child).catch(() => undefined);
-    await server.stop();
   }
 };
 
@@ -122,6 +157,43 @@ const startRegisteredMachine = (apiBase: string, machineId: string, machineName:
     cwd: repoRoot,
     env: {
       ...process.env,
+      CODEX_HUB_LOCAL_MACHINE: "0",
+      CODEX_HUB_PLUGIN_TELEGRAM: "0",
+      TELEGRAM_BOT_TOKEN: ""
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const append = (chunk: Buffer) => {
+    output = `${output}${chunk.toString("utf8")}`.slice(-20_000);
+  };
+  child.stdout?.on("data", append);
+  child.stderr?.on("data", append);
+  return Object.assign(child, { output: () => output });
+};
+
+const startRegisteredServer = async (apiBase: string, machineId: string, machineName: string, dataDir: string) => {
+  const port = await findFreePort();
+  let output = "";
+  const child = spawn(process.execPath, [
+    "--import",
+    "tsx",
+    "src/cli/codexhub.ts",
+    "server",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+    "--register-to",
+    apiBase,
+    "--register-machine-id",
+    machineId,
+    "--register-name",
+    machineName
+  ], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      CODEX_HUB_DATA_DIR: dataDir,
       CODEX_HUB_LOCAL_MACHINE: "0",
       CODEX_HUB_PLUGIN_TELEGRAM: "0",
       TELEGRAM_BOT_TOKEN: ""
