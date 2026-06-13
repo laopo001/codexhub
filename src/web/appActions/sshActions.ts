@@ -1,6 +1,6 @@
 import type React from "react";
 import { apiJson } from "../appHelpers.js";
-import type { SshConnection, SshHost } from "../types.js";
+import type { ParentRegistrationDraft, ParentRegistrationStatus, SshConnection, SshHost } from "../types.js";
 
 type SshHostsPayload = {
   hosts?: SshHost[];
@@ -14,9 +14,18 @@ type SshConnectionPayload = {
   connection?: SshConnection;
 };
 
+type ParentRegistrationPayload = {
+  registration?: ParentRegistrationStatus;
+};
+
 type SshActionsContext = {
+  parentRegistrationDraft: ParentRegistrationDraft;
   registeredCommand: string;
   sshHostDraft: string;
+  setParentRegistration: React.Dispatch<React.SetStateAction<ParentRegistrationStatus>>;
+  setParentRegistrationBusy: React.Dispatch<React.SetStateAction<boolean>>;
+  setParentRegistrationDraft: React.Dispatch<React.SetStateAction<ParentRegistrationDraft>>;
+  setParentRegistrationError: React.Dispatch<React.SetStateAction<string>>;
   setRegisteredCommandCopied: React.Dispatch<React.SetStateAction<boolean>>;
   setSshConfigHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
   setSshConnectingHost: React.Dispatch<React.SetStateAction<string>>;
@@ -35,6 +44,9 @@ export type SshActions = {
   stopSshConnection: (connectionId: string) => Promise<void>;
   removeSshHost: (host: SshHost, activeConnection?: SshConnection) => Promise<void>;
   copyRegisteredCommand: () => Promise<void>;
+  refreshParentRegistration: () => Promise<void>;
+  connectParentRegistration: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
+  disconnectParentRegistration: () => Promise<void>;
 };
 
 export const createSshActions = (ctx: SshActionsContext, _actions: unknown): SshActions => {
@@ -50,6 +62,11 @@ export const createSshActions = (ctx: SshActionsContext, _actions: unknown): Ssh
   const refreshSshConnections = async () => {
     const payload = await apiJson<SshConnectionsPayload>("/api/ssh/connections");
     ctx.setSshConnections(Array.isArray(payload.connections) ? payload.connections : []);
+  };
+
+  const refreshParentRegistration = async () => {
+    const payload = await apiJson<ParentRegistrationPayload>("/api/registered/parent");
+    ctx.setParentRegistration(payload.registration ?? { status: "idle" });
   };
 
   const addSshHost = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -137,6 +154,47 @@ export const createSshActions = (ctx: SshActionsContext, _actions: unknown): Ssh
     window.setTimeout(() => ctx.setRegisteredCommandCopied(false), 1200);
   };
 
+  const connectParentRegistration = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const url = ctx.parentRegistrationDraft.url.trim();
+    if (!url) {
+      ctx.setParentRegistrationError("Parent URL is required.");
+      return;
+    }
+    ctx.setParentRegistrationBusy(true);
+    ctx.setParentRegistrationError("");
+    try {
+      const payload = await apiJson<ParentRegistrationPayload>("/api/registered/parent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          url,
+          authToken: ctx.parentRegistrationDraft.authToken.trim() || undefined,
+          machineId: ctx.parentRegistrationDraft.machineId.trim() || undefined,
+          name: ctx.parentRegistrationDraft.name.trim() || undefined
+        })
+      });
+      ctx.setParentRegistration(payload.registration ?? { status: "idle" });
+    } catch (error) {
+      ctx.setParentRegistrationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      ctx.setParentRegistrationBusy(false);
+    }
+  };
+
+  const disconnectParentRegistration = async () => {
+    ctx.setParentRegistrationBusy(true);
+    ctx.setParentRegistrationError("");
+    try {
+      const payload = await apiJson<ParentRegistrationPayload>("/api/registered/parent", { method: "DELETE" });
+      ctx.setParentRegistration(payload.registration ?? { status: "idle" });
+    } catch (error) {
+      ctx.setParentRegistrationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      ctx.setParentRegistrationBusy(false);
+    }
+  };
+
   return {
     refreshSshHosts,
     refreshSshConnections,
@@ -144,6 +202,9 @@ export const createSshActions = (ctx: SshActionsContext, _actions: unknown): Ssh
     connectSshHost,
     stopSshConnection,
     removeSshHost,
-    copyRegisteredCommand
+    copyRegisteredCommand,
+    refreshParentRegistration,
+    connectParentRegistration,
+    disconnectParentRegistration
   };
 };

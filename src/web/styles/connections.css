@@ -313,6 +313,135 @@
   font-weight: 750;
 }
 
+.registeredParentForm {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #101710;
+  padding: 8px;
+}
+
+.registeredParentHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.registeredParentHeader span {
+  min-width: 0;
+  overflow: hidden;
+  color: #d8e2d5;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.registeredParentStatus {
+  border: 1px solid #405244;
+  border-radius: 999px;
+  color: #b2c2ad;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.registeredParentStatus.online {
+  border-color: #2c7b4e;
+  background: #15452c;
+  color: #b9f4c9;
+}
+
+.registeredParentStatus.connecting {
+  border-color: #87642f;
+  background: #3f3218;
+  color: #f3d39a;
+}
+
+.registeredParentStatus.offline,
+.registeredParentStatus.stopped {
+  border-color: #6a3c36;
+  background: #331b19;
+  color: #f0b0a5;
+}
+
+.registeredParentForm input {
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid #334238;
+  border-radius: 6px;
+  background: #0f1b14;
+  color: #f8fbf4;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.registeredParentOptions {
+  min-width: 0;
+}
+
+.registeredParentOptions summary {
+  cursor: pointer;
+  color: #a9c7af;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.registeredParentOptions[open] {
+  display: grid;
+  gap: 7px;
+}
+
+.registeredParentMeta {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.registeredParentMeta code,
+.registeredParentMeta span {
+  min-width: 0;
+  overflow: hidden;
+  color: #b6c9b2;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registeredParentActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.registeredParentActions button {
+  min-height: 32px;
+  border: 1px solid #405244;
+  border-radius: 6px;
+  background: #203526;
+  color: #f8fbf4;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.registeredParentActions button[type="submit"] {
+  border-color: #d95f36;
+  background: #d95f36;
+  color: #fff8f2;
+}
+
+.registeredParentActions button:disabled {
+  border-color: #405244;
+  background: #203526;
+  color: #7e8c7b;
+}
+
 .sshManualForm {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

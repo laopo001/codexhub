@@ -28,11 +28,20 @@ export type MachineRunnerOptions = {
   machineId?: string;
   type?: MachineType;
   name?: string;
+  onStatus?: (status: CodexhubMachineStatus) => void;
 };
 
 export type CodexhubMachineHandle = {
   machineId: string;
   stop: () => Promise<void>;
+};
+
+export type CodexhubMachineStatus = {
+  status: "starting" | "connecting" | "online" | "offline" | "stopped";
+  machineId: string;
+  apiBase: string;
+  message?: string;
+  updatedAt: string;
 };
 
 type MachineTransportMessage =
@@ -102,6 +111,7 @@ class CodexhubMachineRunner {
     if (this.loopStarted) return;
     this.loopStarted = true;
     console.error(`codexhub machine starting: ${this.machineId}`);
+    this.updateStatus("starting", "codexhub machine starting");
     void this.runLoop();
   }
 
@@ -118,16 +128,25 @@ class CodexhubMachineRunner {
     this.rejectPendingAppServerAttaches(new Error("codexhub machine stopped"));
     this.sessionTransports.clear();
     this.ws?.close();
+    this.updateStatus("stopped", "codexhub machine stopped");
   }
 
   private async runLoop() {
     while (!this.stopped) {
       try {
         console.error(`codexhub machine connecting: ${this.options.apiBase}`);
+        this.updateStatus("connecting", `connecting to ${this.options.apiBase}`);
         await this.connectOnce();
-        if (!this.stopped) console.error("codexhub machine offline: websocket closed");
+        if (!this.stopped) {
+          console.error("codexhub machine offline: websocket closed");
+          this.updateStatus("offline", "websocket closed");
+        }
       } catch (error) {
-        if (!this.stopped) console.error(`codexhub machine offline: ${errorText(error)}`);
+        if (!this.stopped) {
+          const message = errorText(error);
+          console.error(`codexhub machine offline: ${message}`);
+          this.updateStatus("offline", message);
+        }
       } finally {
         if (!this.stopped && this.options.type === "ssh") {
           this.stopped = true;
@@ -202,6 +221,7 @@ class CodexhubMachineRunner {
     if (message.type === "registered") {
       this.registered = true;
       console.error(`codexhub machine connected: ${message.machineId}`);
+      this.updateStatus("online", `registered as ${message.machineId}`);
       for (const transport of this.sessionTransports.values()) transport.reconnect();
       return;
     }
@@ -470,6 +490,16 @@ class CodexhubMachineRunner {
     const runtime = this.runtimeSession;
     this.runtimeSession = null;
     if (runtime) await runtime.session.stop();
+  }
+
+  private updateStatus(status: CodexhubMachineStatus["status"], message?: string) {
+    this.options.onStatus?.({
+      status,
+      machineId: this.machineId,
+      apiBase: this.options.apiBase,
+      message,
+      updatedAt: new Date().toISOString()
+    });
   }
 }
 

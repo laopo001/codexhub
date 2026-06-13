@@ -14,6 +14,8 @@ import type {
   MessageDisplayMode,
   MessageRenderMode,
   ModelSelection,
+  ParentRegistrationDraft,
+  ParentRegistrationStatus,
   PluginSummary,
   ProjectMachineGroup,
   ProjectPickerState,
@@ -55,6 +57,7 @@ export type AppSidebarViewModel = {
   addSshHost: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   collapsedProjectMachineKeys: string[];
   connectionMode: ConnectionMode;
+  connectParentRegistration: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   connectSshHost: (host: string, name?: string) => MaybePromise;
   copyRegisteredCommand: () => MaybePromise;
   createTask: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
@@ -62,6 +65,7 @@ export type AppSidebarViewModel = {
   deleteProject: (project: ProjectSummary) => MaybePromise;
   deleteTask: (taskId: string) => MaybePromise;
   deletingProjectId: string;
+  disconnectParentRegistration: () => MaybePromise;
   focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
   localMachines: MachineSummary[];
   machines: MachineSummary[];
@@ -69,6 +73,10 @@ export type AppSidebarViewModel = {
   onlineMachines: MachineSummary[];
   openingProjectKey: string;
   openProjectPicker: (machine: ProjectMachineGroup) => MaybePromise;
+  parentRegistration: ParentRegistrationStatus;
+  parentRegistrationBusy: boolean;
+  parentRegistrationDraft: ParentRegistrationDraft;
+  parentRegistrationError: string;
   patchTask: (taskId: string, input: TaskPatchInput) => MaybePromise;
   plugins: PluginSummary[];
   projectGroups: ProjectMachineGroup[];
@@ -87,6 +95,7 @@ export type AppSidebarViewModel = {
   selectSessionThread: (session: SessionView, threadId: string) => MaybePromise;
   setConnectionMode: React.Dispatch<React.SetStateAction<ConnectionMode>>;
   setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  setParentRegistrationDraft: React.Dispatch<React.SetStateAction<ParentRegistrationDraft>>;
   setProjectSearch: React.Dispatch<React.SetStateAction<string>>;
   setSshHostDraft: React.Dispatch<React.SetStateAction<string>>;
   setTaskDraft: React.Dispatch<React.SetStateAction<TaskDraft>>;

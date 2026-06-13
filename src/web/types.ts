@@ -120,6 +120,22 @@ export type SshConnection = {
   lastOutput?: string;
 };
 
+export type ParentRegistrationStatus = {
+  status: "idle" | "starting" | "connecting" | "online" | "offline" | "stopped";
+  url?: string;
+  machineId?: string;
+  name?: string;
+  message?: string;
+  updatedAt?: string;
+};
+
+export type ParentRegistrationDraft = {
+  url: string;
+  authToken: string;
+  machineId: string;
+  name: string;
+};
+
 export type PluginSummary = {
   pluginId: string;
   name: string;

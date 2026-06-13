@@ -40,12 +40,21 @@ const taskSchedulePresets = [
   { label: "Weekdays", value: "0 9 * * 1-5" }
 ] as const;
 
+const parentRegistrationStatusLabel = (status: AppSidebarViewModel["parentRegistration"]["status"]) => {
+  if (status === "online") return "online";
+  if (status === "connecting" || status === "starting") return "connecting";
+  if (status === "offline") return "offline";
+  if (status === "stopped") return "stopped";
+  return "idle";
+};
+
 export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const {
     activeProjectKey,
     addSshHost,
     collapsedProjectMachineKeys,
     connectionMode,
+    connectParentRegistration,
     connectSshHost,
     copyRegisteredCommand,
     createTask,
@@ -53,6 +62,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     deleteProject,
     deleteTask,
     deletingProjectId,
+    disconnectParentRegistration,
     focusTaskDraftProject,
     localMachines,
     machines,
@@ -60,6 +70,10 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     onlineMachines,
     openingProjectKey,
     openProjectPicker,
+    parentRegistration,
+    parentRegistrationBusy,
+    parentRegistrationDraft,
+    parentRegistrationError,
     patchTask,
     projectGroups,
     projectList,
@@ -77,6 +91,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     selectSessionThread,
     setConnectionMode,
     setOfflineProjectsCollapsed,
+    setParentRegistrationDraft,
     setProjectSearch,
     setSshHostDraft,
     setTaskDraft,
@@ -118,6 +133,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const taskFormProjectLocked = Boolean(selectedProject);
   const taskMachineOptions = uniqueMachines(machines).filter(machineProjectLauncher);
   const taskProjectOptions = projectList.filter((project) => !taskDraft.machineId || project.machineId === taskDraft.machineId);
+  const parentRegistrationStatus = parentRegistrationStatusLabel(parentRegistration.status);
+  const parentRegistrationActive = parentRegistration.status !== "idle" && parentRegistration.status !== "stopped";
   const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
   const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject);
   const canCreateTask = Boolean(
@@ -327,6 +344,60 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           </div>
         ) : (
           <div className="connectionList">
+            <form className="registeredParentForm" onSubmit={(event) => void connectParentRegistration(event)}>
+              <div className="registeredParentHeader">
+                <span>Register to parent</span>
+                <strong className={`registeredParentStatus ${parentRegistrationStatus}`}>{parentRegistrationStatus}</strong>
+              </div>
+              <input
+                value={parentRegistrationDraft.url}
+                onChange={(event) => setParentRegistrationDraft((current) => ({ ...current, url: event.target.value }))}
+                placeholder="Parent server URL"
+                spellCheck={false}
+                disabled={parentRegistrationBusy}
+              />
+              <input
+                type="password"
+                value={parentRegistrationDraft.authToken}
+                onChange={(event) => setParentRegistrationDraft((current) => ({ ...current, authToken: event.target.value }))}
+                placeholder="Parent auth token"
+                autoComplete="off"
+                disabled={parentRegistrationBusy}
+              />
+              <details className="registeredParentOptions">
+                <summary>Options</summary>
+                <input
+                  value={parentRegistrationDraft.name}
+                  onChange={(event) => setParentRegistrationDraft((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Machine name"
+                  spellCheck={false}
+                  disabled={parentRegistrationBusy}
+                />
+                <input
+                  value={parentRegistrationDraft.machineId}
+                  onChange={(event) => setParentRegistrationDraft((current) => ({ ...current, machineId: event.target.value }))}
+                  placeholder="Machine ID"
+                  spellCheck={false}
+                  disabled={parentRegistrationBusy}
+                />
+              </details>
+              {parentRegistration.url || parentRegistration.machineId || parentRegistration.message ? (
+                <div className="registeredParentMeta">
+                  {parentRegistration.url ? <code title={parentRegistration.url}>{parentRegistration.url}</code> : null}
+                  {parentRegistration.machineId ? <code title={parentRegistration.machineId}>{parentRegistration.machineId}</code> : null}
+                  {parentRegistration.message ? <span title={parentRegistration.message}>{parentRegistration.message}</span> : null}
+                </div>
+              ) : null}
+              <div className="registeredParentActions">
+                <button type="submit" disabled={!parentRegistrationDraft.url.trim() || parentRegistrationBusy}>
+                  {parentRegistrationBusy ? "..." : parentRegistrationActive ? "Reconnect" : "Connect"}
+                </button>
+                <button type="button" onClick={() => void disconnectParentRegistration()} disabled={!parentRegistrationActive || parentRegistrationBusy}>
+                  Disconnect
+                </button>
+              </div>
+              {parentRegistrationError ? <div className="projectOpenError">{parentRegistrationError}</div> : null}
+            </form>
             <div className="registeredCommand">
               <div className="registeredCommandText">
                 <span className="registeredCommandLabel">server register command</span>

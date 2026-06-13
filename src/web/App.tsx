@@ -28,6 +28,8 @@ import type {
   MessageDisplayMode,
   MessageRenderMode,
   ModelSelection,
+  ParentRegistrationDraft,
+  ParentRegistrationStatus,
   PluginSummary,
   ProjectPickerState,
   ProjectSummary,
@@ -95,6 +97,13 @@ const registeredMachineCommand = (origin: string, token: string) => {
     ? `${command} --register-auth-token ${shellQuote(token.trim())}`
     : command;
 };
+
+const defaultParentRegistrationDraft = (): ParentRegistrationDraft => ({
+  url: "",
+  authToken: "",
+  machineId: "",
+  name: ""
+});
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
@@ -233,6 +242,10 @@ const App = () => {
   const [sshConnectingHost, setSshConnectingHost] = useState("");
   const [sshHostBusy, setSshHostBusy] = useState("");
   const [sshError, setSshError] = useState("");
+  const [parentRegistration, setParentRegistration] = useState<ParentRegistrationStatus>({ status: "idle" });
+  const [parentRegistrationDraft, setParentRegistrationDraft] = useState<ParentRegistrationDraft>(() => defaultParentRegistrationDraft());
+  const [parentRegistrationBusy, setParentRegistrationBusy] = useState(false);
+  const [parentRegistrationError, setParentRegistrationError] = useState("");
   const [registeredCommandCopied, setRegisteredCommandCopied] = useState(false);
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [tasks, setTasks] = useState<LocalTask[]>([]);
@@ -847,6 +860,7 @@ const App = () => {
     notificationRecordsByThread,
     notifiedTaskCompletions,
     openingThreads,
+    parentRegistrationDraft,
     projectList,
     projectPicker,
     projectSearch,
@@ -880,6 +894,10 @@ const App = () => {
     setMessageDisplayMode,
     setMessageRenderModes,
     setOpeningProjectKey,
+    setParentRegistration,
+    setParentRegistrationBusy,
+    setParentRegistrationDraft,
+    setParentRegistrationError,
     setPlugins,
     setProjectOpenError,
     setProjectPicker,
@@ -938,6 +956,7 @@ const App = () => {
     clearThreadGoal,
     closeThread,
     confirmProjectPicker,
+    connectParentRegistration,
     connectSshHost,
     copyContextSelection,
     copyRegisteredCommand,
@@ -945,6 +964,7 @@ const App = () => {
     createTask,
     deleteProject,
     deleteTask,
+    disconnectParentRegistration,
     focusTaskDraftProject,
     forkMessage,
     handleComposerKeyDown,
@@ -1026,6 +1046,7 @@ const App = () => {
     composerTextareaRef,
     confirmProjectPicker,
     connectionMode,
+    connectParentRegistration,
     connectSshHost,
     copyContextSelection,
     copyRegisteredCommand,
@@ -1035,6 +1056,7 @@ const App = () => {
     deleteProject,
     deleteTask,
     deletingProjectId,
+    disconnectParentRegistration,
     effectiveModelSelection,
     effectiveReasoningSelection,
     focusTaskDraftProject,
@@ -1060,6 +1082,10 @@ const App = () => {
     openMessageContextMenu,
     openProjectPicker,
     openThreadPicker,
+    parentRegistration,
+    parentRegistrationBusy,
+    parentRegistrationDraft,
+    parentRegistrationError,
     pasteThreadImages,
     patchTask,
     plugins,
@@ -1100,6 +1126,7 @@ const App = () => {
     setMessageContextMenu,
     setMessageDisplayMode,
     setOfflineProjectsCollapsed,
+    setParentRegistrationDraft,
     setProjectPicker,
     setProjectSearch,
     setAuthTokenDraft,

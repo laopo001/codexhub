@@ -35,6 +35,7 @@ import type {
   MachineSummary,
   MessageDisplayMode,
   ModelSelection,
+  ParentRegistrationStatus,
   PluginSummary,
   ProjectSummary,
   ProjectsPayload,
@@ -76,6 +77,10 @@ type SshConnectionsPayload = {
   connections?: SshConnection[];
 };
 
+type ParentRegistrationPayload = {
+  registration?: ParentRegistrationStatus;
+};
+
 type RealtimeOutgoingMessage =
   | {
     type: "hello";
@@ -112,6 +117,7 @@ type RealtimeActionsContext = {
   setInitialized: React.Dispatch<React.SetStateAction<boolean>>;
   setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
   setMessageDisplayMode: React.Dispatch<React.SetStateAction<MessageDisplayMode>>;
+  setParentRegistration: React.Dispatch<React.SetStateAction<ParentRegistrationStatus>>;
   setPlugins: React.Dispatch<React.SetStateAction<PluginSummary[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setProjectSearch: React.Dispatch<React.SetStateAction<string>>;
@@ -164,15 +170,17 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     let sshHostData: SshHostsPayload;
     let sshConfigHostData: SshHostsPayload;
     let sshConnectionData: SshConnectionsPayload;
+    let parentRegistrationData: ParentRegistrationPayload;
     let pluginData: PluginsPayload;
     let taskData: TasksPayload;
     try {
-      [sessionData, projectData, sshHostData, sshConfigHostData, sshConnectionData, pluginData, taskData] = await Promise.all([
+      [sessionData, projectData, sshHostData, sshConfigHostData, sshConnectionData, parentRegistrationData, pluginData, taskData] = await Promise.all([
         apiJson<SessionsPayload>("/api/sessions"),
         apiJson<ProjectsPayload>("/api/projects"),
         apiJson<SshHostsPayload>("/api/ssh/hosts").catch(() => ({ hosts: [] })),
         apiJson<SshHostsPayload>("/api/ssh/config-hosts").catch(() => ({ hosts: [] })),
         apiJson<SshConnectionsPayload>("/api/ssh/connections").catch(() => ({ connections: [] })),
+        apiJson<ParentRegistrationPayload>("/api/registered/parent").catch(() => ({ registration: { status: "idle" as const } })),
         apiJson<PluginsPayload>("/api/plugins").catch(() => ({ plugins: [] })),
         apiJson<TasksPayload>("/api/tasks").catch(() => ({ tasks: [] }))
       ]);
@@ -232,6 +240,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     ctx.setSshHosts(Array.isArray(sshHostData.hosts) ? sshHostData.hosts : []);
     ctx.setSshConfigHosts(Array.isArray(sshConfigHostData.hosts) ? sshConfigHostData.hosts : []);
     ctx.setSshConnections(Array.isArray(sshConnectionData.connections) ? sshConnectionData.connections : []);
+    ctx.setParentRegistration(parentRegistrationData.registration ?? { status: "idle" });
     ctx.setPlugins(normalizePlugins(pluginData.plugins));
     ctx.setTasks(normalizeTasks(taskData.tasks));
     ctx.setSessionList(loadedSessions);

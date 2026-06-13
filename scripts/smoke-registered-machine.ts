@@ -42,11 +42,15 @@ const main = async () => {
   const dataDir = path.join(root, "parent-state");
   const commandProjectDir = path.join(root, "project-machine-command");
   const serverProjectDir = path.join(root, "project-server-register");
+  const dynamicProjectDir = path.join(root, "project-dynamic-server-register");
   const childServerDataDir = path.join(root, "child-server-state");
+  const dynamicServerDataDir = path.join(root, "dynamic-server-state");
   await mkdir(dataDir, { recursive: true });
   await mkdir(commandProjectDir, { recursive: true });
   await mkdir(serverProjectDir, { recursive: true });
+  await mkdir(dynamicProjectDir, { recursive: true });
   await mkdir(childServerDataDir, { recursive: true });
+  await mkdir(dynamicServerDataDir, { recursive: true });
 
   process.env.CODEX_HUB_DATA_DIR = dataDir;
   process.env.CODEX_HUB_LOCAL_MACHINE = "0";
@@ -78,6 +82,30 @@ const main = async () => {
       machineName: serverMachineName,
       projectDir: serverProjectDir,
       child: await startRegisteredServer(apiBase, serverMachineId, serverMachineName, childServerDataDir)
+    });
+    const dynamicMachineId = `registered-dynamic-server-smoke-${process.pid}`;
+    const dynamicMachineName = "Registered Dynamic Server Smoke";
+    const dynamicChild = await startDynamicRegisteredServer(dynamicServerDataDir);
+    await waitForChildServer(dynamicChild.apiBase, dynamicChild);
+    const parentRegistration = await apiJson<{ registration?: { status?: string } }>(dynamicChild.apiBase, "/api/registered/parent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: apiBase,
+        machineId: dynamicMachineId,
+        name: dynamicMachineName
+      })
+    });
+    if (!parentRegistration.registration || parentRegistration.registration.status === "idle") {
+      throw new Error(`dynamic server registration did not start: ${JSON.stringify(parentRegistration)}`);
+    }
+    await runRegisteredScenario({
+      label: "registered server dynamic",
+      apiBase,
+      machineId: dynamicMachineId,
+      machineName: dynamicMachineName,
+      projectDir: dynamicProjectDir,
+      child: dynamicChild
     });
   } finally {
     await server.stop();
@@ -206,6 +234,53 @@ const startRegisteredServer = async (apiBase: string, machineId: string, machine
   child.stdout?.on("data", append);
   child.stderr?.on("data", append);
   return Object.assign(child, { output: () => output });
+};
+
+const startDynamicRegisteredServer = async (dataDir: string) => {
+  const port = await findFreePort();
+  let output = "";
+  const child = spawn(process.execPath, [
+    "--import",
+    "tsx",
+    "src/cli/codexhub.ts",
+    "server",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port)
+  ], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      CODEX_HUB_DATA_DIR: dataDir,
+      CODEX_HUB_LOCAL_MACHINE: "0",
+      CODEX_HUB_PLUGIN_TELEGRAM: "0",
+      TELEGRAM_BOT_TOKEN: ""
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const append = (chunk: Buffer) => {
+    output = `${output}${chunk.toString("utf8")}`.slice(-20_000);
+  };
+  child.stdout?.on("data", append);
+  child.stderr?.on("data", append);
+  return Object.assign(child, {
+    apiBase: `http://127.0.0.1:${port}`,
+    output: () => output
+  });
+};
+
+const waitForChildServer = async (apiBase: string, child: ChildProcess & { output: () => string }) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 20_000) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`child server exited early: code=${child.exitCode} signal=${child.signalCode}\n${child.output()}`);
+    }
+    const health = await fetch(new URL("/api/health", apiBase), { signal: AbortSignal.timeout(1000) }).catch(() => null);
+    if (health?.ok) return;
+    await delay(250);
+  }
+  throw new Error(`child server did not become healthy: ${apiBase}\n${child.output()}`);
 };
 
 const waitForSessionOnline = async (apiBase: string, sessionId: string) => {

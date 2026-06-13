@@ -4,10 +4,11 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { MachineHub } from "../core/machineHub.js";
+import { createMachineId, MachineHub } from "../core/machineHub.js";
 import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
@@ -19,7 +20,7 @@ import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, isCronExpression, nextCronRun } from "../core/taskCron.js";
 import { ThreadHub, type SessionCommand, type SessionRegistration, type SessionEventInput } from "../core/threadHub.js";
-import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
+import { startCodexhubMachine, type CodexhubMachineHandle, type CodexhubMachineStatus } from "../cli/codexhubMachine.js";
 import { startAttachedCodexhubSession, type HeadlessCodexhubSessionHandle, type HeadlessSessionTransport, type HeadlessSessionTransportCallbacks } from "../cli/codexhubConnect.js";
 import {
   startTelegramPlugin,
@@ -173,6 +174,13 @@ const appServerTunnelFrameSchema = z.discriminatedUnion("type", [
     message: z.string().min(1)
   })
 ]);
+
+const parentRegistrationConnectSchema = z.object({
+  url: z.string().url(),
+  authToken: z.string().optional(),
+  machineId: z.string().min(1).optional(),
+  name: z.string().min(1).optional()
+}).strict();
 
 const machineTransportMessageSchema = z.discriminatedUnion("type", [
   z.object({
@@ -420,6 +428,15 @@ export type ServerFeatureOptions = {
   integrations: boolean;
 };
 
+type ParentRegistrationStatus = {
+  status: "idle" | CodexhubMachineStatus["status"];
+  url?: string;
+  machineId?: string;
+  name?: string;
+  message?: string;
+  updatedAt?: string;
+};
+
 export const startServer = async (options: ServerStartOptions = {}): Promise<ServerHandle> => {
   const config = loadConfig({ host: options.host, port: options.port });
   const surface = options.surface ?? parseSurface(process.env.CODEX_HUB_SURFACE);
@@ -467,6 +484,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
   let localMachine: CodexhubMachineHandle | null = null;
+  let parentRegistration: CodexhubMachineHandle | null = null;
+  let parentRegistrationStatus: ParentRegistrationStatus = { status: "idle" };
   const threadRecordSubscriptionCounts = new Map<string, number>();
   const threadRecordSubscriptionTimers = new Map<string, NodeJS.Timeout>();
   const tunneledAppServerSessions = new Map<string, {
@@ -506,6 +525,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     await Promise.allSettled([...tunneledAppServerSessions.values()].map((entry) => entry.handle.stop()));
     tunneledAppServerSessions.clear();
     await sshMachines.stopAll();
+    await parentRegistration?.stop();
+    parentRegistration = null;
     await localMachine?.stop();
     telegramBot?.stop("server closing");
     plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
@@ -684,6 +705,58 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       connections: sshMachines.listConnections()
     };
     for (const subscriber of connectionSubscribers) subscriber(event);
+  }
+
+  function parentRegistrationView() {
+    return { ...parentRegistrationStatus };
+  }
+
+  async function startParentRegistration(input: z.infer<typeof parentRegistrationConnectSchema>) {
+    await stopParentRegistration();
+    const url = normalizeBaseUrl(input.url);
+    const machineId = input.machineId?.trim()
+      || process.env.CODEX_HUB_REGISTER_MACHINE_ID
+      || createMachineId(`${os.hostname()}-server-${config.port}`);
+    const name = input.name?.trim()
+      || process.env.CODEX_HUB_REGISTER_NAME
+      || `CodexHub Server ${localApiBaseUrl(config.host, config.port)}`;
+    parentRegistrationStatus = {
+      status: "starting",
+      url,
+      machineId,
+      name,
+      message: "starting parent registration",
+      updatedAt: new Date().toISOString()
+    };
+    parentRegistration = startCodexhubMachine({
+      apiBase: url,
+      authToken: input.authToken?.trim() || process.env.CODEX_HUB_REGISTER_AUTH_TOKEN,
+      machineId,
+      type: "registered",
+      name,
+      onStatus: (status) => {
+        parentRegistrationStatus = {
+          status: status.status,
+          url,
+          machineId: status.machineId,
+          name,
+          message: status.message,
+          updatedAt: status.updatedAt
+        };
+      }
+    });
+    return parentRegistrationView();
+  }
+
+  async function stopParentRegistration() {
+    const current = parentRegistration;
+    parentRegistration = null;
+    if (current) await current.stop();
+    parentRegistrationStatus = {
+      status: "idle",
+      updatedAt: new Date().toISOString()
+    };
+    return parentRegistrationView();
   }
 
   async function localSshConfigHostsByAlias() {
@@ -1155,6 +1228,21 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.get("/api/ssh/connections", async () => ({
     connections: features.ssh ? sshMachines.listConnections() : []
+  }));
+
+  app.get("/api/registered/parent", async () => ({
+    registration: parentRegistrationView()
+  }));
+
+  app.post("/api/registered/parent", async (request) => {
+    const input = parentRegistrationConnectSchema.parse(request.body);
+    return {
+      registration: await startParentRegistration(input)
+    };
+  });
+
+  app.delete("/api/registered/parent", async () => ({
+    registration: await stopParentRegistration()
   }));
 
   app.get("/api/registered/bootstrap", async (request, reply) => {

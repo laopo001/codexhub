@@ -45,6 +45,8 @@ codexhub server --register-to http://127.0.0.1:8788
 
 也可以在 Web 的 Connections / Registered 里复制当前 server 的 register 命令。远端只需要能从 `PATH` 找到 `codexhub`、`node` 和官方 `codex` 命令；远端 server 会在提供自身 Web/API 的同时，额外用 machine WebSocket 连回父 server。父 server 只把它看成一台 `registered` machine，不同步子 server 的 projects、tasks、server-state 或 thread transcript 权威数据。打开项目时，父 server 会把请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用 machine 级 runtime session。Registered machine 只启动远端官方 `codex app-server` 并通过同一条 machine WebSocket 反向多路复用 app-server WebSocket 帧；父 server 在本地消费官方 app-server 协议并为该目录创建或复用 thread。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
 
+已经打开远端 server 的 Web UI 时，也可以在 Connections / Registered 里直接填写父 server URL 并 Connect；这个动态连接只保存在当前进程内，重启后如需自动连接仍使用 `codexhub server --register-to` 或 `CODEX_HUB_REGISTER_TO`。
+
 如果远端不想预装或升级 CodexHub，`/api/registered/bootstrap` 仍保留为 one-shot bootstrap 入口，会下载父 server 当前 build 的 remote client 后以同样的 registered tunnel 模式连回。
 
 Project 名称来自目录 basename，不单独持久化展示名或提供重命名入口。Web project 卡片点击即打开或复用该 machine 的 runtime session，并为该 project path 创建或复用 thread；卡片不展示 open、history 或 thread 数量，也不提供手动重启/结束 session 按钮。runtime session 生命周期跟 machine/server 主进程走，project delete、watcher idle-close 和普通空闲都不会关闭它。
