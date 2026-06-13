@@ -426,7 +426,7 @@ const App = () => {
   }), [nowMs, openThreads]);
   const displayRecords = useMemo(
     () => activeThread ? threadDisplayRecords(activeThread.threadId, activeThread) : [],
-    [activeThread?.jsonl, activeThread?.records, activeThread?.threadId]
+    [activeThread?.records, activeThread?.threadId]
   );
   const goalRecords = useMemo(
     () => combineRecordSources(displayRecords, activeThread?.records ?? []),

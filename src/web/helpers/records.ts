@@ -2,7 +2,6 @@ import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
 import type { CodexRecordView } from "../../core/codexRecordView.js";
 import { threadUsageFromRecord } from "../../core/threadUsage.js";
 import { isVscodeSurface, reasoningOptions } from "../appConfig.js";
-import { jsonlLinesToRecords, type JsonlLine, type ThreadJsonl } from "../jsonlRecordViews.js";
 import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, StreamEvent, TaskCompleteNotification, ThreadDetail, ThreadGoalView, ThreadSummary, ThreadUsage, TurnUiState, Usage } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, turnIdFromAppRecordId } from "./core.js";
@@ -110,13 +109,11 @@ export const goalTimeMs = (value: unknown) => {
 };
 
 export const sessionConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort } => {
-  const raw = asRecord(record.rawJsonl);
-  const payload = asRecord(raw?.payload) ?? asRecord(record.payload);
+  const payload = asRecord(record.payload);
   const settings = asRecord(asRecord(payload?.collaboration_mode)?.settings);
   return {
     model: stringField(payload, "model")
-      ?? stringField(settings, "model")
-      ?? stringField(raw, "model"),
+      ?? stringField(settings, "model"),
     reasoning: normalizeReasoningEffort(
       stringField(payload, "effort")
       ?? stringField(payload, "reasoning_effort")
@@ -231,12 +228,12 @@ export const formatResetTitle = (window: RateLimitWindow | null | undefined) => 
 export const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
   const existingIndex = records.findIndex((record) => record.id === incoming.id);
   if (existingIndex === -1) {
-    return [
+    return orderRecords([
       ...records.filter((record) => !isMatchingAppServerTranscriptRecord(record, incoming)),
       incoming
-    ];
+    ]);
   }
-  return records.map((record, index) => index === existingIndex ? incoming : record);
+  return orderRecords(records.map((record, index) => index === existingIndex ? incoming : record));
 };
 
 export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) => {
@@ -245,80 +242,51 @@ export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) 
   const byId = new Map<string, CodexRecord>();
   for (const record of left) byId.set(record.id, record);
   for (const record of right) byId.set(record.id, record);
-  return [...byId.values()];
+  return orderRecords([...byId.values()]);
 };
 
 export const threadDisplayRecords = (
-  threadId: string,
-  thread: Pick<ThreadDetail, "jsonl" | "records"> | undefined
-) => {
-  const liveRecords = thread?.records ?? [];
-  if (!thread?.jsonl?.lines.length) return liveRecords;
-  const jsonlRecords = jsonlLinesToRecords(threadId, thread.jsonl);
-  const supplementalLiveRecords = liveRecords.filter(isSupplementalLiveRecord);
-  return supplementalLiveRecords.length
-    ? combineRecordSources(jsonlRecords, supplementalLiveRecords)
-    : jsonlRecords;
-};
-
-const isSupplementalLiveRecord = (record: CodexRecord) => {
-  if (record.type !== "error") return false;
-  const payload = asRecord(record.payload);
-  return payload?.type === "app_server_error" || payload?.type === "session_command_error" || payload?.type === "error";
-};
+  _threadId: string,
+  thread: Pick<ThreadDetail, "records"> | undefined
+) => thread?.records ?? [];
 
 export const recordSortValue = (record: CodexRecord) => {
   const timestamp = Date.parse(record.timestamp ?? "");
   if (Number.isFinite(timestamp)) return timestamp;
   if (typeof record.order === "number") return record.order;
-  if (typeof record.line === "number") return record.line;
   return 0;
 };
 
-export const mergeThreadJsonl = (current: ThreadJsonl | undefined, event: StreamEvent): ThreadJsonl | undefined => {
-  if (event.kind === "jsonl_snapshot") return normalizeThreadJsonl(event.jsonl);
-  if (event.kind !== "jsonl_append" || !event.jsonl) return current;
-  const append = normalizeThreadJsonl(event.jsonl);
-  if (!append) return current;
-  const byLine = new Map<number, JsonlLine>();
-  for (const line of current?.lines ?? []) byLine.set(line.line, line);
-  for (const line of append.lines) byLine.set(line.line, line);
-  return {
-    path: append.path ?? current?.path,
-    lastLine: append.lastLine,
-    lines: [...byLine.values()].sort((left, right) => left.line - right.line)
-  };
+const orderRecords = (records: CodexRecord[]) =>
+  records
+    .map((record, index) => ({ record, index }))
+    .sort((left, right) => compareRecords(left.record, right.record) || left.index - right.index)
+    .map((entry) => entry.record);
+
+const compareRecords = (left: CodexRecord, right: CodexRecord) => {
+  const leftTime = recordTimestampMs(left);
+  const rightTime = recordTimestampMs(right);
+  if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
+  if (leftTime !== null && rightTime === null) return -1;
+  if (leftTime === null && rightTime !== null) return 1;
+  const leftOrder = typeof left.order === "number" ? left.order : Number.MAX_SAFE_INTEGER;
+  const rightOrder = typeof right.order === "number" ? right.order : Number.MAX_SAFE_INTEGER;
+  return leftOrder === rightOrder ? 0 : leftOrder - rightOrder;
 };
 
-export const normalizeThreadJsonl = (jsonl: ThreadJsonl | undefined): ThreadJsonl | undefined => {
-  if (!jsonl) return undefined;
-  const lines = new Map<number, JsonlLine>();
-  for (const line of jsonl.lines ?? []) {
-    if (!Number.isInteger(line.line) || line.line < 1 || typeof line.text !== "string") continue;
-    lines.set(line.line, { line: line.line, text: line.text });
-  }
-  return {
-    path: jsonl.path,
-    lastLine: Number.isInteger(jsonl.lastLine) ? jsonl.lastLine : [...lines.keys()].at(-1) ?? 0,
-    lines: [...lines.values()].sort((left, right) => left.line - right.line)
-  };
-};
-
-export const threadRecordsForNotifications = (threadId: string, thread: ThreadDetail) =>
-  thread.jsonl?.lines.length ? jsonlLinesToRecords(threadId, thread.jsonl) : thread.records;
+export const threadRecordsForNotifications = (_threadId: string, thread: ThreadDetail) =>
+  thread.records;
 
 export const streamEventRecords = (event: StreamEvent): CodexRecord[] => {
   if (event.record) return [event.record];
-  if (!event.jsonl || (event.kind !== "jsonl_append" && event.kind !== "jsonl_snapshot")) return [];
-  return jsonlLinesToRecords(event.thread.threadId, event.jsonl);
+  return [];
 };
 
 export const mergeNotificationRecords = (
   current: CodexRecord[],
-  event: StreamEvent,
+  _event: StreamEvent,
   incomingRecords: CodexRecord[]
 ) => {
-  if (event.kind === "jsonl_snapshot") return incomingRecords;
   return incomingRecords.reduce((records, record) => mergeRecord(records, record), current);
 };
 
@@ -832,11 +800,11 @@ export const isMatchingAppServerTranscriptRecord = (record: CodexRecord, incomin
   if (!incomingPayload) return false;
   const incomingType = incomingPayload?.type;
   if (incomingType !== "user_message" && incomingType !== "agent_message") return false;
-  if (recordPayload?.type !== incomingType) return false;
+  if (!recordPayload || recordPayload.type !== incomingType) return false;
   const threadId = String(incoming.sourceThreadId ?? record.sourceThreadId ?? "");
   const incomingTurnId = turnIdFromAppRecordId(threadId, incoming.id);
   const recordTurnId = turnIdFromAppRecordId(threadId, record.id);
-  if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
+  if ((incomingTurnId || recordTurnId) && (incomingTurnId !== recordTurnId || recordTurnId === null)) return false;
   if (recordPayload.message !== incomingPayload.message) return false;
   if (incomingType === "agent_message") return recordPayload.phase === incomingPayload.phase;
   return JSON.stringify(recordPayload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);

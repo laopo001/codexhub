@@ -2,7 +2,6 @@ import type React from "react";
 import type { CodexRecord } from "../core/codexRecord.js";
 import type { CodexRecordView } from "../core/codexRecordView.js";
 import type { CompactRecordView } from "../shared/compactRecordViews.js";
-import type { ThreadJsonl } from "./jsonlRecordViews.js";
 
 export type ThreadSummary = {
   threadId: string;
@@ -30,7 +29,6 @@ export type ThreadSessionSummary =
 
 export type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
-  jsonl?: ThreadJsonl;
   lastSeq: number;
 };
 
@@ -333,10 +331,9 @@ export type MessageContextMenuState = {
 
 export type StreamEvent = {
   seq: number;
-  kind: "thread" | "record" | "done" | "jsonl_snapshot" | "jsonl_append";
+  kind: "thread" | "record" | "done";
   thread: ThreadSummary;
   record?: CodexRecord;
-  jsonl?: ThreadJsonl;
 };
 
 export type TaskCompleteNotification = {
@@ -376,7 +373,7 @@ export type RealtimeMessage =
   | ({ type: "tasks" } & TasksStreamEvent)
   | ({ type: "connections" } & ConnectionsStreamEvent)
   | ({ type: "server_connections" } & ServerConnectionsStreamEvent)
-  | ({ type: "thread" | "record" | "done" | "jsonl_snapshot" | "jsonl_append" } & StreamEvent)
+  | ({ type: "thread" | "record" | "done" } & StreamEvent)
   | { type: "ready" }
   | { type: "thread_subscribed" | "thread_unsubscribed"; threadId: string }
   | { type: "error"; message: string; scope?: string; threadId?: string };

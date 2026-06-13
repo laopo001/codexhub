@@ -249,7 +249,7 @@ class FakeLocalMachine {
   }
 
   private handleSessionCommand(command: SessionCommand) {
-    if (command.type === "observe_thread_records" || command.type === "unobserve_thread_records") {
+    if (command.type === "subscribe_thread_records" || command.type === "unsubscribe_thread_records") {
       this.sessionCursor = Math.max(this.sessionCursor, command.seq);
       return;
     }

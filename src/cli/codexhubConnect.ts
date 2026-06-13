@@ -1,27 +1,20 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { watch, type FSWatcher } from "node:fs";
-import { access, stat } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Command } from "commander";
-import {
-  findCodexSessionFile,
-  listCodexSessionsForCwd,
-  readCodexSessionJsonlLinesFromFile,
-  type CodexSessionSummary
-} from "../core/codexSession.js";
 import type { MachineCommand, MachineRegistration } from "../core/machineHub.js";
 import type { ProxyInput } from "../core/proxyInput.js";
 import type {
   SessionRegistration,
+  ThreadCandidateSummary,
   ThreadGoalUpdate,
   ThreadRunOptions,
   SessionCommand,
-  SessionEventInput,
-  SessionRecordsInput
+  SessionEventInput
 } from "../core/threadHub.js";
 
 type ConnectOptions = {
@@ -44,16 +37,6 @@ type PendingRequest = {
 };
 
 type SyncedThread = {
-  jsonlPath?: string;
-  jsonlLine: number;
-  jsonlKnownSize?: number;
-  jsonlFileKey?: string;
-  jsonlReplayFull: boolean;
-  jsonlSyncing: boolean;
-  jsonlPending: boolean;
-  jsonlWatcher?: FSWatcher;
-  jsonlWatcherPath?: string;
-  jsonlDebounceTimer?: NodeJS.Timeout;
   appServerTurnsSyncing: boolean;
   appServerTurnsPending: boolean;
   appServerTurnsDebounceTimer?: NodeJS.Timeout;
@@ -70,17 +53,10 @@ type SessionSettings = {
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
 };
 
-type SessionJsonlLine = SessionRecordsInput["lines"][number];
-
 type TurnRequestParams = {
   model?: string | null;
   effort?: ThreadRunOptions["modelReasoningEffort"];
 };
-
-const jsonlRecordsMessageTargetBytes = () =>
-  envPositiveInt("CODEX_HUB_JSONL_RECORDS_MESSAGE_BYTES", 4 * 1024 * 1024);
-const jsonlRecordLineMaxBytes = () =>
-  envPositiveInt("CODEX_HUB_JSONL_RECORD_LINE_BYTES", 4 * 1024 * 1024);
 
 type MachineTransportMessage =
   | { type: "registered"; machineId: string; machine?: unknown }
@@ -92,7 +68,6 @@ type MachineTransportMessage =
 
 type HubTransportSink = {
   sendEvent: (event: SessionEventInput) => void;
-  sendRecords: (records: SessionRecordsInput) => void;
   sendHeartbeat: (registration: Partial<SessionRegistration>) => void;
 };
 
@@ -366,7 +341,6 @@ class ProxyBridgeRunner {
         try {
           const sink: HubTransportSink = {
             sendEvent: (event) => this.transport?.sendEvent(event),
-            sendRecords: (records) => this.transport?.sendRecords(records),
             sendHeartbeat: (registration) => this.transport?.sendHeartbeat(registration)
           };
           this.bridge = await CodexAppServerBridge.connect(this.options, this.bridgeState, sink);
@@ -438,7 +412,6 @@ class ProxyBridgeRunner {
       if (!this.stopping) stopped.reject(new Error(`${label}: ${errorText(error)}`));
     };
     void bridge.runThreadSyncLoop().catch(fail("thread sync"));
-    void bridge.runJsonlRecordSyncLoop().catch(fail("jsonl sync"));
     void bridge.runHeartbeatLoop().catch(fail("heartbeat"));
     void bridge.waitForClose().then(() => stopped.reject(new Error("app-server bridge closed")));
     await stopped.promise;
@@ -509,10 +482,6 @@ class MachineBackedSessionTransport implements HeadlessSessionTransport {
 
   sendEvent(event: SessionEventInput) {
     this.sendOrQueue({ type: "session_event", sessionId: this.sessionId, event });
-  }
-
-  sendRecords(records: SessionRecordsInput) {
-    this.sendOrQueue({ type: "session_records", sessionId: this.sessionId, records });
   }
 
   sendHeartbeat(registration: Partial<SessionRegistration>) {
@@ -803,12 +772,6 @@ class CodexAppServerBridge {
     }
   }
 
-  async runJsonlRecordSyncLoop(intervalMs = 2000) {
-    while (!this.closed) {
-      await delay(intervalMs);
-    }
-  }
-
   close() {
     this.markClosed();
     this.ws.close();
@@ -822,7 +785,6 @@ class CodexAppServerBridge {
     if (this.closed) return;
     this.closed = true;
     for (const state of this.syncedThreads.values()) {
-      this.closeJsonlWatcher(state);
       this.closeAppServerTurnsSync(state);
     }
     this.closeSignal.resolve();
@@ -835,15 +797,15 @@ class CodexAppServerBridge {
       };
     }
 
-    if (command.type === "observe_thread_records") {
-      if (!command.threadId) throw new Error("observe_thread_records command requires threadId");
+    if (command.type === "subscribe_thread_records") {
+      if (!command.threadId) throw new Error("subscribe_thread_records command requires threadId");
       this.bindThread(command.threadId, command.workingDirectory);
       await this.syncThreadAppServerTurns(command.threadId);
       return;
     }
 
-    if (command.type === "unobserve_thread_records") {
-      if (!command.threadId) throw new Error("unobserve_thread_records command requires threadId");
+    if (command.type === "unsubscribe_thread_records") {
+      if (!command.threadId) throw new Error("unsubscribe_thread_records command requires threadId");
       this.unbindThread(command.threadId);
       return;
     }
@@ -962,7 +924,7 @@ class CodexAppServerBridge {
         threadId: command.threadId,
         numTurns: command.numTurns
       }, command);
-      this.resetJsonlCursor(command.threadId);
+      this.scheduleAppServerTurnsSync(command.threadId);
       return;
     }
 
@@ -1093,10 +1055,6 @@ class CodexAppServerBridge {
     if (cwd) this.rememberThreadCwd(threadId, cwd);
     if (this.syncedThreads.has(threadId)) return;
     this.syncedThreads.set(threadId, {
-      jsonlLine: 0,
-      jsonlReplayFull: true,
-      jsonlSyncing: false,
-      jsonlPending: false,
       appServerTurnsSyncing: false,
       appServerTurnsPending: false
     });
@@ -1106,7 +1064,6 @@ class CodexAppServerBridge {
   private unbindThread(threadId: string) {
     const state = this.syncedThreads.get(threadId);
     if (!state) return;
-    this.closeJsonlWatcher(state);
     this.closeAppServerTurnsSync(state);
     this.syncedThreads.delete(threadId);
     this.forwardedSessionSettings.delete(threadId);
@@ -1126,18 +1083,6 @@ class CodexAppServerBridge {
     const threadId = typeof thread.id === "string" ? thread.id : "";
     const cwd = typeof thread.cwd === "string" ? thread.cwd : undefined;
     this.rememberThreadCwd(threadId, cwd);
-  }
-
-  private resetJsonlCursor(threadId: string) {
-    const state = this.syncedThreads.get(threadId);
-    if (!state) return;
-    state.jsonlPath = undefined;
-    state.jsonlLine = 0;
-    state.jsonlKnownSize = undefined;
-    state.jsonlFileKey = undefined;
-    state.jsonlReplayFull = true;
-    this.closeJsonlWatcher(state);
-    this.scheduleAppServerTurnsSync(threadId);
   }
 
   private async ensureThreadLoaded(
@@ -1161,10 +1106,6 @@ class CodexAppServerBridge {
     this.rememberThreadCwd(loadedThreadId, typeof thread?.cwd === "string" ? thread.cwd : cwd);
     this.markThreadLoaded(loadedThreadId);
     return loadedThreadId;
-  }
-
-  private async syncJsonlRecords() {
-    await Promise.all([...this.syncedThreads.keys()].map((threadId) => this.syncThreadJsonl(threadId)));
   }
 
   private scheduleAppServerTurnsSync(
@@ -1214,118 +1155,13 @@ class CodexAppServerBridge {
     }
   }
 
-  private scheduleJsonlSync(
-    threadId: string,
-    options: { replayFull?: boolean; delayMs?: number } = {}
-  ) {
-    const state = this.syncedThreads.get(threadId);
-    if (!state || this.closed) return;
-    if (options.replayFull) state.jsonlReplayFull = true;
-    if (state.jsonlDebounceTimer) clearTimeout(state.jsonlDebounceTimer);
-    state.jsonlDebounceTimer = setTimeout(() => {
-      state.jsonlDebounceTimer = undefined;
-      void this.syncThreadJsonl(threadId).catch((error) => {
-        console.error(`codexhub bridge failed to sync JSONL for ${threadId}: ${errorText(error)}`);
-      });
-    }, options.delayMs ?? 75);
-    state.jsonlDebounceTimer.unref?.();
-  }
-
-  private async syncThreadJsonl(threadId: string) {
-    const state = this.syncedThreads.get(threadId);
-    if (!state || this.closed) return;
-    const stillObserved = () => this.syncedThreads.get(threadId) === state && !this.closed;
-    if (state.jsonlSyncing) {
-      state.jsonlPending = true;
-      return;
-    }
-
-    state.jsonlSyncing = true;
-    state.jsonlPending = false;
-    try {
-      const filePath = await findCodexSessionFile(threadId);
-      if (!stillObserved()) return;
-      if (!filePath) return;
-      const currentStat = await stat(filePath).catch(() => null);
-      if (!stillObserved()) return;
-      const fileKey = currentStat ? `${currentStat.dev}:${currentStat.ino}` : undefined;
-      const pathChanged = Boolean(state.jsonlPath && state.jsonlPath !== filePath);
-      const fileReplaced = Boolean(state.jsonlFileKey && fileKey && state.jsonlFileKey !== fileKey);
-      const truncated = typeof state.jsonlKnownSize === "number"
-        && currentStat
-        && currentStat.size < state.jsonlKnownSize;
-      const replace = !state.jsonlPath || pathChanged || fileReplaced || truncated || state.jsonlReplayFull;
-      const afterLine = replace ? 0 : state.jsonlLine;
-      const batch = await readCodexSessionJsonlLinesFromFile(filePath, { afterLine });
-      if (!stillObserved()) return;
-      if (replace || batch.lines.length) {
-        this.sendJsonlRecords({
-          threadId,
-          mode: replace ? "replace" : "append",
-          path: batch.path,
-          lastLine: batch.lastLine,
-          lines: batch.lines,
-          heartbeat: false,
-          replay: replace || undefined
-        });
-      }
-      state.jsonlPath = batch.path;
-      state.jsonlLine = batch.lastLine;
-      state.jsonlKnownSize = currentStat?.size;
-      state.jsonlFileKey = fileKey;
-      state.jsonlReplayFull = false;
-      this.ensureJsonlWatcher(threadId, batch.path);
-    } finally {
-      state.jsonlSyncing = false;
-      if (state.jsonlPending && !this.closed) this.scheduleJsonlSync(threadId);
-    }
-  }
-
-  private sendJsonlRecords(records: SessionRecordsInput) {
-    let chunkIndex = 0;
-    for (const chunk of chunkSessionJsonlRecords(records)) {
-      this.hub.sendRecords({
-        ...records,
-        mode: chunkIndex === 0 ? records.mode : "append",
-        lastLine: chunk.lastLine,
-        lines: chunk.lines,
-        heartbeat: chunkIndex === 0 ? records.heartbeat : false
-      });
-      chunkIndex += 1;
-    }
-  }
-
-  private ensureJsonlWatcher(threadId: string, filePath: string) {
-    const state = this.syncedThreads.get(threadId);
-    if (!state || state.jsonlWatcherPath === filePath && state.jsonlWatcher) return;
-    this.closeJsonlWatcher(state);
-    try {
-      state.jsonlWatcher = watch(filePath, { persistent: false }, () => this.scheduleJsonlSync(threadId));
-      state.jsonlWatcherPath = filePath;
-      state.jsonlWatcher.on("error", () => {
-        this.closeJsonlWatcher(state);
-        this.scheduleJsonlSync(threadId, { replayFull: true, delayMs: 250 });
-      });
-    } catch {
-      state.jsonlWatcher = undefined;
-    }
-  }
-
-  private closeJsonlWatcher(state: SyncedThread) {
-    if (state.jsonlDebounceTimer) clearTimeout(state.jsonlDebounceTimer);
-    state.jsonlDebounceTimer = undefined;
-    state.jsonlWatcher?.close();
-    state.jsonlWatcher = undefined;
-    state.jsonlWatcherPath = undefined;
-  }
-
   private closeAppServerTurnsSync(state: SyncedThread) {
     if (state.appServerTurnsDebounceTimer) clearTimeout(state.appServerTurnsDebounceTimer);
     state.appServerTurnsDebounceTimer = undefined;
     state.appServerTurnsPending = false;
   }
 
-  private async listAppServerThreads(workingDirectory: string, limit?: number): Promise<CodexSessionSummary[]> {
+  private async listAppServerThreads(workingDirectory: string, limit?: number): Promise<ThreadCandidateSummary[]> {
     const result = asRecord(await this.request("thread/list", {
       cwd: workingDirectory,
       limit: Number.isInteger(limit) && limit !== undefined && limit > 0 ? limit : null,
@@ -1335,7 +1171,7 @@ class CodexAppServerBridge {
     const data = Array.isArray(result?.data) ? result.data : [];
     return data
       .map((thread) => appServerThreadSummary(asRecord(thread), workingDirectory))
-      .filter((thread): thread is CodexSessionSummary => Boolean(thread));
+      .filter((thread): thread is ThreadCandidateSummary => Boolean(thread));
   }
 
   private async listAppServerThreadTurns(threadId: string) {
@@ -1368,13 +1204,7 @@ class CodexAppServerBridge {
 
   resetServerMirrorState() {
     this.forwardedSessionSettings.clear();
-    for (const [threadId, state] of this.syncedThreads) {
-      state.jsonlPath = undefined;
-      state.jsonlLine = 0;
-      state.jsonlKnownSize = undefined;
-      state.jsonlFileKey = undefined;
-      state.jsonlReplayFull = true;
-      this.closeJsonlWatcher(state);
+    for (const [threadId] of this.syncedThreads) {
       this.scheduleAppServerTurnsSync(threadId);
     }
   }
@@ -1793,53 +1623,6 @@ const turnRequestParams = (options: ThreadRunOptions | undefined): TurnRequestPa
   return params;
 };
 
-const chunkSessionJsonlRecords = (records: SessionRecordsInput) => {
-  const targetBytes = jsonlRecordsMessageTargetBytes();
-  const maxLineBytes = Math.min(jsonlRecordLineMaxBytes(), targetBytes);
-  const chunks: Array<{ lastLine: number; lines: SessionJsonlLine[] }> = [];
-  let lines: SessionJsonlLine[] = [];
-  let bytes = 0;
-
-  const flush = () => {
-    chunks.push({ lastLine: lines.at(-1)?.line ?? records.lastLine, lines });
-    lines = [];
-    bytes = 0;
-  };
-
-  for (const line of records.lines) {
-    const transportLine = jsonlLineForTransport(line, records.path, maxLineBytes);
-    const lineBytes = jsonlLinePayloadBytes(transportLine);
-    if (lines.length && bytes + lineBytes > targetBytes) flush();
-    lines.push(transportLine);
-    bytes += lineBytes;
-  }
-
-  if (lines.length) flush();
-  if (!chunks.length) chunks.push({ lastLine: records.lastLine, lines: [] });
-  return chunks;
-};
-
-const jsonlLineForTransport = (line: SessionJsonlLine, filePath: string | undefined, maxBytes: number) => {
-  const payloadBytes = jsonlLinePayloadBytes(line);
-  if (payloadBytes <= maxBytes) return line;
-  const textBytes = Buffer.byteLength(line.text, "utf8");
-  return {
-    line: line.line,
-    text: JSON.stringify({
-      timestamp: new Date().toISOString(),
-      type: "event_msg",
-      payload: {
-        type: "codexhub_jsonl_line_omitted",
-        message: `CodexHub omitted oversized JSONL line ${line.line} (${textBytes} bytes) to keep websocket payload bounded.`,
-        ...(filePath ? { path: filePath } : {})
-      }
-    })
-  };
-};
-
-const jsonlLinePayloadBytes = (line: SessionJsonlLine) =>
-  Buffer.byteLength(JSON.stringify(line), "utf8") + 2;
-
 const envPositiveInt = (name: string, fallback: number) => {
   const value = Number(process.env[name]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
@@ -1900,7 +1683,7 @@ const threadIdForPendingMessage = (pending: Pick<PendingRequest, "method" | "thr
 const appServerThreadSummary = (
   thread: JsonRecord | null,
   workingDirectory: string
-): CodexSessionSummary | null => {
+): ThreadCandidateSummary | null => {
   const threadId = typeof thread?.id === "string" ? thread.id : "";
   const cwd = typeof thread?.cwd === "string" ? thread.cwd : workingDirectory;
   if (!threadId || cwd !== workingDirectory) return null;

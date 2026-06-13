@@ -379,10 +379,6 @@ class MachineSessionTransport implements HeadlessSessionTransport {
     this.sendOrQueue({ type: "session_event", sessionId: this.options.sessionId, event });
   }
 
-  sendRecords(records: Parameters<HeadlessSessionTransport["sendRecords"]>[0]) {
-    this.sendOrQueue({ type: "session_records", sessionId: this.options.sessionId, records });
-  }
-
   sendHeartbeat(registration: Parameters<HeadlessSessionTransport["sendHeartbeat"]>[0]) {
     this.sendOrQueue({
       type: "session_heartbeat",

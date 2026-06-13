@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { CodexSessionSummary } from "./codexSession.js";
 import { asRecord, type CodexRecord } from "./codexRecord.js";
 import { recordsToViews } from "./codexRecordView.js";
 import type { ProxyInput } from "./proxyInput.js";
@@ -66,29 +65,26 @@ export type ThreadGoalUpdate = {
 
 export type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
-  jsonl?: ThreadJsonl;
   lastSeq: number;
 };
 
-export type JsonlLine = {
-  line: number;
-  text: string;
-};
-
-export type ThreadJsonl = {
-  path?: string;
-  lastLine: number;
-  lines: JsonlLine[];
-  replay?: boolean;
+export type ThreadCandidateSummary = {
+  threadId: string;
+  cwd: string;
+  path: string;
+  updatedAt: string;
+  firstUserMessage: string;
+  lastAssistantMessage: string;
+  artifactCount: number;
+  messageCount: number;
 };
 
 export type ThreadStreamEvent = {
   seq: number;
   threadId: string;
-  kind: "thread" | "record" | "done" | "jsonl_snapshot" | "jsonl_append";
+  kind: "thread" | "record" | "done";
   thread: ThreadSummary;
   record?: CodexRecord;
-  jsonl?: ThreadJsonl;
 };
 
 export type SessionRegistration = {
@@ -127,8 +123,8 @@ export type SessionCommand = {
     | "list_threads"
     | "start_thread"
     | "resume_thread"
-    | "observe_thread_records"
-    | "unobserve_thread_records";
+    | "subscribe_thread_records"
+    | "unsubscribe_thread_records";
   workingDirectory: string;
   createdAt: string;
   threadId?: string;
@@ -142,21 +138,11 @@ export type SessionCommand = {
 };
 
 export type SessionThreadCandidatesResult = {
-  threads: CodexSessionSummary[];
+  threads: ThreadCandidateSummary[];
 };
 
 export type SessionThreadCommandResult = {
   threadId: string;
-};
-
-export type SessionRecordsInput = {
-  threadId: string;
-  mode: "replace" | "append";
-  path?: string;
-  lastLine: number;
-  lines: JsonlLine[];
-  heartbeat?: boolean;
-  replay?: boolean;
 };
 
 export type SessionCommandResult = SessionThreadCandidatesResult | SessionThreadCommandResult | ThreadDetail;
@@ -206,7 +192,6 @@ type ThreadState = {
   title: string;
   updatedAt: string;
   records: CodexRecord[];
-  jsonl?: ThreadJsonl;
   recordSeq: number;
   threadUsage: ThreadUsage;
   events: ThreadStreamEvent[];
@@ -480,48 +465,6 @@ export class ThreadHub {
     return { ok: true, thread: thread ? this.summary(thread) : undefined };
   }
 
-  applySessionRecords(sessionId: string, input: SessionRecordsInput) {
-    if (input.heartbeat !== false) this.heartbeatSession(sessionId);
-    const session = this.requireSession(sessionId);
-    const thread = this.ensureThread(input.threadId, session, {
-      params: { threadId: input.threadId, cwd: session.workingDirectory }
-    });
-    const nextLines = normalizeJsonlLines(input.lines);
-    if (input.mode === "replace") {
-      thread.jsonl = {
-        path: input.path,
-        lastLine: input.lastLine,
-        lines: nextLines
-      };
-      thread.updatedAt = new Date().toISOString();
-      this.publish(thread, "jsonl_snapshot", undefined, {
-        jsonl: input.replay ? { ...thread.jsonl, replay: true } : thread.jsonl
-      });
-      return { ok: true, thread: this.summary(thread) };
-    }
-
-    const current = thread.jsonl;
-    const merged = mergeJsonlLines(current?.lines ?? [], nextLines);
-    const changed = merged.changed || current?.path !== input.path || current?.lastLine !== input.lastLine;
-    if (!changed) return { ok: true, thread: this.summary(thread) };
-
-    thread.jsonl = {
-      path: input.path ?? current?.path,
-      lastLine: input.lastLine,
-      lines: merged.lines
-    };
-    thread.updatedAt = new Date().toISOString();
-    this.publish(thread, "jsonl_append", undefined, {
-      jsonl: {
-        path: thread.jsonl.path,
-        lastLine: thread.jsonl.lastLine,
-        lines: nextLines,
-        ...(input.replay ? { replay: true } : {})
-      }
-    });
-    return { ok: true, thread: this.summary(thread) };
-  }
-
   applyMirroredThreadSnapshot(sessionId: string, input: unknown) {
     const session = this.requireSession(sessionId);
     const detail = mirroredThreadDetail(input);
@@ -529,11 +472,10 @@ export class ThreadHub {
       params: { threadId: detail.threadId, cwd: detail.workingDirectory }
     });
     this.applyMirroredThreadSummary(thread, session, detail);
-    thread.records = detail.records;
+    thread.records = orderThreadRecords(detail.records);
     thread.recordSeq = Math.max(0, ...thread.records.map((record) => typeof record.order === "number" ? record.order : 0));
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
-    thread.jsonl = detail.jsonl;
     this.publish(thread, "thread");
     return { ok: true, thread: this.summary(thread) };
   }
@@ -547,23 +489,6 @@ export class ThreadHub {
     this.applyMirroredThreadSummary(thread, session, event.thread);
     if (event.kind === "record" && event.record) {
       this.upsertRecord(thread, event.record);
-      return { ok: true, thread: this.summary(thread) };
-    }
-    if (event.kind === "jsonl_snapshot" && event.jsonl) {
-      thread.jsonl = threadJsonlWithoutReplay(event.jsonl);
-      thread.updatedAt = event.thread.updatedAt;
-      this.publish(thread, "jsonl_snapshot", undefined, { jsonl: event.jsonl });
-      return { ok: true, thread: this.summary(thread) };
-    }
-    if (event.kind === "jsonl_append" && event.jsonl) {
-      const merged = mergeJsonlLines(thread.jsonl?.lines ?? [], event.jsonl.lines);
-      thread.jsonl = {
-        path: event.jsonl.path ?? thread.jsonl?.path,
-        lastLine: event.jsonl.lastLine,
-        lines: merged.lines
-      };
-      thread.updatedAt = event.thread.updatedAt;
-      this.publish(thread, "jsonl_append", undefined, { jsonl: event.jsonl });
       return { ok: true, thread: this.summary(thread) };
     }
     if (event.kind === "done") {
@@ -596,30 +521,30 @@ export class ThreadHub {
     return this.summary(thread);
   }
 
-  observeThreadRecords(threadId: string) {
+  subscribeThreadRecords(threadId: string) {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
     this.enqueueSessionCommand(session.sessionId, {
       commandId: randomUUID(),
-      type: "observe_thread_records",
+      type: "subscribe_thread_records",
       workingDirectory: thread.workingDirectory,
       createdAt: new Date().toISOString(),
       threadId: thread.threadId
     });
-    return { observed: true };
+    return { subscribed: true };
   }
 
-  unobserveThreadRecords(threadId: string) {
+  unsubscribeThreadRecords(threadId: string) {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
     this.enqueueSessionCommand(session.sessionId, {
       commandId: randomUUID(),
-      type: "unobserve_thread_records",
+      type: "unsubscribe_thread_records",
       workingDirectory: thread.workingDirectory,
       createdAt: new Date().toISOString(),
       threadId: thread.threadId
     });
-    return { observed: false };
+    return { subscribed: false };
   }
 
   getThreadUsage(threadId?: string): ThreadUsage {
@@ -1188,7 +1113,7 @@ export class ThreadHub {
 
     if (method === "turn/completed") {
       const turn = asRecord(params.turn);
-      if (turn) this.applyAppServerTurn(thread, turn);
+      if (turn) this.applyAppServerTurn(thread, turn, { replaceTurnRecords: true });
       this.finishSessionTurn(thread);
       return;
     }
@@ -1231,13 +1156,13 @@ export class ThreadHub {
     const turnIds = new Set(turnRecords.map((turn) => typeof turn.id === "string" ? turn.id : "").filter(Boolean));
     thread.records = thread.records.filter((record) => {
       const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
-      return !turnId || turnIds.has(turnId);
+      return !turnId || !turnIds.has(turnId);
     });
-    thread.jsonl = undefined;
     thread.recordSeq = thread.records.reduce((max, record) => (
       typeof record.order === "number" && record.order > max ? record.order : max
     ), 0);
     for (const turnRecord of turnRecords) this.applyAppServerTurn(thread, turnRecord);
+    thread.records = orderThreadRecords(thread.records);
     thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
@@ -1252,19 +1177,30 @@ export class ThreadHub {
     }
   }
 
-  private applyAppServerTurn(thread: ThreadState, turn: Record<string, unknown>) {
+  private applyAppServerTurn(
+    thread: ThreadState,
+    turn: Record<string, unknown>,
+    options: { replaceTurnRecords?: boolean } = {}
+  ) {
     const turnId = typeof turn.id === "string" ? turn.id : "";
     if (!turnId) return;
-    for (const record of codexRecordsFromAppServerTurnLifecycle(thread.threadId, turnId, turn)) {
-      this.upsertRecord(thread, record);
+    if (options.replaceTurnRecords) {
+      thread.records = thread.records.filter((record) => turnIdFromAppRecordId(thread.threadId, record.id) !== turnId);
+      thread.recordSeq = thread.records.reduce((max, record) => (
+        typeof record.order === "number" && record.order > max ? record.order : max
+      ), 0);
     }
-    if (!Array.isArray(turn.items)) return;
+    const lifecycleRecords = codexRecordsFromAppServerTurnLifecycle(thread.threadId, turnId, turn);
+    for (const record of lifecycleRecords.filter(isTaskStartedRecord)) this.upsertRecord(thread, record);
     const timestamp = timestampFromSeconds(turn.completedAt) ?? timestampFromSeconds(turn.startedAt);
-    for (const item of turn.items) {
-      const itemRecord = asRecord(item);
-      const record = itemRecord ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp) : null;
-      if (record) this.upsertRecord(thread, record);
+    if (Array.isArray(turn.items)) {
+      for (const item of turn.items) {
+        const itemRecord = asRecord(item);
+        const record = itemRecord ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp) : null;
+        if (record) this.upsertRecord(thread, record);
+      }
     }
+    for (const record of lifecycleRecords.filter(isTaskCompleteRecord)) this.upsertRecord(thread, record);
   }
 
   private applyAppServerItemEvent(thread: ThreadState, params: Record<string, unknown>, fallbackStatus?: string) {
@@ -1273,7 +1209,12 @@ export class ThreadHub {
     if (!turnId || !item) return;
     const timestamp = timestampFromMillis(params.timestamp) ?? timestampFromSeconds(params.createdAt);
     const record = codexRecordFromAppServerItem(thread.threadId, turnId, item, timestamp, fallbackStatus);
-    if (record) this.upsertRecord(thread, record);
+    if (!record) return;
+    const existing = thread.records.find((item) => item.id === record.id);
+    this.upsertRecord(thread, {
+      ...record,
+      timestamp: record.timestamp ?? existing?.timestamp ?? new Date().toISOString()
+    });
   }
 
   private applyAppServerCommandExecutionOutputDelta(thread: ThreadState, params: Record<string, unknown>) {
@@ -1430,6 +1371,7 @@ export class ThreadHub {
       sourceThreadId: thread.threadId
     };
     thread.records.push(record);
+    thread.records = orderThreadRecords(thread.records);
     thread.updatedAt = record.timestamp ?? thread.updatedAt;
     this.publish(thread, "record", record);
   }
@@ -1458,13 +1400,13 @@ export class ThreadHub {
       sourceThreadId: thread.threadId
     };
     thread.records.push(record);
+    thread.records = orderThreadRecords(thread.records);
     thread.updatedAt = record.timestamp ?? thread.updatedAt;
     this.publish(thread, "record", record);
   }
 
   private resetThreadRecords(thread: ThreadState) {
     thread.records = [];
-    thread.jsonl = undefined;
     thread.recordSeq = 0;
     thread.lastUsage = undefined;
     thread.threadUsage = emptyThreadUsage();
@@ -1480,7 +1422,7 @@ export class ThreadHub {
       const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
       return !turnId || keptTurnIds.has(turnId);
     });
-    thread.jsonl = undefined;
+    thread.records = orderThreadRecords(thread.records);
     thread.recordSeq = thread.records.reduce((max, record) => (
       typeof record.order === "number" && record.order > max ? record.order : max
     ), 0);
@@ -1521,8 +1463,8 @@ export class ThreadHub {
       if (!record.id.startsWith("app:")) return false;
       const recordTurnId = turnIdFromAppRecordId(thread.threadId, record.id);
       const payload = asRecord(record.payload);
-      if (payload?.type !== incomingType) return false;
-      if (incomingTurnId || recordTurnId) return incomingTurnId === recordTurnId && recordTurnId !== null;
+      if (!payload || payload.type !== incomingType) return false;
+      if ((incomingTurnId || recordTurnId) && (incomingTurnId !== recordTurnId || recordTurnId === null)) return false;
       if (payload.message !== incomingPayload.message) return false;
       if (incomingType === "agent_message" && payload.phase !== incomingPayload.phase) return false;
       if (incomingType === "user_message") {
@@ -1549,6 +1491,7 @@ export class ThreadHub {
       if (recordsEqual(thread.records[existingIndex], record)) return;
       thread.records[existingIndex] = record;
     }
+    thread.records = orderThreadRecords(thread.records);
     thread.updatedAt = latestRecordTimestamp(thread.records) ?? record.timestamp ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
@@ -1604,16 +1547,14 @@ export class ThreadHub {
   private publish(
     thread: ThreadState,
     kind: ThreadStreamEvent["kind"],
-    record?: CodexRecord,
-    extra: Pick<ThreadStreamEvent, "jsonl"> = {}
+    record?: CodexRecord
   ) {
     const streamEvent: ThreadStreamEvent = {
       seq: ++thread.seq,
       threadId: thread.threadId,
       kind,
       thread: this.summary(thread),
-      record,
-      ...extra
+      record
     };
     thread.events.push(streamEvent);
     if (thread.events.length > 1000) thread.events.splice(0, thread.events.length - 1000);
@@ -1632,7 +1573,7 @@ export class ThreadHub {
       running: thread.running,
       title: thread.title,
       updatedAt: thread.updatedAt,
-      messageCount: thread.jsonl?.lines.length ?? recordsToViews(thread.records).length,
+      messageCount: recordsToViews(thread.records).length,
       lastUsage: thread.lastUsage,
       threadUsage: thread.threadUsage
     };
@@ -1641,8 +1582,7 @@ export class ThreadHub {
   private detail(thread: ThreadState): ThreadDetail {
     return {
       ...this.summary(thread),
-      records: thread.records,
-      jsonl: thread.jsonl,
+      records: orderThreadRecords(thread.records),
       lastSeq: thread.seq
     };
   }
@@ -1768,30 +1708,6 @@ const threadSummarySnapshotKey = (thread: ThreadSummary) => ({
 
 const sessionCommandsAfter = (session: SessionState, after: number) =>
   session.commands.filter((command) => command.seq > after);
-
-const normalizeJsonlLines = (lines: JsonlLine[]) => {
-  const byLine = new Map<number, JsonlLine>();
-  for (const line of lines) {
-    if (!Number.isInteger(line.line) || line.line < 1 || typeof line.text !== "string") continue;
-    byLine.set(line.line, { line: line.line, text: line.text });
-  }
-  return [...byLine.values()].sort((left, right) => left.line - right.line);
-};
-
-const mergeJsonlLines = (current: JsonlLine[], incoming: JsonlLine[]) => {
-  const byLine = new Map(current.map((line) => [line.line, line]));
-  let changed = false;
-  for (const line of incoming) {
-    const existing = byLine.get(line.line);
-    if (existing?.text === line.text) continue;
-    byLine.set(line.line, line);
-    changed = true;
-  }
-  return {
-    changed,
-    lines: [...byLine.values()].sort((left, right) => left.line - right.line)
-  };
-};
 
 const codexRecordFromAppServerItem = (
   threadId: string,
@@ -2183,6 +2099,12 @@ const codexRecordsFromAppServerTurnLifecycle = (
   return records;
 };
 
+const isTaskStartedRecord = (record: CodexRecord) =>
+  asRecord(record.payload)?.type === "task_started";
+
+const isTaskCompleteRecord = (record: CodexRecord) =>
+  asRecord(record.payload)?.type === "task_complete";
+
 const timestampDeltaMs = (startedAt: string, completedAt: string) => {
   const startedMs = Date.parse(startedAt);
   const completedMs = Date.parse(completedAt);
@@ -2222,6 +2144,29 @@ const latestRecordTimestamp = (records: CodexRecord[]) => {
     }
   }
   return latest?.timestamp ?? fallback;
+};
+
+const orderThreadRecords = (records: CodexRecord[]) =>
+  records
+    .map((record, index) => ({ record, index }))
+    .sort((left, right) => compareThreadRecords(left.record, right.record) || left.index - right.index)
+    .map((entry) => entry.record);
+
+const compareThreadRecords = (left: CodexRecord, right: CodexRecord) => {
+  const leftTime = recordTimeMs(left);
+  const rightTime = recordTimeMs(right);
+  if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
+  if (leftTime !== null && rightTime === null) return -1;
+  if (leftTime === null && rightTime !== null) return 1;
+  const leftOrder = typeof left.order === "number" ? left.order : Number.MAX_SAFE_INTEGER;
+  const rightOrder = typeof right.order === "number" ? right.order : Number.MAX_SAFE_INTEGER;
+  if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+  return 0;
+};
+
+const recordTimeMs = (record: CodexRecord) => {
+  const time = Date.parse(record.timestamp ?? "");
+  return Number.isFinite(time) ? time : null;
 };
 
 const recordsEqual = (left: CodexRecord, right: CodexRecord) =>
@@ -2278,10 +2223,6 @@ const rollbackPlanAfterRecord = (thread: ThreadState, recordId: string) => {
 
 const appServerTurnIds = (thread: ThreadState) => {
   const turnIds: string[] = [];
-  for (const line of thread.jsonl?.lines ?? []) {
-    const turnId = turnIdFromJsonlLine(line.text);
-    if (turnId && !turnIds.includes(turnId)) turnIds.push(turnId);
-  }
   for (const record of thread.records) {
     const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
     if (turnId && !turnIds.includes(turnId)) turnIds.push(turnId);
@@ -2296,17 +2237,6 @@ const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
   const [turnId, kind] = rest.split(":");
   if (!turnId || !kind) return null;
   return turnId;
-};
-
-const turnIdFromJsonlLine = (text: string) => {
-  try {
-    const parsed = asRecord(JSON.parse(text));
-    if (parsed?.type !== "turn_context") return null;
-    const payload = asRecord(parsed.payload);
-    return typeof payload?.turn_id === "string" ? payload.turn_id : null;
-  } catch {
-    return null;
-  }
 };
 
 const summarizeInput = (input: ProxyInput) => {
@@ -2434,7 +2364,6 @@ const mirroredThreadDetail = (value: unknown): ThreadDetail => {
   return {
     ...summary,
     records: mirroredRecords(item.records),
-    jsonl: mirroredJsonl(item.jsonl),
     lastSeq: numberValue(item.lastSeq) ?? 0
   };
 };
@@ -2443,7 +2372,7 @@ const mirroredThreadEvent = (value: unknown): ThreadStreamEvent => {
   const item = asRecord(value);
   if (!item) throw new Error("Mirrored thread event must be an object.");
   const kind = item.kind;
-  if (kind !== "thread" && kind !== "record" && kind !== "done" && kind !== "jsonl_snapshot" && kind !== "jsonl_append") {
+  if (kind !== "thread" && kind !== "record" && kind !== "done") {
     throw new Error("Mirrored thread event has an invalid kind.");
   }
   const thread = mirroredThreadSummary(item.thread);
@@ -2453,8 +2382,7 @@ const mirroredThreadEvent = (value: unknown): ThreadStreamEvent => {
     threadId,
     kind,
     thread: { ...thread, threadId },
-    record: mirroredRecord(item.record),
-    jsonl: mirroredJsonl(item.jsonl)
+    record: mirroredRecord(item.record)
   };
 };
 
@@ -2503,37 +2431,6 @@ const mirroredRecord = (value: unknown): CodexRecord | undefined => {
   const item = asRecord(value);
   if (!item || typeof item.id !== "string" || typeof item.type !== "string") return undefined;
   return item as CodexRecord;
-};
-
-const mirroredJsonl = (value: unknown): ThreadJsonl | undefined => {
-  const item = asRecord(value);
-  if (!item) return undefined;
-  const lastLine = numberValue(item.lastLine);
-  if (lastLine == null) return undefined;
-  const lines = Array.isArray(item.lines)
-    ? item.lines.map(mirroredJsonlLine).filter((line): line is JsonlLine => Boolean(line))
-    : [];
-  return {
-    path: typeof item.path === "string" ? item.path : undefined,
-    lastLine,
-    lines,
-    ...(item.replay === true ? { replay: true } : {})
-  };
-};
-
-const threadJsonlWithoutReplay = (jsonl: ThreadJsonl): ThreadJsonl => ({
-  path: jsonl.path,
-  lastLine: jsonl.lastLine,
-  lines: jsonl.lines
-});
-
-const mirroredJsonlLine = (value: unknown): JsonlLine | undefined => {
-  const item = asRecord(value);
-  if (!item) return undefined;
-  const line = numberValue(item.line);
-  return typeof line === "number" && typeof item.text === "string"
-    ? { line, text: item.text }
-    : undefined;
 };
 
 const stringify = (value: unknown) => {

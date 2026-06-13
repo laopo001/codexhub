@@ -114,6 +114,7 @@ const main = async () => {
   await assertProjectNamesArePathBasenames();
   await assertProjectSessionProjection();
   await assertAppServerTurnLifecycleRecords();
+  await assertAppServerTurnSnapshotPreservesAgentMessages();
   await assertRollbackPreservesKeptTurnToolRecords();
   await assertForkPreservesKeptTurnToolRecords();
   await assertDeletedProjectSuppressesSessionCapture();
@@ -1015,6 +1016,69 @@ const assertAppServerTurnLifecycleRecords = async () => {
   }
 };
 
+const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const hub = new ThreadHub();
+  const sessionId = "app-server-order-session";
+  const threadId = "app-server-order-thread";
+  const turnId = "app-server-order-turn";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-app-server-order"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    heartbeat: false,
+    message: {
+      method: "thread/goal/cleared",
+      params: { threadId }
+    }
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    heartbeat: false,
+    turns: [{
+      id: turnId,
+      startedAt: 1,
+      completedAt: 2,
+      items: [{
+        id: "user-1",
+        type: "userMessage",
+        content: [{ type: "text", text: "run" }]
+      }, {
+        id: "agent-1",
+        type: "agentMessage",
+        text: "first commentary"
+      }, {
+        id: "agent-2",
+        type: "agentMessage",
+        text: "second commentary"
+      }, {
+        id: "agent-3",
+        type: "agentMessage",
+        text: "final",
+        phase: "final_answer"
+      }]
+    }]
+  });
+  const records = hub.getThread(threadId)?.records ?? [];
+  const messages = records
+    .map((record) => asRecord(asRecord(record).payload))
+    .filter((payload) => payload.type === "agent_message")
+    .map((payload) => payload.message);
+  if (JSON.stringify(messages) !== JSON.stringify(["first commentary", "second commentary", "final"])) {
+    throw new Error(`app-server snapshot collapsed or reordered agent messages: ${JSON.stringify(records)}`);
+  }
+  const goalIndex = records.findIndex((record) => asRecord(asRecord(record).payload).type === "thread_goal_cleared");
+  const startedIndex = records.findIndex((record) => asRecord(asRecord(record).payload).type === "task_started");
+  if (goalIndex !== records.length - 1 || startedIndex !== 0) {
+    throw new Error(`thread records were not timestamp ordered after snapshot: ${JSON.stringify(records)}`);
+  }
+};
+
 const assertRollbackPreservesKeptTurnToolRecords = async () => {
   const { ThreadHub } = await import("../src/core/threadHub.js");
   const hub = new ThreadHub();
@@ -1362,8 +1426,8 @@ const assertProjectDeleteKeepsSharedSession = async (apiBase: string, projectId:
 };
 
 const assertSessionStaysOnlineAfterWatcherIdle = async (apiBase: string, machineId: string) => {
-  const previousTimeout = process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS;
-  process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS = "25";
+  const previousTimeout = process.env.CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS;
+  process.env.CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS = "25";
   try {
     const projectDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-idle-project."));
     const open = await apiJson<ProjectOpenResponse>(apiBase, "/api/projects/open", {
@@ -1386,8 +1450,8 @@ const assertSessionStaysOnlineAfterWatcherIdle = async (apiBase: string, machine
       await delay(100);
     }
   } finally {
-    if (previousTimeout === undefined) delete process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS;
-    else process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS = previousTimeout;
+    if (previousTimeout === undefined) delete process.env.CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS;
+    else process.env.CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS = previousTimeout;
   }
 };
 

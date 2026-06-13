@@ -5,9 +5,6 @@ export type CodexRecord = {
   payload: unknown;
   order?: number;
   sourceThreadId?: string;
-  line?: number;
-  rawJsonl?: unknown;
-  rawLineText?: string;
 };
 
 export const asRecord = (value: unknown): Record<string, unknown> | null => {

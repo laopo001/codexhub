@@ -107,21 +107,6 @@ const sessionEventSchema = z.discriminatedUnion("type", [
   })
 ]);
 
-const jsonlLineSchema = z.object({
-  line: z.number().int().min(1),
-  text: z.string()
-}).strict();
-
-const sessionRecordsSchema = z.object({
-  threadId: z.string().min(1),
-  mode: z.enum(["replace", "append"]),
-  path: z.string().min(1).optional(),
-  lastLine: z.number().int().min(0),
-  lines: z.array(jsonlLineSchema),
-  heartbeat: z.boolean().optional(),
-  replay: z.boolean().optional()
-}).strict();
-
 const machineRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
   type: z.enum(["local", "ssh", "registered", "server"]).optional(),
@@ -203,11 +188,6 @@ const machineTransportMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session_event"),
     sessionId: z.string().min(1),
     event: sessionEventSchema
-  }),
-  z.object({
-    type: z.literal("session_records"),
-    sessionId: z.string().min(1),
-    records: sessionRecordsSchema
   }),
   z.object({
     type: z.literal("session_thread_snapshot"),
@@ -493,8 +473,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
   let localMachine: CodexhubMachineHandle | null = null;
-  const threadRecordObservationCounts = new Map<string, number>();
-  const threadRecordObservationTimers = new Map<string, NodeJS.Timeout>();
+  const threadRecordSubscriptionCounts = new Map<string, number>();
+  const threadRecordSubscriptionTimers = new Map<string, NodeJS.Timeout>();
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
@@ -521,8 +501,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.addHook("onClose", async () => {
     clearInterval(sessionSweep);
     if (taskSweep) clearInterval(taskSweep);
-    for (const timer of threadRecordObservationTimers.values()) clearTimeout(timer);
-    threadRecordObservationTimers.clear();
+    for (const timer of threadRecordSubscriptionTimers.values()) clearTimeout(timer);
+    threadRecordSubscriptionTimers.clear();
     await serverMachines?.stopAll();
     await sshMachines.stopAll();
     await localMachine?.stop();
@@ -567,74 +547,74 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     for (const subscriber of projectSubscribers) subscriber(event);
   }
 
-  const cancelThreadRecordObservationIdle = (threadId: string) => {
-    const timer = threadRecordObservationTimers.get(threadId);
+  const cancelThreadRecordSubscriptionIdle = (threadId: string) => {
+    const timer = threadRecordSubscriptionTimers.get(threadId);
     if (!timer) return false;
     clearTimeout(timer);
-    threadRecordObservationTimers.delete(threadId);
+    threadRecordSubscriptionTimers.delete(threadId);
     return true;
   };
 
-  const retainThreadRecordObservation = (threadId: string) => {
-    const current = threadRecordObservationCounts.get(threadId) ?? 0;
-    const hadIdleTimer = cancelThreadRecordObservationIdle(threadId);
-    threadRecordObservationCounts.set(threadId, current + 1);
+  const retainThreadRecordSubscription = (threadId: string) => {
+    const current = threadRecordSubscriptionCounts.get(threadId) ?? 0;
+    const hadIdleTimer = cancelThreadRecordSubscriptionIdle(threadId);
+    threadRecordSubscriptionCounts.set(threadId, current + 1);
     if (current > 0 || hadIdleTimer) return;
     try {
-      threads.observeThreadRecords(threadId);
+      threads.subscribeThreadRecords(threadId);
     } catch {
       // A thread subscription can still serve the in-memory snapshot when its session is offline.
     }
   };
 
-  const releaseThreadRecordObservation = (threadId: string) => {
-    const current = threadRecordObservationCounts.get(threadId) ?? 0;
+  const releaseThreadRecordSubscription = (threadId: string) => {
+    const current = threadRecordSubscriptionCounts.get(threadId) ?? 0;
     if (current <= 0) return;
     if (current > 1) {
-      threadRecordObservationCounts.set(threadId, current - 1);
+      threadRecordSubscriptionCounts.set(threadId, current - 1);
       return;
     }
-    threadRecordObservationCounts.delete(threadId);
-    scheduleThreadRecordObservationIdle(threadId);
+    threadRecordSubscriptionCounts.delete(threadId);
+    scheduleThreadRecordSubscriptionIdle(threadId);
   };
 
-  const forceReleaseThreadRecordObservation = (threadId: string) => {
-    threadRecordObservationCounts.delete(threadId);
-    cancelThreadRecordObservationIdle(threadId);
+  const forceReleaseThreadRecordSubscription = (threadId: string) => {
+    threadRecordSubscriptionCounts.delete(threadId);
+    cancelThreadRecordSubscriptionIdle(threadId);
     try {
-      threads.unobserveThreadRecords(threadId);
+      threads.unsubscribeThreadRecords(threadId);
     } catch {
       // Thread deletion should not be blocked by a stale or offline session.
     }
   };
 
-  const refreshRetainedThreadRecordObservations = () => {
-    for (const threadId of threadRecordObservationCounts.keys()) {
+  const refreshRetainedThreadRecordSubscriptions = () => {
+    for (const threadId of threadRecordSubscriptionCounts.keys()) {
       try {
-        threads.observeThreadRecords(threadId);
+        threads.subscribeThreadRecords(threadId);
       } catch {
-        // Observation is best-effort; Web subscriptions still receive stored thread events.
+        // Subscription refresh is best-effort; Web subscriptions still receive stored thread events.
       }
     }
   };
 
-  function scheduleThreadRecordObservationIdle(threadId: string) {
-    if (threadRecordObservationTimers.has(threadId)) return;
-    const idleMs = threadRecordObservationIdleMs();
+  function scheduleThreadRecordSubscriptionIdle(threadId: string) {
+    if (threadRecordSubscriptionTimers.has(threadId)) return;
+    const idleMs = threadRecordSubscriptionIdleMs();
     if (idleMs <= 0) return;
     const timer = setTimeout(() => {
-      threadRecordObservationTimers.delete(threadId);
-      if ((threadRecordObservationCounts.get(threadId) ?? 0) > 0) return;
+      threadRecordSubscriptionTimers.delete(threadId);
+      if ((threadRecordSubscriptionCounts.get(threadId) ?? 0) > 0) return;
       const thread = threads.getThread(threadId);
       if (!thread) return;
       try {
-        threads.unobserveThreadRecords(threadId);
+        threads.unsubscribeThreadRecords(threadId);
       } catch {
         // Session may have gone offline while the thread tab was idle.
       }
     }, idleMs);
     timer.unref?.();
-    threadRecordObservationTimers.set(threadId, timer);
+    threadRecordSubscriptionTimers.set(threadId, timer);
   }
 
   const sessionsForProject = (target: { machineId: string; path: string }) => {
@@ -1041,10 +1021,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         const unsubscribeStream = threads.subscribe(threadId, after, (event) => {
           sendEvent(event);
         });
-        retainThreadRecordObservation(threadId);
+        retainThreadRecordSubscription(threadId);
         const unsubscribe = () => {
           unsubscribeStream();
-          releaseThreadRecordObservation(threadId);
+          releaseThreadRecordSubscription(threadId);
         };
         threadUnsubscribers.set(threadId, unsubscribe);
         send({ type: "thread_subscribed", threadId });
@@ -1679,7 +1659,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           sessionIds.add(sessionId);
           sessionCursors.set(sessionId, threads.clampSessionCommandCursor(sessionId, parsed.commandCursor ?? 0));
           send({ type: "session_registered", sessionId, session: registered.session });
-          refreshRetainedThreadRecordObservations();
+          refreshRetainedThreadRecordSubscriptions();
           publishProjects();
           startSessionCommandPump(sessionId);
           return;
@@ -1701,11 +1681,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
         if (parsed.type === "session_event") {
           threads.applySessionEvent(parsed.sessionId, parsed.event);
-          return;
-        }
-
-        if (parsed.type === "session_records") {
-          threads.applySessionRecords(parsed.sessionId, parsed.records);
           return;
         }
 
@@ -1776,7 +1751,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.delete("/api/threads/:threadId", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     try {
-      forceReleaseThreadRecordObservation(params.threadId);
+      forceReleaseThreadRecordSubscription(params.threadId);
       return await threads.deleteThread(params.threadId);
     } catch (error) {
       reply.code(404);
@@ -2039,8 +2014,8 @@ const sshRemoteMode = () => process.env.CODEX_HUB_SSH_REMOTE_MODE === "installed
 
 const sshAutoConnectEnabled = () => process.env.CODEX_HUB_SSH_AUTOCONNECT !== "0";
 
-const threadRecordObservationIdleMs = () => {
-  const value = Number(process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS);
+const threadRecordSubscriptionIdleMs = () => {
+  const value = Number(process.env.CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS);
   return Number.isFinite(value) && value >= 0 ? value : 120_000;
 };
 

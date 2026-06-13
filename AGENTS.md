@@ -2,7 +2,7 @@
 
 ## 总体方向
 
-codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP/WebSocket API 和 Web UI，machine 侧负责路径解析、官方 `codex app-server`/headless 进程启动、thread 操作和 JSONL observation。server 可以镜像事件、维护控制面状态和调度任务，但不能变成 Codex app-server、远端文件系统或 thread transcript 的权威来源。
+codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP/WebSocket API 和 Web UI，machine 侧负责路径解析、官方 `codex app-server`/headless 进程启动、thread 操作和 app-server transcript 同步。server 可以镜像事件、维护控制面状态和调度任务，但不能变成 Codex app-server、远端文件系统或 thread transcript 的权威来源。
 
 当前产品心智是 project-first。公开模型以 `machineId`、`projectId`、`threadId` 为主，`sessionId` 表示某台 machine 上的官方 Codex app-server/headless runtime，不是用户心智里的主对象；同一个 runtime session 可以承载多个不同 project cwd 的 threads。`/api/projects` 是 Web 主投影，project 带 `machineOnline` 和当前在线 `session | null`，这里的 `session` 是按 project path 过滤后的 runtime 投影；`/api/sessions` 只作为 session/debug 镜像。
 
@@ -28,7 +28,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 6. `ssh` 表示 server 通过系统 `ssh -R` 建 reverse tunnel 后在远端启动 remote client。SSH 断开后该 connection 下的 machine/session 进入 offline；保存的 SSH host 可以按 autoconnect 策略重连，但不要把 SSH 抽象成插件运行器。
 7. `server` 表示另一个 CodexHub server 主动连接当前 server，并在当前 server 里呈现为一台 project launcher machine。它只暴露子 server 的本地/local launcher，不递归暴露子 server 下的 SSH/registered/server machines。
 8. session 是一次官方 Codex app-server/headless 进程。公开 ID 是 `sessionId`；它是 machine 级 runtime，能通过 app-server 的 per-thread/per-turn `cwd` 支持多个 project。Web 中点击 project 就是打开或复用该 machine 的 runtime，并为 project path 创建/复用 thread；不提供手动 restart/stop 或独立 session 管理入口。
-9. threadId 来自官方 Codex app-server。server/Web/TG/task 读取和展示 thread transcript，但 transcript 来源是 app-server 实时 item/rawResponseItem/tokenUsage 事件、被订阅时的 JSONL observation，或 server bridge 镜像出的 normalized thread snapshot/event。
+9. threadId 来自官方 Codex app-server。server/Web/TG/task 读取和展示 thread transcript，但 transcript 来源是 app-server turns snapshot、实时 item/rawResponseItem/tokenUsage 事件，或 server bridge 镜像出的 normalized thread snapshot/event。
 10. server/session 不维护 `currentThreadId` 或 `currentThread`。Web 当前 tab、Telegram chat 绑定、task `threadId` 都是各自的客户端/任务选择状态；发送入口最终必须显式知道目标 `threadId`。
 11. `session_register.registration` 是 strict schema。旧 `workerId` 必须被拒绝；`currentThreadId` 只作为历史字段容忍并立即丢弃，不能重新进入公共模型。
 
@@ -41,15 +41,15 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 5. server connection 配置保存在 server state 的 `serverConnections`。`enabled=true` 表示启动时自动连接；运行时 connect/disconnect 不应改变 URL/name/token，除非通过 PATCH 显式更新。
 6. Web Connections / Servers tab 操作 `/api/server-connections`。返回给 Web 的 connection view 必须隐藏 `authToken`，只暴露 `hasAuthToken`。
 
-## JSONL Observation 和实时流
+## App-server Thread Sync 和实时流
 
 1. Web 只维护一条 `/api/events/ws`。连接后发送 `hello` 订阅 control-plane snapshots，再用 `subscribe_thread` / `unsubscribe_thread` 多路复用页面 thread tabs。
-2. Control-plane 事件包括 `sessions`、`projects`、`tasks`、`connections`、`server_connections`；thread 事件包括 `thread`、`record`、`done`、`jsonl_snapshot`、`jsonl_append`。
-3. 浏览器不读 JSONL。JSONL watch 在 machine bridge `codexhubConnect` 一侧，server 只通过内部 session command 发送 `observe_thread_records` / `unobserve_thread_records`。
-4. 每个被 Web 订阅的 thread 在一个 bridge 里只能有一份 JSONL observation。server 对 thread subscription 做 ref-count，并用 `CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS` 做 idle grace。
-5. JSONL observation 只由订阅驱动，不由 `turn/start`、`thread/resume`、`thread/fork` 或 loaded-thread 状态驱动。解绑后要保留 still-observed race guard，避免刚 unsubscribe 又被旧 async sync 重新写入。
-6. runtime session 不走 idle auto-stop。machine 只维护一个 app-server/headless runtime，生命周期跟 machine/server 主进程走；project delete、watcher idle-close 和普通空闲都不能触发 `stop_session`。
-7. `CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS=0` 只表示禁用 watcher idle-close。session heartbeat 只表示进程存活，不能当成用户活跃信号。
+2. Control-plane 事件包括 `sessions`、`projects`、`tasks`、`connections`、`server_connections`；thread 事件只包括 `thread`、`record`、`done`。
+3. 浏览器不直接连接官方 app-server。server 通过内部 session command 发送 `subscribe_thread_records` / `unsubscribe_thread_records`，由 machine bridge 负责 app-server turns snapshot 和 live events。
+4. 每个被 Web 订阅的 thread 在一个 bridge 里只能有一份 thread records subscription。server 对 thread subscription 做 ref-count，并用 `CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS` 做 idle grace。
+5. Thread records subscription 只由 Web thread tab 订阅驱动。解绑后要保留 still-subscribed race guard，避免刚 unsubscribe 又被旧 async sync 重新写入。
+6. runtime session 不走 idle auto-stop。machine 只维护一个 app-server/headless runtime，生命周期跟 machine/server 主进程走；project delete、subscription idle-close 和普通空闲都不能触发 `stop_session`。
+7. `CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS=0` 只表示禁用 subscription idle-close。session heartbeat 只表示进程存活，不能当成用户活跃信号。
 8. 不再保留 SSE 事件入口；实时控制面和 thread 增量统一走 `/api/events/ws`。
 
 ## 公共 API 约定
@@ -71,7 +71,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 1. server state 默认在 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml`，数据结构版本为 `version: 1`。
 2. state 可以保存 machines、projects、deletedProjects、tasks、task 最近 run 摘要、SSH hosts、serverConnections。task run 摘要只保留最近 20 条，用于 UI 状态，不是 workspace 运行日志。
-3. state 不保存 thread summary 数量、history 数量、完整 transcript 或 JSONL 内容。project 的 `lastSessionId`、`lastThreadId` 只是最近打开元数据，不是 transcript 权威来源。
+3. state 不保存 thread summary 数量、history 数量或完整 transcript 内容。project 的 `lastSessionId`、`lastThreadId` 只是最近打开元数据，不是 transcript 权威来源。
 4. project ID 由 `machineId + path` 推导；project 名称来自 path basename，不持久化自定义 name，也不提供 rename UI/API。
 5. 删除 project 会写入 deletedProjects tombstone，不能停止该 machine 的 runtime session。后续 session capture 不应自动复活已删除 project，除非用户重新 open。
 6. state loader 会迁移旧 `threads` 和旧 project `name` 字段；不要重新引入这些旧字段。
@@ -80,7 +80,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 1. project 是 `machineId + path` 推导出的 UI/路由元数据。project 不持久拥有 Codex 进程，但公开投影里拥有当前 `session` 状态。
 2. `POST /api/projects/open` 由在线 machine 启动或复用 machine 级 runtime session，再按该目录 cwd 创建或复用 project thread，默认 `reuse: true`。成功后 state 更新 project 的 last opened/session/thread 元数据。
-3. project 列表不展示 open 数、thread/history 数或任何会被本地 JSONL observation 污染的历史数量。在线 thread 列表属于 session/thread picker 和 workspace tabs，不属于 project 卡片持久属性。
+3. project 列表不展示 open 数、thread/history 数或任何 transcript 历史数量。在线 thread 列表属于 session/thread picker 和 workspace tabs，不属于 project 卡片持久属性。
 4. project 级 UI 操作可以有 pin、delete、refresh/open；不要把 session restart/stop、rename、thread count 重新放回 project row。
 5. task 是 server-local 调度记录，选择 machine、project path、可选 thread 和五字段 cron，然后按计划向该 thread 投递一轮对话。默认 cron timezone 是 `Asia/Shanghai`。
 6. task 运行时复用 project 所属 machine 的 runtime session；若配置了 `threadId` 则按 task project path resume 该 thread，否则使用 project open 返回的新/复用 thread 并写回 task 状态。
@@ -102,17 +102,17 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 2. Web composer 有 Chat / Plan / Goal 三种模式。Plan/Goal 通过本轮 turn 的 `options` 传给 server，是一次性输入状态，不应泄漏到后续默认 turn。
 3. Web 在 thread running 时继续发送普通输入，应走 app-server `turn/steer`，并带当前 active `turnId`。没有 active turnId 或非 Web source 时才进入 queue fallback。
 4. Web 在 running thread 上用 Goal mode 发送，应更新 active goal，而不是启动新 turn 或追加 queue。
-5. Goal 状态来自 thread record 流里的 `thread_goal_updated` / `thread_goal_cleared`，需要合并 JSONL 历史和 live records 提取；不要只看 composer 当前选中模式。
+5. Goal 状态来自 thread record 流里的 `thread_goal_updated` / `thread_goal_cleared`，需要合并 app-server snapshot 和 live records 提取；不要只看 composer 当前选中模式。
 6. `POST /api/threads/:threadId/stop` 只停止当前 running turn，不是关闭 project session。UI running 状态下主操作可以收敛成 stop turn。
-7. fork/rollback 依赖 app-server turn id 和 JSONL/record 映射；改动 `jsonlRecordViews`、record id 或 compact/detailed view 时要验证 fork/rollback。
+7. fork/rollback 依赖 app-server turn id 和 record 映射；改动 record id 或 compact/detailed view 时要验证 fork/rollback。
 
 ## Web 前端结构
 
 1. `src/web/App.tsx` 负责全局状态、derived state 和 action factory 组装；不要继续把大段业务逻辑塞回渲染 JSX。
 2. 操作逻辑按领域放在 `src/web/appActions/*`：`realtimeActions`、`projectActions`、`threadActions`、`composerActions`、`sshActions`、`taskActions`。
 3. 渲染入口是 `AppView.tsx`、`AppSidebar.tsx`、`AppDialogs.tsx`，共享格式化和 view helpers 在 `appHelpers.tsx` 及 `helpers/*`。
-4. record 渲染链路分三层：core `recordsToViews`、Web `detailedRecordViews` / `jsonlRecordViews`、shared `compactRecordViews`。Simple/compact/detailed 模式调整要先核对实际 record source。
-5. Web 优先显示 JSONL 转换出的 records；goal/status/notification 这类提取逻辑可以合并 live records 和 JSONL records，但不要把主消息渲染链随意改成双源重复。
+4. record 渲染链路分三层：core `recordsToViews`、Web `detailedRecordViews`、shared `compactRecordViews`。Simple/compact/detailed 模式调整要先核对实际 record source。
+5. Web 优先显示 app-server snapshot/live events 归一化后的 records；goal/status/notification 这类提取逻辑可以合并 snapshot 和 live records，但不要把主消息渲染链随意改成双源重复。
 6. Workspace thread tabs 使用 Ant Design Tabs 的官方 editable-card 行为和 pane 高度契约；不要为 add/remove 重新写一套自定义 tabs 外观。
 7. VSCode surface 使用同一套 Web UI 和完整左侧控制面。`surface=vscode` 只用于 VSCode 通知桥、daemon 兼容判断等嵌入环境差异，不应隐藏 sidebar 或关闭 SSH/tasks/plugins/server connections。
 8. 任务完成通知：普通 Web 走 browser Notification + sound；VSCode 走 iframe `postMessage` 到 extension，再由 VSCode notification 展示。
@@ -168,6 +168,6 @@ pnpm build
 6. `smoke:registered-machine` 覆盖真实 `codexhub machine --type registered` CLI、项目打开、session/thread 对话流，以及 SIGTERM 后 machine/session unregister lifecycle 和 app-server 进程清理。
 7. `smoke:server-bridge` 覆盖父/子 server WS bridge、`type=server` machine 注册、父端 project open、父端 turn 下发到子 server owner，以及 normalized thread event 镜像回父端。
 8. `smoke:ssh-loopback` 覆盖真实本机 sshd、`ssh -R` reverse tunnel、SSH remote client、项目打开、session/thread 对话流和断开 lifecycle。
-9. `smoke:task-lock` 覆盖 task 并发跳过、thread JSONL observation subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn 和 idle watcher。
+9. `smoke:task-lock` 覆盖 task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn 和 idle-close。
 10. `smoke:electron` 覆盖 Electron main process、嵌入 server 随机端口和 `/api/health`。
 11. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vscode/codexhub.vsix --force`。

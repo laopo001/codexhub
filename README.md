@@ -78,7 +78,7 @@ server 的轻量状态默认保存到：
 ~/.local/share/codexhub/server-state.yaml
 ```
 
-可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects、tasks、SSH hosts 等控制面状态，不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 thread/read、JSONL observation 和实时事件镜像。
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects、tasks、SSH hosts 等控制面状态，不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件，以及 server bridge 镜像。
 
 本机 codexhub session：
 
@@ -98,7 +98,7 @@ server 在线时，session 会同步官方 app-server 的 thread/read、item、r
 
 一个 CodexHub server 可以动态注册到另一个 CodexHub server。父 server 会把这个连接看成一台 `type=server` machine，project 会直接合并进父 server 的 Projects 列表，分组名来自保存的连接名称。
 
-子 server 仍然是真实 owner：路径解析、session 启动、thread turn、JSONL observation 和输出都在子 server 本地执行；父 server 只是把 machine/session command 代理过去，并接收子 server 镜像回来的 normalized thread snapshot/event。因此在父 server 输入消息，子 server UI 也能看到同一个输入输出；在子 server 本地继续对话，父 server 订阅同一 thread 后也会看到输出。
+子 server 仍然是真实 owner：路径解析、session 启动、thread turn、app-server turns snapshot 和实时输出都在子 server 本地执行；父 server 只是把 machine/session command 代理过去，并接收子 server 镜像回来的 normalized thread snapshot/event。因此在父 server 输入消息，子 server UI 也能看到同一个输入输出；在子 server 本地继续对话，父 server 订阅同一 thread 后也会看到输出。
 
 Web 的 Connections / Servers tab 可保存父 server URL、可选 token 和自动连接开关。也可以直接调用 API：
 
@@ -166,7 +166,7 @@ server 每 30 秒扫描一次本地 task 状态，间隔可用 `CODEX_HUB_TASK_S
 
 Codex turn 默认不设等待超时，适合长任务和定时任务持续运行。需要在特定部署里限制单次 turn 时，可以设置 `CODEX_HUB_TURN_TIMEOUT_MS` 为正整数毫秒；不设置或设为 `0` 表示不启用 turn 超时。
 
-session 的断线判定和 recently disconnected 保留时间可以用 `CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS`、`CODEX_HUB_SESSION_OFFLINE_RETENTION_MS`、`CODEX_HUB_SESSION_SWEEP_INTERVAL_MS` 调整。runtime session 不做空闲回收；它跟 machine/server 主进程一起保持在线。thread JSONL watcher 的 idle grace 可用 `CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS` 调整，设为 `0` 表示禁用 watcher idle-close。
+session 的断线判定和 recently disconnected 保留时间可以用 `CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS`、`CODEX_HUB_SESSION_OFFLINE_RETENTION_MS`、`CODEX_HUB_SESSION_SWEEP_INTERVAL_MS` 调整。runtime session 不做空闲回收；它跟 machine/server 主进程一起保持在线。thread records subscription 的 idle grace 可用 `CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS` 调整，设为 `0` 表示禁用 subscription idle-close。
 
 ## 插件
 

@@ -46,11 +46,6 @@ type TaskRunResponse = {
 type RealtimeMessage = {
   type?: string;
   threadId?: string;
-  jsonl?: {
-    replay?: boolean;
-    lastLine?: number;
-    lines?: unknown[];
-  };
 };
 
 type MachineCommand = {
@@ -88,7 +83,7 @@ const main = async () => {
   process.env.CODEX_HUB_DATA_DIR = dataDir;
   process.env.CODEX_HUB_LOCAL_MACHINE = "0";
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "0";
-  process.env.CODEX_HUB_THREAD_RECORD_OBSERVATION_IDLE_MS = "25";
+  process.env.CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS = "25";
   process.env.TELEGRAM_BOT_TOKEN = "";
 
   const port = await findFreePort();
@@ -116,11 +111,11 @@ const main = async () => {
     if (open.result?.sessionId !== fake.sessionId || open.result?.threadId !== fake.threadId) {
       throw new Error(`project open returned unexpected session/thread: ${JSON.stringify(open)}`);
     }
-    await fake.expectNoSessionCommand("observe_thread_records", 100);
-    await assertThreadRecordObservation(apiBase, fake.threadId, fake);
-    console.log("thread record observation subscription ok");
-    await assertReplayJsonlEvents(apiBase, fake.threadId, fake);
-    console.log("jsonl replay event marker ok");
+    await fake.expectNoSessionCommand("subscribe_thread_records", 100);
+    await assertThreadRecordSubscription(apiBase, fake.threadId, fake);
+    console.log("thread record subscription ok");
+    await assertAppServerOnlyThreadSubscription(apiBase, fake.threadId, fake);
+    console.log("app-server-only thread subscription ok");
 
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
       method: "POST",
@@ -137,7 +132,7 @@ const main = async () => {
       })
     });
     const modeTurn = await fake.nextTurn();
-    await fake.expectNoSessionCommand("observe_thread_records", 100);
+    await fake.expectNoSessionCommand("subscribe_thread_records", 100);
     if (modeTurn.options?.collaborationMode !== "plan" || modeTurn.options?.goalMode !== true) {
       throw new Error(`web turn mode options were not forwarded: ${JSON.stringify(modeTurn.options)}`);
     }
@@ -419,14 +414,6 @@ class FakeMachine {
     });
   }
 
-  sendRecords(records: unknown) {
-    this.send({
-      type: "session_records",
-      sessionId: this.options.sessionId,
-      records
-    });
-  }
-
   private handleMessage(data: unknown) {
     const message = JSON.parse(String(data)) as {
       type: string;
@@ -471,7 +458,7 @@ class FakeMachine {
       });
       return;
     }
-    if (command.type === "observe_thread_records" || command.type === "unobserve_thread_records") {
+    if (command.type === "subscribe_thread_records" || command.type === "unsubscribe_thread_records") {
       this.send({
         type: "session_command_result",
         sessionId: this.options.sessionId,
@@ -641,20 +628,20 @@ const waitForTaskStatus = async (
   throw new Error(`task ${taskId} did not reach status ${status}`);
 };
 
-const assertThreadRecordObservation = async (apiBase: string, threadId: string, fake: FakeMachine) => {
+const assertThreadRecordSubscription = async (apiBase: string, threadId: string, fake: FakeMachine) => {
   const first = await subscribeThread(apiBase, threadId);
   try {
-    const observe = await fake.nextSessionCommand("observe_thread_records");
-    if (observe.threadId !== threadId) throw new Error(`observe command used wrong thread: ${JSON.stringify(observe)}`);
+    const subscribe = await fake.nextSessionCommand("subscribe_thread_records");
+    if (subscribe.threadId !== threadId) throw new Error(`subscribe command used wrong thread: ${JSON.stringify(subscribe)}`);
 
     const second = await subscribeThread(apiBase, threadId);
     try {
-      await fake.expectNoSessionCommand("observe_thread_records", 100);
+      await fake.expectNoSessionCommand("subscribe_thread_records", 100);
       first.ws.send(JSON.stringify({ type: "unsubscribe_thread", threadId }));
-      await fake.expectNoSessionCommand("unobserve_thread_records", 100);
+      await fake.expectNoSessionCommand("unsubscribe_thread_records", 100);
       second.ws.send(JSON.stringify({ type: "unsubscribe_thread", threadId }));
-      const unobserve = await fake.nextSessionCommand("unobserve_thread_records");
-      if (unobserve.threadId !== threadId) throw new Error(`unobserve command used wrong thread: ${JSON.stringify(unobserve)}`);
+      const unsubscribe = await fake.nextSessionCommand("unsubscribe_thread_records");
+      if (unsubscribe.threadId !== threadId) throw new Error(`unsubscribe command used wrong thread: ${JSON.stringify(unsubscribe)}`);
     } finally {
       second.ws.close();
     }
@@ -663,71 +650,25 @@ const assertThreadRecordObservation = async (apiBase: string, threadId: string, 
   }
 };
 
-const assertReplayJsonlEvents = async (apiBase: string, threadId: string, fake: FakeMachine) => {
+const assertAppServerOnlyThreadSubscription = async (apiBase: string, threadId: string, fake: FakeMachine) => {
   const subscription = await subscribeThread(apiBase, threadId);
   try {
-    const observe = await fake.nextSessionCommand("observe_thread_records");
-    if (observe.threadId !== threadId) throw new Error(`observe command used wrong thread: ${JSON.stringify(observe)}`);
+    const subscribe = await fake.nextSessionCommand("subscribe_thread_records");
+    if (subscribe.threadId !== threadId) throw new Error(`subscribe command used wrong thread: ${JSON.stringify(subscribe)}`);
 
-    fake.sendRecords({
-      threadId,
-      mode: "replace",
-      lastLine: 1,
-      replay: true,
-      heartbeat: false,
-      lines: [jsonlLine(1, "old-turn-a")]
-    });
-    await waitForRealtimeMessage(
-      subscription.messages,
-      (message) => message.type === "jsonl_snapshot" && message.jsonl?.replay === true && message.jsonl.lastLine === 1,
-      "replay jsonl snapshot"
-    );
-
-    fake.sendRecords({
-      threadId,
-      mode: "append",
-      lastLine: 2,
-      replay: true,
-      heartbeat: false,
-      lines: [jsonlLine(2, "old-turn-b")]
-    });
-    await waitForRealtimeMessage(
-      subscription.messages,
-      (message) => message.type === "jsonl_append" && message.jsonl?.replay === true && message.jsonl.lastLine === 2,
-      "replay jsonl append"
-    );
-
-    const detail = await apiJson<{ jsonl?: { replay?: boolean; lines?: unknown[] } }>(
+    const detail = await apiJson<Record<string, unknown>>(
       apiBase,
       `/api/threads/${encodeURIComponent(threadId)}`
     );
-    if (detail.jsonl?.replay) {
-      throw new Error(`thread detail should not persist transient replay marker: ${JSON.stringify(detail.jsonl)}`);
-    }
-    if (detail.jsonl?.lines?.length !== 2) {
-      throw new Error(`thread detail did not merge replay chunks: ${JSON.stringify(detail.jsonl)}`);
-    }
+    if (!Array.isArray(detail.records)) throw new Error(`thread detail did not expose normalized records: ${JSON.stringify(detail)}`);
 
     subscription.ws.send(JSON.stringify({ type: "unsubscribe_thread", threadId }));
-    const unobserve = await fake.nextSessionCommand("unobserve_thread_records");
-    if (unobserve.threadId !== threadId) throw new Error(`unobserve command used wrong thread: ${JSON.stringify(unobserve)}`);
+    const unsubscribe = await fake.nextSessionCommand("unsubscribe_thread_records");
+    if (unsubscribe.threadId !== threadId) throw new Error(`unsubscribe command used wrong thread: ${JSON.stringify(unsubscribe)}`);
   } finally {
     subscription.ws.close();
   }
 };
-
-const jsonlLine = (line: number, turnId: string) => ({
-  line,
-  text: JSON.stringify({
-    timestamp: new Date(0).toISOString(),
-    type: "event_msg",
-    payload: {
-      type: "task_complete",
-      turn_id: turnId,
-      message: "Task completed."
-    }
-  })
-});
 
 const subscribeThread = async (apiBase: string, threadId: string) => {
   const messages: RealtimeMessage[] = [];

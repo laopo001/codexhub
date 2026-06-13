@@ -348,14 +348,14 @@ class ServerMachineBridge {
   private async runSessionCommand(sessionId: string, command: SessionCommand) {
     const threads = this.options.threads;
     if (command.type === "list_threads") return await threads.listSessionThreadCandidates(sessionId, command.limit, command.workingDirectory);
-    if (command.type === "observe_thread_records") {
-      if (!command.threadId) throw new Error("observe_thread_records requires threadId");
-      threads.observeThreadRecords(command.threadId);
+    if (command.type === "subscribe_thread_records") {
+      if (!command.threadId) throw new Error("subscribe_thread_records requires threadId");
+      threads.subscribeThreadRecords(command.threadId);
       return;
     }
-    if (command.type === "unobserve_thread_records") {
-      if (!command.threadId) throw new Error("unobserve_thread_records requires threadId");
-      threads.unobserveThreadRecords(command.threadId);
+    if (command.type === "unsubscribe_thread_records") {
+      if (!command.threadId) throw new Error("unsubscribe_thread_records requires threadId");
+      threads.unsubscribeThreadRecords(command.threadId);
       return;
     }
     if (command.type === "start_thread") {

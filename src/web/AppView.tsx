@@ -253,7 +253,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                     itemContent={(_, message) => {
                       const markdownEnabled = canRenderMarkdown(message);
                       const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
-                      const inspectable = message.record.rawJsonl != null || (messageDisplayMode === "compact" && message.role === "tool");
+                      const inspectable = messageDisplayMode === "compact" && message.role === "tool";
                       return (
                         <MessageCard
                           message={message}

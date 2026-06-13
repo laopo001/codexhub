@@ -64,8 +64,6 @@ export const realtimeMessageTypes = new Set([
   "thread",
   "record",
   "done",
-  "jsonl_snapshot",
-  "jsonl_append",
   "ready",
   "thread_subscribed",
   "thread_unsubscribed",

@@ -9,7 +9,6 @@ import {
   isTaskCompleteRecord,
   mergeNotificationRecords,
   mergeRecord,
-  mergeThreadJsonl,
   mergeThreadOrderBySession,
   normalizeMachines,
   normalizePlugins,
@@ -397,8 +396,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
       message.type === "thread"
       || message.type === "record"
       || message.type === "done"
-      || message.type === "jsonl_snapshot"
-      || message.type === "jsonl_append"
     ) {
       applyThreadStreamEvent(message);
     }
@@ -406,16 +403,15 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
 
   function applyThreadStreamEvent(payload: StreamEvent) {
     if (ctx.closedThreadIds.current.has(payload.thread.threadId)) return;
-    notifyTaskCompletionsFromStreamEvent(payload);
     ctx.threadLastSeqs.current.set(
       payload.thread.threadId,
       Math.max(ctx.threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
     );
+    notifyTaskCompletionsFromStreamEvent(payload);
     ctx.setOpenThreads((current) => current.map((thread) => {
       if (thread.threadId !== payload.thread.threadId) return thread;
       const records = payload.record ? mergeRecord(thread.records, payload.record) : thread.records;
-      const jsonl = mergeThreadJsonl(thread.jsonl, payload);
-      return { ...thread, ...payload.thread, records, jsonl };
+      return { ...thread, ...payload.thread, records };
     }));
     const sessionId = payload.thread.session.sessionId;
     if (sessionId) {
@@ -433,8 +429,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     const previousRecords = ctx.notificationRecordsByThread.current.get(threadId) ?? [];
     const nextRecords = mergeNotificationRecords(previousRecords, event, incomingRecords);
     ctx.notificationRecordsByThread.current.set(threadId, nextRecords);
-    if (event.jsonl?.replay === true) return;
-    if (event.kind !== "record" && event.kind !== "jsonl_append") return;
+    if (event.kind !== "record") return;
 
     for (const record of incomingRecords) {
       if (!isTaskCompleteRecord(record)) continue;
