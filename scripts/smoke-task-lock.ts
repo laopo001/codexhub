@@ -46,6 +46,13 @@ type TaskRunResponse = {
 type RealtimeMessage = {
   type?: string;
   threadId?: string;
+  kind?: string;
+  historical?: boolean;
+  record?: {
+    id?: string;
+    type?: string;
+    payload?: unknown;
+  };
 };
 
 type RateLimitWindow = {
@@ -139,6 +146,8 @@ const main = async () => {
     console.log("thread record subscription ok");
     await assertAppServerOnlyThreadSubscription(apiBase, fake.threadId, fake);
     console.log("app-server-only thread subscription ok");
+    await assertHistoricalSnapshotPublishesMarkedRecordEvents(apiBase, fake.threadId, fake);
+    console.log("historical snapshot record events marked ok");
 
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
       method: "POST",
@@ -470,6 +479,32 @@ class FakeMachine {
     });
   }
 
+  emitTurnsSnapshot(turnId: string) {
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "thread_turns_snapshot",
+        threadId: this.options.threadId,
+        heartbeat: false,
+        turns: [
+          {
+            id: turnId,
+            startedAt: 1781058300,
+            completedAt: 1781058360,
+            items: [
+              {
+                id: `${turnId}-agent`,
+                type: "agentMessage",
+                text: "historical snapshot final answer"
+              }
+            ]
+          }
+        ]
+      }
+    });
+  }
+
   completeTurn(command: SessionCommand) {
     this.send({
       type: "session_event",
@@ -748,6 +783,49 @@ const waitForThreadUsage = async (apiBase: string, threadId: string) => {
 
 const objectValue = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+const assertHistoricalSnapshotPublishesMarkedRecordEvents = async (apiBase: string, threadId: string, fake: FakeMachine) => {
+  const subscription = await subscribeThread(apiBase, threadId);
+  try {
+    const subscribe = await fake.nextSessionCommand("subscribe_thread_records");
+    if (subscribe.threadId !== threadId) throw new Error(`subscribe command used wrong thread: ${JSON.stringify(subscribe)}`);
+    subscription.messages.length = 0;
+
+    const turnId = `historical-turn-${process.pid}`;
+    fake.emitTurnsSnapshot(turnId);
+    await waitForRealtimeMessage(
+      subscription.messages,
+      (message) =>
+        message.type === "record"
+        && message.historical === true
+        && typeof message.record?.id === "string"
+        && message.record.id.includes(`:${turnId}:`),
+      "historical snapshot record event"
+    );
+    await delay(100);
+    const unmarkedHistoricalRecordEvent = subscription.messages.find((message) =>
+      message.type === "record"
+      && message.historical !== true
+      && typeof message.record?.id === "string"
+      && message.record.id.includes(`:${turnId}:`)
+    );
+    if (unmarkedHistoricalRecordEvent) {
+      throw new Error(`historical snapshot published an unmarked record event: ${JSON.stringify(unmarkedHistoricalRecordEvent)}`);
+    }
+
+    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
+    if (!detail.records?.some((record) => {
+      const payload = objectValue(record.payload);
+      return record.type === "event_msg" && payload?.type === "task_complete" && payload.turn_id === turnId;
+    })) {
+      throw new Error(`historical snapshot task_complete was not retained in thread detail: ${JSON.stringify(detail.records)}`);
+    }
+  } finally {
+    subscription.ws.send(JSON.stringify({ type: "unsubscribe_thread", threadId }));
+    await fake.nextSessionCommand("unsubscribe_thread_records").catch(() => undefined);
+    subscription.ws.close();
+  }
+};
 
 const assertThreadRecordSubscription = async (apiBase: string, threadId: string, fake: FakeMachine) => {
   const first = await subscribeThread(apiBase, threadId);

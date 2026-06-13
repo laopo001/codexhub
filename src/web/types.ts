@@ -314,6 +314,7 @@ export type MessageContextMenuState = {
 export type StreamEvent = {
   seq: number;
   kind: "thread" | "record" | "done";
+  historical?: boolean;
   thread: ThreadSummary;
   record?: CodexRecord;
 };

@@ -83,6 +83,7 @@ export type ThreadStreamEvent = {
   seq: number;
   threadId: string;
   kind: "thread" | "record" | "done";
+  historical?: boolean;
   thread: ThreadSummary;
   record?: CodexRecord;
 };
@@ -1035,7 +1036,7 @@ export class ThreadHub {
     const resultThread = asRecord(result?.thread);
     if (resultThread) {
       this.applyAppServerThread(thread, resultThread);
-      this.applyAppServerThreadTurns(thread, resultThread);
+      this.applyAppServerThreadTurns(thread, resultThread, { historicalRecords: true });
     }
 
     const method = typeof record.method === "string" ? record.method : "";
@@ -1046,7 +1047,7 @@ export class ThreadHub {
       const appThread = asRecord(params.thread);
       if (appThread) {
         this.applyAppServerThread(thread, appThread);
-        this.applyAppServerThreadTurns(thread, appThread);
+        this.applyAppServerThreadTurns(thread, appThread, { historicalRecords: true });
       }
       return;
     }
@@ -1124,26 +1125,36 @@ export class ThreadHub {
     thread.recordSeq = thread.records.reduce((max, record) => (
       typeof record.order === "number" && record.order > max ? record.order : max
     ), 0);
-    for (const turnRecord of turnRecords) this.applyAppServerTurn(thread, turnRecord);
+    for (const turnRecord of turnRecords) this.applyAppServerTurn(thread, turnRecord, { historicalRecords: true });
     thread.records = orderThreadRecords(thread.records);
     thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
-    this.publish(thread, "thread");
+    this.publish(thread, "thread", undefined, { historical: true });
   }
 
-  private applyAppServerThreadTurns(thread: ThreadState, appThread: Record<string, unknown>) {
+  private applyAppServerThreadTurns(
+    thread: ThreadState,
+    appThread: Record<string, unknown>,
+    options: { historicalRecords?: boolean } = {}
+  ) {
     if (!Array.isArray(appThread.turns)) return;
     for (const turn of appThread.turns) {
       const turnRecord = asRecord(turn);
-      if (turnRecord) this.applyAppServerTurn(thread, turnRecord);
+      if (turnRecord) this.applyAppServerTurn(thread, turnRecord, { historicalRecords: options.historicalRecords });
     }
+    if (!options.historicalRecords) return;
+    thread.records = orderThreadRecords(thread.records);
+    thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
+    thread.lastUsage = latestUsage(thread.records);
+    thread.threadUsage = threadUsageFromRecords(thread.records);
+    this.publish(thread, "thread", undefined, { historical: options.historicalRecords });
   }
 
   private applyAppServerTurn(
     thread: ThreadState,
     turn: Record<string, unknown>,
-    options: { replaceTurnRecords?: boolean } = {}
+    options: { replaceTurnRecords?: boolean; historicalRecords?: boolean } = {}
   ) {
     const turnId = typeof turn.id === "string" ? turn.id : "";
     if (!turnId) return;
@@ -1154,16 +1165,20 @@ export class ThreadHub {
       ), 0);
     }
     const lifecycleRecords = codexRecordsFromAppServerTurnLifecycle(thread.threadId, turnId, turn);
-    for (const record of lifecycleRecords.filter(isTaskStartedRecord)) this.upsertRecord(thread, record);
+    for (const record of lifecycleRecords.filter(isTaskStartedRecord)) {
+      this.upsertRecord(thread, record, { historical: options.historicalRecords });
+    }
     const timestamp = timestampFromSeconds(turn.completedAt) ?? timestampFromSeconds(turn.startedAt);
     if (Array.isArray(turn.items)) {
       for (const item of turn.items) {
         const itemRecord = asRecord(item);
         const record = itemRecord ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp) : null;
-        if (record) this.upsertRecord(thread, record);
+        if (record) this.upsertRecord(thread, record, { historical: options.historicalRecords });
       }
     }
-    for (const record of lifecycleRecords.filter(isTaskCompleteRecord)) this.upsertRecord(thread, record);
+    for (const record of lifecycleRecords.filter(isTaskCompleteRecord)) {
+      this.upsertRecord(thread, record, { historical: options.historicalRecords });
+    }
   }
 
   private applyAppServerItemEvent(thread: ThreadState, params: Record<string, unknown>, fallbackStatus?: string) {
@@ -1420,7 +1435,7 @@ export class ThreadHub {
     });
   }
 
-  private upsertRecord(thread: ThreadState, record: CodexRecord) {
+  private upsertRecord(thread: ThreadState, record: CodexRecord, options: { historical?: boolean } = {}) {
     const existingIndex = thread.records.findIndex((item) => item.id === record.id);
     if (existingIndex === -1) {
       const replacementIndex = this.matchingAppServerTranscriptRecordIndex(thread, record);
@@ -1441,7 +1456,7 @@ export class ThreadHub {
     thread.updatedAt = latestRecordTimestamp(thread.records) ?? record.timestamp ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
-    this.publish(thread, "record", record);
+    this.publish(thread, "record", record, { historical: options.historical });
   }
 
   private finishSessionTurnByThread(threadId: string, error?: Error) {
@@ -1493,12 +1508,14 @@ export class ThreadHub {
   private publish(
     thread: ThreadState,
     kind: ThreadStreamEvent["kind"],
-    record?: CodexRecord
+    record?: CodexRecord,
+    options: { historical?: boolean } = {}
   ) {
     const streamEvent: ThreadStreamEvent = {
       seq: ++thread.seq,
       threadId: thread.threadId,
       kind,
+      ...(options.historical ? { historical: true } : {}),
       thread: this.summary(thread),
       record
     };
