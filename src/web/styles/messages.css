@@ -174,13 +174,13 @@
 
 .message {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
   max-width: 1080px;
   min-width: 0;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   border-left: 4px solid #a8b4a4;
-  padding: 8px 12px;
+  padding: 6px 12px;
   background: #ffffff;
 }
 
@@ -220,7 +220,7 @@
 
 .toolPreview {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
   color: #17211a;
 }
@@ -232,7 +232,7 @@
   gap: 6px;
   color: #344050;
   font-size: 13px;
-  line-height: 1.35;
+  line-height: 1.25;
 }
 
 .toolPreviewTitle strong {
@@ -264,11 +264,11 @@
   display: flex;
   flex-wrap: wrap;
   min-width: 0;
-  gap: 4px 8px;
+  gap: 2px 8px;
   padding-left: 26px;
   color: #6d7783;
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 1.25;
 }
 
 .toolPreviewMetaItem {
@@ -285,7 +285,7 @@
   padding-left: 26px;
   color: #26342a;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
@@ -316,7 +316,7 @@
   background: #eef7ff;
   color: #0f3e5c;
   font-weight: 700;
-  line-height: 1.45;
+  line-height: 1.35;
 }
 
 .toolPreviewMeta .shellCommandWrapperTag {
@@ -573,7 +573,7 @@
   overflow-wrap: anywhere;
   color: #17211a;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.42;
 }
 
 .messageMarkdown > :first-child {
@@ -590,7 +590,7 @@
 .messageMarkdown blockquote,
 .messageMarkdown .markdownCodeBlock,
 .messageMarkdown .markdownTableScroll {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
 }
 
 .messageMarkdown ul,
