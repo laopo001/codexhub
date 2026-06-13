@@ -476,13 +476,19 @@ export const isSimpleRecord = (record: CodexRecord) => {
   if (record.type === "response_item") return true;
   const payload = asRecord(record.payload);
   return record.type === "event_msg"
-    && (payload?.type === "token_count" || payload?.type === "user_message" || payload?.type === "agent_message");
+    && (
+      payload?.type === "token_count"
+      || payload?.type === "user_message"
+      || payload?.type === "agent_message"
+      || isContextCompactionType(payload?.type)
+    );
 };
 
 export const isSimpleMainView = (view: CodexRecordView) => {
   if (view.role === "error") return true;
   if (view.role === "user" || view.role === "codex") return true;
   const payload = asRecord(view.record.payload);
+  if (view.record.type === "event_msg" && isContextCompactionType(payload?.type)) return true;
   if (view.record.type !== "response_item") return false;
   if (payload?.type === "file_change") return false;
   if (payload?.type !== "message") return true;
@@ -624,10 +630,6 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
 
   if (type === "thread_goal_cleared") {
     return { key: "goal", label: "Goal", status: "completed", at: record.timestamp, text: "Goal cleared" };
-  }
-
-  if (type === "context_compaction" || type === "context_compacted" || type === "compacted") {
-    return { key: "context", label: "Context", status: "completed", at: record.timestamp, text: "Context compacted" };
   }
 
   if (type === "thread_rolled_back") {
@@ -814,6 +816,9 @@ export const stringField = (record: Record<string, unknown> | null | undefined, 
   const value = record?.[key];
   return typeof value === "string" && value ? value : undefined;
 };
+
+const isContextCompactionType = (type: unknown) =>
+  type === "context_compaction" || type === "context_compacted" || type === "compacted";
 
 export const isMatchingAppServerTranscriptRecord = (record: CodexRecord, incoming: CodexRecord) => {
   if (

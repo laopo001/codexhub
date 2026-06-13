@@ -99,6 +99,19 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
     } : null;
   }
 
+  if (payload.type === "context_compaction" || payload.type === "context_compacted" || payload.type === "compacted") {
+    const status = contextCompactionStatus(payload);
+    return {
+      id: record.id,
+      role: "event",
+      label: "context_compaction",
+      text: typeof payload.message === "string" ? payload.message : status === "completed" ? "压缩完成" : "压缩中",
+      at: record.timestamp,
+      status,
+      record
+    };
+  }
+
   if (typeof payload.message === "string") {
     return {
       id: record.id,
@@ -329,6 +342,12 @@ const responseItemStatus = (payload: Record<string, unknown>): CodexRecordView["
   if (payload.status === "completed" || payload.type === "function_call_output" || payload.type === "custom_tool_call_output") return "completed";
   if (payload.status === "pending" || payload.status === "in_progress" || String(payload.type ?? "").endsWith("_call")) return "pending";
   return undefined;
+};
+
+const contextCompactionStatus = (payload: Record<string, unknown>): NonNullable<CodexRecordView["status"]> => {
+  if (payload.status === "failed") return "failed";
+  if (payload.status === "completed") return "completed";
+  return "pending";
 };
 
 export const imageGenerationStatus = (payload: Record<string, unknown>): NonNullable<CodexRecordView["status"]> => {

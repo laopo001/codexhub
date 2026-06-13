@@ -34,6 +34,7 @@ const detailedRecordToView = (record: CodexRecord): CodexRecordView | null => {
   if (record.type === "event_msg") {
     if (payload.type === "user_message") return userMessageToView(record, payload);
     if (payload.type === "agent_message") return agentMessageToView(record, payload);
+    if (isContextCompactionType(payload.type)) return contextCompactionToView(record, payload);
     return {
       id: record.id,
       role: "event",
@@ -55,6 +56,24 @@ const detailedRecordToView = (record: CodexRecord): CodexRecordView | null => {
     record
   };
 };
+
+const contextCompactionToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView => {
+  const status = payload.status === "failed"
+    ? "failed"
+    : payload.status === "completed" ? "completed" : "pending";
+  return {
+    id: record.id,
+    role: "event",
+    label: "context_compaction",
+    text: typeof payload.message === "string" ? payload.message : status === "completed" ? "压缩完成" : "压缩中",
+    at: record.timestamp,
+    status,
+    record
+  };
+};
+
+const isContextCompactionType = (type: unknown) =>
+  type === "context_compaction" || type === "context_compacted" || type === "compacted";
 
 const rawJsonlRecordToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView => ({
   id: record.id,

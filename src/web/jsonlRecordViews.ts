@@ -133,7 +133,8 @@ const eventMsgRecord = (
       payload: {
         ...parsed.payload,
         type: "context_compaction",
-        message: "Context compacted"
+        status: "completed",
+        message: "压缩完成"
       }
     };
   }

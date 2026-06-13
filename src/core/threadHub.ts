@@ -1206,7 +1206,7 @@ export class ThreadHub {
     if (method === "item/agentMessage/delta") return;
 
     if (method === "item/started" || method === "item/completed") {
-      this.applyAppServerItemEvent(thread, params);
+      this.applyAppServerItemEvent(thread, params, method === "item/completed" ? "completed" : "inProgress");
       return;
     }
 
@@ -1267,12 +1267,12 @@ export class ThreadHub {
     }
   }
 
-  private applyAppServerItemEvent(thread: ThreadState, params: Record<string, unknown>) {
+  private applyAppServerItemEvent(thread: ThreadState, params: Record<string, unknown>, fallbackStatus?: string) {
     const turnId = typeof params.turnId === "string" ? params.turnId : "";
     const item = asRecord(params.item);
     if (!turnId || !item) return;
     const timestamp = timestampFromMillis(params.timestamp) ?? timestampFromSeconds(params.createdAt);
-    const record = codexRecordFromAppServerItem(thread.threadId, turnId, item, timestamp);
+    const record = codexRecordFromAppServerItem(thread.threadId, turnId, item, timestamp, fallbackStatus);
     if (record) this.upsertRecord(thread, record);
   }
 
@@ -1797,10 +1797,12 @@ const codexRecordFromAppServerItem = (
   threadId: string,
   turnId: string,
   item: Record<string, unknown>,
-  timestamp?: string
+  timestamp?: string,
+  fallbackStatus?: string
 ): CodexRecord | null => {
   const itemType = typeof item.type === "string" ? item.type : "";
   const itemId = typeof item.id === "string" && item.id ? item.id : stablePayloadKey(item);
+  const status = appServerStatus(item.status ?? fallbackStatus);
   const base = {
     id: `app:${threadId}:${turnId}:item:${itemType}:${itemId}`,
     timestamp,
@@ -1854,7 +1856,7 @@ const codexRecordFromAppServerItem = (
       payload: {
         type: "local_shell_call",
         call_id: itemId,
-        status: appServerStatus(item.status),
+        status,
         action: {
           type: "exec",
           command: commandExecutionCommand(item)
@@ -1872,7 +1874,7 @@ const codexRecordFromAppServerItem = (
       payload: {
         type: "file_change",
         changes: fileChanges(item.changes),
-        status: appServerStatus(item.status)
+        status
       }
     };
   }
@@ -1888,7 +1890,7 @@ const codexRecordFromAppServerItem = (
         arguments: item.arguments,
         result: item.result,
         error: item.error,
-        status: appServerStatus(item.status)
+        status
       }
     };
   }
@@ -1900,7 +1902,7 @@ const codexRecordFromAppServerItem = (
       payload: {
         type: "function_call",
         call_id: itemId,
-        status: appServerStatus(item.status),
+        status,
         success: typeof item.success === "boolean" ? item.success : undefined,
         name: typeof item.tool === "string" ? item.tool : "tool",
         namespace: typeof item.namespace === "string" ? item.namespace : undefined,
@@ -1918,7 +1920,7 @@ const codexRecordFromAppServerItem = (
         type: "collab_agent_tool_call",
         call_id: itemId,
         tool: typeof item.tool === "string" ? item.tool : "agent",
-        status: appServerStatus(item.status),
+        status,
         sender_thread_id: typeof item.senderThreadId === "string" ? item.senderThreadId : undefined,
         receiver_thread_ids: stringArray(item.receiverThreadIds),
         prompt: typeof item.prompt === "string" ? item.prompt : undefined,
@@ -1983,12 +1985,14 @@ const codexRecordFromAppServerItem = (
   }
 
   if (itemType === "contextCompaction") {
+    const compactionStatus = status ?? "completed";
     return {
       ...base,
       type: "event_msg",
       payload: {
         type: "context_compaction",
-        message: "Context compacted"
+        status: compactionStatus,
+        message: compactionStatus === "completed" ? "压缩完成" : "压缩中"
       }
     };
   }
