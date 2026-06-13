@@ -1886,6 +1886,7 @@ const codexRecordFromAppServerUsage = (
 ): CodexRecord | null => {
   const last = asRecord(usage.last);
   if (!last) return null;
+  const rateLimits = tokenUsageRateLimits(usage.rateLimits ?? usage.rate_limits);
   return {
     id: `app:${threadId}:${turnId}:usage`,
     timestamp: new Date().toISOString(),
@@ -1895,7 +1896,8 @@ const codexRecordFromAppServerUsage = (
       info: {
         last_token_usage: tokenUsageBreakdown(last),
         model_context_window: typeof usage.modelContextWindow === "number" ? usage.modelContextWindow : undefined
-      }
+      },
+      ...(rateLimits ? { rate_limits: rateLimits } : {})
     },
     sourceThreadId: threadId
   };
@@ -1917,6 +1919,41 @@ const tokenUsageBreakdown = (value: Record<string, unknown>) => ({
   reasoning_output_tokens: tokenUsageNumber(value.reasoningOutputTokens),
   total_tokens: tokenUsageNumber(value.totalTokens)
 });
+
+const tokenUsageRateLimits = (value: unknown) => {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const primary = tokenUsageRateLimitWindow(record.primary);
+  const secondary = tokenUsageRateLimitWindow(record.secondary);
+  if (!primary && !secondary) return undefined;
+  return {
+    limit_id: stringOrNullValue(record.limit_id ?? record.limitId),
+    limit_name: stringOrNullValue(record.limit_name ?? record.limitName),
+    primary,
+    secondary,
+    credits: record.credits ?? null,
+    individual_limit: record.individual_limit ?? record.individualLimit ?? null,
+    plan_type: stringOrNullValue(record.plan_type ?? record.planType),
+    rate_limit_reached_type: stringOrNullValue(record.rate_limit_reached_type ?? record.rateLimitReachedType)
+  };
+};
+
+const tokenUsageRateLimitWindow = (value: unknown) => {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const usedPercent = tokenUsageNumber(record.usedPercent ?? record.used_percent);
+  const windowMinutes = tokenUsageNumber(record.windowMinutes ?? record.window_minutes);
+  const resetsAt = tokenUsageNumber(record.resetsAt ?? record.resets_at);
+  if (usedPercent === undefined || windowMinutes === undefined || resetsAt === undefined) return undefined;
+  return {
+    used_percent: usedPercent,
+    window_minutes: windowMinutes,
+    resets_at: resetsAt
+  };
+};
+
+const stringOrNullValue = (value: unknown) =>
+  typeof value === "string" ? value : value === null ? null : undefined;
 
 const userMessageText = (content: unknown) =>
   userMessageContent(content)

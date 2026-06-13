@@ -48,6 +48,29 @@ type RealtimeMessage = {
   threadId?: string;
 };
 
+type RateLimitWindow = {
+  usedPercent?: number;
+  windowMinutes?: number;
+  resetsAt?: number;
+};
+
+type ThreadUsage = {
+  context?: {
+    usedTokens?: number;
+    windowTokens?: number;
+  } | null;
+  primaryRateLimit?: RateLimitWindow | null;
+  secondaryRateLimit?: RateLimitWindow | null;
+};
+
+type ThreadDetail = {
+  threadUsage?: ThreadUsage;
+  records?: Array<{
+    type?: string;
+    payload?: unknown;
+  }>;
+};
+
 type MachineCommand = {
   commandId: string;
   type: "start_session" | "list_directory";
@@ -181,6 +204,9 @@ const main = async () => {
     if (steer.turnId !== activeWebTurn.turnId) {
       throw new Error(`web steer used wrong turnId: ${JSON.stringify({ expected: activeWebTurn.turnId, actual: steer.turnId })}`);
     }
+    fake.emitTokenUsage(activeWebTurn);
+    await assertThreadUsageRateLimits(apiBase, fake.threadId);
+    console.log("app-server token usage rate limits ok");
     fake.completeTurn(activeWebTurn);
     console.log("web running turn steer ok");
 
@@ -392,6 +418,55 @@ class FakeMachine {
         this.sessionCommandWaitersByType.set(type, current.filter((item) => item !== waiter));
         resolve();
       }, timeoutMs);
+    });
+  }
+
+  emitTokenUsage(command: SessionCommand) {
+    const threadId = command.threadId ?? this.options.threadId;
+    if (!command.turnId) throw new Error(`fake turn missing turnId: ${JSON.stringify(command)}`);
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "thread_event",
+        threadId,
+        heartbeat: false,
+        message: {
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId,
+            turnId: command.turnId,
+            tokenUsage: {
+              last: {
+                inputTokens: 1200,
+                cachedInputTokens: 800,
+                outputTokens: 90,
+                reasoningOutputTokens: 10,
+                totalTokens: 1300
+              },
+              modelContextWindow: 200000,
+              rateLimits: {
+                limitId: "codex",
+                limitName: null,
+                primary: {
+                  usedPercent: 12.5,
+                  windowMinutes: 300,
+                  resetsAt: 1781058359
+                },
+                secondary: {
+                  usedPercent: 64,
+                  windowMinutes: 10080,
+                  resetsAt: 1781140554
+                },
+                credits: null,
+                individualLimit: null,
+                planType: "pro",
+                rateLimitReachedType: null
+              }
+            }
+          }
+        }
+      }
     });
   }
 
@@ -627,6 +702,52 @@ const waitForTaskStatus = async (
   }
   throw new Error(`task ${taskId} did not reach status ${status}`);
 };
+
+const assertThreadUsageRateLimits = async (apiBase: string, threadId: string) => {
+  const detail = await waitForThreadUsage(apiBase, threadId);
+  const primary = detail.threadUsage?.primaryRateLimit;
+  const secondary = detail.threadUsage?.secondaryRateLimit;
+  if (
+    primary?.usedPercent !== 12.5
+    || primary.windowMinutes !== 300
+    || primary.resetsAt !== 1781058359
+    || secondary?.usedPercent !== 64
+    || secondary.windowMinutes !== 10080
+    || secondary.resetsAt !== 1781140554
+  ) {
+    throw new Error(`thread usage did not include rate limits: ${JSON.stringify(detail.threadUsage)}`);
+  }
+  const usageRecord = detail.records?.find((record) => {
+    const payload = objectValue(record.payload);
+    return record.type === "event_msg" && payload?.type === "token_count";
+  });
+  const rateLimits = objectValue(objectValue(usageRecord?.payload)?.rate_limits);
+  const recordPrimary = objectValue(rateLimits?.primary);
+  const recordSecondary = objectValue(rateLimits?.secondary);
+  if (
+    recordPrimary?.used_percent !== 12.5
+    || recordPrimary.window_minutes !== 300
+    || recordPrimary.resets_at !== 1781058359
+    || recordSecondary?.used_percent !== 64
+    || recordSecondary.window_minutes !== 10080
+    || recordSecondary.resets_at !== 1781140554
+  ) {
+    throw new Error(`token_count record did not preserve rate_limits: ${JSON.stringify(usageRecord)}`);
+  }
+};
+
+const waitForThreadUsage = async (apiBase: string, threadId: string) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
+    if (detail.threadUsage?.primaryRateLimit && detail.threadUsage.secondaryRateLimit) return detail;
+    await delay(100);
+  }
+  throw new Error(`thread ${threadId} did not receive token usage rate limits`);
+};
+
+const objectValue = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 const assertThreadRecordSubscription = async (apiBase: string, threadId: string, fake: FakeMachine) => {
   const first = await subscribeThread(apiBase, threadId);
