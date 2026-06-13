@@ -1,4 +1,5 @@
 import React from "react";
+import { Tag } from "antd";
 import { FileDiff, Image, Plug, Search, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
 import type { CodexRecordView } from "../../core/codexRecordView.js";
@@ -14,6 +15,12 @@ type ToolPreviewIcon = React.ComponentType<{
   size?: number;
   strokeWidth?: number;
 }>;
+
+type ShellCommandDisplay = {
+  raw: string;
+  display: string;
+  wrapper?: string;
+};
 
 export const UpdatePlanPreview = ({
   plan,
@@ -72,6 +79,7 @@ export const ToolPreview = ({
   status,
   className = "",
   meta,
+  metaExtra,
   icon: Icon,
   children
 }: {
@@ -79,6 +87,7 @@ export const ToolPreview = ({
   status?: CodexRecordView["status"];
   className?: string;
   meta?: string[];
+  metaExtra?: React.ReactNode;
   icon?: ToolPreviewIcon;
   children: React.ReactNode;
 }) => (
@@ -90,9 +99,10 @@ export const ToolPreview = ({
       <strong>{title}</strong>
       {status ? <em className={`messageStatus ${status}`}>{statusLabel(status)}</em> : null}
     </div>
-    {meta?.length ? (
+    {meta?.length || metaExtra ? (
       <div className="toolPreviewMeta">
-        {meta.map((item) => <span className="toolPreviewMetaItem" key={item} title={item}>{item}</span>)}
+        {meta?.map((item) => <span className="toolPreviewMetaItem" key={item} title={item}>{item}</span>)}
+        {metaExtra}
       </div>
     ) : null}
     {children}
@@ -296,9 +306,20 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
   if (!payload) return null;
 
   if (payload.type === "local_shell_call") {
+    const command = shellCommandDisplay(payload);
     return (
-      <ToolPreview title="tool: shell" status={status} meta={appServerToolMeta(payload)} icon={Terminal}>
-        <pre className="toolCommandLine">{shellCommandPreview(payload)}</pre>
+      <ToolPreview
+        title="tool: shell"
+        status={status}
+        meta={appServerToolMeta(payload)}
+        metaExtra={command.wrapper ? (
+          <Tag className="shellCommandWrapperTag" title={command.raw}>
+            {command.wrapper}
+          </Tag>
+        ) : null}
+        icon={Terminal}
+      >
+        <ShellCommandPreview command={command} />
       </ToolPreview>
     );
   }
@@ -593,16 +614,80 @@ const appServerOutputMeta = (payload: Record<string, unknown>) => [
   typeof payload.success === "boolean" ? `success: ${payload.success}` : null
 ].filter((line): line is string => Boolean(line)).join("\n") || undefined;
 
-const shellCommandPreview = (payload: Record<string, unknown>) => {
-  const command = shellCommandText(payload);
-  return command ? `$ ${command}` : "$ <empty>";
+const ShellCommandPreview = ({ command }: { command: ShellCommandDisplay }) => {
+  return (
+    <div className="shellCommandPreview">
+      <pre className="toolCommandLine shellCommandDisplayLine">{shellCommandPreviewLine(command.display)}</pre>
+    </div>
+  );
+};
+
+const shellCommandPreviewLine = (command: string) => command ? `$ ${command}` : "$ <empty>";
+
+const shellCommandDisplay = (payload: Record<string, unknown>) => {
+  const raw = shellCommandText(payload);
+  const parts = shellCommandParts(payload);
+  const unwrapped = unwrapShellInvocation(parts, raw);
+  return {
+    raw,
+    display: unwrapped?.command ?? raw,
+    wrapper: unwrapped?.wrapper
+  };
 };
 
 const shellCommandText = (payload: Record<string, unknown>) => {
-  const action = asRecord(payload.action);
-  const commandValue = action?.command ?? payload.command ?? payload.cmd;
+  const commandValue = shellCommandValue(payload);
   if (Array.isArray(commandValue)) return commandValue.filter((part): part is string => typeof part === "string").join(" ");
   return typeof commandValue === "string" ? commandValue : "";
+};
+
+const shellCommandParts = (payload: Record<string, unknown>) => {
+  const commandValue = shellCommandValue(payload);
+  return Array.isArray(commandValue) ? commandValue.filter((part): part is string => typeof part === "string") : null;
+};
+
+const shellCommandValue = (payload: Record<string, unknown>) => {
+  const action = asRecord(payload.action);
+  return action?.command ?? payload.command ?? payload.cmd;
+};
+
+const unwrapShellInvocation = (parts: string[] | null, raw: string) => {
+  const fromParts = unwrapShellParts(parts);
+  if (fromParts) return fromParts;
+  return unwrapShellString(raw);
+};
+
+const unwrapShellParts = (parts: string[] | null) => {
+  if (!parts || parts.length < 3) return null;
+  const [shellPath, flag, command] = parts;
+  if (!isShellExecutable(shellPath) || !isShellCommandFlag(flag) || !command) return null;
+  return {
+    command,
+    wrapper: `${shellPath} ${flag}`
+  };
+};
+
+const unwrapShellString = (raw: string) => {
+  const trimmed = raw.trim();
+  const match = /^(\S+)\s+(-\S*c\S*)\s+([\s\S]+)$/.exec(trimmed);
+  if (!match) return null;
+  const [, shellPath, flag, commandText] = match;
+  if (!isShellExecutable(shellPath) || !isShellCommandFlag(flag)) return null;
+  return {
+    command: stripMatchingOuterQuotes(commandText.trim()),
+    wrapper: `${shellPath} ${flag}`
+  };
+};
+
+const isShellExecutable = (value: string) => /(^|\/)(?:bash|zsh|sh|dash|fish)$/.test(value);
+
+const isShellCommandFlag = (value: string) => value.startsWith("-") && value.includes("c");
+
+const stripMatchingOuterQuotes = (value: string) => {
+  if (value.length < 2) return value;
+  const first = value[0];
+  const last = value[value.length - 1];
+  return (first === "'" || first === "\"") && first === last ? value.slice(1, -1) : value;
 };
 
 const formatToolArgumentsPreview = (value: unknown) => {
