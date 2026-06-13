@@ -55,6 +55,7 @@
     "build": "pnpm run clean && tsc --noEmit && tsc -p tsconfig.node.json && pnpm run build:electron && pnpm run build:remote-client && vite build",
     "build:vscode": "pnpm build && tsx scripts/build-vscode.ts",
     "package:vscode": "pnpm run build:vscode && cd dist-vscode && pnpm exec vsce package --no-dependencies --out codexhub.vsix",
+    "install:vscode": "pnpm run package:vscode && tsx scripts/install-vscode-extension.ts",
     "prepack": "pnpm build",
     "publish:prod": "bash scripts/publish-prod.sh"
   },
