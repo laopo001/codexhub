@@ -347,7 +347,7 @@ const App = () => {
   const registeredCommand = useMemo(() => registeredMachineCommand(window.location.origin, serverAuthRequired ? authToken() : ""), [serverAuthRequired, authRequired]);
   const registeredCommandIncludesToken = serverAuthRequired && registeredCommand.includes("--register-auth-token");
   const currentServerShareUrl = useMemo(
-    () => currentServerRegisterUrlWithToken(serverAuthRequired),
+    () => currentServerRegisterUrlWithToken(),
     [authRequired, authTokenDraft, initialized, serverAuthRequired]
   );
   const projectGroups = useMemo(() => groupProjectsByMachine(projectList, machines), [projectList, machines]);
@@ -1195,13 +1195,13 @@ createRoot(root).render(
   </ConfigProvider>
 );
 
-function currentServerRegisterUrlWithToken(includeToken: boolean) {
+function currentServerRegisterUrlWithToken() {
   if (typeof window === "undefined") return "";
   const url = new URL(window.location.origin);
   url.searchParams.delete("codexhub_token");
   url.searchParams.delete("token");
   const token = authToken();
-  if (includeToken && token) url.searchParams.set("token", token);
+  if (token) url.searchParams.set("token", token);
   const search = url.searchParams.toString();
   return `${url.origin}${search ? `?${search}` : ""}`;
 }
