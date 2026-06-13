@@ -11,9 +11,8 @@ import { MachineHub } from "../core/machineHub.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
-import { ServerMachineBridgeManager } from "../core/serverMachineBridge.js";
 import { CodexhubServerState } from "../core/serverState.js";
-import type { StoredServerConnection, StoredTask } from "../core/serverState.js";
+import type { StoredTask } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
@@ -109,7 +108,7 @@ const sessionEventSchema = z.discriminatedUnion("type", [
 
 const machineRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
-  type: z.enum(["local", "ssh", "registered", "server"]).optional(),
+  type: z.enum(["local", "ssh", "registered"]).optional(),
   name: z.string().min(1).optional(),
   hostname: z.string().min(1),
   pid: z.number().int().optional(),
@@ -190,26 +189,6 @@ const machineTransportMessageSchema = z.discriminatedUnion("type", [
     event: sessionEventSchema
   }),
   z.object({
-    type: z.literal("session_thread_snapshot"),
-    sessionId: z.string().min(1),
-    thread: z.unknown()
-  }),
-  z.object({
-    type: z.literal("thread_snapshot"),
-    sessionId: z.string().min(1),
-    thread: z.unknown()
-  }),
-  z.object({
-    type: z.literal("session_thread_event"),
-    sessionId: z.string().min(1),
-    event: z.unknown()
-  }),
-  z.object({
-    type: z.literal("thread_event"),
-    sessionId: z.string().min(1),
-    event: z.unknown()
-  }),
-  z.object({
     type: z.literal("session_command_result"),
     sessionId: z.string().min(1),
     commandId: z.string().min(1),
@@ -229,8 +208,7 @@ const webEventsMessageSchema = z.discriminatedUnion("type", [
     sessionsAfter: z.number().int().min(0).optional(),
     projectsAfter: z.number().int().min(0).optional(),
     tasksAfter: z.number().int().min(0).optional(),
-    connectionsAfter: z.number().int().min(0).optional(),
-    serverConnectionsAfter: z.number().int().min(0).optional()
+    connectionsAfter: z.number().int().min(0).optional()
   }).strict(),
   z.object({
     type: z.literal("subscribe_thread"),
@@ -254,20 +232,6 @@ const sshConnectSchema = z.object({
 
 const sshHostAliasSchema = z.object({
   alias: z.string().min(1)
-}).strict();
-
-const serverConnectionCreateSchema = z.object({
-  name: z.string().min(1).optional(),
-  url: z.string().url(),
-  authToken: z.string().optional(),
-  enabled: z.boolean().optional()
-}).strict();
-
-const serverConnectionUpdateSchema = z.object({
-  name: z.string().min(1).optional(),
-  url: z.string().url().optional(),
-  authToken: z.string().nullable().optional(),
-  enabled: z.boolean().optional()
 }).strict();
 
 const cronScheduleSchema = z.string().min(1).refine(isCronExpression, {
@@ -416,7 +380,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const state = await CodexhubServerState.load();
   const serverInstanceId = randomUUID();
   let threads: ThreadHub;
-  let serverMachines: ServerMachineBridgeManager | null = null;
   const captureSessionState = () => {
     state.captureSessions({
       sessions: threads.listSessions({ includeOffline: true }),
@@ -427,34 +390,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     onCatalogChange: () => publishProjects(),
     onThreadChange: () => {
       captureSessionState();
-      serverMachines?.notifyThreadChange();
     }
   });
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const projectSubscribers = new Set<(event: ReturnType<typeof projectSnapshotEvent>) => void>();
   const taskSubscribers = new Set<(event: ReturnType<typeof taskSnapshotEvent>) => void>();
   const connectionSubscribers = new Set<(event: ReturnType<typeof connectionSnapshotEvent>) => void>();
-  const serverConnectionSubscribers = new Set<(event: ReturnType<typeof serverConnectionSnapshotEvent>) => void>();
   let projectSeq = 0;
   let taskSeq = 0;
   let connectionSeq = 0;
-  let serverConnectionSeq = 0;
   const machines = new MachineHub({ onChange: () => publishProjects() });
-  const listUsableServerConnections = () =>
-    state.listServerConnections().filter((connection) => !isLocalServerConnectionUrl(connection.url, config.host, config.port));
-  serverMachines = new ServerMachineBridgeManager({
-    machines,
-    threads,
-    listConnections: listUsableServerConnections,
-    updateConnection: (connectionId, input) => {
-      state.updateServerConnection(connectionId, input);
-    },
-    validateConnection: (connection) => validateServerConnectionTarget(connection, serverInstanceId),
-    localMachineId: () => localMachine?.machineId
-      ?? machines.listMachines().find((machine) => machine.type === "local" && machine.online && machine.capabilities.projectLauncher)?.machineId
-      ?? null,
-    onChange: () => publishServerConnections()
-  });
   const sshRemoteClient = features.ssh ? await resolveSshRemoteClientBundle() : null;
   const sshMachines = new SshMachineManager({
     localHost: config.host,
@@ -503,7 +448,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     if (taskSweep) clearInterval(taskSweep);
     for (const timer of threadRecordSubscriptionTimers.values()) clearTimeout(timer);
     threadRecordSubscriptionTimers.clear();
-    await serverMachines?.stopAll();
     await sshMachines.stopAll();
     await localMachine?.stop();
     telegramBot?.stop("server closing");
@@ -683,27 +627,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       connections: sshMachines.listConnections()
     };
     for (const subscriber of connectionSubscribers) subscriber(event);
-  }
-
-  function serverConnectionSnapshotEvent() {
-    return {
-      seq: serverConnectionSeq,
-      kind: "server_connections" as const,
-      connections: serverMachines?.list() ?? []
-    };
-  }
-
-  function publishServerConnections() {
-    const event = {
-      seq: ++serverConnectionSeq,
-      kind: "server_connections" as const,
-      connections: serverMachines?.list() ?? []
-    };
-    for (const subscriber of serverConnectionSubscribers) subscriber(event);
-  }
-
-  function serverConnectionView(connectionId: string) {
-    return (serverMachines?.list() ?? []).find((connection) => connection.connectionId === connectionId) ?? null;
   }
 
   async function localSshConfigHostsByAlias() {
@@ -926,9 +849,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     ssh: {
       connections: sshMachines.listConnections()
     },
-    serverConnections: {
-      connections: serverMachines?.list() ?? []
-    },
     telegram: {
       started: Boolean(telegramBot)
     }
@@ -953,7 +873,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     let projectSubscriber: ((event: ReturnType<typeof projectSnapshotEvent>) => void) | null = null;
     let taskSubscriber: ((event: ReturnType<typeof taskSnapshotEvent>) => void) | null = null;
     let connectionSubscriber: ((event: ReturnType<typeof connectionSnapshotEvent>) => void) | null = null;
-    let serverConnectionSubscriber: ((event: ReturnType<typeof serverConnectionSnapshotEvent>) => void) | null = null;
 
     const send = (message: unknown) => {
       if (socket.readyState !== 1) return;
@@ -970,11 +889,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       if (projectSubscriber) projectSubscribers.delete(projectSubscriber);
       if (taskSubscriber) taskSubscribers.delete(taskSubscriber);
       if (connectionSubscriber) connectionSubscribers.delete(connectionSubscriber);
-      if (serverConnectionSubscriber) serverConnectionSubscribers.delete(serverConnectionSubscriber);
       projectSubscriber = null;
       taskSubscriber = null;
       connectionSubscriber = null;
-      serverConnectionSubscriber = null;
     };
 
     const subscribeControl = (input: Extract<WebEventsMessage, { type: "hello" }>) => {
@@ -985,7 +902,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       const projectsAfter = input.projectsAfter ?? 0;
       const tasksAfter = input.tasksAfter ?? 0;
       const connectionsAfter = input.connectionsAfter ?? 0;
-      const serverConnectionsAfter = input.serverConnectionsAfter ?? 0;
 
       unsubscribeSessions = threads.subscribeSessions(sessionsAfter, (event) => {
         sendEvent(event);
@@ -993,7 +909,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       if (projectsAfter <= 0 || projectSeq > projectsAfter) sendEvent(projectSnapshotEvent());
       if (tasksAfter <= 0 || taskSeq > tasksAfter) sendEvent(taskSnapshotEvent());
       if (connectionsAfter <= 0 || connectionSeq > connectionsAfter) sendEvent(connectionSnapshotEvent());
-      if (serverConnectionsAfter <= 0 || serverConnectionSeq > serverConnectionsAfter) sendEvent(serverConnectionSnapshotEvent());
 
       projectSubscriber = (event) => {
         if (event.seq > projectsAfter) sendEvent(event);
@@ -1004,13 +919,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       connectionSubscriber = (event) => {
         if (event.seq > connectionsAfter) sendEvent(event);
       };
-      serverConnectionSubscriber = (event) => {
-        if (event.seq > serverConnectionsAfter) sendEvent(event);
-      };
       projectSubscribers.add(projectSubscriber);
       taskSubscribers.add(taskSubscriber);
       connectionSubscribers.add(connectionSubscriber);
-      serverConnectionSubscribers.add(serverConnectionSubscriber);
       send({ type: "ready" });
     };
 
@@ -1257,99 +1168,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
     }
-  });
-
-  app.get("/api/server-connections", async () => ({
-    connections: serverMachines?.list() ?? []
-  }));
-
-  app.post("/api/server-connections", async (request, reply) => {
-    const payload = serverConnectionCreateSchema.parse(request.body);
-    try {
-      if (payload.enabled !== false) await assertServerConnectionTarget(payload, serverInstanceId);
-      const connection = state.upsertServerConnection(payload);
-      await serverMachines?.disconnect(connection.connectionId);
-      if (connection.enabled) serverMachines?.connect(connection);
-      publishServerConnections();
-      return { ok: true, connection: serverConnectionView(connection.connectionId) };
-    } catch (error) {
-      reply.code(400);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.patch("/api/server-connections/:connectionId", async (request, reply) => {
-    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
-    const payload = serverConnectionUpdateSchema.parse(request.body);
-    try {
-      const existing = state.getServerConnection(params.connectionId);
-      if (!existing) {
-        reply.code(404);
-        return { error: "server_connection_not_found" };
-      }
-      const nextEnabled = payload.enabled ?? existing.enabled;
-      if (nextEnabled) {
-        await assertServerConnectionTarget({
-          ...existing,
-          ...payload,
-          url: payload.url ?? existing.url,
-          authToken: payload.authToken === undefined
-            ? existing.authToken
-            : payload.authToken ?? undefined
-        }, serverInstanceId);
-      }
-      const connection = state.updateServerConnection(params.connectionId, payload)!;
-      await serverMachines?.disconnect(connection.connectionId);
-      if (connection.enabled) serverMachines?.connect(connection);
-      publishServerConnections();
-      return { ok: true, connection: serverConnectionView(connection.connectionId) };
-    } catch (error) {
-      reply.code(400);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.post("/api/server-connections/:connectionId/connect", async (request, reply) => {
-    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
-    const connection = state.getServerConnection(params.connectionId);
-    if (!connection) {
-      reply.code(404);
-      return { error: "server_connection_not_found" };
-    }
-    const targetError = await validateServerConnectionTarget(connection, serverInstanceId);
-    if (targetError) {
-      state.updateServerConnection(connection.connectionId, { lastError: targetError });
-      publishServerConnections();
-      reply.code(409);
-      return { error: targetError, connection: serverConnectionView(connection.connectionId) };
-    }
-    serverMachines?.connect(connection);
-    publishServerConnections();
-    return { ok: true, connection: serverConnectionView(connection.connectionId) };
-  });
-
-  app.post("/api/server-connections/:connectionId/disconnect", async (request, reply) => {
-    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
-    const connection = state.getServerConnection(params.connectionId);
-    if (!connection) {
-      reply.code(404);
-      return { error: "server_connection_not_found" };
-    }
-    await serverMachines?.disconnect(connection.connectionId);
-    publishServerConnections();
-    return { ok: true, connection: serverConnectionView(connection.connectionId) };
-  });
-
-  app.delete("/api/server-connections/:connectionId", async (request, reply) => {
-    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
-    await serverMachines?.remove(params.connectionId);
-    const deleted = state.deleteServerConnection(params.connectionId);
-    if (!deleted) {
-      reply.code(404);
-      return { error: "server_connection_not_found" };
-    }
-    publishServerConnections();
-    return { ok: true, connections: serverMachines?.list() ?? [] };
   });
 
   app.get("/api/machines/:machineId/directories", async (request, reply) => {
@@ -1684,18 +1502,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           return;
         }
 
-        if (parsed.type === "session_thread_snapshot" || parsed.type === "thread_snapshot") {
-          threads.applyMirroredThreadSnapshot(parsed.sessionId, parsed.thread);
-          publishProjects();
-          return;
-        }
-
-        if (parsed.type === "session_thread_event" || parsed.type === "thread_event") {
-          threads.applyMirroredThreadEvent(parsed.sessionId, parsed.event);
-          publishProjects();
-          return;
-        }
-
         if (parsed.type === "session_command_result") {
           threads.resolveSessionCommand(parsed.sessionId, parsed.commandId, parsed.result);
           return;
@@ -1850,8 +1656,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     });
   }
 
-  await serverMachines?.autoConnectEnabled();
-
   if (features.ssh) await autoConnectSavedSshHosts("startup");
 
   try {
@@ -1883,73 +1687,6 @@ const resolveTargetMachine = (
   if (onlineMachines.length === 0) throw new Error("No online codexhub project launcher.");
   throw new Error("Multiple online project launchers. Choose one before opening a project.");
 };
-
-const assertServerConnectionTarget = async (
-  connection: Pick<StoredServerConnection, "url" | "authToken">,
-  serverInstanceId: string
-) => {
-  const error = await validateServerConnectionTarget(connection, serverInstanceId);
-  if (error) throw new Error(error);
-};
-
-const validateServerConnectionTarget = async (
-  connection: Pick<StoredServerConnection, "url" | "authToken">,
-  serverInstanceId: string
-) => {
-  let url: URL;
-  try {
-    url = new URL(connection.url);
-  } catch {
-    return `Invalid server connection URL: ${connection.url}`;
-  }
-  const path = url.pathname.replace(/\/+$/, "");
-  if (path) {
-    return `Server connection URL must not include a path: ${url.pathname}. Use host:port for ports, for example http://localhost:8788.`;
-  }
-
-  try {
-    const healthUrl = new URL("/api/health", url);
-    const headers = connection.authToken ? { authorization: `Bearer ${connection.authToken}` } : undefined;
-    const response = await fetch(healthUrl, {
-      headers,
-      signal: AbortSignal.timeout(2500)
-    });
-    if (!response.ok) return null;
-    const payload = await response.json() as { serverInstanceId?: unknown };
-    if (payload.serverInstanceId === serverInstanceId) {
-      return `Cannot connect CodexHub server to itself: ${connection.url}`;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-};
-
-const isLocalServerConnectionUrl = (value: string, localHost: string, localPort: number) => {
-  try {
-    const url = new URL(value);
-    if (serverUrlPort(url) !== localPort) return false;
-    const targetHost = normalizeServerUrlHostname(url.hostname);
-    const host = normalizeServerUrlHostname(localHost);
-    if (targetHost === host) return true;
-    return isLoopbackServerHost(targetHost) && isLocalBindHost(host);
-  } catch {
-    return false;
-  }
-};
-
-const serverUrlPort = (url: URL) => {
-  if (url.port) return Number(url.port);
-  return url.protocol === "https:" ? 443 : 80;
-};
-
-const normalizeServerUrlHostname = (value: string) => value.trim().toLowerCase().replace(/^\[|\]$/g, "");
-
-const isLoopbackServerHost = (host: string) =>
-  host === "localhost" || host === "127.0.0.1" || host === "::1";
-
-const isLocalBindHost = (host: string) =>
-  host === "0.0.0.0" || host === "::" || isLoopbackServerHost(host);
 
 const registerStaticRoutes = (app: FastifyInstance, root: string) => {
   const sendIndex = async (_request: unknown, reply: any) => {

@@ -78,7 +78,7 @@ server 的轻量状态默认保存到：
 ~/.local/share/codexhub/server-state.yaml
 ```
 
-可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects、tasks、SSH hosts 等控制面状态，不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件，以及 server bridge 镜像。
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖数据目录。这个 YAML 只保存 machines、projects、tasks、SSH hosts 等控制面状态，不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。
 
 本机 codexhub session：
 
@@ -92,28 +92,17 @@ pnpm codexhub --server http://127.0.0.1:8788 -C /path/to/project
 
 server 在线时，`codexhub` 会通过 machine websocket 注册一个 transient session host，再把当前 session 挂到这台 session host 下；它只代表这个 headless Codex 进程，不作为项目浏览/启动器。Web 里打开本机任意项目优先使用内嵌 `local` machine；远端或宿主机项目使用 SSH / registered machine。
 
-server 在线时，session 会同步官方 app-server 的 thread/read、item、rawResponseItem 和 tokenUsage 事件，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地 headless bridge 会持续重试，直到进程退出。Web 主列表以 projects/threads 为主，session 是 machine 级 runtime/debug 对象，同一个 `sessionId` 可以承载多个 project cwd 的 threads；`/api/projects` 的 `session` 字段是按 project path 过滤后的 runtime 投影，`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections/server_connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 app-server tokenUsage 事件计算。
+server 在线时，session 会同步官方 app-server 的 thread/read、item、rawResponseItem 和 tokenUsage 事件，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地 headless bridge 会持续重试，直到进程退出。Web 主列表以 projects/threads 为主，session 是 machine 级 runtime/debug 对象，同一个 `sessionId` 可以承载多个 project cwd 的 threads；`/api/projects` 的 `session` 字段是按 project path 过滤后的 runtime 投影，`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 app-server tokenUsage 事件计算。
 
-## Server Bridge
+## 连接方式
 
-一个 CodexHub server 可以动态注册到另一个 CodexHub server。父 server 会把这个连接看成一台 `type=server` machine，project 会直接合并进父 server 的 Projects 列表，分组名来自保存的连接名称。
+CodexHub 只保留三种 machine 连接方式：
 
-子 server 仍然是真实 owner：路径解析、session 启动、thread turn、app-server turns snapshot 和实时输出都在子 server 本地执行；父 server 只是把 machine/session command 代理过去，并接收子 server 镜像回来的 normalized thread snapshot/event。因此在父 server 输入消息，子 server UI 也能看到同一个输入输出；在子 server 本地继续对话，父 server 订阅同一 thread 后也会看到输出。
+1. `local`：本机内嵌 launcher，直接在本机项目目录启动或复用官方 Codex app-server runtime。
+2. `ssh`：本机 server 通过 `ssh -R` 把远端 machine 连接转发回来，让本机控制面调用 SSH 机器上的 Codex CLI/app-server。
+3. `registered`：外部机器主动连接当前 server 的 `/api/machines/connect`，把那台机器上的 Codex CLI/app-server 暴露给当前控制面调用。
 
-Web 的 Connections / Servers tab 可保存父 server URL、可选 token 和自动连接开关。也可以直接调用 API：
-
-```bash
-curl -sS -X POST http://127.0.0.1:8788/api/server-connections \
-  -H 'content-type: application/json' \
-  -d '{
-    "name": "public group",
-    "url": "https://hub.example.com",
-    "authToken": "optional-token",
-    "enabled": true
-  }'
-```
-
-`enabled: true` 表示本地 server 下次启动会自动连接。返回给 Web/API 的 connection view 不包含 token，只包含 `hasAuthToken`。
+不再支持 CodexHub server 连接另一个 CodexHub server；也不再提供 `type=server` machine、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。
 
 当前在线 project/session 状态以 Web 和 `/api/projects` 为准；历史 thread 选择以 Web 的 thread picker 和 `/api/sessions/:sessionId/threads` 为准。
 
@@ -229,7 +218,6 @@ SSH 继续保留为 machine transport 类型；Telegram 是内建 integration pl
 pnpm check
 pnpm run smoke:machine-session
 pnpm run smoke:registered-machine
-pnpm run smoke:server-bridge
 pnpm run smoke:ssh-loopback
 pnpm run smoke:task-lock
 pnpm run smoke:electron
@@ -239,8 +227,6 @@ pnpm build
 `smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证跨 project 共享 runtime session、`/api/projects/open`、`/api/sessions`、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。
 
 `smoke:registered-machine` 会启动一个真实 `codexhub machine --type registered` CLI 子进程，验证 registered machine 注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期。
-
-`smoke:server-bridge` 会启动父/子两个临时 server 和一个 fake local machine/session，验证子 server 作为 `type=server` machine 注册到父 server，父端 project open 会转发到子 server 本地 launcher，父端 turn 会在子 server owner 执行，并把 normalized thread event 镜像回父端。
 
 `smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、项目打开、session 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
 
@@ -369,7 +355,7 @@ curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
   -d '{"input":"看一下这个项目结构","source":"web"}'
 
 # /api/events/ws messages:
-# {"type":"hello","sessionsAfter":0,"projectsAfter":0,"tasksAfter":0,"connectionsAfter":0,"serverConnectionsAfter":0}
+# {"type":"hello","sessionsAfter":0,"projectsAfter":0,"tasksAfter":0,"connectionsAfter":0}
 # {"type":"subscribe_thread","threadId":"<threadId>","after":0}
 
 curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \

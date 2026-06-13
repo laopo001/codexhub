@@ -83,19 +83,6 @@ export type StoredSshHost = {
   updatedAt: string;
 };
 
-export type StoredServerConnection = {
-  connectionId: string;
-  name: string;
-  url: string;
-  authToken?: string;
-  enabled: boolean;
-  machineId: string;
-  createdAt: string;
-  updatedAt: string;
-  lastConnectedAt?: string;
-  lastError?: string;
-};
-
 export type ServerStateData = {
   version: 1;
   updatedAt: string;
@@ -104,7 +91,6 @@ export type ServerStateData = {
   deletedProjects: DeletedProject[];
   tasks: StoredTask[];
   sshHosts: StoredSshHost[];
-  serverConnections: StoredServerConnection[];
 };
 
 export type ProjectSummary = StoredProject & {
@@ -129,8 +115,6 @@ type SessionSnapshot = {
 export class CodexhubServerState {
   private saveTimer: NodeJS.Timeout | null = null;
   private lastSavedText = "";
-  private readonly dirtyServerConnectionIds = new Set<string>();
-  private readonly deletedServerConnectionIds = new Set<string>();
   private readonly transientProjects = new Map<string, RuntimeProject>();
 
   private constructor(
@@ -260,106 +244,6 @@ export class CodexhubServerState {
 
   listSshHosts() {
     return [...this.data.sshHosts].sort(compareStoredSshHosts);
-  }
-
-  listServerConnections() {
-    return [...this.data.serverConnections].sort(compareStoredServerConnections);
-  }
-
-  getServerConnection(connectionId: string) {
-    return this.data.serverConnections.find((connection) => connection.connectionId === connectionId) ?? null;
-  }
-
-  upsertServerConnection(input: {
-    connectionId?: string;
-    name?: string;
-    url: string;
-    authToken?: string | null;
-    enabled?: boolean;
-    machineId?: string;
-    createdAt?: string;
-    updatedAt?: string;
-    lastConnectedAt?: string;
-    lastError?: string | null;
-  }) {
-    const url = normalizeServerConnectionUrl(input.url);
-    const now = input.updatedAt ?? new Date().toISOString();
-    const connectionId = input.connectionId?.trim() || serverConnectionIdFor(url);
-    const name = input.name?.trim() || serverConnectionName(url);
-    const existing = this.data.serverConnections.find((connection) => connection.connectionId === connectionId);
-    if (existing) {
-      existing.name = name;
-      existing.url = url;
-      if (input.authToken !== undefined) {
-        if (input.authToken === null || input.authToken === "") delete existing.authToken;
-        else existing.authToken = input.authToken;
-      }
-      if (input.enabled !== undefined) existing.enabled = input.enabled;
-      existing.machineId = input.machineId?.trim() || existing.machineId || serverMachineIdFor(connectionId);
-      existing.updatedAt = now;
-      if (input.lastConnectedAt !== undefined) existing.lastConnectedAt = input.lastConnectedAt;
-      if (input.lastError !== undefined) {
-        if (input.lastError === null || input.lastError === "") delete existing.lastError;
-        else existing.lastError = input.lastError;
-      }
-      this.touch();
-      this.markServerConnectionDirty(existing.connectionId);
-      return existing;
-    }
-    const connection: StoredServerConnection = {
-      connectionId,
-      name,
-      url,
-      authToken: input.authToken || undefined,
-      enabled: input.enabled ?? true,
-      machineId: input.machineId?.trim() || serverMachineIdFor(connectionId),
-      createdAt: input.createdAt ?? now,
-      updatedAt: now,
-      lastConnectedAt: input.lastConnectedAt,
-      lastError: input.lastError || undefined
-    };
-    this.data.serverConnections.push(connection);
-    this.markServerConnectionDirty(connection.connectionId);
-    this.touch();
-    return connection;
-  }
-
-  updateServerConnection(connectionId: string, input: {
-    name?: string;
-    url?: string;
-    authToken?: string | null;
-    enabled?: boolean;
-    lastConnectedAt?: string;
-    lastError?: string | null;
-  }) {
-    const existing = this.getServerConnection(connectionId);
-    if (!existing) return null;
-    if (input.name !== undefined) existing.name = input.name.trim() || existing.name;
-    if (input.url !== undefined) existing.url = normalizeServerConnectionUrl(input.url);
-    if (input.authToken !== undefined) {
-      if (input.authToken === null || input.authToken === "") delete existing.authToken;
-      else existing.authToken = input.authToken;
-    }
-    if (input.enabled !== undefined) existing.enabled = input.enabled;
-    if (input.lastConnectedAt !== undefined) existing.lastConnectedAt = input.lastConnectedAt;
-    if (input.lastError !== undefined) {
-      if (input.lastError === null || input.lastError === "") delete existing.lastError;
-      else existing.lastError = input.lastError;
-    }
-    existing.updatedAt = new Date().toISOString();
-    this.markServerConnectionDirty(existing.connectionId);
-    this.touch();
-    return existing;
-  }
-
-  deleteServerConnection(connectionId: string) {
-    const index = this.data.serverConnections.findIndex((connection) => connection.connectionId === connectionId);
-    if (index === -1) return false;
-    this.data.serverConnections.splice(index, 1);
-    this.deletedServerConnectionIds.add(connectionId);
-    this.dirtyServerConnectionIds.delete(connectionId);
-    this.touch();
-    return true;
   }
 
   upsertSshHost(input: { alias: string; createdAt?: string; updatedAt?: string }) {
@@ -811,26 +695,10 @@ export class CodexhubServerState {
     await writeFile(tmpPath, text, "utf8");
     await rename(tmpPath, this.filePath);
     this.lastSavedText = text;
-    this.dirtyServerConnectionIds.clear();
-    this.deletedServerConnectionIds.clear();
   }
 
   private async dataForSave(): Promise<ServerStateData> {
-    const currentFile = await readStateFile(this.filePath);
-    return {
-      ...this.data,
-      serverConnections: mergeServerConnectionsForSave({
-        memory: this.data.serverConnections,
-        file: currentFile.data.serverConnections,
-        dirtyIds: this.dirtyServerConnectionIds,
-        deletedIds: this.deletedServerConnectionIds
-      })
-    };
-  }
-
-  private markServerConnectionDirty(connectionId: string) {
-    this.dirtyServerConnectionIds.add(connectionId);
-    this.deletedServerConnectionIds.delete(connectionId);
+    return this.data;
   }
 }
 
@@ -860,10 +728,7 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
         projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
         deletedProjects: Array.isArray(parsed.deletedProjects) ? parsed.deletedProjects.filter(isDeletedProject) : [],
         tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : [],
-        sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : [],
-        serverConnections: Array.isArray(parsed.serverConnections)
-          ? parsed.serverConnections.map(normalizeStoredServerConnection).filter(isStoredServerConnection)
-          : []
+        sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : []
       },
       legacyThreads: Array.isArray(parsed.threads),
       legacyProjectNames: Array.isArray(parsed.projects)
@@ -882,32 +747,8 @@ const emptyState = (): ServerStateData => ({
   projects: [],
   deletedProjects: [],
   tasks: [],
-  sshHosts: [],
-  serverConnections: []
+  sshHosts: []
 });
-
-const mergeServerConnectionsForSave = (input: {
-  memory: StoredServerConnection[];
-  file: StoredServerConnection[];
-  dirtyIds: ReadonlySet<string>;
-  deletedIds: ReadonlySet<string>;
-}) => {
-  const memoryById = new Map(input.memory.map((connection) => [connection.connectionId, connection]));
-  const fileById = new Map(input.file.map((connection) => [connection.connectionId, connection]));
-  const connectionIds = new Set([...fileById.keys(), ...memoryById.keys()]);
-  const merged: StoredServerConnection[] = [];
-  for (const connectionId of connectionIds) {
-    if (input.deletedIds.has(connectionId)) continue;
-    const memoryConnection = memoryById.get(connectionId);
-    if (input.dirtyIds.has(connectionId)) {
-      if (memoryConnection) merged.push(memoryConnection);
-      continue;
-    }
-    const fileConnection = fileById.get(connectionId);
-    if (fileConnection) merged.push(fileConnection);
-  }
-  return merged;
-};
 
 const projectIdFor = (machineId: string, projectPath: string) =>
   `project-${createHash("sha256").update(`${machineId}\0${projectPath}`).digest("hex").slice(0, 16)}`;
@@ -1004,28 +845,6 @@ const normalizeStoredSshHost = (value: unknown): unknown => {
   };
 };
 
-const normalizeStoredServerConnection = (value: unknown): unknown => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const item = value as Record<string, unknown>;
-  const now = new Date().toISOString();
-  const url = typeof item.url === "string" ? safeNormalizeServerConnectionUrl(item.url) : "";
-  const connectionId = typeof item.connectionId === "string" && item.connectionId.trim()
-    ? item.connectionId.trim()
-    : url ? serverConnectionIdFor(url) : "";
-  return {
-    connectionId,
-    name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : url ? serverConnectionName(url) : "",
-    url,
-    authToken: typeof item.authToken === "string" && item.authToken ? item.authToken : undefined,
-    enabled: typeof item.enabled === "boolean" ? item.enabled : true,
-    machineId: typeof item.machineId === "string" && item.machineId.trim() ? item.machineId.trim() : serverMachineIdFor(connectionId),
-    createdAt: typeof item.createdAt === "string" ? item.createdAt : now,
-    updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : now,
-    lastConnectedAt: typeof item.lastConnectedAt === "string" ? item.lastConnectedAt : undefined,
-    lastError: typeof item.lastError === "string" ? item.lastError : undefined
-  };
-};
-
 const compareStoredProjects = (left: StoredProject, right: StoredProject) => {
   if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1;
   const createdCompare = left.createdAt.localeCompare(right.createdAt);
@@ -1045,20 +864,13 @@ const compareTasks = (left: StoredTask, right: StoredTask) => {
 const compareStoredSshHosts = (left: StoredSshHost, right: StoredSshHost) =>
   left.alias.localeCompare(right.alias, undefined, { sensitivity: "base" });
 
-const compareStoredServerConnections = (left: StoredServerConnection, right: StoredServerConnection) => {
-  if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
-  const nameCompare = left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
-  if (nameCompare) return nameCompare;
-  return left.createdAt.localeCompare(right.createdAt);
-};
-
 const isStoredMachine = (value: unknown): value is StoredMachine => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const item = value as Partial<StoredMachine>;
   return typeof item.machineId === "string"
     && typeof item.hostname === "string"
     && typeof item.lastSeenAt === "string"
-    && (item.type === "local" || item.type === "ssh" || item.type === "registered" || item.type === "server");
+    && (item.type === "local" || item.type === "ssh" || item.type === "registered");
 };
 
 const isStoredProject = (value: unknown): value is StoredProject => {
@@ -1121,56 +933,4 @@ const isStoredSshHost = (value: unknown): value is StoredSshHost => {
     && item.alias.trim().length > 0
     && typeof item.createdAt === "string"
     && typeof item.updatedAt === "string";
-};
-
-const isStoredServerConnection = (value: unknown): value is StoredServerConnection => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const item = value as Partial<StoredServerConnection>;
-  return typeof item.connectionId === "string"
-    && item.connectionId.trim().length > 0
-    && typeof item.name === "string"
-    && item.name.trim().length > 0
-    && typeof item.url === "string"
-    && item.url.trim().length > 0
-    && typeof item.enabled === "boolean"
-    && typeof item.machineId === "string"
-    && item.machineId.trim().length > 0
-    && typeof item.createdAt === "string"
-    && typeof item.updatedAt === "string"
-    && (item.authToken === undefined || typeof item.authToken === "string")
-    && (item.lastConnectedAt === undefined || typeof item.lastConnectedAt === "string")
-    && (item.lastError === undefined || typeof item.lastError === "string");
-};
-
-const serverConnectionIdFor = (url: string) =>
-  `server-${createHash("sha256").update(url).digest("hex").slice(0, 12)}`;
-
-const serverMachineIdFor = (connectionId: string) => `machine-${connectionId}`;
-
-const normalizeServerConnectionUrl = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) throw new Error("Server URL is required.");
-  const url = new URL(trimmed);
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`Unsupported server URL protocol: ${url.protocol}`);
-  url.pathname = url.pathname.replace(/\/+$/, "");
-  url.search = "";
-  url.hash = "";
-  return url.toString().replace(/\/$/, "");
-};
-
-const safeNormalizeServerConnectionUrl = (value: string) => {
-  try {
-    return normalizeServerConnectionUrl(value);
-  } catch {
-    return "";
-  }
-};
-
-const serverConnectionName = (url: string) => {
-  try {
-    const parsed = new URL(url);
-    return parsed.host || url;
-  } catch {
-    return url;
-  }
 };

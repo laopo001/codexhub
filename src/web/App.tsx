@@ -10,7 +10,6 @@ import { AppView } from "./AppView.js";
 import { createComposerActions } from "./appActions/composerActions.js";
 import { createProjectActions } from "./appActions/projectActions.js";
 import { createRealtimeActions } from "./appActions/realtimeActions.js";
-import { createServerConnectionActions } from "./appActions/serverConnectionActions.js";
 import { createSshActions } from "./appActions/sshActions.js";
 import { createTaskActions } from "./appActions/taskActions.js";
 import { createThreadActions } from "./appActions/threadActions.js";
@@ -33,9 +32,6 @@ import type {
   ProjectPickerState,
   ProjectSummary,
   ReasoningSelection,
-  ServerConnection,
-  ServerConnectionDraft,
-  ServerThreadGroup,
   SessionView,
   SshConnection,
   SshHost,
@@ -237,10 +233,6 @@ const App = () => {
   const [sshConnectingHost, setSshConnectingHost] = useState("");
   const [sshHostBusy, setSshHostBusy] = useState("");
   const [sshError, setSshError] = useState("");
-  const [serverConnections, setServerConnections] = useState<ServerConnection[]>([]);
-  const [serverConnectionDraft, setServerConnectionDraft] = useState<ServerConnectionDraft>({ name: "", url: "" });
-  const [serverConnectionBusyId, setServerConnectionBusyId] = useState("");
-  const [serverConnectionError, setServerConnectionError] = useState("");
   const [registeredCommandCopied, setRegisteredCommandCopied] = useState(false);
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [tasks, setTasks] = useState<LocalTask[]>([]);
@@ -289,7 +281,6 @@ const App = () => {
   const projectsLastSeq = useRef(0);
   const tasksLastSeq = useRef(0);
   const connectionsLastSeq = useRef(0);
-  const serverConnectionsLastSeq = useRef(0);
   const controlReconnectTimer = useRef<number | null>(null);
   const realtimeThreadSubscriptions = useRef(new Set<string>());
   const threadLastSeqs = useRef(new Map<string, number>());
@@ -335,22 +326,6 @@ const App = () => {
   );
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
   const localMachines = useMemo(() => machines.filter((machine) => machine.type === "local"), [machines]);
-  const serverMachines = useMemo(() => machines.filter((machine) => machine.type === "server"), [machines]);
-  const serverThreadGroups = useMemo<ServerThreadGroup[]>(() => serverMachines.map((machine) => {
-    const connectionSessions = sessionList.filter((session) => session.machineId === machine.machineId);
-    const threads = connectionSessions
-      .flatMap((session) => (session.threads ?? []).map((thread) => ({
-        session,
-        thread
-      })))
-      .sort((left, right) => Number(right.thread.running) - Number(left.thread.running)
-        || right.thread.updatedAt.localeCompare(left.thread.updatedAt));
-    return {
-      machine,
-      sessions: connectionSessions,
-      threads
-    };
-  }), [serverMachines, sessionList]);
   const registeredMachines = useMemo(() => machines.filter((machine) => machine.type === "registered"), [machines]);
   const sshConfigHostOptions = useMemo(() => {
     const savedAliases = new Set(sshHosts.map((host) => host.alias));
@@ -883,8 +858,6 @@ const App = () => {
     selectedModel,
     selectedProjectKey,
     selectedReasoning,
-    serverConnectionDraft,
-    serverConnectionsLastSeq,
     sessionList,
     openThreads,
     sessionsLastSeq,
@@ -913,10 +886,6 @@ const App = () => {
     setProjects,
     setProjectSearch,
     setRegisteredCommandCopied,
-    setServerConnectionBusyId,
-    setServerConnectionDraft,
-    setServerConnectionError,
-    setServerConnections,
     setSelectedModel,
     setSelectedProjectKey,
     setSelectedReasoning,
@@ -940,9 +909,6 @@ const App = () => {
     setTasks,
     setThreadOrderBySession,
     setThreadPicker,
-    serverConnections,
-    serverConnectionBusyId,
-    serverConnectionError,
     sshHostDraft,
     sshHosts,
     taskDraft,
@@ -955,7 +921,6 @@ const App = () => {
   Object.assign(
     actions,
     createRealtimeActions(actionContext, actions),
-    createServerConnectionActions(actionContext, actions),
     createSshActions(actionContext, actions),
     createTaskActions(actionContext, actions),
     createThreadActions(actionContext, actions),
@@ -966,7 +931,6 @@ const App = () => {
     addContextSelectionToConversation,
     addThreadFiles,
     addThreadImages,
-    addServerConnection,
     addSshHost,
     changeProjectPickerMachine,
     chooseThreadCandidate,
@@ -974,7 +938,6 @@ const App = () => {
     clearThreadGoal,
     closeThread,
     confirmProjectPicker,
-    connectServerConnection,
     connectSshHost,
     copyContextSelection,
     copyRegisteredCommand,
@@ -982,7 +945,6 @@ const App = () => {
     createTask,
     deleteProject,
     deleteTask,
-    disconnectServerConnection,
     focusTaskDraftProject,
     forkMessage,
     handleComposerKeyDown,
@@ -997,7 +959,6 @@ const App = () => {
     patchTask,
     removeThreadImage,
     removeThreadTextAttachment,
-    removeServerConnection,
     removeSshHost,
     resetComposerHistory,
     rollbackMessage,
@@ -1013,7 +974,6 @@ const App = () => {
     syncThreadSubscriptions,
     toggleProjectMachineGroup,
     toggleProjectPinned,
-    toggleServerConnectionEnabled,
     updateMessageRenderMode,
     updateThreadInput,
     updateTaskDraftMachine,
@@ -1055,7 +1015,6 @@ const App = () => {
     addContextSelectionToConversation,
     addThreadFiles,
     addThreadImages,
-    addServerConnection,
     addSshHost,
     changeProjectPickerMachine,
     chooseThreadCandidate,
@@ -1067,7 +1026,6 @@ const App = () => {
     composerTextareaRef,
     confirmProjectPicker,
     connectionMode,
-    connectServerConnection,
     connectSshHost,
     copyContextSelection,
     copyRegisteredCommand,
@@ -1077,7 +1035,6 @@ const App = () => {
     deleteProject,
     deleteTask,
     deletingProjectId,
-    disconnectServerConnection,
     effectiveModelSelection,
     effectiveReasoningSelection,
     focusTaskDraftProject,
@@ -1117,7 +1074,6 @@ const App = () => {
     registeredMachines,
     removeThreadImage,
     removeThreadTextAttachment,
-    removeServerConnection,
     removeSshHost,
     renderComposerSessionControls,
     resetComposerHistory,
@@ -1133,12 +1089,6 @@ const App = () => {
     sessionDialogOpen,
     sessionList,
     sessionMenuOpen,
-    serverConnectionBusyId,
-    serverConnectionDraft,
-    serverConnectionError,
-    serverConnections,
-    serverMachines,
-    serverThreadGroups,
     openThreads,
     setComposerMenuOpen,
     setComposerMode,
@@ -1155,7 +1105,6 @@ const App = () => {
     setAuthTokenDraft,
     setSelectedModel,
     setSelectedReasoning,
-    setServerConnectionDraft,
     setSessionDialogOpen,
     setSessionMenuOpen,
     setSidebarCollapsed,
@@ -1189,7 +1138,6 @@ const App = () => {
     threadPicker,
     toggleProjectMachineGroup,
     toggleProjectPinned,
-    toggleServerConnectionEnabled,
     turnUiState,
     updateMessageRenderMode,
     updateThreadInput,

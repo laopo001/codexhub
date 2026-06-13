@@ -20,31 +20,22 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 ## Machine / Session / Thread
 
-1. `MachineType = "local" | "ssh" | "registered" | "server"`。
+1. `MachineType = "local" | "ssh" | "registered"`。
 2. machine 是路径解析、目录 listing、project session 启停的执行者。server 不扫描远端文件系统；`/api/machines/:machineId/directories` 和 `/api/projects/open` 都必须发给在线 machine，由 machine 在自身环境确认 path 是可进入目录。
 3. machine capability 里 `projectLauncher` 很重要。Web 只应把可启动 project 的 machine 用于 Add Project；transient session host 必须保持 `projectLauncher: false`。
 4. `local` 表示 server 内嵌的 project launcher，普通 server 默认启用，Docker/测试/嵌入 surface 可用 `CODEX_HUB_LOCAL_MACHINE=0` 或 feature override 关闭。
 5. `registered` 表示外部机器主动连接 `/api/machines/connect`。它注册的是 machine，不是 session；session 由 server 下发 `start_session` 后由 machine 启动并再注册。
 6. `ssh` 表示 server 通过系统 `ssh -R` 建 reverse tunnel 后在远端启动 remote client。SSH 断开后该 connection 下的 machine/session 进入 offline；保存的 SSH host 可以按 autoconnect 策略重连，但不要把 SSH 抽象成插件运行器。
-7. `server` 表示另一个 CodexHub server 主动连接当前 server，并在当前 server 里呈现为一台 project launcher machine。它只暴露子 server 的本地/local launcher，不递归暴露子 server 下的 SSH/registered/server machines。
+7. 不再支持 `type=server` machine、CodexHub server-to-server bridge、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。
 8. session 是一次官方 Codex app-server/headless 进程。公开 ID 是 `sessionId`；它是 machine 级 runtime，能通过 app-server 的 per-thread/per-turn `cwd` 支持多个 project。Web 中点击 project 就是打开或复用该 machine 的 runtime，并为 project path 创建/复用 thread；不提供手动 restart/stop 或独立 session 管理入口。
-9. threadId 来自官方 Codex app-server。server/Web/TG/task 读取和展示 thread transcript，但 transcript 来源是 app-server turns snapshot、实时 item/rawResponseItem/tokenUsage 事件，或 server bridge 镜像出的 normalized thread snapshot/event。
+9. threadId 来自官方 Codex app-server。server/Web/TG/task 读取和展示 thread transcript，但 transcript 来源只能是 app-server turns snapshot、实时 item/rawResponseItem/tokenUsage 事件。
 10. server/session 不维护 `currentThreadId` 或 `currentThread`。Web 当前 tab、Telegram chat 绑定、task `threadId` 都是各自的客户端/任务选择状态；发送入口最终必须显式知道目标 `threadId`。
 11. `session_register.registration` 是 strict schema。旧 `workerId` 必须被拒绝；`currentThreadId` 只作为历史字段容忍并立即丢弃，不能重新进入公共模型。
-
-## Server Bridge
-
-1. server-to-server 注册由子 server 的 `ServerMachineBridgeManager` 连接父 server `/api/machines/connect` 实现；父 server 只看到一台 `type=server` machine，machine name 来自保存的 server connection name。
-2. 父 server 对 `server` machine 下发的 `start_session` / `list_directory` / `stop_session` 会被子 server 转发到子 server 本地/local project launcher。父 server 不扫描子 server 文件系统，也不直接连接子 server 的 child machines。
-3. 子 server 是真实 owner。父 server 发送的 session command 会在子 server 本地 `ThreadHub` 执行，再由子 server 的真实 session/app-server 处理；因此子 server UI 和父 server UI 会看到同一个 thread 输入输出。
-4. 子 server 通过 `session_thread_snapshot` / `session_thread_event` machine transport 消息把 normalized `ThreadDetail` / `ThreadStreamEvent` 镜像给父 server；不要把这些 normalized records 伪装成官方 app-server JSON-RPC。
-5. server connection 配置保存在 server state 的 `serverConnections`。`enabled=true` 表示启动时自动连接；运行时 connect/disconnect 不应改变 URL/name/token，除非通过 PATCH 显式更新。
-6. Web Connections / Servers tab 操作 `/api/server-connections`。返回给 Web 的 connection view 必须隐藏 `authToken`，只暴露 `hasAuthToken`。
 
 ## App-server Thread Sync 和实时流
 
 1. Web 只维护一条 `/api/events/ws`。连接后发送 `hello` 订阅 control-plane snapshots，再用 `subscribe_thread` / `unsubscribe_thread` 多路复用页面 thread tabs。
-2. Control-plane 事件包括 `sessions`、`projects`、`tasks`、`connections`、`server_connections`；thread 事件只包括 `thread`、`record`、`done`。
+2. Control-plane 事件包括 `sessions`、`projects`、`tasks`、`connections`；thread 事件只包括 `thread`、`record`、`done`。
 3. 浏览器不直接连接官方 app-server。server 通过内部 session command 发送 `subscribe_thread_records` / `unsubscribe_thread_records`，由 machine bridge 负责 app-server turns snapshot 和 live events。
 4. 每个被 Web 订阅的 thread 在一个 bridge 里只能有一份 thread records subscription。server 对 thread subscription 做 ref-count，并用 `CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS` 做 idle grace。
 5. Thread records subscription 只由 Web thread tab 订阅驱动。解绑后要保留 still-subscribed race guard，避免刚 unsubscribe 又被旧 async sync 重新写入。
@@ -62,15 +53,14 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 6. Threads：`GET /api/threads`、`GET /api/threads/:threadId`、`POST /api/threads/:threadId/turn`、`POST /api/threads/:threadId/stop`、`POST /api/threads/:threadId/goal`、`DELETE /api/threads/:threadId/goal`、`POST /api/threads/:threadId/fork`、`POST /api/threads/:threadId/rollback`、`DELETE /api/threads/:threadId`。
 7. Tasks：`GET /api/tasks`、`POST /api/tasks`、`PATCH /api/tasks/:taskId`、`DELETE /api/tasks/:taskId`、`POST /api/tasks/:taskId/run`。
 8. SSH：`GET /api/ssh/config-hosts`、`GET /api/ssh/hosts`、`POST /api/ssh/hosts`、`DELETE /api/ssh/hosts/:alias`、`GET /api/ssh/connections`、`POST /api/ssh/connect`、`DELETE /api/ssh/connections/:connectionId`、`GET /api/ssh/remote-client/:hash`。
-9. Server connections：`GET /api/server-connections`、`POST /api/server-connections`、`PATCH /api/server-connections/:connectionId`、`POST /api/server-connections/:connectionId/connect`、`POST /api/server-connections/:connectionId/disconnect`、`DELETE /api/server-connections/:connectionId`。
-10. Plugins：`GET /api/plugins`、`GET /api/plugins/:pluginId/assets/*`。
-11. Web/TG/task 发送对话时优先使用 `/api/threads/:threadId/turn`。`/api/sessions/:sessionId/turn` 只作为兼容/调试入口，body 必须包含 `threadId`，不能表示“当前 thread”。
-12. 对 project runtime 的公开生命周期入口只保留 `POST /api/projects/open`。不要新增公开的 project session stop/restart API；runtime session 不由 project delete 或 idle watcher 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
+9. Plugins：`GET /api/plugins`、`GET /api/plugins/:pluginId/assets/*`。
+10. Web/TG/task 发送对话时优先使用 `/api/threads/:threadId/turn`。`/api/sessions/:sessionId/turn` 只作为兼容/调试入口，body 必须包含 `threadId`，不能表示“当前 thread”。
+11. 对 project runtime 的公开生命周期入口只保留 `POST /api/projects/open`。不要新增公开的 project session stop/restart API；runtime session 不由 project delete 或 idle watcher 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
 
 ## Server State
 
 1. server state 默认在 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml`，数据结构版本为 `version: 1`。
-2. state 可以保存 machines、projects、deletedProjects、tasks、task 最近 run 摘要、SSH hosts、serverConnections。task run 摘要只保留最近 20 条，用于 UI 状态，不是 workspace 运行日志。
+2. state 可以保存 machines、projects、deletedProjects、tasks、task 最近 run 摘要、SSH hosts。task run 摘要只保留最近 20 条，用于 UI 状态，不是 workspace 运行日志。
 3. state 不保存 thread summary 数量、history 数量或完整 transcript 内容。project 的 `lastSessionId`、`lastThreadId` 只是最近打开元数据，不是 transcript 权威来源。
 4. project ID 由 `machineId + path` 推导；project 名称来自 path basename，不持久化自定义 name，也不提供 rename UI/API。
 5. 删除 project 会写入 deletedProjects tombstone，不能停止该 machine 的 runtime session。后续 session capture 不应自动复活已删除 project，除非用户重新 open。
@@ -142,8 +132,8 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 2. Electron 默认随机端口；显式设置 `CODEX_HUB_PORT` 后端口被占用应直接失败，不再 fallback。
 3. VSCode extension 注册 sidebar webview，每个 VSCode 窗口默认启动自己的随机端口嵌入 server；只有显式 `CODEX_HUB_PORT` 时才固定端口，端口占用应直接失败。
 4. VSCode extension 自动 `POST /api/projects/open` 当前窗口的 file workspace folders，body 使用 `persist:false` 和 `source.kind="vscode"`；这些项目以 VSCode workspace group 显示在内存中，不写入 `server-state.yaml`，用户显式保存后才变成普通 project。
-5. VSCode extension 启用和普通 Web 相同的 SSH/tasks/integrations/server connections 能力；这些配置仍属于对应窗口 server/state，窗口自动 workspace project 不应污染全局持久 project list。
-6. Docker 镜像运行 server/Web/API，默认应关闭内嵌 local machine，由宿主机、registered machine、server bridge 或 SSH 接入真实 project session。
+5. VSCode extension 启用和普通 Web 相同的 SSH/tasks/integrations 能力；这些配置仍属于对应窗口 server/state，窗口自动 workspace project 不应污染全局持久 project list。
+6. Docker 镜像运行 server/Web/API，默认应关闭内嵌 local machine，由宿主机、registered machine 或 SSH 接入真实 project session。
 
 ## 发布和验证
 
@@ -156,7 +146,6 @@ pnpm check
 pnpm run smoke:auth
 pnpm run smoke:machine-session
 pnpm run smoke:registered-machine
-pnpm run smoke:server-bridge
 pnpm run smoke:ssh-loopback
 pnpm run smoke:task-lock
 pnpm run smoke:electron
@@ -166,8 +155,7 @@ pnpm build
 4. `smoke:machine-session` 覆盖 local machine、project open、跨 project 共享 runtime session、session/thread `/status`、server-local task、plugin CSS、SSH 参数构造、project delete 和 watcher idle 不误停 runtime、旧 `workerId` registration 拒绝，以及不持久化 thread history/name。
 5. `smoke:auth` 覆盖 token 保护、Bearer token、WebSocket token query、machine websocket 授权。
 6. `smoke:registered-machine` 覆盖真实 `codexhub machine --type registered` CLI、项目打开、session/thread 对话流，以及 SIGTERM 后 machine/session unregister lifecycle 和 app-server 进程清理。
-7. `smoke:server-bridge` 覆盖父/子 server WS bridge、`type=server` machine 注册、父端 project open、父端 turn 下发到子 server owner，以及 normalized thread event 镜像回父端。
-8. `smoke:ssh-loopback` 覆盖真实本机 sshd、`ssh -R` reverse tunnel、SSH remote client、项目打开、session/thread 对话流和断开 lifecycle。
-9. `smoke:task-lock` 覆盖 task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn 和 idle-close。
-10. `smoke:electron` 覆盖 Electron main process、嵌入 server 随机端口和 `/api/health`。
-11. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vscode/codexhub.vsix --force`。
+7. `smoke:ssh-loopback` 覆盖真实本机 sshd、`ssh -R` reverse tunnel、SSH remote client、项目打开、session/thread 对话流和断开 lifecycle。
+8. `smoke:task-lock` 覆盖 task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn 和 idle-close。
+9. `smoke:electron` 覆盖 Electron main process、嵌入 server 随机端口和 `/api/health`。
+10. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vscode/codexhub.vsix --force`。

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-export type MachineType = "local" | "ssh" | "registered" | "server";
+export type MachineType = "local" | "ssh" | "registered";
 
 export type MachineCapabilities = {
   projectLauncher: boolean;
@@ -372,7 +372,7 @@ export const normalizeMachineType = (
   value: MachineType | undefined,
   fallback: MachineType = "registered"
 ): MachineType => {
-  return value === "local" || value === "ssh" || value === "registered" || value === "server" ? value : fallback;
+  return value === "local" || value === "ssh" || value === "registered" ? value : fallback;
 };
 
 export const normalizeMachineCapabilities = (

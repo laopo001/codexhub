@@ -14,7 +14,7 @@ type MachineCommandOptions = {
   server?: string;
   authToken?: string;
   machineId?: string;
-  type?: "local" | "ssh" | "registered" | "server";
+  type?: "local" | "ssh" | "registered";
   name?: string;
 };
 
@@ -81,7 +81,7 @@ program
   .option("--server <url>", "codexhub server URL")
   .option("--auth-token <token>", "codexhub API auth token (defaults to CODEX_HUB_AUTH_TOKEN)")
   .option("--machine-id <id>", "stable machine id")
-  .option("--type <type>", "machine connection type: local, ssh, registered, or server", "registered")
+  .option("--type <type>", "machine connection type: local, ssh, or registered", "registered")
   .option("--name <name>", "display name")
   .action(async (options: MachineCommandOptions = {}) => {
     await runCodexhubMachine({
@@ -406,9 +406,9 @@ function parsePortOption(value: string | undefined) {
   return parsed;
 }
 
-function parseMachineType(value: string | undefined): "local" | "ssh" | "registered" | "server" | undefined {
+function parseMachineType(value: string | undefined): "local" | "ssh" | "registered" | undefined {
   if (!value) return undefined;
-  if (value === "local" || value === "ssh" || value === "registered" || value === "server") return value;
+  if (value === "local" || value === "ssh" || value === "registered") return value;
   throw new Error(`Invalid machine type: ${value}`);
 }
 

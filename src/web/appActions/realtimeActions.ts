@@ -40,8 +40,6 @@ import type {
   ProjectsPayload,
   ReasoningSelection,
   RealtimeMessage,
-  ServerConnection,
-  ServerConnectionsStreamEvent,
   SessionSummary,
   SessionView,
   SshConnection,
@@ -78,10 +76,6 @@ type SshConnectionsPayload = {
   connections?: SshConnection[];
 };
 
-type ServerConnectionsPayload = {
-  connections?: ServerConnection[];
-};
-
 type RealtimeOutgoingMessage =
   | {
     type: "hello";
@@ -89,7 +83,6 @@ type RealtimeOutgoingMessage =
     projectsAfter: number;
     tasksAfter: number;
     connectionsAfter: number;
-    serverConnectionsAfter: number;
   }
   | { type: "subscribe_thread"; threadId: string; after: number }
   | { type: "unsubscribe_thread"; threadId: string };
@@ -104,7 +97,6 @@ type RealtimeActionsContext = {
   projectsLastSeq: React.MutableRefObject<number>;
   realtimeSocket: React.MutableRefObject<WebSocket | null>;
   realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
-  serverConnectionsLastSeq: React.MutableRefObject<number>;
   sessionsLastSeq: React.MutableRefObject<number>;
   tasksLastSeq: React.MutableRefObject<number>;
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
@@ -126,7 +118,6 @@ type RealtimeActionsContext = {
   setSelectedModel: React.Dispatch<React.SetStateAction<ModelSelection>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
   setSelectedReasoning: React.Dispatch<React.SetStateAction<ReasoningSelection>>;
-  setServerConnections: React.Dispatch<React.SetStateAction<ServerConnection[]>>;
   setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
   setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
@@ -173,17 +164,15 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     let sshHostData: SshHostsPayload;
     let sshConfigHostData: SshHostsPayload;
     let sshConnectionData: SshConnectionsPayload;
-    let serverConnectionData: ServerConnectionsPayload;
     let pluginData: PluginsPayload;
     let taskData: TasksPayload;
     try {
-      [sessionData, projectData, sshHostData, sshConfigHostData, sshConnectionData, serverConnectionData, pluginData, taskData] = await Promise.all([
+      [sessionData, projectData, sshHostData, sshConfigHostData, sshConnectionData, pluginData, taskData] = await Promise.all([
         apiJson<SessionsPayload>("/api/sessions"),
         apiJson<ProjectsPayload>("/api/projects"),
         apiJson<SshHostsPayload>("/api/ssh/hosts").catch(() => ({ hosts: [] })),
         apiJson<SshHostsPayload>("/api/ssh/config-hosts").catch(() => ({ hosts: [] })),
         apiJson<SshConnectionsPayload>("/api/ssh/connections").catch(() => ({ connections: [] })),
-        apiJson<ServerConnectionsPayload>("/api/server-connections").catch(() => ({ connections: [] })),
         apiJson<PluginsPayload>("/api/plugins").catch(() => ({ plugins: [] })),
         apiJson<TasksPayload>("/api/tasks").catch(() => ({ tasks: [] }))
       ]);
@@ -243,7 +232,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     ctx.setSshHosts(Array.isArray(sshHostData.hosts) ? sshHostData.hosts : []);
     ctx.setSshConfigHosts(Array.isArray(sshConfigHostData.hosts) ? sshConfigHostData.hosts : []);
     ctx.setSshConnections(Array.isArray(sshConnectionData.connections) ? sshConnectionData.connections : []);
-    ctx.setServerConnections(Array.isArray(serverConnectionData.connections) ? serverConnectionData.connections : []);
     ctx.setPlugins(normalizePlugins(pluginData.plugins));
     ctx.setTasks(normalizeTasks(taskData.tasks));
     ctx.setSessionList(loadedSessions);
@@ -319,8 +307,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
       sessionsAfter: ctx.sessionsLastSeq.current,
       projectsAfter: ctx.projectsLastSeq.current,
       tasksAfter: ctx.tasksLastSeq.current,
-      connectionsAfter: ctx.connectionsLastSeq.current,
-      serverConnectionsAfter: ctx.serverConnectionsLastSeq.current
+      connectionsAfter: ctx.connectionsLastSeq.current
     });
   }
 
@@ -384,12 +371,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
       const payload = message;
       ctx.connectionsLastSeq.current = Math.max(ctx.connectionsLastSeq.current, payload.seq);
       ctx.setSshConnections(Array.isArray(payload.connections) ? payload.connections : []);
-      return;
-    }
-    if (message.type === "server_connections") {
-      const payload = message as ServerConnectionsStreamEvent;
-      ctx.serverConnectionsLastSeq.current = Math.max(ctx.serverConnectionsLastSeq.current, payload.seq);
-      ctx.setServerConnections(Array.isArray(payload.connections) ? payload.connections : []);
       return;
     }
     if (

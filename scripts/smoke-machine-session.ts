@@ -108,7 +108,6 @@ const main = async () => {
 
   await assertTaskCronSemantics();
   await assertServerStateSnapshotPure();
-  await assertServerConnectionStateMerge();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
   await assertProjectNamesArePathBasenames();
@@ -670,45 +669,6 @@ const assertServerStateSnapshotPure = async () => {
   await state.flush();
   const after = await readFile(state.path, "utf8");
   if (after !== before) throw new Error("CodexhubServerState.snapshot mutated server-state.yaml");
-};
-
-const assertServerConnectionStateMerge = async () => {
-  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-server-connections."));
-  const { CodexhubServerState } = await import("../src/core/serverState.js");
-  const first = await CodexhubServerState.load({ dataDir });
-  const second = await CodexhubServerState.load({ dataDir });
-  const connection = second.upsertServerConnection({
-    name: "parent",
-    url: "http://127.0.0.1:8788",
-    enabled: true
-  });
-  await second.flush();
-
-  first.upsertProject({
-    machineId: "machine-state-merge-smoke",
-    path: "/tmp/codexhub-state-merge-smoke",
-    now: "2026-01-01T00:00:00.000Z"
-  });
-  await first.flush();
-  const saved = await readFile(first.path, "utf8");
-  if (!saved.includes("\nserverConnections:") || !saved.includes("http://127.0.0.1:8788")) {
-    throw new Error(`concurrent state save dropped server connections:\n${saved}`);
-  }
-
-  const stale = await CodexhubServerState.load({ dataDir });
-  const remover = await CodexhubServerState.load({ dataDir });
-  if (!remover.deleteServerConnection(connection.connectionId)) throw new Error("server connection delete smoke setup failed");
-  await remover.flush();
-  stale.upsertProject({
-    machineId: "machine-state-merge-stale-smoke",
-    path: "/tmp/codexhub-state-merge-stale-smoke",
-    now: "2026-01-01T00:01:00.000Z"
-  });
-  await stale.flush();
-  const afterDelete = await readFile(stale.path, "utf8");
-  if (afterDelete.includes("http://127.0.0.1:8788")) {
-    throw new Error(`stale state save resurrected deleted server connection:\n${afterDelete}`);
-  }
 };
 
 const assertServerStateDoesNotPersistThreadHistory = async () => {

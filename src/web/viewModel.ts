@@ -19,9 +19,6 @@ import type {
   ProjectPickerState,
   ProjectSummary,
   ReasoningSelection,
-  ServerConnection,
-  ServerConnectionDraft,
-  ServerThreadGroup,
   SessionView,
   SshConnection,
   SshHost,
@@ -55,11 +52,9 @@ export type ThreadGoalUpdateInput = Partial<Pick<ThreadGoalView, "objective" | "
 
 export type AppSidebarViewModel = {
   activeProjectKey: string;
-  addServerConnection: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   addSshHost: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   collapsedProjectMachineKeys: string[];
   connectionMode: ConnectionMode;
-  connectServerConnection: (connectionId: string) => MaybePromise;
   connectSshHost: (host: string, name?: string) => MaybePromise;
   copyRegisteredCommand: () => MaybePromise;
   createTask: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
@@ -67,7 +62,6 @@ export type AppSidebarViewModel = {
   deleteProject: (project: ProjectSummary) => MaybePromise;
   deleteTask: (taskId: string) => MaybePromise;
   deletingProjectId: string;
-  disconnectServerConnection: (connectionId: string) => MaybePromise;
   focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
   localMachines: MachineSummary[];
   machines: MachineSummary[];
@@ -85,7 +79,6 @@ export type AppSidebarViewModel = {
   registeredCommandIncludesToken: boolean;
   registeredCommandCopied: boolean;
   registeredMachines: MachineSummary[];
-  removeServerConnection: (connection: ServerConnection) => MaybePromise;
   removeSshHost: (host: SshHost, activeConnection?: SshConnection) => MaybePromise;
   runTaskNow: (task: LocalTask) => MaybePromise;
   selectedProject?: ProjectSummary | null;
@@ -95,16 +88,9 @@ export type AppSidebarViewModel = {
   setConnectionMode: React.Dispatch<React.SetStateAction<ConnectionMode>>;
   setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setProjectSearch: React.Dispatch<React.SetStateAction<string>>;
-  setServerConnectionDraft: React.Dispatch<React.SetStateAction<ServerConnectionDraft>>;
   setSshHostDraft: React.Dispatch<React.SetStateAction<string>>;
   setTaskDraft: React.Dispatch<React.SetStateAction<TaskDraft>>;
   setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  serverConnectionBusyId: string;
-  serverConnectionDraft: ServerConnectionDraft;
-  serverConnectionError: string;
-  serverConnections: ServerConnection[];
-  serverMachines: MachineSummary[];
-  serverThreadGroups: ServerThreadGroup[];
   sshConfigHostOptions: SshHost[];
   sshConfigHosts: SshHost[];
   sshConnectingHost: string;
@@ -120,7 +106,6 @@ export type AppSidebarViewModel = {
   tasks: LocalTask[];
   toggleProjectMachineGroup: (key: string) => void;
   toggleProjectPinned: (project: ProjectSummary) => MaybePromise;
-  toggleServerConnectionEnabled: (connection: ServerConnection) => MaybePromise;
   updateTaskDraftMachine: (machineId: string) => void;
   updateTaskDraftProject: (projectPath: string) => void;
 };

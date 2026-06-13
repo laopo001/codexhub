@@ -51,14 +51,16 @@ const main = async () => {
   const dataDir = path.join(root, "state");
   const projectDir = path.join(root, "project");
   const sshDir = path.join(root, "ssh");
+  const codexHomeDir = path.join(root, "codex-home");
   await mkdir(dataDir, { recursive: true });
   await mkdir(projectDir, { recursive: true });
   await mkdir(sshDir, { recursive: true });
+  await mkdir(codexHomeDir, { recursive: true });
 
   const sshdPort = await findFreePort();
   const serverPort = await findFreePort();
   const remotePort = await findFreePort();
-  const ssh = await prepareLoopbackSsh(sshDir, sshdPort);
+  const ssh = await prepareLoopbackSsh(sshDir, sshdPort, codexHomeDir);
 
   process.env.CODEX_HUB_DATA_DIR = dataDir;
   process.env.CODEX_HUB_SSH_CONFIG = ssh.clientConfigPath;
@@ -146,7 +148,7 @@ const main = async () => {
   }
 };
 
-const prepareLoopbackSsh = async (root: string, port: number) => {
+const prepareLoopbackSsh = async (root: string, port: number, codexHomeDir: string) => {
   const user = os.userInfo().username;
   const hostAlias = "codexhub-loopback";
   const clientKeyPath = path.join(root, "client_key");
@@ -179,6 +181,7 @@ const prepareLoopbackSsh = async (root: string, port: number) => {
     "ChallengeResponseAuthentication no",
     "PubkeyAuthentication yes",
     "UsePAM no",
+    `SetEnv CODEX_HOME=${codexHomeDir}`,
     "StrictModes no",
     `AllowUsers ${user}`,
     "LogLevel ERROR",

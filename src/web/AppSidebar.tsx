@@ -1,7 +1,7 @@
 import React from "react";
 import { Switch } from "antd";
 import { History, Pin, PinOff, Play, Trash2 } from "lucide-react";
-import type { ProjectMachineGroup, ServerConnection } from "./types.js";
+import type { ProjectMachineGroup } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
   activeSshConnectionForHost,
@@ -43,11 +43,9 @@ const taskSchedulePresets = [
 export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const {
     activeProjectKey,
-    addServerConnection,
     addSshHost,
     collapsedProjectMachineKeys,
     connectionMode,
-    connectServerConnection,
     connectSshHost,
     copyRegisteredCommand,
     createTask,
@@ -55,7 +53,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     deleteProject,
     deleteTask,
     deletingProjectId,
-    disconnectServerConnection,
     focusTaskDraftProject,
     localMachines,
     machines,
@@ -72,7 +69,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     registeredCommandIncludesToken,
     registeredCommandCopied,
     registeredMachines,
-    removeServerConnection,
     removeSshHost,
     runTaskNow,
     selectedProject,
@@ -82,15 +78,9 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     setConnectionMode,
     setOfflineProjectsCollapsed,
     setProjectSearch,
-    setServerConnectionDraft,
     setSshHostDraft,
     setTaskDraft,
     setTaskFormOpen,
-    serverConnectionBusyId,
-    serverConnectionDraft,
-    serverConnectionError,
-    serverConnections,
-    serverThreadGroups,
     sshConfigHostOptions,
     sshConfigHosts,
     sshConnectingHost,
@@ -106,7 +96,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     tasks,
     toggleProjectMachineGroup,
     toggleProjectPinned,
-    toggleServerConnectionEnabled,
     updateTaskDraftMachine,
     updateTaskDraftProject
   } = viewModel;
@@ -248,13 +237,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           </button>
           <button
             type="button"
-            className={connectionMode === "servers" ? "active" : ""}
-            onClick={() => setConnectionMode("servers")}
-          >
-            Servers
-          </button>
-          <button
-            type="button"
             className={connectionMode === "registered" ? "active" : ""}
             onClick={() => setConnectionMode("registered")}
           >
@@ -342,138 +324,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               );
             })}
             {sshError ? <div className="projectOpenError">{sshError}</div> : null}
-          </div>
-        ) : connectionMode === "servers" ? (
-          <div className="connectionList">
-            <form className="serverConnectionForm" onSubmit={(event) => void addServerConnection(event)}>
-              <input
-                value={serverConnectionDraft.name}
-                onChange={(event) => setServerConnectionDraft((draft) => ({ ...draft, name: event.target.value }))}
-                placeholder="Name (optional)"
-                spellCheck={false}
-              />
-              <input
-                value={serverConnectionDraft.url}
-                onChange={(event) => setServerConnectionDraft((draft) => ({ ...draft, url: event.target.value }))}
-                placeholder="https://hub.example.com?token=..."
-                spellCheck={false}
-              />
-              <button type="submit" disabled={!serverConnectionDraft.url.trim() || serverConnectionBusyId === "new"}>
-                {serverConnectionBusyId === "new" ? "..." : "Add"}
-              </button>
-            </form>
-            {serverConnections.length === 0 && serverThreadGroups.length === 0 ? (
-              <div className="connectionEmpty">No server connections</div>
-            ) : serverConnections.map((connection) => {
-              const busy = serverConnectionBusyId === connection.connectionId;
-              const detail = serverConnectionDetail(connection);
-              return (
-                <div className={`connectionRow server ${connection.status}`} key={connection.connectionId} title={detail}>
-                  <button
-                    type="button"
-                    className="connectionHostButton"
-                    onClick={() => void (connection.online
-                      ? disconnectServerConnection(connection.connectionId)
-                      : connectServerConnection(connection.connectionId))}
-                    disabled={busy || connection.status === "connecting"}
-                  >
-                    <span>{connection.name}</span>
-                    <code title={connection.url}>{connection.url}</code>
-                  </button>
-                  <strong>{serverConnectionStatusLabel(connection.status)}</strong>
-                  <button
-                    type="button"
-                    className="connectionSmallButton"
-                    onClick={() => void toggleServerConnectionEnabled(connection)}
-                    disabled={busy}
-                    title={connection.enabled ? "Disable startup auto connect" : "Enable startup auto connect"}
-                  >
-                    {connection.enabled ? "Auto" : "Manual"}
-                  </button>
-                  <button
-                    type="button"
-                    className="connectionDeleteButton"
-                    onClick={() => void removeServerConnection(connection)}
-                    disabled={busy}
-                    aria-label={`Remove ${connection.name}`}
-                    title={`Remove ${connection.name}`}
-                  >
-                    x
-                  </button>
-                  {connection.lastError ? <code className="connectionErrorLine">{connection.lastError}</code> : null}
-                </div>
-              );
-            })}
-            {serverThreadGroups.map((group) => {
-              const machine = group.machine;
-              const machineLabel = machine.name ?? machine.hostname;
-              return (
-                <React.Fragment key={machine.machineId}>
-                  <div className={`connectionRow ${machine.online ? "online" : "offline"}`} title={`${machineLabel}\n${machine.machineId}`}>
-                    <span>{machineLabel}</span>
-                    <strong>{machine.online ? "online" : "offline"}</strong>
-                    <code title={machine.machineId}>{`${group.sessions.length} sessions · ${group.threads.length} threads · ${machine.machineId}`}</code>
-                  </div>
-                  {group.sessions.length ? (
-                    <div className="serverThreadList" aria-label={`${machineLabel} sessions`}>
-                      {group.sessions.map((session) => {
-                        const sessionThreads = [...(session.threads ?? [])].sort((left, right) =>
-                          Number(right.running) - Number(left.running) || right.updatedAt.localeCompare(left.updatedAt)
-                        );
-                        const targetThread = sessionThreads[0];
-                        const sessionLabel = session.name ?? session.sessionId;
-                        return (
-                          <React.Fragment key={session.sessionId}>
-                            <button
-                              type="button"
-                              className={`serverSessionRow ${session.online ? "online" : "offline"}`}
-                              onClick={() => void (targetThread
-                                ? selectSessionThread(session, targetThread.threadId)
-                                : selectProjectSession(session))}
-                              disabled={!session.online}
-                              title={`${sessionLabel}\n${session.workingDirectory}\n${session.sessionId}`}
-                            >
-                              <History size={13} strokeWidth={2.1} aria-hidden="true" />
-                              <span className="serverThreadMain">
-                                <span className="serverThreadTitle">{sessionLabel}</span>
-                                <code>{session.workingDirectory}</code>
-                              </span>
-                              <strong>{session.online ? `${sessionThreads.length} threads` : "offline"}</strong>
-                            </button>
-                            {sessionThreads.length ? sessionThreads.map((thread) => {
-                              const title = threadDisplayTitle(thread);
-                              const runnable = session.online && thread.session.runnable !== false;
-                              return (
-                                <button
-                                  type="button"
-                                  className={`serverThreadRow ${thread.running ? "running" : ""}`}
-                                  key={`${session.sessionId}:${thread.threadId}`}
-                                  onClick={() => void selectSessionThread(session, thread.threadId)}
-                                  disabled={!runnable}
-                                  title={`${title}\n${thread.workingDirectory}\n${thread.threadId}`}
-                                >
-                                  <History size={13} strokeWidth={2.1} aria-hidden="true" />
-                                  <span className="serverThreadMain">
-                                    <span className="serverThreadTitle">{title}</span>
-                                    <code>{thread.threadId}</code>
-                                  </span>
-                                  <strong>{thread.running ? "running" : runnable ? "ready" : "offline"}</strong>
-                                </button>
-                              );
-                            }) : (
-                              <div className="serverThreadEmpty">No threads</div>
-                            )}
-                          </React.Fragment>
-                        );
-                      })}
-                    </div>
-                  ) : machine.online ? (
-                    <div className="serverThreadEmpty">No remote sessions</div>
-                  ) : null}
-                </React.Fragment>
-              );
-            })}
-            {serverConnectionError ? <div className="projectOpenError">{serverConnectionError}</div> : null}
           </div>
         ) : (
           <div className="connectionList">
@@ -748,15 +598,3 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     </aside>
   );
 };
-
-const serverConnectionStatusLabel = (status: ServerConnection["status"]) =>
-  status === "online" ? "online" : status === "connecting" ? "connecting" : status === "failed" ? "failed" : "offline";
-
-const serverConnectionDetail = (connection: ServerConnection) => [
-  connection.url,
-  connection.enabled ? "auto connect enabled" : "manual connect",
-  connection.hasAuthToken ? "auth token saved" : "no auth token",
-  connection.connectedAt ? `connected ${connection.connectedAt}` : null,
-  connection.lastConnectedAt ? `last connected ${connection.lastConnectedAt}` : null,
-  connection.lastError ? `last error ${connection.lastError}` : null
-].filter(Boolean).join("\n");

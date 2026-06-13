@@ -82,11 +82,6 @@
   padding-right: 6px;
 }
 
-.connectionRow.server {
-  grid-template-columns: minmax(0, 1fr) auto auto 26px;
-  padding-right: 6px;
-}
-
 .connectionRow.online {
   border-color: #405244;
   background: #0f1b14;
@@ -99,27 +94,14 @@
   color: #d8e2d5;
 }
 
-.connectionRow.server.connecting {
-  border-color: #4a563d;
-  background: #141a12;
-  color: #d8e2d5;
-}
-
 .connectionRow.ssh.failed {
   border-color: #8b3f31;
   background: #1c1210;
   color: #f0c9bf;
 }
 
-.connectionRow.server.failed {
-  border-color: #8b3f31;
-  background: #1c1210;
-  color: #f0c9bf;
-}
-
 .connectionRow.ssh.stopped,
-.connectionRow.ssh.missing,
-.connectionRow.server.offline {
+.connectionRow.ssh.missing {
   border-color: #4a4f45;
   background: #131712;
   color: #b8c5b4;
@@ -158,24 +140,13 @@
   color: #ffb9a8;
 }
 
-.connectionRow.server.failed strong {
-  background: #4a221b;
-  color: #ffb9a8;
-}
-
 .connectionRow.ssh.starting strong {
   background: #344022;
   color: #d9e5a6;
 }
 
-.connectionRow.server.connecting strong {
-  background: #344022;
-  color: #d9e5a6;
-}
-
 .connectionRow.ssh.stopped strong,
-.connectionRow.ssh.missing strong,
-.connectionRow.server.offline strong {
+.connectionRow.ssh.missing strong {
   background: #252d25;
   color: #aab7a8;
 }
@@ -220,22 +191,6 @@
   cursor: default;
 }
 
-.connectionSmallButton {
-  min-width: 48px;
-  height: 26px;
-  border: 1px solid #334238;
-  border-radius: 6px;
-  background: #132018;
-  color: #b8c5b4;
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.connectionSmallButton:disabled {
-  color: #586458;
-  cursor: default;
-}
-
 .connectionErrorLine {
   grid-column: 1 / -1;
   color: #ffb9a8 !important;
@@ -245,160 +200,6 @@
 .connectionSubList {
   display: grid;
   gap: 5px;
-}
-
-.serverThreadList {
-  display: grid;
-  gap: 4px;
-  margin: -2px 0 6px 12px;
-  padding-left: 8px;
-  border-left: 1px solid #334238;
-}
-
-.serverSessionRow,
-.serverThreadRow,
-.serverThreadEmpty {
-  min-width: 0;
-  border: 1px solid #28362d;
-  border-radius: 7px;
-  background: #0d150f;
-  color: #b8c5b4;
-  font-size: 11px;
-}
-
-.serverSessionRow,
-.serverThreadRow {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 7px;
-  text-align: left;
-}
-
-.serverSessionRow {
-  border-color: #334238;
-  background: #101a13;
-  color: #b8c5b4;
-}
-
-.serverSessionRow.offline {
-  color: #657064;
-}
-
-.serverSessionRow:disabled {
-  color: #657064;
-  cursor: default;
-}
-
-.serverSessionRow:not(:disabled):hover,
-.serverSessionRow:not(:disabled):focus-visible,
-.serverThreadRow:not(:disabled):hover,
-.serverThreadRow:not(:disabled):focus-visible {
-  border-color: #5a765f;
-  background: #122117;
-}
-
-.serverSessionRow + .serverThreadRow {
-  margin-left: 12px;
-}
-
-.serverThreadRow.running {
-  border-color: #725128;
-  background: #18140d;
-}
-
-.serverThreadRow:disabled {
-  color: #657064;
-  cursor: default;
-}
-
-.serverThreadMain {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.serverThreadTitle,
-.serverThreadMain code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.serverThreadTitle {
-  color: #e5eee1;
-  font-weight: 750;
-}
-
-.serverThreadMain code {
-  color: #91a090;
-  font-family: inherit;
-  font-size: 10px;
-}
-
-.serverThreadRow strong {
-  border-radius: 999px;
-  background: #203526;
-  color: #b8c5b4;
-  font-size: 10px;
-  font-weight: 750;
-  padding: 1px 6px;
-}
-
-.serverSessionRow strong {
-  border-radius: 999px;
-  background: #203526;
-  color: #b8c5b4;
-  font-size: 10px;
-  font-weight: 750;
-  padding: 1px 6px;
-}
-
-.serverThreadRow.running strong {
-  background: #40301b;
-  color: #ffd294;
-}
-
-.serverThreadEmpty {
-  margin: -2px 0 6px 12px;
-  padding: 7px 8px;
-  color: #91a090;
-}
-
-.serverConnectionForm {
-  display: grid;
-  grid-template-columns: minmax(86px, 0.7fr) minmax(0, 1.5fr) auto;
-  gap: 6px;
-  min-width: 0;
-}
-
-.serverConnectionForm input {
-  min-width: 0;
-  height: 32px;
-  border: 1px solid #334238;
-  border-radius: 7px;
-  background: #0f1b14;
-  color: #d8e2d5;
-  padding: 0 9px;
-  font: inherit;
-  font-size: 12px;
-}
-
-.serverConnectionForm button {
-  height: 32px;
-  border: 0;
-  border-radius: 7px;
-  background: #2a6041;
-  color: #f8fbf4;
-  padding: 0 11px;
-  font-weight: 800;
-}
-
-.serverConnectionForm button:disabled {
-  background: #26342b;
-  color: #687467;
 }
 
 .serverSharePanel {
