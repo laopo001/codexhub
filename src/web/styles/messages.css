@@ -315,14 +315,53 @@
   border-radius: 6px;
   background: #fbfcfd;
   color: #26342a;
-  font-weight: 500;
   line-height: 1.35;
 }
 
-.shellCommandSyntax,
-.shellCommandSyntaxCode,
-.shellCommandFallback {
+.shellToken {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.shellToken.shellPrompt {
+  color: #c43c35;
+  font-weight: 700;
+}
+
+.shellToken.command {
+  color: #1f5fbf;
+  font-weight: 700;
+}
+
+.shellToken.envKey {
+  color: #8a3ffc;
+  font-weight: 650;
+}
+
+.shellToken.envValue,
+.shellToken.string {
+  color: #2f7d32;
+}
+
+.shellToken.parameter {
+  color: #9a4f00;
+  font-weight: 600;
+}
+
+.shellToken.operator {
+  color: #58677a;
+  font-weight: 650;
+}
+
+.shellToken.url {
+  color: #096b8f;
+}
+
+.shellToken.path {
+  color: #7c5c13;
+}
+
+.shellToken.number {
+  color: #7b4fb5;
 }
 
 .toolPreviewMeta .shellCommandWrapperTag {

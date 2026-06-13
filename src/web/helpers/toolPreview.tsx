@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from "react";
+import React from "react";
 import { Tag } from "antd";
 import { FileDiff, Image, Plug, Search, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
@@ -21,8 +21,6 @@ type ShellCommandDisplay = {
   display: string;
   wrapper?: string;
 };
-
-const SyntaxCodeBlock = lazy(() => import("../SyntaxCodeBlock.js"));
 
 export const UpdatePlanPreview = ({
   plan,
@@ -617,32 +615,155 @@ const appServerOutputMeta = (payload: Record<string, unknown>) => [
 ].filter((line): line is string => Boolean(line)).join("\n") || undefined;
 
 const ShellCommandPreview = ({ command }: { command: ShellCommandDisplay }) => {
-  const previewLine = shellCommandPreviewLine(command.display);
+  const tokens = shellCommandHighlightTokens(command.display);
   return (
     <div className="shellCommandPreview">
-      <div className="toolCommandLine shellCommandDisplayLine">
-        <Suspense fallback={<code className="shellCommandFallback">{previewLine}</code>}>
-          <SyntaxCodeBlock
-            language="shell-session"
-            className="shellCommandSyntax"
-            codeClassName="shellCommandSyntaxCode"
-            customStyle={shellCommandSyntaxStyle}
-            wrapLongLines
-          >
-            {previewLine}
-          </SyntaxCodeBlock>
-        </Suspense>
-      </div>
+      <pre className="toolCommandLine shellCommandDisplayLine" aria-label={shellCommandPreviewLine(command.display)}>
+        <span className="shellToken shellPrompt">$</span>
+        {command.display ? <span className="shellToken shellSpace"> </span> : null}
+        {tokens.length ? tokens.map((token, index) => (
+          <span className={`shellToken ${token.kind}`} key={`${index}:${token.kind}:${token.text}`}>
+            {token.text}
+          </span>
+        )) : <span className="shellToken empty">&lt;empty&gt;</span>}
+      </pre>
     </div>
   );
 };
 
-const shellCommandSyntaxStyle: React.CSSProperties = {
-  fontSize: "13px",
-  lineHeight: 1.35
+const shellCommandPreviewLine = (command: string) => command ? `$ ${command}` : "$ <empty>";
+
+type ShellHighlightToken = {
+  text: string;
+  kind: string;
 };
 
-const shellCommandPreviewLine = (command: string) => command ? `$ ${command}` : "$ <empty>";
+type ShellScannedToken = {
+  text: string;
+  kind: "word" | "space" | "operator" | "string";
+};
+
+const shellCommandHighlightTokens = (command: string): ShellHighlightToken[] => {
+  const scanned = scanShellCommand(command);
+  const highlighted: ShellHighlightToken[] = [];
+  let expectingCommand = true;
+
+  for (const token of scanned) {
+    if (token.kind === "space") {
+      highlighted.push({ text: token.text, kind: "shellSpace" });
+      continue;
+    }
+    if (token.kind === "operator") {
+      highlighted.push({ text: token.text, kind: "operator" });
+      expectingCommand = isCommandSeparator(token.text);
+      continue;
+    }
+    if (token.kind === "string") {
+      highlighted.push({ text: token.text, kind: "string" });
+      expectingCommand = false;
+      continue;
+    }
+
+    if (expectingCommand) {
+      const envAssignment = splitEnvAssignment(token.text);
+      if (envAssignment) {
+        highlighted.push({ text: envAssignment.key, kind: "envKey" });
+        highlighted.push({ text: "=", kind: "operator" });
+        if (envAssignment.value) highlighted.push({ text: envAssignment.value, kind: "envValue" });
+        continue;
+      }
+      highlighted.push({ text: token.text, kind: "command" });
+      expectingCommand = false;
+      continue;
+    }
+
+    highlighted.push(...highlightShellArgument(token.text));
+  }
+
+  return highlighted;
+};
+
+const scanShellCommand = (command: string): ShellScannedToken[] => {
+  const tokens: ShellScannedToken[] = [];
+  for (let index = 0; index < command.length;) {
+    const char = command[index];
+    if (/\s/.test(char)) {
+      const start = index;
+      while (index < command.length && /\s/.test(command[index])) index += 1;
+      tokens.push({ text: command.slice(start, index), kind: "space" });
+      continue;
+    }
+    if (char === "'" || char === "\"" || char === "`") {
+      const start = index;
+      index = scanQuotedShellString(command, index);
+      tokens.push({ text: command.slice(start, index), kind: "string" });
+      continue;
+    }
+    const operator = shellOperatorAt(command, index);
+    if (operator) {
+      tokens.push({ text: operator, kind: "operator" });
+      index += operator.length;
+      continue;
+    }
+    const start = index;
+    while (index < command.length && !/\s/.test(command[index]) && command[index] !== "'" && command[index] !== "\"" && command[index] !== "`" && !shellOperatorAt(command, index)) {
+      index += 1;
+    }
+    tokens.push({ text: command.slice(start, index), kind: "word" });
+  }
+  return tokens;
+};
+
+const scanQuotedShellString = (command: string, start: number) => {
+  const quote = command[start];
+  let index = start + 1;
+  while (index < command.length) {
+    if (command[index] === "\\" && quote !== "'") {
+      index += 2;
+      continue;
+    }
+    if (command[index] === quote) return index + 1;
+    index += 1;
+  }
+  return index;
+};
+
+const shellOperatorAt = (command: string, index: number) => {
+  const candidates = ["2>>", "1>>", "&&", "||", ">>", "<<", "2>", "1>", "|", ";", "(", ")", "<", ">"];
+  return candidates.find((operator) => command.startsWith(operator, index)) ?? null;
+};
+
+const isCommandSeparator = (operator: string) => operator === "&&" || operator === "||" || operator === "|" || operator === ";" || operator === "(";
+
+const splitEnvAssignment = (word: string) => {
+  const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(word);
+  return match ? { key: match[1], value: match[2] } : null;
+};
+
+const highlightShellArgument = (word: string): ShellHighlightToken[] => {
+  const flag = splitFlagAssignment(word);
+  if (flag) {
+    return [
+      { text: flag.key, kind: "parameter" },
+      { text: "=", kind: "operator" },
+      { text: flag.value, kind: classifyShellValue(flag.value) }
+    ];
+  }
+  if (/^--?[\w-]+$/.test(word)) return [{ text: word, kind: "parameter" }];
+  return [{ text: word, kind: classifyShellValue(word) }];
+};
+
+const splitFlagAssignment = (word: string) => {
+  const match = /^(--?[\w-]+)=(.+)$/.exec(word);
+  return match ? { key: match[1], value: match[2] } : null;
+};
+
+const classifyShellValue = (word: string) => {
+  if (/^https?:\/\//.test(word)) return "url";
+  if (/^(?:~|\.{1,2}|\/)/.test(word)) return "path";
+  if (/^-?\d+(?:\.\d+)?$/.test(word)) return "number";
+  return "plain";
+};
 
 const shellCommandDisplay = (payload: Record<string, unknown>) => {
   const raw = shellCommandText(payload);
