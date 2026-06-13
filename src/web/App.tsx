@@ -631,6 +631,10 @@ const App = () => {
     localStorage.setItem(storageKey, JSON.stringify({
       activeWorkspacePath,
       activeSessionId,
+      activeTabThreadId,
+      activeTabThreadBySession,
+      openThreadIds,
+      threadOrderBySession,
       selectedProjectKey,
       projectSearch,
       selectedModel,
@@ -642,6 +646,9 @@ const App = () => {
   }, [
     activeWorkspacePath,
     activeSessionId,
+    activeTabThreadBySession,
+    activeTabThreadId,
+    openThreadIds,
     selectedProjectKey,
     projectSearch,
     selectedModel,
@@ -649,6 +656,7 @@ const App = () => {
     messageDisplayMode,
     sidebarCollapsed,
     collapsedProjectMachineKeys,
+    threadOrderBySession,
     initialized
   ]);
 

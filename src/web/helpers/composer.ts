@@ -114,9 +114,35 @@ export const isReasoningSelection = (value: unknown): value is ReasoningSelectio
 export const isMessageDisplayMode = (value: unknown): value is MessageDisplayMode =>
   value === "compact" || value === "detailed";
 
+const storedStringArray = (value: unknown) =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : undefined;
+
+const storedStringRecord = (value: unknown) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value)
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+};
+
+const storedStringArrayRecord = (value: unknown) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value)
+    .flatMap(([key, item]) => {
+      const ids = storedStringArray(item);
+      return ids?.length ? [[key, ids] as const] : [];
+    });
+  return entries.length ? Object.fromEntries(entries) : undefined;
+};
+
 export const readStoredUiState = (): {
   activeWorkspacePath?: string;
   activeSessionId?: string;
+  activeTabThreadId?: string;
+  activeTabThreadBySession?: Record<string, string>;
+  openThreadIds?: string[];
+  threadOrderBySession?: Record<string, string[]>;
   selectedProjectKey?: string;
   projectSearch?: string;
   selectedModel?: ModelSelection;
@@ -132,6 +158,10 @@ export const readStoredUiState = (): {
     return {
       activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,
       activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : undefined,
+      activeTabThreadId: typeof parsed.activeTabThreadId === "string" ? parsed.activeTabThreadId : undefined,
+      activeTabThreadBySession: storedStringRecord(parsed.activeTabThreadBySession),
+      openThreadIds: Array.isArray(parsed.openThreadIds) ? storedStringArray(parsed.openThreadIds) ?? [] : undefined,
+      threadOrderBySession: storedStringArrayRecord(parsed.threadOrderBySession),
       selectedProjectKey: typeof parsed.selectedProjectKey === "string" ? parsed.selectedProjectKey : undefined,
       projectSearch: typeof parsed.projectSearch === "string" ? parsed.projectSearch : undefined,
       selectedModel: isModelSelection(parsed.selectedModel) ? parsed.selectedModel : undefined,

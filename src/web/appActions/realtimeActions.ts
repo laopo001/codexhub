@@ -109,7 +109,10 @@ type RealtimeActionsContext = {
   sessionsLastSeq: React.MutableRefObject<number>;
   tasksLastSeq: React.MutableRefObject<number>;
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
+  latestRequestedThreadId: React.MutableRefObject<string>;
   setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
+  setActiveTabThreadBySession: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setActiveTabThreadId: React.Dispatch<React.SetStateAction<string>>;
   setActiveWorkspacePath: React.Dispatch<React.SetStateAction<string>>;
   setAuthError: React.Dispatch<React.SetStateAction<string>>;
   setAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
@@ -200,13 +203,24 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     const loadedProjects = normalizeProjects(projectData.projects);
     const loadedProjectSessions = loadedProjects.flatMap((project) => project.session ? [project.session] : []);
     const saved = readStoredUiState();
+    const shouldRestoreSavedTabs = !initialWorkspacePath && Array.isArray(saved?.openThreadIds);
+    const restoredThreadIds = shouldRestoreSavedTabs
+      ? uniqueThreadIds([
+        ...(saved?.openThreadIds ?? []),
+        ...(saved?.activeTabThreadId ? [saved.activeTabThreadId] : [])
+      ])
+      : undefined;
+    const restoredActiveThreadId = restoredThreadIds?.includes(saved?.activeTabThreadId ?? "")
+      ? saved?.activeTabThreadId ?? ""
+      : restoredThreadIds?.[0] ?? "";
     const initialProjectFromUrl = initialWorkspacePath
       ? loadedProjects.find((project) => project.path === initialWorkspacePath)
       : undefined;
+    const availableSessions = [...loadedProjectSessions, ...loadedSessions];
     const savedSession = saved?.activeSessionId
-      ? loadedProjectSessions.find((session) => session.sessionId === saved.activeSessionId)
+      ? availableSessions.find((session) => session.sessionId === saved.activeSessionId)
       : undefined;
-    const initialSession = initialProjectFromUrl?.session ?? savedSession ?? loadedProjectSessions[0];
+    const initialSession = initialProjectFromUrl?.session ?? savedSession ?? loadedProjectSessions[0] ?? loadedSessions[0];
     const initialWorkspace = initialWorkspacePath || saved?.activeWorkspacePath || defaultDirectory;
 
     ctx.setSystemStatus({
@@ -234,17 +248,43 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     ctx.setPlugins(normalizePlugins(pluginData.plugins));
     ctx.setTasks(normalizeTasks(taskData.tasks));
     ctx.setSessionList(loadedSessions);
-    ctx.setThreadOrderBySession((current) => mergeThreadOrderBySession(current, loadedSessions));
+    ctx.setActiveTabThreadBySession(saved?.activeTabThreadBySession ?? {});
+    ctx.setThreadOrderBySession(() => mergeThreadOrderBySession(saved?.threadOrderBySession ?? {}, loadedSessions));
     connectRealtimeEvents();
+    const initialProject = initialSession
+      ? loadedProjects.find((project) => project.session?.sessionId === initialSession.sessionId)
+        ?? loadedProjects.find((project) => project.machineId === initialSession.machineId && project.path === initialSession.workingDirectory)
+      : undefined;
+    const initialThreadId = initialSession ? preferredThreadIdForSession(initialSession, initialProject) : "";
     if (initialSession) {
       ctx.setActiveSessionId(initialSession.sessionId);
       ctx.setActiveWorkspacePath(initialSession.workingDirectory);
-      const initialProject = loadedProjects.find((project) => project.session?.sessionId === initialSession.sessionId)
-        ?? loadedProjects.find((project) => project.machineId === initialSession.machineId && project.path === initialSession.workingDirectory);
-      const initialThreadId = preferredThreadIdForSession(initialSession, initialProject);
-      if (initialThreadId) {
+    }
+    if (restoredThreadIds) {
+      let restoredCount = 0;
+      const openOrder = restoredActiveThreadId
+        ? [...restoredThreadIds.filter((threadId) => threadId !== restoredActiveThreadId), restoredActiveThreadId]
+        : restoredThreadIds;
+      for (const threadId of openOrder) {
+        try {
+          await deps.openThread(threadId);
+          restoredCount += 1;
+        } catch {
+          deps.clearActiveThreadIfLatest(threadId);
+        }
+      }
+      if (restoredThreadIds.length) {
+        ctx.setOpenThreads((current) => orderOpenThreads(current, restoredThreadIds));
+        if (restoredActiveThreadId) {
+          ctx.latestRequestedThreadId.current = restoredActiveThreadId;
+          ctx.setActiveTabThreadId(restoredActiveThreadId);
+        }
+      }
+      if (restoredThreadIds.length && restoredCount === 0 && initialThreadId) {
         await deps.openThread(initialThreadId).catch(() => deps.clearActiveThreadIfLatest(initialThreadId));
       }
+    } else if (initialThreadId) {
+      await deps.openThread(initialThreadId).catch(() => deps.clearActiveThreadIfLatest(initialThreadId));
     }
     ctx.setInitialized(true);
   };
@@ -438,4 +478,27 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     notifyTaskCompletionsFromStreamEvent,
     dispatchTaskCompleteNotification
   };
+};
+
+const uniqueThreadIds = (threadIds: string[]) => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const threadId of threadIds) {
+    if (!threadId || seen.has(threadId)) continue;
+    seen.add(threadId);
+    result.push(threadId);
+  }
+  return result;
+};
+
+const orderOpenThreads = (threads: OpenThreadState[], threadIds: string[]) => {
+  const order = new Map(threadIds.map((threadId, index) => [threadId, index]));
+  return [...threads].sort((left, right) => {
+    const leftIndex = order.get(left.threadId);
+    const rightIndex = order.get(right.threadId);
+    if (leftIndex == null && rightIndex == null) return 0;
+    if (leftIndex == null) return 1;
+    if (rightIndex == null) return -1;
+    return leftIndex - rightIndex;
+  });
 };
