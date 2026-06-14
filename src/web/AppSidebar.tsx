@@ -371,14 +371,27 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         ) : (
           <div className="connectionList">
             <div className="registeredCommand">
-              <div className="registeredCommandText">
-                <span className="registeredCommandLabel">Register</span>
-                <code title={registeredCommand}>{registeredCommand}</code>
-                {registeredCommandIncludesToken ? <span>auth token included</span> : null}
+              <div className="registeredCommandLine">
+                <div className="registeredCommandText">
+                  <span className="registeredCommandLabel">Command</span>
+                  <code title={registeredCommand}>{registeredCommand}</code>
+                  {registeredCommandIncludesToken ? <span>auth token included</span> : null}
+                </div>
+                <button type="button" onClick={() => void copyRegisteredCommand()}>
+                  {registeredCommandCopied ? "Copied" : "Copy"}
+                </button>
               </div>
-              <button type="button" onClick={() => void copyRegisteredCommand()}>
-                {registeredCommandCopied ? "Copied" : "Copy"}
-              </button>
+              {currentServerShareUrl ? (
+                <div className="registeredCommandLine">
+                  <div className="registeredCommandText">
+                    <span className="registeredCommandLabel">Register URL</span>
+                    <code title={currentServerShareUrl}>{currentServerShareUrl}</code>
+                  </div>
+                  <button type="button" onClick={() => void copyCurrentServerShareUrl()}>
+                    {serverShareCopied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              ) : null}
             </div>
             <form className="registeredParentForm" onSubmit={(event) => void connectParentRegistration(event)}>
               <div className="registeredParentHeader">
@@ -681,17 +694,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             </form>
           ) : null}
           {taskError ? <div className="projectOpenError">{taskError}</div> : null}
-        </section>
-      ) : null}
-      {currentServerShareUrl ? (
-        <section className="serverSharePanel" aria-label="Current register URL">
-          <div className="serverSharePanelHeader">
-            <span>Register URL</span>
-            <button type="button" onClick={() => void copyCurrentServerShareUrl()}>
-              {serverShareCopied ? "Copied" : "Copy"}
-            </button>
-          </div>
-          <code title={currentServerShareUrl}>{currentServerShareUrl}</code>
         </section>
       ) : null}
     </aside>

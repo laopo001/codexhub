@@ -202,52 +202,6 @@
   gap: 5px;
 }
 
-.serverSharePanel {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  margin-top: auto;
-  border: 1px solid #334238;
-  border-radius: 8px;
-  background: #111811;
-  padding: 9px 10px;
-}
-
-.serverSharePanelHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.serverSharePanelHeader span {
-  color: #91a090;
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.serverSharePanelHeader button {
-  border: 1px solid #37523e;
-  border-radius: 7px;
-  background: #1c3a27;
-  color: #f7fff4;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 750;
-  padding: 3px 8px;
-}
-
-.serverSharePanel code {
-  min-width: 0;
-  overflow: hidden;
-  color: #d8e2d5;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .connectionDoctor {
   grid-column: 1 / -1;
   min-width: 0;
@@ -280,14 +234,20 @@
 
 .registeredCommand {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
   border: 1px solid #334238;
   border-radius: 8px;
   background: #111811;
   padding: 8px;
+}
+
+.registeredCommandLine {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .registeredCommandText {
