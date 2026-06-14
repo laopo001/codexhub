@@ -57,7 +57,8 @@ type SyncedThread = {
 
 type BridgeState = {
   threadIds: string[];
-  currentThreadId?: string;
+  // Bridge-local fallback target for headless turns; not a server/session current thread.
+  defaultThreadId?: string;
   threadCwds?: Record<string, string>;
 };
 
@@ -109,7 +110,7 @@ type BridgeOptions = {
   sessionId: string;
   machineId?: string;
   cwd: string;
-  ensureCurrentThread?: boolean;
+  ensureDefaultThread?: boolean;
   readyLabel?: string;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
@@ -141,7 +142,7 @@ export type HeadlessCodexhubSessionHandle = {
   wait: () => Promise<ChildExit>;
 };
 
-export type AttachedCodexhubSessionOptions = Omit<BridgeOptions, "sessionId" | "ensureCurrentThread"> & {
+export type AttachedCodexhubSessionOptions = Omit<BridgeOptions, "sessionId" | "ensureDefaultThread"> & {
   sessionId?: string;
 };
 
@@ -201,7 +202,7 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, pro
       sessionId,
       machineId,
       cwd,
-      ensureCurrentThread: true,
+      ensureDefaultThread: true,
       model: options.model,
       sandbox: options.sandbox,
       approvalPolicy: options.approvalPolicy,
@@ -242,7 +243,7 @@ export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSess
     sessionId,
     machineId: options.machineId,
     cwd,
-    ensureCurrentThread: true,
+    ensureDefaultThread: true,
     readyLabel: options.readyLabel,
     model: options.model,
     sandbox: options.sandbox,
@@ -287,7 +288,7 @@ export async function startAttachedCodexhubSession(options: AttachedCodexhubSess
     ...options,
     sessionId,
     cwd,
-    ensureCurrentThread: true
+    ensureDefaultThread: true
   });
   const cleanup = cleanupOnce(async () => {
     await bridgeRunner.stop();
@@ -347,9 +348,9 @@ class ProxyBridgeRunner {
     const trimmed = threadId.trim();
     if (!trimmed) throw new Error("Missing thread id.");
     if (!this.bridge) throw new Error("codexhub bridge is not connected.");
-    const currentThreadId = await this.bridge.ensureThreadCurrent(trimmed);
+    const defaultThreadId = await this.bridge.ensureThreadDefault(trimmed);
     this.bridgeState = this.bridge.snapshotState();
-    return currentThreadId;
+    return defaultThreadId;
   }
 
   async startThread(cwd: string) {
@@ -411,8 +412,8 @@ class ProxyBridgeRunner {
               machineName: `codexhub session ${this.options.sessionId.slice(-8)}`,
               cwd: this.options.cwd
           }, callbacks);
-          if (this.options.ensureCurrentThread) {
-            const threadId = await this.bridge.ensureCurrentThread();
+          if (this.options.ensureDefaultThread) {
+            const threadId = await this.bridge.ensureDefaultThread();
             this.bridgeState = this.bridge.snapshotState();
             this.logHeadlessReady(threadId);
             this.ready.resolve({ sessionId: this.options.sessionId, threadId });
@@ -640,7 +641,7 @@ class CodexAppServerBridge {
   private readonly threadCwds = new Map<string, string>();
   private nextId = 1;
   private closed = false;
-  private currentThreadId: string | undefined;
+  private defaultThreadId: string | undefined;
   private readonly forwardedSessionSettings = new Map<string, string>();
   private readonly bridgeStartedThreads = new Set<string>();
   private bridgeStartedUnknownCount = 0;
@@ -652,7 +653,7 @@ class CodexAppServerBridge {
     initialState: BridgeState,
     private readonly hub: HubTransportSink
   ) {
-    this.currentThreadId = initialState.currentThreadId;
+    this.defaultThreadId = initialState.defaultThreadId;
     for (const [threadId, cwd] of Object.entries(initialState.threadCwds ?? {})) {
       this.threadCwds.set(threadId, cwd);
     }
@@ -681,15 +682,15 @@ class CodexAppServerBridge {
   snapshotState(): BridgeState {
     return {
       threadIds: [...this.syncedThreads.keys()],
-      currentThreadId: this.currentThreadId,
+      defaultThreadId: this.defaultThreadId,
       threadCwds: Object.fromEntries(this.threadCwds)
     };
   }
 
-  async ensureCurrentThread() {
-    if (this.currentThreadId) {
-      const threadId = await this.ensureThreadLoaded(this.currentThreadId, this.options.cwd, this.options.model);
-      await this.rememberCurrentThread(threadId);
+  async ensureDefaultThread() {
+    if (this.defaultThreadId) {
+      const threadId = await this.ensureThreadLoaded(this.defaultThreadId, this.options.cwd, this.options.model);
+      await this.rememberDefaultThread(threadId);
       return threadId;
     }
     const result = asRecord(await this.request("thread/start", {
@@ -702,14 +703,14 @@ class CodexAppServerBridge {
     const threadId = typeof thread?.id === "string" ? thread.id : undefined;
     if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
     this.markThreadLoaded(threadId);
-    await this.rememberCurrentThread(threadId);
+    await this.rememberDefaultThread(threadId);
     return threadId;
   }
 
-  async ensureThreadCurrent(threadId: string) {
-    const currentThreadId = await this.ensureThreadLoaded(threadId, this.options.cwd, this.options.model, { threadId });
-    await this.rememberCurrentThread(currentThreadId);
-    return currentThreadId;
+  async ensureThreadDefault(threadId: string) {
+    const defaultThreadId = await this.ensureThreadLoaded(threadId, this.options.cwd, this.options.model, { threadId });
+    await this.rememberDefaultThread(defaultThreadId);
+    return defaultThreadId;
   }
 
   async startThread(cwd: string, model?: string | null) {
@@ -725,7 +726,7 @@ class CodexAppServerBridge {
       ? await this.ensureThreadLoaded(threadId, this.options.cwd, this.options.model, undefined, {
         markBridgeStarted: true
       })
-      : await this.ensureCurrentThread();
+      : await this.ensureDefaultThread();
     this.markBridgeStartedThread(targetThreadId);
     await this.request("turn/start", {
       threadId: targetThreadId,
@@ -812,7 +813,7 @@ class CodexAppServerBridge {
         command,
         { markBridgeStarted: true }
       );
-      await this.rememberCurrentThread(threadId);
+      await this.rememberDefaultThread(threadId);
       return { threadId };
     }
 
@@ -952,7 +953,7 @@ class CodexAppServerBridge {
     if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
     this.rememberThreadCwd(threadId, cwd);
     this.markThreadLoaded(threadId);
-    await this.rememberCurrentThread(threadId);
+    await this.rememberDefaultThread(threadId);
     return threadId;
   }
 
@@ -1284,7 +1285,7 @@ class CodexAppServerBridge {
       } else if (this.bridgeStartedUnknownCount > 0) {
         this.bridgeStartedUnknownCount -= 1;
       } else {
-        await this.rememberCurrentThread(threadId);
+        await this.rememberDefaultThread(threadId);
       }
     }
     await this.forwardExecutionStateFromMessage(threadId, message);
@@ -1329,9 +1330,9 @@ class CodexAppServerBridge {
     }
   }
 
-  private async rememberCurrentThread(threadId: string) {
-    if (this.currentThreadId === threadId) return;
-    this.currentThreadId = threadId;
+  private async rememberDefaultThread(threadId: string) {
+    if (this.defaultThreadId === threadId) return;
+    this.defaultThreadId = threadId;
   }
 
   private markBridgeStartedThread(threadId: string) {
