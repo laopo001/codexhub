@@ -15,12 +15,17 @@ await build({
   platform: "node",
   format: "cjs",
   target: "node20",
+  define: {
+    navigator: "undefined"
+  },
   external: ["vscode"],
   sourcemap: false,
   minify: false,
   treeShaking: true,
   logLevel: "silent"
 });
+
+await assertNoNodeHostBrowserGlobals(extensionOutfile);
 
 await assertDirectory("dist", "Run `pnpm build` before `pnpm build:vscode`.");
 await assertDirectory("dist-node/ssh", "Run `pnpm build` before `pnpm build:vscode`.");
@@ -56,4 +61,11 @@ async function assertDirectory(dir: string, message: string) {
     // fall through to the explicit error below
   }
   throw new Error(message);
+}
+
+async function assertNoNodeHostBrowserGlobals(filePath: string) {
+  const bundle = await readFile(filePath, "utf8");
+  if (/\bnavigator\b/.test(bundle)) {
+    throw new Error("VSCode extension bundle unexpectedly references `navigator` in the Node extension host.");
+  }
 }
