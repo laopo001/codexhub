@@ -6,6 +6,12 @@ export type ThreadRateLimitUsage = {
   resetsAt: number;
 };
 
+export type ThreadRateLimits = {
+  primaryRateLimit: ThreadRateLimitUsage | null;
+  secondaryRateLimit: ThreadRateLimitUsage | null;
+  observedAt: string | null;
+};
+
 export type ThreadUsage = {
   context: {
     usedTokens: number;
@@ -41,24 +47,41 @@ export const threadUsageFromRecord = (record: CodexRecord): ThreadUsage | null =
     ?? numberValue(lastTokenUsage?.total_tokens);
   const windowTokens = numberValue(info?.model_context_window);
   const rateLimits = asRecord(payload.rate_limits);
+  const rateLimitUsage = threadRateLimitsFromValue(rateLimits, record.timestamp ?? null);
 
   const usage: ThreadUsage = {
     context: usedTokens !== null && windowTokens !== null && windowTokens > 0
       ? { usedTokens, windowTokens }
       : null,
-    primaryRateLimit: rateLimitUsage(rateLimits?.primary),
-    secondaryRateLimit: rateLimitUsage(rateLimits?.secondary),
+    primaryRateLimit: rateLimitUsage?.primaryRateLimit ?? null,
+    secondaryRateLimit: rateLimitUsage?.secondaryRateLimit ?? null,
     observedAt: record.timestamp ?? null
   };
 
   return usage.context || usage.primaryRateLimit || usage.secondaryRateLimit ? usage : null;
 };
 
-const rateLimitUsage = (value: unknown): ThreadRateLimitUsage | null => {
+export const threadRateLimitsFromValue = (value: unknown, observedAt: string | null = null): ThreadRateLimits | null => {
+  const record = asRecord(value);
+  if (!record) return null;
+  const primaryRateLimit = rateLimitWindowUsage(record.primary);
+  const secondaryRateLimit = rateLimitWindowUsage(record.secondary);
+  if (!primaryRateLimit && !secondaryRateLimit) return null;
+  return {
+    primaryRateLimit,
+    secondaryRateLimit,
+    observedAt
+  };
+};
+
+const rateLimitWindowUsage = (value: unknown): ThreadRateLimitUsage | null => {
   const record = asRecord(value);
   if (!record) return null;
   const usedPercent = numberValue(record.used_percent) ?? numberValue(record.usedPercent);
-  const windowMinutes = numberValue(record.window_minutes) ?? numberValue(record.windowMinutes);
+  const windowMinutes = numberValue(record.window_minutes)
+    ?? numberValue(record.windowMinutes)
+    ?? numberValue(record.window_duration_mins)
+    ?? numberValue(record.windowDurationMins);
   const resetsAt = numberValue(record.resets_at) ?? numberValue(record.resetsAt);
   if (usedPercent === null || windowMinutes === null || resetsAt === null) return null;
   return { usedPercent, windowMinutes, resetsAt };

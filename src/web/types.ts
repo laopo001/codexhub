@@ -60,6 +60,7 @@ export type SessionSummary = {
   offlineReason?: "heartbeat_timeout" | "transport_disconnected" | "unregistered";
   pid?: number;
   hostname?: string;
+  accountRateLimits?: SessionRateLimits | null;
   threads?: ThreadSummary[];
 };
 
@@ -436,6 +437,12 @@ export type RateLimitWindow = {
   usedPercent: number;
   windowMinutes: number;
   resetsAt: number;
+};
+
+export type SessionRateLimits = {
+  primaryRateLimit: RateLimitWindow | null;
+  secondaryRateLimit: RateLimitWindow | null;
+  observedAt: string | null;
 };
 
 export type ThreadUsage = {

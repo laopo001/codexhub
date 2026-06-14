@@ -116,6 +116,7 @@ const main = async () => {
   await assertAppServerTurnLifecycleRecords();
   await assertAppServerTurnSnapshotPreservesAgentMessages();
   await assertAppServerAgentMessageDeltaStreams();
+  await assertSessionAccountRateLimits();
   await assertLocalShellExitStatusView();
   await assertRollbackPreservesKeptTurnToolRecords();
   await assertForkPreservesKeptTurnToolRecords();
@@ -1129,6 +1130,48 @@ const assertAppServerAgentMessageDeltaStreams = async () => {
     }
   } finally {
     unsubscribe();
+  }
+};
+
+const assertSessionAccountRateLimits = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const hub = new ThreadHub();
+  const sessionId = "account-rate-limit-session";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-account-rate-limits"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "account_rate_limits_updated",
+    heartbeat: false,
+    rateLimits: {
+      primary: {
+        usedPercent: 25,
+        windowMinutes: 300,
+        resetsAt: 1781058359
+      },
+      secondary: {
+        used_percent: 50,
+        windowDurationMins: 10080,
+        resets_at: 1781140554
+      }
+    }
+  });
+
+  const session = hub.listSessions().find((item) => item.sessionId === sessionId);
+  const primary = session?.accountRateLimits?.primaryRateLimit;
+  const secondary = session?.accountRateLimits?.secondaryRateLimit;
+  if (
+    primary?.usedPercent !== 25
+    || primary.windowMinutes !== 300
+    || primary.resetsAt !== 1781058359
+    || secondary?.usedPercent !== 50
+    || secondary.windowMinutes !== 10080
+    || secondary.resetsAt !== 1781140554
+    || !session?.accountRateLimits?.observedAt
+  ) {
+    throw new Error(`session account rate limits missing from session summary: ${JSON.stringify(session)}`);
   }
 };
 

@@ -111,6 +111,11 @@ const sessionEventSchema = z.discriminatedUnion("type", [
     model: z.string().min(1).nullable().optional(),
     modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
     heartbeat: z.boolean().optional()
+  }),
+  z.object({
+    type: z.literal("account_rate_limits_updated"),
+    rateLimits: z.unknown(),
+    heartbeat: z.boolean().optional()
   })
 ]);
 

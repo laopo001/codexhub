@@ -2,7 +2,7 @@ import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
 import type { CodexRecordView } from "../../core/codexRecordView.js";
 import { threadUsageFromRecord } from "../../core/threadUsage.js";
 import { isVscodeSurface, reasoningOptions } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, StreamEvent, TaskCompleteNotification, ThreadDetail, ThreadGoalView, ThreadSummary, ThreadUsage, TurnUiState, Usage } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, SessionRateLimits, StreamEvent, TaskCompleteNotification, ThreadDetail, ThreadGoalView, ThreadSummary, ThreadUsage, TurnUiState, Usage } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
@@ -23,6 +23,16 @@ export const mergeThreadUsage = (latest: ThreadUsage | null, fallback: ThreadUsa
     primaryRateLimit: latest.primaryRateLimit ?? fallback.primaryRateLimit,
     secondaryRateLimit: latest.secondaryRateLimit ?? fallback.secondaryRateLimit,
     observedAt: latest.observedAt ?? fallback.observedAt
+  };
+};
+
+export const threadUsageFromSessionRateLimits = (rateLimits: SessionRateLimits | null | undefined): ThreadUsage | null => {
+  if (!rateLimits?.primaryRateLimit && !rateLimits?.secondaryRateLimit) return null;
+  return {
+    context: null,
+    primaryRateLimit: rateLimits.primaryRateLimit,
+    secondaryRateLimit: rateLimits.secondaryRateLimit,
+    observedAt: rateLimits.observedAt
   };
 };
 

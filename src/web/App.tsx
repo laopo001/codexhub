@@ -76,6 +76,7 @@ import {
   projectKeyForProject,
   setAuthToken,
   shortId,
+  threadUsageFromSessionRateLimits,
   threadDisplayRecords,
   threadDisplayTitle,
   turnUiStateFromStatus,
@@ -348,6 +349,12 @@ const App = () => {
     },
     [activeSessionId, activeWorkspacePath, projectList, selectedProjectByKey, sessionList]
   );
+  const activeRuntimeSession = useMemo(
+    () => activeProjectSession?.sessionId
+      ? sessionList.find((session) => session.sessionId === activeProjectSession.sessionId) ?? activeProjectSession
+      : activeProjectSession,
+    [activeProjectSession, sessionList]
+  );
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
   const localMachines = useMemo(() => machines.filter((machine) => machine.type === "local"), [machines]);
   const registeredMachines = useMemo(() => machines.filter((machine) => machine.type === "registered" && machine.online), [machines]);
@@ -539,7 +546,14 @@ const App = () => {
   const summaryThreadUsage = activeThread?.threadUsage
     ?? activeThreadSummary?.threadUsage
     ?? null;
-  const activeThreadUsage = mergeThreadUsage(latestThreadUsage, summaryThreadUsage);
+  const sessionRateLimitUsage = useMemo(
+    () => threadUsageFromSessionRateLimits(activeRuntimeSession?.accountRateLimits),
+    [activeRuntimeSession?.accountRateLimits]
+  );
+  const activeThreadUsage = mergeThreadUsage(
+    mergeThreadUsage(latestThreadUsage, summaryThreadUsage),
+    sessionRateLimitUsage
+  );
   const latestSessionConfig = useMemo(
     () => latestSessionConfigFromRecords(latestTurnStatusScope.records) ?? latestSessionConfigFromRecords(displayRecords),
     [displayRecords, latestTurnStatusScope.records]

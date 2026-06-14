@@ -3,7 +3,7 @@ import { asRecord, type CodexRecord } from "./codexRecord.js";
 import { recordsToViews } from "./codexRecordView.js";
 import type { ProxyInput } from "./proxyInput.js";
 import type { ThreadOptions, Usage } from "./threadOptions.js";
-import { emptyThreadUsage, threadUsageFromRecords, type ThreadUsage } from "./threadUsage.js";
+import { emptyThreadUsage, threadRateLimitsFromValue, threadUsageFromRecords, type ThreadRateLimits, type ThreadUsage } from "./threadUsage.js";
 
 export type ThreadSummary = {
   threadId: string;
@@ -43,6 +43,7 @@ export type SessionSummary = {
   offlineReason?: SessionOfflineReason;
   pid?: number;
   hostname?: string;
+  accountRateLimits?: ThreadRateLimits | null;
   threads: ThreadSummary[];
 };
 
@@ -175,6 +176,11 @@ export type SessionEventInput =
       model?: string | null;
       modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
       heartbeat?: boolean;
+    }
+  | {
+      type: "account_rate_limits_updated";
+      rateLimits: unknown;
+      heartbeat?: boolean;
     };
 
 type SessionState = SessionSummary & {
@@ -256,6 +262,7 @@ export class ThreadHub {
       lastSeenAt: now,
       pid: registration.pid,
       hostname: registration.hostname,
+      accountRateLimits: existing?.accountRateLimits ?? null,
       threads: [],
       transportId: registration.transportId,
       commands: existing?.commands ?? [],
@@ -416,6 +423,15 @@ export class ThreadHub {
   applySessionEvent(sessionId: string, input: SessionEventInput) {
     if (input.heartbeat !== false) this.heartbeatSession(sessionId);
     const session = this.requireSession(sessionId);
+    if (input.type === "account_rate_limits_updated") {
+      const rateLimits = threadRateLimitsFromValue(input.rateLimits, new Date().toISOString());
+      if (rateLimits) {
+        session.accountRateLimits = rateLimits;
+        this.publishSessions();
+      }
+      return { ok: true, session: this.sessionSummary(session) };
+    }
+
     if (input.type === "thread_execution_changed") {
       const thread = this.ensureThread(input.threadId, session, {
         params: { threadId: input.threadId, cwd: session.workingDirectory }
@@ -1605,6 +1621,7 @@ export class ThreadHub {
       offlineReason: session.offlineReason,
       pid: session.pid,
       hostname: session.hostname,
+      accountRateLimits: session.accountRateLimits ?? null,
       threads
     };
   }
@@ -1631,7 +1648,8 @@ export class ThreadHub {
       offlineSinceAt: session.offlineSinceAt,
       offlineReason: session.offlineReason,
       pid: session.pid,
-      hostname: session.hostname
+      hostname: session.hostname,
+      accountRateLimits: session.accountRateLimits ?? null
     });
   }
 
@@ -1999,7 +2017,12 @@ const tokenUsageRateLimitWindow = (value: unknown) => {
   const record = asRecord(value);
   if (!record) return undefined;
   const usedPercent = tokenUsageNumber(record.usedPercent ?? record.used_percent);
-  const windowMinutes = tokenUsageNumber(record.windowMinutes ?? record.window_minutes);
+  const windowMinutes = tokenUsageNumber(
+    record.windowMinutes
+    ?? record.window_minutes
+    ?? record.windowDurationMins
+    ?? record.window_duration_mins
+  );
   const resetsAt = tokenUsageNumber(record.resetsAt ?? record.resets_at);
   if (usedPercent === undefined || windowMinutes === undefined || resetsAt === undefined) return undefined;
   return {

@@ -744,6 +744,7 @@ class CodexAppServerBridge {
       capabilities: { experimentalApi: true, requestAttestation: false }
     });
     bridge.notify("initialized");
+    void bridge.syncAccountRateLimits();
     return bridge;
   }
 
@@ -1061,6 +1062,8 @@ class CodexAppServerBridge {
       return;
     }
 
+    if (this.forwardSessionEventFromMessage(message)) return;
+
     if ((typeof message.id === "string" || typeof message.id === "number") && typeof message.method === "string") {
       this.respondToServerRequest(message);
       return;
@@ -1097,6 +1100,33 @@ class CodexAppServerBridge {
     const threadId = threadIdForMessage(message);
     if (!threadId) return undefined;
     return threadId;
+  }
+
+  private forwardSessionEventFromMessage(message: JsonRecord) {
+    const method = typeof message.method === "string" ? message.method : "";
+    if (method !== "account/rateLimits/updated") return false;
+    this.forwardAccountRateLimits(message);
+    return true;
+  }
+
+  private async syncAccountRateLimits() {
+    try {
+      const result = await this.request("account/rateLimits/read", undefined);
+      this.forwardAccountRateLimits(result);
+    } catch {
+      // Older app-server builds may not expose account-level rate limits.
+    }
+  }
+
+  private forwardAccountRateLimits(value: unknown) {
+    const rateLimits = accountRateLimitsFromValue(value);
+    if (!rateLimits) return false;
+    this.hub.sendEvent({
+      type: "account_rate_limits_updated",
+      rateLimits,
+      heartbeat: false
+    });
+    return true;
   }
 
   private bindThread(threadId: string, cwd?: string) {
@@ -1745,6 +1775,21 @@ const threadIdForPendingMessage = (pending: Pick<PendingRequest, "method" | "thr
     return resultThreadIdForMessage(message) ?? threadIdForMessage(message) ?? pending.threadId;
   }
   return threadIdForMessage(message) ?? pending.threadId;
+};
+
+const accountRateLimitsFromValue = (value: unknown): Record<string, unknown> | null => {
+  const record = asRecord(value);
+  if (!record) return null;
+  const result = asRecord(record.result);
+  if (result) return accountRateLimitsFromValue(result);
+  const params = asRecord(record.params);
+  if (params) return accountRateLimitsFromValue(params);
+  return asRecord(record.rateLimits)
+    ?? asRecord(record.rate_limits)
+    ?? asRecord(record.accountRateLimits)
+    ?? asRecord(record.account_rate_limits)
+    ?? asRecord(record.limits)
+    ?? (asRecord(record.primary) || asRecord(record.secondary) ? record : null);
 };
 
 const appServerThreadSummary = (
