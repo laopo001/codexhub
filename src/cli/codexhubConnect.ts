@@ -153,6 +153,11 @@ export type CodexAppServerProcessHandle = {
   wait: () => Promise<ChildExit>;
 };
 
+type StartedCodexAppServerProcess = {
+  child: ChildProcess;
+  stopped: Promise<ChildExit>;
+};
+
 export const registerCodexHubSessionCommands = (program: Command) => {
   program
     .argument("[prompt]", "optional prompt to start the Codex session")
@@ -180,7 +185,7 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, pro
   let bridgeRunner: ProxyBridgeRunner | null = null;
   let statusBar: CodexhubStatusBar | null = null;
   let cleanedUp = false;
-  const appServerStopped = waitForChild(appServer).then(({ code, signal }) => {
+  const appServerStopped = appServer.stopped.then(({ code, signal }) => {
     if (!cleanedUp) process.exitCode = code ?? (signal ? 1 : 1);
     return { code, signal };
   });
@@ -188,7 +193,7 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, pro
     cleanedUp = true;
     statusBar?.stop();
     await bridgeRunner?.stop();
-    await terminateChild(appServer, appServerStopped);
+    await terminateChild(appServer.child, appServerStopped);
   });
   const onSignal = (signal: NodeJS.Signals) => {
     void cleanup().finally(() => process.exit(signalExitCode(signal)));
@@ -1586,16 +1591,34 @@ class CodexhubStatusBar {
   }
 }
 
-const startCodexAppServer = async (cwd: string, appServerUrl: string, port: number) => {
+const codexAppServerReadyTimeoutMs = () => envPositiveInt("CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", 60_000);
+const codexAppServerStderrTailLimit = 4000;
+
+const startCodexAppServer = async (cwd: string, appServerUrl: string, port: number): Promise<StartedCodexAppServerProcess> => {
   const launch = await codexAppServerLaunch(appServerUrl);
   const child = spawn(launch.command, launch.args, {
     cwd,
     stdio: ["ignore", "ignore", "pipe"],
     detached: process.platform !== "win32"
   });
-  child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
-  await waitForReady(port, child);
-  return child;
+  const stopped = waitForChild(child);
+  let stderrTail = "";
+  child.stderr?.on("data", (chunk: Buffer | string) => {
+    process.stderr.write(chunk);
+    stderrTail = textTail(`${stderrTail}${chunk.toString()}`, codexAppServerStderrTailLimit);
+  });
+  try {
+    await waitForReady(port, child, {
+      timeoutMs: codexAppServerReadyTimeoutMs(),
+      stderr: () => stderrTail
+    });
+    return { child, stopped };
+  } catch (error) {
+    await terminateChild(child, stopped).catch((cleanupError: unknown) => {
+      console.error(`codex app-server cleanup after failed startup failed: ${errorText(cleanupError)}`);
+    });
+    throw error;
+  }
 };
 
 export const startCodexAppServerProcess = async (cwdInput: string, portInput?: number): Promise<CodexAppServerProcessHandle> => {
@@ -1603,8 +1626,7 @@ export const startCodexAppServerProcess = async (cwdInput: string, portInput?: n
   const port = portInput ?? await findFreePort();
   if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${portInput}`);
   const appServerUrl = `ws://127.0.0.1:${port}`;
-  const child = await startCodexAppServer(cwd, appServerUrl, port);
-  const stopped = waitForChild(child);
+  const { child, stopped } = await startCodexAppServer(cwd, appServerUrl, port);
   const stop = cleanupOnce(async () => {
     await terminateChild(child, stopped);
   });
@@ -1639,15 +1661,33 @@ const fileExists = async (filePath: string) => {
   }
 };
 
-const waitForReady = async (port: number, child: ChildProcess) => {
-  let exited = false;
-  child.once("exit", () => {
-    exited = true;
+type WaitForReadyOptions = {
+  timeoutMs: number;
+  stderr: () => string;
+};
+
+const waitForReady = async (port: number, child: ChildProcess, options: WaitForReadyOptions) => {
+  let childExited = false;
+  let childExitCode: number | null = null;
+  let childExitSignal: NodeJS.Signals | null = null;
+  let childError: Error | null = null;
+  child.once("error", (error) => {
+    childError = error;
+  });
+  child.once("exit", (code, signal) => {
+    childExited = true;
+    childExitCode = code;
+    childExitSignal = signal;
   });
   const url = `http://127.0.0.1:${port}/readyz`;
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 15000) {
-    if (exited) throw new Error("codex app-server exited before becoming ready");
+  while (Date.now() - startedAt < options.timeoutMs) {
+    if (childError) throw appServerReadyError(`codex app-server failed to start: ${errorText(childError)}`, options.stderr());
+    if (childExited) {
+      const code = childExitCode ?? "";
+      const signal = childExitSignal ?? "";
+      throw appServerReadyError(`codex app-server exited before becoming ready: code=${code} signal=${signal}`, options.stderr());
+    }
     try {
       const response = await fetch(url);
       if (response.ok) return;
@@ -1656,8 +1696,15 @@ const waitForReady = async (port: number, child: ChildProcess) => {
     }
     await delay(150);
   }
-  throw new Error(`codex app-server did not become ready: ${url}`);
+  throw appServerReadyError(`codex app-server did not become ready after ${options.timeoutMs}ms: ${url}`, options.stderr());
 };
+
+const appServerReadyError = (message: string, stderr: string) => {
+  const tail = stderr.trim();
+  return new Error(tail ? `${message}\nRecent codex app-server stderr:\n${tail}` : message);
+};
+
+const textTail = (value: string, limit: number) => value.length <= limit ? value : value.slice(-limit);
 
 const openWebSocket = async (url: string) => {
   const ws = new WebSocket(url);
