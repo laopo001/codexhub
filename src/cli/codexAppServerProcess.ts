@@ -23,6 +23,7 @@ export type StartedCodexAppServerProcess = {
 const codexAppServerReadyTimeoutMs = () => envPositiveInt("CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", 60_000);
 const codexAppServerStderrTailLimit = 4000;
 
+// 启动官方 Codex app-server，并保留足够 stderr 方便解释 ready 失败。
 export const startCodexAppServer = async (cwd: string, appServerUrl: string, port: number): Promise<StartedCodexAppServerProcess> => {
   const launch = await codexAppServerLaunch(appServerUrl);
   const spawnOptions: SpawnOptions = {
@@ -115,6 +116,7 @@ export const signalExitCode = (signal: NodeJS.Signals) => {
 const codexAppServerLaunch = async (appServerUrl: string) => {
   const codexCommand = await resolveCodexCommand();
   if (process.platform === "linux" && await fileExists("/usr/bin/setpriv")) {
+    // 在 Linux 下把子进程绑定到当前进程，避免崩溃后留下孤儿 app-server。
     return {
       command: "/usr/bin/setpriv",
       args: ["--pdeathsig", "TERM", codexCommand, "app-server", "--listen", appServerUrl],
@@ -219,6 +221,7 @@ const waitForReady = async (port: number, child: ChildProcess, options: WaitForR
   });
   const url = `http://127.0.0.1:${port}/readyz`;
   const startedAt = Date.now();
+  // 轮询 /readyz 而不是固定 sleep，让 CLI 解析和登录问题尽快暴露。
   while (Date.now() - startedAt < options.timeoutMs) {
     if (childError) throw appServerReadyError(`codex app-server failed to start: ${errorText(childError)}`, options.stderr());
     if (childExited) {
@@ -230,7 +233,7 @@ const waitForReady = async (port: number, child: ChildProcess, options: WaitForR
       const response = await fetch(url);
       if (response.ok) return;
     } catch {
-      // keep polling until timeout
+      // 继续轮询直到超时
     }
     await delay(150);
   }
@@ -253,13 +256,13 @@ const signalChildProcess = (child: ChildProcess, signal: NodeJS.Signals) => {
       process.kill(-child.pid, signal);
       return;
     } catch {
-      // Fall back to signalling the direct child below.
+      // 回退到下面的直接子进程 signal。
     }
   }
   try {
     child.kill(signal);
   } catch {
-    // The process may already have exited between the status check and signal.
+    // 状态检查和 signal 之间进程可能已经退出。
   }
 };
 

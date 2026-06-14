@@ -28,6 +28,7 @@ export const machineTransportUrl = (apiBase: string, authToken?: string) => {
 export const parseMachineTransportMessage = (data: unknown): MachineTransportMessage | null => {
   const message = parseJsonRecord(data);
   if (!message) return null;
+  // 这条 machine WebSocket 是长连接边界，坏消息要丢弃而不是打断 transport loop。
   if (isAppServerTunnelFrame(message)) return message;
   const type = typeof message.type === "string" ? message.type : "";
   if (type === "registered") {

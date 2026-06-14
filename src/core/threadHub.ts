@@ -452,6 +452,7 @@ export class ThreadHub {
       const thread = this.ensureThread(input.threadId, session, {
         params: { threadId: input.threadId, cwd: session.workingDirectory }
       });
+      // 这里用 snapshot 替换历史 app-server turn records；实时事件继续走 upsert。
       this.applyAppServerTurnsSnapshot(thread, input.turns);
       return { ok: true, thread: this.summary(thread) };
     }
@@ -470,10 +471,12 @@ export class ThreadHub {
     const thread = threadId ? this.ensureThread(threadId, session, message) : null;
     const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
     if (thread && pending?.type === "fork_thread" && pending.threadId && pending.keepTurns) {
+      // 执行 fork 时返回的是新 thread，只复制被保留的历史 records，后续 records 继续来自 app-server。
       const source = this.threads.get(pending.threadId);
       if (source && source.threadId !== thread.threadId) this.seedForkedThreadRecords(source, thread, pending.keepTurns);
     }
     if (thread && pending?.type === "rollback_thread" && asRecord(asRecord(message.result)?.thread)) {
+      // 执行 rollback 后 app-server 会回传 thread 快照，本地先裁掉被回滚之后的 records。
       this.applyRollbackRecordCrop(thread, pending.keepTurns);
     }
     if (thread) this.applyAppServerMessage(thread, message);
@@ -504,6 +507,7 @@ export class ThreadHub {
   subscribeThreadRecords(threadId: string) {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
+    // 请求拥有该 thread 的 session bridge 去镜像官方 app-server turns。
     this.enqueueSessionCommand(session.sessionId, {
       commandId: randomUUID(),
       type: "subscribe_thread_records",
@@ -876,6 +880,7 @@ export class ThreadHub {
 
   private enqueueSessionCommand(sessionId: string, command: Omit<SessionCommand, "seq">) {
     const session = this.requireSession(sessionId);
+    // 这里的 command 只入队到 session；真正执行发生在 machine/session bridge。
     const next: SessionCommand = {
       ...command,
       seq: (session.commands.at(-1)?.seq ?? 0) + 1
@@ -1048,6 +1053,7 @@ export class ThreadHub {
     const record = asRecord(message);
     if (!record) return;
 
+    // 这里把 JSON-RPC 响应和 app-server 通知都归一成 CodexHub records。
     const result = asRecord(record.result);
     const resultThread = asRecord(result?.thread);
     if (resultThread) {
@@ -1178,6 +1184,7 @@ export class ThreadHub {
     turn: Record<string, unknown>,
     options: { replaceTurnRecords?: boolean; historicalRecords?: boolean } = {}
   ) {
+    // 这里把 app-server turn 统一展开成 records；来源可以是历史快照或实时完成事件。
     const turnId = typeof turn.id === "string" ? turn.id : "";
     if (!turnId) return;
     if (options.replaceTurnRecords) {
@@ -1362,6 +1369,7 @@ export class ThreadHub {
   }
 
   private applyThreadExecutionState(thread: ThreadState, running: boolean, turnId?: string) {
+    // 这里的 running 状态是控制面摘要；transcript records 仍由 app-server events 单独写入。
     if (!running) {
       if (thread.running || this.activeTurnCommands.has(thread.threadId)) {
         this.finishSessionTurn(thread);
@@ -1556,6 +1564,7 @@ export class ThreadHub {
   }
 
   private upsertRecord(thread: ThreadState, record: CodexRecord, options: { historical?: boolean } = {}) {
+    // 快照、增量和补全事件可能指向同一条记录，这里负责去重、保序和更新 usage。
     const existingIndex = thread.records.findIndex((item) => item.id === record.id);
     if (existingIndex === -1) {
       const replacementIndex = this.matchingAppServerTranscriptRecordIndex(thread, record);
@@ -1587,6 +1596,7 @@ export class ThreadHub {
   }
 
   private finishSessionTurn(thread: ThreadState, error?: Error) {
+    // 每个 turn 收尾时先兑现等待中的 command，再释放同 thread 的下一条 queued turn。
     const commandId = this.activeTurnCommands.get(thread.threadId);
     if (commandId) {
       this.activeTurnCommands.delete(thread.threadId);

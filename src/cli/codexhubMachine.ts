@@ -253,6 +253,7 @@ class CodexhubMachineRunner {
     this.commandChain = this.commandChain.then(async () => {
       for (const command of commands) {
         try {
+          // 这里的 machine command 必须串行执行；commandCursor 只有执行完才能前移。
           const result = await this.runCommand(command);
           this.sendRaw({ type: "command_result", commandId: command.commandId, result });
         } catch (error) {
@@ -290,6 +291,7 @@ class CodexhubMachineRunner {
     }
 
     const runtime = await this.ensureRuntimeSession(cwd, command.commandId);
+    // 一台 machine 只维护一个 app-server runtime，不同 project cwd 映射到各自 thread。
     const threadId = runtime.projectsByCwd.size === 0 && runtime.cwd === cwd
       ? runtime.session.threadId
       : await runtime.session.startThread(cwd, command.commandId);
@@ -306,6 +308,7 @@ class CodexhubMachineRunner {
   private async ensureRuntimeSession(cwd: string, commandId: string): Promise<ManagedSession> {
     if (this.runtimeSession) return this.runtimeSession;
     console.error(`codexhub machine app-server starting: ${cwd}`);
+    // 已注册 machine 通过 tunnel 暴露本地 app-server；local/ssh machine 直接注册 session。
     const session = this.useAppServerTunnel()
       ? await this.startTunneledRuntimeSession(cwd, commandId)
       : await startHeadlessCodexhubSession({
@@ -342,6 +345,7 @@ class CodexhubMachineRunner {
     const appServer = await startCodexAppServerProcess(cwd);
     const sessionId = createCodexhubSessionId();
     const appServerId = sessionId;
+    // 官方 app-server 仍跑在 registered machine，父 server 只通过 tunnel 访问它。
     this.tunnel?.registerTarget(appServerId, appServer.appServerUrl);
     try {
       const attached = await this.requestParentAppServerAttach({
@@ -396,6 +400,7 @@ class CodexhubMachineRunner {
   }) {
     if (!this.registered) throw new Error("Cannot attach app-server before machine registration.");
     const commandId = message.commandId;
+    // 父 server attach 完成后才返回 threadId，避免 project open 先于 ThreadHub 注册完成。
     const promise = new Promise<{ sessionId: string; threadId: string }>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingAppServerAttaches.delete(commandId);

@@ -642,9 +642,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     threadRecordSubscriptionCounts.set(threadId, current + 1);
     if (current > 0 || hadIdleTimer) return;
     try {
+      // 第一个 Web 订阅者触发对应 session 开始镜像 app-server records。
       threads.subscribeThreadRecords(threadId);
     } catch {
-      // A thread subscription can still serve the in-memory snapshot when its session is offline.
+      // 当 session 离线时，thread 订阅仍可返回内存里的快照。
     }
   };
 
@@ -665,7 +666,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     try {
       threads.unsubscribeThreadRecords(threadId);
     } catch {
-      // Thread deletion should not be blocked by a stale or offline session.
+      // 删除 thread 不应被过期或离线 session 阻塞。
     }
   };
 
@@ -674,7 +675,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       try {
         threads.subscribeThreadRecords(threadId);
       } catch {
-        // Subscription refresh is best-effort; Web subscriptions still receive stored thread events.
+        // 订阅刷新是尽力而为；Web 订阅仍能收到已存储的 thread events。
       }
     }
   };
@@ -689,9 +690,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       const thread = threads.getThread(threadId);
       if (!thread) return;
       try {
+        // 只释放 records 镜像订阅，runtime session 本身保持在线。
         threads.unsubscribeThreadRecords(threadId);
       } catch {
-        // Session may have gone offline while the thread tab was idle.
+        // 当 thread tab idle 期间，session 可能已经离线。
       }
     }, idleMs);
     timer.unref?.();
@@ -1636,6 +1638,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
     if (existing && existing.transportId === input.transportId) return existing.handle.threadId;
     const sessionTransportId = `${input.transportId}:app-server:${input.sessionId}`;
+    // 已注册 machine 的 app-server 通过 tunnel 接入；ThreadHub 看到的仍是一条普通 session。
     const handle = await startAttachedCodexhubSession({
       apiBase: localApiBaseUrl(config.host, config.port),
       appServerUrl: `tunnel://${input.appServerId}`,
@@ -1675,6 +1678,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     if (!entry || entry.transportId !== input.transportId) {
       throw new Error(`Tunneled app-server session not attached: ${input.sessionId}`);
     }
+    // 同一个 tunneled runtime 按 cwd 启动/复用 thread，不新建 machine session。
     const threadId = await entry.handle.startThread(input.cwd);
     publishProjects();
     return threadId;
@@ -1710,6 +1714,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
     const commandPump = async () => {
       while (!closed && machineId) {
+        // 这里的 machine command 长轮询只负责 machine 级动作；thread 动作走 sessionCommandPump。
         const response = await machines.waitMachineCommands(machineId, commandCursor, 60_000);
         if (closed || !machineId) return;
         commandCursor = Math.max(commandCursor, response.cursor);
@@ -1739,6 +1744,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
     const sessionCommandPump = async (sessionId: string) => {
       while (!closed && sessionIds.has(sessionId)) {
+        // 每条 session command pump 独立按 cursor replay，避免多个 session 相互阻塞。
         const response = await threads.waitSessionCommands(sessionId, sessionCursors.get(sessionId) ?? 0, 60_000);
         if (closed || !sessionIds.has(sessionId)) return;
         sessionCursors.set(sessionId, Math.max(sessionCursors.get(sessionId) ?? 0, response.cursor));
@@ -1862,6 +1868,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         }
 
         if (parsed.type === "session_register") {
+          // 历史 currentThreadId 只容忍丢弃；server 不恢复 current thread 状态。
           const { currentThreadId: _legacyCurrentThreadId, ...registration } = parsed.registration;
           const registered = threads.registerSession({
             ...registration,
@@ -2107,6 +2114,7 @@ class DirectThreadHubSessionTransport implements HeadlessSessionTransport {
   start() {
     if (this.stopped || this.registered) return;
     this.callbacks.onState("connecting", `codexhub direct session registering: ${this.options.sessionId}`);
+    // 这是 server 内部 transport，不再经 machine WebSocket 反绕一圈。
     const { currentThreadId: _legacyCurrentThreadId, ...registration } = this.callbacks.registration() as SessionRegistration & { currentThreadId?: string };
     this.options.threads.registerSession({
       ...registration,
@@ -2153,6 +2161,7 @@ class DirectThreadHubSessionTransport implements HeadlessSessionTransport {
 
   private async commandLoop() {
     while (!this.stopped && this.registered) {
+      // 直接 transport 同样使用 ThreadHub command cursor，保持和远端 session 一致的 replay 语义。
       const response = await this.options.threads.waitSessionCommands(this.options.sessionId, this.commandCursor, 60_000);
       if (this.stopped || !this.registered) return;
       this.commandCursor = Math.max(this.commandCursor, response.cursor);

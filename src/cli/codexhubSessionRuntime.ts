@@ -50,6 +50,7 @@ type PendingRequest = {
 };
 
 type SyncedThread = {
+  // 快照同步按订阅的 thread 维护；实时 app-server 事件仍走同一条 WebSocket。
   appServerTurnsSyncing: boolean;
   appServerTurnsPending: boolean;
   appServerTurnsDebounceTimer?: NodeJS.Timeout;
@@ -57,7 +58,7 @@ type SyncedThread = {
 
 type BridgeState = {
   threadIds: string[];
-  // Bridge-local fallback target for headless turns; not a server/session current thread.
+  // 这个 bridge 本地的 headless turn 兜底目标，不是 server/session 的 current thread。
   defaultThreadId?: string;
   threadCwds?: Record<string, string>;
 };
@@ -235,6 +236,7 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, pro
 
 export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSessionOptions): Promise<HeadlessCodexhubSessionHandle> {
   const cwd = path.resolve(options.cwd);
+  // 这里的 headless session 自己启动 app-server，作为 machine runtime 暴露给 server。
   const appServer = await startCodexAppServerProcess(cwd, options.port);
   const sessionId = createSessionId();
   const bridgeRunner = new ProxyBridgeRunner({
@@ -284,6 +286,7 @@ export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSess
 export async function startAttachedCodexhubSession(options: AttachedCodexhubSessionOptions): Promise<HeadlessCodexhubSessionHandle> {
   const cwd = path.resolve(options.cwd);
   const sessionId = options.sessionId?.trim() || createSessionId();
+  // 这里的 attached session 不启动新进程，只把已有 app-server 接到 ThreadHub。
   const bridgeRunner = new ProxyBridgeRunner({
     ...options,
     sessionId,
@@ -371,6 +374,7 @@ class ProxyBridgeRunner {
     try {
       while (!this.stopping) {
         try {
+          // 重连时会重建 transport，但保留已订阅 thread 和 headless 默认 thread。
           const sink: HubTransportSink = {
             sendEvent: (event) => this.transport?.sendEvent(event),
             sendHeartbeat: (registration) => this.transport?.sendHeartbeat(registration)
@@ -442,6 +446,7 @@ class ProxyBridgeRunner {
     const fail = (label: string) => (error: unknown) => {
       if (!this.stopping) stopped.reject(new Error(`${label}: ${errorText(error)}`));
     };
+    // 任一后台循环失败都会断开本次 bridge；runLoop 会用最新快照重连。
     void bridge.runThreadSyncLoop().catch(fail("thread sync"));
     void bridge.runHeartbeatLoop().catch(fail("heartbeat"));
     void bridge.waitForClose().then(() => stopped.reject(new Error("app-server bridge closed")));
@@ -583,6 +588,7 @@ class MachineBackedSessionTransport implements HeadlessSessionTransport {
       pid: process.pid,
       platform: `${process.platform}-${process.arch}`,
       cwd: this.options.cwd,
+      // 这里的 legacy/transient headless 只承载当前 session，不能作为项目 launcher。
       capabilities: { projectLauncher: false }
     };
   }
@@ -600,6 +606,7 @@ class MachineBackedSessionTransport implements HeadlessSessionTransport {
     }
     if (message.type === "registered") {
       this.machineRegistered = true;
+      // 当 machine 注册成功后再注册 session，确保 server 先知道承载它的 machine。
       this.sessionPeer.reconnect();
       return;
     }
@@ -619,6 +626,7 @@ class MachineBackedSessionTransport implements HeadlessSessionTransport {
 
   private failUnsupportedMachineCommands(commands: MachineCommand[]) {
     for (const command of commands) {
+      // 这里的 transient machine 不处理目录浏览或 start_session，避免被误当项目入口。
       this.sendRaw({
         type: "command_error",
         commandId: command.commandId,
@@ -670,6 +678,7 @@ class CodexAppServerBridge {
       if (!bridge.closed) console.error("codex app-server websocket error");
     });
     ws.addEventListener("close", () => bridge.markClosed());
+    // 官方 app-server 通过这条 socket 说 JSON-RPC，必须先 initialize。
     await bridge.request("initialize", {
       clientInfo: { name: "codexhub", title: "codexhub bridge", version: "0.1.0" },
       capabilities: { experimentalApi: true, requestAttestation: false }
@@ -688,6 +697,7 @@ class CodexAppServerBridge {
   }
 
   async ensureDefaultThread() {
+    // 这里的 headless session 暴露一个 ready/default thread，用于 CLI 兜底和启动输出。
     if (this.defaultThreadId) {
       const threadId = await this.ensureThreadLoaded(this.defaultThreadId, this.options.cwd, this.options.model);
       await this.rememberDefaultThread(threadId);
@@ -776,6 +786,7 @@ class CodexAppServerBridge {
   }
 
   private async handleCommand(command: SessionCommand) {
+    // 这里把 server 下发的 session command 转换成官方 app-server 的 JSON-RPC 调用。
     if (command.type === "list_threads") {
       return {
         threads: await this.listAppServerThreads(command.workingDirectory, command.limit)
@@ -958,6 +969,7 @@ class CodexAppServerBridge {
   }
 
   private request(method: string, params: unknown, command?: { threadId?: string; commandId?: string }) {
+    // 每个请求都登记 pending，响应回来时才能把结果和 command/thread 对上。
     const id = this.nextId++;
     const message = { id, method, params };
     return new Promise((resolve, reject) => {
@@ -995,6 +1007,7 @@ class CodexAppServerBridge {
     if (!message) return;
     this.rememberThreads(message);
 
+    // 这里的 JSON-RPC 响应会回到 pending command，但其中仍可能携带 thread 状态。
     if ((typeof message.id === "string" || typeof message.id === "number") && this.pending.has(message.id)) {
       const pending = this.pending.get(message.id)!;
       this.pending.delete(message.id);
@@ -1022,8 +1035,7 @@ class CodexAppServerBridge {
 
     const threadId = this.threadIdForMessage(message);
     if (threadId) {
-      await this.forwardStateEventsFromMessage(threadId, message);
-      await this.forwardThreadEvent(threadId, undefined, message);
+      await this.forwardAppServerThreadNotification(threadId, message);
     }
   }
 
@@ -1065,7 +1077,7 @@ class CodexAppServerBridge {
       const result = await this.request("account/rateLimits/read", undefined);
       this.forwardAccountRateLimits(result);
     } catch {
-      // Older app-server builds may not expose account-level rate limits.
+      // 旧版 app-server 可能没有账号级 rate limits。
     }
   }
 
@@ -1122,6 +1134,7 @@ class CodexAppServerBridge {
     options: { markBridgeStarted?: boolean } = {}
   ) {
     if (this.loadedThreads.has(threadId)) return threadId;
+    // 执行 app-server 操作前先 resume thread，确保 cwd/model 和当前 runtime 绑定。
     this.rememberThreadCwd(threadId, cwd);
     if (options.markBridgeStarted) this.markBridgeStartedThread(threadId);
     const result = asRecord(await this.request("thread/resume", {
@@ -1170,6 +1183,7 @@ class CodexAppServerBridge {
         markBridgeStarted: true
       });
       if (!stillObserved()) return;
+      // 快照补历史 records；实时 app-server 消息会单独转发。
       const turns = await this.listAppServerThreadTurnsOrEmpty(loadedThreadId);
       if (!stillObserved()) return;
       this.hub.sendEvent({
@@ -1234,6 +1248,7 @@ class CodexAppServerBridge {
   resetServerMirrorState() {
     this.forwardedSessionSettings.clear();
     for (const [threadId] of this.syncedThreads) {
+      // 当 server 侧 transport 重连后，需要重新推送已订阅 thread 的快照状态。
       this.scheduleAppServerTurnsSync(threadId);
     }
   }
@@ -1242,6 +1257,7 @@ class CodexAppServerBridge {
     if (!threadIds.length) return;
     try {
       await Promise.all(threadIds.map(async (threadId) => {
+        // 这里的 session settings 是 cwd 相关配置，只同步差异，避免 Web 反复刷新。
         const settings = await this.readSessionSettings(this.threadCwds.get(threadId) ?? this.options.cwd);
         const snapshot = JSON.stringify(settings);
         if (this.forwardedSessionSettings.get(threadId) === snapshot) return;
@@ -1273,10 +1289,18 @@ class CodexAppServerBridge {
     message: JsonRecord,
     options: { heartbeat?: boolean } = {}
   ) {
+    // 原始 app-server 消息保留给 ThreadHub 归一化为 transcript records。
     this.hub.sendEvent({ type: "thread_event", threadId, commandId, message, heartbeat: options.heartbeat });
   }
 
-  private async forwardStateEventsFromMessage(threadId: string, message: JsonRecord) {
+  private async forwardAppServerThreadNotification(threadId: string, message: JsonRecord) {
+    // 同一条 app-server 通知同时驱动控制面状态和 transcript，统一在这里排序。
+    await this.forwardDerivedStateFromMessage(threadId, message);
+    await this.forwardThreadEvent(threadId, undefined, message);
+  }
+
+  private async forwardDerivedStateFromMessage(threadId: string, message: JsonRecord) {
+    // 从原始消息提取控制面状态，不直接生成 transcript record。
     const method = typeof message.method === "string" ? message.method : "";
     if (method === "thread/started") {
       this.markThreadLoaded(threadId);
@@ -1364,6 +1388,7 @@ class CodexAppServerBridge {
   }
 
   private respondToServerRequest(message: JsonRecord) {
+    // 这个 bridge 没有交互式审批 UI，app-server 主动询问时统一拒绝或给空响应。
     const method = typeof message.method === "string" ? message.method : "";
     const id = message.id;
     if (method === "item/commandExecution/requestApproval") {

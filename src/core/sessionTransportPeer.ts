@@ -21,6 +21,7 @@ export type SessionTransportPeerOptions = {
   }>;
 };
 
+// 这里是 machine/direct transport 共用的 session 端；重连时保留 command cursor。
 export class SessionTransportPeer {
   private registered = false;
   private stopped = false;
@@ -110,6 +111,7 @@ export class SessionTransportPeer {
   }
 
   private enqueueCommands(commands: SessionCommand[]) {
+    // 这里的 session command 必须按服务端顺序执行，commandCursor 才能安全 replay。
     this.commandChain = this.commandChain.then(async () => {
       for (const command of commands) {
         try {
@@ -147,6 +149,7 @@ export class SessionTransportPeer {
       this.options.send(message);
       return;
     }
+    // 这里的 heartbeat 是临时状态；thread events/results 会排队等注册恢复。
     if (options.queue === false) return;
     this.pendingOutgoing.push(message);
     if (this.pendingOutgoing.length > 1000) this.pendingOutgoing.splice(0, this.pendingOutgoing.length - 1000);
