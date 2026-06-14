@@ -366,7 +366,7 @@ export const machineProjectCatalogEditable = (machine: MachineSummary | StoredMa
   machine?.capabilities?.projectCatalog !== "fixed";
 
 export const fixedProject = (project: ProjectSummary) =>
-  project.source?.kind === "vscode";
+  project.machine?.capabilities?.projectCatalog === "fixed";
 
 type StoredMachineLike = {
   capabilities?: {

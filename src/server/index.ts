@@ -13,7 +13,7 @@ import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTu
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
-import { CodexhubServerState, isFixedProjectSource } from "../core/serverState.js";
+import { CodexhubServerState } from "../core/serverState.js";
 import type { ProjectSource, StoredTask } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
@@ -598,6 +598,19 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       ...source,
       groupId: `registered:${machineId}:${source.groupId}`
     };
+  }
+
+  function projectIsFixed(projectId: string) {
+    const project = projectSnapshot().projects.find((item) => item.projectId === projectId);
+    return project?.machine?.capabilities?.projectCatalog === "fixed";
+  }
+
+  function fixedProjectPathExists(machineId: string, projectPath: string) {
+    return projectSnapshot().projects.some((project) => project.machineId === machineId && project.path === projectPath);
+  }
+
+  function isVscodeWorkspaceSource(source: ProjectSource | undefined) {
+    return source?.kind === "vscode";
   }
 
   function publishProjects() {
@@ -1419,7 +1432,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.delete("/api/projects/:projectId", async (request, reply) => {
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
-    if (state.isFixedProject(params.projectId)) {
+    if (projectIsFixed(params.projectId)) {
       reply.code(409);
       return { error: "Fixed workspace projects are controlled by their provider." };
     }
@@ -1443,7 +1456,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.patch("/api/projects/:projectId", async (request, reply) => {
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
     const payload = projectUpdateSchema.parse(request.body);
-    if (state.isFixedProject(params.projectId)) {
+    if (projectIsFixed(params.projectId)) {
       reply.code(409);
       return { error: "Fixed workspace projects cannot be saved, pinned, or renamed." };
     }
@@ -1469,7 +1482,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
     try {
       const machine = resolveTargetMachine(machines.listMachines(), payload.machineId);
-      if (machine.capabilities?.projectCatalog === "fixed" && !isFixedProjectSource(payload.source)) {
+      const fixedCatalog = machine.capabilities?.projectCatalog === "fixed";
+      const providerSeed = surface === "vscode" && machine.type === "local" && isVscodeWorkspaceSource(payload.source);
+      if (fixedCatalog && !providerSeed && !fixedProjectPathExists(machine.machineId, payload.path)) {
         reply.code(409);
         return { error: "This machine exposes a fixed workspace project list." };
       }
@@ -2315,7 +2330,7 @@ const selfRegistrationError = () => Object.assign(
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
 const resolveTargetMachine = (
-  allMachines: Array<{ machineId: string; online: boolean; capabilities?: { projectLauncher?: boolean; projectCatalog?: "editable" | "fixed" } }>,
+  allMachines: Array<{ machineId: string; type?: "local" | "ssh" | "registered"; online: boolean; capabilities?: { projectLauncher?: boolean; projectCatalog?: "editable" | "fixed" } }>,
   requestedMachineId: string | undefined
 ) => {
   const onlineMachines = allMachines.filter((machine) => machine.online && machine.capabilities?.projectLauncher !== false);

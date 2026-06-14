@@ -33,9 +33,6 @@ export type ProjectSource = {
   label?: string;
 };
 
-export const isFixedProjectSource = (source: ProjectSource | undefined) =>
-  source?.kind === "vscode";
-
 type RuntimeProject = StoredProject & {
   transient?: boolean;
   source?: ProjectSource;
@@ -152,15 +149,6 @@ export class CodexhubServerState {
   hasStoredProject(projectId: string) {
     const resolvedProjectId = this.resolveProjectId(projectId);
     return this.data.projects.some((project) => project.projectId === resolvedProjectId);
-  }
-
-  projectSource(projectId: string) {
-    const resolvedProjectId = this.resolveProjectId(projectId);
-    return this.transientProjects.get(resolvedProjectId)?.source;
-  }
-
-  isFixedProject(projectId: string) {
-    return isFixedProjectSource(this.projectSource(projectId));
   }
 
   deleteProject(projectId: string) {

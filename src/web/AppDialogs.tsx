@@ -3,6 +3,8 @@ import { reasoningOptions } from "./appConfig.js";
 import {
   formatInspectTitle,
   formatThreadCandidateTime,
+  machineProjectCatalogEditable,
+  machineProjectLauncher,
   modelOptionLabel,
   reasoningOptionLabel,
   shortId,
@@ -57,6 +59,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const projectPickerMachine = projectPicker
     ? machines.find((machine) => machine.machineId === projectPicker.machineId)
     : undefined;
+  const projectPickerMachines = onlineMachines.filter((machine) =>
+    machineProjectLauncher(machine) && machineProjectCatalogEditable(machine)
+  );
   const projectPickerOpening = projectPicker
     ? openingProjectKey === `${projectPicker.machineId}:${projectPicker.path.trim()}`
     : false;
@@ -212,9 +217,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 <select
                   value={projectPicker.machineId}
                   onChange={(event) => changeProjectPickerMachine(event.target.value)}
-                  disabled={projectPicker.loading || onlineMachines.length <= 1}
+                  disabled={projectPicker.loading || projectPickerMachines.length <= 1}
                 >
-                  {onlineMachines.map((machine) => (
+                  {projectPickerMachines.map((machine) => (
                     <option value={machine.machineId} key={machine.machineId}>
                       {machine.name ?? machine.hostname}
                     </option>

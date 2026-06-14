@@ -8,6 +8,8 @@ import {
   normalizeSessions,
   preferredThreadIdForSession,
   fixedProject,
+  machineProjectCatalogEditable,
+  machineProjectLauncher,
   projectKeyFor,
   projectKeyForProject
 } from "../appHelpers.js";
@@ -111,6 +113,14 @@ export type ProjectActions = {
 
 export const createProjectActions = (ctx: ProjectActionsContext, actions: Record<string, any>): ProjectActions => {
   const deps = actions as ProjectActionsDependencies;
+  const fixedCatalogMessage = "This machine exposes a fixed workspace project list.";
+  const editableProjectPickerMachine = (machineId: string) =>
+    ctx.machines.find((machine) =>
+      machine.machineId === machineId
+      && machine.online
+      && machineProjectLauncher(machine)
+      && machineProjectCatalogEditable(machine)
+    );
 
   const selectProjectSession = async (session: SessionView) => {
     ctx.setActiveSessionId(session.sessionId);
@@ -161,6 +171,14 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
   };
 
   const loadProjectPickerDirectory = async (machineId: string, targetPath?: string) => {
+    if (!editableProjectPickerMachine(machineId)) {
+      ctx.setProjectPicker((current) => current && current.machineId === machineId ? {
+        ...current,
+        loading: false,
+        error: fixedCatalogMessage
+      } : current);
+      return;
+    }
     const trimmedPath = targetPath?.trim();
     ctx.setProjectPicker((current) => current && current.machineId === machineId ? {
       ...current,
@@ -193,7 +211,8 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
 
   const openProjectPicker = (machine: ProjectMachineGroup) => {
     const browseMachineId = machine.machineId ?? machine.key;
-    const summary = ctx.machines.find((item) => item.machineId === browseMachineId);
+    const summary = editableProjectPickerMachine(browseMachineId);
+    if (!summary) return;
     const initialPath = summary?.cwd ?? machine.projects[0]?.path ?? "";
     ctx.setProjectPicker({
       machineId: browseMachineId,
@@ -206,7 +225,11 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
   };
 
   const changeProjectPickerMachine = (machineId: string) => {
-    const summary = ctx.machines.find((machine) => machine.machineId === machineId);
+    const summary = editableProjectPickerMachine(machineId);
+    if (!summary) {
+      ctx.setProjectPicker((current) => current ? { ...current, loading: false, error: fixedCatalogMessage } : current);
+      return;
+    }
     const initialPath = summary?.cwd ?? "";
     ctx.setProjectPicker({
       machineId,
@@ -226,6 +249,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
 
   const confirmProjectPicker = async () => {
     if (!ctx.projectPicker) return;
+    if (!editableProjectPickerMachine(ctx.projectPicker.machineId)) {
+      ctx.setProjectPicker((current) => current ? { ...current, loading: false, error: fixedCatalogMessage } : current);
+      return;
+    }
     const opened = await openProject(ctx.projectPicker.path, ctx.projectPicker.machineId);
     if (opened) ctx.setProjectPicker(null);
   };
