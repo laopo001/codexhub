@@ -1054,6 +1054,8 @@ export class ThreadHub {
       this.applyAppServerThread(thread, resultThread);
       this.applyAppServerThreadTurns(thread, resultThread, { historicalRecords: true });
     }
+    const resultGoal = asRecord(result?.goal);
+    if (resultGoal) this.appendThreadGoalUpdatedRecord(thread, { threadId: thread.threadId, goal: resultGoal });
 
     const method = typeof record.method === "string" ? record.method : "";
     const params = asRecord(record.params);
@@ -1077,6 +1079,7 @@ export class ThreadHub {
     }
 
     if (method === "thread/goal/updated") {
+      this.appendThreadGoalUpdatedRecord(thread, params);
       return;
     }
 
@@ -1322,9 +1325,17 @@ export class ThreadHub {
         changed = true;
       }
     }
-    if (!changed) return;
-    thread.updatedAt = new Date().toISOString();
-    this.publish(thread, "thread");
+    if (changed) {
+      thread.updatedAt = new Date().toISOString();
+      this.publish(thread, "thread");
+    }
+    if (!hasOwn(appThread, "goal")) return;
+    const goal = asRecord(appThread.goal);
+    if (goal) {
+      this.appendThreadGoalUpdatedRecord(thread, { threadId: thread.threadId, goal }, { historical: true });
+      return;
+    }
+    this.appendThreadGoalClearedRecord(thread, { threadId: thread.threadId }, { ifKnownGoal: true });
   }
 
   private applySessionSettings(
@@ -1377,10 +1388,16 @@ export class ThreadHub {
     this.publish(thread, "thread");
   }
 
-  private appendHubRecord(thread: ThreadState, type: string, payload: unknown) {
+  private appendHubRecord(
+    thread: ThreadState,
+    type: string,
+    payload: unknown,
+    timestamp = new Date().toISOString(),
+    options: { historical?: boolean } = {}
+  ) {
     const record: CodexRecord = {
       id: `proxy:${randomUUID()}`,
-      timestamp: new Date().toISOString(),
+      timestamp,
       type,
       payload,
       order: ++thread.recordSeq,
@@ -1389,16 +1406,64 @@ export class ThreadHub {
     thread.records.push(record);
     thread.records = orderThreadRecords(thread.records);
     thread.updatedAt = record.timestamp ?? thread.updatedAt;
-    this.publish(thread, "record", record);
+    this.publish(thread, "record", record, { historical: options.historical });
   }
 
-  private appendThreadGoalClearedRecord(thread: ThreadState, payload: Record<string, unknown> = {}) {
+  private appendThreadGoalUpdatedRecord(
+    thread: ThreadState,
+    payload: Record<string, unknown> = {},
+    options: { historical?: boolean } = {}
+  ) {
+    const rawGoal = asRecord(payload.goal) ?? payload;
+    const threadId = threadGoalThreadId(payload, rawGoal) ?? thread.threadId;
+    const goal = {
+      ...rawGoal,
+      threadId,
+      ...(typeof rawGoal.status === "string" ? {} : { status: "active" })
+    };
+    if (this.latestThreadGoalMatches(thread, threadId, goal)) return;
+    this.appendHubRecord(thread, "event_msg", {
+      ...payload,
+      type: "thread_goal_updated",
+      threadId,
+      goal,
+      message: typeof payload.message === "string" ? payload.message : formatThreadGoalMessage(goal)
+    }, threadGoalTimestamp(payload, goal), { historical: options.historical });
+  }
+
+  private appendThreadGoalClearedRecord(
+    thread: ThreadState,
+    payload: Record<string, unknown> = {},
+    options: { ifKnownGoal?: boolean } = {}
+  ) {
+    const threadId = threadGoalThreadId(payload, null) ?? thread.threadId;
+    const latest = this.latestThreadGoalRecord(thread, threadId);
+    if (options.ifKnownGoal && !latest) return;
+    if (latest?.type === "thread_goal_cleared") return;
     this.appendHubRecord(thread, "event_msg", {
       ...payload,
       type: "thread_goal_cleared",
-      threadId: typeof payload.threadId === "string" ? payload.threadId : thread.threadId,
+      threadId,
       message: typeof payload.message === "string" ? payload.message : "Goal cleared"
-    });
+    }, threadGoalTimestamp(payload, null));
+  }
+
+  private latestThreadGoalMatches(thread: ThreadState, threadId: string, goal: Record<string, unknown>) {
+    const latest = this.latestThreadGoalRecord(thread, threadId);
+    if (!latest || latest.type !== "thread_goal_updated") return false;
+    return threadGoalsEqual(asRecord(latest.payload?.goal), goal);
+  }
+
+  private latestThreadGoalRecord(thread: ThreadState, threadId: string) {
+    for (let index = thread.records.length - 1; index >= 0; index -= 1) {
+      const payload = asRecord(thread.records[index].payload);
+      const type = typeof payload?.type === "string" ? payload.type : "";
+      if (type !== "thread_goal_updated" && type !== "thread_goal_cleared") continue;
+      const goal = asRecord(payload?.goal);
+      if (!threadGoalRecordMatchesThread(payload, goal, threadId)) continue;
+      return { type, payload };
+    }
+    return null;
   }
 
   private appendUserInputRecord(thread: ThreadState, input: ProxyInput) {
@@ -2369,8 +2434,62 @@ const formatThreadGoalMessage = (goal: Record<string, unknown> | null) => {
   const objective = typeof goal?.objective === "string" && goal.objective.trim()
     ? goal.objective.trim()
     : "Untitled goal";
-  const budget = typeof goal?.tokenBudget === "number" ? ` (budget ${goal.tokenBudget} tokens)` : "";
+  const tokenBudget = numberValue(goal?.tokenBudget) ?? numberValue(goal?.token_budget);
+  const budget = tokenBudget == null ? "" : ` (budget ${tokenBudget} tokens)`;
   return `Goal ${status}: ${objective}${budget}`;
+};
+
+const threadGoalThreadId = (
+  payload: Record<string, unknown> | null,
+  goal: Record<string, unknown> | null
+) =>
+  stringValue(payload?.threadId)
+  ?? stringValue(payload?.thread_id)
+  ?? stringValue(goal?.threadId)
+  ?? stringValue(goal?.thread_id);
+
+const threadGoalRecordMatchesThread = (
+  payload: Record<string, unknown> | null,
+  goal: Record<string, unknown> | null,
+  threadId: string
+) => {
+  const payloadThreadId = stringValue(payload?.threadId) ?? stringValue(payload?.thread_id);
+  const goalThreadId = stringValue(goal?.threadId) ?? stringValue(goal?.thread_id);
+  return payloadThreadId === threadId || goalThreadId === threadId || (!payloadThreadId && !goalThreadId);
+};
+
+const threadGoalsEqual = (left: Record<string, unknown> | null, right: Record<string, unknown> | null) => {
+  if (!left || !right) return false;
+  return normalizedGoalObjective(left) === normalizedGoalObjective(right)
+    && normalizedGoalStatus(left) === normalizedGoalStatus(right)
+    && normalizedGoalTokenBudget(left) === normalizedGoalTokenBudget(right);
+};
+
+const normalizedGoalObjective = (goal: Record<string, unknown>) =>
+  typeof goal.objective === "string" ? goal.objective.trim() : "";
+
+const normalizedGoalStatus = (goal: Record<string, unknown>) =>
+  typeof goal.status === "string" && goal.status ? goal.status : "active";
+
+const normalizedGoalTokenBudget = (goal: Record<string, unknown>) =>
+  numberValue(goal.tokenBudget) ?? numberValue(goal.token_budget) ?? null;
+
+const threadGoalTimestamp = (payload: Record<string, unknown>, goal: Record<string, unknown> | null) =>
+  timestampFromEpochOrIso(payload.timestamp, "millis")
+  ?? timestampFromEpochOrIso(payload.createdAt ?? payload.created_at, "seconds")
+  ?? timestampFromEpochOrIso(payload.updatedAt ?? payload.updated_at, "seconds")
+  ?? timestampFromEpochOrIso(goal?.updatedAt ?? goal?.updated_at, "seconds")
+  ?? timestampFromEpochOrIso(goal?.createdAt ?? goal?.created_at, "seconds")
+  ?? new Date().toISOString();
+
+const timestampFromEpochOrIso = (value: unknown, numericUnit: "millis" | "seconds") => {
+  if (typeof value === "string" && value) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const millis = numericUnit === "millis" ? value : value * 1000;
+  return new Date(millis).toISOString();
 };
 
 const formatSession = (summary: ThreadSessionSummary) => {
@@ -2394,6 +2513,8 @@ const formatUsage = (usage: Usage | undefined) => {
 };
 
 const numberValue = (value: unknown) => typeof value === "number" ? value : undefined;
+
+const stringValue = (value: unknown) => typeof value === "string" ? value : undefined;
 
 const isThreadReasoningEffort = (value: unknown): value is ThreadOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";

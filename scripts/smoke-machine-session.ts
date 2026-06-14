@@ -114,6 +114,7 @@ const main = async () => {
   await assertProjectNamesArePathBasenames();
   await assertProjectSessionProjection();
   await assertAppServerTurnLifecycleRecords();
+  await assertAppServerGoalRecords();
   await assertAppServerTurnSnapshotPreservesAgentMessages();
   await assertAppServerAgentMessageDeltaStreams();
   await assertSessionAccountRateLimits();
@@ -977,6 +978,129 @@ const assertAppServerTurnLifecycleRecords = async () => {
     || completedPayload.time_to_first_token_ms !== 750
   ) {
     throw new Error(`app-server turn snapshot did not create task_complete duration: ${JSON.stringify(records)}`);
+  }
+};
+
+const assertAppServerGoalRecords = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const hub = new ThreadHub();
+  const sessionId = "app-server-goal-session";
+  const threadId = "app-server-goal-thread";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-app-server-goal"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    heartbeat: false,
+    message: {
+      id: "set-goal-response",
+      result: {
+        goal: {
+          threadId,
+          objective: "goal from app-server response",
+          status: "active",
+          tokenBudget: 111,
+          updatedAt: 1
+        }
+      }
+    }
+  });
+  let records = hub.getThread(threadId)?.records ?? [];
+  let goalRecords = records.filter((record) => asRecord(asRecord(record).payload).type === "thread_goal_updated");
+  let goalPayload = asRecord(asRecord(goalRecords[0]).payload);
+  let goal = asRecord(goalPayload.goal);
+  if (
+    goalRecords.length !== 1
+    || goalPayload.threadId !== threadId
+    || goal.objective !== "goal from app-server response"
+    || goal.status !== "active"
+    || goal.tokenBudget !== 111
+  ) {
+    throw new Error(`app-server goal response did not create goal record: ${JSON.stringify(records)}`);
+  }
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    heartbeat: false,
+    message: {
+      method: "thread/goal/updated",
+      params: {
+        threadId,
+        goal: {
+          objective: "keep the goal strip visible",
+          status: "active",
+          tokenBudget: 123,
+          updatedAt: 2
+        }
+      }
+    }
+  });
+  records = hub.getThread(threadId)?.records ?? [];
+  goalRecords = records.filter((record) => asRecord(asRecord(record).payload).type === "thread_goal_updated");
+  goalPayload = asRecord(asRecord(goalRecords[goalRecords.length - 1]).payload);
+  goal = asRecord(goalPayload.goal);
+  if (
+    goalRecords.length !== 2
+    || goalPayload.threadId !== threadId
+    || goal.objective !== "keep the goal strip visible"
+    || goal.status !== "active"
+    || goal.tokenBudget !== 123
+  ) {
+    throw new Error(`app-server goal notification did not create goal record: ${JSON.stringify(records)}`);
+  }
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    heartbeat: false,
+    message: {
+      result: {
+        thread: {
+          id: threadId,
+          goal: {
+            objective: "goal from app-server snapshot",
+            status: "paused",
+            token_budget: 456,
+            updated_at: 3
+          }
+        }
+      }
+    }
+  });
+  records = hub.getThread(threadId)?.records ?? [];
+  goalRecords = records.filter((record) => asRecord(asRecord(record).payload).type === "thread_goal_updated");
+  goalPayload = asRecord(asRecord(goalRecords[goalRecords.length - 1]).payload);
+  goal = asRecord(goalPayload.goal);
+  if (
+    goalRecords.length !== 3
+    || goal.objective !== "goal from app-server snapshot"
+    || goal.status !== "paused"
+    || goal.token_budget !== 456
+  ) {
+    throw new Error(`app-server thread snapshot did not create goal record: ${JSON.stringify(records)}`);
+  }
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    heartbeat: false,
+    message: {
+      result: {
+        thread: {
+          id: threadId,
+          goal: null
+        }
+      }
+    }
+  });
+  records = hub.getThread(threadId)?.records ?? [];
+  const latestGoalPayload = asRecord(asRecord(records[records.length - 1]).payload);
+  if (latestGoalPayload.type !== "thread_goal_cleared" || latestGoalPayload.threadId !== threadId) {
+    throw new Error(`app-server empty goal snapshot did not clear goal record: ${JSON.stringify(records)}`);
   }
 };
 
