@@ -380,6 +380,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
       const payload = message;
       ctx.connectionsLastSeq.current = Math.max(ctx.connectionsLastSeq.current, payload.seq);
       ctx.setSshConnections(Array.isArray(payload.connections) ? payload.connections : []);
+      if (payload.registration) ctx.setParentRegistration(payload.registration);
       return;
     }
     if (

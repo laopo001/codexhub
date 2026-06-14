@@ -245,10 +245,11 @@ export type ProjectMachineGroup = {
   key: string;
   kind?: "machine" | "vscodeWorkspace";
   machineId: string;
+  machineType: NonNullable<MachineSummary["type"]>;
   label: string;
   online: boolean;
   projectLauncher: boolean;
-  statusLabel: string;
+  badgeLabel: string;
   projects: ProjectSummary[];
 };
 
@@ -343,6 +344,7 @@ export type ConnectionsStreamEvent = {
   seq: number;
   kind: "connections";
   connections: SshConnection[];
+  registration?: ParentRegistrationStatus;
 };
 
 export type RealtimeMessage =

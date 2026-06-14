@@ -294,6 +294,7 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
   const groupedMachineIds = new Set<string>();
   for (const project of projects) {
     const machine = machinesById.get(project.machineId) ?? project.machine;
+    const machineType = machine?.type ?? "registered";
     const sourceGroupKey = project.source?.kind === "vscode" ? `vscode:${project.source.groupId}` : "";
     const groupKey = sourceGroupKey || project.machineId;
     const label = machine
@@ -306,15 +307,17 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
         key: groupKey,
         kind: sourceGroupKey ? "vscodeWorkspace" : "machine",
         machineId: project.machineId,
+        machineType,
         label: project.source?.label ?? label,
         online,
         projectLauncher: machineProjectLauncher(machine),
-        statusLabel: online ? "online" : "offline",
+        badgeLabel: machineType,
         projects: []
       };
       groups.set(groupKey, group);
     }
     group.online = group.online || online;
+    group.machineType = group.machineType ?? machineType;
     group.projectLauncher = group.projectLauncher || machineProjectLauncher(machine);
     if (group.label === project.machineId && label !== project.machineId) group.label = label;
     group.projects.push(project);
@@ -329,17 +332,18 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
       key: machine.machineId,
       kind: "machine",
       machineId: machine.machineId,
+      machineType: machine.type ?? "registered",
       label: machine.name ?? machine.hostname,
       online: machine.online,
       projectLauncher: machineProjectLauncher(machine),
-      statusLabel: machine.online ? "ready" : "offline",
+      badgeLabel: machine.type ?? "registered",
       projects: []
     });
   }
   return [...groups.values()]
     .map((group) => ({
       ...group,
-      statusLabel: projectMachineStatus(group),
+      badgeLabel: projectMachineBadgeLabel(group),
       projects: [...group.projects].sort((left, right) => {
         return compareProjectRows(left, right);
       })
@@ -351,12 +355,8 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
     );
 };
 
-export const projectMachineStatus = (group: Pick<ProjectMachineGroup, "online" | "projectLauncher" | "projects">) => {
-  const onlineProjects = group.projects.filter((project) => project.session?.online).length;
-  if (!group.online) return "offline";
-  if (!group.projectLauncher) return "session";
-  if (onlineProjects) return `${onlineProjects}/${group.projects.length} active`;
-  return "ready";
+export const projectMachineBadgeLabel = (group: Pick<ProjectMachineGroup, "machineType">) => {
+  return group.machineType;
 };
 
 export const machineProjectLauncher = (machine: MachineSummary | StoredMachineLike | undefined) =>

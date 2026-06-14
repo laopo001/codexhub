@@ -25,7 +25,7 @@ pnpm run dev:api
 
 - Web/API: `http://127.0.0.1:8788`
 
-普通本机启动时，server 会默认注册一台 `local` machine，Web 的 Connections / This Computer 可以直接看到它，并通过 Projects 打开本机目录、启动 Codex session。需要关闭这个内嵌本机入口时设置：
+普通本机启动时，server 会默认注册一台 `local` machine，Web 的 Connections / local 可以直接看到它，并通过 Projects 打开本机目录、启动 Codex session。需要关闭这个内嵌本机入口时设置：
 
 ```bash
 CODEX_HUB_LOCAL_MACHINE=0 pnpm codexhub server

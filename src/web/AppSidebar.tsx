@@ -43,7 +43,7 @@ const taskSchedulePresets = [
 ] as const;
 
 const parentRegistrationStatusLabel = (status: AppSidebarViewModel["parentRegistration"]["status"]) => {
-  if (status === "online") return "online";
+  if (status === "online") return "connected";
   if (status === "connecting" || status === "starting") return "connecting";
   if (status === "offline") return "offline";
   if (status === "stopped") return "stopped";
@@ -137,10 +137,11 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         key: machine.machineId,
         kind: "machine",
         machineId: machine.machineId,
+        machineType: machine.type ?? "registered",
         label: machine.name ?? machine.hostname,
         online: machine.online,
         projectLauncher: machineProjectLauncher(machine),
-        statusLabel: machine.online ? "ready" : "offline",
+        badgeLabel: machine.type ?? "registered",
         projects: []
       }))[0];
   const visibleProjectTaskTargets = new Set(projectList.map((project) => `${project.machineId}\0${project.path}`));
@@ -179,7 +180,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         >
           <span className={`projectOfflineArrow ${collapsed ? "collapsed" : ""}`}>{">"}</span>
           <span title={machine.label}>{machine.label}</span>
-          <strong>{machine.statusLabel}</strong>
+          <strong>{machine.badgeLabel}</strong>
         </button>
         {!collapsed ? (
           <div className="projectMachineRows">
@@ -268,7 +269,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             className={connectionMode === "local" ? "active" : ""}
             onClick={() => setConnectionMode("local")}
           >
-            This Computer
+            local
           </button>
           <button
             type="button"

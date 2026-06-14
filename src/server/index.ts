@@ -748,7 +748,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return {
       seq: connectionSeq,
       kind: "connections" as const,
-      connections: features.ssh ? sshMachines.listConnections() : []
+      connections: features.ssh ? sshMachines.listConnections() : [],
+      registration: parentRegistrationView()
     };
   }
 
@@ -756,7 +757,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const event = {
       seq: ++connectionSeq,
       kind: "connections" as const,
-      connections: sshMachines.listConnections()
+      connections: sshMachines.listConnections(),
+      registration: parentRegistrationView()
     };
     for (const subscriber of connectionSubscribers) subscriber(event);
   }
@@ -807,6 +809,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           message: status.message,
           updatedAt: status.updatedAt
         };
+        publishConnections();
       }
     });
     return parentRegistrationView();
@@ -2055,7 +2058,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       authToken: serverAuthToken ?? undefined,
       machineId: process.env.CODEX_HUB_LOCAL_MACHINE_ID,
       type: "local",
-      name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "This Computer",
+      name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "local",
       capabilities: surface === "vscode" ? { projectCatalog: "fixed" } : undefined
     });
   }

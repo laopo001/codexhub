@@ -370,7 +370,8 @@
   font-weight: 800;
 }
 
-.registeredParentStatus.online {
+.registeredParentStatus.online,
+.registeredParentStatus.connected {
   border-color: #2c7b4e;
   background: #15452c;
   color: #b9f4c9;
