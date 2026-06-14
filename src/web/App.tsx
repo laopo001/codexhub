@@ -471,10 +471,6 @@ const App = () => {
     () => latestUserTurnStatusScope(displayRecords),
     [displayRecords]
   );
-  const latestGoalScope = useMemo(
-    () => latestUserTurnStatusScope(goalRecords),
-    [goalRecords]
-  );
   const latestTurnStatuses = useMemo(
     () => activityStatusesFromRecords(latestTurnStatusScope.records),
     [latestTurnStatusScope.records]
@@ -488,8 +484,8 @@ const App = () => {
     [latestTurnStatuses, messageDisplayMode]
   );
   const activeGoal = useMemo(
-    () => latestThreadGoalFromRecords(latestGoalScope.records, activeThread?.threadId),
-    [activeThread?.threadId, latestGoalScope.records]
+    () => latestThreadGoalFromRecords(goalRecords, activeThread?.threadId),
+    [activeThread?.threadId, goalRecords]
   );
   const turnUiState = useMemo(
     () => turnUiStateFromStatus(latestTurnStatus, Boolean(activeThread?.running)),
