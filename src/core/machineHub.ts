@@ -6,6 +6,17 @@ export type MachineCapabilities = {
   projectLauncher: boolean;
 };
 
+export type MachineRegistrationProjectSource = {
+  kind: "vscode";
+  groupId: string;
+  label?: string;
+};
+
+export type MachineRegistrationProject = {
+  path: string;
+  source?: MachineRegistrationProjectSource;
+};
+
 export type MachineRegistration = {
   machineId?: string;
   type?: MachineType;
@@ -15,6 +26,7 @@ export type MachineRegistration = {
   platform?: string;
   cwd?: string;
   capabilities?: Partial<MachineCapabilities>;
+  projects?: MachineRegistrationProject[];
   transportId?: string;
 };
 

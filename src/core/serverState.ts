@@ -167,6 +167,16 @@ export class CodexhubServerState {
     return this.transientProjects.delete(resolvedProjectId);
   }
 
+  deleteTransientProjectsForMachine(machineId: string) {
+    let deleted = false;
+    for (const [projectId, project] of this.transientProjects) {
+      if (project.machineId !== machineId) continue;
+      this.transientProjects.delete(projectId);
+      deleted = true;
+    }
+    return deleted;
+  }
+
   isTransientProject(projectId: string) {
     return this.transientProjects.has(this.resolveProjectId(projectId));
   }

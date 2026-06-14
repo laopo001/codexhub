@@ -8,6 +8,7 @@ import {
   type MachineCommand,
   type MachineDirectoryListing,
   type MachineRegistration,
+  type MachineRegistrationProject,
   type MachineStartSessionResult,
   type MachineStopSessionResult,
   type MachineType
@@ -28,6 +29,7 @@ export type MachineRunnerOptions = {
   machineId?: string;
   type?: MachineType;
   name?: string;
+  projects?: MachineRegistrationProject[] | (() => MachineRegistrationProject[]);
   onStatus?: (status: CodexhubMachineStatus) => void;
 };
 
@@ -192,6 +194,9 @@ class CodexhubMachineRunner {
   }
 
   private registration(): MachineRegistration {
+    const projects = typeof this.options.projects === "function"
+      ? this.options.projects()
+      : this.options.projects;
     return {
       machineId: this.machineId,
       type: this.options.type ?? "registered",
@@ -200,7 +205,8 @@ class CodexhubMachineRunner {
       pid: process.pid,
       platform: `${process.platform}-${process.arch}`,
       cwd: process.cwd(),
-      capabilities: { projectLauncher: true }
+      capabilities: { projectLauncher: true },
+      projects: projects?.length ? projects : undefined
     };
   }
 

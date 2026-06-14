@@ -356,6 +356,16 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           </div>
         ) : (
           <div className="connectionList">
+            <div className="registeredCommand">
+              <div className="registeredCommandText">
+                <span className="registeredCommandLabel">Register</span>
+                <code title={registeredCommand}>{registeredCommand}</code>
+                {registeredCommandIncludesToken ? <span>auth token included</span> : null}
+              </div>
+              <button type="button" onClick={() => void copyRegisteredCommand()}>
+                {registeredCommandCopied ? "Copied" : "Copy"}
+              </button>
+            </div>
             <form className="registeredParentForm" onSubmit={(event) => void connectParentRegistration(event)}>
               <div className="registeredParentHeader">
                 <span>Register to parent</span>
@@ -402,16 +412,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               </div>
               {parentRegistrationError ? <div className="projectOpenError">{parentRegistrationError}</div> : null}
             </form>
-            <div className="registeredCommand">
-              <div className="registeredCommandText">
-                <span className="registeredCommandLabel">server register command</span>
-                <code title={registeredCommand}>{registeredCommand}</code>
-                {registeredCommandIncludesToken ? <span>auth token included</span> : null}
-              </div>
-              <button type="button" onClick={() => void copyRegisteredCommand()}>
-                {registeredCommandCopied ? "Copied" : "Copy"}
-              </button>
-            </div>
             {registeredMachines.length === 0 ? (
               <div className="connectionEmpty">No registered machines</div>
             ) : registeredMachines.map((machine) => (

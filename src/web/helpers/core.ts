@@ -291,6 +291,11 @@ export const uniqueMachines = (machines: MachineSummary[]) => {
 export const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSummary[]): ProjectMachineGroup[] => {
   const machinesById = new Map(machines.map((machine) => [machine.machineId, machine]));
   const groups = new Map<string, ProjectMachineGroup>();
+  const sourceProjectMachineIds = new Set(
+    projects
+      .filter((project) => project.source?.kind === "vscode")
+      .map((project) => project.machineId)
+  );
   for (const machine of machines) {
     if (!machine.online) continue;
     if (!machineProjectLauncher(machine)) continue;
@@ -333,6 +338,7 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
     group.projects.push(project);
   }
   return [...groups.values()]
+    .filter((group) => !(group.kind === "machine" && group.projects.length === 0 && group.machineId && sourceProjectMachineIds.has(group.machineId)))
     .map((group) => ({
       ...group,
       statusLabel: projectMachineStatus(group),

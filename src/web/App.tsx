@@ -350,7 +350,7 @@ const App = () => {
   );
   const onlineMachines = useMemo(() => machines.filter((machine) => machine.online), [machines]);
   const localMachines = useMemo(() => machines.filter((machine) => machine.type === "local"), [machines]);
-  const registeredMachines = useMemo(() => machines.filter((machine) => machine.type === "registered"), [machines]);
+  const registeredMachines = useMemo(() => machines.filter((machine) => machine.type === "registered" && machine.online), [machines]);
   const sshConfigHostOptions = useMemo(() => {
     const savedAliases = new Set(sshHosts.map((host) => host.alias));
     return sshConfigHosts.filter((host) => !savedAliases.has(host.alias));

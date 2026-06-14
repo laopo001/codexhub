@@ -8,13 +8,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { createMachineId, MachineHub } from "../core/machineHub.js";
+import { createMachineId, MachineHub, type MachineRegistrationProject } from "../core/machineHub.js";
 import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
 import { CodexhubServerState } from "../core/serverState.js";
-import type { StoredTask } from "../core/serverState.js";
+import type { ProjectSource, StoredTask } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
@@ -65,6 +65,11 @@ const projectSourceSchema = z.object({
   kind: z.literal("vscode"),
   groupId: z.string().min(1),
   label: z.string().min(1).optional()
+}).strict();
+
+const machineRegistrationProjectSchema = z.object({
+  path: z.string().min(1),
+  source: projectSourceSchema.optional()
 }).strict();
 
 const sessionRegistrationSchema = z.object({
@@ -119,7 +124,8 @@ const machineRegistrationSchema = z.object({
   cwd: z.string().min(1).optional(),
   capabilities: z.object({
     projectLauncher: z.boolean().optional()
-  }).optional()
+  }).optional(),
+  projects: z.array(machineRegistrationProjectSchema).optional()
 });
 
 const machineHeartbeatSchema = machineRegistrationSchema.partial();
@@ -560,6 +566,39 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     };
   }
 
+  function vscodeParentRegistrationProjects(): MachineRegistrationProject[] {
+    if (surface !== "vscode" || !localMachine) return [];
+    return projectSnapshot().projects
+      .filter((project) => project.machineId === localMachine?.machineId && project.source?.kind === "vscode")
+      .map((project) => ({
+        path: project.path,
+        source: project.source
+      }));
+  }
+
+  function replaceMachineRegistrationProjects(machineId: string, projects: MachineRegistrationProject[] | undefined) {
+    state.deleteTransientProjectsForMachine(machineId);
+    for (const project of projects ?? []) {
+      state.upsertTransientProject({
+        machineId,
+        path: project.path,
+        source: project.source ? registeredProjectSource(machineId, project.source) : undefined
+      });
+    }
+  }
+
+  function clearMachineRegistrationProjects(machineId: string) {
+    state.deleteTransientProjectsForMachine(machineId);
+  }
+
+  function registeredProjectSource(machineId: string, source: ProjectSource): ProjectSource {
+    if (source.kind !== "vscode") return source;
+    return {
+      ...source,
+      groupId: `registered:${machineId}:${source.groupId}`
+    };
+  }
+
   function publishProjects() {
     captureSessionState();
     const event = {
@@ -743,6 +782,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       machineId,
       type: "registered",
       name,
+      projects: vscodeParentRegistrationProjects,
       onStatus: (status) => {
         parentRegistrationStatus = {
           status: status.status,
@@ -1714,6 +1754,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
             lastSeenAt: result.machine.lastSeenAt,
             capabilities: result.machine.capabilities
           });
+          replaceMachineRegistrationProjects(result.machineId, parsed.registration.projects);
           machineId = result.machineId;
           commandCursor = machines.clampMachineCommandCursor(machineId, parsed.commandCursor ?? 0);
           send({ type: "registered", machineId, machine: result.machine });
@@ -1764,6 +1805,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
         if (parsed.type === "unregister") {
           machines.unregisterMachine(machineId!, transportId);
+          clearMachineRegistrationProjects(machineId!);
           await stopTunneledAppServerSessionsForTransport(transportId);
           for (const sessionId of [...sessionIds]) {
             threads.unregisterSession(sessionId, sessionTransportId(sessionId));
@@ -1859,6 +1901,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       void stopTunneledAppServerSessionsForTransport(transportId);
       if (machineId) {
         machines.disconnectMachine(machineId, transportId);
+        clearMachineRegistrationProjects(machineId);
         publishProjects();
       }
     });
@@ -1869,6 +1912,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       void stopTunneledAppServerSessionsForTransport(transportId);
       if (machineId) {
         machines.disconnectMachine(machineId, transportId);
+        clearMachineRegistrationProjects(machineId);
         publishProjects();
       }
     });
