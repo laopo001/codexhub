@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 import net from "node:net";
@@ -1596,12 +1596,18 @@ const codexAppServerStderrTailLimit = 4000;
 
 const startCodexAppServer = async (cwd: string, appServerUrl: string, port: number): Promise<StartedCodexAppServerProcess> => {
   const launch = await codexAppServerLaunch(appServerUrl);
-  const child = spawn(launch.command, launch.args, {
+  const spawnOptions: SpawnOptions = {
     cwd,
     env: codexAppServerEnv(launch.codexCommand),
     stdio: ["ignore", "ignore", "pipe"],
     detached: process.platform !== "win32"
-  });
+  };
+  let child: ChildProcess;
+  try {
+    child = spawn(launch.command, launch.args, spawnOptions);
+  } catch (error) {
+    throw new Error(`codex app-server failed to spawn (${launch.command}): ${errorText(error)}`);
+  }
   const stopped = waitForChild(child);
   let stderrTail = "";
   child.stderr?.on("data", (chunk: Buffer | string) => {
@@ -1649,6 +1655,13 @@ const codexAppServerLaunch = async (appServerUrl: string) => {
       codexCommand
     };
   }
+  if (needsWindowsCommandShell(codexCommand)) {
+    return {
+      command: process.env.ComSpec || "cmd.exe",
+      args: ["/d", "/s", "/c", "call", codexCommand, "app-server", "--listen", appServerUrl],
+      codexCommand
+    };
+  }
   return {
     command: codexCommand,
     args: ["app-server", "--listen", appServerUrl],
@@ -1674,8 +1687,15 @@ const resolveCodexCommand = async () => {
 
 const codexCommandCandidates = () => {
   const executableNames = process.platform === "win32"
-    ? ["codex.cmd", "codex.exe", "codex"]
+    ? ["codex.cmd", "codex.bat", "codex.exe", "codex"]
     : ["codex"];
+  const windowsGlobalDirs = process.platform === "win32"
+    ? [
+      path.join(os.homedir(), "AppData", "Roaming", "npm"),
+      path.join(os.homedir(), "AppData", "Local", "pnpm"),
+      process.env.ProgramFiles ? path.join(process.env.ProgramFiles, "nodejs") : undefined
+    ]
+    : [];
   const pathCandidates = (process.env.PATH ?? "")
     .split(path.delimiter)
     .filter(Boolean)
@@ -1686,9 +1706,12 @@ const codexCommandCandidates = () => {
     ...pathCandidates,
     ...executableNames.map((name) => path.join(os.homedir(), ".local", "share", "pnpm", "bin", name)),
     ...executableNames.map((name) => path.join(os.homedir(), ".npm-global", "bin", name)),
-    ...executableNames.map((name) => path.join(os.homedir(), "AppData", "Local", "pnpm", name))
+    ...windowsGlobalDirs.flatMap((entry) => entry ? executableNames.map((name) => path.join(entry, name)) : [])
   ].filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0);
 };
+
+const needsWindowsCommandShell = (command: string) =>
+  process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command);
 
 const uniquePathEntries = (entries: string[]) => {
   const seen = new Set<string>();
