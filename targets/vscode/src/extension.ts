@@ -180,10 +180,12 @@ const openWorkspaceProject = async (serverUrl: string, workspacePath: string, gr
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
+      const machineId = await vscodeLocalMachineId(serverUrl);
       const response = await fetch(new URL("/api/projects/open", serverUrl), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          machineId,
           path: workspacePath,
           reuse: true,
           persist: false,
@@ -204,6 +206,27 @@ const openWorkspaceProject = async (serverUrl: string, workspacePath: string, gr
     await delay(500);
   }
   throw lastError instanceof Error ? lastError : new Error(errorText(lastError));
+};
+
+const vscodeLocalMachineId = async (serverUrl: string) => {
+  const response = await fetch(new URL("/api/machines", serverUrl));
+  if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  const body = asRecord(await response.json().catch(() => null));
+  const machines = Array.isArray(body?.machines) ? body.machines : [];
+  for (const item of machines) {
+    const machine = asRecord(item);
+    const capabilities = asRecord(machine?.capabilities);
+    const machineId = stringValue(machine?.machineId);
+    if (
+      machineId
+      && machine?.type === "local"
+      && machine?.online === true
+      && capabilities?.projectLauncher !== false
+    ) {
+      return machineId;
+    }
+  }
+  throw new Error("No online VSCode local project launcher.");
 };
 
 const isTransientProjectLauncherOpenError = (status: number, body: string) =>

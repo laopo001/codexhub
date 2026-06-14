@@ -1598,6 +1598,7 @@ const startCodexAppServer = async (cwd: string, appServerUrl: string, port: numb
   const launch = await codexAppServerLaunch(appServerUrl);
   const child = spawn(launch.command, launch.args, {
     cwd,
+    env: codexAppServerEnv(launch.codexCommand),
     stdio: ["ignore", "ignore", "pipe"],
     detached: process.platform !== "win32"
   });
@@ -1640,16 +1641,64 @@ export const startCodexAppServerProcess = async (cwdInput: string, portInput?: n
 };
 
 const codexAppServerLaunch = async (appServerUrl: string) => {
+  const codexCommand = await resolveCodexCommand();
   if (process.platform === "linux" && await fileExists("/usr/bin/setpriv")) {
     return {
       command: "/usr/bin/setpriv",
-      args: ["--pdeathsig", "TERM", "codex", "app-server", "--listen", appServerUrl]
+      args: ["--pdeathsig", "TERM", codexCommand, "app-server", "--listen", appServerUrl],
+      codexCommand
     };
   }
   return {
-    command: "codex",
-    args: ["app-server", "--listen", appServerUrl]
+    command: codexCommand,
+    args: ["app-server", "--listen", appServerUrl],
+    codexCommand
   };
+};
+
+const codexAppServerEnv = (codexCommand: string) => ({
+  ...process.env,
+  PATH: uniquePathEntries([
+    path.dirname(process.execPath),
+    path.dirname(codexCommand),
+    ...(process.env.PATH ?? "").split(path.delimiter)
+  ]).join(path.delimiter)
+});
+
+const resolveCodexCommand = async () => {
+  for (const candidate of codexCommandCandidates()) {
+    if (candidate && await fileExists(candidate)) return candidate;
+  }
+  throw new Error("codex CLI not found. Install @openai/codex or set CODEX_HUB_CODEX_CLI to the codex executable path.");
+};
+
+const codexCommandCandidates = () => {
+  const executableNames = process.platform === "win32"
+    ? ["codex.cmd", "codex.exe", "codex"]
+    : ["codex"];
+  const pathCandidates = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .flatMap((entry) => executableNames.map((name) => path.join(entry, name)));
+  return [
+    process.env.CODEX_HUB_CODEX_CLI,
+    process.env.CODEX_CLI_PATH,
+    ...pathCandidates,
+    ...executableNames.map((name) => path.join(os.homedir(), ".local", "share", "pnpm", "bin", name)),
+    ...executableNames.map((name) => path.join(os.homedir(), ".npm-global", "bin", name)),
+    ...executableNames.map((name) => path.join(os.homedir(), "AppData", "Local", "pnpm", name))
+  ].filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0);
+};
+
+const uniquePathEntries = (entries: string[]) => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of entries) {
+    if (!entry || seen.has(entry)) continue;
+    seen.add(entry);
+    result.push(entry);
+  }
+  return result;
 };
 
 const fileExists = async (filePath: string) => {
