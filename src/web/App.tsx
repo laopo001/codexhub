@@ -285,7 +285,6 @@ const App = () => {
   });
   const [selectedModel, setSelectedModel] = useState<ModelSelection>("auto");
   const [selectedReasoning, setSelectedReasoning] = useState<ReasoningSelection>("auto");
-  const [composerMode, setComposerMode] = useState<ComposerMode>("chat");
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -325,6 +324,13 @@ const App = () => {
     () => openThreads.find((thread) => thread.threadId === activeTabThreadId),
     [activeTabThreadId, openThreads]
   );
+  const composerMode = activeThread?.composerMode ?? "chat";
+  const setComposerMode = (mode: ComposerMode) => {
+    if (!activeTabThreadId) return;
+    setOpenThreads((current) => current.map((thread) => thread.threadId === activeTabThreadId
+      ? { ...thread, composerMode: mode }
+      : thread));
+  };
   useEffect(() => {
     resizeComposerTextarea(composerTextareaRef.current);
   }, [activeThread?.threadId, activeThread?.input]);
@@ -894,7 +900,6 @@ const App = () => {
     closedThreadIds,
     collapsedProjectMachineKeys,
     composerHistoryRef,
-    composerMode,
     connectionsLastSeq,
     controlReconnectTimer,
     goalDialog,
@@ -930,7 +935,6 @@ const App = () => {
     setServerAuthRequired,
     setCollapsedProjectMachineKeys,
     setComposerMenuOpen,
-    setComposerMode,
     setDeletingProjectId,
     setGoalDialog,
     setInitialized,

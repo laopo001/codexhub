@@ -30,7 +30,6 @@ import {
 import type {
   OpenThreadState,
   AppSettings,
-  ComposerMode,
   ConnectionsStreamEvent,
   LocalTask,
   MachineSummary,
@@ -116,7 +115,6 @@ type RealtimeActionsContext = {
   setAuthError: React.Dispatch<React.SetStateAction<string>>;
   setAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
   setCollapsedProjectMachineKeys: React.Dispatch<React.SetStateAction<string[]>>;
-  setComposerMode: React.Dispatch<React.SetStateAction<ComposerMode>>;
   setInitialized: React.Dispatch<React.SetStateAction<boolean>>;
   setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
   setMessageDisplayMode: React.Dispatch<React.SetStateAction<MessageDisplayMode>>;
@@ -235,7 +233,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     ctx.setActiveWorkspacePath(initialWorkspace);
     ctx.setSelectedModel(saved?.selectedModel ?? "auto");
     ctx.setSelectedReasoning(saved?.selectedReasoning ?? "auto");
-    ctx.setComposerMode("chat");
     ctx.setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     ctx.setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     ctx.setSelectedProjectKey(initialProjectFromUrl ? projectKeyForProject(initialProjectFromUrl) : saved?.selectedProjectKey ?? "");

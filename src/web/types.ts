@@ -282,6 +282,7 @@ export type ProjectsPayload = {
 };
 
 export type OpenThreadState = ThreadDetail & {
+  composerMode: ComposerMode;
   input: string;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];

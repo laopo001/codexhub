@@ -199,7 +199,7 @@ export type AppViewModel = AppSidebarViewModel & {
   openThreads: OpenThreadState[];
   setAuthTokenDraft: React.Dispatch<React.SetStateAction<string>>;
   setComposerMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setComposerMode: React.Dispatch<React.SetStateAction<ComposerMode>>;
+  setComposerMode: (mode: ComposerMode) => void;
   setExpandedStatusKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
   setHiddenStatusTurns: React.Dispatch<React.SetStateAction<Record<string, string>>>;

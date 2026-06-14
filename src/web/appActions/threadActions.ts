@@ -20,7 +20,6 @@ import {
 } from "../appHelpers.js";
 import type {
   OpenThreadState,
-  ComposerMode,
   GoalDialogState,
   ModelSelection,
   ProjectSummary,
@@ -41,7 +40,6 @@ type ThreadActionsContext = {
   activeProjectSession?: SessionView | null;
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
-  composerMode: ComposerMode;
   goalDialog: GoalDialogState | null;
   latestRequestedThreadId: React.MutableRefObject<string>;
   notificationRecordsByThread: React.MutableRefObject<Map<string, CodexRecord[]>>;
@@ -79,6 +77,17 @@ type ThreadGoalUpdateOptions = {
 type TurnInputPart =
   | { type: "text"; text: string }
   | { type: "image"; url: string };
+
+const openThreadStateFromDetail = (
+  thread: ThreadDetail,
+  existing?: OpenThreadState
+): OpenThreadState => ({
+  ...thread,
+  composerMode: existing?.composerMode ?? "chat",
+  input: existing?.input ?? "",
+  imageAttachments: existing?.imageAttachments ?? [],
+  textAttachments: existing?.textAttachments ?? []
+});
 
 export type ThreadActions = {
   openThread: (threadId: string) => Promise<void>;
@@ -124,7 +133,6 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
 
     const open = (async () => {
       const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
-      const openThread: OpenThreadState = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
       const sessionId = thread.session.sessionId;
       if (sessionId) {
         ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
@@ -134,9 +142,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
       ctx.notificationRecordsByThread.current.set(thread.threadId, threadRecordsForNotifications(thread.threadId, thread));
       ctx.setOpenThreads((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
-        const nextThread = existing
-          ? { ...openThread, input: existing.input, imageAttachments: existing.imageAttachments, textAttachments: existing.textAttachments ?? [] }
-          : openThread;
+        const nextThread = openThreadStateFromDetail(thread, existing);
         return current.some((item) => item.threadId === thread.threadId)
           ? current.map((item) => item.threadId === thread.threadId ? nextThread : item)
           : [...current, nextThread];
@@ -288,12 +294,9 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId })
       });
-      const openThread: OpenThreadState = { ...thread, input: "", imageAttachments: [], textAttachments: [] };
       ctx.setOpenThreads((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
-        const nextThread = existing
-          ? { ...openThread, input: existing.input, imageAttachments: existing.imageAttachments, textAttachments: existing.textAttachments ?? [] }
-          : openThread;
+        const nextThread = openThreadStateFromDetail(thread, existing);
         return current.some((item) => item.threadId === thread.threadId)
           ? current.map((item) => item.threadId === thread.threadId ? nextThread : item)
           : [...current, nextThread];
@@ -320,6 +323,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
     const textAttachments = openThread.textAttachments;
     const text = composeUserInputText(typedText, textAttachments);
     const imageAttachments = openThread.imageAttachments;
+    const composerMode = openThread.composerMode;
     if (!text && !imageAttachments.length) return;
     if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {
       deps.resetComposerHistory(threadId);
@@ -357,13 +361,17 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
       body: JSON.stringify({
         input,
         source: "web",
-        options: selectedThreadOptions(ctx.selectedModel, ctx.selectedReasoning, ctx.composerMode)
+        options: selectedThreadOptions(ctx.selectedModel, ctx.selectedReasoning, composerMode)
       })
     });
     if (!response.ok) {
       const text = await response.text();
       ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
         ? { ...item, records: [...item.records, errorRecord("error", text)] }
+        : item));
+    } else if (composerMode !== "chat") {
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
+        ? { ...item, composerMode: item.composerMode === composerMode ? "chat" : item.composerMode }
         : item));
     }
   };
