@@ -106,7 +106,7 @@ const sessionEventSchema = z.discriminatedUnion("type", [
     heartbeat: z.boolean().optional()
   }),
   z.object({
-    type: z.literal("session_settings_changed"),
+    type: z.literal("thread_settings_changed"),
     threadId: z.string().min(1),
     model: z.string().min(1).nullable().optional(),
     modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),

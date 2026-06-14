@@ -94,7 +94,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     removeThreadImage,
     removeThreadTextAttachment,
     removeSshHost,
-    renderComposerSessionControls,
+    renderComposerThreadControls,
     resetComposerHistory,
     resizeComposerTextarea,
     rollbackMessage,
@@ -102,9 +102,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     saveGoalDialog,
     selectProject,
     send,
-    sessionDialogOpen,
     sessionList,
-    sessionMenuOpen,
+    threadControlsMenuOpen,
     setComposerMenuOpen,
     setComposerMode,
     setConnectionMode,
@@ -117,10 +116,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setOfflineProjectsCollapsed,
     setProjectPicker,
     setAuthTokenDraft,
-    setSelectedModel,
-    setSelectedReasoning,
-    setSessionDialogOpen,
-    setSessionMenuOpen,
+    setThreadControlsMenuOpen,
     setSidebarCollapsed,
     setSshHostDraft,
     setTaskDraft,
@@ -435,20 +431,20 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                             </div>
                           </div>
                           <div className="composerRightActions">
-                            {renderComposerSessionControls("inline")}
+                            {renderComposerThreadControls("inline")}
                             <div className="composerSessionMenuHost" onClick={(event) => event.stopPropagation()}>
                               <button
                                 type="button"
                                 className="composerMoreButton"
-                                aria-label="Show session usage and model"
-                                aria-expanded={sessionMenuOpen}
-                                onClick={() => setSessionMenuOpen((open) => !open)}
+                                aria-label="Show thread usage and model"
+                                aria-expanded={threadControlsMenuOpen}
+                                onClick={() => setThreadControlsMenuOpen((open) => !open)}
                               >
                                 ...
                               </button>
-                              {sessionMenuOpen ? (
+                              {threadControlsMenuOpen ? (
                                 <div className="composerSessionPopover">
-                                  {renderComposerSessionControls("popover")}
+                                  {renderComposerThreadControls("popover")}
                                 </div>
                               ) : null}
                             </div>

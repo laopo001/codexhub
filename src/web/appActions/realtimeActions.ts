@@ -34,12 +34,10 @@ import type {
   LocalTask,
   MachineSummary,
   MessageDisplayMode,
-  ModelSelection,
   ParentRegistrationStatus,
   PluginSummary,
   ProjectSummary,
   ProjectsPayload,
-  ReasoningSelection,
   RealtimeMessage,
   SessionSummary,
   SessionView,
@@ -122,9 +120,7 @@ type RealtimeActionsContext = {
   setPlugins: React.Dispatch<React.SetStateAction<PluginSummary[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setProjectSearch: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedModel: React.Dispatch<React.SetStateAction<ModelSelection>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedReasoning: React.Dispatch<React.SetStateAction<ReasoningSelection>>;
   setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
   setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
@@ -231,8 +227,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
     ctx.setAuthRequired(false);
     ctx.setAuthError("");
     ctx.setActiveWorkspacePath(initialWorkspace);
-    ctx.setSelectedModel(saved?.selectedModel ?? "auto");
-    ctx.setSelectedReasoning(saved?.selectedReasoning ?? "auto");
     ctx.setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     ctx.setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     ctx.setSelectedProjectKey(initialProjectFromUrl ? projectKeyForProject(initialProjectFromUrl) : saved?.selectedProjectKey ?? "");

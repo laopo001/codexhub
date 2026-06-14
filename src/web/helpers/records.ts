@@ -36,9 +36,9 @@ export const threadUsageFromSessionRateLimits = (rateLimits: SessionRateLimits |
   };
 };
 
-export const latestSessionConfigFromRecords = (records: CodexRecord[]) => {
+export const latestThreadConfigFromRecords = (records: CodexRecord[]) => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
-    const config = sessionConfigFromRecord(records[index]);
+    const config = threadConfigFromRecord(records[index]);
     if (config.model || config.reasoning) return config;
   }
   return null;
@@ -118,7 +118,7 @@ export const goalTimeMs = (value: unknown) => {
   return null;
 };
 
-export const sessionConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort } => {
+export const threadConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort } => {
   const payload = asRecord(record.payload);
   const settings = asRecord(asRecord(payload?.collaboration_mode)?.settings);
   return {
@@ -142,25 +142,25 @@ export const normalizeReasoningEffort = (value: unknown): ReasoningEffort | unde
 };
 
 export const formatComposerModelTitle = (
-  selectedModel: ModelSelection,
-  selectedReasoning: ReasoningSelection,
-  sessionModel: string | null,
-  sessionReasoning: ReasoningEffort | null
+  modelDraft: ModelSelection,
+  reasoningDraft: ReasoningSelection,
+  threadModel: string | null,
+  threadReasoning: ReasoningEffort | null
 ) => [
-  `selected model ${rawModelLabel(selectedModel)}`,
-  sessionModel ? `session model ${rawModelLabel(sessionModel)}` : null,
-  `selected thinking ${selectedReasoning === "auto" ? "Auto" : selectedReasoning}`,
-  sessionReasoning ? `session thinking ${sessionReasoning}` : null
+  `draft model ${rawModelLabel(modelDraft)}`,
+  threadModel ? `thread model ${rawModelLabel(threadModel)}` : null,
+  `draft thinking ${reasoningDraft === "auto" ? "Auto" : reasoningDraft}`,
+  threadReasoning ? `thread thinking ${threadReasoning}` : null
 ].filter(Boolean).join(" · ");
 
 export const formatComposerModelButtonLabel = (
-  selectedModel: ModelSelection,
-  selectedReasoning: ReasoningSelection,
-  sessionModel: string | null,
-  sessionReasoning: ReasoningEffort | null
+  modelDraft: ModelSelection,
+  reasoningDraft: ReasoningSelection,
+  threadModel: string | null,
+  threadReasoning: ReasoningEffort | null
 ) => {
-  const model = selectedModel === "auto" && sessionModel ? sessionModel : selectedModel;
-  const reasoning = sessionReasoning ?? (selectedReasoning === "auto" ? null : selectedReasoning);
+  const model = modelDraft === "auto" && threadModel ? threadModel : modelDraft;
+  const reasoning = reasoningDraft === "auto" ? threadReasoning : reasoningDraft;
   const label = rawModelLabel(model);
   return reasoning ? `${label}:${reasoning}` : label;
 };

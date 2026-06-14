@@ -20,7 +20,7 @@ type ComposerActionsContext = {
   setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
   setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
   setMessageRenderModes: React.Dispatch<React.SetStateAction<Record<string, MessageRenderMode>>>;
-  setSessionMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setThreadControlsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
 };
 
@@ -237,7 +237,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
     event.preventDefault();
     event.stopPropagation();
     ctx.setComposerMenuOpen(false);
-    ctx.setSessionMenuOpen(false);
+    ctx.setThreadControlsMenuOpen(false);
     ctx.setMessageContextMenu({
       ...contextMenuPosition(event.clientX, event.clientY),
       threadId,

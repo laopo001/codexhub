@@ -21,10 +21,8 @@ import {
 import type {
   OpenThreadState,
   GoalDialogState,
-  ModelSelection,
   ProjectSummary,
   ProjectsPayload,
-  ReasoningSelection,
   SessionView,
   ThreadDetail,
   ThreadGoalView,
@@ -46,8 +44,6 @@ type ThreadActionsContext = {
   openingThreads: React.MutableRefObject<Map<string, Promise<void>>>;
   realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
   selectedProjectKey: string;
-  selectedModel: ModelSelection;
-  selectedReasoning: ReasoningSelection;
   openThreads: OpenThreadState[];
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
   setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
@@ -56,7 +52,7 @@ type ThreadActionsContext = {
   setActiveWorkspacePath: React.Dispatch<React.SetStateAction<string>>;
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
-  setSessionDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
   setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
   setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
@@ -84,6 +80,8 @@ const openThreadStateFromDetail = (
 ): OpenThreadState => ({
   ...thread,
   composerMode: existing?.composerMode ?? "chat",
+  modelDraft: existing?.modelDraft ?? thread.model ?? "auto",
+  reasoningDraft: existing?.reasoningDraft ?? thread.modelReasoningEffort ?? "auto",
   input: existing?.input ?? "",
   imageAttachments: existing?.imageAttachments ?? [],
   textAttachments: existing?.textAttachments ?? []
@@ -328,7 +326,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
     if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {
       deps.resetComposerHistory(threadId);
       ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "" } : item));
-      ctx.setSessionDialogOpen(true);
+      ctx.setThreadModelDialogOpen(true);
       return;
     }
     deps.resetComposerHistory(threadId);
@@ -361,7 +359,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<s
       body: JSON.stringify({
         input,
         source: "web",
-        options: selectedThreadOptions(ctx.selectedModel, ctx.selectedReasoning, composerMode)
+        options: selectedThreadOptions(openThread.modelDraft, openThread.reasoningDraft, composerMode)
       })
     });
     if (!response.ok) {

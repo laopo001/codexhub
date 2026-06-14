@@ -30,20 +30,20 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     confirmProjectPicker,
     copyContextSelection,
     createSessionThread,
-    effectiveModelSelection,
-    effectiveReasoningSelection,
     goalDialog,
     inspectContextMessage,
     inspectMessage,
     loadProjectPickerDirectory,
     machines,
     messageContextMenu,
+    activeThreadModelDraft,
+    activeThreadReasoningDraft,
     modelOptions,
     onlineMachines,
     openingProjectKey,
     projectPicker,
     saveGoalDialog,
-    sessionDialogOpen,
+    threadModelDialogOpen,
     settingsDialogOpen,
     sessionList,
     openThreads,
@@ -52,9 +52,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setAppSettings,
     setMessageContextMenu,
     setProjectPicker,
-    setSelectedModel,
-    setSelectedReasoning,
-    setSessionDialogOpen,
+    setActiveThreadModelDraft,
+    setActiveThreadReasoningDraft,
+    setThreadModelDialogOpen,
     setSettingsDialogOpen,
     setThreadPicker,
     submitProjectPickerPath,
@@ -84,24 +84,24 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
 
   return (
     <>
-      {sessionDialogOpen ? (
+      {threadModelDialogOpen ? (
         <div className="sessionDialogOverlay" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setSessionDialogOpen(false);
+          if (event.target === event.currentTarget) setThreadModelDialogOpen(false);
         }}>
           <section className="sessionDialog" role="dialog" aria-modal="true" aria-labelledby="sessionDialogTitle">
             <header className="sessionDialogHeader">
-              <h2 id="sessionDialogTitle">Session</h2>
-              <button type="button" className="iconButton" onClick={() => setSessionDialogOpen(false)} aria-label="Close">x</button>
+              <h2 id="sessionDialogTitle">Thread Model</h2>
+              <button type="button" className="iconButton" onClick={() => setThreadModelDialogOpen(false)} aria-label="Close">x</button>
             </header>
             <label className="sessionDialogField">
               <span>Model</span>
-              <select value={effectiveModelSelection} onChange={(event) => setSelectedModel(event.target.value as ModelSelection)}>
+              <select value={activeThreadModelDraft} onChange={(event) => setActiveThreadModelDraft(event.target.value as ModelSelection)}>
                 {modelOptions.map((option) => <option value={option.value} key={option.value}>{modelOptionLabel(option)}</option>)}
               </select>
             </label>
             <label className="sessionDialogField">
               <span>Thinking</span>
-              <select value={effectiveReasoningSelection} onChange={(event) => setSelectedReasoning(event.target.value as ReasoningSelection)}>
+              <select value={activeThreadReasoningDraft} onChange={(event) => setActiveThreadReasoningDraft(event.target.value as ReasoningSelection)}>
                 {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{reasoningOptionLabel(option)}</option>)}
               </select>
             </label>

@@ -63,7 +63,7 @@ type BridgeState = {
   threadCwds?: Record<string, string>;
 };
 
-type SessionSettings = {
+type ThreadSettings = {
   model?: string | null;
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
 };
@@ -650,7 +650,7 @@ class CodexAppServerBridge {
   private nextId = 1;
   private closed = false;
   private defaultThreadId: string | undefined;
-  private readonly forwardedSessionSettings = new Map<string, string>();
+  private readonly forwardedThreadSettings = new Map<string, string>();
   private readonly bridgeStartedThreads = new Set<string>();
   private bridgeStartedUnknownCount = 0;
   private readonly closeSignal = new Deferred<void>();
@@ -758,7 +758,7 @@ class CodexAppServerBridge {
       await delay(1500);
       if (this.closed) return;
       const entries = [...this.syncedThreads];
-      await this.syncSessionSettings(entries.map(([threadId]) => threadId));
+      await this.syncThreadSettings(entries.map(([threadId]) => threadId));
     }
   }
 
@@ -1107,7 +1107,7 @@ class CodexAppServerBridge {
     if (!state) return;
     this.closeAppServerTurnsSync(state);
     this.syncedThreads.delete(threadId);
-    this.forwardedSessionSettings.delete(threadId);
+    this.forwardedThreadSettings.delete(threadId);
   }
 
   private markThreadLoaded(threadId: string) {
@@ -1246,30 +1246,30 @@ class CodexAppServerBridge {
   }
 
   resetServerMirrorState() {
-    this.forwardedSessionSettings.clear();
+    this.forwardedThreadSettings.clear();
     for (const [threadId] of this.syncedThreads) {
       // 当 server 侧 transport 重连后，需要重新推送已订阅 thread 的快照状态。
       this.scheduleAppServerTurnsSync(threadId);
     }
   }
 
-  private async syncSessionSettings(threadIds: string[]) {
+  private async syncThreadSettings(threadIds: string[]) {
     if (!threadIds.length) return;
     try {
       await Promise.all(threadIds.map(async (threadId) => {
-        // 这里的 session settings 是 cwd 相关配置，只同步差异，避免 Web 反复刷新。
-        const settings = await this.readSessionSettings(this.threadCwds.get(threadId) ?? this.options.cwd);
+        // 这里的 thread settings 是 cwd 相关配置，只同步差异，避免 Web 反复刷新。
+        const settings = await this.readThreadSettings(this.threadCwds.get(threadId) ?? this.options.cwd);
         const snapshot = JSON.stringify(settings);
-        if (this.forwardedSessionSettings.get(threadId) === snapshot) return;
-        this.forwardedSessionSettings.set(threadId, snapshot);
-        await this.forwardSessionSettings(threadId, settings);
+        if (this.forwardedThreadSettings.get(threadId) === snapshot) return;
+        this.forwardedThreadSettings.set(threadId, snapshot);
+        await this.forwardThreadSettings(threadId, settings);
       }));
     } catch (error) {
-      console.error(`codexhub bridge failed to sync session settings: ${errorText(error)}`);
+      console.error(`codexhub bridge failed to sync thread settings: ${errorText(error)}`);
     }
   }
 
-  private async readSessionSettings(cwd: string): Promise<SessionSettings> {
+  private async readThreadSettings(cwd: string): Promise<ThreadSettings> {
     const result = asRecord(await this.request("config/read", {
       cwd,
       includeLayers: false
@@ -1318,7 +1318,7 @@ class CodexAppServerBridge {
     const params = asRecord(message.params);
     const settings = asRecord(params?.threadSettings) ?? asRecord(params?.settings);
     if (!settings) return;
-    await this.forwardSessionSettings(threadId, {
+    await this.forwardThreadSettings(threadId, {
       model: typeof settings.model === "string" && settings.model ? settings.model : null,
       modelReasoningEffort: isModelReasoningEffort(settings.effort)
         ? settings.effort
@@ -1377,9 +1377,9 @@ class CodexAppServerBridge {
     this.hub.sendEvent({ type: "thread_execution_changed", threadId, running, turnId, heartbeat: false });
   }
 
-  private async forwardSessionSettings(threadId: string, settings: SessionSettings) {
+  private async forwardThreadSettings(threadId: string, settings: ThreadSettings) {
     this.hub.sendEvent({
-      type: "session_settings_changed",
+      type: "thread_settings_changed",
       threadId,
       model: settings.model,
       modelReasoningEffort: settings.modelReasoningEffort,

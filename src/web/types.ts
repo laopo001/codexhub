@@ -283,6 +283,8 @@ export type ProjectsPayload = {
 
 export type OpenThreadState = ThreadDetail & {
   composerMode: ComposerMode;
+  modelDraft: ModelSelection;
+  reasoningDraft: ReasoningSelection;
   input: string;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];

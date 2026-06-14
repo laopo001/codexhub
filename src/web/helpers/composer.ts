@@ -1,7 +1,7 @@
 import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../../core/codexRecordView.js";
-import { defaultAppSettings, isVscodeSurface, legacyStorageKey, reasoningOptions, storageKey } from "../appConfig.js";
-import type { AppSettings, MessageDisplayMode, ModelSelection, ReasoningSelection, TextAttachment } from "../types.js";
+import { defaultAppSettings, isVscodeSurface, legacyStorageKey, storageKey } from "../appConfig.js";
+import type { AppSettings, MessageDisplayMode, TextAttachment } from "../types.js";
 import { browserId, formatDate } from "./common.js";
 
 export const clipboardImageFiles = (clipboardData: DataTransfer) => {
@@ -105,12 +105,6 @@ export const errorRecord = (label: string, error: unknown): CodexRecord => ({
   }
 });
 
-export const isModelSelection = (value: unknown): value is ModelSelection =>
-  typeof value === "string" && value.trim().length > 0;
-
-export const isReasoningSelection = (value: unknown): value is ReasoningSelection =>
-  typeof value === "string" && reasoningOptions.some((option) => option.value === value);
-
 export const isMessageDisplayMode = (value: unknown): value is MessageDisplayMode =>
   value === "compact" || value === "detailed";
 
@@ -156,8 +150,6 @@ export const readStoredUiState = (): {
   threadOrderBySession?: Record<string, string[]>;
   selectedProjectKey?: string;
   projectSearch?: string;
-  selectedModel?: ModelSelection;
-  selectedReasoning?: ReasoningSelection;
   messageDisplayMode?: MessageDisplayMode;
   settings?: AppSettings;
   sidebarCollapsed?: boolean;
@@ -176,8 +168,6 @@ export const readStoredUiState = (): {
       threadOrderBySession: storedStringArrayRecord(parsed.threadOrderBySession),
       selectedProjectKey: typeof parsed.selectedProjectKey === "string" ? parsed.selectedProjectKey : undefined,
       projectSearch: typeof parsed.projectSearch === "string" ? parsed.projectSearch : undefined,
-      selectedModel: isModelSelection(parsed.selectedModel) ? parsed.selectedModel : undefined,
-      selectedReasoning: isReasoningSelection(parsed.selectedReasoning) ? parsed.selectedReasoning : undefined,
       messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)
         ? parsed.messageDisplayMode
         : isMessageDisplayMode(parsed.toolDisplayMode) ? parsed.toolDisplayMode : undefined,

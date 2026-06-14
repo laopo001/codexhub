@@ -171,7 +171,7 @@ export type SessionEventInput =
       heartbeat?: boolean;
     }
   | {
-      type: "session_settings_changed";
+      type: "thread_settings_changed";
       threadId: string;
       model?: string | null;
       modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
@@ -440,11 +440,11 @@ export class ThreadHub {
       return { ok: true, thread: this.summary(thread) };
     }
 
-    if (input.type === "session_settings_changed") {
+    if (input.type === "thread_settings_changed") {
       const thread = this.ensureThread(input.threadId, session, {
         params: { threadId: input.threadId, cwd: session.workingDirectory }
       });
-      this.applySessionSettings(thread, input.model, input.modelReasoningEffort);
+      this.applyThreadSettings(thread, input.model, input.modelReasoningEffort);
       return { ok: true, thread: this.summary(thread) };
     }
 
@@ -1345,7 +1345,7 @@ export class ThreadHub {
     this.appendThreadGoalClearedRecord(thread, { threadId: thread.threadId }, { ifKnownGoal: true });
   }
 
-  private applySessionSettings(
+  private applyThreadSettings(
     thread: ThreadState,
     model: string | null | undefined,
     modelReasoningEffort: ThreadOptions["modelReasoningEffort"] | null | undefined

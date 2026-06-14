@@ -63,7 +63,7 @@ import {
   initAuthTokenFromUrl,
   isSimpleMainView,
   isSimpleRecord,
-  latestSessionConfigFromRecords,
+  latestThreadConfigFromRecords,
   latestThreadGoalFromRecords,
   latestThreadUsageFromRecords,
   latestTurnStatusFromRecords,
@@ -283,16 +283,14 @@ const App = () => {
     modelReasoningEffort: null,
     contextWindowTokens: null
   });
-  const [selectedModel, setSelectedModel] = useState<ModelSelection>("auto");
-  const [selectedReasoning, setSelectedReasoning] = useState<ReasoningSelection>("auto");
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [collapsedProjectMachineKeys, setCollapsedProjectMachineKeys] = useState<string[]>([]);
   const [offlineProjectsCollapsed, setOfflineProjectsCollapsed] = useState(true);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
-  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
-  const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
+  const [threadControlsMenuOpen, setThreadControlsMenuOpen] = useState(false);
+  const [threadModelDialogOpen, setThreadModelDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [appSettings, setAppSettingsState] = useState<AppSettings>(() => defaultAppSettings());
   const [goalDialog, setGoalDialog] = useState<GoalDialogState | null>(null);
@@ -330,6 +328,28 @@ const App = () => {
     setOpenThreads((current) => current.map((thread) => thread.threadId === activeTabThreadId
       ? { ...thread, composerMode: mode }
       : thread));
+  };
+  const activeThreadModelDraft = activeThread?.modelDraft ?? "auto";
+  const activeThreadReasoningDraft = activeThread?.reasoningDraft ?? "auto";
+  const setActiveThreadModelDraft: React.Dispatch<React.SetStateAction<ModelSelection>> = (value) => {
+    if (!activeTabThreadId) return;
+    setOpenThreads((current) => current.map((thread) => {
+      if (thread.threadId !== activeTabThreadId) return thread;
+      const next = typeof value === "function"
+        ? (value as (current: ModelSelection) => ModelSelection)(thread.modelDraft)
+        : value;
+      return { ...thread, modelDraft: next };
+    }));
+  };
+  const setActiveThreadReasoningDraft: React.Dispatch<React.SetStateAction<ReasoningSelection>> = (value) => {
+    if (!activeTabThreadId) return;
+    setOpenThreads((current) => current.map((thread) => {
+      if (thread.threadId !== activeTabThreadId) return thread;
+      const next = typeof value === "function"
+        ? (value as (current: ReasoningSelection) => ReasoningSelection)(thread.reasoningDraft)
+        : value;
+      return { ...thread, reasoningDraft: next };
+    }));
   };
   useEffect(() => {
     resizeComposerTextarea(composerTextareaRef.current);
@@ -561,43 +581,43 @@ const App = () => {
     mergeThreadUsage(latestThreadUsage, summaryThreadUsage),
     sessionRateLimitUsage
   );
-  const latestSessionConfig = useMemo(
-    () => latestSessionConfigFromRecords(latestTurnStatusScope.records) ?? latestSessionConfigFromRecords(displayRecords),
+  const latestThreadConfig = useMemo(
+    () => latestThreadConfigFromRecords(latestTurnStatusScope.records) ?? latestThreadConfigFromRecords(displayRecords),
     [displayRecords, latestTurnStatusScope.records]
   );
-  const activeThreadModel = latestSessionConfig?.model
+  const activeThreadModel = latestThreadConfig?.model
     ?? activeThread?.model
     ?? activeThreadSummary?.model
     ?? systemStatus.model
     ?? null;
-  const activeThreadReasoning = latestSessionConfig?.reasoning
+  const activeThreadReasoning = latestThreadConfig?.reasoning
     ?? activeThread?.modelReasoningEffort
     ?? activeThreadSummary?.modelReasoningEffort
     ?? normalizeReasoningEffort(systemStatus.modelReasoningEffort)
     ?? null;
-  const effectiveModelSelection = selectedModel === "auto" && activeThreadModel ? activeThreadModel : selectedModel;
-  const effectiveReasoningSelection: ReasoningSelection = selectedReasoning === "auto" && activeThreadReasoning
+  const effectiveModelSelection = activeThreadModelDraft === "auto" && activeThreadModel ? activeThreadModel : activeThreadModelDraft;
+  const effectiveReasoningSelection: ReasoningSelection = activeThreadReasoningDraft === "auto" && activeThreadReasoning
     ? activeThreadReasoning
-    : selectedReasoning;
+    : activeThreadReasoningDraft;
   const modelOptions = useMemo(
     () => modelOptionsForSelection(effectiveModelSelection),
     [effectiveModelSelection]
   );
   const composerModelButtonLabel = formatComposerModelButtonLabel(
-    selectedModel,
-    selectedReasoning,
+    activeThreadModelDraft,
+    activeThreadReasoningDraft,
     activeThreadModel,
     activeThreadReasoning
   );
   const composerModelButtonTitle = formatComposerModelTitle(
-    selectedModel,
-    selectedReasoning,
+    activeThreadModelDraft,
+    activeThreadReasoningDraft,
     activeThreadModel,
     activeThreadReasoning
   );
-  const renderComposerSessionControls = (mode: "inline" | "popover") => (
-    <div className={`composerSessionControls ${mode}`} aria-label="Session usage and model">
-      <div className="composerUsagePills" aria-label="Session usage">
+  const renderComposerThreadControls = (mode: "inline" | "popover") => (
+    <div className={`composerSessionControls ${mode}`} aria-label="Thread usage and model">
+      <div className="composerUsagePills" aria-label="Thread usage">
         <button
           type="button"
           className={`usagePill statusPill${simpleStatuses.length ? " available" : ""}`}
@@ -627,8 +647,8 @@ const App = () => {
         className="composerModelButton"
         title={composerModelButtonTitle}
         onClick={() => {
-          setSessionMenuOpen(false);
-          setSessionDialogOpen(true);
+          setThreadControlsMenuOpen(false);
+          setThreadModelDialogOpen(true);
         }}
       >
         {composerModelButtonLabel}
@@ -669,8 +689,6 @@ const App = () => {
       threadOrderBySession,
       selectedProjectKey,
       projectSearch,
-      selectedModel,
-      selectedReasoning,
       messageDisplayMode,
       settings: appSettings,
       sidebarCollapsed,
@@ -684,8 +702,6 @@ const App = () => {
     openThreadIds,
     selectedProjectKey,
     projectSearch,
-    selectedModel,
-    selectedReasoning,
     messageDisplayMode,
     appSettings,
     sidebarCollapsed,
@@ -778,12 +794,6 @@ const App = () => {
   }, [openThreadIdsKey, initialized]);
 
   useEffect(() => {
-    if (!activeThread) return;
-    setSelectedModel(activeThread.model ?? "auto");
-    setSelectedReasoning(activeThread.modelReasoningEffort ?? "auto");
-  }, [activeThread?.threadId, activeThread?.model, activeThread?.modelReasoningEffort]);
-
-  useEffect(() => {
     if (!activeViews.length) return;
     const scrollToBottom = (behavior: "auto" | "smooth" = "smooth") => {
       messagesRef.current?.scrollToIndex({
@@ -818,8 +828,8 @@ const App = () => {
   }, [composerMenuOpen]);
 
   useEffect(() => {
-    if (!sessionMenuOpen) return undefined;
-    const close = () => setSessionMenuOpen(false);
+    if (!threadControlsMenuOpen) return undefined;
+    const close = () => setThreadControlsMenuOpen(false);
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
@@ -829,7 +839,7 @@ const App = () => {
       window.removeEventListener("click", close);
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [sessionMenuOpen]);
+  }, [threadControlsMenuOpen]);
 
   useEffect(() => {
     if (!messageContextMenu) return undefined;
@@ -919,9 +929,7 @@ const App = () => {
     realtimeThreadSubscriptions,
     registeredCommand,
     resizeComposerTextarea,
-    selectedModel,
     selectedProjectKey,
-    selectedReasoning,
     sessionList,
     openThreads,
     sessionsLastSeq,
@@ -954,12 +962,12 @@ const App = () => {
     setProjects,
     setProjectSearch,
     setRegisteredCommandCopied,
-    setSelectedModel,
     setSelectedProjectKey,
-    setSelectedReasoning,
-    setSessionDialogOpen,
+    setActiveThreadModelDraft,
+    setActiveThreadReasoningDraft,
+    setThreadModelDialogOpen,
     setSessionList,
-    setSessionMenuOpen,
+    setThreadControlsMenuOpen,
     setOpenThreads,
     setSidebarCollapsed,
     setSshConfigHosts,
@@ -1132,6 +1140,8 @@ const App = () => {
     messageContextMenu,
     messageDisplayMode,
     messageRenderModes,
+    activeThreadModelDraft,
+    activeThreadReasoningDraft,
     messagesRef,
     messagesScrollerRef,
     modelOptions,
@@ -1161,7 +1171,7 @@ const App = () => {
     removeThreadImage,
     removeThreadTextAttachment,
     removeSshHost,
-    renderComposerSessionControls,
+    renderComposerThreadControls,
     resetComposerHistory,
     resizeComposerTextarea,
     rollbackMessage,
@@ -1173,9 +1183,9 @@ const App = () => {
     selectSessionThread,
     send,
     serverShareCopied,
-    sessionDialogOpen,
+    threadModelDialogOpen,
     sessionList,
-    sessionMenuOpen,
+    threadControlsMenuOpen,
     settingsDialogOpen,
     openThreads,
     setAppSettings,
@@ -1193,10 +1203,10 @@ const App = () => {
     setProjectPicker,
     setProjectSearch,
     setAuthTokenDraft,
-    setSelectedModel,
-    setSelectedReasoning,
-    setSessionDialogOpen,
-    setSessionMenuOpen,
+    setActiveThreadModelDraft,
+    setActiveThreadReasoningDraft,
+    setThreadModelDialogOpen,
+    setThreadControlsMenuOpen,
     setSettingsDialogOpen,
     setSidebarCollapsed,
     setSshHostDraft,
