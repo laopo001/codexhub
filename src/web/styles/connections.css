@@ -2,7 +2,7 @@
   display: grid;
   align-content: start;
   flex: 0 0 auto;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
 }
 
@@ -29,22 +29,22 @@
 
 .connectionTabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
   border: 1px solid #334238;
   border-radius: 8px;
   background: #0f1b14;
-  padding: 3px;
+  padding: 2px;
 }
 
 .connectionTabs button {
   min-width: 0;
-  min-height: 28px;
+  min-height: 26px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #91a090;
-  padding: 0 8px;
+  padding: 0 6px;
   font-size: 12px;
   font-weight: 700;
 }
@@ -56,7 +56,7 @@
 
 .connectionList {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -66,7 +66,7 @@
   border-radius: 8px;
   background: #111811;
   color: #91a090;
-  padding: 7px 9px;
+  padding: 6px 8px;
   font-size: 12px;
 }
 
