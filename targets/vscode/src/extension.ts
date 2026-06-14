@@ -74,7 +74,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   async openInBrowser() {
     const server = await this.ensureServer();
-    await vscode.env.openExternal(vscode.Uri.parse(server.url));
+    await vscode.env.openExternal(await externalServerUri(server.url));
   }
 
   private async handleWebviewMessage(message: unknown) {
@@ -108,7 +108,8 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       iframeUrl.searchParams.set("surface", "vscode");
       iframeUrl.searchParams.set("workspacePath", activeFolder.path);
       for (const folder of workspaceFolders) iframeUrl.searchParams.append("workspaceFolder", folder.path);
-      this.view.webview.html = iframeHtml(iframeUrl.toString(), activeFolder.path);
+      const externalIframeUri = await externalServerUri(iframeUrl.toString());
+      this.view.webview.html = iframeHtml(externalIframeUri.toString(), activeFolder.path);
     } catch (error) {
       this.view.webview.html = statusHtml(`Codex Hub failed to start: ${errorText(error)}`);
     }
@@ -351,6 +352,8 @@ const serverUrl = (host: string, port: number) => {
   const displayHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${displayHost}:${port}`;
 };
+
+const externalServerUri = async (url: string) => vscode.env.asExternalUri(vscode.Uri.parse(url));
 
 const parsePort = (value: string | undefined) => {
   if (!value) return undefined;
