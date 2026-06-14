@@ -291,25 +291,7 @@ export const uniqueMachines = (machines: MachineSummary[]) => {
 export const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSummary[]): ProjectMachineGroup[] => {
   const machinesById = new Map(machines.map((machine) => [machine.machineId, machine]));
   const groups = new Map<string, ProjectMachineGroup>();
-  const sourceProjectMachineIds = new Set(
-    projects
-      .filter((project) => project.source?.kind === "vscode")
-      .map((project) => project.machineId)
-  );
-  for (const machine of machines) {
-    if (!machine.online) continue;
-    if (!machineProjectLauncher(machine)) continue;
-    groups.set(machine.machineId, {
-      key: machine.machineId,
-      kind: "machine",
-      machineId: machine.machineId,
-      label: machine.name ?? machine.hostname,
-      online: machine.online,
-      projectLauncher: machineProjectLauncher(machine),
-      statusLabel: machine.online ? "ready" : "offline",
-      projects: []
-    });
-  }
+  const groupedMachineIds = new Set<string>();
   for (const project of projects) {
     const machine = machinesById.get(project.machineId) ?? project.machine;
     const sourceGroupKey = project.source?.kind === "vscode" ? `vscode:${project.source.groupId}` : "";
@@ -336,9 +318,25 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
     group.projectLauncher = group.projectLauncher || machineProjectLauncher(machine);
     if (group.label === project.machineId && label !== project.machineId) group.label = label;
     group.projects.push(project);
+    groupedMachineIds.add(project.machineId);
+  }
+  for (const machine of machines) {
+    if (!machine.online) continue;
+    if (!machineProjectLauncher(machine)) continue;
+    if (!machineProjectCatalogEditable(machine)) continue;
+    if (groupedMachineIds.has(machine.machineId)) continue;
+    groups.set(machine.machineId, {
+      key: machine.machineId,
+      kind: "machine",
+      machineId: machine.machineId,
+      label: machine.name ?? machine.hostname,
+      online: machine.online,
+      projectLauncher: machineProjectLauncher(machine),
+      statusLabel: machine.online ? "ready" : "offline",
+      projects: []
+    });
   }
   return [...groups.values()]
-    .filter((group) => !(group.kind === "machine" && group.projects.length === 0 && group.machineId && sourceProjectMachineIds.has(group.machineId)))
     .map((group) => ({
       ...group,
       statusLabel: projectMachineStatus(group),
@@ -364,9 +362,16 @@ export const projectMachineStatus = (group: Pick<ProjectMachineGroup, "online" |
 export const machineProjectLauncher = (machine: MachineSummary | StoredMachineLike | undefined) =>
   machine?.capabilities?.projectLauncher !== false;
 
+export const machineProjectCatalogEditable = (machine: MachineSummary | StoredMachineLike | undefined) =>
+  machine?.capabilities?.projectCatalog !== "fixed";
+
+export const fixedProject = (project: ProjectSummary) =>
+  project.source?.kind === "vscode";
+
 type StoredMachineLike = {
   capabilities?: {
     projectLauncher?: boolean;
+    projectCatalog?: "editable" | "fixed";
   };
 };
 

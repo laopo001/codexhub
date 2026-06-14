@@ -80,6 +80,7 @@ export type MachineSummary = {
   cwd?: string;
   capabilities?: {
     projectLauncher?: boolean;
+    projectCatalog?: "editable" | "fixed";
   };
 };
 
@@ -243,7 +244,7 @@ export type TaskDraft = {
 export type ProjectMachineGroup = {
   key: string;
   kind?: "machine" | "vscodeWorkspace";
-  machineId?: string;
+  machineId: string;
   label: string;
   online: boolean;
   projectLauncher: boolean;

@@ -13,7 +13,7 @@ import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTu
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
-import { CodexhubServerState } from "../core/serverState.js";
+import { CodexhubServerState, isFixedProjectSource } from "../core/serverState.js";
 import type { ProjectSource, StoredTask } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
@@ -123,7 +123,8 @@ const machineRegistrationSchema = z.object({
   platform: z.string().min(1).optional(),
   cwd: z.string().min(1).optional(),
   capabilities: z.object({
-    projectLauncher: z.boolean().optional()
+    projectLauncher: z.boolean().optional(),
+    projectCatalog: z.enum(["editable", "fixed"]).optional()
   }).optional(),
   projects: z.array(machineRegistrationProjectSchema).optional()
 });
@@ -782,6 +783,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       machineId,
       type: "registered",
       name,
+      capabilities: surface === "vscode" ? { projectCatalog: "fixed" } : undefined,
       projects: vscodeParentRegistrationProjects,
       onStatus: (status) => {
         parentRegistrationStatus = {
@@ -1417,6 +1419,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.delete("/api/projects/:projectId", async (request, reply) => {
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
+    if (state.isFixedProject(params.projectId)) {
+      reply.code(409);
+      return { error: "Fixed workspace projects are controlled by their provider." };
+    }
     if (state.deleteTransientProject(params.projectId)) {
       publishProjects();
       return { ok: true, deleted: true, transient: true, stoppedSessions: [], ...projectSnapshot() };
@@ -1437,6 +1443,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.patch("/api/projects/:projectId", async (request, reply) => {
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
     const payload = projectUpdateSchema.parse(request.body);
+    if (state.isFixedProject(params.projectId)) {
+      reply.code(409);
+      return { error: "Fixed workspace projects cannot be saved, pinned, or renamed." };
+    }
     const project = state.isTransientProject(params.projectId) && !state.hasStoredProject(params.projectId) && payload.pinned
       ? state.persistTransientProject(params.projectId, { pinned: true })
       : state.updateProject(params.projectId, payload);
@@ -1459,6 +1469,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
     try {
       const machine = resolveTargetMachine(machines.listMachines(), payload.machineId);
+      if (machine.capabilities?.projectCatalog === "fixed" && !isFixedProjectSource(payload.source)) {
+        reply.code(409);
+        return { error: "This machine exposes a fixed workspace project list." };
+      }
       const started = machines.startSession(machine.machineId, {
         cwd: payload.path,
         reuse: payload.reuse ?? true
@@ -2026,7 +2040,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       authToken: serverAuthToken ?? undefined,
       machineId: process.env.CODEX_HUB_LOCAL_MACHINE_ID,
       type: "local",
-      name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "This Computer"
+      name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "This Computer",
+      capabilities: surface === "vscode" ? { projectCatalog: "fixed" } : undefined
     });
   }
 
@@ -2300,7 +2315,7 @@ const selfRegistrationError = () => Object.assign(
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
 const resolveTargetMachine = (
-  allMachines: Array<{ machineId: string; online: boolean; capabilities?: { projectLauncher?: boolean } }>,
+  allMachines: Array<{ machineId: string; online: boolean; capabilities?: { projectLauncher?: boolean; projectCatalog?: "editable" | "fixed" } }>,
   requestedMachineId: string | undefined
 ) => {
   const onlineMachines = allMachines.filter((machine) => machine.online && machine.capabilities?.projectLauncher !== false);

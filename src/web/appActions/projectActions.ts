@@ -7,6 +7,7 @@ import {
   normalizeProjects,
   normalizeSessions,
   preferredThreadIdForSession,
+  fixedProject,
   projectKeyFor,
   projectKeyForProject
 } from "../appHelpers.js";
@@ -415,9 +416,8 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
   };
 
   const deleteProject = async (project: ProjectSummary) => {
-    const prompt = project.source?.kind === "vscode"
-      ? `Hide ${project.name} from this VSCode workspace?\n\nThis does not delete files or close open thread tabs.`
-      : `Remove ${project.name} from CodexHub projects?\n\nThis does not delete files or close open thread tabs.`;
+    if (fixedProject(project)) return;
+    const prompt = `Remove ${project.name} from CodexHub projects?\n\nThis does not delete files or close open thread tabs.`;
     if (!window.confirm(prompt)) return;
     ctx.setDeletingProjectId(project.projectId);
     try {
@@ -456,6 +456,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, actions: Record
   };
 
   const toggleProjectPinned = async (project: ProjectSummary) => {
+    if (fixedProject(project)) return;
     await patchProject(project, { pinned: !project.pinned });
   };
 

@@ -33,6 +33,9 @@ export type ProjectSource = {
   label?: string;
 };
 
+export const isFixedProjectSource = (source: ProjectSource | undefined) =>
+  source?.kind === "vscode";
+
 type RuntimeProject = StoredProject & {
   transient?: boolean;
   source?: ProjectSource;
@@ -149,6 +152,15 @@ export class CodexhubServerState {
   hasStoredProject(projectId: string) {
     const resolvedProjectId = this.resolveProjectId(projectId);
     return this.data.projects.some((project) => project.projectId === resolvedProjectId);
+  }
+
+  projectSource(projectId: string) {
+    const resolvedProjectId = this.resolveProjectId(projectId);
+    return this.transientProjects.get(resolvedProjectId)?.source;
+  }
+
+  isFixedProject(projectId: string) {
+    return isFixedProjectSource(this.projectSource(projectId));
   }
 
   deleteProject(projectId: string) {
@@ -791,12 +803,14 @@ const asMachineCapabilities = (value: unknown): Partial<MachineCapabilities> | u
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const item = value as Partial<MachineCapabilities>;
   return {
-    projectLauncher: typeof item.projectLauncher === "boolean" ? item.projectLauncher : undefined
+    projectLauncher: typeof item.projectLauncher === "boolean" ? item.projectLauncher : undefined,
+    projectCatalog: item.projectCatalog === "fixed" || item.projectCatalog === "editable" ? item.projectCatalog : undefined
   };
 };
 
 const machineCapabilitiesEqual = (left: MachineCapabilities, right: MachineCapabilities) =>
-  left.projectLauncher === right.projectLauncher;
+  left.projectLauncher === right.projectLauncher
+  && left.projectCatalog === right.projectCatalog;
 
 const normalizeStoredProject = (value: unknown): unknown => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;

@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { AppServerTunnelPeer, isAppServerTunnelFrame, type AppServerTunnelFrame } from "../core/appServerTunnel.js";
 import {
   createMachineId,
+  type MachineCapabilities,
   type MachineCommand,
   type MachineDirectoryListing,
   type MachineRegistration,
@@ -29,6 +30,7 @@ export type MachineRunnerOptions = {
   machineId?: string;
   type?: MachineType;
   name?: string;
+  capabilities?: Partial<MachineCapabilities>;
   projects?: MachineRegistrationProject[] | (() => MachineRegistrationProject[]);
   onStatus?: (status: CodexhubMachineStatus) => void;
 };
@@ -205,7 +207,7 @@ class CodexhubMachineRunner {
       pid: process.pid,
       platform: `${process.platform}-${process.arch}`,
       cwd: process.cwd(),
-      capabilities: { projectLauncher: true },
+      capabilities: { projectLauncher: true, ...this.options.capabilities },
       projects: projects?.length ? projects : undefined
     };
   }

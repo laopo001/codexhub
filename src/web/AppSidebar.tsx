@@ -5,7 +5,9 @@ import type { ProjectMachineGroup } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
   activeSshConnectionForHost,
+  fixedProject,
   latestSshConnectionForHost,
+  machineProjectCatalogEditable,
   machineProjectLauncher,
   projectKeyForProject,
   projectSearchMatches,
@@ -129,7 +131,18 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const offlineProjectGroups = visibleProjectGroups.filter((machine) => !machine.online);
   const projectAddMachine = projectScopeLocked
     ? undefined
-    : projectGroups.filter((machine) => machine.online).find((machine) => machine.projectLauncher);
+    : uniqueMachines(machines)
+      .filter((machine) => machine.online && machineProjectLauncher(machine) && machineProjectCatalogEditable(machine))
+      .map((machine): ProjectMachineGroup => ({
+        key: machine.machineId,
+        kind: "machine",
+        machineId: machine.machineId,
+        label: machine.name ?? machine.hostname,
+        online: machine.online,
+        projectLauncher: machineProjectLauncher(machine),
+        statusLabel: machine.online ? "ready" : "offline",
+        projects: []
+      }))[0];
   const visibleProjectTaskTargets = new Set(projectList.map((project) => `${project.machineId}\0${project.path}`));
   const visibleTasks = selectedProject
     ? tasks.filter((task) => taskBelongsToProject(task, selectedProject))
@@ -178,16 +191,16 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               const deleting = deletingProjectId === project.projectId;
               const busy = openingProjectKey === projectKey || deleting;
               const openDisabled = busy;
-              const vscodeSource = project.source?.kind === "vscode";
+              const fixed = fixedProject(project);
               const saveTitle = project.transient ? "Save project to CodexHub" : project.pinned ? "Unpin project" : "Pin project";
               const saveAria = project.transient
                 ? `Save ${project.name} to CodexHub`
                 : project.pinned ? `Unpin ${project.name}` : `Pin ${project.name}`;
-              const removeTitle = vscodeSource ? `Hide ${project.name} from this VSCode workspace` : `Remove ${project.name} from CodexHub`;
+              const removeTitle = `Remove ${project.name} from CodexHub`;
               return (
                 <div
                   key={project.projectId}
-                  className={`projectRow ${active ? "active" : ""} ${project.pinned ? "pinned" : ""} ${vscodeSource ? "transient" : ""}`}
+                  className={`projectRow ${active ? "active" : ""} ${project.pinned ? "pinned" : ""} ${fixed ? "transient" : ""}`}
                 >
                   <button
                     type="button"
@@ -200,7 +213,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   />
                   <div className="projectRowTop">
                     <span className="projectOpenButton projectOpenNameButton" title={project.name}>{project.name}</span>
-                    {!projectScopeLocked ? (
+                    {!projectScopeLocked && !fixed ? (
                       <div className="projectRowActions">
                         <button
                           type="button"

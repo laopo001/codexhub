@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 export type MachineType = "local" | "ssh" | "registered";
+export type MachineProjectCatalog = "editable" | "fixed";
 
 export type MachineCapabilities = {
   projectLauncher: boolean;
+  projectCatalog?: MachineProjectCatalog;
 };
 
 export type MachineRegistrationProjectSource = {
@@ -389,9 +391,12 @@ export const normalizeMachineType = (
 
 export const normalizeMachineCapabilities = (
   value: Partial<MachineCapabilities> | undefined,
-  fallback: MachineCapabilities = { projectLauncher: true }
+  fallback: MachineCapabilities = { projectLauncher: true, projectCatalog: "editable" }
 ): MachineCapabilities => ({
   projectLauncher: typeof value?.projectLauncher === "boolean"
     ? value.projectLauncher
-    : fallback.projectLauncher
+    : fallback.projectLauncher,
+  projectCatalog: value?.projectCatalog === "fixed" || value?.projectCatalog === "editable"
+    ? value.projectCatalog
+    : fallback.projectCatalog
 });
