@@ -2,7 +2,9 @@ import { access, readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { AppServerTunnelPeer, isAppServerTunnelFrame, type AppServerTunnelFrame } from "../core/appServerTunnel.js";
+import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
+import { machineTransportUrl, parseMachineTransportMessage } from "../core/machineTransportProtocol.js";
+import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
 import {
   createMachineId,
   type MachineCapabilities,
@@ -14,14 +16,11 @@ import {
   type MachineStopSessionResult,
   type MachineType
 } from "../core/machineHub.js";
-import type { SessionCommand } from "../core/threadHub.js";
 import {
   createCodexhubSessionId,
   startCodexAppServerProcess,
   startHeadlessCodexhubSession,
-  type HeadlessCodexhubSessionHandle,
-  type HeadlessSessionTransport,
-  type HeadlessSessionTransportCallbacks
+  type HeadlessCodexhubSessionHandle
 } from "./codexhubConnect.js";
 
 export type MachineRunnerOptions = {
@@ -47,17 +46,6 @@ export type CodexhubMachineStatus = {
   message?: string;
   updatedAt: string;
 };
-
-type MachineTransportMessage =
-  | { type: "registered"; machineId: string; machine?: unknown }
-  | { type: "commands"; cursor: number; commands: MachineCommand[] }
-  | { type: "session_registered"; sessionId: string; session?: unknown }
-  | { type: "session_commands"; sessionId: string; cursor: number; commands: SessionCommand[] }
-  | { type: "session_error"; sessionId: string; message: string }
-  | { type: "app_server_attached"; commandId: string; sessionId: string; threadId: string }
-  | { type: "app_server_attach_error"; commandId: string; sessionId?: string; message: string }
-  | AppServerTunnelFrame
-  | { type: "error"; message: string };
 
 type ManagedSession = {
   session: RuntimeSessionHandle;
@@ -99,7 +87,7 @@ class CodexhubMachineRunner {
   private commandCursor = 0;
   private commandChain = Promise.resolve();
   private runtimeSession: ManagedSession | null = null;
-  private readonly sessionTransports = new Map<string, MachineSessionTransport>();
+  private readonly sessionTransports = new Map<string, SessionTransportPeer>();
   private tunnel: AppServerTunnelPeer | null = null;
   private readonly pendingAppServerAttaches = new Map<string, PendingAppServerAttach>();
 
@@ -326,7 +314,7 @@ class CodexhubMachineRunner {
         cwd,
         readyLabel: "codexhub machine app-server ready",
         transportFactory: (context, callbacks) => {
-          const transport = new MachineSessionTransport({
+          const transport = new SessionTransportPeer({
             sessionId: context.sessionId,
             send: (message) => this.sendRaw(message),
             callbacks,
@@ -511,133 +499,6 @@ class CodexhubMachineRunner {
   }
 }
 
-type MachineSessionTransportMessage =
-  | Extract<MachineTransportMessage, { type: "session_registered" | "session_commands" | "session_error" }>;
-
-class MachineSessionTransport implements HeadlessSessionTransport {
-  private registered = false;
-  private stopped = false;
-  private commandCursor = 0;
-  private pendingOutgoing: unknown[] = [];
-  private commandChain = Promise.resolve();
-
-  constructor(private readonly options: {
-    sessionId: string;
-    send: (message: unknown) => void;
-    callbacks: HeadlessSessionTransportCallbacks;
-    onStop: () => void;
-  }) {}
-
-  start() {
-    if (this.stopped) return;
-    this.register();
-  }
-
-  reconnect() {
-    if (this.stopped) return;
-    this.registered = false;
-    this.register();
-  }
-
-  markDisconnected() {
-    if (this.stopped || !this.registered) return;
-    this.registered = false;
-    this.options.callbacks.onState("offline", `codexhub machine session offline: ${this.options.sessionId}`);
-  }
-
-  stop(options: { unregister?: boolean } = {}) {
-    if (this.stopped) return;
-    this.stopped = true;
-    if (options.unregister && this.registered) {
-      this.options.send({ type: "session_unregister", sessionId: this.options.sessionId });
-    }
-    this.registered = false;
-    this.pendingOutgoing = [];
-    this.options.onStop();
-  }
-
-  sendEvent(event: Parameters<HeadlessSessionTransport["sendEvent"]>[0]) {
-    this.sendOrQueue({ type: "session_event", sessionId: this.options.sessionId, event });
-  }
-
-  sendHeartbeat(registration: Parameters<HeadlessSessionTransport["sendHeartbeat"]>[0]) {
-    this.sendOrQueue({
-      type: "session_heartbeat",
-      sessionId: this.options.sessionId,
-      registration
-    }, { queue: false });
-  }
-
-  handleServerMessage(message: MachineSessionTransportMessage) {
-    if (this.stopped) return;
-    if (message.type === "session_registered") {
-      this.registered = true;
-      this.options.callbacks.onState("online", `codexhub machine session connected: ${message.sessionId}`);
-      this.flushPending();
-      return;
-    }
-    if (message.type === "session_commands") {
-      this.commandCursor = Math.max(this.commandCursor, message.cursor);
-      this.enqueueCommands(message.commands);
-      return;
-    }
-    console.error(`codexhub machine session error: ${message.message}`);
-  }
-
-  private register() {
-    this.options.callbacks.onState("connecting", `codexhub machine session connecting: ${this.options.sessionId}`);
-    this.options.send({
-      type: "session_register",
-      sessionId: this.options.sessionId,
-      commandCursor: this.commandCursor,
-      registration: this.options.callbacks.registration()
-    });
-  }
-
-  private enqueueCommands(commands: SessionCommand[]) {
-    this.commandChain = this.commandChain.then(async () => {
-      for (const command of commands) {
-        try {
-          const result = await this.options.callbacks.handleCommand(command);
-          if (result !== undefined) {
-            this.sendOrQueue({
-              type: "session_command_result",
-              sessionId: this.options.sessionId,
-              commandId: command.commandId,
-              result
-            });
-          }
-        } catch (error) {
-          this.sendOrQueue({
-            type: "session_command_error",
-            sessionId: this.options.sessionId,
-            commandId: command.commandId,
-            message: errorText(error)
-          });
-        } finally {
-          this.commandCursor = Math.max(this.commandCursor, command.seq);
-        }
-      }
-    }).catch((error) => {
-      console.error(`codexhub machine session command queue failed: ${errorText(error)}`);
-    });
-  }
-
-  private flushPending() {
-    for (const message of this.pendingOutgoing.splice(0)) this.options.send(message);
-  }
-
-  private sendOrQueue(message: unknown, options: { queue?: boolean } = {}) {
-    if (this.registered) {
-      this.options.send(message);
-      return;
-    }
-    if (options.queue === false) return;
-    this.pendingOutgoing.push(message);
-    if (this.pendingOutgoing.length > 1000) this.pendingOutgoing.splice(0, this.pendingOutgoing.length - 1000);
-  }
-}
-
 const resolveDirectory = async (input: string) => {
   const cwd = path.resolve(expandHome(input.trim()));
   const info = await stat(cwd);
@@ -652,13 +513,6 @@ const expandHome = (input: string) => {
   return input;
 };
 
-const machineTransportUrl = (apiBase: string, authToken?: string) => {
-  const url = new URL("/api/machines/connect", apiBase);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  if (authToken?.trim()) url.searchParams.set("codexhub_token", authToken.trim());
-  return url.toString();
-};
-
 const openWebSocket = async (url: string) => {
   const ws = new WebSocket(url);
   await new Promise<void>((resolve, reject) => {
@@ -666,72 +520,6 @@ const openWebSocket = async (url: string) => {
     ws.addEventListener("error", () => reject(new Error(`WebSocket failed: ${url}`)), { once: true });
   });
   return ws;
-};
-
-const parseMachineTransportMessage = (data: unknown): MachineTransportMessage | null => {
-  const message = parseJsonRecord(data);
-  if (!message) return null;
-  if (isAppServerTunnelFrame(message)) return message;
-  const type = typeof message.type === "string" ? message.type : "";
-  if (type === "registered") {
-    const machineId = typeof message.machineId === "string" ? message.machineId : "";
-    return machineId ? { type: "registered", machineId, machine: message.machine } : null;
-  }
-  if (type === "commands") {
-    const cursor = typeof message.cursor === "number" ? message.cursor : NaN;
-    return Number.isFinite(cursor) && Array.isArray(message.commands)
-      ? { type: "commands", cursor, commands: message.commands as MachineCommand[] }
-      : null;
-  }
-  if (type === "session_registered") {
-    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
-    return sessionId ? { type: "session_registered", sessionId, session: message.session } : null;
-  }
-  if (type === "session_commands") {
-    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
-    const cursor = typeof message.cursor === "number" ? message.cursor : NaN;
-    return sessionId && Number.isFinite(cursor) && Array.isArray(message.commands)
-      ? { type: "session_commands", sessionId, cursor, commands: message.commands as SessionCommand[] }
-      : null;
-  }
-  if (type === "session_error") {
-    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
-    const messageText = typeof message.message === "string" ? message.message : "machine session server error";
-    return sessionId ? { type: "session_error", sessionId, message: messageText } : null;
-  }
-  if (type === "app_server_attached") {
-    const commandId = typeof message.commandId === "string" ? message.commandId : "";
-    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
-    const threadId = typeof message.threadId === "string" ? message.threadId : "";
-    return commandId && sessionId && threadId ? { type: "app_server_attached", commandId, sessionId, threadId } : null;
-  }
-  if (type === "app_server_attach_error") {
-    const commandId = typeof message.commandId === "string" ? message.commandId : "";
-    const sessionId = typeof message.sessionId === "string" ? message.sessionId : undefined;
-    const messageText = typeof message.message === "string" ? message.message : "app-server attach failed";
-    return commandId ? { type: "app_server_attach_error", commandId, sessionId, message: messageText } : null;
-  }
-  if (type === "error") {
-    return { type: "error", message: typeof message.message === "string" ? message.message : "machine transport server error" };
-  }
-  return null;
-};
-
-type JsonRecord = Record<string, unknown>;
-
-const parseJsonRecord = (data: unknown): JsonRecord | null => {
-  try {
-    if (typeof data === "string") return asRecord(JSON.parse(data));
-    if (data instanceof ArrayBuffer) return asRecord(JSON.parse(Buffer.from(data).toString("utf8")));
-    return asRecord(JSON.parse(String(data)));
-  } catch {
-    return null;
-  }
-};
-
-const asRecord = (value: unknown): JsonRecord | null => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as JsonRecord;
 };
 
 const waitForShutdown = async () => await new Promise<void>((resolve) => {
