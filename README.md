@@ -25,7 +25,7 @@ pnpm run dev:api
 
 - Web/API: `http://127.0.0.1:8788`
 
-普通本机启动时，server 会默认注册一台 `local` machine，Web 的 Connections / local 可以直接看到它，并通过 Projects 打开本机目录、启动 Codex session。需要关闭这个内嵌本机入口时设置：
+普通本机启动时，server 会默认注册一台 `local` machine，Web 的 Connections / local 可以直接看到它，并通过 Projects 打开本机目录、启动 Codex session。这个内嵌 machine 的默认名称是 `local`，可用 `CODEX_HUB_LOCAL_MACHINE_ID` / `CODEX_HUB_LOCAL_MACHINE_NAME` 固定 ID 或显示名。需要关闭这个内嵌本机入口时设置：
 
 ```bash
 CODEX_HUB_LOCAL_MACHINE=0 pnpm codexhub server
@@ -36,6 +36,8 @@ CODEX_HUB_LOCAL_MACHINE=0 pnpm codexhub server
 ```bash
 pnpm codexhub server --host 0.0.0.0 --port 8788
 ```
+
+CodexHub 启动官方 `codex app-server` 时会先解析 Codex CLI：优先使用 `CODEX_HUB_CODEX_CLI`，其次兼容 `CODEX_CLI_PATH`，再查找 `PATH`、常见 npm/pnpm 全局 bin 目录；Windows 下会识别 `codex.cmd` / `codex.bat` 并通过 `cmd.exe call` 启动。app-server ready 检查默认等待 60 秒，可用 `CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 调整；启动失败时错误会带上最近的 app-server stderr 尾部，方便定位 Codex CLI 或登录环境问题。
 
 远端机器或容器外的宿主机可以主动注册。远端已经安装 CodexHub 时，直接让远端 server 注册到父 server：
 
@@ -49,7 +51,7 @@ codexhub server --register-to http://127.0.0.1:8788
 
 CodexHub 会拒绝把一个 server 注册到它自己：同一本机地址且同端口会直接返回错误，目标 `/api/health` 的 `serverInstanceId` 与当前实例相同也会被拒绝。为了本机测试，同一台电脑上不同端口的多个 server 可以互相注册，例如 `127.0.0.1:8789` 注册到 `127.0.0.1:8788` 是允许的。
 
-如果远端不想预装或升级 CodexHub，`/api/registered/bootstrap` 仍保留为 one-shot bootstrap 入口，会下载父 server 当前 build 的 remote client 后以同样的 registered tunnel 模式连回。
+如果远端不想预装或升级 CodexHub，`/api/registered/bootstrap` 仍保留为 one-shot bootstrap 入口，会通过 `/api/remote-client/:hash` 下载父 server 当前 build 的 remote client 后以同样的 registered tunnel 模式连回。
 
 Project 名称来自目录 basename，不单独持久化展示名或提供重命名入口。Web project 卡片点击即打开或复用该 machine 的 runtime session，并为该 project path 创建或复用 thread；卡片不展示 open、history 或 thread 数量，也不提供手动重启/结束 session 按钮。runtime session 生命周期跟 machine/server 主进程走，project delete、watcher idle-close 和普通空闲都不会关闭它。
 
@@ -98,7 +100,7 @@ pnpm codexhub --server http://127.0.0.1:8788 -C /path/to/project
 
 server 在线时，`codexhub` 会通过 machine websocket 注册一个 transient session host，再把当前 session 挂到这台 session host 下；它只代表这个 headless Codex 进程，不作为项目浏览/启动器。Web 里打开本机任意项目优先使用内嵌 `local` machine；远端或宿主机项目使用 SSH / registered machine。
 
-server 在线时，session 会同步官方 app-server 的 thread/read、item、rawResponseItem 和 tokenUsage 事件，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地 headless bridge 会持续重试，直到进程退出。Web 主列表以 projects/threads 为主，session 是 machine 级 runtime/debug 对象，同一个 `sessionId` 可以承载多个 project cwd 的 threads；`/api/projects` 的 `session` 字段是按 project path 过滤后的 runtime 投影，`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 app-server tokenUsage 事件计算。
+server 在线时，session 会同步官方 app-server 的 thread/read、item、rawResponseItem 和 tokenUsage 事件，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地 headless bridge 会持续重试，直到进程退出。Web 主列表以 projects/threads 为主，session 是 machine 级 runtime/debug 对象，同一个 `sessionId` 可以承载多个 project cwd 的 threads；`/api/projects` 的 `session` 字段是按 project path 过滤后的 runtime 投影，`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 app-server tokenUsage 事件计算；session 级账号 rate limit 会从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 `/api/sessions`，Web 在当前 thread 没有更新的 tokenUsage rate limit 时用它作为显示兜底。
 
 ## 连接方式
 
@@ -158,6 +160,8 @@ pnpm codexhub task run daily-summary
 ```
 
 server 每 30 秒扫描一次本地 task 状态，间隔可用 `CODEX_HUB_TASK_SCAN_INTERVAL_MS` 调整。task 的 `schedule` 会在保存时校验为五字段 cron 表达式；无效表达式会被 API 拒绝，而不是静默保存后永远不触发。task 不再写入 `.codexp/tasks`，也不由远端 workspace 持有。
+
+任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VSCode notification；这个开关默认开启并保存在本地 UI state。
 
 Codex turn 默认不设等待超时，适合长任务和定时任务持续运行。需要在特定部署里限制单次 turn 时，可以设置 `CODEX_HUB_TURN_TIMEOUT_MS` 为正整数毫秒；不设置或设为 `0` 表示不启用 turn 超时。
 
@@ -222,6 +226,7 @@ SSH 继续保留为 machine transport 类型；Telegram 是内建 integration pl
 
 ```bash
 pnpm check
+pnpm run smoke:auth
 pnpm run smoke:machine-session
 pnpm run smoke:registered-machine
 pnpm run smoke:ssh-loopback
@@ -230,13 +235,15 @@ pnpm run smoke:electron
 pnpm build
 ```
 
-`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证跨 project 共享 runtime session、`/api/projects/open`、`/api/sessions`、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。
+`smoke:auth` 覆盖 token 保护、Bearer token、WebSocket token query 和 machine websocket 授权。
 
-`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?token=` 提取、自注册拒绝、同机不同端口注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期。
+`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证跨 project 共享 runtime session、`/api/projects/open`、`/api/sessions`、session account rate limits、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。
+
+`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?token=` 提取、自注册拒绝、同机不同端口注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。
 
 `smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、项目打开、session 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
 
-`smoke:task-lock` 会用假的 registered machine/session 走真实 websocket 协议，验证同一个 task 在已有 queued/running turn 时第二次运行会 `skipped`，且 turn 完成后可以再次运行。
+`smoke:task-lock` 会用假的 registered machine/session 走真实 websocket 协议，验证同一个 task 在已有 queued/running turn 时第二次运行会 `skipped`，且 turn 完成后可以再次运行；同时覆盖 thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close 和 token usage rate limits。
 
 `smoke:electron` 会以 headless Electron 启动桌面入口的内嵌 server，验证它会使用随机空闲端口，并检查 `/api/health` 可用；它不创建真实桌面窗口。
 
@@ -308,7 +315,9 @@ codexhub server --register-to http://127.0.0.1:8788 --port 8789
 
 Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex app-server/headless 进程仍然由本机/SSH/registered machine session 提供。
 
-VSCode extension 每个窗口默认启动自己的随机端口嵌入 server；显式设置 `CODEX_HUB_PORT` 时才固定端口，端口被占用会直接失败。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/server connections 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。extension 会把当前窗口的 file workspace folders 通过 `/api/projects/open` 以 `persist:false` 打开成 VSCode workspace project group；这些项目只存在于该窗口 server 的内存中，不写入 `server-state.yaml`。用户在 UI 中显式保存 transient project 后，它才会进入普通 CodexHub project list。
+VSCode extension 每个窗口默认启动自己的随机端口嵌入 server；显式设置 `CODEX_HUB_PORT` 时才固定端口，端口被占用会直接失败。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/Registered 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。extension 会先从 `/api/machines` 找到在线的 `local` project launcher，再把当前窗口的 file workspace folders 通过 `/api/projects/open` 以 `persist:false` 打开成 VSCode workspace project group；这些项目只存在于该窗口 server 的内存中，不写入 `server-state.yaml`。用户在 UI 中显式保存 transient project 后，它才会进入普通 CodexHub project list。
+
+VSCode Webview 和 Open in Browser 都通过 `vscode.env.asExternalUri` 使用 VSCode 提供的外部 URI，而不是直接把 loopback URL 写进 iframe；这让远程 VSCode、端口转发或 tunnel 环境也能访问内嵌 server。工作区项目打开会对 transient local launcher race 做最多 30 次、每次 500ms 的重试；如果当前窗口没有 file workspace folder，会显示状态页而不是启动项目。
 
 ```bash
 pnpm electron:start
@@ -323,6 +332,15 @@ pnpm electron:start
 - `CODEX_HUB_ELECTRON_DEVTOOLS=1`: 启动后打开 DevTools
 
 在 Electron 里连接宿主机 project launcher 的方式和 Web 相同；也可以从 Connections / Registered 复制包含当前实际端口的命令。
+
+VSCode extension 打包走独立链路：
+
+```bash
+pnpm run package:vscode
+pnpm run install:vscode
+```
+
+`build:vscode` 会先跑完整 `pnpm build`，再把 extension 打成 Node CJS bundle，显式把 extension host 里的 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；staging 目录会包含 Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE。仓库内的 VSCode Marketplace 发布 workflow 是手动 `workflow_dispatch`，会运行 `pnpm run package:vscode`，并要求仓库 secret `VSCE_PAT`，发布时使用 `vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate`。
 
 ## API
 
@@ -377,4 +395,4 @@ curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
 
 Slash command 会在转发给 Codex 前先处理。`/status` 和 `/help` 返回本地代理状态/帮助记录；Web 里的 `/model` 是客户端命令，会打开 Session 选择器，下一次普通 turn 再把选中的 model/reasoning 发给 app-server。`codexhub` 会从 `thread/settings/updated` 或有效的 `config/read` 结果镜像 model/reasoning。不支持的 slash command 不会作为普通 user turn 发给 Codex app-server。
 
-Server 不读取运行机器上的 `~/.codex` session、远端 `.codexp/tasks` 或上传临时图片目录。历史 session 通过 Web/API 或 app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；thread usage 由 server 从 app-server tokenUsage 事件镜像计算；新定时任务由本机 server state 调度。
+Server 不读取运行机器上的 `~/.codex` session、远端 `.codexp/tasks` 或上传临时图片目录。历史 session 通过 Web/API 或 app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；thread usage 由 server 从 app-server tokenUsage 事件镜像计算，session account rate limits 只作为当前账号窗口的 UI 兜底；新定时任务由本机 server state 调度。
