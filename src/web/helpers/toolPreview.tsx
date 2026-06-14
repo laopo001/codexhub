@@ -390,7 +390,7 @@ const formatAppServerInspectDetail = (
     return {
       inputMeta: appServerInspectMeta("tool: shell", payload),
       inputBlockLabel: "Command",
-      inputBlock: shellCommandText(payload) || "<empty>",
+      inputBlock: shellCommandText(payload) || "Waiting for command details",
       outputMeta: appServerOutputMeta(payload),
       outputBlockLabel: "Output",
       outputBlock: output || undefined
@@ -621,22 +621,23 @@ const appServerStatusMeta = (payload: Record<string, unknown>, prefix = "") => {
 
 const ShellCommandPreview = ({ command }: { command: ShellCommandDisplay }) => {
   const tokens = shellCommandHighlightTokens(command.display);
+  const pendingCommand = !command.display;
   return (
-    <div className="shellCommandPreview">
-      <pre className="toolCommandLine shellCommandDisplayLine" aria-label={shellCommandPreviewLine(command.display)}>
+    <div className={`shellCommandPreview ${pendingCommand ? "pendingCommand" : ""}`.trim()}>
+      <pre className={`toolCommandLine shellCommandDisplayLine ${pendingCommand ? "pendingCommand" : ""}`.trim()} aria-label={shellCommandPreviewLine(command.display)}>
         <span className="shellToken shellPrompt">$</span>
-        {command.display ? <span className="shellToken shellSpace"> </span> : null}
+        <span className="shellToken shellSpace"> </span>
         {tokens.length ? tokens.map((token, index) => (
           <span className={`shellToken ${token.kind}`} key={`${index}:${token.kind}:${token.text}`}>
             {token.text}
           </span>
-        )) : <span className="shellToken empty">&lt;empty&gt;</span>}
+        )) : <span className="shellToken shellPlaceholder">Waiting for command details</span>}
       </pre>
     </div>
   );
 };
 
-const shellCommandPreviewLine = (command: string) => command ? `$ ${command}` : "$ <empty>";
+const shellCommandPreviewLine = (command: string) => command ? `$ ${command}` : "$ Waiting for command details";
 
 type ShellHighlightToken = {
   text: string;

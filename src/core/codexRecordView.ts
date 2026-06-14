@@ -105,7 +105,7 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
       id: record.id,
       role: "event",
       label: "context_compaction",
-      text: typeof payload.message === "string" ? payload.message : status === "completed" ? "压缩完成" : "压缩中",
+      text: typeof payload.message === "string" ? payload.message : status === "completed" ? "Compaction complete" : "Compacting",
       at: record.timestamp,
       status,
       record
@@ -392,7 +392,7 @@ const localShellText = (payload: Record<string, unknown>) => {
     ? commandValue.filter((part): part is string => typeof part === "string").join(" ")
     : typeof commandValue === "string" ? commandValue : "";
   const output = typeof payload.aggregated_output === "string" ? payload.aggregated_output.trimEnd() : "";
-  return [`$ ${command}`.trim(), output].filter(Boolean).join("\n");
+  return [`$ ${command || "Waiting for command details"}`, output].filter(Boolean).join("\n");
 };
 
 const mcpToolText = (payload: Record<string, unknown>) => {

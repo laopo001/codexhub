@@ -1210,9 +1210,25 @@ const assertLocalShellExitStatusView = async () => {
       exit_code: null
     }
   };
+  const pendingCommandRecord: CodexRecord = {
+    id: "shell-command-pending",
+    type: "response_item",
+    payload: {
+      type: "local_shell_call",
+      call_id: "shell-call-pending",
+      status: "in_progress",
+      action: { type: "exec", command: [] },
+      aggregated_output: "",
+      exit_code: null
+    }
+  };
   const views = recordsToViews([finishedRecord, runningRecord]);
   if (views[0]?.status !== "completed" || views[1]?.status !== "pending") {
     throw new Error(`local shell status views were not normalized: ${JSON.stringify(views)}`);
+  }
+  const [pendingView] = recordsToViews([pendingCommandRecord]);
+  if (!pendingView?.text.includes("Waiting for command details") || pendingView.text.includes("<empty>")) {
+    throw new Error(`pending shell command view was not descriptive: ${JSON.stringify(pendingView)}`);
   }
 };
 

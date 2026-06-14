@@ -1929,7 +1929,7 @@ const codexRecordFromAppServerItem = (
       payload: {
         type: "context_compaction",
         status: compactionStatus,
-        message: compactionStatus === "completed" ? "压缩完成" : "压缩中"
+        message: compactionStatus === "completed" ? "Compaction complete" : "Compacting"
       }
     };
   }

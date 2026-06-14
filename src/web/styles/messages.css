@@ -307,7 +307,11 @@
 }
 
 .shellCommandPreview .toolCommandLine {
-  padding: 0 12px;
+  padding: 4px 10px;
+}
+
+.shellCommandPreview.pendingCommand .toolCommandLine {
+  padding: 1px 0;
 }
 
 .shellCommandDisplayLine {
@@ -316,6 +320,13 @@
   background: #fbfcfd;
   color: #26342a;
   line-height: 1.35;
+}
+
+.shellCommandDisplayLine.pendingCommand {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #66715f;
 }
 
 .shellToken {
@@ -362,6 +373,11 @@
 
 .shellToken.number {
   color: #7b4fb5;
+}
+
+.shellToken.shellPlaceholder {
+  color: #6d7783;
+  font-style: italic;
 }
 
 .toolPreviewMeta .shellCommandWrapperTag {

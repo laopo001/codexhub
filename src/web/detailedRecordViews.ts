@@ -63,7 +63,7 @@ const contextCompactionToView = (record: CodexRecord, payload: Record<string, un
     id: record.id,
     role: "event",
     label: "context_compaction",
-    text: typeof payload.message === "string" ? payload.message : status === "completed" ? "压缩完成" : "压缩中",
+    text: typeof payload.message === "string" ? payload.message : status === "completed" ? "Compaction complete" : "Compacting",
     at: record.timestamp,
     status,
     record
