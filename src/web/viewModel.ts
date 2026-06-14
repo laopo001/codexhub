@@ -3,6 +3,7 @@ import type { VirtuosoHandle } from "react-virtuoso";
 import type { CodexRecord } from "../core/codexRecord.js";
 import type {
   ActivityStatusView,
+  AppSettings,
   OpenThreadState,
   CodexThreadCandidate,
   ComposerMode,
@@ -54,6 +55,7 @@ export type ThreadGoalUpdateInput = Partial<Pick<ThreadGoalView, "objective" | "
 
 export type AppSidebarViewModel = {
   activeProjectKey: string;
+  appSettings: AppSettings;
   addSshHost: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   collapsedProjectMachineKeys: string[];
   connectionMode: ConnectionMode;
@@ -96,6 +98,8 @@ export type AppSidebarViewModel = {
   selectProjectSession: (session: SessionView) => MaybePromise;
   selectSessionThread: (session: SessionView, threadId: string) => MaybePromise;
   serverShareCopied: boolean;
+  settingsDialogOpen: boolean;
+  setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
   setConnectionMode: React.Dispatch<React.SetStateAction<ConnectionMode>>;
   setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setParentRegistrationDraft: React.Dispatch<React.SetStateAction<ParentRegistrationDraft>>;
@@ -103,6 +107,7 @@ export type AppSidebarViewModel = {
   setSshHostDraft: React.Dispatch<React.SetStateAction<string>>;
   setTaskDraft: React.Dispatch<React.SetStateAction<TaskDraft>>;
   setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setSettingsDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   sshConfigHostOptions: SshHost[];
   sshConfigHosts: SshHost[];
   sshConnectingHost: string;

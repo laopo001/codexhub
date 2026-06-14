@@ -1,6 +1,6 @@
 import type React from "react";
 import type { CodexRecord } from "../../core/codexRecord.js";
-import { initialWorkspacePath, isVscodeSurface } from "../appConfig.js";
+import { defaultAppSettings, initialWorkspacePath, isVscodeSurface } from "../appConfig.js";
 import {
   apiJson,
   authToken,
@@ -29,6 +29,7 @@ import {
 } from "../appHelpers.js";
 import type {
   OpenThreadState,
+  AppSettings,
   ComposerMode,
   ConnectionsStreamEvent,
   LocalTask,
@@ -93,6 +94,7 @@ type RealtimeOutgoingMessage =
   | { type: "unsubscribe_thread"; threadId: string };
 
 type RealtimeActionsContext = {
+  appSettingsRef: React.MutableRefObject<AppSettings>;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   connectionsLastSeq: React.MutableRefObject<number>;
   controlReconnectTimer: React.MutableRefObject<number | null>;
@@ -110,6 +112,7 @@ type RealtimeActionsContext = {
   setActiveTabThreadBySession: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setActiveTabThreadId: React.Dispatch<React.SetStateAction<string>>;
   setActiveWorkspacePath: React.Dispatch<React.SetStateAction<string>>;
+  setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
   setAuthError: React.Dispatch<React.SetStateAction<string>>;
   setAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
   setCollapsedProjectMachineKeys: React.Dispatch<React.SetStateAction<string[]>>;
@@ -218,12 +221,15 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
       : undefined;
     const initialSession = initialProjectFromUrl?.session ?? savedSession ?? loadedProjectSessions[0] ?? loadedSessions[0];
     const initialWorkspace = initialWorkspacePath || saved?.activeWorkspacePath || defaultDirectory;
+    const initialSettings = saved?.settings ?? defaultAppSettings();
 
     ctx.setSystemStatus({
       model: health.model ?? null,
       modelReasoningEffort: health.modelReasoningEffort ?? null,
       contextWindowTokens: health.contextWindowTokens ?? null
     });
+    ctx.appSettingsRef.current = initialSettings;
+    ctx.setAppSettings(initialSettings);
     ctx.setAuthRequired(false);
     ctx.setAuthError("");
     ctx.setActiveWorkspacePath(initialWorkspace);
@@ -434,6 +440,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Reco
 
   function dispatchTaskCompleteNotification(notification: TaskCompleteNotification) {
     playTaskCompletionSound(ctx.notificationAudioContext);
+    if (!ctx.appSettingsRef.current.taskCompleteSystemNotifications) return;
     if (isVscodeSurface) {
       window.parent?.postMessage({
         type: "codexhub.taskCompleteNotification",

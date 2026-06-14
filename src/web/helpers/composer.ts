@@ -1,7 +1,7 @@
 import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
 import { recordsToViews, type CodexRecordView } from "../../core/codexRecordView.js";
-import { isVscodeSurface, legacyStorageKey, reasoningOptions, storageKey } from "../appConfig.js";
-import type { MessageDisplayMode, ModelSelection, ReasoningSelection, TextAttachment } from "../types.js";
+import { defaultAppSettings, isVscodeSurface, legacyStorageKey, reasoningOptions, storageKey } from "../appConfig.js";
+import type { AppSettings, MessageDisplayMode, ModelSelection, ReasoningSelection, TextAttachment } from "../types.js";
 import { browserId, formatDate } from "./common.js";
 
 export const clipboardImageFiles = (clipboardData: DataTransfer) => {
@@ -114,6 +114,17 @@ export const isReasoningSelection = (value: unknown): value is ReasoningSelectio
 export const isMessageDisplayMode = (value: unknown): value is MessageDisplayMode =>
   value === "compact" || value === "detailed";
 
+const storedAppSettings = (value: unknown): AppSettings | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  return {
+    ...defaultAppSettings(),
+    taskCompleteSystemNotifications: typeof record.taskCompleteSystemNotifications === "boolean"
+      ? record.taskCompleteSystemNotifications
+      : defaultAppSettings().taskCompleteSystemNotifications
+  };
+};
+
 const storedStringArray = (value: unknown) =>
   Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
@@ -148,6 +159,7 @@ export const readStoredUiState = (): {
   selectedModel?: ModelSelection;
   selectedReasoning?: ReasoningSelection;
   messageDisplayMode?: MessageDisplayMode;
+  settings?: AppSettings;
   sidebarCollapsed?: boolean;
   collapsedProjectMachineKeys?: string[];
 } | null => {
@@ -169,6 +181,7 @@ export const readStoredUiState = (): {
       messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)
         ? parsed.messageDisplayMode
         : isMessageDisplayMode(parsed.toolDisplayMode) ? parsed.toolDisplayMode : undefined,
+      settings: storedAppSettings(parsed.settings),
       sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined,
       collapsedProjectMachineKeys: Array.isArray(parsed.collapsedProjectMachineKeys)
         ? parsed.collapsedProjectMachineKeys.filter((key: unknown): key is string => typeof key === "string" && key.trim().length > 0)

@@ -43,6 +43,70 @@
   font-weight: 700;
 }
 
+.settingsDialogOverlay {
+  background: rgb(18 32 24 / 0.42);
+}
+
+.settingsDialog {
+  display: grid;
+  gap: 12px;
+  width: min(380px, 100%);
+  border: 1px solid #cbd6c7;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: 0 24px 80px rgb(18 32 24 / 0.28);
+}
+
+.settingsDialogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settingsDialogHeader h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.settingsList {
+  display: grid;
+  gap: 8px;
+}
+
+.settingsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 54px;
+  border: 1px solid #e0e6dc;
+  border-radius: 8px;
+  background: #fbfcf8;
+  padding: 10px 11px;
+}
+
+.settingsRowText {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settingsRowText strong {
+  color: #17211a;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.settingsRowText em {
+  color: #66715f;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.25;
+}
+
 .goalDialogOverlay {
   background: rgb(18 32 24 / 0.22);
 }

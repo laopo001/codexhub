@@ -133,6 +133,40 @@
   font-size: 12px;
 }
 
+.sidebarFooter {
+  position: sticky;
+  bottom: -14px;
+  z-index: 1;
+  margin-top: auto;
+  margin-right: -14px;
+  margin-bottom: -14px;
+  margin-left: -14px;
+  border-top: 1px solid #293129;
+  background: #151815;
+  padding: 10px 14px 14px;
+}
+
+.sidebarSettingsButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #394039;
+  border-radius: 8px;
+  background: #1d231e;
+  color: #f8fbf4;
+  padding: 0 11px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.sidebarSettingsButton:hover {
+  border-color: #4e5d50;
+  background: #242b25;
+}
+
 input,
 select,
 textarea {

@@ -1,4 +1,5 @@
 import React from "react";
+import { Switch } from "antd";
 import { reasoningOptions } from "./appConfig.js";
 import {
   formatInspectTitle,
@@ -6,6 +7,7 @@ import {
   machineProjectCatalogEditable,
   machineProjectLauncher,
   modelOptionLabel,
+  primeTaskNotificationPermission,
   reasoningOptionLabel,
   shortId,
   statusLabel,
@@ -22,6 +24,7 @@ type AppDialogsProps = {
 export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const {
     addContextSelectionToConversation,
+    appSettings,
     changeProjectPickerMachine,
     chooseThreadCandidate,
     confirmProjectPicker,
@@ -41,15 +44,18 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     projectPicker,
     saveGoalDialog,
     sessionDialogOpen,
+    settingsDialogOpen,
     sessionList,
     openThreads,
     setGoalDialog,
     setInspectMessage,
+    setAppSettings,
     setMessageContextMenu,
     setProjectPicker,
     setSelectedModel,
     setSelectedReasoning,
     setSessionDialogOpen,
+    setSettingsDialogOpen,
     setThreadPicker,
     submitProjectPickerPath,
     threadOrderBySession,
@@ -99,6 +105,35 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{reasoningOptionLabel(option)}</option>)}
               </select>
             </label>
+          </section>
+        </div>
+      ) : null}
+
+      {settingsDialogOpen ? (
+        <div className="modalOverlay settingsDialogOverlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setSettingsDialogOpen(false);
+        }}>
+          <section className="settingsDialog" role="dialog" aria-modal="true" aria-labelledby="settingsDialogTitle">
+            <header className="settingsDialogHeader">
+              <h2 id="settingsDialogTitle">Settings</h2>
+              <button type="button" className="iconButton" onClick={() => setSettingsDialogOpen(false)} aria-label="Close">x</button>
+            </header>
+            <div className="settingsList">
+              <div className="settingsRow">
+                <span className="settingsRowText">
+                  <strong id="settingTaskCompletePopups">Task complete popups</strong>
+                  <em>Browser or VSCode notification</em>
+                </span>
+                <Switch
+                  checked={appSettings.taskCompleteSystemNotifications}
+                  onChange={(checked) => {
+                    setAppSettings((current) => ({ ...current, taskCompleteSystemNotifications: checked }));
+                    if (checked) primeTaskNotificationPermission();
+                  }}
+                  aria-labelledby="settingTaskCompletePopups"
+                />
+              </div>
+            </div>
           </section>
         </div>
       ) : null}

@@ -10,7 +10,7 @@ import {
   primeTaskCompletionSound,
   primeTaskNotificationPermission
 } from "../appHelpers.js";
-import type { LocalTask, MachineSummary, ProjectSummary, ProjectsPayload, SessionSummary, SessionView, TaskDraft } from "../types.js";
+import type { AppSettings, LocalTask, MachineSummary, ProjectSummary, ProjectsPayload, SessionSummary, SessionView, TaskDraft } from "../types.js";
 
 type SessionsPayload = {
   sessions?: SessionSummary[];
@@ -29,6 +29,7 @@ type TaskMutationPayload = {
 type TaskPatchInput = Partial<Pick<LocalTask, "enabled" | "input" | "name" | "schedule" | "threadId">>;
 
 type TaskActionsContext = {
+  appSettingsRef: React.MutableRefObject<AppSettings>;
   notificationAudioContext: React.MutableRefObject<AudioContext | null>;
   projectList: ProjectSummary[];
   sessionList: SessionView[];
@@ -116,7 +117,9 @@ export const createTaskActions = (ctx: TaskActionsContext, actions: Record<strin
   };
 
   const primeTaskCompletionFeedback = () => {
-    primeTaskNotificationPermission();
+    if (ctx.appSettingsRef.current.taskCompleteSystemNotifications) {
+      primeTaskNotificationPermission();
+    }
     primeTaskCompletionSound(ctx.notificationAudioContext);
   };
 

@@ -162,6 +162,7 @@
 
   .threadPickerModal,
   .projectPickerModal,
+  .settingsDialog,
   .goalDialog,
   .modal {
     max-height: calc(100svh - 16px);

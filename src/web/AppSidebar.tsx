@@ -1,6 +1,6 @@
 import React from "react";
 import { Switch } from "antd";
-import { History, Pin, PinOff, Play, Trash2 } from "lucide-react";
+import { History, Pin, PinOff, Play, Settings, Trash2 } from "lucide-react";
 import type { ProjectMachineGroup } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
@@ -98,6 +98,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     setOfflineProjectsCollapsed,
     setParentRegistrationDraft,
     setProjectSearch,
+    setSettingsDialogOpen,
     setSshHostDraft,
     setTaskDraft,
     setTaskFormOpen,
@@ -696,6 +697,18 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           {taskError ? <div className="projectOpenError">{taskError}</div> : null}
         </section>
       ) : null}
+      <div className="sidebarFooter">
+        <button
+          type="button"
+          className="sidebarSettingsButton"
+          onClick={() => setSettingsDialogOpen(true)}
+          title="Open settings"
+          aria-label="Open settings"
+        >
+          <Settings size={16} strokeWidth={2.1} aria-hidden="true" />
+          <span>Settings</span>
+        </button>
+      </div>
     </aside>
   );
 };

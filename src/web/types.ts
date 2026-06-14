@@ -314,6 +314,10 @@ export type MessageContextMenuState = {
   canInspect: boolean;
 };
 
+export type AppSettings = {
+  taskCompleteSystemNotifications: boolean;
+};
+
 export type StreamEvent = {
   seq: number;
   kind: "thread" | "record" | "done";

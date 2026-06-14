@@ -1,4 +1,4 @@
-import type { ComposerMode, ModelSelection, ReasoningSelection } from "./types.js";
+import type { AppSettings, ComposerMode, ModelSelection, ReasoningSelection } from "./types.js";
 
 const searchParams = new URLSearchParams(window.location.search);
 const uniqueTrimmedParams = (names: string[]) => {
@@ -12,6 +12,9 @@ export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ??
 export const vscodeWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "workspacePath"]);
 export const storageKey = isVscodeSurface ? "codexhub-ui-state-vscode-v1" : "codexhub-ui-state-v5";
 export const legacyStorageKey = "codexhub-ui-state-v4";
+export const defaultAppSettings = (): AppSettings => ({
+  taskCompleteSystemNotifications: true
+});
 export const modelOptions: Array<{ value: ModelSelection; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "gpt-5.5", label: "GPT-5.5" },

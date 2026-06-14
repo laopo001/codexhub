@@ -17,6 +17,7 @@ import "antd/dist/antd.css";
 import "./style.css";
 import type {
   ActivityStatusView,
+  AppSettings,
   OpenThreadState,
   ComposerHistoryState,
   ComposerMode,
@@ -44,7 +45,7 @@ import type {
   WebRecordView
 } from "./types.js";
 
-import { isVscodeSurface, storageKey, vscodeWorkspacePaths } from "./appConfig.js";
+import { defaultAppSettings, isVscodeSurface, storageKey, vscodeWorkspacePaths } from "./appConfig.js";
 import {
   authToken,
   activityStatusesFromRecords,
@@ -293,6 +294,8 @@ const App = () => {
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [appSettings, setAppSettingsState] = useState<AppSettings>(() => defaultAppSettings());
   const [goalDialog, setGoalDialog] = useState<GoalDialogState | null>(null);
   const [hiddenStatusTurns, setHiddenStatusTurns] = useState<Record<string, string>>({});
   const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
@@ -315,6 +318,8 @@ const App = () => {
   const notificationRecordsByThread = useRef(new Map<string, CodexRecord[]>());
   const notifiedTaskCompletions = useRef(new Set<string>());
   const notificationAudioContext = useRef<AudioContext | null>(null);
+  const appSettingsRef = useRef<AppSettings>(appSettings);
+  appSettingsRef.current = appSettings;
 
   const activeThread = useMemo(
     () => openThreads.find((thread) => thread.threadId === activeTabThreadId),
@@ -665,6 +670,7 @@ const App = () => {
       selectedModel,
       selectedReasoning,
       messageDisplayMode,
+      settings: appSettings,
       sidebarCollapsed,
       collapsedProjectMachineKeys
     }));
@@ -679,6 +685,7 @@ const App = () => {
     selectedModel,
     selectedReasoning,
     messageDisplayMode,
+    appSettings,
     sidebarCollapsed,
     collapsedProjectMachineKeys,
     threadOrderBySession,
@@ -872,11 +879,22 @@ const App = () => {
     };
   }, [plugins]);
 
+  const setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>> = (value) => {
+    setAppSettingsState((current) => {
+      const next = typeof value === "function"
+        ? (value as (current: AppSettings) => AppSettings)(current)
+        : value;
+      appSettingsRef.current = next;
+      return next;
+    });
+  };
+
   const actionContext = {
     activeCanSend,
     activeProjectSession,
     activeTabThreadBySession,
     activeTabThreadId,
+    appSettingsRef,
     closedThreadIds,
     collapsedProjectMachineKeys,
     composerHistoryRef,
@@ -910,6 +928,7 @@ const App = () => {
     setActiveTabThreadBySession,
     setActiveTabThreadId,
     setActiveWorkspacePath,
+    setAppSettings,
     setAuthError,
     setAuthRequired,
     setServerAuthRequired,
@@ -1067,6 +1086,7 @@ const App = () => {
     activeUserMessageHistory,
     activeViews,
     activeWorkspacePath,
+    appSettings,
     authError,
     authRequired,
     authTokenDraft,
@@ -1156,7 +1176,9 @@ const App = () => {
     sessionDialogOpen,
     sessionList,
     sessionMenuOpen,
+    settingsDialogOpen,
     openThreads,
+    setAppSettings,
     setComposerMenuOpen,
     setComposerMode,
     setConnectionMode,
@@ -1175,6 +1197,7 @@ const App = () => {
     setSelectedReasoning,
     setSessionDialogOpen,
     setSessionMenuOpen,
+    setSettingsDialogOpen,
     setSidebarCollapsed,
     setSshHostDraft,
     setTaskDraft,
