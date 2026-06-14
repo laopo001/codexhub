@@ -210,7 +210,7 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
       label: "shell",
       text: localShellText(payload),
       at: record.timestamp,
-      status: payload.status === "completed" ? "completed" : "pending",
+      status: localShellStatus(payload),
       record
     };
   }
@@ -347,6 +347,14 @@ const responseItemStatus = (payload: Record<string, unknown>): CodexRecordView["
 const contextCompactionStatus = (payload: Record<string, unknown>): NonNullable<CodexRecordView["status"]> => {
   if (payload.status === "failed") return "failed";
   if (payload.status === "completed") return "completed";
+  return "pending";
+};
+
+const localShellStatus = (payload: Record<string, unknown>): NonNullable<CodexRecordView["status"]> => {
+  if (typeof payload.exit_code === "number") return "completed";
+  const status = typeof payload.status === "string" ? payload.status : "";
+  if (status === "pending" || status === "in_progress" || status === "running" || status === "queued") return "pending";
+  if (status) return "completed";
   return "pending";
 };
 

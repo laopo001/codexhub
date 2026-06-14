@@ -588,7 +588,7 @@ export const toolPreviewMeta = (args: Record<string, unknown>) => [
 ].filter((item): item is string => Boolean(item));
 
 export const appServerToolMeta = (payload: Record<string, unknown>) => [
-  typeof payload.status === "string" ? payload.status : null,
+  appServerStatusMeta(payload),
   typeof payload.exit_code === "number" ? `exit ${payload.exit_code}` : null,
   typeof payload.namespace === "string" ? `ns ${payload.namespace}` : null,
   typeof payload.tool === "string" ? payload.tool : null,
@@ -600,7 +600,7 @@ export const appServerToolMeta = (payload: Record<string, unknown>) => [
 
 const appServerInspectMeta = (title: string, payload: Record<string, unknown>) => [
   title,
-  typeof payload.status === "string" ? `status: ${payload.status}` : null,
+  appServerStatusMeta(payload, "status: "),
   typeof payload.exit_code === "number" ? `exit: ${payload.exit_code}` : null,
   typeof payload.success === "boolean" ? `success: ${payload.success}` : null,
   typeof payload.call_id === "string" ? `call_id: ${payload.call_id}` : null,
@@ -609,10 +609,15 @@ const appServerInspectMeta = (title: string, payload: Record<string, unknown>) =
 ].filter((line): line is string => Boolean(line)).join("\n");
 
 const appServerOutputMeta = (payload: Record<string, unknown>) => [
-  typeof payload.status === "string" ? `status: ${payload.status}` : null,
+  appServerStatusMeta(payload, "status: "),
   typeof payload.exit_code === "number" ? `exit: ${payload.exit_code}` : null,
   typeof payload.success === "boolean" ? `success: ${payload.success}` : null
 ].filter((line): line is string => Boolean(line)).join("\n") || undefined;
+
+const appServerStatusMeta = (payload: Record<string, unknown>, prefix = "") => {
+  if (payload.type === "local_shell_call" && typeof payload.exit_code === "number") return null;
+  return typeof payload.status === "string" ? `${prefix}${payload.status}` : null;
+};
 
 const ShellCommandPreview = ({ command }: { command: ShellCommandDisplay }) => {
   const tokens = shellCommandHighlightTokens(command.display);

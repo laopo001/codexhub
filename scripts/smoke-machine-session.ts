@@ -116,6 +116,7 @@ const main = async () => {
   await assertAppServerTurnLifecycleRecords();
   await assertAppServerTurnSnapshotPreservesAgentMessages();
   await assertAppServerAgentMessageDeltaStreams();
+  await assertLocalShellExitStatusView();
   await assertRollbackPreservesKeptTurnToolRecords();
   await assertForkPreservesKeptTurnToolRecords();
   await assertDeletedProjectSuppressesSessionCapture();
@@ -1138,6 +1139,38 @@ const agentMessageRecord = (records: unknown[], itemId: string): CodexRecord | u
     return typeof item.id === "string" && item.id.endsWith(`:agent:${itemId}`) && payload.type === "agent_message";
   });
   return found as CodexRecord | undefined;
+};
+
+const assertLocalShellExitStatusView = async () => {
+  const { recordsToViews } = await import("../src/core/codexRecordView.js");
+  const finishedRecord: CodexRecord = {
+    id: "shell-exit-1",
+    type: "response_item",
+    payload: {
+      type: "local_shell_call",
+      call_id: "shell-call-1",
+      status: "failed",
+      action: { type: "exec", command: ["rg", "missing"] },
+      aggregated_output: "",
+      exit_code: 1
+    }
+  };
+  const runningRecord: CodexRecord = {
+    id: "shell-running",
+    type: "response_item",
+    payload: {
+      type: "local_shell_call",
+      call_id: "shell-call-running",
+      status: "in_progress",
+      action: { type: "exec", command: ["sleep", "1"] },
+      aggregated_output: "",
+      exit_code: null
+    }
+  };
+  const views = recordsToViews([finishedRecord, runningRecord]);
+  if (views[0]?.status !== "completed" || views[1]?.status !== "pending") {
+    throw new Error(`local shell status views were not normalized: ${JSON.stringify(views)}`);
+  }
 };
 
 const assertRollbackPreservesKeptTurnToolRecords = async () => {
