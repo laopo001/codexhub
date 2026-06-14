@@ -390,7 +390,7 @@ const formatAppServerInspectDetail = (
     return {
       inputMeta: appServerInspectMeta("tool: shell", payload),
       inputBlockLabel: "Command",
-      inputBlock: shellCommandText(payload) || "Waiting for command details",
+      inputBlock: shellCommandText(payload) || "<empty>",
       outputMeta: appServerOutputMeta(payload),
       outputBlockLabel: "Output",
       outputBlock: output || undefined
@@ -631,13 +631,13 @@ const ShellCommandPreview = ({ command }: { command: ShellCommandDisplay }) => {
           <span className={`shellToken ${token.kind}`} key={`${index}:${token.kind}:${token.text}`}>
             {token.text}
           </span>
-        )) : <span className="shellToken shellPlaceholder">Waiting for command details</span>}
+        )) : <span className="shellToken shellPlaceholder">&lt;empty&gt;</span>}
       </pre>
     </div>
   );
 };
 
-const shellCommandPreviewLine = (command: string) => command ? `$ ${command}` : "$ Waiting for command details";
+const shellCommandPreviewLine = (command: string) => command ? `$ ${command}` : "$ <empty>";
 
 type ShellHighlightToken = {
   text: string;

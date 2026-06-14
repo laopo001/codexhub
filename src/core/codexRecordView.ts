@@ -392,7 +392,7 @@ const localShellText = (payload: Record<string, unknown>) => {
     ? commandValue.filter((part): part is string => typeof part === "string").join(" ")
     : typeof commandValue === "string" ? commandValue : "";
   const output = typeof payload.aggregated_output === "string" ? payload.aggregated_output.trimEnd() : "";
-  return [`$ ${command || "Waiting for command details"}`, output].filter(Boolean).join("\n");
+  return [`$ ${command || "<empty>"}`, output].filter(Boolean).join("\n");
 };
 
 const mcpToolText = (payload: Record<string, unknown>) => {

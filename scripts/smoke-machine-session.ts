@@ -1227,7 +1227,7 @@ const assertLocalShellExitStatusView = async () => {
     throw new Error(`local shell status views were not normalized: ${JSON.stringify(views)}`);
   }
   const [pendingView] = recordsToViews([pendingCommandRecord]);
-  if (!pendingView?.text.includes("Waiting for command details") || pendingView.text.includes("<empty>")) {
+  if (pendingView?.text !== "$ <empty>") {
     throw new Error(`pending shell command view was not descriptive: ${JSON.stringify(pendingView)}`);
   }
 };
