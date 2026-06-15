@@ -1,4 +1,6 @@
-import { asRecord } from "../../core/codexRecord.js";
+import { asRecord } from "../../shared/recordTypes.js";
+import type { StoredMachine } from "../../shared/apiContract.js";
+import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
 import { modelOptions } from "../appConfig.js";
 import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary } from "../types.js";
 import { formatDate, shortId } from "./common.js";
@@ -55,6 +57,30 @@ export const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> 
   return await response.json() as T;
 };
 
+export const apiRouteJson = async <Route extends AnyApiRoute>(
+  route: Route,
+  ...args: ApiRouteCallArgs<Route>
+): Promise<ApiRouteResponse<Route>> => {
+  const values = [...args] as unknown[];
+  const body = route.hasBody ? values.pop() : undefined;
+  const pathArgs = values as ApiRoutePathArgs<Route>;
+  const path = typeof route.path === "function"
+    ? route.path(...(pathArgs as never[]))
+    : route.path;
+  const init: RequestInit | undefined = route.method === "GET"
+    ? undefined
+    : {
+      method: route.method,
+      ...(route.hasBody
+        ? {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body)
+        }
+        : {})
+    };
+  return apiJson<ApiRouteResponse<Route>>(path, init);
+};
+
 export const realtimeMessageTypes = new Set([
   "sessions",
   "projects",
@@ -107,9 +133,18 @@ export const normalizeSessions = (sessions: SessionSummary[] | undefined): Sessi
       }))
     : [];
 
-export const normalizeMachines = (machines: MachineSummary[] | undefined) =>
+const normalizeMachine = (machine: MachineSummary | StoredMachine): MachineSummary =>
+  "online" in machine
+    ? machine
+    : {
+      ...machine,
+      online: false,
+      status: "offline"
+    };
+
+export const normalizeMachines = (machines: Array<MachineSummary | StoredMachine> | undefined): MachineSummary[] =>
   Array.isArray(machines)
-    ? machines
+    ? machines.map(normalizeMachine)
     : [];
 
 export const normalizeProjects = (projects: ProjectSummary[] | undefined) =>

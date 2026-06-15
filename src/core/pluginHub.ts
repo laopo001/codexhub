@@ -2,70 +2,14 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
-
-export type PluginAssetContribution = {
-  path: string;
-  url: string;
-};
-
-export type PluginOrigin = "builtin" | "local";
-export type PluginIntegrationRunner = "builtin" | "external";
-
-export type PluginIntegrationContribution = {
-  type: string;
-  runner: PluginIntegrationRunner;
-  enabled: boolean;
-  label?: string;
-  requiredEnv: string[];
-  configured?: boolean;
-  started?: boolean;
-};
-
-export type PluginSummary = {
-  pluginId: string;
-  name: string;
-  version?: string;
-  enabled: boolean;
-  origin: PluginOrigin;
-  root: string;
-  contributions: {
-    web: {
-      styles: PluginAssetContribution[];
-    };
-    integrations: PluginIntegrationContribution[];
-  };
-};
-
-export type PluginIntegrationManifest = string | {
-  type?: string;
-  runner?: PluginIntegrationRunner;
-  label?: string;
-  enabled?: boolean;
-  requiredEnv?: string[];
-};
-
-export type PluginManifest = {
-  version?: number;
-  id?: string;
-  name?: string;
-  enabled?: boolean;
-  contributes?: {
-    web?: {
-      styles?: string[];
-    };
-    integrations?: PluginIntegrationManifest[];
-  };
-};
-
-export type BuiltinPluginDefinition = {
-  root: string;
-  manifest: PluginManifest;
-};
-
-export type PluginIntegrationState = {
-  configured?: boolean;
-  started?: boolean;
-};
+import type {
+  BuiltinPluginDefinition,
+  PluginIntegrationContribution,
+  PluginIntegrationState,
+  PluginManifest,
+  PluginOrigin,
+  PluginSummary
+} from "../shared/pluginTypes.js";
 
 type LoadedPlugin = {
   manifest: PluginManifest;

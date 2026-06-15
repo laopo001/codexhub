@@ -1,7 +1,6 @@
 import type React from "react";
-import type { CodexRecord } from "../core/codexRecord.js";
-import type { CodexRecordView } from "../core/codexRecordView.js";
 import type {
+  ConnectionsStreamEvent as ApiConnectionsStreamEvent,
   MachineDirectoryListing as ApiMachineDirectoryListing,
   MachineSummary as ApiMachineSummary,
   ParentRegistrationStatus as ApiParentRegistrationStatus,
@@ -9,29 +8,35 @@ import type {
   ProjectSummary as ApiProjectSummary,
   ProjectsPayload as ApiProjectsPayload,
   ReasoningEffort as ApiReasoningEffort,
+  RealtimeMessage as ApiRealtimeMessage,
+  SessionStreamEvent as ApiSessionStreamEvent,
   SessionSummary as ApiSessionSummary,
   SessionView as ApiSessionView,
   SshConnectionSummary,
   SshHostSummary,
-  StoredTask,
   StoredTaskRun,
   TaskRunStatus,
+  TasksStreamEvent as ApiTasksStreamEvent,
+  TaskView as ApiTaskView,
   ThreadCandidateSummary,
   ThreadDetail as ApiThreadDetail,
+  ThreadGoalStatus,
   ThreadRateLimits,
   ThreadRateLimitUsage,
+  ThreadStreamEvent as ApiThreadStreamEvent,
   ThreadSummary as ApiThreadSummary,
   ThreadUsage as ApiThreadUsage,
   Usage as ApiUsage
 } from "../shared/apiContract.js";
 import type { CompactRecordView } from "../shared/compactRecordViews.js";
+import type { CodexRecordView } from "../shared/recordTypes.js";
 
 export type ThreadSummary = ApiThreadSummary;
 export type ThreadDetail = ApiThreadDetail;
 
 export type ThreadGoalView = {
   objective: string;
-  status: string;
+  status: ThreadGoalStatus;
   tokenBudget?: number;
   updatedAt?: string;
 };
@@ -64,9 +69,7 @@ export type CodexThreadCandidate = ThreadCandidateSummary;
 export type ProjectSummary = ApiProjectSummary;
 export type LocalTaskStatus = TaskRunStatus;
 export type LocalTaskRun = StoredTaskRun;
-export type LocalTask = StoredTask & {
-  nextRunAt?: string | null;
-};
+export type LocalTask = ApiTaskView;
 
 export type TaskDraft = {
   name: string;
@@ -151,13 +154,7 @@ export type AppSettings = {
   taskCompleteSystemNotifications: boolean;
 };
 
-export type StreamEvent = {
-  seq: number;
-  kind: "thread" | "record" | "done";
-  historical?: boolean;
-  thread: ThreadSummary;
-  record?: CodexRecord;
-};
+export type StreamEvent = ApiThreadStreamEvent;
 
 export type TaskCompleteNotification = {
   title: string;
@@ -166,34 +163,10 @@ export type TaskCompleteNotification = {
   duration?: string;
 };
 
-export type SessionStreamEvent = {
-  seq: number;
-  kind: "sessions";
-  sessions: SessionView[];
-};
-
-export type TasksStreamEvent = {
-  seq: number;
-  kind: "tasks";
-  tasks: LocalTask[];
-};
-
-export type ConnectionsStreamEvent = {
-  seq: number;
-  kind: "connections";
-  connections: SshConnection[];
-  registration?: ParentRegistrationStatus;
-};
-
-export type RealtimeMessage =
-  | ({ type: "sessions" } & SessionStreamEvent)
-  | ({ type: "projects" } & ProjectsPayload)
-  | ({ type: "tasks" } & TasksStreamEvent)
-  | ({ type: "connections" } & ConnectionsStreamEvent)
-  | ({ type: "thread" | "record" | "done" } & StreamEvent)
-  | { type: "ready" }
-  | { type: "thread_subscribed" | "thread_unsubscribed"; threadId: string }
-  | { type: "error"; message: string; scope?: string; threadId?: string };
+export type SessionStreamEvent = ApiSessionStreamEvent;
+export type TasksStreamEvent = ApiTasksStreamEvent;
+export type ConnectionsStreamEvent = ApiConnectionsStreamEvent;
+export type RealtimeMessage = ApiRealtimeMessage;
 
 export type Usage = ApiUsage;
 

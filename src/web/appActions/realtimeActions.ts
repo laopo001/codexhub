@@ -1,8 +1,10 @@
 import type React from "react";
-import type { CodexRecord } from "../../core/codexRecord.js";
+import type { RealtimeOutgoingMessage } from "../../shared/apiContract.js";
+import { apiRoutes } from "../../shared/apiRoutes.js";
+import type { CodexRecord } from "../../shared/recordTypes.js";
 import { defaultAppSettings, initialWorkspacePath, isVscodeSurface } from "../appConfig.js";
 import {
-  apiJson,
+  apiRouteJson,
   authToken,
   authWebSocketUrl,
   appendThreadOrder,
@@ -37,9 +39,7 @@ import type {
   ParentRegistrationStatus,
   PluginSummary,
   ProjectSummary,
-  ProjectsPayload,
   RealtimeMessage,
-  SessionSummary,
   SessionView,
   SshConnection,
   SshHost,
@@ -48,47 +48,6 @@ import type {
   TaskCompleteNotification,
   TasksStreamEvent
 } from "../types.js";
-
-type HealthPayload = Partial<SystemStatus> & {
-  authRequired?: boolean;
-  authenticated?: boolean;
-  defaultWorkingDirectory?: string;
-};
-
-type SessionsPayload = {
-  sessions?: SessionSummary[];
-};
-
-type SshHostsPayload = {
-  hosts?: SshHost[];
-};
-
-type PluginsPayload = {
-  plugins?: PluginSummary[];
-};
-
-type TasksPayload = {
-  tasks?: LocalTask[];
-};
-
-type SshConnectionsPayload = {
-  connections?: SshConnection[];
-};
-
-type ParentRegistrationPayload = {
-  registration?: ParentRegistrationStatus;
-};
-
-type RealtimeOutgoingMessage =
-  | {
-    type: "hello";
-    sessionsAfter: number;
-    projectsAfter: number;
-    tasksAfter: number;
-    connectionsAfter: number;
-  }
-  | { type: "subscribe_thread"; threadId: string; after: number }
-  | { type: "unsubscribe_thread"; threadId: string };
 
 type RealtimeActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
@@ -151,8 +110,19 @@ export type RealtimeActions = {
 };
 
 export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: RealtimeActionsDependencies): RealtimeActions => {
+  const loadInitialPayloads = async () => Promise.all([
+    apiRouteJson(apiRoutes.sessions),
+    apiRouteJson(apiRoutes.projects),
+    apiRouteJson(apiRoutes.sshHosts).catch(() => ({ hosts: [] })),
+    apiRouteJson(apiRoutes.sshConfigHosts).catch(() => ({ hosts: [] })),
+    apiRouteJson(apiRoutes.sshConnections).catch(() => ({ connections: [] })),
+    apiRouteJson(apiRoutes.parentRegistration).catch(() => ({ registration: { status: "idle" as const } })),
+    apiRouteJson(apiRoutes.plugins).catch(() => ({ plugins: [] })),
+    apiRouteJson(apiRoutes.tasks).catch(() => ({ tasks: [] }))
+  ] as const);
+
   const initialize = async () => {
-    const health = await apiJson<HealthPayload>("/api/health");
+    const health = await apiRouteJson(apiRoutes.health);
     ctx.setServerAuthRequired(Boolean(health.authRequired));
     if (health.authRequired && !health.authenticated && !authToken()) {
       ctx.setAuthRequired(true);
@@ -160,25 +130,9 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       return;
     }
 
-    let sessionData: SessionsPayload;
-    let projectData: ProjectsPayload;
-    let sshHostData: SshHostsPayload;
-    let sshConfigHostData: SshHostsPayload;
-    let sshConnectionData: SshConnectionsPayload;
-    let parentRegistrationData: ParentRegistrationPayload;
-    let pluginData: PluginsPayload;
-    let taskData: TasksPayload;
+    let initialPayloads: Awaited<ReturnType<typeof loadInitialPayloads>>;
     try {
-      [sessionData, projectData, sshHostData, sshConfigHostData, sshConnectionData, parentRegistrationData, pluginData, taskData] = await Promise.all([
-        apiJson<SessionsPayload>("/api/sessions"),
-        apiJson<ProjectsPayload>("/api/projects"),
-        apiJson<SshHostsPayload>("/api/ssh/hosts").catch(() => ({ hosts: [] })),
-        apiJson<SshHostsPayload>("/api/ssh/config-hosts").catch(() => ({ hosts: [] })),
-        apiJson<SshConnectionsPayload>("/api/ssh/connections").catch(() => ({ connections: [] })),
-        apiJson<ParentRegistrationPayload>("/api/registered/parent").catch(() => ({ registration: { status: "idle" as const } })),
-        apiJson<PluginsPayload>("/api/plugins").catch(() => ({ plugins: [] })),
-        apiJson<TasksPayload>("/api/tasks").catch(() => ({ tasks: [] }))
-      ]);
+      initialPayloads = await loadInitialPayloads();
     } catch (error) {
       if (String(error).includes("HTTP 401")) {
         ctx.setAuthRequired(true);
@@ -188,6 +142,16 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       }
       throw error;
     }
+    const [
+      sessionData,
+      projectData,
+      sshHostData,
+      sshConfigHostData,
+      sshConnectionData,
+      parentRegistrationData,
+      pluginData,
+      taskData
+    ] = initialPayloads;
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
     const loadedSessions = normalizeSessions(sessionData.sessions);
     const loadedMachines = normalizeMachines(projectData.machines);

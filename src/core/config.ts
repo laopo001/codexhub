@@ -1,4 +1,4 @@
-import type { ThreadOptions } from "./threadOptions.js";
+import type { ThreadOptions } from "../shared/usageTypes.js";
 
 export type ProxyConfig = {
   host: string;

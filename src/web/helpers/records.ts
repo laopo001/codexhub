@@ -1,6 +1,5 @@
-import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
-import type { CodexRecordView } from "../../core/codexRecordView.js";
 import { threadUsageFromRecord } from "../../core/threadUsage.js";
+import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { isVscodeSurface, reasoningOptions } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, SessionRateLimits, StreamEvent, TaskCompleteNotification, ThreadDetail, ThreadGoalView, ThreadSummary, ThreadUsage, TurnUiState, Usage } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
@@ -65,7 +64,7 @@ export const latestThreadGoalFromRecords = (records: CodexRecord[], threadId?: s
     }
     const objective = typeof goal?.objective === "string" ? compactLine(goal.objective) : "";
     if (!objective) return null;
-    const status = typeof goal?.status === "string" ? goal.status : "active";
+    const status = threadGoalStatusFromValue(goal?.status);
     if (status === "complete") return null;
     const tokenBudget = typeof goal?.tokenBudget === "number"
       ? goal.tokenBudget
@@ -78,6 +77,18 @@ export const latestThreadGoalFromRecords = (records: CodexRecord[], threadId?: s
     return { objective, status, tokenBudget, updatedAt };
   }
   return null;
+};
+
+const threadGoalStatusFromValue = (value: unknown): ThreadGoalView["status"] => {
+  if (
+    value === "active"
+    || value === "paused"
+    || value === "blocked"
+    || value === "usageLimited"
+    || value === "budgetLimited"
+    || value === "complete"
+  ) return value;
+  return "active";
 };
 
 export const latestThreadGoalClearedAt = (records: CodexRecord[], threadId?: string) => {

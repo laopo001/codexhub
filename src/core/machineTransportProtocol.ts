@@ -1,5 +1,5 @@
 import { isAppServerTunnelFrame, type AppServerTunnelFrame } from "./appServerTunnel.js";
-import type { MachineCommand } from "./machineHub.js";
+import type { MachineCommand } from "../shared/machineTypes.js";
 import type { SessionCommand } from "../shared/threadTypes.js";
 
 export type MachineTransportMessage =

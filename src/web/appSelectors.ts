@@ -1,6 +1,7 @@
 import { useMemo, type Dispatch, type SetStateAction } from "react";
-import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
+import { recordsToViews } from "../core/codexRecordView.js";
 import { compactToolViews } from "../shared/compactRecordViews.js";
+import type { CodexRecordView } from "../shared/recordTypes.js";
 import { recordsToDetailedViews } from "./detailedRecordViews.js";
 import { isVscodeSurface, vscodeWorkspacePaths } from "./appConfig.js";
 import {

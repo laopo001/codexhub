@@ -1,14 +1,14 @@
-import { asRecord } from "../core/codexRecord.js";
-import type { CodexRecord } from "../core/codexRecord.js";
-import type { CodexRecordView } from "../core/codexRecordView.js";
+import { asRecord, type CodexRecord, type CodexRecordView } from "./recordTypes.js";
 import { formatUpdatePlanCompact, parseUpdatePlanArguments } from "./updatePlanView.js";
 
+/** compact/simple 消息模式使用的 record view，保留 inspect 所需的原始信息。 */
 export type CompactRecordView = CodexRecordView & {
   inspectRecord?: CodexRecord;
   inspectCallText?: string;
   inspectText?: string;
 };
 
+/** compact record view 转换过程中的聚合状态。 */
 export type CompactRecordViewState = {
   views: CompactRecordView[];
   toolIndexes: Map<string, number>;
@@ -23,6 +23,7 @@ export type CompactRecordViewState = {
   };
 };
 
+/** 单条 record view compact 后的增量结果。 */
 export type CompactRecordViewChange = {
   view: CompactRecordView;
   appended: boolean;

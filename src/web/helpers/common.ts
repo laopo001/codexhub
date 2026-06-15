@@ -1,4 +1,4 @@
-import type { CodexRecordView } from "../../core/codexRecordView.js";
+import type { CodexRecordView } from "../../shared/recordTypes.js";
 
 export const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
@@ -43,4 +43,3 @@ export const formatDate = (value: string) => {
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 };
-

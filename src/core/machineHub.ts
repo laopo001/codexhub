@@ -1,102 +1,20 @@
 import { randomUUID } from "node:crypto";
+import type {
+  MachineCapabilities,
+  MachineCommand,
+  MachineCommandResult,
+  MachineDirectoryListing,
+  MachineRegistration,
+  MachineSummary,
+  MachineStartSessionResult,
+  MachineStopSessionResult,
+  MachineType
+} from "../shared/machineTypes.js";
 
-export type MachineType = "local" | "ssh" | "registered";
-export type MachineProjectCatalog = "editable" | "fixed";
-
-export type MachineCapabilities = {
-  projectLauncher: boolean;
-  projectCatalog?: MachineProjectCatalog;
-};
-
-export type MachineRegistrationProjectSource = {
-  kind: "vscode";
-  groupId: string;
-  label?: string;
-};
-
-export type MachineRegistrationProject = {
-  path: string;
-  source?: MachineRegistrationProjectSource;
-};
-
-export type MachineRegistration = {
-  machineId?: string;
-  type?: MachineType;
-  name?: string;
-  hostname: string;
-  pid?: number;
-  platform?: string;
-  cwd?: string;
-  capabilities?: Partial<MachineCapabilities>;
-  projects?: MachineRegistrationProject[];
-  transportId?: string;
-};
-
-export type MachineSummary = {
-  machineId: string;
-  type: MachineType;
-  name?: string;
-  hostname: string;
-  online: boolean;
-  status: "online" | "offline";
-  lastSeenAt: string;
-  offlineSinceAt?: string;
-  offlineReason?: "transport_disconnected" | "unregistered";
-  pid?: number;
-  platform?: string;
-  cwd?: string;
-  capabilities: MachineCapabilities;
-};
-
-export type MachineStartSessionResult = {
-  sessionId: string;
-  threadId: string;
-  appServerUrl: string;
-  cwd: string;
-  reused?: boolean;
-};
-
-export type MachineDirectoryEntry = {
-  name: string;
-  path: string;
-};
-
-export type MachineDirectoryListing = {
-  cwd: string;
-  parent?: string;
-  home: string;
-  entries: MachineDirectoryEntry[];
-};
-
-export type MachineStopSessionResult = {
-  sessionId: string;
-  stopped: boolean;
-  cwd?: string;
-};
-
-export type MachineCommandResult = MachineStartSessionResult | MachineDirectoryListing | MachineStopSessionResult;
-
-type MachineCommandBase = {
-  seq: number;
-  commandId: string;
-  createdAt: string;
-};
-
-type MachineCommandDetail = {
-  type: "start_session";
-  cwd: string;
-  reuse?: boolean;
-} | {
-  type: "list_directory";
-  cwd?: string;
-} | {
-  type: "stop_session";
-  sessionId: string;
-};
-
-type MachineCommandInput = Omit<MachineCommandBase, "seq"> & MachineCommandDetail;
-
-export type MachineCommand = MachineCommandBase & MachineCommandDetail;
+type MachineCommandInput =
+  | Omit<Extract<MachineCommand, { type: "start_session" }>, "seq">
+  | Omit<Extract<MachineCommand, { type: "list_directory" }>, "seq">
+  | Omit<Extract<MachineCommand, { type: "stop_session" }>, "seq">;
 
 type MachineState = MachineSummary & {
   transportId?: string;

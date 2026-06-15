@@ -5,8 +5,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
 import { machineTransportUrl, parseMachineTransportMessage } from "../core/machineTransportProtocol.js";
 import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
+import { createMachineId } from "../core/machineHub.js";
 import {
-  createMachineId,
   type MachineCapabilities,
   type MachineCommand,
   type MachineDirectoryListing,
@@ -15,7 +15,7 @@ import {
   type MachineStartSessionResult,
   type MachineStopSessionResult,
   type MachineType
-} from "../core/machineHub.js";
+} from "../shared/machineTypes.js";
 import {
   createCodexhubSessionId,
   startCodexAppServerProcess,

@@ -1,8 +1,11 @@
 import type React from "react";
-import type { CodexRecord } from "../../core/codexRecord.js";
+import type { RealtimeOutgoingMessage, ThreadGoalUpdateInput } from "../../shared/apiContract.js";
+import { apiRoutes } from "../../shared/apiRoutes.js";
+import type { ProxyInput } from "../../shared/inputTypes.js";
+import type { CodexRecord } from "../../shared/recordTypes.js";
 import {
   adjacentThreadId,
-  apiJson,
+  apiRouteJson,
   authFetch,
   appendThreadOrder,
   composeUserInputText,
@@ -25,14 +28,9 @@ import type {
   ProjectsPayload,
   SessionView,
   ThreadDetail,
-  ThreadGoalView,
 } from "../types.js";
 
-type ThreadGoalUpdateInput = Partial<Pick<ThreadGoalView, "objective" | "status" | "tokenBudget">>;
-
-type RealtimeThreadMessage =
-  | { type: "subscribe_thread"; threadId: string; after: number }
-  | { type: "unsubscribe_thread"; threadId: string };
+type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
 type ThreadActionsContext = {
   activeProjectSession?: SessionView | null;
@@ -69,10 +67,6 @@ export type ThreadActionsDependencies = {
 type ThreadGoalUpdateOptions = {
   dialog?: boolean;
 };
-
-type TurnInputPart =
-  | { type: "text"; text: string }
-  | { type: "image"; url: string };
 
 const openThreadStateFromDetail = (
   thread: ThreadDetail,
@@ -128,7 +122,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     if (existingOpen) return existingOpen;
 
     const open = (async () => {
-      const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
+      const thread = await apiRouteJson(apiRoutes.thread, threadId);
       const sessionId = thread.session.sessionId;
       if (sessionId) {
         ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
@@ -262,11 +256,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
   const forkMessage = async (threadId: string, messageId: string) => {
     try {
-      const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/fork`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messageId })
-      });
+      const thread = await apiRouteJson(apiRoutes.forkThread, threadId, { messageId });
       const sessionId = thread.session.sessionId ?? ctx.activeProjectSession?.sessionId;
       if (sessionId) {
         ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
@@ -285,11 +275,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
   const rollbackMessage = async (threadId: string, messageId: string) => {
     try {
-      const thread = await apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}/rollback`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messageId })
-      });
+      const thread = await apiRouteJson(apiRoutes.rollbackThread, threadId, { messageId });
       ctx.setOpenThreads((current) => {
         const existing = current.find((item) => item.threadId === thread.threadId);
         const nextThread = openThreadStateFromDetail(thread, existing);
@@ -345,7 +331,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
         : item));
       return;
     }
-    const input: string | TurnInputPart[] = encodedImages.length
+    const input: ProxyInput = encodedImages.length
       ? [
         ...(text ? [{ type: "text" as const, text }] : []),
         ...encodedImages.map((image) => ({ type: "image" as const, url: image.url }))

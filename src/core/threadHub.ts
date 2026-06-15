@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { asRecord, type CodexRecord } from "./codexRecord.js";
 import { recordsToViews } from "./codexRecordView.js";
-import type { ProxyInput } from "./proxyInput.js";
-import type { ThreadOptions, Usage } from "./threadOptions.js";
-import { emptyThreadUsage, threadRateLimitsFromValue, threadUsageFromRecords, type ThreadUsage } from "./threadUsage.js";
+import { emptyThreadUsage, threadRateLimitsFromValue, threadUsageFromRecords } from "./threadUsage.js";
+import type { ProxyInput } from "../shared/inputTypes.js";
+import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
+import type { ThreadOptions, ThreadUsage, Usage } from "../shared/usageTypes.js";
 import type {
   InternalSessionRegistration,
   PendingCommand,

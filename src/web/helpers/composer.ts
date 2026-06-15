@@ -1,5 +1,5 @@
-import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
-import { recordsToViews, type CodexRecordView } from "../../core/codexRecordView.js";
+import { recordsToViews } from "../../core/codexRecordView.js";
+import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { defaultAppSettings, isVscodeSurface, legacyStorageKey, storageKey } from "../appConfig.js";
 import type { AppSettings, MessageDisplayMode, TextAttachment } from "../types.js";
 import { browserId, formatDate } from "./common.js";

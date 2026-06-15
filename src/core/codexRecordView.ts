@@ -1,25 +1,5 @@
-import { asRecord, type CodexRecord } from "./codexRecord.js";
-
-export type RecordUsage = {
-  input_tokens: number;
-  cached_input_tokens: number;
-  output_tokens: number;
-  reasoning_output_tokens: number;
-  total_tokens?: number;
-};
-
-export type CodexRecordView = {
-  id: string;
-  role: "user" | "codex" | "event" | "error" | "tool" | "thinking";
-  label: string;
-  text: string;
-  at?: string;
-  attachments?: Array<{ type: "image"; url: string }>;
-  usage?: RecordUsage;
-  status?: "pending" | "completed" | "failed";
-  canFork?: boolean;
-  record: CodexRecord;
-};
+import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage } from "../shared/recordTypes.js";
+export type { CodexRecordView, RecordUsage } from "../shared/recordTypes.js";
 
 export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
   const views: CodexRecordView[] = [];

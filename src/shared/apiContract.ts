@@ -1,18 +1,23 @@
 import { z } from "zod";
-import type { MachineDirectoryListing, MachineStartSessionResult, MachineStopSessionResult, MachineSummary } from "../core/machineHub.js";
-import type { PluginSummary } from "../core/pluginHub.js";
-import type { ProjectSummary, StoredTask, StoredTaskRun, TaskRunStatus } from "../core/serverState.js";
-import type { SshHostConfig } from "../core/sshConfig.js";
-import type { SshMachineConnectInput, SshMachineConnection } from "../core/sshMachine.js";
 import { isCronExpression } from "../core/taskCron.js";
-import type { ModelReasoningEffort, Usage } from "../core/threadOptions.js";
-import type { ThreadRateLimitUsage, ThreadRateLimits, ThreadUsage } from "../core/threadUsage.js";
 import type {
+  MachineDirectoryListing,
+  MachineStartSessionResult,
+  MachineStopSessionResult,
+  MachineSummary
+} from "./machineTypes.js";
+import type { PluginSummary } from "./pluginTypes.js";
+import type { ProjectSource, ProjectSummary, StoredMachine, StoredProject, StoredTask, StoredTaskRun, TaskRunStatus } from "./projectTypes.js";
+import type { SshHostConfig, SshMachineConnectInput, SshMachineConnection } from "./sshTypes.js";
+import type { ModelReasoningEffort, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "./usageTypes.js";
+import type {
+  SessionStreamEvent,
   SessionSummary,
   ThreadCandidateSummary,
   ThreadDetail,
   ThreadGoalStatus,
   ThreadRunOptions,
+  ThreadStreamEvent,
   ThreadSummary
 } from "./threadTypes.js";
 
@@ -23,6 +28,9 @@ export type {
   MachineSummary,
   PluginSummary,
   ProjectSummary,
+  StoredMachine,
+  StoredProject,
+  SessionStreamEvent,
   SessionSummary,
   StoredTask,
   StoredTaskRun,
@@ -33,25 +41,31 @@ export type {
   ThreadRateLimitUsage,
   ThreadRateLimits,
   ThreadRunOptions,
+  ThreadStreamEvent,
   ThreadSummary,
   ThreadUsage,
   Usage
 };
 
+/** OpenAI reasoning effort 的 Web/API 别名。 */
 export type ReasoningEffort = ModelReasoningEffort;
 
+/** Web 使用的 session view；保持 sessionId 必填以兼容历史 UI 代码。 */
 export type SessionView = SessionSummary & {
   sessionId: string;
 };
 
+/** SSH host 列表接口返回的 host 摘要，合并 SSH config 和 CodexHub 收纳状态。 */
 export type SshHostSummary = SshHostConfig & {
   configured?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
 
+/** SSH connection 列表和 mutation 接口返回的连接摘要。 */
 export type SshConnectionSummary = SshMachineConnection;
 
+/** registered parent 连接状态，供 Web Registered 面板展示。 */
 export type ParentRegistrationStatus = {
   status: "idle" | "starting" | "connecting" | "online" | "offline" | "stopped";
   url?: string;
@@ -61,43 +75,141 @@ export type ParentRegistrationStatus = {
   updatedAt?: string;
 };
 
+/** 认证状态接口返回值。 */
+export type AuthStatusPayload = {
+  authRequired: boolean;
+  authenticated: boolean;
+};
+
+/** `/api/health` 返回的 server 运行状态和默认配置。 */
+export type HealthPayload = AuthStatusPayload & {
+  ok?: boolean;
+  serverInstanceId?: string;
+  env?: string;
+  build?: string | null;
+  host?: string;
+  port?: number;
+  surface?: "default" | "vscode";
+  features?: Record<string, boolean>;
+  staticDirectory?: string;
+  statePath?: string;
+  model: string | null;
+  modelReasoningEffort: ModelReasoningEffort | null;
+  contextWindowTokens: number | null;
+  defaultWorkingDirectory?: string;
+  ssh?: {
+    connections?: SshConnectionSummary[];
+  };
+  telegram?: {
+    started?: boolean;
+  };
+};
+
+/** Web 展示用 task，额外包含 server 按当前时间计算的下一次运行时间。 */
+export type TaskView = StoredTask & {
+  nextRunAt?: string | null;
+};
+
+/** project mutation 中直接返回的 state 层项目记录。 */
+export type ProjectRecordPayload = StoredProject & {
+  transient?: boolean;
+  source?: ProjectSource;
+};
+
+/** `/api/projects` 和 projects realtime 事件共享的项目列表 payload。 */
 export type ProjectsPayload = {
   seq?: number;
   kind?: "projects";
-  statePath?: string;
-  machines?: MachineSummary[];
-  projects?: ProjectSummary[];
+  statePath: string;
+  machines: Array<MachineSummary | StoredMachine>;
+  projects: ProjectSummary[];
 };
 
+/** `/api/machines` 返回的机器列表 payload。 */
+export type MachinesPayload = {
+  machines?: MachineSummary[];
+};
+
+/** `/api/sessions` 返回的 session 列表 payload。 */
 export type SessionsPayload = {
   sessions?: SessionSummary[];
+  offline?: number;
+  removed?: number;
 };
 
+/** `/api/threads` 返回的 thread 列表 payload。 */
+export type ThreadsPayload = {
+  threads?: ThreadSummary[];
+  offline?: number;
+  removed?: number;
+};
+
+/** `/api/tasks` 返回的 task 列表 payload。 */
 export type TasksPayload = {
-  tasks?: StoredTask[];
+  tasks?: TaskView[];
 };
 
+/** `/api/plugins` 返回的插件列表 payload。 */
 export type PluginsPayload = {
   plugins?: PluginSummary[];
 };
 
+/** `/api/ssh/hosts` 和 `/api/ssh/config-hosts` 返回的 host 列表 payload。 */
 export type SshHostsPayload = {
   hosts?: SshHostSummary[];
+  ok?: boolean;
+  deleted?: boolean;
 };
 
+/** `/api/ssh/connections` 返回的 SSH 连接列表 payload。 */
 export type SshConnectionsPayload = {
   connections?: SshConnectionSummary[];
 };
 
+/** SSH connect/delete mutation 返回的单个连接 payload。 */
+export type SshConnectionPayload = {
+  ok?: boolean;
+  connection?: SshConnectionSummary;
+};
+
+/** registered parent 查询、连接和断开接口返回的 payload。 */
 export type ParentRegistrationPayload = {
   registration?: ParentRegistrationStatus;
 };
 
+/** thread picker 候选接口返回的 payload。 */
 export type ThreadCandidatesPayload = {
   threads?: ThreadCandidateSummary[];
 };
 
+/** session/thread turn mutation 返回值。 */
+export type ThreadTurnPayload = {
+  ok?: boolean;
+  queued?: boolean;
+  thread?: ThreadSummary | ThreadDetail;
+  command?: string;
+};
+
+/** thread delete mutation 返回值。 */
+export type ThreadDeletePayload = {
+  deleted?: boolean;
+};
+
+/** thread stop mutation 返回值。 */
+export type ThreadStopPayload = {
+  stopped?: boolean;
+};
+
+/** thread goal set/clear mutation 返回值。 */
+export type ThreadGoalMutationPayload = {
+  ok?: boolean;
+};
+
+/** project open 接口返回值，包含项目快照和 machine 启动 session 的结果。 */
 export type ProjectOpenPayload = ProjectsPayload & {
+  ok?: boolean;
+  machine?: MachineSummary;
+  project?: ProjectRecordPayload | ProjectSummary;
   result?: {
     cwd?: string;
     sessionId?: string;
@@ -105,9 +217,65 @@ export type ProjectOpenPayload = ProjectsPayload & {
   };
 };
 
-export type TaskMutationPayload = {
-  task?: StoredTask;
+/** project update/delete mutation 返回值，包含更新后的项目快照。 */
+export type ProjectMutationPayload = ProjectsPayload & {
+  ok?: boolean;
+  deleted?: boolean;
+  transient?: boolean;
+  project?: ProjectRecordPayload | ProjectSummary;
+  stoppedSessions?: Array<{
+    machineId: string;
+    sessionId: string;
+    stopped: boolean;
+    removed: boolean;
+    reason: string;
+  }>;
 };
+
+/** task create/update/run mutation 返回值；run 可能额外返回定位到的 session/thread。 */
+export type TaskMutationPayload = {
+  ok?: boolean;
+  skipped?: boolean;
+  task?: TaskView;
+  sessionId?: string;
+  threadId?: string;
+  command?: string;
+};
+
+/** `/api/events/ws` 的 projects 控制面事件。 */
+export type ProjectsStreamEvent = Omit<ProjectsPayload, "seq" | "kind"> & {
+  seq: number;
+  kind: "projects";
+};
+
+/** `/api/events/ws` 的 tasks 控制面事件。 */
+export type TasksStreamEvent = {
+  seq: number;
+  kind: "tasks";
+  tasks: TaskView[];
+};
+
+/** `/api/events/ws` 的 connections 控制面事件。 */
+export type ConnectionsStreamEvent = {
+  seq: number;
+  kind: "connections";
+  connections: SshConnectionSummary[];
+  registration?: ParentRegistrationStatus;
+};
+
+/** WebSocket 从 server 发给 Web 的所有入站消息。 */
+export type RealtimeMessage =
+  | ({ type: "sessions" } & SessionStreamEvent)
+  | ({ type: "projects" } & ProjectsStreamEvent)
+  | ({ type: "tasks" } & TasksStreamEvent)
+  | ({ type: "connections" } & ConnectionsStreamEvent)
+  | ({ type: ThreadStreamEvent["kind"] } & ThreadStreamEvent)
+  | { type: "ready" }
+  | { type: "thread_subscribed" | "thread_unsubscribed"; threadId: string }
+  | { type: "error"; message: string; scope?: string; threadId?: string };
+
+/** Web 通过 `/api/events/ws` 发给 server 的出站消息。 */
+export type RealtimeOutgoingMessage = WebEventsMessage;
 
 export const inputSchema = z.union([
   z.string(),
@@ -400,11 +568,26 @@ export const projectUpdateSchema = z.object({
   pinned: z.boolean().nullable().optional()
 }).strict();
 
+/** 用户输入 payload，可为纯文本或文本/图片混合输入。 */
 export type ProxyInputPayload = z.infer<typeof inputSchema>;
+
+/** Web 订阅 realtime WebSocket 时发送的消息。 */
 export type WebEventsMessage = z.infer<typeof webEventsMessageSchema>;
+
+/** machine WebSocket 发给 server 的入站消息。 */
 export type MachineTransportIncomingMessage = z.infer<typeof machineTransportMessageSchema>;
+
+/** registered parent 连接请求 body。 */
 export type ParentRegistrationConnectInput = z.infer<typeof parentRegistrationConnectSchema>;
+
+/** 创建 task 的请求 body。 */
 export type TaskCreateInput = z.infer<typeof taskCreateSchema>;
+
+/** 更新 task 的请求 body。 */
 export type TaskUpdateInput = z.infer<typeof taskUpdateSchema>;
+
+/** 更新 project 元数据的请求 body。 */
 export type ProjectUpdateInput = z.infer<typeof projectUpdateSchema>;
+
+/** 更新 thread goal 的请求 body。 */
 export type ThreadGoalUpdateInput = z.infer<typeof threadGoalUpdateSchema>;

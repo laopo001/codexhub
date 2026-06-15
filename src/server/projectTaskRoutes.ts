@@ -2,13 +2,20 @@ import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { MachineHub } from "../core/machineHub.js";
-import type { CodexhubServerState, ProjectSource, StoredTask } from "../core/serverState.js";
+import type { CodexhubServerState } from "../core/serverState.js";
 import type { ThreadHub } from "../core/threadHub.js";
+import type { ProjectSource, StoredTask } from "../shared/projectTypes.js";
 import {
   projectSourceSchema,
   projectUpdateSchema,
   taskCreateSchema,
-  taskUpdateSchema
+  taskUpdateSchema,
+  type ProjectMutationPayload,
+  type ProjectOpenPayload,
+  type ProjectsPayload,
+  type TaskMutationPayload,
+  type TasksPayload,
+  type TaskView
 } from "../shared/apiContract.js";
 
 type ProjectSessionStopResult = {
@@ -23,18 +30,18 @@ export type ProjectTaskRoutesContext = {
   features: { tasks: boolean };
   fixedProjectPathExists: (machineId: string, projectPath: string) => boolean;
   isVscodeWorkspaceSource: (source: ProjectSource | undefined) => boolean;
-  localTaskView: (task: StoredTask) => unknown;
-  localTaskViews: () => unknown[];
+  localTaskView: (task: StoredTask) => TaskView;
+  localTaskViews: () => TaskView[];
   machines: MachineHub;
   projectIsFixed: (projectId: string) => boolean | undefined;
-  projectSnapshot: () => object;
+  projectSnapshot: () => ProjectsPayload;
   publishProjects: () => void;
   publishTasks: () => void;
   resolveTargetMachine: (
     machines: ReturnType<MachineHub["listMachines"]>,
     requestedMachineId: string | undefined
   ) => ReturnType<MachineHub["listMachines"]>[number];
-  runLocalTask: (taskId: string) => Promise<unknown>;
+  runLocalTask: (taskId: string) => Promise<TaskMutationPayload>;
   sessionsForProject: (target: { machineId: string; path: string }) => Array<{ sessionId: string }>;
   state: CodexhubServerState;
   stopProjectSessions: (target: { machineId: string; path: string }) => Promise<ProjectSessionStopResult[]> | ProjectSessionStopResult[];
@@ -44,7 +51,7 @@ export type ProjectTaskRoutesContext = {
 };
 
 export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTaskRoutesContext) => {
-  app.get("/api/projects", async () => ctx.projectSnapshot());
+  app.get("/api/projects", async () => ctx.projectSnapshot() satisfies ProjectsPayload);
 
   app.delete("/api/projects/:projectId", async (request, reply) => {
     const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
@@ -54,7 +61,13 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
     }
     if (ctx.state.deleteTransientProject(params.projectId)) {
       ctx.publishProjects();
-      return { ok: true, deleted: true, transient: true, stoppedSessions: [], ...ctx.projectSnapshot() };
+      return {
+        ok: true,
+        deleted: true,
+        transient: true,
+        stoppedSessions: [],
+        ...ctx.projectSnapshot()
+      } satisfies ProjectMutationPayload;
     }
     const target = ctx.state.projectDeleteTarget(params.projectId);
     const deleted = ctx.state.deleteProject(params.projectId);
@@ -66,7 +79,7 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
     if (deleted) ctx.publishProjects();
     const stoppedSessions = target ? await ctx.stopProjectSessions(target) : [];
     ctx.publishProjects();
-    return { ok: true, deleted, stoppedSessions, ...ctx.projectSnapshot() };
+    return { ok: true, deleted, stoppedSessions, ...ctx.projectSnapshot() } satisfies ProjectMutationPayload;
   });
 
   app.patch("/api/projects/:projectId", async (request, reply) => {
@@ -84,7 +97,7 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
       return { error: `Project not found: ${params.projectId}` };
     }
     ctx.publishProjects();
-    return { ok: true, project, ...ctx.projectSnapshot() };
+    return { ok: true, project, ...ctx.projectSnapshot() } satisfies ProjectMutationPayload;
   });
 
   app.post("/api/projects/open", async (request, reply) => {
@@ -126,8 +139,12 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
           sessionId,
           threadId: result.threadId
         });
+      if (!project) {
+        reply.code(409);
+        return { error: "Project could not be opened." };
+      }
       ctx.publishProjects();
-      return { ok: true, machine, project, result, ...ctx.projectSnapshot() };
+      return { ok: true, machine, project, result, ...ctx.projectSnapshot() } satisfies ProjectOpenPayload;
     } catch (error) {
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -136,7 +153,7 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
 
   app.get("/api/tasks", async () => ({
     tasks: ctx.localTaskViews()
-  }));
+  } satisfies TasksPayload));
 
   app.post("/api/tasks", async (request, reply) => {
     const payload = taskCreateSchema.parse(request.body);
@@ -153,7 +170,7 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
         input: payload.input
       });
       ctx.publishTasks();
-      return { ok: true, task: ctx.localTaskView(task) };
+      return { ok: true, task: ctx.localTaskView(task) } satisfies TaskMutationPayload;
     } catch (error) {
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -184,7 +201,7 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
         createdAt: existing.createdAt
       });
       ctx.publishTasks();
-      return { ok: true, task: ctx.localTaskView(task) };
+      return { ok: true, task: ctx.localTaskView(task) } satisfies TaskMutationPayload;
     } catch (error) {
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -198,13 +215,14 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
       return { error: "task_not_found" };
     }
     ctx.publishTasks();
-    return { ok: true, deleted: true };
+    return { ok: true, deleted: true } satisfies { ok: boolean; deleted: boolean };
   });
 
   app.post("/api/tasks/:taskId/run", async (request, reply) => {
     const params = z.object({ taskId: z.string().min(1) }).parse(request.params);
     try {
-      return await ctx.runLocalTask(params.taskId);
+      const result = await ctx.runLocalTask(params.taskId);
+      return result satisfies TaskMutationPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Task not found:") ? 404 : 409);

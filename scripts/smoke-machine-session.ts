@@ -3,7 +3,7 @@ import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import type { CodexRecord } from "../src/core/codexRecord.js";
+import type { CodexRecord } from "../src/shared/recordTypes.js";
 
 type MachineSummary = {
   machineId: string;

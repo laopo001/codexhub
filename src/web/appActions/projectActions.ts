@@ -1,6 +1,8 @@
 import type React from "react";
+import type { ProjectUpdateInput } from "../../shared/apiContract.js";
+import { apiRoutes } from "../../shared/apiRoutes.js";
 import {
-  apiJson,
+  apiRouteJson,
   appendThreadOrder,
   mergeThreadOrderBySession,
   normalizeMachines,
@@ -22,31 +24,10 @@ import type {
   ProjectPickerState,
   ProjectsPayload,
   ProjectSummary,
-  SessionSummary,
   SessionView,
   ThreadDetail,
   ThreadPickerState
 } from "../types.js";
-
-type SessionsPayload = {
-  sessions?: SessionSummary[];
-};
-
-type ThreadCandidatesPayload = {
-  threads?: CodexThreadCandidate[];
-};
-
-type ProjectOpenPayload = ProjectsPayload & {
-  result?: {
-    cwd?: string;
-    sessionId?: string;
-    threadId?: string;
-  };
-};
-
-type ProjectPatchInput = {
-  pinned?: boolean;
-};
 
 type ProjectActionsContext = {
   activeProjectSession?: SessionView | null;
@@ -105,7 +86,7 @@ export type ProjectActions = {
   chooseThreadCandidate: (candidate: CodexThreadCandidate) => Promise<void>;
   openProject: (projectPath: string, machineId?: string) => Promise<boolean>;
   deleteProject: (project: ProjectSummary) => Promise<void>;
-  patchProject: (project: ProjectSummary, patch: ProjectPatchInput) => Promise<void>;
+  patchProject: (project: ProjectSummary, patch: ProjectUpdateInput) => Promise<void>;
   toggleProjectPinned: (project: ProjectSummary) => Promise<void>;
   toggleProjectMachineGroup: (machineKey: string) => void;
   switchSessionThread: (threadId: string) => Promise<void>;
@@ -186,10 +167,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       error: ""
     } : current);
     try {
-      const query = trimmedPath ? `?path=${encodeURIComponent(trimmedPath)}` : "";
-      const listing = await apiJson<MachineDirectoryListing>(
-        `/api/machines/${encodeURIComponent(machineId)}/directories${query}`
-      );
+      const listing = await apiRouteJson(apiRoutes.machineDirectories, machineId, trimmedPath);
       ctx.setProjectPicker((current) => current && current.machineId === machineId ? {
         ...current,
         path: listing.cwd,
@@ -264,11 +242,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     } : current);
     try {
       const cwd = workingDirectory ?? ctx.threadPicker?.workingDirectory;
-      const query = new URLSearchParams({ limit: "20" });
-      if (cwd) query.set("cwd", cwd);
-      const payload = await apiJson<ThreadCandidatesPayload>(
-        `/api/sessions/${encodeURIComponent(sessionId)}/thread-candidates?${query.toString()}`
-      );
+      const payload = await apiRouteJson(apiRoutes.threadCandidates, sessionId, cwd, 20);
       ctx.setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
         loading: false,
@@ -334,10 +308,9 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     const sessionId = ctx.threadPicker.sessionId;
     ctx.setThreadPicker((current) => current && current.sessionId === sessionId ? { ...current, acting: "new", error: "" } : current);
     try {
-      const thread = await apiJson<ThreadDetail>(`/api/sessions/${encodeURIComponent(sessionId)}/threads`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "new", cwd: ctx.threadPicker.workingDirectory })
+      const thread = await apiRouteJson(apiRoutes.createSessionThread, sessionId, {
+        action: "new",
+        cwd: ctx.threadPicker.workingDirectory
       });
       ctx.setThreadPicker(null);
       await activateSessionThread(sessionId, thread.threadId);
@@ -364,14 +337,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       error: ""
     } : current);
     try {
-      const thread = await apiJson<ThreadDetail>(`/api/sessions/${encodeURIComponent(sessionId)}/threads`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          action: "resume",
-          threadId: candidate.threadId,
-          cwd: ctx.threadPicker.workingDirectory
-        })
+      const thread = await apiRouteJson(apiRoutes.createSessionThread, sessionId, {
+        action: "resume",
+        threadId: candidate.threadId,
+        cwd: ctx.threadPicker.workingDirectory
       });
       ctx.setThreadPicker(null);
       await activateSessionThread(sessionId, thread.threadId);
@@ -401,23 +370,19 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         ? ctx.projectList.find((project) => project.machineId === machineId && project.path === trimmedPath)
         : undefined;
       const vscodeSource = existingProject?.source?.kind === "vscode" ? existingProject.source : undefined;
-      const payload = await apiJson<ProjectOpenPayload>("/api/projects/open", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          path: trimmedPath,
-          machineId: machineId || undefined,
-          reuse: true,
-          persist: vscodeSource ? false : undefined,
-          source: vscodeSource
-        })
+      const payload = await apiRouteJson(apiRoutes.openProject, {
+        path: trimmedPath,
+        machineId: machineId || undefined,
+        reuse: true,
+        persist: vscodeSource ? false : undefined,
+        source: vscodeSource
       });
       ctx.setMachines(normalizeMachines(payload.machines));
       const freshProjects = normalizeProjects(payload.projects);
       ctx.setProjects(freshProjects);
       ctx.setProjectOpenError("");
       ctx.setActiveWorkspacePath(payload.result?.cwd ?? trimmedPath);
-      const freshSessions = await apiJson<SessionsPayload>("/api/sessions")
+      const freshSessions = await apiRouteJson(apiRoutes.sessions)
         .then((data) => normalizeSessions(data.sessions))
         .catch(() => ctx.sessionList);
       ctx.setSessionList(freshSessions);
@@ -447,9 +412,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     if (!window.confirm(prompt)) return;
     ctx.setDeletingProjectId(project.projectId);
     try {
-      const payload = await apiJson<ProjectsPayload>(`/api/projects/${encodeURIComponent(project.projectId)}`, {
-        method: "DELETE"
-      });
+      const payload = await apiRouteJson(apiRoutes.deleteProject, project.projectId);
       ctx.setMachines(normalizeMachines(payload.machines));
       ctx.setProjects(normalizeProjects(payload.projects));
       if (ctx.selectedProjectKey === projectKeyForProject(project)) ctx.setSelectedProjectKey("");
@@ -467,14 +430,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     return freshProjects;
   };
 
-  const patchProject = async (project: ProjectSummary, patch: ProjectPatchInput) => {
+  const patchProject = async (project: ProjectSummary, patch: ProjectUpdateInput) => {
     ctx.setProjectOpenError("");
     try {
-      const payload = await apiJson<ProjectsPayload>(`/api/projects/${encodeURIComponent(project.projectId)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(patch)
-      });
+      const payload = await apiRouteJson(apiRoutes.updateProject, project.projectId, patch);
       applyProjectPayload(payload);
     } catch (error) {
       ctx.setProjectOpenError(error instanceof Error ? error.message : String(error));

@@ -1,72 +1,19 @@
 import { Telegraf } from "telegraf";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CodexRecord } from "../../src/core/codexRecord.js";
-import { recordToView, type CodexRecordView } from "../../src/core/codexRecordView.js";
+import { recordToView } from "../../src/core/codexRecordView.js";
+import type { CodexRecord, CodexRecordView } from "../../src/shared/recordTypes.js";
+import type { ProxyInput } from "../../src/shared/inputTypes.js";
 import { loadDotEnv } from "../../src/core/dotenv.js";
 import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../../src/shared/compactRecordViews.js";
-
-type ThreadSummary = {
-  threadId: string;
-  workingDirectory: string;
-  session: ThreadSessionSummary;
-  status: ThreadStatus;
-  running: boolean;
-  title: string;
-  updatedAt: string;
-  messageCount: number;
-  threadUsage: ThreadUsage;
-};
-
-type ThreadSessionSummary = {
-  sessionId?: string;
-  name?: string;
-  online: boolean;
-  runnable: boolean;
-};
-
-type ThreadDetail = ThreadSummary & {
-  records: CodexRecord[];
-  lastSeq: number;
-};
-
-type SessionTurnResponse = {
-  ok: boolean;
-  command?: string;
-};
-
-type SessionSummary = {
-  sessionId: string;
-  machineId?: string;
-  name?: string;
-  workingDirectory: string;
-  online: boolean;
-  status?: "online" | "offline";
-  threads?: ThreadSummary[];
-};
-
-type ThreadStatus = "running" | "idle";
-
-type TurnInput = string | Array<
-  | { type: "text"; text: string }
-  | { type: "image"; url: string }
->;
-
-type RateLimitWindow = {
-  usedPercent: number;
-  windowMinutes: number;
-  resetsAt: number;
-};
-
-type ThreadUsage = {
-  context: {
-    usedTokens: number;
-    windowTokens: number;
-  } | null;
-  primaryRateLimit: RateLimitWindow | null;
-  secondaryRateLimit: RateLimitWindow | null;
-  observedAt: string | null;
-};
+import type {
+  SessionSummary,
+  ThreadDetail,
+  ThreadRateLimitUsage,
+  ThreadSummary,
+  ThreadTurnPayload,
+  ThreadUsage
+} from "../../src/shared/apiContract.js";
 
 type ChatState = {
   sessionId?: string;
@@ -330,7 +277,7 @@ const runPrompt = async (
   ].filter(Boolean).join("\n"));
 
   try {
-    let input: TurnInput = prompt;
+    let input: ProxyInput = prompt;
     if (images.length) {
       const imageUrls = await Promise.all(images.map((image) => telegramImageUrl(image.fileId)));
       input = [
@@ -398,14 +345,14 @@ const createSessionThread = async (sessionId: string) =>
     body: JSON.stringify({ action: "new" })
   });
 
-const postThreadTurn = async (threadId: string, input: TurnInput) => {
+const postThreadTurn = async (threadId: string, input: ProxyInput) => {
   const response = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ input, source: "telegram" })
   });
   if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
-  return await response.json() as SessionTurnResponse;
+  return await response.json() as ThreadTurnPayload;
 };
 
 const telegramImageUrl = async (fileId: string) => {
@@ -594,7 +541,7 @@ const formatContextUsage = (usage: ThreadUsage | null) => {
   if (!context) return "--";
   return `${formatPercent((context.usedTokens / context.windowTokens) * 100)}`;
 };
-const formatRateLimitRemaining = (window: RateLimitWindow | null | undefined) => {
+const formatRateLimitRemaining = (window: ThreadRateLimitUsage | null | undefined) => {
   if (!window) return "--";
   return formatPercent(100 - window.usedPercent);
 };

@@ -1,12 +1,15 @@
-import { asRecord } from "../core/codexRecord.js";
+import { asRecord } from "./recordTypes.js";
 
+/** update_plan 工具状态在 Web 里的归一化展示枚举。 */
 export type UpdatePlanStatus = "completed" | "in_progress" | "pending" | "unknown";
 
+/** update_plan 的单个步骤展示模型。 */
 export type UpdatePlanStepView = {
   step: string;
   status: string;
 };
 
+/** update_plan 工具参数解析后的展示模型。 */
 export type UpdatePlanView = {
   explanation?: string;
   steps: UpdatePlanStepView[];

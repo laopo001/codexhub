@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Popover } from "antd";
-import { asRecord, type CodexRecord } from "../core/codexRecord.js";
+import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import {
   activityStatusTitle,
   formatComposerModelButtonLabel,

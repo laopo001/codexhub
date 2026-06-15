@@ -1,22 +1,7 @@
 import type React from "react";
-import { apiJson } from "../appHelpers.js";
+import { apiRoutes } from "../../shared/apiRoutes.js";
+import { apiRouteJson } from "../appHelpers.js";
 import type { ParentRegistrationDraft, ParentRegistrationStatus, SshConnection, SshHost } from "../types.js";
-
-type SshHostsPayload = {
-  hosts?: SshHost[];
-};
-
-type SshConnectionsPayload = {
-  connections?: SshConnection[];
-};
-
-type SshConnectionPayload = {
-  connection?: SshConnection;
-};
-
-type ParentRegistrationPayload = {
-  registration?: ParentRegistrationStatus;
-};
 
 type SshActionsContext = {
   parentRegistrationDraft: ParentRegistrationDraft;
@@ -52,20 +37,20 @@ export type SshActions = {
 export const createSshActions = (ctx: SshActionsContext): SshActions => {
   const refreshSshHosts = async () => {
     const [hostData, configHostData] = await Promise.all([
-      apiJson<SshHostsPayload>("/api/ssh/hosts"),
-      apiJson<SshHostsPayload>("/api/ssh/config-hosts")
+      apiRouteJson(apiRoutes.sshHosts),
+      apiRouteJson(apiRoutes.sshConfigHosts)
     ]);
     ctx.setSshHosts(Array.isArray(hostData.hosts) ? hostData.hosts : []);
     ctx.setSshConfigHosts(Array.isArray(configHostData.hosts) ? configHostData.hosts : []);
   };
 
   const refreshSshConnections = async () => {
-    const payload = await apiJson<SshConnectionsPayload>("/api/ssh/connections");
+    const payload = await apiRouteJson(apiRoutes.sshConnections);
     ctx.setSshConnections(Array.isArray(payload.connections) ? payload.connections : []);
   };
 
   const refreshParentRegistration = async () => {
-    const payload = await apiJson<ParentRegistrationPayload>("/api/registered/parent");
+    const payload = await apiRouteJson(apiRoutes.parentRegistration);
     ctx.setParentRegistration(payload.registration ?? { status: "idle" });
   };
 
@@ -76,11 +61,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
     ctx.setSshError("");
     ctx.setSshHostBusy(alias);
     try {
-      const payload = await apiJson<SshHostsPayload>("/api/ssh/hosts", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ alias })
-      });
+      const payload = await apiRouteJson(apiRoutes.addSshHost, { alias });
       ctx.setSshHosts(Array.isArray(payload.hosts) ? payload.hosts : []);
       await refreshSshHosts().catch(() => undefined);
       ctx.setSshHostDraft("");
@@ -97,11 +78,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
     ctx.setSshError("");
     ctx.setSshConnectingHost(trimmedHost);
     try {
-      const payload = await apiJson<SshConnectionPayload>("/api/ssh/connect", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ host: trimmedHost, name })
-      });
+      const payload = await apiRouteJson(apiRoutes.connectSsh, { host: trimmedHost, name });
       const connection = payload.connection;
       if (connection) {
         ctx.setSshConnections((current) => [connection, ...current.filter((item) => item.connectionId !== connection.connectionId)]);
@@ -116,9 +93,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
 
   const stopSshConnection = async (connectionId: string) => {
     try {
-      const payload = await apiJson<SshConnectionPayload>(`/api/ssh/connections/${encodeURIComponent(connectionId)}`, {
-        method: "DELETE"
-      });
+      const payload = await apiRouteJson(apiRoutes.stopSshConnection, connectionId);
       const connection = payload.connection;
       if (connection) {
         ctx.setSshConnections((current) => [connection, ...current.filter((item) => item.connectionId !== connectionId)]);
@@ -135,9 +110,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
     ctx.setSshError("");
     ctx.setSshHostBusy(host.alias);
     try {
-      const payload = await apiJson<SshHostsPayload>(`/api/ssh/hosts/${encodeURIComponent(host.alias)}`, {
-        method: "DELETE"
-      });
+      const payload = await apiRouteJson(apiRoutes.removeSshHost, host.alias);
       ctx.setSshHosts(Array.isArray(payload.hosts) ? payload.hosts : []);
       await refreshSshHosts().catch(() => undefined);
       if (activeConnection) await stopSshConnection(activeConnection.connectionId);
@@ -166,15 +139,11 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
     ctx.setParentRegistrationBusy(true);
     ctx.setParentRegistrationError("");
     try {
-      const payload = await apiJson<ParentRegistrationPayload>("/api/registered/parent", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          url: parsed.url,
-          authToken: parsed.authToken,
-          machineId: ctx.parentRegistrationDraft.machineId.trim() || undefined,
-          name: ctx.parentRegistrationDraft.name.trim() || undefined
-        })
+      const payload = await apiRouteJson(apiRoutes.connectParentRegistration, {
+        url: parsed.url,
+        authToken: parsed.authToken,
+        machineId: ctx.parentRegistrationDraft.machineId.trim() || undefined,
+        name: ctx.parentRegistrationDraft.name.trim() || undefined
       });
       ctx.setParentRegistration(payload.registration ?? { status: "idle" });
     } catch (error) {
@@ -188,7 +157,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
     ctx.setParentRegistrationBusy(true);
     ctx.setParentRegistrationError("");
     try {
-      const payload = await apiJson<ParentRegistrationPayload>("/api/registered/parent", { method: "DELETE" });
+      const payload = await apiRouteJson(apiRoutes.disconnectParentRegistration);
       ctx.setParentRegistration(payload.registration ?? { status: "idle" });
     } catch (error) {
       ctx.setParentRegistrationError(error instanceof Error ? error.message : String(error));

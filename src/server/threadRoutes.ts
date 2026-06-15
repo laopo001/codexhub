@@ -6,6 +6,14 @@ import {
   threadGoalUpdateSchema,
   threadRunOptionsSchema,
   webEventsMessageSchema,
+  type SessionsPayload,
+  type ThreadCandidatesPayload,
+  type ThreadDeletePayload,
+  type ThreadDetail,
+  type ThreadGoalMutationPayload,
+  type ThreadsPayload,
+  type ThreadStopPayload,
+  type ThreadTurnPayload,
   type WebEventsMessage
 } from "../shared/apiContract.js";
 
@@ -44,14 +52,14 @@ export const registerThreadRoutes = <
   app.get("/api/threads", async () => ({
     ...ctx.markStaleSessions(),
     threads: ctx.threads.listThreads()
-  }));
+  } satisfies ThreadsPayload));
 
   app.get("/api/sessions", async (request) => {
     const query = z.object({ includeOffline: z.string().optional() }).parse(request.query);
     return {
       ...ctx.markStaleSessions(),
       sessions: ctx.threads.listSessions({ includeOffline: query.includeOffline === "true" })
-    };
+    } satisfies SessionsPayload;
   });
 
   app.get("/api/events/ws", { websocket: true }, (socket) => {
@@ -184,7 +192,8 @@ export const registerThreadRoutes = <
       cwd: z.string().min(1).optional()
     }).parse(request.query);
     try {
-      return await ctx.threads.listSessionThreadCandidates(params.sessionId, query.limit ?? 50, query.cwd);
+      const result = await ctx.threads.listSessionThreadCandidates(params.sessionId, query.limit ?? 50, query.cwd);
+      return result satisfies ThreadCandidatesPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Session not found:") ? 404 : 409);
@@ -203,7 +212,7 @@ export const registerThreadRoutes = <
         ? await ctx.threads.startSessionThread(params.sessionId, payload.cwd)
         : await ctx.threads.resumeSessionThread(params.sessionId, payload.threadId, payload.cwd);
       ctx.publishProjects();
-      return thread;
+      return thread satisfies ThreadDetail;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Session not found:") ? 404 : 409);
@@ -231,7 +240,7 @@ export const registerThreadRoutes = <
         payload.cwd
       );
       result.promise.catch(() => undefined);
-      return { ok: true, thread: result.thread, command: result.command };
+      return { ok: true, thread: result.thread, command: result.command } satisfies ThreadTurnPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Session not found:") || message.startsWith("Thread not found:") ? 404 : 409);
@@ -246,14 +255,15 @@ export const registerThreadRoutes = <
       reply.code(404);
       return { error: "thread_not_found" };
     }
-    return thread;
+    return thread satisfies ThreadDetail;
   });
 
   app.delete("/api/threads/:threadId", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     try {
       ctx.forceReleaseThreadRecordSubscription(params.threadId);
-      return await ctx.threads.deleteThread(params.threadId);
+      const result = await ctx.threads.deleteThread(params.threadId);
+      return result satisfies ThreadDeletePayload;
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -264,7 +274,8 @@ export const registerThreadRoutes = <
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({ messageId: z.string().min(1) }).parse(request.body);
     try {
-      return await ctx.threads.forkThread(params.threadId, payload.messageId);
+      const thread = await ctx.threads.forkThread(params.threadId, payload.messageId);
+      return thread satisfies ThreadDetail;
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -275,7 +286,8 @@ export const registerThreadRoutes = <
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({ messageId: z.string().min(1) }).parse(request.body);
     try {
-      return await ctx.threads.rollbackThreadAfterRecord(params.threadId, payload.messageId);
+      const thread = await ctx.threads.rollbackThreadAfterRecord(params.threadId, payload.messageId);
+      return thread satisfies ThreadDetail;
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -292,9 +304,9 @@ export const registerThreadRoutes = <
 
     try {
       const command = ctx.threads.runLocalCommand(params.threadId, payload.input, payload.source ?? "web");
-      if (command.handled) return { ok: true, command: command.command };
+      if (command.handled) return { ok: true, command: command.command } satisfies ThreadTurnPayload;
       ctx.threads.runTurn(params.threadId, payload.input, payload.source ?? "web", payload.options).catch(() => undefined);
-      return { ok: true };
+      return { ok: true } satisfies ThreadTurnPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") ? 404 : 409);
@@ -307,7 +319,7 @@ export const registerThreadRoutes = <
     const payload = threadGoalUpdateSchema.parse(request.body);
     try {
       await ctx.threads.setGoal(params.threadId, payload);
-      return { ok: true };
+      return { ok: true } satisfies ThreadGoalMutationPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") ? 404 : 409);
@@ -319,7 +331,7 @@ export const registerThreadRoutes = <
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     try {
       await ctx.threads.clearGoal(params.threadId);
-      return { ok: true };
+      return { ok: true } satisfies ThreadGoalMutationPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") ? 404 : 409);
@@ -330,7 +342,8 @@ export const registerThreadRoutes = <
   app.post("/api/threads/:threadId/stop", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     try {
-      return ctx.threads.stopTurn(params.threadId);
+      const result = ctx.threads.stopTurn(params.threadId);
+      return result satisfies ThreadStopPayload;
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };

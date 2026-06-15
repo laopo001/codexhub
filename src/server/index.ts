@@ -8,13 +8,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { createMachineId, MachineHub, type MachineRegistrationProject } from "../core/machineHub.js";
+import { createMachineId, MachineHub } from "../core/machineHub.js";
 import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
 import { CodexhubServerState } from "../core/serverState.js";
-import type { ProjectSource, StoredTask } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
@@ -27,8 +26,26 @@ import {
   parentRegistrationConnectSchema,
   sshConnectSchema,
   sshHostAliasSchema,
-  type ParentRegistrationStatus
+  type AuthStatusPayload,
+  type ConnectionsStreamEvent,
+  type HealthPayload,
+  type MachinesPayload,
+  type ParentRegistrationPayload,
+  type ParentRegistrationStatus,
+  type PluginsPayload,
+  type ProjectsPayload,
+  type ProjectsStreamEvent,
+  type SessionsPayload,
+  type SshConnectionPayload,
+  type SshConnectionsPayload,
+  type SshHostsPayload,
+  type TaskMutationPayload,
+  type TasksStreamEvent,
+  type TaskView
 } from "../shared/apiContract.js";
+import type { MachineDirectoryListing } from "../shared/machineTypes.js";
+import type { MachineRegistrationProject } from "../shared/machineTypes.js";
+import type { ProjectSource, StoredTask } from "../shared/projectTypes.js";
 import type { SessionCommand, SessionEventInput, SessionRegistration } from "../shared/threadTypes.js";
 import { registerProjectTaskRoutes } from "./projectTaskRoutes.js";
 import { registerThreadRoutes } from "./threadRoutes.js";
@@ -264,20 +281,20 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       .send({ error: "unauthorized", authRequired: true });
   });
 
-  function projectSnapshot() {
+  function projectSnapshot(): ProjectsPayload {
     return state.snapshot({
       machines: machines.listMachines(),
       sessions: threads.listSessions({ includeOffline: true }),
       threads: threads.listThreads()
-    });
+    }) satisfies ProjectsPayload;
   }
 
-  function projectSnapshotEvent() {
+  function projectSnapshotEvent(): ProjectsStreamEvent {
     return {
       seq: projectSeq,
       kind: "projects" as const,
       ...projectSnapshot()
-    };
+    } satisfies ProjectsStreamEvent;
   }
 
   function vscodeParentRegistrationProjects(): MachineRegistrationProject[] {
@@ -332,7 +349,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       seq: ++projectSeq,
       kind: "projects" as const,
       ...projectSnapshot()
-    };
+    } satisfies ProjectsStreamEvent;
     for (const subscriber of projectSubscribers) subscriber(event);
   }
 
@@ -431,22 +448,22 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }));
   };
 
-  function taskSnapshotEvent() {
+  function taskSnapshotEvent(): TasksStreamEvent {
     return {
       seq: taskSeq,
       kind: "tasks" as const,
       tasks: localTaskViews()
-    };
+    } satisfies TasksStreamEvent;
   }
 
-  function localTaskView(task: StoredTask) {
+  function localTaskView(task: StoredTask): TaskView {
     return {
       ...task,
       nextRunAt: task.enabled ? nextCronRun(task.schedule, new Date(), defaultTaskTimezone)?.toISOString() ?? null : null
-    };
+    } satisfies TaskView;
   }
 
-  function localTaskViews() {
+  function localTaskViews(): TaskView[] {
     return state.listTasks().map(localTaskView);
   }
 
@@ -455,17 +472,17 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       seq: ++taskSeq,
       kind: "tasks" as const,
       tasks: localTaskViews()
-    };
+    } satisfies TasksStreamEvent;
     for (const subscriber of taskSubscribers) subscriber(event);
   }
 
-  function connectionSnapshotEvent() {
+  function connectionSnapshotEvent(): ConnectionsStreamEvent {
     return {
       seq: connectionSeq,
       kind: "connections" as const,
       connections: features.ssh ? sshMachines.listConnections() : [],
       registration: parentRegistrationView()
-    };
+    } satisfies ConnectionsStreamEvent;
   }
 
   function publishConnections() {
@@ -474,12 +491,12 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       kind: "connections" as const,
       connections: sshMachines.listConnections(),
       registration: parentRegistrationView()
-    };
+    } satisfies ConnectionsStreamEvent;
     for (const subscriber of connectionSubscribers) subscriber(event);
   }
 
-  function parentRegistrationView() {
-    return { ...parentRegistrationStatus };
+  function parentRegistrationView(): ParentRegistrationStatus {
+    return { ...parentRegistrationStatus } satisfies ParentRegistrationStatus;
   }
 
   async function startParentRegistration(input: z.infer<typeof parentRegistrationConnectSchema>) {
@@ -606,7 +623,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     throw new Error(`Session did not register: ${sessionId}`);
   }
 
-  async function runLocalTask(taskId: string) {
+  async function runLocalTask(taskId: string): Promise<TaskMutationPayload> {
     if (!features.tasks) throw new Error("Tasks are disabled for this codexhub surface.");
     const task = state.getTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -622,7 +639,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         ok: true,
         skipped: true,
         task: localTaskView(skippedTask)
-      };
+      } satisfies TaskMutationPayload;
     }
     let releaseOnReturn = true;
     runningTasks.add(task.taskId);
@@ -657,7 +674,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           sessionId,
           threadId,
           command: localCommand.command
-        };
+        } satisfies TaskMutationPayload;
       }
       const turn = threads.runTurn(threadId, task.input, "task");
       const queuedTask = state.updateTaskRun(task.taskId, {
@@ -689,7 +706,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         task: localTaskView(queuedTask),
         sessionId,
         threadId
-      };
+      } satisfies TaskMutationPayload;
     } catch (error) {
       state.finishTaskRun(task.taskId, runId, {
         status: "failed",
@@ -740,7 +757,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   app.get("/api/auth/status", async (request) => ({
     authRequired: Boolean(serverAuthToken),
     authenticated: !serverAuthToken || isAuthorizedRequest(request, serverAuthToken)
-  }));
+  } satisfies AuthStatusPayload));
 
   app.get("/api/health", async (request) => ({
     ok: true,
@@ -764,7 +781,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     telegram: {
       started: Boolean(telegramBot)
     }
-  }));
+  } satisfies HealthPayload));
 
   registerThreadRoutes(app, {
     connectionSnapshotEvent,
@@ -783,15 +800,15 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.get("/api/machines", async () => ({
     machines: machines.listMachines()
-  }));
+  } satisfies MachinesPayload));
 
   app.get("/api/ssh/config-hosts", async () => ({
     hosts: features.ssh ? await listSshHosts() : []
-  }));
+  } satisfies SshHostsPayload));
 
   app.get("/api/ssh/hosts", async () => ({
     hosts: await listCodexhubSshHosts()
-  }));
+  } satisfies SshHostsPayload));
 
   app.post("/api/ssh/hosts", async (request, reply) => {
     if (!features.ssh) {
@@ -811,7 +828,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return {
       ok: true,
       hosts: await listCodexhubSshHosts()
-    };
+    } satisfies SshHostsPayload;
   });
 
   app.delete("/api/ssh/hosts/:alias", async (request, reply) => {
@@ -825,27 +842,27 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       ok: true,
       deleted: state.deleteSshHost(params.alias),
       hosts: await listCodexhubSshHosts()
-    };
+    } satisfies SshHostsPayload;
   });
 
   app.get("/api/ssh/connections", async () => ({
     connections: features.ssh ? sshMachines.listConnections() : []
-  }));
+  } satisfies SshConnectionsPayload));
 
   app.get("/api/registered/parent", async () => ({
     registration: parentRegistrationView()
-  }));
+  } satisfies ParentRegistrationPayload));
 
   app.post("/api/registered/parent", async (request) => {
     const input = parentRegistrationConnectSchema.parse(request.body);
     return {
       registration: await startParentRegistration(input)
-    };
+    } satisfies ParentRegistrationPayload;
   });
 
   app.delete("/api/registered/parent", async () => ({
     registration: await stopParentRegistration()
-  }));
+  } satisfies ParentRegistrationPayload));
 
   app.get("/api/registered/bootstrap", async (request, reply) => {
     const query = z.object({
@@ -903,7 +920,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   app.get("/api/plugins", async () => ({
     plugins: await plugins.listPlugins()
-  }));
+  } satisfies PluginsPayload));
 
   app.get("/api/plugins/:pluginId/assets/*", async (request, reply) => {
     const params = z.object({
@@ -930,7 +947,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       return {
         ok: true,
         connection: sshMachines.connect(payload)
-      };
+      } satisfies SshConnectionPayload;
     } catch (error) {
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -947,7 +964,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       return {
         ok: true,
         connection: await sshMachines.stop(params.connectionId)
-      };
+      } satisfies SshConnectionPayload;
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -959,7 +976,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const query = z.object({ path: z.string().optional() }).parse(request.query);
     try {
       const command = machines.listDirectory(params.machineId, { cwd: query.path });
-      return await command.promise;
+      const listing = await command.promise;
+      return listing satisfies MachineDirectoryListing;
     } catch (error) {
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };

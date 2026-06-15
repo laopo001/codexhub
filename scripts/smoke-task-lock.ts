@@ -55,23 +55,23 @@ type RealtimeMessage = {
   };
 };
 
-type RateLimitWindow = {
+type PartialRateLimitWindow = {
   usedPercent?: number;
   windowMinutes?: number;
   resetsAt?: number;
 };
 
-type ThreadUsage = {
+type PartialThreadUsage = {
   context?: {
     usedTokens?: number;
     windowTokens?: number;
   } | null;
-  primaryRateLimit?: RateLimitWindow | null;
-  secondaryRateLimit?: RateLimitWindow | null;
+  primaryRateLimit?: PartialRateLimitWindow | null;
+  secondaryRateLimit?: PartialRateLimitWindow | null;
 };
 
 type ThreadDetail = {
-  threadUsage?: ThreadUsage;
+  threadUsage?: PartialThreadUsage;
   records?: Array<{
     type?: string;
     payload?: unknown;

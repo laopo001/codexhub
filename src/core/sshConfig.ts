@@ -1,15 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-
-export type SshHostConfig = {
-  alias: string;
-  hostName?: string;
-  user?: string;
-  port?: number;
-  identityFiles: string[];
-  proxyJump?: string;
-};
+import type { SshHostConfig } from "../shared/sshTypes.js";
 
 type SshHostSection = {
   aliases: string[];

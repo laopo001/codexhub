@@ -1,5 +1,5 @@
-import { asRecord, type CodexRecord } from "../core/codexRecord.js";
-import { imageGenerationAttachments, imageGenerationStatus, type CodexRecordView, type RecordUsage } from "../core/codexRecordView.js";
+import { imageGenerationAttachments, imageGenerationStatus } from "../core/codexRecordView.js";
+import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage } from "../shared/recordTypes.js";
 
 export const recordsToDetailedViews = (records: CodexRecord[]): CodexRecordView[] => {
   const views: CodexRecordView[] = [];

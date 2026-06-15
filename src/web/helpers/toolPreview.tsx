@@ -1,8 +1,7 @@
 import React from "react";
 import { Tag } from "antd";
 import { FileDiff, Image, Plug, Search, Sparkles, Terminal, Users, Workflow } from "lucide-react";
-import { asRecord, type CodexRecord } from "../../core/codexRecord.js";
-import type { CodexRecordView } from "../../core/codexRecordView.js";
+import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { normalizeUpdatePlanStatus, parseUpdatePlanArguments, updatePlanStatusIcon, updatePlanStatusLabel, type UpdatePlanView as UpdatePlanViewModel } from "../../shared/updatePlanView.js";
 import type { InspectDetail, ParsedToolCall, WebRecordView, WebToolPresenter } from "../types.js";
 import { emptyMemoryCitation, parseMemoryCitationText, shouldExtractMemoryCitation } from "./components.js";

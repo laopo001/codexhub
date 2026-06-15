@@ -1,7 +1,7 @@
 import type React from "react";
 import { useRef, useState } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
-import type { CodexRecord } from "../core/codexRecord.js";
+import type { CodexRecord } from "../shared/recordTypes.js";
 import { defaultAppSettings } from "./appConfig.js";
 import { defaultTaskDraft, initAuthTokenFromUrl } from "./appHelpers.js";
 import type {

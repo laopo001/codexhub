@@ -1,7 +1,6 @@
-import type { CodexRecord } from "./codexRecord.js";
-import type { ProxyInput } from "./proxyInput.js";
-import type { ThreadOptions, Usage } from "./threadOptions.js";
-import type { ThreadUsage } from "./threadUsage.js";
+import type { ProxyInput } from "../shared/inputTypes.js";
+import type { CodexRecord } from "../shared/recordTypes.js";
+import type { ThreadOptions, ThreadUsage, Usage } from "../shared/usageTypes.js";
 import type {
   SessionCommand,
   SessionRegistration,

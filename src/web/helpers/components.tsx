@@ -4,7 +4,7 @@ import { Switch } from "antd";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, languageAliases } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, WebRecordView } from "../types.js";
-import type { CodexRecordView } from "../../core/codexRecordView.js";
+import type { CodexRecordView } from "../../shared/recordTypes.js";
 import { statusLabel } from "./common.js";
 import { formatInspectDetail, formatInspectTitle, renderToolMessageBody } from "./toolPreview.js";
 import { activityStatusOverlayClass, activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";

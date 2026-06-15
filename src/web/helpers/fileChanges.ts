@@ -1,4 +1,4 @@
-import { asRecord } from "../../core/codexRecord.js";
+import { asRecord } from "../../shared/recordTypes.js";
 
 export const fileChangePreviewFiles = (payload: Record<string, unknown>) => {
   if (!Array.isArray(payload.changes)) return [];
@@ -26,4 +26,3 @@ export const diffStats = (diffText: string): { added?: number; removed?: number 
   }
   return { added, removed };
 };
-

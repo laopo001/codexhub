@@ -12,11 +12,11 @@ import {
   type ChildExit,
   type CodexAppServerProcessHandle
 } from "./codexAppServerProcess.js";
-import type { MachineCommand, MachineRegistration } from "../core/machineHub.js";
 import { machineTransportUrl, parseMachineTransportMessage } from "../core/machineTransportProtocol.js";
-import type { ProxyInput } from "../core/proxyInput.js";
 import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
+import type { ProxyInput } from "../shared/inputTypes.js";
+import type { MachineCommand, MachineRegistration } from "../shared/machineTypes.js";
 import type {
   SessionCommand,
   SessionEventInput,

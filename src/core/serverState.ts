@@ -3,107 +3,25 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
-import type { MachineCapabilities, MachineSummary, MachineType } from "./machineHub.js";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
+import type { MachineCapabilities, MachineSummary, MachineType } from "../shared/machineTypes.js";
+import type {
+  DeletedProject,
+  ProjectSource,
+  ProjectSummary,
+  ServerStateData,
+  StoredMachine,
+  StoredProject,
+  StoredSshHost,
+  StoredTask,
+  StoredTaskRun,
+  TaskRunStatus
+} from "../shared/projectTypes.js";
 import type { SessionSummary, ThreadSummary } from "../shared/threadTypes.js";
-
-export type StoredMachine = {
-  machineId: string;
-  type: MachineType;
-  name?: string;
-  hostname: string;
-  lastSeenAt: string;
-  capabilities: MachineCapabilities;
-};
-
-export type StoredProject = {
-  projectId: string;
-  machineId: string;
-  path: string;
-  pinned?: boolean;
-  createdAt: string;
-  lastOpenedAt: string;
-  lastSessionId?: string;
-  lastThreadId?: string;
-};
-
-export type ProjectSource = {
-  kind: "vscode";
-  groupId: string;
-  label?: string;
-};
 
 type RuntimeProject = StoredProject & {
   transient?: boolean;
   source?: ProjectSource;
-};
-
-export type TaskRunStatus = "queued" | "completed" | "failed" | "skipped";
-
-export type StoredTaskRun = {
-  runId: string;
-  status: TaskRunStatus;
-  startedAt: string;
-  finishedAt?: string;
-  durationMs?: number;
-  sessionId?: string;
-  threadId?: string;
-  error?: string;
-};
-
-export type DeletedProject = {
-  projectId: string;
-  machineId: string;
-  path: string;
-  deletedAt: string;
-};
-
-export type StoredTask = {
-  taskId: string;
-  name: string;
-  enabled: boolean;
-  schedule: string;
-  machineId: string;
-  projectPath: string;
-  projectId?: string;
-  threadId?: string;
-  input: string;
-  createdAt: string;
-  updatedAt: string;
-  lastRunAt?: string;
-  lastStatus?: TaskRunStatus;
-  lastError?: string;
-  lastDurationMs?: number;
-  runs?: StoredTaskRun[];
-};
-
-export type StoredSshHost = {
-  alias: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ServerStateData = {
-  version: 1;
-  updatedAt: string;
-  machines: StoredMachine[];
-  projects: StoredProject[];
-  deletedProjects: DeletedProject[];
-  tasks: StoredTask[];
-  sshHosts: StoredSshHost[];
-};
-
-export type ProjectSummary = StoredProject & {
-  name: string;
-  transient?: boolean;
-  source?: ProjectSource;
-  machine?: MachineSummary | StoredMachine;
-  machineOnline: boolean;
-  session: SessionSummary | null;
-  online: boolean;
-  running: boolean;
-  sessions: SessionSummary[];
-  threads: ThreadSummary[];
 };
 
 type SessionSnapshot = {

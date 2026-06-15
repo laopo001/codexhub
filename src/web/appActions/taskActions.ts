@@ -1,6 +1,8 @@
 import type React from "react";
+import type { TaskUpdateInput } from "../../shared/apiContract.js";
+import { apiRoutes } from "../../shared/apiRoutes.js";
 import {
-  apiJson,
+  apiRouteJson,
   defaultTaskDraft,
   mergeThreadOrderBySession,
   normalizeMachines,
@@ -10,23 +12,7 @@ import {
   primeTaskCompletionSound,
   primeTaskNotificationPermission
 } from "../appHelpers.js";
-import type { AppSettings, LocalTask, MachineSummary, ProjectSummary, ProjectsPayload, SessionSummary, SessionView, TaskDraft } from "../types.js";
-
-type SessionsPayload = {
-  sessions?: SessionSummary[];
-};
-
-type TasksPayload = {
-  tasks?: LocalTask[];
-};
-
-type TaskMutationPayload = {
-  task?: LocalTask;
-  sessionId?: string;
-  threadId?: string;
-};
-
-type TaskPatchInput = Partial<Pick<LocalTask, "enabled" | "input" | "name" | "schedule" | "threadId">>;
+import type { AppSettings, LocalTask, MachineSummary, ProjectSummary, ProjectsPayload, SessionView, TaskDraft } from "../types.js";
 
 type TaskActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
@@ -60,14 +46,14 @@ export type TaskActions = {
   focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
   primeTaskCompletionFeedback: () => void;
   createTask: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
-  patchTask: (taskId: string, patch: TaskPatchInput) => Promise<void>;
+  patchTask: (taskId: string, patch: TaskUpdateInput) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
   runTaskNow: (task: LocalTask) => Promise<void>;
 };
 
 export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDependencies): TaskActions => {
   const refreshSessions = async () => {
-    const freshSessions = await apiJson<SessionsPayload>("/api/sessions")
+    const freshSessions = await apiRouteJson(apiRoutes.sessions)
       .then((data) => normalizeSessions(data.sessions));
     ctx.setSessionList(freshSessions);
     ctx.setThreadOrderBySession((current) => mergeThreadOrderBySession(current, freshSessions));
@@ -75,14 +61,14 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
   };
 
   const refreshProjects = async () => {
-    const payload = await apiJson<ProjectsPayload>("/api/projects");
+    const payload = await apiRouteJson(apiRoutes.projects);
     ctx.setMachines(normalizeMachines(payload.machines));
     ctx.setProjects(normalizeProjects(payload.projects));
     return payload;
   };
 
   const refreshTasks = async () => {
-    const payload = await apiJson<TasksPayload>("/api/tasks");
+    const payload = await apiRouteJson(apiRoutes.tasks);
     ctx.setTasks(normalizeTasks(payload.tasks));
   };
 
@@ -140,19 +126,15 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
     ctx.setTaskBusyId("create");
     ctx.setTaskError("");
     try {
-      const payload = await apiJson<TaskMutationPayload>("/api/tasks", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name,
-          enabled: ctx.taskDraft.enabled,
-          schedule,
-          machineId,
-          projectId: project?.projectId,
-          projectPath,
-          input,
-          ...(threadId ? { threadId } : {})
-        })
+      const payload = await apiRouteJson(apiRoutes.createTask, {
+        name,
+        enabled: ctx.taskDraft.enabled,
+        schedule,
+        machineId,
+        projectId: project?.projectId,
+        projectPath,
+        input,
+        ...(threadId ? { threadId } : {})
       });
       const task = payload.task;
       if (task) {
@@ -175,15 +157,11 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
     }
   };
 
-  const patchTask = async (taskId: string, patch: TaskPatchInput) => {
+  const patchTask = async (taskId: string, patch: TaskUpdateInput) => {
     ctx.setTaskBusyId(taskId);
     ctx.setTaskError("");
     try {
-      const payload = await apiJson<TaskMutationPayload>(`/api/tasks/${encodeURIComponent(taskId)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(patch)
-      });
+      const payload = await apiRouteJson(apiRoutes.updateTask, taskId, patch);
       const task = payload.task;
       if (task) {
         ctx.setTasks((current) => normalizeTasks(current.map((item) => item.taskId === taskId ? task : item)));
@@ -201,7 +179,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
     ctx.setTaskBusyId(taskId);
     ctx.setTaskError("");
     try {
-      await apiJson(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+      await apiRouteJson(apiRoutes.deleteTask, taskId);
       ctx.setTasks((current) => current.filter((task) => task.taskId !== taskId));
     } catch (error) {
       ctx.setTaskError(error instanceof Error ? error.message : String(error));
@@ -215,10 +193,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
     ctx.setTaskBusyId(task.taskId);
     ctx.setTaskError("");
     try {
-      const payload = await apiJson<TaskMutationPayload>(
-        `/api/tasks/${encodeURIComponent(task.taskId)}/run`,
-        { method: "POST" }
-      );
+      const payload = await apiRouteJson(apiRoutes.runTask, task.taskId);
       const updatedTask = payload.task;
       if (updatedTask) {
         ctx.setTasks((current) => normalizeTasks(current.map((item) => item.taskId === task.taskId ? updatedTask : item)));

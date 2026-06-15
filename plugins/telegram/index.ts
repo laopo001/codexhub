@@ -1,4 +1,4 @@
-import type { BuiltinPluginDefinition, PluginIntegrationState } from "../../src/core/pluginHub.js";
+import type { BuiltinPluginDefinition, PluginIntegrationState } from "../../src/shared/pluginTypes.js";
 import { startTelegramBotFromEnv, type TelegramBotHandle } from "./bot.js";
 
 export type { TelegramBotHandle };

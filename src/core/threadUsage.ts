@@ -1,26 +1,6 @@
-import { asRecord, type CodexRecord } from "./codexRecord.js";
-
-export type ThreadRateLimitUsage = {
-  usedPercent: number;
-  windowMinutes: number;
-  resetsAt: number;
-};
-
-export type ThreadRateLimits = {
-  primaryRateLimit: ThreadRateLimitUsage | null;
-  secondaryRateLimit: ThreadRateLimitUsage | null;
-  observedAt: string | null;
-};
-
-export type ThreadUsage = {
-  context: {
-    usedTokens: number;
-    windowTokens: number;
-  } | null;
-  primaryRateLimit: ThreadRateLimitUsage | null;
-  secondaryRateLimit: ThreadRateLimitUsage | null;
-  observedAt: string | null;
-};
+import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
+import type { ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage } from "../shared/usageTypes.js";
+export type { ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage } from "../shared/usageTypes.js";
 
 export const emptyThreadUsage = (): ThreadUsage => ({
   context: null,

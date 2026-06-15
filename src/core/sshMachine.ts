@@ -1,34 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { SshRemoteClientBundle } from "./sshRemoteClient.js";
-
-export type SshMachineConnectionStatus = "starting" | "running" | "exited";
-export type SshMachineRemoteMode = "bootstrap" | "installed";
-
-export type SshMachineConnection = {
-  connectionId: string;
-  host: string;
-  name?: string;
-  remoteMode: SshMachineRemoteMode | "custom";
-  remoteClientHash?: string;
-  status: SshMachineConnectionStatus;
-  startedAt: string;
-  updatedAt: string;
-  remotePort: number;
-  localHost: string;
-  localPort: number;
-  pid?: number;
-  exitCode?: number | null;
-  signal?: NodeJS.Signals | null;
-  lastOutput?: string;
-};
-
-export type SshMachineConnectInput = {
-  host: string;
-  name?: string;
-  remotePort?: number;
-  remoteCommand?: string;
-};
+import type {
+  SshMachineConnectInput,
+  SshMachineConnection,
+  SshMachineRemoteMode
+} from "../shared/sshTypes.js";
 
 type SshMachineConnectionState = SshMachineConnection & {
   child: ChildProcess;

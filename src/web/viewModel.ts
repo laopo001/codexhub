@@ -1,6 +1,10 @@
 import type React from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
-import type { CodexRecord } from "../core/codexRecord.js";
+import type {
+  TaskUpdateInput as ApiTaskUpdateInput,
+  ThreadGoalUpdateInput as ApiThreadGoalUpdateInput
+} from "../shared/apiContract.js";
+import type { CodexRecord } from "../shared/recordTypes.js";
 import type {
   ActivityStatusView,
   AppSettings,
@@ -39,7 +43,7 @@ export type ModelOption = {
   label: string;
 };
 
-export type TaskPatchInput = Partial<Pick<LocalTask, "enabled" | "input" | "name" | "schedule" | "threadId">>;
+export type TaskPatchInput = ApiTaskUpdateInput;
 
 export type ThreadTabItem = {
   key: string;
@@ -51,7 +55,7 @@ export type TurnStatusScope = {
   records: CodexRecord[];
 };
 
-export type ThreadGoalUpdateInput = Partial<Pick<ThreadGoalView, "objective" | "status" | "tokenBudget">>;
+export type ThreadGoalUpdateInput = ApiThreadGoalUpdateInput;
 
 export type AppSidebarViewModel = {
   activeProjectKey: string;
