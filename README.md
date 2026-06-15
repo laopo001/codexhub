@@ -100,7 +100,7 @@ pnpm codexhub --server http://127.0.0.1:8788 -C /path/to/project
 
 server 在线时，`codexhub` 会通过 machine websocket 注册一个 transient session host，再把当前 session 挂到这台 session host 下；它只代表这个 headless Codex 进程，不作为项目浏览/启动器。Web 里打开本机任意项目优先使用内嵌 `local` machine；远端或宿主机项目使用 SSH / registered machine。
 
-server 在线时，session 会同步官方 app-server 的 thread/read、item、rawResponseItem 和 tokenUsage 事件，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地 headless bridge 会持续重试，直到进程退出。Web 主列表以 projects/threads 为主，session 是 machine 级 runtime/debug 对象，同一个 `sessionId` 可以承载多个 project cwd 的 threads；`/api/projects` 的 `session` 字段是按 project path 过滤后的 runtime 投影，`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 app-server tokenUsage 事件计算；session 级账号 rate limit 会从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 `/api/sessions`，Web 在当前 thread 没有更新的 tokenUsage rate limit 时用它作为显示兜底。
+server 在线时，session 会同步官方 app-server 的 thread/read、item、rawResponseItem 和 tokenUsage 事件，并接收 Web、Telegram、task 或 API 对同一个 `threadId` 的远程 turn；server 离线时，本地 headless bridge 会持续重试，直到进程退出。Web 主列表以 projects/threads 为主，session 是 machine 级 runtime/debug 对象，同一个 `sessionId` 可以承载多个 project cwd 的 threads；`/api/projects` 的 `session` 字段是按 project path 过滤后的 runtime 投影，`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread usage 由 server 从每个 thread 镜像到的 app-server tokenUsage 事件计算；session 级账号 rate limit 会从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 `/api/sessions`，Web 在当前 thread 没有更新的 tokenUsage rate limit 时用它作为显示兜底。Thread Model 的 model/reasoning/service tier 下拉优先从当前在线 session 的 app-server `model/list` catalog 读取，通过 `/api/sessions/:sessionId/models` 暴露，不写入 server state。Web Context 旁的 Compact 按钮和 `/api/threads/:threadId/compact` 会调用官方 app-server `thread/compact/start`，compact 进度继续由 app-server record 流显示。Composer menu 里的 Review changes 和 `/api/threads/:threadId/review` 会调用官方 app-server `review/start`，默认 review 当前 workspace 未提交改动并 inline 跑在当前 thread。
 
 ## 连接方式
 
@@ -237,13 +237,13 @@ pnpm build
 
 `smoke:auth` 覆盖 token 保护、Bearer token、WebSocket token query 和 machine websocket 授权。
 
-`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证跨 project 共享 runtime session、`/api/projects/open`、`/api/sessions`、session account rate limits、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。
+`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证跨 project 共享 runtime session、`/api/projects/open`、`/api/sessions`、session account rate limits、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。`smoke:task-lock` 额外覆盖 `/api/sessions/:sessionId/models` 的 session command 通道和 model/reasoning/service tier catalog 响应。
 
 `smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?token=` 提取、自注册拒绝、同机不同端口注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。
 
 `smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、项目打开、session 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
 
-`smoke:task-lock` 会用假的 registered machine/session 走真实 websocket 协议，验证同一个 task 在已有 queued/running turn 时第二次运行会 `skipped`，且 turn 完成后可以再次运行；同时覆盖 thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close 和 token usage rate limits。
+`smoke:task-lock` 会用假的 registered machine/session 走真实 websocket 协议，验证同一个 task 在已有 queued/running turn 时第二次运行会 `skipped`，且 turn 完成后可以再次运行；同时覆盖 thread records subscription、thread compact command、thread review command、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close 和 token usage rate limits。
 
 `smoke:electron` 会以 headless Electron 启动桌面入口的内嵌 server，验证它会使用随机空闲端口，并检查 `/api/health` 可用；它不创建真实桌面窗口。
 
@@ -389,10 +389,18 @@ curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
 curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
   -H 'content-type: application/json' \
   -d '{"action":"new"}'
+
+curl -sS "http://127.0.0.1:8788/api/sessions/$SESSION_ID/models"
 ```
 
-`options` 可随 turn 传递 Web 运行选择：`model`、`modelReasoningEffort`、`collaborationMode:"plan"`、`goalMode:true`、`goalObjective` 和 `goalTokenBudget`。Plan mode 只会把本轮输入标记为只规划不实施，不覆盖 app-server sandbox；权限仍由当前 Codex 配置或显式 `--sandbox` 决定。Goal mode 会先通过 app-server `thread/goal/set` 为该 thread 建立 active goal，再启动 turn；如果 Web 在 running thread 上用 Goal mode 发送，则只更新 active goal，不对当前 turn 做 `turn/steer`。
+`/api/sessions/:sessionId/models` 由在线 machine/session bridge 调用官方 app-server `model/list`，返回当前账号/配置可见的 model、supported reasoning efforts 和 service tiers；Web Thread Model 弹窗用它生成下拉选项，失败时才回退本地静态兜底。
 
-Slash command 会在转发给 Codex 前先处理。`/status` 和 `/help` 返回本地代理状态/帮助记录；Web 里的 `/model` 是客户端命令，会打开 Session 选择器，下一次普通 turn 再把选中的 model/reasoning 发给 app-server。`codexhub` 会从 `thread/settings/updated` 或有效的 `config/read` 结果镜像 model/reasoning。不支持的 slash command 不会作为普通 user turn 发给 Codex app-server。
+`POST /api/threads/:threadId/compact` 由在线 machine/session bridge 调用官方 app-server `thread/compact/start`。它只触发 app-server 对该 thread 的上下文压缩，不改写 CodexHub server 本地 records；Web 通过实时 record 流显示 `context_compaction` / `compacted` 进度和结果。
+
+`POST /api/threads/:threadId/review` 由在线 machine/session bridge 调用官方 app-server `review/start`。当前 Web 入口是 composer `+` 菜单里的 Review changes，target 固定为 `uncommittedChanges`，delivery 为 `inline`，review turn 仍按普通 app-server record 流展示。
+
+`options` 可随 turn 传递 Web 运行选择：`model`、`modelReasoningEffort`、`serviceTier`、`collaborationMode:"plan"`、`goalMode:true`、`goalObjective` 和 `goalTokenBudget`。`serviceTier` 应使用 `/api/sessions/:sessionId/models` 返回的 catalog value；当前 app-server 的 Fast tier 通常是 `priority`。传 `null` 表示清除显式 tier，回到 Codex 配置默认值。Plan mode 只会把本轮输入标记为只规划不实施，不覆盖 app-server sandbox；权限仍由当前 Codex 配置或显式 `--sandbox` 决定。Goal mode 会先通过 app-server `thread/goal/set` 为该 thread 建立 active goal，再启动 turn；如果 Web 在 running thread 上用 Goal mode 发送，则只更新 active goal，不对当前 turn 做 `turn/steer`。
+
+Slash command 会在转发给 Codex 前先处理。`/status` 和 `/help` 返回本地代理状态/帮助记录；`/fast on`、`/fast off`、`/fast status` 会设置或查看当前 thread 的 app-server service tier；Web 里的 `/model` 是客户端命令，会打开 Session 选择器，下一次普通 turn 再把选中的 model/reasoning/service tier 发给 app-server。`codexhub` 会从 `thread/settings/updated` 或有效的 `config/read` 结果镜像 model/reasoning/service tier。不支持的 slash command 不会作为普通 user turn 发给 Codex app-server。
 
 Server 不读取运行机器上的 `~/.codex` session、远端 `.codexp/tasks` 或上传临时图片目录。历史 session 通过 Web/API 或 app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；thread usage 由 server 从 app-server tokenUsage 事件镜像计算，session account rate limits 只作为当前账号窗口的 UI 兜底；新定时任务由本机 server state 调度。

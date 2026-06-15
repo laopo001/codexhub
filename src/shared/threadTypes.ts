@@ -8,6 +8,7 @@ export type ThreadSummary = {
   workingDirectory: string;
   model?: string;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"];
+  serviceTier?: ThreadOptions["serviceTier"];
   session: ThreadSessionSummary;
   status: "running" | "idle";
   running: boolean;
@@ -51,6 +52,7 @@ export type SessionSummary = {
 export type ThreadRunOptions = {
   model?: string | null;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
+  serviceTier?: ThreadOptions["serviceTier"] | null;
   collaborationMode?: "default" | "plan" | null;
   goalMode?: boolean | null;
   goalObjective?: string | null;
@@ -84,6 +86,34 @@ export type ThreadCandidateSummary = {
   lastAssistantMessage: string;
   artifactCount: number;
   messageCount: number;
+};
+
+/** app-server model/list 返回的 reasoning effort 选项，已归一化为 Web/API 稳定字段。 */
+export type ModelCatalogReasoningOption = {
+  value: string;
+  label?: string;
+  description?: string;
+};
+
+/** app-server model/list 返回的 service tier 选项，已归一化为 Web/API 稳定字段。 */
+export type ModelCatalogServiceTier = {
+  value: string;
+  label?: string;
+  description?: string;
+};
+
+/** app-server model/list 返回的单个模型目录项。 */
+export type ModelCatalogItem = {
+  id: string;
+  model: string;
+  displayName?: string;
+  description?: string;
+  hidden?: boolean;
+  isDefault?: boolean;
+  defaultReasoningEffort?: string | null;
+  supportedReasoningEfforts: ModelCatalogReasoningOption[];
+  defaultServiceTier?: string | null;
+  serviceTiers: ModelCatalogServiceTier[];
 };
 
 /** `/api/events/ws` 下发的 thread 增量事件。 */
@@ -127,9 +157,12 @@ export type SessionCommand = {
     | "steer"
     | "set_goal"
     | "clear_goal"
+    | "compact_thread"
+    | "review_thread"
     | "rename_thread"
     | "stop"
     | "list_threads"
+    | "list_models"
     | "start_thread"
     | "resume_thread"
     | "subscribe_thread_records"
@@ -142,14 +175,21 @@ export type SessionCommand = {
   numTurns?: number;
   keepTurns?: number;
   limit?: number;
+  includeHidden?: boolean;
   title?: string;
   goal?: ThreadGoalUpdate;
+  reviewTarget?: { type: "uncommittedChanges" };
   options?: ThreadRunOptions;
 };
 
 /** list_threads 命令返回的 thread 候选集合。 */
 export type SessionThreadCandidatesResult = {
   threads: ThreadCandidateSummary[];
+};
+
+/** list_models 命令返回的 app-server 模型目录。 */
+export type SessionModelCatalogResult = {
+  models: ModelCatalogItem[];
 };
 
 /** start_thread/resume_thread 命令返回的 thread 标识和可选 app-server metadata。 */
@@ -159,7 +199,12 @@ export type SessionThreadCommandResult = {
 };
 
 /** session command 的所有成功返回形状。 */
-export type SessionCommandResult = SessionThreadCandidatesResult | SessionThreadCommandResult | ThreadDetail;
+export type SessionCommandResult =
+  | SessionThreadCandidatesResult
+  | SessionModelCatalogResult
+  | SessionThreadCommandResult
+  | { ok?: boolean }
+  | ThreadDetail;
 
 /** session bridge 推给 ThreadHub 的事件输入，来源于 app-server snapshot/live event。 */
 export type SessionEventInput =
@@ -188,6 +233,7 @@ export type SessionEventInput =
       threadId: string;
       model?: string | null;
       modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
+      serviceTier?: ThreadOptions["serviceTier"] | null;
       heartbeat?: boolean;
     }
   | {

@@ -1,8 +1,9 @@
 import { useEffect } from "react";
 import { isVscodeSurface, storageKey } from "./appConfig.js";
-import { machineProjectLauncher, preferredThreadIdForSession, primeTaskCompletionSound } from "./appHelpers.js";
+import { apiRouteJson, machineProjectLauncher, preferredThreadIdForSession, primeTaskCompletionSound } from "./appHelpers.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
+import { apiRoutes } from "../shared/apiRoutes.js";
 
 type AppEffectsActions = {
   clearActiveThreadIfLatest: (threadId: string) => void;
@@ -172,6 +173,34 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     if (!state.initialized) return;
     actions.syncThreadSubscriptions(selectors.openThreadIds);
   }, [selectors.openThreadIdsKey, state.initialized]);
+
+  useEffect(() => {
+    if (!state.initialized || !state.threadModelDialogOpen) return undefined;
+    const sessionId = selectors.activeRuntimeSession?.sessionId;
+    if (!sessionId) return undefined;
+    if (Object.prototype.hasOwnProperty.call(state.modelCatalogBySession, sessionId)) return undefined;
+    let cancelled = false;
+    void apiRouteJson(apiRoutes.sessionModels, sessionId)
+      .then((payload) => {
+        if (cancelled) return;
+        state.setModelCatalogBySession((current) => ({
+          ...current,
+          [sessionId]: Array.isArray(payload.models) ? payload.models : []
+        }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        state.setModelCatalogBySession((current) => ({ ...current, [sessionId]: [] }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectors.activeRuntimeSession?.sessionId,
+    state.initialized,
+    state.modelCatalogBySession,
+    state.threadModelDialogOpen
+  ]);
 
   useEffect(() => {
     if (!selectors.runningOpenThreadIds) return;

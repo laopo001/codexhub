@@ -10,6 +10,7 @@ import {
   appendThreadOrder,
   composeUserInputText,
   errorRecord,
+  fastCommandAction,
   fileToDataUrl,
   isModelCommand,
   mergeRecord,
@@ -79,10 +80,14 @@ const openThreadStateFromDetail = (
   composerMode: existing?.composerMode ?? "chat",
   modelDraft: existing?.modelDraft ?? thread.model ?? "auto",
   reasoningDraft: existing?.reasoningDraft ?? thread.modelReasoningEffort ?? "auto",
+  serviceTierDraft: existing?.serviceTierDraft ?? serviceTierDraftFromThread(thread.serviceTier),
   input: existing?.input ?? "",
   imageAttachments: existing?.imageAttachments ?? [],
   textAttachments: existing?.textAttachments ?? []
 });
+
+const serviceTierDraftFromThread = (serviceTier: string | null | undefined) =>
+  serviceTier && serviceTier !== "default" ? serviceTier : "auto";
 
 export type ThreadActions = {
   openThread: (threadId: string) => Promise<void>;
@@ -97,6 +102,8 @@ export type ThreadActions = {
   rollbackMessage: (threadId: string, messageId: string) => Promise<void>;
   send: (threadId: string) => Promise<void>;
   stopTurn: (threadId: string) => Promise<void>;
+  compactThread: (threadId: string) => Promise<void>;
+  reviewThread: (threadId: string) => Promise<void>;
   updateThreadGoal: (threadId: string, goal: ThreadGoalUpdateInput, options?: ThreadGoalUpdateOptions) => Promise<boolean>;
   clearThreadGoal: (threadId: string) => Promise<void>;
   saveGoalDialog: () => Promise<void>;
@@ -349,6 +356,12 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       ctx.setThreadModelDialogOpen(true);
       return;
     }
+    const fastAction = !textAttachments.length && !imageAttachments.length ? fastCommandAction(typedText) : null;
+    if (fastAction === "on" || fastAction === "off") {
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
+        ? { ...item, serviceTierDraft: fastAction === "on" ? "priority" : "auto" }
+        : item));
+    }
     deps.resetComposerHistory(threadId);
     ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [], textAttachments: [] } : item));
     let encodedImages: Array<{ url: string }>;
@@ -379,7 +392,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       body: JSON.stringify({
         input,
         source: "web",
-        options: selectedThreadOptions(openThread.modelDraft, openThread.reasoningDraft, composerMode)
+        options: selectedThreadOptions(openThread.modelDraft, openThread.reasoningDraft, openThread.serviceTierDraft, composerMode)
       })
     });
     if (!response.ok) {
@@ -400,6 +413,26 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       const text = await response.text();
       ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
         ? { ...item, records: [...item.records, errorRecord("stop failed", text)] }
+        : item));
+    }
+  };
+
+  const compactThread = async (threadId: string) => {
+    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/compact`, { method: "POST" });
+    if (!response.ok) {
+      const text = await response.text();
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
+        ? { ...item, records: [...item.records, errorRecord("compact failed", text)] }
+        : item));
+    }
+  };
+
+  const reviewThread = async (threadId: string) => {
+    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/review`, { method: "POST" });
+    if (!response.ok) {
+      const text = await response.text();
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
+        ? { ...item, records: [...item.records, errorRecord("review failed", text)] }
         : item));
     }
   };
@@ -463,6 +496,8 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     rollbackMessage,
     send,
     stopTurn,
+    compactThread,
+    reviewThread,
     updateThreadGoal,
     clearThreadGoal,
     saveGoalDialog,

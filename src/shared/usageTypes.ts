@@ -1,10 +1,14 @@
 /** Codex 模型 reasoning effort 枚举。 */
 export type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
+/** Codex app-server service tier。当前 Fast tier 常见值是 priority，但 catalog 可扩展。 */
+export type ThreadServiceTier = string;
+
 /** thread/session 默认模型配置。 */
 export type ThreadOptions = {
   model?: string;
   modelReasoningEffort?: ModelReasoningEffort;
+  serviceTier?: ThreadServiceTier;
 };
 
 /** app-server 可能返回的新旧命名 token usage 字段。 */

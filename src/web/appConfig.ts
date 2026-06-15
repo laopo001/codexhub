@@ -1,4 +1,4 @@
-import type { AppSettings, ComposerMode, ModelSelection, ReasoningSelection } from "./types.js";
+import type { AppSettings, ComposerMode, ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
 
 const searchParams = new URLSearchParams(window.location.search);
 const uniqueTrimmedParams = (names: string[]) => {
@@ -31,6 +31,10 @@ export const reasoningOptions: Array<{ value: ReasoningSelection; label: string 
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
   { value: "xhigh", label: "XHigh" }
+];
+export const serviceTierOptions: Array<{ value: ServiceTierSelection; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "priority", label: "Fast" }
 ];
 export const composerModeOptions: Array<{ value: ComposerMode; label: string }> = [
   { value: "chat", label: "Chat" },

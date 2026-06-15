@@ -173,7 +173,6 @@ const App = () => {
   } = appState;
 
   const selectors = useAppSelectors(appState);
-  const viewSelectors = useAppViewSelectors(appState, selectors);
   const {
     activeCanSend,
     activeCanStop,
@@ -187,6 +186,7 @@ const App = () => {
     activeThreadIsOpen,
     activeThreadModelDraft,
     activeThreadReasoningDraft,
+    activeThreadServiceTierDraft,
     activeUserMessageHistory,
     activeViews,
     composerMode,
@@ -197,6 +197,7 @@ const App = () => {
     latestViewKey,
     localMachines,
     modelOptions,
+    serviceTierOptions,
     onlineMachines,
     openThreadEmptyMessage,
     openThreadIds,
@@ -206,10 +207,12 @@ const App = () => {
     registeredCommand,
     registeredCommandIncludesToken,
     registeredMachines,
+    reasoningOptions,
     runningOpenThreadIds,
     selectedProject,
     setActiveThreadModelDraft,
     setActiveThreadReasoningDraft,
+    setActiveThreadServiceTierDraft,
     setComposerMode,
     showComposerSendButton,
     showInlineStatusPanel,
@@ -218,10 +221,6 @@ const App = () => {
     statusScopeKey,
     turnUiState
   } = selectors;
-  const {
-    openThreadTabs,
-    renderComposerThreadControls
-  } = viewSelectors;
   const actionContext = { ...appState, ...selectors, resizeComposerTextarea };
   let threadActions: ThreadActions | null = null;
   const requireThreadActions = () => {
@@ -293,10 +292,12 @@ const App = () => {
     openThreadPicker,
     pasteThreadImages,
     patchTask,
+    compactThread,
     removeThreadImage,
     removeThreadTextAttachment,
     removeSshHost,
     resetComposerHistory,
+    reviewThread,
     rollbackMessage,
     runTaskNow,
     saveGoalDialog,
@@ -317,6 +318,12 @@ const App = () => {
     updateTaskDraftProject,
     updateThreadGoal
   } = actions;
+
+  const viewSelectors = useAppViewSelectors(appState, selectors, { compactThread });
+  const {
+    openThreadTabs,
+    renderComposerThreadControls
+  } = viewSelectors;
 
   useAppEffects({
     actions: {
@@ -414,9 +421,12 @@ const App = () => {
     messageRenderModes,
     activeThreadModelDraft,
     activeThreadReasoningDraft,
+    activeThreadServiceTierDraft,
     messagesRef,
     messagesScrollerRef,
     modelOptions,
+    reasoningOptions,
+    serviceTierOptions,
     offlineProjectsCollapsed,
     onlineMachines,
     openingProjectKey,
@@ -445,6 +455,7 @@ const App = () => {
     removeSshHost,
     renderComposerThreadControls,
     resetComposerHistory,
+    reviewThread,
     resizeComposerTextarea,
     rollbackMessage,
     runTaskNow,
@@ -481,6 +492,7 @@ const App = () => {
     setAuthTokenDraft,
     setActiveThreadModelDraft,
     setActiveThreadReasoningDraft,
+    setActiveThreadServiceTierDraft,
     setThreadModelDialogOpen,
     setThreadControlsMenuOpen,
     setThreadRenameDialog,

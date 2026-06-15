@@ -182,6 +182,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setSystemStatus({
       model: health.model ?? null,
       modelReasoningEffort: health.modelReasoningEffort ?? null,
+      serviceTier: health.serviceTier ?? null,
       contextWindowTokens: health.contextWindowTokens ?? null
     });
     ctx.appSettingsRef.current = initialSettings;

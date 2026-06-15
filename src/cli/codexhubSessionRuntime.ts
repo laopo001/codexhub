@@ -18,6 +18,7 @@ import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import type { MachineCommand, MachineRegistration } from "../shared/machineTypes.js";
 import type {
+  ModelCatalogItem,
   SessionCommand,
   SessionEventInput,
   SessionRegistration,
@@ -66,11 +67,13 @@ type BridgeState = {
 type ThreadSettings = {
   model?: string | null;
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
+  serviceTier?: ThreadRunOptions["serviceTier"] | null;
 };
 
 type TurnRequestParams = {
   model?: string | null;
   effort?: ThreadRunOptions["modelReasoningEffort"];
+  serviceTier?: ThreadRunOptions["serviceTier"] | null;
 };
 
 type HubTransportSink = {
@@ -793,6 +796,12 @@ class CodexAppServerBridge {
       };
     }
 
+    if (command.type === "list_models") {
+      return {
+        models: await this.listAppServerModels(Boolean(command.includeHidden))
+      };
+    }
+
     if (command.type === "subscribe_thread_records") {
       if (!command.threadId) throw new Error("subscribe_thread_records command requires threadId");
       this.bindThread(command.threadId, command.workingDirectory);
@@ -849,6 +858,43 @@ class CodexAppServerBridge {
         name
       }, command);
       return;
+    }
+
+    if (command.type === "compact_thread") {
+      if (!command.threadId) throw new Error("compact_thread command requires threadId");
+      const threadId = await this.ensureThreadLoaded(
+        command.threadId,
+        command.workingDirectory,
+        commandModel(command.options, this.options.model),
+        command,
+        { markBridgeStarted: true }
+      );
+      await this.request("thread/compact/start", { threadId }, command);
+      this.scheduleAppServerTurnsSync(threadId);
+      return { ok: true };
+    }
+
+    if (command.type === "review_thread") {
+      if (!command.threadId) throw new Error("review_thread command requires threadId");
+      const threadId = await this.ensureThreadLoaded(
+        command.threadId,
+        command.workingDirectory,
+        commandModel(command.options, this.options.model),
+        command,
+        { markBridgeStarted: true }
+      );
+      const result = asRecord(await this.request("review/start", {
+        threadId,
+        target: command.reviewTarget ?? { type: "uncommittedChanges" },
+        delivery: "inline"
+      }, command));
+      const turn = asRecord(result?.turn);
+      await this.forwardThreadExecutionChanged(threadId, true, typeof turn?.id === "string" ? turn.id : undefined);
+      this.scheduleAppServerTurnsSync(threadId);
+      return {
+        ok: true,
+        reviewThreadId: typeof result?.reviewThreadId === "string" ? result.reviewThreadId : threadId
+      };
     }
 
     if (command.type === "steer") {
@@ -1237,6 +1283,25 @@ class CodexAppServerBridge {
       .filter((thread): thread is ThreadCandidateSummary => Boolean(thread));
   }
 
+  private async listAppServerModels(includeHidden = false): Promise<ModelCatalogItem[]> {
+    const models: ModelCatalogItem[] = [];
+    let cursor: string | null | undefined;
+    for (let page = 0; page < 20; page += 1) {
+      const result = asRecord(await this.request("model/list", {
+        ...(cursor ? { cursor } : {}),
+        limit: 200,
+        includeHidden
+      }));
+      const data = Array.isArray(result?.data) ? result.data : [];
+      models.push(...data
+        .map((item) => appServerModelCatalogItem(asRecord(item)))
+        .filter((item): item is ModelCatalogItem => Boolean(item)));
+      cursor = typeof result?.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
+      if (!cursor) break;
+    }
+    return models;
+  }
+
   private async listAppServerThreadTurns(threadId: string) {
     const turns: unknown[] = [];
     let cursor: string | null | undefined;
@@ -1297,9 +1362,11 @@ class CodexAppServerBridge {
     const config = asRecord(result?.config);
     const model = config?.model;
     const modelReasoningEffort = config?.model_reasoning_effort;
+    const serviceTier = config?.service_tier;
     return {
       model: typeof model === "string" && model ? model : null,
-      modelReasoningEffort: isModelReasoningEffort(modelReasoningEffort) ? modelReasoningEffort : null
+      modelReasoningEffort: isModelReasoningEffort(modelReasoningEffort) ? modelReasoningEffort : null,
+      serviceTier: typeof serviceTier === "string" && serviceTier ? serviceTier : null
     };
   }
 
@@ -1344,6 +1411,11 @@ class CodexAppServerBridge {
         ? settings.effort
         : isModelReasoningEffort(settings.modelReasoningEffort)
           ? settings.modelReasoningEffort
+          : null,
+      serviceTier: typeof settings.serviceTier === "string" && settings.serviceTier
+        ? settings.serviceTier
+        : typeof settings.service_tier === "string" && settings.service_tier
+          ? settings.service_tier
           : null
     });
   }
@@ -1403,6 +1475,7 @@ class CodexAppServerBridge {
       threadId,
       model: settings.model,
       modelReasoningEffort: settings.modelReasoningEffort,
+      serviceTier: settings.serviceTier,
       heartbeat: false
     });
   }
@@ -1515,6 +1588,7 @@ const turnRequestParams = (options: ThreadRunOptions | undefined): TurnRequestPa
   if (!options) return params;
   if (hasOwn(options, "model")) params.model = options.model;
   if (hasOwn(options, "modelReasoningEffort")) params.effort = options.modelReasoningEffort;
+  if (hasOwn(options, "serviceTier")) params.serviceTier = options.serviceTier;
   return params;
 };
 
@@ -1609,6 +1683,92 @@ const appServerThreadSummary = (
     messageCount: 0
   };
 };
+
+const appServerModelCatalogItem = (model: JsonRecord | null): ModelCatalogItem | null => {
+  const modelName = stringValue(model?.model) ?? stringValue(model?.name) ?? stringValue(model?.id);
+  const id = stringValue(model?.id) ?? modelName;
+  if (!id || !modelName) return null;
+  const defaultReasoningEffort = stringValue(model?.defaultReasoningEffort)
+    ?? stringValue(model?.default_reasoning_effort)
+    ?? null;
+  const defaultServiceTier = stringValue(model?.defaultServiceTier)
+    ?? stringValue(model?.default_service_tier)
+    ?? null;
+  return {
+    id,
+    model: modelName,
+    ...(stringValue(model?.displayName) ? { displayName: stringValue(model?.displayName) } : {}),
+    ...(stringValue(model?.description) ? { description: stringValue(model?.description) } : {}),
+    ...(typeof model?.hidden === "boolean" ? { hidden: model.hidden } : {}),
+    ...(typeof model?.isDefault === "boolean" ? { isDefault: model.isDefault } : {}),
+    ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+    supportedReasoningEfforts: appServerReasoningOptions(model?.supportedReasoningEfforts, defaultReasoningEffort),
+    ...(defaultServiceTier ? { defaultServiceTier } : {}),
+    serviceTiers: appServerServiceTierOptions(model, defaultServiceTier)
+  };
+};
+
+const appServerReasoningOptions = (value: unknown, defaultReasoningEffort: string | null) => {
+  const seen = new Set<string>();
+  const options: ModelCatalogItem["supportedReasoningEfforts"] = [];
+  const push = (raw: unknown, description?: unknown) => {
+    const option = stringValue(raw);
+    if (!option || seen.has(option)) return;
+    seen.add(option);
+    options.push({
+      value: option,
+      label: option,
+      ...(stringValue(description) ? { description: stringValue(description) } : {})
+    });
+  };
+  for (const item of Array.isArray(value) ? value : []) {
+    const record = asRecord(item);
+    if (record) {
+      push(
+        record.reasoningEffort ?? record.reasoning_effort ?? record.value ?? record.id,
+        record.description
+      );
+    } else {
+      push(item);
+    }
+  }
+  push(defaultReasoningEffort);
+  return options;
+};
+
+const appServerServiceTierOptions = (model: JsonRecord | null, defaultServiceTier: string | null) => {
+  const seen = new Set<string>();
+  const options: ModelCatalogItem["serviceTiers"] = [];
+  const push = (raw: unknown, label?: unknown, description?: unknown) => {
+    const value = stringValue(raw);
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    const tierLabel = stringValue(label) ?? value;
+    options.push({
+      value,
+      label: tierLabel,
+      ...(stringValue(description) ? { description: stringValue(description) } : {})
+    });
+  };
+  const rawServiceTiers = Array.isArray(model?.serviceTiers) ? model.serviceTiers : [];
+  for (const item of rawServiceTiers) {
+    const tier = asRecord(item);
+    if (tier) {
+      push(tier.id ?? tier.value ?? tier.name, tier.name ?? tier.label, tier.description);
+    } else {
+      push(item);
+    }
+  }
+  if (!rawServiceTiers.length) {
+    for (const item of Array.isArray(model?.additionalSpeedTiers) ? model.additionalSpeedTiers : []) {
+      push(item);
+    }
+  }
+  push(defaultServiceTier);
+  return options;
+};
+
+const stringValue = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : undefined;
 
 const appServerTimestamp = (value: unknown) => {
   if (typeof value === "number" && Number.isFinite(value)) return new Date(value * 1000).toISOString();

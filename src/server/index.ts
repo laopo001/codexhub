@@ -775,6 +775,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     statePath: state.path,
     model: config.defaultThreadOptions.model ?? null,
     modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
+    serviceTier: config.defaultThreadOptions.serviceTier ?? null,
     contextWindowTokens,
     ssh: {
       connections: sshMachines.listConnections()

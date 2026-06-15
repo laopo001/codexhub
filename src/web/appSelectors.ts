@@ -23,6 +23,8 @@ import {
   normalizeReasoningEffort,
   preferredThreadIdForSession,
   projectKeyForProject,
+  reasoningOptionsForSelection,
+  serviceTierOptionsForSelection,
   threadDisplayRecords,
   threadUsageFromSessionRateLimits,
   turnUiStateFromStatus,
@@ -35,6 +37,7 @@ import type {
   ModelSelection,
   ProjectSummary,
   ReasoningSelection,
+  ServiceTierSelection,
   ThreadSummary,
   WebRecordView
 } from "./types.js";
@@ -55,6 +58,7 @@ export const useAppSelectors = (state: AppState) => {
   };
   const activeThreadModelDraft = activeThread?.modelDraft ?? "auto";
   const activeThreadReasoningDraft = activeThread?.reasoningDraft ?? "auto";
+  const activeThreadServiceTierDraft = activeThread?.serviceTierDraft ?? "auto";
   const setActiveThreadModelDraft: Dispatch<SetStateAction<ModelSelection>> = (value) => {
     if (!state.activeTabThreadId) return;
     state.setOpenThreads((current) => current.map((thread) => {
@@ -73,6 +77,16 @@ export const useAppSelectors = (state: AppState) => {
         ? (value as (current: ReasoningSelection) => ReasoningSelection)(thread.reasoningDraft)
         : value;
       return { ...thread, reasoningDraft: next };
+    }));
+  };
+  const setActiveThreadServiceTierDraft: Dispatch<SetStateAction<ServiceTierSelection>> = (value) => {
+    if (!state.activeTabThreadId) return;
+    state.setOpenThreads((current) => current.map((thread) => {
+      if (thread.threadId !== state.activeTabThreadId) return thread;
+      const next = typeof value === "function"
+        ? (value as (current: ServiceTierSelection) => ServiceTierSelection)(thread.serviceTierDraft)
+        : value;
+      return { ...thread, serviceTierDraft: next };
     }));
   };
   const projectList = useMemo(
@@ -308,13 +322,32 @@ export const useAppSelectors = (state: AppState) => {
     ?? activeThreadSummary?.modelReasoningEffort
     ?? normalizeReasoningEffort(state.systemStatus.modelReasoningEffort)
     ?? null;
+  const activeThreadServiceTier = latestThreadConfig?.serviceTier
+    ?? activeThread?.serviceTier
+    ?? activeThreadSummary?.serviceTier
+    ?? state.systemStatus.serviceTier
+    ?? null;
   const effectiveModelSelection = activeThreadModelDraft === "auto" && activeThreadModel ? activeThreadModel : activeThreadModelDraft;
   const effectiveReasoningSelection: ReasoningSelection = activeThreadReasoningDraft === "auto" && activeThreadReasoning
     ? activeThreadReasoning
     : activeThreadReasoningDraft;
+  const effectiveServiceTierSelection: ServiceTierSelection = activeThreadServiceTierDraft === "auto" && activeThreadServiceTier
+    ? activeThreadServiceTier
+    : activeThreadServiceTierDraft;
+  const activeModelCatalog = activeRuntimeSession?.sessionId
+    ? state.modelCatalogBySession[activeRuntimeSession.sessionId] ?? []
+    : [];
   const modelOptions = useMemo(
-    () => modelOptionsForSelection(effectiveModelSelection),
-    [effectiveModelSelection]
+    () => modelOptionsForSelection(effectiveModelSelection, activeModelCatalog),
+    [effectiveModelSelection, activeModelCatalog]
+  );
+  const reasoningOptions = useMemo(
+    () => reasoningOptionsForSelection(effectiveReasoningSelection, activeModelCatalog, effectiveModelSelection),
+    [effectiveReasoningSelection, effectiveModelSelection, activeModelCatalog]
+  );
+  const serviceTierOptions = useMemo(
+    () => serviceTierOptionsForSelection(effectiveServiceTierSelection, activeModelCatalog, effectiveModelSelection),
+    [effectiveServiceTierSelection, effectiveModelSelection, activeModelCatalog]
   );
   return {
     activeCanSend,
@@ -333,6 +366,8 @@ export const useAppSelectors = (state: AppState) => {
     activeThreadModelDraft,
     activeThreadReasoning,
     activeThreadReasoningDraft,
+    activeThreadServiceTier,
+    activeThreadServiceTierDraft,
     activeThreadUsage,
     activeUserMessageHistory,
     activeViews,
@@ -340,10 +375,12 @@ export const useAppSelectors = (state: AppState) => {
     currentServerShareUrl,
     effectiveModelSelection,
     effectiveReasoningSelection,
+    effectiveServiceTierSelection,
     latestTurnStatusScope,
     latestViewKey,
     localMachines,
     modelOptions,
+    serviceTierOptions,
     onlineMachines,
     openThreadEmptyMessage,
     openThreadIds,
@@ -353,10 +390,12 @@ export const useAppSelectors = (state: AppState) => {
     registeredCommand,
     registeredCommandIncludesToken,
     registeredMachines,
+    reasoningOptions,
     runningOpenThreadIds,
     selectedProject,
     setActiveThreadModelDraft,
     setActiveThreadReasoningDraft,
+    setActiveThreadServiceTierDraft,
     setComposerMode,
     showComposerSendButton,
     showInlineStatusPanel,

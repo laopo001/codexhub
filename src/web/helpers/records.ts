@@ -1,7 +1,7 @@
 import { threadUsageFromRecord } from "../../core/threadUsage.js";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { isVscodeSurface, reasoningOptions } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, SessionRateLimits, StreamEvent, TaskCompleteNotification, ThreadDetail, ThreadGoalView, ThreadSummary, ThreadUsage, TurnUiState, Usage } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, TaskCompleteNotification, ThreadDetail, ThreadGoalView, ThreadSummary, ThreadUsage, TurnUiState, Usage } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
@@ -129,7 +129,7 @@ export const goalTimeMs = (value: unknown) => {
   return null;
 };
 
-export const threadConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort } => {
+export const threadConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort; serviceTier?: string } => {
   const payload = asRecord(record.payload);
   const settings = asRecord(asRecord(payload?.collaboration_mode)?.settings);
   return {
@@ -141,7 +141,11 @@ export const threadConfigFromRecord = (record: CodexRecord): { model?: string; r
       ?? stringField(payload, "model_reasoning_effort")
       ?? stringField(settings, "reasoning_effort")
       ?? stringField(settings, "model_reasoning_effort")
-    )
+    ),
+    serviceTier: stringField(payload, "serviceTier")
+      ?? stringField(payload, "service_tier")
+      ?? stringField(settings, "serviceTier")
+      ?? stringField(settings, "service_tier")
   };
 };
 
@@ -155,25 +159,32 @@ export const normalizeReasoningEffort = (value: unknown): ReasoningEffort | unde
 export const formatComposerModelTitle = (
   modelDraft: ModelSelection,
   reasoningDraft: ReasoningSelection,
+  serviceTierDraft: ServiceTierSelection,
   threadModel: string | null,
-  threadReasoning: ReasoningEffort | null
+  threadReasoning: ReasoningEffort | null,
+  threadServiceTier: string | null
 ) => [
   `draft model ${rawModelLabel(modelDraft)}`,
   threadModel ? `thread model ${rawModelLabel(threadModel)}` : null,
   `draft thinking ${reasoningDraft === "auto" ? "Auto" : reasoningDraft}`,
-  threadReasoning ? `thread thinking ${threadReasoning}` : null
+  threadReasoning ? `thread thinking ${threadReasoning}` : null,
+  `draft tier ${serviceTierDraft === "auto" ? "Auto" : serviceTierDraft}`,
+  threadServiceTier ? `thread tier ${threadServiceTier}` : null
 ].filter(Boolean).join(" · ");
 
 export const formatComposerModelButtonLabel = (
   modelDraft: ModelSelection,
   reasoningDraft: ReasoningSelection,
+  serviceTierDraft: ServiceTierSelection,
   threadModel: string | null,
-  threadReasoning: ReasoningEffort | null
+  threadReasoning: ReasoningEffort | null,
+  threadServiceTier: string | null
 ) => {
   const model = modelDraft === "auto" && threadModel ? threadModel : modelDraft;
   const reasoning = reasoningDraft === "auto" ? threadReasoning : reasoningDraft;
+  const serviceTier = serviceTierDraft === "auto" ? threadServiceTier : serviceTierDraft;
   const label = rawModelLabel(model);
-  return reasoning ? `${label}:${reasoning}` : label;
+  return [reasoning ? `${label}:${reasoning}` : label, serviceTier].filter(Boolean).join(" · ");
 };
 
 export const formatContextUsage = (threadUsage: ThreadUsage | null) => {

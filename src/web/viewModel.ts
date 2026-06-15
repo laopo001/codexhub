@@ -181,9 +181,12 @@ export type AppViewModel = AppSidebarViewModel & {
   messageRenderModes: Record<string, MessageRenderMode>;
   activeThreadModelDraft: ModelSelection;
   activeThreadReasoningDraft: ReasoningSelection;
+  activeThreadServiceTierDraft: string;
   messagesRef: React.RefObject<VirtuosoHandle | null>;
   messagesScrollerRef: React.RefObject<HTMLElement | null>;
   modelOptions: ModelOption[];
+  reasoningOptions: ModelOption[];
+  serviceTierOptions: ModelOption[];
   openMessageContextMenu: (
     event: React.MouseEvent,
     threadId: string,
@@ -197,6 +200,7 @@ export type AppViewModel = AppSidebarViewModel & {
   removeThreadTextAttachment: (threadId: string, attachmentId: string) => void;
   renderComposerThreadControls: (mode: "inline" | "popover") => React.ReactNode;
   resetComposerHistory: (threadId: string) => void;
+  reviewThread: (threadId: string) => MaybePromise;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
   rollbackMessage: (threadId: string, messageId: string) => MaybePromise;
   saveGoalDialog: () => MaybePromise;
@@ -221,6 +225,7 @@ export type AppViewModel = AppSidebarViewModel & {
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
   setActiveThreadModelDraft: React.Dispatch<React.SetStateAction<ModelSelection>>;
   setActiveThreadReasoningDraft: React.Dispatch<React.SetStateAction<ReasoningSelection>>;
+  setActiveThreadServiceTierDraft: React.Dispatch<React.SetStateAction<string>>;
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadControlsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;

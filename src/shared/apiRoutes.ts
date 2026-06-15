@@ -9,6 +9,7 @@ import type {
   ProjectOpenPayload,
   ProjectUpdateInput,
   ProjectsPayload,
+  SessionModelsPayload,
   SessionsPayload,
   SshConnectionPayload,
   SshConnectionsPayload,
@@ -20,10 +21,12 @@ import type {
   ThreadCandidatesPayload,
   ThreadDeletePayload,
   ThreadDetail,
+  ThreadCompactPayload,
   ThreadGoalMutationPayload,
   ThreadGoalUpdateInput,
   ThreadRenameInput,
   ThreadRenamePayload,
+  ThreadReviewPayload,
   ThreadStopPayload,
   ThreadTurnPayload
 } from "./apiContract.js";
@@ -140,6 +143,9 @@ export const apiRoutes = {
   threadCandidates: get<ThreadCandidatesPayload, (sessionId: string, cwd?: string, limit?: number) => string>(
     (sessionId, cwd, limit = 20) => `/api/sessions/${encode(sessionId)}/thread-candidates${queryString({ limit, cwd })}`
   ),
+  sessionModels: get<SessionModelsPayload, (sessionId: string, includeHidden?: boolean) => string>(
+    (sessionId, includeHidden) => `/api/sessions/${encode(sessionId)}/models${queryString({ includeHidden: includeHidden ? "true" : undefined })}`
+  ),
   thread: get<ThreadDetail, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}`
   ),
@@ -174,6 +180,12 @@ export const apiRoutes = {
   ),
   stopThreadTurn: postNoBody<ThreadStopPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/stop`
+  ),
+  compactThread: postNoBody<ThreadCompactPayload, (threadId: string) => string>(
+    (threadId) => `/api/threads/${encode(threadId)}/compact`
+  ),
+  reviewThread: postNoBody<ThreadReviewPayload, (threadId: string) => string>(
+    (threadId) => `/api/threads/${encode(threadId)}/review`
   ),
   renameThread: patch<ThreadRenameInput, ThreadRenamePayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/name`

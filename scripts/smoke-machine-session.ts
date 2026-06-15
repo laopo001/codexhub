@@ -117,6 +117,7 @@ const main = async () => {
   await assertProjectSessionProjection();
   await assertAppServerTurnLifecycleRecords();
   await assertAppServerGoalRecords();
+  await assertAppServerServiceTierSettings();
   await assertAppServerTurnSnapshotPreservesAgentMessages();
   await assertAppServerAgentMessageDeltaStreams();
   await assertAppServerReasoningItemStatusViews();
@@ -1197,6 +1198,40 @@ const assertAppServerGoalRecords = async () => {
   const latestGoalPayload = asRecord(asRecord(records[records.length - 1]).payload);
   if (latestGoalPayload.type !== "thread_goal_cleared" || latestGoalPayload.threadId !== threadId) {
     throw new Error(`app-server empty goal snapshot did not clear goal record: ${JSON.stringify(records)}`);
+  }
+};
+
+const assertAppServerServiceTierSettings = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const hub = new ThreadHub();
+  const sessionId = "app-server-service-tier-session";
+  const threadId = "app-server-service-tier-thread";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-app-server-service-tier"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_settings_changed",
+    threadId,
+    heartbeat: false,
+    model: "gpt-service-tier-smoke",
+    modelReasoningEffort: "low",
+    serviceTier: "fast"
+  });
+  let thread = hub.getThread(threadId);
+  if (thread?.model !== "gpt-service-tier-smoke" || thread.modelReasoningEffort !== "low" || thread.serviceTier !== "fast") {
+    throw new Error(`app-server service tier settings were not mirrored: ${JSON.stringify(thread)}`);
+  }
+  let command = hub.runLocalCommand(threadId, "/fast off");
+  thread = hub.getThread(threadId);
+  if (!command.handled || command.command !== "fast" || thread?.serviceTier) {
+    throw new Error(`local /fast off did not clear service tier: ${JSON.stringify({ command, thread })}`);
+  }
+  command = hub.runLocalCommand(threadId, "/fast on");
+  thread = hub.getThread(threadId);
+  if (!command.handled || command.command !== "fast" || thread?.serviceTier !== "priority") {
+    throw new Error(`local /fast on did not set service tier: ${JSON.stringify({ command, thread })}`);
   }
 };
 

@@ -394,6 +394,24 @@
   cursor: pointer;
 }
 
+.contextCompactButton {
+  min-height: 25px;
+  color: #4b6151;
+  font: inherit;
+  cursor: pointer;
+}
+
+.contextCompactButton:hover:not(:disabled) {
+  background: #ffffff;
+  border-color: #cbded1;
+  color: #26342a;
+}
+
+.contextCompactButton:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .statusPill.available {
   border-color: #cbded1;
   background: #ffffff;

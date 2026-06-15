@@ -96,6 +96,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     removeSshHost,
     renderComposerThreadControls,
     resetComposerHistory,
+    reviewThread,
     resizeComposerTextarea,
     rollbackMessage,
     runTaskNow,
@@ -424,6 +425,20 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                   >
                                     <span className="composerMenuIcon" aria-hidden="true">[]</span>
                                     <span>添加照片和文件</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="composerMenuItem"
+                                    role="menuitem"
+                                    disabled={activeThread.running}
+                                    title={activeThread.running ? "Stop the running turn before starting a review" : "Review uncommitted changes in this thread"}
+                                    onClick={() => {
+                                      setComposerMenuOpen(false);
+                                      void reviewThread(activeThread.threadId);
+                                    }}
+                                  >
+                                    <span className="composerMenuIcon" aria-hidden="true">R</span>
+                                    <span>Review changes</span>
                                   </button>
                                 </div>
                               ) : null}

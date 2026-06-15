@@ -7,12 +7,15 @@ import {
   threadRenameSchema,
   threadRunOptionsSchema,
   webEventsMessageSchema,
+  type SessionModelsPayload,
   type SessionsPayload,
   type ThreadCandidatesPayload,
+  type ThreadCompactPayload,
   type ThreadDeletePayload,
   type ThreadDetail,
   type ThreadGoalMutationPayload,
   type ThreadRenamePayload,
+  type ThreadReviewPayload,
   type ThreadsPayload,
   type ThreadStopPayload,
   type ThreadTurnPayload,
@@ -203,6 +206,19 @@ export const registerThreadRoutes = <
     }
   });
 
+  app.get("/api/sessions/:sessionId/models", async (request, reply) => {
+    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
+    const query = z.object({ includeHidden: z.string().optional() }).parse(request.query);
+    try {
+      const result = await ctx.threads.listSessionModels(params.sessionId, query.includeHidden === "true");
+      return result satisfies SessionModelsPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Session not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
   app.post("/api/sessions/:sessionId/threads", async (request, reply) => {
     const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
     const payload = z.discriminatedUnion("action", [
@@ -362,6 +378,30 @@ export const registerThreadRoutes = <
     } catch (error) {
       reply.code(404);
       return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.post("/api/threads/:threadId/compact", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    try {
+      const result = await ctx.threads.compactThread(params.threadId);
+      return { ok: true, ...result } satisfies ThreadCompactPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.post("/api/threads/:threadId/review", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    try {
+      const result = await ctx.threads.reviewThread(params.threadId);
+      return { ok: true, ...result } satisfies ThreadReviewPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
     }
   });
 };

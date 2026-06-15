@@ -54,8 +54,8 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 3. Registered parent：`GET /api/registered/parent`、`POST /api/registered/parent`、`DELETE /api/registered/parent`、`GET /api/registered/bootstrap`、`GET /api/remote-client/:hash`。动态 parent 注册只保存在当前进程内，body `url` 可以携带 `?token=` / `?codexhub_token=`；bootstrap 脚本通过 `/api/remote-client/:hash` 拉当前 build 的 remote client。
 4. Realtime：`GET /api/events/ws` WebSocket。
 5. Projects：`GET /api/projects`、`POST /api/projects/open`、`PATCH /api/projects/:projectId`、`DELETE /api/projects/:projectId`。`PATCH` 目前只更新 `pinned`。
-6. Sessions：`GET /api/sessions`、`GET /api/sessions/:sessionId/thread-candidates`、`POST /api/sessions/:sessionId/threads`、`POST /api/sessions/:sessionId/turn`。
-7. Threads：`GET /api/threads`、`GET /api/threads/:threadId`、`PATCH /api/threads/:threadId/name`、`POST /api/threads/:threadId/turn`、`POST /api/threads/:threadId/stop`、`POST /api/threads/:threadId/goal`、`DELETE /api/threads/:threadId/goal`、`POST /api/threads/:threadId/fork`、`POST /api/threads/:threadId/rollback`、`DELETE /api/threads/:threadId`。
+6. Sessions：`GET /api/sessions`、`GET /api/sessions/:sessionId/thread-candidates`、`GET /api/sessions/:sessionId/models`、`POST /api/sessions/:sessionId/threads`、`POST /api/sessions/:sessionId/turn`。
+7. Threads：`GET /api/threads`、`GET /api/threads/:threadId`、`PATCH /api/threads/:threadId/name`、`POST /api/threads/:threadId/turn`、`POST /api/threads/:threadId/stop`、`POST /api/threads/:threadId/compact`、`POST /api/threads/:threadId/review`、`POST /api/threads/:threadId/goal`、`DELETE /api/threads/:threadId/goal`、`POST /api/threads/:threadId/fork`、`POST /api/threads/:threadId/rollback`、`DELETE /api/threads/:threadId`。
 8. Tasks：`GET /api/tasks`、`POST /api/tasks`、`PATCH /api/tasks/:taskId`、`DELETE /api/tasks/:taskId`、`POST /api/tasks/:taskId/run`。
 9. SSH：`GET /api/ssh/config-hosts`、`GET /api/ssh/hosts`、`POST /api/ssh/hosts`、`DELETE /api/ssh/hosts/:alias`、`GET /api/ssh/connections`、`POST /api/ssh/connect`、`DELETE /api/ssh/connections/:connectionId`、`GET /api/ssh/remote-client/:hash`。
 10. Plugins：`GET /api/plugins`、`GET /api/plugins/:pluginId/assets/*`。
@@ -85,7 +85,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 ## CLI 模型
 
 1. 顶层 CLI 保留 `server`、`machine`、`ssh`、`task`；默认 headless session 入口是 legacy/transient 行为，不作为 project runtime 主路径。`list`、`threads`、`resume`、`delete` 作为隐藏 removed commands 只返回迁移错误，不做兼容实现。
-2. thread history browsing、thread resume 和 new thread 选择放在 Web/API：`/api/sessions/:sessionId/thread-candidates` 和 `/api/sessions/:sessionId/threads`。
+2. thread history browsing、thread resume 和 new thread 选择放在 Web/API：`/api/sessions/:sessionId/thread-candidates` 和 `/api/sessions/:sessionId/threads`。模型目录来自在线 session 的 app-server `model/list`，通过 `/api/sessions/:sessionId/models` 暴露给 Web，不在 server state 持久化。
 3. `codexhub [prompt]` 是废弃的 legacy/transient headless 入口；它不是项目浏览 launcher，也不是 project runtime 主路径。不要为了它扩展新的 project/session 语义。
 4. `--sandbox`、`--approval-policy`、`--model` 只有用户显式传参时才作为 app-server override 转发；不要偷偷发明默认权限策略。
 5. CLI 默认通过 `loadDotEnv()` 读取当前 cwd 的 `.env`，并且只填补未设置的环境变量。跨目录运行 `cxh` 时要先核对 cwd 和环境来源。
@@ -93,13 +93,16 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 ## Thread 行为
 
-1. Slash command 不按普通 Codex turn 透传。server 本地只处理 `/status`、`/help`、`/model`；其他 slash command 生成不支持说明。
+1. Slash command 不按普通 Codex turn 透传。server 本地只处理 `/status`、`/help`、`/model`、`/fast on|off|status`；其他 slash command 生成不支持说明。`/fast` 映射到 app-server Fast service tier（当前 catalog value 通常是 `priority`），`off` 清除显式 tier 回到 Codex 配置默认值。
 2. Web composer 有 Chat / Plan / Goal 三种模式。Plan/Goal 通过本轮 turn 的 `options` 传给 server，是一次性输入状态，不应泄漏到后续默认 turn。
 3. Web 在 thread running 时继续发送普通输入，应走 app-server `turn/steer`，并带当前 active `turnId`。没有 active turnId 或非 Web source 时才进入 queue fallback。
 4. Web 在 running thread 上用 Goal mode 发送，应更新 active goal，而不是启动新 turn 或追加 queue。
 5. Goal 状态来自 thread record 流里的 `thread_goal_updated` / `thread_goal_cleared`，需要合并 app-server snapshot 和 live records 提取；不要只看 composer 当前选中模式。
 6. `POST /api/threads/:threadId/stop` 只停止当前 running turn，不是关闭 project session。UI running 状态下主操作可以收敛成 stop turn。
-7. fork/rollback 依赖 app-server turn id 和 record 映射；改动 record id 或 compact/detailed view 时要验证 fork/rollback。
+7. `POST /api/threads/:threadId/compact` 和 Web Context 旁的 Compact 控制只触发官方 app-server `thread/compact/start`，不改写 server transcript；compact 进度和结果仍来自 app-server record 流里的 `context_compaction` / `compacted`。
+8. `POST /api/threads/:threadId/review` 和 Web composer menu 的 Review changes 触发官方 app-server `review/start`，默认 target 为 `uncommittedChanges` 且 inline 跑在当前 thread。
+9. app-server `thread/archive` / `thread/unarchive` 尚未接 GUI；不要把普通 thread tab close 偷偷改成持久归档，归档需要显式产品入口。
+10. fork/rollback 依赖 app-server turn id 和 record 映射；改动 record id 或 compact/detailed view 时要验证 fork/rollback。
 
 ## Web 前端结构
 
@@ -111,7 +114,8 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 6. Workspace thread tabs 使用 Ant Design Tabs 的官方 editable-card 行为和 pane 高度契约；不要为 add/remove 重新写一套自定义 tabs 外观。
 7. VSCode surface 使用同一套 Web UI 和完整左侧控制面。`surface=vscode` 只用于 VSCode 通知桥、daemon 兼容判断、workspace project group 等嵌入环境差异，不应隐藏 sidebar 或关闭 SSH/tasks/plugins/Registered 能力。
 8. 任务完成通知：完成音效总是由 Web 播放；Settings 里的 `taskCompleteSystemNotifications` 只控制系统弹窗，普通 Web 走 browser Notification，VSCode 走 iframe `postMessage` 到 extension，再由 VSCode notification 展示。
-9. UI 文案和交互不要重新暴露已删除概念：worker、instance、project rename、project thread/history count、project session restart/stop。
+9. Thread Model 弹窗的 model/reasoning/service tier 选项优先使用当前在线 app-server `model/list` catalog；catalog 不可用时才回退本地静态兜底，不能把 catalog 保存进 server state。
+10. UI 文案和交互不要重新暴露已删除概念：worker、instance、project rename、project thread/history count、project session restart/stop。
 
 ## 插件和集成
 
@@ -163,7 +167,7 @@ pnpm build
 5. `smoke:auth` 覆盖 token 保护、Bearer token、WebSocket token query、machine websocket 授权。
 6. `smoke:registered-machine` 覆盖真实 `codexhub machine --type registered` CLI、`codexhub server --register-to`、动态 parent 注册、Register URL token 提取、自注册拒绝、同机不同端口注册、项目打开、session/thread 对话流，以及 SIGTERM 后 machine/session unregister lifecycle 和 app-server 进程清理。
 7. `smoke:ssh-loopback` 覆盖真实本机 sshd、`ssh -R` reverse tunnel、SSH remote client、项目打开、session/thread 对话流和断开 lifecycle。
-8. `smoke:task-lock` 覆盖 task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close 和 token usage rate limits。
+8. `smoke:task-lock` 覆盖 session model catalog、thread compact command、thread review command、task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close 和 token usage rate limits。
 9. `smoke:electron` 覆盖 Electron main process、嵌入 server 随机端口和 `/api/health`。
 10. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vscode/codexhub.vsix --force`。
 11. VSCode Marketplace 发布 workflow 在 `.github/workflows/publish-vscode.yml`，只允许 `workflow_dispatch`，要求仓库 secret `VSCE_PAT`，先 `pnpm run package:vscode`，再用 `vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate`。

@@ -88,6 +88,7 @@ type SessionCommand = {
   commandId: string;
   type: string;
   threadId?: string;
+  includeHidden?: boolean;
   input?: unknown;
   turnId?: string;
   goal?: {
@@ -95,11 +96,15 @@ type SessionCommand = {
     status?: string | null;
     tokenBudget?: number | null;
   };
+  reviewTarget?: {
+    type?: string;
+  };
   options?: {
     collaborationMode?: "default" | "plan" | null;
     goalMode?: boolean | null;
     goalObjective?: string | null;
     goalTokenBudget?: number | null;
+    serviceTier?: string | null;
   };
 };
 
@@ -141,6 +146,29 @@ const main = async () => {
     if (open.result?.sessionId !== fake.sessionId || open.result?.threadId !== fake.threadId) {
       throw new Error(`project open returned unexpected session/thread: ${JSON.stringify(open)}`);
     }
+    const modelCatalogPromise = apiJson<{
+      models?: Array<{
+        model?: string;
+        supportedReasoningEfforts?: Array<{ value?: string }>;
+        serviceTiers?: Array<{ value?: string }>;
+      }>;
+    }>(apiBase, `/api/sessions/${encodeURIComponent(fake.sessionId)}/models`);
+    const modelListCommand = await fake.nextSessionCommand("list_models");
+    if (modelListCommand.includeHidden !== false) {
+      throw new Error(`model catalog command should not include hidden models by default: ${JSON.stringify(modelListCommand)}`);
+    }
+    const modelCatalog = await modelCatalogPromise;
+    const catalogModel = modelCatalog.models?.find((model) => model.model === "gpt-5.5");
+    if (!catalogModel) {
+      throw new Error(`model catalog response missing gpt-5.5: ${JSON.stringify(modelCatalog)}`);
+    }
+    if (!catalogModel.supportedReasoningEfforts?.some((option) => option.value === "xhigh")) {
+      throw new Error(`model catalog response missing reasoning effort: ${JSON.stringify(modelCatalog)}`);
+    }
+    if (!catalogModel.serviceTiers?.some((option) => option.value === "fast")) {
+      throw new Error(`model catalog response missing fast service tier: ${JSON.stringify(modelCatalog)}`);
+    }
+    console.log("session model catalog ok");
     await fake.expectNoSessionCommand("subscribe_thread_records", 100);
     await assertThreadRecordSubscription(apiBase, fake.threadId, fake);
     console.log("thread record subscription ok");
@@ -148,6 +176,34 @@ const main = async () => {
     console.log("app-server-only thread subscription ok");
     await assertHistoricalSnapshotPublishesMarkedRecordEvents(apiBase, fake.threadId, fake);
     console.log("historical snapshot record events marked ok");
+
+    const compactPromise = apiJson<{ ok?: boolean }>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/compact`,
+      { method: "POST" }
+    );
+    const compactCommand = await fake.nextSessionCommand("compact_thread");
+    if (compactCommand.threadId !== fake.threadId) {
+      throw new Error(`thread compact command mismatch: ${JSON.stringify(compactCommand)}`);
+    }
+    const compactResult = await compactPromise;
+    if (!compactResult.ok) throw new Error(`thread compact response mismatch: ${JSON.stringify(compactResult)}`);
+    console.log("thread compact command ok");
+
+    const reviewPromise = apiJson<{ ok?: boolean; reviewThreadId?: string }>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/review`,
+      { method: "POST" }
+    );
+    const reviewCommand = await fake.nextSessionCommand("review_thread");
+    if (reviewCommand.threadId !== fake.threadId || reviewCommand.reviewTarget?.type !== "uncommittedChanges") {
+      throw new Error(`thread review command mismatch: ${JSON.stringify(reviewCommand)}`);
+    }
+    const reviewResult = await reviewPromise;
+    if (!reviewResult.ok || reviewResult.reviewThreadId !== fake.threadId) {
+      throw new Error(`thread review response mismatch: ${JSON.stringify(reviewResult)}`);
+    }
+    console.log("thread review command ok");
 
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
       method: "POST",
@@ -159,7 +215,8 @@ const main = async () => {
           collaborationMode: "plan",
           goalMode: true,
           goalObjective: "finish the plan and goal smoke",
-          goalTokenBudget: 1234
+          goalTokenBudget: 1234,
+          serviceTier: "priority"
         }
       })
     });
@@ -170,6 +227,9 @@ const main = async () => {
     }
     if (modeTurn.options.goalObjective !== "finish the plan and goal smoke" || modeTurn.options.goalTokenBudget !== 1234) {
       throw new Error(`web turn goal options were not forwarded: ${JSON.stringify(modeTurn.options)}`);
+    }
+    if (modeTurn.options.serviceTier !== "priority") {
+      throw new Error(`web turn service tier option was not forwarded: ${JSON.stringify(modeTurn.options)}`);
     }
     fake.completeTurn(modeTurn);
     console.log("web turn mode options ok");
@@ -577,6 +637,34 @@ class FakeMachine {
       });
       return;
     }
+    if (command.type === "list_models") {
+      this.send({
+        type: "session_command_result",
+        sessionId: this.options.sessionId,
+        commandId: command.commandId,
+        result: {
+          models: [
+            {
+              id: "model-gpt-5.5",
+              model: "gpt-5.5",
+              displayName: "GPT-5.5",
+              description: "Fake smoke model",
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: [
+                { value: "high", label: "High" },
+                { value: "xhigh", label: "XHigh" }
+              ],
+              defaultServiceTier: "default",
+              serviceTiers: [
+                { value: "default", label: "Default" },
+                { value: "fast", label: "Fast" }
+              ]
+            }
+          ]
+        }
+      });
+      return;
+    }
     if (command.type !== "turn") {
       if (command.type === "set_goal") {
         this.send({
@@ -596,6 +684,46 @@ class FakeMachine {
             threadId: command.threadId ?? this.options.threadId,
             commandId: command.commandId,
             message: { id: command.commandId, result: { cleared: true } },
+            heartbeat: false
+          }
+        });
+        return;
+      }
+      if (command.type === "compact_thread") {
+        this.send({
+          type: "session_command_result",
+          sessionId: this.options.sessionId,
+          commandId: command.commandId,
+          result: { ok: true }
+        });
+        return;
+      }
+      if (command.type === "review_thread") {
+        const turnId = `fake-review-${command.commandId}`;
+        this.send({
+          type: "session_event",
+          sessionId: this.options.sessionId,
+          event: {
+            type: "thread_execution_changed",
+            threadId: command.threadId ?? this.options.threadId,
+            running: true,
+            turnId,
+            heartbeat: false
+          }
+        });
+        this.send({
+          type: "session_command_result",
+          sessionId: this.options.sessionId,
+          commandId: command.commandId,
+          result: { ok: true, reviewThreadId: command.threadId ?? this.options.threadId }
+        });
+        this.send({
+          type: "session_event",
+          sessionId: this.options.sessionId,
+          event: {
+            type: "thread_execution_changed",
+            threadId: command.threadId ?? this.options.threadId,
+            running: false,
             heartbeat: false
           }
         });

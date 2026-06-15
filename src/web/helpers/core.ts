@@ -1,8 +1,8 @@
 import { asRecord } from "../../shared/recordTypes.js";
-import type { StoredMachine } from "../../shared/apiContract.js";
+import type { ModelCatalogItem, StoredMachine } from "../../shared/apiContract.js";
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
-import { modelOptions } from "../appConfig.js";
-import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary } from "../types.js";
+import { modelOptions, reasoningOptions, serviceTierOptions } from "../appConfig.js";
+import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -711,25 +711,96 @@ export const upsertThreadSummary = (threads: ThreadSummary[], thread: ThreadSumm
 export const selectedThreadOptions = (
   model: ModelSelection,
   reasoning: ReasoningSelection,
+  serviceTier: ServiceTierSelection,
   composerMode: ComposerMode
 ) => ({
   model: model === "auto" ? null : model,
   modelReasoningEffort: reasoning === "auto" ? null : reasoning,
+  serviceTier: serviceTier === "auto" ? null : serviceTier,
   ...(composerMode === "plan" ? { collaborationMode: "plan" as const } : {}),
   ...(composerMode === "goal" ? { goalMode: true } : {})
 });
 
 export const isModelCommand = (text: string) => /^\/model\s*$/i.test(text);
 
+export const fastCommandAction = (text: string) => {
+  const match = /^\/fast(?:\s+(\S+))?\s*$/i.exec(text.trim());
+  const action = match?.[1]?.toLowerCase();
+  return action === "on" || action === "off" || action === "status" || (match && action === undefined)
+    ? action ?? "status"
+    : null;
+};
+
 export const rawModelLabel = (model: ModelSelection) => model === "auto" ? "Auto" : model;
 
-export const modelOptionLabel = (option: { value: ModelSelection; label: string }) =>
-  option.value === "auto" ? option.label : option.value;
+export const modelOptionLabel = (option: { value: string; label: string }) =>
+  option.label || option.value;
 
-export const reasoningOptionLabel = (option: { value: ReasoningSelection; label: string }) =>
-  option.value === "auto" ? option.label : option.value;
+export const reasoningOptionLabel = (option: { value: string; label: string }) =>
+  option.label || option.value;
 
-export const modelOptionsForSelection = (model: ModelSelection) => {
-  if (!model || modelOptions.some((option) => option.value === model)) return modelOptions;
-  return [...modelOptions, { value: model, label: model }];
+export const modelOptionsForSelection = (model: ModelSelection, catalog: ModelCatalogItem[] = []) => {
+  const catalogOptions = catalog
+    .filter((item) => !item.hidden)
+    .map((item) => ({
+      value: modelCatalogValue(item),
+      label: item.displayName || item.model || item.id
+    }))
+    .filter((option) => option.value);
+  const options = catalogOptions.length ? [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)] : modelOptions;
+  return ensureOption(options, model);
+};
+
+export const reasoningOptionsForSelection = (
+  reasoning: ReasoningSelection,
+  catalog: ModelCatalogItem[] = [],
+  model: ModelSelection = "auto"
+) => {
+  const catalogModel = modelCatalogItemForSelection(catalog, model);
+  const catalogOptions = (catalogModel?.supportedReasoningEfforts ?? [])
+    .filter((option) => reasoningOptions.some((staticOption) => staticOption.value === option.value))
+    .map((option) => ({
+      value: option.value,
+      label: option.label || option.value
+    }));
+  const options = catalogOptions.length ? [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)] : reasoningOptions;
+  return ensureOption(options, reasoning);
+};
+
+export const serviceTierOptionsForSelection = (
+  serviceTier: ServiceTierSelection,
+  catalog: ModelCatalogItem[] = [],
+  model: ModelSelection = "auto"
+) => {
+  const catalogModel = modelCatalogItemForSelection(catalog, model);
+  const sourceTiers = catalogModel?.serviceTiers.length
+    ? catalogModel.serviceTiers
+    : catalog.flatMap((item) => item.serviceTiers);
+  const catalogOptions = sourceTiers.map((option) => ({
+    value: option.value,
+    label: option.label || option.value
+  }));
+  const options = catalogOptions.length ? [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)] : serviceTierOptions;
+  return ensureOption(options, serviceTier);
+};
+
+const modelCatalogValue = (item: Pick<ModelCatalogItem, "model" | "id">) => item.model || item.id;
+
+const modelCatalogItemForSelection = (catalog: ModelCatalogItem[], model: ModelSelection) => {
+  if (!model || model === "auto") return undefined;
+  return catalog.find((item) => modelCatalogValue(item) === model || item.id === model || item.displayName === model);
+};
+
+const dedupeOptions = <T extends { value: string; label: string }>(options: T[]): T[] => {
+  const seen = new Set<string>();
+  return options.filter((option) => {
+    if (!option.value || seen.has(option.value)) return false;
+    seen.add(option.value);
+    return true;
+  });
+};
+
+const ensureOption = <T extends { value: string; label: string }>(options: T[], value: string) => {
+  if (!value || options.some((option) => option.value === value)) return options;
+  return [...options, { value, label: value }];
 };

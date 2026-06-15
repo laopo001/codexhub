@@ -14,6 +14,7 @@ import type {
 import type {
   SessionCommand,
   SessionEventInput,
+  SessionModelCatalogResult,
   SessionOfflineReason,
   SessionRegistration,
   SessionStreamEvent,
@@ -246,7 +247,7 @@ export class ThreadHub {
       const thread = this.ensureThread(input.threadId, session, {
         params: { threadId: input.threadId, cwd: session.workingDirectory }
       });
-      this.applyThreadSettings(thread, input.model, input.modelReasoningEffort);
+      this.applyThreadSettings(thread, input.model, input.modelReasoningEffort, input.serviceTier);
       return { ok: true, thread: this.summary(thread) };
     }
 
@@ -353,6 +354,26 @@ export class ThreadHub {
       workingDirectory: cwd,
       createdAt: new Date().toISOString(),
       limit
+    });
+    return await promise;
+  }
+
+  async listSessionModels(sessionId: string, includeHidden = false): Promise<SessionModelCatalogResult> {
+    const session = this.requireOnlineSession(sessionId);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<SessionModelCatalogResult>(
+      commandId,
+      "list_models",
+      undefined,
+      60_000,
+      session.workingDirectory
+    );
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "list_models",
+      workingDirectory: session.workingDirectory,
+      createdAt: new Date().toISOString(),
+      includeHidden
     });
     return await promise;
   }
@@ -486,19 +507,69 @@ export class ThreadHub {
     return { stopped: true };
   }
 
+  async compactThread(threadId: string) {
+    const thread = this.requireThread(threadId);
+    if (thread.running) throw new Error(`Thread is running: ${threadId}`);
+    const session = this.requireThreadSession(thread);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<{ ok?: boolean }>(
+      commandId,
+      "compact_thread",
+      thread.threadId,
+      undefined,
+      thread.workingDirectory
+    );
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "compact_thread",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId
+    });
+    return await promise;
+  }
+
+  async reviewThread(threadId: string) {
+    const thread = this.requireThread(threadId);
+    if (thread.running) throw new Error(`Thread is already running: ${thread.threadId}`);
+    const session = this.requireThreadSession(thread);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<{ ok?: boolean; reviewThreadId?: string }>(
+      commandId,
+      "review_thread",
+      thread.threadId,
+      undefined,
+      thread.workingDirectory
+    );
+    this.activeTurnCommands.set(thread.threadId, commandId);
+    if (thread.title === thread.threadId) thread.title = "Review changes";
+    thread.running = true;
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "review_thread",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId,
+      reviewTarget: { type: "uncommittedChanges" }
+    });
+    return await promise;
+  }
+
   runLocalCommand(threadId: string, input: ProxyInput, _source: "web" | "telegram" | "task" = "web") {
-    const command = parseLocalSlashCommand(input);
-    if (!command) return { handled: false };
+    const parsed = parseLocalSlashCommand(input);
+    if (!parsed) return { handled: false };
 
     const thread = this.requireThread(threadId);
     const session = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
     this.appendUserInputRecord(thread, input);
     this.appendHubRecord(thread, "event_msg", {
       type: "agent_message",
-      message: this.localCommandMessage(thread, command),
+      message: this.localCommandMessage(thread, parsed.command, parsed.args),
       phase: "final_answer"
     });
-    return { handled: true, command };
+    return { handled: true, command: parsed.command };
   }
 
   runTurn(threadId: string, input: ProxyInput, _source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
@@ -1182,7 +1253,8 @@ export class ThreadHub {
   private applyThreadSettings(
     thread: ThreadState,
     model: string | null | undefined,
-    modelReasoningEffort: ThreadOptions["modelReasoningEffort"] | null | undefined
+    modelReasoningEffort: ThreadOptions["modelReasoningEffort"] | null | undefined,
+    serviceTier: ThreadOptions["serviceTier"] | null | undefined
   ) {
     let changed = false;
     const nextModel = typeof model === "string" && model ? model : undefined;
@@ -1195,6 +1267,12 @@ export class ThreadHub {
     if (thread.threadOptions.modelReasoningEffort !== nextEffort) {
       thread.threadOptions = { ...thread.threadOptions, modelReasoningEffort: nextEffort };
       if (!nextEffort) delete thread.threadOptions.modelReasoningEffort;
+      changed = true;
+    }
+    const nextServiceTier = typeof serviceTier === "string" && serviceTier ? serviceTier : undefined;
+    if (thread.threadOptions.serviceTier !== nextServiceTier) {
+      thread.threadOptions = { ...thread.threadOptions, serviceTier: nextServiceTier };
+      if (!nextServiceTier) delete thread.threadOptions.serviceTier;
       changed = true;
     }
     if (!changed) return;
@@ -1495,6 +1573,7 @@ export class ThreadHub {
       workingDirectory: thread.workingDirectory,
       model: thread.threadOptions.model,
       modelReasoningEffort: thread.threadOptions.modelReasoningEffort,
+      serviceTier: thread.threadOptions.serviceTier,
       session: this.threadSessionSummary(thread),
       status: thread.running ? "running" : "idle",
       running: thread.running,
@@ -1599,10 +1678,11 @@ export class ThreadHub {
     return { online: false, runnable: false };
   }
 
-  private localCommandMessage(thread: ThreadState, command: string) {
+  private localCommandMessage(thread: ThreadState, command: string, args: string[]) {
     if (command === "status") return threadStatusMessage(thread, this.threadSessionSummary(thread));
     if (command === "help") return slashHelpMessage();
     if (command === "model") return modelCommandMessage(thread);
+    if (command === "fast") return fastCommandMessage(thread, args);
     return [
       `Unsupported slash command: /${command}`,
       "",
@@ -2250,8 +2330,13 @@ const imageUrls = (input: ProxyInput) => {
 
 const parseLocalSlashCommand = (input: ProxyInput) => {
   if (typeof input !== "string") return null;
-  const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s|$)/.exec(input.trim());
-  return match?.[1].toLowerCase() ?? null;
+  const trimmed = input.trim();
+  const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+(.*)|$)/.exec(trimmed);
+  if (!match) return null;
+  return {
+    command: match[1].toLowerCase(),
+    args: (match[2] ?? "").trim().split(/\s+/).filter(Boolean)
+  };
 };
 
 const threadStatusMessage = (thread: ThreadState, session: ThreadSessionSummary) => [
@@ -2262,6 +2347,7 @@ const threadStatusMessage = (thread: ThreadState, session: ThreadSessionSummary)
   `session: ${formatSession(session)}`,
   `model: ${formatModel(thread.threadOptions)}`,
   `reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
+  `service tier: ${formatServiceTier(thread.threadOptions)}`,
   `records: ${thread.records.length}`,
   `updated: ${thread.updatedAt}`,
   `usage: ${formatUsage(thread.lastUsage)}`
@@ -2271,19 +2357,62 @@ const modelCommandMessage = (thread: ThreadState) => [
   "Model control",
   `current model: ${formatModel(thread.threadOptions)}`,
   `current reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
+  `current service tier: ${formatServiceTier(thread.threadOptions)}`,
   "",
   "In Web, use the Model selector. The selected model and reasoning are sent with the next Web turn.",
   "For API, Telegram, task, and session turns, pass model options with the next turn request."
 ].join("\n");
 
+const fastCommandMessage = (thread: ThreadState, args: string[]) => {
+  const action = (args[0] ?? "status").toLowerCase();
+  if (action === "status") {
+    return [
+      "Fast mode",
+      `current service tier: ${formatServiceTier(thread.threadOptions)}`,
+      "",
+      "Use /fast on to request the app-server Fast service tier for subsequent turns.",
+      "Use /fast off to clear the explicit service tier and return to the configured default."
+    ].join("\n");
+  }
+  if (action === "on") {
+    thread.threadOptions = { ...thread.threadOptions, serviceTier: fastServiceTier };
+    return [
+      "Fast mode enabled",
+      `service tier: ${fastServiceTier}`,
+      "",
+      "Subsequent turns on this thread will request the app-server Fast service tier."
+    ].join("\n");
+  }
+  if (action === "off") {
+    thread.threadOptions = { ...thread.threadOptions };
+    delete thread.threadOptions.serviceTier;
+    return [
+      "Fast mode disabled",
+      "service tier: auto",
+      "",
+      "Subsequent turns on this thread will use the configured default service tier."
+    ].join("\n");
+  }
+  return [
+    `Unsupported /fast argument: ${action}`,
+    "",
+    "Usage: /fast on | /fast off | /fast status"
+  ].join("\n");
+};
+
 const slashHelpMessage = () => [
   "Supported codexhub slash commands:",
   "/status - show this thread session status",
   "/model - explain model control",
+  "/fast on|off|status - toggle or inspect app-server Fast service tier",
   "/help - show supported proxy commands"
 ].join("\n");
 
 const formatModel = (options: ThreadOptions) => options.model ?? "auto";
+
+const fastServiceTier = "priority";
+
+const formatServiceTier = (options: ThreadOptions) => options.serviceTier ?? "auto";
 
 const formatThreadGoalMessage = (goal: Record<string, unknown> | null) => {
   const status = typeof goal?.status === "string" ? goal.status : "active";
@@ -2393,6 +2522,10 @@ const applyThreadRunOptions = (current: ThreadOptions, options: ThreadRunOptions
   if (hasOwn(options, "modelReasoningEffort")) {
     if (options.modelReasoningEffort) next.modelReasoningEffort = options.modelReasoningEffort;
     else delete next.modelReasoningEffort;
+  }
+  if (hasOwn(options, "serviceTier")) {
+    if (options.serviceTier) next.serviceTier = options.serviceTier;
+    else delete next.serviceTier;
   }
   return next;
 };

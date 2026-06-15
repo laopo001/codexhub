@@ -14,6 +14,7 @@ import type {
   MessageContextMenuState,
   MessageDisplayMode,
   MessageRenderMode,
+  ModelCatalogItem,
   OpenThreadState,
   ParentRegistrationDraft,
   ParentRegistrationStatus,
@@ -86,8 +87,10 @@ export const useAppState = () => {
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     model: null,
     modelReasoningEffort: null,
+    serviceTier: null,
     contextWindowTokens: null
   });
+  const [modelCatalogBySession, setModelCatalogBySession] = useState<Record<string, ModelCatalogItem[]>>({});
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -167,6 +170,7 @@ export const useAppState = () => {
     messageContextMenu,
     messageDisplayMode,
     messageRenderModes,
+    modelCatalogBySession,
     messagesRef,
     messagesScrollerRef,
     notificationAudioContext,
@@ -217,6 +221,7 @@ export const useAppState = () => {
     setMessageContextMenu,
     setMessageDisplayMode,
     setMessageRenderModes,
+    setModelCatalogBySession,
     setNowMs,
     setOfflineProjectsCollapsed,
     setOpeningProjectKey,

@@ -11,6 +11,7 @@ import type { ProjectSource, ProjectSummary, StoredMachine, StoredProject, Store
 import type { SshHostConfig, SshMachineConnectInput, SshMachineConnection } from "./sshTypes.js";
 import type { ModelReasoningEffort, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "./usageTypes.js";
 import type {
+  ModelCatalogItem,
   SessionStreamEvent,
   SessionSummary,
   ThreadCandidateSummary,
@@ -28,6 +29,7 @@ export type {
   MachineSummary,
   PluginSummary,
   ProjectSummary,
+  ModelCatalogItem,
   StoredMachine,
   StoredProject,
   SessionStreamEvent,
@@ -95,6 +97,7 @@ export type HealthPayload = AuthStatusPayload & {
   statePath?: string;
   model: string | null;
   modelReasoningEffort: ModelReasoningEffort | null;
+  serviceTier: string | null;
   contextWindowTokens: number | null;
   defaultWorkingDirectory?: string;
   ssh?: {
@@ -182,6 +185,11 @@ export type ThreadCandidatesPayload = {
   threads?: ThreadCandidateSummary[];
 };
 
+/** app-server model catalog 接口返回的 payload。 */
+export type SessionModelsPayload = {
+  models?: ModelCatalogItem[];
+};
+
 /** session/thread turn mutation 返回值。 */
 export type ThreadTurnPayload = {
   ok?: boolean;
@@ -198,6 +206,17 @@ export type ThreadDeletePayload = {
 /** thread stop mutation 返回值。 */
 export type ThreadStopPayload = {
   stopped?: boolean;
+};
+
+/** thread context compact mutation 返回值。 */
+export type ThreadCompactPayload = {
+  ok?: boolean;
+};
+
+/** thread review mutation 返回值。 */
+export type ThreadReviewPayload = {
+  ok?: boolean;
+  reviewThreadId?: string;
 };
 
 /** thread goal set/clear mutation 返回值。 */
@@ -300,6 +319,7 @@ export const inputSchema = z.union([
 export const threadRunOptionsSchema = z.object({
   model: z.string().min(1).nullable().optional(),
   modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
+  serviceTier: z.string().min(1).nullable().optional(),
   collaborationMode: z.enum(["default", "plan"]).nullable().optional(),
   goalMode: z.boolean().nullable().optional(),
   goalObjective: z.string().min(1).nullable().optional(),
@@ -367,6 +387,7 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     threadId: z.string().min(1),
     model: z.string().min(1).nullable().optional(),
     modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
+    serviceTier: z.string().min(1).nullable().optional(),
     heartbeat: z.boolean().optional()
   }),
   z.object({

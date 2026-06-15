@@ -3,6 +3,7 @@ import type {
   ConnectionsStreamEvent as ApiConnectionsStreamEvent,
   MachineDirectoryListing as ApiMachineDirectoryListing,
   MachineSummary as ApiMachineSummary,
+  ModelCatalogItem as ApiModelCatalogItem,
   ParentRegistrationStatus as ApiParentRegistrationStatus,
   PluginSummary as ApiPluginSummary,
   ProjectSummary as ApiProjectSummary,
@@ -57,6 +58,7 @@ export type ThreadRenameDialogState = {
 
 export type SessionSummary = ApiSessionSummary;
 export type SessionView = ApiSessionView;
+export type ModelCatalogItem = ApiModelCatalogItem;
 export type MachineSummary = ApiMachineSummary;
 export type MachineDirectoryListing = ApiMachineDirectoryListing;
 export type MachineDirectoryEntry = MachineDirectoryListing["entries"][number];
@@ -125,6 +127,7 @@ export type OpenThreadState = ThreadDetail & {
   composerMode: ComposerMode;
   modelDraft: ModelSelection;
   reasoningDraft: ReasoningSelection;
+  serviceTierDraft: ServiceTierSelection;
   input: string;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];
@@ -187,6 +190,7 @@ export type ReasoningEffort = ApiReasoningEffort;
 export type ThreadStatus = "running" | "idle";
 export type ModelSelection = string;
 export type ReasoningSelection = "auto" | ReasoningEffort;
+export type ServiceTierSelection = string;
 export type ComposerMode = "chat" | "plan" | "goal";
 export type MessageDisplayMode = "compact" | "detailed";
 export type MessageRenderMode = "markdown" | "raw";
@@ -247,6 +251,7 @@ export type ParsedToolCall = {
 export type SystemStatus = {
   model: string | null;
   modelReasoningEffort: string | null;
+  serviceTier: string | null;
   contextWindowTokens: number | null;
 };
 

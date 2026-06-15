@@ -33,7 +33,10 @@ type ComposerThreadControlsProps = {
   activeThreadModelDraft: AppSelectors["activeThreadModelDraft"];
   activeThreadReasoning: AppSelectors["activeThreadReasoning"];
   activeThreadReasoningDraft: AppSelectors["activeThreadReasoningDraft"];
+  activeThreadServiceTier: AppSelectors["activeThreadServiceTier"];
+  activeThreadServiceTierDraft: AppSelectors["activeThreadServiceTierDraft"];
   activeThreadUsage: AppSelectors["activeThreadUsage"];
+  compactThread: AppViewActions["compactThread"];
   mode: ComposerThreadControlsMode;
   setHiddenStatusTurns: AppState["setHiddenStatusTurns"];
   setThreadControlsMenuOpen: AppState["setThreadControlsMenuOpen"];
@@ -42,7 +45,11 @@ type ComposerThreadControlsProps = {
   turnUiState: AppSelectors["turnUiState"];
 };
 
-export const useAppViewSelectors = (state: AppState, selectors: AppSelectors) => {
+type AppViewActions = {
+  compactThread: (threadId: string) => unknown;
+};
+
+export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, actions: AppViewActions) => {
   const openThreadTabs = useMemo(() => state.openThreads.map((thread) => ({
     key: thread.threadId,
     label: (
@@ -68,7 +75,10 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors) =>
       activeThreadModelDraft={selectors.activeThreadModelDraft}
       activeThreadReasoning={selectors.activeThreadReasoning}
       activeThreadReasoningDraft={selectors.activeThreadReasoningDraft}
+      activeThreadServiceTier={selectors.activeThreadServiceTier}
+      activeThreadServiceTierDraft={selectors.activeThreadServiceTierDraft}
       activeThreadUsage={selectors.activeThreadUsage}
+      compactThread={actions.compactThread}
       mode={mode}
       setHiddenStatusTurns={state.setHiddenStatusTurns}
       setThreadControlsMenuOpen={state.setThreadControlsMenuOpen}
@@ -158,7 +168,10 @@ const ComposerThreadControls = ({
   activeThreadModelDraft,
   activeThreadReasoning,
   activeThreadReasoningDraft,
+  activeThreadServiceTier,
+  activeThreadServiceTierDraft,
   activeThreadUsage,
+  compactThread,
   mode,
   setHiddenStatusTurns,
   setThreadControlsMenuOpen,
@@ -173,15 +186,23 @@ const ComposerThreadControls = ({
   const composerModelButtonLabel = formatComposerModelButtonLabel(
     activeThreadModelDraft,
     activeThreadReasoningDraft,
+    activeThreadServiceTierDraft,
     activeThreadModel,
-    activeThreadReasoning
+    activeThreadReasoning,
+    activeThreadServiceTier
   );
   const composerModelButtonTitle = formatComposerModelTitle(
     activeThreadModelDraft,
     activeThreadReasoningDraft,
+    activeThreadServiceTierDraft,
     activeThreadModel,
-    activeThreadReasoning
+    activeThreadReasoning,
+    activeThreadServiceTier
   );
+  const canCompactThread = Boolean(activeThread?.threadId && !activeThread.running);
+  const compactTitle = activeThread?.running
+    ? "Stop the running turn before compacting context"
+    : "Compact this thread's app-server context";
 
   return (
     <div className={`composerSessionControls ${mode}`} aria-label="Thread usage and model">
@@ -206,6 +227,19 @@ const ComposerThreadControls = ({
         <span className="usagePill" title={formatContextTitle(activeThreadUsage)}>
           Context {formatContextUsage(activeThreadUsage)}
         </span>
+        <button
+          type="button"
+          className="usagePill contextCompactButton"
+          disabled={!canCompactThread}
+          title={compactTitle}
+          onClick={() => {
+            if (!activeThread?.threadId || activeThread.running) return;
+            setThreadControlsMenuOpen(false);
+            void compactThread(activeThread.threadId);
+          }}
+        >
+          Compact
+        </button>
 
         <span className="usagePill" title={formatResetTitle(activeThreadUsage?.primaryRateLimit)}>5h {formatRateLimitRemaining(activeThreadUsage?.primaryRateLimit)}</span>
         <span className="usagePill" title={formatResetTitle(activeThreadUsage?.secondaryRateLimit)}>weekly {formatRateLimitRemaining(activeThreadUsage?.secondaryRateLimit)}</span>

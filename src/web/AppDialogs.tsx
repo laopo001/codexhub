@@ -1,6 +1,5 @@
 import React from "react";
 import { Switch } from "antd";
-import { reasoningOptions } from "./appConfig.js";
 import {
   formatInspectTitle,
   formatThreadCandidateTime,
@@ -15,7 +14,7 @@ import {
   threadDisplayTitle,
   ToolInspectBody
 } from "./appHelpers.js";
-import type { ModelSelection, ReasoningSelection } from "./types.js";
+import type { ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
 import type { AppViewModel } from "./viewModel.js";
 
 type AppDialogsProps = {
@@ -39,7 +38,10 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     messageContextMenu,
     activeThreadModelDraft,
     activeThreadReasoningDraft,
+    activeThreadServiceTierDraft,
     modelOptions,
+    reasoningOptions,
+    serviceTierOptions,
     onlineMachines,
     openingProjectKey,
     projectPicker,
@@ -58,6 +60,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setProjectPicker,
     setActiveThreadModelDraft,
     setActiveThreadReasoningDraft,
+    setActiveThreadServiceTierDraft,
     setThreadModelDialogOpen,
     setThreadRenameDialog,
     setThreadTabContextMenu,
@@ -112,6 +115,12 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <span>Thinking</span>
               <select value={activeThreadReasoningDraft} onChange={(event) => setActiveThreadReasoningDraft(event.target.value as ReasoningSelection)}>
                 {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{reasoningOptionLabel(option)}</option>)}
+              </select>
+            </label>
+            <label className="sessionDialogField">
+              <span>Service Tier</span>
+              <select value={activeThreadServiceTierDraft} onChange={(event) => setActiveThreadServiceTierDraft(event.target.value as ServiceTierSelection)}>
+                {serviceTierOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
               </select>
             </label>
           </section>
