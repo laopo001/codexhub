@@ -205,6 +205,12 @@ export type ThreadGoalMutationPayload = {
   ok?: boolean;
 };
 
+/** thread rename mutation 返回值。 */
+export type ThreadRenamePayload = {
+  ok?: boolean;
+  thread?: ThreadDetail;
+};
+
 /** project open 接口返回值，包含项目快照和 machine 启动 session 的结果。 */
 export type ProjectOpenPayload = ProjectsPayload & {
   ok?: boolean;
@@ -307,6 +313,10 @@ export const threadGoalUpdateSchema = z.object({
   status: threadGoalStatusSchema.nullable().optional(),
   tokenBudget: z.number().int().positive().nullable().optional()
 });
+
+export const threadRenameSchema = z.object({
+  title: z.string().trim().min(1).max(200)
+}).strict();
 
 export const projectSourceSchema = z.object({
   kind: z.literal("vscode"),
@@ -508,7 +518,8 @@ export const machineTransportMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("app_server_start_thread"),
     commandId: z.string().min(1),
     sessionId: z.string().min(1),
-    cwd: z.string().min(1)
+    cwd: z.string().min(1),
+    threadId: z.string().min(1).optional()
   }),
   z.object({
     type: z.literal("app_server_stopped"),
@@ -591,3 +602,6 @@ export type ProjectUpdateInput = z.infer<typeof projectUpdateSchema>;
 
 /** 更新 thread goal 的请求 body。 */
 export type ThreadGoalUpdateInput = z.infer<typeof threadGoalUpdateSchema>;
+
+/** 更新 thread 展示名称的请求 body。 */
+export type ThreadRenameInput = z.infer<typeof threadRenameSchema>;

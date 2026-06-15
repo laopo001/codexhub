@@ -1072,13 +1072,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     transportId: string;
     sessionId: string;
     cwd: string;
+    threadId?: string;
   }) => {
     const entry = tunneledAppServerSessions.get(input.sessionId);
     if (!entry || entry.transportId !== input.transportId) {
       throw new Error(`Tunneled app-server session not attached: ${input.sessionId}`);
     }
     // 同一个 tunneled runtime 按 cwd 启动/复用 thread，不新建 machine session。
-    const threadId = await entry.handle.startThread(input.cwd);
+    const threadId = input.threadId
+      ? await entry.handle.ensureThread(input.threadId, input.cwd)
+      : await entry.handle.startThread(input.cwd);
     publishProjects();
     return threadId;
   };
@@ -1229,7 +1232,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           const threadId = await startTunneledAppServerThread({
             transportId,
             sessionId: parsed.sessionId,
-            cwd: parsed.cwd
+            cwd: parsed.cwd,
+            threadId: parsed.threadId
           });
           send({
             type: "app_server_attached",

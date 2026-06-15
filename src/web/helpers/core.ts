@@ -578,7 +578,7 @@ export const goalStatusClass = (status: string) => {
 };
 
 export const threadCandidateTitle = (candidate: CodexThreadCandidate) =>
-  compactLine(candidate.firstUserMessage || candidate.lastAssistantMessage || shortId(candidate.threadId));
+  compactLine(candidate.title || candidate.firstUserMessage || candidate.lastAssistantMessage || shortId(candidate.threadId));
 
 export const formatThreadCandidateTime = (value: string) => relativeTime(value);
 

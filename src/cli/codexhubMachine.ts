@@ -54,6 +54,7 @@ type ManagedSession = {
 };
 
 type RuntimeSessionHandle = Pick<HeadlessCodexhubSessionHandle, "sessionId" | "threadId" | "appServerUrl" | "cwd" | "stop" | "wait"> & {
+  ensureThread: (threadId: string, cwd: string, commandId?: string) => Promise<string>;
   startThread: (cwd: string, commandId?: string) => Promise<string>;
 };
 
@@ -281,8 +282,11 @@ class CodexhubMachineRunner {
   private async startSession(command: MachineCommand): Promise<MachineStartSessionResult> {
     if (command.type !== "start_session") throw new Error(`Unexpected command: ${command.type}`);
     const cwd = await resolveDirectory(command.cwd);
+    const requestedThreadId = typeof command.threadId === "string" && command.threadId.trim()
+      ? command.threadId.trim()
+      : undefined;
     const existing = command.reuse !== false ? this.runtimeSession?.projectsByCwd.get(cwd) : undefined;
-    if (existing) {
+    if (existing && (!requestedThreadId || existing.threadId === requestedThreadId)) {
       return {
         ...existing,
         cwd,
@@ -292,9 +296,20 @@ class CodexhubMachineRunner {
 
     const runtime = await this.ensureRuntimeSession(cwd, command.commandId);
     // 一台 machine 只维护一个 app-server runtime，不同 project cwd 映射到各自 thread。
-    const threadId = runtime.projectsByCwd.size === 0 && runtime.cwd === cwd
+    const startProjectThread = async () => runtime.projectsByCwd.size === 0 && runtime.cwd === cwd
       ? runtime.session.threadId
       : await runtime.session.startThread(cwd, command.commandId);
+    let threadId: string;
+    if (requestedThreadId) {
+      try {
+        threadId = await runtime.session.ensureThread(requestedThreadId, cwd, command.commandId);
+      } catch (error) {
+        if (!isMissingAppServerThreadError(error)) throw error;
+        threadId = await startProjectThread();
+      }
+    } else {
+      threadId = await startProjectThread();
+    }
     const result = {
       sessionId: runtime.session.sessionId,
       threadId,
@@ -361,6 +376,17 @@ class CodexhubMachineRunner {
         threadId: attached.threadId,
         appServerUrl: `tunnel://${appServerId}`,
         cwd,
+        ensureThread: async (threadId: string, nextCwd: string, nextCommandId?: string) => {
+          if (!nextCommandId) throw new Error("Tunneled app-server ensureThread requires a machine command id.");
+          const started = await this.requestParentAppServerAttach({
+            type: "app_server_start_thread",
+            commandId: nextCommandId,
+            sessionId,
+            cwd: nextCwd,
+            threadId
+          });
+          return started.threadId;
+        },
         startThread: async (nextCwd: string, nextCommandId?: string) => {
           if (!nextCommandId) throw new Error("Tunneled app-server startThread requires a machine command id.");
           const started = await this.requestParentAppServerAttach({
@@ -397,6 +423,7 @@ class CodexhubMachineRunner {
     commandId: string;
     sessionId: string;
     cwd: string;
+    threadId?: string;
   }) {
     if (!this.registered) throw new Error("Cannot attach app-server before machine registration.");
     const commandId = message.commandId;
@@ -552,3 +579,10 @@ class Deferred<T> {
 }
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const isMissingAppServerThreadError = (error: unknown) => {
+  const message = errorText(error).toLowerCase();
+  return message.includes("no rollout found for thread id")
+    || message.includes("thread not found")
+    || message.includes("not found for thread id");
+};

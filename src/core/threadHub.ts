@@ -144,9 +144,11 @@ export class ThreadHub {
         this.rejectCommand(commandId, new Error(`Session command did not return threadId: ${pending.type}`));
         return { ok: false, sessionId, commandId };
       }
+      const resultThread = asRecord(asRecord(result)?.thread);
       const thread = this.ensureThread(threadId, session, {
-        result: { thread: { id: threadId, cwd: pending.workingDirectory ?? session.workingDirectory } }
+        result: { thread: resultThread ?? { id: threadId, cwd: pending.workingDirectory ?? session.workingDirectory } }
       });
+      if (resultThread) this.applyAppServerThread(thread, resultThread);
       this.resolveCommand(commandId, this.detail(thread));
       return { ok: true, sessionId, commandId };
     }
@@ -417,6 +419,26 @@ export class ThreadHub {
     return await this.rollbackThread(threadId, numTurns, keepTurns);
   }
 
+  async renameThread(threadId: string, title: string): Promise<ThreadDetail> {
+    const thread = this.requireThread(threadId);
+    const session = this.requireThreadSession(thread);
+    const nextTitle = compactThreadTitle(title);
+    if (!nextTitle) throw new Error("Thread title must not be empty");
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<void>(commandId, "rename_thread", thread.threadId, undefined, thread.workingDirectory);
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "rename_thread",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId,
+      title: nextTitle
+    });
+    await promise;
+    this.applyThreadTitle(thread, nextTitle);
+    return this.detail(thread);
+  }
+
   private async rollbackThread(threadId: string, numTurns: number, keepTurns?: number): Promise<ThreadDetail> {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
@@ -501,7 +523,8 @@ export class ThreadHub {
     this.activeTurnCommands.set(thread.threadId, commandId);
 
     const userText = summarizeInput(input);
-    if (userText && thread.title === thread.threadId) thread.title = userText.slice(0, 80);
+    const userTitle = compactThreadTitle(userText);
+    if (userTitle && thread.title === thread.threadId) thread.title = userTitle;
     thread.running = true;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
@@ -735,6 +758,7 @@ export class ThreadHub {
       if (pending.type === "clear_goal" && thread) this.appendThreadGoalClearedRecord(thread);
       this.resolveCommand(commandId);
     }
+    if (pending.type === "rename_thread") this.resolveCommand(commandId);
   }
 
   private resolveCommand(commandId: string, value?: unknown) {
@@ -825,9 +849,7 @@ export class ThreadHub {
     const appThread = appServerThreadFromMessage(message);
     const now = new Date().toISOString();
     const workingDirectory = typeof appThread?.cwd === "string" ? appThread.cwd : session.workingDirectory;
-    const title = typeof appThread?.preview === "string" && appThread.preview.trim()
-      ? appThread.preview.slice(0, 80)
-      : threadId;
+    const title = appThread ? appServerThreadTitle(appThread) ?? threadId : threadId;
     const thread: ThreadState = {
       threadId,
       workingDirectory,
@@ -881,6 +903,12 @@ export class ThreadHub {
     }
 
     if (method === "thread/settings/updated") {
+      return;
+    }
+
+    if (method === "thread/name/updated") {
+      const title = typeof params.threadName === "string" ? params.threadName : "";
+      this.applyThreadTitle(thread, title);
       return;
     }
 
@@ -1125,12 +1153,10 @@ export class ThreadHub {
       thread.workingDirectory = appThread.cwd;
       changed = true;
     }
-    if (typeof appThread.preview === "string" && appThread.preview.trim()) {
-      const title = appThread.preview.slice(0, 80);
-      if (thread.title !== title) {
-        thread.title = title;
-        changed = true;
-      }
+    const title = appServerThreadTitle(appThread);
+    if (title && thread.title !== title) {
+      thread.title = title;
+      changed = true;
     }
     if (changed) {
       thread.updatedAt = new Date().toISOString();
@@ -1143,6 +1169,14 @@ export class ThreadHub {
       return;
     }
     this.appendThreadGoalClearedRecord(thread, { threadId: thread.threadId }, { ifKnownGoal: true });
+  }
+
+  private applyThreadTitle(thread: ThreadState, title: string) {
+    const nextTitle = compactThreadTitle(title);
+    if (!nextTitle || thread.title === nextTitle) return;
+    thread.title = nextTitle;
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
   }
 
   private applyThreadSettings(
@@ -2139,7 +2173,9 @@ const resultThreadIdFromAppServerMessage = (message: Record<string, unknown>) =>
 
 const commandResultThreadId = (result: unknown) => {
   const record = asRecord(result);
-  return typeof record?.threadId === "string" ? record.threadId : undefined;
+  if (typeof record?.threadId === "string") return record.threadId;
+  const thread = asRecord(record?.thread);
+  return typeof thread?.id === "string" ? thread.id : undefined;
 };
 
 const appServerThreadFromMessage = (message: Record<string, unknown>) => {
@@ -2184,6 +2220,15 @@ const summarizeInput = (input: ProxyInput) => {
     .filter((item) => item.type === "text")
     .map((item) => item.text)
     .join("\n");
+};
+
+const compactThreadTitle = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 80);
+
+const appServerThreadTitle = (thread: Record<string, unknown>) => {
+  const name = typeof thread.name === "string" ? compactThreadTitle(thread.name) : "";
+  if (name) return name;
+  const preview = typeof thread.preview === "string" ? compactThreadTitle(thread.preview) : "";
+  return preview || undefined;
 };
 
 const goalUpdateFromInput = (input: ProxyInput, options: ThreadRunOptions): ThreadGoalUpdate => {

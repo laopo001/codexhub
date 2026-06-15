@@ -12,6 +12,7 @@ import {
   shortId,
   statusLabel,
   threadCandidateTitle,
+  threadDisplayTitle,
   ToolInspectBody
 } from "./appHelpers.js";
 import type { ModelSelection, ReasoningSelection } from "./types.js";
@@ -43,7 +44,10 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     openingProjectKey,
     projectPicker,
     saveGoalDialog,
+    saveThreadRenameDialog,
     threadModelDialogOpen,
+    threadRenameDialog,
+    threadTabContextMenu,
     settingsDialogOpen,
     sessionList,
     openThreads,
@@ -55,6 +59,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setActiveThreadModelDraft,
     setActiveThreadReasoningDraft,
     setThreadModelDialogOpen,
+    setThreadRenameDialog,
+    setThreadTabContextMenu,
     setSettingsDialogOpen,
     setThreadPicker,
     submitProjectPickerPath,
@@ -81,6 +87,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     ...(threadPicker ? threadOrderBySession[threadPicker.sessionId] ?? [] : []),
     ...openThreads.map((thread) => thread.threadId)
   ]);
+  const threadTabContextThread = threadTabContextMenu
+    ? openThreads.find((thread) => thread.threadId === threadTabContextMenu.threadId)
+    : undefined;
 
   return (
     <>
@@ -231,6 +240,91 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
             </div>
             {threadPicker.error ? <div className="projectOpenError">{threadPicker.error}</div> : null}
           </section>
+        </div>
+      ) : null}
+
+      {threadTabContextMenu && threadTabContextThread ? (
+        <div
+          className="messageContextMenuLayer"
+          role="presentation"
+          onMouseDown={() => setThreadTabContextMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setThreadTabContextMenu(null);
+          }}
+        >
+          <div
+            className="messageContextMenu"
+            role="menu"
+            style={{ left: threadTabContextMenu.x, top: threadTabContextMenu.y }}
+            onMouseDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setThreadRenameDialog({
+                  threadId: threadTabContextThread.threadId,
+                  title: threadDisplayTitle(threadTabContextThread),
+                  saving: false,
+                  error: ""
+                });
+                setThreadTabContextMenu(null);
+              }}
+            >
+              Rename
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {threadRenameDialog ? (
+        <div className="modalOverlay threadRenameDialogOverlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !threadRenameDialog.saving) setThreadRenameDialog(null);
+        }}>
+          <form
+            className="threadRenameDialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="threadRenameDialogTitle"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveThreadRenameDialog();
+            }}
+          >
+            <header className="threadRenameDialogHeader">
+              <h2 id="threadRenameDialogTitle">Rename Thread</h2>
+              <button
+                type="button"
+                className="iconButton"
+                onClick={() => setThreadRenameDialog(null)}
+                disabled={threadRenameDialog.saving}
+                aria-label="Close"
+              >
+                x
+              </button>
+            </header>
+            <label className="threadRenameDialogField">
+              <span>Name</span>
+              <input
+                value={threadRenameDialog.title}
+                onChange={(event) => setThreadRenameDialog((current) => current
+                  ? { ...current, title: event.target.value, error: "" }
+                  : current)}
+                maxLength={200}
+                disabled={threadRenameDialog.saving}
+                autoFocus
+              />
+            </label>
+            {threadRenameDialog.error ? <div className="threadRenameDialogError">{threadRenameDialog.error}</div> : null}
+            <footer className="threadRenameDialogActions">
+              <button type="button" onClick={() => setThreadRenameDialog(null)} disabled={threadRenameDialog.saving}>Cancel</button>
+              <button type="submit" className="primary" disabled={threadRenameDialog.saving || !threadRenameDialog.title.trim()}>
+                {threadRenameDialog.saving ? "Saving" : "Save"}
+              </button>
+            </footer>
+          </form>
         </div>
       ) : null}
 

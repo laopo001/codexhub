@@ -32,6 +32,8 @@ import type {
   TaskDraft,
   ThreadGoalView,
   ThreadPickerState,
+  ThreadRenameDialogState,
+  ThreadTabContextMenuState,
   TurnUiState,
   WebRecordView
 } from "./types.js";
@@ -198,10 +200,13 @@ export type AppViewModel = AppSidebarViewModel & {
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
   rollbackMessage: (threadId: string, messageId: string) => MaybePromise;
   saveGoalDialog: () => MaybePromise;
+  saveThreadRenameDialog: () => MaybePromise;
   send: (threadId: string) => MaybePromise;
   threadModelDialogOpen: boolean;
   sessionList: SessionView[];
   threadControlsMenuOpen: boolean;
+  threadRenameDialog: ThreadRenameDialogState | null;
+  threadTabContextMenu: ThreadTabContextMenuState | null;
   openThreads: OpenThreadState[];
   setAuthTokenDraft: React.Dispatch<React.SetStateAction<string>>;
   setComposerMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -218,6 +223,8 @@ export type AppViewModel = AppSidebarViewModel & {
   setActiveThreadReasoningDraft: React.Dispatch<React.SetStateAction<ReasoningSelection>>;
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadControlsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;
+  setThreadTabContextMenu: React.Dispatch<React.SetStateAction<ThreadTabContextMenuState | null>>;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadPicker: React.Dispatch<React.SetStateAction<ThreadPickerState | null>>;
   showComposerSendButton: boolean;

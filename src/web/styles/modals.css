@@ -205,6 +205,85 @@
   opacity: 0.55;
 }
 
+.threadRenameDialogOverlay {
+  background: rgb(18 32 24 / 0.42);
+}
+
+.threadRenameDialog {
+  display: grid;
+  gap: 12px;
+  width: min(380px, 100%);
+  border: 1px solid #d8dfd4;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 15px;
+  box-shadow: 0 24px 70px rgb(18 32 24 / 0.26);
+}
+
+.threadRenameDialogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.threadRenameDialogHeader h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.threadRenameDialogField {
+  display: grid;
+  gap: 6px;
+}
+
+.threadRenameDialogField span {
+  color: #51604f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.threadRenameDialogField input {
+  min-height: 36px;
+  border: 1px solid #9fb0a0;
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.threadRenameDialogError {
+  color: #8b3f31;
+  font-size: 12px;
+}
+
+.threadRenameDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.threadRenameDialogActions button {
+  min-width: 64px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: #f0f1ef;
+  color: #17211a;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.threadRenameDialogActions button.primary {
+  background: #4d6f5d;
+  color: #ffffff;
+}
+
+.threadRenameDialogActions button:disabled {
+  opacity: 0.55;
+}
+
 .imageUploadInput {
   position: absolute;
   width: 1px;

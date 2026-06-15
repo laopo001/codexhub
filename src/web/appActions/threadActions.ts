@@ -28,6 +28,7 @@ import type {
   ProjectsPayload,
   SessionView,
   ThreadDetail,
+  ThreadRenameDialogState,
 } from "../types.js";
 
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
@@ -37,6 +38,7 @@ type ThreadActionsContext = {
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   goalDialog: GoalDialogState | null;
+  threadRenameDialog: ThreadRenameDialogState | null;
   latestRequestedThreadId: React.MutableRefObject<string>;
   notificationRecordsByThread: React.MutableRefObject<Map<string, CodexRecord[]>>;
   openingThreads: React.MutableRefObject<Map<string, Promise<void>>>;
@@ -51,6 +53,7 @@ type ThreadActionsContext = {
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
   setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
   setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
@@ -97,6 +100,7 @@ export type ThreadActions = {
   updateThreadGoal: (threadId: string, goal: ThreadGoalUpdateInput, options?: ThreadGoalUpdateOptions) => Promise<boolean>;
   clearThreadGoal: (threadId: string) => Promise<void>;
   saveGoalDialog: () => Promise<void>;
+  saveThreadRenameDialog: () => Promise<void>;
 };
 
 export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActionsDependencies): ThreadActions => {
@@ -224,6 +228,38 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" });
     if (response.ok || response.status === 404) return;
     throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  };
+
+  const applyThreadDetail = (thread: ThreadDetail) => {
+    ctx.setOpenThreads((current) => {
+      const existing = current.find((item) => item.threadId === thread.threadId);
+      const nextThread = openThreadStateFromDetail(thread, existing);
+      return current.some((item) => item.threadId === thread.threadId)
+        ? current.map((item) => item.threadId === thread.threadId ? nextThread : item)
+        : [...current, nextThread];
+    });
+    ctx.setSessionList((current) => patchSessionsThread(current, thread));
+    ctx.setProjects((current) => patchProjectsThread(current, thread));
+  };
+
+  const saveThreadRenameDialog = async () => {
+    const dialog = ctx.threadRenameDialog;
+    if (!dialog) return;
+    const title = dialog.title.replace(/\s+/g, " ").trim();
+    if (!title) {
+      ctx.setThreadRenameDialog((current) => current ? { ...current, error: "名称不能为空" } : current);
+      return;
+    }
+    ctx.setThreadRenameDialog((current) => current ? { ...current, saving: true, error: "" } : current);
+    try {
+      const payload = await apiRouteJson(apiRoutes.renameThread, dialog.threadId, { title });
+      if (payload.thread) applyThreadDetail(payload.thread);
+      ctx.setThreadRenameDialog(null);
+    } catch (error) {
+      ctx.setThreadRenameDialog((current) => current && current.threadId === dialog.threadId
+        ? { ...current, saving: false, error: error instanceof Error ? error.message : String(error) }
+        : current);
+    }
   };
 
   function subscribeThread(threadId: string, after: number) {
@@ -429,6 +465,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     stopTurn,
     updateThreadGoal,
     clearThreadGoal,
-    saveGoalDialog
+    saveGoalDialog,
+    saveThreadRenameDialog
   };
 };

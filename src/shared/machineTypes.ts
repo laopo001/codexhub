@@ -97,6 +97,7 @@ type MachineCommandDetail = {
   type: "start_session";
   cwd: string;
   reuse?: boolean;
+  threadId?: string;
 } | {
   type: "list_directory";
   cwd?: string;

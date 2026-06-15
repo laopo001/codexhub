@@ -25,6 +25,8 @@ import type {
   SshHost,
   SystemStatus,
   TaskDraft,
+  ThreadRenameDialogState,
+  ThreadTabContextMenuState,
   ThreadPickerState,
   WebRecordView
 } from "./types.js";
@@ -97,6 +99,8 @@ export const useAppState = () => {
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [appSettings, setAppSettingsState] = useState<AppSettings>(() => defaultAppSettings());
   const [goalDialog, setGoalDialog] = useState<GoalDialogState | null>(null);
+  const [threadRenameDialog, setThreadRenameDialog] = useState<ThreadRenameDialogState | null>(null);
+  const [threadTabContextMenu, setThreadTabContextMenu] = useState<ThreadTabContextMenuState | null>(null);
   const [hiddenStatusTurns, setHiddenStatusTurns] = useState<Record<string, string>>({});
   const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
   const [expandedToolBatchKeys, setExpandedToolBatchKeys] = useState<Record<string, string[]>>({});
@@ -249,6 +253,8 @@ export const useAppState = () => {
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
     setThreadOrderBySession,
+    setThreadRenameDialog,
+    setThreadTabContextMenu,
     setThreadPicker,
     settingsDialogOpen,
     sidebarCollapsed,
@@ -270,6 +276,8 @@ export const useAppState = () => {
     threadLastSeqs,
     threadModelDialogOpen,
     threadOrderBySession,
+    threadRenameDialog,
+    threadTabContextMenu,
     threadPicker
   };
 };

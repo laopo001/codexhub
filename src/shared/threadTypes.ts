@@ -78,6 +78,7 @@ export type ThreadCandidateSummary = {
   threadId: string;
   cwd: string;
   path: string;
+  title: string;
   updatedAt: string;
   firstUserMessage: string;
   lastAssistantMessage: string;
@@ -126,6 +127,7 @@ export type SessionCommand = {
     | "steer"
     | "set_goal"
     | "clear_goal"
+    | "rename_thread"
     | "stop"
     | "list_threads"
     | "start_thread"
@@ -140,6 +142,7 @@ export type SessionCommand = {
   numTurns?: number;
   keepTurns?: number;
   limit?: number;
+  title?: string;
   goal?: ThreadGoalUpdate;
   options?: ThreadRunOptions;
 };
@@ -149,9 +152,10 @@ export type SessionThreadCandidatesResult = {
   threads: ThreadCandidateSummary[];
 };
 
-/** start_thread/resume_thread 命令返回的 thread 标识。 */
+/** start_thread/resume_thread 命令返回的 thread 标识和可选 app-server metadata。 */
 export type SessionThreadCommandResult = {
   threadId: string;
+  thread?: unknown;
 };
 
 /** session command 的所有成功返回形状。 */

@@ -110,7 +110,7 @@ export class MachineHub {
       .map(machineSummary);
   }
 
-  startSession(machineId: string, input: { cwd: string; reuse?: boolean }, timeoutMs = 90_000) {
+  startSession(machineId: string, input: { cwd: string; reuse?: boolean; threadId?: string }, timeoutMs = 90_000) {
     const machine = this.requireMachine(machineId);
     if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
     if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot launch projects: ${machineId}`);
@@ -120,7 +120,8 @@ export class MachineHub {
       type: "start_session",
       createdAt: new Date().toISOString(),
       cwd: input.cwd,
-      reuse: input.reuse
+      reuse: input.reuse,
+      threadId: input.threadId
     });
     return {
       command,

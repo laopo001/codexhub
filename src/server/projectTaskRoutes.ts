@@ -117,9 +117,12 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
         reply.code(409);
         return { error: "This machine exposes a fixed workspace project list." };
       }
+      const previousProject = ctx.state.listStoredProjects()
+        .find((project) => project.machineId === machine.machineId && project.path === payload.path);
       const started = ctx.machines.startSession(machine.machineId, {
         cwd: payload.path,
-        reuse: payload.reuse ?? true
+        reuse: payload.reuse ?? true,
+        threadId: payload.reuse === false ? undefined : previousProject?.lastThreadId
       });
       const result = await started.promise;
       const sessionId = result.sessionId;

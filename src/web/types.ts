@@ -48,6 +48,13 @@ export type GoalDialogState = {
   error: string;
 };
 
+export type ThreadRenameDialogState = {
+  threadId: string;
+  title: string;
+  saving: boolean;
+  error: string;
+};
+
 export type SessionSummary = ApiSessionSummary;
 export type SessionView = ApiSessionView;
 export type MachineSummary = ApiMachineSummary;
@@ -148,6 +155,12 @@ export type MessageContextMenuState = {
   message: WebRecordView;
   selectedText: string;
   canInspect: boolean;
+};
+
+export type ThreadTabContextMenuState = {
+  x: number;
+  y: number;
+  threadId: string;
 };
 
 export type AppSettings = {

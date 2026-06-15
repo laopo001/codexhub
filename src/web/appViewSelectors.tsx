@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type React from "react";
 import { Popover } from "antd";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import {
@@ -16,6 +17,7 @@ import {
 } from "./appHelpers.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
+import { contextMenuPosition } from "./helpers/composer.js";
 import type { ActivityStatusView, OpenThreadState } from "./types.js";
 
 type ThreadTabTurnMeta = {
@@ -43,8 +45,21 @@ type ComposerThreadControlsProps = {
 export const useAppViewSelectors = (state: AppState, selectors: AppSelectors) => {
   const openThreadTabs = useMemo(() => state.openThreads.map((thread) => ({
     key: thread.threadId,
-    label: <OpenThreadTabLabel thread={thread} nowMs={state.nowMs} />
-  })), [state.nowMs, state.openThreads]);
+    label: (
+      <OpenThreadTabLabel
+        thread={thread}
+        nowMs={state.nowMs}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          state.setThreadTabContextMenu({
+            ...contextMenuPosition(event.clientX, event.clientY),
+            threadId: thread.threadId
+          });
+        }}
+      />
+    )
+  })), [state.nowMs, state.openThreads, state.setThreadTabContextMenu]);
 
   const renderComposerThreadControls = (mode: ComposerThreadControlsMode) => (
     <ComposerThreadControls
@@ -71,7 +86,15 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors) =>
 
 export type AppViewSelectors = ReturnType<typeof useAppViewSelectors>;
 
-const OpenThreadTabLabel = ({ thread, nowMs }: { thread: OpenThreadState; nowMs: number }) => {
+const OpenThreadTabLabel = ({
+  thread,
+  nowMs,
+  onContextMenu
+}: {
+  thread: OpenThreadState;
+  nowMs: number;
+  onContextMenu: (event: React.MouseEvent<HTMLElement>) => void;
+}) => {
   const title = threadDisplayTitle(thread);
   const workspaceName = compactWorkspaceName(thread.workingDirectory);
   const records = threadDisplayRecords(thread.threadId, thread);
@@ -117,6 +140,7 @@ const OpenThreadTabLabel = ({ thread, nowMs }: { thread: OpenThreadState; nowMs:
       <span
         className="openThreadTabLabel"
         title={`${thread.workingDirectory}\n${title}\n${thread.threadId}`}
+        onContextMenu={onContextMenu}
       >
         <span className="openThreadTabTitle">{title}</span>
         <span className="openThreadTabMeta">

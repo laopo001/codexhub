@@ -4,6 +4,7 @@ import type { ThreadHub } from "../core/threadHub.js";
 import {
   inputSchema,
   threadGoalUpdateSchema,
+  threadRenameSchema,
   threadRunOptionsSchema,
   webEventsMessageSchema,
   type SessionsPayload,
@@ -11,6 +12,7 @@ import {
   type ThreadDeletePayload,
   type ThreadDetail,
   type ThreadGoalMutationPayload,
+  type ThreadRenamePayload,
   type ThreadsPayload,
   type ThreadStopPayload,
   type ThreadTurnPayload,
@@ -256,6 +258,19 @@ export const registerThreadRoutes = <
       return { error: "thread_not_found" };
     }
     return thread satisfies ThreadDetail;
+  });
+
+  app.patch("/api/threads/:threadId/name", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const payload = threadRenameSchema.parse(request.body);
+    try {
+      const thread = await ctx.threads.renameThread(params.threadId, payload.title);
+      return { ok: true, thread } satisfies ThreadRenamePayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
+    }
   });
 
   app.delete("/api/threads/:threadId", async (request, reply) => {

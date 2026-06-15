@@ -22,6 +22,8 @@ import type {
   ThreadDetail,
   ThreadGoalMutationPayload,
   ThreadGoalUpdateInput,
+  ThreadRenameInput,
+  ThreadRenamePayload,
   ThreadStopPayload,
   ThreadTurnPayload
 } from "./apiContract.js";
@@ -172,6 +174,9 @@ export const apiRoutes = {
   ),
   stopThreadTurn: postNoBody<ThreadStopPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/stop`
+  ),
+  renameThread: patch<ThreadRenameInput, ThreadRenamePayload, (threadId: string) => string>(
+    (threadId) => `/api/threads/${encode(threadId)}/name`
   ),
   updateThreadGoal: post<ThreadGoalUpdateInput, ThreadGoalMutationPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/goal`

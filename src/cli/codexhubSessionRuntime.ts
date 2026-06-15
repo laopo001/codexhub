@@ -136,7 +136,7 @@ export type HeadlessCodexhubSessionHandle = {
   threadId: string;
   appServerUrl: string;
   cwd: string;
-  ensureThread: (threadId: string) => Promise<string>;
+  ensureThread: (threadId: string, cwd?: string) => Promise<string>;
   startThread: (cwd: string) => Promise<string>;
   runTurn: (input: ProxyInput, threadId?: string) => Promise<string>;
   stop: () => Promise<void>;
@@ -271,7 +271,7 @@ export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSess
       threadId: ready.threadId,
       appServerUrl: appServer.appServerUrl,
       cwd,
-      ensureThread: (threadId: string) => bridgeRunner.ensureThread(threadId),
+      ensureThread: (threadId: string, cwd?: string) => bridgeRunner.ensureThread(threadId, cwd),
       startThread: (cwd: string) => bridgeRunner.startThread(cwd),
       runTurn: (input: ProxyInput, threadId?: string) => bridgeRunner.runTurn(input, threadId),
       stop: cleanup,
@@ -305,7 +305,7 @@ export async function startAttachedCodexhubSession(options: AttachedCodexhubSess
       threadId: ready.threadId,
       appServerUrl: options.appServerUrl,
       cwd,
-      ensureThread: (threadId: string) => bridgeRunner.ensureThread(threadId),
+      ensureThread: (threadId: string, cwd?: string) => bridgeRunner.ensureThread(threadId, cwd),
       startThread: (nextCwd: string) => bridgeRunner.startThread(nextCwd),
       runTurn: (input: ProxyInput, threadId?: string) => bridgeRunner.runTurn(input, threadId),
       stop: cleanup,
@@ -347,18 +347,18 @@ class ProxyBridgeRunner {
     return this.ready.promise;
   }
 
-  async ensureThread(threadId: string) {
+  async ensureThread(threadId: string, cwd?: string) {
     const trimmed = threadId.trim();
     if (!trimmed) throw new Error("Missing thread id.");
     if (!this.bridge) throw new Error("codexhub bridge is not connected.");
-    const defaultThreadId = await this.bridge.ensureThreadDefault(trimmed);
+    const defaultThreadId = await this.bridge.ensureThreadDefault(trimmed, cwd);
     this.bridgeState = this.bridge.snapshotState();
     return defaultThreadId;
   }
 
   async startThread(cwd: string) {
     if (!this.bridge) throw new Error("codexhub bridge is not connected.");
-    const threadId = await this.bridge.startThread(cwd, this.options.model);
+    const { threadId } = await this.bridge.startThread(cwd, this.options.model);
     this.bridgeState = this.bridge.snapshotState();
     return threadId;
   }
@@ -717,8 +717,8 @@ class CodexAppServerBridge {
     return threadId;
   }
 
-  async ensureThreadDefault(threadId: string) {
-    const defaultThreadId = await this.ensureThreadLoaded(threadId, this.options.cwd, this.options.model, { threadId });
+  async ensureThreadDefault(threadId: string, cwd?: string) {
+    const defaultThreadId = await this.ensureThreadLoaded(threadId, cwd ?? this.options.cwd, this.options.model, { threadId });
     await this.rememberDefaultThread(defaultThreadId);
     return defaultThreadId;
   }
@@ -807,25 +807,24 @@ class CodexAppServerBridge {
     }
 
     if (command.type === "start_thread") {
-      const threadId = await this.startNewThread(
+      return await this.startNewThread(
         command.workingDirectory,
         commandModel(command.options, this.options.model),
         command
       );
-      return { threadId };
     }
 
     if (command.type === "resume_thread") {
       if (!command.threadId) throw new Error("resume_thread command requires threadId");
-      const threadId = await this.ensureThreadLoaded(
+      const resumed = await this.loadThread(
         command.threadId,
         command.workingDirectory,
         commandModel(command.options, this.options.model),
         command,
         { markBridgeStarted: true }
       );
-      await this.rememberDefaultThread(threadId);
-      return { threadId };
+      await this.rememberDefaultThread(resumed.threadId);
+      return resumed;
     }
 
     if (command.type === "stop") {
@@ -838,6 +837,17 @@ class CodexAppServerBridge {
           turnId: command.turnId
         }, command);
       }
+      return;
+    }
+
+    if (command.type === "rename_thread") {
+      if (!command.threadId) throw new Error("rename_thread command requires threadId");
+      const name = typeof command.title === "string" ? command.title.trim() : "";
+      if (!name) throw new Error("rename_thread command requires title");
+      await this.request("thread/name/set", {
+        threadId: command.threadId,
+        name
+      }, command);
       return;
     }
 
@@ -965,7 +975,7 @@ class CodexAppServerBridge {
     this.rememberThreadCwd(threadId, cwd);
     this.markThreadLoaded(threadId);
     await this.rememberDefaultThread(threadId);
-    return threadId;
+    return { threadId, ...(thread ? { thread } : {}) };
   }
 
   private request(method: string, params: unknown, command?: { threadId?: string; commandId?: string }) {
@@ -1133,7 +1143,17 @@ class CodexAppServerBridge {
     command?: { threadId?: string; commandId?: string },
     options: { markBridgeStarted?: boolean } = {}
   ) {
-    if (this.loadedThreads.has(threadId)) return threadId;
+    return (await this.loadThread(threadId, cwd, model, command, options)).threadId;
+  }
+
+  private async loadThread(
+    threadId: string,
+    cwd: string,
+    model?: string | null,
+    command?: { threadId?: string; commandId?: string },
+    options: { markBridgeStarted?: boolean } = {}
+  ) {
+    if (this.loadedThreads.has(threadId)) return { threadId };
     // 执行 app-server 操作前先 resume thread，确保 cwd/model 和当前 runtime 绑定。
     this.rememberThreadCwd(threadId, cwd);
     if (options.markBridgeStarted) this.markBridgeStartedThread(threadId);
@@ -1147,7 +1167,7 @@ class CodexAppServerBridge {
     const loadedThreadId = typeof thread?.id === "string" ? thread.id : threadId;
     this.rememberThreadCwd(loadedThreadId, typeof thread?.cwd === "string" ? thread.cwd : cwd);
     this.markThreadLoaded(loadedThreadId);
-    return loadedThreadId;
+    return { threadId: loadedThreadId, ...(thread ? { thread } : {}) };
   }
 
   private scheduleAppServerTurnsSync(
@@ -1581,6 +1601,7 @@ const appServerThreadSummary = (
     threadId,
     cwd,
     path: typeof thread?.path === "string" ? thread.path : "",
+    title: typeof thread?.name === "string" ? thread.name : "",
     updatedAt: appServerTimestamp(thread?.updatedAt),
     firstUserMessage: typeof thread?.preview === "string" ? thread.preview : "",
     lastAssistantMessage: "",
