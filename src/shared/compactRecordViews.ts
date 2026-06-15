@@ -131,7 +131,7 @@ const compactTurnStarted = (
     id: `compact-turn:${turnId}`,
     label: "turn",
     text: formatTurnStarted(payload),
-    status: "pending"
+    status: "in_progress"
   };
   state.views.push(compactView);
   return { view: compactView, appended: true };

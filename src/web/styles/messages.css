@@ -48,6 +48,10 @@
 
 .activityStatusOverlay.in_progress {
   border-color: rgba(47, 111, 159, 0.36);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.92), rgba(229, 242, 255, 0.96), rgba(255, 255, 255, 0.92));
+  background-size: 220% 100%;
+  animation: codexhubStatusSweep 1.8s ease-in-out infinite;
 }
 
 .activityStatusOverlay.completed {
@@ -93,6 +97,24 @@
   font-weight: 800;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.activityStatusOverlay.in_progress .activityStatusLabel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: #2a648c;
+}
+
+.activityStatusOverlay.in_progress .activityStatusLabel::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: currentColor;
+  animation: codexhubStatusPulse 1s ease-in-out infinite;
 }
 
 .activityStatusViewport {
@@ -594,6 +616,9 @@
 }
 
 .messageStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border-radius: 999px;
   background: #e6ece2;
   color: #405244;
@@ -613,6 +638,18 @@
 .messageStatus.in_progress {
   background: #e0f0ff;
   color: #1f5f93;
+  box-shadow: inset 0 0 0 1px rgba(31, 95, 147, 0.14);
+}
+
+.messageStatus.in_progress::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: codexhubStatusSpin 0.75s linear infinite;
 }
 
 .messageStatus.completed {
@@ -623,6 +660,41 @@
 .messageStatus.failed {
   background: #fbe3df;
   color: #9b2f25;
+}
+
+@keyframes codexhubStatusSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes codexhubStatusPulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.72);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes codexhubStatusSweep {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activityStatusOverlay.in_progress,
+  .activityStatusOverlay.in_progress .activityStatusLabel::before,
+  .messageStatus.in_progress::before {
+    animation: none;
+  }
 }
 
 .message pre {
