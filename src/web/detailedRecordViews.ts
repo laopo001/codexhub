@@ -1,4 +1,4 @@
-import { imageGenerationAttachments, imageGenerationStatus } from "../core/codexRecordView.js";
+import { imageGenerationAttachments, imageGenerationStatus, isActiveRecordStatus, recordViewStatusFromAppStatus, recordViewStatusText } from "../core/codexRecordView.js";
 import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage } from "../shared/recordTypes.js";
 
 export const recordsToDetailedViews = (records: CodexRecord[]): CodexRecordView[] => {
@@ -25,6 +25,7 @@ const detailedRecordToView = (record: CodexRecord): CodexRecordView | null => {
       text: stringify(payload),
       at: record.timestamp,
       status: "failed",
+      statusText: recordViewStatusText(payload.status),
       record
     };
   }
@@ -56,9 +57,7 @@ const detailedRecordToView = (record: CodexRecord): CodexRecordView | null => {
 };
 
 const contextCompactionToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView => {
-  const status = payload.status === "failed"
-    ? "failed"
-    : payload.status === "completed" ? "completed" : "pending";
+  const status = recordViewStatusFromAppStatus(payload.status) ?? "pending";
   return {
     id: record.id,
     role: "event",
@@ -66,6 +65,7 @@ const contextCompactionToView = (record: CodexRecord, payload: Record<string, un
     text: typeof payload.message === "string" ? payload.message : status === "completed" ? "Compaction complete" : "Compacting",
     at: record.timestamp,
     status,
+    statusText: recordViewStatusText(payload.status),
     record
   };
 };
@@ -90,13 +90,17 @@ const userMessageToView = (record: CodexRecord, payload: Record<string, unknown>
 const agentMessageToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
   if (typeof payload.message !== "string") return null;
   const phase = typeof payload.phase === "string" ? payload.phase : "assistant";
+  const status = recordViewStatusFromAppStatus(payload.status);
+  const statusText = recordViewStatusText(payload.status);
   return {
     id: record.id,
     role: "codex",
     label: phase,
     text: payload.message,
     at: record.timestamp,
-    canFork: phase === "final_answer" && payload.status !== "in_progress",
+    status,
+    statusText,
+    canFork: phase === "final_answer" && !isActiveRecordStatus(status),
     record
   };
 };
@@ -111,21 +115,23 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     text: stringify(payload),
     at: record.timestamp,
     status,
+    statusText: recordViewStatusText(payload.status),
     attachments,
     record
   };
 };
 
 const responseStatus = (payload: Record<string, unknown>): CodexRecordView["status"] | undefined => {
-  if (payload.type === "error" || payload.status === "failed") return "failed";
+  if (payload.type === "error") return "failed";
+  const appStatus = recordViewStatusFromAppStatus(payload.status);
+  if (appStatus) return appStatus;
   if (
     payload.type === "function_call_output"
     || payload.type === "web_search_call"
     || payload.type === "file_change"
     || (payload.type === "image_generation_call" && imageGenerationStatus(payload) === "completed")
-    || payload.status === "completed"
   ) return "completed";
-  if (payload.type === "function_call" || payload.type === "image_generation_call" || payload.status === "in_progress" || payload.status === "pending") {
+  if (payload.type === "function_call" || payload.type === "image_generation_call") {
     return payload.type === "image_generation_call" ? imageGenerationStatus(payload) : "pending";
   }
   return undefined;

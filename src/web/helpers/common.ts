@@ -32,10 +32,9 @@ export function browserId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-export const statusLabel = (status: NonNullable<CodexRecordView["status"]>) => {
-  if (status === "pending") return "Waiting";
-  if (status === "failed") return "Failed";
-  return "Done";
+export const statusLabel = (status: NonNullable<CodexRecordView["status"]>, statusText?: string) => {
+  if (statusText?.trim()) return statusText.trim();
+  return status;
 };
 
 export const formatDate = (value: string) => {

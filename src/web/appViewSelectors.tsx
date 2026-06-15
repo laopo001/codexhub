@@ -212,9 +212,10 @@ const threadTabTurnMeta = (
   turnStatus: ActivityStatusView | null,
   nowMs: number
 ): ThreadTabTurnMeta => {
-  const running = Boolean(thread.running || turnStatus?.status === "pending");
+  const activeStatus = turnStatus?.status === "pending" || turnStatus?.status === "in_progress";
+  const running = Boolean(thread.running || activeStatus);
   if (running) {
-    const startedAt = latestTurnStartedAt(records) ?? (turnStatus?.status === "pending" ? turnStatus.at : undefined);
+    const startedAt = latestTurnStartedAt(records) ?? (activeStatus ? turnStatus?.at : undefined);
     const startedMs = startedAt ? Date.parse(startedAt) : NaN;
     return {
       status: "running",

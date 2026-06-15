@@ -223,7 +223,7 @@ export type InspectDetail = {
   rawBlock?: string;
 };
 export type WebToolPresenter = {
-  render?: (args: Record<string, unknown>, status?: CodexRecordView["status"]) => React.ReactNode | null;
+  render?: (args: Record<string, unknown>, status?: CodexRecordView["status"], statusText?: string) => React.ReactNode | null;
   inspect?: (args: Record<string, unknown>, output: string) => InspectDetail | null;
 };
 export type ParsedToolCall = {

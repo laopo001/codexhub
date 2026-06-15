@@ -46,6 +46,10 @@
   border-color: rgba(47, 111, 159, 0.28);
 }
 
+.activityStatusOverlay.in_progress {
+  border-color: rgba(47, 111, 159, 0.36);
+}
+
 .activityStatusOverlay.completed {
   border-color: rgba(47, 125, 90, 0.26);
 }
@@ -604,6 +608,11 @@
 .messageStatus.pending {
   background: #fff0d8;
   color: #8a5a13;
+}
+
+.messageStatus.in_progress {
+  background: #e0f0ff;
+  color: #1f5f93;
 }
 
 .messageStatus.completed {

@@ -117,6 +117,7 @@ const main = async () => {
   await assertAppServerGoalRecords();
   await assertAppServerTurnSnapshotPreservesAgentMessages();
   await assertAppServerAgentMessageDeltaStreams();
+  await assertAppServerReasoningItemStatusViews();
   await assertSessionAccountRateLimits();
   await assertLocalShellExitStatusView();
   await assertRollbackPreservesKeptTurnToolRecords();
@@ -1215,6 +1216,9 @@ const assertAppServerAgentMessageDeltaStreams = async () => {
       throw new Error(`agent message delta did not stream into record: ${JSON.stringify(hub.getThread(threadId)?.records)}`);
     }
     const deltaViews = recordsToViews([deltaRecord]);
+    if (deltaViews[0]?.status !== "in_progress" || deltaViews[0]?.statusText !== "in_progress") {
+      throw new Error(`in-progress final_answer should expose in_progress status: ${JSON.stringify(deltaViews[0])}`);
+    }
     if (deltaViews[0]?.canFork) {
       throw new Error(`in-progress final_answer should not be forkable: ${JSON.stringify(deltaViews[0])}`);
     }
@@ -1249,11 +1253,77 @@ const assertAppServerAgentMessageDeltaStreams = async () => {
       throw new Error(`agent message completion did not replace streamed record: ${JSON.stringify(records)}`);
     }
     const completedViews = recordsToViews([completedRecord]);
+    if (completedViews[0]?.status !== "completed" || completedViews[0]?.statusText !== "completed") {
+      throw new Error(`completed final_answer should expose completed status: ${JSON.stringify(completedViews[0])}`);
+    }
     if (!completedViews[0]?.canFork) {
       throw new Error(`completed final_answer should be forkable: ${JSON.stringify(completedViews[0])}`);
     }
   } finally {
     unsubscribe();
+  }
+};
+
+const assertAppServerReasoningItemStatusViews = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const { recordsToViews } = await import("../src/core/codexRecordView.js");
+  const hub = new ThreadHub();
+  const sessionId = "app-server-reasoning-status-session";
+  const threadId = "app-server-reasoning-status-thread";
+  const turnId = "app-server-reasoning-status-turn";
+  const itemId = "reasoning-status-1";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-app-server-reasoning-status"
+  });
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    heartbeat: false,
+    message: {
+      method: "item/started",
+      params: {
+        threadId,
+        turnId,
+        item: {
+          id: itemId,
+          type: "reasoning",
+          summary: ["thinking"],
+          content: []
+        }
+      }
+    }
+  });
+  let record = reasoningRecord(hub.getThread(threadId)?.records ?? [], itemId);
+  let view = record ? recordsToViews([record])[0] : undefined;
+  if (!record || view?.role !== "thinking" || view.status !== "in_progress" || view.statusText !== "in_progress") {
+    throw new Error(`started reasoning item should expose in_progress status: ${JSON.stringify({ record, view })}`);
+  }
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    heartbeat: false,
+    message: {
+      method: "item/completed",
+      params: {
+        threadId,
+        turnId,
+        item: {
+          id: itemId,
+          type: "reasoning",
+          summary: ["done thinking"],
+          content: []
+        }
+      }
+    }
+  });
+  record = reasoningRecord(hub.getThread(threadId)?.records ?? [], itemId);
+  view = record ? recordsToViews([record])[0] : undefined;
+  if (!record || view?.role !== "thinking" || view.status !== "completed" || view.statusText !== "completed") {
+    throw new Error(`completed reasoning item should expose completed status: ${JSON.stringify({ record, view })}`);
   }
 };
 
@@ -1308,6 +1378,15 @@ const agentMessageRecord = (records: unknown[], itemId: string): CodexRecord | u
   return found as CodexRecord | undefined;
 };
 
+const reasoningRecord = (records: unknown[], itemId: string): CodexRecord | undefined => {
+  const found = records.find((record) => {
+    const item = asRecord(record);
+    const payload = asRecord(item.payload);
+    return typeof item.id === "string" && item.id.endsWith(`:item:reasoning:${itemId}`) && payload.type === "reasoning";
+  });
+  return found as CodexRecord | undefined;
+};
+
 const assertLocalShellExitStatusView = async () => {
   const { recordsToViews } = await import("../src/core/codexRecordView.js");
   const finishedRecord: CodexRecord = {
@@ -1347,10 +1426,13 @@ const assertLocalShellExitStatusView = async () => {
     }
   };
   const views = recordsToViews([finishedRecord, runningRecord]);
-  if (views[0]?.status !== "completed" || views[1]?.status !== "pending") {
+  if (views[0]?.status !== "completed" || views[0]?.statusText !== "failed" || views[1]?.status !== "in_progress" || views[1]?.statusText !== "in_progress") {
     throw new Error(`local shell status views were not normalized: ${JSON.stringify(views)}`);
   }
   const [pendingView] = recordsToViews([pendingCommandRecord]);
+  if (pendingView?.status !== "in_progress" || pendingView.statusText !== "in_progress") {
+    throw new Error(`pending shell command should expose in_progress status: ${JSON.stringify(pendingView)}`);
+  }
   if (pendingView?.text !== "$ <empty>") {
     throw new Error(`pending shell command view was not descriptive: ${JSON.stringify(pendingView)}`);
   }

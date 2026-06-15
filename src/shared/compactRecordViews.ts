@@ -61,7 +61,7 @@ export const compactRecordView = (
 
   state.eventRun = undefined;
   const payload = asRecord(view.record.payload);
-  if (view.status === "pending") {
+  if (view.status === "pending" || view.status === "in_progress") {
     const callId = compactToolCallId(view);
     state.toolIndexes.set(callId, state.views.length);
     const compactView: CompactRecordView = {
@@ -89,6 +89,7 @@ export const compactRecordView = (
     text: view.status === "failed" && view.text ? [callView.text, `Output:\n${view.text.trimEnd()}`].join("\n\n") : callView.text,
     at: view.at ?? callView.at,
     status: view.status,
+    statusText: view.statusText,
     record: callView.record,
     inspectRecord: view.record,
     inspectText: view.text

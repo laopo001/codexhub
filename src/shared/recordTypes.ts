@@ -32,7 +32,8 @@ export type CodexRecordView = {
   at?: string;
   attachments?: Array<{ type: "image"; url: string }>;
   usage?: RecordUsage;
-  status?: "pending" | "completed" | "failed";
+  status?: "pending" | "in_progress" | "completed" | "failed";
+  statusText?: string;
   canFork?: boolean;
   record: CodexRecord;
 };

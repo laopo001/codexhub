@@ -721,6 +721,7 @@ export const activityStatusPriority = (key: string) => {
 
 export const activityStatusOverlayClass = (statuses: ActivityStatusView[]) => {
   if (statuses.some((status) => status.status === "failed")) return "failed";
+  if (statuses.some((status) => status.status === "in_progress")) return "in_progress";
   if (statuses.some((status) => status.status === "pending")) return "pending";
   if (statuses.some((status) => status.status === "completed")) return "completed";
   return "idle";
@@ -758,7 +759,7 @@ export const turnUiStateFromStatus = (
         title: `${turnStatus.label || "Failed"} · ${turnStatus.text}`
       };
     }
-    if (turnStatus.status === "pending") {
+    if (turnStatus.status === "pending" || turnStatus.status === "in_progress") {
       return {
         kind: "running",
         label: turnStatus.label || "Running",

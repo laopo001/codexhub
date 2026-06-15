@@ -370,7 +370,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
             <header className="modalHeader">
               <div>
                 <h2>{formatInspectTitle(inspectMessage)}</h2>
-                <p>{inspectMessage.status ? statusLabel(inspectMessage.status) : "Details"}</p>
+                <p>{inspectMessage.status ? statusLabel(inspectMessage.status, inspectMessage.statusText) : "Details"}</p>
               </div>
               <button type="button" className="iconButton" onClick={() => setInspectMessage(null)} aria-label="Close">x</button>
             </header>

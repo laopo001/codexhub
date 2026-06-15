@@ -1656,7 +1656,8 @@ const codexRecordFromAppServerItem = (
       payload: {
         type: "reasoning",
         summary: stringArray(item.summary),
-        content: stringArray(item.content).join("\n")
+        content: stringArray(item.content).join("\n"),
+        ...(status ? { status } : {})
       }
     };
   }

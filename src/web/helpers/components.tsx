@@ -37,7 +37,7 @@ export const MessageCard = ({
   onRollback?: () => void;
 }) => {
   const isThinkingMessage = message.role === "thinking";
-  const toolBody = renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined) : null;
+  const toolBody = renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined, showStatus ? message.statusText : undefined) : null;
   const hasToolBody = toolBody !== null;
   const memoryCitation = useMemo(() => {
     if (isThinkingMessage) return emptyMemoryCitation("");
@@ -68,7 +68,7 @@ export const MessageCard = ({
       {hasToolBody ? null : (
         <span className="messageHeader">
           <b>{message.label ?? message.role}</b>
-          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status)}</em> : null}
+          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status, message.statusText)}</em> : null}
         </span>
       )}
       {hasToolBody ? (
