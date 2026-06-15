@@ -1,39 +1,4 @@
 @media (max-width: 860px) {
-  .app {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr);
-    min-width: 0;
-  }
-
-  .sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    z-index: 70;
-    width: min(306px, 86vw);
-    max-height: none;
-    box-shadow: 18px 0 42px rgb(0 0 0 / 0.32);
-  }
-
-  .sidebarScrim {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: block;
-    min-height: 0;
-    border: 0;
-    border-radius: 0;
-    background: rgb(0 0 0 / 0.42);
-    padding: 0;
-  }
-
-  .app.sidebarCollapsed .sidebar {
-    display: none;
-  }
-
-  .app:not(.sidebarCollapsed) .workspace {
-    grid-column: 1;
-  }
-
   .workspace {
     min-height: 0;
   }
@@ -129,11 +94,19 @@
   }
 
   .composerSessionMenuHost {
+    position: static;
     display: block;
+  }
+
+  .composerSessionPopover {
+    right: 8px;
+    left: 8px;
+    max-width: none;
   }
 
   .composerSessionPopover .composerSessionControls {
     align-items: center;
+    min-width: 0;
     flex-wrap: nowrap;
     gap: 6px;
   }
@@ -146,6 +119,13 @@
 
   .composerSessionPopover .usagePill {
     padding: 3px 6px;
+  }
+
+  .composerSessionPopover .composerModelButton {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .composerMenu {
@@ -179,5 +159,38 @@
 
   .projectPickerPathForm {
     grid-template-columns: 32px 32px minmax(0, 1fr) auto;
+  }
+}
+
+@media (max-width: 860px), (orientation: portrait) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 70;
+    width: min(306px, 86vw);
+    max-height: none;
+    box-shadow: 18px 0 42px rgb(0 0 0 / 0.32);
+  }
+
+  .sidebarScrim {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: block;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(0 0 0 / 0.42);
+    padding: 0;
+  }
+
+  .app:not(.sidebarCollapsed) .workspace {
+    grid-column: 1;
   }
 }
