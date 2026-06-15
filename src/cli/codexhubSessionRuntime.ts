@@ -18,13 +18,13 @@ import type { ProxyInput } from "../core/proxyInput.js";
 import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import type {
+  SessionCommand,
+  SessionEventInput,
   SessionRegistration,
   ThreadCandidateSummary,
   ThreadGoalUpdate,
-  ThreadRunOptions,
-  SessionCommand,
-  SessionEventInput
-} from "../core/threadHub.js";
+  ThreadRunOptions
+} from "../shared/threadTypes.js";
 
 export { startCodexAppServerProcess };
 export type { CodexAppServerProcessHandle };

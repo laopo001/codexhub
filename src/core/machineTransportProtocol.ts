@@ -1,6 +1,6 @@
 import { isAppServerTunnelFrame, type AppServerTunnelFrame } from "./appServerTunnel.js";
 import type { MachineCommand } from "./machineHub.js";
-import type { SessionCommand } from "./threadHub.js";
+import type { SessionCommand } from "../shared/threadTypes.js";
 
 export type MachineTransportMessage =
   | { type: "registered"; machineId: string; machine?: unknown }

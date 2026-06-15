@@ -1,5 +1,5 @@
-import type { SessionCommand, SessionEventInput, SessionRegistration } from "./threadHub.js";
 import type { MachineSessionTransportMessage } from "./machineTransportProtocol.js";
+import type { SessionCommand, SessionEventInput, SessionRegistration } from "../shared/threadTypes.js";
 
 export type SessionTransportCallbacks = {
   registration: () => SessionRegistration;

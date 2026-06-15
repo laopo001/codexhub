@@ -19,25 +19,19 @@ import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, nextCronRun } from "../core/taskCron.js";
-import { ThreadHub, type SessionCommand, type SessionRegistration, type SessionEventInput } from "../core/threadHub.js";
+import { ThreadHub } from "../core/threadHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle, type CodexhubMachineStatus } from "../cli/codexhubMachine.js";
 import { startAttachedCodexhubSession, type HeadlessCodexhubSessionHandle, type HeadlessSessionTransport, type HeadlessSessionTransportCallbacks } from "../cli/codexhubConnect.js";
 import {
-  inputSchema,
   machineTransportMessageSchema,
   parentRegistrationConnectSchema,
-  projectSourceSchema,
-  projectUpdateSchema,
   sshConnectSchema,
   sshHostAliasSchema,
-  taskCreateSchema,
-  taskUpdateSchema,
-  threadGoalUpdateSchema,
-  threadRunOptionsSchema,
-  webEventsMessageSchema,
-  type ParentRegistrationStatus,
-  type WebEventsMessage
+  type ParentRegistrationStatus
 } from "../shared/apiContract.js";
+import type { SessionCommand, SessionEventInput, SessionRegistration } from "../shared/threadTypes.js";
+import { registerProjectTaskRoutes } from "./projectTaskRoutes.js";
+import { registerThreadRoutes } from "./threadRoutes.js";
 import {
   startTelegramPlugin,
   telegramBuiltinPlugin,
@@ -772,199 +766,19 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   }));
 
-  app.get("/api/threads", async () => ({
-    ...threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
-    threads: threads.listThreads()
-  }));
-
-  app.get("/api/sessions", async (request) => {
-    const query = z.object({ includeOffline: z.string().optional() }).parse(request.query);
-    return {
-      ...threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
-      sessions: threads.listSessions({ includeOffline: query.includeOffline === "true" })
-    };
-  });
-
-  app.get("/api/events/ws", { websocket: true }, (socket) => {
-    const threadUnsubscribers = new Map<string, () => void>();
-    let unsubscribeSessions: (() => void) | null = null;
-    let projectSubscriber: ((event: ReturnType<typeof projectSnapshotEvent>) => void) | null = null;
-    let taskSubscriber: ((event: ReturnType<typeof taskSnapshotEvent>) => void) | null = null;
-    let connectionSubscriber: ((event: ReturnType<typeof connectionSnapshotEvent>) => void) | null = null;
-
-    const send = (message: unknown) => {
-      if (socket.readyState !== 1) return;
-      socket.send(JSON.stringify(message));
-    };
-
-    const sendEvent = <T extends { kind: string }>(event: T) => {
-      send({ type: event.kind, ...event });
-    };
-
-    const unsubscribeControl = () => {
-      unsubscribeSessions?.();
-      unsubscribeSessions = null;
-      if (projectSubscriber) projectSubscribers.delete(projectSubscriber);
-      if (taskSubscriber) taskSubscribers.delete(taskSubscriber);
-      if (connectionSubscriber) connectionSubscribers.delete(connectionSubscriber);
-      projectSubscriber = null;
-      taskSubscriber = null;
-      connectionSubscriber = null;
-    };
-
-    const subscribeControl = (input: Extract<WebEventsMessage, { type: "hello" }>) => {
-      unsubscribeControl();
-      threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
-
-      const sessionsAfter = input.sessionsAfter ?? 0;
-      const projectsAfter = input.projectsAfter ?? 0;
-      const tasksAfter = input.tasksAfter ?? 0;
-      const connectionsAfter = input.connectionsAfter ?? 0;
-
-      unsubscribeSessions = threads.subscribeSessions(sessionsAfter, (event) => {
-        sendEvent(event);
-      });
-      if (projectsAfter <= 0 || projectSeq > projectsAfter) sendEvent(projectSnapshotEvent());
-      if (tasksAfter <= 0 || taskSeq > tasksAfter) sendEvent(taskSnapshotEvent());
-      if (connectionsAfter <= 0 || connectionSeq > connectionsAfter) sendEvent(connectionSnapshotEvent());
-
-      projectSubscriber = (event) => {
-        if (event.seq > projectsAfter) sendEvent(event);
-      };
-      taskSubscriber = (event) => {
-        if (event.seq > tasksAfter) sendEvent(event);
-      };
-      connectionSubscriber = (event) => {
-        if (event.seq > connectionsAfter) sendEvent(event);
-      };
-      projectSubscribers.add(projectSubscriber);
-      taskSubscribers.add(taskSubscriber);
-      connectionSubscribers.add(connectionSubscriber);
-      send({ type: "ready" });
-    };
-
-    const subscribeThread = (threadId: string, after = 0) => {
-      threadUnsubscribers.get(threadId)?.();
-      threadUnsubscribers.delete(threadId);
-      try {
-        const unsubscribeStream = threads.subscribe(threadId, after, (event) => {
-          sendEvent(event);
-        });
-        retainThreadRecordSubscription(threadId);
-        const unsubscribe = () => {
-          unsubscribeStream();
-          releaseThreadRecordSubscription(threadId);
-        };
-        threadUnsubscribers.set(threadId, unsubscribe);
-        send({ type: "thread_subscribed", threadId });
-      } catch (error) {
-        send({
-          type: "error",
-          scope: "thread",
-          threadId,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
-    };
-
-    const unsubscribeThread = (threadId: string) => {
-      threadUnsubscribers.get(threadId)?.();
-      threadUnsubscribers.delete(threadId);
-      send({ type: "thread_unsubscribed", threadId });
-    };
-
-    const closeSubscriptions = () => {
-      unsubscribeControl();
-      for (const unsubscribe of threadUnsubscribers.values()) unsubscribe();
-      threadUnsubscribers.clear();
-    };
-
-    const handleMessage = (data: unknown) => {
-      let parsed: WebEventsMessage;
-      try {
-        parsed = webEventsMessageSchema.parse(JSON.parse(String(data)));
-      } catch (error) {
-        send({ type: "error", message: `invalid web events message: ${error instanceof Error ? error.message : String(error)}` });
-        return;
-      }
-
-      if (parsed.type === "hello") {
-        subscribeControl(parsed);
-        return;
-      }
-      if (parsed.type === "subscribe_thread") {
-        subscribeThread(parsed.threadId, parsed.after ?? 0);
-        return;
-      }
-      if (parsed.type === "unsubscribe_thread") {
-        unsubscribeThread(parsed.threadId);
-      }
-    };
-
-    socket.on("message", (data: unknown) => handleMessage(data));
-    socket.on("close", closeSubscriptions);
-  });
-
-  app.get("/api/sessions/:sessionId/thread-candidates", async (request, reply) => {
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
-    const query = z.object({
-      limit: z.coerce.number().int().min(1).max(200).optional(),
-      cwd: z.string().min(1).optional()
-    }).parse(request.query);
-    try {
-      return await threads.listSessionThreadCandidates(params.sessionId, query.limit ?? 50, query.cwd);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session not found:") ? 404 : 409);
-      return { error: message };
-    }
-  });
-
-  app.post("/api/sessions/:sessionId/threads", async (request, reply) => {
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
-    const payload = z.discriminatedUnion("action", [
-      z.object({ action: z.literal("new"), cwd: z.string().min(1).optional() }),
-      z.object({ action: z.literal("resume"), threadId: z.string().min(1), cwd: z.string().min(1).optional() })
-    ]).parse(request.body);
-    try {
-      const thread = payload.action === "new"
-        ? await threads.startSessionThread(params.sessionId, payload.cwd)
-        : await threads.resumeSessionThread(params.sessionId, payload.threadId, payload.cwd);
-      publishProjects();
-      return thread;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session not found:") ? 404 : 409);
-      return { error: message };
-    }
-  });
-
-  app.post("/api/sessions/:sessionId/turn", async (request, reply) => {
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({
-      threadId: z.string().min(1),
-      input: inputSchema,
-      source: z.enum(["web", "telegram", "task"]).optional(),
-      options: threadRunOptionsSchema.optional(),
-      cwd: z.string().min(1).optional()
-    }).parse(request.body);
-
-    try {
-      const result = threads.runSessionThreadTurn(
-        params.sessionId,
-        payload.threadId,
-        payload.input,
-        payload.source ?? "web",
-        payload.options,
-        payload.cwd
-      );
-      result.promise.catch(() => undefined);
-      return { ok: true, thread: result.thread, command: result.command };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session not found:") || message.startsWith("Thread not found:") ? 404 : 409);
-      return { error: message };
-    }
+  registerThreadRoutes(app, {
+    connectionSnapshotEvent,
+    connectionSubscribers,
+    forceReleaseThreadRecordSubscription,
+    markStaleSessions: () => threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
+    projectSnapshotEvent,
+    projectSubscribers,
+    publishProjects,
+    releaseThreadRecordSubscription,
+    retainThreadRecordSubscription,
+    taskSnapshotEvent,
+    taskSubscribers,
+    threads
   });
 
   app.get("/api/machines", async () => ({
@@ -1152,172 +966,25 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   });
 
-  app.get("/api/projects", async () => projectSnapshot());
-
-  app.delete("/api/projects/:projectId", async (request, reply) => {
-    const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
-    if (projectIsFixed(params.projectId)) {
-      reply.code(409);
-      return { error: "Fixed workspace projects are controlled by their provider." };
-    }
-    if (state.deleteTransientProject(params.projectId)) {
-      publishProjects();
-      return { ok: true, deleted: true, transient: true, stoppedSessions: [], ...projectSnapshot() };
-    }
-    const target = state.projectDeleteTarget(params.projectId);
-    const deleted = state.deleteProject(params.projectId);
-    const existingSessions = target ? sessionsForProject(target) : [];
-    if (!deleted && existingSessions.length === 0) {
-      reply.code(404);
-      return { error: `Project not found: ${params.projectId}` };
-    }
-    if (deleted) publishProjects();
-    const stoppedSessions = target ? await stopProjectSessions(target) : [];
-    publishProjects();
-    return { ok: true, deleted, stoppedSessions, ...projectSnapshot() };
-  });
-
-  app.patch("/api/projects/:projectId", async (request, reply) => {
-    const params = z.object({ projectId: z.string().min(1) }).parse(request.params);
-    const payload = projectUpdateSchema.parse(request.body);
-    if (projectIsFixed(params.projectId)) {
-      reply.code(409);
-      return { error: "Fixed workspace projects cannot be saved, pinned, or renamed." };
-    }
-    const project = state.isTransientProject(params.projectId) && !state.hasStoredProject(params.projectId) && payload.pinned
-      ? state.persistTransientProject(params.projectId, { pinned: true })
-      : state.updateProject(params.projectId, payload);
-    if (!project) {
-      reply.code(404);
-      return { error: `Project not found: ${params.projectId}` };
-    }
-    publishProjects();
-    return { ok: true, project, ...projectSnapshot() };
-  });
-
-  app.post("/api/projects/open", async (request, reply) => {
-    const payload = z.object({
-      machineId: z.string().min(1).optional(),
-      path: z.string().min(1),
-      reuse: z.boolean().optional(),
-      persist: z.boolean().optional(),
-      source: projectSourceSchema.optional()
-    }).parse(request.body);
-
-    try {
-      const machine = resolveTargetMachine(machines.listMachines(), payload.machineId);
-      const fixedCatalog = machine.capabilities?.projectCatalog === "fixed";
-      const providerSeed = surface === "vscode" && machine.type === "local" && isVscodeWorkspaceSource(payload.source);
-      if (fixedCatalog && !providerSeed && !fixedProjectPathExists(machine.machineId, payload.path)) {
-        reply.code(409);
-        return { error: "This machine exposes a fixed workspace project list." };
-      }
-      const started = machines.startSession(machine.machineId, {
-        cwd: payload.path,
-        reuse: payload.reuse ?? true
-      });
-      const result = await started.promise;
-      const sessionId = result.sessionId;
-      await waitForSession(sessionId);
-      threads.attachSessionThread(sessionId, result.threadId, result.cwd);
-      const project = payload.persist === false
-        ? state.upsertTransientProject({
-          machineId: machine.machineId,
-          path: result.cwd,
-          sessionId,
-          threadId: result.threadId,
-          source: payload.source
-        })
-        : state.upsertProject({
-          machineId: machine.machineId,
-          path: result.cwd,
-          sessionId,
-          threadId: result.threadId
-        });
-      publishProjects();
-      return { ok: true, machine, project, result, ...projectSnapshot() };
-    } catch (error) {
-      reply.code(409);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.get("/api/tasks", async () => ({
-    tasks: localTaskViews()
-  }));
-
-  app.post("/api/tasks", async (request, reply) => {
-    const payload = taskCreateSchema.parse(request.body);
-    try {
-      const task = state.upsertTask({
-        taskId: randomUUID(),
-        name: payload.name,
-        enabled: payload.enabled ?? true,
-        schedule: payload.schedule,
-        machineId: payload.machineId,
-        projectId: payload.projectId,
-        projectPath: payload.projectPath,
-        threadId: payload.threadId,
-        input: payload.input
-      });
-      publishTasks();
-      return { ok: true, task: localTaskView(task) };
-    } catch (error) {
-      reply.code(409);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.patch("/api/tasks/:taskId", async (request, reply) => {
-    const params = z.object({ taskId: z.string().min(1) }).parse(request.params);
-    const payload = taskUpdateSchema.parse(request.body);
-    const existing = state.getTask(params.taskId);
-    if (!existing) {
-      reply.code(404);
-      return { error: "task_not_found" };
-    }
-    try {
-      const task = state.upsertTask({
-        ...existing,
-        ...payload,
-        taskId: existing.taskId,
-        name: payload.name ?? existing.name,
-        enabled: payload.enabled ?? existing.enabled,
-        schedule: payload.schedule ?? existing.schedule,
-        machineId: payload.machineId ?? existing.machineId,
-        projectPath: payload.projectPath ?? existing.projectPath,
-        input: payload.input ?? existing.input,
-        projectId: payload.projectId ?? existing.projectId,
-        threadId: payload.threadId ?? existing.threadId,
-        createdAt: existing.createdAt
-      });
-      publishTasks();
-      return { ok: true, task: localTaskView(task) };
-    } catch (error) {
-      reply.code(409);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.delete("/api/tasks/:taskId", async (request, reply) => {
-    const params = z.object({ taskId: z.string().min(1) }).parse(request.params);
-    if (!state.deleteTask(params.taskId)) {
-      reply.code(404);
-      return { error: "task_not_found" };
-    }
-    publishTasks();
-    return { ok: true, deleted: true };
-  });
-
-  app.post("/api/tasks/:taskId/run", async (request, reply) => {
-    const params = z.object({ taskId: z.string().min(1) }).parse(request.params);
-    try {
-      return await runLocalTask(params.taskId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Task not found:") ? 404 : 409);
-      return { error: message };
-    }
+  registerProjectTaskRoutes(app, {
+    features,
+    fixedProjectPathExists,
+    isVscodeWorkspaceSource,
+    localTaskView,
+    localTaskViews,
+    machines,
+    projectIsFixed,
+    projectSnapshot,
+    publishProjects,
+    publishTasks,
+    resolveTargetMachine,
+    runLocalTask,
+    sessionsForProject,
+    state,
+    stopProjectSessions,
+    surface,
+    threads,
+    waitForSession
   });
 
   const stopTunneledAppServerSession = async (sessionId: string, transportId?: string) => {
@@ -1676,104 +1343,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     });
   });
 
-  app.get("/api/threads/:threadId", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const thread = threads.getThread(params.threadId);
-    if (!thread) {
-      reply.code(404);
-      return { error: "thread_not_found" };
-    }
-    return thread;
-  });
-
-  app.delete("/api/threads/:threadId", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    try {
-      forceReleaseThreadRecordSubscription(params.threadId);
-      return await threads.deleteThread(params.threadId);
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.post("/api/threads/:threadId/fork", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({ messageId: z.string().min(1) }).parse(request.body);
-    try {
-      return await threads.forkThread(params.threadId, payload.messageId);
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.post("/api/threads/:threadId/rollback", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({ messageId: z.string().min(1) }).parse(request.body);
-    try {
-      return await threads.rollbackThreadAfterRecord(params.threadId, payload.messageId);
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.post("/api/threads/:threadId/turn", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({
-      input: inputSchema,
-      source: z.enum(["web", "telegram", "task"]).optional(),
-      options: threadRunOptionsSchema.optional()
-    }).parse(request.body);
-
-    try {
-      const command = threads.runLocalCommand(params.threadId, payload.input, payload.source ?? "web");
-      if (command.handled) return { ok: true, command: command.command };
-      threads.runTurn(params.threadId, payload.input, payload.source ?? "web", payload.options).catch(() => undefined);
-      return { ok: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
-      return { error: message };
-    }
-  });
-
-  app.post("/api/threads/:threadId/goal", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const payload = threadGoalUpdateSchema.parse(request.body);
-    try {
-      await threads.setGoal(params.threadId, payload);
-      return { ok: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
-      return { error: message };
-    }
-  });
-
-  app.delete("/api/threads/:threadId/goal", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    try {
-      await threads.clearGoal(params.threadId);
-      return { ok: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
-      return { error: message };
-    }
-  });
-
-  app.post("/api/threads/:threadId/stop", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    try {
-      return threads.stopTurn(params.threadId);
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
   if (staticDirectory) registerStaticRoutes(app, staticDirectory);
 
   await app.listen({ host: config.host, port: config.port });
@@ -2060,10 +1629,15 @@ const selfRegistrationError = () => Object.assign(
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
-const resolveTargetMachine = (
-  allMachines: Array<{ machineId: string; type?: "local" | "ssh" | "registered"; online: boolean; capabilities?: { projectLauncher?: boolean; projectCatalog?: "editable" | "fixed" } }>,
+const resolveTargetMachine = <T extends {
+  machineId: string;
+  type?: "local" | "ssh" | "registered";
+  online: boolean;
+  capabilities?: { projectLauncher?: boolean; projectCatalog?: "editable" | "fixed" };
+}>(
+  allMachines: T[],
   requestedMachineId: string | undefined
-) => {
+): T => {
   const onlineMachines = allMachines.filter((machine) => machine.online && machine.capabilities?.projectLauncher !== false);
   if (requestedMachineId) {
     const machine = onlineMachines.find((item) => item.machineId === requestedMachineId);

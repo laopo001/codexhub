@@ -5,7 +5,7 @@ import path from "node:path";
 import YAML from "yaml";
 import type { MachineCapabilities, MachineSummary, MachineType } from "./machineHub.js";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
-import type { SessionSummary, ThreadSummary } from "./threadHub.js";
+import type { SessionSummary, ThreadSummary } from "../shared/threadTypes.js";
 
 export type StoredMachine = {
   machineId: string;

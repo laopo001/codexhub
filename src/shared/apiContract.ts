@@ -7,7 +7,14 @@ import type { SshMachineConnectInput, SshMachineConnection } from "../core/sshMa
 import { isCronExpression } from "../core/taskCron.js";
 import type { ModelReasoningEffort, Usage } from "../core/threadOptions.js";
 import type { ThreadRateLimitUsage, ThreadRateLimits, ThreadUsage } from "../core/threadUsage.js";
-import type { SessionSummary, ThreadDetail, ThreadGoalStatus, ThreadRunOptions, ThreadSummary } from "../core/threadHub.js";
+import type {
+  SessionSummary,
+  ThreadCandidateSummary,
+  ThreadDetail,
+  ThreadGoalStatus,
+  ThreadRunOptions,
+  ThreadSummary
+} from "./threadTypes.js";
 
 export type {
   MachineDirectoryListing,
@@ -20,6 +27,7 @@ export type {
   StoredTask,
   StoredTaskRun,
   TaskRunStatus,
+  ThreadCandidateSummary,
   ThreadDetail,
   ThreadGoalStatus,
   ThreadRateLimitUsage,
@@ -400,14 +408,3 @@ export type TaskCreateInput = z.infer<typeof taskCreateSchema>;
 export type TaskUpdateInput = z.infer<typeof taskUpdateSchema>;
 export type ProjectUpdateInput = z.infer<typeof projectUpdateSchema>;
 export type ThreadGoalUpdateInput = z.infer<typeof threadGoalUpdateSchema>;
-
-export type ThreadCandidateSummary = {
-  threadId: string;
-  cwd: string;
-  path: string;
-  updatedAt: string;
-  firstUserMessage: string;
-  lastAssistantMessage: string;
-  artifactCount: number;
-  messageCount: number;
-};
