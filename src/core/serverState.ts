@@ -20,6 +20,7 @@ import type {
 import type { SessionSummary, ThreadSummary } from "../shared/threadTypes.js";
 
 type RuntimeProject = StoredProject & {
+  lastSessionId?: string;
   transient?: boolean;
   source?: ProjectSource;
 };
@@ -46,7 +47,7 @@ export class CodexhubServerState {
       : path.join(options.dataDir ? path.resolve(options.dataDir) : defaultDataDir(), "server-state.yaml");
     const result = await readStateFile(filePath);
     const state = new CodexhubServerState(filePath, result.data);
-    const legacyStateFields = result.legacyThreads || result.legacyProjectNames;
+    const legacyStateFields = result.legacyThreads || result.legacyProjectNames || result.legacyProjectSessionIds;
     state.lastSavedText = legacyStateFields ? result.rawText ?? "" : YAML.stringify(result.data);
     if (legacyStateFields) await state.save();
     return state;
@@ -106,7 +107,6 @@ export class CodexhubServerState {
     const project = this.upsertProject({
       machineId: transient.machineId,
       path: transient.path,
-      sessionId: transient.lastSessionId,
       threadId: transient.lastThreadId,
       touchOpenedAt: false
     });
@@ -365,7 +365,6 @@ export class CodexhubServerState {
     machineId: string;
     path: string;
     now?: string;
-    sessionId?: string;
     threadId?: string;
     touchOpenedAt?: boolean;
     restoreDeleted?: boolean;
@@ -382,19 +381,16 @@ export class CodexhubServerState {
     if (existing) {
       const next = {
         lastOpenedAt: input.touchOpenedAt === false ? existing.lastOpenedAt : maxIso(existing.lastOpenedAt, now),
-        lastSessionId: input.sessionId ?? existing.lastSessionId,
         lastThreadId: input.threadId ?? existing.lastThreadId
       };
       if (
         existing.lastOpenedAt === next.lastOpenedAt
-        && existing.lastSessionId === next.lastSessionId
         && existing.lastThreadId === next.lastThreadId
       ) {
         if (deletedProjectRestored) this.touch();
         return existing;
       }
       existing.lastOpenedAt = next.lastOpenedAt;
-      existing.lastSessionId = next.lastSessionId;
       existing.lastThreadId = next.lastThreadId;
       this.touch();
       return existing;
@@ -405,7 +401,6 @@ export class CodexhubServerState {
       path: normalizedPath,
       createdAt: now,
       lastOpenedAt: now,
-      lastSessionId: input.sessionId,
       lastThreadId: input.threadId
     };
     this.data.projects.push(project);
@@ -463,7 +458,6 @@ export class CodexhubServerState {
         this.upsertProject({
           machineId,
           path: session.workingDirectory,
-          sessionId: session.sessionId,
           now: session.lastSeenAt,
           touchOpenedAt: false,
           restoreDeleted: false
@@ -561,7 +555,7 @@ export class CodexhubServerState {
       return {
         ...project,
         lastOpenedAt: maxIso(project.lastOpenedAt, overlay.lastOpenedAt),
-        lastSessionId: overlay.lastSessionId ?? project.lastSessionId,
+        lastSessionId: overlay.lastSessionId,
         lastThreadId: overlay.lastThreadId ?? project.lastThreadId,
         source: overlay.source
       };
@@ -640,6 +634,7 @@ type StateFileReadResult = {
   data: ServerStateData;
   legacyThreads: boolean;
   legacyProjectNames: boolean;
+  legacyProjectSessionIds: boolean;
   rawText?: string;
 };
 
@@ -647,7 +642,7 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
   try {
     const rawText = await readFile(filePath, "utf8");
     const parsed = YAML.parse(rawText) as (Partial<ServerStateData> & { threads?: unknown }) | null;
-    if (parsed?.version !== 1) return { data: emptyState(), legacyThreads: false, legacyProjectNames: false, rawText };
+    if (parsed?.version !== 1) return { data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, rawText };
     return {
       data: {
         version: 1,
@@ -661,10 +656,12 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
       legacyThreads: Array.isArray(parsed.threads),
       legacyProjectNames: Array.isArray(parsed.projects)
         && parsed.projects.some((project) => Boolean(project && typeof project === "object" && !Array.isArray(project) && "name" in project)),
+      legacyProjectSessionIds: Array.isArray(parsed.projects)
+        && parsed.projects.some((project) => Boolean(project && typeof project === "object" && !Array.isArray(project) && "lastSessionId" in project)),
       rawText
     };
   } catch {
-    return { data: emptyState(), legacyThreads: false, legacyProjectNames: false };
+    return { data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false };
   }
 };
 
@@ -728,7 +725,6 @@ const normalizeStoredProject = (value: unknown): unknown => {
     pinned: item.pinned,
     createdAt: item.createdAt,
     lastOpenedAt: item.lastOpenedAt,
-    lastSessionId: item.lastSessionId,
     lastThreadId: item.lastThreadId
   };
 };

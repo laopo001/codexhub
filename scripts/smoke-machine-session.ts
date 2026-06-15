@@ -111,6 +111,7 @@ const main = async () => {
   await assertServerStateSnapshotPure();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
+  await assertProjectSessionIdsAreNotPersisted();
   await assertProjectNamesArePathBasenames();
   await assertProjectSessionProjection();
   await assertAppServerTurnLifecycleRecords();
@@ -830,6 +831,42 @@ const assertTransientProjectsStayInMemory = async () => {
   }
 };
 
+const assertProjectSessionIdsAreNotPersisted = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-project-session-id."));
+  await writeFile(path.join(dataDir, "server-state.yaml"), [
+    "version: 1",
+    "updatedAt: 2026-01-01T00:00:00.000Z",
+    "machines: []",
+    "projects:",
+    "  - projectId: project-session-id-smoke",
+    "    machineId: machine-session-id-smoke",
+    "    path: /tmp/codexhub-session-id-smoke",
+    "    createdAt: 2026-01-01T00:00:00.000Z",
+    "    lastOpenedAt: 2026-01-01T00:00:00.000Z",
+    "    lastSessionId: stale-session-id",
+    "    lastThreadId: codex-thread-id",
+    "deletedProjects: []",
+    "tasks: []",
+    "sshHosts: []",
+    ""
+  ].join("\n"), "utf8");
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const state = await CodexhubServerState.load({ dataDir });
+  const migrated = await readFile(state.path, "utf8");
+  if (migrated.includes("lastSessionId")) throw new Error(`project lastSessionId was not migrated out:\n${migrated}`);
+  if (!migrated.includes("lastThreadId: codex-thread-id")) throw new Error(`project lastThreadId was not preserved:\n${migrated}`);
+
+  state.upsertProject({
+    machineId: "machine-session-id-smoke",
+    path: "/tmp/codexhub-session-id-smoke",
+    threadId: "codex-thread-id-2",
+    now: "2026-01-01T00:01:00.000Z"
+  });
+  await state.flush();
+  const saved = await readFile(state.path, "utf8");
+  if (saved.includes("lastSessionId")) throw new Error(`project upsert persisted lastSessionId:\n${saved}`);
+};
+
 const assertProjectNamesArePathBasenames = async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-project-name."));
   const projectPath = "/tmp/codexhub-custom-name-smoke";
@@ -893,6 +930,28 @@ const assertProjectSessionProjection = async () => {
     hostname: "session-smoke",
     threads: []
   };
+  const thread = {
+    threadId: "thread-projection-smoke",
+    workingDirectory: projectPath,
+    session: {
+      sessionId: session.sessionId,
+      name: session.name,
+      online: true,
+      runnable: true,
+      lastSeenAt: session.lastSeenAt
+    },
+    status: "idle" as const,
+    running: false,
+    title: "session projection thread",
+    updatedAt: "2026-01-01T00:02:30.000Z",
+    messageCount: 0,
+    threadUsage: {
+      context: null,
+      primaryRateLimit: null,
+      secondaryRateLimit: null,
+      observedAt: null
+    }
+  };
 
   state.captureSessions({ sessions: [session], threads: [] });
   const missingProjectSnapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [] });
@@ -903,12 +962,11 @@ const assertProjectSessionProjection = async () => {
   const project = state.upsertProject({
     machineId,
     path: projectPath,
-    sessionId: session.sessionId,
     now: "2026-01-01T00:03:00.000Z"
   });
   if (!project) throw new Error("session projection project upsert failed");
-  state.captureSessions({ sessions: [session], threads: [] });
-  const onlineSnapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [] });
+  state.captureSessions({ sessions: [session], threads: [thread] });
+  const onlineSnapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [thread] });
   const onlineProject = onlineSnapshot.projects.find((item) => item.projectId === project.projectId);
   if (!onlineProject?.machineOnline) throw new Error("project session projection did not expose machineOnline");
   if (onlineProject.session?.sessionId !== session.sessionId || onlineProject.session.online !== true) {
@@ -925,7 +983,14 @@ const assertProjectSessionProjection = async () => {
     offlineSinceAt: "2026-01-01T00:04:00.000Z",
     offlineReason: "unregistered" as const
   };
-  const offlineSnapshot = state.snapshot({ machines: [machine], sessions: [offlineSession], threads: [] });
+  const offlineThread = {
+    ...thread,
+    session: {
+      ...thread.session,
+      online: false
+    }
+  };
+  const offlineSnapshot = state.snapshot({ machines: [machine], sessions: [offlineSession], threads: [offlineThread] });
   const offlineProject = offlineSnapshot.projects.find((item) => item.projectId === project.projectId);
   if (!offlineProject) throw new Error("project disappeared when session went offline");
   if (offlineProject.session !== null) {

@@ -144,7 +144,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     ctx.setProjectOpenError("");
     ctx.setActiveWorkspacePath(project.path);
     if (project.session?.online) {
-      ctx.setActiveSessionId(project.session.sessionId);
+      await selectProjectSession(project.session);
       return;
     }
     await openProject(project.path, project.machineId);
@@ -394,7 +394,11 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
           ? project.session
           : freshSessions.find((item) => item.sessionId === sessionId)
         : undefined;
-      if (session) ctx.setActiveSessionId(session.sessionId);
+      if (session && payload.result?.threadId) {
+        await activateSessionThread(session.sessionId, payload.result.threadId);
+      } else if (session) {
+        ctx.setActiveSessionId(session.sessionId);
+      }
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

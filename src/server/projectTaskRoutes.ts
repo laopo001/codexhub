@@ -139,7 +139,6 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
         : ctx.state.upsertProject({
           machineId: machine.machineId,
           path: result.cwd,
-          sessionId,
           threadId: result.threadId
         });
       if (!project) {

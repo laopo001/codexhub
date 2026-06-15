@@ -23,7 +23,6 @@ export type StoredProject = {
   pinned?: boolean;
   createdAt: string;
   lastOpenedAt: string;
-  lastSessionId?: string;
   lastThreadId?: string;
 };
 

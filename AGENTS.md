@@ -66,7 +66,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 1. server state 默认在 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml`，数据结构版本为 `version: 1`。
 2. state 可以保存 machines、projects、deletedProjects、tasks、task 最近 run 摘要、SSH hosts。task run 摘要只保留最近 20 条，用于 UI 状态，不是 workspace 运行日志。
-3. state 不保存 thread summary 数量、history 数量或完整 transcript 内容。project 的 `lastSessionId`、`lastThreadId` 只是最近打开元数据，不是 transcript 权威来源。
+3. state 不保存 thread summary 数量、history 数量、完整 transcript 内容或 project `lastSessionId`。project 的 `lastThreadId` 只是最近打开的 Codex thread 指针，不是 transcript 权威来源；当前 session 只能来自运行时投影。
 4. project ID 由 `machineId + path` 推导；project 名称来自 path basename，不持久化自定义 name，也不提供 rename UI/API。
 5. 删除 project 会写入 deletedProjects tombstone，不能停止该 machine 的 runtime session。后续 session capture 不应自动复活已删除 project，除非用户重新 open。
 6. state loader 会迁移旧 `threads` 和旧 project `name` 字段；不要重新引入这些旧字段。
