@@ -107,6 +107,7 @@ const main = async () => {
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "1";
   process.env.TELEGRAM_BOT_TOKEN = "";
 
+  await assertEmbeddedServerDataDirOptionOverridesEnvironment();
   await assertTaskCronSemantics();
   await assertServerStateSnapshotPure();
   await assertServerStateDoesNotPersistThreadHistory();
@@ -230,6 +231,34 @@ const main = async () => {
       throw new Error(`legacy session registration was not rejected as expected: ${legacyError}`);
     }
     console.log("legacy registration rejected");
+  } finally {
+    await server.stop();
+  }
+};
+
+const assertEmbeddedServerDataDirOptionOverridesEnvironment = async () => {
+  const explicitDataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-embedded-state."));
+  const port = await findFreePort();
+  const { startEmbeddedServer } = await import("../src/server/embedded.js");
+  const server = await startEmbeddedServer({
+    host: "127.0.0.1",
+    portMode: "preferred",
+    preferredPort: port,
+    explicitPort: true,
+    dataDir: explicitDataDir,
+    features: {
+      localMachine: false,
+      ssh: false,
+      tasks: false,
+      integrations: false
+    }
+  });
+  try {
+    const health = await apiJson<{ statePath?: string }>(`http://127.0.0.1:${port}`, "/api/health");
+    const expectedStatePath = path.join(explicitDataDir, "server-state.yaml");
+    if (health.statePath !== expectedStatePath) {
+      throw new Error(`embedded server used unexpected state path: ${health.statePath}, expected ${expectedStatePath}`);
+    }
   } finally {
     await server.stop();
   }

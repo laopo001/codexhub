@@ -17,7 +17,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 5. `codexhub machine --type registered` 注册一台可启动 project runtime 的 machine；内嵌 local machine 也走同一套 machine command 协议。
 6. `codexhub server --register-to <parent>` 会启动当前 server，并额外把它作为一台 `registered` machine 接入父 server；这不是 server-to-server state bridge。
 7. `codexhub ssh ...` 是 server-side SSH 管理入口；SSH remote client 默认由本机 server bootstrap 下发，不要求远端预装 codexhub。
-8. VSCode 和 Electron 都调用 `src/server/embedded.ts` 复用同一套 server/Web。VSCode 默认每个窗口启动自己的随机端口嵌入 server，窗口自动 workspace projects 只作为 transient project group 进入内存，不写入 server state；Electron 默认随机端口，只有显式 `CODEX_HUB_PORT` 时才固定端口。
+8. VSCode 和 Electron 都调用 `src/server/embedded.ts` 复用同一套 server/Web。VSCode 默认每个窗口启动自己的随机端口嵌入 server，并使用 VSCode extension `globalStorageUri` 下独立的 `server-state.yaml`；窗口自动 workspace projects 只作为 transient project group 进入内存，不写入 server state。Electron 默认随机端口，只有显式 `CODEX_HUB_PORT` 时才固定端口。
 9. machine/headless 启动官方 `codex app-server` 时必须走 `resolveCodexCommand()`：优先 `CODEX_HUB_CODEX_CLI`，兼容 `CODEX_CLI_PATH`，再查 `PATH` 和常见 npm/pnpm 全局 bin；Windows `.cmd` / `.bat` 需要经 `cmd.exe /d /s /c call` 启动。`CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 控制 `/readyz` 等待时间，错误应带最近 app-server stderr tail。
 
 ## Machine / Session / Thread
@@ -135,7 +135,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 1. Electron main process 只包装同一个 server 和 Web UI。窗口使用隔离/sandbox WebPreferences，外链用系统浏览器打开。
 2. Electron 默认随机端口；显式设置 `CODEX_HUB_PORT` 后端口被占用应直接失败，不再 fallback。
-3. VSCode extension 注册 sidebar webview，每个 VSCode 窗口默认启动自己的随机端口嵌入 server；只有显式 `CODEX_HUB_PORT` 时才固定端口，端口占用应直接失败。Webview iframe 和 Open in Browser 必须通过 `vscode.env.asExternalUri` 暴露 server URL，不能直接写 raw loopback URL。
+3. VSCode extension 注册 sidebar webview，每个 VSCode 窗口默认启动自己的随机端口嵌入 server，并把 `CODEX_HUB_DATA_DIR` 语义收敛到 VSCode extension `globalStorageUri` 对应的数据目录；只有显式 `CODEX_HUB_PORT` 时才固定端口，端口占用应直接失败。Webview iframe 和 Open in Browser 必须通过 `vscode.env.asExternalUri` 暴露 server URL，不能直接写 raw loopback URL。
 4. VSCode extension 自动 `POST /api/projects/open` 当前窗口的 file workspace folders，body 使用 `persist:false` 和 `source.kind="vscode"`；打开前先从 `/api/machines` 选在线 `local` + `projectLauncher !== false` 的 machineId，避免依赖默认 machine 推断。这些项目以 VSCode workspace group 显示在内存中，不写入 `server-state.yaml`，用户显式保存后才变成普通 project。
 5. VSCode workspace project 打开要容忍 embedded server listen 后 local launcher 尚未完成注册的 race：对 `HTTP 409` + launcher offline 类错误按 `500ms * 30` 重试；没有 file workspace folder 时只显示状态页。
 6. VSCode extension 启用和普通 Web 相同的 SSH/tasks/integrations/Registered 能力；这些配置仍属于对应窗口 server/state，窗口自动 workspace project 不应污染全局持久 project list。

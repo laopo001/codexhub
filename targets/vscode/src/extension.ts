@@ -133,6 +133,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       portMode: explicitPort ? "preferred" : "random",
       preferredPort: explicitPort,
       explicitPort: Boolean(explicitPort),
+      dataDir: this.context.globalStorageUri.fsPath,
       staticDirectory,
       surface: "vscode",
       buildId,

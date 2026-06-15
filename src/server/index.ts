@@ -153,6 +153,7 @@ const resolveServerFeatures = (overrides: Partial<ServerFeatureOptions> = {}): S
 export type ServerStartOptions = {
   host?: string;
   port?: number;
+  dataDir?: string;
   staticDirectory?: string;
   surface?: "default" | "vscode";
   authToken?: string | null;
@@ -181,7 +182,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const features = resolveServerFeatures(options.features);
   const serverAuthToken = normalizedAuthToken(options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN);
   const buildId = options.buildId ?? process.env.CODEX_HUB_BUILD_ID ?? null;
-  const state = await CodexhubServerState.load();
+  const state = await CodexhubServerState.load({ dataDir: options.dataDir });
   const serverInstanceId = randomUUID();
   let threads: ThreadHub;
   const captureSessionState = () => {

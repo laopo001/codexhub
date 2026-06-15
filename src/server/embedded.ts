@@ -7,6 +7,7 @@ export type EmbeddedServerOptions = {
   portMode?: "preferred" | "random";
   preferredPort?: number;
   explicitPort?: boolean;
+  dataDir?: string;
   staticDirectory?: string;
   surface?: "default" | "vscode";
   buildId?: string | null;
@@ -24,6 +25,7 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions = {}) =
     return await startServer({
       host,
       port: preferredPort,
+      dataDir: options.dataDir,
       staticDirectory: options.staticDirectory,
       surface: options.surface,
       buildId: options.buildId,
@@ -37,6 +39,7 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions = {}) =
     return await startServer({
       host,
       port: fallbackPort,
+      dataDir: options.dataDir,
       staticDirectory: options.staticDirectory,
       surface: options.surface,
       buildId: options.buildId,
