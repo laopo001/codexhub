@@ -108,6 +108,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setComposerMode,
     setConnectionMode,
     setExpandedStatusKeys,
+    setExpandedToolBatchKeys,
     setGoalDialog,
     setHiddenStatusTurns,
     setInspectMessage,
@@ -249,7 +250,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                     itemContent={(_, message) => {
                       const markdownEnabled = canRenderMarkdown(message);
                       const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
-                      const inspectable = messageDisplayMode === "compact" && message.role === "tool";
+                      const toolBatchKey = message.toolBatch?.key;
+                      const inspectable = messageDisplayMode === "compact" && message.role === "tool" && !toolBatchKey;
                       return (
                         <MessageCard
                           message={message}
@@ -261,6 +263,16 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
                           onContextMenu={(event) => openMessageContextMenu(event, activeThread.threadId, message, inspectable)}
                           onInspect={inspectable && message.role === "tool" ? () => setInspectMessage(message) : undefined}
+                          onToggleToolBatch={toolBatchKey ? () => {
+                            setExpandedToolBatchKeys((current) => {
+                              const keys = new Set(current[activeThread.threadId] ?? []);
+                              keys.add(toolBatchKey);
+                              return {
+                                ...current,
+                                [activeThread.threadId]: [...keys]
+                              };
+                            });
+                          } : undefined}
                           onFork={canForkAtMessage(activeThread.threadId, message) ? () => void forkMessage(activeThread.threadId, message.record.id) : undefined}
                           onRollback={canForkAtMessage(activeThread.threadId, message) ? () => void rollbackMessage(activeThread.threadId, message.record.id) : undefined}
                         />

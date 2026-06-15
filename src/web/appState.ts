@@ -99,6 +99,7 @@ export const useAppState = () => {
   const [goalDialog, setGoalDialog] = useState<GoalDialogState | null>(null);
   const [hiddenStatusTurns, setHiddenStatusTurns] = useState<Record<string, string>>({});
   const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
+  const [expandedToolBatchKeys, setExpandedToolBatchKeys] = useState<Record<string, string[]>>({});
   const realtimeSocket = useRef<WebSocket | null>(null);
   const sessionsLastSeq = useRef(0);
   const projectsLastSeq = useRef(0);
@@ -151,6 +152,7 @@ export const useAppState = () => {
     controlReconnectTimer,
     deletingProjectId,
     expandedStatusKeys,
+    expandedToolBatchKeys,
     goalDialog,
     hiddenStatusTurns,
     imageFileInputRef,
@@ -202,6 +204,7 @@ export const useAppState = () => {
     setConnectionMode,
     setDeletingProjectId,
     setExpandedStatusKeys,
+    setExpandedToolBatchKeys,
     setGoalDialog,
     setHiddenStatusTurns,
     setInitialized,

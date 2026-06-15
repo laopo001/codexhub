@@ -207,6 +207,7 @@ export type AppViewModel = AppSidebarViewModel & {
   setComposerMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setComposerMode: (mode: ComposerMode) => void;
   setExpandedStatusKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+  setExpandedToolBatchKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
   setHiddenStatusTurns: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;

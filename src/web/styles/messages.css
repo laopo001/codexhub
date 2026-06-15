@@ -244,6 +244,70 @@
   background: #f7f9fd;
 }
 
+.message.toolBatchCollapsed {
+  padding: 0;
+  border-color: #8a97ad;
+  background: #f4f7fb;
+}
+
+.toolBatchToggle {
+  display: grid;
+  grid-template-columns: auto auto auto auto minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: #26364a;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.toolBatchToggle:hover {
+  background: #edf3fa;
+}
+
+.toolBatchToggle:focus-visible {
+  outline: 2px solid rgba(47, 111, 159, 0.35);
+  outline-offset: 2px;
+}
+
+.toolBatchChevron {
+  color: #536178;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.toolBatchTitle {
+  color: #203147;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.toolBatchCount {
+  border-radius: 999px;
+  background: #e3eaf3;
+  color: #43536b;
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.toolBatchSummary {
+  min-width: 0;
+  overflow: hidden;
+  color: #536178;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .toolPreview {
   display: grid;
   gap: 3px;

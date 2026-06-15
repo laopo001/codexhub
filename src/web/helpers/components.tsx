@@ -21,6 +21,7 @@ export const MessageCard = ({
   onRenderModeChange,
   onContextMenu,
   onInspect,
+  onToggleToolBatch,
   onFork,
   onRollback
 }: {
@@ -33,11 +34,13 @@ export const MessageCard = ({
   onRenderModeChange?: (mode: MessageRenderMode) => void;
   onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
   onInspect?: () => void;
+  onToggleToolBatch?: () => void;
   onFork?: () => void;
   onRollback?: () => void;
 }) => {
   const isThinkingMessage = message.role === "thinking";
-  const toolBody = renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined, showStatus ? message.statusText : undefined) : null;
+  const isToolBatch = Boolean(message.toolBatch);
+  const toolBody = !isToolBatch && renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined, showStatus ? message.statusText : undefined) : null;
   const hasToolBody = toolBody !== null;
   const memoryCitation = useMemo(() => {
     if (isThinkingMessage) return emptyMemoryCitation("");
@@ -56,6 +59,25 @@ export const MessageCard = ({
     if (!canClickInspect || window.getSelection()?.toString()) return;
     onInspect?.();
   };
+  if (message.toolBatch) {
+    return (
+      <article className="message tool toolBatchCollapsed">
+        <button
+          type="button"
+          className="toolBatchToggle"
+          onClick={onToggleToolBatch}
+          aria-expanded="false"
+          aria-label={`Expand ${message.toolBatch.count} tool call${message.toolBatch.count === 1 ? "" : "s"}`}
+        >
+          <span className="toolBatchChevron" aria-hidden="true">{">"}</span>
+          <span className="toolBatchTitle">tools</span>
+          <span className="toolBatchCount">{message.toolBatch.count} call{message.toolBatch.count === 1 ? "" : "s"}</span>
+          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status, message.statusText)}</em> : null}
+          <span className="toolBatchSummary">{message.toolBatch.labels.join(", ")}</span>
+        </button>
+      </article>
+    );
+  }
   return (
     <article
       className={`message ${message.role} ${hasToolBody ? "richTool" : ""} ${canClickInspect ? "inspectableTool" : ""} ${onContextMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}

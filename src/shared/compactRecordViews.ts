@@ -6,6 +6,11 @@ export type CompactRecordView = CodexRecordView & {
   inspectRecord?: CodexRecord;
   inspectCallText?: string;
   inspectText?: string;
+  toolBatch?: {
+    key: string;
+    count: number;
+    labels: string[];
+  };
 };
 
 /** compact record view 转换过程中的聚合状态。 */
@@ -43,6 +48,46 @@ export const compactToolViews = (views: CodexRecordView[]): CompactRecordView[] 
   const state = createCompactRecordViewState();
   for (const view of views) compactRecordView(state, view);
   return state.views;
+};
+
+export const collapseHistoricalToolBatches = (
+  views: CompactRecordView[],
+  expandedBatchKeys: Set<string> = new Set()
+): CompactRecordView[] => {
+  const segments: Array<{ kind: "view"; view: CompactRecordView } | { kind: "toolBatch"; key: string; views: CompactRecordView[] }> = [];
+  let currentBatch: CompactRecordView[] = [];
+
+  const flushBatch = () => {
+    if (!currentBatch.length) return;
+    segments.push({ kind: "toolBatch", key: compactToolBatchKey(currentBatch), views: currentBatch });
+    currentBatch = [];
+  };
+
+  for (const view of views) {
+    if (isBatchableToolView(view)) {
+      currentBatch.push(view);
+      continue;
+    }
+    flushBatch();
+    segments.push({ kind: "view", view });
+  }
+  flushBatch();
+
+  const latestBatchKey = [...segments].reverse().find((segment) => segment.kind === "toolBatch")?.key;
+  const collapsedViews: CompactRecordView[] = [];
+  for (const segment of segments) {
+    if (segment.kind === "view") {
+      collapsedViews.push(segment.view);
+      continue;
+    }
+    const isLatestBatch = segment.key === latestBatchKey;
+    if (isLatestBatch || expandedBatchKeys.has(segment.key)) {
+      collapsedViews.push(...segment.views);
+      continue;
+    }
+    collapsedViews.push(compactToolBatchSummary(segment.key, segment.views));
+  }
+  return collapsedViews;
 };
 
 export const compactRecordView = (
@@ -232,6 +277,58 @@ const compactToolCallId = (view: CodexRecordView) => {
   const payload = asRecord(view.record.payload);
   return typeof payload?.call_id === "string" ? payload.call_id : view.id;
 };
+
+const compactToolBatchKey = (views: CompactRecordView[]) => {
+  const first = views[0];
+  const turnId = compactTurnId(first) ?? "unscoped";
+  return `${turnId}:${first.record.id}`;
+};
+
+const compactToolBatchSummary = (key: string, views: CompactRecordView[]): CompactRecordView => {
+  const first = views[0];
+  const last = views.at(-1) ?? first;
+  const labels = compactToolBatchLabels(views);
+  const status = compactToolBatchStatus(views);
+  const count = views.length;
+  return {
+    id: `compact-tool-batch:${key}`,
+    role: "tool",
+    label: "tools",
+    text: [
+      `${count} tool call${count === 1 ? "" : "s"}`,
+      labels.length ? labels.join(", ") : null
+    ].filter(Boolean).join("\n"),
+    at: last.at ?? first.at,
+    status,
+    statusText: status,
+    record: first.record,
+    toolBatch: {
+      key,
+      count,
+      labels
+    }
+  };
+};
+
+const compactToolBatchLabels = (views: CompactRecordView[]) => {
+  const labels: string[] = [];
+  for (const view of views) {
+    const label = view.label.replace(/^tool(?: call)?:\s*/i, "").trim() || view.label;
+    if (!labels.includes(label)) labels.push(label);
+    if (labels.length >= 4) break;
+  }
+  const hidden = views.length - labels.length;
+  return hidden > 0 ? [...labels, `+${hidden} more`] : labels;
+};
+
+const compactToolBatchStatus = (views: CompactRecordView[]): CodexRecordView["status"] => {
+  if (views.some((view) => view.status === "failed")) return "failed";
+  if (views.some((view) => view.status === "in_progress")) return "in_progress";
+  if (views.some((view) => view.status === "pending")) return "pending";
+  return "completed";
+};
+
+const isBatchableToolView = (view: CompactRecordView) => view.role === "tool" && !view.toolBatch;
 
 const compactTurnId = (view: CodexRecordView) => {
   const parts = view.record.id.split(":");

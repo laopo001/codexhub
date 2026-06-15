@@ -120,6 +120,7 @@ const main = async () => {
   await assertAppServerReasoningItemStatusViews();
   await assertSessionAccountRateLimits();
   await assertLocalShellExitStatusView();
+  await assertHistoricalToolBatchCollapse();
   await assertRollbackPreservesKeptTurnToolRecords();
   await assertForkPreservesKeptTurnToolRecords();
   await assertDeletedProjectSuppressesSessionCapture();
@@ -1435,6 +1436,54 @@ const assertLocalShellExitStatusView = async () => {
   }
   if (pendingView?.text !== "$ <empty>") {
     throw new Error(`pending shell command view was not descriptive: ${JSON.stringify(pendingView)}`);
+  }
+};
+
+const assertHistoricalToolBatchCollapse = async () => {
+  const { collapseHistoricalToolBatches } = await import("../src/shared/compactRecordViews.js");
+  const turnId = "tool-batch-turn";
+  const toolView = (id: string, label: string): Awaited<ReturnType<typeof collapseHistoricalToolBatches>>[number] => ({
+    id,
+    role: "tool",
+    label,
+    text: label,
+    status: "completed",
+    statusText: "completed",
+    record: {
+      id: `app:thread:${turnId}:item:function_call:${id}`,
+      type: "response_item",
+      payload: { type: "function_call", call_id: id, status: "completed" }
+    }
+  });
+  const commentary = (id: string, text: string): Awaited<ReturnType<typeof collapseHistoricalToolBatches>>[number] => ({
+    id,
+    role: "codex",
+    label: "commentary",
+    text,
+    record: {
+      id: `app:thread:${turnId}:item:agent_message:${id}`,
+      type: "event_msg",
+      payload: { type: "agent_message", phase: "commentary", message: text }
+    }
+  });
+  const views = [
+    commentary("c1", "first tool round"),
+    toolView("tool-a", "tool: shell"),
+    toolView("tool-b", "tool: apply_patch"),
+    commentary("c2", "second tool round"),
+    toolView("tool-c", "tool: shell")
+  ];
+  const collapsed = collapseHistoricalToolBatches(views);
+  const collapsedBatch = collapsed.find((view) => view.toolBatch);
+  if (!collapsedBatch?.toolBatch || collapsedBatch.toolBatch.count !== 2 || collapsed.some((view) => view.id === "tool-a" || view.id === "tool-b")) {
+    throw new Error(`historical tool batch was not collapsed: ${JSON.stringify(collapsed)}`);
+  }
+  if (!collapsed.some((view) => view.id === "tool-c")) {
+    throw new Error(`latest tool batch should remain expanded: ${JSON.stringify(collapsed)}`);
+  }
+  const expanded = collapseHistoricalToolBatches(views, new Set([collapsedBatch.toolBatch.key]));
+  if (expanded.some((view) => view.toolBatch) || !expanded.some((view) => view.id === "tool-a") || !expanded.some((view) => view.id === "tool-b")) {
+    throw new Error(`expanded historical tool batch did not restore original tools: ${JSON.stringify(expanded)}`);
   }
 };
 

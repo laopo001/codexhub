@@ -1,6 +1,6 @@
 import { useMemo, type Dispatch, type SetStateAction } from "react";
 import { recordsToViews } from "../core/codexRecordView.js";
-import { compactToolViews } from "../shared/compactRecordViews.js";
+import { collapseHistoricalToolBatches, compactToolViews } from "../shared/compactRecordViews.js";
 import type { CodexRecordView } from "../shared/recordTypes.js";
 import { recordsToDetailedViews } from "./detailedRecordViews.js";
 import { isVscodeSurface, vscodeWorkspacePaths } from "./appConfig.js";
@@ -241,9 +241,15 @@ export const useAppSelectors = (state: AppState) => {
     () => new Set(statusScopeKey ? state.expandedStatusKeys[statusScopeKey] ?? [] : []),
     [state.expandedStatusKeys, statusScopeKey]
   );
+  const activeExpandedToolBatchKeys = useMemo(
+    () => new Set(activeThread?.threadId ? state.expandedToolBatchKeys[activeThread.threadId] ?? [] : []),
+    [activeThread?.threadId, state.expandedToolBatchKeys]
+  );
   const activeViews = useMemo<WebRecordView[]>(
-    () => state.messageDisplayMode === "compact" ? compactToolViews(baseViews) : detailedViews,
-    [baseViews, detailedViews, state.messageDisplayMode]
+    () => state.messageDisplayMode === "compact"
+      ? collapseHistoricalToolBatches(compactToolViews(baseViews), activeExpandedToolBatchKeys)
+      : detailedViews,
+    [activeExpandedToolBatchKeys, baseViews, detailedViews, state.messageDisplayMode]
   );
   const activeUserMessageHistory = useMemo(
     () => userMessageHistoryFromRecords(displayRecords),
