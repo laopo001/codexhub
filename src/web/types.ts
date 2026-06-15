@@ -1,36 +1,33 @@
 import type React from "react";
 import type { CodexRecord } from "../core/codexRecord.js";
 import type { CodexRecordView } from "../core/codexRecordView.js";
+import type {
+  MachineDirectoryListing as ApiMachineDirectoryListing,
+  MachineSummary as ApiMachineSummary,
+  ParentRegistrationStatus as ApiParentRegistrationStatus,
+  PluginSummary as ApiPluginSummary,
+  ProjectSummary as ApiProjectSummary,
+  ProjectsPayload as ApiProjectsPayload,
+  ReasoningEffort as ApiReasoningEffort,
+  SessionSummary as ApiSessionSummary,
+  SessionView as ApiSessionView,
+  SshConnectionSummary,
+  SshHostSummary,
+  StoredTask,
+  StoredTaskRun,
+  TaskRunStatus,
+  ThreadCandidateSummary,
+  ThreadDetail as ApiThreadDetail,
+  ThreadRateLimits,
+  ThreadRateLimitUsage,
+  ThreadSummary as ApiThreadSummary,
+  ThreadUsage as ApiThreadUsage,
+  Usage as ApiUsage
+} from "../shared/apiContract.js";
 import type { CompactRecordView } from "../shared/compactRecordViews.js";
 
-export type ThreadSummary = {
-  threadId: string;
-  workingDirectory: string;
-  session: ThreadSessionSummary;
-  model?: string;
-  modelReasoningEffort?: ReasoningEffort;
-  status: ThreadStatus;
-  running: boolean;
-  title: string;
-  updatedAt: string;
-  messageCount: number;
-  lastUsage?: Usage;
-  threadUsage: ThreadUsage;
-};
-
-export type ThreadSessionSummary =
-  {
-    sessionId?: string;
-    name?: string;
-    online: boolean;
-    runnable: boolean;
-    lastSeenAt?: string;
-  };
-
-export type ThreadDetail = ThreadSummary & {
-  records: CodexRecord[];
-  lastSeq: number;
-};
+export type ThreadSummary = ApiThreadSummary;
+export type ThreadDetail = ApiThreadDetail;
 
 export type ThreadGoalView = {
   objective: string;
@@ -46,90 +43,14 @@ export type GoalDialogState = {
   error: string;
 };
 
-export type SessionSummary = {
-  sessionId: string;
-  machineId?: string;
-  name?: string;
-  workingDirectory: string;
-  appServerUrl?: string;
-  online: boolean;
-  status?: "online" | "offline";
-  createdAt?: string;
-  lastSeenAt: string;
-  offlineSinceAt?: string;
-  offlineReason?: "heartbeat_timeout" | "transport_disconnected" | "unregistered";
-  pid?: number;
-  hostname?: string;
-  accountRateLimits?: SessionRateLimits | null;
-  threads?: ThreadSummary[];
-};
-
-export type SessionView = SessionSummary & {
-  sessionId: string;
-};
-
-export type MachineSummary = {
-  machineId: string;
-  type?: "local" | "ssh" | "registered";
-  name?: string;
-  hostname: string;
-  online: boolean;
-  status: "online" | "offline";
-  lastSeenAt: string;
-  offlineSinceAt?: string;
-  offlineReason?: "transport_disconnected" | "unregistered";
-  cwd?: string;
-  capabilities?: {
-    projectLauncher?: boolean;
-    projectCatalog?: "editable" | "fixed";
-  };
-};
-
-export type MachineDirectoryEntry = {
-  name: string;
-  path: string;
-};
-
-export type MachineDirectoryListing = {
-  cwd: string;
-  parent?: string;
-  home: string;
-  entries: MachineDirectoryEntry[];
-};
-
-export type SshHost = {
-  alias: string;
-  hostName?: string;
-  user?: string;
-  port?: number;
-  identityFiles?: string[];
-  proxyJump?: string;
-  configured?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-export type SshConnection = {
-  connectionId: string;
-  host: string;
-  name?: string;
-  status: "starting" | "running" | "exited";
-  remotePort: number;
-  startedAt: string;
-  updatedAt: string;
-  exitCode?: number | null;
-  signal?: string | null;
-  lastOutput?: string;
-};
-
-export type ParentRegistrationStatus = {
-  status: "idle" | "starting" | "connecting" | "online" | "offline" | "stopped";
-  url?: string;
-  machineId?: string;
-  name?: string;
-  message?: string;
-  updatedAt?: string;
-};
+export type SessionSummary = ApiSessionSummary;
+export type SessionView = ApiSessionView;
+export type MachineSummary = ApiMachineSummary;
+export type MachineDirectoryListing = ApiMachineDirectoryListing;
+export type MachineDirectoryEntry = MachineDirectoryListing["entries"][number];
+export type SshHost = SshHostSummary;
+export type SshConnection = SshConnectionSummary;
+export type ParentRegistrationStatus = ApiParentRegistrationStatus;
 
 export type ParentRegistrationDraft = {
   url: string;
@@ -137,99 +58,14 @@ export type ParentRegistrationDraft = {
   name: string;
 };
 
-export type PluginSummary = {
-  pluginId: string;
-  name: string;
-  version?: string;
-  enabled: boolean;
-  origin?: "builtin" | "local";
-  root?: string;
-  contributions?: {
-    web?: {
-      styles?: Array<{
-        path: string;
-        url: string;
-      }>;
-    };
-    integrations?: Array<{
-      type: string;
-      runner: "builtin" | "external";
-      enabled: boolean;
-      label?: string;
-      requiredEnv?: string[];
-      configured?: boolean;
-      started?: boolean;
-    }>;
-  };
-};
+export type PluginSummary = ApiPluginSummary;
 
-export type CodexThreadCandidate = {
-  threadId: string;
-  cwd: string;
-  path: string;
-  updatedAt: string;
-  firstUserMessage: string;
-  lastAssistantMessage: string;
-  artifactCount: number;
-  messageCount: number;
-};
-
-export type ProjectSummary = {
-  projectId: string;
-  machineId: string;
-  path: string;
-  name: string;
-  transient?: boolean;
-  source?: {
-    kind: "vscode";
-    groupId: string;
-    label?: string;
-  };
-  pinned?: boolean;
-  createdAt: string;
-  lastOpenedAt: string;
-  lastSessionId?: string;
-  lastThreadId?: string;
-  machine?: MachineSummary;
-  machineOnline: boolean;
-  session: SessionView | null;
-  online: boolean;
-  running: boolean;
-  sessions: SessionView[];
-  threads: ThreadSummary[];
-};
-
-export type LocalTaskStatus = "queued" | "completed" | "failed" | "skipped";
-
-export type LocalTaskRun = {
-  runId: string;
-  status: LocalTaskStatus;
-  startedAt: string;
-  finishedAt?: string;
-  durationMs?: number;
-  sessionId?: string;
-  threadId?: string;
-  error?: string;
-};
-
-export type LocalTask = {
-  taskId: string;
-  name: string;
-  enabled: boolean;
-  schedule: string;
-  machineId: string;
-  projectPath: string;
-  projectId?: string;
-  threadId?: string;
-  input: string;
-  createdAt: string;
-  updatedAt: string;
-  lastRunAt?: string;
-  lastStatus?: LocalTaskStatus;
-  lastError?: string;
-  lastDurationMs?: number;
+export type CodexThreadCandidate = ThreadCandidateSummary;
+export type ProjectSummary = ApiProjectSummary;
+export type LocalTaskStatus = TaskRunStatus;
+export type LocalTaskRun = StoredTaskRun;
+export type LocalTask = StoredTask & {
   nextRunAt?: string | null;
-  runs?: LocalTaskRun[];
 };
 
 export type TaskDraft = {
@@ -273,13 +109,7 @@ export type ThreadPickerState = {
   acting: "new" | string | null;
 };
 
-export type ProjectsPayload = {
-  seq?: number;
-  kind?: "projects";
-  statePath?: string;
-  machines?: MachineSummary[];
-  projects?: ProjectSummary[];
-};
+export type ProjectsPayload = ApiProjectsPayload;
 
 export type OpenThreadState = ThreadDetail & {
   composerMode: ComposerMode;
@@ -365,15 +195,9 @@ export type RealtimeMessage =
   | { type: "thread_subscribed" | "thread_unsubscribed"; threadId: string }
   | { type: "error"; message: string; scope?: string; threadId?: string };
 
-export type Usage = {
-  input_tokens: number;
-  cached_input_tokens: number;
-  output_tokens: number;
-  reasoning_output_tokens: number;
-  total_tokens?: number;
-};
+export type Usage = ApiUsage;
 
-export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = ApiReasoningEffort;
 export type ThreadStatus = "running" | "idle";
 export type ModelSelection = string;
 export type ReasoningSelection = "auto" | ReasoningEffort;
@@ -440,24 +264,6 @@ export type SystemStatus = {
   contextWindowTokens: number | null;
 };
 
-export type RateLimitWindow = {
-  usedPercent: number;
-  windowMinutes: number;
-  resetsAt: number;
-};
-
-export type SessionRateLimits = {
-  primaryRateLimit: RateLimitWindow | null;
-  secondaryRateLimit: RateLimitWindow | null;
-  observedAt: string | null;
-};
-
-export type ThreadUsage = {
-  context: {
-    usedTokens: number;
-    windowTokens: number;
-  } | null;
-  primaryRateLimit: RateLimitWindow | null;
-  secondaryRateLimit: RateLimitWindow | null;
-  observedAt: string | null;
-};
+export type RateLimitWindow = ThreadRateLimitUsage;
+export type SessionRateLimits = ThreadRateLimits;
+export type ThreadUsage = ApiThreadUsage;

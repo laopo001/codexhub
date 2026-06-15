@@ -81,7 +81,7 @@ type ProjectActionsContext = {
   setThreadPicker: React.Dispatch<React.SetStateAction<ThreadPickerState | null>>;
 };
 
-type ProjectActionsDependencies = {
+export type ProjectActionsDependencies = {
   clearActiveThreadIfLatest: (threadId: string) => void;
   focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
   openThread: (threadId: string) => Promise<void>;
@@ -111,8 +111,7 @@ export type ProjectActions = {
   switchSessionThread: (threadId: string) => Promise<void>;
 };
 
-export const createProjectActions = (ctx: ProjectActionsContext, actions: Record<string, any>): ProjectActions => {
-  const deps = actions as ProjectActionsDependencies;
+export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectActionsDependencies): ProjectActions => {
   const fixedCatalogMessage = "This machine exposes a fixed workspace project list.";
   const editableProjectPickerMachine = (machineId: string) =>
     ctx.machines.find((machine) =>

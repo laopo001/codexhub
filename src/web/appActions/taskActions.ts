@@ -46,7 +46,7 @@ type TaskActionsContext = {
   setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
 
-type TaskActionsDependencies = {
+export type TaskActionsDependencies = {
   clearActiveThreadIfLatest: (threadId: string) => void;
   openThread: (threadId: string) => Promise<void>;
 };
@@ -65,7 +65,7 @@ export type TaskActions = {
   runTaskNow: (task: LocalTask) => Promise<void>;
 };
 
-export const createTaskActions = (ctx: TaskActionsContext, actions: Record<string, any>): TaskActions => {
+export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDependencies): TaskActions => {
   const refreshSessions = async () => {
     const freshSessions = await apiJson<SessionsPayload>("/api/sessions")
       .then((data) => normalizeSessions(data.sessions));
@@ -231,7 +231,6 @@ export const createTaskActions = (ctx: TaskActionsContext, actions: Record<strin
       }
       const threadId = payload.threadId;
       if (threadId) {
-        const deps = actions as TaskActionsDependencies;
         await deps.openThread(threadId).catch(() => deps.clearActiveThreadIfLatest(threadId));
       }
     } catch (error) {

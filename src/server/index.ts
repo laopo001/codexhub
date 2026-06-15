@@ -18,10 +18,26 @@ import type { ProjectSource, StoredTask } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
-import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, isCronExpression, nextCronRun } from "../core/taskCron.js";
+import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, nextCronRun } from "../core/taskCron.js";
 import { ThreadHub, type SessionCommand, type SessionRegistration, type SessionEventInput } from "../core/threadHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle, type CodexhubMachineStatus } from "../cli/codexhubMachine.js";
 import { startAttachedCodexhubSession, type HeadlessCodexhubSessionHandle, type HeadlessSessionTransport, type HeadlessSessionTransportCallbacks } from "../cli/codexhubConnect.js";
+import {
+  inputSchema,
+  machineTransportMessageSchema,
+  parentRegistrationConnectSchema,
+  projectSourceSchema,
+  projectUpdateSchema,
+  sshConnectSchema,
+  sshHostAliasSchema,
+  taskCreateSchema,
+  taskUpdateSchema,
+  threadGoalUpdateSchema,
+  threadRunOptionsSchema,
+  webEventsMessageSchema,
+  type ParentRegistrationStatus,
+  type WebEventsMessage
+} from "../shared/apiContract.js";
 import {
   startTelegramPlugin,
   telegramBuiltinPlugin,
@@ -29,299 +45,6 @@ import {
   telegramPluginState,
   type TelegramBotHandle
 } from "../../plugins/telegram/index.js";
-
-const inputSchema = z.union([
-  z.string(),
-  z.array(
-    z.union([
-      z.object({ type: z.literal("text"), text: z.string() }),
-      z.object({
-        type: z.literal("image"),
-        url: z.string().min(1),
-        detail: z.enum(["auto", "low", "high", "original"]).optional()
-      })
-    ])
-  )
-]);
-
-const threadRunOptionsSchema = z.object({
-  model: z.string().min(1).nullable().optional(),
-  modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
-  collaborationMode: z.enum(["default", "plan"]).nullable().optional(),
-  goalMode: z.boolean().nullable().optional(),
-  goalObjective: z.string().min(1).nullable().optional(),
-  goalTokenBudget: z.number().int().positive().nullable().optional()
-});
-
-const threadGoalStatusSchema = z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]);
-
-const threadGoalUpdateSchema = z.object({
-  objective: z.string().min(1).nullable().optional(),
-  status: threadGoalStatusSchema.nullable().optional(),
-  tokenBudget: z.number().int().positive().nullable().optional()
-});
-
-const projectSourceSchema = z.object({
-  kind: z.literal("vscode"),
-  groupId: z.string().min(1),
-  label: z.string().min(1).optional()
-}).strict();
-
-const machineRegistrationProjectSchema = z.object({
-  path: z.string().min(1),
-  source: projectSourceSchema.optional()
-}).strict();
-
-const sessionRegistrationSchema = z.object({
-  machineId: z.string().min(1).optional(),
-  name: z.string().min(1).optional(),
-  workingDirectory: z.string().min(1),
-  appServerUrl: z.string().min(1).optional(),
-  pid: z.number().int().optional(),
-  hostname: z.string().min(1).optional(),
-  currentThreadId: z.string().min(1).optional()
-}).strict();
-
-const sessionHeartbeatSchema = sessionRegistrationSchema.partial();
-
-const sessionEventSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("thread_event"),
-    threadId: z.string().min(1),
-    commandId: z.string().min(1).optional(),
-    heartbeat: z.boolean().optional(),
-    message: z.unknown()
-  }),
-  z.object({
-    type: z.literal("thread_turns_snapshot"),
-    threadId: z.string().min(1),
-    heartbeat: z.boolean().optional(),
-    turns: z.array(z.unknown())
-  }),
-  z.object({
-    type: z.literal("thread_execution_changed"),
-    threadId: z.string().min(1),
-    running: z.boolean(),
-    turnId: z.string().min(1).optional(),
-    heartbeat: z.boolean().optional()
-  }),
-  z.object({
-    type: z.literal("thread_settings_changed"),
-    threadId: z.string().min(1),
-    model: z.string().min(1).nullable().optional(),
-    modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
-    heartbeat: z.boolean().optional()
-  }),
-  z.object({
-    type: z.literal("account_rate_limits_updated"),
-    rateLimits: z.unknown(),
-    heartbeat: z.boolean().optional()
-  })
-]);
-
-const machineRegistrationSchema = z.object({
-  machineId: z.string().min(1).optional(),
-  type: z.enum(["local", "ssh", "registered"]).optional(),
-  name: z.string().min(1).optional(),
-  hostname: z.string().min(1),
-  pid: z.number().int().optional(),
-  platform: z.string().min(1).optional(),
-  cwd: z.string().min(1).optional(),
-  capabilities: z.object({
-    projectLauncher: z.boolean().optional(),
-    projectCatalog: z.enum(["editable", "fixed"]).optional()
-  }).optional(),
-  projects: z.array(machineRegistrationProjectSchema).optional()
-});
-
-const machineHeartbeatSchema = machineRegistrationSchema.partial();
-
-const machineStartSessionResultSchema = z.object({
-  sessionId: z.string().min(1),
-  threadId: z.string().min(1),
-  appServerUrl: z.string().min(1),
-  cwd: z.string().min(1),
-  reused: z.boolean().optional()
-});
-
-const machineDirectoryListingSchema = z.object({
-  cwd: z.string().min(1),
-  parent: z.string().min(1).optional(),
-  home: z.string().min(1),
-  entries: z.array(z.object({
-    name: z.string().min(1),
-    path: z.string().min(1)
-  }))
-});
-
-const machineStopSessionResultSchema = z.object({
-  sessionId: z.string().min(1),
-  stopped: z.boolean(),
-  cwd: z.string().min(1).optional()
-});
-
-const appServerTunnelFrameSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("app_server_tunnel_open"),
-    streamId: z.string().min(1),
-    appServerId: z.string().min(1)
-  }),
-  z.object({
-    type: z.literal("app_server_tunnel_opened"),
-    streamId: z.string().min(1)
-  }),
-  z.object({
-    type: z.literal("app_server_tunnel_message"),
-    streamId: z.string().min(1),
-    data: z.string()
-  }),
-  z.object({
-    type: z.literal("app_server_tunnel_close"),
-    streamId: z.string().min(1),
-    reason: z.string().optional()
-  }),
-  z.object({
-    type: z.literal("app_server_tunnel_error"),
-    streamId: z.string().min(1),
-    message: z.string().min(1)
-  })
-]);
-
-const parentRegistrationConnectSchema = z.object({
-  url: z.string().url(),
-  authToken: z.string().optional(),
-  machineId: z.string().min(1).optional(),
-  name: z.string().min(1).optional()
-}).strict();
-
-const machineTransportMessageSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("register"),
-    commandCursor: z.number().int().min(0).optional(),
-    registration: machineRegistrationSchema
-  }),
-  z.object({
-    type: z.literal("unregister")
-  }),
-  z.object({
-    type: z.literal("heartbeat"),
-    registration: machineHeartbeatSchema.optional()
-  }),
-  z.object({
-    type: z.literal("command_result"),
-    commandId: z.string().min(1),
-    result: z.union([machineStartSessionResultSchema, machineDirectoryListingSchema, machineStopSessionResultSchema])
-  }),
-  z.object({
-    type: z.literal("command_error"),
-    commandId: z.string().min(1),
-    message: z.string().min(1)
-  }),
-  z.object({
-    type: z.literal("session_register"),
-    sessionId: z.string().min(1),
-    commandCursor: z.number().int().min(0).optional(),
-    registration: sessionRegistrationSchema
-  }),
-  z.object({
-    type: z.literal("session_unregister"),
-    sessionId: z.string().min(1)
-  }),
-  z.object({
-    type: z.literal("session_heartbeat"),
-    sessionId: z.string().min(1),
-    registration: sessionHeartbeatSchema.optional()
-  }),
-  z.object({
-    type: z.literal("session_event"),
-    sessionId: z.string().min(1),
-    event: sessionEventSchema
-  }),
-  z.object({
-    type: z.literal("session_command_result"),
-    sessionId: z.string().min(1),
-    commandId: z.string().min(1),
-    result: z.unknown()
-  }),
-  z.object({
-    type: z.literal("session_command_error"),
-    sessionId: z.string().min(1),
-    commandId: z.string().min(1),
-    message: z.string().min(1)
-  }),
-  z.object({
-    type: z.literal("app_server_ready"),
-    commandId: z.string().min(1),
-    sessionId: z.string().min(1),
-    appServerId: z.string().min(1),
-    cwd: z.string().min(1),
-    appServerUrl: z.string().min(1)
-  }),
-  z.object({
-    type: z.literal("app_server_start_thread"),
-    commandId: z.string().min(1),
-    sessionId: z.string().min(1),
-    cwd: z.string().min(1)
-  }),
-  z.object({
-    type: z.literal("app_server_stopped"),
-    sessionId: z.string().min(1)
-  }),
-  ...appServerTunnelFrameSchema.options
-]);
-
-const webEventsMessageSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("hello"),
-    sessionsAfter: z.number().int().min(0).optional(),
-    projectsAfter: z.number().int().min(0).optional(),
-    tasksAfter: z.number().int().min(0).optional(),
-    connectionsAfter: z.number().int().min(0).optional()
-  }).strict(),
-  z.object({
-    type: z.literal("subscribe_thread"),
-    threadId: z.string().min(1),
-    after: z.number().int().min(0).optional()
-  }).strict(),
-  z.object({
-    type: z.literal("unsubscribe_thread"),
-    threadId: z.string().min(1)
-  }).strict()
-]);
-
-type WebEventsMessage = z.infer<typeof webEventsMessageSchema>;
-
-const sshConnectSchema = z.object({
-  host: z.string().min(1),
-  name: z.string().min(1).optional(),
-  remotePort: z.number().int().min(1).max(65535).optional(),
-  remoteCommand: z.string().min(1).optional()
-});
-
-const sshHostAliasSchema = z.object({
-  alias: z.string().min(1)
-}).strict();
-
-const cronScheduleSchema = z.string().min(1).refine(isCronExpression, {
-  message: "Invalid cron schedule. Use five fields such as \"0 9 * * *\"."
-});
-
-const taskCreateSchema = z.object({
-  name: z.string().min(1),
-  enabled: z.boolean().optional(),
-  schedule: cronScheduleSchema,
-  machineId: z.string().min(1),
-  projectPath: z.string().min(1),
-  projectId: z.string().min(1).optional(),
-  threadId: z.string().min(1).optional(),
-  input: z.string().min(1)
-});
-
-const taskUpdateSchema = taskCreateSchema.partial();
-
-const projectUpdateSchema = z.object({
-  pinned: z.boolean().nullable().optional()
-}).strict();
 
 const envMs = (name: string, fallback: number) => {
   const raw = process.env[name];
@@ -439,15 +162,6 @@ export type ServerFeatureOptions = {
   ssh: boolean;
   tasks: boolean;
   integrations: boolean;
-};
-
-type ParentRegistrationStatus = {
-  status: "idle" | CodexhubMachineStatus["status"];
-  url?: string;
-  machineId?: string;
-  name?: string;
-  message?: string;
-  updatedAt?: string;
 };
 
 export const startServer = async (options: ServerStartOptions = {}): Promise<ServerHandle> => {

@@ -24,7 +24,7 @@ type ComposerActionsContext = {
   setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
 };
 
-type ComposerActionsDependencies = {
+export type ComposerActionsDependencies = {
   send: (threadId: string) => Promise<void>;
 };
 
@@ -54,7 +54,7 @@ export type ComposerActions = {
   removeThreadImage: (threadId: string, imageId: string) => void;
   removeThreadTextAttachment: (threadId: string, textId: string) => void;
   openMessageContextMenu: (
-    event: React.MouseEvent<HTMLElement>,
+    event: React.MouseEvent,
     threadId: string,
     message: WebRecordView,
     canInspect: boolean
@@ -64,7 +64,7 @@ export type ComposerActions = {
   copyContextSelection: () => Promise<void>;
 };
 
-export const createComposerActions = (ctx: ComposerActionsContext, actions: Record<string, any>): ComposerActions => {
+export const createComposerActions = (ctx: ComposerActionsContext, deps: ComposerActionsDependencies): ComposerActions => {
   const updateThreadInput = (threadId: string, input: string) => {
     ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId ? { ...thread, input } : thread));
   };
@@ -138,7 +138,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
 
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    if (ctx.activeCanSend) void (actions as ComposerActionsDependencies).send(threadId);
+    if (ctx.activeCanSend) void deps.send(threadId);
   };
 
   const addThreadTextAttachment = (threadId: string, text: string) => {
@@ -227,12 +227,14 @@ export const createComposerActions = (ctx: ComposerActionsContext, actions: Reco
   };
 
   const openMessageContextMenu = (
-    event: React.MouseEvent<HTMLElement>,
+    event: React.MouseEvent,
     threadId: string,
     message: WebRecordView,
     canInspect: boolean
   ) => {
-    const selectedText = selectedTextWithin(event.currentTarget);
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) return;
+    const selectedText = selectedTextWithin(target);
     if (!canInspect && !selectedText) return;
     event.preventDefault();
     event.stopPropagation();

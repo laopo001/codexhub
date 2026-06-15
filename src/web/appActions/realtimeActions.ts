@@ -133,7 +133,7 @@ type RealtimeActionsContext = {
   setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
 
-type RealtimeActionsDependencies = {
+export type RealtimeActionsDependencies = {
   clearActiveThreadIfLatest: (threadId: string) => void;
   openThread: (threadId: string) => Promise<void>;
 };
@@ -150,9 +150,7 @@ export type RealtimeActions = {
   dispatchTaskCompleteNotification: (notification: TaskCompleteNotification) => void;
 };
 
-export const createRealtimeActions = (ctx: RealtimeActionsContext, actions: Record<string, any>): RealtimeActions => {
-  const deps = actions as RealtimeActionsDependencies;
-
+export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: RealtimeActionsDependencies): RealtimeActions => {
   const initialize = async () => {
     const health = await apiJson<HealthPayload>("/api/health");
     ctx.setServerAuthRequired(Boolean(health.authRequired));

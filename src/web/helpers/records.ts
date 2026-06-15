@@ -210,7 +210,8 @@ export const formatMessageTime = (value: string) => {
 };
 
 export const usageTotal = (usage: Usage) =>
-  usage.total_tokens ?? usage.input_tokens + usage.output_tokens + usage.reasoning_output_tokens;
+  usage.total_tokens
+    ?? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.reasoning_output_tokens ?? 0);
 
 export const formatRateLimitRemaining = (window: RateLimitWindow | null | undefined) => {
   if (!window) return "--";

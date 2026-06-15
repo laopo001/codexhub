@@ -58,7 +58,7 @@ type ThreadActionsContext = {
   setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
 
-type ThreadActionsDependencies = {
+export type ThreadActionsDependencies = {
   primeTaskCompletionFeedback: () => void;
   refreshProjects: () => Promise<ProjectsPayload>;
   refreshSessions: () => Promise<SessionView[]>;
@@ -105,9 +105,7 @@ export type ThreadActions = {
   saveGoalDialog: () => Promise<void>;
 };
 
-export const createThreadActions = (ctx: ThreadActionsContext, actions: Record<string, any>): ThreadActions => {
-  const deps = actions as ThreadActionsDependencies;
-
+export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActionsDependencies): ThreadActions => {
   const openThread = async (threadId: string) => {
     ctx.closedThreadIds.current.delete(threadId);
     ctx.latestRequestedThreadId.current = threadId;

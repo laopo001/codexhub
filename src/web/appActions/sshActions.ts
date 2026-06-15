@@ -49,7 +49,7 @@ export type SshActions = {
   disconnectParentRegistration: () => Promise<void>;
 };
 
-export const createSshActions = (ctx: SshActionsContext, _actions: unknown): SshActions => {
+export const createSshActions = (ctx: SshActionsContext): SshActions => {
   const refreshSshHosts = async () => {
     const [hostData, configHostData] = await Promise.all([
       apiJson<SshHostsPayload>("/api/ssh/hosts"),
