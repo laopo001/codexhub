@@ -10,6 +10,7 @@ export type CompactRecordView = CodexRecordView & {
     key: string;
     count: number;
     labels: string[];
+    expanded?: boolean;
   };
 };
 
@@ -81,11 +82,13 @@ export const collapseHistoricalToolBatches = (
       continue;
     }
     const isLatestBatch = segment.key === latestBatchKey;
-    if (isLatestBatch || expandedBatchKeys.has(segment.key)) {
+    if (isLatestBatch) {
       collapsedViews.push(...segment.views);
       continue;
     }
-    collapsedViews.push(compactToolBatchSummary(segment.key, segment.views));
+    const isExpanded = expandedBatchKeys.has(segment.key);
+    collapsedViews.push(compactToolBatchSummary(segment.key, segment.views, isExpanded));
+    if (isExpanded) collapsedViews.push(...segment.views);
   }
   return collapsedViews;
 };
@@ -284,7 +287,7 @@ const compactToolBatchKey = (views: CompactRecordView[]) => {
   return `${turnId}:${first.record.id}`;
 };
 
-const compactToolBatchSummary = (key: string, views: CompactRecordView[]): CompactRecordView => {
+const compactToolBatchSummary = (key: string, views: CompactRecordView[], expanded = false): CompactRecordView => {
   const first = views[0];
   const last = views.at(-1) ?? first;
   const labels = compactToolBatchLabels(views);
@@ -305,7 +308,8 @@ const compactToolBatchSummary = (key: string, views: CompactRecordView[]): Compa
     toolBatch: {
       key,
       count,
-      labels
+      labels,
+      expanded
     }
   };
 };

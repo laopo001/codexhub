@@ -1482,8 +1482,13 @@ const assertHistoricalToolBatchCollapse = async () => {
     throw new Error(`latest tool batch should remain expanded: ${JSON.stringify(collapsed)}`);
   }
   const expanded = collapseHistoricalToolBatches(views, new Set([collapsedBatch.toolBatch.key]));
-  if (expanded.some((view) => view.toolBatch) || !expanded.some((view) => view.id === "tool-a") || !expanded.some((view) => view.id === "tool-b")) {
+  const expandedBatch = expanded.find((view) => view.toolBatch);
+  if (!expandedBatch?.toolBatch?.expanded || !expanded.some((view) => view.id === "tool-a") || !expanded.some((view) => view.id === "tool-b")) {
     throw new Error(`expanded historical tool batch did not restore original tools: ${JSON.stringify(expanded)}`);
+  }
+  const collapsedAgain = collapseHistoricalToolBatches(views, new Set());
+  if (collapsedAgain.some((view) => view.id === "tool-a" || view.id === "tool-b") || collapsedAgain.some((view) => view.toolBatch?.expanded)) {
+    throw new Error(`historical tool batch did not collapse again: ${JSON.stringify(collapsedAgain)}`);
   }
 };
 

@@ -60,16 +60,17 @@ export const MessageCard = ({
     onInspect?.();
   };
   if (message.toolBatch) {
+    const isExpanded = Boolean(message.toolBatch.expanded);
     return (
-      <article className="message tool toolBatchCollapsed">
+      <article className={`message tool toolBatchRow ${isExpanded ? "expanded" : "collapsed"}`}>
         <button
           type="button"
           className="toolBatchToggle"
           onClick={onToggleToolBatch}
-          aria-expanded="false"
-          aria-label={`Expand ${message.toolBatch.count} tool call${message.toolBatch.count === 1 ? "" : "s"}`}
+          aria-expanded={isExpanded}
+          aria-label={`${isExpanded ? "Collapse" : "Expand"} ${message.toolBatch.count} tool call${message.toolBatch.count === 1 ? "" : "s"}`}
         >
-          <span className="toolBatchChevron" aria-hidden="true">{">"}</span>
+          <span className="toolBatchChevron" aria-hidden="true">{isExpanded ? "v" : ">"}</span>
           <span className="toolBatchTitle">tools</span>
           <span className="toolBatchCount">{message.toolBatch.count} call{message.toolBatch.count === 1 ? "" : "s"}</span>
           {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status, message.statusText)}</em> : null}

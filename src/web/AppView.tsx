@@ -266,7 +266,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           onToggleToolBatch={toolBatchKey ? () => {
                             setExpandedToolBatchKeys((current) => {
                               const keys = new Set(current[activeThread.threadId] ?? []);
-                              keys.add(toolBatchKey);
+                              if (message.toolBatch?.expanded) keys.delete(toolBatchKey);
+                              else keys.add(toolBatchKey);
                               return {
                                 ...current,
                                 [activeThread.threadId]: [...keys]

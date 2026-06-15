@@ -244,10 +244,14 @@
   background: #f7f9fd;
 }
 
-.message.toolBatchCollapsed {
+.message.toolBatchRow {
   padding: 0;
   border-color: #8a97ad;
   background: #f4f7fb;
+}
+
+.message.toolBatchRow.expanded {
+  background: #eef4fa;
 }
 
 .toolBatchToggle {
