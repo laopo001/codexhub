@@ -615,6 +615,21 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
     };
   }
 
+  if (isContextCompactionType(type)) {
+    const status = activityRecordStatus(payload.status) ?? "completed";
+    return {
+      key: "context",
+      label: "Context",
+      status,
+      at: record.timestamp,
+      text: typeof payload.message === "string"
+        ? payload.message
+        : status === "completed"
+          ? "Compaction complete"
+          : "Compacting"
+    };
+  }
+
   if (type === "thread_goal_updated") {
     const goal = asRecord(payload.goal);
     return {
@@ -821,6 +836,16 @@ export const stringField = (record: Record<string, unknown> | null | undefined, 
 
 const isContextCompactionType = (type: unknown) =>
   type === "context_compaction" || type === "context_compacted" || type === "compacted";
+
+const activityRecordStatus = (status: unknown): ActivityStatusView["status"] | undefined => {
+  if (typeof status !== "string") return undefined;
+  const normalized = status.trim().replace(/[-\s]+/g, "_").toLowerCase();
+  if (normalized === "inprogress" || normalized === "in_progress" || normalized === "running") return "in_progress";
+  if (normalized === "pending" || normalized === "queued") return "pending";
+  if (normalized === "failed" || normalized === "error" || normalized === "errored" || normalized === "aborted") return "failed";
+  if (normalized === "completed" || normalized === "complete" || normalized === "success" || normalized === "succeeded") return "completed";
+  return undefined;
+};
 
 export const isMatchingAppServerTranscriptRecord = (record: CodexRecord, incoming: CodexRecord) => {
   if (

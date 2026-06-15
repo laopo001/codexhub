@@ -1,6 +1,7 @@
-import React, { Suspense, lazy, useMemo } from "react";
+import React, { Suspense, lazy, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { Switch } from "antd";
+import { GripHorizontal } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, languageAliases } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, WebRecordView } from "../types.js";
@@ -10,6 +11,35 @@ import { formatInspectDetail, formatInspectTitle, renderToolMessageBody } from "
 import { activityStatusOverlayClass, activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
 
 const SyntaxCodeBlock = lazy(() => import("../SyntaxCodeBlock.js"));
+
+type ActivityStatusOffset = {
+  x: number;
+  y: number;
+};
+
+type ActivityStatusDragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  origin: ActivityStatusOffset;
+};
+
+const ACTIVITY_STATUS_DEFAULT_LEFT = 12;
+const ACTIVITY_STATUS_DEFAULT_TOP = 8;
+const ACTIVITY_STATUS_EDGE_GAP = 8;
+
+const clampActivityStatusOffset = (element: HTMLDivElement | null, offset: ActivityStatusOffset): ActivityStatusOffset => {
+  const parent = element?.offsetParent;
+  if (!(element && parent instanceof HTMLElement)) return offset;
+  const minX = ACTIVITY_STATUS_EDGE_GAP - ACTIVITY_STATUS_DEFAULT_LEFT;
+  const minY = ACTIVITY_STATUS_EDGE_GAP - ACTIVITY_STATUS_DEFAULT_TOP;
+  const maxX = Math.max(minX, parent.clientWidth - element.offsetWidth - ACTIVITY_STATUS_DEFAULT_LEFT - ACTIVITY_STATUS_EDGE_GAP);
+  const maxY = Math.max(minY, parent.clientHeight - element.offsetHeight - ACTIVITY_STATUS_DEFAULT_TOP - ACTIVITY_STATUS_EDGE_GAP);
+  return {
+    x: Math.min(maxX, Math.max(minX, offset.x)),
+    y: Math.min(maxY, Math.max(minY, offset.y))
+  };
+};
 
 export const MessageCard = ({
   message,
@@ -331,12 +361,75 @@ export const ActivityStatusOverlay = ({
   expandedKeys: Set<string>;
   onMinimize: () => void;
   onToggle: (key: string) => void;
-}) => (
-  <div className={`activityStatusOverlay ${activityStatusOverlayClass(statuses)}`} aria-live="polite" title={activityStatusTitle(statuses)}>
-    <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} />
-    <button type="button" className="activityStatusMinimize" onClick={onMinimize} aria-label="Minimize status" title="Minimize status">−</button>
-  </div>
-);
+}) => {
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<ActivityStatusDragState | null>(null);
+  const [offset, setOffset] = useState<ActivityStatusOffset>({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const title = activityStatusTitle(statuses);
+  const overlayStyle: React.CSSProperties = {
+    transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`
+  };
+  const startDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      origin: offset
+    };
+    setDragging(true);
+  };
+  const moveDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const next = {
+      x: drag.origin.x + event.clientX - drag.startX,
+      y: drag.origin.y + event.clientY - drag.startY
+    };
+    setOffset(clampActivityStatusOffset(overlayRef.current, next));
+  };
+  const endDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    setDragging(false);
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture may already be released by the browser on cancel.
+    }
+  };
+  return (
+    <div
+      ref={overlayRef}
+      className={`activityStatusOverlay ${activityStatusOverlayClass(statuses)}${dragging ? " dragging" : ""}`}
+      aria-live="polite"
+      title={title}
+      style={overlayStyle}
+    >
+      <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} />
+      <button
+        type="button"
+        className="activityStatusDragHandle"
+        onPointerDown={startDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={() => {
+          dragRef.current = null;
+          setDragging(false);
+        }}
+        aria-label="Drag status"
+        title="Drag status"
+      >
+        <GripHorizontal size={13} strokeWidth={2.4} aria-hidden="true" />
+      </button>
+      <button type="button" className="activityStatusMinimize" onClick={onMinimize} aria-label="Minimize status" title="Minimize status">−</button>
+    </div>
+  );
+};
 
 export const ActivityStatusRows = ({
   statuses,
@@ -355,7 +448,7 @@ export const ActivityStatusRows = ({
         <>
           <span className="activityStatusLabel">{status.label}</span>
           <span className="activityStatusViewport">
-            <span className="activityStatusTrack">{status.text}</span>
+            <span className="activityStatusTrack">{renderActivityStatusText(status.text)}</span>
           </span>
           {expanded && status.files?.length ? <ActivityStatusFiles files={status.files} /> : null}
         </>
@@ -378,6 +471,14 @@ export const ActivityStatusRows = ({
     })}
   </div>
 );
+
+const renderActivityStatusText = (text: string) =>
+  text.split(/([+-]\d+)/g).map((part, index) => {
+    if (!part) return null;
+    if (/^\+\d+$/.test(part)) return <span className="activityStatusDelta added" key={`${part}:${index}`}>{part}</span>;
+    if (/^-\d+$/.test(part)) return <span className="activityStatusDelta removed" key={`${part}:${index}`}>{part}</span>;
+    return <React.Fragment key={`${part}:${index}`}>{part}</React.Fragment>;
+  });
 
 export const ActivityStatusFiles = ({ files }: { files: ActivityStatusFile[] }) => (
   <div className="activityStatusFiles">

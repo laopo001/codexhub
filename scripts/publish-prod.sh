@@ -15,7 +15,7 @@ pnpm check
 pnpm build
 
 PROD_PORT="$(
-  node --input-type=module -e 'import { loadDotEnv } from "./dist-node/core/dotenv.js"; await loadDotEnv(); console.log(process.env.CODEX_HUB_PORT ?? "8788");'
+  node --input-type=module -e 'import { loadDotEnv } from "./dist-node/src/core/dotenv.js"; await loadDotEnv(); console.log(process.env.CODEX_HUB_PORT ?? "8788");'
 )"
 PROD_URL="http://127.0.0.1:${PROD_PORT}"
 

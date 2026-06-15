@@ -395,21 +395,40 @@
 }
 
 .contextCompactButton {
+  --context-progress: 0%;
+  width: 25px;
+  height: 25px;
   min-height: 25px;
-  color: #4b6151;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+  color: #66715f;
   font: inherit;
   cursor: pointer;
 }
 
 .contextCompactButton:hover:not(:disabled) {
-  background: #ffffff;
-  border-color: #cbded1;
+  background: #f4f6f1;
+  border-color: #dfe5dc;
   color: #26342a;
 }
 
 .contextCompactButton:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.contextUsageIcon {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, #ffffff 0 42%, transparent 44%),
+    conic-gradient(currentColor var(--context-progress), #d3d8d1 0);
+  box-shadow: inset 0 0 0 1px #d3d8d1;
 }
 
 .statusPill.available {

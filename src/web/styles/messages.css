@@ -13,33 +13,40 @@
   position: absolute;
   z-index: 8;
   top: 8px;
-  left: 16px;
-  right: 16px;
+  left: 12px;
+  right: auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 3px;
+  gap: 2px;
+  width: min(520px, calc(100% - 40px));
   min-width: 0;
-  max-width: 1080px;
-  min-height: 28px;
-  padding: 3px;
+  max-width: calc(100% - 40px);
+  min-height: 0;
+  padding: 2px;
   border: 1px solid rgba(104, 115, 145, 0.18);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 8px 24px rgba(49, 55, 65, 0.08);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 18px rgba(49, 55, 65, 0.08);
   color: #26342a;
   pointer-events: auto;
   backdrop-filter: blur(8px);
+  will-change: transform;
+}
+
+.activityStatusOverlay.dragging {
+  user-select: none;
+  box-shadow: 0 10px 26px rgba(49, 55, 65, 0.14);
 }
 
 .activityStatusRows {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
 }
 
 .activityStatusRows.expanded {
-  gap: 5px;
+  gap: 3px;
 }
 
 .activityStatusOverlay.pending {
@@ -49,7 +56,7 @@
 .activityStatusOverlay.in_progress {
   border-color: rgba(47, 111, 159, 0.36);
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.92), rgba(229, 242, 255, 0.96), rgba(255, 255, 255, 0.92));
+    linear-gradient(90deg, rgba(255, 255, 255, 0.92), rgba(232, 244, 255, 0.96), rgba(255, 255, 255, 0.92));
   background-size: 220% 100%;
   animation: codexhubStatusSweep 1.8s ease-in-out infinite;
 }
@@ -69,9 +76,9 @@
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  min-height: 24px;
+  min-height: 20px;
   border: 1px solid rgba(104, 115, 145, 0.12);
-  border-radius: 6px;
+  border-radius: 5px;
   background: rgba(248, 250, 247, 0.86);
   color: inherit;
   overflow: hidden;
@@ -89,12 +96,13 @@
   align-self: stretch;
   display: grid;
   place-items: center;
-  min-width: 62px;
-  padding: 0 8px;
+  min-width: 52px;
+  padding: 0 6px;
   border-right: 1px solid rgba(104, 115, 145, 0.16);
   color: #5f6a78;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
+  line-height: 18px;
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -103,14 +111,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   color: #2a648c;
 }
 
 .activityStatusOverlay.in_progress .activityStatusLabel::before {
   content: "";
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   flex: 0 0 auto;
   border-radius: 999px;
   background: currentColor;
@@ -131,28 +139,62 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  line-height: 24px;
+  font-size: 10.5px;
+  line-height: 20px;
+  padding: 0 6px;
 }
 
+.activityStatusDelta {
+  font-weight: 750;
+}
+
+.activityStatusDelta.added {
+  color: #0a9a58;
+}
+
+.activityStatusDelta.removed {
+  color: #c63f3f;
+}
+
+.activityStatusDragHandle,
 .activityStatusMinimize {
   position: absolute;
-  top: -9px;
-  right: -9px;
+  top: -8px;
   display: grid;
   place-items: center;
-  width: 22px;
-  min-height: 22px;
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
   border: 1px solid #d8e0d5;
   border-radius: 999px;
   background: #ffffff;
   color: #66715f;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1;
   box-shadow: 0 4px 14px rgb(18 32 24 / 0.14);
 }
 
+.activityStatusDragHandle {
+  right: 15px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.activityStatusDragHandle svg {
+  display: block;
+}
+
+.activityStatusMinimize {
+  right: -8px;
+}
+
+.activityStatusOverlay.dragging .activityStatusDragHandle {
+  cursor: grabbing;
+}
+
+.activityStatusDragHandle:hover,
 .activityStatusMinimize:hover {
   background: #f4f6f1;
   color: #17211a;
@@ -164,7 +206,7 @@
   gap: 2px;
   min-width: 0;
   margin: 0;
-  padding: 6px 8px;
+  padding: 4px 6px;
   border-top: 1px solid rgba(104, 115, 145, 0.12);
   background: #fbfcf8;
 }

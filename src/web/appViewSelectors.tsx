@@ -200,9 +200,17 @@ const ComposerThreadControls = ({
     activeThreadServiceTier
   );
   const canCompactThread = Boolean(activeThread?.threadId && !activeThread.running);
+  const contextUsageLabel = formatContextUsage(activeThreadUsage);
+  const contextPercent = contextUsagePercent(activeThreadUsage);
+  const contextProgressStyle = contextPercent == null
+    ? undefined
+    : ({ "--context-progress": `${contextPercent}%` } as React.CSSProperties);
   const compactTitle = activeThread?.running
     ? "Stop the running turn before compacting context"
-    : "Compact this thread's app-server context";
+    : [
+        formatContextTitle(activeThreadUsage),
+        "Click to compact this thread's app-server context"
+      ].filter(Boolean).join("\n");
 
   return (
     <div className={`composerSessionControls ${mode}`} aria-label="Thread usage and model">
@@ -224,21 +232,20 @@ const ComposerThreadControls = ({
         >
           {statusButtonLabel}
         </button>
-        <span className="usagePill" title={formatContextTitle(activeThreadUsage)}>
-          Context {formatContextUsage(activeThreadUsage)}
-        </span>
         <button
           type="button"
           className="usagePill contextCompactButton"
           disabled={!canCompactThread}
           title={compactTitle}
+          aria-label={`Context ${contextUsageLabel}. Compact context`}
+          style={contextProgressStyle}
           onClick={() => {
             if (!activeThread?.threadId || activeThread.running) return;
             setThreadControlsMenuOpen(false);
             void compactThread(activeThread.threadId);
           }}
         >
-          Compact
+          <span className="contextUsageIcon" aria-hidden="true" />
         </button>
 
         <span className="usagePill" title={formatResetTitle(activeThreadUsage?.primaryRateLimit)}>5h {formatRateLimitRemaining(activeThreadUsage?.primaryRateLimit)}</span>
@@ -262,6 +269,12 @@ const ComposerThreadControls = ({
 const compactWorkspaceName = (value: string) => {
   const parts = value.split(/[\\/]+/).filter(Boolean);
   return parts.at(-1) ?? (value || "workspace");
+};
+
+const contextUsagePercent = (threadUsage: AppSelectors["activeThreadUsage"]) => {
+  const context = threadUsage?.context;
+  if (!context || context.windowTokens <= 0) return null;
+  return Math.min(100, Math.max(0, Math.round((context.usedTokens / context.windowTokens) * 100)));
 };
 
 const threadTabTurnMeta = (
