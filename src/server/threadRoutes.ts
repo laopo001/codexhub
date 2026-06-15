@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ThreadHub } from "../core/threadHub.js";
 import {
   inputSchema,
+  threadApprovalDecisionSchema,
   threadGoalUpdateSchema,
   threadRenameSchema,
   threadRunOptionsSchema,
@@ -13,6 +14,7 @@ import {
   type ThreadCompactPayload,
   type ThreadDeletePayload,
   type ThreadDetail,
+  type ThreadApprovalPayload,
   type ThreadGoalMutationPayload,
   type ThreadRenamePayload,
   type ThreadReviewPayload,
@@ -401,6 +403,19 @@ export const registerThreadRoutes = <
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.post("/api/threads/:threadId/approval", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const payload = threadApprovalDecisionSchema.parse(request.body);
+    try {
+      const result = await ctx.threads.respondToApproval(params.threadId, payload.approvalId, payload.decision);
+      return { ok: true, ...result } satisfies ThreadApprovalPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") || message.startsWith("Approval not found:") ? 404 : 409);
       return { error: message };
     }
   });

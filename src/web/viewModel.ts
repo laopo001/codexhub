@@ -1,6 +1,7 @@
 import type React from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import type {
+  AppServerApprovalDecision,
   TaskUpdateInput as ApiTaskUpdateInput,
   ThreadGoalUpdateInput as ApiThreadGoalUpdateInput
 } from "../shared/apiContract.js";
@@ -200,6 +201,7 @@ export type AppViewModel = AppSidebarViewModel & {
   removeThreadTextAttachment: (threadId: string, attachmentId: string) => void;
   renderComposerThreadControls: (mode: "inline" | "popover") => React.ReactNode;
   resetComposerHistory: (threadId: string) => void;
+  respondToApproval: (threadId: string, approvalId: string, decision: AppServerApprovalDecision) => MaybePromise;
   reviewThread: (threadId: string) => MaybePromise;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
   rollbackMessage: (threadId: string, messageId: string) => MaybePromise;

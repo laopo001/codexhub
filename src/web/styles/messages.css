@@ -1019,6 +1019,38 @@
   text-underline-offset: 2px;
 }
 
+.approvalActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.approvalButton {
+  border: 1px solid #d3dccf;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #344037;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 8px;
+}
+
+.approvalButton:hover {
+  border-color: #93a48d;
+}
+
+.approvalButton.approve {
+  border-color: #2f6f4f;
+  background: #2f6f4f;
+  color: #ffffff;
+}
+
+.approvalButton.deny {
+  color: #b94332;
+}
+
 .messageMeta a:hover {
   color: #df5b35;
 }

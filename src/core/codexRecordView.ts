@@ -374,7 +374,13 @@ export const recordViewStatusFromAppStatus = (status: unknown): CodexRecordView[
   if (typeof status !== "string") return undefined;
   const normalized = status.trim().replace(/[-\s]+/g, "_").toLowerCase();
   if (!normalized) return undefined;
-  if (normalized === "completed" || normalized === "complete" || normalized === "done") return "completed";
+  if (
+    normalized === "completed"
+    || normalized === "complete"
+    || normalized === "done"
+    || normalized === "approved"
+    || normalized === "accepted"
+  ) return "completed";
   if (
     normalized === "failed"
     || normalized === "failure"
@@ -385,7 +391,7 @@ export const recordViewStatusFromAppStatus = (status: unknown): CodexRecordView[
     || normalized === "interrupted"
     || normalized === "aborted"
   ) return "failed";
-  if (normalized === "pending" || normalized === "queued") return "pending";
+  if (normalized === "pending" || normalized === "queued" || normalized === "pending_approval") return "pending";
   if (
     normalized === "in_progress"
     || normalized === "inprogress"
@@ -566,8 +572,17 @@ const formatFunctionCall = (name: string, args: string) => {
 
 const fileChangeText = (payload: Record<string, unknown>) => {
   const changes = Array.isArray(payload.changes) ? payload.changes : [];
+  const approval = asRecord(payload.approval);
+  const approvalStatus = typeof approval?.status === "string" ? approval.status : "";
+  const headline = approvalStatus === "pending"
+    ? "Approval required before applying file changes."
+    : approvalStatus === "denied"
+      ? "File changes denied."
+      : approvalStatus === "approved"
+        ? "File changes approved."
+        : payload.status === "failed" ? "Patch failed." : "Patch applied successfully.";
   return [
-    payload.status === "failed" ? "Patch failed." : "Patch applied successfully.",
+    headline,
     "",
     `Status: ${typeof payload.status === "string" ? payload.status : "completed"}`,
     `Changed files: ${changes.length}`,

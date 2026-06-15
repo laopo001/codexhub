@@ -69,6 +69,29 @@ export type ThreadGoalUpdate = {
   tokenBudget?: number | null;
 };
 
+/** app-server 发起的交互式审批类型。 */
+export type AppServerApprovalKind =
+  | "command_execution"
+  | "file_change"
+  | "legacy_exec_command"
+  | "legacy_apply_patch";
+
+/** CodexHub Web 对 app-server 审批请求的稳定决策。 */
+export type AppServerApprovalDecision = "approve" | "deny";
+
+/** server/Web 可见的 app-server 审批请求。 */
+export type AppServerApprovalRequest = {
+  approvalId: string;
+  method: string;
+  requestId: string | number;
+  kind: AppServerApprovalKind;
+  threadId: string;
+  turnId?: string;
+  itemId?: string;
+  createdAt: string;
+  params: unknown;
+};
+
 /** thread 详情接口返回值，包含当前 records 快照和最后事件序号。 */
 export type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
@@ -166,12 +189,15 @@ export type SessionCommand = {
     | "start_thread"
     | "resume_thread"
     | "subscribe_thread_records"
-    | "unsubscribe_thread_records";
+    | "unsubscribe_thread_records"
+    | "approval_decision";
   workingDirectory: string;
   createdAt: string;
   threadId?: string;
   input?: ProxyInput;
   turnId?: string;
+  approvalId?: string;
+  approvalDecision?: AppServerApprovalDecision;
   numTurns?: number;
   keepTurns?: number;
   limit?: number;
@@ -220,6 +246,12 @@ export type SessionEventInput =
       threadId: string;
       heartbeat?: boolean;
       turns: unknown[];
+    }
+  | {
+      type: "approval_request";
+      threadId: string;
+      approval: AppServerApprovalRequest;
+      heartbeat?: boolean;
     }
   | {
       type: "thread_execution_changed";

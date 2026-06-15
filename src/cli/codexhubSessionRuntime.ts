@@ -18,6 +18,8 @@ import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import type { MachineCommand, MachineRegistration } from "../shared/machineTypes.js";
 import type {
+  AppServerApprovalDecision,
+  AppServerApprovalKind,
   ModelCatalogItem,
   SessionCommand,
   SessionEventInput,
@@ -48,6 +50,11 @@ type PendingRequest = {
   timeout?: NodeJS.Timeout;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+};
+
+type PendingApprovalRequest = {
+  requestId: string | number;
+  method: string;
 };
 
 type SyncedThread = {
@@ -647,6 +654,7 @@ class MachineBackedSessionTransport implements HeadlessSessionTransport {
 
 class CodexAppServerBridge {
   private readonly pending = new Map<string | number, PendingRequest>();
+  private readonly pendingApprovals = new Map<string, PendingApprovalRequest>();
   private readonly syncedThreads = new Map<string, SyncedThread>();
   private readonly loadedThreads = new Set<string>();
   private readonly threadCwds = new Map<string, string>();
@@ -782,6 +790,7 @@ class CodexAppServerBridge {
       pending.reject(new Error("codex app-server bridge closed before request completed"));
     }
     this.pending.clear();
+    this.pendingApprovals.clear();
     for (const state of this.syncedThreads.values()) {
       this.closeAppServerTurnsSync(state);
     }
@@ -895,6 +904,13 @@ class CodexAppServerBridge {
         ok: true,
         reviewThreadId: typeof result?.reviewThreadId === "string" ? result.reviewThreadId : threadId
       };
+    }
+
+    if (command.type === "approval_decision") {
+      if (!command.approvalId) throw new Error("approval_decision command requires approvalId");
+      if (!command.approvalDecision) throw new Error("approval_decision command requires approvalDecision");
+      this.resolveApprovalRequest(command.approvalId, command.approvalDecision);
+      return { ok: true };
     }
 
     if (command.type === "steer") {
@@ -1481,15 +1497,15 @@ class CodexAppServerBridge {
   }
 
   private respondToServerRequest(message: JsonRecord) {
-    // 这个 bridge 没有交互式审批 UI，app-server 主动询问时统一拒绝或给空响应。
+    // app-server 主动询问时，能交给 Web 的 approval request 先保持挂起。
     const method = typeof message.method === "string" ? message.method : "";
     const id = message.id;
     if (method === "item/commandExecution/requestApproval") {
-      this.ws.send(JSON.stringify({ id, result: { decision: "decline" } }));
+      this.forwardApprovalRequest(message, "command_execution");
       return;
     }
     if (method === "item/fileChange/requestApproval") {
-      this.ws.send(JSON.stringify({ id, result: { decision: "decline" } }));
+      this.forwardApprovalRequest(message, "file_change");
       return;
     }
     if (method === "item/tool/call") {
@@ -1503,11 +1519,11 @@ class CodexAppServerBridge {
       return;
     }
     if (method === "execCommandApproval") {
-      this.ws.send(JSON.stringify({ id, result: { decision: "denied" } }));
+      this.forwardApprovalRequest(message, "legacy_exec_command");
       return;
     }
     if (method === "applyPatchApproval") {
-      this.ws.send(JSON.stringify({ id, result: { decision: "denied" } }));
+      this.forwardApprovalRequest(message, "legacy_apply_patch");
       return;
     }
     if (method === "item/tool/requestUserInput") {
@@ -1524,6 +1540,47 @@ class CodexAppServerBridge {
         code: -32601,
         message: `codexhub bridge does not handle app-server request: ${method}`
       }
+    }));
+  }
+
+  private forwardApprovalRequest(message: JsonRecord, kind: AppServerApprovalKind) {
+    const method = typeof message.method === "string" ? message.method : "";
+    const requestId = message.id;
+    if (typeof requestId !== "string" && typeof requestId !== "number") return;
+    const params = asRecord(message.params) ?? {};
+    const threadId = approvalThreadId(params) ?? this.defaultThreadId;
+    if (!threadId) {
+      this.ws.send(JSON.stringify({ id: requestId, result: approvalResponse(method, "deny") }));
+      return;
+    }
+
+    const approvalId = randomUUID();
+    this.pendingApprovals.set(approvalId, { requestId, method });
+    this.hub.sendEvent({
+      type: "approval_request",
+      threadId,
+      approval: {
+        approvalId,
+        method,
+        requestId,
+        kind,
+        threadId,
+        ...(approvalTurnId(params) ? { turnId: approvalTurnId(params) } : {}),
+        ...(approvalItemId(params) ? { itemId: approvalItemId(params) } : {}),
+        createdAt: approvalCreatedAt(params),
+        params
+      },
+      heartbeat: false
+    });
+  }
+
+  private resolveApprovalRequest(approvalId: string, decision: AppServerApprovalDecision) {
+    const pending = this.pendingApprovals.get(approvalId);
+    if (!pending) throw new Error(`Approval request not found: ${approvalId}`);
+    this.pendingApprovals.delete(approvalId);
+    this.ws.send(JSON.stringify({
+      id: pending.requestId,
+      result: approvalResponse(pending.method, decision)
     }));
   }
 
@@ -1627,6 +1684,32 @@ const goalUpdateParams = (
 
 const isModelReasoningEffort = (value: unknown): value is ThreadRunOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
+
+const approvalResponse = (method: string, decision: AppServerApprovalDecision) => {
+  if (method === "execCommandApproval" || method === "applyPatchApproval") {
+    return { decision: decision === "approve" ? "approved" : "denied" };
+  }
+  return { decision: decision === "approve" ? "accept" : "decline" };
+};
+
+const approvalThreadId = (params: Record<string, unknown>) => {
+  const direct = stringValue(params.threadId);
+  if (direct) return direct;
+  return stringValue(params.conversationId);
+};
+
+const approvalTurnId = (params: Record<string, unknown>) =>
+  stringValue(params.turnId);
+
+const approvalItemId = (params: Record<string, unknown>) =>
+  stringValue(params.itemId) ?? stringValue(params.callId) ?? stringValue(params.approvalId);
+
+const approvalCreatedAt = (params: Record<string, unknown>) => {
+  const startedAtMs = typeof params.startedAtMs === "number" && Number.isFinite(params.startedAtMs)
+    ? params.startedAtMs
+    : undefined;
+  return startedAtMs ? new Date(startedAtMs).toISOString() : new Date().toISOString();
+};
 
 const threadIdForMessage = (message: JsonRecord) => {
   const params = asRecord(message.params);

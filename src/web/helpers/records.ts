@@ -491,9 +491,14 @@ export const isSimpleMainView = (view: CodexRecordView) => {
   const payload = asRecord(view.record.payload);
   if (view.record.type === "event_msg" && isContextCompactionType(payload?.type)) return true;
   if (view.record.type !== "response_item") return false;
-  if (payload?.type === "file_change") return false;
+  if (payload?.type === "file_change") return isPendingApprovalPayload(payload);
   if (payload?.type !== "message") return true;
   return payload.role === "user" || payload.role === "assistant";
+};
+
+const isPendingApprovalPayload = (payload: Record<string, unknown> | null) => {
+  const approval = asRecord(payload?.approval);
+  return approval?.status === "pending";
 };
 
 export const hideSupersededSimpleThinkingViews = (views: CodexRecordView[]) => {
@@ -539,6 +544,10 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
   let fileStatus: ActivityStatusView | null = null;
   for (const record of records) {
     const payload = asRecord(record.payload);
+    if (record.type === "response_item" && asRecord(payload?.approval)) {
+      statuses.set("approval", approvalActivityStatus(record, payload));
+      continue;
+    }
     if (record.type === "response_item" && payload?.type === "file_change") {
       fileStatus = mergeFileChangeStatus(fileStatus, fileChangeActivityStatus(record, payload));
       continue;
@@ -675,6 +684,26 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
     label: type || "Event",
     at: record.timestamp,
     text: typeof payload.message === "string" ? payload.message : stringifyInspectJson(payload)
+  };
+};
+
+export const approvalActivityStatus = (
+  record: CodexRecord,
+  payload: Record<string, unknown> | null
+): ActivityStatusView => {
+  const approval = asRecord(payload?.approval);
+  const status = activityRecordStatus(approval?.status) ?? (
+    approval?.status === "approved" ? "completed" : approval?.status === "denied" ? "failed" : "pending"
+  );
+  return {
+    key: "approval",
+    label: status === "completed" ? "Approved" : status === "failed" ? "Approval" : "Waiting approval",
+    status,
+    at: record.timestamp,
+    text: [
+      typeof approval?.kind === "string" ? approval.kind : null,
+      typeof approval?.reason === "string" ? approval.reason : null
+    ].filter(Boolean).join(" · ") || "User approval required"
   };
 };
 
@@ -841,9 +870,9 @@ const activityRecordStatus = (status: unknown): ActivityStatusView["status"] | u
   if (typeof status !== "string") return undefined;
   const normalized = status.trim().replace(/[-\s]+/g, "_").toLowerCase();
   if (normalized === "inprogress" || normalized === "in_progress" || normalized === "running") return "in_progress";
-  if (normalized === "pending" || normalized === "queued") return "pending";
-  if (normalized === "failed" || normalized === "error" || normalized === "errored" || normalized === "aborted") return "failed";
-  if (normalized === "completed" || normalized === "complete" || normalized === "success" || normalized === "succeeded") return "completed";
+  if (normalized === "pending" || normalized === "queued" || normalized === "pending_approval") return "pending";
+  if (normalized === "failed" || normalized === "error" || normalized === "errored" || normalized === "aborted" || normalized === "denied" || normalized === "declined") return "failed";
+  if (normalized === "completed" || normalized === "complete" || normalized === "success" || normalized === "succeeded" || normalized === "approved" || normalized === "accepted") return "completed";
   return undefined;
 };
 

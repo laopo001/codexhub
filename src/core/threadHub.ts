@@ -12,6 +12,9 @@ import type {
   ThreadState
 } from "./threadHubState.js";
 import type {
+  AppServerApprovalDecision,
+  AppServerApprovalKind,
+  AppServerApprovalRequest,
   SessionCommand,
   SessionEventInput,
   SessionModelCatalogResult,
@@ -28,10 +31,16 @@ import type {
   ThreadSessionSummary
 } from "../shared/threadTypes.js";
 
+type PendingApproval = AppServerApprovalRequest & {
+  sessionId: string;
+  status: "pending" | "approved" | "denied" | "failed";
+};
+
 export class ThreadHub {
   private readonly threads = new Map<string, ThreadState>();
   private readonly sessions = new Map<string, SessionState>();
   private readonly pendingCommands = new Map<string, PendingCommand>();
+  private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly activeTurnCommands = new Map<string, string>();
   private readonly queuedTurns = new Map<string, QueuedTurn[]>();
   private readonly sessionEvents: SessionStreamEvent[] = [];
@@ -233,6 +242,20 @@ export class ThreadHub {
         this.publishSessions();
       }
       return { ok: true, session: this.sessionSummary(session) };
+    }
+
+    if (input.type === "approval_request") {
+      const thread = this.ensureThread(input.threadId, session, {
+        params: { threadId: input.threadId, cwd: session.workingDirectory }
+      });
+      const approval: PendingApproval = {
+        ...input.approval,
+        sessionId,
+        status: "pending"
+      };
+      this.pendingApprovals.set(approval.approvalId, approval);
+      this.upsertRecord(thread, approvalRecord(approval));
+      return { ok: true, thread: this.summary(thread) };
     }
 
     if (input.type === "thread_execution_changed") {
@@ -557,6 +580,54 @@ export class ThreadHub {
     return await promise;
   }
 
+  async respondToApproval(
+    threadId: string,
+    approvalId: string,
+    decision: AppServerApprovalDecision
+  ) {
+    const thread = this.requireThread(threadId);
+    const approval = this.pendingApprovals.get(approvalId);
+    if (!approval || approval.threadId !== thread.threadId || approval.status !== "pending") {
+      throw new Error(`Approval not found: ${approvalId}`);
+    }
+    const session = this.requireOnlineSession(approval.sessionId);
+    if (thread.sessionId !== session.sessionId) {
+      throw new Error(`Approval belongs to a different session: ${approvalId}`);
+    }
+
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<{ ok?: boolean }>(
+      commandId,
+      "approval_decision",
+      thread.threadId,
+      30_000,
+      thread.workingDirectory
+    );
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "approval_decision",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId,
+      approvalId,
+      approvalDecision: decision
+    });
+
+    try {
+      await promise;
+      const status: "approved" | "denied" = decision === "approve" ? "approved" : "denied";
+      const nextApproval: PendingApproval = { ...approval, status };
+      this.pendingApprovals.delete(approvalId);
+      this.upsertRecord(thread, approvalRecord(nextApproval));
+      return { status, thread: this.detail(thread) };
+    } catch (error) {
+      const failedApproval: PendingApproval = { ...approval, status: "failed" };
+      this.pendingApprovals.delete(approvalId);
+      this.upsertRecord(thread, approvalRecord(failedApproval, errorText(error)));
+      throw error;
+    }
+  }
+
   runLocalCommand(threadId: string, input: ProxyInput, _source: "web" | "telegram" | "task" = "web") {
     const parsed = parseLocalSlashCommand(input);
     if (!parsed) return { handled: false };
@@ -849,6 +920,16 @@ export class ThreadHub {
     pending.reject(error);
   }
 
+  private failSessionApprovals(sessionId: string, message: string) {
+    for (const approval of [...this.pendingApprovals.values()]) {
+      if (approval.sessionId !== sessionId || approval.status !== "pending") continue;
+      this.pendingApprovals.delete(approval.approvalId);
+      const thread = this.threads.get(approval.threadId);
+      if (!thread) continue;
+      this.upsertRecord(thread, approvalRecord({ ...approval, status: "failed" }, message));
+    }
+  }
+
   private markSessionOffline(
     session: SessionState,
     message: string,
@@ -862,6 +943,7 @@ export class ThreadHub {
     session.offlineSinceAt = session.offlineSinceAt ?? offlineSinceAt;
     session.offlineReason = reason;
     this.rejectPendingSessionCommands(session, new Error(message));
+    this.failSessionApprovals(session.sessionId, message);
     for (const waiter of [...session.waiters]) waiter();
     for (const thread of this.threads.values()) {
       if (thread.sessionId !== session.sessionId) continue;
@@ -888,6 +970,7 @@ export class ThreadHub {
     session.offlineSinceAt = session.offlineSinceAt ?? offlineSinceAt;
     session.offlineReason = reason;
     this.rejectPendingSessionCommands(session, error);
+    this.failSessionApprovals(session.sessionId, message);
     for (const waiter of [...session.waiters]) waiter();
     this.sessions.delete(session.sessionId);
     for (const thread of this.threads.values()) {
@@ -2080,6 +2163,139 @@ const fileChanges = (value: unknown) =>
     })
     : [];
 
+const approvalRecord = (approval: PendingApproval, errorMessage?: string): CodexRecord => {
+  const params = asRecord(approval.params);
+  const status = approvalRecordStatus(approval.status);
+  const timestamp = approval.createdAt;
+  if (approval.kind === "command_execution" || approval.kind === "legacy_exec_command") {
+    return {
+      id: approvalRecordId(approval),
+      timestamp,
+      type: "response_item",
+      payload: {
+        type: "local_shell_call",
+        call_id: approval.itemId ?? approval.approvalId,
+        status,
+        action: {
+          type: "exec",
+          command: approvalCommandParts(approval, params)
+        },
+        aggregated_output: approvalOutputText(approval, params, errorMessage),
+        exit_code: approval.status === "denied" || approval.status === "failed" ? 1 : null,
+        approval: approvalPayload(approval, params, errorMessage)
+      },
+      sourceThreadId: approval.threadId
+    };
+  }
+
+  return {
+    id: approvalRecordId(approval),
+    timestamp,
+    type: "response_item",
+    payload: {
+      type: "file_change",
+      changes: approvalFileChanges(approval, params),
+      status,
+      approval: approvalPayload(approval, params, errorMessage)
+    },
+    sourceThreadId: approval.threadId
+  };
+};
+
+const approvalRecordId = (approval: PendingApproval) => {
+  const turnId = approval.turnId || "approval";
+  const itemId = approval.itemId || approval.approvalId;
+  if (approval.kind === "command_execution") {
+    const params = asRecord(approval.params);
+    const callbackId = typeof params?.approvalId === "string" && params.approvalId ? params.approvalId : "";
+    return callbackId
+      ? `app:${approval.threadId}:${turnId}:approval:commandExecution:${itemId}:${callbackId}`
+      : `app:${approval.threadId}:${turnId}:item:commandExecution:${itemId}`;
+  }
+  if (approval.kind === "file_change") return `app:${approval.threadId}:${turnId}:item:fileChange:${itemId}`;
+  return `app:${approval.threadId}:${turnId}:approval:${approval.kind}:${itemId}`;
+};
+
+const approvalRecordStatus = (status: PendingApproval["status"]) => {
+  if (status === "pending") return "pending_approval";
+  if (status === "approved") return "approved";
+  if (status === "denied") return "denied";
+  return "failed";
+};
+
+const approvalPayload = (
+  approval: PendingApproval,
+  params: Record<string, unknown> | null,
+  errorMessage?: string
+) => ({
+  approvalId: approval.approvalId,
+  kind: approval.kind,
+  method: approval.method,
+  requestId: approval.requestId,
+  status: approval.status,
+  reason: stringValue(params?.reason) ?? null,
+  ...(approval.turnId ? { turnId: approval.turnId } : {}),
+  ...(approval.itemId ? { itemId: approval.itemId } : {}),
+  ...(errorMessage ? { error: errorMessage } : {})
+});
+
+const approvalCommandParts = (approval: PendingApproval, params: Record<string, unknown> | null) => {
+  const command = params?.command;
+  if (Array.isArray(command)) return command.filter((item): item is string => typeof item === "string" && Boolean(item));
+  if (typeof command === "string" && command) return [command];
+  const action = asRecord(params?.action);
+  const actionCommand = action?.command;
+  if (Array.isArray(actionCommand)) return actionCommand.filter((item): item is string => typeof item === "string" && Boolean(item));
+  if (typeof actionCommand === "string" && actionCommand) return [actionCommand];
+  return approval.kind === "legacy_apply_patch" || approval.kind === "file_change" ? ["apply_patch"] : [];
+};
+
+const approvalOutputText = (
+  approval: PendingApproval,
+  params: Record<string, unknown> | null,
+  errorMessage?: string
+) => [
+  approval.status === "pending"
+    ? "Approval required."
+    : approval.status === "approved"
+      ? "Approved."
+      : approval.status === "denied"
+        ? "Denied."
+        : "Approval failed.",
+  stringValue(params?.reason),
+  approvalNetworkText(params?.networkApprovalContext),
+  stringValue(params?.cwd) ? `cwd: ${stringValue(params?.cwd)}` : null,
+  errorMessage ? `error: ${errorMessage}` : null
+].filter(Boolean).join("\n");
+
+const approvalNetworkText = (value: unknown) => {
+  const record = asRecord(value);
+  if (!record) return null;
+  return [
+    "network:",
+    stringValue(record.protocol),
+    stringValue(record.host)
+  ].filter(Boolean).join(" ");
+};
+
+const approvalFileChanges = (approval: PendingApproval, params: Record<string, unknown> | null) => {
+  const direct = fileChanges(params?.changes);
+  if (direct.length) return direct;
+  const legacy = asRecord(params?.fileChanges);
+  if (legacy) {
+    return Object.entries(legacy).map(([path, change]) => {
+      const record = asRecord(change);
+      return {
+        path,
+        kind: stringValue(record?.type) ?? stringValue(record?.kind) ?? "update",
+        diff: stringValue(record?.diff)
+      };
+    });
+  }
+  const grantRoot = stringValue(params?.grantRoot);
+  return grantRoot ? [{ path: grantRoot, kind: "grant", diff: stringValue(params?.reason) }] : [];
+};
+
 const appServerStatus = (status: unknown) =>
   status === "inProgress" ? "in_progress" : typeof status === "string" ? status : undefined;
 
@@ -2500,6 +2716,8 @@ const formatUsage = (usage: Usage | undefined) => {
 const numberValue = (value: unknown) => typeof value === "number" ? value : undefined;
 
 const stringValue = (value: unknown) => typeof value === "string" ? value : undefined;
+
+const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 const isThreadReasoningEffort = (value: unknown): value is ThreadOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";

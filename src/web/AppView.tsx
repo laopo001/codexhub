@@ -96,6 +96,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     removeSshHost,
     renderComposerThreadControls,
     resetComposerHistory,
+    respondToApproval,
     reviewThread,
     resizeComposerTextarea,
     rollbackMessage,
@@ -275,6 +276,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                               };
                             });
                           } : undefined}
+                          onApprovalDecision={(approvalId, decision) => void respondToApproval(activeThread.threadId, approvalId, decision)}
                           onFork={canForkAtMessage(activeThread.threadId, message) ? () => void forkMessage(activeThread.threadId, message.record.id) : undefined}
                           onRollback={canForkAtMessage(activeThread.threadId, message) ? () => void rollbackMessage(activeThread.threadId, message.record.id) : undefined}
                         />

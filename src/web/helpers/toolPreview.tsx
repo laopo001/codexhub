@@ -128,7 +128,10 @@ export const FileChangePreview = ({
   const files = fileChangePreviewFiles(payload);
   const visibleFiles = files.slice(0, 5);
   const hiddenCount = files.length - visibleFiles.length;
-  const title = status === "failed" ? "Patch failed" : "Files changed";
+  const approval = asRecord(payload.approval);
+  const title = approval?.status === "pending"
+    ? "File changes need approval"
+    : status === "failed" ? "Patch failed" : "Files changed";
   return (
     <ToolPreview title={title} status={status} statusText={statusText} meta={appServerToolMeta(payload)} className="fileChangePreview" icon={FileDiff}>
       {visibleFiles.length ? (

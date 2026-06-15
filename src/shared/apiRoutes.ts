@@ -21,6 +21,8 @@ import type {
   ThreadCandidatesPayload,
   ThreadDeletePayload,
   ThreadDetail,
+  ThreadApprovalDecisionInput,
+  ThreadApprovalPayload,
   ThreadCompactPayload,
   ThreadGoalMutationPayload,
   ThreadGoalUpdateInput,
@@ -186,6 +188,9 @@ export const apiRoutes = {
   ),
   reviewThread: postNoBody<ThreadReviewPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/review`
+  ),
+  respondThreadApproval: post<ThreadApprovalDecisionInput, ThreadApprovalPayload, (threadId: string) => string>(
+    (threadId) => `/api/threads/${encode(threadId)}/approval`
   ),
   renameThread: patch<ThreadRenameInput, ThreadRenamePayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/name`

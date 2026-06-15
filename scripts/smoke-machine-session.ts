@@ -123,6 +123,7 @@ const main = async () => {
   await assertAppServerReasoningItemStatusViews();
   await assertSessionAccountRateLimits();
   await assertLocalShellExitStatusView();
+  await assertAppServerApprovalRequestFlow();
   await assertHistoricalToolBatchCollapse();
   await assertRollbackPreservesKeptTurnToolRecords();
   await assertForkPreservesKeptTurnToolRecords();
@@ -1566,6 +1567,167 @@ const assertLocalShellExitStatusView = async () => {
   if (pendingView?.text !== "$ <empty>") {
     throw new Error(`pending shell command view was not descriptive: ${JSON.stringify(pendingView)}`);
   }
+};
+
+const assertAppServerApprovalRequestFlow = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const { recordsToViews } = await import("../src/core/codexRecordView.js");
+  const { machineTransportMessageSchema } = await import("../src/shared/apiContract.js");
+  const hub = new ThreadHub();
+  const sessionId = "approval-session";
+  const threadId = "approval-thread";
+  const cwd = process.cwd();
+  hub.registerSession({ sessionId, workingDirectory: cwd });
+  hub.attachSessionThread(sessionId, threadId, cwd);
+  let cursor = 0;
+  const exerciseApproval = async (
+    approvalId: string,
+    decision: "approve" | "deny",
+    approval: {
+      method: string;
+      requestId: number;
+      kind: "command_execution" | "legacy_exec_command" | "legacy_apply_patch";
+      turnId?: string;
+      itemId: string;
+      params: Record<string, unknown>;
+    },
+    assertPendingPayload: (payload: Record<string, unknown>) => void
+  ) => {
+    const event = {
+      type: "approval_request",
+      threadId,
+      approval: {
+        approvalId,
+        method: approval.method,
+        requestId: approval.requestId,
+        kind: approval.kind,
+        threadId,
+        ...(approval.turnId ? { turnId: approval.turnId } : {}),
+        itemId: approval.itemId,
+        createdAt: "2026-06-16T00:00:00.000Z",
+        params: approval.params
+      }
+    } as const;
+    machineTransportMessageSchema.parse({ type: "session_event", sessionId, event });
+    hub.applySessionEvent(sessionId, event);
+
+    let records = hub.getThread(threadId)?.records ?? [];
+    let record = records.find((item) => asRecord(asRecord(item)?.payload).approval && asRecord(asRecord(asRecord(item)?.payload).approval).approvalId === approvalId);
+    let approvalPayload = asRecord(asRecord(record)?.payload);
+    let approvalRecord = asRecord(approvalPayload.approval);
+    if (approvalRecord.status !== "pending") throw new Error(`approval request record missing pending status: ${JSON.stringify(records)}`);
+    assertPendingPayload(approvalPayload);
+    const pendingView = recordsToViews([record as CodexRecord])[0];
+    if (pendingView?.status !== "pending" || pendingView.statusText !== "pending_approval") {
+      throw new Error(`approval request view was not pending: ${JSON.stringify(pendingView)}`);
+    }
+
+    const response = hub.respondToApproval(threadId, approvalId, decision);
+    const batch = await hub.waitSessionCommands(sessionId, cursor, 100);
+    cursor = batch.cursor;
+    const command = batch.commands.find((item) => item.type === "approval_decision" && item.approvalId === approvalId);
+    if (!command || command.approvalDecision !== decision) {
+      throw new Error(`approval decision command missing: ${JSON.stringify(batch)}`);
+    }
+    hub.resolveSessionCommand(sessionId, command.commandId, { ok: true });
+    const result = await response;
+    const expectedStatus = decision === "approve" ? "approved" : "denied";
+    if (result.status !== expectedStatus) throw new Error(`approval response was not ${expectedStatus}: ${JSON.stringify(result)}`);
+    records = hub.getThread(threadId)?.records ?? [];
+    record = records.find((item) => asRecord(asRecord(item)?.payload).approval && asRecord(asRecord(asRecord(item)?.payload).approval).approvalId === approvalId);
+    approvalPayload = asRecord(asRecord(record)?.payload);
+    approvalRecord = asRecord(approvalPayload.approval);
+    if (approvalRecord.status !== expectedStatus) throw new Error(`approval record was not marked ${expectedStatus}: ${JSON.stringify(records)}`);
+  };
+
+  await exerciseApproval(
+    "approval-1",
+    "approve",
+    {
+      method: "item/commandExecution/requestApproval",
+      requestId: 99,
+      kind: "command_execution",
+      turnId: "approval-turn",
+      itemId: "shell-1",
+      params: {
+        threadId,
+        turnId: "approval-turn",
+        itemId: "shell-1",
+        command: "touch /tmp/codexhub-approval",
+        cwd,
+        reason: "requires elevated permissions"
+      }
+    },
+    (payload) => {
+      const action = asRecord(payload.action);
+      const command = action.command;
+      if (payload.type !== "local_shell_call" || !Array.isArray(command) || command.join(" ") !== "touch /tmp/codexhub-approval") {
+        throw new Error(`command approval payload was not rendered as shell call: ${JSON.stringify(payload)}`);
+      }
+    }
+  );
+
+  await exerciseApproval(
+    "legacy-exec-approval",
+    "approve",
+    {
+      method: "execCommandApproval",
+      requestId: 100,
+      kind: "legacy_exec_command",
+      itemId: "legacy-call-1",
+      params: {
+        conversationId: threadId,
+        callId: "legacy-call-1",
+        approvalId: "legacy-exec-callback",
+        command: ["echo", "legacy"],
+        cwd,
+        reason: "legacy exec approval",
+        parsedCmd: []
+      }
+    },
+    (payload) => {
+      const action = asRecord(payload.action);
+      const command = action.command;
+      const approval = asRecord(payload.approval);
+      if (payload.type !== "local_shell_call" || !Array.isArray(command) || command.join(" ") !== "echo legacy") {
+        throw new Error(`legacy exec approval payload was not rendered as shell call: ${JSON.stringify(payload)}`);
+      }
+      if (approval.kind !== "legacy_exec_command" || approval.itemId !== "legacy-call-1") {
+        throw new Error(`legacy exec approval metadata was not preserved: ${JSON.stringify(payload)}`);
+      }
+    }
+  );
+
+  await exerciseApproval(
+    "legacy-patch-approval",
+    "deny",
+    {
+      method: "applyPatchApproval",
+      requestId: 101,
+      kind: "legacy_apply_patch",
+      itemId: "legacy-patch-1",
+      params: {
+        conversationId: threadId,
+        callId: "legacy-patch-1",
+        fileChanges: {
+          "src/example.ts": { type: "update", diff: "@@ -1 +1 @@" }
+        },
+        reason: "legacy patch approval",
+        grantRoot: null
+      }
+    },
+    (payload) => {
+      const changes = Array.isArray(payload.changes) ? payload.changes : [];
+      const first = asRecord(changes[0]);
+      const approval = asRecord(payload.approval);
+      if (payload.type !== "file_change" || first.path !== "src/example.ts" || first.kind !== "update") {
+        throw new Error(`legacy applyPatch approval payload was not rendered as file change: ${JSON.stringify(payload)}`);
+      }
+      if (approval.kind !== "legacy_apply_patch" || approval.itemId !== "legacy-patch-1") {
+        throw new Error(`legacy applyPatch approval metadata was not preserved: ${JSON.stringify(payload)}`);
+      }
+    }
+  );
 };
 
 const assertHistoricalToolBatchCollapse = async () => {

@@ -1,5 +1,5 @@
 import type React from "react";
-import type { RealtimeOutgoingMessage, ThreadGoalUpdateInput } from "../../shared/apiContract.js";
+import type { AppServerApprovalDecision, RealtimeOutgoingMessage, ThreadGoalUpdateInput } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import type { ProxyInput } from "../../shared/inputTypes.js";
 import type { CodexRecord } from "../../shared/recordTypes.js";
@@ -104,6 +104,7 @@ export type ThreadActions = {
   stopTurn: (threadId: string) => Promise<void>;
   compactThread: (threadId: string) => Promise<void>;
   reviewThread: (threadId: string) => Promise<void>;
+  respondToApproval: (threadId: string, approvalId: string, decision: AppServerApprovalDecision) => Promise<void>;
   updateThreadGoal: (threadId: string, goal: ThreadGoalUpdateInput, options?: ThreadGoalUpdateOptions) => Promise<boolean>;
   clearThreadGoal: (threadId: string) => Promise<void>;
   saveGoalDialog: () => Promise<void>;
@@ -437,6 +438,21 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
   };
 
+  const respondToApproval = async (
+    threadId: string,
+    approvalId: string,
+    decision: AppServerApprovalDecision
+  ) => {
+    try {
+      const payload = await apiRouteJson(apiRoutes.respondThreadApproval, threadId, { approvalId, decision });
+      if (payload.thread) applyThreadDetail(payload.thread);
+    } catch (error) {
+      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
+        ? { ...item, records: [...item.records, errorRecord("approval failed", error)] }
+        : item));
+    }
+  };
+
   const updateThreadGoal = async (
     threadId: string,
     goal: ThreadGoalUpdateInput,
@@ -498,6 +514,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     stopTurn,
     compactThread,
     reviewThread,
+    respondToApproval,
     updateThreadGoal,
     clearThreadGoal,
     saveGoalDialog,

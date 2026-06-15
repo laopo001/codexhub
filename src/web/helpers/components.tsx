@@ -5,7 +5,8 @@ import { GripHorizontal } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, languageAliases } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, WebRecordView } from "../types.js";
-import type { CodexRecordView } from "../../shared/recordTypes.js";
+import type { AppServerApprovalDecision } from "../../shared/apiContract.js";
+import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { statusLabel } from "./common.js";
 import { formatInspectDetail, formatInspectTitle, renderToolMessageBody } from "./toolPreview.js";
 import { activityStatusOverlayClass, activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
@@ -52,6 +53,7 @@ export const MessageCard = ({
   onContextMenu,
   onInspect,
   onToggleToolBatch,
+  onApprovalDecision,
   onFork,
   onRollback
 }: {
@@ -65,6 +67,7 @@ export const MessageCard = ({
   onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
   onInspect?: () => void;
   onToggleToolBatch?: () => void;
+  onApprovalDecision?: (approvalId: string, decision: AppServerApprovalDecision) => void;
   onFork?: () => void;
   onRollback?: () => void;
 }) => {
@@ -77,7 +80,15 @@ export const MessageCard = ({
     return shouldExtractMemoryCitation(message) ? parseMemoryCitationText(message.text) : emptyMemoryCitation(message.text);
   }, [message, isThinkingMessage]);
   const messageText = memoryCitation.text;
-  const hasMessageMeta = !isThinkingMessage && ((showTimestamp && message.at) || message.usage || markdownEnabled || onFork || onRollback);
+  const approval = pendingApprovalFromMessage(message);
+  const hasMessageMeta = !isThinkingMessage && (
+    (showTimestamp && message.at)
+    || message.usage
+    || markdownEnabled
+    || approval
+    || onFork
+    || onRollback
+  );
   const canClickInspect = Boolean(hasToolBody && onInspect);
   const inspectOnKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (!canClickInspect || event.defaultPrevented) return;
@@ -161,6 +172,24 @@ export const MessageCard = ({
               aria-label="Toggle Markdown rendering"
             />
           ) : null}
+          {approval && onApprovalDecision ? (
+            <span className="approvalActions">
+              <button
+                type="button"
+                className="approvalButton approve"
+                onClick={() => onApprovalDecision(approval.approvalId, "approve")}
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                className="approvalButton deny"
+                onClick={() => onApprovalDecision(approval.approvalId, "deny")}
+              >
+                Deny
+              </button>
+            </span>
+          ) : null}
           {onFork ? (
             <a href="#" onClick={(event) => {
               event.preventDefault();
@@ -209,6 +238,14 @@ export const MemoryCitationPanel = ({ citation }: { citation: MemoryCitationView
 export const memoryCitationBlockPattern = /<oai-mem-citation>[\s\S]*?<\/oai-mem-citation>/g;
 
 export const emptyMemoryCitation = (text: string): MemoryCitationView => ({ text, entries: [], rolloutIds: [] });
+
+const pendingApprovalFromMessage = (message: WebRecordView) => {
+  const payload = asRecord(message.record.payload);
+  const approval = asRecord(payload?.approval);
+  const approvalId = typeof approval?.approvalId === "string" ? approval.approvalId : "";
+  const status = typeof approval?.status === "string" ? approval.status : "";
+  return approvalId && status === "pending" ? { approvalId } : null;
+};
 
 export const shouldExtractMemoryCitation = (message: WebRecordView) =>
   message.role === "codex" && message.label === "final_answer";
