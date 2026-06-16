@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type React from "react";
 import { Popover } from "antd";
+import { Zap } from "lucide-react";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import {
   activityStatusTitle,
@@ -199,6 +200,10 @@ const ComposerThreadControls = ({
     activeThreadReasoning,
     activeThreadServiceTier
   );
+  const composerModelServiceTier = activeThreadServiceTierDraft === "auto"
+    ? activeThreadServiceTier
+    : activeThreadServiceTierDraft;
+  const showPriorityTierIcon = composerModelServiceTier === "priority";
   const canCompactThread = Boolean(activeThread?.threadId && !activeThread.running);
   const contextUsageLabel = formatContextUsage(activeThreadUsage);
   const contextPercent = contextUsagePercent(activeThreadUsage);
@@ -261,6 +266,7 @@ const ComposerThreadControls = ({
         }}
       >
         {composerModelButtonLabel}
+        {showPriorityTierIcon ? <Zap className="composerModelTierIcon" aria-label="priority" /> : null}
       </button>
     </div>
   );

@@ -184,7 +184,10 @@ export const formatComposerModelButtonLabel = (
   const reasoning = reasoningDraft === "auto" ? threadReasoning : reasoningDraft;
   const serviceTier = serviceTierDraft === "auto" ? threadServiceTier : serviceTierDraft;
   const label = rawModelLabel(model);
-  return [reasoning ? `${label}:${reasoning}` : label, serviceTier ? serviceTierDisplayLabel(serviceTier) : null].filter(Boolean).join(" · ");
+  const visibleServiceTier = serviceTier && serviceTier !== "default" && serviceTier !== "priority"
+    ? serviceTierDisplayLabel(serviceTier)
+    : null;
+  return [reasoning ? `${label}:${reasoning}` : label, visibleServiceTier].filter(Boolean).join(" · ");
 };
 
 export const formatContextUsage = (threadUsage: ThreadUsage | null) => {

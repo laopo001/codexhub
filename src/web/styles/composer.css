@@ -548,6 +548,9 @@
 }
 
 .composerModelButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-height: 28px;
   border: 1px solid #cbd6c7;
   border-radius: 999px;
@@ -561,6 +564,14 @@
 
 .composerModelButton:hover {
   background: #f4f6f1;
+}
+
+.composerModelTierIcon {
+  width: 14px;
+  height: 14px;
+  color: #b7791f;
+  stroke-width: 2.4;
+  flex: 0 0 auto;
 }
 
 .composerActionButton {

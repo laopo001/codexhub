@@ -25,12 +25,12 @@ export const defaultAppSettings = (): AppSettings => ({
 });
 export const modelOptions: Array<{ value: ModelSelection; label: string }> = [
   { value: "auto", label: "Auto" },
-  { value: "gpt-5.5", label: "GPT-5.5" },
-  { value: "gpt-5.4", label: "GPT-5.4" },
-  { value: "gpt-5.4-mini", label: "GPT-5.4-Mini" },
-  { value: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
-  { value: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark" },
-  { value: "gpt-5.2", label: "GPT-5.2" }
+  { value: "gpt-5.5", label: "gpt-5.5" },
+  { value: "gpt-5.4", label: "gpt-5.4" },
+  { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+  { value: "gpt-5.3-codex", label: "gpt-5.3-codex" },
+  { value: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark" },
+  { value: "gpt-5.2", label: "gpt-5.2" }
 ];
 export const reasoningOptions: Array<{ value: ReasoningSelection; label: string }> = [
   { value: "auto", label: "Auto" },
@@ -42,8 +42,8 @@ export const reasoningOptions: Array<{ value: ReasoningSelection; label: string 
 ];
 export const serviceTierOptions: Array<{ value: ServiceTierSelection; label: string }> = [
   { value: "auto", label: "Auto" },
-  { value: "default", label: "Default" },
-  { value: "priority", label: "Fast" }
+  { value: "default", label: "default" },
+  { value: "priority", label: "priority" }
 ];
 export const approvalPolicyOptions: Array<{ value: ApprovalPolicySelection; label: string }> = [
   { value: "untrusted", label: "Untrusted" },

@@ -754,28 +754,21 @@ export const fastCommandAction = (text: string) => {
 export const rawModelLabel = (model: ModelSelection) => model === "auto" ? "Auto" : model;
 
 export const modelOptionLabel = (option: { value: string; label: string }) =>
-  option.label || option.value;
+  option.value;
 
 export const reasoningOptionLabel = (option: { value: string; label: string }) =>
-  option.label || option.value;
+  option.value;
 
-export const serviceTierDisplayLabel = (tier: string) => {
-  if (tier === "priority") return "Fast";
-  if (tier === "default") return "Default";
-  return tier;
-};
+export const serviceTierDisplayLabel = (tier: string) => tier;
 
-export const serviceTierOptionLabel = (option: { value: string; label: string }) => {
-  const label = option.label || option.value;
-  return label === option.value ? serviceTierDisplayLabel(option.value) : label;
-};
+export const serviceTierOptionLabel = (option: { value: string; label: string }) => option.value;
 
 export const modelOptionsForSelection = (model: ModelSelection, catalog: ModelCatalogItem[] = []) => {
   const catalogOptions = catalog
     .filter((item) => !item.hidden)
     .map((item) => ({
       value: modelCatalogValue(item),
-      label: item.displayName || item.model || item.id
+      label: modelCatalogValue(item)
     }))
     .filter((option) => option.value);
   const options = catalogOptions.length ? [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)] : modelOptions;
@@ -792,7 +785,7 @@ export const reasoningOptionsForSelection = (
     .filter((option) => reasoningOptions.some((staticOption) => staticOption.value === option.value))
     .map((option) => ({
       value: option.value,
-      label: option.label || option.value
+      label: option.value
     }));
   const options = catalogOptions.length ? [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)] : reasoningOptions;
   return ensureOption(options, reasoning);
@@ -809,10 +802,10 @@ export const serviceTierOptionsForSelection = (
     : catalog.flatMap((item) => item.serviceTiers);
   const catalogOptions = sourceTiers.map((option) => ({
     value: option.value,
-    label: serviceTierOptionLabel({ value: option.value, label: option.label || option.value })
+    label: option.value
   }));
   const options = catalogOptions.length
-    ? [{ value: "auto", label: "Auto" }, ...dedupeOptions([...catalogOptions, { value: "default", label: "Default" }])]
+    ? [{ value: "auto", label: "Auto" }, ...dedupeOptions([...catalogOptions, { value: "default", label: "default" }])]
     : serviceTierOptions;
   return ensureOption(options, serviceTier, serviceTierDisplayLabel(serviceTier));
 };
