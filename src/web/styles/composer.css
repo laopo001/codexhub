@@ -231,14 +231,11 @@
 }
 
 .goalStripIcon {
-  display: grid;
   flex: 0 0 auto;
-  place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   color: #7c8778;
-  font-size: 13px;
-  line-height: 1;
+  stroke-width: 2.35;
 }
 
 .goalStripLabel {
@@ -458,25 +455,25 @@
 
 .composerModeSegmented {
   display: grid;
-  grid-template-columns: repeat(3, minmax(50px, 1fr));
-  width: min(160px, 34vw);
-  min-width: 144px;
-  height: 28px;
+  grid-template-columns: repeat(3, 32px);
+  width: 98px;
+  min-width: 98px;
+  height: 32px;
   overflow: hidden;
   border: 1px solid #cbd6c7;
-  border-radius: 7px;
+  border-radius: 999px;
   background: #ffffff;
 }
 
 .composerModeOption {
+  display: grid;
+  place-items: center;
   min-width: 0;
   border: 0;
   border-left: 1px solid #dfe5dc;
   background: transparent;
   color: #3c4738;
-  padding: 0 6px;
-  font-size: 12px;
-  font-weight: 650;
+  padding: 0;
   letter-spacing: 0;
 }
 
@@ -491,6 +488,12 @@
 .composerModeOption.active {
   background: #1f6feb;
   color: #ffffff;
+}
+
+.composerModeIcon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.35;
 }
 
 .composerIconButton,

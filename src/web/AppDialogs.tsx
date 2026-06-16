@@ -1,5 +1,6 @@
 import React from "react";
 import { Select, Switch } from "antd";
+import { Target } from "lucide-react";
 import {
   formatInspectTitle,
   formatThreadCandidateTime,
@@ -175,7 +176,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
         }}>
           <section className="goalDialog" role="dialog" aria-modal="true" aria-labelledby="goalDialogTitle">
             <header className="goalDialogHeader">
-              <div className="goalDialogMark" aria-hidden="true">◎</div>
+              <div className="goalDialogMark" aria-hidden="true">
+                <Target />
+              </div>
               <button
                 type="button"
                 className="goalDialogClose"

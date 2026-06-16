@@ -1,5 +1,6 @@
 import React from "react";
 import { Tabs } from "antd";
+import { ListChecks, MessageCircle, Target, type LucideIcon } from "lucide-react";
 import { Virtuoso } from "react-virtuoso";
 import { approvalPolicyOptions, composerModeOptions, sandboxPolicyOptions } from "./appConfig.js";
 import { AppDialogs } from "./AppDialogs.js";
@@ -18,6 +19,12 @@ import {
 
 type AppViewProps = {
   viewModel: AppViewModel;
+};
+
+const composerModeIconByValue: Record<(typeof composerModeOptions)[number]["value"], LucideIcon> = {
+  chat: MessageCircle,
+  plan: ListChecks,
+  goal: Target
 };
 
 export const AppView = ({ viewModel }: AppViewProps) => {
@@ -328,7 +335,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                             aria-label={`${goalStatusLabel(activeGoal.status)}: ${activeGoal.objective}`}
                           >
                             <div className="goalStripMain">
-                              <span className="goalStripIcon" aria-hidden="true">◎</span>
+                              <Target className="goalStripIcon" aria-hidden="true" />
                               <span className="goalStripLabel">{goalStatusLabel(activeGoal.status)}</span>
                               <span className="goalStripObjective" title={activeGoal.objective}>{activeGoal.objective}</span>
                               {activeGoal.updatedAt ? <span className="goalStripAge">{formatGoalAge(activeGoal.updatedAt)}</span> : null}
@@ -486,18 +493,23 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                               ) : null}
                             </div>
                             <div className="composerModeSegmented" role="radiogroup" aria-label="Composer mode">
-                              {composerModeOptions.map((option) => (
-                                <button
-                                  key={option.value}
-                                  type="button"
-                                  className={`composerModeOption${composerMode === option.value ? " active" : ""}`}
-                                  role="radio"
-                                  aria-checked={composerMode === option.value}
-                                  onClick={() => setComposerMode(option.value)}
-                                >
-                                  {option.label}
-                                </button>
-                              ))}
+                              {composerModeOptions.map((option) => {
+                                const ModeIcon = composerModeIconByValue[option.value];
+                                return (
+                                  <button
+                                    key={option.value}
+                                    type="button"
+                                    className={`composerModeOption${composerMode === option.value ? " active" : ""}`}
+                                    role="radio"
+                                    aria-checked={composerMode === option.value}
+                                    aria-label={option.label}
+                                    title={option.label}
+                                    onClick={() => setComposerMode(option.value)}
+                                  >
+                                    <ModeIcon className="composerModeIcon" aria-hidden="true" />
+                                  </button>
+                                );
+                              })}
                             </div>
                           </div>
                           <div className="composerRightActions">

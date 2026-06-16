@@ -79,14 +79,9 @@
   }
 
   .composerModeSegmented {
-    flex: 1 1 144px;
-    width: min(160px, calc(100vw - 102px));
-    min-width: 142px;
-  }
-
-  .composerModeOption {
-    padding: 0 6px;
-    font-size: 11px;
+    flex: 0 0 98px;
+    width: 98px;
+    min-width: 98px;
   }
 
   .composerSessionControls.inline {
