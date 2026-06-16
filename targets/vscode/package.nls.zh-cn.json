@@ -1,0 +1,10 @@
+{
+  "extension.description": "在 VS Code 中使用本地 Codex Hub 工作区聊天。",
+  "command.category": "Codex Hub",
+  "command.refresh.title": "刷新 Workspace 视图",
+  "command.refresh.shortTitle": "刷新",
+  "command.openInBrowser.title": "在浏览器中打开 Workspace 视图",
+  "command.openInBrowser.shortTitle": "在浏览器中打开",
+  "viewsContainer.codexhub.title": "Codex Hub",
+  "view.workspace.name": "Workspace"
+}

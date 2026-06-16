@@ -1,0 +1,10 @@
+{
+  "extension.description": "Local Codex Hub workspace chat inside VS Code.",
+  "command.category": "Codex Hub",
+  "command.refresh.title": "Refresh Workspace View",
+  "command.refresh.shortTitle": "Refresh",
+  "command.openInBrowser.title": "Open Workspace View in Browser",
+  "command.openInBrowser.shortTitle": "Open in Browser",
+  "viewsContainer.codexhub.title": "Codex Hub",
+  "view.workspace.name": "Workspace"
+}

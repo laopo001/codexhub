@@ -1,7 +1,7 @@
 {
   "name": "codexhub",
   "displayName": "Codex Hub",
-  "description": "Local Codex Hub workspace chat inside VS Code.",
+  "description": "%extension.description%",
   "version": "0.0.0",
   "publisher": "dadigua",
   "license": "MIT",
@@ -14,6 +14,8 @@
     "dist",
     "dist-node",
     "media",
+    "package.nls.json",
+    "package.nls.zh-cn.json",
     "README.md",
     "LICENSE"
   ],
@@ -36,18 +38,22 @@
     "commands": [
       {
         "command": "codexhub.refresh",
-        "title": "Codex Hub: Refresh"
+        "category": "%command.category%",
+        "title": "%command.refresh.title%",
+        "shortTitle": "%command.refresh.shortTitle%"
       },
       {
         "command": "codexhub.openInBrowser",
-        "title": "Codex Hub: Open in Browser"
+        "category": "%command.category%",
+        "title": "%command.openInBrowser.title%",
+        "shortTitle": "%command.openInBrowser.shortTitle%"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
           "id": "codexhub",
-          "title": "Codex Hub",
+          "title": "%viewsContainer.codexhub.title%",
           "icon": "media/codexhub.svg"
         }
       ]
@@ -56,7 +62,7 @@
       "codexhub": [
         {
           "id": "codexhub.workspaceView",
-          "name": "Workspace",
+          "name": "%view.workspace.name%",
           "type": "webview"
         }
       ]

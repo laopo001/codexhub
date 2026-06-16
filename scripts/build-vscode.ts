@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile, cp, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile, cp, stat, readdir } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
 
@@ -32,6 +32,7 @@ await assertDirectory("dist-node/ssh", "Run `pnpm build` before `pnpm build:vsco
 await cp("dist", path.join(outDir, "dist"), { recursive: true });
 await cp("dist-node/ssh", path.join(outDir, "dist-node", "ssh"), { recursive: true });
 await cp("targets/vscode/media", path.join(outDir, "media"), { recursive: true });
+await copyPackageNlsFiles();
 await writeFile(path.join(outDir, "package.json"), `${JSON.stringify(await extensionManifest(), null, 2)}\n`);
 await cp("README.md", path.join(outDir, "README.md"));
 await cp("LICENSE", path.join(outDir, "LICENSE"));
@@ -52,6 +53,15 @@ async function extensionManifest() {
 
 async function readJson<T>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
+}
+
+async function copyPackageNlsFiles() {
+  const files = await readdir("targets/vscode");
+  await Promise.all(
+    files
+      .filter((file) => /^package\.nls(?:\.[a-z0-9-]+)?\.json$/i.test(file))
+      .map((file) => cp(path.join("targets/vscode", file), path.join(outDir, file)))
+  );
 }
 
 async function assertDirectory(dir: string, message: string) {
