@@ -2635,12 +2635,12 @@ const orderThreadRecords = (records: CodexRecord[]) =>
 const compareThreadRecords = (left: CodexRecord, right: CodexRecord) => {
   const leftTime = recordTimeMs(left);
   const rightTime = recordTimeMs(right);
+  const leftOrder = recordOrder(left);
+  const rightOrder = recordOrder(right);
   if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
+  if (leftOrder !== null && rightOrder !== null && leftOrder !== rightOrder) return leftOrder - rightOrder;
   if (leftTime !== null && rightTime === null) return -1;
   if (leftTime === null && rightTime !== null) return 1;
-  const leftOrder = typeof left.order === "number" ? left.order : Number.MAX_SAFE_INTEGER;
-  const rightOrder = typeof right.order === "number" ? right.order : Number.MAX_SAFE_INTEGER;
-  if (leftOrder !== rightOrder) return leftOrder - rightOrder;
   return 0;
 };
 
@@ -2648,6 +2648,9 @@ const recordTimeMs = (record: CodexRecord) => {
   const time = Date.parse(record.timestamp ?? "");
   return Number.isFinite(time) ? time : null;
 };
+
+const recordOrder = (record: CodexRecord) =>
+  typeof record.order === "number" && Number.isFinite(record.order) ? record.order : null;
 
 const recordsEqual = (left: CodexRecord, right: CodexRecord) =>
   JSON.stringify(left) === JSON.stringify(right);

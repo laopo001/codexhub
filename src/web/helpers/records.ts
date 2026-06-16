@@ -283,13 +283,6 @@ export const threadDisplayRecords = (
   thread: Pick<ThreadDetail, "records"> | undefined
 ) => thread?.records ?? [];
 
-export const recordSortValue = (record: CodexRecord) => {
-  const timestamp = Date.parse(record.timestamp ?? "");
-  if (Number.isFinite(timestamp)) return timestamp;
-  if (typeof record.order === "number") return record.order;
-  return 0;
-};
-
 const orderRecords = (records: CodexRecord[]) =>
   records
     .map((record, index) => ({ record, index }))
@@ -299,13 +292,17 @@ const orderRecords = (records: CodexRecord[]) =>
 const compareRecords = (left: CodexRecord, right: CodexRecord) => {
   const leftTime = recordTimestampMs(left);
   const rightTime = recordTimestampMs(right);
+  const leftOrder = recordOrder(left);
+  const rightOrder = recordOrder(right);
   if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
+  if (leftOrder !== null && rightOrder !== null && leftOrder !== rightOrder) return leftOrder - rightOrder;
   if (leftTime !== null && rightTime === null) return -1;
   if (leftTime === null && rightTime !== null) return 1;
-  const leftOrder = typeof left.order === "number" ? left.order : Number.MAX_SAFE_INTEGER;
-  const rightOrder = typeof right.order === "number" ? right.order : Number.MAX_SAFE_INTEGER;
-  return leftOrder === rightOrder ? 0 : leftOrder - rightOrder;
+  return 0;
 };
+
+const recordOrder = (record: CodexRecord) =>
+  typeof record.order === "number" && Number.isFinite(record.order) ? record.order : null;
 
 export const threadRecordsForNotifications = (_threadId: string, thread: ThreadDetail) =>
   thread.records;
@@ -364,11 +361,10 @@ export const usefulTaskCompleteMessage = (payload: Record<string, unknown> | nul
 export const latestFinalAnswerText = (records: CodexRecord[], taskRecord: CodexRecord) => {
   const taskPayload = asRecord(taskRecord.payload);
   const taskTurnId = stringField(taskPayload, "turn_id") ?? stringField(taskPayload, "turnId");
-  const taskOrder = recordSortValue(taskRecord);
-  for (let index = records.length - 1; index >= 0; index -= 1) {
+  const taskIndex = records.findIndex((record) => record.id === taskRecord.id);
+  for (let index = taskIndex === -1 ? records.length - 1 : taskIndex; index >= 0; index -= 1) {
     const record = records[index];
     const recordTurnId = turnIdFromRecord(record);
-    if (recordSortValue(record) > taskOrder) continue;
     if (taskTurnId && recordTurnId && recordTurnId !== taskTurnId) continue;
     const text = finalAnswerTextFromRecord(record);
     if (text) return text;

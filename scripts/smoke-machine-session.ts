@@ -1298,6 +1298,52 @@ const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
   if (goalIndex !== records.length - 1 || startedIndex !== 0) {
     throw new Error(`thread records were not timestamp ordered after snapshot: ${JSON.stringify(records)}`);
   }
+
+  const untimedHub = new ThreadHub();
+  const untimedSessionId = "app-server-untimed-order-session";
+  const untimedThreadId = "app-server-untimed-order-thread";
+  untimedHub.registerSession({
+    sessionId: untimedSessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-app-server-untimed-order"
+  });
+  untimedHub.applySessionEvent(untimedSessionId, {
+    type: "thread_turns_snapshot",
+    threadId: untimedThreadId,
+    heartbeat: false,
+    turns: [{
+      id: "app-server-untimed-order-old-turn",
+      items: [{
+        id: "agent-untimed",
+        type: "agentMessage",
+        text: "untimed old commentary"
+      }]
+    }]
+  });
+  untimedHub.applySessionEvent(untimedSessionId, {
+    type: "thread_event",
+    threadId: untimedThreadId,
+    heartbeat: false,
+    message: {
+      method: "item/completed",
+      params: {
+        turnId: "app-server-untimed-order-new-turn",
+        timestamp: 3000,
+        item: {
+          id: "agent-later",
+          type: "agentMessage",
+          text: "later timestamped commentary"
+        }
+      }
+    }
+  });
+  const untimedMessages = (untimedHub.getThread(untimedThreadId)?.records ?? [])
+    .map((record) => asRecord(asRecord(record).payload))
+    .filter((payload) => payload.type === "agent_message")
+    .map((payload) => payload.message);
+  if (JSON.stringify(untimedMessages) !== JSON.stringify(["untimed old commentary", "later timestamped commentary"])) {
+    throw new Error(`untimed app-server records sank below newer timestamped records: ${JSON.stringify(untimedHub.getThread(untimedThreadId)?.records ?? [])}`);
+  }
 };
 
 const assertAppServerAgentMessageDeltaStreams = async () => {
