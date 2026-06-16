@@ -759,6 +759,17 @@ export const modelOptionLabel = (option: { value: string; label: string }) =>
 export const reasoningOptionLabel = (option: { value: string; label: string }) =>
   option.label || option.value;
 
+export const serviceTierDisplayLabel = (tier: string) => {
+  if (tier === "priority") return "Fast";
+  if (tier === "default") return "Default";
+  return tier;
+};
+
+export const serviceTierOptionLabel = (option: { value: string; label: string }) => {
+  const label = option.label || option.value;
+  return label === option.value ? serviceTierDisplayLabel(option.value) : label;
+};
+
 export const modelOptionsForSelection = (model: ModelSelection, catalog: ModelCatalogItem[] = []) => {
   const catalogOptions = catalog
     .filter((item) => !item.hidden)
@@ -798,10 +809,12 @@ export const serviceTierOptionsForSelection = (
     : catalog.flatMap((item) => item.serviceTiers);
   const catalogOptions = sourceTiers.map((option) => ({
     value: option.value,
-    label: option.label || option.value
+    label: serviceTierOptionLabel({ value: option.value, label: option.label || option.value })
   }));
-  const options = catalogOptions.length ? [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)] : serviceTierOptions;
-  return ensureOption(options, serviceTier);
+  const options = catalogOptions.length
+    ? [{ value: "auto", label: "Auto" }, ...dedupeOptions([...catalogOptions, { value: "default", label: "Default" }])]
+    : serviceTierOptions;
+  return ensureOption(options, serviceTier, serviceTierDisplayLabel(serviceTier));
 };
 
 const modelCatalogValue = (item: Pick<ModelCatalogItem, "model" | "id">) => item.model || item.id;
@@ -820,7 +833,7 @@ const dedupeOptions = <T extends { value: string; label: string }>(options: T[])
   });
 };
 
-const ensureOption = <T extends { value: string; label: string }>(options: T[], value: string) => {
+const ensureOption = <T extends { value: string; label: string }>(options: T[], value: string, label = value) => {
   if (!value || options.some((option) => option.value === value)) return options;
-  return [...options, { value, label: value }];
+  return [...options, { value, label }];
 };

@@ -1,5 +1,5 @@
 import React from "react";
-import { Switch } from "antd";
+import { Select, Switch } from "antd";
 import {
   formatInspectTitle,
   formatThreadCandidateTime,
@@ -8,6 +8,7 @@ import {
   modelOptionLabel,
   primeTaskNotificationPermission,
   reasoningOptionLabel,
+  serviceTierOptionLabel,
   shortId,
   statusLabel,
   threadCandidateTitle,
@@ -36,9 +37,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     loadProjectPickerDirectory,
     machines,
     messageContextMenu,
-    activeThreadModelDraft,
-    activeThreadReasoningDraft,
-    activeThreadServiceTierDraft,
+    effectiveModelSelection,
+    effectiveReasoningSelection,
+    effectiveServiceTierSelection,
     modelOptions,
     reasoningOptions,
     serviceTierOptions,
@@ -93,6 +94,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const threadTabContextThread = threadTabContextMenu
     ? openThreads.find((thread) => thread.threadId === threadTabContextMenu.threadId)
     : undefined;
+  const dialogModelOptions = optionsWithoutAutoWhenResolved(modelOptions, effectiveModelSelection);
+  const dialogReasoningOptions = optionsWithoutAutoWhenResolved(reasoningOptions, effectiveReasoningSelection);
+  const dialogServiceTierOptions = optionsWithoutAutoWhenResolved(serviceTierOptions, effectiveServiceTierSelection);
 
   return (
     <>
@@ -107,21 +111,30 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
             </header>
             <label className="sessionDialogField">
               <span>Model</span>
-              <select value={activeThreadModelDraft} onChange={(event) => setActiveThreadModelDraft(event.target.value as ModelSelection)}>
-                {modelOptions.map((option) => <option value={option.value} key={option.value}>{modelOptionLabel(option)}</option>)}
-              </select>
+              <Select
+                className="threadModelSelect"
+                value={effectiveModelSelection}
+                options={dialogModelOptions.map((option) => ({ value: option.value, label: modelOptionLabel(option) }))}
+                onChange={(value) => setActiveThreadModelDraft(value as ModelSelection)}
+              />
             </label>
             <label className="sessionDialogField">
               <span>Thinking</span>
-              <select value={activeThreadReasoningDraft} onChange={(event) => setActiveThreadReasoningDraft(event.target.value as ReasoningSelection)}>
-                {reasoningOptions.map((option) => <option value={option.value} key={option.value}>{reasoningOptionLabel(option)}</option>)}
-              </select>
+              <Select
+                className="threadModelSelect"
+                value={effectiveReasoningSelection}
+                options={dialogReasoningOptions.map((option) => ({ value: option.value, label: reasoningOptionLabel(option) }))}
+                onChange={(value) => setActiveThreadReasoningDraft(value as ReasoningSelection)}
+              />
             </label>
             <label className="sessionDialogField">
               <span>Service Tier</span>
-              <select value={activeThreadServiceTierDraft} onChange={(event) => setActiveThreadServiceTierDraft(event.target.value as ServiceTierSelection)}>
-                {serviceTierOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
-              </select>
+              <Select
+                className="threadModelSelect"
+                value={effectiveServiceTierSelection}
+                options={dialogServiceTierOptions.map((option) => ({ value: option.value, label: serviceTierOptionLabel(option) }))}
+                onChange={(value) => setActiveThreadServiceTierDraft(value as ServiceTierSelection)}
+              />
             </label>
           </section>
         </div>
@@ -484,3 +497,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     </>
   );
 };
+
+const optionsWithoutAutoWhenResolved = <T extends { value: string; label: string }>(options: T[], value: string) =>
+  value === "auto" ? options : options.filter((option) => option.value !== "auto");

@@ -3,7 +3,7 @@ import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/r
 import { isVscodeSurface, reasoningOptions } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, TaskCompleteNotification, ThreadDetail, ThreadGoalView, ThreadSummary, ThreadUsage, TurnUiState, Usage } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
-import { compactLine, rawModelLabel, turnIdFromAppRecordId } from "./core.js";
+import { compactLine, rawModelLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
 
 export const latestThreadUsageFromRecords = (records: CodexRecord[]): ThreadUsage | null => {
@@ -168,8 +168,8 @@ export const formatComposerModelTitle = (
   threadModel ? `thread model ${rawModelLabel(threadModel)}` : null,
   `draft thinking ${reasoningDraft === "auto" ? "Auto" : reasoningDraft}`,
   threadReasoning ? `thread thinking ${threadReasoning}` : null,
-  `draft tier ${serviceTierDraft === "auto" ? "Auto" : serviceTierDraft}`,
-  threadServiceTier ? `thread tier ${threadServiceTier}` : null
+  `draft tier ${serviceTierDraft === "auto" ? "Auto" : serviceTierDisplayLabel(serviceTierDraft)}`,
+  threadServiceTier ? `thread tier ${serviceTierDisplayLabel(threadServiceTier)}` : null
 ].filter(Boolean).join(" · ");
 
 export const formatComposerModelButtonLabel = (
@@ -184,7 +184,7 @@ export const formatComposerModelButtonLabel = (
   const reasoning = reasoningDraft === "auto" ? threadReasoning : reasoningDraft;
   const serviceTier = serviceTierDraft === "auto" ? threadServiceTier : serviceTierDraft;
   const label = rawModelLabel(model);
-  return [reasoning ? `${label}:${reasoning}` : label, serviceTier].filter(Boolean).join(" · ");
+  return [reasoning ? `${label}:${reasoning}` : label, serviceTier ? serviceTierDisplayLabel(serviceTier) : null].filter(Boolean).join(" · ");
 };
 
 export const formatContextUsage = (threadUsage: ThreadUsage | null) => {

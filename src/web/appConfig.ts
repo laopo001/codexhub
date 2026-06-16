@@ -42,6 +42,7 @@ export const reasoningOptions: Array<{ value: ReasoningSelection; label: string 
 ];
 export const serviceTierOptions: Array<{ value: ServiceTierSelection; label: string }> = [
   { value: "auto", label: "Auto" },
+  { value: "default", label: "Default" },
   { value: "priority", label: "Fast" }
 ];
 export const approvalPolicyOptions: Array<{ value: ApprovalPolicySelection; label: string }> = [

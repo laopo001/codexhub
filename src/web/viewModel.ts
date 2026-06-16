@@ -32,6 +32,7 @@ import type {
   ReasoningSelection,
   SandboxPolicyDraft,
   SandboxPolicySelection,
+  ServiceTierSelection,
   SessionView,
   SshConnection,
   SshHost,
@@ -170,6 +171,7 @@ export type AppViewModel = AppSidebarViewModel & {
   createSessionThread: () => MaybePromise;
   effectiveModelSelection: ModelSelection;
   effectiveReasoningSelection: ReasoningSelection;
+  effectiveServiceTierSelection: ServiceTierSelection;
   forkMessage: (threadId: string, messageId: string) => MaybePromise;
   goalDialog: GoalDialogState | null;
   handleComposerKeyDown: (
@@ -188,7 +190,7 @@ export type AppViewModel = AppSidebarViewModel & {
   activeThreadApprovalPolicySelection?: ApprovalPolicySelection;
   activeThreadModelDraft: ModelSelection;
   activeThreadReasoningDraft: ReasoningSelection;
-  activeThreadServiceTierDraft: string;
+  activeThreadServiceTierDraft: ServiceTierSelection;
   activeThreadSandboxPolicySelection?: SandboxPolicySelection;
   messagesRef: React.RefObject<VirtuosoHandle | null>;
   messagesScrollerRef: React.RefObject<HTMLElement | null>;

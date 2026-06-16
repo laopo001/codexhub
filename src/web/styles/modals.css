@@ -43,6 +43,27 @@
   font-weight: 700;
 }
 
+.threadModelSelect {
+  width: 100%;
+}
+
+.threadModelSelect.ant-select-single {
+  height: 44px;
+}
+
+.threadModelSelect .ant-select-selector {
+  border-color: #cbd6c7 !important;
+  border-radius: 8px !important;
+  background: #fcfdf9 !important;
+  padding: 6px 12px !important;
+}
+
+.threadModelSelect.ant-select-focused .ant-select-selector,
+.threadModelSelect .ant-select-selector:hover {
+  border-color: #7b8f78 !important;
+  box-shadow: 0 0 0 2px rgb(84 114 80 / 0.14) !important;
+}
+
 .settingsDialogOverlay {
   background: rgb(18 32 24 / 0.42);
 }
