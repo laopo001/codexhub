@@ -352,7 +352,7 @@ const appServerApprovalRequestSchema = z.object({
   approvalId: z.string().min(1),
   method: z.string().min(1),
   requestId: z.union([z.string().min(1), z.number()]),
-  kind: z.enum(["command_execution", "file_change", "legacy_exec_command", "legacy_apply_patch"]),
+  kind: z.enum(["command_execution", "file_change", "mcp_elicitation", "legacy_exec_command", "legacy_apply_patch"]),
   threadId: z.string().min(1),
   turnId: z.string().min(1).optional(),
   itemId: z.string().min(1).optional(),

@@ -2167,6 +2167,28 @@ const approvalRecord = (approval: PendingApproval, errorMessage?: string): Codex
   const params = asRecord(approval.params);
   const status = approvalRecordStatus(approval.status);
   const timestamp = approval.createdAt;
+  if (approval.kind === "mcp_elicitation") {
+    return {
+      id: approvalRecordId(approval),
+      timestamp,
+      type: "response_item",
+      payload: {
+        type: "mcp_tool_call",
+        server: mcpElicitationServer(params),
+        tool: "elicitation.request",
+        arguments: mcpElicitationArguments(params),
+        result: approval.status === "approved" ? { action: "accept" } : null,
+        error: approval.status === "denied"
+          ? { message: "User declined MCP request." }
+          : approval.status === "failed"
+            ? { message: errorMessage ?? "MCP request approval failed." }
+            : null,
+        status,
+        approval: approvalPayload(approval, params, errorMessage)
+      },
+      sourceThreadId: approval.threadId
+    };
+  }
   if (approval.kind === "command_execution" || approval.kind === "legacy_exec_command") {
     return {
       id: approvalRecordId(approval),
@@ -2213,6 +2235,7 @@ const approvalRecordId = (approval: PendingApproval) => {
       : `app:${approval.threadId}:${turnId}:item:commandExecution:${itemId}`;
   }
   if (approval.kind === "file_change") return `app:${approval.threadId}:${turnId}:item:fileChange:${itemId}`;
+  if (approval.kind === "mcp_elicitation") return `app:${approval.threadId}:${turnId}:approval:mcpElicitation:${itemId}`;
   return `app:${approval.threadId}:${turnId}:approval:${approval.kind}:${itemId}`;
 };
 
@@ -2267,6 +2290,20 @@ const approvalOutputText = (
   stringValue(params?.cwd) ? `cwd: ${stringValue(params?.cwd)}` : null,
   errorMessage ? `error: ${errorMessage}` : null
 ].filter(Boolean).join("\n");
+
+const mcpElicitationServer = (params: Record<string, unknown> | null) =>
+  stringValue(params?.server)
+  ?? stringValue(params?.serverName)
+  ?? stringValue(params?.mcpServer)
+  ?? "mcp";
+
+const mcpElicitationArguments = (params: Record<string, unknown> | null) => ({
+  mode: stringValue(params?.mode) ?? "form",
+  message: stringValue(params?.message) ?? "MCP server requested user approval.",
+  requestedSchema: asRecord(params?.requestedSchema) ?? null,
+  url: stringValue(params?.url) ?? null,
+  elicitationId: stringValue(params?.elicitationId) ?? null
+});
 
 const approvalNetworkText = (value: unknown) => {
   const record = asRecord(value);

@@ -73,6 +73,7 @@ export type ThreadGoalUpdate = {
 export type AppServerApprovalKind =
   | "command_execution"
   | "file_change"
+  | "mcp_elicitation"
   | "legacy_exec_command"
   | "legacy_apply_patch";
 

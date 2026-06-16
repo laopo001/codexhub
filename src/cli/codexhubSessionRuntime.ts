@@ -55,6 +55,7 @@ type PendingRequest = {
 type PendingApprovalRequest = {
   requestId: string | number;
   method: string;
+  params?: Record<string, unknown>;
 };
 
 type SyncedThread = {
@@ -1531,7 +1532,7 @@ class CodexAppServerBridge {
       return;
     }
     if (method === "mcpServer/elicitation/request") {
-      this.ws.send(JSON.stringify({ id, result: { action: "cancel", content: null, _meta: null } }));
+      this.forwardApprovalRequest(message, "mcp_elicitation");
       return;
     }
     this.ws.send(JSON.stringify({
@@ -1550,12 +1551,12 @@ class CodexAppServerBridge {
     const params = asRecord(message.params) ?? {};
     const threadId = approvalThreadId(params) ?? this.defaultThreadId;
     if (!threadId) {
-      this.ws.send(JSON.stringify({ id: requestId, result: approvalResponse(method, "deny") }));
+      this.ws.send(JSON.stringify({ id: requestId, result: approvalResponse(method, "deny", params) }));
       return;
     }
 
     const approvalId = randomUUID();
-    this.pendingApprovals.set(approvalId, { requestId, method });
+    this.pendingApprovals.set(approvalId, { requestId, method, params });
     this.hub.sendEvent({
       type: "approval_request",
       threadId,
@@ -1580,7 +1581,7 @@ class CodexAppServerBridge {
     this.pendingApprovals.delete(approvalId);
     this.ws.send(JSON.stringify({
       id: pending.requestId,
-      result: approvalResponse(pending.method, decision)
+      result: approvalResponse(pending.method, decision, pending.params)
     }));
   }
 
@@ -1685,11 +1686,34 @@ const goalUpdateParams = (
 const isModelReasoningEffort = (value: unknown): value is ThreadRunOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
 
-const approvalResponse = (method: string, decision: AppServerApprovalDecision) => {
+const approvalResponse = (
+  method: string,
+  decision: AppServerApprovalDecision,
+  params?: Record<string, unknown>
+) => {
+  if (method === "mcpServer/elicitation/request") {
+    return decision === "approve"
+      ? { action: "accept", content: mcpElicitationDefaultContent(params), _meta: null }
+      : { action: "decline", content: null, _meta: null };
+  }
   if (method === "execCommandApproval" || method === "applyPatchApproval") {
     return { decision: decision === "approve" ? "approved" : "denied" };
   }
   return { decision: decision === "approve" ? "accept" : "decline" };
+};
+
+const mcpElicitationDefaultContent = (params: Record<string, unknown> | undefined) => {
+  const requestedSchema = asRecord(params?.requestedSchema);
+  const properties = asRecord(requestedSchema?.properties);
+  if (!properties) return {};
+
+  const content: Record<string, unknown> = {};
+  for (const [key, rawSchema] of Object.entries(properties)) {
+    const fieldSchema = asRecord(rawSchema);
+    if (!fieldSchema || !Object.prototype.hasOwnProperty.call(fieldSchema, "default")) continue;
+    content[key] = fieldSchema.default;
+  }
+  return content;
 };
 
 const approvalThreadId = (params: Record<string, unknown>) => {

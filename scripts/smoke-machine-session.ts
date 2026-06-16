@@ -1586,7 +1586,7 @@ const assertAppServerApprovalRequestFlow = async () => {
     approval: {
       method: string;
       requestId: number;
-      kind: "command_execution" | "legacy_exec_command" | "legacy_apply_patch";
+      kind: "command_execution" | "mcp_elicitation" | "legacy_exec_command" | "legacy_apply_patch";
       turnId?: string;
       itemId: string;
       params: Record<string, unknown>;
@@ -1668,11 +1668,48 @@ const assertAppServerApprovalRequestFlow = async () => {
   );
 
   await exerciseApproval(
+    "mcp-elicitation-approval",
+    "approve",
+    {
+      method: "mcpServer/elicitation/request",
+      requestId: 100,
+      kind: "mcp_elicitation",
+      turnId: "approval-turn",
+      itemId: "google-calendar-create-event",
+      params: {
+        threadId,
+        turnId: "approval-turn",
+        itemId: "google-calendar-create-event",
+        server: "codex_apps",
+        message: "Allow Google Calendar to create this event?",
+        requestedSchema: {
+          type: "object",
+          properties: {},
+          required: []
+        }
+      }
+    },
+    (payload) => {
+      const args = asRecord(payload.arguments);
+      const approval = asRecord(payload.approval);
+      if (payload.type !== "mcp_tool_call" || payload.server !== "codex_apps" || payload.tool !== "elicitation.request") {
+        throw new Error(`mcp elicitation approval payload was not rendered as MCP tool call: ${JSON.stringify(payload)}`);
+      }
+      if (args.message !== "Allow Google Calendar to create this event?") {
+        throw new Error(`mcp elicitation message was not preserved: ${JSON.stringify(payload)}`);
+      }
+      if (approval.kind !== "mcp_elicitation" || approval.itemId !== "google-calendar-create-event") {
+        throw new Error(`mcp elicitation approval metadata was not preserved: ${JSON.stringify(payload)}`);
+      }
+    }
+  );
+
+  await exerciseApproval(
     "legacy-exec-approval",
     "approve",
     {
       method: "execCommandApproval",
-      requestId: 100,
+      requestId: 101,
       kind: "legacy_exec_command",
       itemId: "legacy-call-1",
       params: {
@@ -1703,7 +1740,7 @@ const assertAppServerApprovalRequestFlow = async () => {
     "deny",
     {
       method: "applyPatchApproval",
-      requestId: 101,
+      requestId: 102,
       kind: "legacy_apply_patch",
       itemId: "legacy-patch-1",
       params: {
