@@ -281,6 +281,12 @@ class JsonRpcClient {
       return;
     }
 
+    if (method === "item/permissions/requestApproval") {
+      const params = asRecord(message.params);
+      this.send({ id, result: permissionsApprovalResponse(this.options.autoApprove, params) });
+      return;
+    }
+
     if (method === "execCommandApproval") {
       this.send({ id, result: { decision: this.options.autoApprove ? "approved" : "denied" } });
       return;
@@ -297,7 +303,13 @@ class JsonRpcClient {
     }
 
     if (method === "mcpServer/elicitation/request") {
-      this.send({ id, result: { action: "cancel", content: null, _meta: null } });
+      const params = asRecord(message.params);
+      this.send({
+        id,
+        result: this.options.autoApprove
+          ? { action: "accept", content: mcpElicitationDefaultContent(params), _meta: null }
+          : { action: "cancel", content: null, _meta: null }
+      });
       return;
     }
 
@@ -779,6 +791,28 @@ const parseJsonRecord = (value: unknown): JsonRecord | null => {
   } catch {
     return null;
   }
+};
+
+const permissionsApprovalResponse = (approved: boolean, params: JsonRecord | null) => {
+  if (!approved) return { permissions: {}, scope: "turn" };
+  const permissions = asRecord(params?.permissions);
+  const granted: JsonRecord = {};
+  if (permissions?.network !== null && permissions?.network !== undefined) granted.network = permissions.network;
+  if (permissions?.fileSystem !== null && permissions?.fileSystem !== undefined) granted.fileSystem = permissions.fileSystem;
+  return { permissions: granted, scope: "turn" };
+};
+
+const mcpElicitationDefaultContent = (params: JsonRecord | null) => {
+  const requestedSchema = asRecord(params?.requestedSchema);
+  const properties = asRecord(requestedSchema?.properties);
+  if (!properties) return {};
+  const content: JsonRecord = {};
+  for (const [key, rawSchema] of Object.entries(properties)) {
+    const fieldSchema = asRecord(rawSchema);
+    if (!fieldSchema || !Object.prototype.hasOwnProperty.call(fieldSchema, "default")) continue;
+    content[key] = fieldSchema.default;
+  }
+  return content;
 };
 
 const asRecord = (value: unknown): JsonRecord | null =>

@@ -248,6 +248,34 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
+  if (payload.type === "permission_request") {
+    const status = recordViewStatusFromAppStatus(payload.status) ?? "pending";
+    return {
+      id: record.id,
+      role: "tool",
+      label: "permission request",
+      text: permissionRequestText(payload),
+      at: record.timestamp,
+      status,
+      statusText: recordViewStatusText(payload.status),
+      record
+    };
+  }
+
+  if (payload.type === "user_input_request") {
+    const status = recordViewStatusFromAppStatus(payload.status) ?? "pending";
+    return {
+      id: record.id,
+      role: "tool",
+      label: "user input",
+      text: userInputRequestText(payload),
+      at: record.timestamp,
+      status,
+      statusText: recordViewStatusText(payload.status),
+      record
+    };
+  }
+
   if (payload.type === "web_search_call") {
     return {
       id: record.id,
@@ -391,7 +419,8 @@ export const recordViewStatusFromAppStatus = (status: unknown): CodexRecordView[
     || normalized === "interrupted"
     || normalized === "aborted"
   ) return "failed";
-  if (normalized === "pending" || normalized === "queued" || normalized === "pending_approval") return "pending";
+  if (normalized === "pending" || normalized === "queued" || normalized === "pending_approval" || normalized === "pending_user_input") return "pending";
+  if (normalized === "cancelled" || normalized === "canceled") return "failed";
   if (
     normalized === "in_progress"
     || normalized === "inprogress"
@@ -596,6 +625,27 @@ const fileChangeText = (payload: Record<string, unknown>) => {
   ].join("\n");
 };
 
+const permissionRequestText = (payload: Record<string, unknown>) => {
+  const parts = [
+    "Permission request",
+    stringValue(payload.reason),
+    stringValue(payload.cwd) ? `cwd: ${stringValue(payload.cwd)}` : null,
+    stringify(payload.permissions)
+  ].filter((item): item is string => Boolean(item?.trim()));
+  return parts.join("\n");
+};
+
+const userInputRequestText = (payload: Record<string, unknown>) => {
+  const questions = Array.isArray(payload.questions) ? payload.questions : [];
+  if (!questions.length) return "User input requested";
+  return questions.map((question, index) => {
+    const record = asRecord(question);
+    const header = stringValue(record?.header);
+    const text = stringValue(record?.question);
+    return [header ? `${index + 1}. ${header}` : `${index + 1}. Question`, text].filter(Boolean).join("\n");
+  }).join("\n\n");
+};
+
 const collabAgentToolText = (payload: Record<string, unknown>) => [
   typeof payload.tool === "string" ? payload.tool : "agent",
   typeof payload.prompt === "string" && payload.prompt.trim() ? payload.prompt : null,
@@ -626,3 +676,6 @@ const stringify = (value: unknown) => {
     return String(value);
   }
 };
+
+const stringValue = (value: unknown) =>
+  typeof value === "string" && value.trim() ? value : null;

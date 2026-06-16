@@ -30,7 +30,9 @@ import type {
   ThreadRenamePayload,
   ThreadReviewPayload,
   ThreadStopPayload,
-  ThreadTurnPayload
+  ThreadTurnPayload,
+  ThreadUserInputPayload,
+  ThreadUserInputResponseInput
 } from "./apiContract.js";
 import type { ProxyInput } from "./inputTypes.js";
 import type { ThreadRunOptions } from "./threadTypes.js";
@@ -191,6 +193,9 @@ export const apiRoutes = {
   ),
   respondThreadApproval: post<ThreadApprovalDecisionInput, ThreadApprovalPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/approval`
+  ),
+  respondThreadUserInput: post<ThreadUserInputResponseInput, ThreadUserInputPayload, (threadId: string) => string>(
+    (threadId) => `/api/threads/${encode(threadId)}/user-input`
   ),
   renameThread: patch<ThreadRenameInput, ThreadRenamePayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/name`

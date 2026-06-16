@@ -15,6 +15,8 @@ import type {
   AppServerApprovalDecision,
   AppServerApprovalKind,
   AppServerApprovalRequest,
+  AppServerUserInputAnswers,
+  AppServerUserInputRequest,
   SessionCommand,
   SessionEventInput,
   SessionModelCatalogResult,
@@ -33,7 +35,16 @@ import type {
 
 type PendingApproval = AppServerApprovalRequest & {
   sessionId: string;
-  status: "pending" | "approved" | "denied" | "failed";
+  status: "pending" | "approved" | "denied" | "cancelled" | "failed";
+  decision?: AppServerApprovalDecision;
+};
+
+type ApprovalDecisionStatus = "approved" | "denied" | "cancelled";
+
+type PendingUserInput = AppServerUserInputRequest & {
+  sessionId: string;
+  status: "pending" | "answered" | "failed";
+  answers?: AppServerUserInputAnswers;
 };
 
 export class ThreadHub {
@@ -41,6 +52,7 @@ export class ThreadHub {
   private readonly sessions = new Map<string, SessionState>();
   private readonly pendingCommands = new Map<string, PendingCommand>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
+  private readonly pendingUserInputs = new Map<string, PendingUserInput>();
   private readonly activeTurnCommands = new Map<string, string>();
   private readonly queuedTurns = new Map<string, QueuedTurn[]>();
   private readonly sessionEvents: SessionStreamEvent[] = [];
@@ -255,6 +267,20 @@ export class ThreadHub {
       };
       this.pendingApprovals.set(approval.approvalId, approval);
       this.upsertRecord(thread, approvalRecord(approval));
+      return { ok: true, thread: this.summary(thread) };
+    }
+
+    if (input.type === "user_input_request") {
+      const thread = this.ensureThread(input.threadId, session, {
+        params: { threadId: input.threadId, cwd: session.workingDirectory }
+      });
+      const userInput: PendingUserInput = {
+        ...input.userInput,
+        sessionId,
+        status: "pending"
+      };
+      this.pendingUserInputs.set(userInput.userInputId, userInput);
+      this.upsertRecord(thread, userInputRecord(userInput));
       return { ok: true, thread: this.summary(thread) };
     }
 
@@ -615,15 +641,62 @@ export class ThreadHub {
 
     try {
       await promise;
-      const status: "approved" | "denied" = decision === "approve" ? "approved" : "denied";
-      const nextApproval: PendingApproval = { ...approval, status };
+      const status = approvalDecisionStatus(decision);
+      const nextApproval: PendingApproval = { ...approval, status, decision };
       this.pendingApprovals.delete(approvalId);
       this.upsertRecord(thread, approvalRecord(nextApproval));
-      return { status, thread: this.detail(thread) };
+      return { status, decision, thread: this.detail(thread) };
     } catch (error) {
       const failedApproval: PendingApproval = { ...approval, status: "failed" };
       this.pendingApprovals.delete(approvalId);
       this.upsertRecord(thread, approvalRecord(failedApproval, errorText(error)));
+      throw error;
+    }
+  }
+
+  async respondToUserInput(
+    threadId: string,
+    userInputId: string,
+    answers: AppServerUserInputAnswers
+  ) {
+    const thread = this.requireThread(threadId);
+    const userInput = this.pendingUserInputs.get(userInputId);
+    if (!userInput || userInput.threadId !== thread.threadId || userInput.status !== "pending") {
+      throw new Error(`User input not found: ${userInputId}`);
+    }
+    const session = this.requireOnlineSession(userInput.sessionId);
+    if (thread.sessionId !== session.sessionId) {
+      throw new Error(`User input belongs to a different session: ${userInputId}`);
+    }
+
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<{ ok?: boolean }>(
+      commandId,
+      "user_input_response",
+      thread.threadId,
+      30_000,
+      thread.workingDirectory
+    );
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "user_input_response",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId,
+      userInputId,
+      userInputAnswers: answers
+    });
+
+    try {
+      await promise;
+      const nextUserInput: PendingUserInput = { ...userInput, status: "answered", answers };
+      this.pendingUserInputs.delete(userInputId);
+      this.upsertRecord(thread, userInputRecord(nextUserInput));
+      return { status: "answered" as const, thread: this.detail(thread) };
+    } catch (error) {
+      const failedUserInput: PendingUserInput = { ...userInput, status: "failed" };
+      this.pendingUserInputs.delete(userInputId);
+      this.upsertRecord(thread, userInputRecord(failedUserInput, errorText(error)));
       throw error;
     }
   }
@@ -930,6 +1003,16 @@ export class ThreadHub {
     }
   }
 
+  private failSessionUserInputs(sessionId: string, message: string) {
+    for (const userInput of [...this.pendingUserInputs.values()]) {
+      if (userInput.sessionId !== sessionId || userInput.status !== "pending") continue;
+      this.pendingUserInputs.delete(userInput.userInputId);
+      const thread = this.threads.get(userInput.threadId);
+      if (!thread) continue;
+      this.upsertRecord(thread, userInputRecord({ ...userInput, status: "failed" }, message));
+    }
+  }
+
   private markSessionOffline(
     session: SessionState,
     message: string,
@@ -944,6 +1027,7 @@ export class ThreadHub {
     session.offlineReason = reason;
     this.rejectPendingSessionCommands(session, new Error(message));
     this.failSessionApprovals(session.sessionId, message);
+    this.failSessionUserInputs(session.sessionId, message);
     for (const waiter of [...session.waiters]) waiter();
     for (const thread of this.threads.values()) {
       if (thread.sessionId !== session.sessionId) continue;
@@ -971,6 +1055,7 @@ export class ThreadHub {
     session.offlineReason = reason;
     this.rejectPendingSessionCommands(session, error);
     this.failSessionApprovals(session.sessionId, message);
+    this.failSessionUserInputs(session.sessionId, message);
     for (const waiter of [...session.waiters]) waiter();
     this.sessions.delete(session.sessionId);
     for (const thread of this.threads.values()) {
@@ -2189,6 +2274,32 @@ const approvalRecord = (approval: PendingApproval, errorMessage?: string): Codex
       sourceThreadId: approval.threadId
     };
   }
+  if (approval.kind === "permissions_request") {
+    return {
+      id: approvalRecordId(approval),
+      timestamp,
+      type: "response_item",
+      payload: {
+        type: "permission_request",
+        cwd: stringValue(params?.cwd) ?? null,
+        reason: stringValue(params?.reason) ?? null,
+        permissions: asRecord(params?.permissions) ?? {},
+        result: approval.status === "approved"
+          ? permissionApprovalResult(params, approval.decision)
+          : null,
+        error: approval.status === "denied"
+          ? { message: "User declined permission request." }
+          : approval.status === "cancelled"
+            ? { message: "User cancelled permission request." }
+            : approval.status === "failed"
+              ? { message: errorMessage ?? "Permission request approval failed." }
+              : null,
+        status,
+        approval: approvalPayload(approval, params, errorMessage)
+      },
+      sourceThreadId: approval.threadId
+    };
+  }
   if (approval.kind === "command_execution" || approval.kind === "legacy_exec_command") {
     return {
       id: approvalRecordId(approval),
@@ -2224,6 +2335,43 @@ const approvalRecord = (approval: PendingApproval, errorMessage?: string): Codex
   };
 };
 
+const userInputRecord = (userInput: PendingUserInput, errorMessage?: string): CodexRecord => ({
+  id: userInputRecordId(userInput),
+  timestamp: userInput.createdAt,
+  type: "response_item",
+  payload: {
+    type: "user_input_request",
+    questions: userInput.questions,
+    response: userInput.answers ?? null,
+    error: userInput.status === "failed"
+      ? { message: errorMessage ?? "User input request failed." }
+      : null,
+    status: userInputRecordStatus(userInput.status),
+    userInput: {
+      userInputId: userInput.userInputId,
+      method: userInput.method,
+      requestId: userInput.requestId,
+      status: userInput.status,
+      ...(userInput.turnId ? { turnId: userInput.turnId } : {}),
+      ...(userInput.itemId ? { itemId: userInput.itemId } : {}),
+      ...(errorMessage ? { error: errorMessage } : {})
+    }
+  },
+  sourceThreadId: userInput.threadId
+});
+
+const userInputRecordId = (userInput: PendingUserInput) => {
+  const turnId = userInput.turnId || "userInput";
+  const itemId = userInput.itemId || userInput.userInputId;
+  return `app:${userInput.threadId}:${turnId}:userInput:${itemId}`;
+};
+
+const userInputRecordStatus = (status: PendingUserInput["status"]) => {
+  if (status === "pending") return "pending_user_input";
+  if (status === "answered") return "completed";
+  return "failed";
+};
+
 const approvalRecordId = (approval: PendingApproval) => {
   const turnId = approval.turnId || "approval";
   const itemId = approval.itemId || approval.approvalId;
@@ -2236,6 +2384,7 @@ const approvalRecordId = (approval: PendingApproval) => {
   }
   if (approval.kind === "file_change") return `app:${approval.threadId}:${turnId}:item:fileChange:${itemId}`;
   if (approval.kind === "mcp_elicitation") return `app:${approval.threadId}:${turnId}:approval:mcpElicitation:${itemId}`;
+  if (approval.kind === "permissions_request") return `app:${approval.threadId}:${turnId}:approval:permissions:${itemId}`;
   return `app:${approval.threadId}:${turnId}:approval:${approval.kind}:${itemId}`;
 };
 
@@ -2243,7 +2392,14 @@ const approvalRecordStatus = (status: PendingApproval["status"]) => {
   if (status === "pending") return "pending_approval";
   if (status === "approved") return "approved";
   if (status === "denied") return "denied";
+  if (status === "cancelled") return "cancelled";
   return "failed";
+};
+
+const approvalDecisionStatus = (decision: AppServerApprovalDecision): ApprovalDecisionStatus => {
+  if (decision === "approve" || decision === "approve_for_session") return "approved";
+  if (decision === "cancel") return "cancelled";
+  return "denied";
 };
 
 const approvalPayload = (
@@ -2256,11 +2412,29 @@ const approvalPayload = (
   method: approval.method,
   requestId: approval.requestId,
   status: approval.status,
+  ...(approval.decision ? { decision: approval.decision } : {}),
   reason: stringValue(params?.reason) ?? null,
   ...(approval.turnId ? { turnId: approval.turnId } : {}),
   ...(approval.itemId ? { itemId: approval.itemId } : {}),
   ...(errorMessage ? { error: errorMessage } : {})
 });
+
+const permissionApprovalResult = (
+  params: Record<string, unknown> | null,
+  decision: AppServerApprovalDecision | undefined
+) => ({
+  permissions: grantedPermissionsFromRequest(params),
+  scope: decision === "approve_for_session" ? "session" : "turn"
+});
+
+const grantedPermissionsFromRequest = (params: Record<string, unknown> | null) => {
+  const permissions = asRecord(params?.permissions);
+  if (!permissions) return {};
+  const granted: Record<string, unknown> = {};
+  if (permissions.network !== null && permissions.network !== undefined) granted.network = permissions.network;
+  if (permissions.fileSystem !== null && permissions.fileSystem !== undefined) granted.fileSystem = permissions.fileSystem;
+  return granted;
+};
 
 const approvalCommandParts = (approval: PendingApproval, params: Record<string, unknown> | null) => {
   const command = params?.command;

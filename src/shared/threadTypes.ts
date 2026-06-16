@@ -74,11 +74,12 @@ export type AppServerApprovalKind =
   | "command_execution"
   | "file_change"
   | "mcp_elicitation"
+  | "permissions_request"
   | "legacy_exec_command"
   | "legacy_apply_patch";
 
 /** CodexHub Web 对 app-server 审批请求的稳定决策。 */
-export type AppServerApprovalDecision = "approve" | "deny";
+export type AppServerApprovalDecision = "approve" | "approve_for_session" | "deny" | "cancel";
 
 /** server/Web 可见的 app-server 审批请求。 */
 export type AppServerApprovalRequest = {
@@ -90,6 +91,32 @@ export type AppServerApprovalRequest = {
   turnId?: string;
   itemId?: string;
   createdAt: string;
+  params: unknown;
+};
+
+/** app-server request_user_input 的单个问题。 */
+export type AppServerUserInputQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  isOther: boolean;
+  isSecret: boolean;
+  options: Array<{ label: string; description?: string }> | null;
+};
+
+/** Web/API 回给 app-server request_user_input 的答案。 */
+export type AppServerUserInputAnswers = Record<string, { answers: string[] }>;
+
+/** server/Web 可见的 app-server 用户输入请求。 */
+export type AppServerUserInputRequest = {
+  userInputId: string;
+  method: string;
+  requestId: string | number;
+  threadId: string;
+  turnId?: string;
+  itemId?: string;
+  createdAt: string;
+  questions: AppServerUserInputQuestion[];
   params: unknown;
 };
 
@@ -191,7 +218,8 @@ export type SessionCommand = {
     | "resume_thread"
     | "subscribe_thread_records"
     | "unsubscribe_thread_records"
-    | "approval_decision";
+    | "approval_decision"
+    | "user_input_response";
   workingDirectory: string;
   createdAt: string;
   threadId?: string;
@@ -199,6 +227,8 @@ export type SessionCommand = {
   turnId?: string;
   approvalId?: string;
   approvalDecision?: AppServerApprovalDecision;
+  userInputId?: string;
+  userInputAnswers?: AppServerUserInputAnswers;
   numTurns?: number;
   keepTurns?: number;
   limit?: number;
@@ -252,6 +282,12 @@ export type SessionEventInput =
       type: "approval_request";
       threadId: string;
       approval: AppServerApprovalRequest;
+      heartbeat?: boolean;
+    }
+  | {
+      type: "user_input_request";
+      threadId: string;
+      userInput: AppServerUserInputRequest;
       heartbeat?: boolean;
     }
   | {

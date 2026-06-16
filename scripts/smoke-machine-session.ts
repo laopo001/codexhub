@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
+import type { SessionEventInput } from "../src/shared/threadTypes.js";
 
 type MachineSummary = {
   machineId: string;
@@ -1582,16 +1583,17 @@ const assertAppServerApprovalRequestFlow = async () => {
   let cursor = 0;
   const exerciseApproval = async (
     approvalId: string,
-    decision: "approve" | "deny",
+    decision: "approve" | "approve_for_session" | "deny" | "cancel",
     approval: {
       method: string;
       requestId: number;
-      kind: "command_execution" | "mcp_elicitation" | "legacy_exec_command" | "legacy_apply_patch";
+      kind: "command_execution" | "file_change" | "mcp_elicitation" | "permissions_request" | "legacy_exec_command" | "legacy_apply_patch";
       turnId?: string;
       itemId: string;
       params: Record<string, unknown>;
     },
-    assertPendingPayload: (payload: Record<string, unknown>) => void
+    assertPendingPayload: (payload: Record<string, unknown>) => void,
+    assertResolvedPayload: (payload: Record<string, unknown>) => void = () => undefined
   ) => {
     const event = {
       type: "approval_request",
@@ -1631,18 +1633,22 @@ const assertAppServerApprovalRequestFlow = async () => {
     }
     hub.resolveSessionCommand(sessionId, command.commandId, { ok: true });
     const result = await response;
-    const expectedStatus = decision === "approve" ? "approved" : "denied";
+    const expectedStatus = decision === "approve" || decision === "approve_for_session"
+      ? "approved"
+      : decision === "cancel" ? "cancelled" : "denied";
     if (result.status !== expectedStatus) throw new Error(`approval response was not ${expectedStatus}: ${JSON.stringify(result)}`);
     records = hub.getThread(threadId)?.records ?? [];
     record = records.find((item) => asRecord(asRecord(item)?.payload).approval && asRecord(asRecord(asRecord(item)?.payload).approval).approvalId === approvalId);
     approvalPayload = asRecord(asRecord(record)?.payload);
     approvalRecord = asRecord(approvalPayload.approval);
     if (approvalRecord.status !== expectedStatus) throw new Error(`approval record was not marked ${expectedStatus}: ${JSON.stringify(records)}`);
+    if (approvalRecord.decision !== decision) throw new Error(`approval decision metadata was not preserved: ${JSON.stringify(approvalRecord)}`);
+    assertResolvedPayload(approvalPayload);
   };
 
   await exerciseApproval(
     "approval-1",
-    "approve",
+    "approve_for_session",
     {
       method: "item/commandExecution/requestApproval",
       requestId: 99,
@@ -1664,15 +1670,85 @@ const assertAppServerApprovalRequestFlow = async () => {
       if (payload.type !== "local_shell_call" || !Array.isArray(command) || command.join(" ") !== "touch /tmp/codexhub-approval") {
         throw new Error(`command approval payload was not rendered as shell call: ${JSON.stringify(payload)}`);
       }
+    },
+    (payload) => {
+      const approval = asRecord(payload.approval);
+      if (approval.decision !== "approve_for_session") {
+        throw new Error(`command approval did not preserve session decision: ${JSON.stringify(payload)}`);
+      }
+    }
+  );
+
+  await exerciseApproval(
+    "file-change-approval",
+    "cancel",
+    {
+      method: "item/fileChange/requestApproval",
+      requestId: 100,
+      kind: "file_change",
+      turnId: "approval-turn",
+      itemId: "file-change-1",
+      params: {
+        threadId,
+        turnId: "approval-turn",
+        itemId: "file-change-1",
+        reason: "needs write permission",
+        grantRoot: cwd
+      }
+    },
+    (payload) => {
+      const approval = asRecord(payload.approval);
+      if (payload.type !== "file_change" || approval.kind !== "file_change" || approval.itemId !== "file-change-1") {
+        throw new Error(`file change approval payload was not rendered as file change: ${JSON.stringify(payload)}`);
+      }
+    }
+  );
+
+  await exerciseApproval(
+    "permissions-approval",
+    "approve_for_session",
+    {
+      method: "item/permissions/requestApproval",
+      requestId: 101,
+      kind: "permissions_request",
+      turnId: "approval-turn",
+      itemId: "permissions-1",
+      params: {
+        threadId,
+        turnId: "approval-turn",
+        itemId: "permissions-1",
+        cwd,
+        reason: "needs network",
+        permissions: {
+          network: { enabled: true },
+          fileSystem: null
+        }
+      }
+    },
+    (payload) => {
+      const approval = asRecord(payload.approval);
+      const permissions = asRecord(payload.permissions);
+      const network = asRecord(permissions.network);
+      if (payload.type !== "permission_request" || approval.kind !== "permissions_request" || network.enabled !== true) {
+        throw new Error(`permissions approval payload was not rendered as permission request: ${JSON.stringify(payload)}`);
+      }
+    },
+    (payload) => {
+      const result = asRecord(payload.result);
+      const permissions = asRecord(result.permissions);
+      const network = asRecord(permissions.network);
+      if (result.scope !== "session" || network.enabled !== true) {
+        throw new Error(`permissions approval result did not preserve grant and scope: ${JSON.stringify(payload)}`);
+      }
     }
   );
 
   await exerciseApproval(
     "mcp-elicitation-approval",
-    "approve",
+    "cancel",
     {
       method: "mcpServer/elicitation/request",
-      requestId: 100,
+      requestId: 102,
       kind: "mcp_elicitation",
       turnId: "approval-turn",
       itemId: "google-calendar-create-event",
@@ -1709,7 +1785,7 @@ const assertAppServerApprovalRequestFlow = async () => {
     "approve",
     {
       method: "execCommandApproval",
-      requestId: 101,
+      requestId: 103,
       kind: "legacy_exec_command",
       itemId: "legacy-call-1",
       params: {
@@ -1740,7 +1816,7 @@ const assertAppServerApprovalRequestFlow = async () => {
     "deny",
     {
       method: "applyPatchApproval",
-      requestId: 102,
+      requestId: 104,
       kind: "legacy_apply_patch",
       itemId: "legacy-patch-1",
       params: {
@@ -1765,6 +1841,78 @@ const assertAppServerApprovalRequestFlow = async () => {
       }
     }
   );
+
+  const userInputEvent: SessionEventInput = {
+    type: "user_input_request",
+    threadId,
+    userInput: {
+      userInputId: "user-input-1",
+      method: "item/tool/requestUserInput",
+      requestId: 105,
+      threadId,
+      turnId: "approval-turn",
+      itemId: "tool-input-1",
+      createdAt: "2026-06-16T00:00:00.000Z",
+      questions: [{
+        id: "choice",
+        header: "Mode",
+        question: "Choose a mode",
+        isOther: false,
+        isSecret: false,
+        options: [
+          { label: "Fast", description: "Use fast mode" },
+          { label: "Careful", description: "Use careful mode" }
+        ]
+      }],
+      params: {
+        threadId,
+        turnId: "approval-turn",
+        itemId: "tool-input-1",
+        questions: []
+      }
+    }
+  };
+  machineTransportMessageSchema.parse({ type: "session_event", sessionId, event: userInputEvent });
+  hub.applySessionEvent(sessionId, userInputEvent);
+  let records = hub.getThread(threadId)?.records ?? [];
+  let userInputRecord = records.find((item) => {
+    const payload = asRecord(asRecord(item)?.payload);
+    const userInput = asRecord(payload.userInput);
+    return userInput.userInputId === "user-input-1";
+  });
+  let userInputPayload = asRecord(asRecord(userInputRecord)?.payload);
+  let userInputMeta = asRecord(userInputPayload.userInput);
+  if (userInputPayload.type !== "user_input_request" || userInputMeta.status !== "pending") {
+    throw new Error(`user input request record missing pending status: ${JSON.stringify(records)}`);
+  }
+  const userInputView = recordsToViews([userInputRecord as CodexRecord])[0];
+  if (userInputView?.status !== "pending" || userInputView.statusText !== "pending_user_input") {
+    throw new Error(`user input view was not pending: ${JSON.stringify(userInputView)}`);
+  }
+  const answers = { choice: { answers: ["Careful"] } };
+  const userInputResponse = hub.respondToUserInput(threadId, "user-input-1", answers);
+  const userInputBatch = await hub.waitSessionCommands(sessionId, cursor, 100);
+  cursor = userInputBatch.cursor;
+  const userInputCommand = userInputBatch.commands.find((item) => item.type === "user_input_response" && item.userInputId === "user-input-1");
+  if (!userInputCommand || JSON.stringify(userInputCommand.userInputAnswers) !== JSON.stringify(answers)) {
+    throw new Error(`user input response command missing: ${JSON.stringify(userInputBatch)}`);
+  }
+  hub.resolveSessionCommand(sessionId, userInputCommand.commandId, { ok: true });
+  const userInputResult = await userInputResponse;
+  if (userInputResult.status !== "answered") throw new Error(`user input response was not answered: ${JSON.stringify(userInputResult)}`);
+  records = hub.getThread(threadId)?.records ?? [];
+  userInputRecord = records.find((item) => {
+    const payload = asRecord(asRecord(item)?.payload);
+    const userInput = asRecord(payload.userInput);
+    return userInput.userInputId === "user-input-1";
+  });
+  userInputPayload = asRecord(asRecord(userInputRecord)?.payload);
+  userInputMeta = asRecord(userInputPayload.userInput);
+  const response = asRecord(userInputPayload.response);
+  const choice = asRecord(response.choice);
+  if (userInputMeta.status !== "answered" || JSON.stringify(choice.answers) !== JSON.stringify(["Careful"])) {
+    throw new Error(`user input response was not recorded: ${JSON.stringify(userInputPayload)}`);
+  }
 };
 
 const assertHistoricalToolBatchCollapse = async () => {

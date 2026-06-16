@@ -1,6 +1,6 @@
 import React from "react";
 import { Tag } from "antd";
-import { FileDiff, Image, Plug, Search, Sparkles, Terminal, Users, Workflow } from "lucide-react";
+import { FileDiff, Image, MessageSquareText, Plug, Search, ShieldCheck, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { normalizeUpdatePlanStatus, parseUpdatePlanArguments, updatePlanStatusIcon, updatePlanStatusLabel, type UpdatePlanView as UpdatePlanViewModel } from "../../shared/updatePlanView.js";
 import type { InspectDetail, ParsedToolCall, WebRecordView, WebToolPresenter } from "../types.js";
@@ -364,6 +364,22 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
     );
   }
 
+  if (payload.type === "permission_request") {
+    return (
+      <ToolPreview title="tool: permission_request" status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={ShieldCheck}>
+        <p className="toolPreviewBody">{permissionRequestPreview(payload)}</p>
+      </ToolPreview>
+    );
+  }
+
+  if (payload.type === "user_input_request") {
+    return (
+      <ToolPreview title="tool: request_user_input" status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={MessageSquareText}>
+        <p className="toolPreviewBody">{userInputRequestPreview(payload)}</p>
+      </ToolPreview>
+    );
+  }
+
   if (payload.type === "collab_agent_tool_call") {
     return (
       <ToolPreview title={`tool: ${collabAgentToolPreviewName(payload)}`} status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={Users}>
@@ -436,6 +452,30 @@ const formatAppServerInspectDetail = (
       outputMeta: typeof error?.message === "string" ? error.message : appServerOutputMeta(payload),
       outputBlockLabel: typeof error?.message === "string" ? "Error" : "Result",
       outputBlock: payload.result == null ? undefined : formatJsonBlock(payload.result)
+    };
+  }
+
+  if (payload.type === "permission_request") {
+    const error = asRecord(payload.error);
+    return {
+      inputMeta: appServerInspectMeta("tool: permission_request", payload),
+      inputBlockLabel: "Permissions",
+      inputBlock: formatJsonBlock(payload.permissions ?? {}),
+      outputMeta: typeof error?.message === "string" ? error.message : appServerOutputMeta(payload),
+      outputBlockLabel: typeof error?.message === "string" ? "Error" : "Result",
+      outputBlock: payload.result == null ? undefined : formatJsonBlock(payload.result)
+    };
+  }
+
+  if (payload.type === "user_input_request") {
+    const error = asRecord(payload.error);
+    return {
+      inputMeta: appServerInspectMeta("tool: request_user_input", payload),
+      inputBlockLabel: "Questions",
+      inputBlock: formatJsonBlock(payload.questions ?? []),
+      outputMeta: typeof error?.message === "string" ? error.message : appServerOutputMeta(payload),
+      outputBlockLabel: typeof error?.message === "string" ? "Error" : "Response",
+      outputBlock: payload.response == null ? undefined : formatJsonBlock(payload.response)
     };
   }
 
@@ -612,6 +652,7 @@ export const appServerToolMeta = (payload: Record<string, unknown>) => [
   typeof payload.tool === "string" ? payload.tool : null,
   typeof payload.call_id === "string" ? payload.call_id : null,
   Array.isArray(payload.changes) ? `${payload.changes.length} files` : null,
+  Array.isArray(payload.questions) ? `${payload.questions.length} questions` : null,
   Array.isArray(payload.receiver_thread_ids) ? `${payload.receiver_thread_ids.length} agents` : null,
   typeof payload.path === "string" ? payload.path : null
 ].filter((item): item is string => Boolean(item));
@@ -859,6 +900,23 @@ const formatToolArgumentsPreview = (value: unknown) => {
   if (value == null) return "No arguments";
   const preview = compactJsonPreview(value);
   return preview ? `args: ${preview}` : "No arguments";
+};
+
+const permissionRequestPreview = (payload: Record<string, unknown>) => [
+  typeof payload.reason === "string" && payload.reason.trim() ? compactTextPreview(payload.reason) : null,
+  typeof payload.cwd === "string" && payload.cwd ? `cwd: ${payload.cwd}` : null,
+  compactJsonPreview(payload.permissions ?? {})
+].filter(Boolean).join("\n") || "Permission request";
+
+const userInputRequestPreview = (payload: Record<string, unknown>) => {
+  const questions = Array.isArray(payload.questions) ? payload.questions : [];
+  if (!questions.length) return "User input requested";
+  return questions.map((question, index) => {
+    const record = asRecord(question);
+    const header = typeof record?.header === "string" && record.header.trim() ? record.header.trim() : `Question ${index + 1}`;
+    const text = typeof record?.question === "string" && record.question.trim() ? record.question.trim() : "";
+    return text ? `${header}: ${compactTextPreview(text)}` : header;
+  }).join("\n");
 };
 
 const collabAgentToolInputPreview = (payload: Record<string, unknown>) => [

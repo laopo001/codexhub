@@ -5,7 +5,7 @@ import { GripHorizontal } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, languageAliases } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, WebRecordView } from "../types.js";
-import type { AppServerApprovalDecision } from "../../shared/apiContract.js";
+import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
 import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { statusLabel } from "./common.js";
 import { formatInspectDetail, formatInspectTitle, renderToolMessageBody } from "./toolPreview.js";
@@ -54,6 +54,7 @@ export const MessageCard = ({
   onInspect,
   onToggleToolBatch,
   onApprovalDecision,
+  onUserInputResponse,
   onFork,
   onRollback
 }: {
@@ -68,6 +69,7 @@ export const MessageCard = ({
   onInspect?: () => void;
   onToggleToolBatch?: () => void;
   onApprovalDecision?: (approvalId: string, decision: AppServerApprovalDecision) => void;
+  onUserInputResponse?: (userInputId: string, answers: AppServerUserInputAnswers) => void | Promise<void>;
   onFork?: () => void;
   onRollback?: () => void;
 }) => {
@@ -81,6 +83,8 @@ export const MessageCard = ({
   }, [message, isThinkingMessage]);
   const messageText = memoryCitation.text;
   const approval = pendingApprovalFromMessage(message);
+  const userInput = pendingUserInputFromMessage(message);
+  const approvalActions = approval ? approvalDecisionActions(approval.kind) : [];
   const hasMessageMeta = !isThinkingMessage && (
     (showTimestamp && message.at)
     || message.usage
@@ -174,20 +178,17 @@ export const MessageCard = ({
           ) : null}
           {approval && onApprovalDecision ? (
             <span className="approvalActions">
-              <button
-                type="button"
-                className="approvalButton approve"
-                onClick={() => onApprovalDecision(approval.approvalId, "approve")}
-              >
-                Approve
-              </button>
-              <button
-                type="button"
-                className="approvalButton deny"
-                onClick={() => onApprovalDecision(approval.approvalId, "deny")}
-              >
-                Deny
-              </button>
+              {approvalActions.map((action) => (
+                <button
+                  type="button"
+                  className={`approvalButton ${action.className}`}
+                  onClick={() => onApprovalDecision(approval.approvalId, action.decision)}
+                  title={action.title}
+                  key={action.decision}
+                >
+                  {action.label}
+                </button>
+              ))}
             </span>
           ) : null}
           {onFork ? (
@@ -204,7 +205,82 @@ export const MessageCard = ({
           ) : null}
         </footer>
       ) : null}
+      {userInput && onUserInputResponse ? (
+        <UserInputRequestForm request={userInput} onSubmit={onUserInputResponse} />
+      ) : null}
     </article>
+  );
+};
+
+type PendingUserInputQuestionView = {
+  id: string;
+  header: string;
+  question: string;
+  isOther: boolean;
+  isSecret: boolean;
+  options: Array<{ label: string; description?: string }> | null;
+};
+
+type PendingUserInputView = {
+  userInputId: string;
+  questions: PendingUserInputQuestionView[];
+};
+
+const UserInputRequestForm = ({
+  request,
+  onSubmit
+}: {
+  request: PendingUserInputView;
+  onSubmit: (userInputId: string, answers: AppServerUserInputAnswers) => void | Promise<void>;
+}) => {
+  const [values, setValues] = useState<Record<string, string>>(() => defaultUserInputValues(request.questions));
+  const [submitting, setSubmitting] = useState(false);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSubmitting(true);
+    try {
+      await onSubmit(request.userInputId, userInputAnswers(request.questions, values));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  return (
+    <form className="userInputRequestForm" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
+      {request.questions.length ? request.questions.map((question) => (
+        <label className="userInputQuestion" key={question.id}>
+          <span className="userInputQuestionHeader">{question.header || question.id}</span>
+          {question.question ? <span className="userInputQuestionText">{question.question}</span> : null}
+          {question.options?.length ? (
+            <select
+              className="userInputControl"
+              value={values[question.id] ?? ""}
+              onChange={(event) => setValues((current) => ({ ...current, [question.id]: event.target.value }))}
+              disabled={submitting}
+            >
+              <option value="">Select...</option>
+              {question.options.map((option) => (
+                <option value={option.label} key={option.label}>{option.label}</option>
+              ))}
+            </select>
+          ) : null}
+          {question.isOther || !question.options?.length ? (
+            <input
+              className="userInputControl"
+              type={question.isSecret ? "password" : "text"}
+              value={values[question.id] ?? ""}
+              onChange={(event) => setValues((current) => ({ ...current, [question.id]: event.target.value }))}
+              disabled={submitting}
+            />
+          ) : null}
+        </label>
+      )) : (
+        <p className="userInputEmpty">No questions were provided.</p>
+      )}
+      <button type="submit" className="approvalButton approve userInputSubmit" disabled={submitting}>
+        Submit
+      </button>
+    </form>
   );
 };
 
@@ -244,7 +320,100 @@ const pendingApprovalFromMessage = (message: WebRecordView) => {
   const approval = asRecord(payload?.approval);
   const approvalId = typeof approval?.approvalId === "string" ? approval.approvalId : "";
   const status = typeof approval?.status === "string" ? approval.status : "";
-  return approvalId && status === "pending" ? { approvalId } : null;
+  const kind = typeof approval?.kind === "string" ? approval.kind : "";
+  return approvalId && status === "pending" ? { approvalId, kind } : null;
+};
+
+const pendingUserInputFromMessage = (message: WebRecordView): PendingUserInputView | null => {
+  const payload = asRecord(message.record.payload);
+  const userInput = asRecord(payload?.userInput);
+  const userInputId = typeof userInput?.userInputId === "string" ? userInput.userInputId : "";
+  const status = typeof userInput?.status === "string" ? userInput.status : "";
+  if (!userInputId || status !== "pending") return null;
+  const questions = Array.isArray(payload?.questions)
+    ? payload.questions.flatMap(userInputQuestionFromValue)
+    : [];
+  return { userInputId, questions };
+};
+
+const userInputQuestionFromValue = (value: unknown): PendingUserInputQuestionView[] => {
+  const record = asRecord(value);
+  const id = typeof record?.id === "string" && record.id ? record.id : "";
+  if (!id) return [];
+  return [{
+    id,
+    header: typeof record?.header === "string" ? record.header : "",
+    question: typeof record?.question === "string" ? record.question : "",
+    isOther: record?.isOther === true,
+    isSecret: record?.isSecret === true,
+    options: Array.isArray(record?.options)
+      ? record.options.flatMap(userInputOptionFromValue)
+      : null
+  }];
+};
+
+const userInputOptionFromValue = (value: unknown) => {
+  const record = asRecord(value);
+  const label = typeof record?.label === "string" && record.label ? record.label : "";
+  if (!label) return [];
+  return [{
+    label,
+    ...(typeof record?.description === "string" && record.description ? { description: record.description } : {})
+  }];
+};
+
+const defaultUserInputValues = (questions: PendingUserInputQuestionView[]) =>
+  Object.fromEntries(questions.map((question) => [question.id, ""]));
+
+const userInputAnswers = (
+  questions: PendingUserInputQuestionView[],
+  values: Record<string, string>
+): AppServerUserInputAnswers =>
+  Object.fromEntries(questions.map((question) => [
+    question.id,
+    { answers: (values[question.id]?.trim() ? [values[question.id].trim()] : []) }
+  ]));
+
+const approvalDecisionActions = (kind: string): Array<{
+  decision: AppServerApprovalDecision;
+  label: string;
+  className: string;
+  title: string;
+}> => {
+  const actions: Array<{
+    decision: AppServerApprovalDecision;
+    label: string;
+    className: string;
+    title: string;
+  }> = [{
+    decision: "approve",
+    label: "Approve",
+    className: "approve",
+    title: "Approve this request once"
+  }];
+  if (kind !== "mcp_elicitation") {
+    actions.push({
+      decision: "approve_for_session",
+      label: "Session",
+      className: "approve session",
+      title: "Approve similar requests for this session"
+    });
+  }
+  actions.push({
+    decision: "deny",
+    label: "Deny",
+    className: "deny",
+    title: "Decline this request"
+  });
+  if (kind !== "permissions_request") {
+    actions.push({
+      decision: "cancel",
+      label: "Cancel",
+      className: "cancel",
+      title: "Cancel this request"
+    });
+  }
+  return actions;
 };
 
 export const shouldExtractMemoryCitation = (message: WebRecordView) =>

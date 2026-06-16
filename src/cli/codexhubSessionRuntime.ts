@@ -20,6 +20,7 @@ import type { MachineCommand, MachineRegistration } from "../shared/machineTypes
 import type {
   AppServerApprovalDecision,
   AppServerApprovalKind,
+  AppServerUserInputAnswers,
   ModelCatalogItem,
   SessionCommand,
   SessionEventInput,
@@ -53,6 +54,12 @@ type PendingRequest = {
 };
 
 type PendingApprovalRequest = {
+  requestId: string | number;
+  method: string;
+  params?: Record<string, unknown>;
+};
+
+type PendingUserInputRequest = {
   requestId: string | number;
   method: string;
   params?: Record<string, unknown>;
@@ -656,6 +663,7 @@ class MachineBackedSessionTransport implements HeadlessSessionTransport {
 class CodexAppServerBridge {
   private readonly pending = new Map<string | number, PendingRequest>();
   private readonly pendingApprovals = new Map<string, PendingApprovalRequest>();
+  private readonly pendingUserInputs = new Map<string, PendingUserInputRequest>();
   private readonly syncedThreads = new Map<string, SyncedThread>();
   private readonly loadedThreads = new Set<string>();
   private readonly threadCwds = new Map<string, string>();
@@ -792,6 +800,7 @@ class CodexAppServerBridge {
     }
     this.pending.clear();
     this.pendingApprovals.clear();
+    this.pendingUserInputs.clear();
     for (const state of this.syncedThreads.values()) {
       this.closeAppServerTurnsSync(state);
     }
@@ -911,6 +920,12 @@ class CodexAppServerBridge {
       if (!command.approvalId) throw new Error("approval_decision command requires approvalId");
       if (!command.approvalDecision) throw new Error("approval_decision command requires approvalDecision");
       this.resolveApprovalRequest(command.approvalId, command.approvalDecision);
+      return { ok: true };
+    }
+
+    if (command.type === "user_input_response") {
+      if (!command.userInputId) throw new Error("user_input_response command requires userInputId");
+      this.resolveUserInputRequest(command.userInputId, command.userInputAnswers ?? {});
       return { ok: true };
     }
 
@@ -1509,6 +1524,10 @@ class CodexAppServerBridge {
       this.forwardApprovalRequest(message, "file_change");
       return;
     }
+    if (method === "item/permissions/requestApproval") {
+      this.forwardApprovalRequest(message, "permissions_request");
+      return;
+    }
     if (method === "item/tool/call") {
       this.ws.send(JSON.stringify({
         id,
@@ -1528,7 +1547,7 @@ class CodexAppServerBridge {
       return;
     }
     if (method === "item/tool/requestUserInput") {
-      this.ws.send(JSON.stringify({ id, result: { answers: {} } }));
+      this.forwardUserInputRequest(message);
       return;
     }
     if (method === "mcpServer/elicitation/request") {
@@ -1582,6 +1601,47 @@ class CodexAppServerBridge {
     this.ws.send(JSON.stringify({
       id: pending.requestId,
       result: approvalResponse(pending.method, decision, pending.params)
+    }));
+  }
+
+  private forwardUserInputRequest(message: JsonRecord) {
+    const method = typeof message.method === "string" ? message.method : "";
+    const requestId = message.id;
+    if (typeof requestId !== "string" && typeof requestId !== "number") return;
+    const params = asRecord(message.params) ?? {};
+    const threadId = approvalThreadId(params) ?? this.defaultThreadId;
+    if (!threadId) {
+      this.ws.send(JSON.stringify({ id: requestId, result: { answers: {} } }));
+      return;
+    }
+
+    const userInputId = randomUUID();
+    this.pendingUserInputs.set(userInputId, { requestId, method, params });
+    this.hub.sendEvent({
+      type: "user_input_request",
+      threadId,
+      userInput: {
+        userInputId,
+        method,
+        requestId,
+        threadId,
+        ...(approvalTurnId(params) ? { turnId: approvalTurnId(params) } : {}),
+        ...(approvalItemId(params) ? { itemId: approvalItemId(params) } : {}),
+        createdAt: approvalCreatedAt(params),
+        questions: userInputQuestions(params),
+        params
+      },
+      heartbeat: false
+    });
+  }
+
+  private resolveUserInputRequest(userInputId: string, answers: AppServerUserInputAnswers) {
+    const pending = this.pendingUserInputs.get(userInputId);
+    if (!pending) throw new Error(`User input request not found: ${userInputId}`);
+    this.pendingUserInputs.delete(userInputId);
+    this.ws.send(JSON.stringify({
+      id: pending.requestId,
+      result: { answers }
     }));
   }
 
@@ -1692,14 +1752,54 @@ const approvalResponse = (
   params?: Record<string, unknown>
 ) => {
   if (method === "mcpServer/elicitation/request") {
-    return decision === "approve"
+    if (decision === "cancel") return { action: "cancel", content: null, _meta: null };
+    return decision === "approve" || decision === "approve_for_session"
       ? { action: "accept", content: mcpElicitationDefaultContent(params), _meta: null }
       : { action: "decline", content: null, _meta: null };
   }
-  if (method === "execCommandApproval" || method === "applyPatchApproval") {
-    return { decision: decision === "approve" ? "approved" : "denied" };
+  if (method === "item/permissions/requestApproval") {
+    return permissionsApprovalResponse(decision, params);
   }
-  return { decision: decision === "approve" ? "accept" : "decline" };
+  if (method === "execCommandApproval" || method === "applyPatchApproval") {
+    return { decision: legacyApprovalDecision(decision) };
+  }
+  return { decision: modernApprovalDecision(decision) };
+};
+
+const modernApprovalDecision = (decision: AppServerApprovalDecision) => {
+  if (decision === "approve") return "accept";
+  if (decision === "approve_for_session") return "acceptForSession";
+  if (decision === "cancel") return "cancel";
+  return "decline";
+};
+
+const legacyApprovalDecision = (decision: AppServerApprovalDecision) => {
+  if (decision === "approve") return "approved";
+  if (decision === "approve_for_session") return "approved_for_session";
+  if (decision === "cancel") return "abort";
+  return "denied";
+};
+
+const permissionsApprovalResponse = (
+  decision: AppServerApprovalDecision,
+  params: Record<string, unknown> | undefined
+) => {
+  if (decision === "approve" || decision === "approve_for_session") {
+    return {
+      permissions: requestedPermissionsGrant(params),
+      scope: decision === "approve_for_session" ? "session" : "turn"
+    };
+  }
+  return { permissions: {}, scope: "turn" };
+};
+
+const requestedPermissionsGrant = (params: Record<string, unknown> | undefined) => {
+  const permissions = asRecord(params?.permissions);
+  if (!permissions) return {};
+  const granted: Record<string, unknown> = {};
+  if (permissions.network !== null && permissions.network !== undefined) granted.network = permissions.network;
+  if (permissions.fileSystem !== null && permissions.fileSystem !== undefined) granted.fileSystem = permissions.fileSystem;
+  return granted;
 };
 
 const mcpElicitationDefaultContent = (params: Record<string, unknown> | undefined) => {
@@ -1714,6 +1814,38 @@ const mcpElicitationDefaultContent = (params: Record<string, unknown> | undefine
     content[key] = fieldSchema.default;
   }
   return content;
+};
+
+const userInputQuestions = (params: Record<string, unknown>) => {
+  const questions = Array.isArray(params.questions) ? params.questions : [];
+  return questions.flatMap((question) => {
+    const record = asRecord(question);
+    const id = stringValue(record?.id);
+    if (!id) return [];
+    return [{
+      id,
+      header: stringValue(record?.header) ?? "",
+      question: stringValue(record?.question) ?? "",
+      isOther: record?.isOther === true,
+      isSecret: record?.isSecret === true,
+      options: userInputOptions(record?.options)
+    }];
+  });
+};
+
+const userInputOptions = (value: unknown) => {
+  if (!Array.isArray(value)) return null;
+  const options = value.flatMap((option) => {
+    const record = asRecord(option);
+    const label = stringValue(record?.label);
+    if (!label) return [];
+    const description = stringValue(record?.description);
+    return [{
+      label,
+      ...(description ? { description } : {})
+    }];
+  });
+  return options.length ? options : null;
 };
 
 const approvalThreadId = (params: Record<string, unknown>) => {

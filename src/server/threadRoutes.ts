@@ -7,6 +7,7 @@ import {
   threadGoalUpdateSchema,
   threadRenameSchema,
   threadRunOptionsSchema,
+  threadUserInputResponseSchema,
   webEventsMessageSchema,
   type SessionModelsPayload,
   type SessionsPayload,
@@ -21,6 +22,7 @@ import {
   type ThreadsPayload,
   type ThreadStopPayload,
   type ThreadTurnPayload,
+  type ThreadUserInputPayload,
   type WebEventsMessage
 } from "../shared/apiContract.js";
 
@@ -416,6 +418,19 @@ export const registerThreadRoutes = <
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") || message.startsWith("Approval not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.post("/api/threads/:threadId/user-input", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const payload = threadUserInputResponseSchema.parse(request.body);
+    try {
+      const result = await ctx.threads.respondToUserInput(params.threadId, payload.userInputId, payload.answers);
+      return { ok: true, ...result } satisfies ThreadUserInputPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") || message.startsWith("User input not found:") ? 404 : 409);
       return { error: message };
     }
   });

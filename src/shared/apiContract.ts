@@ -12,6 +12,7 @@ import type { SshHostConfig, SshMachineConnectInput, SshMachineConnection } from
 import type { ModelReasoningEffort, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "./usageTypes.js";
 import type {
   AppServerApprovalDecision,
+  AppServerUserInputAnswers,
   ModelCatalogItem,
   SessionStreamEvent,
   SessionSummary,
@@ -31,6 +32,7 @@ export type {
   PluginSummary,
   ProjectSummary,
   AppServerApprovalDecision,
+  AppServerUserInputAnswers,
   ModelCatalogItem,
   StoredMachine,
   StoredProject,
@@ -224,7 +226,15 @@ export type ThreadReviewPayload = {
 /** thread approval mutation 返回值。 */
 export type ThreadApprovalPayload = {
   ok?: boolean;
-  status?: "approved" | "denied";
+  status?: "approved" | "denied" | "cancelled";
+  decision?: AppServerApprovalDecision;
+  thread?: ThreadDetail;
+};
+
+/** thread user input mutation 返回值。 */
+export type ThreadUserInputPayload = {
+  ok?: boolean;
+  status?: "answered" | "failed";
   thread?: ThreadDetail;
 };
 
@@ -345,18 +355,51 @@ export const threadGoalUpdateSchema = z.object({
 
 export const threadApprovalDecisionSchema = z.object({
   approvalId: z.string().min(1),
-  decision: z.enum(["approve", "deny"])
+  decision: z.enum(["approve", "approve_for_session", "deny", "cancel"])
+}).strict();
+
+const threadUserInputAnswerSchema = z.object({
+  answers: z.array(z.string())
+}).strict();
+
+export const threadUserInputResponseSchema = z.object({
+  userInputId: z.string().min(1),
+  answers: z.record(z.string(), threadUserInputAnswerSchema)
 }).strict();
 
 const appServerApprovalRequestSchema = z.object({
   approvalId: z.string().min(1),
   method: z.string().min(1),
   requestId: z.union([z.string().min(1), z.number()]),
-  kind: z.enum(["command_execution", "file_change", "mcp_elicitation", "legacy_exec_command", "legacy_apply_patch"]),
+  kind: z.enum(["command_execution", "file_change", "mcp_elicitation", "permissions_request", "legacy_exec_command", "legacy_apply_patch"]),
   threadId: z.string().min(1),
   turnId: z.string().min(1).optional(),
   itemId: z.string().min(1).optional(),
   createdAt: z.string().min(1),
+  params: z.unknown()
+}).strict();
+
+const appServerUserInputQuestionSchema = z.object({
+  id: z.string().min(1),
+  header: z.string(),
+  question: z.string(),
+  isOther: z.boolean(),
+  isSecret: z.boolean(),
+  options: z.array(z.object({
+    label: z.string(),
+    description: z.string().optional()
+  }).strict()).nullable()
+}).strict();
+
+const appServerUserInputRequestSchema = z.object({
+  userInputId: z.string().min(1),
+  method: z.string().min(1),
+  requestId: z.union([z.string().min(1), z.number()]),
+  threadId: z.string().min(1),
+  turnId: z.string().min(1).optional(),
+  itemId: z.string().min(1).optional(),
+  createdAt: z.string().min(1),
+  questions: z.array(appServerUserInputQuestionSchema),
   params: z.unknown()
 }).strict();
 
@@ -425,6 +468,12 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     type: z.literal("approval_request"),
     threadId: z.string().min(1),
     approval: appServerApprovalRequestSchema,
+    heartbeat: z.boolean().optional()
+  }),
+  z.object({
+    type: z.literal("user_input_request"),
+    threadId: z.string().min(1),
+    userInput: appServerUserInputRequestSchema,
     heartbeat: z.boolean().optional()
   })
 ]);
@@ -658,6 +707,9 @@ export type ThreadGoalUpdateInput = z.infer<typeof threadGoalUpdateSchema>;
 
 /** 响应 app-server approval request 的请求 body。 */
 export type ThreadApprovalDecisionInput = z.infer<typeof threadApprovalDecisionSchema>;
+
+/** 响应 app-server request_user_input 的请求 body。 */
+export type ThreadUserInputResponseInput = z.infer<typeof threadUserInputResponseSchema>;
 
 /** 更新 thread 展示名称的请求 body。 */
 export type ThreadRenameInput = z.infer<typeof threadRenameSchema>;
