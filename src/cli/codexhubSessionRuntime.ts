@@ -10,6 +10,7 @@ import {
   startCodexAppServerProcess,
   terminateChild,
   type ChildExit,
+  type CodexAppServerLaunchOptions,
   type CodexAppServerProcessHandle
 } from "./codexAppServerProcess.js";
 import { machineTransportUrl, parseMachineTransportMessage } from "../core/machineTransportProtocol.js";
@@ -83,12 +84,16 @@ type ThreadSettings = {
   model?: string | null;
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
   serviceTier?: ThreadRunOptions["serviceTier"] | null;
+  approvalPolicy?: ThreadRunOptions["approvalPolicy"] | null;
+  sandboxPolicy?: ThreadRunOptions["sandboxPolicy"] | null;
 };
 
 type TurnRequestParams = {
   model?: string | null;
   effort?: ThreadRunOptions["modelReasoningEffort"];
   serviceTier?: ThreadRunOptions["serviceTier"] | null;
+  approvalPolicy?: ThreadRunOptions["approvalPolicy"] | null;
+  sandboxPolicy?: ThreadRunOptions["sandboxPolicy"] | null;
 };
 
 type HubTransportSink = {
@@ -142,6 +147,7 @@ export type HeadlessCodexhubSessionOptions = {
   cwd: string;
   machineId?: string;
   port?: number;
+  appServerLaunch?: CodexAppServerLaunchOptions;
   readyLabel?: string;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
@@ -188,7 +194,10 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, pro
   const appServerUrl = `ws://127.0.0.1:${port}`;
   const sessionId = createSessionId();
   const machineId = createSessionMachineId(sessionId);
-  const appServer = await startCodexAppServer(cwd, appServerUrl, port);
+  const appServer = await startCodexAppServer(cwd, appServerUrl, port, {
+    approvalPolicy: options.approvalPolicy,
+    sandbox: options.sandbox
+  });
   let bridgeRunner: ProxyBridgeRunner | null = null;
   let cleanedUp = false;
   const appServerStopped = appServer.stopped.then(({ code, signal }) => {
@@ -255,7 +264,7 @@ async function runCodexhubSession(program: Command, options: ConnectOptions, pro
 export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSessionOptions): Promise<HeadlessCodexhubSessionHandle> {
   const cwd = path.resolve(options.cwd);
   // 这里的 headless session 自己启动 app-server，作为 machine runtime 暴露给 server。
-  const appServer = await startCodexAppServerProcess(cwd, options.port);
+  const appServer = await startCodexAppServerProcess(cwd, options.port, options.appServerLaunch);
   const sessionId = createSessionId();
   const bridgeRunner = new ProxyBridgeRunner({
     apiBase: options.apiBase,
@@ -1395,10 +1404,18 @@ class CodexAppServerBridge {
     const model = config?.model;
     const modelReasoningEffort = config?.model_reasoning_effort;
     const serviceTier = config?.service_tier;
+    const approvalPolicy = config?.approval_policy;
+    const sandboxPolicy = sandboxPolicyFromConfig(config);
     return {
       model: typeof model === "string" && model ? model : null,
       modelReasoningEffort: isModelReasoningEffort(modelReasoningEffort) ? modelReasoningEffort : null,
-      serviceTier: typeof serviceTier === "string" && serviceTier ? serviceTier : null
+      serviceTier: typeof serviceTier === "string" && serviceTier ? serviceTier : null,
+      ...(config && hasOwn(config, "approval_policy")
+        ? { approvalPolicy: isThreadApprovalPolicy(approvalPolicy) ? approvalPolicy : null }
+        : {}),
+      ...(config && (hasOwn(config, "sandbox_policy") || hasOwn(config, "sandbox_mode"))
+        ? { sandboxPolicy: sandboxPolicy ?? null }
+        : {})
     };
   }
 
@@ -1448,7 +1465,9 @@ class CodexAppServerBridge {
         ? settings.serviceTier
         : typeof settings.service_tier === "string" && settings.service_tier
           ? settings.service_tier
-          : null
+          : null,
+      ...threadApprovalPolicySettings(settings),
+      ...threadSandboxPolicySettings(settings)
     });
   }
 
@@ -1508,6 +1527,8 @@ class CodexAppServerBridge {
       model: settings.model,
       modelReasoningEffort: settings.modelReasoningEffort,
       serviceTier: settings.serviceTier,
+      approvalPolicy: settings.approvalPolicy,
+      sandboxPolicy: settings.sandboxPolicy,
       heartbeat: false
     });
   }
@@ -1707,6 +1728,8 @@ const turnRequestParams = (options: ThreadRunOptions | undefined): TurnRequestPa
   if (hasOwn(options, "model")) params.model = options.model;
   if (hasOwn(options, "modelReasoningEffort")) params.effort = options.modelReasoningEffort;
   if (hasOwn(options, "serviceTier")) params.serviceTier = options.serviceTier;
+  if (hasOwn(options, "approvalPolicy")) params.approvalPolicy = options.approvalPolicy;
+  if (hasOwn(options, "sandboxPolicy")) params.sandboxPolicy = options.sandboxPolicy;
   return params;
 };
 
@@ -1745,6 +1768,79 @@ const goalUpdateParams = (
 
 const isModelReasoningEffort = (value: unknown): value is ThreadRunOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
+
+const isThreadApprovalPolicy = (value: unknown): value is ThreadRunOptions["approvalPolicy"] =>
+  value === "untrusted" || value === "on-failure" || value === "on-request" || value === "never";
+
+const threadApprovalPolicySettings = (settings: Record<string, unknown>): Pick<ThreadSettings, "approvalPolicy"> => {
+  if (hasOwn(settings, "approvalPolicy")) {
+    return { approvalPolicy: isThreadApprovalPolicy(settings.approvalPolicy) ? settings.approvalPolicy : null };
+  }
+  if (hasOwn(settings, "approval_policy")) {
+    return { approvalPolicy: isThreadApprovalPolicy(settings.approval_policy) ? settings.approval_policy : null };
+  }
+  return {};
+};
+
+const threadSandboxPolicySettings = (settings: Record<string, unknown>): Pick<ThreadSettings, "sandboxPolicy"> => {
+  if (hasOwn(settings, "sandboxPolicy")) {
+    return { sandboxPolicy: asThreadSandboxPolicy(settings.sandboxPolicy) ?? null };
+  }
+  if (hasOwn(settings, "sandbox_policy")) {
+    return { sandboxPolicy: asThreadSandboxPolicy(settings.sandbox_policy) ?? null };
+  }
+  return {};
+};
+
+const sandboxPolicyFromConfig = (config: JsonRecord | null): ThreadRunOptions["sandboxPolicy"] | undefined => {
+  if (!config) return undefined;
+  const structured = asThreadSandboxPolicy(config.sandbox_policy);
+  if (structured) return structured;
+  const mode = config.sandbox_mode;
+  if (mode === "danger-full-access") return { type: "dangerFullAccess" };
+  if (mode === "read-only") return { type: "readOnly", networkAccess: false };
+  if (mode !== "workspace-write") return undefined;
+  const workspaceWrite = asRecord(config.sandbox_workspace_write);
+  const writableRoots = Array.isArray(workspaceWrite?.writable_roots)
+    ? workspaceWrite.writable_roots.filter((item): item is string => typeof item === "string" && item.length > 0)
+    : [];
+  return {
+    type: "workspaceWrite",
+    writableRoots,
+    networkAccess: workspaceWrite?.network_access === true,
+    excludeTmpdirEnvVar: workspaceWrite?.exclude_tmpdir_env_var === true,
+    excludeSlashTmp: workspaceWrite?.exclude_slash_tmp === true
+  };
+};
+
+const asThreadSandboxPolicy = (value: unknown): ThreadRunOptions["sandboxPolicy"] | undefined => {
+  const policy = asRecord(value);
+  if (!policy || typeof policy.type !== "string") return undefined;
+  if (policy.type === "dangerFullAccess") return { type: "dangerFullAccess" };
+  if (policy.type === "readOnly" && typeof policy.networkAccess === "boolean") {
+    return { type: "readOnly", networkAccess: policy.networkAccess };
+  }
+  if (policy.type === "externalSandbox" && (policy.networkAccess === "restricted" || policy.networkAccess === "enabled")) {
+    return { type: "externalSandbox", networkAccess: policy.networkAccess };
+  }
+  if (policy.type !== "workspaceWrite" || !Array.isArray(policy.writableRoots)) return undefined;
+  const writableRoots = policy.writableRoots.filter((item): item is string => typeof item === "string" && item.length > 0);
+  if (
+    writableRoots.length !== policy.writableRoots.length
+    || typeof policy.networkAccess !== "boolean"
+    || typeof policy.excludeTmpdirEnvVar !== "boolean"
+    || typeof policy.excludeSlashTmp !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    type: "workspaceWrite",
+    writableRoots,
+    networkAccess: policy.networkAccess,
+    excludeTmpdirEnvVar: policy.excludeTmpdirEnvVar,
+    excludeSlashTmp: policy.excludeSlashTmp
+  };
+};
 
 const approvalResponse = (
   method: string,

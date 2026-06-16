@@ -10,6 +10,8 @@ import type { CodexRecord } from "../shared/recordTypes.js";
 import type {
   ActivityStatusView,
   AppSettings,
+  ApprovalPolicyDraft,
+  ApprovalPolicySelection,
   OpenThreadState,
   CodexThreadCandidate,
   ComposerMode,
@@ -28,6 +30,8 @@ import type {
   ProjectPickerState,
   ProjectSummary,
   ReasoningSelection,
+  SandboxPolicyDraft,
+  SandboxPolicySelection,
   SessionView,
   SshConnection,
   SshHost,
@@ -181,9 +185,11 @@ export type AppViewModel = AppSidebarViewModel & {
   messageContextMenu: MessageContextMenuState | null;
   messageDisplayMode: MessageDisplayMode;
   messageRenderModes: Record<string, MessageRenderMode>;
+  activeThreadApprovalPolicySelection?: ApprovalPolicySelection;
   activeThreadModelDraft: ModelSelection;
   activeThreadReasoningDraft: ReasoningSelection;
   activeThreadServiceTierDraft: string;
+  activeThreadSandboxPolicySelection?: SandboxPolicySelection;
   messagesRef: React.RefObject<VirtuosoHandle | null>;
   messagesScrollerRef: React.RefObject<HTMLElement | null>;
   modelOptions: ModelOption[];
@@ -227,9 +233,11 @@ export type AppViewModel = AppSidebarViewModel & {
   setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
   setMessageDisplayMode: React.Dispatch<React.SetStateAction<MessageDisplayMode>>;
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
+  setActiveThreadApprovalPolicyDraft: React.Dispatch<React.SetStateAction<ApprovalPolicyDraft>>;
   setActiveThreadModelDraft: React.Dispatch<React.SetStateAction<ModelSelection>>;
   setActiveThreadReasoningDraft: React.Dispatch<React.SetStateAction<ReasoningSelection>>;
   setActiveThreadServiceTierDraft: React.Dispatch<React.SetStateAction<string>>;
+  setActiveThreadSandboxPolicyDraft: React.Dispatch<React.SetStateAction<SandboxPolicyDraft>>;
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadControlsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;

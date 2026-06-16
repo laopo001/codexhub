@@ -34,9 +34,13 @@ import {
 import type { AppState } from "./appState.js";
 import type {
   ComposerMode,
+  ApprovalPolicyDraft,
+  ApprovalPolicySelection,
   ModelSelection,
   ProjectSummary,
   ReasoningSelection,
+  SandboxPolicyDraft,
+  SandboxPolicySelection,
   ServiceTierSelection,
   ThreadSummary,
   WebRecordView
@@ -59,6 +63,14 @@ export const useAppSelectors = (state: AppState) => {
   const activeThreadModelDraft = activeThread?.modelDraft ?? "auto";
   const activeThreadReasoningDraft = activeThread?.reasoningDraft ?? "auto";
   const activeThreadServiceTierDraft = activeThread?.serviceTierDraft ?? "auto";
+  const activeThreadApprovalPolicyDraft = activeThread?.approvalPolicyDraft ?? "auto";
+  const activeThreadSandboxPolicyDraft = activeThread?.sandboxPolicyDraft ?? "auto";
+  const activeThreadApprovalPolicySelection = activeThreadApprovalPolicyDraft === "auto"
+    ? activeThread?.approvalPolicy
+    : activeThreadApprovalPolicyDraft;
+  const activeThreadSandboxPolicySelection = activeThreadSandboxPolicyDraft === "auto"
+    ? sandboxPolicySelectionFromThread(activeThread?.sandboxPolicy)
+    : activeThreadSandboxPolicyDraft;
   const setActiveThreadModelDraft: Dispatch<SetStateAction<ModelSelection>> = (value) => {
     if (!state.activeTabThreadId) return;
     state.setOpenThreads((current) => current.map((thread) => {
@@ -87,6 +99,26 @@ export const useAppSelectors = (state: AppState) => {
         ? (value as (current: ServiceTierSelection) => ServiceTierSelection)(thread.serviceTierDraft)
         : value;
       return { ...thread, serviceTierDraft: next };
+    }));
+  };
+  const setActiveThreadApprovalPolicyDraft: Dispatch<SetStateAction<ApprovalPolicyDraft>> = (value) => {
+    if (!state.activeTabThreadId) return;
+    state.setOpenThreads((current) => current.map((thread) => {
+      if (thread.threadId !== state.activeTabThreadId) return thread;
+      const next = typeof value === "function"
+        ? (value as (current: ApprovalPolicyDraft) => ApprovalPolicyDraft)(thread.approvalPolicyDraft)
+        : value;
+      return { ...thread, approvalPolicyDraft: next };
+    }));
+  };
+  const setActiveThreadSandboxPolicyDraft: Dispatch<SetStateAction<SandboxPolicyDraft>> = (value) => {
+    if (!state.activeTabThreadId) return;
+    state.setOpenThreads((current) => current.map((thread) => {
+      if (thread.threadId !== state.activeTabThreadId) return thread;
+      const next = typeof value === "function"
+        ? (value as (current: SandboxPolicyDraft) => SandboxPolicyDraft)(thread.sandboxPolicyDraft)
+        : value;
+      return { ...thread, sandboxPolicyDraft: next };
     }));
   };
   const projectList = useMemo(
@@ -364,10 +396,12 @@ export const useAppSelectors = (state: AppState) => {
     activeThreadModel,
     activeThreadIsOpen,
     activeThreadModelDraft,
+    activeThreadApprovalPolicySelection,
     activeThreadReasoning,
     activeThreadReasoningDraft,
     activeThreadServiceTier,
     activeThreadServiceTierDraft,
+    activeThreadSandboxPolicySelection,
     activeThreadUsage,
     activeUserMessageHistory,
     activeViews,
@@ -393,9 +427,11 @@ export const useAppSelectors = (state: AppState) => {
     reasoningOptions,
     runningOpenThreadIds,
     selectedProject,
+    setActiveThreadApprovalPolicyDraft,
     setActiveThreadModelDraft,
     setActiveThreadReasoningDraft,
     setActiveThreadServiceTierDraft,
+    setActiveThreadSandboxPolicyDraft,
     setComposerMode,
     showComposerSendButton,
     showInlineStatusPanel,
@@ -407,6 +443,14 @@ export const useAppSelectors = (state: AppState) => {
 };
 
 export type AppSelectors = ReturnType<typeof useAppSelectors>;
+
+const sandboxPolicySelectionFromThread = (policy: ThreadSummary["sandboxPolicy"]): SandboxPolicySelection | undefined => {
+  if (!policy) return undefined;
+  if (policy.type === "readOnly") return "read-only";
+  if (policy.type === "workspaceWrite") return "workspace-write";
+  if (policy.type === "dangerFullAccess") return "danger-full-access";
+  return undefined;
+};
 
 const isCurrentVscodeWorkspaceProject = (project: ProjectSummary) =>
   project.source?.kind === "vscode"

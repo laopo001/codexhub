@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { SshRemoteClientBundle } from "./sshRemoteClient.js";
+import type { CodexAppServerLaunchOptions } from "../cli/codexAppServerProcess.js";
 import type {
   SshMachineConnectInput,
   SshMachineConnection,
@@ -17,6 +18,7 @@ type SshMachineManagerOptions = {
   sshConfigPath?: string;
   remoteMode?: SshMachineRemoteMode;
   remoteClient?: Pick<SshRemoteClientBundle, "hash" | "endpointPath">;
+  appServerLaunch?: CodexAppServerLaunchOptions;
   authToken?: string | null;
   onChange?: () => void;
 };
@@ -62,8 +64,8 @@ export class SshMachineManager {
     const remoteClientHash = remoteMode === "bootstrap" ? this.options.remoteClient?.hash : undefined;
     const remoteCommand = input.remoteCommand ?? (
       remoteMode === "bootstrap"
-        ? sshBootstrapRemoteCommand(remoteApiBase, this.requireRemoteClient(), input, this.options.authToken)
-        : installedRemoteCommand(remoteApiBase, input, this.options.authToken)
+        ? sshBootstrapRemoteCommand(remoteApiBase, this.requireRemoteClient(), input, this.options.authToken, this.options.appServerLaunch)
+        : installedRemoteCommand(remoteApiBase, input, this.options.authToken, this.options.appServerLaunch)
     );
 
     const args = [
@@ -181,9 +183,15 @@ const randomRemotePort = () => 18_000 + Math.floor(Math.random() * 30_000);
 const trimOutput = (value: string) =>
   value.length <= outputLimit ? value : value.slice(value.length - outputLimit);
 
-const installedRemoteCommand = (remoteApiBase: string, input: Pick<SshMachineConnectInput, "name">, authToken?: string | null) => [
+const installedRemoteCommand = (
+  remoteApiBase: string,
+  input: Pick<SshMachineConnectInput, "name">,
+  authToken?: string | null,
+  appServerLaunch?: CodexAppServerLaunchOptions
+) => [
   `PATH=${shellDoubleQuote(defaultRemotePath)}`,
   ...(authToken ? [`CODEX_HUB_AUTH_TOKEN=${shellQuote(authToken)}`] : []),
+  ...appServerLaunchEnvAssignments(appServerLaunch),
   "codexhub",
   "machine",
   "--server",
@@ -197,7 +205,8 @@ const sshBootstrapRemoteCommand = (
   remoteApiBase: string,
   remoteClient: Pick<SshRemoteClientBundle, "hash" | "endpointPath">,
   input: Pick<SshMachineConnectInput, "name">,
-  authToken?: string | null
+  authToken?: string | null,
+  appServerLaunch?: CodexAppServerLaunchOptions
 ) => {
   const clientUrl = `${remoteApiBase}${remoteClient.endpointPath}`;
   const script = [
@@ -207,7 +216,13 @@ const sshBootstrapRemoteCommand = (
     `CODEXHUB_REMOTE_CLIENT_HASH=${shellQuote(remoteClient.hash)}`,
     `CODEXHUB_REMOTE_CLIENT_URL=${shellQuote(clientUrl)}`,
     ...(authToken ? [`CODEX_HUB_AUTH_TOKEN=${shellQuote(authToken)}`] : []),
-    `export CODEXHUB_REMOTE_CLIENT_HASH CODEXHUB_REMOTE_CLIENT_URL${authToken ? " CODEX_HUB_AUTH_TOKEN" : ""}`,
+    ...appServerLaunchEnvAssignments(appServerLaunch),
+    `export ${[
+      "CODEXHUB_REMOTE_CLIENT_HASH",
+      "CODEXHUB_REMOTE_CLIENT_URL",
+      ...(authToken ? ["CODEX_HUB_AUTH_TOKEN"] : []),
+      ...appServerLaunchEnvNames(appServerLaunch)
+    ].join(" ")}`,
     "cache_root=\"${XDG_CACHE_HOME:-$HOME/.cache}/codexhub/remote-client\"",
     "cache_dir=\"$cache_root/$CODEXHUB_REMOTE_CLIENT_HASH\"",
     "client=\"$cache_dir/client.cjs\"",
@@ -235,6 +250,16 @@ const sshBootstrapRemoteCommand = (
   ].join("\n");
   return ["sh", "-lc", shellQuote(script)].join(" ");
 };
+
+const appServerLaunchEnvAssignments = (options: CodexAppServerLaunchOptions | undefined) => [
+  ...(options?.approvalPolicy ? [`CODEX_HUB_APP_SERVER_APPROVAL_POLICY=${shellQuote(options.approvalPolicy)}`] : []),
+  ...(options?.sandbox ? [`CODEX_HUB_APP_SERVER_SANDBOX=${shellQuote(options.sandbox)}`] : [])
+];
+
+const appServerLaunchEnvNames = (options: CodexAppServerLaunchOptions | undefined) => [
+  ...(options?.approvalPolicy ? ["CODEX_HUB_APP_SERVER_APPROVAL_POLICY"] : []),
+  ...(options?.sandbox ? ["CODEX_HUB_APP_SERVER_SANDBOX"] : [])
+];
 
 const remoteClientBootstrapNodeScript = [
   "const fs = require('node:fs');",

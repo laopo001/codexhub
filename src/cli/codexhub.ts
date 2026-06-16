@@ -3,6 +3,12 @@ import { Command } from "commander";
 import os from "node:os";
 import { loadDotEnv } from "../core/dotenv.js";
 import { createMachineId } from "../core/machineHub.js";
+import {
+  parseCodexApprovalPolicy,
+  parseCodexSandboxMode,
+  resolveCodexAppServerLaunchOptions,
+  type CodexAppServerLaunchOptions
+} from "./codexAppServerProcess.js";
 import { runCodexhubMachine, startCodexhubMachine, type CodexhubMachineHandle } from "./codexhubMachine.js";
 import { registerCodexHubSessionCommands } from "./codexhubConnect.js";
 
@@ -14,6 +20,8 @@ type ServerCommandOptions = {
   registerAuthToken?: string;
   registerMachineId?: string;
   registerName?: string;
+  approvalPolicy?: string;
+  sandbox?: string;
 };
 
 type MachineCommandOptions = {
@@ -22,6 +30,8 @@ type MachineCommandOptions = {
   machineId?: string;
   type?: "local" | "ssh" | "registered";
   name?: string;
+  approvalPolicy?: string;
+  sandbox?: string;
 };
 
 type SshConnectCommandOptions = {
@@ -72,16 +82,20 @@ program
   .option("--register-auth-token <token>", "parent CodexHub auth token (defaults to CODEX_HUB_REGISTER_AUTH_TOKEN)")
   .option("--register-machine-id <id>", "stable machine id for parent registration")
   .option("--register-name <name>", "display name for parent registration")
+  .option("--approval-policy <policy>", "default approval policy for launched Codex app-server (defaults to never)")
+  .option("--sandbox <mode>", "default sandbox mode for launched Codex app-server")
   .action(async (options: ServerCommandOptions = {}) => {
     const rootOptions = program.opts<{ port?: string }>();
     const { startServer } = await import("../server/index.js");
+    const appServerLaunch = appServerLaunchOptions(options);
     let handle: Awaited<ReturnType<typeof startServer>> | null = null;
     let parentMachine: CodexhubMachineHandle | null = null;
     try {
       handle = await startServer({
         host: options.host,
         port: parsePortOption(options.port ?? rootOptions.port),
-        staticDirectory: options.serveStatic
+        staticDirectory: options.serveStatic,
+        appServerLaunch
       });
       const localUrl = serverUrl(handle.host, handle.port);
       console.error(`codexhub server listening: ${localUrl}`);
@@ -101,13 +115,17 @@ program
   .option("--machine-id <id>", "stable machine id")
   .option("--type <type>", "machine connection type: local, ssh, or registered", "registered")
   .option("--name <name>", "display name")
+  .option("--approval-policy <policy>", "default approval policy for launched Codex app-server (defaults to never)")
+  .option("--sandbox <mode>", "default sandbox mode for launched Codex app-server")
   .action(async (options: MachineCommandOptions = {}) => {
+    const appServerLaunch = appServerLaunchOptions(options);
     await runCodexhubMachine({
       apiBase: options.server ?? apiBase(),
       authToken: options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN,
       machineId: options.machineId,
       type: parseMachineType(options.type),
-      name: options.name
+      name: options.name,
+      appServerLaunch
     });
   });
 
@@ -430,6 +448,13 @@ function parseMachineType(value: string | undefined): "local" | "ssh" | "registe
   throw new Error(`Invalid machine type: ${value}`);
 }
 
+function appServerLaunchOptions(options: Pick<ServerCommandOptions, "approvalPolicy" | "sandbox">): CodexAppServerLaunchOptions {
+  return resolveCodexAppServerLaunchOptions({
+    approvalPolicy: parseCodexApprovalPolicy(options.approvalPolicy, "--approval-policy"),
+    sandbox: parseCodexSandboxMode(options.sandbox, "--sandbox")
+  });
+}
+
 async function startParentRegistration(
   options: ServerCommandOptions,
   localUrl: string,
@@ -454,7 +479,8 @@ async function startParentRegistration(
     authToken,
     machineId,
     type: "registered",
-    name
+    name,
+    appServerLaunch: appServerLaunchOptions(options)
   });
 }
 

@@ -6,6 +6,12 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 export type ChildExit = { code: number | null; signal: NodeJS.Signals | null };
+export type CodexApprovalPolicy = "untrusted" | "on-failure" | "on-request" | "never";
+export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+export type CodexAppServerLaunchOptions = {
+  approvalPolicy?: CodexApprovalPolicy;
+  sandbox?: CodexSandboxMode;
+};
 
 export type CodexAppServerProcessHandle = {
   cwd: string;
@@ -22,10 +28,16 @@ export type StartedCodexAppServerProcess = {
 
 const codexAppServerReadyTimeoutMs = () => envPositiveInt("CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", 60_000);
 const codexAppServerStderrTailLimit = 4000;
+const defaultCodexAppServerApprovalPolicy: CodexApprovalPolicy = "never";
 
 // 启动官方 Codex app-server，并保留足够 stderr 方便解释 ready 失败。
-export const startCodexAppServer = async (cwd: string, appServerUrl: string, port: number): Promise<StartedCodexAppServerProcess> => {
-  const launch = await codexAppServerLaunch(appServerUrl);
+export const startCodexAppServer = async (
+  cwd: string,
+  appServerUrl: string,
+  port: number,
+  options: CodexAppServerLaunchOptions = {}
+): Promise<StartedCodexAppServerProcess> => {
+  const launch = await codexAppServerLaunch(appServerUrl, resolveCodexAppServerLaunchOptions(options));
   const spawnOptions: SpawnOptions = {
     cwd,
     env: codexAppServerEnv(launch.codexCommand),
@@ -58,12 +70,16 @@ export const startCodexAppServer = async (cwd: string, appServerUrl: string, por
   }
 };
 
-export const startCodexAppServerProcess = async (cwdInput: string, portInput?: number): Promise<CodexAppServerProcessHandle> => {
+export const startCodexAppServerProcess = async (
+  cwdInput: string,
+  portInput?: number,
+  options: CodexAppServerLaunchOptions = {}
+): Promise<CodexAppServerProcessHandle> => {
   const cwd = path.resolve(cwdInput);
   const port = portInput ?? await findFreePort();
   if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${portInput}`);
   const appServerUrl = `ws://127.0.0.1:${port}`;
-  const { child, stopped } = await startCodexAppServer(cwd, appServerUrl, port);
+  const { child, stopped } = await startCodexAppServer(cwd, appServerUrl, port, options);
   const stop = cleanupOnce(async () => {
     await terminateChild(child, stopped);
   });
@@ -113,29 +129,77 @@ export const signalExitCode = (signal: NodeJS.Signals) => {
   return 128 + signalNumber;
 };
 
-const codexAppServerLaunch = async (appServerUrl: string) => {
+export const resolveCodexAppServerLaunchOptions = (
+  overrides: CodexAppServerLaunchOptions = {}
+): CodexAppServerLaunchOptions => {
+  const envOptions = codexAppServerLaunchOptionsFromEnv();
+  return {
+    approvalPolicy: overrides.approvalPolicy ?? envOptions.approvalPolicy ?? defaultCodexAppServerApprovalPolicy,
+    sandbox: overrides.sandbox ?? envOptions.sandbox
+  };
+};
+
+export const codexAppServerLaunchOptionsFromEnv = (): CodexAppServerLaunchOptions => ({
+  approvalPolicy: parseCodexApprovalPolicy(process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY, "CODEX_HUB_APP_SERVER_APPROVAL_POLICY"),
+  sandbox: parseCodexSandboxMode(process.env.CODEX_HUB_APP_SERVER_SANDBOX, "CODEX_HUB_APP_SERVER_SANDBOX")
+});
+
+export const parseCodexApprovalPolicy = (
+  value: string | undefined,
+  label = "approval policy"
+): CodexApprovalPolicy | undefined => {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed === "untrusted" || trimmed === "on-failure" || trimmed === "on-request" || trimmed === "never") return trimmed;
+  throw new Error(`Invalid ${label}: ${value}`);
+};
+
+export const parseCodexSandboxMode = (
+  value: string | undefined,
+  label = "sandbox mode"
+): CodexSandboxMode | undefined => {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed === "read-only" || trimmed === "workspace-write" || trimmed === "danger-full-access") return trimmed;
+  throw new Error(`Invalid ${label}: ${value}`);
+};
+
+const codexAppServerLaunch = async (appServerUrl: string, options: CodexAppServerLaunchOptions) => {
   const codexCommand = await resolveCodexCommand();
+  const appServerArgs = codexAppServerArgs(appServerUrl, options);
   if (process.platform === "linux" && await fileExists("/usr/bin/setpriv")) {
     // 在 Linux 下把子进程绑定到当前进程，避免崩溃后留下孤儿 app-server。
     return {
       command: "/usr/bin/setpriv",
-      args: ["--pdeathsig", "TERM", codexCommand, "app-server", "--listen", appServerUrl],
+      args: ["--pdeathsig", "TERM", codexCommand, ...appServerArgs],
       codexCommand
     };
   }
   if (needsWindowsCommandShell(codexCommand)) {
     return {
       command: process.env.ComSpec || "cmd.exe",
-      args: ["/d", "/s", "/c", "call", codexCommand, "app-server", "--listen", appServerUrl],
+      args: ["/d", "/s", "/c", "call", codexCommand, ...appServerArgs],
       codexCommand
     };
   }
   return {
     command: codexCommand,
-    args: ["app-server", "--listen", appServerUrl],
+    args: appServerArgs,
     codexCommand
   };
 };
+
+const codexAppServerArgs = (appServerUrl: string, options: CodexAppServerLaunchOptions) => [
+  "app-server",
+  ...codexConfigArgs(options),
+  "--listen",
+  appServerUrl
+];
+
+const codexConfigArgs = (options: CodexAppServerLaunchOptions) => [
+  ...(options.approvalPolicy ? ["-c", `approval_policy="${options.approvalPolicy}"`] : []),
+  ...(options.sandbox ? ["-c", `sandbox_mode="${options.sandbox}"`] : [])
+];
 
 const codexAppServerEnv = (codexCommand: string) => ({
   ...process.env,

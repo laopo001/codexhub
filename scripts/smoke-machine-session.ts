@@ -3,6 +3,7 @@ import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { resolveCodexAppServerLaunchOptions } from "../src/cli/codexAppServerProcess.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { SessionEventInput } from "../src/shared/threadTypes.js";
 
@@ -32,6 +33,7 @@ type ProjectsPayload = {
 
 type ThreadDetail = {
   threadId: string;
+  approvalPolicy?: string;
   records?: unknown[];
 };
 
@@ -106,8 +108,10 @@ const main = async () => {
   process.env.PATH = `${fakeSshDir}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.CODEX_HUB_LOCAL_MACHINE = "1";
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "1";
+  process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY = "on-request";
   process.env.TELEGRAM_BOT_TOKEN = "";
 
+  assertAppServerLaunchApprovalPolicyDefault();
   await assertEmbeddedServerDataDirOptionOverridesEnvironment();
   await assertTaskCronSemantics();
   await assertServerStateSnapshotPure();
@@ -183,6 +187,8 @@ const main = async () => {
     const thread = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
     assertNoWorkerId(thread, "/api/threads/:threadId");
     if ((thread.records ?? []).length < 2) throw new Error("/status did not write thread records");
+    await assertThreadApprovalPolicy(apiBase, threadId, "on-request");
+    console.log("app-server launch approval policy ok");
     console.log("thread stream ok");
 
     const task = await createAndRunTask(apiBase, {
@@ -1219,11 +1225,61 @@ const assertAppServerServiceTierSettings = async () => {
     heartbeat: false,
     model: "gpt-service-tier-smoke",
     modelReasoningEffort: "low",
-    serviceTier: "fast"
+    serviceTier: "fast",
+    approvalPolicy: "on-failure",
+    sandboxPolicy: {
+      type: "readOnly",
+      networkAccess: false
+    }
   });
   let thread = hub.getThread(threadId);
-  if (thread?.model !== "gpt-service-tier-smoke" || thread.modelReasoningEffort !== "low" || thread.serviceTier !== "fast") {
+  if (
+    thread?.model !== "gpt-service-tier-smoke"
+    || thread.modelReasoningEffort !== "low"
+    || thread.serviceTier !== "fast"
+    || thread.approvalPolicy !== "on-failure"
+    || thread.sandboxPolicy?.type !== "readOnly"
+  ) {
     throw new Error(`app-server service tier settings were not mirrored: ${JSON.stringify(thread)}`);
+  }
+  const sandboxPolicy = {
+    type: "workspaceWrite" as const,
+    writableRoots: ["/tmp/codexhub-app-server-service-tier"],
+    networkAccess: false,
+    excludeTmpdirEnvVar: false,
+    excludeSlashTmp: false
+  };
+  const turn = hub.runTurn(threadId, "permission options smoke", "web", {
+    approvalPolicy: "on-request",
+    sandboxPolicy
+  });
+  const batch = await hub.waitSessionCommands(sessionId, 0, 1);
+  const turnCommand = batch.commands[0];
+  if (
+    !turnCommand
+    || turnCommand.type !== "turn"
+    || turnCommand.options?.approvalPolicy !== "on-request"
+    || JSON.stringify(turnCommand.options.sandboxPolicy) !== JSON.stringify(sandboxPolicy)
+  ) {
+    throw new Error(`approval/sandbox turn options were not forwarded: ${JSON.stringify(turnCommand)}`);
+  }
+  hub.resolveSessionCommand(sessionId, turnCommand.commandId, { ok: true });
+  await turn;
+  thread = hub.getThread(threadId);
+  if (thread?.approvalPolicy !== "on-request" || JSON.stringify(thread.sandboxPolicy) !== JSON.stringify(sandboxPolicy)) {
+    throw new Error(`approval/sandbox turn options were not retained: ${JSON.stringify(thread)}`);
+  }
+  hub.applySessionEvent(sessionId, {
+    type: "thread_settings_changed",
+    threadId,
+    heartbeat: false,
+    model: "gpt-service-tier-smoke",
+    modelReasoningEffort: "low",
+    serviceTier: "fast"
+  });
+  thread = hub.getThread(threadId);
+  if (thread?.approvalPolicy !== "on-request" || JSON.stringify(thread.sandboxPolicy) !== JSON.stringify(sandboxPolicy)) {
+    throw new Error(`missing approval/sandbox settings fields should not clear existing options: ${JSON.stringify(thread)}`);
   }
   let command = hub.runLocalCommand(threadId, "/fast off");
   thread = hub.getThread(threadId);
@@ -2325,6 +2381,24 @@ const assertSessionTurnRequiresThread = async (apiBase: string, sessionId: strin
   }
 };
 
+const assertAppServerLaunchApprovalPolicyDefault = () => {
+  const previous = process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
+  try {
+    delete process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
+    const defaults = resolveCodexAppServerLaunchOptions();
+    if (defaults.approvalPolicy !== "never") {
+      throw new Error(`app-server launch approval policy default was not never: ${JSON.stringify(defaults)}`);
+    }
+    const explicit = resolveCodexAppServerLaunchOptions({ approvalPolicy: "on-request" });
+    if (explicit.approvalPolicy !== "on-request") {
+      throw new Error(`explicit app-server launch approval policy was not preserved: ${JSON.stringify(explicit)}`);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
+    else process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY = previous;
+  }
+};
+
 const assertProjectSession = async (apiBase: string, projectId: string, sessionId: string) => {
   const payload = await apiJson<ProjectsPayload>(apiBase, "/api/projects");
   assertNoWorkerId(payload, "/api/projects");
@@ -2335,6 +2409,17 @@ const assertProjectSession = async (apiBase: string, projectId: string, sessionI
   if (session.sessionId !== sessionId || session.online !== true) {
     throw new Error(`/api/projects did not project active session for ${projectId}: ${JSON.stringify(project.session)}`);
   }
+};
+
+const assertThreadApprovalPolicy = async (apiBase: string, threadId: string, expected: string) => {
+  const startedAt = Date.now();
+  let latest: ThreadDetail | null = null;
+  while (Date.now() - startedAt < 5000) {
+    latest = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
+    if (latest.approvalPolicy === expected) return;
+    await delay(100);
+  }
+  throw new Error(`thread approval policy did not sync to ${expected}: ${JSON.stringify(latest)}`);
 };
 
 const assertProjectDeleteKeepsSharedSession = async (apiBase: string, projectId: string, sessionId: string) => {

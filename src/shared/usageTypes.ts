@@ -4,11 +4,29 @@ export type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhig
 /** Codex app-server service tier。当前 Fast tier 常见值是 priority，但 catalog 可扩展。 */
 export type ThreadServiceTier = string;
 
+/** Codex app-server approval policy。granular policy 暂不在 Web 菜单暴露。 */
+export type ThreadApprovalPolicy = "untrusted" | "on-failure" | "on-request" | "never";
+
+/** Codex app-server turn/start 使用的结构化 sandbox policy。 */
+export type ThreadSandboxPolicy =
+  | { type: "dangerFullAccess" }
+  | { type: "readOnly"; networkAccess: boolean }
+  | {
+      type: "workspaceWrite";
+      writableRoots: string[];
+      networkAccess: boolean;
+      excludeTmpdirEnvVar: boolean;
+      excludeSlashTmp: boolean;
+    }
+  | { type: "externalSandbox"; networkAccess: "restricted" | "enabled" };
+
 /** thread/session 默认模型配置。 */
 export type ThreadOptions = {
   model?: string;
   modelReasoningEffort?: ModelReasoningEffort;
   serviceTier?: ThreadServiceTier;
+  approvalPolicy?: ThreadApprovalPolicy;
+  sandboxPolicy?: ThreadSandboxPolicy;
 };
 
 /** app-server 可能返回的新旧命名 token usage 字段。 */

@@ -2,7 +2,7 @@ import { asRecord } from "../../shared/recordTypes.js";
 import type { ModelCatalogItem, StoredMachine } from "../../shared/apiContract.js";
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
 import { modelOptions, reasoningOptions, serviceTierOptions } from "../appConfig.js";
-import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary } from "../types.js";
+import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -712,14 +712,34 @@ export const selectedThreadOptions = (
   model: ModelSelection,
   reasoning: ReasoningSelection,
   serviceTier: ServiceTierSelection,
-  composerMode: ComposerMode
+  composerMode: ComposerMode,
+  approvalPolicy: ApprovalPolicyDraft,
+  sandboxPolicy: SandboxPolicyDraft,
+  workingDirectory: string
 ) => ({
   model: model === "auto" ? null : model,
   modelReasoningEffort: reasoning === "auto" ? null : reasoning,
   serviceTier: serviceTier === "auto" ? null : serviceTier,
+  approvalPolicy: approvalPolicy === "auto" ? null : approvalPolicy,
+  sandboxPolicy: sandboxPolicyFromSelection(sandboxPolicy, workingDirectory),
   ...(composerMode === "plan" ? { collaborationMode: "plan" as const } : {}),
   ...(composerMode === "goal" ? { goalMode: true } : {})
 });
+
+const sandboxPolicyFromSelection = (selection: SandboxPolicyDraft, workingDirectory: string) => {
+  if (selection === "auto") return null;
+  if (selection === "read-only") return { type: "readOnly" as const, networkAccess: false };
+  if (selection === "workspace-write") {
+    return {
+      type: "workspaceWrite" as const,
+      writableRoots: [workingDirectory],
+      networkAccess: false,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false
+    };
+  }
+  return { type: "dangerFullAccess" as const };
+};
 
 export const isModelCommand = (text: string) => /^\/model\s*$/i.test(text);
 

@@ -81,6 +81,8 @@ const openThreadStateFromDetail = (
   modelDraft: existing?.modelDraft ?? thread.model ?? "auto",
   reasoningDraft: existing?.reasoningDraft ?? thread.modelReasoningEffort ?? "auto",
   serviceTierDraft: existing?.serviceTierDraft ?? serviceTierDraftFromThread(thread.serviceTier),
+  approvalPolicyDraft: existing?.approvalPolicyDraft ?? "auto",
+  sandboxPolicyDraft: existing?.sandboxPolicyDraft ?? "auto",
   input: existing?.input ?? "",
   imageAttachments: existing?.imageAttachments ?? [],
   textAttachments: existing?.textAttachments ?? []
@@ -394,7 +396,15 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       body: JSON.stringify({
         input,
         source: "web",
-        options: selectedThreadOptions(openThread.modelDraft, openThread.reasoningDraft, openThread.serviceTierDraft, composerMode)
+        options: selectedThreadOptions(
+          openThread.modelDraft,
+          openThread.reasoningDraft,
+          openThread.serviceTierDraft,
+          composerMode,
+          openThread.approvalPolicyDraft,
+          openThread.sandboxPolicyDraft,
+          openThread.workingDirectory
+        )
       })
     });
     if (!response.ok) {

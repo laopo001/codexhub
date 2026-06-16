@@ -116,7 +116,7 @@ CodexHub 只保留三种 machine 连接方式：
 
 启动成功后终端会输出 `sessionId` 和 `threadId`，Web、Telegram、task 或 API 都应显式用这个 `threadId` 继续投递消息。当前所有本机 session CLI 都是 headless。
 
-`codexhub` 默认不替官方 Codex 设置 `sandbox` 或 `approvalPolicy`；未显式传参时，权限由 Codex 按当前 workspace 的真实配置解析。只有显式传 `--sandbox` 或 `--approval-policy` 时，codexhub 才把这些值作为 app-server override 转发。
+`codexhub` 启动官方 Codex app-server 时默认设置 `approvalPolicy=never`；可以通过 `--approval-policy` 或 `CODEX_HUB_APP_SERVER_APPROVAL_POLICY` 改成 `untrusted`、`on-failure`、`on-request` 或 `never`。`sandbox` 默认不覆盖官方 Codex 配置；需要固定 sandbox 时，可显式传 `--sandbox` 或设置 `CODEX_HUB_APP_SERVER_SANDBOX`。`codexhub server`、`codexhub machine` 和 SSH / registered machine 启动 app-server 时都会通过 `-c approval_policy="..."` / `-c sandbox_mode="..."` 传给官方 `codex app-server`。旧的 `codexhub [prompt]` transient session 也会把显式 `--sandbox` / `--approval-policy` 用作 app-server 默认和 turn override。
 
 Telegram bot 是内建 integration plugin。`.env` 里配置 token 后直接运行 `pnpm run dev:api` 即可：
 

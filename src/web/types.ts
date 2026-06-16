@@ -31,6 +31,7 @@ import type {
 } from "../shared/apiContract.js";
 import type { CompactRecordView } from "../shared/compactRecordViews.js";
 import type { CodexRecordView } from "../shared/recordTypes.js";
+import type { ThreadApprovalPolicy } from "../shared/usageTypes.js";
 
 export type ThreadSummary = ApiThreadSummary;
 export type ThreadDetail = ApiThreadDetail;
@@ -128,6 +129,8 @@ export type OpenThreadState = ThreadDetail & {
   modelDraft: ModelSelection;
   reasoningDraft: ReasoningSelection;
   serviceTierDraft: ServiceTierSelection;
+  approvalPolicyDraft: ApprovalPolicyDraft;
+  sandboxPolicyDraft: SandboxPolicyDraft;
   input: string;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];
@@ -191,6 +194,10 @@ export type ThreadStatus = "running" | "idle";
 export type ModelSelection = string;
 export type ReasoningSelection = "auto" | ReasoningEffort;
 export type ServiceTierSelection = string;
+export type ApprovalPolicySelection = ThreadApprovalPolicy;
+export type SandboxPolicySelection = "read-only" | "workspace-write" | "danger-full-access";
+export type ApprovalPolicyDraft = "auto" | ApprovalPolicySelection;
+export type SandboxPolicyDraft = "auto" | SandboxPolicySelection;
 export type ComposerMode = "chat" | "plan" | "goal";
 export type MessageDisplayMode = "compact" | "detailed";
 export type MessageRenderMode = "markdown" | "raw";

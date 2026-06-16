@@ -22,6 +22,7 @@ import {
   startHeadlessCodexhubSession,
   type HeadlessCodexhubSessionHandle
 } from "./codexhubConnect.js";
+import type { CodexAppServerLaunchOptions } from "./codexAppServerProcess.js";
 
 export type MachineRunnerOptions = {
   apiBase: string;
@@ -30,6 +31,7 @@ export type MachineRunnerOptions = {
   type?: MachineType;
   name?: string;
   capabilities?: Partial<MachineCapabilities>;
+  appServerLaunch?: CodexAppServerLaunchOptions;
   projects?: MachineRegistrationProject[] | (() => MachineRegistrationProject[]);
   onStatus?: (status: CodexhubMachineStatus) => void;
 };
@@ -330,6 +332,7 @@ class CodexhubMachineRunner {
         apiBase: this.options.apiBase,
         machineId: this.machineId,
         cwd,
+        appServerLaunch: this.options.appServerLaunch,
         readyLabel: "codexhub machine app-server ready",
         transportFactory: (context, callbacks) => {
           const transport = new SessionTransportPeer({
@@ -357,7 +360,7 @@ class CodexhubMachineRunner {
   }
 
   private async startTunneledRuntimeSession(cwd: string, commandId: string): Promise<RuntimeSessionHandle> {
-    const appServer = await startCodexAppServerProcess(cwd);
+    const appServer = await startCodexAppServerProcess(cwd, undefined, this.options.appServerLaunch);
     const sessionId = createCodexhubSessionId();
     const appServerId = sessionId;
     // 官方 app-server 仍跑在 registered machine，父 server 只通过 tunnel 访问它。

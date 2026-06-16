@@ -1,4 +1,12 @@
-import type { AppSettings, ComposerMode, ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
+import type {
+  AppSettings,
+  ApprovalPolicySelection,
+  ComposerMode,
+  ModelSelection,
+  ReasoningSelection,
+  SandboxPolicySelection,
+  ServiceTierSelection
+} from "./types.js";
 
 const searchParams = new URLSearchParams(window.location.search);
 const uniqueTrimmedParams = (names: string[]) => {
@@ -35,6 +43,17 @@ export const reasoningOptions: Array<{ value: ReasoningSelection; label: string 
 export const serviceTierOptions: Array<{ value: ServiceTierSelection; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "priority", label: "Fast" }
+];
+export const approvalPolicyOptions: Array<{ value: ApprovalPolicySelection; label: string }> = [
+  { value: "untrusted", label: "Untrusted" },
+  { value: "on-failure", label: "On failure" },
+  { value: "on-request", label: "On request" },
+  { value: "never", label: "Never" }
+];
+export const sandboxPolicyOptions: Array<{ value: SandboxPolicySelection; label: string }> = [
+  { value: "read-only", label: "Read only" },
+  { value: "workspace-write", label: "Workspace write" },
+  { value: "danger-full-access", label: "Danger full access" }
 ];
 export const composerModeOptions: Array<{ value: ComposerMode; label: string }> = [
   { value: "chat", label: "Chat" },

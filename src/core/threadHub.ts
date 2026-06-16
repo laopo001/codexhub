@@ -296,7 +296,14 @@ export class ThreadHub {
       const thread = this.ensureThread(input.threadId, session, {
         params: { threadId: input.threadId, cwd: session.workingDirectory }
       });
-      this.applyThreadSettings(thread, input.model, input.modelReasoningEffort, input.serviceTier);
+      this.applyThreadSettings(
+        thread,
+        input.model,
+        input.modelReasoningEffort,
+        input.serviceTier,
+        input.approvalPolicy,
+        input.sandboxPolicy
+      );
       return { ok: true, thread: this.summary(thread) };
     }
 
@@ -1422,7 +1429,9 @@ export class ThreadHub {
     thread: ThreadState,
     model: string | null | undefined,
     modelReasoningEffort: ThreadOptions["modelReasoningEffort"] | null | undefined,
-    serviceTier: ThreadOptions["serviceTier"] | null | undefined
+    serviceTier: ThreadOptions["serviceTier"] | null | undefined,
+    approvalPolicy: ThreadOptions["approvalPolicy"] | null | undefined,
+    sandboxPolicy: ThreadOptions["sandboxPolicy"] | null | undefined
   ) {
     let changed = false;
     const nextModel = typeof model === "string" && model ? model : undefined;
@@ -1442,6 +1451,22 @@ export class ThreadHub {
       thread.threadOptions = { ...thread.threadOptions, serviceTier: nextServiceTier };
       if (!nextServiceTier) delete thread.threadOptions.serviceTier;
       changed = true;
+    }
+    if (approvalPolicy !== undefined) {
+      const nextApprovalPolicy = isThreadApprovalPolicy(approvalPolicy) ? approvalPolicy : undefined;
+      if (thread.threadOptions.approvalPolicy !== nextApprovalPolicy) {
+        thread.threadOptions = { ...thread.threadOptions, approvalPolicy: nextApprovalPolicy };
+        if (!nextApprovalPolicy) delete thread.threadOptions.approvalPolicy;
+        changed = true;
+      }
+    }
+    if (sandboxPolicy !== undefined) {
+      const nextSandboxPolicy = isThreadSandboxPolicy(sandboxPolicy) ? sandboxPolicy : undefined;
+      if (JSON.stringify(thread.threadOptions.sandboxPolicy) !== JSON.stringify(nextSandboxPolicy)) {
+        thread.threadOptions = { ...thread.threadOptions, sandboxPolicy: nextSandboxPolicy };
+        if (!nextSandboxPolicy) delete thread.threadOptions.sandboxPolicy;
+        changed = true;
+      }
     }
     if (!changed) return;
     thread.updatedAt = new Date().toISOString();
@@ -1742,6 +1767,8 @@ export class ThreadHub {
       model: thread.threadOptions.model,
       modelReasoningEffort: thread.threadOptions.modelReasoningEffort,
       serviceTier: thread.threadOptions.serviceTier,
+      approvalPolicy: thread.threadOptions.approvalPolicy,
+      sandboxPolicy: thread.threadOptions.sandboxPolicy,
       session: this.threadSessionSummary(thread),
       status: thread.running ? "running" : "idle",
       running: thread.running,
@@ -2778,6 +2805,8 @@ const threadStatusMessage = (thread: ThreadState, session: ThreadSessionSummary)
   `model: ${formatModel(thread.threadOptions)}`,
   `reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
   `service tier: ${formatServiceTier(thread.threadOptions)}`,
+  `approval policy: ${formatApprovalPolicy(thread.threadOptions)}`,
+  `sandbox policy: ${formatSandboxPolicy(thread.threadOptions)}`,
   `records: ${thread.records.length}`,
   `updated: ${thread.updatedAt}`,
   `usage: ${formatUsage(thread.lastUsage)}`
@@ -2843,6 +2872,17 @@ const formatModel = (options: ThreadOptions) => options.model ?? "auto";
 const fastServiceTier = "priority";
 
 const formatServiceTier = (options: ThreadOptions) => options.serviceTier ?? "auto";
+
+const formatApprovalPolicy = (options: ThreadOptions) => options.approvalPolicy ?? "auto";
+
+const formatSandboxPolicy = (options: ThreadOptions) => {
+  const policy = options.sandboxPolicy;
+  if (!policy) return "auto";
+  if (policy.type === "dangerFullAccess") return "danger-full-access";
+  if (policy.type === "readOnly") return `read-only${policy.networkAccess ? " + network" : ""}`;
+  if (policy.type === "workspaceWrite") return `workspace-write${policy.networkAccess ? " + network" : ""}`;
+  return `external-sandbox:${policy.networkAccess}`;
+};
 
 const formatThreadGoalMessage = (goal: Record<string, unknown> | null) => {
   const status = typeof goal?.status === "string" ? goal.status : "active";
@@ -2936,6 +2976,23 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : S
 const isThreadReasoningEffort = (value: unknown): value is ThreadOptions["modelReasoningEffort"] =>
   value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
 
+const isThreadApprovalPolicy = (value: unknown): value is ThreadOptions["approvalPolicy"] =>
+  value === "untrusted" || value === "on-failure" || value === "on-request" || value === "never";
+
+const isThreadSandboxPolicy = (value: unknown): value is ThreadOptions["sandboxPolicy"] => {
+  const policy = asRecord(value);
+  if (!policy || typeof policy.type !== "string") return false;
+  if (policy.type === "dangerFullAccess") return true;
+  if (policy.type === "readOnly") return typeof policy.networkAccess === "boolean";
+  if (policy.type === "externalSandbox") return policy.networkAccess === "restricted" || policy.networkAccess === "enabled";
+  if (policy.type !== "workspaceWrite") return false;
+  return Array.isArray(policy.writableRoots)
+    && policy.writableRoots.every((item) => typeof item === "string" && item.length > 0)
+    && typeof policy.networkAccess === "boolean"
+    && typeof policy.excludeTmpdirEnvVar === "boolean"
+    && typeof policy.excludeSlashTmp === "boolean";
+};
+
 const turnCommandTimeoutMs = () => {
   const raw = process.env.CODEX_HUB_TURN_TIMEOUT_MS?.trim();
   if (!raw) return null;
@@ -2958,6 +3015,14 @@ const applyThreadRunOptions = (current: ThreadOptions, options: ThreadRunOptions
   if (hasOwn(options, "serviceTier")) {
     if (options.serviceTier) next.serviceTier = options.serviceTier;
     else delete next.serviceTier;
+  }
+  if (hasOwn(options, "approvalPolicy")) {
+    if (isThreadApprovalPolicy(options.approvalPolicy)) next.approvalPolicy = options.approvalPolicy;
+    else delete next.approvalPolicy;
+  }
+  if (hasOwn(options, "sandboxPolicy")) {
+    if (isThreadSandboxPolicy(options.sandboxPolicy)) next.sandboxPolicy = options.sandboxPolicy;
+    else delete next.sandboxPolicy;
   }
   return next;
 };

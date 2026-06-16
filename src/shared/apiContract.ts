@@ -335,10 +335,35 @@ export const inputSchema = z.union([
   )
 ]);
 
+const approvalPolicySchema = z.enum(["untrusted", "on-failure", "on-request", "never"]);
+
+const sandboxPolicySchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("dangerFullAccess")
+  }).strict(),
+  z.object({
+    type: z.literal("readOnly"),
+    networkAccess: z.boolean()
+  }).strict(),
+  z.object({
+    type: z.literal("workspaceWrite"),
+    writableRoots: z.array(z.string().min(1)),
+    networkAccess: z.boolean(),
+    excludeTmpdirEnvVar: z.boolean(),
+    excludeSlashTmp: z.boolean()
+  }).strict(),
+  z.object({
+    type: z.literal("externalSandbox"),
+    networkAccess: z.enum(["restricted", "enabled"])
+  }).strict()
+]);
+
 export const threadRunOptionsSchema = z.object({
   model: z.string().min(1).nullable().optional(),
   modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
   serviceTier: z.string().min(1).nullable().optional(),
+  approvalPolicy: approvalPolicySchema.nullable().optional(),
+  sandboxPolicy: sandboxPolicySchema.nullable().optional(),
   collaborationMode: z.enum(["default", "plan"]).nullable().optional(),
   goalMode: z.boolean().nullable().optional(),
   goalObjective: z.string().min(1).nullable().optional(),
@@ -457,6 +482,8 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     model: z.string().min(1).nullable().optional(),
     modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
     serviceTier: z.string().min(1).nullable().optional(),
+    approvalPolicy: approvalPolicySchema.nullable().optional(),
+    sandboxPolicy: sandboxPolicySchema.nullable().optional(),
     heartbeat: z.boolean().optional()
   }),
   z.object({

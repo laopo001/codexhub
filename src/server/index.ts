@@ -21,6 +21,7 @@ import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, 
 import { ThreadHub } from "../core/threadHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle, type CodexhubMachineStatus } from "../cli/codexhubMachine.js";
 import { startAttachedCodexhubSession, type HeadlessCodexhubSessionHandle, type HeadlessSessionTransport, type HeadlessSessionTransportCallbacks } from "../cli/codexhubConnect.js";
+import { resolveCodexAppServerLaunchOptions, type CodexAppServerLaunchOptions } from "../cli/codexAppServerProcess.js";
 import {
   machineTransportMessageSchema,
   parentRegistrationConnectSchema,
@@ -158,6 +159,7 @@ export type ServerStartOptions = {
   surface?: "default" | "vscode";
   authToken?: string | null;
   buildId?: string | null;
+  appServerLaunch?: CodexAppServerLaunchOptions;
   features?: Partial<ServerFeatureOptions>;
 };
 
@@ -178,6 +180,7 @@ export type ServerFeatureOptions = {
 
 export const startServer = async (options: ServerStartOptions = {}): Promise<ServerHandle> => {
   const config = loadConfig({ host: options.host, port: options.port });
+  const appServerLaunch = resolveCodexAppServerLaunchOptions(options.appServerLaunch);
   const surface = options.surface ?? parseSurface(process.env.CODEX_HUB_SURFACE);
   const features = resolveServerFeatures(options.features);
   const serverAuthToken = normalizedAuthToken(options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN);
@@ -212,6 +215,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     sshConfigPath: process.env.CODEX_HUB_SSH_CONFIG,
     remoteMode: sshRemoteMode(),
     remoteClient: sshRemoteClient ?? undefined,
+    appServerLaunch,
     authToken: serverAuthToken,
     onChange: () => {
       publishConnections();
@@ -531,6 +535,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       machineId,
       type: "registered",
       name,
+      appServerLaunch,
       capabilities: surface === "vscode" ? { projectCatalog: "fixed" } : undefined,
       projects: vscodeParentRegistrationProjects,
       onStatus: (status) => {
@@ -883,6 +888,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       clientUrl: `${serverBase}/api/remote-client/${bundle.hash}`,
       clientHash: bundle.hash,
       authToken,
+      appServerLaunch,
       name: query.name
     });
     reply.type("text/x-shellscript; charset=utf-8");
@@ -1378,6 +1384,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       machineId: process.env.CODEX_HUB_LOCAL_MACHINE_ID,
       type: "local",
       name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "local",
+      appServerLaunch,
       capabilities: surface === "vscode" ? { projectCatalog: "fixed" } : undefined
     });
   }
@@ -1498,6 +1505,7 @@ const registeredBootstrapScript = (input: {
   clientUrl: string;
   clientHash: string;
   authToken: string | null;
+  appServerLaunch?: CodexAppServerLaunchOptions;
   name?: string;
 }) => [
   "#!/bin/sh",
@@ -1507,7 +1515,13 @@ const registeredBootstrapScript = (input: {
   `CODEXHUB_REMOTE_CLIENT_HASH=${shellQuote(input.clientHash)}`,
   `CODEXHUB_REMOTE_CLIENT_URL=${shellQuote(input.clientUrl)}`,
   ...(input.authToken ? [`CODEX_HUB_AUTH_TOKEN=${shellQuote(input.authToken)}`] : []),
-  `export CODEXHUB_REMOTE_CLIENT_HASH CODEXHUB_REMOTE_CLIENT_URL${input.authToken ? " CODEX_HUB_AUTH_TOKEN" : ""}`,
+  ...registeredAppServerLaunchEnvAssignments(input.appServerLaunch),
+  `export ${[
+    "CODEXHUB_REMOTE_CLIENT_HASH",
+    "CODEXHUB_REMOTE_CLIENT_URL",
+    ...(input.authToken ? ["CODEX_HUB_AUTH_TOKEN"] : []),
+    ...registeredAppServerLaunchEnvNames(input.appServerLaunch)
+  ].join(" ")}`,
   "cache_root=\"${XDG_CACHE_HOME:-$HOME/.cache}/codexhub/remote-client\"",
   "cache_dir=\"$cache_root/$CODEXHUB_REMOTE_CLIENT_HASH\"",
   "client=\"$cache_dir/client.cjs\"",
@@ -1534,6 +1548,16 @@ const registeredBootstrapScript = (input: {
   ].join(" "),
   ""
 ].join("\n");
+
+const registeredAppServerLaunchEnvAssignments = (options: CodexAppServerLaunchOptions | undefined) => [
+  ...(options?.approvalPolicy ? [`CODEX_HUB_APP_SERVER_APPROVAL_POLICY=${shellQuote(options.approvalPolicy)}`] : []),
+  ...(options?.sandbox ? [`CODEX_HUB_APP_SERVER_SANDBOX=${shellQuote(options.sandbox)}`] : [])
+];
+
+const registeredAppServerLaunchEnvNames = (options: CodexAppServerLaunchOptions | undefined) => [
+  ...(options?.approvalPolicy ? ["CODEX_HUB_APP_SERVER_APPROVAL_POLICY"] : []),
+  ...(options?.sandbox ? ["CODEX_HUB_APP_SERVER_SANDBOX"] : [])
+];
 
 const remoteClientBootstrapNodeScript = [
   "const fs = require('node:fs');",

@@ -129,7 +129,7 @@
   }
 
   .composerMenu {
-    min-width: min(204px, calc(100vw - 48px));
+    min-width: min(248px, calc(100vw - 48px));
   }
 
   .modalOverlay {

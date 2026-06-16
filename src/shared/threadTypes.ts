@@ -9,6 +9,8 @@ export type ThreadSummary = {
   model?: string;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"];
   serviceTier?: ThreadOptions["serviceTier"];
+  approvalPolicy?: ThreadOptions["approvalPolicy"];
+  sandboxPolicy?: ThreadOptions["sandboxPolicy"];
   session: ThreadSessionSummary;
   status: "running" | "idle";
   running: boolean;
@@ -53,6 +55,8 @@ export type ThreadRunOptions = {
   model?: string | null;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
   serviceTier?: ThreadOptions["serviceTier"] | null;
+  approvalPolicy?: ThreadOptions["approvalPolicy"] | null;
+  sandboxPolicy?: ThreadOptions["sandboxPolicy"] | null;
   collaborationMode?: "default" | "plan" | null;
   goalMode?: boolean | null;
   goalObjective?: string | null;
@@ -303,6 +307,8 @@ export type SessionEventInput =
       model?: string | null;
       modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
       serviceTier?: ThreadOptions["serviceTier"] | null;
+      approvalPolicy?: ThreadOptions["approvalPolicy"] | null;
+      sandboxPolicy?: ThreadOptions["sandboxPolicy"] | null;
       heartbeat?: boolean;
     }
   | {

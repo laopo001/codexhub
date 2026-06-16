@@ -1,7 +1,7 @@
 import React from "react";
 import { Tabs } from "antd";
 import { Virtuoso } from "react-virtuoso";
-import { composerModeOptions } from "./appConfig.js";
+import { approvalPolicyOptions, composerModeOptions, sandboxPolicyOptions } from "./appConfig.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import type { AppViewModel } from "./viewModel.js";
@@ -31,6 +31,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeProjectSession,
     activeThread,
     activeThreadIsOpen,
+    activeThreadApprovalPolicySelection,
+    activeThreadSandboxPolicySelection,
     activeUserMessageHistory,
     activeViews,
     authError,
@@ -117,6 +119,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setInspectMessage,
     setMessageContextMenu,
     setMessageDisplayMode,
+    setActiveThreadApprovalPolicyDraft,
+    setActiveThreadSandboxPolicyDraft,
     setOfflineProjectsCollapsed,
     setProjectPicker,
     setAuthTokenDraft,
@@ -444,6 +448,40 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                     <span className="composerMenuIcon" aria-hidden="true">R</span>
                                     <span>Review changes</span>
                                   </button>
+                                  <div className="composerMenuGroup" role="group" aria-label="Approval policy">
+                                    <div className="composerMenuGroupLabel">Approval policy</div>
+                                    <div className="composerMenuChoiceGrid">
+                                      {approvalPolicyOptions.map((option) => (
+                                        <button
+                                          key={option.value}
+                                          type="button"
+                                          className={`composerMenuChoice${activeThreadApprovalPolicySelection === option.value ? " active" : ""}`}
+                                          role="menuitemradio"
+                                          aria-checked={activeThreadApprovalPolicySelection === option.value}
+                                          onClick={() => setActiveThreadApprovalPolicyDraft(option.value)}
+                                        >
+                                          {option.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="composerMenuGroup" role="group" aria-label="Sandbox policy">
+                                    <div className="composerMenuGroupLabel">Sandbox policy</div>
+                                    <div className="composerMenuChoiceGrid">
+                                      {sandboxPolicyOptions.map((option) => (
+                                        <button
+                                          key={option.value}
+                                          type="button"
+                                          className={`composerMenuChoice${activeThreadSandboxPolicySelection === option.value ? " active" : ""}`}
+                                          role="menuitemradio"
+                                          aria-checked={activeThreadSandboxPolicySelection === option.value}
+                                          onClick={() => setActiveThreadSandboxPolicyDraft(option.value)}
+                                        >
+                                          {option.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
                                 </div>
                               ) : null}
                             </div>
