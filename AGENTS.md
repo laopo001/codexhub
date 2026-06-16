@@ -170,4 +170,4 @@ pnpm build
 8. `smoke:task-lock` 覆盖 session model catalog、thread compact command、thread review command、task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close 和 token usage rate limits。
 9. `smoke:electron` 覆盖 Electron main process、嵌入 server 随机端口和 `/api/health`。
 10. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vscode/codexhub.vsix --force`。
-11. VSCode Marketplace 发布 workflow 在 `.github/workflows/publish-vscode.yml`，只允许 `workflow_dispatch`，要求仓库 secret `VSCE_PAT`，先 `pnpm run package:vscode`，再用 `vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate`。
+11. VSCode Marketplace 发布 workflow 在 `.github/workflows/publish-vscode.yml`，支持 `main` 分支 push 自动触发和 `workflow_dispatch` 手动触发，要求仓库 secret `VSCE_PAT`，先 `pnpm run package:vscode`，再用 `vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate`。

@@ -340,7 +340,7 @@ pnpm run package:vscode
 pnpm run install:vscode
 ```
 
-`build:vscode` 会先跑完整 `pnpm build`，再把 extension 打成 Node CJS bundle，显式把 extension host 里的 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；staging 目录会包含 Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE。仓库内的 VSCode Marketplace 发布 workflow 是手动 `workflow_dispatch`，会运行 `pnpm run package:vscode`，并要求仓库 secret `VSCE_PAT`，发布时使用 `vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate`。
+`build:vscode` 会先跑完整 `pnpm build`，再把 extension 打成 Node CJS bundle，显式把 extension host 里的 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；staging 目录会包含 Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE。仓库内的 VSCode Marketplace 发布 workflow 会在 `main` 分支 push 后自动触发，也支持手动 `workflow_dispatch`，会运行 `pnpm run package:vscode`，并要求仓库 secret `VSCE_PAT`，发布时使用 `vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate`。
 
 ## API
 
