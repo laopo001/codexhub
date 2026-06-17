@@ -6,10 +6,11 @@ import YAML from "yaml";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
 import type { MachineCapabilities, MachineSummary, MachineType } from "../shared/machineTypes.js";
 import type {
-  DeletedProject,
   ProjectSource,
+  ServerConfig,
   ProjectSummary,
   ServerStateData,
+  ServerUiConfig,
   StoredMachine,
   StoredProject,
   StoredSshHost,
@@ -45,7 +46,7 @@ export class CodexhubServerState {
     const filePath = configFilePath(options);
     const result = await readConfigFileWithLegacyFallback(filePath, options);
     const state = new CodexhubServerState(filePath, result.data);
-    const legacyStateFields = result.legacyThreads || result.legacyProjectNames || result.legacyProjectSessionIds;
+    const legacyStateFields = result.missingConfig || result.legacyThreads || result.legacyProjectNames || result.legacyProjectSessionIds;
     state.lastSavedText = result.path !== filePath ? "" : legacyStateFields ? result.rawText ?? "" : YAML.stringify(result.data);
     if (legacyStateFields || result.path !== filePath) await state.save();
     return state;
@@ -59,6 +60,22 @@ export class CodexhubServerState {
     for (const [key, value] of Object.entries(this.data.env)) {
       if (!(key in target)) target[key] = value;
     }
+  }
+
+  config() {
+    return cloneServerConfig(this.data.config);
+  }
+
+  updateUiConfig(input: Partial<ServerUiConfig>) {
+    const nextUi = normalizeServerUiConfig({
+      ...this.data.config.ui,
+      ...input
+    });
+    if (this.data.config.ui.taskCompleteSystemNotifications !== nextUi.taskCompleteSystemNotifications) {
+      this.data.config.ui = nextUi;
+      this.touch();
+    }
+    return this.config();
   }
 
   listStoredMachines() {
@@ -77,10 +94,8 @@ export class CodexhubServerState {
   deleteProject(projectId: string) {
     const resolvedProjectId = this.resolveProjectId(projectId);
     const index = this.data.projects.findIndex((project) => project.projectId === resolvedProjectId);
-    if (index === -1 && this.data.deletedProjects.some((project) => project.projectId === resolvedProjectId)) return true;
     if (index === -1) return false;
-    const [project] = this.data.projects.splice(index, 1);
-    this.addDeletedProject(project);
+    this.data.projects.splice(index, 1);
     this.touch();
     return true;
   }
@@ -124,10 +139,10 @@ export class CodexhubServerState {
   }
 
   projectDeleteTarget(projectId: string): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
-    return this.projectTarget(projectId, true);
+    return this.projectTarget(projectId);
   }
 
-  projectTarget(projectId: string, includeDeleted = false): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
+  projectTarget(projectId: string): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
     const resolvedProjectId = this.resolveProjectId(projectId);
     const project = this.data.projects.find((item) => item.projectId === resolvedProjectId);
     if (project) {
@@ -135,16 +150,6 @@ export class CodexhubServerState {
         projectId: project.projectId,
         machineId: project.machineId,
         path: project.path
-      };
-    }
-    const deletedProject = includeDeleted
-      ? this.data.deletedProjects.find((item) => item.projectId === resolvedProjectId)
-      : undefined;
-    if (deletedProject) {
-      return {
-        projectId: deletedProject.projectId,
-        machineId: deletedProject.machineId,
-        path: deletedProject.path
       };
     }
     const legacyProject = this.parseLegacyProjectId(projectId);
@@ -371,16 +376,11 @@ export class CodexhubServerState {
     now?: string;
     threadId?: string;
     touchOpenedAt?: boolean;
-    restoreDeleted?: boolean;
   }) {
     const now = input.now ?? new Date().toISOString();
     const normalizedPath = input.path.trim();
     if (!normalizedPath) throw new Error("Project path is required.");
     const projectId = projectIdFor(input.machineId, normalizedPath);
-    const deletedProjectIndex = this.data.deletedProjects.findIndex((project) => project.projectId === projectId);
-    if (deletedProjectIndex !== -1 && input.restoreDeleted === false) return null;
-    const deletedProjectRestored = deletedProjectIndex !== -1;
-    if (deletedProjectIndex !== -1) this.data.deletedProjects.splice(deletedProjectIndex, 1);
     const existing = this.data.projects.find((project) => project.projectId === projectId);
     if (existing) {
       const next = {
@@ -391,7 +391,6 @@ export class CodexhubServerState {
         existing.lastOpenedAt === next.lastOpenedAt
         && existing.lastThreadId === next.lastThreadId
       ) {
-        if (deletedProjectRestored) this.touch();
         return existing;
       }
       existing.lastOpenedAt = next.lastOpenedAt;
@@ -447,7 +446,8 @@ export class CodexhubServerState {
     return project;
   }
 
-  captureSessions(snapshot: Pick<SessionSnapshot, "sessions" | "threads">) {
+  captureSessions(snapshot: Pick<SessionSnapshot, "sessions" | "threads">, options: { persistMachines?: boolean } = {}) {
+    if (options.persistMachines === false) return;
     for (const session of snapshot.sessions) {
       const machineId = machineIdForSession(session);
       this.upsertMachine({
@@ -458,15 +458,6 @@ export class CodexhubServerState {
         touchLastSeenAt: false,
         capabilities: session.machineId ? undefined : { projectLauncher: false }
       });
-      if (this.findProject(machineId, session.workingDirectory)) {
-        this.upsertProject({
-          machineId,
-          path: session.workingDirectory,
-          now: session.lastSeenAt,
-          touchOpenedAt: false,
-          restoreDeleted: false
-        });
-      }
     }
   }
 
@@ -570,21 +561,6 @@ export class CodexhubServerState {
     return [...stored, ...transient].sort(compareStoredProjects);
   }
 
-  private addDeletedProject(project: Pick<StoredProject, "projectId" | "machineId" | "path">) {
-    const deletedAt = new Date().toISOString();
-    const existing = this.data.deletedProjects.find((item) => item.projectId === project.projectId);
-    if (existing) {
-      existing.deletedAt = deletedAt;
-      return;
-    }
-    this.data.deletedProjects.push({
-      projectId: project.projectId,
-      machineId: project.machineId,
-      path: project.path,
-      deletedAt
-    });
-  }
-
   private resolveProjectId(projectId: string) {
     if (projectId.startsWith("project-")) return projectId;
     const legacyProject = this.parseLegacyProjectId(projectId);
@@ -665,6 +641,7 @@ type StateFileReadResult = {
   legacyThreads: boolean;
   legacyProjectNames: boolean;
   legacyProjectSessionIds: boolean;
+  missingConfig: boolean;
   rawText?: string;
 };
 
@@ -687,24 +664,24 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
     rawText = await readFile(filePath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { found: false, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false };
+      return { found: false, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, missingConfig: false };
     }
-    return { found: false, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false };
+    return { found: false, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, missingConfig: false };
   }
 
   try {
     const parsed = YAML.parse(rawText) as (Partial<ServerStateData> & { threads?: unknown }) | null;
-    if (parsed?.version !== 1) return { found: true, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, rawText };
+    if (parsed?.version !== 1) return { found: true, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, missingConfig: false, rawText };
     return {
       found: true,
       path: filePath,
       data: {
         version: 1,
         updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+        config: normalizeServerConfig(parsed.config),
         env: normalizeStateEnv(parsed.env),
         machines: Array.isArray(parsed.machines) ? parsed.machines.map(normalizeStoredMachine).filter(isStoredMachine) : [],
         projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
-        deletedProjects: Array.isArray(parsed.deletedProjects) ? parsed.deletedProjects.filter(isDeletedProject) : [],
         tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : [],
         sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : []
       },
@@ -713,10 +690,11 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
         && parsed.projects.some((project) => Boolean(project && typeof project === "object" && !Array.isArray(project) && "name" in project)),
       legacyProjectSessionIds: Array.isArray(parsed.projects)
         && parsed.projects.some((project) => Boolean(project && typeof project === "object" && !Array.isArray(project) && "lastSessionId" in project)),
+      missingConfig: !isCompleteServerConfig(parsed.config),
       rawText
     };
   } catch {
-    return { found: true, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, rawText };
+    return { found: true, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, missingConfig: false, rawText };
   }
 };
 
@@ -740,10 +718,10 @@ const readConfigEnv = async (filePath: string): Promise<Record<string, string> |
 const emptyState = (): ServerStateData => ({
   version: 1,
   updatedAt: new Date().toISOString(),
+  config: defaultServerConfig(),
   env: {},
   machines: [],
   projects: [],
-  deletedProjects: [],
   tasks: [],
   sshHosts: []
 });
@@ -752,6 +730,43 @@ const projectIdFor = (machineId: string, projectPath: string) =>
   `project-${createHash("sha256").update(`${machineId}\0${projectPath}`).digest("hex").slice(0, 16)}`;
 
 const projectName = (projectPath: string) => path.basename(projectPath) || projectPath;
+
+const defaultServerUiConfig = (): ServerUiConfig => ({
+  taskCompleteSystemNotifications: false
+});
+
+const defaultServerConfig = (): ServerConfig => ({
+  ui: defaultServerUiConfig()
+});
+
+const cloneServerConfig = (config: ServerConfig): ServerConfig => ({
+  ui: { ...config.ui }
+});
+
+const normalizeServerConfig = (value: unknown): ServerConfig => {
+  const record = objectRecord(value);
+  return {
+    ui: normalizeServerUiConfig(record?.ui)
+  };
+};
+
+const normalizeServerUiConfig = (value: unknown): ServerUiConfig => {
+  const record = objectRecord(value);
+  return {
+    taskCompleteSystemNotifications: typeof record?.taskCompleteSystemNotifications === "boolean"
+      ? record.taskCompleteSystemNotifications
+      : defaultServerUiConfig().taskCompleteSystemNotifications
+  };
+};
+
+const isCompleteServerConfig = (value: unknown) => {
+  const config = objectRecord(value);
+  const ui = objectRecord(config?.ui);
+  return typeof ui?.taskCompleteSystemNotifications === "boolean";
+};
+
+const objectRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 const projectSessionSummary = (
   session: SessionSummary,
@@ -897,15 +912,6 @@ const isStoredProject = (value: unknown): value is StoredProject => {
     && typeof item.path === "string"
     && typeof item.createdAt === "string"
     && typeof item.lastOpenedAt === "string";
-};
-
-const isDeletedProject = (value: unknown): value is DeletedProject => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const item = value as Partial<DeletedProject>;
-  return typeof item.projectId === "string"
-    && typeof item.machineId === "string"
-    && typeof item.path === "string"
-    && typeof item.deletedAt === "string";
 };
 
 const isStoredTask = (value: unknown): value is StoredTask => {

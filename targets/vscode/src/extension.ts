@@ -269,9 +269,10 @@ const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[]) => {
 
 const iframeHtml = (src: string, workspacePath: string) => {
   const nonce = randomNonce();
+  const sourceOrigin = new URL(src).origin;
   const escapedSource = escapeHtml(src);
-  const escapedOrigin = escapeHtml(new URL(src).origin);
-  const sourceOriginJson = scriptJson(new URL(src).origin);
+  const escapedOrigin = escapeHtml(sourceOrigin);
+  const scriptOrigin = JSON.stringify(sourceOrigin).replaceAll("<", "\\u003c");
   const escapedTitle = escapeHtml(`Codex Hub: ${path.basename(workspacePath) || workspacePath}`);
   return [
     "<!doctype html>",
@@ -288,12 +289,13 @@ const iframeHtml = (src: string, workspacePath: string) => {
     "</style>",
     "</head>",
     "<body>",
-    `<iframe src="${escapedSource}" title="${escapedTitle}" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></iframe>`,
+    `<iframe id="codexhubFrame" src="${escapedSource}" title="${escapedTitle}" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></iframe>`,
     `<script nonce="${nonce}">`,
     "const vscode = acquireVsCodeApi();",
-    `const expectedOrigin = ${sourceOriginJson};`,
+    "const codexhubFrame = document.getElementById('codexhubFrame');",
+    `const codexhubOrigin = ${scriptOrigin};`,
     "window.addEventListener('message', (event) => {",
-    "  if (event.origin !== expectedOrigin) return;",
+    "  if (event.source !== codexhubFrame.contentWindow && event.origin !== codexhubOrigin) return;",
     "  const data = event.data;",
     "  if (!data || data.type !== 'codexhub.taskCompleteNotification') return;",
     "  vscode.postMessage(data);",
@@ -334,8 +336,6 @@ const escapeHtml = (value: string) => value
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;");
 
-const scriptJson = (value: string) => JSON.stringify(value).replaceAll("<", "\\u003c");
-
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
@@ -361,10 +361,12 @@ const ensureConfigFile = async (filePath: string) => {
 const defaultConfigFileText = () => [
   "version: 1",
   `updatedAt: "${new Date().toISOString()}"`,
+  "config:",
+  "  ui:",
+  "    taskCompleteSystemNotifications: false",
   "env: {}",
   "machines: []",
   "projects: []",
-  "deletedProjects: []",
   "tasks: []",
   "sshHosts: []",
   ""
@@ -400,7 +402,18 @@ const serverUrl = (host: string, port: number) => {
   return `http://${displayHost}:${port}`;
 };
 
-const externalServerUri = async (url: string) => vscode.env.asExternalUri(vscode.Uri.parse(url));
+const externalServerUri = async (url: string) => {
+  const parsed = new URL(url);
+  const external = await vscode.env.asExternalUri(vscode.Uri.from({
+    scheme: parsed.protocol.replace(/:$/, ""),
+    authority: parsed.host,
+    path: parsed.pathname
+  }));
+  const externalUrl = new URL(external.toString());
+  externalUrl.search = parsed.search;
+  externalUrl.hash = parsed.hash;
+  return vscode.Uri.parse(externalUrl.toString());
+};
 
 const parsePort = (value: string | undefined) => {
   if (!value) return undefined;

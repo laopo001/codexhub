@@ -37,6 +37,7 @@ import {
   type PluginsPayload,
   type ProjectsPayload,
   type ProjectsStreamEvent,
+  type ServerConfigPayload,
   type SessionsPayload,
   type SshConnectionPayload,
   type SshConnectionsPayload,
@@ -75,6 +76,12 @@ const envFlag = (name: string, fallback: boolean) => {
   return fallback;
 };
 const localMachineEnabled = () => envFlag("CODEX_HUB_LOCAL_MACHINE", true);
+
+const serverConfigUpdateSchema = z.object({
+  ui: z.object({
+    taskCompleteSystemNotifications: z.boolean().optional()
+  }).strict().optional()
+}).strict();
 
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
@@ -190,11 +197,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const buildId = options.buildId ?? process.env.CODEX_HUB_BUILD_ID ?? null;
   const serverInstanceId = randomUUID();
   const notificationHooks = notificationHookRunnerFromEnv(process.env);
+  const shouldPersistMachine = (machine: { type?: string }) => !(surface === "vscode" && machine.type === "local");
   let threads: ThreadHub;
   const captureSessionState = () => {
     state.captureSessions({
       sessions: threads.listSessions({ includeOffline: true }),
       threads: threads.listThreads()
+    }, {
+      persistMachines: surface !== "vscode"
     });
   };
   threads = new ThreadHub(config.defaultThreadOptions, {
@@ -795,6 +805,18 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   } satisfies HealthPayload));
 
+  app.get("/api/config", async () => ({
+    config: state.config()
+  } satisfies ServerConfigPayload));
+
+  app.patch("/api/config", async (request) => {
+    const payload = serverConfigUpdateSchema.parse(request.body);
+    if (payload.ui) state.updateUiConfig(payload.ui);
+    return {
+      config: state.config()
+    } satisfies ServerConfigPayload;
+  });
+
   registerThreadRoutes(app, {
     connectionSnapshotEvent,
     connectionSubscribers,
@@ -1204,14 +1226,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
         if (parsed.type === "register") {
           const result = machines.registerMachine({ ...parsed.registration, transportId });
-          state.upsertMachine({
-            machineId: result.machineId,
-            type: result.machine.type,
-            hostname: result.machine.hostname,
-            name: result.machine.name,
-            lastSeenAt: result.machine.lastSeenAt,
-            capabilities: result.machine.capabilities
-          });
+          if (shouldPersistMachine(result.machine)) {
+            state.upsertMachine({
+              machineId: result.machineId,
+              type: result.machine.type,
+              hostname: result.machine.hostname,
+              name: result.machine.name,
+              lastSeenAt: result.machine.lastSeenAt,
+              capabilities: result.machine.capabilities
+            });
+          }
           replaceMachineRegistrationProjects(result.machineId, parsed.registration.projects);
           machineId = result.machineId;
           commandCursor = machines.clampMachineCommandCursor(machineId, parsed.commandCursor ?? 0);

@@ -2,6 +2,7 @@ import React from "react";
 import { Select, Switch } from "antd";
 import { Target } from "lucide-react";
 import {
+  apiRouteJson,
   formatInspectTitle,
   formatThreadCandidateTime,
   machineProjectCatalogEditable,
@@ -16,6 +17,7 @@ import {
   threadDisplayTitle,
   ToolInspectBody
 } from "./appHelpers.js";
+import { apiRoutes } from "../shared/apiRoutes.js";
 import type { ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
 import type { AppViewModel } from "./viewModel.js";
 
@@ -159,8 +161,19 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 <Switch
                   checked={appSettings.taskCompleteSystemNotifications}
                   onChange={(checked) => {
+                    const previous = appSettings.taskCompleteSystemNotifications;
                     setAppSettings((current) => ({ ...current, taskCompleteSystemNotifications: checked }));
                     if (checked) primeTaskNotificationPermission();
+                    void apiRouteJson(apiRoutes.updateConfig, {
+                      ui: { taskCompleteSystemNotifications: checked }
+                    }).then((payload) => {
+                      setAppSettings((current) => ({
+                        ...current,
+                        taskCompleteSystemNotifications: payload.config.ui.taskCompleteSystemNotifications
+                      }));
+                    }).catch(() => {
+                      setAppSettings((current) => ({ ...current, taskCompleteSystemNotifications: previous }));
+                    });
                   }}
                   aria-labelledby="settingTaskCompletePopups"
                 />

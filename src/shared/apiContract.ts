@@ -7,7 +7,17 @@ import type {
   MachineSummary
 } from "./machineTypes.js";
 import type { PluginSummary } from "./pluginTypes.js";
-import type { ProjectSource, ProjectSummary, StoredMachine, StoredProject, StoredTask, StoredTaskRun, TaskRunStatus } from "./projectTypes.js";
+import type {
+  ProjectSource,
+  ProjectSummary,
+  ServerConfig,
+  ServerUiConfig,
+  StoredMachine,
+  StoredProject,
+  StoredTask,
+  StoredTaskRun,
+  TaskRunStatus
+} from "./projectTypes.js";
 import type { SshHostConfig, SshMachineConnectInput, SshMachineConnection } from "./sshTypes.js";
 import type { ModelReasoningEffort, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "./usageTypes.js";
 import type {
@@ -31,6 +41,8 @@ export type {
   MachineSummary,
   PluginSummary,
   ProjectSummary,
+  ServerConfig,
+  ServerUiConfig,
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
   ModelCatalogItem,
@@ -85,6 +97,14 @@ export type ParentRegistrationStatus = {
 export type AuthStatusPayload = {
   authRequired: boolean;
   authenticated: boolean;
+};
+
+export type ServerConfigPayload = {
+  config: ServerConfig;
+};
+
+export type ServerConfigUpdateInput = {
+  ui?: Partial<ServerUiConfig>;
 };
 
 /** `/api/health` 返回的 server 运行状态和默认配置。 */

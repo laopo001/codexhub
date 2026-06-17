@@ -5,7 +5,7 @@ import type {
 } from "./machineTypes.js";
 import type { SessionSummary, ThreadSummary } from "./threadTypes.js";
 
-/** server-state 中持久化的 machine 元数据，不表示当前在线状态。 */
+/** config.yaml 中持久化的 machine 元数据，不表示当前在线状态。 */
 export type StoredMachine = {
   machineId: string;
   type: MachineType;
@@ -15,7 +15,7 @@ export type StoredMachine = {
   capabilities: MachineCapabilities;
 };
 
-/** server-state 中持久化的项目记录；项目 ID 由 machineId 和 path 推导。 */
+/** config.yaml 中持久化的项目记录；项目 ID 由 machineId 和 path 推导。 */
 export type StoredProject = {
   projectId: string;
   machineId: string;
@@ -48,14 +48,6 @@ export type StoredTaskRun = {
   error?: string;
 };
 
-/** 已删除项目的 tombstone，用于阻止 session capture 自动复活项目。 */
-export type DeletedProject = {
-  projectId: string;
-  machineId: string;
-  path: string;
-  deletedAt: string;
-};
-
 /** server-local 定时任务配置及最近运行摘要。 */
 export type StoredTask = {
   taskId: string;
@@ -83,14 +75,24 @@ export type StoredSshHost = {
   updatedAt: string;
 };
 
+/** config.yaml 中持久化的 Web/VSCode 共享 UI 偏好。 */
+export type ServerUiConfig = {
+  taskCompleteSystemNotifications: boolean;
+};
+
+/** config.yaml 中持久化的全局配置。 */
+export type ServerConfig = {
+  ui: ServerUiConfig;
+};
+
 /** config.yaml 的持久化结构。 */
 export type ServerStateData = {
   version: 1;
   updatedAt: string;
+  config: ServerConfig;
   env: Record<string, string>;
   machines: StoredMachine[];
   projects: StoredProject[];
-  deletedProjects: DeletedProject[];
   tasks: StoredTask[];
   sshHosts: StoredSshHost[];
 };

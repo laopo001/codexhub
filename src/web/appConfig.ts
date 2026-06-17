@@ -8,7 +8,20 @@ import type {
   ServiceTierSelection
 } from "./types.js";
 
-const searchParams = new URLSearchParams(window.location.search);
+const normalizedSearch = () => {
+  const raw = window.location.search;
+  if (!raw || new URLSearchParams(raw).has("surface")) return raw;
+  const encoded = raw.replace(/^\?/, "");
+  if (!/%(?:3d|26)/i.test(encoded)) return raw;
+  try {
+    const decoded = decodeURIComponent(encoded);
+    return new URLSearchParams(decoded).has("surface") ? `?${decoded}` : raw;
+  } catch {
+    return raw;
+  }
+};
+
+const searchParams = new URLSearchParams(normalizedSearch());
 const uniqueTrimmedParams = (names: string[]) => {
   const values = names.flatMap((name) => searchParams.getAll(name));
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -21,7 +34,7 @@ export const vscodeWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "wor
 export const storageKey = isVscodeSurface ? "codexhub-ui-state-vscode-v1" : "codexhub-ui-state-v5";
 export const legacyStorageKey = "codexhub-ui-state-v4";
 export const defaultAppSettings = (): AppSettings => ({
-  taskCompleteSystemNotifications: true
+  taskCompleteSystemNotifications: false
 });
 export const modelOptions: Array<{ value: ModelSelection; label: string }> = [
   { value: "auto", label: "Auto" },

@@ -9,6 +9,8 @@ import type {
   ProjectOpenPayload,
   ProjectUpdateInput,
   ProjectsPayload,
+  ServerConfigPayload,
+  ServerConfigUpdateInput,
   SessionModelsPayload,
   SessionsPayload,
   SshConnectionPayload,
@@ -132,6 +134,8 @@ export type ThreadTurnInput = {
 /** 前后端共享的 HTTP API route map。 */
 export const apiRoutes = {
   health: get<HealthPayload>("/api/health"),
+  config: get<ServerConfigPayload>("/api/config"),
+  updateConfig: patch<ServerConfigUpdateInput, ServerConfigPayload>("/api/config"),
   machines: get<MachinesPayload>("/api/machines"),
   sessions: get<SessionsPayload>("/api/sessions"),
   projects: get<ProjectsPayload>("/api/projects"),

@@ -8,6 +8,7 @@ import {
   authToken,
   authWebSocketUrl,
   appendThreadOrder,
+  formatDuration,
   isTaskCompleteRecord,
   mergeNotificationRecords,
   mergeRecord,
@@ -46,6 +47,7 @@ import type {
   StreamEvent,
   SystemStatus,
   TaskCompleteNotification,
+  LocalTaskRun,
   TasksStreamEvent
 } from "../types.js";
 
@@ -109,9 +111,22 @@ export type RealtimeActions = {
   dispatchTaskCompleteNotification: (notification: TaskCompleteNotification) => void;
 };
 
+const taskRunNotificationKey = (task: LocalTask, runId: string) => `task:${task.taskId}:${runId}`;
+
+const taskRunCompleteNotification = (task: LocalTask, run: LocalTaskRun): TaskCompleteNotification => {
+  const duration = formatDuration(run.durationMs) || undefined;
+  return {
+    title: duration ? `Codex task complete · 运行时间 ${duration}` : "Codex task complete",
+    body: `${task.name || "Scheduled task"} completed.`,
+    threadId: run.threadId ?? task.threadId ?? task.taskId,
+    duration
+  };
+};
+
 export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: RealtimeActionsDependencies): RealtimeActions => {
   const loadInitialPayloads = async () => Promise.all([
     apiRouteJson(apiRoutes.sessions),
+    apiRouteJson(apiRoutes.config),
     apiRouteJson(apiRoutes.projects),
     apiRouteJson(apiRoutes.sshHosts).catch(() => ({ hosts: [] })),
     apiRouteJson(apiRoutes.sshConfigHosts).catch(() => ({ hosts: [] })),
@@ -144,6 +159,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     }
     const [
       sessionData,
+      configData,
       projectData,
       sshHostData,
       sshConfigHostData,
@@ -177,7 +193,12 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       : undefined;
     const initialSession = initialProjectFromUrl?.session ?? savedSession ?? loadedProjectSessions[0] ?? loadedSessions[0];
     const initialWorkspace = initialWorkspacePath || saved?.activeWorkspacePath || defaultDirectory;
-    const initialSettings = saved?.settings ?? defaultAppSettings();
+    const initialSettings = {
+      ...defaultAppSettings(),
+      ...(configData.config.ui ?? saved?.settings ?? {})
+    };
+    const loadedTasks = normalizeTasks(taskData.tasks);
+    rememberCompletedTaskRuns(loadedTasks);
 
     ctx.setSystemStatus({
       model: health.model ?? null,
@@ -202,7 +223,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setSshConnections(Array.isArray(sshConnectionData.connections) ? sshConnectionData.connections : []);
     ctx.setParentRegistration(parentRegistrationData.registration ?? { status: "idle" });
     ctx.setPlugins(normalizePlugins(pluginData.plugins));
-    ctx.setTasks(normalizeTasks(taskData.tasks));
+    ctx.setTasks(loadedTasks);
     ctx.setSessionList(loadedSessions);
     ctx.setActiveTabThreadBySession(saved?.activeTabThreadBySession ?? {});
     ctx.setThreadOrderBySession(() => mergeThreadOrderBySession(saved?.threadOrderBySession ?? {}, loadedSessions));
@@ -333,7 +354,9 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     if (message.type === "tasks") {
       const payload = message;
       ctx.tasksLastSeq.current = Math.max(ctx.tasksLastSeq.current, payload.seq);
-      ctx.setTasks(normalizeTasks(payload.tasks));
+      const nextTasks = normalizeTasks(payload.tasks);
+      notifyTaskCompletionsFromTasksEvent(nextTasks);
+      ctx.setTasks(nextTasks);
       return;
     }
     if (message.type === "connections") {
@@ -389,6 +412,28 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       if (ctx.notifiedTaskCompletions.current.has(key)) continue;
       ctx.notifiedTaskCompletions.current.add(key);
       dispatchTaskCompleteNotification(taskCompleteNotification(event.thread, record, nextRecords));
+    }
+  }
+
+  function rememberCompletedTaskRuns(tasks: LocalTask[]) {
+    for (const task of tasks) {
+      for (const run of task.runs ?? []) {
+        if (run.status !== "completed") continue;
+        ctx.notifiedTaskCompletions.current.add(taskRunNotificationKey(task, run.runId));
+      }
+    }
+  }
+
+  function notifyTaskCompletionsFromTasksEvent(tasks: LocalTask[]) {
+    for (const task of tasks) {
+      for (const run of task.runs ?? []) {
+        if (run.status !== "completed") continue;
+        const key = taskRunNotificationKey(task, run.runId);
+        if (ctx.notifiedTaskCompletions.current.has(key)) continue;
+        ctx.notifiedTaskCompletions.current.add(key);
+        if (run.threadId && ctx.realtimeThreadSubscriptions.current.has(run.threadId)) continue;
+        dispatchTaskCompleteNotification(taskRunCompleteNotification(task, run));
+      }
     }
   }
 

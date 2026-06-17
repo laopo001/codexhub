@@ -14,6 +14,11 @@ import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { ThreadStreamEvent, ThreadSummary } from "../src/shared/threadTypes.js";
 
 const tmpdir = await mkdtemp(path.join(os.tmpdir(), "codexhub-notification-hooks-"));
+const defaultConfigLines = [
+  "config:",
+  "  ui:",
+  "    taskCompleteSystemNotifications: false"
+];
 
 try {
   const commandOutput = path.join(tmpdir, "command-output.jsonl");
@@ -59,6 +64,7 @@ try {
   }
 
   await assertServerStateEnv(tmpdir);
+  await assertServerUiConfig(tmpdir);
   await assertExternalEnvEditsSurviveStateSave(tmpdir);
 } finally {
   await rm(tmpdir, { recursive: true, force: true });
@@ -70,6 +76,7 @@ async function assertServerStateEnv(root: string) {
   await writeFile(path.join(dataDir, "config.yaml"), [
     "version: 1",
     "updatedAt: \"2026-06-17T00:00:00.000Z\"",
+    ...defaultConfigLines,
     "env:",
     "  CODEX_HUB_HOST: \"127.0.0.1\"",
     "  CODEX_HUB_NOTIFICATION_COMMAND: \"from-state\"",
@@ -79,7 +86,6 @@ async function assertServerStateEnv(root: string) {
     "    nested: \"ignored\"",
     "machines: []",
     "projects: []",
-    "deletedProjects: []",
     "tasks: []",
     "sshHosts: []",
     ""
@@ -89,13 +95,13 @@ async function assertServerStateEnv(root: string) {
   const targetEnv: NodeJS.ProcessEnv = { CODEX_HUB_NOTIFICATION_COMMAND: "from-process" };
   state.applyEnvToProcess(targetEnv);
   if (targetEnv.CODEX_HUB_NOTIFICATION_COMMAND !== "from-process") {
-    throw new Error("server-state env overrode an existing process env value");
+    throw new Error("config env overrode an existing process env value");
   }
-  if (targetEnv.CODEX_HUB_HOST !== "127.0.0.1") throw new Error("server-state env did not apply host");
+  if (targetEnv.CODEX_HUB_HOST !== "127.0.0.1") throw new Error("config env did not apply host");
   if (targetEnv.CODEX_HUB_NOTIFICATION_TIMEOUT_MS !== "1234") {
-    throw new Error(`server-state numeric env was not stringified: ${targetEnv.CODEX_HUB_NOTIFICATION_TIMEOUT_MS}`);
+    throw new Error(`config numeric env was not stringified: ${targetEnv.CODEX_HUB_NOTIFICATION_TIMEOUT_MS}`);
   }
-  if ("BAD-NAME" in targetEnv || "OBJECT_VALUE" in targetEnv) throw new Error("server-state env kept invalid entries");
+  if ("BAD-NAME" in targetEnv || "OBJECT_VALUE" in targetEnv) throw new Error("config env kept invalid entries");
 
   const previous = {
     host: process.env.CODEX_HUB_HOST,
@@ -113,15 +119,69 @@ async function assertServerStateEnv(root: string) {
     features: { localMachine: false, ssh: false, tasks: false, integrations: false }
   });
   try {
-    if (handle.host !== "127.0.0.1") throw new Error(`server-state env was not applied before loadConfig: ${handle.host}`);
+    if (handle.host !== "127.0.0.1") throw new Error(`config env was not applied before loadConfig: ${handle.host}`);
     if (process.env.CODEX_HUB_NOTIFICATION_COMMAND !== "from-state") {
-      throw new Error("server-state notification command was not loaded during server init");
+      throw new Error("config notification command was not loaded during server init");
     }
   } finally {
     await handle.stop();
     restoreEnv("CODEX_HUB_HOST", previous.host);
     restoreEnv("CODEX_HUB_NOTIFICATION_COMMAND", previous.notificationCommand);
     restoreEnv("CODEX_HUB_NOTIFICATION_TIMEOUT_MS", previous.notificationTimeoutMs);
+  }
+}
+
+async function assertServerUiConfig(root: string) {
+  const dataDir = path.join(root, "state-ui-config");
+  const configPath = path.join(dataDir, "config.yaml");
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(configPath, [
+    "version: 1",
+    "updatedAt: \"2026-06-17T00:00:00.000Z\"",
+    "env: {}",
+    "machines: []",
+    "projects: []",
+    "tasks: []",
+    "sshHosts: []",
+    ""
+  ].join("\n"));
+
+  const state = await CodexhubServerState.load({ dataDir });
+  if (state.config().ui.taskCompleteSystemNotifications !== false) {
+    throw new Error("missing UI config did not default task complete notifications to false");
+  }
+  const migrated = YAML.parse(await readFile(configPath, "utf8")) as { config?: { ui?: { taskCompleteSystemNotifications?: unknown } } };
+  if (migrated.config?.ui?.taskCompleteSystemNotifications !== false) {
+    throw new Error(`missing UI config was not written to config.yaml: ${JSON.stringify(migrated.config)}`);
+  }
+
+  const port = await freePort();
+  const handle = await startServer({
+    dataDir,
+    port,
+    features: { localMachine: false, ssh: false, tasks: false, integrations: false }
+  });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    const initial = await jsonFetch<{ config?: { ui?: { taskCompleteSystemNotifications?: unknown } } }>(`${base}/api/config`);
+    if (initial.config?.ui?.taskCompleteSystemNotifications !== false) {
+      throw new Error(`server UI config default was not false: ${JSON.stringify(initial.config)}`);
+    }
+    const updated = await jsonFetch<{ config?: { ui?: { taskCompleteSystemNotifications?: unknown } } }>(`${base}/api/config`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ui: { taskCompleteSystemNotifications: true } })
+    });
+    if (updated.config?.ui?.taskCompleteSystemNotifications !== true) {
+      throw new Error(`server UI config patch did not return true: ${JSON.stringify(updated.config)}`);
+    }
+  } finally {
+    await handle.stop();
+  }
+
+  const saved = YAML.parse(await readFile(configPath, "utf8")) as { config?: { ui?: { taskCompleteSystemNotifications?: unknown } } };
+  if (saved.config?.ui?.taskCompleteSystemNotifications !== true) {
+    throw new Error(`server UI config patch was not saved: ${JSON.stringify(saved.config)}`);
   }
 }
 
@@ -132,11 +192,11 @@ async function assertExternalEnvEditsSurviveStateSave(root: string) {
   await writeFile(configPath, [
     "version: 1",
     "updatedAt: \"2026-06-17T00:00:00.000Z\"",
+    ...defaultConfigLines,
     "env:",
     "  CODEX_HUB_NOTIFICATION_COMMAND: \"from-loaded-state\"",
     "machines: []",
     "projects: []",
-    "deletedProjects: []",
     "tasks: []",
     "sshHosts: []",
     ""
@@ -145,12 +205,12 @@ async function assertExternalEnvEditsSurviveStateSave(root: string) {
   await writeFile(configPath, [
     "version: 1",
     "updatedAt: \"2026-06-17T00:00:01.000Z\"",
+    ...defaultConfigLines,
     "env:",
     "  CODEX_HUB_NOTIFICATION_COMMAND: \"from-user-edit\"",
     "  CODEX_HUB_NOTIFICATION_TIMEOUT_MS: 7000",
     "machines: []",
     "projects: []",
-    "deletedProjects: []",
     "tasks: []",
     "sshHosts: []",
     ""
@@ -225,6 +285,12 @@ async function commandPayloads(filePath: string) {
     throw error;
   });
   return text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line));
+}
+
+async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  return await response.json() as T;
 }
 
 async function eventually(check: () => Promise<void>, timeoutMs = 3000) {

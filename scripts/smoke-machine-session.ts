@@ -117,6 +117,7 @@ const main = async () => {
   await assertServerStateSnapshotPure();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
+  await assertVscodeLocalMachineStaysInMemory();
   await assertProjectSessionIdsAreNotPersisted();
   await assertProjectNamesArePathBasenames();
   await assertProjectSessionProjection();
@@ -132,7 +133,7 @@ const main = async () => {
   await assertHistoricalToolBatchCollapse();
   await assertRollbackPreservesKeptTurnToolRecords();
   await assertForkPreservesKeptTurnToolRecords();
-  await assertDeletedProjectSuppressesSessionCapture();
+  await assertProjectDeleteDoesNotWriteTombstone();
   await writeStartupSshHostState(dataDir, "included-host");
 
   const port = await findFreePort();
@@ -731,7 +732,6 @@ const assertServerStateDoesNotPersistThreadHistory = async () => {
     "    updatedAt: 2026-01-01T00:00:00.000Z",
     "    status: idle",
     "    messageCount: 1",
-    "deletedProjects: []",
     "tasks: []",
     "sshHosts: []",
     ""
@@ -872,6 +872,53 @@ const assertTransientProjectsStayInMemory = async () => {
   }
 };
 
+const assertVscodeLocalMachineStaysInMemory = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-vscode-machine."));
+  const port = await findFreePort();
+  const { startServer } = await import("../src/server/index.js");
+  const server = await startServer({
+    host: "127.0.0.1",
+    port,
+    dataDir,
+    surface: "vscode",
+    buildId: "vscode-machine-smoke",
+    features: {
+      localMachine: true,
+      ssh: false,
+      tasks: false,
+      integrations: false
+    }
+  });
+  const apiBase = `http://127.0.0.1:${port}`;
+  let machineId = "";
+  try {
+    const machine = await waitForLocalMachine(apiBase);
+    machineId = machine.machineId;
+    await delay(1000);
+    const listed = await apiJson<{ machines?: MachineSummary[] }>(apiBase, "/api/machines");
+    if (!listed.machines?.some((item) => item.machineId === machine.machineId && item.type === "local" && item.online)) {
+      throw new Error(`VSCode local machine was not projected in memory: ${JSON.stringify(listed)}`);
+    }
+    const saved = await readFile(path.join(dataDir, "config.yaml"), "utf8").catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw error;
+    });
+    if (saved.includes(machine.machineId) || saved.includes("\nmachines:\n  -")) {
+      throw new Error(`VSCode local machine was persisted before shutdown:\n${saved}`);
+    }
+  } finally {
+    await server.stop();
+  }
+
+  const saved = await readFile(path.join(dataDir, "config.yaml"), "utf8").catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  });
+  if (machineId && (saved.includes(machineId) || saved.includes("\nmachines:\n  -"))) {
+    throw new Error(`VSCode local machine was persisted on shutdown:\n${saved}`);
+  }
+};
+
 const assertProjectSessionIdsAreNotPersisted = async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-project-session-id."));
   await writeFile(path.join(dataDir, "config.yaml"), [
@@ -886,7 +933,6 @@ const assertProjectSessionIdsAreNotPersisted = async () => {
     "    lastOpenedAt: 2026-01-01T00:00:00.000Z",
     "    lastSessionId: stale-session-id",
     "    lastThreadId: codex-thread-id",
-    "deletedProjects: []",
     "tasks: []",
     "sshHosts: []",
     ""
@@ -922,7 +968,6 @@ const assertProjectNamesArePathBasenames = async () => {
     "    name: Custom Project Label",
     "    createdAt: 2026-01-01T00:00:00.000Z",
     "    lastOpenedAt: 2026-01-01T00:00:00.000Z",
-    "deletedProjects: []",
     "tasks: []",
     "sshHosts: []",
     ""
@@ -2321,7 +2366,7 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
   }
 };
 
-const assertDeletedProjectSuppressesSessionCapture = async () => {
+const assertProjectDeleteDoesNotWriteTombstone = async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-delete."));
   const { CodexhubServerState } = await import("../src/core/serverState.js");
   const state = await CodexhubServerState.load({ dataDir });
@@ -2332,7 +2377,7 @@ const assertDeletedProjectSuppressesSessionCapture = async () => {
   const legacyProjectId = `${machineId}\0${projectPath}`;
   if (!project) throw new Error("explicit project upsert was suppressed");
   if (!state.deleteProject(legacyProjectId)) throw new Error("legacy project delete did not report success");
-  if (!state.deleteProject(legacyProjectId)) throw new Error("deleted project tombstone was not idempotent");
+  if (state.deleteProject(legacyProjectId)) throw new Error("project delete should not be idempotent without tombstones");
 
   const machine = {
     machineId,
@@ -2359,6 +2404,9 @@ const assertDeletedProjectSuppressesSessionCapture = async () => {
   if (deletedSnapshot.projects.some((item) => item.projectId === project.projectId)) {
     throw new Error("deleted project was restored by session capture");
   }
+  await state.flush();
+  const deletedSaved = await readFile(state.path, "utf8");
+  if (deletedSaved.includes("deletedProjects")) throw new Error(`project delete wrote a tombstone:\n${deletedSaved}`);
 
   const restored = state.upsertProject({
     machineId,
