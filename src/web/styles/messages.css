@@ -772,6 +772,61 @@
   color: #9b2f25;
 }
 
+.turnLoadingMessage {
+  display: flex;
+  position: relative;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 34px;
+  margin: 6px auto 10px;
+  padding: 7px 10px;
+  border: 1px solid rgba(31, 95, 147, 0.16);
+  border-radius: 7px;
+  background: linear-gradient(90deg, #f7faf5 0%, #edf6ef 100%);
+  color: #405244;
+  font-size: 12px;
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.turnLoadingMessage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 30%,
+    rgba(255, 255, 255, 0.88) 48%,
+    rgba(84, 140, 103, 0.16) 58%,
+    transparent 72%,
+    transparent 100%
+  );
+  transform: translateX(-110%);
+  animation: codexhubLoadingSweep 1.55s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.turnLoadingText {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.turnLoadingDuration {
+  position: relative;
+  flex: 0 0 auto;
+  z-index: 1;
+  margin-left: 7px;
+  color: #1f5f93;
+  font-variant-numeric: tabular-nums;
+}
+
 @keyframes codexhubStatusSpin {
   to {
     transform: rotate(360deg);
@@ -799,10 +854,20 @@
   }
 }
 
+@keyframes codexhubLoadingSweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(110%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .activityStatusOverlay.in_progress,
   .activityStatusOverlay.in_progress .activityStatusLabel::before,
-  .messageStatus.in_progress::before {
+  .messageStatus.in_progress::before,
+  .turnLoadingMessage::after {
     animation: none;
   }
 }

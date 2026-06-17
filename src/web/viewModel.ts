@@ -148,6 +148,7 @@ export type AppViewModel = AppSidebarViewModel & {
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
   activeProjectSession?: SessionView;
+  activeRunningTurnDuration: string;
   activeThread?: OpenThreadState;
   activeThreadIsOpen: boolean;
   activeUserMessageHistory: string[];

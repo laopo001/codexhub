@@ -21,7 +21,7 @@ import type { AppState } from "./appState.js";
 import { contextMenuPosition } from "./helpers/composer.js";
 import type { ActivityStatusView, OpenThreadState } from "./types.js";
 
-type ThreadTabTurnMeta = {
+export type ThreadTurnMeta = {
   status: "running" | "idle";
   duration: string;
 };
@@ -51,6 +51,16 @@ type AppViewActions = {
 };
 
 export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, actions: AppViewActions) => {
+  const activeThreadTurnMeta = useMemo(() => {
+    const activeThread = selectors.activeThread;
+    if (!activeThread) return null;
+    const records = threadDisplayRecords(activeThread.threadId, activeThread);
+    const turnStatus = latestTurnStatusFromRecords(records);
+    return threadTurnMeta(activeThread, records, turnStatus, state.nowMs);
+  }, [selectors.activeThread, state.nowMs]);
+  const activeRunningTurnDuration = activeThreadTurnMeta?.status === "running"
+    ? activeThreadTurnMeta.duration
+    : "";
   const openThreadTabs = useMemo(() => state.openThreads.map((thread) => ({
     key: thread.threadId,
     label: (
@@ -90,6 +100,7 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
   );
 
   return {
+    activeRunningTurnDuration,
     openThreadTabs,
     renderComposerThreadControls
   };
@@ -110,7 +121,7 @@ const OpenThreadTabLabel = ({
   const workspaceName = compactWorkspaceName(thread.workingDirectory);
   const records = threadDisplayRecords(thread.threadId, thread);
   const turnStatus = latestTurnStatusFromRecords(records);
-  const turnMeta = threadTabTurnMeta(thread, records, turnStatus, nowMs);
+  const turnMeta = threadTurnMeta(thread, records, turnStatus, nowMs);
   const badgeText = turnMeta.duration
     ? `${turnMeta.status} | ${turnMeta.duration}`
     : turnMeta.status;
@@ -283,12 +294,12 @@ const contextUsagePercent = (threadUsage: AppSelectors["activeThreadUsage"]) => 
   return Math.min(100, Math.max(0, Math.round((context.usedTokens / context.windowTokens) * 100)));
 };
 
-const threadTabTurnMeta = (
+export const threadTurnMeta = (
   thread: OpenThreadState,
   records: CodexRecord[],
   turnStatus: ActivityStatusView | null,
   nowMs: number
-): ThreadTabTurnMeta => {
+): ThreadTurnMeta => {
   const activeStatus = turnStatus?.status === "pending" || turnStatus?.status === "in_progress";
   const running = Boolean(thread.running || activeStatus);
   if (running) {
@@ -296,13 +307,13 @@ const threadTabTurnMeta = (
     const startedMs = startedAt ? Date.parse(startedAt) : NaN;
     return {
       status: "running",
-      duration: Number.isFinite(startedMs) ? formatThreadTabDuration(nowMs - startedMs) : ""
+      duration: Number.isFinite(startedMs) ? formatThreadDuration(nowMs - startedMs) : ""
     };
   }
   const durationMs = latestCompletedTurnDurationMs(records);
   return {
     status: "idle",
-    duration: durationMs == null ? "" : formatThreadTabDuration(durationMs)
+    duration: durationMs == null ? "" : formatThreadDuration(durationMs)
   };
 };
 
@@ -325,7 +336,7 @@ const latestCompletedTurnDurationMs = (records: CodexRecord[]) => {
   return undefined;
 };
 
-const formatThreadTabDuration = (durationMs: number) => {
+export const formatThreadDuration = (durationMs: number) => {
   const seconds = Math.max(0, Math.round(durationMs / 1000));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
