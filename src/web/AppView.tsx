@@ -82,8 +82,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     messageContextMenu,
     messageDisplayMode,
     messageRenderModes,
+    messagesAutoScrollPendingRef,
     messagesRef,
-    messagesScrollerRef,
+    messagesShouldFollowRef,
     modelOptions,
     offlineProjectsCollapsed,
     onlineMachines,
@@ -251,12 +252,24 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                   <Virtuoso
                     key={activeThread.threadId}
                     ref={messagesRef}
-                    scrollerRef={(ref) => {
-                      messagesScrollerRef.current = ref instanceof HTMLElement ? ref : null;
-                    }}
                     className="messages"
                     data={activeViews}
-                    followOutput={() => "smooth"}
+                    atBottomStateChange={(atBottom) => {
+                      if (atBottom) {
+                        messagesShouldFollowRef.current = true;
+                        messagesAutoScrollPendingRef.current = false;
+                      } else if (!messagesAutoScrollPendingRef.current) {
+                        messagesShouldFollowRef.current = false;
+                      }
+                    }}
+                    atBottomThreshold={48}
+                    followOutput={(isAtBottom) => {
+                      if (isAtBottom) {
+                        messagesShouldFollowRef.current = true;
+                        messagesAutoScrollPendingRef.current = true;
+                      }
+                      return false;
+                    }}
                     initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
                     increaseViewportBy={{ top: 360, bottom: 720 }}
                     computeItemKey={(_, message) => message.id}

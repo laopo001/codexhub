@@ -28,7 +28,6 @@ import {
   threadDisplayRecords,
   threadUsageFromSessionRateLimits,
   turnUiStateFromStatus,
-  usageTotal,
   userMessageHistoryFromRecords
 } from "./appHelpers.js";
 import type { AppState } from "./appState.js";
@@ -301,10 +300,6 @@ export const useAppSelectors = (state: AppState) => {
     () => userMessageHistoryFromRecords(displayRecords),
     [displayRecords]
   );
-  const latestView = activeViews.at(-1);
-  const latestViewKey = latestView
-    ? `${latestView.id}:${latestView.status ?? ""}:${latestView.text.length}:${latestView.usage ? usageTotal(latestView.usage) : ""}`
-    : "";
   const activeDisplayThreadId = activeThread?.threadId ?? state.activeTabThreadId;
   const activeThreadIsOpen = Boolean(activeThread && openThreadIds.includes(activeThread.threadId));
   const activeHasDraft = Boolean(activeThread?.input.trim() || activeThread?.imageAttachments.length || activeThread?.textAttachments.length);
@@ -411,7 +406,6 @@ export const useAppSelectors = (state: AppState) => {
     effectiveReasoningSelection,
     effectiveServiceTierSelection,
     latestTurnStatusScope,
-    latestViewKey,
     localMachines,
     modelOptions,
     serviceTierOptions,
