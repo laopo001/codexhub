@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { Switch } from "antd";
 import { GripHorizontal } from "lucide-react";
@@ -8,6 +8,7 @@ import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, Memor
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
 import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { statusLabel } from "./common.js";
+import { contextMenuPosition, writeTextToClipboard } from "./composer.js";
 import { formatInspectDetail, formatInspectTitle, renderToolMessageBody } from "./toolPreview.js";
 import { activityStatusOverlayClass, activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
 
@@ -524,42 +525,126 @@ export const MessageText = ({
   markdownEnabled: boolean;
   threadWorkingDirectory?: string;
 }) => {
-  const components = useMemo(() => markdownComponents(threadWorkingDirectory), [threadWorkingDirectory]);
+  const [fileLinkMenu, setFileLinkMenu] = useState<FileLinkMenuState | null>(null);
+  const handleFileLinkClick = useCallback((target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isVscodeSurface) {
+      window.parent?.postMessage({
+        type: "codexhub.openFile",
+        path: target.path,
+        line: target.line,
+        column: target.column
+      }, "*");
+      return;
+    }
+    setFileLinkMenu({
+      target,
+      ...contextMenuPosition(event.clientX, event.clientY)
+    });
+  }, []);
+  const components = useMemo(
+    () => markdownComponents(threadWorkingDirectory, handleFileLinkClick),
+    [handleFileLinkClick, threadWorkingDirectory]
+  );
+  useEffect(() => {
+    if (!fileLinkMenu) return undefined;
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".fileLinkCopyMenu")) return;
+      setFileLinkMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFileLinkMenu(null);
+    };
+    window.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [fileLinkMenu]);
   if (!markdownEnabled || mode === "raw") return <pre>{text}</pre>;
   return (
     <div className="messageMarkdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {text}
       </ReactMarkdown>
+      {fileLinkMenu ? (
+        <FileLinkCopyMenu menu={fileLinkMenu} onClose={() => setFileLinkMenu(null)} />
+      ) : null}
     </div>
   );
 };
 
-export const markdownComponents = (threadWorkingDirectory?: string): Components => ({
+type FileLinkMenuState = {
+  target: LocalFileLinkTarget;
+  x: number;
+  y: number;
+};
+
+const FileLinkCopyMenu = ({
+  menu,
+  onClose
+}: {
+  menu: FileLinkMenuState;
+  onClose: () => void;
+}) => {
+  const actions = fileLinkCopyActions(menu.target);
+  const copyValue = async (value: string) => {
+    await writeTextToClipboard(value).catch(() => undefined);
+    onClose();
+  };
+  return (
+    <div
+      className="fileLinkCopyMenu"
+      role="menu"
+      style={{ left: menu.x, top: menu.y }}
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="fileLinkCopyTitle" title={menu.target.title}>{menu.target.label}</div>
+      {actions.map((action) => (
+        <button type="button" role="menuitem" onClick={() => void copyValue(action.value)} key={action.key}>
+          {action.label}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const fileLinkCopyActions = (target: LocalFileLinkTarget) => {
+  const actions = [
+    { key: "shown", label: "Copy shown path", value: target.label },
+    { key: "full", label: "Copy path with line", value: target.title },
+    { key: "path", label: "Copy file path", value: target.fullPath }
+  ];
+  const seen = new Set<string>();
+  return actions.filter((action) => {
+    if (seen.has(action.value)) return false;
+    seen.add(action.value);
+    return true;
+  });
+};
+
+export const markdownComponents = (
+  threadWorkingDirectory: string | undefined,
+  onFileLinkClick: (target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => void
+): Components => ({
   a: ({ children, href, className, title, ...props }) => {
-    const openFileTarget = vscodeOpenFileTargetFromHref(href, threadWorkingDirectory);
-    const linkClassName = [className, openFileTarget ? "vscodeFileLink" : null].filter(Boolean).join(" ") || undefined;
+    const fileTarget = localFileLinkTargetFromHref(href, threadWorkingDirectory);
+    const linkClassName = [className, fileTarget ? "localFileLink" : null].filter(Boolean).join(" ") || undefined;
     return (
       <a
         {...props}
         href={href}
         className={linkClassName}
-        target={openFileTarget ? undefined : "_blank"}
-        rel={openFileTarget ? undefined : "noreferrer"}
-        title={openFileTarget?.title ?? title}
-        aria-label={openFileTarget ? `Open ${openFileTarget.title}` : props["aria-label"]}
-        onClick={openFileTarget ? (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          window.parent?.postMessage({
-            type: "codexhub.openFile",
-            path: openFileTarget.path,
-            line: openFileTarget.line,
-            column: openFileTarget.column
-          }, "*");
-        } : undefined}
+        target={fileTarget ? undefined : "_blank"}
+        rel={fileTarget ? undefined : "noreferrer"}
+        title={fileTarget?.title ?? title}
+        aria-label={fileTarget ? `File link ${fileTarget.title}` : props["aria-label"]}
+        onClick={fileTarget ? (event) => onFileLinkClick(fileTarget, event) : undefined}
       >
-        {openFileTarget?.label ?? children}
+        {fileTarget?.label ?? children}
       </a>
     );
   },
@@ -585,28 +670,33 @@ export const markdownComponents = (threadWorkingDirectory?: string): Components 
   )
 });
 
-type VscodeOpenFileTarget = {
+type LocalFileLinkTarget = {
   path: string;
   line?: number;
   column?: number;
+  fullPath: string;
   label: string;
   title: string;
 };
 
-const vscodeOpenFileTargetFromHref = (
+const localFileLinkTargetFromHref = (
   href: string | undefined,
   threadWorkingDirectory: string | undefined
-): VscodeOpenFileTarget | null => {
-  if (!isVscodeSurface || !href) return null;
+): LocalFileLinkTarget | null => {
+  if (!href) return null;
   const decoded = decodeHref(href.trim());
   if (!decoded) return null;
-  const filePath = decoded.startsWith("file://") ? filePathFromFileUrl(decoded) : decoded;
+  const isFileUrl = decoded.startsWith("file://");
+  const filePath = isFileUrl ? filePathFromFileUrl(decoded) : decoded;
   if (!filePath || !isAbsoluteFilePath(filePath)) return null;
   const location = splitFileLocation(filePath);
+  if (!isFileUrl && !hasFileLinkSignal(location)) return null;
+  const fullPath = normalizePathSeparators(location.path);
   return {
     ...location,
+    fullPath,
     label: formatFileLocation(displayFilePathForThread(location.path, threadWorkingDirectory), location),
-    title: formatFileLocation(normalizePathSeparators(location.path), location)
+    title: formatFileLocation(fullPath, location)
   };
 };
 
@@ -632,7 +722,7 @@ const filePathFromFileUrl = (href: string) => {
 const isAbsoluteFilePath = (value: string) =>
   value.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(value);
 
-const splitFileLocation = (value: string): Pick<VscodeOpenFileTarget, "path" | "line" | "column"> => {
+const splitFileLocation = (value: string): Pick<LocalFileLinkTarget, "path" | "line" | "column"> => {
   const match = /^(.*?)(?::([1-9]\d*)(?::([1-9]\d*))?)?$/.exec(value);
   if (!match) return { path: value };
   const line = match[2] ? Number(match[2]) : undefined;
@@ -644,9 +734,12 @@ const splitFileLocation = (value: string): Pick<VscodeOpenFileTarget, "path" | "
   };
 };
 
+const hasFileLinkSignal = (location: Pick<LocalFileLinkTarget, "path" | "line">) =>
+  Boolean(location.line) || /(^|\/)[^/]+\.[^/]+$/.test(normalizePathSeparators(location.path));
+
 const formatFileLocation = (
   filePath: string,
-  location: Pick<VscodeOpenFileTarget, "line" | "column">
+  location: Pick<LocalFileLinkTarget, "line" | "column">
 ) => [
   filePath,
   location.line ? String(location.line) : null,
