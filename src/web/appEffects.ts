@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { isVscodeSurface, storageKey } from "./appConfig.js";
 import { apiRouteJson, machineProjectLauncher, preferredThreadIdForSession, primeTaskCompletionSound } from "./appHelpers.js";
 import type { AppSelectors } from "./appSelectors.js";
@@ -21,10 +21,6 @@ type AppEffectsInput = {
 };
 
 export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, state }: AppEffectsInput) => {
-  const previousScrollTarget = useRef({ threadId: "", latestViewId: "", viewCount: 0 });
-  const latestView = selectors.activeViews.at(-1);
-  const latestViewId = latestView?.id ?? "";
-
   useEffect(() => {
     resizeComposerTextarea(state.composerTextareaRef.current);
   }, [selectors.activeThread?.threadId, selectors.activeThread?.input]);
@@ -36,14 +32,6 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       if (state.controlReconnectTimer.current !== null) {
         window.clearTimeout(state.controlReconnectTimer.current);
         state.controlReconnectTimer.current = null;
-      }
-      if (state.messageScrollTimer.current !== null) {
-        window.clearTimeout(state.messageScrollTimer.current);
-        state.messageScrollTimer.current = null;
-      }
-      if (state.messageScrollReleaseTimer.current !== null) {
-        window.clearTimeout(state.messageScrollReleaseTimer.current);
-        state.messageScrollReleaseTimer.current = null;
       }
       state.realtimeThreadSubscriptions.current.clear();
     };
@@ -220,49 +208,9 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
   }, [selectors.runningOpenThreadIds]);
 
   useEffect(() => {
-    if (!selectors.activeViews.length) return;
-    const previous = previousScrollTarget.current;
-    const threadChanged = previous.threadId !== state.activeTabThreadId;
-    const latestViewChanged = previous.latestViewId !== latestViewId || previous.viewCount !== selectors.activeViews.length;
-    previousScrollTarget.current = {
-      threadId: state.activeTabThreadId,
-      latestViewId,
-      viewCount: selectors.activeViews.length
-    };
-
-    if (!threadChanged && !latestViewChanged) return;
-    if (threadChanged) {
-      state.messagesShouldFollowRef.current = true;
-      state.messagesAutoScrollPendingRef.current = true;
-    } else if (!state.messagesShouldFollowRef.current) {
-      return;
-    }
-
-    if (state.messageScrollTimer.current !== null) window.clearTimeout(state.messageScrollTimer.current);
-    if (state.messageScrollReleaseTimer.current !== null) window.clearTimeout(state.messageScrollReleaseTimer.current);
-
-    state.messagesAutoScrollPendingRef.current = true;
-    state.messageScrollTimer.current = window.setTimeout(() => {
-      state.messageScrollTimer.current = null;
-      state.messagesRef.current?.scrollToIndex({
-        index: selectors.activeViews.length - 1,
-        align: "end",
-        offset: 10000,
-        behavior: "auto"
-      });
-      state.messageScrollReleaseTimer.current = window.setTimeout(() => {
-        state.messageScrollReleaseTimer.current = null;
-        state.messagesAutoScrollPendingRef.current = false;
-      }, 120);
-    }, 180);
-
-    return () => {
-      if (state.messageScrollTimer.current !== null) {
-        window.clearTimeout(state.messageScrollTimer.current);
-        state.messageScrollTimer.current = null;
-      }
-    };
-  }, [state.activeTabThreadId, selectors.activeViews.length, latestViewId]);
+    if (!state.activeTabThreadId) return;
+    state.messagesShouldFollowRef.current = true;
+  }, [state.activeTabThreadId]);
 
   useEffect(() => {
     if (!state.composerMenuOpen) return undefined;

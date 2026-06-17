@@ -27,6 +27,10 @@ const composerModeIconByValue: Record<(typeof composerModeOptions)[number]["valu
   goal: Target
 };
 
+const messagesBottomThreshold = 48;
+const messagesScrollbarHitArea = 20;
+const messagesScrollKeys = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
 export const AppView = ({ viewModel }: AppViewProps) => {
   const {
     activeCanSend,
@@ -82,7 +86,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     messageContextMenu,
     messageDisplayMode,
     messageRenderModes,
-    messagesAutoScrollPendingRef,
     messagesRef,
     messagesShouldFollowRef,
     modelOptions,
@@ -172,6 +175,67 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     openThreadEmptyMessage,
     openThreadTabs
   } = viewModel;
+  const messagesUserScrollIntentRef = React.useRef(false);
+  const messagesStickScrollFrameRef = React.useRef<number | null>(null);
+  React.useEffect(() => () => {
+    if (messagesStickScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(messagesStickScrollFrameRef.current);
+      messagesStickScrollFrameRef.current = null;
+    }
+  }, []);
+  React.useEffect(() => {
+    messagesUserScrollIntentRef.current = false;
+    if (messagesStickScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(messagesStickScrollFrameRef.current);
+      messagesStickScrollFrameRef.current = null;
+    }
+  }, [activeThread?.threadId]);
+  const scrollMessagesToBottom = React.useCallback(() => {
+    if (messagesStickScrollFrameRef.current !== null) return;
+    messagesStickScrollFrameRef.current = window.requestAnimationFrame(() => {
+      messagesStickScrollFrameRef.current = null;
+      if (!messagesShouldFollowRef.current) return;
+      messagesRef.current?.scrollTo({
+        top: Number.MAX_SAFE_INTEGER,
+        behavior: "auto"
+      });
+    });
+  }, [messagesRef, messagesShouldFollowRef]);
+  const updateMessagesFollowFromUserScroll = React.useCallback((scroller: HTMLElement) => {
+    const distanceFromBottom = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+    if (distanceFromBottom > messagesBottomThreshold) {
+      messagesShouldFollowRef.current = false;
+    } else {
+      messagesShouldFollowRef.current = true;
+      messagesUserScrollIntentRef.current = false;
+    }
+  }, [messagesShouldFollowRef]);
+  const markMessagesUserScrollIntent = React.useCallback((scroller: HTMLElement) => {
+    messagesUserScrollIntentRef.current = true;
+    window.requestAnimationFrame(() => updateMessagesFollowFromUserScroll(scroller));
+  }, [updateMessagesFollowFromUserScroll]);
+  const handleMessagesScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    if (!messagesUserScrollIntentRef.current) return;
+    updateMessagesFollowFromUserScroll(event.currentTarget);
+  }, [updateMessagesFollowFromUserScroll]);
+  const handleMessagesWheel = React.useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented) return;
+    markMessagesUserScrollIntent(event.currentTarget);
+  }, [markMessagesUserScrollIntent]);
+  const handleMessagesTouchMove = React.useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented) return;
+    markMessagesUserScrollIntent(event.currentTarget);
+  }, [markMessagesUserScrollIntent]);
+  const handleMessagesPointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.target !== event.currentTarget) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (event.clientX < rect.right - messagesScrollbarHitArea) return;
+    markMessagesUserScrollIntent(event.currentTarget);
+  }, [markMessagesUserScrollIntent]);
+  const handleMessagesKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || !messagesScrollKeys.has(event.key)) return;
+    markMessagesUserScrollIntent(event.currentTarget);
+  }, [markMessagesUserScrollIntent]);
   if (authRequired) {
     return (
       <main className="authShell">
@@ -254,21 +318,26 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                     ref={messagesRef}
                     className="messages"
                     data={activeViews}
+                    onKeyDown={handleMessagesKeyDown}
+                    onPointerDown={handleMessagesPointerDown}
+                    onScroll={handleMessagesScroll}
+                    onTouchMove={handleMessagesTouchMove}
+                    onWheel={handleMessagesWheel}
                     atBottomStateChange={(atBottom) => {
                       if (atBottom) {
                         messagesShouldFollowRef.current = true;
-                        messagesAutoScrollPendingRef.current = false;
-                      } else if (!messagesAutoScrollPendingRef.current) {
-                        messagesShouldFollowRef.current = false;
+                        messagesUserScrollIntentRef.current = false;
+                      } else if (messagesShouldFollowRef.current && !messagesUserScrollIntentRef.current) {
+                        scrollMessagesToBottom();
                       }
                     }}
-                    atBottomThreshold={48}
+                    atBottomThreshold={messagesBottomThreshold}
                     followOutput={(isAtBottom) => {
                       if (isAtBottom) {
                         messagesShouldFollowRef.current = true;
-                        messagesAutoScrollPendingRef.current = true;
+                        messagesUserScrollIntentRef.current = false;
                       }
-                      return false;
+                      return messagesShouldFollowRef.current ? "auto" : false;
                     }}
                     initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
                     increaseViewportBy={{ top: 360, bottom: 720 }}

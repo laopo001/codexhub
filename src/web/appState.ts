@@ -120,9 +120,6 @@ export const useAppState = () => {
   const closedThreadIds = useRef(new Set<string>());
   const messagesRef = useRef<VirtuosoHandle>(null);
   const messagesShouldFollowRef = useRef(true);
-  const messagesAutoScrollPendingRef = useRef(false);
-  const messageScrollTimer = useRef<number | null>(null);
-  const messageScrollReleaseTimer = useRef<number | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerHistoryRef = useRef<ComposerHistoryState | null>(null);
@@ -174,9 +171,6 @@ export const useAppState = () => {
     messageDisplayMode,
     messageRenderModes,
     modelCatalogBySession,
-    messageScrollReleaseTimer,
-    messageScrollTimer,
-    messagesAutoScrollPendingRef,
     messagesRef,
     messagesShouldFollowRef,
     notificationAudioContext,

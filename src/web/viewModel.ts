@@ -192,7 +192,6 @@ export type AppViewModel = AppSidebarViewModel & {
   activeThreadReasoningDraft: ReasoningSelection;
   activeThreadServiceTierDraft: ServiceTierSelection;
   activeThreadSandboxPolicySelection?: SandboxPolicySelection;
-  messagesAutoScrollPendingRef: React.MutableRefObject<boolean>;
   messagesRef: React.RefObject<VirtuosoHandle | null>;
   messagesShouldFollowRef: React.MutableRefObject<boolean>;
   modelOptions: ModelOption[];
