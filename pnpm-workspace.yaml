@@ -1,2 +1,5 @@
 allowBuilds:
+  '@vscode/vsce-sign': true
   electron: true
+  esbuild: true
+  keytar: true
