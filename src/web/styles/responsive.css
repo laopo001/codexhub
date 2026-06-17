@@ -84,6 +84,41 @@
     min-width: 98px;
   }
 
+  .composerMenu {
+    min-width: min(248px, calc(100vw - 48px));
+  }
+
+  .modalOverlay {
+    padding: 8px;
+  }
+
+  .sessionDialogOverlay {
+    padding: 8px;
+  }
+
+  .threadPickerModal,
+  .projectPickerModal,
+  .settingsDialog,
+  .goalDialog,
+  .modal {
+    max-height: calc(100svh - 16px);
+    padding: 12px;
+  }
+
+  .threadPickerList {
+    min-height: 144px;
+  }
+
+  .threadPickerRow {
+    padding: 7px 9px;
+  }
+
+  .projectPickerPathForm {
+    grid-template-columns: 32px 32px minmax(0, 1fr) auto;
+  }
+}
+
+@media (max-width: 600px) {
   .composerSessionControls.inline {
     display: none;
   }
@@ -121,39 +156,6 @@
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .composerMenu {
-    min-width: min(248px, calc(100vw - 48px));
-  }
-
-  .modalOverlay {
-    padding: 8px;
-  }
-
-  .sessionDialogOverlay {
-    padding: 8px;
-  }
-
-  .threadPickerModal,
-  .projectPickerModal,
-  .settingsDialog,
-  .goalDialog,
-  .modal {
-    max-height: calc(100svh - 16px);
-    padding: 12px;
-  }
-
-  .threadPickerList {
-    min-height: 144px;
-  }
-
-  .threadPickerRow {
-    padding: 7px 9px;
-  }
-
-  .projectPickerPathForm {
-    grid-template-columns: 32px 32px minmax(0, 1fr) auto;
   }
 }
 
