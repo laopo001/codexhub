@@ -935,6 +935,13 @@
   color: #df5b35;
 }
 
+.messageMarkdown a.vscodeFileLink {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.94em;
+  text-decoration-style: dotted;
+}
+
 .messageMarkdown code {
   border-radius: 4px;
   background: #f0f4ed;

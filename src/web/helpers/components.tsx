@@ -3,7 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import { Switch } from "antd";
 import { GripHorizontal } from "lucide-react";
 import remarkGfm from "remark-gfm";
-import { highlightedLanguages, languageAliases } from "../appConfig.js";
+import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
 import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
@@ -49,6 +49,7 @@ export const MessageCard = ({
   renderToolPreview = true,
   renderMode,
   markdownEnabled,
+  threadWorkingDirectory,
   onRenderModeChange,
   onContextMenu,
   onInspect,
@@ -64,6 +65,7 @@ export const MessageCard = ({
   renderToolPreview?: boolean;
   renderMode: MessageRenderMode;
   markdownEnabled: boolean;
+  threadWorkingDirectory?: string;
   onRenderModeChange?: (mode: MessageRenderMode) => void;
   onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
   onInspect?: () => void;
@@ -142,7 +144,12 @@ export const MessageCard = ({
       {hasToolBody ? (
         toolBody
       ) : messageText ? (
-        <MessageText text={messageText} mode={renderMode} markdownEnabled={markdownEnabled} />
+        <MessageText
+          text={messageText}
+          mode={renderMode}
+          markdownEnabled={markdownEnabled}
+          threadWorkingDirectory={threadWorkingDirectory}
+        />
       ) : null}
       {!isThinkingMessage && (memoryCitation.entries.length || memoryCitation.rolloutIds.length) ? (
         <MemoryCitationPanel citation={memoryCitation} />
@@ -509,28 +516,53 @@ export const markdownCodeLanguage = (className: string | undefined) => {
 export const MessageText = ({
   text,
   mode,
-  markdownEnabled
+  markdownEnabled,
+  threadWorkingDirectory
 }: {
   text: string;
   mode: MessageRenderMode;
   markdownEnabled: boolean;
+  threadWorkingDirectory?: string;
 }) => {
+  const components = useMemo(() => markdownComponents(threadWorkingDirectory), [threadWorkingDirectory]);
   if (!markdownEnabled || mode === "raw") return <pre>{text}</pre>;
   return (
     <div className="messageMarkdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {text}
       </ReactMarkdown>
     </div>
   );
 };
 
-export const markdownComponents: Components = {
-  a: ({ children, href, ...props }) => (
-    <a href={href} target="_blank" rel="noreferrer" {...props}>
-      {children}
-    </a>
-  ),
+export const markdownComponents = (threadWorkingDirectory?: string): Components => ({
+  a: ({ children, href, className, title, ...props }) => {
+    const openFileTarget = vscodeOpenFileTargetFromHref(href, threadWorkingDirectory);
+    const linkClassName = [className, openFileTarget ? "vscodeFileLink" : null].filter(Boolean).join(" ") || undefined;
+    return (
+      <a
+        {...props}
+        href={href}
+        className={linkClassName}
+        target={openFileTarget ? undefined : "_blank"}
+        rel={openFileTarget ? undefined : "noreferrer"}
+        title={openFileTarget?.title ?? title}
+        aria-label={openFileTarget ? `Open ${openFileTarget.title}` : props["aria-label"]}
+        onClick={openFileTarget ? (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          window.parent?.postMessage({
+            type: "codexhub.openFile",
+            path: openFileTarget.path,
+            line: openFileTarget.line,
+            column: openFileTarget.column
+          }, "*");
+        } : undefined}
+      >
+        {openFileTarget?.label ?? children}
+      </a>
+    );
+  },
   pre: ({ children }) => (
     <div className="markdownCodeBlock">
       {children}
@@ -551,7 +583,103 @@ export const markdownComponents: Components = {
       <table>{children}</table>
     </div>
   )
+});
+
+type VscodeOpenFileTarget = {
+  path: string;
+  line?: number;
+  column?: number;
+  label: string;
+  title: string;
 };
+
+const vscodeOpenFileTargetFromHref = (
+  href: string | undefined,
+  threadWorkingDirectory: string | undefined
+): VscodeOpenFileTarget | null => {
+  if (!isVscodeSurface || !href) return null;
+  const decoded = decodeHref(href.trim());
+  if (!decoded) return null;
+  const filePath = decoded.startsWith("file://") ? filePathFromFileUrl(decoded) : decoded;
+  if (!filePath || !isAbsoluteFilePath(filePath)) return null;
+  const location = splitFileLocation(filePath);
+  return {
+    ...location,
+    label: formatFileLocation(displayFilePathForThread(location.path, threadWorkingDirectory), location),
+    title: formatFileLocation(normalizePathSeparators(location.path), location)
+  };
+};
+
+const decodeHref = (href: string) => {
+  try {
+    return decodeURI(href);
+  } catch {
+    return href;
+  }
+};
+
+const filePathFromFileUrl = (href: string) => {
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "file:") return null;
+    const filePath = decodeURIComponent(url.pathname);
+    return /^\/[a-zA-Z]:\//.test(filePath) ? filePath.slice(1) : filePath;
+  } catch {
+    return null;
+  }
+};
+
+const isAbsoluteFilePath = (value: string) =>
+  value.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(value);
+
+const splitFileLocation = (value: string): Pick<VscodeOpenFileTarget, "path" | "line" | "column"> => {
+  const match = /^(.*?)(?::([1-9]\d*)(?::([1-9]\d*))?)?$/.exec(value);
+  if (!match) return { path: value };
+  const line = match[2] ? Number(match[2]) : undefined;
+  const column = match[3] ? Number(match[3]) : undefined;
+  return {
+    path: match[1] || value,
+    ...(line ? { line } : {}),
+    ...(column ? { column } : {})
+  };
+};
+
+const formatFileLocation = (
+  filePath: string,
+  location: Pick<VscodeOpenFileTarget, "line" | "column">
+) => [
+  filePath,
+  location.line ? String(location.line) : null,
+  location.column ? String(location.column) : null
+].filter(Boolean).join(":");
+
+const displayFilePathForThread = (filePath: string, threadWorkingDirectory: string | undefined) => {
+  const normalizedPath = normalizePathSeparators(filePath);
+  const normalizedBase = normalizeThreadBasePath(threadWorkingDirectory);
+  if (!normalizedBase) return normalizedPath;
+  const isWindowsPath = /^[a-zA-Z]:\//.test(normalizedPath);
+  const comparablePath = comparableFilePath(normalizedPath, isWindowsPath);
+  const comparableBase = comparableFilePath(normalizedBase, isWindowsPath);
+  if (comparablePath === comparableBase) return ".";
+  const prefix = normalizedBase === "/" ? "/" : `${normalizedBase}/`;
+  const comparablePrefix = comparableBase === "/" ? "/" : `${comparableBase}/`;
+  return comparablePath.startsWith(comparablePrefix)
+    ? normalizedPath.slice(prefix.length)
+    : normalizedPath;
+};
+
+const normalizeThreadBasePath = (value: string | undefined) => {
+  if (!value?.trim()) return "";
+  const normalized = normalizePathSeparators(value.trim());
+  if (normalized === "/") return normalized;
+  if (/^[a-zA-Z]:\/?$/.test(normalized)) return normalized.replace(/\/$/, "");
+  return normalized.replace(/\/+$/, "");
+};
+
+const normalizePathSeparators = (value: string) => value.replace(/\\/g, "/");
+
+const comparableFilePath = (value: string, isWindowsPath: boolean) =>
+  isWindowsPath ? value.toLowerCase() : value;
 
 export const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>

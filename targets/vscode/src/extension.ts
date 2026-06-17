@@ -87,6 +87,10 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   private async handleWebviewMessage(message: unknown) {
     const record = asRecord(message);
+    if (record?.type === "codexhub.openFile") {
+      await this.openFileFromWebview(record);
+      return;
+    }
     if (record?.type !== "codexhub.taskCompleteNotification") return;
     const notification = asRecord(record.notification);
     const title = stringValue(notification?.title) ?? "Codex task complete";
@@ -97,6 +101,21 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     if (selected !== open) return;
     if (this.view) this.view.show(false);
     else await vscode.commands.executeCommand(`${viewId}.focus`);
+  }
+
+  private async openFileFromWebview(record: Record<string, unknown>) {
+    const filePath = stringValue(record.path);
+    if (!filePath || filePath.includes("\0") || !path.isAbsolute(filePath)) return;
+    try {
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+      const selection = documentSelectionFromWebviewMessage(document, record);
+      await vscode.window.showTextDocument(document, {
+        preview: false,
+        ...(selection ? { selection } : {})
+      });
+    } catch (error) {
+      await vscode.window.showWarningMessage(`Codex Hub could not open ${path.basename(filePath)}: ${errorText(error)}`);
+    }
   }
 
   private async render() {
@@ -295,9 +314,9 @@ const iframeHtml = (src: string, workspacePath: string) => {
     "const codexhubFrame = document.getElementById('codexhubFrame');",
     `const codexhubOrigin = ${scriptOrigin};`,
     "window.addEventListener('message', (event) => {",
-    "  if (event.source !== codexhubFrame.contentWindow && event.origin !== codexhubOrigin) return;",
+    "  if (event.source !== codexhubFrame.contentWindow || event.origin !== codexhubOrigin) return;",
     "  const data = event.data;",
-    "  if (!data || data.type !== 'codexhub.taskCompleteNotification') return;",
+    "  if (!data || (data.type !== 'codexhub.taskCompleteNotification' && data.type !== 'codexhub.openFile')) return;",
     "  vscode.postMessage(data);",
     "});",
     "</script>",
@@ -340,6 +359,24 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 const stringValue = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : undefined;
+
+const positiveInteger = (value: unknown) => {
+  const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+};
+
+const documentSelectionFromWebviewMessage = (
+  document: vscode.TextDocument,
+  record: Record<string, unknown>
+) => {
+  const line = positiveInteger(record.line);
+  if (!line) return undefined;
+  const lineIndex = Math.min(document.lineCount - 1, line - 1);
+  const column = positiveInteger(record.column) ?? 1;
+  const character = Math.min(document.lineAt(lineIndex).text.length, column - 1);
+  const position = new vscode.Position(lineIndex, character);
+  return new vscode.Range(position, position);
+};
 
 const truncateNotificationText = (value: string) => {
   const text = value.replace(/\s+/g, " ").trim();

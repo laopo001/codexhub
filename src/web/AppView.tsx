@@ -404,6 +404,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           renderToolPreview={messageDisplayMode === "compact"}
                           renderMode={renderMode}
                           markdownEnabled={markdownEnabled}
+                          threadWorkingDirectory={activeThread.workingDirectory}
                           onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
                           onContextMenu={(event) => openMessageContextMenu(event, activeThread.threadId, message, inspectable)}
                           onInspect={inspectable && message.role === "tool" ? () => setInspectMessage(message) : undefined}
