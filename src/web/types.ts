@@ -31,6 +31,7 @@ import type {
 } from "../shared/apiContract.js";
 import type { CompactRecordView } from "../shared/compactRecordViews.js";
 import type { CodexRecordView } from "../shared/recordTypes.js";
+import type { TaskCompleteNotification as ApiTaskCompleteNotification } from "../shared/taskNotifications.js";
 import type { ThreadApprovalPolicy } from "../shared/usageTypes.js";
 
 export type ThreadSummary = ApiThreadSummary;
@@ -175,12 +176,7 @@ export type AppSettings = {
 
 export type StreamEvent = ApiThreadStreamEvent;
 
-export type TaskCompleteNotification = {
-  title: string;
-  body: string;
-  threadId: string;
-  duration?: string;
-};
+export type TaskCompleteNotification = ApiTaskCompleteNotification;
 
 export type SessionStreamEvent = ApiSessionStreamEvent;
 export type TasksStreamEvent = ApiTasksStreamEvent;

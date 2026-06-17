@@ -263,10 +263,10 @@ const assertEmbeddedServerDataDirOptionOverridesEnvironment = async () => {
     }
   });
   try {
-    const health = await apiJson<{ statePath?: string }>(`http://127.0.0.1:${port}`, "/api/health");
-    const expectedStatePath = path.join(explicitDataDir, "server-state.yaml");
-    if (health.statePath !== expectedStatePath) {
-      throw new Error(`embedded server used unexpected state path: ${health.statePath}, expected ${expectedStatePath}`);
+    const health = await apiJson<{ configPath?: string; statePath?: string }>(`http://127.0.0.1:${port}`, "/api/health");
+    const expectedConfigPath = path.join(explicitDataDir, "config.yaml");
+    if (health.configPath !== expectedConfigPath || health.statePath !== expectedConfigPath) {
+      throw new Error(`embedded server used unexpected config path: ${JSON.stringify(health)}, expected ${expectedConfigPath}`);
     }
   } finally {
     await server.stop();
@@ -714,7 +714,7 @@ const assertServerStateSnapshotPure = async () => {
   });
   await state.flush();
   const after = await readFile(state.path, "utf8");
-  if (after !== before) throw new Error("CodexhubServerState.snapshot mutated server-state.yaml");
+  if (after !== before) throw new Error("CodexhubServerState.snapshot mutated config.yaml");
 };
 
 const assertServerStateDoesNotPersistThreadHistory = async () => {
@@ -738,6 +738,9 @@ const assertServerStateDoesNotPersistThreadHistory = async () => {
   ].join("\n"), "utf8");
   const { CodexhubServerState } = await import("../src/core/serverState.js");
   const legacyState = await CodexhubServerState.load({ dataDir: legacyDataDir });
+  if (legacyState.path !== path.join(legacyDataDir, "config.yaml")) {
+    throw new Error(`legacy config should migrate to config.yaml, got ${legacyState.path}`);
+  }
   const migrated = await readFile(legacyState.path, "utf8");
   if (migrated.includes("\nthreads:")) throw new Error(`legacy thread history was not migrated out:\n${migrated}`);
 
@@ -797,7 +800,7 @@ const assertServerStateDoesNotPersistThreadHistory = async () => {
   if ("storedThreads" in asRecord(projected)) throw new Error("project snapshot exposed persisted thread history");
   await state.flush();
   const saved = await readFile(state.path, "utf8");
-  if (saved.includes("\nthreads:")) throw new Error(`server state persisted thread history:\n${saved}`);
+  if (saved.includes("\nthreads:")) throw new Error(`config persisted thread history:\n${saved}`);
 };
 
 const assertTransientProjectsStayInMemory = async () => {
@@ -832,7 +835,7 @@ const assertTransientProjectsStayInMemory = async () => {
   if (!transientProject?.transient) throw new Error(`transient project missing from snapshot: ${JSON.stringify(transientSnapshot.projects)}`);
   if (transientProject.source?.kind !== "vscode") throw new Error(`transient project source missing: ${JSON.stringify(transientProject)}`);
   await state.flush();
-  const statePath = path.join(dataDir, "server-state.yaml");
+  const statePath = path.join(dataDir, "config.yaml");
   const transientSaved = await readFile(statePath, "utf8").catch((error) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
     throw error;
@@ -871,7 +874,7 @@ const assertTransientProjectsStayInMemory = async () => {
 
 const assertProjectSessionIdsAreNotPersisted = async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-project-session-id."));
-  await writeFile(path.join(dataDir, "server-state.yaml"), [
+  await writeFile(path.join(dataDir, "config.yaml"), [
     "version: 1",
     "updatedAt: 2026-01-01T00:00:00.000Z",
     "machines: []",
@@ -908,7 +911,7 @@ const assertProjectSessionIdsAreNotPersisted = async () => {
 const assertProjectNamesArePathBasenames = async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-project-name."));
   const projectPath = "/tmp/codexhub-custom-name-smoke";
-  await writeFile(path.join(dataDir, "server-state.yaml"), [
+  await writeFile(path.join(dataDir, "config.yaml"), [
     "version: 1",
     "updatedAt: 2026-01-01T00:00:00.000Z",
     "machines: []",

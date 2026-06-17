@@ -5,6 +5,8 @@
   "command.refresh.shortTitle": "Refresh",
   "command.openInBrowser.title": "Open Workspace View in Browser",
   "command.openInBrowser.shortTitle": "Open in Browser",
+  "command.openConfig.title": "Open Config File",
+  "command.openConfig.shortTitle": "Open Config",
   "viewsContainer.codexhub.title": "Codex Hub",
   "view.workspace.name": "Workspace"
 }

@@ -62,7 +62,11 @@ export class ThreadHub {
 
   constructor(
     private readonly defaultThreadOptions: ThreadOptions = {},
-    private readonly options: { onCatalogChange?: () => void; onThreadChange?: () => void } = {}
+    private readonly options: {
+      onCatalogChange?: () => void;
+      onThreadChange?: () => void;
+      onThreadEvent?: (event: ThreadStreamEvent, records: CodexRecord[]) => void;
+    } = {}
   ) {}
 
   registerSession(registration: InternalSessionRegistration): { sessionId: string; session: SessionSummary } {
@@ -1757,6 +1761,7 @@ export class ThreadHub {
     thread.events.push(streamEvent);
     if (thread.events.length > 1000) thread.events.splice(0, thread.events.length - 1000);
     for (const subscriber of thread.subscribers) subscriber(streamEvent);
+    this.options.onThreadEvent?.(streamEvent, thread.records);
     this.options.onThreadChange?.();
   }
 

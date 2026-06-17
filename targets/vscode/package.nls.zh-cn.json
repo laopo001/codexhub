@@ -5,6 +5,8 @@
   "command.refresh.shortTitle": "刷新",
   "command.openInBrowser.title": "在浏览器中打开 Workspace 视图",
   "command.openInBrowser.shortTitle": "在浏览器中打开",
+  "command.openConfig.title": "打开配置文件",
+  "command.openConfig.shortTitle": "打开配置",
   "viewsContainer.codexhub.title": "Codex Hub",
   "view.workspace.name": "Workspace"
 }

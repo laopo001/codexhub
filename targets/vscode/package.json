@@ -31,7 +31,8 @@
   "activationEvents": [
     "onView:codexhub.workspaceView",
     "onCommand:codexhub.refresh",
-    "onCommand:codexhub.openInBrowser"
+    "onCommand:codexhub.openInBrowser",
+    "onCommand:codexhub.openConfig"
   ],
   "main": "./extension.cjs",
   "contributes": {
@@ -47,6 +48,12 @@
         "category": "%command.category%",
         "title": "%command.openInBrowser.title%",
         "shortTitle": "%command.openInBrowser.shortTitle%"
+      },
+      {
+        "command": "codexhub.openConfig",
+        "category": "%command.category%",
+        "title": "%command.openConfig.title%",
+        "shortTitle": "%command.openConfig.shortTitle%"
       }
     ],
     "viewsContainers": {

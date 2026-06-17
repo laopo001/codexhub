@@ -83,10 +83,11 @@ export type StoredSshHost = {
   updatedAt: string;
 };
 
-/** server-state.yaml 的持久化结构。 */
+/** config.yaml 的持久化结构。 */
 export type ServerStateData = {
   version: 1;
   updatedAt: string;
+  env: Record<string, string>;
   machines: StoredMachine[];
   projects: StoredProject[];
   deletedProjects: DeletedProject[];

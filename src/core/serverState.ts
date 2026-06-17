@@ -42,19 +42,23 @@ export class CodexhubServerState {
   ) {}
 
   static async load(options: { dataDir?: string; filePath?: string } = {}) {
-    const filePath = options.filePath
-      ? path.resolve(options.filePath)
-      : path.join(options.dataDir ? path.resolve(options.dataDir) : defaultDataDir(), "server-state.yaml");
-    const result = await readStateFile(filePath);
+    const filePath = configFilePath(options);
+    const result = await readConfigFileWithLegacyFallback(filePath, options);
     const state = new CodexhubServerState(filePath, result.data);
     const legacyStateFields = result.legacyThreads || result.legacyProjectNames || result.legacyProjectSessionIds;
-    state.lastSavedText = legacyStateFields ? result.rawText ?? "" : YAML.stringify(result.data);
-    if (legacyStateFields) await state.save();
+    state.lastSavedText = result.path !== filePath ? "" : legacyStateFields ? result.rawText ?? "" : YAML.stringify(result.data);
+    if (legacyStateFields || result.path !== filePath) await state.save();
     return state;
   }
 
   get path() {
     return this.filePath;
+  }
+
+  applyEnvToProcess(target: NodeJS.ProcessEnv = process.env) {
+    for (const [key, value] of Object.entries(this.data.env)) {
+      if (!(key in target)) target[key] = value;
+    }
   }
 
   listStoredMachines() {
@@ -518,6 +522,7 @@ export class CodexhubServerState {
     });
 
     return {
+      configPath: this.filePath,
       statePath: this.filePath,
       machines: [...machinesById.values()].sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt)),
       projects
@@ -620,6 +625,8 @@ export class CodexhubServerState {
   }
 
   private async dataForSave(): Promise<ServerStateData> {
+    const externalEnv = await readConfigEnv(this.filePath);
+    if (externalEnv !== undefined) this.data.env = externalEnv;
     return this.data;
   }
 }
@@ -628,9 +635,32 @@ export const machineIdForSession = (session: Pick<SessionSummary, "machineId" | 
   session.machineId ?? createMachineId(session.hostname ?? "local");
 
 const defaultDataDir = () =>
-  path.resolve(process.env.CODEX_HUB_DATA_DIR ?? path.join(os.homedir(), ".local", "share", "codexhub"));
+  path.resolve(process.env.CODEX_HUB_DATA_DIR ?? path.join(os.homedir(), ".config", "codexhub"));
+
+const legacyDefaultDataDir = () =>
+  path.resolve(path.join(os.homedir(), ".local", "share", "codexhub"));
+
+const configFileName = "config.yaml";
+const legacyStateFileName = "server-state.yaml";
+
+const configFilePath = (options: { dataDir?: string; filePath?: string }) =>
+  options.filePath
+    ? path.resolve(options.filePath)
+    : path.join(options.dataDir ? path.resolve(options.dataDir) : defaultDataDir(), configFileName);
+
+const legacyConfigFilePaths = (options: { dataDir?: string; filePath?: string }, preferredPath: string) => {
+  if (options.filePath) return [];
+  const dataDir = options.dataDir ? path.resolve(options.dataDir) : defaultDataDir();
+  const paths = [path.join(dataDir, legacyStateFileName)];
+  if (!options.dataDir && !process.env.CODEX_HUB_DATA_DIR) {
+    paths.push(path.join(legacyDefaultDataDir(), legacyStateFileName));
+  }
+  return [...new Set(paths.map((item) => path.resolve(item)).filter((item) => item !== preferredPath))];
+};
 
 type StateFileReadResult = {
+  found: boolean;
+  path: string;
   data: ServerStateData;
   legacyThreads: boolean;
   legacyProjectNames: boolean;
@@ -638,15 +668,40 @@ type StateFileReadResult = {
   rawText?: string;
 };
 
+const readConfigFileWithLegacyFallback = async (
+  preferredPath: string,
+  options: { dataDir?: string; filePath?: string }
+): Promise<StateFileReadResult> => {
+  const preferred = await readStateFile(preferredPath);
+  if (preferred.found) return preferred;
+  for (const legacyPath of legacyConfigFilePaths(options, preferredPath)) {
+    const legacy = await readStateFile(legacyPath);
+    if (legacy.found) return legacy;
+  }
+  return preferred;
+};
+
 const readStateFile = async (filePath: string): Promise<StateFileReadResult> => {
+  let rawText: string;
   try {
-    const rawText = await readFile(filePath, "utf8");
+    rawText = await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { found: false, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false };
+    }
+    return { found: false, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false };
+  }
+
+  try {
     const parsed = YAML.parse(rawText) as (Partial<ServerStateData> & { threads?: unknown }) | null;
-    if (parsed?.version !== 1) return { data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, rawText };
+    if (parsed?.version !== 1) return { found: true, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, rawText };
     return {
+      found: true,
+      path: filePath,
       data: {
         version: 1,
         updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+        env: normalizeStateEnv(parsed.env),
         machines: Array.isArray(parsed.machines) ? parsed.machines.map(normalizeStoredMachine).filter(isStoredMachine) : [],
         projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
         deletedProjects: Array.isArray(parsed.deletedProjects) ? parsed.deletedProjects.filter(isDeletedProject) : [],
@@ -661,13 +716,31 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
       rawText
     };
   } catch {
-    return { data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false };
+    return { found: true, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, rawText };
+  }
+};
+
+const readConfigEnv = async (filePath: string): Promise<Record<string, string> | undefined> => {
+  let rawText: string;
+  try {
+    rawText = await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    return undefined;
+  }
+  try {
+    const parsed = YAML.parse(rawText) as Partial<ServerStateData> | null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return normalizeStateEnv(parsed.env);
+  } catch {
+    return undefined;
   }
 };
 
 const emptyState = (): ServerStateData => ({
   version: 1,
   updatedAt: new Date().toISOString(),
+  env: {},
   machines: [],
   projects: [],
   deletedProjects: [],
@@ -691,6 +764,23 @@ const projectSessionSummary = (
 });
 
 const maxIso = (left: string, right: string) => left.localeCompare(right) >= 0 ? left : right;
+
+const stateEnvNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+const normalizeStateEnv = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const env: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = rawKey.trim();
+    if (!stateEnvNamePattern.test(key)) continue;
+    if (typeof rawValue === "string") {
+      env[key] = rawValue;
+    } else if (typeof rawValue === "number" || typeof rawValue === "boolean") {
+      env[key] = String(rawValue);
+    }
+  }
+  return env;
+};
 
 const normalizeStoredMachine = (value: unknown): unknown => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;

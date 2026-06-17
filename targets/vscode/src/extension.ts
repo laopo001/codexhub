@@ -1,5 +1,5 @@
 import path from "node:path";
-import { stat } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import * as vscode from "vscode";
 import type { ServerHandle } from "../../../src/server/index.js";
 import { startEmbeddedServer } from "../../../src/server/embedded.js";
@@ -20,6 +20,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("codexhub.refresh", () => provider.refresh()),
     vscode.commands.registerCommand("codexhub.openInBrowser", () => provider.openInBrowser()),
+    vscode.commands.registerCommand("codexhub.openConfig", () => provider.openConfig()),
     provider
   );
 }
@@ -75,6 +76,13 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   async openInBrowser() {
     const server = await this.ensureServer();
     await vscode.env.openExternal(await externalServerUri(server.url));
+  }
+
+  async openConfig() {
+    const configPath = await this.resolveConfigPath();
+    await ensureConfigFile(configPath);
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(configPath));
+    await vscode.window.showTextDocument(document, { preview: false });
   }
 
   private async handleWebviewMessage(message: unknown) {
@@ -143,6 +151,20 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       logPrefix: "codexhub vscode window"
     });
     return { url: serverUrl(owned.host, owned.port), owned };
+  }
+
+  private async resolveConfigPath() {
+    const fallbackPath = path.join(this.context.globalStorageUri.fsPath, "config.yaml");
+    try {
+      const server = await this.ensureServer();
+      const response = await fetch(new URL("/api/health", server.url));
+      if (!response.ok) return fallbackPath;
+      const body = asRecord(await response.json().catch(() => null));
+      return stringValue(body?.configPath) ?? stringValue(body?.statePath) ?? fallbackPath;
+    } catch (error) {
+      console.warn(`codexhub vscode config path fallback: ${errorText(error)}`);
+      return fallbackPath;
+    }
   }
 }
 
@@ -323,6 +345,30 @@ const truncateNotificationText = (value: string) => {
   const text = value.replace(/\s+/g, " ").trim();
   return text.length > 500 ? `${text.slice(0, 497)}...` : text;
 };
+
+const ensureConfigFile = async (filePath: string) => {
+  try {
+    if ((await stat(filePath)).isFile()) return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, defaultConfigFileText(), { flag: "wx" }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "EEXIST") throw error;
+  });
+};
+
+const defaultConfigFileText = () => [
+  "version: 1",
+  `updatedAt: "${new Date().toISOString()}"`,
+  "env: {}",
+  "machines: []",
+  "projects: []",
+  "deletedProjects: []",
+  "tasks: []",
+  "sshHosts: []",
+  ""
+].join("\n");
 
 const delay = async (ms: number) => await new Promise<void>((resolve) => {
   const timer = setTimeout(resolve, ms);

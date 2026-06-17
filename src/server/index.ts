@@ -13,6 +13,7 @@ import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTu
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
+import { notificationHookRunnerFromEnv } from "../core/notificationHooks.js";
 import { CodexhubServerState } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
@@ -179,14 +180,16 @@ export type ServerFeatureOptions = {
 };
 
 export const startServer = async (options: ServerStartOptions = {}): Promise<ServerHandle> => {
+  const state = await CodexhubServerState.load({ dataDir: options.dataDir });
+  state.applyEnvToProcess();
   const config = loadConfig({ host: options.host, port: options.port });
   const appServerLaunch = resolveCodexAppServerLaunchOptions(options.appServerLaunch);
   const surface = options.surface ?? parseSurface(process.env.CODEX_HUB_SURFACE);
   const features = resolveServerFeatures(options.features);
   const serverAuthToken = normalizedAuthToken(options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN);
   const buildId = options.buildId ?? process.env.CODEX_HUB_BUILD_ID ?? null;
-  const state = await CodexhubServerState.load({ dataDir: options.dataDir });
   const serverInstanceId = randomUUID();
+  const notificationHooks = notificationHookRunnerFromEnv(process.env);
   let threads: ThreadHub;
   const captureSessionState = () => {
     state.captureSessions({
@@ -196,6 +199,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   };
   threads = new ThreadHub(config.defaultThreadOptions, {
     onCatalogChange: () => publishProjects(),
+    onThreadEvent: (event, records) => notificationHooks?.handleThreadEvent(event, records),
     onThreadChange: () => {
       captureSessionState();
     }
@@ -777,6 +781,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     surface,
     features,
     staticDirectory,
+    configPath: state.path,
     statePath: state.path,
     model: config.defaultThreadOptions.model ?? null,
     modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,

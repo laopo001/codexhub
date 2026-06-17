@@ -98,6 +98,7 @@ export type HealthPayload = AuthStatusPayload & {
   surface?: "default" | "vscode";
   features?: Record<string, boolean>;
   staticDirectory?: string;
+  configPath?: string;
   statePath?: string;
   model: string | null;
   modelReasoningEffort: ModelReasoningEffort | null;
@@ -127,6 +128,7 @@ export type ProjectRecordPayload = StoredProject & {
 export type ProjectsPayload = {
   seq?: number;
   kind?: "projects";
+  configPath: string;
   statePath: string;
   machines: Array<MachineSummary | StoredMachine>;
   projects: ProjectSummary[];
