@@ -27,6 +27,7 @@ import type {
   SessionThreadCandidatesResult,
   ThreadDetail,
   ThreadGoalRunPolicy,
+  ThreadGoalStatus,
   ThreadGoalUpdate,
   ThreadRunOptions,
   ThreadStreamEvent,
@@ -851,7 +852,8 @@ export class ThreadHub {
       if (thread.goalRunPolicy && goalUpdateCanStartRunPolicy(goal)) {
         this.maybeStartGoalRunPolicyTurn(thread, {
           allowUnknownUsage: true,
-          fallbackObjective: typeof appServerGoal.objective === "string" ? appServerGoal.objective : undefined
+          fallbackObjective: typeof appServerGoal.objective === "string" ? appServerGoal.objective : undefined,
+          statusOverride: goal.status === "active" ? "active" : undefined
         });
       }
     }, (error) => {
@@ -1823,7 +1825,7 @@ export class ThreadHub {
 
   private maybeStartGoalRunPolicyTurn(
     thread: ThreadState,
-    options: { allowUnknownUsage?: boolean; fallbackObjective?: string } = {}
+    options: { allowUnknownUsage?: boolean; fallbackObjective?: string; statusOverride?: ThreadGoalStatus } = {}
   ) {
     if (thread.running || thread.skipNextGoalRunPolicyRun) {
       thread.skipNextGoalRunPolicyRun = false;
@@ -1832,7 +1834,7 @@ export class ThreadHub {
     const policy = thread.goalRunPolicy;
     if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return false;
     const goal = this.latestRunnableThreadGoal(thread);
-    const status = goal?.status ?? thread.goalRunPolicyStatus ?? "active";
+    const status = options.statusOverride ?? goal?.status ?? thread.goalRunPolicyStatus ?? "active";
     const objective = goal?.objective ?? thread.goalRunPolicyObjective ?? options.fallbackObjective?.trim();
     if (!objective || status !== "active") return false;
     const weeklyRemainingPercent = this.weeklyRemainingPercent(thread);
@@ -2928,7 +2930,7 @@ const hasThreadGoalPatch = (goal: ThreadGoalUpdate) =>
 
 const goalUpdateCanStartRunPolicy = (goal: ThreadGoalUpdate) =>
   (!hasOwn(goal, "status") || goal.status === "active")
-  && (hasOwn(goal, "runPolicy") || hasOwn(goal, "objective"));
+  && (hasOwn(goal, "runPolicy") || hasOwn(goal, "objective") || goal.status === "active");
 
 const normalizeThreadGoalRunPolicy = (policy: ThreadGoalUpdate["runPolicy"]): ThreadGoalRunPolicy | null => {
   if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return null;

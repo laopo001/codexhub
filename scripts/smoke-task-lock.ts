@@ -421,6 +421,28 @@ const main = async () => {
     await fake.expectNoTurn(150);
     console.log("consume-until quota error pauses policy ok");
 
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "active" })
+    });
+    const resumedGoal = await fake.nextSessionCommand("set_goal");
+    if (resumedGoal.goal?.status !== "active") {
+      throw new Error(`consume goal resume payload mismatch: ${JSON.stringify(resumedGoal.goal)}`);
+    }
+    const resumedTurn = await fake.nextTurn();
+    if (
+      resumedTurn.input !== rateLimitedObjective
+      || resumedTurn.options?.goalMode !== true
+      || resumedTurn.options.goalObjective !== rateLimitedObjective
+    ) {
+      throw new Error(`consume goal resumed turn mismatch: ${JSON.stringify(resumedTurn)}`);
+    }
+    fake.emitTokenUsage(resumedTurn, 95);
+    fake.completeTurn(resumedTurn);
+    await fake.expectNoTurn(150);
+    console.log("consume-until manual resume ok");
+
     const created = await apiJson<{ task?: LocalTask }>(apiBase, "/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
