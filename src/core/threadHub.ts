@@ -1588,7 +1588,22 @@ export class ThreadHub {
   ) {
     const rawGoal = asRecord(payload.goal) ?? payload;
     const threadId = threadGoalThreadId(payload, rawGoal) ?? thread.threadId;
+    const latest = this.latestThreadGoalRecord(thread, threadId);
+    const previousGoal = latest?.type === "thread_goal_updated"
+      ? asRecord(latest.payload?.goal)
+      : null;
+    const inheritedGoalFields: Record<string, unknown> = {};
+    if (!hasOwn(rawGoal, "objective") && typeof previousGoal?.objective === "string") {
+      inheritedGoalFields.objective = previousGoal.objective;
+    }
+    if (!hasOwn(rawGoal, "tokenBudget") && typeof previousGoal?.tokenBudget === "number") {
+      inheritedGoalFields.tokenBudget = previousGoal.tokenBudget;
+    }
+    if (!hasOwn(rawGoal, "token_budget") && typeof previousGoal?.token_budget === "number") {
+      inheritedGoalFields.token_budget = previousGoal.token_budget;
+    }
     const goal: Record<string, unknown> = {
+      ...inheritedGoalFields,
       ...rawGoal,
       threadId,
       ...(typeof rawGoal.status === "string" ? {} : { status: "active" })
@@ -1837,8 +1852,8 @@ export class ThreadHub {
     const policy = thread.goalRunPolicy;
     if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return false;
     const goal = this.latestRunnableThreadGoal(thread);
-    const status = options.statusOverride ?? goal?.status ?? thread.goalRunPolicyStatus ?? "active";
-    const objective = goal?.objective ?? thread.goalRunPolicyObjective ?? options.fallbackObjective?.trim();
+    const status = options.statusOverride ?? thread.goalRunPolicyStatus ?? goal?.status ?? "active";
+    const objective = thread.goalRunPolicyObjective ?? goal?.objective ?? options.fallbackObjective?.trim();
     if (!objective || status !== "active") return false;
     if (policy.targetRemainingPercent >= 100) return false;
     const weeklyRemainingPercent = this.weeklyRemainingPercent(thread);
@@ -1863,7 +1878,7 @@ export class ThreadHub {
   private pauseGoalRunPolicy(thread: ThreadState) {
     if (!thread.goalRunPolicy) return;
     const goal = this.latestRunnableThreadGoal(thread);
-    const objective = goal?.objective ?? thread.goalRunPolicyObjective;
+    const objective = thread.goalRunPolicyObjective ?? goal?.objective;
     if (!objective) return;
     thread.goalRunPolicyStatus = "paused";
     this.appendThreadGoalUpdatedRecord(thread, {

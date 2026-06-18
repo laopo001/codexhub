@@ -328,6 +328,28 @@ const main = async () => {
     fake.completeTurn(activeGoalTurn);
     console.log("web running goal update ok");
 
+    fake.emitGoalUpdated({
+      objective: "status-only app-server goal",
+      status: "active",
+      tokenBudget: 777
+    });
+    fake.emitGoalUpdated({ status: "paused" });
+    const statusOnlyGoalDetail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    const statusOnlyGoalRecords = statusOnlyGoalDetail.records?.filter((record) => {
+      const payload = objectValue(record.payload);
+      return payload?.type === "thread_goal_updated";
+    }) ?? [];
+    const latestStatusOnlyGoalPayload = objectValue(statusOnlyGoalRecords.at(-1)?.payload);
+    const latestStatusOnlyGoal = objectValue(latestStatusOnlyGoalPayload?.goal);
+    if (
+      latestStatusOnlyGoal?.objective !== "status-only app-server goal"
+      || latestStatusOnlyGoal.status !== "paused"
+      || latestStatusOnlyGoal.tokenBudget !== 777
+    ) {
+      throw new Error(`status-only goal update did not preserve goal fields: ${JSON.stringify(latestStatusOnlyGoal)}`);
+    }
+    console.log("app-server status-only goal update preserves objective ok");
+
     await expectApiError(
       apiBase,
       `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
@@ -805,6 +827,25 @@ class FakeMachine {
       sessionId: this.options.sessionId,
       commandId: command.commandId,
       message
+    });
+  }
+
+  emitGoalUpdated(goal: Record<string, unknown>) {
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "thread_event",
+        threadId: this.options.threadId,
+        heartbeat: false,
+        message: {
+          method: "thread/goal/updated",
+          params: {
+            threadId: this.options.threadId,
+            goal
+          }
+        }
+      }
     });
   }
 
