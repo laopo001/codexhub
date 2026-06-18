@@ -63,6 +63,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeRunningTurnDuration,
     activeThread,
     activeThreadIsOpen,
+    activeThreadTurnMeta,
     activeThreadApprovalPolicySelection,
     activeThreadSandboxPolicySelection,
     activeUserMessageHistory,
@@ -430,6 +431,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                   {showInlineStatusPanel ? (
                     <ActivityStatusOverlay
                       statuses={simpleStatuses}
+                      turnMeta={activeThreadTurnMeta}
                       expandedKeys={activeExpandedStatusKeys}
                       onMinimize={() => {
                         if (!activeThread?.threadId || !latestTurnStatusScope.key) return;

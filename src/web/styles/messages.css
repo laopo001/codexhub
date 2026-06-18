@@ -17,16 +17,18 @@
   right: auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
+  gap: 4px;
   width: min(520px, calc(100% - 40px));
   min-width: 0;
   max-width: calc(100% - 40px);
   min-height: 0;
-  padding: 2px;
-  border: 1px solid rgba(104, 115, 145, 0.18);
+  padding: 5px;
+  border: 1px solid rgba(77, 132, 94, 0.28);
+  border-left-width: 3px;
+  border-left-color: #4f9468;
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 6px 18px rgba(49, 55, 65, 0.08);
+  box-shadow: 0 8px 22px rgba(49, 55, 65, 0.12);
   color: #26342a;
   pointer-events: auto;
   backdrop-filter: blur(8px);
@@ -51,10 +53,12 @@
 
 .activityStatusOverlay.pending {
   border-color: rgba(47, 111, 159, 0.28);
+  border-left-color: #2f6f9f;
 }
 
 .activityStatusOverlay.in_progress {
   border-color: rgba(47, 111, 159, 0.36);
+  border-left-color: #2f6f9f;
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.92), rgba(232, 244, 255, 0.96), rgba(255, 255, 255, 0.92));
   background-size: 220% 100%;
@@ -63,10 +67,60 @@
 
 .activityStatusOverlay.completed {
   border-color: rgba(47, 125, 90, 0.26);
+  border-left-color: #2f7d5a;
 }
 
 .activityStatusOverlay.failed {
   border-color: rgba(181, 55, 55, 0.28);
+  border-left-color: #b53737;
+}
+
+.activityStatusHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 22px;
+  padding: 0 44px 4px 5px;
+  border-bottom: 1px solid rgba(104, 115, 145, 0.12);
+}
+
+.activityStatusHeaderTitle {
+  color: #243027;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.activityStatusHeaderState {
+  display: inline-grid;
+  place-items: center;
+  min-height: 17px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #eef3eb;
+  color: #526154;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.activityStatusHeaderState.running {
+  background: #e3f0fb;
+  color: #245d88;
+}
+
+.activityStatusHeaderCount {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: auto;
+  color: #6b7569;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .activityStatusItem {
@@ -107,7 +161,16 @@
   text-transform: uppercase;
 }
 
-.activityStatusOverlay.in_progress .activityStatusLabel {
+.activityStatusItem.completed .activityStatusLabel {
+  color: #2f7d5a;
+}
+
+.activityStatusItem.failed .activityStatusLabel {
+  color: #9c2d2d;
+}
+
+.activityStatusItem.pending .activityStatusLabel,
+.activityStatusItem.in_progress .activityStatusLabel {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -115,7 +178,8 @@
   color: #2a648c;
 }
 
-.activityStatusOverlay.in_progress .activityStatusLabel::before {
+.activityStatusItem.pending .activityStatusLabel::before,
+.activityStatusItem.in_progress .activityStatusLabel::before {
   content: "";
   width: 5px;
   height: 5px;
@@ -166,10 +230,10 @@
   height: 20px;
   min-height: 20px;
   padding: 0;
-  border: 1px solid #d8e0d5;
+  border: 1px solid #c8d7c9;
   border-radius: 999px;
   background: #ffffff;
-  color: #66715f;
+  color: #446346;
   font-size: 11px;
   font-weight: 800;
   line-height: 1;
@@ -190,14 +254,19 @@
   right: -8px;
 }
 
+.activityStatusMinimize svg {
+  display: block;
+}
+
 .activityStatusOverlay.dragging .activityStatusDragHandle {
   cursor: grabbing;
 }
 
 .activityStatusDragHandle:hover,
 .activityStatusMinimize:hover {
-  background: #f4f6f1;
-  color: #17211a;
+  border-color: #95b79a;
+  background: #eaf4ec;
+  color: #174f31;
 }
 
 .activityStatusFiles {
@@ -865,7 +934,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .activityStatusOverlay.in_progress,
-  .activityStatusOverlay.in_progress .activityStatusLabel::before,
+  .activityStatusItem.pending .activityStatusLabel::before,
+  .activityStatusItem.in_progress .activityStatusLabel::before,
   .messageStatus.in_progress::before,
   .turnLoadingMessage::after {
     animation: none;

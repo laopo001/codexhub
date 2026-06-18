@@ -41,6 +41,7 @@ import type {
   ThreadPickerState,
   ThreadRenameDialogState,
   ThreadTabContextMenuState,
+  ThreadTurnMeta,
   TurnUiState,
   WebRecordView
 } from "./types.js";
@@ -151,6 +152,7 @@ export type AppViewModel = AppSidebarViewModel & {
   activeRunningTurnDuration: string;
   activeThread?: OpenThreadState;
   activeThreadIsOpen: boolean;
+  activeThreadTurnMeta: ThreadTurnMeta | null;
   activeUserMessageHistory: string[];
   activeViews: WebRecordView[];
   activeWorkspacePath: string;

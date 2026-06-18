@@ -207,6 +207,10 @@ export type ActivityStatusView = {
   status?: CodexRecordView["status"];
   files?: ActivityStatusFile[];
 };
+export type ThreadTurnMeta = {
+  status: "running" | "idle";
+  duration: string;
+};
 export type TurnUiStateKind = "idle" | "running" | "completed" | "aborted" | "failed";
 export type TurnUiState = {
   kind: TurnUiStateKind;

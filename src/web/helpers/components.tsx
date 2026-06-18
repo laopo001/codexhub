@@ -1,10 +1,10 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { Switch } from "antd";
-import { GripHorizontal } from "lucide-react";
+import { ChevronDown, GripHorizontal } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, WebRecordView } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadTurnMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
 import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { statusLabel } from "./common.js";
@@ -780,11 +780,13 @@ export const EmptyMessages = () => (
 
 export const ActivityStatusOverlay = ({
   statuses,
+  turnMeta,
   expandedKeys,
   onMinimize,
   onToggle
 }: {
   statuses: ActivityStatusView[];
+  turnMeta: ThreadTurnMeta | null;
   expandedKeys: Set<string>;
   onMinimize: () => void;
   onToggle: (key: string) => void;
@@ -793,7 +795,14 @@ export const ActivityStatusOverlay = ({
   const dragRef = useRef<ActivityStatusDragState | null>(null);
   const [offset, setOffset] = useState<ActivityStatusOffset>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const overlayClass = activityStatusOverlayClass(statuses);
   const title = activityStatusTitle(statuses);
+  const summaryClass = turnMeta?.status ?? "idle";
+  const summaryLabel = activityStatusSummaryLabel(summaryClass);
+  const summaryDetails = [
+    `${statuses.length} item${statuses.length === 1 ? "" : "s"}`,
+    turnMeta?.duration || null
+  ].filter(Boolean).join(" · ");
   const overlayStyle: React.CSSProperties = {
     transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`
   };
@@ -831,11 +840,16 @@ export const ActivityStatusOverlay = ({
   return (
     <div
       ref={overlayRef}
-      className={`activityStatusOverlay ${activityStatusOverlayClass(statuses)}${dragging ? " dragging" : ""}`}
+      className={`activityStatusOverlay ${overlayClass}${dragging ? " dragging" : ""}`}
       aria-live="polite"
       title={title}
       style={overlayStyle}
     >
+      <div className="activityStatusHeader">
+        <span className="activityStatusHeaderTitle">Status</span>
+        <span className={`activityStatusHeaderState ${summaryClass}`}>{summaryLabel}</span>
+        <span className="activityStatusHeaderCount">{summaryDetails}</span>
+      </div>
       <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} />
       <button
         type="button"
@@ -853,9 +867,16 @@ export const ActivityStatusOverlay = ({
       >
         <GripHorizontal size={13} strokeWidth={2.4} aria-hidden="true" />
       </button>
-      <button type="button" className="activityStatusMinimize" onClick={onMinimize} aria-label="Minimize status" title="Minimize status">−</button>
+      <button type="button" className="activityStatusMinimize" onClick={onMinimize} aria-label="Hide status" title="Hide status">
+        <ChevronDown size={13} strokeWidth={2.4} aria-hidden="true" />
+      </button>
     </div>
   );
+};
+
+const activityStatusSummaryLabel = (status: string) => {
+  if (status === "running") return "Running";
+  return "Idle";
 };
 
 export const ActivityStatusRows = ({
@@ -871,6 +892,12 @@ export const ActivityStatusRows = ({
     {statuses.map((status) => {
       const expandable = Boolean(status.files?.length && onToggle);
       const expanded = Boolean(expandedKeys?.has(status.key));
+      const itemClass = [
+        "activityStatusItem",
+        status.status ?? "",
+        expandable ? "hasFiles" : "",
+        expanded ? "expanded" : ""
+      ].filter(Boolean).join(" ");
       const content = (
         <>
           <span className="activityStatusLabel">{status.label}</span>
@@ -883,7 +910,7 @@ export const ActivityStatusRows = ({
       return expandable ? (
         <button
           type="button"
-          className={`activityStatusItem hasFiles${expanded ? " expanded" : ""}`}
+          className={itemClass}
           key={status.key}
           onClick={() => onToggle?.(status.key)}
           aria-expanded={expanded}
@@ -891,7 +918,7 @@ export const ActivityStatusRows = ({
           {content}
         </button>
       ) : (
-        <div className="activityStatusItem" key={status.key}>
+        <div className={itemClass} key={status.key}>
           {content}
         </div>
       );

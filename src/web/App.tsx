@@ -328,6 +328,7 @@ const App = () => {
   const viewSelectors = useAppViewSelectors(appState, selectors, { compactThread });
   const {
     activeRunningTurnDuration,
+    activeThreadTurnMeta,
     openThreadTabs,
     renderComposerThreadControls
   } = viewSelectors;
@@ -378,6 +379,7 @@ const App = () => {
     activeRunningTurnDuration,
     activeThread,
     activeThreadIsOpen,
+    activeThreadTurnMeta,
     activeUserMessageHistory,
     activeViews,
     activeWorkspacePath,

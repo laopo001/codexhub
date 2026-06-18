@@ -19,12 +19,7 @@ import {
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { contextMenuPosition } from "./helpers/composer.js";
-import type { ActivityStatusView, OpenThreadState } from "./types.js";
-
-export type ThreadTurnMeta = {
-  status: "running" | "idle";
-  duration: string;
-};
+import type { ActivityStatusView, OpenThreadState, ThreadTurnMeta } from "./types.js";
 
 type ComposerThreadControlsMode = "inline" | "popover";
 
@@ -38,10 +33,12 @@ type ComposerThreadControlsProps = {
   activeThreadServiceTierDraft: AppSelectors["activeThreadServiceTierDraft"];
   activeThreadUsage: AppSelectors["activeThreadUsage"];
   compactThread: AppViewActions["compactThread"];
+  latestTurnStatusScope: AppSelectors["latestTurnStatusScope"];
   mode: ComposerThreadControlsMode;
   setHiddenStatusTurns: AppState["setHiddenStatusTurns"];
   setThreadControlsMenuOpen: AppState["setThreadControlsMenuOpen"];
   setThreadModelDialogOpen: AppState["setThreadModelDialogOpen"];
+  showInlineStatusPanel: AppSelectors["showInlineStatusPanel"];
   simpleStatuses: AppSelectors["simpleStatuses"];
   turnUiState: AppSelectors["turnUiState"];
 };
@@ -90,10 +87,12 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
       activeThreadServiceTierDraft={selectors.activeThreadServiceTierDraft}
       activeThreadUsage={selectors.activeThreadUsage}
       compactThread={actions.compactThread}
+      latestTurnStatusScope={selectors.latestTurnStatusScope}
       mode={mode}
       setHiddenStatusTurns={state.setHiddenStatusTurns}
       setThreadControlsMenuOpen={state.setThreadControlsMenuOpen}
       setThreadModelDialogOpen={state.setThreadModelDialogOpen}
+      showInlineStatusPanel={selectors.showInlineStatusPanel}
       simpleStatuses={selectors.simpleStatuses}
       turnUiState={selectors.turnUiState}
     />
@@ -101,6 +100,7 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
 
   return {
     activeRunningTurnDuration,
+    activeThreadTurnMeta,
     openThreadTabs,
     renderComposerThreadControls
   };
@@ -184,16 +184,25 @@ const ComposerThreadControls = ({
   activeThreadServiceTierDraft,
   activeThreadUsage,
   compactThread,
+  latestTurnStatusScope,
   mode,
   setHiddenStatusTurns,
   setThreadControlsMenuOpen,
   setThreadModelDialogOpen,
+  showInlineStatusPanel,
   simpleStatuses,
   turnUiState
 }: ComposerThreadControlsProps) => {
   const statusButtonLabel = simpleStatuses.length ? `Status ${simpleStatuses.length}` : "Status";
+  const statusPanelExpanded = Boolean(simpleStatuses.length && showInlineStatusPanel);
+  const statusButtonClass = [
+    "usagePill",
+    "statusPill",
+    simpleStatuses.length ? "available" : "",
+    simpleStatuses.length && !statusPanelExpanded ? "collapsed" : ""
+  ].filter(Boolean).join(" ");
   const statusButtonTitle = simpleStatuses.length
-    ? `Show latest turn status\n${activityStatusTitle(simpleStatuses)}`
+    ? `${statusPanelExpanded ? "Hide" : "Show"} latest turn status\n${activityStatusTitle(simpleStatuses)}`
     : turnUiState.title;
   const composerModelButtonLabel = formatComposerModelButtonLabel(
     activeThreadModelDraft,
@@ -233,13 +242,19 @@ const ComposerThreadControls = ({
       <div className="composerUsagePills" aria-label="Thread usage">
         <button
           type="button"
-          className={`usagePill statusPill${simpleStatuses.length ? " available" : ""}`}
+          className={statusButtonClass}
           disabled={!simpleStatuses.length}
           title={statusButtonTitle}
+          aria-pressed={simpleStatuses.length ? statusPanelExpanded : undefined}
           onClick={() => {
-            if (!activeThread?.threadId) return;
+            if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
             setHiddenStatusTurns((current) => {
-              if (!(activeThread.threadId in current)) return current;
+              if (current[activeThread.threadId] !== latestTurnStatusScope.key) {
+                return {
+                  ...current,
+                  [activeThread.threadId]: latestTurnStatusScope.key
+                };
+              }
               const next = { ...current };
               delete next[activeThread.threadId];
               return next;

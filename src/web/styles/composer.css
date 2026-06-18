@@ -435,8 +435,21 @@
   font-weight: 750;
 }
 
+.statusPill.available.collapsed {
+  border-color: #26342a;
+  background: #26342a;
+  color: #ffffff;
+  box-shadow: 0 2px 7px rgba(38, 52, 42, 0.18);
+}
+
 .statusPill:hover:not(:disabled) {
   background: #eef3eb;
+}
+
+.statusPill.available.collapsed:hover:not(:disabled) {
+  border-color: #1d2821;
+  background: #1d2821;
+  color: #ffffff;
 }
 
 .statusPill:disabled {
