@@ -275,6 +275,8 @@ const main = async () => {
     }
     fake.emitTokenUsage(activeWebTurn);
     await assertThreadUsageRateLimits(apiBase, fake.threadId);
+    fake.emitTokenUsageWithoutRateLimits("context-only-usage");
+    await assertThreadUsageRateLimits(apiBase, fake.threadId);
     console.log("app-server token usage rate limits ok");
     fake.completeTurn(activeWebTurn);
     console.log("web running turn steer ok");
@@ -804,6 +806,36 @@ class FakeMachine {
   emitTokenUsage(command: SessionCommand, secondaryUsedPercent = 64, secondaryWindowMinutes = 10080) {
     const threadId = command.threadId ?? this.options.threadId;
     if (!command.turnId) throw new Error(`fake turn missing turnId: ${JSON.stringify(command)}`);
+    this.emitTokenUsageForTurnId(threadId, command.turnId, {
+      rateLimits: {
+        primary: {
+          usedPercent: 12.5,
+          windowMinutes: 300,
+          resetsAt: 1781058359
+        },
+        secondary: {
+          usedPercent: secondaryUsedPercent,
+          windowMinutes: secondaryWindowMinutes,
+          resetsAt: 1781140554
+        }
+      }
+    });
+  }
+
+  emitTokenUsageWithoutRateLimits(turnId: string) {
+    this.emitTokenUsageForTurnId(this.options.threadId, turnId);
+  }
+
+  private emitTokenUsageForTurnId(
+    threadId: string,
+    turnId: string,
+    options: {
+      rateLimits?: {
+        primary: { usedPercent: number; windowMinutes: number; resetsAt: number };
+        secondary: { usedPercent: number; windowMinutes: number; resetsAt: number };
+      };
+    } = {}
+  ) {
     this.send({
       type: "session_event",
       sessionId: this.options.sessionId,
@@ -815,7 +847,7 @@ class FakeMachine {
           method: "thread/tokenUsage/updated",
           params: {
             threadId,
-            turnId: command.turnId,
+            turnId,
             tokenUsage: {
               last: {
                 inputTokens: 1200,
@@ -825,24 +857,20 @@ class FakeMachine {
                 totalTokens: 1300
               },
               modelContextWindow: 200000,
-              rateLimits: {
-                limitId: "codex",
-                limitName: null,
-                primary: {
-                  usedPercent: 12.5,
-                  windowMinutes: 300,
-                  resetsAt: 1781058359
-                },
-                secondary: {
-                  usedPercent: secondaryUsedPercent,
-                  windowMinutes: secondaryWindowMinutes,
-                  resetsAt: 1781140554
-                },
-                credits: null,
-                individualLimit: null,
-                planType: "pro",
-                rateLimitReachedType: null
-              }
+              ...(options.rateLimits
+                ? {
+                  rateLimits: {
+                    limitId: "codex",
+                    limitName: null,
+                    primary: options.rateLimits.primary,
+                    secondary: options.rateLimits.secondary,
+                    credits: null,
+                    individualLimit: null,
+                    planType: "pro",
+                    rateLimitReachedType: null
+                  }
+                }
+                : {})
             }
           }
         }

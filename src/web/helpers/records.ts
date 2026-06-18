@@ -1,4 +1,4 @@
-import { threadUsageFromRecord } from "../../core/threadUsage.js";
+import { threadUsageFromRecords } from "../../core/threadUsage.js";
 export {
   isTaskCompleteRecord,
   taskCompleteNotification,
@@ -12,11 +12,8 @@ import { compactLine, rawModelLabel, serviceTierDisplayLabel, turnIdFromAppRecor
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
 
 export const latestThreadUsageFromRecords = (records: CodexRecord[]): ThreadUsage | null => {
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    const usage = threadUsageFromRecord(records[index]);
-    if (usage) return usage;
-  }
-  return null;
+  const usage = threadUsageFromRecords(records);
+  return usage.context || usage.primaryRateLimit || usage.secondaryRateLimit ? usage : null;
 };
 
 export const mergeThreadUsage = (latest: ThreadUsage | null, fallback: ThreadUsage | null): ThreadUsage | null => {
