@@ -1837,6 +1837,7 @@ export class ThreadHub {
     const status = options.statusOverride ?? goal?.status ?? thread.goalRunPolicyStatus ?? "active";
     const objective = goal?.objective ?? thread.goalRunPolicyObjective ?? options.fallbackObjective?.trim();
     if (!objective || status !== "active") return false;
+    if (policy.targetRemainingPercent >= 100) return false;
     const weeklyRemainingPercent = this.weeklyRemainingPercent(thread);
     if (weeklyRemainingPercent === null && !options.allowUnknownUsage) return false;
     if (weeklyRemainingPercent !== null && weeklyRemainingPercent <= policy.targetRemainingPercent) return false;
