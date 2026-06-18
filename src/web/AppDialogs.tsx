@@ -225,8 +225,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <input
                 type="number"
                 min={0}
-                max={99}
-                step={1}
+                max={99.9}
+                step={0.1}
                 value={goalDialog.targetRemainingPercent}
                 disabled={!goalDialog.consumeUntilWeeklyRemaining}
                 onChange={(event) => setGoalDialog((current) => current
