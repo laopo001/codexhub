@@ -510,6 +510,16 @@ const main = async () => {
     await fake.expectNoTurn(150);
     console.log("consume-until manual resume ok");
 
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, { method: "DELETE" });
+    await fake.nextSessionCommand("clear_goal");
+    const clearedPolicyDetail = await apiJson<ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    if (clearedPolicyDetail.goalRunPolicy !== null) {
+      throw new Error(`goal clear did not clear run policy: ${JSON.stringify(clearedPolicyDetail.goalRunPolicy)}`);
+    }
+    console.log("consume-until clear removes policy ok");
+
     const created = await apiJson<{ task?: LocalTask }>(apiBase, "/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
