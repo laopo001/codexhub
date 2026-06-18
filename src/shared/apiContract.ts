@@ -398,7 +398,7 @@ export const threadGoalStatusSchema = z.enum(["active", "paused", "blocked", "us
 
 export const threadGoalRunPolicySchema = z.object({
   type: z.literal("consumeUntilWeeklyRemainingAtOrBelow"),
-  targetRemainingPercent: z.number().min(0).max(100)
+  targetRemainingPercent: z.number().finite().min(0).max(100)
 }).strict();
 
 export const threadGoalUpdateSchema = z.object({

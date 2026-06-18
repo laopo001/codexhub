@@ -520,10 +520,16 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       ctx.setGoalDialog((current) => current ? { ...current, error: "目标不能为空" } : current);
       return;
     }
-    const targetRemainingPercent = Number(dialog.targetRemainingPercent);
+    const targetRemainingPercentText = dialog.targetRemainingPercent.trim();
+    const targetRemainingPercent = Number(targetRemainingPercentText);
     if (
       dialog.consumeUntilWeeklyRemaining
-      && (!Number.isFinite(targetRemainingPercent) || targetRemainingPercent < 0 || targetRemainingPercent > 100)
+      && (
+        !targetRemainingPercentText
+        || !Number.isFinite(targetRemainingPercent)
+        || targetRemainingPercent < 0
+        || targetRemainingPercent > 100
+      )
     ) {
       ctx.setGoalDialog((current) => current ? { ...current, error: "weekly 剩余目标必须在 0 到 100 之间" } : current);
       return;

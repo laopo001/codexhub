@@ -328,6 +328,25 @@ const main = async () => {
     fake.completeTurn(activeGoalTurn);
     console.log("web running goal update ok");
 
+    await expectApiError(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          objective: "invalid weekly target",
+          status: "active",
+          runPolicy: {
+            type: "consumeUntilWeeklyRemainingAtOrBelow",
+            targetRemainingPercent: 101
+          }
+        })
+      },
+      400
+    );
+    console.log("consume-until invalid target rejected ok");
+
     const consumeObjective = "consume weekly budget until target";
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
       method: "POST",
@@ -1160,6 +1179,22 @@ const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: Re
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) throw new Error(`HTTP ${response.status} ${pathname}: ${text}`);
   return data as T;
+};
+
+const expectApiError = async (
+  apiBase: string,
+  pathname: string,
+  init: RequestInit,
+  expectedStatus: number
+) => {
+  const response = await fetch(new URL(pathname, apiBase), {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(30_000)
+  });
+  const text = await response.text();
+  if (response.status !== expectedStatus) {
+    throw new Error(`expected HTTP ${expectedStatus} ${pathname}, got ${response.status}: ${text}`);
+  }
 };
 
 const assertNoWorkerId = (value: unknown, label: string) => {
