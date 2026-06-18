@@ -822,6 +822,10 @@ export class ThreadHub {
       ? this.waitForCommand<void>(commandId, "set_goal", thread.threadId, undefined, thread.workingDirectory)
       : Promise.resolve();
     const previousPolicy = thread.goalRunPolicy ?? null;
+    const previousPolicyObjective = thread.goalRunPolicyObjective;
+    const previousPolicyStatus = thread.goalRunPolicyStatus;
+    const previousSkipNextPolicyRun = thread.skipNextGoalRunPolicyRun;
+    const policyCacheChanged = hasOwn(goal, "runPolicy") || hasOwn(goal, "objective") || hasOwn(goal, "status");
     if (hasOwn(goal, "runPolicy")) {
       thread.goalRunPolicy = normalizeThreadGoalRunPolicy(goal.runPolicy);
       thread.skipNextGoalRunPolicyRun = false;
@@ -857,12 +861,11 @@ export class ThreadHub {
         });
       }
     }, (error) => {
-      if (hasOwn(goal, "runPolicy")) {
+      if (policyCacheChanged) {
         thread.goalRunPolicy = previousPolicy;
-        if (!previousPolicy) {
-          thread.goalRunPolicyObjective = undefined;
-          thread.goalRunPolicyStatus = undefined;
-        }
+        thread.goalRunPolicyObjective = previousPolicyObjective;
+        thread.goalRunPolicyStatus = previousPolicyStatus;
+        thread.skipNextGoalRunPolicyRun = previousSkipNextPolicyRun;
         thread.updatedAt = new Date().toISOString();
         this.publish(thread, "thread");
       }

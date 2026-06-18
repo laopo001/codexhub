@@ -437,6 +437,37 @@ const main = async () => {
     await fake.expectNoTurn(150);
     console.log("consume-until weekly goal policy ok");
 
+    fake.failNextSetGoal("set goal rejected");
+    const failedGoalRequest = expectApiError(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          objective: "failed goal update should roll back",
+          status: "active",
+          runPolicy: {
+            type: "consumeUntilWeeklyRemainingAtOrBelow",
+            targetRemainingPercent: 90
+          }
+        })
+      },
+      409
+    );
+    await fake.nextSessionCommand("set_goal");
+    await failedGoalRequest;
+    const rollbackDetail = await apiJson<ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    if (
+      rollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
+      || rollbackDetail.goalRunPolicy.targetRemainingPercent !== 20
+    ) {
+      throw new Error(`failed goal update did not roll back policy: ${JSON.stringify(rollbackDetail.goalRunPolicy)}`);
+    }
+    console.log("consume-until failed goal update rollback ok");
+
     const rateLimitedObjective = "pause consume policy on quota error";
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
       method: "POST",
@@ -547,6 +578,7 @@ const main = async () => {
 class FakeMachine {
   private ws: WebSocket | null = null;
   private sessionRegistered = false;
+  private nextSetGoalError: string | null = null;
   private pendingTurns: SessionCommand[] = [];
   private pendingSteers: SessionCommand[] = [];
   private pendingSessionCommandsByType = new Map<string, SessionCommand[]>();
@@ -636,6 +668,10 @@ class FakeMachine {
 
   async nextSessionCommand(type: string, timeoutMs = 5000) {
     return await this.waitForSessionCommand(type, timeoutMs);
+  }
+
+  failNextSetGoal(message: string) {
+    this.nextSetGoalError = message;
   }
 
   async expectNoSessionCommand(type: string, timeoutMs = 100) {
@@ -845,6 +881,17 @@ class FakeMachine {
     }
     if (command.type !== "turn") {
       if (command.type === "set_goal") {
+        if (this.nextSetGoalError) {
+          const message = this.nextSetGoalError;
+          this.nextSetGoalError = null;
+          this.send({
+            type: "session_command_error",
+            sessionId: this.options.sessionId,
+            commandId: command.commandId,
+            message
+          });
+          return;
+        }
         this.send({
           type: "session_command_result",
           sessionId: this.options.sessionId,
