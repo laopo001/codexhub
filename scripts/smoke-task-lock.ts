@@ -347,6 +347,26 @@ const main = async () => {
     );
     console.log("consume-until invalid target rejected ok");
 
+    const nonWeeklyObjective = "do not continue on non-weekly secondary window";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: nonWeeklyObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 20
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    const nonWeeklyTurn = await fake.nextTurn();
+    fake.emitTokenUsage(nonWeeklyTurn, 64, 300);
+    fake.completeTurn(nonWeeklyTurn);
+    await fake.expectNoTurn(150);
+    console.log("consume-until ignores non-weekly secondary window ok");
+
     const consumeObjective = "consume weekly budget until target";
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
       method: "POST",
@@ -623,7 +643,7 @@ class FakeMachine {
     });
   }
 
-  emitTokenUsage(command: SessionCommand, secondaryUsedPercent = 64) {
+  emitTokenUsage(command: SessionCommand, secondaryUsedPercent = 64, secondaryWindowMinutes = 10080) {
     const threadId = command.threadId ?? this.options.threadId;
     if (!command.turnId) throw new Error(`fake turn missing turnId: ${JSON.stringify(command)}`);
     this.send({
@@ -657,7 +677,7 @@ class FakeMachine {
                 },
                 secondary: {
                   usedPercent: secondaryUsedPercent,
-                  windowMinutes: 10080,
+                  windowMinutes: secondaryWindowMinutes,
                   resetsAt: 1781140554
                 },
                 credits: null,

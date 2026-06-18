@@ -3,7 +3,7 @@ import { recordsToViews } from "./codexRecordView.js";
 import { emptyThreadUsage, threadRateLimitsFromValue, threadUsageFromRecords } from "./threadUsage.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
-import type { ThreadOptions, ThreadUsage, Usage } from "../shared/usageTypes.js";
+import type { ThreadOptions, ThreadRateLimitUsage, ThreadUsage, Usage } from "../shared/usageTypes.js";
 import type {
   InternalSessionRegistration,
   PendingCommand,
@@ -1657,8 +1657,8 @@ export class ThreadHub {
   }
 
   private weeklyRemainingPercent(thread: ThreadState) {
-    const limit = thread.threadUsage.secondaryRateLimit
-      ?? this.sessions.get(thread.sessionId ?? "")?.accountRateLimits?.secondaryRateLimit
+    const limit = weeklyRateLimitUsage(thread.threadUsage.secondaryRateLimit)
+      ?? weeklyRateLimitUsage(this.sessions.get(thread.sessionId ?? "")?.accountRateLimits?.secondaryRateLimit)
       ?? null;
     if (!limit || !Number.isFinite(limit.usedPercent)) return null;
     return Math.max(0, Math.min(100, 100 - limit.usedPercent));
@@ -2942,6 +2942,11 @@ const normalizeThreadGoalRunPolicy = (policy: ThreadGoalUpdate["runPolicy"]): Th
 
 const clampPercent = (value: number) =>
   Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+
+const weeklyRateLimitWindowMinutes = 7 * 24 * 60;
+
+const weeklyRateLimitUsage = (limit: ThreadRateLimitUsage | null | undefined) =>
+  limit?.windowMinutes === weeklyRateLimitWindowMinutes ? limit : null;
 
 const imageUrls = (input: ProxyInput) => {
   if (typeof input === "string") return [];
