@@ -797,6 +797,10 @@ export class ThreadHub {
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "clear_goal", thread.threadId, undefined, thread.workingDirectory);
+    const previousPolicy = thread.goalRunPolicy ?? null;
+    const previousPolicyObjective = thread.goalRunPolicyObjective;
+    const previousPolicyStatus = thread.goalRunPolicyStatus;
+    const previousSkipNextPolicyRun = thread.skipNextGoalRunPolicyRun;
     thread.goalRunPolicy = null;
     thread.goalRunPolicyObjective = undefined;
     thread.goalRunPolicyStatus = undefined;
@@ -810,7 +814,15 @@ export class ThreadHub {
       createdAt: new Date().toISOString(),
       threadId: thread.threadId
     });
-    return promise;
+    return promise.catch((error) => {
+      thread.goalRunPolicy = previousPolicy;
+      thread.goalRunPolicyObjective = previousPolicyObjective;
+      thread.goalRunPolicyStatus = previousPolicyStatus;
+      thread.skipNextGoalRunPolicyRun = previousSkipNextPolicyRun;
+      thread.updatedAt = new Date().toISOString();
+      this.publish(thread, "thread");
+      throw error;
+    });
   }
 
   private setThreadGoal(thread: ThreadState, goal: ThreadGoalUpdate) {

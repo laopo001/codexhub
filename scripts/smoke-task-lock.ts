@@ -532,6 +532,26 @@ const main = async () => {
     await fake.expectNoTurn(150);
     console.log("consume-until manual resume ok");
 
+    fake.failNextClearGoal("clear goal rejected");
+    const failedClearGoalRequest = expectApiError(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
+      { method: "DELETE" },
+      409
+    );
+    await fake.nextSessionCommand("clear_goal");
+    await failedClearGoalRequest;
+    const clearRollbackDetail = await apiJson<ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    if (
+      clearRollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
+      || clearRollbackDetail.goalRunPolicy.targetRemainingPercent !== 10
+    ) {
+      throw new Error(`failed goal clear did not roll back policy: ${JSON.stringify(clearRollbackDetail.goalRunPolicy)}`);
+    }
+    console.log("consume-until failed clear rollback ok");
+
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, { method: "DELETE" });
     await fake.nextSessionCommand("clear_goal");
     const clearedPolicyDetail = await apiJson<ThreadDetail & {
@@ -611,6 +631,7 @@ class FakeMachine {
   private ws: WebSocket | null = null;
   private sessionRegistered = false;
   private nextSetGoalError: string | null = null;
+  private nextClearGoalError: string | null = null;
   private pendingTurns: SessionCommand[] = [];
   private pendingSteers: SessionCommand[] = [];
   private pendingSessionCommandsByType = new Map<string, SessionCommand[]>();
@@ -704,6 +725,10 @@ class FakeMachine {
 
   failNextSetGoal(message: string) {
     this.nextSetGoalError = message;
+  }
+
+  failNextClearGoal(message: string) {
+    this.nextClearGoalError = message;
   }
 
   async expectNoSessionCommand(type: string, timeoutMs = 100) {
@@ -952,6 +977,17 @@ class FakeMachine {
         return;
       }
       if (command.type === "clear_goal") {
+        if (this.nextClearGoalError) {
+          const message = this.nextClearGoalError;
+          this.nextClearGoalError = null;
+          this.send({
+            type: "session_command_error",
+            sessionId: this.options.sessionId,
+            commandId: command.commandId,
+            message
+          });
+          return;
+        }
         this.send({
           type: "session_event",
           sessionId: this.options.sessionId,
