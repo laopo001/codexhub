@@ -12,6 +12,7 @@ import {
   formatRateLimitRemaining,
   formatResetTitle,
   latestTurnStatusFromRecords,
+  latestUserTurnStatusScope,
   shortId,
   threadDisplayRecords,
   threadDisplayTitle
@@ -38,7 +39,7 @@ type ComposerThreadControlsProps = {
   setHiddenStatusTurns: AppState["setHiddenStatusTurns"];
   setThreadControlsMenuOpen: AppState["setThreadControlsMenuOpen"];
   setThreadModelDialogOpen: AppState["setThreadModelDialogOpen"];
-  showInlineStatusPanel: AppSelectors["showInlineStatusPanel"];
+  showStatusRows: AppSelectors["showStatusRows"];
   simpleStatuses: AppSelectors["simpleStatuses"];
   turnUiState: AppSelectors["turnUiState"];
 };
@@ -92,7 +93,7 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
       setHiddenStatusTurns={state.setHiddenStatusTurns}
       setThreadControlsMenuOpen={state.setThreadControlsMenuOpen}
       setThreadModelDialogOpen={state.setThreadModelDialogOpen}
-      showInlineStatusPanel={selectors.showInlineStatusPanel}
+      showStatusRows={selectors.showStatusRows}
       simpleStatuses={selectors.simpleStatuses}
       turnUiState={selectors.turnUiState}
     />
@@ -189,12 +190,12 @@ const ComposerThreadControls = ({
   setHiddenStatusTurns,
   setThreadControlsMenuOpen,
   setThreadModelDialogOpen,
-  showInlineStatusPanel,
+  showStatusRows,
   simpleStatuses,
   turnUiState
 }: ComposerThreadControlsProps) => {
   const statusButtonLabel = simpleStatuses.length ? `Status ${simpleStatuses.length}` : "Status";
-  const statusPanelExpanded = Boolean(simpleStatuses.length && showInlineStatusPanel);
+  const statusPanelExpanded = Boolean(simpleStatuses.length && showStatusRows);
   const statusButtonClass = [
     "usagePill",
     "statusPill",
@@ -317,38 +318,64 @@ export const threadTurnMeta = (
 ): ThreadTurnMeta => {
   const activeStatus = turnStatus?.status === "pending" || turnStatus?.status === "in_progress";
   const running = Boolean(thread.running || activeStatus);
-  if (running) {
-    const startedAt = latestTurnStartedAt(records) ?? (activeStatus ? turnStatus?.at : undefined);
-    const startedMs = startedAt ? Date.parse(startedAt) : NaN;
-    return {
-      status: "running",
-      duration: Number.isFinite(startedMs) ? formatThreadDuration(nowMs - startedMs) : ""
-    };
-  }
-  const durationMs = latestCompletedTurnDurationMs(records);
+  const durationMs = activityDurationMs(
+    latestUserTurnStatusScope(records).records,
+    running,
+    nowMs,
+    activeStatus ? turnStatus?.at : undefined
+  );
   return {
-    status: "idle",
+    status: running ? "running" : "idle",
     duration: durationMs == null ? "" : formatThreadDuration(durationMs)
   };
 };
 
-const latestTurnStartedAt = (records: CodexRecord[]) => {
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    const record = records[index];
+const activityDurationMs = (
+  records: CodexRecord[],
+  running: boolean,
+  nowMs: number,
+  runningFallbackAt?: string
+) => {
+  let totalMs = 0;
+  let hasDuration = false;
+  let openStartedMs: number | null = null;
+  for (const record of records) {
     const payload = asRecord(record.payload);
-    if (record.type === "event_msg" && payload?.type === "task_started") return record.timestamp;
+    if (record.type !== "event_msg" || !payload) continue;
+    if (payload.type === "task_started") {
+      openStartedMs = parseRecordTimestamp(record);
+      continue;
+    }
+    if (payload.type !== "task_complete" && payload.type !== "turn_aborted") continue;
+    const duration = payload.duration_ms;
+    if (typeof duration === "number" && Number.isFinite(duration)) {
+      totalMs += Math.max(0, duration);
+      hasDuration = true;
+    } else {
+      const finishedMs = parseRecordTimestamp(record);
+      if (openStartedMs !== null && finishedMs !== null) {
+        totalMs += Math.max(0, finishedMs - openStartedMs);
+        hasDuration = true;
+      }
+    }
+    openStartedMs = null;
   }
-  return undefined;
+  if (running) {
+    const startedMs = openStartedMs ?? parseTimestamp(runningFallbackAt);
+    if (startedMs !== null) {
+      totalMs += Math.max(0, nowMs - startedMs);
+      hasDuration = true;
+    }
+  }
+  return hasDuration ? totalMs : null;
 };
 
-const latestCompletedTurnDurationMs = (records: CodexRecord[]) => {
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    const payload = asRecord(records[index].payload);
-    if (!payload || (payload.type !== "task_complete" && payload.type !== "turn_aborted")) continue;
-    const duration = payload.duration_ms;
-    return typeof duration === "number" && Number.isFinite(duration) ? Math.max(0, duration) : undefined;
-  }
-  return undefined;
+const parseRecordTimestamp = (record: CodexRecord) => parseTimestamp(record.timestamp);
+
+const parseTimestamp = (value: string | undefined) => {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
 };
 
 export const formatThreadDuration = (durationMs: number) => {

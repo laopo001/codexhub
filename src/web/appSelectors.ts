@@ -273,12 +273,22 @@ export const useAppSelectors = (state: AppState) => {
     () => turnUiStateFromStatus(latestTurnStatus, Boolean(activeThread?.running)),
     [activeThread?.running, latestTurnStatus]
   );
-  const statusPanelHidden = Boolean(
+  const statusRowsHidden = Boolean(
     activeThread?.threadId
     && latestTurnStatusScope.key
     && state.hiddenStatusTurns[activeThread.threadId] === latestTurnStatusScope.key
   );
-  const showInlineStatusPanel = Boolean(simpleStatuses.length && !statusPanelHidden);
+  const showStatusRows = Boolean(simpleStatuses.length && !statusRowsHidden);
+  const showInlineStatusPanel = Boolean(
+    activeThread
+    && (
+      showStatusRows
+      || statusRowsHidden
+      || activeThread.running
+      || turnUiState.kind === "running"
+      || latestTurnStatus
+    )
+  );
   const statusScopeKey = activeThread?.threadId && latestTurnStatusScope.key
     ? `${activeThread.threadId}:${latestTurnStatusScope.key}`
     : "";
@@ -429,6 +439,7 @@ export const useAppSelectors = (state: AppState) => {
     setComposerMode,
     showComposerSendButton,
     showInlineStatusPanel,
+    showStatusRows,
     simpleStatuses,
     sshConfigHostOptions,
     statusScopeKey,

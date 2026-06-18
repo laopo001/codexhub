@@ -251,6 +251,7 @@ export type AppViewModel = AppSidebarViewModel & {
   setThreadPicker: React.Dispatch<React.SetStateAction<ThreadPickerState | null>>;
   showComposerSendButton: boolean;
   showInlineStatusPanel: boolean;
+  showStatusRows: boolean;
   sidebarCollapsed: boolean;
   simpleStatuses: ActivityStatusView[];
   statusScopeKey: string;
