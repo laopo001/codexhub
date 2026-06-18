@@ -2319,6 +2319,7 @@ const codexRecordFromAppServerUsage = (
   const last = asRecord(usage.last);
   if (!last) return null;
   const rateLimits = tokenUsageRateLimits(usage.rateLimits ?? usage.rate_limits);
+  const modelContextWindow = tokenUsageNumber(usage.modelContextWindow ?? usage.model_context_window);
   return {
     id: `app:${threadId}:${turnId}:usage`,
     timestamp: new Date().toISOString(),
@@ -2327,7 +2328,7 @@ const codexRecordFromAppServerUsage = (
       type: "token_count",
       info: {
         last_token_usage: tokenUsageBreakdown(last),
-        model_context_window: typeof usage.modelContextWindow === "number" ? usage.modelContextWindow : undefined
+        model_context_window: modelContextWindow
       },
       ...(rateLimits ? { rate_limits: rateLimits } : {})
     },
@@ -2345,11 +2346,11 @@ const normalizeRawResponseItem = (item: Record<string, unknown>) => {
 };
 
 const tokenUsageBreakdown = (value: Record<string, unknown>) => ({
-  input_tokens: tokenUsageNumber(value.inputTokens),
-  cached_input_tokens: tokenUsageNumber(value.cachedInputTokens),
-  output_tokens: tokenUsageNumber(value.outputTokens),
-  reasoning_output_tokens: tokenUsageNumber(value.reasoningOutputTokens),
-  total_tokens: tokenUsageNumber(value.totalTokens)
+  input_tokens: tokenUsageNumber(value.inputTokens ?? value.input_tokens),
+  cached_input_tokens: tokenUsageNumber(value.cachedInputTokens ?? value.cached_input_tokens),
+  output_tokens: tokenUsageNumber(value.outputTokens ?? value.output_tokens),
+  reasoning_output_tokens: tokenUsageNumber(value.reasoningOutputTokens ?? value.reasoning_output_tokens),
+  total_tokens: tokenUsageNumber(value.totalTokens ?? value.total_tokens)
 });
 
 const tokenUsageRateLimits = (value: unknown) => {

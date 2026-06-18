@@ -277,6 +277,9 @@ const main = async () => {
     await assertThreadUsageRateLimits(apiBase, fake.threadId);
     fake.emitTokenUsageWithoutRateLimits("context-only-usage");
     await assertThreadUsageRateLimits(apiBase, fake.threadId);
+    fake.emitSnakeCaseTokenUsageWithoutRateLimits("snake-context-usage");
+    await assertThreadUsageContext(apiBase, fake.threadId, 321, 456000);
+    await assertThreadUsageRateLimits(apiBase, fake.threadId);
     console.log("app-server token usage rate limits ok");
     fake.completeTurn(activeWebTurn);
     console.log("web running turn steer ok");
@@ -826,6 +829,21 @@ class FakeMachine {
     this.emitTokenUsageForTurnId(this.options.threadId, turnId);
   }
 
+  emitSnakeCaseTokenUsageWithoutRateLimits(turnId: string) {
+    this.emitTokenUsageForTurnId(this.options.threadId, turnId, {
+      tokenUsage: {
+        last: {
+          input_tokens: 321,
+          cached_input_tokens: 123,
+          output_tokens: 222,
+          reasoning_output_tokens: 111,
+          total_tokens: 654
+        },
+        model_context_window: 456000
+      }
+    });
+  }
+
   private emitTokenUsageForTurnId(
     threadId: string,
     turnId: string,
@@ -834,6 +852,7 @@ class FakeMachine {
         primary: { usedPercent: number; windowMinutes: number; resetsAt: number };
         secondary: { usedPercent: number; windowMinutes: number; resetsAt: number };
       };
+      tokenUsage?: Record<string, unknown>;
     } = {}
   ) {
     this.send({
@@ -849,14 +868,16 @@ class FakeMachine {
             threadId,
             turnId,
             tokenUsage: {
-              last: {
-                inputTokens: 1200,
-                cachedInputTokens: 800,
-                outputTokens: 90,
-                reasoningOutputTokens: 10,
-                totalTokens: 1300
-              },
-              modelContextWindow: 200000,
+              ...(options.tokenUsage ?? {
+                last: {
+                  inputTokens: 1200,
+                  cachedInputTokens: 800,
+                  outputTokens: 90,
+                  reasoningOutputTokens: 10,
+                  totalTokens: 1300
+                },
+                modelContextWindow: 200000
+              }),
               ...(options.rateLimits
                 ? {
                   rateLimits: {
@@ -1297,6 +1318,36 @@ const assertThreadUsageRateLimits = async (apiBase: string, threadId: string) =>
   }
 };
 
+const assertThreadUsageContext = async (
+  apiBase: string,
+  threadId: string,
+  usedTokens: number,
+  windowTokens: number
+) => {
+  const detail = await waitForThreadUsageContext(apiBase, threadId, usedTokens, windowTokens);
+  const usageRecord = detail.records?.find((record) => {
+    const payload = objectValue(record.payload);
+    const info = objectValue(payload?.info);
+    const lastUsage = objectValue(info?.last_token_usage);
+    return record.type === "event_msg"
+      && payload?.type === "token_count"
+      && lastUsage?.input_tokens === usedTokens;
+  });
+  const payload = objectValue(usageRecord?.payload);
+  const info = objectValue(payload?.info);
+  const lastUsage = objectValue(info?.last_token_usage);
+  if (
+    !usageRecord
+    || lastUsage?.cached_input_tokens !== 123
+    || lastUsage?.output_tokens !== 222
+    || lastUsage?.reasoning_output_tokens !== 111
+    || lastUsage?.total_tokens !== 654
+    || info?.model_context_window !== windowTokens
+  ) {
+    throw new Error(`token_count record did not normalize usage context: ${JSON.stringify(usageRecord)}`);
+  }
+};
+
 const waitForThreadUsage = async (apiBase: string, threadId: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 5000) {
@@ -1305,6 +1356,22 @@ const waitForThreadUsage = async (apiBase: string, threadId: string) => {
     await delay(100);
   }
   throw new Error(`thread ${threadId} did not receive token usage rate limits`);
+};
+
+const waitForThreadUsageContext = async (
+  apiBase: string,
+  threadId: string,
+  usedTokens: number,
+  windowTokens: number
+) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
+    const context = detail.threadUsage?.context;
+    if (context?.usedTokens === usedTokens && context.windowTokens === windowTokens) return detail;
+    await delay(100);
+  }
+  throw new Error(`thread ${threadId} did not receive token usage context`);
 };
 
 const waitForGoalStatus = async (
