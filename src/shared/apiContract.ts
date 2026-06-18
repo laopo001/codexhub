@@ -26,6 +26,7 @@ import type {
   ModelCatalogItem,
   SessionStreamEvent,
   SessionSummary,
+  ThreadGoalRunPolicy,
   ThreadCandidateSummary,
   ThreadDetail,
   ThreadGoalStatus,
@@ -55,6 +56,7 @@ export type {
   TaskRunStatus,
   ThreadCandidateSummary,
   ThreadDetail,
+  ThreadGoalRunPolicy,
   ThreadGoalStatus,
   ThreadRateLimitUsage,
   ThreadRateLimits,
@@ -394,10 +396,16 @@ export const threadRunOptionsSchema = z.object({
 
 export const threadGoalStatusSchema = z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]);
 
+export const threadGoalRunPolicySchema = z.object({
+  type: z.literal("consumeUntilWeeklyRemainingAtOrBelow"),
+  targetRemainingPercent: z.number().min(0).max(100)
+}).strict();
+
 export const threadGoalUpdateSchema = z.object({
   objective: z.string().min(1).nullable().optional(),
   status: threadGoalStatusSchema.nullable().optional(),
-  tokenBudget: z.number().int().positive().nullable().optional()
+  tokenBudget: z.number().int().positive().nullable().optional(),
+  runPolicy: threadGoalRunPolicySchema.nullable().optional()
 });
 
 export const threadApprovalDecisionSchema = z.object({

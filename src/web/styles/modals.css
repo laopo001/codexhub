@@ -199,6 +199,45 @@
   line-height: 1.5;
 }
 
+.goalPolicyToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #243126;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.goalPolicyToggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.goalPolicyField {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: #66715f;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.goalPolicyField input {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid #d8dfd4;
+  border-radius: 10px;
+  padding: 0 10px;
+  color: #17211a;
+}
+
+.goalPolicyField input:disabled {
+  background: #f5f6f3;
+  color: #98a092;
+}
+
 .goalDialogError {
   color: #8b3f31;
   font-size: 12px;

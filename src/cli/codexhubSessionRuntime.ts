@@ -1757,7 +1757,10 @@ const goalUpdateParams = (
   input: ProxyInput | undefined,
   options: ThreadRunOptions | undefined
 ) => {
-  const params: ThreadGoalUpdate = { ...(goal ?? {}) };
+  const params: ThreadGoalUpdate = {};
+  if (goal && hasOwn(goal, "objective")) params.objective = goal.objective;
+  if (goal && hasOwn(goal, "status")) params.status = goal.status;
+  if (goal && hasOwn(goal, "tokenBudget")) params.tokenBudget = goal.tokenBudget;
   if (params.objective === undefined && input && options) params.objective = goalObjective(input, options);
   if (params.status === undefined && options?.goalMode) params.status = "active";
   if (params.tokenBudget === undefined && options && hasOwn(options, "goalTokenBudget")) {

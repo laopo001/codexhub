@@ -26,6 +26,7 @@ import type {
   SessionSummary,
   SessionThreadCandidatesResult,
   ThreadDetail,
+  ThreadGoalRunPolicy,
   ThreadGoalUpdate,
   ThreadRunOptions,
   ThreadStreamEvent,
@@ -556,6 +557,7 @@ export class ThreadHub {
     const thread = this.requireThread(threadId);
     if (!thread.running) return { stopped: false };
     const session = this.requireThreadSession(thread);
+    thread.skipNextGoalRunPolicyRun = true;
     this.enqueueSessionCommand(session.sessionId, {
       commandId: randomUUID(),
       type: "stop",
@@ -794,6 +796,10 @@ export class ThreadHub {
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "clear_goal", thread.threadId, undefined, thread.workingDirectory);
+    thread.goalRunPolicy = null;
+    thread.goalRunPolicyObjective = undefined;
+    thread.goalRunPolicyStatus = undefined;
+    thread.skipNextGoalRunPolicyRun = false;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
     this.enqueueSessionCommand(session.sessionId, {
@@ -809,18 +815,57 @@ export class ThreadHub {
   private setThreadGoal(thread: ThreadState, goal: ThreadGoalUpdate) {
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
-    const promise = this.waitForCommand<void>(commandId, "set_goal", thread.threadId, undefined, thread.workingDirectory);
+    const appServerGoal = appServerGoalUpdate(goal);
+    const shouldSendGoal = hasThreadGoalPatch(appServerGoal);
+    const promise = shouldSendGoal
+      ? this.waitForCommand<void>(commandId, "set_goal", thread.threadId, undefined, thread.workingDirectory)
+      : Promise.resolve();
+    const previousPolicy = thread.goalRunPolicy ?? null;
+    if (hasOwn(goal, "runPolicy")) {
+      thread.goalRunPolicy = normalizeThreadGoalRunPolicy(goal.runPolicy);
+      thread.skipNextGoalRunPolicyRun = false;
+      if (!thread.goalRunPolicy) {
+        thread.goalRunPolicyObjective = undefined;
+        thread.goalRunPolicyStatus = undefined;
+      }
+    }
+    if (typeof goal.objective === "string" && goal.objective.trim()) {
+      thread.goalRunPolicyObjective = goal.objective.trim();
+    }
+    if (typeof goal.status === "string" && goal.status) {
+      thread.goalRunPolicyStatus = goal.status;
+    }
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
-    this.enqueueSessionCommand(session.sessionId, {
-      commandId,
-      type: "set_goal",
-      workingDirectory: thread.workingDirectory,
-      createdAt: new Date().toISOString(),
-      threadId: thread.threadId,
-      goal
+    if (shouldSendGoal) {
+      this.enqueueSessionCommand(session.sessionId, {
+        commandId,
+        type: "set_goal",
+        workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(),
+        threadId: thread.threadId,
+        goal: appServerGoal
+      });
+    }
+    return promise.then(() => {
+      if (thread.goalRunPolicy && goalUpdateCanStartRunPolicy(goal)) {
+        this.maybeStartGoalRunPolicyTurn(thread, {
+          allowUnknownUsage: true,
+          fallbackObjective: typeof appServerGoal.objective === "string" ? appServerGoal.objective : undefined
+        });
+      }
+    }, (error) => {
+      if (hasOwn(goal, "runPolicy")) {
+        thread.goalRunPolicy = previousPolicy;
+        if (!previousPolicy) {
+          thread.goalRunPolicyObjective = undefined;
+          thread.goalRunPolicyStatus = undefined;
+        }
+        thread.updatedAt = new Date().toISOString();
+        this.publish(thread, "thread");
+      }
+      throw error;
     });
-    return promise;
   }
 
   private queueTurn(thread: ThreadState, input: ProxyInput, source: "web" | "telegram" | "task", options?: ThreadRunOptions) {
@@ -1105,6 +1150,10 @@ export class ThreadHub {
       workingDirectory,
       sessionId: session.sessionId,
       threadOptions: { ...this.defaultThreadOptions },
+      goalRunPolicy: null,
+      goalRunPolicyObjective: undefined,
+      goalRunPolicyStatus: undefined,
+      goalRunPolicyTurnActive: false,
       running: false,
       title,
       updatedAt: now,
@@ -1191,6 +1240,7 @@ export class ThreadHub {
         type: "app_server_error",
         message: typeof error?.message === "string" ? error.message : stringify(params)
       });
+      if (thread.goalRunPolicyTurnActive) this.pauseGoalRunPolicy(thread);
       this.finishSessionTurn(thread);
       return;
     }
@@ -1533,11 +1583,16 @@ export class ThreadHub {
   ) {
     const rawGoal = asRecord(payload.goal) ?? payload;
     const threadId = threadGoalThreadId(payload, rawGoal) ?? thread.threadId;
-    const goal = {
+    const goal: Record<string, unknown> = {
       ...rawGoal,
       threadId,
       ...(typeof rawGoal.status === "string" ? {} : { status: "active" })
     };
+    if (thread.goalRunPolicy && threadId === thread.threadId) {
+      const objective = typeof goal.objective === "string" ? goal.objective.trim() : "";
+      if (objective) thread.goalRunPolicyObjective = objective;
+      if (typeof goal.status === "string" && goal.status) thread.goalRunPolicyStatus = goal.status;
+    }
     if (this.latestThreadGoalMatches(thread, threadId, goal)) return;
     this.appendHubRecord(thread, "event_msg", {
       ...payload,
@@ -1557,6 +1612,12 @@ export class ThreadHub {
     const latest = this.latestThreadGoalRecord(thread, threadId);
     if (options.ifKnownGoal && !latest) return;
     if (latest?.type === "thread_goal_cleared") return;
+    if (threadId === thread.threadId) {
+      thread.goalRunPolicy = null;
+      thread.goalRunPolicyObjective = undefined;
+      thread.goalRunPolicyStatus = undefined;
+      thread.skipNextGoalRunPolicyRun = false;
+    }
     this.appendHubRecord(thread, "event_msg", {
       ...payload,
       type: "thread_goal_cleared",
@@ -1581,6 +1642,24 @@ export class ThreadHub {
       return { type, payload };
     }
     return null;
+  }
+
+  private latestRunnableThreadGoal(thread: ThreadState) {
+    const latest = this.latestThreadGoalRecord(thread, thread.threadId);
+    if (!latest || latest.type !== "thread_goal_updated") return null;
+    const goal = asRecord(latest.payload?.goal);
+    const objective = typeof goal?.objective === "string" ? goal.objective.trim() : "";
+    const status = typeof goal?.status === "string" ? goal.status : "active";
+    if (!objective) return null;
+    return { objective, status };
+  }
+
+  private weeklyRemainingPercent(thread: ThreadState) {
+    const limit = thread.threadUsage.secondaryRateLimit
+      ?? this.sessions.get(thread.sessionId ?? "")?.accountRateLimits?.secondaryRateLimit
+      ?? null;
+    if (!limit || !Number.isFinite(limit.usedPercent)) return null;
+    return Math.max(0, Math.min(100, 100 - limit.usedPercent));
   }
 
   private appendUserInputRecord(thread: ThreadState, input: ProxyInput) {
@@ -1707,6 +1786,9 @@ export class ThreadHub {
   private finishSessionTurn(thread: ThreadState, error?: Error) {
     // 每个 turn 收尾时先兑现等待中的 command，再释放同 thread 的下一条 queued turn。
     const commandId = this.activeTurnCommands.get(thread.threadId);
+    const wasGoalRunPolicyTurn = Boolean(thread.goalRunPolicyTurnActive);
+    thread.goalRunPolicyTurnActive = false;
+    if (error && wasGoalRunPolicyTurn) this.pauseGoalRunPolicy(thread);
     if (commandId) {
       this.activeTurnCommands.delete(thread.threadId);
       if (error) this.rejectCommand(commandId, error);
@@ -1717,24 +1799,75 @@ export class ThreadHub {
     thread.appServerTurnId = undefined;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, wasRunning ? "done" : "thread");
-    this.startNextQueuedTurn(thread);
+    const startedQueuedTurn = this.startNextQueuedTurn(thread);
+    if (!startedQueuedTurn && !error) this.maybeStartGoalRunPolicyTurn(thread);
   }
 
-  private startNextQueuedTurn(thread: ThreadState) {
-    if (thread.running) return;
+  private startNextQueuedTurn(thread: ThreadState): boolean {
+    if (thread.running) return false;
     const queue = this.queuedTurns.get(thread.threadId);
     const next = queue?.shift();
     if (!queue || !next) {
       this.queuedTurns.delete(thread.threadId);
-      return;
+      return false;
     }
     if (!queue.length) this.queuedTurns.delete(thread.threadId);
     try {
       this.startTurn(thread, next.input, next.source, next.options).then(next.resolve, next.reject);
+      return true;
     } catch (error) {
       next.reject(error instanceof Error ? error : new Error(String(error)));
-      this.startNextQueuedTurn(thread);
+      return this.startNextQueuedTurn(thread);
     }
+  }
+
+  private maybeStartGoalRunPolicyTurn(
+    thread: ThreadState,
+    options: { allowUnknownUsage?: boolean; fallbackObjective?: string } = {}
+  ) {
+    if (thread.running || thread.skipNextGoalRunPolicyRun) {
+      thread.skipNextGoalRunPolicyRun = false;
+      return false;
+    }
+    const policy = thread.goalRunPolicy;
+    if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return false;
+    const goal = this.latestRunnableThreadGoal(thread);
+    const status = goal?.status ?? thread.goalRunPolicyStatus ?? "active";
+    const objective = goal?.objective ?? thread.goalRunPolicyObjective ?? options.fallbackObjective?.trim();
+    if (!objective || status !== "active") return false;
+    const weeklyRemainingPercent = this.weeklyRemainingPercent(thread);
+    if (weeklyRemainingPercent === null && !options.allowUnknownUsage) return false;
+    if (weeklyRemainingPercent !== null && weeklyRemainingPercent <= policy.targetRemainingPercent) return false;
+    try {
+      thread.goalRunPolicyTurnActive = true;
+      this.startTurn(thread, objective, "web", {
+        goalMode: true,
+        goalObjective: objective
+      }).catch((error) => {
+        this.pauseGoalRunPolicy(thread);
+      });
+      return true;
+    } catch (error) {
+      thread.goalRunPolicyTurnActive = false;
+      this.pauseGoalRunPolicy(thread);
+      return false;
+    }
+  }
+
+  private pauseGoalRunPolicy(thread: ThreadState) {
+    if (!thread.goalRunPolicy) return;
+    const goal = this.latestRunnableThreadGoal(thread);
+    const objective = goal?.objective ?? thread.goalRunPolicyObjective;
+    if (!objective) return;
+    thread.goalRunPolicyStatus = "paused";
+    this.appendThreadGoalUpdatedRecord(thread, {
+      threadId: thread.threadId,
+      goal: {
+        objective,
+        status: "paused"
+      },
+      message: "Goal paused"
+    });
   }
 
   private rejectQueuedTurns(threadId: string, error: Error) {
@@ -1781,7 +1914,8 @@ export class ThreadHub {
       updatedAt: thread.updatedAt,
       messageCount: recordsToViews(thread.records).length,
       lastUsage: thread.lastUsage,
-      threadUsage: thread.threadUsage
+      threadUsage: thread.threadUsage,
+      goalRunPolicy: thread.goalRunPolicy ?? null
     };
   }
 
@@ -2782,6 +2916,30 @@ const goalUpdateFromInput = (input: ProxyInput, options: ThreadRunOptions): Thre
     ...(hasOwn(options, "goalTokenBudget") ? { tokenBudget: options.goalTokenBudget } : {})
   };
 };
+
+const appServerGoalUpdate = (goal: ThreadGoalUpdate): ThreadGoalUpdate => ({
+  ...(hasOwn(goal, "objective") ? { objective: goal.objective } : {}),
+  ...(hasOwn(goal, "status") ? { status: goal.status } : {}),
+  ...(hasOwn(goal, "tokenBudget") ? { tokenBudget: goal.tokenBudget } : {})
+});
+
+const hasThreadGoalPatch = (goal: ThreadGoalUpdate) =>
+  hasOwn(goal, "objective") || hasOwn(goal, "status") || hasOwn(goal, "tokenBudget");
+
+const goalUpdateCanStartRunPolicy = (goal: ThreadGoalUpdate) =>
+  (!hasOwn(goal, "status") || goal.status === "active")
+  && (hasOwn(goal, "runPolicy") || hasOwn(goal, "objective"));
+
+const normalizeThreadGoalRunPolicy = (policy: ThreadGoalUpdate["runPolicy"]): ThreadGoalRunPolicy | null => {
+  if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return null;
+  return {
+    type: "consumeUntilWeeklyRemainingAtOrBelow",
+    targetRemainingPercent: clampPercent(policy.targetRemainingPercent)
+  };
+};
+
+const clampPercent = (value: number) =>
+  Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 
 const imageUrls = (input: ProxyInput) => {
   if (typeof input === "string") return [];

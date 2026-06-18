@@ -255,6 +255,18 @@
   white-space: nowrap;
 }
 
+.goalStripPolicy {
+  flex: 0 0 auto;
+  border: 1px solid #dfe5dc;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #51604f;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
 .goalStripAge {
   flex: 0 0 auto;
   color: #8a9586;
@@ -544,6 +556,16 @@
 .composerIconButton:hover,
 .composerMoreButton:hover {
   background: #f4f6f1;
+}
+
+.composerGoalRunPolicyButton {
+  color: #4d5b4b;
+}
+
+.composerGoalRunPolicyButton svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.35;
 }
 
 .composerSessionPopover {

@@ -211,6 +211,30 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               rows={7}
               autoFocus
             />
+            <label className="goalPolicyToggle">
+              <input
+                type="checkbox"
+                checked={goalDialog.consumeUntilWeeklyRemaining}
+                onChange={(event) => setGoalDialog((current) => current
+                  ? { ...current, consumeUntilWeeklyRemaining: event.target.checked, error: "" }
+                  : current)}
+              />
+              <span>消耗到 weekly 剩余</span>
+            </label>
+            <label className="goalPolicyField">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={goalDialog.targetRemainingPercent}
+                disabled={!goalDialog.consumeUntilWeeklyRemaining}
+                onChange={(event) => setGoalDialog((current) => current
+                  ? { ...current, targetRemainingPercent: event.target.value, error: "" }
+                  : current)}
+              />
+              <span>%</span>
+            </label>
             {goalDialog.error ? <div className="goalDialogError">{goalDialog.error}</div> : null}
             <footer className="goalDialogActions">
               <button type="button" onClick={() => setGoalDialog(null)} disabled={goalDialog.saving}>取消</button>

@@ -5,6 +5,7 @@ import type {
   SessionCommand,
   SessionRegistration,
   SessionSummary,
+  ThreadGoalRunPolicy,
   ThreadRunOptions,
   ThreadStreamEvent
 } from "../shared/threadTypes.js";
@@ -28,6 +29,11 @@ export type ThreadState = {
   sessionId?: string;
   appServerTurnId?: string;
   threadOptions: ThreadOptions;
+  goalRunPolicy?: ThreadGoalRunPolicy | null;
+  goalRunPolicyObjective?: string;
+  goalRunPolicyStatus?: string;
+  goalRunPolicyTurnActive?: boolean;
+  skipNextGoalRunPolicyRun?: boolean;
   running: boolean;
   title: string;
   updatedAt: string;
