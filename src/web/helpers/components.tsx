@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { Switch } from "antd";
-import { ChevronDown, GripHorizontal } from "lucide-react";
+import { ChevronDown, ChevronUp, GripHorizontal } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadTurnMeta, WebRecordView } from "../types.js";
@@ -781,28 +781,34 @@ export const EmptyMessages = () => (
 export const ActivityStatusOverlay = ({
   statuses,
   turnMeta,
+  rowsHidden,
   expandedKeys,
-  onMinimize,
+  onToggleRows,
   onToggle
 }: {
   statuses: ActivityStatusView[];
   turnMeta: ThreadTurnMeta | null;
+  rowsHidden: boolean;
   expandedKeys: Set<string>;
-  onMinimize: () => void;
+  onToggleRows: () => void;
   onToggle: (key: string) => void;
 }) => {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<ActivityStatusDragState | null>(null);
   const [offset, setOffset] = useState<ActivityStatusOffset>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
-  const overlayClass = activityStatusOverlayClass(statuses);
+  const overlayClass = statuses.length
+    ? activityStatusOverlayClass(statuses)
+    : turnMeta?.status === "running" ? "in_progress" : "idle";
   const title = activityStatusTitle(statuses);
   const summaryClass = turnMeta?.status ?? "idle";
   const summaryLabel = activityStatusSummaryLabel(summaryClass);
-  const summaryDetails = [
-    `${statuses.length} item${statuses.length === 1 ? "" : "s"}`,
+  const summaryStatusText = [
+    summaryLabel,
     turnMeta?.duration || null
-  ].filter(Boolean).join(" · ");
+  ].filter(Boolean).join(" | ");
+  const summaryDetails = `${statuses.length} item${statuses.length === 1 ? "" : "s"}`;
+  const showRows = Boolean(statuses.length && !rowsHidden);
   const overlayStyle: React.CSSProperties = {
     transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`
   };
@@ -847,10 +853,10 @@ export const ActivityStatusOverlay = ({
     >
       <div className="activityStatusHeader">
         <span className="activityStatusHeaderTitle">Status</span>
-        <span className={`activityStatusHeaderState ${summaryClass}`}>{summaryLabel}</span>
-        <span className="activityStatusHeaderCount">{summaryDetails}</span>
+        <span className={`activityStatusHeaderState ${summaryClass}`}>{summaryStatusText}</span>
+        {statuses.length ? <span className="activityStatusHeaderCount">{summaryDetails}</span> : null}
       </div>
-      <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} />
+      {showRows ? <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} /> : null}
       <button
         type="button"
         className="activityStatusDragHandle"
@@ -867,9 +873,19 @@ export const ActivityStatusOverlay = ({
       >
         <GripHorizontal size={13} strokeWidth={2.4} aria-hidden="true" />
       </button>
-      <button type="button" className="activityStatusMinimize" onClick={onMinimize} aria-label="Hide status" title="Hide status">
-        <ChevronDown size={13} strokeWidth={2.4} aria-hidden="true" />
-      </button>
+      {statuses.length ? (
+        <button
+          type="button"
+          className="activityStatusMinimize"
+          onClick={onToggleRows}
+          aria-label={rowsHidden ? "Show status details" : "Hide status details"}
+          title={rowsHidden ? "Show status details" : "Hide status details"}
+        >
+          {rowsHidden
+            ? <ChevronUp size={13} strokeWidth={2.4} aria-hidden="true" />
+            : <ChevronDown size={13} strokeWidth={2.4} aria-hidden="true" />}
+        </button>
+      ) : null}
     </div>
   );
 };

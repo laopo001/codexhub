@@ -43,9 +43,9 @@ const MessagesTurnLoadingFooter = ({ context }: { context?: MessagesVirtuosoCont
       className="turnLoadingMessage"
       role="status"
       aria-live="polite"
-      aria-label={duration ? `Loading ${duration}` : "Loading"}
+      aria-label={duration ? `Running ${duration}` : "Running"}
     >
-      <span className="turnLoadingText">Loading</span>
+      <span className="turnLoadingText">Running</span>
       {duration ? <span className="turnLoadingDuration">· {duration}</span> : null}
     </div>
   );
@@ -165,6 +165,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setThreadPicker,
     showComposerSendButton,
     showInlineStatusPanel,
+    showStatusRows,
     sidebarCollapsed,
     simpleStatuses,
     sshConfigHostOptions,
@@ -432,13 +433,21 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                     <ActivityStatusOverlay
                       statuses={simpleStatuses}
                       turnMeta={activeThreadTurnMeta}
+                      rowsHidden={!showStatusRows && simpleStatuses.length > 0}
                       expandedKeys={activeExpandedStatusKeys}
-                      onMinimize={() => {
+                      onToggleRows={() => {
                         if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
-                        setHiddenStatusTurns((current) => ({
-                          ...current,
-                          [activeThread.threadId]: latestTurnStatusScope.key
-                        }));
+                        setHiddenStatusTurns((current) => {
+                          if (current[activeThread.threadId] !== latestTurnStatusScope.key) {
+                            return {
+                              ...current,
+                              [activeThread.threadId]: latestTurnStatusScope.key
+                            };
+                          }
+                          const next = { ...current };
+                          delete next[activeThread.threadId];
+                          return next;
+                        });
                       }}
                       onToggle={(key) => {
                         if (!statusScopeKey) return;
