@@ -552,6 +552,38 @@ const main = async () => {
     }
     console.log("consume-until failed clear rollback ok");
 
+    const stoppedObjective = "stop consume policy without retry";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: stoppedObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 1
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    const stoppedTurn = await fake.nextTurn();
+    const stopResult = await apiJson<{ stopped?: boolean }>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/stop`,
+      { method: "POST" }
+    );
+    if (!stopResult.stopped) {
+      throw new Error(`consume policy stop did not report stopped: ${JSON.stringify(stopResult)}`);
+    }
+    const stopCommand = await fake.nextSessionCommand("stop");
+    if (stopCommand.threadId !== fake.threadId || stopCommand.turnId !== stoppedTurn.turnId) {
+      throw new Error(`consume policy stop command mismatch: ${JSON.stringify(stopCommand)}`);
+    }
+    fake.emitTokenUsage(stoppedTurn, 64);
+    fake.completeTurn(stoppedTurn);
+    await fake.expectNoTurn(150);
+    console.log("consume-until manual stop halts continuation ok");
+
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, { method: "DELETE" });
     await fake.nextSessionCommand("clear_goal");
     const clearedPolicyDetail = await apiJson<ThreadDetail & {
@@ -1050,6 +1082,15 @@ class FakeMachine {
           sessionId: this.options.sessionId,
           commandId: command.commandId,
           result: { turnId: command.turnId }
+        });
+        return;
+      }
+      if (command.type === "stop") {
+        this.send({
+          type: "session_command_result",
+          sessionId: this.options.sessionId,
+          commandId: command.commandId,
+          result: { ok: true }
         });
         return;
       }
