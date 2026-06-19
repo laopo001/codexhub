@@ -443,6 +443,39 @@ const main = async () => {
     await fake.expectNoTurn(150);
     console.log("consume-until weekly goal policy ok");
 
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 17
+        }
+      })
+    });
+    await fake.expectNoSessionCommand("set_goal", 150);
+    const retargetDetail = await apiJson<ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    if (
+      retargetDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
+      || retargetDetail.goalRunPolicy.targetRemainingPercent !== 17
+    ) {
+      throw new Error(`consume policy-only retarget missing from thread detail: ${JSON.stringify(retargetDetail.goalRunPolicy)}`);
+    }
+    const retargetTurn = await fake.nextTurn();
+    if (
+      retargetTurn.input !== consumeObjective
+      || retargetTurn.options?.goalMode !== true
+      || retargetTurn.options.goalObjective !== consumeObjective
+    ) {
+      throw new Error(`consume policy-only retarget turn mismatch: ${JSON.stringify(retargetTurn)}`);
+    }
+    fake.emitTokenUsage(retargetTurn, 84);
+    fake.completeTurn(retargetTurn);
+    await fake.expectNoTurn(150);
+    console.log("consume-until policy-only retarget ok");
+
     fake.failNextSetGoal("set goal rejected");
     const failedGoalRequest = expectApiError(
       apiBase,
@@ -468,7 +501,7 @@ const main = async () => {
     }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
     if (
       rollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
-      || rollbackDetail.goalRunPolicy.targetRemainingPercent !== 20
+      || rollbackDetail.goalRunPolicy.targetRemainingPercent !== 17
     ) {
       throw new Error(`failed goal update did not roll back policy: ${JSON.stringify(rollbackDetail.goalRunPolicy)}`);
     }
