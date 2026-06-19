@@ -361,7 +361,7 @@ const main = async () => {
           status: "active",
           runPolicy: {
             type: "consumeUntilWeeklyRemainingAtOrBelow",
-            targetRemainingPercent: 101
+            targetRemainingPercent: 100
           }
         })
       },
@@ -388,22 +388,6 @@ const main = async () => {
     fake.completeTurn(nonWeeklyTurn);
     await fake.expectNoTurn(150);
     console.log("consume-until ignores non-weekly secondary window ok");
-
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        objective: "target 100 should not need consumption",
-        status: "active",
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 100
-        }
-      })
-    });
-    await fake.nextSessionCommand("set_goal");
-    await fake.expectNoTurn(150);
-    console.log("consume-until target 100 no-op ok");
 
     const consumeObjective = "consume weekly budget until target";
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {

@@ -2969,7 +2969,7 @@ const normalizeThreadGoalRunPolicy = (policy: ThreadGoalUpdate["runPolicy"]): Th
     typeof policy.targetRemainingPercent !== "number"
     || !Number.isFinite(policy.targetRemainingPercent)
     || policy.targetRemainingPercent < 0
-    || policy.targetRemainingPercent > 100
+    || policy.targetRemainingPercent >= 100
   ) return null;
   return {
     type: "consumeUntilWeeklyRemainingAtOrBelow",

@@ -1287,6 +1287,15 @@ const assertMalformedGoalRunPolicyIgnored = async () => {
   if (hub.getThread(threadId)?.goalRunPolicy !== null) {
     throw new Error(`malformed goal run policy was retained: ${JSON.stringify(hub.getThread(threadId)?.goalRunPolicy)}`);
   }
+  await hub.setGoal(threadId, {
+    runPolicy: {
+      type: "consumeUntilWeeklyRemainingAtOrBelow",
+      targetRemainingPercent: 100
+    }
+  });
+  if (hub.getThread(threadId)?.goalRunPolicy !== null) {
+    throw new Error(`100 percent goal run policy was retained: ${JSON.stringify(hub.getThread(threadId)?.goalRunPolicy)}`);
+  }
 };
 
 const assertAppServerServiceTierSettings = async () => {

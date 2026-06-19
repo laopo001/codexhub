@@ -140,7 +140,7 @@ const normalizeThreadGoalRunPolicy = (value: unknown): ThreadSummary["goalRunPol
   const policy = asRecord(value);
   if (policy?.type !== "consumeUntilWeeklyRemainingAtOrBelow") return null;
   const target = policy.targetRemainingPercent;
-  if (typeof target !== "number" || !Number.isFinite(target) || target < 0 || target > 100) return null;
+  if (typeof target !== "number" || !Number.isFinite(target) || target < 0 || target >= 100) return null;
   return {
     type: "consumeUntilWeeklyRemainingAtOrBelow",
     targetRemainingPercent: target
