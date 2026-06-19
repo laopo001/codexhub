@@ -224,10 +224,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setGoalDialog({
       threadId: activeThread.threadId,
       objective: activeGoal?.objective ?? activeThread.input,
-      consumeUntilWeeklyRemaining: Boolean(goalRunPolicy) || !activeGoal,
       targetRemainingPercent: goalRunPolicy
         ? String(goalRunPolicy.targetRemainingPercent)
-        : "60",
+        : "",
       saving: false,
       error: ""
     });
@@ -522,10 +521,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                   setGoalDialog({
                                     threadId: activeThread.threadId,
                                     objective: activeGoal.objective,
-                                    consumeUntilWeeklyRemaining: Boolean(goalRunPolicy),
                                     targetRemainingPercent: goalRunPolicy
                                       ? String(goalRunPolicy.targetRemainingPercent)
-                                      : "60",
+                                      : "",
                                     saving: false,
                                     error: ""
                                   });

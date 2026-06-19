@@ -523,13 +523,10 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const targetRemainingPercentText = dialog.targetRemainingPercent.trim();
     const targetRemainingPercent = Number(targetRemainingPercentText);
     if (
-      dialog.consumeUntilWeeklyRemaining
-      && (
-        !targetRemainingPercentText
-        || !Number.isFinite(targetRemainingPercent)
-        || targetRemainingPercent < 0
-        || targetRemainingPercent >= 100
-      )
+      !targetRemainingPercentText
+      || !Number.isFinite(targetRemainingPercent)
+      || targetRemainingPercent < 0
+      || targetRemainingPercent >= 100
     ) {
       ctx.setGoalDialog((current) => current ? { ...current, error: "weekly 剩余目标必须在 0 到小于 100 之间" } : current);
       return;
@@ -538,12 +535,10 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const saved = await updateThreadGoal(dialog.threadId, {
       objective,
       status: "active",
-      runPolicy: dialog.consumeUntilWeeklyRemaining
-        ? {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent
-        }
-        : null
+      runPolicy: {
+        type: "consumeUntilWeeklyRemainingAtOrBelow",
+        targetRemainingPercent
+      }
     }, { dialog: true });
     if (saved) ctx.setGoalDialog(null);
   };
