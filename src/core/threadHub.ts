@@ -1694,6 +1694,62 @@ export class ThreadHub {
     return Math.max(0, Math.min(100, 100 - limit.usedPercent));
   }
 
+  private maybeRetargetGoalRunPolicyForWeeklyLimit(thread: ThreadState) {
+    if (!thread.running) return false;
+    const policy = thread.goalRunPolicy;
+    if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return false;
+    const goal = this.latestRunnableThreadGoal(thread);
+    const status = thread.goalRunPolicyStatus ?? goal?.status ?? "active";
+    const objective = thread.goalRunPolicyObjective ?? goal?.objective;
+    if (!objective || status !== "active") return false;
+    const weeklyRemainingPercent = this.weeklyRemainingPercent(thread);
+    if (weeklyRemainingPercent === null || weeklyRemainingPercent > policy.targetRemainingPercent) return false;
+    return this.retargetGoalRunPolicyToWrapUp(thread, weeklyRemainingPercent, policy.targetRemainingPercent);
+  }
+
+  private retargetGoalRunPolicyToWrapUp(
+    thread: ThreadState,
+    weeklyRemainingPercent: number,
+    targetRemainingPercent: number
+  ) {
+    const session = this.requireThreadSession(thread);
+    const commandId = randomUUID();
+    const goal: ThreadGoalUpdate = {
+      objective: weeklyGoalWrapUpObjective,
+      status: "active",
+      runPolicy: null
+    };
+    const appServerGoal = appServerGoalUpdate(goal);
+    const promise = this.waitForCommand<void>(commandId, "set_goal", thread.threadId, undefined, thread.workingDirectory);
+    thread.goalRunPolicy = null;
+    thread.goalRunPolicyObjective = undefined;
+    thread.goalRunPolicyStatus = undefined;
+    thread.skipNextGoalRunPolicyRun = false;
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "set_goal",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId,
+      goal: appServerGoal
+    });
+    void promise.then(() => {
+      this.appendThreadGoalUpdatedRecord(thread, {
+        threadId: thread.threadId,
+        goal: appServerGoal,
+        message: `Weekly remaining ${formatPercent(weeklyRemainingPercent)} reached target ${formatPercent(targetRemainingPercent)}; switching goal to wrap-up.`
+      });
+    }, (error) => {
+      this.appendHubRecord(thread, "error", {
+        type: "error",
+        message: `Failed to switch weekly goal to wrap-up: ${errorText(error)}`
+      });
+    });
+    return true;
+  }
+
   private appendUserInputRecord(thread: ThreadState, input: ProxyInput) {
     const record: CodexRecord = {
       id: `proxy:user:${randomUUID()}`,
@@ -1806,6 +1862,7 @@ export class ThreadHub {
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
     this.publish(thread, "record", record, { historical: options.historical });
+    if (!options.historical) this.maybeRetargetGoalRunPolicyForWeeklyLimit(thread);
   }
 
   private finishSessionTurnByThread(threadId: string, error?: Error) {
@@ -2980,8 +3037,13 @@ const normalizeThreadGoalRunPolicy = (policy: ThreadGoalUpdate["runPolicy"]): Th
 
 const weeklyRateLimitWindowMinutes = 7 * 24 * 60;
 
+const weeklyGoalWrapUpObjective = "收尾工作";
+
 const weeklyRateLimitUsage = (limit: ThreadRateLimitUsage | null | undefined) =>
   limit?.windowMinutes === weeklyRateLimitWindowMinutes ? limit : null;
+
+const formatPercent = (value: number) =>
+  Number.isInteger(value) ? `${value}%` : `${value.toFixed(1)}%`;
 
 const imageUrls = (input: ProxyInput) => {
   if (typeof input === "string") return [];

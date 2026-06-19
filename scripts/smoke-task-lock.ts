@@ -78,6 +78,8 @@ type ThreadDetail = {
   }>;
 };
 
+const weeklyWrapUpObjective = "收尾工作";
+
 type MachineCommand = {
   commandId: string;
   type: "start_session" | "list_directory";
@@ -443,11 +445,6 @@ const main = async () => {
     ) {
       throw new Error(`consume goal retry turn mismatch: ${JSON.stringify(retryTurn)}`);
     }
-    fake.emitTokenUsage(retryTurn, 82);
-    fake.completeTurn(retryTurn);
-    await fake.expectNoTurn(150);
-    console.log("consume-until weekly goal policy ok");
-
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -468,18 +465,42 @@ const main = async () => {
     ) {
       throw new Error(`consume policy-only retarget missing from thread detail: ${JSON.stringify(retargetDetail.goalRunPolicy)}`);
     }
-    const retargetTurn = await fake.nextTurn();
+    fake.emitTokenUsage(retryTurn, 84);
+    const wrapUpSetGoal = await fake.nextSessionCommand("set_goal");
+    const wrapUpGoal = objectValue(wrapUpSetGoal.goal);
     if (
-      retargetTurn.input !== consumeObjective
-      || retargetTurn.options?.goalMode !== true
-      || retargetTurn.options.goalObjective !== consumeObjective
+      wrapUpSetGoal.threadId !== fake.threadId
+      || wrapUpGoal?.objective !== weeklyWrapUpObjective
+      || wrapUpGoal.status !== "active"
+      || objectValue(wrapUpGoal.runPolicy) !== null
     ) {
-      throw new Error(`consume policy-only retarget turn mismatch: ${JSON.stringify(retargetTurn)}`);
+      throw new Error(`weekly wrap-up goal payload mismatch: ${JSON.stringify(wrapUpSetGoal.goal)}`);
     }
-    fake.emitTokenUsage(retargetTurn, 84);
-    fake.completeTurn(retargetTurn);
+    const wrapUpDetail = await waitForGoalStatus(apiBase, fake.threadId, "active", weeklyWrapUpObjective) as ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    };
+    if (wrapUpDetail.goalRunPolicy !== null) {
+      throw new Error(`weekly wrap-up did not clear run policy: ${JSON.stringify(wrapUpDetail.goalRunPolicy)}`);
+    }
+    fake.completeTurn(retryTurn);
     await fake.expectNoTurn(150);
-    console.log("consume-until policy-only retarget ok");
+    console.log("consume-until weekly goal wrap-up retarget ok");
+
+    const rollbackBaselineObjective = "rollback policy baseline";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: rollbackBaselineObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 30
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    await fake.expectNoTurn(150);
 
     fake.failNextSetGoal("set goal rejected");
     const failedGoalRequest = expectApiError(
@@ -506,7 +527,7 @@ const main = async () => {
     }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
     if (
       rollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
-      || rollbackDetail.goalRunPolicy.targetRemainingPercent !== 17
+      || rollbackDetail.goalRunPolicy.targetRemainingPercent !== 30
     ) {
       throw new Error(`failed goal update did not roll back policy: ${JSON.stringify(rollbackDetail.goalRunPolicy)}`);
     }
@@ -550,9 +571,34 @@ const main = async () => {
       throw new Error(`consume goal resumed turn mismatch: ${JSON.stringify(resumedTurn)}`);
     }
     fake.emitTokenUsage(resumedTurn, 95);
+    const resumedWrapUpSetGoal = await fake.nextSessionCommand("set_goal");
+    const resumedWrapUpGoal = objectValue(resumedWrapUpSetGoal.goal);
+    if (
+      resumedWrapUpSetGoal.threadId !== fake.threadId
+      || resumedWrapUpGoal?.objective !== weeklyWrapUpObjective
+      || resumedWrapUpGoal.status !== "active"
+    ) {
+      throw new Error(`manual resume wrap-up goal payload mismatch: ${JSON.stringify(resumedWrapUpSetGoal.goal)}`);
+    }
     fake.completeTurn(resumedTurn);
     await fake.expectNoTurn(150);
     console.log("consume-until manual resume ok");
+
+    const clearRollbackObjective = "clear rollback policy baseline";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: clearRollbackObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 30
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    await fake.expectNoTurn(150);
 
     fake.failNextClearGoal("clear goal rejected");
     const failedClearGoalRequest = expectApiError(
@@ -568,7 +614,7 @@ const main = async () => {
     }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
     if (
       clearRollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
-      || clearRollbackDetail.goalRunPolicy.targetRemainingPercent !== 10
+      || clearRollbackDetail.goalRunPolicy.targetRemainingPercent !== 30
     ) {
       throw new Error(`failed goal clear did not roll back policy: ${JSON.stringify(clearRollbackDetail.goalRunPolicy)}`);
     }
