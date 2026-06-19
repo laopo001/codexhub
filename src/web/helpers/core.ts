@@ -81,6 +81,9 @@ export const apiRouteJson = async <Route extends AnyApiRoute>(
   return apiJson<ApiRouteResponse<Route>>(path, init);
 };
 
+const hasNonBlankString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+
 export const realtimeMessageTypes = new Set([
   "sessions",
   "projects",
@@ -124,7 +127,7 @@ export const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
 
 const isThreadSummaryLike = (value: unknown): value is ThreadSummary => {
   const record = asRecord(value);
-  return hasNonBlankString(record?.threadId) && hasNonBlankString(record.updatedAt);
+  return Boolean(record && hasNonBlankString(record.threadId) && hasNonBlankString(record.updatedAt));
 };
 
 const normalizeThreads = (threads: unknown): ThreadSummary[] =>
@@ -154,7 +157,7 @@ export const normalizeThreadCandidates = (threads: CodexThreadCandidate[] | unde
   Array.isArray(threads)
     ? threads.flatMap((thread) => {
       const record = asRecord(thread);
-      if (!hasNonBlankString(record?.threadId) || !hasNonBlankString(record.updatedAt)) return [];
+      if (!record || !hasNonBlankString(record.threadId) || !hasNonBlankString(record.updatedAt)) return [];
       return [{
         threadId: record.threadId,
         cwd: candidateText(record.cwd),
@@ -171,7 +174,7 @@ export const normalizeThreadCandidates = (threads: CodexThreadCandidate[] | unde
 
 const isSessionLike = (value: unknown): value is SessionSummary => {
   const record = asRecord(value);
-  return hasNonBlankString(record?.sessionId);
+  return Boolean(record && hasNonBlankString(record.sessionId));
 };
 
 export const normalizeSessions = (sessions: SessionSummary[] | undefined): SessionView[] =>
