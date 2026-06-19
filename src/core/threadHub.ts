@@ -2965,14 +2965,17 @@ const goalUpdateCanStartRunPolicy = (goal: ThreadGoalUpdate) =>
 
 const normalizeThreadGoalRunPolicy = (policy: ThreadGoalUpdate["runPolicy"]): ThreadGoalRunPolicy | null => {
   if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return null;
+  if (
+    typeof policy.targetRemainingPercent !== "number"
+    || !Number.isFinite(policy.targetRemainingPercent)
+    || policy.targetRemainingPercent < 0
+    || policy.targetRemainingPercent > 100
+  ) return null;
   return {
     type: "consumeUntilWeeklyRemainingAtOrBelow",
-    targetRemainingPercent: clampPercent(policy.targetRemainingPercent)
+    targetRemainingPercent: policy.targetRemainingPercent
   };
 };
-
-const clampPercent = (value: number) =>
-  Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 
 const weeklyRateLimitWindowMinutes = 7 * 24 * 60;
 
