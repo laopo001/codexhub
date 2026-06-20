@@ -81,6 +81,9 @@ export const apiRouteJson = async <Route extends AnyApiRoute>(
   return apiJson<ApiRouteResponse<Route>>(path, init);
 };
 
+const hasNonBlankString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+
 export const realtimeMessageTypes = new Set([
   "sessions",
   "projects",
@@ -122,14 +125,66 @@ export const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
   return turnId;
 };
 
+const isThreadSummaryLike = (value: unknown): value is ThreadSummary => {
+  const record = asRecord(value);
+  return Boolean(record && hasNonBlankString(record.threadId) && hasNonBlankString(record.updatedAt));
+};
+
+const normalizeThreads = (threads: unknown): ThreadSummary[] =>
+  Array.isArray(threads)
+    ? threads.filter(isThreadSummaryLike).map((thread) => ({
+      ...thread,
+      title: hasNonBlankString(thread.title) ? thread.title : thread.threadId,
+      goalRunPolicy: normalizeThreadGoalRunPolicy(thread.goalRunPolicy)
+    }))
+    : [];
+
+const normalizeThreadGoalRunPolicy = (value: unknown): ThreadSummary["goalRunPolicy"] => {
+  const policy = asRecord(value);
+  if (policy?.type !== "consumeUntilWeeklyRemainingAtOrBelow") return null;
+  const target = policy.targetRemainingPercent;
+  if (typeof target !== "number" || !Number.isFinite(target) || target < 0 || target >= 100) return null;
+  return {
+    type: "consumeUntilWeeklyRemainingAtOrBelow",
+    targetRemainingPercent: target
+  };
+};
+
+const candidateText = (value: unknown) => typeof value === "string" ? value : "";
+const candidateCount = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+export const normalizeThreadCandidates = (threads: CodexThreadCandidate[] | undefined): CodexThreadCandidate[] =>
+  Array.isArray(threads)
+    ? threads.flatMap((thread) => {
+      const record = asRecord(thread);
+      if (!record || !hasNonBlankString(record.threadId) || !hasNonBlankString(record.updatedAt)) return [];
+      return [{
+        threadId: record.threadId,
+        cwd: candidateText(record.cwd),
+        path: candidateText(record.path),
+        title: candidateText(record.title),
+        updatedAt: record.updatedAt,
+        firstUserMessage: candidateText(record.firstUserMessage),
+        lastAssistantMessage: candidateText(record.lastAssistantMessage),
+        artifactCount: candidateCount(record.artifactCount),
+        messageCount: candidateCount(record.messageCount)
+      }];
+    })
+    : [];
+
+const isSessionLike = (value: unknown): value is SessionSummary => {
+  const record = asRecord(value);
+  return Boolean(record && hasNonBlankString(record.sessionId));
+};
+
 export const normalizeSessions = (sessions: SessionSummary[] | undefined): SessionView[] =>
   Array.isArray(sessions)
     ? sessions
-      .filter((session) => typeof session.sessionId === "string" && Boolean(session.sessionId))
+      .filter(isSessionLike)
       .map((session) => ({
         ...session,
         sessionId: session.sessionId,
-        threads: Array.isArray(session.threads) ? session.threads : []
+        threads: normalizeThreads(session.threads)
       }))
     : [];
 

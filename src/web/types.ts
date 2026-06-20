@@ -47,6 +47,7 @@ export type ThreadGoalView = {
 export type GoalDialogState = {
   threadId: string;
   objective: string;
+  targetRemainingPercent: string;
   saving: boolean;
   error: string;
 };

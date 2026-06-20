@@ -211,6 +211,23 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               rows={7}
               autoFocus
             />
+            <label className="goalPolicyField">
+              <span>消耗到 weekly 剩余</span>
+              <span className="goalPolicyPercentInput">
+                <input
+                  type="number"
+                  min={0}
+                  max={99.9}
+                  step={0.1}
+                  required
+                  value={goalDialog.targetRemainingPercent}
+                  onChange={(event) => setGoalDialog((current) => current
+                    ? { ...current, targetRemainingPercent: event.target.value, error: "" }
+                    : current)}
+                />
+                <span>%</span>
+              </span>
+            </label>
             {goalDialog.error ? <div className="goalDialogError">{goalDialog.error}</div> : null}
             <footer className="goalDialogActions">
               <button type="button" onClick={() => setGoalDialog(null)} disabled={goalDialog.saving}>取消</button>
@@ -218,7 +235,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 type="button"
                 className="primary"
                 onClick={() => void saveGoalDialog()}
-                disabled={goalDialog.saving || !goalDialog.objective.trim()}
+                disabled={goalDialog.saving || !goalDialog.objective.trim() || !goalDialog.targetRemainingPercent.trim()}
               >
                 {goalDialog.saving ? "保存中" : "保存"}
               </button>

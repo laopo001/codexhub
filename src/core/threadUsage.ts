@@ -10,11 +10,19 @@ export const emptyThreadUsage = (): ThreadUsage => ({
 });
 
 export const threadUsageFromRecords = (records: CodexRecord[]): ThreadUsage => {
+  let merged = emptyThreadUsage();
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const usage = threadUsageFromRecord(records[index]);
-    if (usage) return usage;
+    if (!usage) continue;
+    merged = {
+      context: merged.context ?? usage.context,
+      primaryRateLimit: merged.primaryRateLimit ?? usage.primaryRateLimit,
+      secondaryRateLimit: merged.secondaryRateLimit ?? usage.secondaryRateLimit,
+      observedAt: merged.observedAt ?? usage.observedAt
+    };
+    if (merged.context && merged.primaryRateLimit && merged.secondaryRateLimit) return merged;
   }
-  return emptyThreadUsage();
+  return merged;
 };
 
 export const threadUsageFromRecord = (record: CodexRecord): ThreadUsage | null => {

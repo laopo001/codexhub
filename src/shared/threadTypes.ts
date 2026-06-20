@@ -2,6 +2,12 @@ import type { ProxyInput } from "./inputTypes.js";
 import type { CodexRecord } from "./recordTypes.js";
 import type { ThreadOptions, ThreadRateLimits, ThreadUsage, Usage } from "./usageTypes.js";
 
+/** CodexHub 本地 goal 续跑策略。 */
+export type ThreadGoalRunPolicy = {
+  type: "consumeUntilWeeklyRemainingAtOrBelow";
+  targetRemainingPercent: number;
+};
+
 /** Web/API 可见的 thread 摘要，records 之外的轻量投影。 */
 export type ThreadSummary = {
   threadId: string;
@@ -19,6 +25,7 @@ export type ThreadSummary = {
   messageCount: number;
   lastUsage?: Usage;
   threadUsage: ThreadUsage;
+  goalRunPolicy?: ThreadGoalRunPolicy | null;
 };
 
 /** thread 所属 runtime session 的轻量信息。 */
@@ -71,6 +78,7 @@ export type ThreadGoalUpdate = {
   objective?: string | null;
   status?: ThreadGoalStatus | null;
   tokenBudget?: number | null;
+  runPolicy?: ThreadGoalRunPolicy | null;
 };
 
 /** app-server 发起的交互式审批类型。 */

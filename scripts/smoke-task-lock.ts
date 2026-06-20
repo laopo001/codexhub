@@ -78,6 +78,8 @@ type ThreadDetail = {
   }>;
 };
 
+const weeklyWrapUpObjective = "收尾工作";
+
 type MachineCommand = {
   commandId: string;
   type: "start_session" | "list_directory";
@@ -275,6 +277,11 @@ const main = async () => {
     }
     fake.emitTokenUsage(activeWebTurn);
     await assertThreadUsageRateLimits(apiBase, fake.threadId);
+    fake.emitTokenUsageWithoutRateLimits("context-only-usage");
+    await assertThreadUsageRateLimits(apiBase, fake.threadId);
+    fake.emitSnakeCaseTokenUsageWithoutRateLimits("snake-context-usage");
+    await assertThreadUsageContext(apiBase, fake.threadId, 321, 456000);
+    await assertThreadUsageRateLimits(apiBase, fake.threadId);
     console.log("app-server token usage rate limits ok");
     fake.completeTurn(activeWebTurn);
     console.log("web running turn steer ok");
@@ -327,6 +334,335 @@ const main = async () => {
     }
     fake.completeTurn(activeGoalTurn);
     console.log("web running goal update ok");
+
+    fake.emitGoalUpdated({
+      objective: "status-only app-server goal",
+      status: "active",
+      tokenBudget: 777
+    });
+    fake.emitGoalUpdated({ status: "paused" });
+    const statusOnlyGoalDetail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    const statusOnlyGoalRecords = statusOnlyGoalDetail.records?.filter((record) => {
+      const payload = objectValue(record.payload);
+      return payload?.type === "thread_goal_updated";
+    }) ?? [];
+    const latestStatusOnlyGoalPayload = objectValue(statusOnlyGoalRecords.at(-1)?.payload);
+    const latestStatusOnlyGoal = objectValue(latestStatusOnlyGoalPayload?.goal);
+    if (
+      latestStatusOnlyGoal?.objective !== "status-only app-server goal"
+      || latestStatusOnlyGoal.status !== "paused"
+      || latestStatusOnlyGoal.tokenBudget !== 777
+    ) {
+      throw new Error(`status-only goal update did not preserve goal fields: ${JSON.stringify(latestStatusOnlyGoal)}`);
+    }
+    console.log("app-server status-only goal update preserves objective ok");
+
+    await expectApiError(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          objective: "invalid weekly target",
+          status: "active",
+          runPolicy: {
+            type: "consumeUntilWeeklyRemainingAtOrBelow",
+            targetRemainingPercent: 100
+          }
+        })
+      },
+      400
+    );
+    console.log("consume-until invalid target rejected ok");
+
+    const nonWeeklyObjective = "do not continue on non-weekly secondary window";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: nonWeeklyObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 20
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    const nonWeeklyTurn = await fake.nextTurn();
+    fake.emitTokenUsage(nonWeeklyTurn, 64, 300);
+    fake.completeTurn(nonWeeklyTurn);
+    await fake.expectNoTurn(150);
+    console.log("consume-until ignores non-weekly secondary window ok");
+
+    const consumeObjective = "consume weekly budget until target";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: consumeObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 20
+        }
+      })
+    });
+    const consumeSetGoal = await fake.nextSessionCommand("set_goal");
+    const consumeGoal = objectValue(consumeSetGoal.goal);
+    if (
+      consumeGoal?.objective !== consumeObjective
+      || consumeGoal.status !== "active"
+      || objectValue(consumeGoal.runPolicy) !== null
+    ) {
+      throw new Error(`consume goal set payload mismatch: ${JSON.stringify(consumeSetGoal.goal)}`);
+    }
+    const consumeDetail = await apiJson<ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    if (
+      consumeDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
+      || consumeDetail.goalRunPolicy.targetRemainingPercent !== 20
+    ) {
+      throw new Error(`consume goal policy missing from thread detail: ${JSON.stringify(consumeDetail.goalRunPolicy)}`);
+    }
+    const consumeTurn = await fake.nextTurn();
+    if (
+      consumeTurn.input !== consumeObjective
+      || consumeTurn.options?.goalMode !== true
+      || consumeTurn.options.goalObjective !== consumeObjective
+    ) {
+      throw new Error(`consume goal initial turn mismatch: ${JSON.stringify(consumeTurn)}`);
+    }
+    fake.emitTokenUsage(consumeTurn, 64);
+    fake.emitGoalUpdated({ objective: consumeObjective, status: "complete" });
+    await waitForGoalStatus(apiBase, fake.threadId, "complete", consumeObjective);
+    fake.completeTurn(consumeTurn);
+    const retryTurn = await fake.nextTurn();
+    if (
+      retryTurn.input !== consumeObjective
+      || retryTurn.options?.goalMode !== true
+      || retryTurn.options.goalObjective !== consumeObjective
+    ) {
+      throw new Error(`consume goal retry turn mismatch: ${JSON.stringify(retryTurn)}`);
+    }
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 17
+        }
+      })
+    });
+    await fake.expectNoSessionCommand("set_goal", 150);
+    const retargetDetail = await apiJson<ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    if (
+      retargetDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
+      || retargetDetail.goalRunPolicy.targetRemainingPercent !== 17
+    ) {
+      throw new Error(`consume policy-only retarget missing from thread detail: ${JSON.stringify(retargetDetail.goalRunPolicy)}`);
+    }
+    fake.emitTokenUsage(retryTurn, 84);
+    const wrapUpSetGoal = await fake.nextSessionCommand("set_goal");
+    const wrapUpGoal = objectValue(wrapUpSetGoal.goal);
+    if (
+      wrapUpSetGoal.threadId !== fake.threadId
+      || wrapUpGoal?.objective !== weeklyWrapUpObjective
+      || wrapUpGoal.status !== "active"
+      || objectValue(wrapUpGoal.runPolicy) !== null
+    ) {
+      throw new Error(`weekly wrap-up goal payload mismatch: ${JSON.stringify(wrapUpSetGoal.goal)}`);
+    }
+    const wrapUpDetail = await waitForGoalStatus(apiBase, fake.threadId, "active", weeklyWrapUpObjective) as ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    };
+    if (wrapUpDetail.goalRunPolicy !== null) {
+      throw new Error(`weekly wrap-up did not clear run policy: ${JSON.stringify(wrapUpDetail.goalRunPolicy)}`);
+    }
+    fake.completeTurn(retryTurn);
+    await fake.expectNoTurn(150);
+    console.log("consume-until weekly goal wrap-up retarget ok");
+
+    const rollbackBaselineObjective = "rollback policy baseline";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: rollbackBaselineObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 30
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    await fake.expectNoTurn(150);
+
+    fake.failNextSetGoal("set goal rejected");
+    const failedGoalRequest = expectApiError(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          objective: "failed goal update should roll back",
+          status: "active",
+          runPolicy: {
+            type: "consumeUntilWeeklyRemainingAtOrBelow",
+            targetRemainingPercent: 90
+          }
+        })
+      },
+      409
+    );
+    await fake.nextSessionCommand("set_goal");
+    await failedGoalRequest;
+    const rollbackDetail = await apiJson<ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    if (
+      rollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
+      || rollbackDetail.goalRunPolicy.targetRemainingPercent !== 30
+    ) {
+      throw new Error(`failed goal update did not roll back policy: ${JSON.stringify(rollbackDetail.goalRunPolicy)}`);
+    }
+    console.log("consume-until failed goal update rollback ok");
+
+    const rateLimitedObjective = "pause consume policy on quota error";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: rateLimitedObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 10
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    const rateLimitedTurn = await fake.nextTurn();
+    fake.failTurn(rateLimitedTurn, "5h quota exhausted");
+    await waitForGoalStatus(apiBase, fake.threadId, "paused", rateLimitedObjective);
+    await fake.expectNoTurn(150);
+    console.log("consume-until quota error pauses policy ok");
+
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "active" })
+    });
+    const resumedGoal = await fake.nextSessionCommand("set_goal");
+    if (resumedGoal.goal?.status !== "active") {
+      throw new Error(`consume goal resume payload mismatch: ${JSON.stringify(resumedGoal.goal)}`);
+    }
+    const resumedTurn = await fake.nextTurn();
+    if (
+      resumedTurn.input !== rateLimitedObjective
+      || resumedTurn.options?.goalMode !== true
+      || resumedTurn.options.goalObjective !== rateLimitedObjective
+    ) {
+      throw new Error(`consume goal resumed turn mismatch: ${JSON.stringify(resumedTurn)}`);
+    }
+    fake.emitTokenUsage(resumedTurn, 95);
+    const resumedWrapUpSetGoal = await fake.nextSessionCommand("set_goal");
+    const resumedWrapUpGoal = objectValue(resumedWrapUpSetGoal.goal);
+    if (
+      resumedWrapUpSetGoal.threadId !== fake.threadId
+      || resumedWrapUpGoal?.objective !== weeklyWrapUpObjective
+      || resumedWrapUpGoal.status !== "active"
+    ) {
+      throw new Error(`manual resume wrap-up goal payload mismatch: ${JSON.stringify(resumedWrapUpSetGoal.goal)}`);
+    }
+    fake.completeTurn(resumedTurn);
+    await fake.expectNoTurn(150);
+    console.log("consume-until manual resume ok");
+
+    const clearRollbackObjective = "clear rollback policy baseline";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: clearRollbackObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 30
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    await fake.expectNoTurn(150);
+
+    fake.failNextClearGoal("clear goal rejected");
+    const failedClearGoalRequest = expectApiError(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
+      { method: "DELETE" },
+      409
+    );
+    await fake.nextSessionCommand("clear_goal");
+    await failedClearGoalRequest;
+    const clearRollbackDetail = await apiJson<ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    if (
+      clearRollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
+      || clearRollbackDetail.goalRunPolicy.targetRemainingPercent !== 30
+    ) {
+      throw new Error(`failed goal clear did not roll back policy: ${JSON.stringify(clearRollbackDetail.goalRunPolicy)}`);
+    }
+    console.log("consume-until failed clear rollback ok");
+
+    const stoppedObjective = "stop consume policy without retry";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: stoppedObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 1
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    const stoppedTurn = await fake.nextTurn();
+    const stopResult = await apiJson<{ stopped?: boolean }>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/stop`,
+      { method: "POST" }
+    );
+    if (!stopResult.stopped) {
+      throw new Error(`consume policy stop did not report stopped: ${JSON.stringify(stopResult)}`);
+    }
+    const stopCommand = await fake.nextSessionCommand("stop");
+    if (stopCommand.threadId !== fake.threadId || stopCommand.turnId !== stoppedTurn.turnId) {
+      throw new Error(`consume policy stop command mismatch: ${JSON.stringify(stopCommand)}`);
+    }
+    fake.emitTokenUsage(stoppedTurn, 64);
+    fake.completeTurn(stoppedTurn);
+    await fake.expectNoTurn(150);
+    console.log("consume-until manual stop halts continuation ok");
+
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, { method: "DELETE" });
+    await fake.nextSessionCommand("clear_goal");
+    const clearedPolicyDetail = await apiJson<ThreadDetail & {
+      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    if (clearedPolicyDetail.goalRunPolicy !== null) {
+      throw new Error(`goal clear did not clear run policy: ${JSON.stringify(clearedPolicyDetail.goalRunPolicy)}`);
+    }
+    console.log("consume-until clear removes policy ok");
 
     const created = await apiJson<{ task?: LocalTask }>(apiBase, "/api/tasks", {
       method: "POST",
@@ -396,6 +732,8 @@ const main = async () => {
 class FakeMachine {
   private ws: WebSocket | null = null;
   private sessionRegistered = false;
+  private nextSetGoalError: string | null = null;
+  private nextClearGoalError: string | null = null;
   private pendingTurns: SessionCommand[] = [];
   private pendingSteers: SessionCommand[] = [];
   private pendingSessionCommandsByType = new Map<string, SessionCommand[]>();
@@ -461,12 +799,38 @@ class FakeMachine {
     return await this.waitForTurn();
   }
 
+  async expectNoTurn(timeoutMs = 100) {
+    const existing = this.pendingTurns.shift();
+    if (existing) throw new Error(`unexpected turn command: ${JSON.stringify(existing)}`);
+    let resolved = false;
+    await new Promise<void>((resolve, reject) => {
+      const waiter = (command: SessionCommand) => {
+        resolved = true;
+        reject(new Error(`unexpected turn command: ${JSON.stringify(command)}`));
+      };
+      this.turnWaiters.push(waiter);
+      setTimeout(() => {
+        if (resolved) return;
+        this.turnWaiters = this.turnWaiters.filter((item) => item !== waiter);
+        resolve();
+      }, timeoutMs);
+    });
+  }
+
   async nextSteer() {
     return await this.waitForSteer();
   }
 
   async nextSessionCommand(type: string, timeoutMs = 5000) {
     return await this.waitForSessionCommand(type, timeoutMs);
+  }
+
+  failNextSetGoal(message: string) {
+    this.nextSetGoalError = message;
+  }
+
+  failNextClearGoal(message: string) {
+    this.nextClearGoalError = message;
   }
 
   async expectNoSessionCommand(type: string, timeoutMs = 100) {
@@ -490,9 +854,55 @@ class FakeMachine {
     });
   }
 
-  emitTokenUsage(command: SessionCommand) {
+  emitTokenUsage(command: SessionCommand, secondaryUsedPercent = 64, secondaryWindowMinutes = 10080) {
     const threadId = command.threadId ?? this.options.threadId;
     if (!command.turnId) throw new Error(`fake turn missing turnId: ${JSON.stringify(command)}`);
+    this.emitTokenUsageForTurnId(threadId, command.turnId, {
+      rateLimits: {
+        primary: {
+          usedPercent: 12.5,
+          windowMinutes: 300,
+          resetsAt: 1781058359
+        },
+        secondary: {
+          usedPercent: secondaryUsedPercent,
+          windowMinutes: secondaryWindowMinutes,
+          resetsAt: 1781140554
+        }
+      }
+    });
+  }
+
+  emitTokenUsageWithoutRateLimits(turnId: string) {
+    this.emitTokenUsageForTurnId(this.options.threadId, turnId);
+  }
+
+  emitSnakeCaseTokenUsageWithoutRateLimits(turnId: string) {
+    this.emitTokenUsageForTurnId(this.options.threadId, turnId, {
+      tokenUsage: {
+        last: {
+          input_tokens: 321,
+          cached_input_tokens: 123,
+          output_tokens: 222,
+          reasoning_output_tokens: 111,
+          total_tokens: 654
+        },
+        model_context_window: 456000
+      }
+    });
+  }
+
+  private emitTokenUsageForTurnId(
+    threadId: string,
+    turnId: string,
+    options: {
+      rateLimits?: {
+        primary: { usedPercent: number; windowMinutes: number; resetsAt: number };
+        secondary: { usedPercent: number; windowMinutes: number; resetsAt: number };
+      };
+      tokenUsage?: Record<string, unknown>;
+    } = {}
+  ) {
     this.send({
       type: "session_event",
       sessionId: this.options.sessionId,
@@ -504,34 +914,32 @@ class FakeMachine {
           method: "thread/tokenUsage/updated",
           params: {
             threadId,
-            turnId: command.turnId,
+            turnId,
             tokenUsage: {
-              last: {
-                inputTokens: 1200,
-                cachedInputTokens: 800,
-                outputTokens: 90,
-                reasoningOutputTokens: 10,
-                totalTokens: 1300
-              },
-              modelContextWindow: 200000,
-              rateLimits: {
-                limitId: "codex",
-                limitName: null,
-                primary: {
-                  usedPercent: 12.5,
-                  windowMinutes: 300,
-                  resetsAt: 1781058359
+              ...(options.tokenUsage ?? {
+                last: {
+                  inputTokens: 1200,
+                  cachedInputTokens: 800,
+                  outputTokens: 90,
+                  reasoningOutputTokens: 10,
+                  totalTokens: 1300
                 },
-                secondary: {
-                  usedPercent: 64,
-                  windowMinutes: 10080,
-                  resetsAt: 1781140554
-                },
-                credits: null,
-                individualLimit: null,
-                planType: "pro",
-                rateLimitReachedType: null
-              }
+                modelContextWindow: 200000
+              }),
+              ...(options.rateLimits
+                ? {
+                  rateLimits: {
+                    limitId: "codex",
+                    limitName: null,
+                    primary: options.rateLimits.primary,
+                    secondary: options.rateLimits.secondary,
+                    credits: null,
+                    individualLimit: null,
+                    planType: "pro",
+                    rateLimitReachedType: null
+                  }
+                }
+                : {})
             }
           }
         }
@@ -581,6 +989,34 @@ class FakeMachine {
       sessionId: this.options.sessionId,
       commandId: command.commandId,
       result: { ok: true }
+    });
+  }
+
+  failTurn(command: SessionCommand, message: string) {
+    this.send({
+      type: "session_command_error",
+      sessionId: this.options.sessionId,
+      commandId: command.commandId,
+      message
+    });
+  }
+
+  emitGoalUpdated(goal: Record<string, unknown>) {
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "thread_event",
+        threadId: this.options.threadId,
+        heartbeat: false,
+        message: {
+          method: "thread/goal/updated",
+          params: {
+            threadId: this.options.threadId,
+            goal
+          }
+        }
+      }
     });
   }
 
@@ -667,6 +1103,17 @@ class FakeMachine {
     }
     if (command.type !== "turn") {
       if (command.type === "set_goal") {
+        if (this.nextSetGoalError) {
+          const message = this.nextSetGoalError;
+          this.nextSetGoalError = null;
+          this.send({
+            type: "session_command_error",
+            sessionId: this.options.sessionId,
+            commandId: command.commandId,
+            message
+          });
+          return;
+        }
         this.send({
           type: "session_command_result",
           sessionId: this.options.sessionId,
@@ -676,6 +1123,17 @@ class FakeMachine {
         return;
       }
       if (command.type === "clear_goal") {
+        if (this.nextClearGoalError) {
+          const message = this.nextClearGoalError;
+          this.nextClearGoalError = null;
+          this.send({
+            type: "session_command_error",
+            sessionId: this.options.sessionId,
+            commandId: command.commandId,
+            message
+          });
+          return;
+        }
         this.send({
           type: "session_event",
           sessionId: this.options.sessionId,
@@ -738,6 +1196,15 @@ class FakeMachine {
           sessionId: this.options.sessionId,
           commandId: command.commandId,
           result: { turnId: command.turnId }
+        });
+        return;
+      }
+      if (command.type === "stop") {
+        this.send({
+          type: "session_command_result",
+          sessionId: this.options.sessionId,
+          commandId: command.commandId,
+          result: { ok: true }
         });
         return;
       }
@@ -899,6 +1366,36 @@ const assertThreadUsageRateLimits = async (apiBase: string, threadId: string) =>
   }
 };
 
+const assertThreadUsageContext = async (
+  apiBase: string,
+  threadId: string,
+  usedTokens: number,
+  windowTokens: number
+) => {
+  const detail = await waitForThreadUsageContext(apiBase, threadId, usedTokens, windowTokens);
+  const usageRecord = detail.records?.find((record) => {
+    const payload = objectValue(record.payload);
+    const info = objectValue(payload?.info);
+    const lastUsage = objectValue(info?.last_token_usage);
+    return record.type === "event_msg"
+      && payload?.type === "token_count"
+      && lastUsage?.input_tokens === usedTokens;
+  });
+  const payload = objectValue(usageRecord?.payload);
+  const info = objectValue(payload?.info);
+  const lastUsage = objectValue(info?.last_token_usage);
+  if (
+    !usageRecord
+    || lastUsage?.cached_input_tokens !== 123
+    || lastUsage?.output_tokens !== 222
+    || lastUsage?.reasoning_output_tokens !== 111
+    || lastUsage?.total_tokens !== 654
+    || info?.model_context_window !== windowTokens
+  ) {
+    throw new Error(`token_count record did not normalize usage context: ${JSON.stringify(usageRecord)}`);
+  }
+};
+
 const waitForThreadUsage = async (apiBase: string, threadId: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 5000) {
@@ -907,6 +1404,44 @@ const waitForThreadUsage = async (apiBase: string, threadId: string) => {
     await delay(100);
   }
   throw new Error(`thread ${threadId} did not receive token usage rate limits`);
+};
+
+const waitForThreadUsageContext = async (
+  apiBase: string,
+  threadId: string,
+  usedTokens: number,
+  windowTokens: number
+) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
+    const context = detail.threadUsage?.context;
+    if (context?.usedTokens === usedTokens && context.windowTokens === windowTokens) return detail;
+    await delay(100);
+  }
+  throw new Error(`thread ${threadId} did not receive token usage context`);
+};
+
+const waitForGoalStatus = async (
+  apiBase: string,
+  threadId: string,
+  status: string,
+  objective: string
+) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
+    const match = detail.records?.some((record) => {
+      const payload = objectValue(record.payload);
+      const goal = objectValue(payload?.goal);
+      return payload?.type === "thread_goal_updated"
+        && goal?.objective === objective
+        && goal.status === status;
+    });
+    if (match) return detail;
+    await delay(100);
+  }
+  throw new Error(`thread ${threadId} did not reach goal status ${status}`);
 };
 
 const objectValue = (value: unknown): Record<string, unknown> | null =>
@@ -1037,6 +1572,22 @@ const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: Re
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) throw new Error(`HTTP ${response.status} ${pathname}: ${text}`);
   return data as T;
+};
+
+const expectApiError = async (
+  apiBase: string,
+  pathname: string,
+  init: RequestInit,
+  expectedStatus: number
+) => {
+  const response = await fetch(new URL(pathname, apiBase), {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(30_000)
+  });
+  const text = await response.text();
+  if (response.status !== expectedStatus) {
+    throw new Error(`expected HTTP ${expectedStatus} ${pathname}, got ${response.status}: ${text}`);
+  }
 };
 
 const assertNoWorkerId = (value: unknown, label: string) => {

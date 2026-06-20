@@ -123,6 +123,7 @@ const main = async () => {
   await assertProjectSessionProjection();
   await assertAppServerTurnLifecycleRecords();
   await assertAppServerGoalRecords();
+  await assertMalformedGoalRunPolicyIgnored();
   await assertAppServerServiceTierSettings();
   await assertAppServerTurnSnapshotPreservesAgentMessages();
   await assertAppServerAgentMessageDeltaStreams();
@@ -1254,6 +1255,46 @@ const assertAppServerGoalRecords = async () => {
   const latestGoalPayload = asRecord(asRecord(records[records.length - 1]).payload);
   if (latestGoalPayload.type !== "thread_goal_cleared" || latestGoalPayload.threadId !== threadId) {
     throw new Error(`app-server empty goal snapshot did not clear goal record: ${JSON.stringify(records)}`);
+  }
+};
+
+const assertMalformedGoalRunPolicyIgnored = async () => {
+  const { ThreadHub } = await import("../src/core/threadHub.js");
+  const hub = new ThreadHub();
+  const sessionId = "goal-policy-normalization-session";
+  const threadId = "goal-policy-normalization-thread";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/codexhub-goal-policy-normalization"
+  });
+  hub.attachSessionThread(sessionId, threadId);
+  await hub.setGoal(threadId, {
+    runPolicy: {
+      type: "consumeUntilWeeklyRemainingAtOrBelow",
+      targetRemainingPercent: 25
+    }
+  });
+  if (hub.getThread(threadId)?.goalRunPolicy?.targetRemainingPercent !== 25) {
+    throw new Error(`valid goal run policy was not retained: ${JSON.stringify(hub.getThread(threadId)?.goalRunPolicy)}`);
+  }
+  await hub.setGoal(threadId, {
+    runPolicy: {
+      type: "consumeUntilWeeklyRemainingAtOrBelow",
+      targetRemainingPercent: Number.NaN
+    }
+  });
+  if (hub.getThread(threadId)?.goalRunPolicy !== null) {
+    throw new Error(`malformed goal run policy was retained: ${JSON.stringify(hub.getThread(threadId)?.goalRunPolicy)}`);
+  }
+  await hub.setGoal(threadId, {
+    runPolicy: {
+      type: "consumeUntilWeeklyRemainingAtOrBelow",
+      targetRemainingPercent: 100
+    }
+  });
+  if (hub.getThread(threadId)?.goalRunPolicy !== null) {
+    throw new Error(`100 percent goal run policy was retained: ${JSON.stringify(hub.getThread(threadId)?.goalRunPolicy)}`);
   }
 };
 
