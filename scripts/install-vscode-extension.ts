@@ -19,12 +19,17 @@ const extensionId = extensionIdentifier(manifest);
 
 await assertFile(vsixPath, "VSCode package not found. Run `pnpm package:vscode` first.");
 
-if (await installWithLocalCode(vsixPath, extensionId)) {
-  process.exit(0);
-}
+const localInstalled = await installWithLocalCode(vsixPath, extensionId);
 
 if (await isWsl()) {
   await installWithWindowsCode(vsixPath, extensionId);
+  if (!localInstalled) {
+    throw new Error("Could not install VSCode extension in the current WSL environment. Ensure the `code` CLI is installed and on PATH.");
+  }
+  process.exit(0);
+}
+
+if (localInstalled) {
   process.exit(0);
 }
 

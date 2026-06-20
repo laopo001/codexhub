@@ -436,6 +436,8 @@ const main = async () => {
       throw new Error(`consume goal initial turn mismatch: ${JSON.stringify(consumeTurn)}`);
     }
     fake.emitTokenUsage(consumeTurn, 64);
+    fake.emitGoalUpdated({ objective: consumeObjective, status: "complete" });
+    await waitForGoalStatus(apiBase, fake.threadId, "complete", consumeObjective);
     fake.completeTurn(consumeTurn);
     const retryTurn = await fake.nextTurn();
     if (

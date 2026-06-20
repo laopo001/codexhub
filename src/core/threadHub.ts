@@ -1701,7 +1701,7 @@ export class ThreadHub {
     const goal = this.latestRunnableThreadGoal(thread);
     const status = thread.goalRunPolicyStatus ?? goal?.status ?? "active";
     const objective = thread.goalRunPolicyObjective ?? goal?.objective;
-    if (!objective || status !== "active") return false;
+    if (!objective || !goalRunPolicyStatusCanRun(status, thread.goalRunPolicyTurnActive)) return false;
     const weeklyRemainingPercent = this.weeklyRemainingPercent(thread);
     if (weeklyRemainingPercent === null || weeklyRemainingPercent > policy.targetRemainingPercent) return false;
     return this.retargetGoalRunPolicyToWrapUp(thread, weeklyRemainingPercent, policy.targetRemainingPercent);
@@ -1889,7 +1889,9 @@ export class ThreadHub {
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, wasRunning ? "done" : "thread");
     const startedQueuedTurn = this.startNextQueuedTurn(thread);
-    if (!startedQueuedTurn && !error) this.maybeStartGoalRunPolicyTurn(thread);
+    if (!startedQueuedTurn && !error) {
+      this.maybeStartGoalRunPolicyTurn(thread, { allowCompletedPolicyTurn: wasGoalRunPolicyTurn });
+    }
   }
 
   private startNextQueuedTurn(thread: ThreadState): boolean {
@@ -1912,7 +1914,12 @@ export class ThreadHub {
 
   private maybeStartGoalRunPolicyTurn(
     thread: ThreadState,
-    options: { allowUnknownUsage?: boolean; fallbackObjective?: string; statusOverride?: ThreadGoalStatus } = {}
+    options: {
+      allowUnknownUsage?: boolean;
+      fallbackObjective?: string;
+      statusOverride?: ThreadGoalStatus;
+      allowCompletedPolicyTurn?: boolean;
+    } = {}
   ) {
     if (thread.running || thread.skipNextGoalRunPolicyRun) {
       thread.skipNextGoalRunPolicyRun = false;
@@ -1923,7 +1930,7 @@ export class ThreadHub {
     const goal = this.latestRunnableThreadGoal(thread);
     const status = options.statusOverride ?? thread.goalRunPolicyStatus ?? goal?.status ?? "active";
     const objective = thread.goalRunPolicyObjective ?? goal?.objective ?? options.fallbackObjective?.trim();
-    if (!objective || status !== "active") return false;
+    if (!objective || !goalRunPolicyStatusCanRun(status, options.allowCompletedPolicyTurn)) return false;
     if (policy.targetRemainingPercent >= 100) return false;
     const weeklyRemainingPercent = this.weeklyRemainingPercent(thread);
     if (weeklyRemainingPercent === null && !options.allowUnknownUsage) return false;
@@ -3020,6 +3027,9 @@ const hasThreadGoalPatch = (goal: ThreadGoalUpdate) =>
 const goalUpdateCanStartRunPolicy = (goal: ThreadGoalUpdate) =>
   (!hasOwn(goal, "status") || goal.status === "active")
   && (hasOwn(goal, "runPolicy") || hasOwn(goal, "objective") || goal.status === "active");
+
+const goalRunPolicyStatusCanRun = (status: string | null | undefined, allowComplete = false) =>
+  status === "active" || (allowComplete && status === "complete");
 
 const normalizeThreadGoalRunPolicy = (policy: ThreadGoalUpdate["runPolicy"]): ThreadGoalRunPolicy | null => {
   if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return null;
