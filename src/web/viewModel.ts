@@ -172,6 +172,7 @@ export type AppViewModel = AppSidebarViewModel & {
   confirmProjectPicker: () => MaybePromise;
   copyContextSelection: () => MaybePromise;
   createSessionThread: () => MaybePromise;
+  createWorktreeThread: () => MaybePromise;
   effectiveModelSelection: ModelSelection;
   effectiveReasoningSelection: ReasoningSelection;
   effectiveServiceTierSelection: ServiceTierSelection;
@@ -206,7 +207,8 @@ export type AppViewModel = AppSidebarViewModel & {
     message: WebRecordView,
     canInspect: boolean
   ) => void;
-  openThreadPicker: (session: SessionView) => MaybePromise;
+  openThreadPicker: (session: SessionView, workingDirectory?: string) => MaybePromise;
+  openSelectedProjectThreadPicker: () => MaybePromise;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   projectPicker: ProjectPickerState | null;
   removeThreadImage: (threadId: string, attachmentId: string) => void;

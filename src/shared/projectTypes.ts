@@ -15,11 +15,21 @@ export type StoredMachine = {
   capabilities: MachineCapabilities;
 };
 
+/** project 之间的控制面关系；不改变 app-server 看到的 cwd/thread 语义。 */
+export type ProjectRelation = {
+  type: "worktree";
+  parentProjectId: string;
+  parentPath: string;
+  branch: string;
+  baseRef?: string;
+};
+
 /** config.yaml 中持久化的项目记录；项目 ID 由 machineId 和 path 推导。 */
 export type StoredProject = {
   projectId: string;
   machineId: string;
   path: string;
+  relation?: ProjectRelation;
   pinned?: boolean;
   createdAt: string;
   lastOpenedAt: string;

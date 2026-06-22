@@ -194,6 +194,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               const busy = openingProjectKey === projectKey || deleting;
               const openDisabled = busy;
               const fixed = fixedProject(project);
+              const worktreeRelation = project.relation?.type === "worktree" ? project.relation : null;
               const saveTitle = project.transient ? "Save project to CodexHub" : project.pinned ? "Unpin project" : "Pin project";
               const saveAria = project.transient
                 ? `Save ${project.name} to CodexHub`
@@ -202,7 +203,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               return (
                 <div
                   key={project.projectId}
-                  className={`projectRow ${active ? "active" : ""} ${project.pinned ? "pinned" : ""} ${fixed ? "transient" : ""}`}
+                  className={`projectRow ${active ? "active" : ""} ${project.pinned ? "pinned" : ""} ${fixed ? "transient" : ""} ${worktreeRelation ? "worktreeProject" : ""}`}
                 >
                   <button
                     type="button"
@@ -214,7 +215,10 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                     title={`Select ${project.name}`}
                   />
                   <div className="projectRowTop">
-                    <span className="projectOpenButton projectOpenNameButton" title={project.name}>{project.name}</span>
+                    <span className="projectOpenButton projectOpenNameButton" title={project.name}>
+                      <span className="projectOpenNameText">{project.name}</span>
+                      {worktreeRelation ? <em className="projectWorktreeBadge" title={worktreeRelation.branch}>{worktreeRelation.branch}</em> : null}
+                    </span>
                     {!projectScopeLocked && !fixed ? (
                       <div className="projectRowActions">
                         <button

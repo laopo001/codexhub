@@ -6,6 +6,7 @@ import YAML from "yaml";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
 import type { MachineCapabilities, MachineSummary, MachineType } from "../shared/machineTypes.js";
 import type {
+  ProjectRelation,
   ProjectSource,
   ServerConfig,
   ProjectSummary,
@@ -126,6 +127,7 @@ export class CodexhubServerState {
     const project = this.upsertProject({
       machineId: transient.machineId,
       path: transient.path,
+      relation: transient.relation,
       threadId: transient.lastThreadId,
       touchOpenedAt: false
     });
@@ -144,7 +146,8 @@ export class CodexhubServerState {
 
   projectTarget(projectId: string): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
     const resolvedProjectId = this.resolveProjectId(projectId);
-    const project = this.data.projects.find((item) => item.projectId === resolvedProjectId);
+    const project = this.data.projects.find((item) => item.projectId === resolvedProjectId)
+      ?? this.transientProjects.get(resolvedProjectId);
     if (project) {
       return {
         projectId: project.projectId,
@@ -373,6 +376,7 @@ export class CodexhubServerState {
   upsertProject(input: {
     machineId: string;
     path: string;
+    relation?: ProjectRelation;
     now?: string;
     threadId?: string;
     touchOpenedAt?: boolean;
@@ -385,16 +389,19 @@ export class CodexhubServerState {
     if (existing) {
       const next = {
         lastOpenedAt: input.touchOpenedAt === false ? existing.lastOpenedAt : maxIso(existing.lastOpenedAt, now),
-        lastThreadId: input.threadId ?? existing.lastThreadId
+        lastThreadId: input.threadId ?? existing.lastThreadId,
+        relation: input.relation ?? existing.relation
       };
       if (
         existing.lastOpenedAt === next.lastOpenedAt
         && existing.lastThreadId === next.lastThreadId
+        && existing.relation === next.relation
       ) {
         return existing;
       }
       existing.lastOpenedAt = next.lastOpenedAt;
       existing.lastThreadId = next.lastThreadId;
+      existing.relation = next.relation;
       this.touch();
       return existing;
     }
@@ -402,6 +409,7 @@ export class CodexhubServerState {
       projectId,
       machineId: input.machineId,
       path: normalizedPath,
+      relation: input.relation,
       createdAt: now,
       lastOpenedAt: now,
       lastThreadId: input.threadId
@@ -414,6 +422,7 @@ export class CodexhubServerState {
   upsertTransientProject(input: {
     machineId: string;
     path: string;
+    relation?: ProjectRelation;
     now?: string;
     sessionId?: string;
     threadId?: string;
@@ -428,6 +437,7 @@ export class CodexhubServerState {
       existing.lastOpenedAt = maxIso(existing.lastOpenedAt, now);
       existing.lastSessionId = input.sessionId ?? existing.lastSessionId;
       existing.lastThreadId = input.threadId ?? existing.lastThreadId;
+      existing.relation = input.relation ?? existing.relation;
       existing.source = input.source ?? existing.source;
       return existing;
     }
@@ -435,6 +445,7 @@ export class CodexhubServerState {
       projectId,
       machineId: input.machineId,
       path: normalizedPath,
+      relation: input.relation,
       createdAt: now,
       lastOpenedAt: now,
       lastSessionId: input.sessionId,
@@ -553,6 +564,7 @@ export class CodexhubServerState {
         lastOpenedAt: maxIso(project.lastOpenedAt, overlay.lastOpenedAt),
         lastSessionId: overlay.lastSessionId,
         lastThreadId: overlay.lastThreadId ?? project.lastThreadId,
+        relation: overlay.relation ?? project.relation,
         source: overlay.source
       };
     });
@@ -827,10 +839,30 @@ const normalizeStoredProject = (value: unknown): unknown => {
     projectId: item.projectId,
     machineId: item.machineId,
     path: item.path,
+    relation: normalizeProjectRelation(item.relation),
     pinned: item.pinned,
     createdAt: item.createdAt,
     lastOpenedAt: item.lastOpenedAt,
     lastThreadId: item.lastThreadId
+  };
+};
+
+const normalizeProjectRelation = (value: unknown): ProjectRelation | undefined => {
+  const item = objectRecord(value);
+  if (!item || item.type !== "worktree") return undefined;
+  if (
+    typeof item.parentProjectId !== "string"
+    || typeof item.parentPath !== "string"
+    || typeof item.branch !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    type: "worktree",
+    parentProjectId: item.parentProjectId,
+    parentPath: item.parentPath,
+    branch: item.branch,
+    ...(typeof item.baseRef === "string" && item.baseRef ? { baseRef: item.baseRef } : {})
   };
 };
 

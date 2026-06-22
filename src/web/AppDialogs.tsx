@@ -34,6 +34,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     confirmProjectPicker,
     copyContextSelection,
     createSessionThread,
+    createWorktreeThread,
     goalDialog,
     inspectContextMessage,
     inspectMessage,
@@ -252,7 +253,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
             <header className="threadPickerHeader">
               <div>
                 <h2 id="threadPickerTitle">Add Thread</h2>
-                <p>{threadPickerSession?.name ?? shortId(threadPicker.sessionId)}</p>
+                <p title={threadPicker.workingDirectory}>{threadPicker.workingDirectory}</p>
               </div>
               <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
             </header>
@@ -266,6 +267,64 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 <span className="threadPickerRowTitle">New thread</span>
                 <span className="threadPickerRowMeta">{threadPicker.acting === "new" ? "creating" : "Start a new Codex thread"}</span>
               </button>
+              <form
+                className="threadPickerWorktree"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void createWorktreeThread();
+                }}
+              >
+                <div className="threadPickerWorktreeHeader">
+                  <span>New worktree thread</span>
+                  <button
+                    type="submit"
+                    disabled={threadPicker.acting !== null || !threadPicker.worktreeBranch.trim()}
+                  >
+                    {threadPicker.acting === "worktree" ? "creating" : "Create"}
+                  </button>
+                </div>
+                <label>
+                  <span>Branch</span>
+                  <input
+                    value={threadPicker.worktreeBranch}
+                    onChange={(event) => setThreadPicker((current) => current ? {
+                      ...current,
+                      worktreeBranch: event.target.value,
+                      error: ""
+                    } : current)}
+                    disabled={threadPicker.acting !== null}
+                    placeholder="feature/name"
+                  />
+                </label>
+                <div className="threadPickerWorktreeGrid">
+                  <label>
+                    <span>Base</span>
+                    <input
+                      value={threadPicker.worktreeBaseRef}
+                      onChange={(event) => setThreadPicker((current) => current ? {
+                        ...current,
+                        worktreeBaseRef: event.target.value,
+                        error: ""
+                      } : current)}
+                      disabled={threadPicker.acting !== null}
+                      placeholder="HEAD"
+                    />
+                  </label>
+                  <label>
+                    <span>Path</span>
+                    <input
+                      value={threadPicker.worktreePath}
+                      onChange={(event) => setThreadPicker((current) => current ? {
+                        ...current,
+                        worktreePath: event.target.value,
+                        error: ""
+                      } : current)}
+                      disabled={threadPicker.acting !== null}
+                      placeholder="auto"
+                    />
+                  </label>
+                </div>
+              </form>
               {threadPicker.loading ? (
                 <div className="threadPickerEmpty">Loading threads</div>
               ) : threadPicker.candidates.length === 0 ? (

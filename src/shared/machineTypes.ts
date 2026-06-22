@@ -77,6 +77,15 @@ export type MachineDirectoryListing = {
   entries: MachineDirectoryEntry[];
 };
 
+/** machine 在自身文件系统中创建或复用 git worktree 后返回的路径。 */
+export type MachineGitWorktreeResult = {
+  parentCwd: string;
+  path: string;
+  branch: string;
+  baseRef?: string;
+  createdBranch: boolean;
+};
+
 /** 停止指定 machine session 的命令结果；当前公开 project flow 一般不主动停止 runtime。 */
 export type MachineStopSessionResult = {
   sessionId: string;
@@ -85,7 +94,11 @@ export type MachineStopSessionResult = {
 };
 
 /** machine command 的所有可能返回值。 */
-export type MachineCommandResult = MachineStartSessionResult | MachineDirectoryListing | MachineStopSessionResult;
+export type MachineCommandResult =
+  | MachineStartSessionResult
+  | MachineDirectoryListing
+  | MachineGitWorktreeResult
+  | MachineStopSessionResult;
 
 type MachineCommandBase = {
   seq: number;
@@ -101,6 +114,12 @@ type MachineCommandDetail = {
 } | {
   type: "list_directory";
   cwd?: string;
+} | {
+  type: "create_git_worktree";
+  parentCwd: string;
+  branch: string;
+  baseRef?: string;
+  path?: string;
 } | {
   type: "stop_session";
   sessionId: string;

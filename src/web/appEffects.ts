@@ -1,6 +1,12 @@
 import { useEffect } from "react";
 import { isVscodeSurface, storageKey } from "./appConfig.js";
-import { apiRouteJson, machineProjectLauncher, preferredThreadIdForSession, primeTaskCompletionSound } from "./appHelpers.js";
+import {
+  apiRouteJson,
+  machineProjectLauncher,
+  preferredThreadIdForSession,
+  primeTaskCompletionSound,
+  runtimeSessionForProject
+} from "./appHelpers.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { apiRoutes } from "../shared/apiRoutes.js";
@@ -123,7 +129,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       return;
     }
 
-    const selectedProjectSession = selectors.selectedProject?.session;
+    const selectedProjectSession = runtimeSessionForProject(selectors.selectedProject ?? undefined, state.sessionList);
     if (state.selectedProjectKey && selectors.selectedProject) {
       if (selectedProjectSession && state.activeSessionId !== selectedProjectSession.sessionId) {
         state.setActiveSessionId(selectedProjectSession.sessionId);

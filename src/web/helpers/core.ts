@@ -434,9 +434,7 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
     .map((group) => ({
       ...group,
       badgeLabel: projectMachineBadgeLabel(group),
-      projects: [...group.projects].sort((left, right) => {
-        return compareProjectRows(left, right);
-      })
+      projects: orderProjectsByRelation(group.projects)
     }))
     .sort((left, right) =>
       Number(right.kind === "vscodeWorkspace") - Number(left.kind === "vscodeWorkspace")
@@ -474,6 +472,33 @@ export const compareProjectRows = (left: ProjectSummary, right: ProjectSummary) 
   return left.path.localeCompare(right.path, undefined, { sensitivity: "base" });
 };
 
+export const orderProjectsByRelation = (projects: ProjectSummary[]) => {
+  const projectIds = new Set(projects.map((project) => project.projectId));
+  const childrenByParent = new Map<string, ProjectSummary[]>();
+  const roots: ProjectSummary[] = [];
+  for (const project of projects) {
+    const parentProjectId = project.relation?.type === "worktree" ? project.relation.parentProjectId : "";
+    if (parentProjectId && projectIds.has(parentProjectId)) {
+      const children = childrenByParent.get(parentProjectId) ?? [];
+      children.push(project);
+      childrenByParent.set(parentProjectId, children);
+    } else {
+      roots.push(project);
+    }
+  }
+  const ordered: ProjectSummary[] = [];
+  for (const root of roots.sort(compareProjectRows)) {
+    ordered.push(root);
+    const children = childrenByParent.get(root.projectId);
+    if (children?.length) ordered.push(...children.sort(compareProjectRows));
+  }
+  for (const [parentProjectId, children] of childrenByParent) {
+    if (projectIds.has(parentProjectId) && ordered.some((project) => project.projectId === parentProjectId)) continue;
+    ordered.push(...children.sort(compareProjectRows));
+  }
+  return ordered;
+};
+
 export const projectKeyFor = (machineId: string, projectPath: string) => `${machineId}:${projectPath}`;
 
 export const projectKeyForProject = (project: Pick<ProjectSummary, "machineId" | "path">) =>
@@ -488,6 +513,8 @@ export const projectSearchMatches = (project: ProjectSummary, query: string) => 
     project.name,
     project.path,
     project.machineId,
+    project.relation?.type === "worktree" ? project.relation.branch : "",
+    project.relation?.type === "worktree" ? project.relation.parentPath : "",
     project.session?.sessionId,
     ...project.threads.map((thread) => thread.title)
   ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalized));
@@ -682,12 +709,22 @@ export const sessionThreadIds = (session: SessionView) => {
 };
 
 export const preferredThreadIdForSession = (session: SessionView, project?: ProjectSummary) => {
-  const sessionThreadIds = new Set((session.threads ?? []).map((thread) => thread.threadId));
-  if (project?.lastThreadId && sessionThreadIds.has(project.lastThreadId)) return project.lastThreadId;
-  return session.threads?.[0]?.threadId
-    ?? project?.threads?.[0]?.threadId
-    ?? "";
+  const sessionThreads = session.threads ?? [];
+  if (!project) return sessionThreads[0]?.threadId ?? "";
+  const projectThreads = sessionThreads.filter((thread) => thread.workingDirectory === project.path);
+  const projectThreadIds = new Set(projectThreads.map((thread) => thread.threadId));
+  if (project.lastThreadId && projectThreadIds.has(project.lastThreadId)) return project.lastThreadId;
+  return projectThreads[0]?.threadId ?? "";
 };
+
+export const runtimeSessionForMachine = (sessions: SessionView[], machineId?: string) => {
+  if (!machineId) return undefined;
+  return sessions.find((session) => session.machineId === machineId && session.online)
+    ?? sessions.find((session) => session.machineId === machineId);
+};
+
+export const runtimeSessionForProject = (project: ProjectSummary | undefined, sessions: SessionView[]) =>
+  project ? runtimeSessionForMachine(sessions, project.machineId) ?? project.session ?? undefined : undefined;
 
 export const adjacentThreadId = (threadIds: string[], threadId: string) => {
   const index = threadIds.indexOf(threadId);

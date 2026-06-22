@@ -8,6 +8,8 @@ import type {
   ProjectMutationPayload,
   ProjectOpenPayload,
   ProjectUpdateInput,
+  ProjectWorktreeOpenInput,
+  ProjectWorktreeOpenPayload,
   ProjectsPayload,
   ServerConfigPayload,
   ServerConfigUpdateInput,
@@ -161,6 +163,7 @@ export const apiRoutes = {
     (sessionId) => `/api/sessions/${encode(sessionId)}/threads`
   ),
   openProject: post<ProjectOpenInput, ProjectOpenPayload>("/api/projects/open"),
+  openProjectWorktree: post<ProjectWorktreeOpenInput, ProjectWorktreeOpenPayload>("/api/projects/worktree/open"),
   createTask: post<TaskCreateInput, TaskMutationPayload>("/api/tasks"),
   updateTask: patch<TaskUpdateInput, TaskMutationPayload, (taskId: string) => string>(
     (taskId) => `/api/tasks/${encode(taskId)}`

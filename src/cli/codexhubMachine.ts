@@ -1,7 +1,9 @@
-import { access, readdir, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, appendFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
 import { machineTransportUrl, parseMachineTransportMessage } from "../core/machineTransportProtocol.js";
 import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
@@ -10,6 +12,7 @@ import {
   type MachineCapabilities,
   type MachineCommand,
   type MachineDirectoryListing,
+  type MachineGitWorktreeResult,
   type MachineRegistration,
   type MachineRegistrationProject,
   type MachineStartSessionResult,
@@ -23,6 +26,8 @@ import {
   type HeadlessCodexhubSessionHandle
 } from "./codexhubConnect.js";
 import type { CodexAppServerLaunchOptions } from "./codexAppServerProcess.js";
+
+const execFileAsync = promisify(execFile);
 
 export type MachineRunnerOptions = {
   apiBase: string;
@@ -277,6 +282,7 @@ class CodexhubMachineRunner {
   private async runCommand(command: MachineCommand) {
     if (command.type === "start_session") return await this.startSession(command);
     if (command.type === "list_directory") return await this.listDirectory(command);
+    if (command.type === "create_git_worktree") return await this.createGitWorktree(command);
     if (command.type === "stop_session") return await this.stopSession(command);
     throw new Error(`Unexpected command: ${(command as { type?: string }).type ?? "unknown"}`);
   }
@@ -512,6 +518,34 @@ class CodexhubMachineRunner {
     };
   }
 
+  private async createGitWorktree(command: MachineCommand): Promise<MachineGitWorktreeResult> {
+    if (command.type !== "create_git_worktree") throw new Error(`Unexpected command: ${command.type}`);
+    const parentCwd = await resolveDirectory(command.parentCwd);
+    const branch = normalizeBranchName(command.branch);
+    const baseRef = command.baseRef?.trim() || undefined;
+    await assertGitRepository(parentCwd);
+    const customPath = command.path?.trim();
+    const defaultPath = !customPath;
+    const targetPath = path.resolve(defaultPath ? defaultWorktreePath(parentCwd, branch) : expandHome(customPath));
+    if (defaultPath) {
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      await addGitInfoExclude(parentCwd, ".codexhub/worktrees");
+    }
+    const branchExists = await gitBranchExists(parentCwd, branch);
+    const args = branchExists
+      ? ["worktree", "add", targetPath, branch]
+      : ["worktree", "add", "-b", branch, targetPath, baseRef ?? "HEAD"];
+    await runGit(parentCwd, args);
+    const resolvedPath = await resolveDirectory(targetPath);
+    return {
+      parentCwd,
+      path: resolvedPath,
+      branch,
+      ...(baseRef ? { baseRef } : {}),
+      createdBranch: !branchExists
+    };
+  }
+
   private sendRaw(message: unknown) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(message));
@@ -540,6 +574,70 @@ const resolveDirectory = async (input: string) => {
   if (!info.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
   await access(cwd);
   return cwd;
+};
+
+const normalizeBranchName = (input: string) => {
+  const branch = input.trim();
+  if (!branch) throw new Error("Worktree branch is required.");
+  if (branch.startsWith("-")) throw new Error("Worktree branch cannot start with '-'.");
+  if (branch.includes("..") || branch.includes("@{") || /[\s~^:?*[\\\x00-\x1f\x7f]/.test(branch)) {
+    throw new Error(`Invalid git branch name: ${branch}`);
+  }
+  return branch;
+};
+
+const defaultWorktreePath = (parentCwd: string, branch: string) => {
+  return path.join(parentCwd, ".codexhub", "worktrees", safePathSegment(branch));
+};
+
+const safePathSegment = (value: string) =>
+  value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "worktree";
+
+const assertGitRepository = async (cwd: string) => {
+  await runGit(cwd, ["rev-parse", "--show-toplevel"]);
+};
+
+const gitBranchExists = async (cwd: string, branch: string) => {
+  try {
+    await runGit(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const addGitInfoExclude = async (cwd: string, pattern: string) => {
+  const rawExcludePath = (await runGit(cwd, ["rev-parse", "--git-path", "info/exclude"])).trim();
+  if (!rawExcludePath) return;
+  const excludePath = path.isAbsolute(rawExcludePath) ? rawExcludePath : path.resolve(cwd, rawExcludePath);
+  await mkdir(path.dirname(excludePath), { recursive: true });
+  let existing = "";
+  try {
+    existing = await readFile(excludePath, "utf8");
+  } catch {
+    existing = "";
+  }
+  const lines = existing.split(/\r?\n/).map((line) => line.trim());
+  if (lines.includes(pattern)) return;
+  const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+  await appendFile(excludePath, `${prefix}${pattern}\n`, "utf8");
+};
+
+const runGit = async (cwd: string, args: string[]) => {
+  try {
+    const result = await execFileAsync("git", args, {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024 * 8
+    });
+    return typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? "");
+  } catch (error) {
+    const failure = error as { stderr?: unknown; stdout?: unknown; message?: string };
+    const detail = [failure.stderr, failure.stdout, failure.message]
+      .map((value) => typeof value === "string" ? value.trim() : "")
+      .find(Boolean);
+    throw new Error(detail ? `git ${args.join(" ")} failed: ${detail}` : `git ${args.join(" ")} failed`);
+  }
 };
 
 const expandHome = (input: string) => {

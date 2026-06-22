@@ -364,6 +364,9 @@ export class ThreadHub {
     const thread = this.ensureThread(threadId, session, {
       params: { threadId, cwd: workingDirectory ?? session.workingDirectory }
     });
+    if (workingDirectory && thread.workingDirectory !== workingDirectory) {
+      thread.workingDirectory = workingDirectory;
+    }
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
     return this.summary(thread);

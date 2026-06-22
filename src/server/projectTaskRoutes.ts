@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { MachineHub } from "../core/machineHub.js";
 import type { CodexhubServerState } from "../core/serverState.js";
 import type { ThreadHub } from "../core/threadHub.js";
-import type { ProjectSource, StoredTask } from "../shared/projectTypes.js";
+import type { ProjectRelation, ProjectSource, StoredTask } from "../shared/projectTypes.js";
 import {
   projectSourceSchema,
   projectUpdateSchema,
@@ -12,6 +12,7 @@ import {
   taskUpdateSchema,
   type ProjectMutationPayload,
   type ProjectOpenPayload,
+  type ProjectWorktreeOpenPayload,
   type ProjectsPayload,
   type TaskMutationPayload,
   type TasksPayload,
@@ -51,6 +52,57 @@ export type ProjectTaskRoutesContext = {
 };
 
 export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTaskRoutesContext) => {
+  const openProjectOnMachine = async (input: {
+    machine: ReturnType<MachineHub["listMachines"]>[number];
+    path: string;
+    reuse?: boolean;
+    persist?: boolean;
+    source?: ProjectSource;
+    relation?: ProjectRelation;
+  }): Promise<ProjectOpenPayload> => {
+    const previousProject = ctx.state.listStoredProjects()
+      .find((project) => project.machineId === input.machine.machineId && project.path === input.path);
+    const knownLastThread = previousProject?.lastThreadId
+      ? ctx.threads.listThreads().find((thread) => thread.threadId === previousProject.lastThreadId)
+      : undefined;
+    const relation = input.relation ?? previousProject?.relation;
+    const knownLastThreadMismatches = Boolean(knownLastThread && knownLastThread.workingDirectory !== input.path);
+    const worktreeNeedsKnownThread = relation?.type === "worktree";
+    const reusableThreadId = input.reuse === false || knownLastThreadMismatches || (worktreeNeedsKnownThread && !knownLastThread)
+      ? undefined
+      : previousProject?.lastThreadId;
+    const reuseExistingProjectRuntime = input.reuse === false
+      ? false
+      : !knownLastThreadMismatches && (!worktreeNeedsKnownThread || Boolean(knownLastThread));
+    const started = ctx.machines.startSession(input.machine.machineId, {
+      cwd: input.path,
+      reuse: reuseExistingProjectRuntime,
+      threadId: reusableThreadId
+    });
+    const result = await started.promise;
+    const sessionId = result.sessionId;
+    await ctx.waitForSession(sessionId);
+    ctx.threads.attachSessionThread(sessionId, result.threadId, result.cwd);
+    const project = input.persist === false
+      ? ctx.state.upsertTransientProject({
+        machineId: input.machine.machineId,
+        path: result.cwd,
+        relation: input.relation,
+        sessionId,
+        threadId: result.threadId,
+        source: input.source
+      })
+      : ctx.state.upsertProject({
+        machineId: input.machine.machineId,
+        path: result.cwd,
+        relation: input.relation,
+        threadId: result.threadId
+      });
+    if (!project) throw new Error("Project could not be opened.");
+    ctx.publishProjects();
+    return { ok: true, machine: input.machine, project, result, ...ctx.projectSnapshot() } satisfies ProjectOpenPayload;
+  };
+
   app.get("/api/projects", async () => ctx.projectSnapshot() satisfies ProjectsPayload);
 
   app.delete("/api/projects/:projectId", async (request, reply) => {
@@ -117,36 +169,58 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
         reply.code(409);
         return { error: "This machine exposes a fixed workspace project list." };
       }
-      const previousProject = ctx.state.listStoredProjects()
-        .find((project) => project.machineId === machine.machineId && project.path === payload.path);
-      const started = ctx.machines.startSession(machine.machineId, {
-        cwd: payload.path,
-        reuse: payload.reuse ?? true,
-        threadId: payload.reuse === false ? undefined : previousProject?.lastThreadId
+      return await openProjectOnMachine({
+        machine,
+        path: payload.path,
+        reuse: payload.reuse,
+        persist: payload.persist,
+        source: payload.source
       });
-      const result = await started.promise;
-      const sessionId = result.sessionId;
-      await ctx.waitForSession(sessionId);
-      ctx.threads.attachSessionThread(sessionId, result.threadId, result.cwd);
-      const project = payload.persist === false
-        ? ctx.state.upsertTransientProject({
-          machineId: machine.machineId,
-          path: result.cwd,
-          sessionId,
-          threadId: result.threadId,
-          source: payload.source
-        })
-        : ctx.state.upsertProject({
-          machineId: machine.machineId,
-          path: result.cwd,
-          threadId: result.threadId
-        });
-      if (!project) {
-        reply.code(409);
-        return { error: "Project could not be opened." };
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.post("/api/projects/worktree/open", async (request, reply) => {
+    const payload = z.object({
+      parentProjectId: z.string().min(1),
+      branch: z.string().trim().min(1),
+      baseRef: z.string().trim().min(1).optional(),
+      path: z.string().trim().min(1).optional(),
+      reuse: z.boolean().optional(),
+      persist: z.boolean().optional()
+    }).parse(request.body);
+
+    try {
+      const parent = ctx.state.projectTarget(payload.parentProjectId);
+      if (!parent) {
+        reply.code(404);
+        return { error: `Project not found: ${payload.parentProjectId}` };
       }
-      ctx.publishProjects();
-      return { ok: true, machine, project, result, ...ctx.projectSnapshot() } satisfies ProjectOpenPayload;
+      const machine = ctx.resolveTargetMachine(ctx.machines.listMachines(), parent.machineId);
+      const created = ctx.machines.createGitWorktree(machine.machineId, {
+        parentCwd: parent.path,
+        branch: payload.branch,
+        baseRef: payload.baseRef,
+        path: payload.path
+      });
+      const worktree = await created.promise;
+      const relation: ProjectRelation = {
+        type: "worktree",
+        parentProjectId: parent.projectId,
+        parentPath: parent.path,
+        branch: worktree.branch,
+        ...(worktree.baseRef ? { baseRef: worktree.baseRef } : payload.baseRef ? { baseRef: payload.baseRef } : {})
+      };
+      const opened = await openProjectOnMachine({
+        machine,
+        path: worktree.path,
+        relation,
+        reuse: payload.reuse,
+        persist: payload.persist
+      });
+      return { ...opened, worktree } satisfies ProjectWorktreeOpenPayload;
     } catch (error) {
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };

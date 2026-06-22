@@ -113,6 +113,10 @@
     padding: 7px 9px;
   }
 
+  .threadPickerWorktreeGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .projectPickerPathForm {
     grid-template-columns: 32px 32px minmax(0, 1fr) auto;
   }

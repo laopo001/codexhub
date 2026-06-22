@@ -122,7 +122,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     openingProjectKey,
     openMessageContextMenu,
     openProjectPicker,
-    openThreadPicker,
+    openSelectedProjectThreadPicker,
     pasteThreadImages,
     patchTask,
     projectGroups,
@@ -145,6 +145,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     runTaskNow,
     saveGoalDialog,
     selectProject,
+    selectedProject,
     send,
     sessionList,
     threadControlsMenuOpen,
@@ -204,6 +205,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     openThreadEmptyMessage,
     openThreadTabs
   } = viewModel;
+  const canAddThreadForProject = Boolean(activeProjectSession?.online || selectedProject?.machineOnline);
+  const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
+  const showThreadTabs = Boolean(activeThreadKey || canAddThreadForProject);
   const showTurnLoadingMessage = Boolean(activeThread?.running || turnUiState.kind === "running");
   const messagesVirtuosoContext = React.useMemo(
     () => ({ turnLoadingDuration: activeRunningTurnDuration }),
@@ -356,7 +360,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       <AppSidebar viewModel={viewModel} />
 
       <section className="workspace">
-        {activeThread && activeThreadIsOpen ? (
+        {showThreadTabs ? (
           <Tabs
             className="openThreadTabs"
             tabBarExtraContent={{
@@ -379,11 +383,11 @@ export const AppView = ({ viewModel }: AppViewProps) => {
             }}
             size="small"
             type="editable-card"
-            activeKey={activeThread.threadId}
+            activeKey={activeThreadKey || undefined}
             items={openThreadTabs.map((item) => ({
               ...item,
               closable: true,
-              children: item.key === activeThread.threadId ? (
+              children: activeThread && item.key === activeThreadKey ? (
                 <div className="threadWorkspacePane">
                   <Virtuoso
                     key={activeThread.threadId}
@@ -767,7 +771,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
             onChange={(threadId) => void switchSessionThread(threadId)}
             onEdit={(targetKey, action) => {
               if (action === "add") {
-                if (activeProjectSession?.online) openThreadPicker(activeProjectSession);
+                if (canAddThreadForProject) void openSelectedProjectThreadPicker();
                 return;
               }
               if (action === "remove" && typeof targetKey === "string") {
@@ -779,11 +783,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
           <div className="empty">
             <div className="emptySidebarToggle">{sidebarToggle}</div>
             <span>{openThreadEmptyMessage}</span>
-            {activeProjectSession?.online ? (
-              <button type="button" className="emptyActionButton" onClick={() => openThreadPicker(activeProjectSession)}>
-                Add Thread
-              </button>
-            ) : null}
           </div>
         )}
       </section>

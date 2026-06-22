@@ -121,7 +121,10 @@ export type ThreadPickerState = {
   loading: boolean;
   error: string;
   candidates: CodexThreadCandidate[];
-  acting: "new" | string | null;
+  acting: "new" | "worktree" | string | null;
+  worktreeBranch: string;
+  worktreeBaseRef: string;
+  worktreePath: string;
 };
 
 export type ProjectsPayload = ApiProjectsPayload;

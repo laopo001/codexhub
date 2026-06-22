@@ -742,6 +742,78 @@
   color: #8a9586;
 }
 
+.threadPickerWorktree {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dfe5dc;
+  border-radius: 7px;
+  background: #fbfcf8;
+  padding: 9px 10px;
+}
+
+.threadPickerWorktreeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.threadPickerWorktreeHeader span {
+  min-width: 0;
+  overflow: hidden;
+  color: #17211a;
+  font-size: 13px;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threadPickerWorktreeHeader button,
+.threadPickerWorktree input {
+  border: 1px solid #cdd8ca;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17211a;
+}
+
+.threadPickerWorktreeHeader button {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.threadPickerWorktreeHeader button:disabled {
+  color: #8a9586;
+}
+
+.threadPickerWorktree label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.threadPickerWorktree label span {
+  color: #66715f;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.threadPickerWorktree input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 7px;
+  font-size: 12px;
+}
+
+.threadPickerWorktreeGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 8px;
+}
+
 .threadPickerRowTitle {
   min-width: 0;
   overflow: hidden;

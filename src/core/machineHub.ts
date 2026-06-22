@@ -4,6 +4,7 @@ import type {
   MachineCommand,
   MachineCommandResult,
   MachineDirectoryListing,
+  MachineGitWorktreeResult,
   MachineRegistration,
   MachineSummary,
   MachineStartSessionResult,
@@ -14,6 +15,7 @@ import type {
 type MachineCommandInput =
   | Omit<Extract<MachineCommand, { type: "start_session" }>, "seq">
   | Omit<Extract<MachineCommand, { type: "list_directory" }>, "seq">
+  | Omit<Extract<MachineCommand, { type: "create_git_worktree" }>, "seq">
   | Omit<Extract<MachineCommand, { type: "stop_session" }>, "seq">;
 
 type MachineState = MachineSummary & {
@@ -143,6 +145,30 @@ export class MachineHub {
     return {
       command,
       promise: this.waitForCommand<MachineDirectoryListing>(commandId, machine.machineId, "list_directory", timeoutMs)
+    };
+  }
+
+  createGitWorktree(
+    machineId: string,
+    input: { parentCwd: string; branch: string; baseRef?: string; path?: string },
+    timeoutMs = 90_000
+  ) {
+    const machine = this.requireMachine(machineId);
+    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
+    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot launch projects: ${machineId}`);
+    const commandId = randomUUID();
+    const command = this.enqueueMachineCommand(machine.machineId, {
+      commandId,
+      type: "create_git_worktree",
+      createdAt: new Date().toISOString(),
+      parentCwd: input.parentCwd,
+      branch: input.branch,
+      baseRef: input.baseRef,
+      path: input.path
+    });
+    return {
+      command,
+      promise: this.waitForCommand<MachineGitWorktreeResult>(commandId, machine.machineId, "create_git_worktree", timeoutMs)
     };
   }
 

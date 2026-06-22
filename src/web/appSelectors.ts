@@ -24,6 +24,7 @@ import {
   preferredThreadIdForSession,
   projectKeyForProject,
   reasoningOptionsForSelection,
+  runtimeSessionForProject,
   serviceTierOptionsForSelection,
   threadDisplayRecords,
   threadUsageFromSessionRateLimits,
@@ -134,7 +135,7 @@ export const useAppSelectors = (state: AppState) => {
   );
   const activeProjectSession = useMemo(
     () => {
-      if (selectedProjectByKey) return selectedProjectByKey.session ?? undefined;
+      if (selectedProjectByKey) return runtimeSessionForProject(selectedProjectByKey, state.sessionList);
       return projectList.find((project) =>
         project.session?.sessionId === state.activeSessionId
         && (!state.activeWorkspacePath || project.path === state.activeWorkspacePath)
@@ -178,9 +179,14 @@ export const useAppSelectors = (state: AppState) => {
     if (selectedProjectByKey) return selectedProjectByKey;
     if (activeProjectSession) {
       return projectList.find((project) =>
-        project.session?.sessionId === activeProjectSession.sessionId
-        && project.path === activeProjectSession.workingDirectory
+        project.machineId === activeProjectSession.machineId
+        && Boolean(state.activeWorkspacePath)
+        && project.path === state.activeWorkspacePath
       )
+        ?? projectList.find((project) =>
+          project.machineId === activeProjectSession.machineId
+          && project.path === activeProjectSession.workingDirectory
+        )
         ?? projectList.find((project) =>
           project.session?.sessionId === activeProjectSession.sessionId
           && (!state.activeWorkspacePath || project.path === state.activeWorkspacePath)
@@ -197,7 +203,11 @@ export const useAppSelectors = (state: AppState) => {
   const activeProjectKey = selectedProject ? projectKeyForProject(selectedProject) : "";
   const activeProjectSessionThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
-    for (const thread of activeProjectSession?.threads ?? []) byId.set(thread.threadId, thread);
+    const projectPath = selectedProject?.path ?? state.activeWorkspacePath;
+    for (const thread of activeProjectSession?.threads ?? []) {
+      if (projectPath && thread.workingDirectory !== projectPath) continue;
+      byId.set(thread.threadId, thread);
+    }
     const orderedIds = state.threadOrderBySession[activeProjectSession?.sessionId ?? ""] ?? [];
     return [
       ...orderedIds.flatMap((threadId) => {
@@ -208,7 +218,7 @@ export const useAppSelectors = (state: AppState) => {
       }),
       ...byId.values()
     ];
-  }, [activeProjectSession, state.threadOrderBySession]);
+  }, [activeProjectSession, selectedProject?.path, state.activeWorkspacePath, state.threadOrderBySession]);
   const openThreadIds = useMemo(
     () => state.openThreads.map((thread) => thread.threadId),
     [state.openThreads]
@@ -324,11 +334,17 @@ export const useAppSelectors = (state: AppState) => {
   const activeCanSubmit = activeCanSend;
   const showComposerSendButton = Boolean(activeThread && !activeThread.running);
   const openThreadEmptyMessage = openThreadIds.length
-    ? "Select a thread"
+    ? selectedProject
+      ? activeProjectSession?.online
+        ? activeProjectSessionThreads.length ? "Select a thread" : "No threads"
+        : selectedProject.machineOnline ? "No threads" : "Machine offline"
+      : "Select a thread"
     : activeProjectSession
     ? activeProjectSession.online
       ? activeProjectSessionThreads.length ? "Select a thread" : "No threads"
       : "Session disconnected"
+    : selectedProject
+    ? selectedProject.machineOnline ? "No threads" : "Machine offline"
     : "No session";
   const latestThreadUsage = useMemo(
     () => latestThreadUsageFromRecords(latestTurnStatusScope.records) ?? latestThreadUsageFromRecords(displayRecords),

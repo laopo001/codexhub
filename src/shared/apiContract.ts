@@ -2,6 +2,7 @@ import { z } from "zod";
 import { isCronExpression } from "../core/taskCron.js";
 import type {
   MachineDirectoryListing,
+  MachineGitWorktreeResult,
   MachineStartSessionResult,
   MachineStopSessionResult,
   MachineSummary
@@ -37,6 +38,7 @@ import type {
 
 export type {
   MachineDirectoryListing,
+  MachineGitWorktreeResult,
   MachineStartSessionResult,
   MachineStopSessionResult,
   MachineSummary,
@@ -283,6 +285,21 @@ export type ProjectOpenPayload = ProjectsPayload & {
     sessionId?: string;
     threadId?: string;
   };
+};
+
+/** 创建 git worktree project 并打开对应 Codex thread 的请求 body。 */
+export type ProjectWorktreeOpenInput = {
+  parentProjectId: string;
+  branch: string;
+  baseRef?: string;
+  path?: string;
+  reuse?: boolean;
+  persist?: boolean;
+};
+
+/** worktree project open 接口返回值，包含创建出的 worktree 路径。 */
+export type ProjectWorktreeOpenPayload = ProjectOpenPayload & {
+  worktree?: MachineGitWorktreeResult;
 };
 
 /** project update/delete mutation 返回值，包含更新后的项目快照。 */
@@ -570,6 +587,14 @@ export const machineDirectoryListingSchema = z.object({
   }))
 });
 
+export const machineGitWorktreeResultSchema = z.object({
+  parentCwd: z.string().min(1),
+  path: z.string().min(1),
+  branch: z.string().min(1),
+  baseRef: z.string().min(1).optional(),
+  createdBranch: z.boolean()
+});
+
 export const machineStopSessionResultSchema = z.object({
   sessionId: z.string().min(1),
   stopped: z.boolean(),
@@ -626,7 +651,12 @@ export const machineTransportMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("command_result"),
     commandId: z.string().min(1),
-    result: z.union([machineStartSessionResultSchema, machineDirectoryListingSchema, machineStopSessionResultSchema])
+    result: z.union([
+      machineStartSessionResultSchema,
+      machineDirectoryListingSchema,
+      machineGitWorktreeResultSchema,
+      machineStopSessionResultSchema
+    ])
   }),
   z.object({
     type: z.literal("command_error"),
