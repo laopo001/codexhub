@@ -275,8 +275,8 @@ export type ThreadRenamePayload = {
   thread?: ThreadDetail;
 };
 
-/** project open 接口返回值，包含项目快照和 machine 启动 session 的结果。 */
-export type ProjectOpenPayload = ProjectsPayload & {
+/** 基于 project path 启动/复用 machine runtime 并创建或恢复 thread 的返回值。 */
+export type ProjectThreadStartPayload = ProjectsPayload & {
   ok?: boolean;
   machine?: MachineSummary;
   project?: ProjectRecordPayload | ProjectSummary;
@@ -287,8 +287,8 @@ export type ProjectOpenPayload = ProjectsPayload & {
   };
 };
 
-/** 创建 git worktree project 并打开对应 Codex thread 的请求 body。 */
-export type ProjectWorktreeOpenInput = {
+/** 创建 git worktree project 并启动对应 Codex thread 的请求 body。 */
+export type WorktreeThreadStartInput = {
   parentProjectId: string;
   branch: string;
   baseRef?: string;
@@ -297,8 +297,8 @@ export type ProjectWorktreeOpenInput = {
   persist?: boolean;
 };
 
-/** worktree project open 接口返回值，包含创建出的 worktree 路径。 */
-export type ProjectWorktreeOpenPayload = ProjectOpenPayload & {
+/** worktree thread 启动返回值，包含创建出的 worktree 路径。 */
+export type WorktreeThreadStartPayload = ProjectThreadStartPayload & {
   worktree?: MachineGitWorktreeResult;
 };
 
@@ -308,13 +308,6 @@ export type ProjectMutationPayload = ProjectsPayload & {
   deleted?: boolean;
   transient?: boolean;
   project?: ProjectRecordPayload | ProjectSummary;
-  stoppedSessions?: Array<{
-    machineId: string;
-    sessionId: string;
-    stopped: boolean;
-    removed: boolean;
-    reason: string;
-  }>;
 };
 
 /** task create/update/run mutation 返回值；run 可能额外返回定位到的 session/thread。 */

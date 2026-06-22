@@ -25,6 +25,7 @@ import {
   preferredThreadIdForSession,
   projectKeyForProject,
   readStoredUiState,
+  runtimeSessionForProject,
   streamEventRecords,
   taskCompleteNotification,
   taskCompletionNotificationKey,
@@ -172,7 +173,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const loadedSessions = normalizeSessions(sessionData.sessions);
     const loadedMachines = normalizeMachines(projectData.machines);
     const loadedProjects = normalizeProjects(projectData.projects);
-    const loadedProjectSessions = loadedProjects.flatMap((project) => project.session ? [project.session] : []);
     const saved = readStoredUiState();
     const shouldRestoreSavedTabs = !initialWorkspacePath && Array.isArray(saved?.openThreadIds);
     const restoredThreadIds = shouldRestoreSavedTabs
@@ -187,11 +187,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const initialProjectFromUrl = initialWorkspacePath
       ? loadedProjects.find((project) => project.path === initialWorkspacePath)
       : undefined;
-    const availableSessions = [...loadedProjectSessions, ...loadedSessions];
+    const availableSessions = loadedSessions;
     const savedSession = saved?.activeSessionId
       ? availableSessions.find((session) => session.sessionId === saved.activeSessionId)
       : undefined;
-    const initialSession = initialProjectFromUrl?.session ?? savedSession ?? loadedProjectSessions[0] ?? loadedSessions[0];
+    const initialSession = runtimeSessionForProject(initialProjectFromUrl, loadedSessions) ?? savedSession ?? loadedSessions[0];
     const initialWorkspace = initialWorkspacePath || saved?.activeWorkspacePath || defaultDirectory;
     const initialSettings = {
       ...defaultAppSettings(),
@@ -229,13 +229,14 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setThreadOrderBySession(() => mergeThreadOrderBySession(saved?.threadOrderBySession ?? {}, loadedSessions));
     connectRealtimeEvents();
     const initialProject = initialSession
-      ? loadedProjects.find((project) => project.session?.sessionId === initialSession.sessionId)
+      ? initialProjectFromUrl
+        ?? loadedProjects.find((project) => project.machineId === initialSession.machineId && project.path === initialWorkspace)
         ?? loadedProjects.find((project) => project.machineId === initialSession.machineId && project.path === initialSession.workingDirectory)
       : undefined;
     const initialThreadId = initialSession ? preferredThreadIdForSession(initialSession, initialProject) : "";
     if (initialSession) {
       ctx.setActiveSessionId(initialSession.sessionId);
-      ctx.setActiveWorkspacePath(initialSession.workingDirectory);
+      ctx.setActiveWorkspacePath(initialProject?.path ?? (initialWorkspace || initialSession.workingDirectory));
     }
     if (restoredThreadIds) {
       let restoredCount = 0;

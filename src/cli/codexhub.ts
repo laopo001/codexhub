@@ -109,7 +109,7 @@ program
 
 program
   .command("machine")
-  .description("Register this machine so it can start project sessions")
+  .description("Register this machine so it can start runtime threads for project paths")
   .option("--server <url>", "codexhub server URL")
   .option("--auth-token <token>", "codexhub API auth token (defaults to CODEX_HUB_AUTH_TOKEN)")
   .option("--machine-id <id>", "stable machine id")
@@ -217,7 +217,7 @@ sshCommand
     console.log(`SSH connection ${connection.status}: ${connection.host} (${connection.connectionId}, remote port ${connection.remotePort})`);
   });
 
-registerRemovedTopLevelCommand("list", "codexhub list was removed. Use the Web UI or /api/projects for project/session state.");
+registerRemovedTopLevelCommand("list", "codexhub list was removed. Use the Web UI, /api/projects, and /api/sessions for project and runtime state.");
 registerRemovedTopLevelCommand("delete", "codexhub delete was removed. Delete threads from the Web UI when needed.");
 registerRemovedTopLevelCommand("threads", "codexhub threads was removed. Use the Web thread picker to select or resume local Codex threads.");
 registerRemovedTopLevelCommand("resume", "codexhub resume was removed. Start a session with codexhub, then select or resume the thread from Web/API.");

@@ -35,7 +35,7 @@ import type {
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
 type ThreadActionsContext = {
-  activeProjectSession?: SessionView | null;
+  activeRuntimeSession?: SessionView | null;
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   goalDialog: GoalDialogState | null;
@@ -185,7 +185,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     if (ctx.closedThreadIds.current.has(threadId)) return;
     const threadIds = ctx.openThreads.map((thread) => thread.threadId);
     const closingThread = ctx.openThreads.find((thread) => thread.threadId === threadId);
-    const sessionId = closingThread?.session.sessionId ?? ctx.activeProjectSession?.sessionId ?? "";
+    const sessionId = closingThread?.session.sessionId ?? ctx.activeRuntimeSession?.sessionId ?? "";
     const nextThreadId = ctx.activeTabThreadId === threadId
       ? adjacentThreadId(threadIds, threadId)
       : ctx.activeTabThreadId;
@@ -304,7 +304,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   const forkMessage = async (threadId: string, messageId: string) => {
     try {
       const thread = await apiRouteJson(apiRoutes.forkThread, threadId, { messageId });
-      const sessionId = thread.session.sessionId ?? ctx.activeProjectSession?.sessionId;
+      const sessionId = thread.session.sessionId ?? ctx.activeRuntimeSession?.sessionId;
       if (sessionId) {
         ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
         ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));

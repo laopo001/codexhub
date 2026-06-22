@@ -31,7 +31,7 @@ import type {
 } from "../types.js";
 
 type ProjectActionsContext = {
-  activeProjectSession?: SessionView | null;
+  activeRuntimeSession?: SessionView | null;
   activeTabThreadBySession: Record<string, string>;
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
@@ -53,7 +53,7 @@ type ProjectActionsContext = {
   setDeletingProjectId: React.Dispatch<React.SetStateAction<string>>;
   setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
   setOpeningProjectKey: React.Dispatch<React.SetStateAction<string>>;
-  setProjectOpenError: React.Dispatch<React.SetStateAction<string>>;
+  setProjectActionError: React.Dispatch<React.SetStateAction<string>>;
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
@@ -70,7 +70,7 @@ export type ProjectActionsDependencies = {
   subscribeThread: (threadId: string, after: number) => void;
 };
 
-type OpenProjectOptions = {
+type StartProjectThreadOptions = {
   activateThread?: boolean;
   openThreadPicker?: boolean;
 };
@@ -80,7 +80,7 @@ export type ProjectActions = {
   selectSessionThread: (session: SessionView, threadId: string) => Promise<void>;
   selectProject: (project: ProjectSummary) => Promise<void>;
   loadProjectPickerDirectory: (machineId: string, targetPath?: string) => Promise<void>;
-  openProjectPicker: (machine: ProjectMachineGroup) => void;
+  showProjectPicker: (machine: ProjectMachineGroup) => void;
   changeProjectPickerMachine: (machineId: string) => void;
   submitProjectPickerPath: (event: React.FormEvent<HTMLFormElement>) => void;
   confirmProjectPicker: () => Promise<void>;
@@ -92,7 +92,7 @@ export type ProjectActions = {
   createSessionThread: () => Promise<void>;
   createWorktreeThread: () => Promise<void>;
   chooseThreadCandidate: (candidate: CodexThreadCandidate) => Promise<void>;
-  openProject: (projectPath: string, machineId?: string, options?: OpenProjectOptions) => Promise<boolean>;
+  startProjectThread: (projectPath: string, machineId?: string, options?: StartProjectThreadOptions) => Promise<boolean>;
   deleteProject: (project: ProjectSummary) => Promise<void>;
   patchProject: (project: ProjectSummary, patch: ProjectUpdateInput) => Promise<void>;
   toggleProjectPinned: (project: ProjectSummary) => Promise<void>;
@@ -115,10 +115,9 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     const selectedProject = ctx.selectedProjectKey
       ? ctx.projectList.find((item) => projectKeyForProject(item) === ctx.selectedProjectKey)
       : undefined;
-    const project = selectedProject?.session?.sessionId === session.sessionId
+    const project = selectedProject?.machineId === session.machineId
       ? selectedProject
-      : ctx.projectList.find((item) => item.session?.sessionId === session.sessionId && item.path === session.workingDirectory)
-      ?? ctx.projectList.find((item) => item.machineId === session.machineId && item.path === session.workingDirectory);
+      : ctx.projectList.find((item) => item.machineId === session.machineId && item.path === session.workingDirectory);
     ctx.setActiveWorkspacePath(project?.path ?? session.workingDirectory);
     if (project) {
       ctx.setSelectedProjectKey(projectKeyForProject(project));
@@ -139,7 +138,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
   const selectSessionThread = async (session: SessionView, threadId: string) => {
     ctx.setSelectedProjectKey("");
     ctx.setTaskError("");
-    ctx.setProjectOpenError("");
+    ctx.setProjectActionError("");
     ctx.setThreadPicker(null);
     ctx.setActiveWorkspacePath(session.workingDirectory);
     await activateSessionThread(session.sessionId, threadId);
@@ -149,7 +148,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     ctx.setSelectedProjectKey(projectKeyForProject(project));
     deps.focusTaskDraftProject(project);
     ctx.setTaskError("");
-    ctx.setProjectOpenError("");
+    ctx.setProjectActionError("");
     ctx.setActiveWorkspacePath(project.path);
     ctx.setThreadPicker(null);
     ctx.setActiveTabThreadId("");
@@ -193,7 +192,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     }
   };
 
-  const openProjectPicker = (machine: ProjectMachineGroup) => {
+  const showProjectPicker = (machine: ProjectMachineGroup) => {
     const browseMachineId = machine.machineId ?? machine.key;
     const summary = editableProjectPickerMachine(browseMachineId);
     if (!summary) return;
@@ -237,7 +236,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ctx.setProjectPicker((current) => current ? { ...current, loading: false, error: fixedCatalogMessage } : current);
       return;
     }
-    const opened = await openProject(ctx.projectPicker.path, ctx.projectPicker.machineId);
+    const opened = await startProjectThread(ctx.projectPicker.path, ctx.projectPicker.machineId);
     if (opened) ctx.setProjectPicker(null);
   };
 
@@ -287,12 +286,12 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ? ctx.projectList.find((project) => projectKeyForProject(project) === ctx.selectedProjectKey)
       : undefined;
     if (!selectedProject) {
-      const session = ctx.activeProjectSession;
+      const session = ctx.activeRuntimeSession;
       if (session?.online) openThreadPicker(session);
       return;
     }
     ctx.setTaskError("");
-    ctx.setProjectOpenError("");
+    ctx.setProjectActionError("");
     ctx.setActiveWorkspacePath(selectedProject.path);
     const runtimeSession = runtimeSessionForProject(selectedProject, ctx.sessionList);
     if (runtimeSession?.online) {
@@ -300,10 +299,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       return;
     }
     if (!selectedProject.machineOnline) {
-      ctx.setProjectOpenError(`Machine offline for project: ${selectedProject.name}`);
+      ctx.setProjectActionError(`Machine offline for project: ${selectedProject.name}`);
       return;
     }
-    await openProject(selectedProject.path, selectedProject.machineId, {
+    await startProjectThread(selectedProject.path, selectedProject.machineId, {
       activateThread: false,
       openThreadPicker: true
     });
@@ -313,9 +312,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     ctx.closedThreadIds.current.delete(threadId);
     const session = ctx.sessionList.find((item) => item.sessionId === sessionId);
     const thread = session?.threads?.find((item) => item.threadId === threadId)
-      ?? ctx.projectList
-        .flatMap((project) => project.session?.sessionId === sessionId ? project.session.threads ?? [] : [])
-        .find((item) => item.threadId === threadId);
+      ?? ctx.openThreads.find((item) => item.threadId === threadId);
     if (session) {
       ctx.setActiveSessionId(session.sessionId);
       ctx.setActiveWorkspacePath(thread?.workingDirectory ?? session.workingDirectory);
@@ -374,14 +371,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     }
     const session = ctx.sessionList.find((item) => item.sessionId === sessionId);
     const parentProject = ctx.projectList.find((project) =>
-      project.session?.sessionId === sessionId
+      session?.machineId
+      && project.machineId === session.machineId
       && project.path === picker.workingDirectory
-    )
-      ?? ctx.projectList.find((project) =>
-        session?.machineId
-        && project.machineId === session.machineId
-        && project.path === picker.workingDirectory
-      );
+    );
     if (!parentProject) {
       ctx.setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
@@ -391,7 +384,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     }
     ctx.setThreadPicker((current) => current && current.sessionId === sessionId ? { ...current, acting: "worktree", error: "" } : current);
     try {
-      const payload = await apiRouteJson(apiRoutes.openProjectWorktree, {
+      const payload = await apiRouteJson(apiRoutes.startWorktreeThread, {
         parentProjectId: parentProject.projectId,
         branch,
         baseRef: picker.worktreeBaseRef.trim() || undefined,
@@ -458,7 +451,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     }
   };
 
-  const openProject = async (projectPath: string, machineId?: string, options: OpenProjectOptions = {}) => {
+  const startProjectThread = async (projectPath: string, machineId?: string, options: StartProjectThreadOptions = {}) => {
     const trimmedPath = projectPath.trim();
     if (!trimmedPath) return false;
     const key = `${machineId ?? ""}:${trimmedPath}`;
@@ -466,7 +459,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ctx.setSelectedProjectKey(projectKeyFor(machineId, trimmedPath));
       deps.focusTaskDraftProject({ machineId, path: trimmedPath });
     }
-    ctx.setProjectOpenError("");
+    ctx.setProjectActionError("");
     ctx.setActiveWorkspacePath(trimmedPath);
     ctx.setProjectPicker((current) => current && current.machineId === machineId ? { ...current, error: "" } : current);
     ctx.setOpeningProjectKey(key);
@@ -475,7 +468,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         ? ctx.projectList.find((project) => project.machineId === machineId && project.path === trimmedPath)
         : undefined;
       const vscodeSource = existingProject?.source?.kind === "vscode" ? existingProject.source : undefined;
-      const payload = await apiRouteJson(apiRoutes.openProject, {
+      const payload = await apiRouteJson(apiRoutes.startProjectThread, {
         path: trimmedPath,
         machineId: machineId || undefined,
         reuse: true,
@@ -485,7 +478,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ctx.setMachines(normalizeMachines(payload.machines));
       const freshProjects = normalizeProjects(payload.projects);
       ctx.setProjects(freshProjects);
-      ctx.setProjectOpenError("");
+      ctx.setProjectActionError("");
       ctx.setActiveWorkspacePath(payload.result?.cwd ?? trimmedPath);
       const freshSessions = await apiRouteJson(apiRoutes.sessions)
         .then((data) => normalizeSessions(data.sessions))
@@ -493,11 +486,8 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ctx.setSessionList(freshSessions);
       ctx.setThreadOrderBySession((current) => mergeThreadOrderBySession(current, freshSessions));
       const sessionId = payload.result?.sessionId;
-      const project = freshProjects.find((item) => item.path === (payload.result?.cwd ?? trimmedPath));
       const session = sessionId
-        ? project?.session?.sessionId === sessionId
-          ? project.session
-          : freshSessions.find((item) => item.sessionId === sessionId)
+        ? freshSessions.find((item) => item.sessionId === sessionId)
         : undefined;
       if (session && options.openThreadPicker) {
         openThreadPicker(session, payload.result?.cwd ?? trimmedPath);
@@ -510,7 +500,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ctx.setProjectOpenError(message);
+      ctx.setProjectActionError(message);
       ctx.setProjectPicker((current) => current && current.machineId === machineId ? { ...current, error: message } : current);
       return false;
     } finally {
@@ -543,12 +533,12 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
   };
 
   const patchProject = async (project: ProjectSummary, patch: ProjectUpdateInput) => {
-    ctx.setProjectOpenError("");
+    ctx.setProjectActionError("");
     try {
       const payload = await apiRouteJson(apiRoutes.updateProject, project.projectId, patch);
       applyProjectPayload(payload);
     } catch (error) {
-      ctx.setProjectOpenError(error instanceof Error ? error.message : String(error));
+      ctx.setProjectActionError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -568,7 +558,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
   const switchSessionThread = async (threadId: string) => {
     if (threadId === ctx.activeTabThreadId) return;
     const thread = ctx.openThreads.find((item) => item.threadId === threadId);
-    const sessionId = thread?.session.sessionId ?? ctx.activeProjectSession?.sessionId ?? "";
+    const sessionId = thread?.session.sessionId ?? ctx.activeRuntimeSession?.sessionId ?? "";
     if (sessionId) {
       if (!ctx.selectedProjectKey) ctx.setActiveSessionId(sessionId);
       ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
@@ -584,7 +574,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     selectSessionThread,
     selectProject,
     loadProjectPickerDirectory,
-    openProjectPicker,
+    showProjectPicker,
     changeProjectPickerMachine,
     submitProjectPickerPath,
     confirmProjectPicker,
@@ -596,7 +586,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     createSessionThread,
     createWorktreeThread,
     chooseThreadCandidate,
-    openProject,
+    startProjectThread,
     deleteProject,
     patchProject,
     toggleProjectPinned,

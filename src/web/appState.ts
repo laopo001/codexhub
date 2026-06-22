@@ -70,7 +70,7 @@ export const useAppState = () => {
   const [activeSessionId, setActiveSessionId] = useState("");
   const [selectedProjectKey, setSelectedProjectKey] = useState("");
   const [openingProjectKey, setOpeningProjectKey] = useState("");
-  const [projectOpenError, setProjectOpenError] = useState("");
+  const [projectActionError, setProjectActionError] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
   const [authRequired, setAuthRequired] = useState(false);
   const [serverAuthRequired, setServerAuthRequired] = useState(false);
@@ -186,7 +186,7 @@ export const useAppState = () => {
     parentRegistrationDraft,
     parentRegistrationError,
     plugins,
-    projectOpenError,
+    projectActionError,
     projectPicker,
     projects,
     projectSearch,
@@ -231,7 +231,7 @@ export const useAppState = () => {
     setParentRegistrationDraft,
     setParentRegistrationError,
     setPlugins,
-    setProjectOpenError,
+    setProjectActionError,
     setProjectPicker,
     setProjects,
     setProjectSearch,

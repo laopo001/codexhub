@@ -54,7 +54,7 @@ export type MachineSummary = {
   capabilities: MachineCapabilities;
 };
 
-/** 机器启动或复用 project runtime 后返回的 session/thread 绑定结果。 */
+/** 机器启动或复用 machine runtime 后，按 cwd 创建/恢复 thread 的结果。 */
 export type MachineStartSessionResult = {
   sessionId: string;
   threadId: string;

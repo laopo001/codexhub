@@ -11,21 +11,13 @@ import {
   taskCreateSchema,
   taskUpdateSchema,
   type ProjectMutationPayload,
-  type ProjectOpenPayload,
-  type ProjectWorktreeOpenPayload,
+  type ProjectThreadStartPayload,
   type ProjectsPayload,
   type TaskMutationPayload,
   type TasksPayload,
-  type TaskView
+  type TaskView,
+  type WorktreeThreadStartPayload
 } from "../shared/apiContract.js";
-
-type ProjectSessionStopResult = {
-  machineId: string;
-  sessionId: string;
-  stopped: boolean;
-  removed: boolean;
-  reason: string;
-};
 
 export type ProjectTaskRoutesContext = {
   features: { tasks: boolean };
@@ -43,23 +35,21 @@ export type ProjectTaskRoutesContext = {
     requestedMachineId: string | undefined
   ) => ReturnType<MachineHub["listMachines"]>[number];
   runLocalTask: (taskId: string) => Promise<TaskMutationPayload>;
-  sessionsForProject: (target: { machineId: string; path: string }) => Array<{ sessionId: string }>;
   state: CodexhubServerState;
-  stopProjectSessions: (target: { machineId: string; path: string }) => Promise<ProjectSessionStopResult[]> | ProjectSessionStopResult[];
   surface: "default" | "vscode";
   threads: ThreadHub;
   waitForSession: (sessionId: string) => Promise<unknown>;
 };
 
 export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTaskRoutesContext) => {
-  const openProjectOnMachine = async (input: {
+  const startProjectThreadOnMachine = async (input: {
     machine: ReturnType<MachineHub["listMachines"]>[number];
     path: string;
     reuse?: boolean;
     persist?: boolean;
     source?: ProjectSource;
     relation?: ProjectRelation;
-  }): Promise<ProjectOpenPayload> => {
+  }): Promise<ProjectThreadStartPayload> => {
     const previousProject = ctx.state.listStoredProjects()
       .find((project) => project.machineId === input.machine.machineId && project.path === input.path);
     const knownLastThread = previousProject?.lastThreadId
@@ -88,7 +78,6 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
         machineId: input.machine.machineId,
         path: result.cwd,
         relation: input.relation,
-        sessionId,
         threadId: result.threadId,
         source: input.source
       })
@@ -100,7 +89,7 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
       });
     if (!project) throw new Error("Project could not be opened.");
     ctx.publishProjects();
-    return { ok: true, machine: input.machine, project, result, ...ctx.projectSnapshot() } satisfies ProjectOpenPayload;
+    return { ok: true, machine: input.machine, project, result, ...ctx.projectSnapshot() } satisfies ProjectThreadStartPayload;
   };
 
   app.get("/api/projects", async () => ctx.projectSnapshot() satisfies ProjectsPayload);
@@ -117,21 +106,16 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
         ok: true,
         deleted: true,
         transient: true,
-        stoppedSessions: [],
         ...ctx.projectSnapshot()
       } satisfies ProjectMutationPayload;
     }
-    const target = ctx.state.projectDeleteTarget(params.projectId);
     const deleted = ctx.state.deleteProject(params.projectId);
-    const existingSessions = target ? ctx.sessionsForProject(target) : [];
-    if (!deleted && existingSessions.length === 0) {
+    if (!deleted) {
       reply.code(404);
       return { error: `Project not found: ${params.projectId}` };
     }
-    if (deleted) ctx.publishProjects();
-    const stoppedSessions = target ? await ctx.stopProjectSessions(target) : [];
     ctx.publishProjects();
-    return { ok: true, deleted, stoppedSessions, ...ctx.projectSnapshot() } satisfies ProjectMutationPayload;
+    return { ok: true, deleted, ...ctx.projectSnapshot() } satisfies ProjectMutationPayload;
   });
 
   app.patch("/api/projects/:projectId", async (request, reply) => {
@@ -169,7 +153,7 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
         reply.code(409);
         return { error: "This machine exposes a fixed workspace project list." };
       }
-      return await openProjectOnMachine({
+      return await startProjectThreadOnMachine({
         machine,
         path: payload.path,
         reuse: payload.reuse,
@@ -213,14 +197,14 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
         branch: worktree.branch,
         ...(worktree.baseRef ? { baseRef: worktree.baseRef } : payload.baseRef ? { baseRef: payload.baseRef } : {})
       };
-      const opened = await openProjectOnMachine({
+      const opened = await startProjectThreadOnMachine({
         machine,
         path: worktree.path,
         relation,
         reuse: payload.reuse,
         persist: payload.persist
       });
-      return { ...opened, worktree } satisfies ProjectWorktreeOpenPayload;
+      return { ...opened, worktree } satisfies WorktreeThreadStartPayload;
     } catch (error) {
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };

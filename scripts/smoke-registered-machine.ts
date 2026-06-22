@@ -15,7 +15,7 @@ type MachineSummary = {
   };
 };
 
-type ProjectOpenResponse = {
+type ProjectThreadStartResponse = {
   result?: {
     sessionId?: string;
     threadId?: string;
@@ -140,7 +140,7 @@ const runRegisteredScenario = async (input: {
     const machine = await waitForRegisteredMachine(apiBase, machineId, machineName, child);
     console.log(`${label} ok: ${machine.machineId}`);
 
-    const open = await apiJson<ProjectOpenResponse>(apiBase, "/api/projects/open", {
+    const open = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machineId: machine.machineId, path: projectDir })
@@ -148,13 +148,13 @@ const runRegisteredScenario = async (input: {
     assertNoWorkerId(open, "/api/projects/open");
     const sessionId = open.result?.sessionId;
     const threadId = open.result?.threadId;
-    if (!sessionId || !threadId) throw new Error(`project open did not return session/thread: ${JSON.stringify(open)}`);
+    if (!sessionId || !threadId) throw new Error(`project thread start did not return session/thread: ${JSON.stringify(open)}`);
     if (open.result?.cwd !== projectDir) throw new Error(`registered machine opened unexpected cwd: ${open.result?.cwd}`);
     const session = await waitForSessionOnline(apiBase, sessionId);
     if (!session.appServerUrl?.startsWith("tunnel://")) {
       throw new Error(`registered session did not use app-server tunnel: ${session.appServerUrl ?? ""}`);
     }
-    console.log(`${label} project/session ok: ${sessionId} ${threadId}`);
+    console.log(`${label} project thread ok: ${sessionId} ${threadId}`);
 
     const turn = await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
       method: "POST",

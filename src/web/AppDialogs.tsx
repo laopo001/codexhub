@@ -352,7 +352,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 );
               })}
             </div>
-            {threadPicker.error ? <div className="projectOpenError">{threadPicker.error}</div> : null}
+            {threadPicker.error ? <div className="projectActionError">{threadPicker.error}</div> : null}
           </section>
         </div>
       ) : null}
@@ -519,7 +519,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   </button>
                 ))}
               </div>
-              {projectPicker.error ? <div className="projectOpenError">{projectPicker.error}</div> : null}
+              {projectPicker.error ? <div className="projectActionError">{projectPicker.error}</div> : null}
             </div>
             <footer className="projectPickerFooter">
               <button type="button" className="secondaryButton" onClick={() => setProjectPicker(null)}>Cancel</button>

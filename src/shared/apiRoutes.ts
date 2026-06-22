@@ -6,10 +6,8 @@ import type {
   ParentRegistrationPayload,
   PluginsPayload,
   ProjectMutationPayload,
-  ProjectOpenPayload,
+  ProjectThreadStartPayload,
   ProjectUpdateInput,
-  ProjectWorktreeOpenInput,
-  ProjectWorktreeOpenPayload,
   ProjectsPayload,
   ServerConfigPayload,
   ServerConfigUpdateInput,
@@ -36,7 +34,9 @@ import type {
   ThreadStopPayload,
   ThreadTurnPayload,
   ThreadUserInputPayload,
-  ThreadUserInputResponseInput
+  ThreadUserInputResponseInput,
+  WorktreeThreadStartInput,
+  WorktreeThreadStartPayload
 } from "./apiContract.js";
 import type { ProxyInput } from "./inputTypes.js";
 import type { ThreadRunOptions } from "./threadTypes.js";
@@ -111,7 +111,7 @@ const queryString = (values: Record<string, string | number | undefined>) => {
   return text ? `?${text}` : "";
 };
 
-export type ProjectOpenInput = {
+export type ProjectThreadStartInput = {
   path: string;
   machineId?: string;
   reuse?: boolean;
@@ -162,8 +162,8 @@ export const apiRoutes = {
   createSessionThread: post<SessionThreadInput, ThreadDetail, (sessionId: string) => string>(
     (sessionId) => `/api/sessions/${encode(sessionId)}/threads`
   ),
-  openProject: post<ProjectOpenInput, ProjectOpenPayload>("/api/projects/open"),
-  openProjectWorktree: post<ProjectWorktreeOpenInput, ProjectWorktreeOpenPayload>("/api/projects/worktree/open"),
+  startProjectThread: post<ProjectThreadStartInput, ProjectThreadStartPayload>("/api/projects/open"),
+  startWorktreeThread: post<WorktreeThreadStartInput, WorktreeThreadStartPayload>("/api/projects/worktree/open"),
   createTask: post<TaskCreateInput, TaskMutationPayload>("/api/tasks"),
   updateTask: patch<TaskUpdateInput, TaskMutationPayload, (taskId: string) => string>(
     (taskId) => `/api/tasks/${encode(taskId)}`

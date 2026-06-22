@@ -89,7 +89,7 @@ export type AppSidebarViewModel = {
   offlineProjectsCollapsed: boolean;
   onlineMachines: MachineSummary[];
   openingProjectKey: string;
-  openProjectPicker: (machine: ProjectMachineGroup) => MaybePromise;
+  showProjectPicker: (machine: ProjectMachineGroup) => MaybePromise;
   parentRegistration: ParentRegistrationStatus;
   parentRegistrationBusy: boolean;
   parentRegistrationDraft: ParentRegistrationDraft;
@@ -99,7 +99,7 @@ export type AppSidebarViewModel = {
   projectGroups: ProjectMachineGroup[];
   projectList: ProjectSummary[];
   projectScopeLocked: boolean;
-  projectOpenError: string;
+  projectActionError: string;
   projectSearch: string;
   registeredCommand: string;
   registeredCommandIncludesToken: boolean;
@@ -111,6 +111,7 @@ export type AppSidebarViewModel = {
   selectProject: (project: ProjectSummary) => MaybePromise;
   selectProjectSession: (session: SessionView) => MaybePromise;
   selectSessionThread: (session: SessionView, threadId: string) => MaybePromise;
+  sessionList: SessionView[];
   serverShareCopied: boolean;
   settingsDialogOpen: boolean;
   setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
@@ -148,7 +149,7 @@ export type AppViewModel = AppSidebarViewModel & {
   activeDisplayThreadId: string;
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
-  activeProjectSession?: SessionView;
+  activeRuntimeSession?: SessionView;
   activeRunningTurnDuration: string;
   activeThread?: OpenThreadState;
   activeThreadIsOpen: boolean;

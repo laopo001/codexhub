@@ -22,7 +22,6 @@ import type {
 import type { SessionSummary, ThreadSummary } from "../shared/threadTypes.js";
 
 type RuntimeProject = StoredProject & {
-  lastSessionId?: string;
   transient?: boolean;
   source?: ProjectSource;
 };
@@ -138,10 +137,6 @@ export class CodexhubServerState {
     }
     this.transientProjects.delete(resolvedProjectId);
     return project;
-  }
-
-  projectDeleteTarget(projectId: string): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
-    return this.projectTarget(projectId);
   }
 
   projectTarget(projectId: string): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
@@ -424,7 +419,6 @@ export class CodexhubServerState {
     path: string;
     relation?: ProjectRelation;
     now?: string;
-    sessionId?: string;
     threadId?: string;
     source?: ProjectSource;
   }) {
@@ -435,7 +429,6 @@ export class CodexhubServerState {
     const existing = this.transientProjects.get(projectId);
     if (existing) {
       existing.lastOpenedAt = maxIso(existing.lastOpenedAt, now);
-      existing.lastSessionId = input.sessionId ?? existing.lastSessionId;
       existing.lastThreadId = input.threadId ?? existing.lastThreadId;
       existing.relation = input.relation ?? existing.relation;
       existing.source = input.source ?? existing.source;
@@ -448,7 +441,6 @@ export class CodexhubServerState {
       relation: input.relation,
       createdAt: now,
       lastOpenedAt: now,
-      lastSessionId: input.sessionId,
       lastThreadId: input.threadId,
       transient: true,
       source: input.source
@@ -493,21 +485,6 @@ export class CodexhubServerState {
     const projects: ProjectSummary[] = this.listRuntimeProjects().map((project) => {
       const threads = (threadsByProject.get(project.projectId) ?? [])
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-      const sessionIds = new Set<string>();
-      if (project.lastSessionId) sessionIds.add(project.lastSessionId);
-      for (const thread of threads) {
-        if (thread.session.sessionId) sessionIds.add(thread.session.sessionId);
-      }
-      for (const session of snapshot.sessions) {
-        if (machineIdForSession(session) !== project.machineId) continue;
-        if (session.workingDirectory === project.path) sessionIds.add(session.sessionId);
-      }
-      const sessions = [...sessionIds]
-        .map((sessionId) => sessionsById.get(sessionId))
-        .filter((session): session is SessionSummary => Boolean(session))
-        .map((session) => projectSessionSummary(session, project.path, threads))
-        .sort((left, right) => Number(right.online) - Number(left.online) || right.lastSeenAt.localeCompare(left.lastSeenAt));
-      const session = sessions.find((session) => session.online) ?? null;
       const machine = machinesById.get(project.machineId);
       const machineOnline = Boolean(machine && "online" in machine && machine.online);
       return {
@@ -515,11 +492,8 @@ export class CodexhubServerState {
         name: projectName(project.path),
         machine,
         machineOnline,
-        session,
-        online: Boolean(session) || machineOnline,
-        running: threads.some((thread) => thread.running || thread.status === "running"),
-        sessions,
-        threads
+        online: machineOnline,
+        running: threads.some((thread) => thread.running || thread.status === "running")
       };
     });
 
@@ -562,7 +536,6 @@ export class CodexhubServerState {
       return {
         ...project,
         lastOpenedAt: maxIso(project.lastOpenedAt, overlay.lastOpenedAt),
-        lastSessionId: overlay.lastSessionId,
         lastThreadId: overlay.lastThreadId ?? project.lastThreadId,
         relation: overlay.relation ?? project.relation,
         source: overlay.source
@@ -779,16 +752,6 @@ const isCompleteServerConfig = (value: unknown) => {
 
 const objectRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-
-const projectSessionSummary = (
-  session: SessionSummary,
-  projectPath: string,
-  threads: ThreadSummary[]
-): SessionSummary => ({
-  ...session,
-  workingDirectory: projectPath,
-  threads: threads.filter((thread) => thread.session.sessionId === session.sessionId)
-});
 
 const maxIso = (left: string, right: string) => left.localeCompare(right) >= 0 ? left : right;
 

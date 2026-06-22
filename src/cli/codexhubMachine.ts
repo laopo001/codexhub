@@ -436,7 +436,7 @@ class CodexhubMachineRunner {
   }) {
     if (!this.registered) throw new Error("Cannot attach app-server before machine registration.");
     const commandId = message.commandId;
-    // 父 server attach 完成后才返回 threadId，避免 project open 先于 ThreadHub 注册完成。
+    // 父 server attach 完成后才返回 threadId，避免 path thread bootstrap 先于 ThreadHub 注册完成。
     const promise = new Promise<{ sessionId: string; threadId: string }>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingAppServerAttaches.delete(commandId);

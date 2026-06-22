@@ -206,10 +206,7 @@ export const normalizeProjects = (projects: ProjectSummary[] | undefined) =>
   Array.isArray(projects)
     ? projects.map((project) => ({
       ...project,
-      machineOnline: Boolean(project.machineOnline ?? (project.machine && "online" in project.machine && project.machine.online)),
-      session: project.session ? normalizeSessions([project.session])[0] ?? null : null,
-      sessions: normalizeSessions(project.sessions),
-      threads: Array.isArray(project.threads) ? project.threads : []
+      machineOnline: Boolean(project.machineOnline ?? (project.machine && "online" in project.machine && project.machine.online))
     }))
     : [];
 
@@ -246,7 +243,7 @@ export const defaultTaskDraft = (): TaskDraft => ({
   input: "检查这个项目最近的变更，给我总结风险和下一步。"
 });
 
-export const taskThreadOptionsFor = (project: ProjectSummary | undefined) => {
+export const taskThreadOptionsFor = (project: ProjectSummary | undefined, sessions: SessionView[] = []) => {
   const threads = new Map<string, Pick<ThreadSummary, "threadId" | "title" | "updatedAt">>();
   const pushThread = (thread: Pick<ThreadSummary, "threadId" | "title" | "updatedAt">) => {
     if (!thread.threadId) return;
@@ -258,7 +255,13 @@ export const taskThreadOptionsFor = (project: ProjectSummary | undefined) => {
       updatedAt: thread.updatedAt
     });
   };
-  for (const thread of project?.threads ?? []) pushThread(thread);
+  if (project) {
+    for (const session of sessions.filter((session) => session.machineId === project.machineId)) {
+      for (const thread of session.threads ?? []) {
+        if (thread.workingDirectory === project.path) pushThread(thread);
+      }
+    }
+  }
   return [...threads.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 };
 
@@ -514,9 +517,7 @@ export const projectSearchMatches = (project: ProjectSummary, query: string) => 
     project.path,
     project.machineId,
     project.relation?.type === "worktree" ? project.relation.branch : "",
-    project.relation?.type === "worktree" ? project.relation.parentPath : "",
-    project.session?.sessionId,
-    ...project.threads.map((thread) => thread.title)
+    project.relation?.type === "worktree" ? project.relation.parentPath : ""
   ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalized));
 };
 
@@ -724,7 +725,7 @@ export const runtimeSessionForMachine = (sessions: SessionView[], machineId?: st
 };
 
 export const runtimeSessionForProject = (project: ProjectSummary | undefined, sessions: SessionView[]) =>
-  project ? runtimeSessionForMachine(sessions, project.machineId) ?? project.session ?? undefined : undefined;
+  project ? runtimeSessionForMachine(sessions, project.machineId) : undefined;
 
 export const adjacentThreadId = (threadIds: string[], threadId: string) => {
   const index = threadIds.indexOf(threadId);
@@ -743,22 +744,12 @@ export const patchSessionsThread = (sessionList: SessionView[], thread: ThreadSu
 
 export const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) =>
   projects.map((project) => {
-    const matchesSession = Boolean(thread.session.sessionId && project.session?.sessionId === thread.session.sessionId);
     const matchesPath = project.path === thread.workingDirectory;
-    if (!matchesSession && !matchesPath) return project;
-    const threads = upsertThreadSummary(project.threads ?? [], thread);
-    const session = matchesSession && project.session
-      ? {
-        ...project.session,
-        threads: upsertThreadSummary(project.session.threads ?? [], thread)
-      }
-      : project.session;
+    if (!matchesPath) return project;
     return {
       ...project,
       lastThreadId: thread.threadId,
-      running: threads.some((item) => item.running || item.status === "running"),
-      session,
-      threads
+      running: thread.running || thread.status === "running" || project.running
     };
   });
 
@@ -770,24 +761,9 @@ export const removeSessionsThread = (sessionList: SessionView[], threadId: strin
 
 export const removeProjectsThread = (projects: ProjectSummary[], threadId: string) =>
   projects.map((project) => {
-    const threads = (project.threads ?? []).filter((thread) => thread.threadId !== threadId);
-    const session = project.session
-      ? {
-        ...project.session,
-        threads: (project.session.threads ?? []).filter((thread) => thread.threadId !== threadId)
-      }
-      : project.session;
-    const sessions = (project.sessions ?? []).map((session) => ({
-      ...session,
-      threads: (session.threads ?? []).filter((thread) => thread.threadId !== threadId)
-    }));
     return {
       ...project,
-      lastThreadId: project.lastThreadId === threadId ? threads[0]?.threadId : project.lastThreadId,
-      running: threads.some((thread) => thread.running || thread.status === "running"),
-      session,
-      sessions,
-      threads
+      lastThreadId: project.lastThreadId === threadId ? undefined : project.lastThreadId
     };
   });
 

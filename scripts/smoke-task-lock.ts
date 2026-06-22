@@ -11,7 +11,7 @@ type MachineSummary = {
   };
 };
 
-type ProjectOpenResponse = {
+type ProjectThreadStartResponse = {
   result?: {
     sessionId?: string;
     threadId?: string;
@@ -139,14 +139,14 @@ const main = async () => {
     const machine = await waitForMachine(apiBase, fake.machineId);
     console.log(`fake machine ok: ${machine.machineId}`);
 
-    const open = await apiJson<ProjectOpenResponse>(apiBase, "/api/projects/open", {
+    const open = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machineId: fake.machineId, path: projectDir })
     });
     assertNoWorkerId(open, "/api/projects/open");
     if (open.result?.sessionId !== fake.sessionId || open.result?.threadId !== fake.threadId) {
-      throw new Error(`project open returned unexpected session/thread: ${JSON.stringify(open)}`);
+      throw new Error(`project thread start returned unexpected session/thread: ${JSON.stringify(open)}`);
     }
     const modelCatalogPromise = apiJson<{
       models?: Array<{

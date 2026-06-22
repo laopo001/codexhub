@@ -2,12 +2,12 @@
 
 一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
-- 共享核心：API server 统一管理 machines、runtime sessions 和 threads，并把它们投影成 project-first 的 `/api/projects`；Web 左侧按项目优先展示，点击 project 打开或复用 machine 级 Codex app-server runtime，右侧跟随选中 thread。
+- 共享核心：API server 统一管理 machines、machine runtime sessions 和 threads，并把轻量 project 元数据投影到 `/api/projects`；Web 左侧按项目优先展示，点击 project 只切换 active path，Add Tab/thread picker 基于该 path 创建或恢复 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
 - Machine：server 默认内嵌一台 `local` machine；远端或宿主机也可以用 `codexhub server --register-to` 主动注册成 `registered` machine，负责路径校验和维护 machine 级 runtime session。
 - SSH：本机 server 可读取 `~/.ssh/config` 的 host 列表，通过系统 `ssh` 建立 reverse tunnel，并默认下发当前 build 的 remote client 到远端运行。
-- Local session CLI：`codexhub [prompt]` 仅作为 legacy/transient headless 入口保留；project runtime 主路径是 server + machine。
+- Local session CLI：`codexhub [prompt]` 仅作为 legacy/transient headless 入口保留；project path thread 主路径是 server + machine。
 - Telegram bot：由 API server 内置启动，把 Telegram 消息转成 Codex turn。
 
 ## 启动
@@ -126,7 +126,7 @@ CodexHub 只保留三种 machine 连接方式：
 
 不再支持 CodexHub server-to-server state bridge；也不再提供 `type=server` machine、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。`codexhub server --register-to` 只把当前 server 作为一台 `registered` machine 接入父 server，父 server 仍只通过 machine/app-server 协议操作它。
 
-当前在线 project/session 状态以 Web 和 `/api/projects` 为准；历史 thread 选择以 Web 的 thread picker 和 `/api/sessions/:sessionId/threads` 为准。
+当前在线 machine runtime 状态以 Web 和 `/api/sessions` 为准；project 只是 `machineId + path` 元数据。历史 thread 选择以 Web 的 thread picker 和 `/api/sessions/:sessionId/threads` 为准。
 
 启动成功后终端会输出 `sessionId` 和 `threadId`，Web、Telegram、task 或 API 都应显式用这个 `threadId` 继续投递消息。当前所有本机 session CLI 都是 headless。
 
@@ -262,11 +262,11 @@ pnpm build
 
 `smoke:auth` 覆盖 token 保护、Bearer token、WebSocket token query 和 machine websocket 授权。
 
-`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，打开临时项目，验证跨 project 共享 runtime session、`/api/projects/open`、`/api/sessions`、session account rate limits、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。`smoke:task-lock` 额外覆盖 `/api/sessions/:sessionId/models` 的 session command 通道和 model/reasoning/service tier catalog 响应。
+`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，验证 project path thread bootstrap、跨 project 共享 machine runtime、`/api/projects` 不暴露 runtime session/thread 列表、`/api/sessions`、session account rate limits、thread detail 不再暴露 `workerId` 或 current thread，验证 session turn 必须显式带 `threadId`，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认旧 `session_register.registration.workerId` 会被 strict schema 拒绝。`smoke:task-lock` 额外覆盖 `/api/sessions/:sessionId/models` 的 session command 通道和 model/reasoning/service tier catalog 响应。
 
-`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?token=` 提取、自注册拒绝、同机不同端口注册、项目打开、session 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。
+`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?token=` 提取、自注册拒绝、同机不同端口注册、project path thread bootstrap、machine runtime 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。
 
-`smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、项目打开、session 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
+`smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、project path thread bootstrap、machine runtime 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
 
 `smoke:task-lock` 会用假的 registered machine/session 走真实 websocket 协议，验证同一个 task 在已有 queued/running turn 时第二次运行会 `skipped`，且 turn 完成后可以再次运行；同时覆盖 thread records subscription、thread compact command、thread review command、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close 和 token usage rate limits。
 
@@ -340,7 +340,7 @@ codexhub server --register-to http://127.0.0.1:8788 --port 8789
 
 Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex app-server/headless 进程仍然由本机/SSH/registered machine session 提供。
 
-VSCode extension 每个窗口默认启动自己的随机端口嵌入 server；显式设置 `CODEX_HUB_PORT` 时才固定端口，端口被占用会直接失败。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/Registered 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。extension 会先从 `/api/machines` 找到在线的 `local` project launcher，再把当前窗口的 file workspace folders 通过 `/api/projects/open` 以 `persist:false` 打开成 VSCode workspace project group；这个窗口内嵌的 local machine 和这些项目都只存在于该窗口 server 的内存中，不写入 `config.yaml`。用户在 UI 中显式保存 transient project 后，它才会进入普通 CodexHub project list。
+VSCode extension 每个窗口默认启动自己的随机端口嵌入 server；显式设置 `CODEX_HUB_PORT` 时才固定端口，端口被占用会直接失败。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/Registered 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。extension 会先从 `/api/machines` 找到在线的 `local` project launcher，再把当前窗口的 file workspace folders 通过 `/api/projects/open` 以 `persist:false` bootstrap 成 VSCode workspace project group；这个窗口内嵌的 local machine 和这些项目都只存在于该窗口 server 的内存中，不写入 `config.yaml`。用户在 UI 中显式保存 transient project 后，它才会进入普通 CodexHub project list。
 
 命令面板里的 `Codex Hub: Open Config File` 会打开当前 VSCode 窗口 embedded server 使用的 `config.yaml`；文件不存在时会先创建一个最小配置。
 
@@ -371,7 +371,7 @@ pnpm run install:vscode
 
 ## API
 
-当前公开 API 分成两层：`sessionId` 是在线 session 的投递入口，`threadId` 是 transcript、事件订阅和多 thread 操作的主键。机器和项目入口负责把路径请求路由到在线 machine，再启动或复用 session：
+当前公开 API 分成三层：project 是 `machineId + path` 元数据，`sessionId` 是在线 machine runtime 的投递入口，`threadId` 是 transcript、事件订阅和多 thread 操作的主键。机器和 project path thread bootstrap 入口负责把路径请求路由到在线 machine，再启动或复用 machine runtime：
 
 ```bash
 curl -sS http://127.0.0.1:8788/api/machines
@@ -382,7 +382,7 @@ curl -sS -X POST http://127.0.0.1:8788/api/projects/open \
   -d '{"machineId":"machine-example","path":"/path/to/project"}'
 ```
 
-Project runtime 的公开生命周期入口只保留 `/api/projects/open`，不提供 project session stop/restart API；runtime 不由 watcher idle 或 project delete 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
+`/api/projects/open` 是兼容保留的 project path thread bootstrap 入口：它返回 machine runtime 的 `sessionId` 和创建/恢复的 `threadId`，但 project 本身不拥有 runtime lifecycle。CodexHub 不提供 per-project runtime stop/restart API；runtime 不由 watcher idle 或 project delete 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
 
 单上下文入口（例如 Telegram 或脚本）可以绑定 session，但发送时仍然必须显式指定 `threadId`：
 

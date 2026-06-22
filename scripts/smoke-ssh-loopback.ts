@@ -23,7 +23,7 @@ type SshConnection = {
   lastOutput?: string;
 };
 
-type ProjectOpenResponse = {
+type ProjectThreadStartResponse = {
   result?: {
     sessionId?: string;
     threadId?: string;
@@ -100,7 +100,7 @@ const main = async () => {
     const machine = await waitForSshMachine(apiBase);
     console.log(`ssh machine ok: ${machine.machineId}`);
 
-    const open = await apiJson<ProjectOpenResponse>(apiBase, "/api/projects/open", {
+    const open = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machineId: machine.machineId, path: projectDir })
@@ -108,9 +108,9 @@ const main = async () => {
     assertNoWorkerId(open, "/api/projects/open");
     const sessionId = open.result?.sessionId;
     const threadId = open.result?.threadId;
-    if (!sessionId || !threadId) throw new Error(`project open did not return session/thread: ${JSON.stringify(open)}`);
+    if (!sessionId || !threadId) throw new Error(`project thread start did not return session/thread: ${JSON.stringify(open)}`);
     if (open.result?.cwd !== projectDir) throw new Error(`remote machine opened unexpected cwd: ${open.result?.cwd}`);
-    console.log(`project/session ok: ${sessionId} ${threadId}`);
+    console.log(`project thread ok: ${sessionId} ${threadId}`);
 
     const turn = await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
       method: "POST",

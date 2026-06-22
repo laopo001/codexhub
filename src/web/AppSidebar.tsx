@@ -72,7 +72,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     offlineProjectsCollapsed,
     onlineMachines,
     openingProjectKey,
-    openProjectPicker,
+    showProjectPicker,
     parentRegistration,
     parentRegistrationBusy,
     parentRegistrationDraft,
@@ -82,7 +82,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     projectList,
     projectScopeLocked,
     projectSearch,
-    projectOpenError,
+    projectActionError,
     registeredCommand,
     registeredCommandIncludesToken,
     registeredCommandCopied,
@@ -93,6 +93,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     selectProject,
     selectProjectSession,
     selectSessionThread,
+    sessionList,
     serverShareCopied,
     setConnectionMode,
     setOfflineProjectsCollapsed,
@@ -161,7 +162,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const parentRegistrationStatus = parentRegistrationStatusLabel(parentRegistration.status);
   const parentRegistrationActive = parentRegistration.status !== "idle" && parentRegistration.status !== "stopped";
   const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
-  const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject);
+  const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject, sessionList);
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
@@ -215,8 +216,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                     title={`Select ${project.name}`}
                   />
                   <div className="projectRowTop">
-                    <span className="projectOpenButton projectOpenNameButton" title={project.name}>
-                      <span className="projectOpenNameText">{project.name}</span>
+                    <span className="projectSelectText projectSelectName" title={project.name}>
+                      <span className="projectSelectNameText">{project.name}</span>
                       {worktreeRelation ? <em className="projectWorktreeBadge" title={worktreeRelation.branch}>{worktreeRelation.branch}</em> : null}
                     </span>
                     {!projectScopeLocked && !fixed ? (
@@ -244,7 +245,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                       </div>
                     ) : null}
                   </div>
-                  <code className="projectOpenButton projectOpenPathButton" title={project.path}>{project.path}</code>
+                  <code className="projectSelectText projectSelectPath" title={project.path}>{project.path}</code>
                 </div>
               );
             })}
@@ -371,7 +372,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                 </div>
               );
             })}
-            {sshError ? <div className="projectOpenError">{sshError}</div> : null}
+            {sshError ? <div className="projectActionError">{sshError}</div> : null}
           </div>
         ) : (
           <div className="connectionList">
@@ -442,7 +443,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   Disconnect
                 </button>
               </div>
-              {parentRegistrationError ? <div className="projectOpenError">{parentRegistrationError}</div> : null}
+              {parentRegistrationError ? <div className="projectActionError">{parentRegistrationError}</div> : null}
             </form>
             {registeredMachines.length === 0 ? (
               <div className="connectionEmpty">No registered machines</div>
@@ -466,7 +467,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           <button
             type="button"
             className="projectAddButton"
-            onClick={() => projectAddMachine ? openProjectPicker(projectAddMachine) : undefined}
+            onClick={() => projectAddMachine ? showProjectPicker(projectAddMachine) : undefined}
             disabled={!projectAddMachine}
             title={projectAddMachine ? "Add a project" : "No online machines"}
           >
@@ -506,7 +507,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             ) : null}
           </div>
         )}
-        {projectOpenError ? <div className="projectOpenError">{projectOpenError}</div> : null}
+        {projectActionError ? <div className="projectActionError">{projectActionError}</div> : null}
       </section>
 
       {!projectScopeLocked ? (
@@ -698,7 +699,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               </div>
             </form>
           ) : null}
-          {taskError ? <div className="projectOpenError">{taskError}</div> : null}
+          {taskError ? <div className="projectActionError">{taskError}</div> : null}
         </section>
       ) : null}
       <div className="sidebarFooter">

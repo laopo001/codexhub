@@ -133,24 +133,13 @@ export const useAppSelectors = (state: AppState) => {
       : undefined,
     [projectList, state.selectedProjectKey]
   );
-  const activeProjectSession = useMemo(
+  const activeRuntimeSession = useMemo(
     () => {
       if (selectedProjectByKey) return runtimeSessionForProject(selectedProjectByKey, state.sessionList);
-      return projectList.find((project) =>
-        project.session?.sessionId === state.activeSessionId
-        && (!state.activeWorkspacePath || project.path === state.activeWorkspacePath)
-      )?.session
-      ?? projectList.find((project) => project.session?.sessionId === state.activeSessionId)?.session
-      ?? state.sessionList.find((session) => session.sessionId === state.activeSessionId)
+      return state.sessionList.find((session) => session.sessionId === state.activeSessionId)
       ?? undefined;
     },
     [state.activeSessionId, state.activeWorkspacePath, projectList, selectedProjectByKey, state.sessionList]
-  );
-  const activeRuntimeSession = useMemo(
-    () => activeProjectSession?.sessionId
-      ? state.sessionList.find((session) => session.sessionId === activeProjectSession.sessionId) ?? activeProjectSession
-      : activeProjectSession,
-    [activeProjectSession, state.sessionList]
   );
   const onlineMachines = useMemo(() => state.machines.filter((machine) => machine.online), [state.machines]);
   const localMachines = useMemo(() => state.machines.filter((machine) => machine.type === "local"), [state.machines]);
@@ -177,38 +166,38 @@ export const useAppSelectors = (state: AppState) => {
   );
   const selectedProject = useMemo(() => {
     if (selectedProjectByKey) return selectedProjectByKey;
-    if (activeProjectSession) {
+    if (activeRuntimeSession) {
       return projectList.find((project) =>
-        project.machineId === activeProjectSession.machineId
+        project.machineId === activeRuntimeSession.machineId
         && Boolean(state.activeWorkspacePath)
         && project.path === state.activeWorkspacePath
-      )
-        ?? projectList.find((project) =>
-          project.machineId === activeProjectSession.machineId
-          && project.path === activeProjectSession.workingDirectory
         )
         ?? projectList.find((project) =>
-          project.session?.sessionId === activeProjectSession.sessionId
-          && (!state.activeWorkspacePath || project.path === state.activeWorkspacePath)
-        )
-        ?? projectList.find((project) => project.session?.sessionId === activeProjectSession.sessionId)
-        ?? projectList.find((project) => project.machineId === activeProjectSession.machineId && project.path === activeProjectSession.workingDirectory);
+          project.machineId === activeRuntimeSession.machineId
+          && project.path === activeRuntimeSession.workingDirectory
+        );
     }
     if (state.activeSessionId) {
-      const sessionProject = projectList.find((project) => project.session?.sessionId === state.activeSessionId);
+      const session = state.sessionList.find((session) => session.sessionId === state.activeSessionId);
+      const sessionProject = session
+        ? projectList.find((project) =>
+          project.machineId === session.machineId
+          && (!state.activeWorkspacePath || project.path === state.activeWorkspacePath || project.path === session.workingDirectory)
+        )
+        : undefined;
       if (sessionProject) return sessionProject;
     }
     return state.activeWorkspacePath ? projectList.find((project) => project.path === state.activeWorkspacePath) : undefined;
-  }, [activeProjectSession, state.activeSessionId, state.activeWorkspacePath, projectList, selectedProjectByKey]);
+  }, [activeRuntimeSession, state.activeSessionId, state.activeWorkspacePath, projectList, selectedProjectByKey, state.sessionList]);
   const activeProjectKey = selectedProject ? projectKeyForProject(selectedProject) : "";
-  const activeProjectSessionThreads = useMemo(() => {
+  const activeProjectThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
     const projectPath = selectedProject?.path ?? state.activeWorkspacePath;
-    for (const thread of activeProjectSession?.threads ?? []) {
+    for (const thread of activeRuntimeSession?.threads ?? []) {
       if (projectPath && thread.workingDirectory !== projectPath) continue;
       byId.set(thread.threadId, thread);
     }
-    const orderedIds = state.threadOrderBySession[activeProjectSession?.sessionId ?? ""] ?? [];
+    const orderedIds = state.threadOrderBySession[activeRuntimeSession?.sessionId ?? ""] ?? [];
     return [
       ...orderedIds.flatMap((threadId) => {
         const thread = byId.get(threadId);
@@ -218,7 +207,7 @@ export const useAppSelectors = (state: AppState) => {
       }),
       ...byId.values()
     ];
-  }, [activeProjectSession, selectedProject?.path, state.activeWorkspacePath, state.threadOrderBySession]);
+  }, [activeRuntimeSession, selectedProject?.path, state.activeWorkspacePath, state.threadOrderBySession]);
   const openThreadIds = useMemo(
     () => state.openThreads.map((thread) => thread.threadId),
     [state.openThreads]
@@ -335,13 +324,13 @@ export const useAppSelectors = (state: AppState) => {
   const showComposerSendButton = Boolean(activeThread && !activeThread.running);
   const openThreadEmptyMessage = openThreadIds.length
     ? selectedProject
-      ? activeProjectSession?.online
-        ? activeProjectSessionThreads.length ? "Select a thread" : "No threads"
+      ? activeRuntimeSession?.online
+        ? activeProjectThreads.length ? "Select a thread" : "No threads"
         : selectedProject.machineOnline ? "No threads" : "Machine offline"
       : "Select a thread"
-    : activeProjectSession
-    ? activeProjectSession.online
-      ? activeProjectSessionThreads.length ? "Select a thread" : "No threads"
+    : activeRuntimeSession
+    ? activeRuntimeSession.online
+      ? activeProjectThreads.length ? "Select a thread" : "No threads"
       : "Session disconnected"
     : selectedProject
     ? selectedProject.machineOnline ? "No threads" : "Machine offline"
@@ -410,8 +399,7 @@ export const useAppSelectors = (state: AppState) => {
     activeExpandedStatusKeys,
     activeGoal,
     activeProjectKey,
-    activeProjectSession,
-    activeProjectSessionThreads,
+    activeProjectThreads,
     activeRuntimeSession,
     activeThread,
     activeThreadModel,

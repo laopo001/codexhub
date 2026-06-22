@@ -3,7 +3,6 @@ import type {
   MachineSummary,
   MachineType
 } from "./machineTypes.js";
-import type { SessionSummary, ThreadSummary } from "./threadTypes.js";
 
 /** config.yaml 中持久化的 machine 元数据，不表示当前在线状态。 */
 export type StoredMachine = {
@@ -107,16 +106,13 @@ export type ServerStateData = {
   sshHosts: StoredSshHost[];
 };
 
-/** Web/API 展示用项目投影，合并了持久项目、machine 在线状态和当前 session。 */
+/** Web/API 展示用项目投影。project 只是 machineId + path 的控制面元数据。 */
 export type ProjectSummary = StoredProject & {
   name: string;
   transient?: boolean;
   source?: ProjectSource;
   machine?: MachineSummary | StoredMachine;
   machineOnline: boolean;
-  session: SessionSummary | null;
   online: boolean;
   running: boolean;
-  sessions: SessionSummary[];
-  threads: ThreadSummary[];
 };

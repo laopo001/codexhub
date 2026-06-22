@@ -65,7 +65,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeExpandedStatusKeys,
     activeGoal,
     activeProjectKey,
-    activeProjectSession,
+    activeRuntimeSession,
     activeRunningTurnDuration,
     activeThread,
     activeThreadIsOpen,
@@ -121,13 +121,13 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     onlineMachines,
     openingProjectKey,
     openMessageContextMenu,
-    openProjectPicker,
+    showProjectPicker,
     openSelectedProjectThreadPicker,
     pasteThreadImages,
     patchTask,
     projectGroups,
     projectList,
-    projectOpenError,
+    projectActionError,
     projectPicker,
     registeredCommand,
     registeredCommandCopied,
@@ -205,7 +205,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     openThreadEmptyMessage,
     openThreadTabs
   } = viewModel;
-  const canAddThreadForProject = Boolean(activeProjectSession?.online || selectedProject?.machineOnline);
+  const canAddThreadForProject = Boolean(activeRuntimeSession?.online || selectedProject?.machineOnline);
   const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
   const showThreadTabs = Boolean(activeThreadKey || canAddThreadForProject);
   const showTurnLoadingMessage = Boolean(activeThread?.running || turnUiState.kind === "running");

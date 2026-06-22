@@ -444,29 +444,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     threadRecordSubscriptionTimers.set(threadId, timer);
   }
 
-  const sessionsForProject = (target: { machineId: string; path: string }) => {
-    const sessions = threads.listSessions({ includeOffline: true })
-      .filter((session) =>
-        session.machineId === target.machineId
-        && (
-          session.workingDirectory === target.path
-          || session.threads.some((thread) => thread.workingDirectory === target.path)
-        )
-      );
-    return [...new Map(sessions.map((session) => [session.sessionId, session])).values()];
-  };
-
-  const stopProjectSessions = async (target: { machineId: string; path: string }) => {
-    const sessions = sessionsForProject(target);
-    return sessions.map((session) => ({
-      machineId: target.machineId,
-      sessionId: session.sessionId,
-      stopped: false,
-      removed: true,
-      reason: session.online ? "shared_session" : "session_offline"
-    }));
-  };
-
   function taskSnapshotEvent(): TasksStreamEvent {
     return {
       seq: taskSeq,
@@ -1032,9 +1009,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     publishTasks,
     resolveTargetMachine,
     runLocalTask,
-    sessionsForProject,
     state,
-    stopProjectSessions,
     surface,
     threads,
     waitForSession

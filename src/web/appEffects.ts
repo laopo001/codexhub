@@ -121,19 +121,18 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
 
   useEffect(() => {
     if (!state.initialized) return;
-    const projectSessions = selectors.projectList.flatMap((project) => project.session ? [project.session] : []);
-    const availableSessions = [...projectSessions, ...state.sessionList];
+    const availableSessions = state.sessionList;
     if (!availableSessions.length) {
       if (state.activeSessionId) state.setActiveSessionId("");
       if (state.activeTabThreadId) state.setActiveTabThreadId("");
       return;
     }
 
-    const selectedProjectSession = runtimeSessionForProject(selectors.selectedProject ?? undefined, state.sessionList);
+    const selectedRuntimeSession = runtimeSessionForProject(selectors.selectedProject ?? undefined, state.sessionList);
     if (state.selectedProjectKey && selectors.selectedProject) {
-      if (selectedProjectSession && state.activeSessionId !== selectedProjectSession.sessionId) {
-        state.setActiveSessionId(selectedProjectSession.sessionId);
-      } else if (!selectedProjectSession && !selectors.selectedProject.machineOnline && state.activeSessionId) {
+      if (selectedRuntimeSession && state.activeSessionId !== selectedRuntimeSession.sessionId) {
+        state.setActiveSessionId(selectedRuntimeSession.sessionId);
+      } else if (!selectedRuntimeSession && !selectors.selectedProject.machineOnline && state.activeSessionId) {
         state.setActiveSessionId("");
       }
       return;
@@ -143,7 +142,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     const preferredSession = activeTabSessionId
       ? availableSessions.find((session) => session.sessionId === activeTabSessionId)
       : undefined;
-    const session = preferredSession ?? selectors.activeProjectSession ?? projectSessions[0] ?? state.sessionList[0];
+    const session = preferredSession ?? selectors.activeRuntimeSession ?? state.sessionList[0];
     if (session && !state.activeSessionId) state.setActiveSessionId(session.sessionId);
 
     if (state.activeTabThreadId || state.openThreads.length) return;
@@ -152,7 +151,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       ? preferredThreadIdForSession(
         session,
         selectors.projectList.find((project) =>
-          project.session?.sessionId === session.sessionId
+          project.machineId === session.machineId
           && project.path === session.workingDirectory
         )
       )
@@ -164,7 +163,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     selectors.activeThread?.session.sessionId,
     state.activeSessionId,
     state.activeTabThreadId,
-    selectors.activeProjectSession,
+    selectors.activeRuntimeSession,
     state.initialized,
     selectors.projectList,
     selectors.selectedProject,

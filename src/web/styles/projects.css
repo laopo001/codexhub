@@ -59,7 +59,7 @@
   font-size: 12px;
 }
 
-.projectOpenError {
+.projectActionError {
   overflow-wrap: anywhere;
   border: 1px solid #6d3523;
   border-radius: 8px;
@@ -250,7 +250,7 @@
 }
 
 .projectRowTop,
-.projectOpenPathButton {
+.projectSelectPath {
   position: relative;
   z-index: 1;
   pointer-events: none;
@@ -303,7 +303,7 @@
   min-width: 0;
 }
 
-.projectOpenButton {
+.projectSelectText {
   color: inherit;
   text-align: left;
   min-width: 0;
@@ -312,7 +312,7 @@
   white-space: nowrap;
 }
 
-.projectOpenNameButton {
+.projectSelectName {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -320,14 +320,14 @@
   font-weight: 800;
 }
 
-.projectOpenNameText {
+.projectSelectNameText {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.projectOpenNameButton .projectWorktreeBadge {
+.projectSelectName .projectWorktreeBadge {
   flex: 0 1 auto;
   min-width: 0;
   max-width: 45%;
@@ -344,7 +344,7 @@
   white-space: nowrap;
 }
 
-.projectOpenPathButton {
+.projectSelectPath {
   display: block;
   width: 100%;
   min-width: 0;
