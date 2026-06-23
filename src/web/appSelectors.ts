@@ -213,7 +213,11 @@ export const useAppSelectors = (state: AppState) => {
     [state.openThreads]
   );
   const runningOpenThreadIds = useMemo(
-    () => state.openThreads.filter((thread) => thread.running).map((thread) => thread.threadId).join("\n"),
+    () => state.openThreads.filter((thread) => {
+      if (thread.running) return true;
+      const turnStatus = latestTurnStatusFromRecords(threadDisplayRecords(thread.threadId, thread));
+      return turnStatus?.status === "pending" || turnStatus?.status === "in_progress";
+    }).map((thread) => thread.threadId).join("\n"),
     [state.openThreads]
   );
   const activeThreadSummary = useMemo(
@@ -280,9 +284,9 @@ export const useAppSelectors = (state: AppState) => {
   const showStatusRows = Boolean(simpleStatuses.length && !statusRowsHidden);
   const showInlineStatusPanel = Boolean(
     activeThread
+    && !statusRowsHidden
     && (
       showStatusRows
-      || statusRowsHidden
       || activeThread.running
       || turnUiState.kind === "running"
       || latestTurnStatus

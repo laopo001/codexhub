@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { resolveCodexAppServerLaunchOptions } from "../src/cli/codexAppServerProcess.js";
+import { accountRateLimitsPayloadFromValue } from "../src/core/threadUsage.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { SessionEventInput } from "../src/shared/threadTypes.js";
 
@@ -1695,6 +1696,42 @@ const assertSessionAccountRateLimits = async () => {
     || !session?.accountRateLimits?.observedAt
   ) {
     throw new Error(`session account rate limits missing from session summary: ${JSON.stringify(session)}`);
+  }
+
+  const selected = accountRateLimitsPayloadFromValue({
+    result: {
+      rateLimitsByLimitId: {
+        codex_bengalfox: {
+          limitId: "codex_bengalfox",
+          primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 1782208264 },
+          secondary: { usedPercent: 0, windowDurationMins: 10080, resetsAt: 1782795064 }
+        },
+        codex: {
+          limitId: "codex",
+          primary: { usedPercent: 47, windowDurationMins: 300, resetsAt: 1782190868 },
+          secondary: { usedPercent: 81, windowDurationMins: 10080, resetsAt: 1782338417 }
+        }
+      }
+    }
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "account_rate_limits_updated",
+    heartbeat: false,
+    rateLimits: selected
+  });
+
+  const updated = hub.listSessions().find((item) => item.sessionId === sessionId);
+  const updatedPrimary = updated?.accountRateLimits?.primaryRateLimit;
+  const updatedSecondary = updated?.accountRateLimits?.secondaryRateLimit;
+  if (
+    updatedPrimary?.usedPercent !== 47
+    || updatedPrimary.windowMinutes !== 300
+    || updatedPrimary.resetsAt !== 1782190868
+    || updatedSecondary?.usedPercent !== 81
+    || updatedSecondary.windowMinutes !== 10080
+    || updatedSecondary.resetsAt !== 1782338417
+  ) {
+    throw new Error(`session account rate limits should prefer codex aggregate limit: ${JSON.stringify(updated)}`);
   }
 };
 

@@ -62,6 +62,31 @@ export const threadRateLimitsFromValue = (value: unknown, observedAt: string | n
   };
 };
 
+export const accountRateLimitsPayloadFromValue = (value: unknown): Record<string, unknown> | null => {
+  const record = asRecord(value);
+  if (!record) return null;
+  const result = asRecord(record.result);
+  if (result) return accountRateLimitsPayloadFromValue(result);
+  const params = asRecord(record.params);
+  if (params) return accountRateLimitsPayloadFromValue(params);
+
+  const byLimitId = asRecord(record.rateLimitsByLimitId ?? record.rate_limits_by_limit_id);
+  const codexLimit = rateLimitPayloadById(byLimitId, "codex");
+  if (codexLimit) return codexLimit;
+
+  const direct = asRecord(record.rateLimits)
+    ?? asRecord(record.rate_limits)
+    ?? asRecord(record.accountRateLimits)
+    ?? asRecord(record.account_rate_limits)
+    ?? asRecord(record.limits);
+  if (direct) return direct;
+
+  const firstLimit = firstRateLimitPayload(byLimitId);
+  if (firstLimit) return firstLimit;
+
+  return isRateLimitPayload(record) ? record : null;
+};
+
 const rateLimitWindowUsage = (value: unknown): ThreadRateLimitUsage | null => {
   const record = asRecord(value);
   if (!record) return null;
@@ -74,6 +99,28 @@ const rateLimitWindowUsage = (value: unknown): ThreadRateLimitUsage | null => {
   if (usedPercent === null || windowMinutes === null || resetsAt === null) return null;
   return { usedPercent, windowMinutes, resetsAt };
 };
+
+const rateLimitPayloadById = (byLimitId: Record<string, unknown> | null, limitId: string) => {
+  const direct = asRecord(byLimitId?.[limitId]);
+  if (isRateLimitPayload(direct)) return direct;
+  for (const value of Object.values(byLimitId ?? {})) {
+    const record = asRecord(value);
+    const recordLimitId = typeof record?.limitId === "string" ? record.limitId : record?.limit_id;
+    if (recordLimitId === limitId && isRateLimitPayload(record)) return record;
+  }
+  return null;
+};
+
+const firstRateLimitPayload = (byLimitId: Record<string, unknown> | null) => {
+  for (const value of Object.values(byLimitId ?? {})) {
+    const record = asRecord(value);
+    if (isRateLimitPayload(record)) return record;
+  }
+  return null;
+};
+
+const isRateLimitPayload = (value: Record<string, unknown> | null | undefined) =>
+  Boolean(value && (asRecord(value.primary) || asRecord(value.secondary)));
 
 const numberValue = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;

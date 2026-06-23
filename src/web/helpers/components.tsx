@@ -878,12 +878,10 @@ export const ActivityStatusOverlay = ({
           type="button"
           className="activityStatusMinimize"
           onClick={onToggleRows}
-          aria-label={rowsHidden ? "Show status details" : "Hide status details"}
-          title={rowsHidden ? "Show status details" : "Hide status details"}
+          aria-label="Hide status card"
+          title="Hide status card"
         >
-          {rowsHidden
-            ? <ChevronUp size={13} strokeWidth={2.4} aria-hidden="true" />
-            : <ChevronDown size={13} strokeWidth={2.4} aria-hidden="true" />}
+          <ChevronDown size={13} strokeWidth={2.4} aria-hidden="true" />
         </button>
       ) : null}
     </div>

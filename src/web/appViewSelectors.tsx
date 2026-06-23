@@ -203,8 +203,22 @@ const ComposerThreadControls = ({
     simpleStatuses.length && !statusPanelExpanded ? "collapsed" : ""
   ].filter(Boolean).join(" ");
   const statusButtonTitle = simpleStatuses.length
-    ? `${statusPanelExpanded ? "Hide" : "Show"} latest turn status\n${activityStatusTitle(simpleStatuses)}`
+    ? `${statusPanelExpanded ? "Hide" : "Show"} turn status\n${activityStatusTitle(simpleStatuses)}`
     : turnUiState.title;
+  const toggleStatusPanel = () => {
+    if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
+    setHiddenStatusTurns((current) => {
+      if (current[activeThread.threadId] !== latestTurnStatusScope.key) {
+        return {
+          ...current,
+          [activeThread.threadId]: latestTurnStatusScope.key
+        };
+      }
+      const next = { ...current };
+      delete next[activeThread.threadId];
+      return next;
+    });
+  };
   const composerModelButtonLabel = formatComposerModelButtonLabel(
     activeThreadModelDraft,
     activeThreadReasoningDraft,
@@ -247,20 +261,7 @@ const ComposerThreadControls = ({
           disabled={!simpleStatuses.length}
           title={statusButtonTitle}
           aria-pressed={simpleStatuses.length ? statusPanelExpanded : undefined}
-          onClick={() => {
-            if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
-            setHiddenStatusTurns((current) => {
-              if (current[activeThread.threadId] !== latestTurnStatusScope.key) {
-                return {
-                  ...current,
-                  [activeThread.threadId]: latestTurnStatusScope.key
-                };
-              }
-              const next = { ...current };
-              delete next[activeThread.threadId];
-              return next;
-            });
-          }}
+          onClick={toggleStatusPanel}
         >
           {statusButtonLabel}
         </button>

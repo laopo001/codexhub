@@ -15,6 +15,7 @@ import {
 } from "./codexAppServerProcess.js";
 import { machineTransportUrl, parseMachineTransportMessage } from "../core/machineTransportProtocol.js";
 import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
+import { accountRateLimitsPayloadFromValue } from "../core/threadUsage.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import type { MachineCommand, MachineRegistration } from "../shared/machineTypes.js";
@@ -1179,7 +1180,7 @@ class CodexAppServerBridge {
   }
 
   private forwardAccountRateLimits(value: unknown) {
-    const rateLimits = accountRateLimitsFromValue(value);
+    const rateLimits = accountRateLimitsPayloadFromValue(value);
     if (!rateLimits) return false;
     this.hub.sendEvent({
       type: "account_rate_limits_updated",
@@ -1985,21 +1986,6 @@ const threadIdForPendingMessage = (pending: Pick<PendingRequest, "method" | "thr
     return resultThreadIdForMessage(message) ?? threadIdForMessage(message) ?? pending.threadId;
   }
   return threadIdForMessage(message) ?? pending.threadId;
-};
-
-const accountRateLimitsFromValue = (value: unknown): Record<string, unknown> | null => {
-  const record = asRecord(value);
-  if (!record) return null;
-  const result = asRecord(record.result);
-  if (result) return accountRateLimitsFromValue(result);
-  const params = asRecord(record.params);
-  if (params) return accountRateLimitsFromValue(params);
-  return asRecord(record.rateLimits)
-    ?? asRecord(record.rate_limits)
-    ?? asRecord(record.accountRateLimits)
-    ?? asRecord(record.account_rate_limits)
-    ?? asRecord(record.limits)
-    ?? (asRecord(record.primary) || asRecord(record.secondary) ? record : null);
 };
 
 const appServerThreadSummary = (
