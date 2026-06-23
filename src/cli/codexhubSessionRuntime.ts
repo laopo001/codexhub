@@ -1166,16 +1166,19 @@ class CodexAppServerBridge {
   private forwardSessionEventFromMessage(message: JsonRecord) {
     const method = typeof message.method === "string" ? message.method : "";
     if (method !== "account/rateLimits/updated") return false;
-    this.forwardAccountRateLimits(message);
+    void this.syncAccountRateLimits().then((synced) => {
+      if (!synced) this.forwardAccountRateLimits(message);
+    });
     return true;
   }
 
   private async syncAccountRateLimits() {
     try {
       const result = await this.request("account/rateLimits/read", undefined);
-      this.forwardAccountRateLimits(result);
+      return this.forwardAccountRateLimits(result);
     } catch {
       // 旧版 app-server 可能没有账号级 rate limits。
+      return false;
     }
   }
 

@@ -1700,6 +1700,11 @@ const assertSessionAccountRateLimits = async () => {
 
   const selected = accountRateLimitsPayloadFromValue({
     result: {
+      rateLimits: {
+        limitId: "codex_bengalfox",
+        primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 1782208264 },
+        secondary: { usedPercent: 0, windowDurationMins: 10080, resetsAt: 1782795064 }
+      },
       rateLimitsByLimitId: {
         codex_bengalfox: {
           limitId: "codex_bengalfox",
