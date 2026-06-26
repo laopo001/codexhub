@@ -264,10 +264,7 @@ export const useAppSelectors = (state: AppState) => {
     () => latestTurnStatusFromRecords(displayRecords),
     [displayRecords]
   );
-  const simpleStatuses = useMemo(
-    () => state.messageDisplayMode === "compact" ? latestTurnStatuses : [],
-    [latestTurnStatuses, state.messageDisplayMode]
-  );
+  const turnStatusItems = latestTurnStatuses;
   const activeGoal = useMemo(
     () => latestThreadGoalFromRecords(goalRecords, activeThread?.threadId),
     [activeThread?.threadId, goalRecords]
@@ -276,22 +273,20 @@ export const useAppSelectors = (state: AppState) => {
     () => turnUiStateFromStatus(latestTurnStatus, Boolean(activeThread?.running)),
     [activeThread?.running, latestTurnStatus]
   );
-  const statusRowsHidden = Boolean(
+  const statusPanelClosed = Boolean(
     activeThread?.threadId
     && latestTurnStatusScope.key
     && state.hiddenStatusTurns[activeThread.threadId] === latestTurnStatusScope.key
   );
-  const showStatusRows = Boolean(simpleStatuses.length && !statusRowsHidden);
-  const showInlineStatusPanel = Boolean(
+  const statusPanelAvailable = Boolean(
     activeThread
-    && !statusRowsHidden
     && (
-      showStatusRows
+      turnStatusItems.length
       || activeThread.running
       || turnUiState.kind === "running"
-      || latestTurnStatus
     )
   );
+  const showInlineStatusPanel = Boolean(statusPanelAvailable && !statusPanelClosed);
   const statusScopeKey = activeThread?.threadId && latestTurnStatusScope.key
     ? `${activeThread.threadId}:${latestTurnStatusScope.key}`
     : "";
@@ -455,10 +450,10 @@ export const useAppSelectors = (state: AppState) => {
     setComposerMode,
     showComposerSendButton,
     showInlineStatusPanel,
-    showStatusRows,
-    simpleStatuses,
+    statusPanelAvailable,
     sshConfigHostOptions,
     statusScopeKey,
+    turnStatusItems,
     turnUiState
   };
 };
@@ -477,7 +472,8 @@ const withStatusDurations = <T extends CodexRecordView>(
         statusDurationMs: Math.max(0, nowMs - startedMs)
       };
     }
-    if ((view.status !== "completed" && view.status !== "failed") || view.statusDurationMs != null) return view;
+    if (!isFinalAnswerView(view) || view.statusDurationMs != null) return view;
+    if (view.status !== "completed" && view.status !== "failed") return view;
     const turnId = turnIdFromRecordView(view);
     const statusDurationMs = turnId ? turnDurations.get(turnId) : undefined;
     if (statusDurationMs == null) return view;
@@ -518,6 +514,9 @@ const turnDurationMapFromRecords = (records: CodexRecord[]) => {
   }
   return durationByTurn;
 };
+
+const isFinalAnswerView = (view: CodexRecordView) =>
+  view.role === "codex" && view.label === "final_answer";
 
 const turnIdFromRecordView = (view: CodexRecordView) => {
   const parts = view.record.id.split(":");

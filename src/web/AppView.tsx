@@ -172,9 +172,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setThreadPicker,
     showComposerSendButton,
     showInlineStatusPanel,
-    showStatusRows,
     sidebarCollapsed,
-    simpleStatuses,
     sshConfigHostOptions,
     sshConfigHosts,
     sshConnectingHost,
@@ -184,6 +182,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     sshHostDraft,
     sshHosts,
     statusScopeKey,
+    turnStatusItems,
     stopTurn,
     submitAuthToken,
     submitProjectPickerPath,
@@ -456,9 +455,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                   />
                   {showInlineStatusPanel ? (
                     <ActivityStatusOverlay
-                      statuses={simpleStatuses}
+                      statuses={turnStatusItems}
                       turnMeta={activeThreadTurnMeta}
-                      rowsHidden={!showStatusRows && simpleStatuses.length > 0}
                       expandedKeys={activeExpandedStatusKeys}
                       onToggleRows={() => {
                         if (!activeThread?.threadId || !latestTurnStatusScope.key) return;

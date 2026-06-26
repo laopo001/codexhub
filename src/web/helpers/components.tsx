@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { Switch } from "antd";
-import { ChevronDown, ChevronUp, GripHorizontal } from "lucide-react";
+import { ChevronDown, GripHorizontal } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadTurnMeta, WebRecordView } from "../types.js";
@@ -785,14 +785,12 @@ export const EmptyMessages = () => (
 export const ActivityStatusOverlay = ({
   statuses,
   turnMeta,
-  rowsHidden,
   expandedKeys,
   onToggleRows,
   onToggle
 }: {
   statuses: ActivityStatusView[];
   turnMeta: ThreadTurnMeta | null;
-  rowsHidden: boolean;
   expandedKeys: Set<string>;
   onToggleRows: () => void;
   onToggle: (key: string) => void;
@@ -804,15 +802,14 @@ export const ActivityStatusOverlay = ({
   const overlayClass = statuses.length
     ? activityStatusOverlayClass(statuses)
     : turnMeta?.status === "running" ? "in_progress" : "idle";
-  const title = activityStatusTitle(statuses);
   const summaryClass = turnMeta?.status ?? "idle";
   const summaryLabel = activityStatusSummaryLabel(summaryClass);
   const summaryStatusText = [
     summaryLabel,
     turnMeta?.duration || null
   ].filter(Boolean).join(" | ");
+  const title = statuses.length ? activityStatusTitle(statuses) : summaryStatusText;
   const summaryDetails = `${statuses.length} item${statuses.length === 1 ? "" : "s"}`;
-  const showRows = Boolean(statuses.length && !rowsHidden);
   const overlayStyle: React.CSSProperties = {
     transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`
   };
@@ -860,7 +857,7 @@ export const ActivityStatusOverlay = ({
         <span className={`activityStatusHeaderState ${summaryClass}`}>{summaryStatusText}</span>
         {statuses.length ? <span className="activityStatusHeaderCount">{summaryDetails}</span> : null}
       </div>
-      {showRows ? <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} /> : null}
+      {statuses.length ? <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} /> : null}
       <button
         type="button"
         className="activityStatusDragHandle"
@@ -877,17 +874,15 @@ export const ActivityStatusOverlay = ({
       >
         <GripHorizontal size={13} strokeWidth={2.4} aria-hidden="true" />
       </button>
-      {statuses.length ? (
-        <button
-          type="button"
-          className="activityStatusMinimize"
-          onClick={onToggleRows}
-          aria-label="Hide status card"
-          title="Hide status card"
-        >
-          <ChevronDown size={13} strokeWidth={2.4} aria-hidden="true" />
-        </button>
-      ) : null}
+      <button
+        type="button"
+        className="activityStatusMinimize"
+        onClick={onToggleRows}
+        aria-label="Hide status card"
+        title="Hide status card"
+      >
+        <ChevronDown size={13} strokeWidth={2.4} aria-hidden="true" />
+      </button>
     </div>
   );
 };

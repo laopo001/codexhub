@@ -220,10 +220,10 @@ const App = () => {
     setComposerMode,
     showComposerSendButton,
     showInlineStatusPanel,
-    showStatusRows,
-    simpleStatuses,
+    statusPanelAvailable,
     sshConfigHostOptions,
     statusScopeKey,
+    turnStatusItems,
     turnUiState
   } = selectors;
   const actionContext = { ...appState, ...selectors, resizeComposerTextarea };
@@ -527,9 +527,8 @@ const App = () => {
     setThreadPicker,
     showComposerSendButton,
     showInlineStatusPanel,
-    showStatusRows,
     sidebarCollapsed,
-    simpleStatuses,
+    statusPanelAvailable,
     sshConfigHostOptions,
     sshConfigHosts,
     sshConnectingHost,
@@ -552,6 +551,7 @@ const App = () => {
     threadPicker,
     toggleProjectMachineGroup,
     toggleProjectPinned,
+    turnStatusItems,
     turnUiState,
     updateMessageRenderMode,
     updateThreadInput,

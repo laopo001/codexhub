@@ -254,9 +254,8 @@ export type AppViewModel = AppSidebarViewModel & {
   setThreadPicker: React.Dispatch<React.SetStateAction<ThreadPickerState | null>>;
   showComposerSendButton: boolean;
   showInlineStatusPanel: boolean;
-  showStatusRows: boolean;
   sidebarCollapsed: boolean;
-  simpleStatuses: ActivityStatusView[];
+  statusPanelAvailable: boolean;
   statusScopeKey: string;
   stopTurn: (threadId: string) => MaybePromise;
   submitAuthToken: (event: React.FormEvent<HTMLFormElement>) => void;
@@ -264,6 +263,7 @@ export type AppViewModel = AppSidebarViewModel & {
   switchSessionThread: (threadId: string) => MaybePromise;
   threadOrderBySession: Record<string, string[]>;
   threadPicker: ThreadPickerState | null;
+  turnStatusItems: ActivityStatusView[];
   turnUiState: TurnUiState;
   updateMessageRenderMode: (messageId: string, mode: MessageRenderMode) => void;
   updateThreadInput: (threadId: string, input: string) => void;

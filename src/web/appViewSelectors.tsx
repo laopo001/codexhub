@@ -39,8 +39,9 @@ type ComposerThreadControlsProps = {
   setHiddenStatusTurns: AppState["setHiddenStatusTurns"];
   setThreadControlsMenuOpen: AppState["setThreadControlsMenuOpen"];
   setThreadModelDialogOpen: AppState["setThreadModelDialogOpen"];
-  showStatusRows: AppSelectors["showStatusRows"];
-  simpleStatuses: AppSelectors["simpleStatuses"];
+  showInlineStatusPanel: AppSelectors["showInlineStatusPanel"];
+  statusPanelAvailable: AppSelectors["statusPanelAvailable"];
+  turnStatusItems: AppSelectors["turnStatusItems"];
   turnUiState: AppSelectors["turnUiState"];
 };
 
@@ -93,8 +94,9 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
       setHiddenStatusTurns={state.setHiddenStatusTurns}
       setThreadControlsMenuOpen={state.setThreadControlsMenuOpen}
       setThreadModelDialogOpen={state.setThreadModelDialogOpen}
-      showStatusRows={selectors.showStatusRows}
-      simpleStatuses={selectors.simpleStatuses}
+      showInlineStatusPanel={selectors.showInlineStatusPanel}
+      statusPanelAvailable={selectors.statusPanelAvailable}
+      turnStatusItems={selectors.turnStatusItems}
       turnUiState={selectors.turnUiState}
     />
   );
@@ -190,20 +192,25 @@ const ComposerThreadControls = ({
   setHiddenStatusTurns,
   setThreadControlsMenuOpen,
   setThreadModelDialogOpen,
-  showStatusRows,
-  simpleStatuses,
+  showInlineStatusPanel,
+  statusPanelAvailable,
+  turnStatusItems,
   turnUiState
 }: ComposerThreadControlsProps) => {
-  const statusButtonLabel = simpleStatuses.length ? `Status ${simpleStatuses.length}` : "Status";
-  const statusPanelExpanded = Boolean(simpleStatuses.length && showStatusRows);
+  const statusItemCount = turnStatusItems.length;
+  const statusButtonLabel = statusItemCount ? `Status ${statusItemCount}` : "Status";
+  const statusPanelExpanded = Boolean(statusPanelAvailable && showInlineStatusPanel);
   const statusButtonClass = [
     "usagePill",
     "statusPill",
-    simpleStatuses.length ? "available" : "",
-    simpleStatuses.length && !statusPanelExpanded ? "collapsed" : ""
+    statusPanelAvailable ? "available" : "",
+    statusPanelAvailable && !statusPanelExpanded ? "collapsed" : ""
   ].filter(Boolean).join(" ");
-  const statusButtonTitle = simpleStatuses.length
-    ? `${statusPanelExpanded ? "Hide" : "Show"} turn status\n${activityStatusTitle(simpleStatuses)}`
+  const statusButtonTitle = statusPanelAvailable
+    ? [
+        `${statusPanelExpanded ? "Hide" : "Show"} turn status`,
+        statusItemCount ? activityStatusTitle(turnStatusItems) : turnUiState.title
+      ].filter(Boolean).join("\n")
     : turnUiState.title;
   const toggleStatusPanel = () => {
     if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
@@ -258,9 +265,9 @@ const ComposerThreadControls = ({
         <button
           type="button"
           className={statusButtonClass}
-          disabled={!simpleStatuses.length}
+          disabled={!statusPanelAvailable}
           title={statusButtonTitle}
-          aria-pressed={simpleStatuses.length ? statusPanelExpanded : undefined}
+          aria-pressed={statusPanelAvailable ? statusPanelExpanded : undefined}
           onClick={toggleStatusPanel}
         >
           {statusButtonLabel}
