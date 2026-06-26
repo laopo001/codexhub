@@ -1,4 +1,4 @@
-import { imageGenerationAttachments, imageGenerationStatus, isActiveRecordStatus, recordViewStatusFromAppStatus, recordViewStatusText } from "../core/codexRecordView.js";
+import { imageGenerationAttachments, imageGenerationStatus, isActiveRecordStatus, recordViewStatusFromAppStatus, recordViewStatusText, withRecordViewStatusDuration } from "../core/codexRecordView.js";
 import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage } from "../shared/recordTypes.js";
 
 export const recordsToDetailedViews = (records: CodexRecord[]): CodexRecordView[] => {
@@ -8,7 +8,8 @@ export const recordsToDetailedViews = (records: CodexRecord[]): CodexRecordView[
     if (usage) attachUsageToLatestCodexView(views, usage);
 
     const view = detailedRecordToView(record);
-    if (view) views.push(view);
+    const payload = asRecord(record.payload);
+    if (view) views.push(payload ? withRecordViewStatusDuration(view, payload) : view);
   }
   return views;
 };

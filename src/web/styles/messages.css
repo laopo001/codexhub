@@ -340,6 +340,15 @@
   border-color: #d95f36;
 }
 
+.message.codex.finalAnswer {
+  border-color: #267c86;
+  background: #fbfefe;
+}
+
+.message.codex.finalAnswer .messageHeader {
+  color: #236974;
+}
+
 .message.event {
   border-color: #7b8794;
   background: #fbfcf8;

@@ -20,7 +20,7 @@ export const recordToView = (record: CodexRecord): CodexRecordView | null => {
   if (!payload) return null;
 
   if (record.type === "error") {
-    return {
+    return withRecordViewStatusDuration({
       id: record.id,
       role: "error",
       label: typeof payload.type === "string" ? payload.type : "error",
@@ -29,11 +29,28 @@ export const recordToView = (record: CodexRecord): CodexRecordView | null => {
       status: "failed",
       statusText: recordViewStatusText(payload.status),
       record
-    };
+    }, payload);
   }
-  if (record.type === "event_msg") return eventMessageToView(record, payload);
-  if (record.type === "response_item") return responseItemToView(record, payload);
+  if (record.type === "event_msg") return withRecordViewStatusDuration(eventMessageToView(record, payload), payload);
+  if (record.type === "response_item") return withRecordViewStatusDuration(responseItemToView(record, payload), payload);
   return null;
+};
+
+export const withRecordViewStatusDuration = <T extends CodexRecordView | null>(
+  view: T,
+  payload: Record<string, unknown>
+): T => {
+  if (!view) return view;
+  const statusDurationMs = recordViewStatusDurationMs(payload);
+  return statusDurationMs == null ? view : { ...view, statusDurationMs } as T;
+};
+
+export const recordViewStatusDurationMs = (payload: Record<string, unknown>) => {
+  const direct = durationMsValue(payload.duration_ms) ?? durationMsValue(payload.durationMs);
+  if (direct != null) return direct;
+  const startedAt = timestampMsValue(payload.started_at) ?? timestampMsValue(payload.startedAt);
+  const completedAt = timestampMsValue(payload.completed_at) ?? timestampMsValue(payload.completedAt);
+  return startedAt != null && completedAt != null ? Math.max(0, completedAt - startedAt) : undefined;
 };
 
 const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
@@ -435,6 +452,18 @@ export const recordViewStatusText = (status: unknown): string | undefined => {
   if (typeof status !== "string") return undefined;
   const text = status.trim();
   return text || undefined;
+};
+
+const durationMsValue = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : undefined;
+
+const timestampMsValue = (value: unknown) => {
+  if (typeof value === "string" && value) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return value < 10_000_000_000 ? value * 1000 : value;
 };
 
 export const isActiveRecordStatus = (status: CodexRecordView["status"] | undefined) =>

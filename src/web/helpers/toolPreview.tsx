@@ -24,13 +24,15 @@ type ShellCommandDisplay = {
 export const UpdatePlanPreview = ({
   plan,
   status,
-  statusText
+  statusText,
+  statusDurationMs
 }: {
   plan: UpdatePlanViewModel;
   status?: CodexRecordView["status"];
   statusText?: string;
+  statusDurationMs?: number;
 }) => (
-  <ToolPreview title="Updated Plan" status={status} statusText={statusText} className="updatePlanPreview" icon={Workflow}>
+  <ToolPreview title="Updated Plan" status={status} statusText={statusText} statusDurationMs={statusDurationMs} className="updatePlanPreview" icon={Workflow}>
     {plan.explanation ? <p className="updatePlanExplanation">{plan.explanation}</p> : null}
     {plan.steps.length ? (
       <ol className="updatePlanSteps">
@@ -51,15 +53,17 @@ export const UpdatePlanPreview = ({
 export const CommandToolPreview = ({
   args,
   status,
-  statusText
+  statusText,
+  statusDurationMs
 }: {
   args: Record<string, unknown>;
   status?: CodexRecordView["status"];
   statusText?: string;
+  statusDurationMs?: number;
 }) => {
   const command = typeof args.cmd === "string" ? formatCommandBlock(args.cmd) : "<missing>";
   return (
-    <ToolPreview title="tool: exec_command" status={status} statusText={statusText} meta={toolPreviewMeta(args)} icon={Terminal}>
+    <ToolPreview title="tool: exec_command" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={toolPreviewMeta(args)} icon={Terminal}>
       <pre className="toolCommandLine">{command.includes("\n") ? command : `$ ${command}`}</pre>
     </ToolPreview>
   );
@@ -68,13 +72,15 @@ export const CommandToolPreview = ({
 export const WriteStdinToolPreview = ({
   args,
   status,
-  statusText
+  statusText,
+  statusDurationMs
 }: {
   args: Record<string, unknown>;
   status?: CodexRecordView["status"];
   statusText?: string;
+  statusDurationMs?: number;
 }) => (
-  <ToolPreview title="tool: write_stdin" status={status} statusText={statusText} meta={toolPreviewMeta(args)} icon={Terminal}>
+  <ToolPreview title="tool: write_stdin" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={toolPreviewMeta(args)} icon={Terminal}>
     <p className="toolPreviewBody">{formatWriteStdinSummary(args)}</p>
   </ToolPreview>
 );
@@ -83,6 +89,7 @@ export const ToolPreview = ({
   title,
   status,
   statusText,
+  statusDurationMs,
   className = "",
   meta,
   metaExtra,
@@ -92,6 +99,7 @@ export const ToolPreview = ({
   title: string;
   status?: CodexRecordView["status"];
   statusText?: string;
+  statusDurationMs?: number;
   className?: string;
   meta?: string[];
   metaExtra?: React.ReactNode;
@@ -104,7 +112,7 @@ export const ToolPreview = ({
         {Icon ? <Icon className="toolPreviewIcon" size={16} strokeWidth={2.2} /> : "•"}
       </span>
       <strong>{title}</strong>
-      {status ? <em className={`messageStatus ${status}`}>{statusLabel(status, statusText)}</em> : null}
+      {status ? <em className={`messageStatus ${status}`}>{statusLabel(status, statusText, statusDurationMs)}</em> : null}
     </div>
     {meta?.length || metaExtra ? (
       <div className="toolPreviewMeta">
@@ -119,11 +127,13 @@ export const ToolPreview = ({
 export const FileChangePreview = ({
   payload,
   status,
-  statusText
+  statusText,
+  statusDurationMs
 }: {
   payload: Record<string, unknown>;
   status?: CodexRecordView["status"];
   statusText?: string;
+  statusDurationMs?: number;
 }) => {
   const files = fileChangePreviewFiles(payload);
   const visibleFiles = files.slice(0, 5);
@@ -133,7 +143,7 @@ export const FileChangePreview = ({
     ? "File changes need approval"
     : status === "failed" ? "Patch failed" : "Files changed";
   return (
-    <ToolPreview title={title} status={status} statusText={statusText} meta={appServerToolMeta(payload)} className="fileChangePreview" icon={FileDiff}>
+    <ToolPreview title={title} status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} className="fileChangePreview" icon={FileDiff}>
       {visibleFiles.length ? (
         <div className="fileChangeList">
           {visibleFiles.map((file, index) => (
@@ -157,11 +167,13 @@ export const FileChangePreview = ({
 export const ApplyPatchPreview = ({
   args,
   status,
-  statusText
+  statusText,
+  statusDurationMs
 }: {
   args: Record<string, unknown>;
   status?: CodexRecordView["status"];
   statusText?: string;
+  statusDurationMs?: number;
 }) => {
   const patch = applyPatchInput(args);
   const files = parseApplyPatchFiles(patch);
@@ -174,6 +186,7 @@ export const ApplyPatchPreview = ({
       title="tool: apply_patch"
       status={status}
       statusText={statusText}
+      statusDurationMs={statusDurationMs}
       meta={[
         files.length ? `${files.length} file${files.length === 1 ? "" : "s"}` : null,
         added ? `+${added}` : null,
@@ -205,16 +218,16 @@ export const ApplyPatchPreview = ({
 
 export const webToolPresenters: Record<string, WebToolPresenter> = {
   exec_command: {
-    render: (args, status, statusText) => <CommandToolPreview args={args} status={status} statusText={statusText} />,
+    render: (args, status, statusText, statusDurationMs) => <CommandToolPreview args={args} status={status} statusText={statusText} statusDurationMs={statusDurationMs} />,
     inspect: (args, output) => ({
       ...formatToolInput("exec_command", args),
       ...formatRawToolOutput(output)
     })
   },
   update_plan: {
-    render: (args, status, statusText) => {
+    render: (args, status, statusText, statusDurationMs) => {
       const plan = parseUpdatePlanArguments(args);
-      return plan ? <UpdatePlanPreview plan={plan} status={status} statusText={statusText} /> : null;
+      return plan ? <UpdatePlanPreview plan={plan} status={status} statusText={statusText} statusDurationMs={statusDurationMs} /> : null;
     },
     inspect: (args, output) => {
       const plan = parseUpdatePlanArguments(args);
@@ -225,14 +238,14 @@ export const webToolPresenters: Record<string, WebToolPresenter> = {
     }
   },
   write_stdin: {
-    render: (args, status, statusText) => <WriteStdinToolPreview args={args} status={status} statusText={statusText} />,
+    render: (args, status, statusText, statusDurationMs) => <WriteStdinToolPreview args={args} status={status} statusText={statusText} statusDurationMs={statusDurationMs} />,
     inspect: (args, output) => ({
       ...formatToolInput("write_stdin", args),
       ...formatRawToolOutput(output)
     })
   },
   apply_patch: {
-    render: (args, status, statusText) => <ApplyPatchPreview args={args} status={status} statusText={statusText} />,
+    render: (args, status, statusText, statusDurationMs) => <ApplyPatchPreview args={args} status={status} statusText={statusText} statusDurationMs={statusDurationMs} />,
     inspect: (args, output) => ({
       ...formatApplyPatchInspect(args),
       ...formatRawToolOutput(output)
@@ -281,28 +294,30 @@ export const formatInspectTitle = (message: WebRecordView) => {
 
 export const renderToolMessageBody = (message: WebRecordView, status?: CodexRecordView["status"], statusText?: string) => {
   const toolCall = parseToolCallMessage(message);
-  if (toolCall) return webToolPresenters[toolCall.name]?.render?.(toolCall.args, status, statusText) ?? (
-    <FunctionCallPreview message={message} toolCall={toolCall} status={status} statusText={statusText} />
+  if (toolCall) return webToolPresenters[toolCall.name]?.render?.(toolCall.args, status, statusText, message.statusDurationMs) ?? (
+    <FunctionCallPreview message={message} toolCall={toolCall} status={status} statusText={statusText} statusDurationMs={message.statusDurationMs} />
   );
-  return renderAppServerToolPreview(message, status, statusText);
+  return renderAppServerToolPreview(message, status, statusText, message.statusDurationMs);
 };
 
 export const FunctionCallPreview = ({
   message,
   toolCall,
   status,
-  statusText
+  statusText,
+  statusDurationMs
 }: {
   message: WebRecordView;
   toolCall: ParsedToolCall;
   status?: CodexRecordView["status"];
   statusText?: string;
+  statusDurationMs?: number;
 }) => {
   const payload = asRecord(message.record.payload) ?? {};
   const namespace = typeof payload.namespace === "string" && payload.namespace ? payload.namespace : "";
   const title = `tool: ${[namespace, toolCall.name].filter(Boolean).join(".") || toolCall.name}`;
   return (
-    <ToolPreview title={title} status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={Workflow}>
+    <ToolPreview title={title} status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Workflow}>
       <p className="toolPreviewBody">{formatFunctionCallPreview(toolCall.name, toolCall.args)}</p>
     </ToolPreview>
   );
@@ -317,7 +332,12 @@ export const parseToolCallMessage = (message: WebRecordView): ParsedToolCall | n
   return { name, args: args ?? {} };
 };
 
-export const renderAppServerToolPreview = (message: WebRecordView, status?: CodexRecordView["status"], statusText?: string) => {
+export const renderAppServerToolPreview = (
+  message: WebRecordView,
+  status?: CodexRecordView["status"],
+  statusText?: string,
+  statusDurationMs?: number
+) => {
   if (message.role !== "tool") return null;
   const payload = asRecord(message.record.payload);
   if (!payload) return null;
@@ -329,6 +349,7 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
         title="tool: shell"
         status={status}
         statusText={statusText}
+        statusDurationMs={statusDurationMs}
         meta={appServerToolMeta(payload)}
         metaExtra={command.wrapper ? (
           <Tag className="shellCommandWrapperTag" title={command.raw}>
@@ -344,13 +365,13 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
 
   if (payload.type === "file_change") {
     return (
-      <FileChangePreview payload={payload} status={status} statusText={statusText} />
+      <FileChangePreview payload={payload} status={status} statusText={statusText} statusDurationMs={statusDurationMs} />
     );
   }
 
   if (payload.type === "web_search_call") {
     return (
-      <ToolPreview title="tool: web_search" status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={Search}>
+      <ToolPreview title="tool: web_search" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Search}>
         <p className="toolPreviewBody">{typeof payload.query === "string" && payload.query ? payload.query : message.text}</p>
       </ToolPreview>
     );
@@ -358,7 +379,7 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
 
   if (payload.type === "mcp_tool_call") {
     return (
-      <ToolPreview title={`tool: ${mcpToolPreviewName(payload)}`} status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={Plug}>
+      <ToolPreview title={`tool: ${mcpToolPreviewName(payload)}`} status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Plug}>
         <p className="toolPreviewBody">{formatToolArgumentsPreview(payload.arguments)}</p>
       </ToolPreview>
     );
@@ -366,7 +387,7 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
 
   if (payload.type === "permission_request") {
     return (
-      <ToolPreview title="tool: permission_request" status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={ShieldCheck}>
+      <ToolPreview title="tool: permission_request" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={ShieldCheck}>
         <p className="toolPreviewBody">{permissionRequestPreview(payload)}</p>
       </ToolPreview>
     );
@@ -374,7 +395,7 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
 
   if (payload.type === "user_input_request") {
     return (
-      <ToolPreview title="tool: request_user_input" status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={MessageSquareText}>
+      <ToolPreview title="tool: request_user_input" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={MessageSquareText}>
         <p className="toolPreviewBody">{userInputRequestPreview(payload)}</p>
       </ToolPreview>
     );
@@ -382,7 +403,7 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
 
   if (payload.type === "collab_agent_tool_call") {
     return (
-      <ToolPreview title={`tool: ${collabAgentToolPreviewName(payload)}`} status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={Users}>
+      <ToolPreview title={`tool: ${collabAgentToolPreviewName(payload)}`} status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Users}>
         <p className="toolPreviewBody">{collabAgentToolInputPreview(payload)}</p>
       </ToolPreview>
     );
@@ -390,7 +411,7 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
 
   if (payload.type === "image_view") {
     return (
-      <ToolPreview title="tool: image_view" status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={Image}>
+      <ToolPreview title="tool: image_view" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Image}>
         <p className="toolPreviewBody">{typeof payload.path === "string" && payload.path ? payload.path : message.text}</p>
       </ToolPreview>
     );
@@ -398,7 +419,7 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
 
   if (payload.type === "image_generation_call") {
     return (
-      <ToolPreview title="tool: image_generation" status={status} statusText={statusText} meta={appServerToolMeta(payload)} icon={Sparkles}>
+      <ToolPreview title="tool: image_generation" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Sparkles}>
         <p className="toolPreviewBody">{imageGenerationInputPreview(payload)}</p>
       </ToolPreview>
     );
@@ -406,7 +427,7 @@ export const renderAppServerToolPreview = (message: WebRecordView, status?: Code
 
   if (payload.type === "function_call_output") {
     return (
-      <ToolPreview title="tool result" status={status} statusText={statusText} meta={appServerToolMeta(payload)}>
+      <ToolPreview title="tool result" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)}>
         <p className="toolPreviewBody">{message.text || "Completed"}</p>
       </ToolPreview>
     );

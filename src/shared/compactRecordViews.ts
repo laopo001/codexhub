@@ -138,6 +138,7 @@ export const compactRecordView = (
     at: view.at ?? callView.at,
     status: view.status,
     statusText: view.statusText,
+    statusDurationMs: view.statusDurationMs ?? durationMsBetweenViews(callView, view) ?? callView.statusDurationMs,
     record: callView.record,
     inspectRecord: view.record,
     inspectText: view.text
@@ -202,6 +203,7 @@ const compactTurnFinished = (
     text: eventType === "turn_aborted" ? formatTurnAborted(payload) : formatTurnCompleted(payload),
     at: view.at ?? started.at,
     status: eventType === "turn_aborted" ? "failed" : "completed",
+    statusDurationMs: view.statusDurationMs,
     inspectRecord: view.record,
     inspectText: view.text
   };
@@ -304,6 +306,7 @@ const compactToolBatchSummary = (key: string, views: CompactRecordView[], expand
     at: last.at ?? first.at,
     status,
     statusText: status,
+    statusDurationMs: compactToolBatchDurationMs(views),
     record: first.record,
     toolBatch: {
       key,
@@ -332,7 +335,30 @@ const compactToolBatchStatus = (views: CompactRecordView[]): CodexRecordView["st
   return "completed";
 };
 
+const compactToolBatchDurationMs = (views: CompactRecordView[]) => {
+  let total = 0;
+  let hasDuration = false;
+  for (const view of views) {
+    if (typeof view.statusDurationMs !== "number" || !Number.isFinite(view.statusDurationMs)) continue;
+    total += Math.max(0, view.statusDurationMs);
+    hasDuration = true;
+  }
+  return hasDuration ? total : undefined;
+};
+
 const isBatchableToolView = (view: CompactRecordView) => view.role === "tool" && !view.toolBatch;
+
+const durationMsBetweenViews = (started: CompactRecordView, finished: CompactRecordView) => {
+  const startedMs = timestampMs(started.at);
+  const finishedMs = timestampMs(finished.at);
+  return startedMs != null && finishedMs != null ? Math.max(0, finishedMs - startedMs) : undefined;
+};
+
+const timestampMs = (value: string | undefined) => {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
 
 const compactTurnId = (view: CodexRecordView) => {
   const parts = view.record.id.split(":");

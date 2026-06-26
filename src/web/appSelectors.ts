@@ -1,7 +1,7 @@
 import { useMemo, type Dispatch, type SetStateAction } from "react";
 import { recordsToViews } from "../core/codexRecordView.js";
 import { collapseHistoricalToolBatches, compactToolViews } from "../shared/compactRecordViews.js";
-import type { CodexRecordView } from "../shared/recordTypes.js";
+import { asRecord, type CodexRecord, type CodexRecordView } from "../shared/recordTypes.js";
 import { recordsToDetailedViews } from "./detailedRecordViews.js";
 import { isVscodeSurface, vscodeWorkspacePaths } from "./appConfig.js";
 import {
@@ -303,11 +303,19 @@ export const useAppSelectors = (state: AppState) => {
     () => new Set(activeThread?.threadId ? state.expandedToolBatchKeys[activeThread.threadId] ?? [] : []),
     [activeThread?.threadId, state.expandedToolBatchKeys]
   );
+  const turnDurations = useMemo(
+    () => turnDurationMapFromRecords(displayRecords),
+    [displayRecords]
+  );
   const activeViews = useMemo<WebRecordView[]>(
-    () => state.messageDisplayMode === "compact"
-      ? collapseHistoricalToolBatches(compactToolViews(baseViews), activeExpandedToolBatchKeys)
-      : detailedViews,
-    [activeExpandedToolBatchKeys, baseViews, detailedViews, state.messageDisplayMode]
+    () => withStatusDurations(
+      state.messageDisplayMode === "compact"
+        ? collapseHistoricalToolBatches(compactToolViews(baseViews), activeExpandedToolBatchKeys)
+        : detailedViews,
+      state.nowMs,
+      turnDurations
+    ),
+    [activeExpandedToolBatchKeys, baseViews, detailedViews, state.messageDisplayMode, state.nowMs, turnDurations]
   );
   const activeUserMessageHistory = useMemo(
     () => userMessageHistoryFromRecords(displayRecords),
@@ -453,6 +461,72 @@ export const useAppSelectors = (state: AppState) => {
     statusScopeKey,
     turnUiState
   };
+};
+
+const withStatusDurations = <T extends CodexRecordView>(
+  views: T[],
+  nowMs: number,
+  turnDurations: Map<string, number>
+): T[] =>
+  views.map((view) => {
+    if (view.status === "pending" || view.status === "in_progress") {
+      const startedMs = Date.parse(view.at ?? "");
+      if (!Number.isFinite(startedMs)) return view;
+      return {
+        ...view,
+        statusDurationMs: Math.max(0, nowMs - startedMs)
+      };
+    }
+    if ((view.status !== "completed" && view.status !== "failed") || view.statusDurationMs != null) return view;
+    const turnId = turnIdFromRecordView(view);
+    const statusDurationMs = turnId ? turnDurations.get(turnId) : undefined;
+    if (statusDurationMs == null) return view;
+    return {
+      ...view,
+      statusDurationMs
+    };
+  });
+
+const turnDurationMapFromRecords = (records: CodexRecord[]) => {
+  const startedByTurn = new Map<string, number>();
+  const durationByTurn = new Map<string, number>();
+  for (const record of records) {
+    const payload = asRecord(record.payload);
+    if (record.type !== "event_msg" || !payload) continue;
+    const turnId = typeof payload.turn_id === "string"
+      ? payload.turn_id
+      : typeof payload.turnId === "string" ? payload.turnId : "";
+    if (!turnId) continue;
+    if (payload.type === "task_started") {
+      const startedMs = timestampMsFromRecord(record);
+      if (startedMs != null) startedByTurn.set(turnId, startedMs);
+      continue;
+    }
+    if (payload.type !== "task_complete" && payload.type !== "turn_aborted") continue;
+    const direct = typeof payload.duration_ms === "number" && Number.isFinite(payload.duration_ms)
+      ? Math.max(0, payload.duration_ms)
+      : undefined;
+    if (direct != null) {
+      durationByTurn.set(turnId, direct);
+      continue;
+    }
+    const startedMs = startedByTurn.get(turnId);
+    const finishedMs = timestampMsFromRecord(record);
+    if (startedMs != null && finishedMs != null) {
+      durationByTurn.set(turnId, Math.max(0, finishedMs - startedMs));
+    }
+  }
+  return durationByTurn;
+};
+
+const turnIdFromRecordView = (view: CodexRecordView) => {
+  const parts = view.record.id.split(":");
+  return parts[0] === "app" && parts.length >= 3 ? parts[2] : "";
+};
+
+const timestampMsFromRecord = (record: CodexRecord) => {
+  const parsed = Date.parse(record.timestamp ?? "");
+  return Number.isFinite(parsed) ? parsed : undefined;
 };
 
 export type AppSelectors = ReturnType<typeof useAppSelectors>;

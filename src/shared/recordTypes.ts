@@ -34,6 +34,7 @@ export type CodexRecordView = {
   usage?: RecordUsage;
   status?: "pending" | "in_progress" | "completed" | "failed";
   statusText?: string;
+  statusDurationMs?: number;
   canFork?: boolean;
   record: CodexRecord;
 };

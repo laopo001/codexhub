@@ -32,9 +32,25 @@ export function browserId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-export const statusLabel = (status: NonNullable<CodexRecordView["status"]>, statusText?: string) => {
-  if (statusText?.trim()) return statusText.trim();
-  return status;
+export const statusLabel = (
+  status: NonNullable<CodexRecordView["status"]>,
+  statusText?: string,
+  statusDurationMs?: number
+) => {
+  const label = statusText?.trim() || status;
+  const duration = formatStatusLabelDuration(statusDurationMs);
+  return duration ? `${label} · ${duration}` : label;
+};
+
+const formatStatusLabelDuration = (value: number | undefined) => {
+  if (value == null || !Number.isFinite(value)) return "";
+  const seconds = value > 0 ? Math.max(1, Math.round(value / 1000)) : 0;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  if (hours) return `${hours}h${minutes}m${remainder}s`;
+  if (minutes) return `${minutes}m${remainder}s`;
+  return `${remainder}s`;
 };
 
 export const formatDate = (value: string) => {

@@ -1335,8 +1335,13 @@ export class ThreadHub {
     // 这里把 app-server turn 统一展开成 records；来源可以是历史快照或实时完成事件。
     const turnId = typeof turn.id === "string" ? turn.id : "";
     if (!turnId) return;
+    const previousTurnRecords = new Map<string, CodexRecord>();
     if (options.replaceTurnRecords) {
-      thread.records = thread.records.filter((record) => turnIdFromAppRecordId(thread.threadId, record.id) !== turnId);
+      thread.records = thread.records.filter((record) => {
+        if (turnIdFromAppRecordId(thread.threadId, record.id) !== turnId) return true;
+        previousTurnRecords.set(record.id, record);
+        return false;
+      });
       thread.recordSeq = thread.records.reduce((max, record) => (
         typeof record.order === "number" && record.order > max ? record.order : max
       ), 0);
@@ -1349,7 +1354,10 @@ export class ThreadHub {
     if (Array.isArray(turn.items)) {
       for (const item of turn.items) {
         const itemRecord = asRecord(item);
-        const record = itemRecord ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp) : null;
+        const rawRecord = itemRecord ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp) : null;
+        const record = itemRecord
+          ? withAppServerItemRecordTiming(rawRecord, { item: itemRecord, existing: rawRecord ? previousTurnRecords.get(rawRecord.id) : undefined })
+          : null;
         if (record) this.upsertRecord(thread, record, { historical: options.historicalRecords });
       }
     }
@@ -1366,9 +1374,10 @@ export class ThreadHub {
     const record = codexRecordFromAppServerItem(thread.threadId, turnId, item, timestamp, fallbackStatus);
     if (!record) return;
     const existing = thread.records.find((item) => item.id === record.id);
+    const timedRecord = withAppServerItemRecordTiming(record, { item, existing }) ?? record;
     this.upsertRecord(thread, {
-      ...record,
-      timestamp: record.timestamp ?? existing?.timestamp ?? new Date().toISOString()
+      ...timedRecord,
+      timestamp: timedRecord.timestamp ?? existing?.timestamp ?? new Date().toISOString()
     });
   }
 
@@ -2360,6 +2369,96 @@ const codexRecordFromAppServerItem = (
 
   return null;
 };
+
+const withAppServerItemRecordTiming = (
+  record: CodexRecord | null,
+  options: { item?: Record<string, unknown>; existing?: CodexRecord } = {}
+): CodexRecord | null => {
+  if (!record) return null;
+  const payload = asRecord(record.payload);
+  if (!payload) return record;
+
+  const itemTiming = appServerItemTiming(options.item);
+  const existingPayload = asRecord(options.existing?.payload);
+  const startedAt = stringValue(payload.started_at)
+    ?? stringValue(payload.startedAt)
+    ?? itemTiming.startedAt
+    ?? stringValue(existingPayload?.started_at)
+    ?? stringValue(existingPayload?.startedAt)
+    ?? (isActiveTimingPayload(payload) ? record.timestamp : options.existing?.timestamp);
+  const completedAt = stringValue(payload.completed_at)
+    ?? stringValue(payload.completedAt)
+    ?? itemTiming.completedAt
+    ?? stringValue(existingPayload?.completed_at)
+    ?? stringValue(existingPayload?.completedAt)
+    ?? (isFinishedTimingPayload(payload) ? record.timestamp : undefined);
+  const durationMs = numberValue(payload.duration_ms)
+    ?? numberValue(payload.durationMs)
+    ?? itemTiming.durationMs
+    ?? (startedAt && completedAt ? timestampDeltaMs(startedAt, completedAt) : undefined);
+
+  if (!startedAt && !completedAt && durationMs == null) return record;
+  return {
+    ...record,
+    payload: {
+      ...payload,
+      ...(startedAt ? { started_at: startedAt } : {}),
+      ...(completedAt ? { completed_at: completedAt } : {}),
+      ...(durationMs == null ? {} : { duration_ms: durationMs })
+    }
+  };
+};
+
+const appServerItemTiming = (item: Record<string, unknown> | undefined) => {
+  if (!item) return {};
+  const startedAt = timestampFromEpochOrIso(item.startedAtMs ?? item.started_at_ms, "millis")
+    ?? timestampFromEpochOrIso(item.startedAt ?? item.started_at ?? item.createdAt ?? item.created_at, "seconds");
+  const completedAt = timestampFromEpochOrIso(item.completedAtMs ?? item.completed_at_ms ?? item.finishedAtMs ?? item.finished_at_ms, "millis")
+    ?? timestampFromEpochOrIso(item.completedAt ?? item.completed_at ?? item.finishedAt ?? item.finished_at, "seconds");
+  const durationMs = numberValue(item.durationMs) ?? numberValue(item.duration_ms);
+  return {
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { completedAt } : {}),
+    ...(durationMs == null ? {} : { durationMs: Math.max(0, durationMs) })
+  };
+};
+
+const isActiveTimingPayload = (payload: Record<string, unknown>) => {
+  const status = normalizedTimingStatus(payload.status);
+  return status === "pending"
+    || status === "queued"
+    || status === "pending_approval"
+    || status === "pending_user_input"
+    || status === "in_progress"
+    || status === "inprogress"
+    || status === "running"
+    || status === "generating";
+};
+
+const isFinishedTimingPayload = (payload: Record<string, unknown>) => {
+  if (typeof payload.exit_code === "number") return true;
+  const status = normalizedTimingStatus(payload.status);
+  return status === "completed"
+    || status === "complete"
+    || status === "done"
+    || status === "success"
+    || status === "succeeded"
+    || status === "approved"
+    || status === "accepted"
+    || status === "failed"
+    || status === "failure"
+    || status === "error"
+    || status === "errored"
+    || status === "declined"
+    || status === "denied"
+    || status === "interrupted"
+    || status === "aborted"
+    || status === "cancelled"
+    || status === "canceled";
+};
+
+const normalizedTimingStatus = (status: unknown) =>
+  typeof status === "string" ? status.trim().replace(/[-\s]+/g, "_").toLowerCase() : "";
 
 const codexRecordFromRawResponseItem = (
   threadId: string,

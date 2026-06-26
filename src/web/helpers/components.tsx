@@ -78,6 +78,7 @@ export const MessageCard = ({
 }) => {
   const isThinkingMessage = message.role === "thinking";
   const isToolBatch = Boolean(message.toolBatch);
+  const messageToneClass = messageToneClassName(message);
   const toolBody = !isToolBatch && renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined, showStatus ? message.statusText : undefined) : null;
   const hasToolBody = toolBody !== null;
   const memoryCitation = useMemo(() => {
@@ -121,7 +122,7 @@ export const MessageCard = ({
           <span className="toolBatchChevron" aria-hidden="true">{isExpanded ? "v" : ">"}</span>
           <span className="toolBatchTitle">tools</span>
           <span className="toolBatchCount">{message.toolBatch.count} call{message.toolBatch.count === 1 ? "" : "s"}</span>
-          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status, message.statusText)}</em> : null}
+          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status, message.statusText, message.statusDurationMs)}</em> : null}
           <span className="toolBatchSummary">{message.toolBatch.labels.join(", ")}</span>
         </button>
       </article>
@@ -129,7 +130,7 @@ export const MessageCard = ({
   }
   return (
     <article
-      className={`message ${message.role} ${hasToolBody ? "richTool" : ""} ${canClickInspect ? "inspectableTool" : ""} ${onContextMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
+      className={`message ${message.role} ${messageToneClass} ${hasToolBody ? "richTool" : ""} ${canClickInspect ? "inspectableTool" : ""} ${onContextMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
       onContextMenu={onContextMenu}
       onClick={canClickInspect ? inspectOnClick : undefined}
       onKeyDown={canClickInspect ? inspectOnKeyDown : undefined}
@@ -139,7 +140,7 @@ export const MessageCard = ({
       {hasToolBody ? null : (
         <span className="messageHeader">
           <b>{message.label ?? message.role}</b>
-          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status, message.statusText)}</em> : null}
+          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status, message.statusText, message.statusDurationMs)}</em> : null}
         </span>
       )}
       {hasToolBody ? (
@@ -219,6 +220,9 @@ export const MessageCard = ({
     </article>
   );
 };
+
+const messageToneClassName = (message: WebRecordView) =>
+  message.role === "codex" && message.label === "final_answer" ? "finalAnswer" : "";
 
 type PendingUserInputQuestionView = {
   id: string;
