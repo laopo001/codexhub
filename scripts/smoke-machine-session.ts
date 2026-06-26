@@ -2184,25 +2184,29 @@ const assertHistoricalToolBatchCollapse = async () => {
   const views = [
     commentary("c1", "first tool round"),
     toolView("tool-a", "tool: shell"),
+    toolView("tool-aa", "tool: shell"),
     toolView("tool-b", "tool: apply_patch"),
     commentary("c2", "second tool round"),
     toolView("tool-c", "tool: shell")
   ];
   const collapsed = collapseHistoricalToolBatches(views);
   const collapsedBatch = collapsed.find((view) => view.toolBatch);
-  if (!collapsedBatch?.toolBatch || collapsedBatch.toolBatch.count !== 2 || collapsed.some((view) => view.id === "tool-a" || view.id === "tool-b")) {
+  if (!collapsedBatch?.toolBatch || collapsedBatch.toolBatch.count !== 3 || collapsed.some((view) => view.id === "tool-a" || view.id === "tool-aa" || view.id === "tool-b")) {
     throw new Error(`historical tool batch was not collapsed: ${JSON.stringify(collapsed)}`);
+  }
+  if (JSON.stringify(collapsedBatch.toolBatch.labels) !== JSON.stringify(["2 shell", "1 apply_patch"])) {
+    throw new Error(`historical tool batch labels were not counted by tool type: ${JSON.stringify(collapsedBatch.toolBatch.labels)}`);
   }
   if (!collapsed.some((view) => view.id === "tool-c")) {
     throw new Error(`latest tool batch should remain expanded: ${JSON.stringify(collapsed)}`);
   }
   const expanded = collapseHistoricalToolBatches(views, new Set([collapsedBatch.toolBatch.key]));
   const expandedBatch = expanded.find((view) => view.toolBatch);
-  if (!expandedBatch?.toolBatch?.expanded || !expanded.some((view) => view.id === "tool-a") || !expanded.some((view) => view.id === "tool-b")) {
+  if (!expandedBatch?.toolBatch?.expanded || !expanded.some((view) => view.id === "tool-a") || !expanded.some((view) => view.id === "tool-aa") || !expanded.some((view) => view.id === "tool-b")) {
     throw new Error(`expanded historical tool batch did not restore original tools: ${JSON.stringify(expanded)}`);
   }
   const collapsedAgain = collapseHistoricalToolBatches(views, new Set());
-  if (collapsedAgain.some((view) => view.id === "tool-a" || view.id === "tool-b") || collapsedAgain.some((view) => view.toolBatch?.expanded)) {
+  if (collapsedAgain.some((view) => view.id === "tool-a" || view.id === "tool-aa" || view.id === "tool-b") || collapsedAgain.some((view) => view.toolBatch?.expanded)) {
     throw new Error(`historical tool batch did not collapse again: ${JSON.stringify(collapsedAgain)}`);
   }
 };

@@ -318,14 +318,12 @@ const compactToolBatchSummary = (key: string, views: CompactRecordView[], expand
 };
 
 const compactToolBatchLabels = (views: CompactRecordView[]) => {
-  const labels: string[] = [];
+  const counts = new Map<string, number>();
   for (const view of views) {
     const label = view.label.replace(/^tool(?: call)?:\s*/i, "").trim() || view.label;
-    if (!labels.includes(label)) labels.push(label);
-    if (labels.length >= 4) break;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
   }
-  const hidden = views.length - labels.length;
-  return hidden > 0 ? [...labels, `+${hidden} more`] : labels;
+  return [...counts].map(([label, count]) => `${count} ${label}`);
 };
 
 const compactToolBatchStatus = (views: CompactRecordView[]): CodexRecordView["status"] => {
