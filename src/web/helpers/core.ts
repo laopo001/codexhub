@@ -2,7 +2,7 @@ import { asRecord } from "../../shared/recordTypes.js";
 import type { ModelCatalogItem, StoredMachine } from "../../shared/apiContract.js";
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
 import { modelOptions, reasoningOptions, serviceTierOptions } from "../appConfig.js";
-import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
+import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -519,6 +519,15 @@ export const projectSearchMatches = (project: ProjectSummary, query: string) => 
     project.relation?.type === "worktree" ? project.relation.branch : "",
     project.relation?.type === "worktree" ? project.relation.parentPath : ""
   ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalized));
+};
+
+export const filterProjectDirectoryEntries = (entries: MachineDirectoryEntry[], query: string) => {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return entries;
+  return entries.filter((entry) => {
+    const haystack = `${entry.name}\n${entry.path}`.toLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+  });
 };
 
 export const sshHostMeta = (host: SshHost) => [
