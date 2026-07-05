@@ -7,6 +7,7 @@ import { resolveCodexAppServerLaunchOptions } from "../src/cli/codexAppServerPro
 import { accountRateLimitsPayloadFromValue } from "../src/core/threadUsage.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { SessionEventInput } from "../src/shared/threadTypes.js";
+import type { OpenThreadState } from "../src/web/types.js";
 
 type MachineSummary = {
   machineId: string;
@@ -122,6 +123,7 @@ const main = async () => {
   assertAppServerLaunchApprovalPolicyDefault();
   await assertEmbeddedServerDataDirOptionOverridesEnvironment();
   await assertTaskCronSemantics();
+  await assertComposerAttachmentClear();
   await assertServerStateSnapshotPure();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
@@ -301,6 +303,89 @@ const assertTaskCronSemantics = async () => {
   }
   if (cronMinuteKeyFromIso(mondayNotFirst.toISOString(), "UTC") !== cronMinuteKey(mondayNotFirst, "UTC")) {
     throw new Error("cron lastRunAt minute key did not match date minute key");
+  }
+};
+
+const assertComposerAttachmentClear = async () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
+  const originalRevoke = URL.revokeObjectURL;
+  const revoked: string[] = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: { search: "" },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+        removeItem: () => undefined
+      },
+      history: {
+        state: null,
+        replaceState: () => undefined
+      }
+    }
+  });
+  URL.revokeObjectURL = (url: string) => {
+    revoked.push(url);
+  };
+  try {
+    const { createComposerActions } = await import("../src/web/appActions/composerActions.js");
+    let openThreads = [
+      {
+        threadId: "thread-a",
+        imageAttachments: [
+          { id: "image-a", file: {} as File, name: "image-a.png", previewUrl: "blob:image-a" }
+        ],
+        textAttachments: [
+          { id: "text-a", text: "File: a.txt\n\nhello" }
+        ]
+      },
+      {
+        threadId: "thread-b",
+        imageAttachments: [
+          { id: "image-b", file: {} as File, name: "image-b.png", previewUrl: "blob:image-b" }
+        ],
+        textAttachments: [
+          { id: "text-b", text: "keep" }
+        ]
+      }
+    ] as OpenThreadState[];
+    const actions = createComposerActions({
+      activeCanSend: false,
+      composerHistoryRef: { current: null },
+      messageContextMenu: null,
+      resizeComposerTextarea: () => undefined,
+      setComposerMenuOpen: () => undefined,
+      setInspectMessage: () => undefined,
+      setMessageContextMenu: () => undefined,
+      setMessageRenderModes: () => undefined,
+      setThreadControlsMenuOpen: () => undefined,
+      setOpenThreads: (update) => {
+        openThreads = typeof update === "function" ? update(openThreads) : update;
+      }
+    }, {
+      send: async () => undefined
+    });
+    actions.clearThreadAttachments("thread-a");
+    const cleared = openThreads.find((thread) => thread.threadId === "thread-a");
+    const untouched = openThreads.find((thread) => thread.threadId === "thread-b");
+    if (cleared?.imageAttachments.length || cleared?.textAttachments.length) {
+      throw new Error("composer clear attachments did not clear the target thread");
+    }
+    if (untouched?.imageAttachments.length !== 1 || untouched.textAttachments.length !== 1) {
+      throw new Error("composer clear attachments changed another thread");
+    }
+    if (revoked.join(",") !== "blob:image-a") {
+      throw new Error(`composer clear attachments did not revoke target image previews: ${revoked.join(",")}`);
+    }
+  } finally {
+    URL.revokeObjectURL = originalRevoke;
+    if (hadWindow) {
+      Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
   }
 };
 

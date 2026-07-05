@@ -51,6 +51,7 @@ export type ComposerActions = {
   addThreadFiles: (threadId: string, files: FileList | null) => Promise<void>;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   updateMessageRenderMode: (messageId: string, mode: MessageRenderMode) => void;
+  clearThreadAttachments: (threadId: string) => void;
   removeThreadImage: (threadId: string, imageId: string) => void;
   removeThreadTextAttachment: (threadId: string, textId: string) => void;
   openMessageContextMenu: (
@@ -211,6 +212,14 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     ctx.setMessageRenderModes((current) => current[messageId] === mode ? current : { ...current, [messageId]: mode });
   };
 
+  const clearThreadAttachments = (threadId: string) => {
+    ctx.setOpenThreads((current) => current.map((thread) => {
+      if (thread.threadId !== threadId) return thread;
+      for (const image of thread.imageAttachments) URL.revokeObjectURL(image.previewUrl);
+      return { ...thread, imageAttachments: [], textAttachments: [] };
+    }));
+  };
+
   const removeThreadImage = (threadId: string, imageId: string) => {
     ctx.setOpenThreads((current) => current.map((thread) => {
       if (thread.threadId !== threadId) return thread;
@@ -280,6 +289,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     addThreadFiles,
     pasteThreadImages,
     updateMessageRenderMode,
+    clearThreadAttachments,
     removeThreadImage,
     removeThreadTextAttachment,
     openMessageContextMenu,
