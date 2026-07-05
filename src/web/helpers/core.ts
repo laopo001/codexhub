@@ -1,6 +1,7 @@
 import { asRecord } from "../../shared/recordTypes.js";
 import type { ModelCatalogItem, StoredMachine } from "../../shared/apiContract.js";
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
+import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../core/taskCron.js";
 import { modelOptions, reasoningOptions, serviceTierOptions } from "../appConfig.js";
 import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
 import { formatDate, shortId } from "./common.js";
@@ -305,6 +306,45 @@ export const taskScheduleLine = (task: LocalTask) =>
   task.nextRunAt && task.enabled
     ? `${task.schedule} · next ${relativeTimeFuture(task.nextRunAt)}`
     : task.schedule;
+
+export type TaskSchedulePreview = {
+  kind: "empty" | "invalid" | "valid";
+  text: string;
+  title: string;
+};
+
+export const taskDraftSchedulePreview = (schedule: string): TaskSchedulePreview => {
+  const expression = schedule.trim();
+  if (!expression) {
+    return {
+      kind: "empty",
+      text: "Enter a five-field cron schedule.",
+      title: ""
+    };
+  }
+  if (!isCronExpression(expression)) {
+    return {
+      kind: "invalid",
+      text: "Invalid schedule. Use five cron fields, for example 0 9 * * *.",
+      title: "Invalid cron schedule"
+    };
+  }
+  const nextRun = nextCronRun(expression, new Date(), defaultTaskTimezone);
+  if (!nextRun) {
+    return {
+      kind: "invalid",
+      text: "No matching run in the next year.",
+      title: `timezone: ${defaultTaskTimezone}`
+    };
+  }
+  const nextRunIso = nextRun.toISOString();
+  const formatted = formatDate(nextRunIso);
+  return {
+    kind: "valid",
+    text: `Next run ${relativeTimeFuture(nextRunIso)} · ${formatted}`,
+    title: `timezone: ${defaultTaskTimezone}\nnext run: ${formatted}`
+  };
+};
 
 export const taskRunSummary = (task: LocalTask) => {
   const run = task.runs?.[0];

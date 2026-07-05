@@ -18,6 +18,7 @@ import {
   sshConnectionTitle,
   sshHostMeta,
   taskBelongsToProject,
+  taskDraftSchedulePreview,
   taskRunDetailTitle,
   taskRunLine,
   taskRunSummary,
@@ -163,10 +164,12 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const parentRegistrationActive = parentRegistration.status !== "idle" && parentRegistration.status !== "stopped";
   const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
   const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject, sessionList);
+  const taskSchedulePreview = taskDraftSchedulePreview(taskDraft.schedule);
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
     && taskDraft.schedule.trim()
+    && taskSchedulePreview.kind === "valid"
     && taskDraft.input.trim()
   );
 
@@ -673,6 +676,9 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                     </button>
                   ))}
                 </div>
+                <small className={`taskSchedulePreview ${taskSchedulePreview.kind}`} title={taskSchedulePreview.title}>
+                  {taskSchedulePreview.text}
+                </small>
               </label>
               <label className="taskField">
                 <span>Prompt</span>
