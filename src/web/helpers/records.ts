@@ -464,7 +464,7 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
 export const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivityStatusView | null => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const status = activityStatusFromRecord(records[index]);
-    if (status?.key === "turn") return status;
+    if (status?.key === "turn" || status?.key === "userInput") return status;
   }
   return null;
 };
@@ -472,6 +472,9 @@ export const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivitySta
 export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusView | null => {
   const payload = asRecord(record.payload);
   const type = typeof payload?.type === "string" ? payload.type : "";
+  if (record.type === "response_item" && type === "user_input_request" && payload) {
+    return userInputActivityStatus(record, payload);
+  }
   if (record.type !== "event_msg") return null;
   if (!payload || type === "user_message" || type === "agent_message" || type === "patch_apply_end") return null;
   if (type === "session_meta" || type === "turn_context") return null;
@@ -609,6 +612,27 @@ export const approvalActivityStatus = (
   };
 };
 
+export const userInputActivityStatus = (
+  record: CodexRecord,
+  payload: Record<string, unknown>
+): ActivityStatusView => {
+  const userInput = asRecord(payload.userInput);
+  const status = activityRecordStatus(payload.status) ?? activityRecordStatus(userInput?.status) ?? "pending";
+  const question = userInputQuestionSummary(payload.questions);
+  const statusText = status === "completed"
+    ? "Answered"
+    : status === "failed"
+      ? "Failed"
+      : "Waiting for answer";
+  return {
+    key: "userInput",
+    label: "User input",
+    status,
+    at: record.timestamp,
+    text: [statusText, question].filter(Boolean).join(" · ") || statusText
+  };
+};
+
 export const fileChangeActivityStatus = (record: CodexRecord, payload: Record<string, unknown>): ActivityStatusView => {
   const files = fileChangePreviewFiles(payload);
   const changed = files.length;
@@ -666,12 +690,13 @@ export const fileChangeTotalsText = (added: number, removed: number) => [
 export const activityStatusPriority = (key: string) => {
   const order: Record<string, number> = {
     turn: 0,
-    goal: 1,
-    usage: 2,
-    files: 3,
-    context: 4,
-    rollback: 5,
-    item: 6
+    userInput: 1,
+    goal: 2,
+    usage: 3,
+    files: 4,
+    context: 5,
+    rollback: 6,
+    item: 7
   };
   return order[key] ?? 10;
 };
@@ -772,10 +797,26 @@ const activityRecordStatus = (status: unknown): ActivityStatusView["status"] | u
   if (typeof status !== "string") return undefined;
   const normalized = status.trim().replace(/[-\s]+/g, "_").toLowerCase();
   if (normalized === "inprogress" || normalized === "in_progress" || normalized === "running") return "in_progress";
-  if (normalized === "pending" || normalized === "queued" || normalized === "pending_approval") return "pending";
+  if (normalized === "pending" || normalized === "queued" || normalized === "pending_approval" || normalized === "pending_user_input") return "pending";
   if (normalized === "failed" || normalized === "error" || normalized === "errored" || normalized === "aborted" || normalized === "denied" || normalized === "declined") return "failed";
-  if (normalized === "completed" || normalized === "complete" || normalized === "success" || normalized === "succeeded" || normalized === "approved" || normalized === "accepted") return "completed";
+  if (normalized === "completed" || normalized === "complete" || normalized === "success" || normalized === "succeeded" || normalized === "approved" || normalized === "accepted" || normalized === "answered") return "completed";
   return undefined;
+};
+
+const userInputQuestionSummary = (value: unknown) => {
+  if (!Array.isArray(value)) return "";
+  const labels = value.flatMap((item) => {
+    const question = asRecord(item);
+    const text = typeof question?.question === "string" && question.question.trim()
+      ? question.question
+      : typeof question?.header === "string" && question.header.trim()
+        ? question.header
+        : typeof question?.id === "string" && question.id.trim()
+          ? question.id
+          : "";
+    return text ? [compactLine(text)] : [];
+  });
+  return labels[0] ?? (value.length ? `${value.length} questions` : "");
 };
 
 export const isMatchingAppServerTranscriptRecord = (record: CodexRecord, incoming: CodexRecord) => {

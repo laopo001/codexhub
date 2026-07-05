@@ -1813,6 +1813,11 @@ const assertAppServerApprovalRequestFlow = async () => {
   const { ThreadHub } = await import("../src/core/threadHub.js");
   const { recordsToViews } = await import("../src/core/codexRecordView.js");
   const { machineTransportMessageSchema } = await import("../src/shared/apiContract.js");
+  const runtimeGlobal = globalThis as Record<string, unknown>;
+  const previousWindow = runtimeGlobal.window;
+  if (!previousWindow) runtimeGlobal.window = { location: { search: "" } };
+  const { activityStatusesFromRecords, latestTurnStatusFromRecords } = await import("../src/web/helpers/records.js");
+  if (!previousWindow) delete runtimeGlobal.window;
   const hub = new ThreadHub();
   const sessionId = "approval-session";
   const threadId = "approval-thread";
@@ -2128,6 +2133,15 @@ const assertAppServerApprovalRequestFlow = async () => {
   if (userInputView?.status !== "pending" || userInputView.statusText !== "pending_user_input") {
     throw new Error(`user input view was not pending: ${JSON.stringify(userInputView)}`);
   }
+  const pendingUserInputStatuses = activityStatusesFromRecords(records);
+  const pendingUserInputStatus = pendingUserInputStatuses.find((item) => item.key === "userInput");
+  if (pendingUserInputStatus?.status !== "pending" || !pendingUserInputStatus.text.includes("Choose a mode")) {
+    throw new Error(`user input status was not pending: ${JSON.stringify(pendingUserInputStatuses)}`);
+  }
+  const pendingLatestStatus = latestTurnStatusFromRecords(records);
+  if (pendingLatestStatus?.key !== "userInput" || pendingLatestStatus.status !== "pending") {
+    throw new Error(`latest turn status did not surface pending user input: ${JSON.stringify(pendingLatestStatus)}`);
+  }
   const answers = { choice: { answers: ["Careful"] } };
   const userInputResponse = hub.respondToUserInput(threadId, "user-input-1", answers);
   const userInputBatch = await hub.waitSessionCommands(sessionId, cursor, 100);
@@ -2151,6 +2165,15 @@ const assertAppServerApprovalRequestFlow = async () => {
   const choice = asRecord(response.choice);
   if (userInputMeta.status !== "answered" || JSON.stringify(choice.answers) !== JSON.stringify(["Careful"])) {
     throw new Error(`user input response was not recorded: ${JSON.stringify(userInputPayload)}`);
+  }
+  const answeredUserInputStatuses = activityStatusesFromRecords(records);
+  const answeredUserInputStatus = answeredUserInputStatuses.find((item) => item.key === "userInput");
+  if (answeredUserInputStatus?.status !== "completed" || !answeredUserInputStatus.text.includes("Answered")) {
+    throw new Error(`user input status was not completed: ${JSON.stringify(answeredUserInputStatuses)}`);
+  }
+  const answeredLatestStatus = latestTurnStatusFromRecords(records);
+  if (answeredLatestStatus?.key !== "userInput" || answeredLatestStatus.status !== "completed") {
+    throw new Error(`latest turn status did not surface answered user input: ${JSON.stringify(answeredLatestStatus)}`);
   }
 };
 
