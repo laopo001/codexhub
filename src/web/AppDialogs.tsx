@@ -8,6 +8,7 @@ import {
   machineProjectCatalogEditable,
   machineProjectLauncher,
   modelOptionLabel,
+  modelOptionSearchMatches,
   primeTaskNotificationPermission,
   reasoningOptionLabel,
   serviceTierOptionLabel,
@@ -101,6 +102,10 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const dialogModelOptions = optionsWithoutAutoWhenResolved(modelOptions, effectiveModelSelection);
   const dialogReasoningOptions = optionsWithoutAutoWhenResolved(reasoningOptions, effectiveReasoningSelection);
   const dialogServiceTierOptions = optionsWithoutAutoWhenResolved(serviceTierOptions, effectiveServiceTierSelection);
+  const dialogModelSelectOptions = dialogModelOptions.map((option) => ({
+    ...option,
+    label: modelOptionLabel(option)
+  }));
 
   return (
     <>
@@ -117,8 +122,10 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <span>Model</span>
               <Select
                 className="threadModelSelect"
+                showSearch
                 value={effectiveModelSelection}
-                options={dialogModelOptions.map((option) => ({ value: option.value, label: modelOptionLabel(option) }))}
+                options={dialogModelSelectOptions}
+                filterOption={(input, option) => modelOptionSearchMatches(selectOptionSearchPayload(option), input)}
                 onChange={(value) => setActiveThreadModelDraft(value as ModelSelection)}
               />
             </label>
@@ -592,3 +599,12 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
 
 const optionsWithoutAutoWhenResolved = <T extends { value: string; label: string }>(options: T[], value: string) =>
   value === "auto" ? options : options.filter((option) => option.value !== "auto");
+
+const selectOptionSearchPayload = (option: unknown) => {
+  const record = option as { value?: unknown; label?: unknown; searchText?: unknown } | undefined;
+  return {
+    value: typeof record?.value === "string" ? record.value : "",
+    label: typeof record?.label === "string" ? record.label : "",
+    searchText: typeof record?.searchText === "string" ? record.searchText : ""
+  };
+};
