@@ -823,6 +823,15 @@
   white-space: nowrap;
 }
 
+.threadPickerRowSnippet {
+  min-width: 0;
+  overflow: hidden;
+  color: #51604f;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .threadPickerRowMeta {
   display: flex;
   flex-wrap: wrap;
