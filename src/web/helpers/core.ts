@@ -528,6 +528,19 @@ export const sshHostMeta = (host: SshHost) => [
   host.proxyJump ? `via ${host.proxyJump}` : null
 ].filter(Boolean).join(" ") || host.alias;
 
+export const sshHostSearchMatches = (host: SshHost, query: string) => {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    host.alias,
+    host.hostName,
+    host.user,
+    host.port ? String(host.port) : "",
+    host.proxyJump,
+    sshHostMeta(host)
+  ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalized));
+};
+
 type SshConnectionStatusLabel = "ready" | "starting" | "connected" | "failed" | "stopped" | "missing";
 
 export const latestSshConnectionForHost = (connections: SshConnection[], host: string) =>

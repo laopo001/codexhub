@@ -120,6 +120,7 @@ export type AppSidebarViewModel = {
   setParentRegistrationDraft: React.Dispatch<React.SetStateAction<ParentRegistrationDraft>>;
   setProjectSearch: React.Dispatch<React.SetStateAction<string>>;
   setSshHostDraft: React.Dispatch<React.SetStateAction<string>>;
+  setSshSearch: React.Dispatch<React.SetStateAction<string>>;
   setTaskDraft: React.Dispatch<React.SetStateAction<TaskDraft>>;
   setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setSettingsDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -131,6 +132,7 @@ export type AppSidebarViewModel = {
   sshHostBusy: string;
   sshHostDraft: string;
   sshHosts: SshHost[];
+  sshSearch: string;
   taskBusyId: string;
   taskDraft: TaskDraft;
   taskError: string;

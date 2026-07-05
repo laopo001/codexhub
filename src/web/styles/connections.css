@@ -437,6 +437,21 @@
   font-size: 12px;
 }
 
+.connectionSearchInput {
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #0f1b14;
+  color: #f8fbf4;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.connectionSearchInput::placeholder {
+  color: #6f7c70;
+}
+
 .sshManualForm button {
   min-height: 34px;
   border: 1px solid #d95f36;

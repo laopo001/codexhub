@@ -17,6 +17,7 @@ import {
   sshConnectionStatusLabel,
   sshConnectionTitle,
   sshHostMeta,
+  sshHostSearchMatches,
   taskBelongsToProject,
   taskRunDetailTitle,
   taskRunLine,
@@ -101,6 +102,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     setProjectSearch,
     setSettingsDialogOpen,
     setSshHostDraft,
+    setSshSearch,
     setTaskDraft,
     setTaskFormOpen,
     sshConfigHostOptions,
@@ -111,6 +113,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     sshHostBusy,
     sshHostDraft,
     sshHosts,
+    sshSearch,
     taskBusyId,
     taskDraft,
     taskError,
@@ -163,6 +166,9 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const parentRegistrationActive = parentRegistration.status !== "idle" && parentRegistration.status !== "stopped";
   const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
   const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject, sessionList);
+  const sshQuery = sshSearch.trim();
+  const visibleSshConfigHostOptions = sshConfigHostOptions.filter((host) => sshHostSearchMatches(host, sshQuery));
+  const visibleSshHosts = sshHosts.filter((host) => sshHostSearchMatches(host, sshQuery));
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
@@ -315,7 +321,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                 spellCheck={false}
               />
               <datalist id="sshConfigHostOptions">
-                {sshConfigHostOptions.map((host) => (
+                {visibleSshConfigHostOptions.map((host) => (
                   <option key={host.alias} value={host.alias}>
                     {sshHostMeta(host)}
                   </option>
@@ -333,9 +339,16 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                 {sshHostBusy === sshHostDraft.trim() ? "..." : "Add"}
               </button>
             </form>
-            {sshHosts.length === 0 ? (
-              <div className="connectionEmpty">No SSH hosts</div>
-            ) : sshHosts.map((host) => {
+            <input
+              className="connectionSearchInput"
+              value={sshSearch}
+              onChange={(event) => setSshSearch(event.target.value)}
+              placeholder="Search SSH hosts"
+              spellCheck={false}
+            />
+            {visibleSshHosts.length === 0 ? (
+              <div className="connectionEmpty">{sshQuery ? "No matching SSH hosts" : "No SSH hosts"}</div>
+            ) : visibleSshHosts.map((host) => {
               const activeConnection = activeSshConnectionForHost(sshConnections, host.alias);
               const latestConnection = latestSshConnectionForHost(sshConnections, host.alias);
               const connecting = sshConnectingHost === host.alias;

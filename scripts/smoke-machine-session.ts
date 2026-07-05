@@ -122,6 +122,7 @@ const main = async () => {
   assertAppServerLaunchApprovalPolicyDefault();
   await assertEmbeddedServerDataDirOptionOverridesEnvironment();
   await assertTaskCronSemantics();
+  await assertSshHostSearch();
   await assertServerStateSnapshotPure();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
@@ -301,6 +302,45 @@ const assertTaskCronSemantics = async () => {
   }
   if (cronMinuteKeyFromIso(mondayNotFirst.toISOString(), "UTC") !== cronMinuteKey(mondayNotFirst, "UTC")) {
     throw new Error("cron lastRunAt minute key did not match date minute key");
+  }
+};
+
+const assertSshHostSearch = async () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { location: { search: "" } }
+  });
+  try {
+    const { sshHostSearchMatches } = await import("../src/web/helpers/core.js");
+    const prodHost = {
+      alias: "prod-db",
+      hostName: "db.example.com",
+      user: "deploy",
+      identityFiles: [],
+      port: 2202,
+      proxyJump: "bastion"
+    };
+    const localHost = {
+      alias: "local-dev",
+      hostName: "127.0.0.1",
+      identityFiles: [],
+      user: "dev"
+    };
+    for (const query of ["prod", "db.example", "deploy", "2202", "bastion"]) {
+      if (!sshHostSearchMatches(prodHost, query)) {
+        throw new Error(`SSH host search did not match ${query}`);
+      }
+    }
+    if (!sshHostSearchMatches(localHost, "")) throw new Error("empty SSH host search should match");
+    if (sshHostSearchMatches(prodHost, "staging")) throw new Error("SSH host search matched an unrelated query");
+  } finally {
+    if (hadWindow) {
+      Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
   }
 };
 
