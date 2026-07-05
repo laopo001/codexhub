@@ -332,6 +332,13 @@
   resize: vertical;
 }
 
+.taskThreadTargetSummary {
+  min-width: 0;
+  color: #8d9b89;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .taskSchedulePresets {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

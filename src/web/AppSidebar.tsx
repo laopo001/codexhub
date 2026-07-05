@@ -11,6 +11,7 @@ import {
   machineProjectLauncher,
   projectKeyForProject,
   projectSearchMatches,
+  shortId,
   sshConnectionDoctorLines,
   sshConnectionDetail,
   sshConnectionStatusClass,
@@ -163,6 +164,17 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const parentRegistrationActive = parentRegistration.status !== "idle" && parentRegistration.status !== "stopped";
   const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
   const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject, sessionList);
+  const selectedTaskThread = taskThreadOptions.find((thread) => thread.threadId === taskDraft.threadId);
+  const taskThreadTargetSummary = !selectedTaskProject
+    ? "Select a project before choosing a thread."
+    : selectedTaskThread
+    ? `Pinned to ${threadDisplayTitle(selectedTaskThread)} (${shortId(selectedTaskThread.threadId)})`
+    : taskThreadOptions.length
+    ? "Uses the project thread created or reused when the task runs."
+    : "No live threads for this project yet; the first run will create one.";
+  const taskThreadTargetTitle = selectedTaskThread
+    ? selectedTaskThread.threadId
+    : selectedTaskProject?.path;
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
@@ -645,13 +657,16 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   onChange={(event) => setTaskDraft((current) => ({ ...current, threadId: event.target.value }))}
                   disabled={!selectedTaskProject}
                 >
-                  <option value="">Current thread</option>
+                  <option value="">Project thread on run</option>
                   {taskThreadOptions.map((thread) => (
                     <option value={thread.threadId} key={thread.threadId}>
                       {threadDisplayTitle(thread)}
                     </option>
                   ))}
                 </select>
+                <small className="taskThreadTargetSummary" title={taskThreadTargetTitle}>
+                  {taskThreadTargetSummary}
+                </small>
               </label>
               <label className="taskField">
                 <span>Schedule</span>
