@@ -1,6 +1,6 @@
 import React from "react";
 import { Switch } from "antd";
-import { History, Pin, PinOff, Play, Settings, Trash2 } from "lucide-react";
+import { History, Pin, PinOff, Play, Settings, Trash2, Unplug } from "lucide-react";
 import type { ProjectMachineGroup } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
@@ -103,6 +103,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     setSshHostDraft,
     setTaskDraft,
     setTaskFormOpen,
+    stopSshConnection,
     sshConfigHostOptions,
     sshConfigHosts,
     sshConnectingHost,
@@ -355,6 +356,17 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                     <code title={connectionDetail}>{connectionDetail}</code>
                   </button>
                   <strong>{statusLabel}</strong>
+                  <button
+                    type="button"
+                    className={`connectionStopButton ${activeConnection ? "" : "hidden"}`}
+                    onClick={() => activeConnection ? void stopSshConnection(activeConnection.connectionId) : undefined}
+                    disabled={!activeConnection || sshHostBusy === host.alias}
+                    aria-label={`Disconnect ${host.alias}`}
+                    aria-hidden={!activeConnection}
+                    title={activeConnection ? `Disconnect ${host.alias}` : "No active SSH connection"}
+                  >
+                    <Unplug size={13} strokeWidth={2.1} aria-hidden="true" />
+                  </button>
                   <button
                     type="button"
                     className="connectionDeleteButton"

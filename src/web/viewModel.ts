@@ -123,6 +123,7 @@ export type AppSidebarViewModel = {
   setTaskDraft: React.Dispatch<React.SetStateAction<TaskDraft>>;
   setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setSettingsDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  stopSshConnection: (connectionId: string) => MaybePromise;
   sshConfigHostOptions: SshHost[];
   sshConfigHosts: SshHost[];
   sshConnectingHost: string;
