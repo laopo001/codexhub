@@ -18,6 +18,7 @@ import {
   sshConnectionTitle,
   sshHostMeta,
   taskBelongsToProject,
+  taskPromptPreview,
   taskRunDetailTitle,
   taskRunLine,
   taskRunSummary,
@@ -534,6 +535,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               {visibleTasks.map((task) => {
                 const busy = taskBusyId === task.taskId;
                 const taskRunError = task.lastError ? `Last run failed: ${task.lastError}` : "";
+                const promptPreview = taskPromptPreview(task);
                 const recentRuns = (task.runs ?? []).slice(0, 5);
                 return (
                   <div className={`taskRow ${task.enabled ? "enabled" : "paused"}`} key={task.taskId}>
@@ -545,6 +547,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                     </div>
                     <code title={taskTargetTitle(task, projectList, machines)}>{taskScheduleLine(task)}</code>
                     <em title={taskTargetTitle(task, projectList, machines)}>{taskTargetLabel(task, projectList, machines)}</em>
+                    <small className="taskPromptPreview" title={task.input}>Prompt: {promptPreview}</small>
                     <small className="taskRunSummary" title={taskRunTitle(task)}>{taskRunSummary(task)}</small>
                     {taskRunError ? <small className="taskLastError" title={taskRunError}>{taskRunError}</small> : null}
                     {recentRuns.length ? (

@@ -301,6 +301,11 @@ export const taskTargetTitle = (task: LocalTask, projects: ProjectSummary[], mac
   ].filter(Boolean).join("\n");
 };
 
+export const taskPromptPreview = (task: Pick<LocalTask, "input">) => {
+  const input = task.input.replace(/\s+/g, " ").trim();
+  return input || "No prompt";
+};
+
 export const taskScheduleLine = (task: LocalTask) =>
   task.nextRunAt && task.enabled
     ? `${task.schedule} · next ${relativeTimeFuture(task.nextRunAt)}`
