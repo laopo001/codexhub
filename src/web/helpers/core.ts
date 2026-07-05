@@ -521,6 +521,28 @@ export const projectSearchMatches = (project: ProjectSummary, query: string) => 
   ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalized));
 };
 
+const worktreePathSegment = (value: string) =>
+  value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "worktree";
+
+const projectPathSeparator = (projectPath: string) =>
+  projectPath.includes("\\") && !projectPath.includes("/") ? "\\" : "/";
+
+const joinProjectPath = (projectPath: string, ...segments: string[]) => {
+  const separator = projectPathSeparator(projectPath);
+  const base = projectPath.replace(/[\\/]+$/, "") || projectPath;
+  const suffix = segments.filter(Boolean).join(separator);
+  if (!suffix) return base;
+  return base.endsWith("/") || base.endsWith("\\") ? `${base}${suffix}` : [base, suffix].join(separator);
+};
+
+export const worktreeTargetPreview = (workingDirectory: string, branch: string, customPath: string) => {
+  const targetPath = customPath.trim();
+  if (targetPath) return targetPath;
+  const branchName = branch.trim();
+  if (!branchName) return "Target pending";
+  return joinProjectPath(workingDirectory, ".codexhub", "worktrees", worktreePathSegment(branchName));
+};
+
 export const sshHostMeta = (host: SshHost) => [
   host.user,
   host.hostName,
