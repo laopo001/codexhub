@@ -23,6 +23,7 @@ import {
   taskRunSummary,
   taskRunTitle,
   taskScheduleLine,
+  taskSearchMatches,
   taskStatusClass,
   taskStatusLabel,
   taskTargetLabel,
@@ -51,6 +52,7 @@ const parentRegistrationStatusLabel = (status: AppSidebarViewModel["parentRegist
 };
 
 export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
+  const [taskSearch, setTaskSearch] = React.useState("");
   const {
     activeProjectKey,
     addSshHost,
@@ -147,11 +149,13 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         projects: []
       }))[0];
   const visibleProjectTaskTargets = new Set(projectList.map((project) => `${project.machineId}\0${project.path}`));
-  const visibleTasks = selectedProject
+  const scopedTasks = selectedProject
     ? tasks.filter((task) => taskBelongsToProject(task, selectedProject))
     : projectScopeLocked
     ? tasks.filter((task) => visibleProjectTaskTargets.has(`${task.machineId}\0${task.projectPath}`))
     : tasks;
+  const taskQuery = taskSearch.trim();
+  const visibleTasks = scopedTasks.filter((task) => taskSearchMatches(task, taskQuery, projectList, machines));
   const taskPanelContextLabel = selectedProject?.name ?? (projectScopeLocked ? "Workspace" : "All projects");
   const taskPanelContextTitle = selectedProject ? `${selectedProject.name}\n${selectedProject.path}` : projectScopeLocked ? "VSCode workspace projects" : "All projects";
   const taskFormProjectLocked = Boolean(selectedProject);
@@ -527,8 +531,17 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               {taskFormOpen ? "Close" : "New"}
             </button>
           </div>
+          {scopedTasks.length > 0 || taskQuery ? (
+            <input
+              className="taskSearchInput"
+              value={taskSearch}
+              onChange={(event) => setTaskSearch(event.target.value)}
+              placeholder="Search tasks"
+              spellCheck={false}
+            />
+          ) : null}
           {visibleTasks.length === 0 ? (
-            <div className="taskEmpty">{selectedProject ? "No tasks for this project" : "No tasks"}</div>
+            <div className="taskEmpty">{taskQuery ? "No matching tasks" : selectedProject ? "No tasks for this project" : "No tasks"}</div>
           ) : (
             <div className="taskList">
               {visibleTasks.map((task) => {
