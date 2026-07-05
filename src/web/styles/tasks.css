@@ -255,6 +255,7 @@
   padding-top: 2px;
 }
 
+.taskEditButton,
 .taskRunButton,
 .taskDeleteButton {
   display: grid;
@@ -282,11 +283,13 @@
   margin-left: auto;
 }
 
+.taskEditButton svg,
 .taskRunButton svg,
 .taskDeleteButton svg {
   pointer-events: none;
 }
 
+.taskEditButton:disabled,
 .taskRunButton:disabled,
 .taskDeleteButton:disabled {
   border-color: #405244;

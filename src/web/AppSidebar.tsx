@@ -1,10 +1,11 @@
 import React from "react";
 import { Switch } from "antd";
-import { History, Pin, PinOff, Play, Settings, Trash2 } from "lucide-react";
+import { History, Pencil, Pin, PinOff, Play, Settings, Trash2 } from "lucide-react";
 import type { ProjectMachineGroup } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
   activeSshConnectionForHost,
+  defaultTaskDraft,
   fixedProject,
   latestSshConnectionForHost,
   machineProjectCatalogEditable,
@@ -22,6 +23,7 @@ import {
   taskRunLine,
   taskRunSummary,
   taskRunTitle,
+  taskDraftFromTask,
   taskScheduleLine,
   taskStatusClass,
   taskStatusLabel,
@@ -121,6 +123,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     updateTaskDraftMachine,
     updateTaskDraftProject
   } = viewModel;
+  const [editingTaskId, setEditingTaskId] = React.useState("");
 
   const projectQuery = projectSearch.trim();
   const visibleProjectGroups = projectGroups
@@ -163,12 +166,75 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const parentRegistrationActive = parentRegistration.status !== "idle" && parentRegistration.status !== "stopped";
   const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
   const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject, sessionList);
+  const editingTask = editingTaskId ? tasks.find((task) => task.taskId === editingTaskId) : undefined;
+  const taskSubmitBusy = editingTaskId ? taskBusyId === editingTaskId : taskBusyId === "create";
+  const taskThreadEmptyLabel = editingTask?.threadId ? "Keep current thread" : "Current thread";
+  const taskSubmitLabel = taskSubmitBusy ? "Saving" : editingTaskId ? "Update" : "Save";
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
     && taskDraft.schedule.trim()
     && taskDraft.input.trim()
   );
+  React.useEffect(() => {
+    if (editingTaskId && !editingTask) {
+      setEditingTaskId("");
+      setTaskFormOpen(false);
+    }
+  }, [editingTask, editingTaskId, setTaskFormOpen]);
+
+  const openNewTaskForm = () => {
+    const wasEditing = Boolean(editingTaskId);
+    setEditingTaskId("");
+    if (wasEditing) {
+      const nextDraft = defaultTaskDraft();
+      setTaskDraft(selectedProject ? { ...nextDraft, machineId: selectedProject.machineId, projectPath: selectedProject.path } : nextDraft);
+    } else if (selectedProject) {
+      focusTaskDraftProject(selectedProject);
+    }
+    setTaskFormOpen(true);
+  };
+
+  const closeTaskForm = () => {
+    setEditingTaskId("");
+    setTaskFormOpen(false);
+  };
+
+  const submitTaskForm = async (event: React.FormEvent<HTMLFormElement>) => {
+    if (!editingTaskId) {
+      await createTask(event);
+      return;
+    }
+    event.preventDefault();
+    const name = taskDraft.name.trim() || "Scheduled task";
+    const schedule = taskDraft.schedule.trim();
+    const machineId = taskDraft.machineId.trim();
+    const projectPath = taskDraft.projectPath.trim();
+    const input = taskDraft.input.trim();
+    const threadId = taskDraft.threadId.trim();
+    if (!machineId || !projectPath || !schedule || !input) return;
+    const project = projectList.find((item) => item.machineId === machineId && item.path === projectPath);
+    const saved = await patchTask(editingTaskId, {
+      name,
+      enabled: taskDraft.enabled,
+      schedule,
+      machineId,
+      projectId: project?.projectId,
+      projectPath,
+      input,
+      ...(threadId ? { threadId } : {})
+    });
+    if (!saved) return;
+    setEditingTaskId("");
+    setTaskDraft((current) => ({
+      ...defaultTaskDraft(),
+      machineId,
+      projectPath,
+      schedule: current.schedule,
+      input: current.input
+    }));
+    setTaskFormOpen(false);
+  };
 
   const renderProjectMachineGroup = (machine: ProjectMachineGroup) => {
     const collapsed = collapsedProjectMachineKeys.includes(machine.key);
@@ -520,8 +586,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             <button
               type="button"
               onClick={() => {
-                if (selectedProject) focusTaskDraftProject(selectedProject);
-                setTaskFormOpen((open) => !open);
+                if (taskFormOpen) closeTaskForm();
+                else openNewTaskForm();
               }}
             >
               {taskFormOpen ? "Close" : "New"}
@@ -567,6 +633,20 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                     <div className="taskActions">
                       <button
                         type="button"
+                        className="taskEditButton"
+                        onClick={() => {
+                          setEditingTaskId(task.taskId);
+                          setTaskDraft(taskDraftFromTask(task));
+                          setTaskFormOpen(true);
+                        }}
+                        disabled={busy}
+                        aria-label={`Edit ${task.name}`}
+                        title={`Edit ${task.name}`}
+                      >
+                        <Pencil size={13} strokeWidth={2.1} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
                         className="taskRunButton"
                         onClick={() => void runTaskNow(task)}
                         disabled={busy}
@@ -599,7 +679,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             </div>
           )}
           {taskFormOpen ? (
-            <form className="taskForm" onSubmit={createTask}>
+            <form className="taskForm" onSubmit={submitTaskForm}>
               <label className="taskField">
                 <span>Name</span>
                 <input
@@ -645,7 +725,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   onChange={(event) => setTaskDraft((current) => ({ ...current, threadId: event.target.value }))}
                   disabled={!selectedTaskProject}
                 >
-                  <option value="">Current thread</option>
+                  <option value="">{taskThreadEmptyLabel}</option>
                   {taskThreadOptions.map((thread) => (
                     <option value={thread.threadId} key={thread.threadId}>
                       {threadDisplayTitle(thread)}
@@ -693,8 +773,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   />
                   <span>Enabled</span>
                 </label>
-                <button type="submit" disabled={!canCreateTask || taskBusyId === "create"}>
-                  {taskBusyId === "create" ? "Saving" : "Save"}
+                <button type="submit" disabled={!canCreateTask || taskSubmitBusy}>
+                  {taskSubmitLabel}
                 </button>
               </div>
             </form>
