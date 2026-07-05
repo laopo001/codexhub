@@ -138,6 +138,7 @@ const main = async () => {
   await assertAppServerReasoningItemStatusViews();
   await assertSessionAccountRateLimits();
   await assertLocalShellExitStatusView();
+  await assertThreadCandidateFiltering();
   await assertAppServerApprovalRequestFlow();
   await assertHistoricalToolBatchCollapse();
   await assertRollbackPreservesKeptTurnToolRecords();
@@ -1806,6 +1807,71 @@ const assertLocalShellExitStatusView = async () => {
   }
   if (pendingView?.text !== "$ <empty>") {
     throw new Error(`pending shell command view was not descriptive: ${JSON.stringify(pendingView)}`);
+  }
+};
+
+const assertThreadCandidateFiltering = async () => {
+  const runtimeGlobal = globalThis as unknown as { window?: { location: { search: string } } };
+  const previousWindow = runtimeGlobal.window;
+  if (!previousWindow) runtimeGlobal.window = { location: { search: "" } };
+  try {
+    const { filterThreadCandidates } = await import("../src/web/helpers/core.js");
+    const candidates = [
+      {
+        threadId: "abc12345-worktree-thread",
+        cwd: "/repo",
+        path: "/repo",
+        title: "Fix login flow",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        firstUserMessage: "Please inspect auth",
+        lastAssistantMessage: "Ready for review",
+        artifactCount: 0,
+        messageCount: 4
+      },
+      {
+        threadId: "def67890-weekly-thread",
+        cwd: "/repo",
+        path: "/repo",
+        title: "",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+        firstUserMessage: "Plan weekly report",
+        lastAssistantMessage: "",
+        artifactCount: 0,
+        messageCount: 2
+      },
+      {
+        threadId: "fedcba98-ssh-thread",
+        cwd: "/repo",
+        path: "/repo",
+        title: "Remote machine notes",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+        firstUserMessage: "",
+        lastAssistantMessage: "Ready to ship SSH loopback",
+        artifactCount: 0,
+        messageCount: 6
+      }
+    ];
+    if (filterThreadCandidates(candidates, "").length !== candidates.length) {
+      throw new Error("empty thread candidate search should keep all candidates");
+    }
+    if (filterThreadCandidates(candidates, "login fix")[0]?.threadId !== "abc12345-worktree-thread") {
+      throw new Error("thread candidate search should match title tokens");
+    }
+    if (filterThreadCandidates(candidates, "weekly report")[0]?.threadId !== "def67890-weekly-thread") {
+      throw new Error("thread candidate search should match first user message");
+    }
+    if (filterThreadCandidates(candidates, "ssh loopback")[0]?.threadId !== "fedcba98-ssh-thread") {
+      throw new Error("thread candidate search should match assistant summary");
+    }
+    if (filterThreadCandidates(candidates, "abc12345")[0]?.threadId !== "abc12345-worktree-thread") {
+      throw new Error("thread candidate search should match short thread id");
+    }
+    if (filterThreadCandidates(candidates, "missing").length !== 0) {
+      throw new Error("thread candidate search should expose empty results");
+    }
+  } finally {
+    if (previousWindow) runtimeGlobal.window = previousWindow;
+    else delete runtimeGlobal.window;
   }
 };
 

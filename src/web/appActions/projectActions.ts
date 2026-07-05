@@ -248,7 +248,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     } : current);
     try {
       const cwd = workingDirectory ?? ctx.threadPicker?.workingDirectory;
-      const payload = await apiRouteJson(apiRoutes.threadCandidates, sessionId, cwd, 20);
+      const payload = await apiRouteJson(apiRoutes.threadCandidates, sessionId, cwd, 50);
       ctx.setThreadPicker((current) => current && current.sessionId === sessionId ? {
         ...current,
         loading: false,
@@ -273,6 +273,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       loading: true,
       error: "",
       candidates: [],
+      searchQuery: "",
       acting: null,
       worktreeBranch: "",
       worktreeBaseRef: "",
