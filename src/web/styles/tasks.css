@@ -208,7 +208,9 @@
 
 .taskRunItem {
   display: grid;
-  gap: 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 5px;
   min-width: 0;
   border-left: 2px solid #405244;
   padding-left: 7px;
@@ -242,9 +244,34 @@
 }
 
 .taskRunItem em {
+  grid-column: 1 / -1;
   color: #f0b58d;
   font-size: 10px;
   font-style: normal;
+}
+
+.taskRunThreadButton {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  border: 1px solid #334238;
+  border-radius: 6px;
+  background: #151d17;
+  color: #9daa98;
+  padding: 0;
+  line-height: 0;
+}
+
+.taskRunThreadButton:hover {
+  border-color: #405244;
+  background: #203526;
+  color: #d8e2d5;
+}
+
+.taskRunThreadButton svg {
+  pointer-events: none;
 }
 
 .taskActions {

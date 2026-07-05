@@ -49,6 +49,7 @@ export type TaskActions = {
   patchTask: (taskId: string, patch: TaskUpdateInput) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
   runTaskNow: (task: LocalTask) => Promise<void>;
+  openTaskRunThread: (threadId: string) => Promise<void>;
 };
 
 export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDependencies): TaskActions => {
@@ -216,6 +217,18 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
     }
   };
 
+  const openTaskRunThread = async (threadId: string) => {
+    const targetThreadId = threadId.trim();
+    if (!targetThreadId) return;
+    ctx.setTaskError("");
+    try {
+      await deps.openThread(targetThreadId);
+    } catch (error) {
+      deps.clearActiveThreadIfLatest(targetThreadId);
+      ctx.setTaskError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return {
     refreshSessions,
     refreshProjects,
@@ -227,6 +240,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
     createTask,
     patchTask,
     deleteTask,
-    runTaskNow
+    runTaskNow,
+    openTaskRunThread
   };
 };
