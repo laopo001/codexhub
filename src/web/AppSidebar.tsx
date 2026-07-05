@@ -1,6 +1,6 @@
 import React from "react";
 import { Switch } from "antd";
-import { History, Pin, PinOff, Play, Settings, Trash2 } from "lucide-react";
+import { Copy, History, Pin, PinOff, Play, Settings, Trash2 } from "lucide-react";
 import type { ProjectMachineGroup } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
@@ -31,6 +31,7 @@ import {
   threadDisplayTitle,
   uniqueMachines
 } from "./appHelpers.js";
+import { writeTextToClipboard } from "./helpers/composer.js";
 
 type AppSidebarProps = {
   viewModel: AppSidebarViewModel;
@@ -220,30 +221,41 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                       <span className="projectSelectNameText">{project.name}</span>
                       {worktreeRelation ? <em className="projectWorktreeBadge" title={worktreeRelation.branch}>{worktreeRelation.branch}</em> : null}
                     </span>
-                    {!projectScopeLocked && !fixed ? (
-                      <div className="projectRowActions">
-                        <button
-                          type="button"
-                          className={`projectMiniButton ${project.pinned ? "active" : ""}`}
-                          onClick={() => void toggleProjectPinned(project)}
-                          disabled={busy}
-                          aria-label={saveAria}
-                          title={saveTitle}
-                        >
-                          {project.pinned ? <PinOff size={13} strokeWidth={2.1} aria-hidden="true" /> : <Pin size={13} strokeWidth={2.1} aria-hidden="true" />}
-                        </button>
-                        <button
-                          type="button"
-                          className="projectDeleteButton"
-                          onClick={() => void deleteProject(project)}
-                          disabled={deleting}
-                          aria-label={`Remove ${project.name}`}
-                          title={removeTitle}
-                        >
-                          <Trash2 size={13} strokeWidth={2.1} aria-hidden="true" />
-                        </button>
-                      </div>
-                    ) : null}
+                    <div className="projectRowActions">
+                      <button
+                        type="button"
+                        className="projectMiniButton"
+                        onClick={() => void writeTextToClipboard(project.path).catch(() => undefined)}
+                        aria-label={`Copy ${project.name} path`}
+                        title={`Copy ${project.name} path`}
+                      >
+                        <Copy size={13} strokeWidth={2.1} aria-hidden="true" />
+                      </button>
+                      {!projectScopeLocked && !fixed ? (
+                        <>
+                          <button
+                            type="button"
+                            className={`projectMiniButton ${project.pinned ? "active" : ""}`}
+                            onClick={() => void toggleProjectPinned(project)}
+                            disabled={busy}
+                            aria-label={saveAria}
+                            title={saveTitle}
+                          >
+                            {project.pinned ? <PinOff size={13} strokeWidth={2.1} aria-hidden="true" /> : <Pin size={13} strokeWidth={2.1} aria-hidden="true" />}
+                          </button>
+                          <button
+                            type="button"
+                            className="projectDeleteButton"
+                            onClick={() => void deleteProject(project)}
+                            disabled={deleting}
+                            aria-label={`Remove ${project.name}`}
+                            title={removeTitle}
+                          >
+                            <Trash2 size={13} strokeWidth={2.1} aria-hidden="true" />
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
                   </div>
                   <code className="projectSelectText projectSelectPath" title={project.path}>{project.path}</code>
                 </div>

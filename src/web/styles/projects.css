@@ -356,7 +356,7 @@
 
 .projectRowActions {
   display: grid;
-  grid-template-columns: repeat(2, auto);
+  grid-template-columns: repeat(3, auto);
   flex: 0 0 auto;
   align-items: center;
   gap: 3px;
