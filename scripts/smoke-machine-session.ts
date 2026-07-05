@@ -7,6 +7,7 @@ import { resolveCodexAppServerLaunchOptions } from "../src/cli/codexAppServerPro
 import { accountRateLimitsPayloadFromValue } from "../src/core/threadUsage.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { SessionEventInput } from "../src/shared/threadTypes.js";
+import type { ProjectMachineGroup, ProjectSummary } from "../src/web/types.js";
 
 type MachineSummary = {
   machineId: string;
@@ -122,6 +123,7 @@ const main = async () => {
   assertAppServerLaunchApprovalPolicyDefault();
   await assertEmbeddedServerDataDirOptionOverridesEnvironment();
   await assertTaskCronSemantics();
+  await assertProjectMachineGroupSearchMatches();
   await assertServerStateSnapshotPure();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
@@ -301,6 +303,91 @@ const assertTaskCronSemantics = async () => {
   }
   if (cronMinuteKeyFromIso(mondayNotFirst.toISOString(), "UTC") !== cronMinuteKey(mondayNotFirst, "UTC")) {
     throw new Error("cron lastRunAt minute key did not match date minute key");
+  }
+};
+
+const assertProjectMachineGroupSearchMatches = async () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: { search: "" },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+        removeItem: () => undefined
+      },
+      history: {
+        state: null,
+        replaceState: () => undefined
+      }
+    }
+  });
+  try {
+    const { filterProjectMachineGroupsBySearch } = await import("../src/web/helpers/core.js");
+    const alpha = {
+      projectId: "project-alpha",
+      machineId: "remote-a",
+      name: "alpha-api",
+      path: "/work/alpha-api"
+    } as ProjectSummary;
+    const beta = {
+      projectId: "project-beta",
+      machineId: "remote-a",
+      name: "beta-web",
+      path: "/work/beta-web"
+    } as ProjectSummary;
+    const local = {
+      projectId: "project-local",
+      machineId: "local",
+      name: "local-tool",
+      path: "/work/local-tool"
+    } as ProjectSummary;
+    const groups: ProjectMachineGroup[] = [
+      {
+        key: "remote-a",
+        machineId: "remote-a",
+        machineType: "registered",
+        label: "Builder Box",
+        online: true,
+        projectLauncher: true,
+        badgeLabel: "registered",
+        projects: [alpha, beta]
+      },
+      {
+        key: "local",
+        machineId: "local",
+        machineType: "local",
+        label: "local",
+        online: true,
+        projectLauncher: true,
+        badgeLabel: "local",
+        projects: [local]
+      }
+    ];
+
+    const byMachineLabel = filterProjectMachineGroupsBySearch(groups, "builder");
+    if (byMachineLabel.length !== 1 || byMachineLabel[0]?.projects.map((project) => project.name).join(",") !== "alpha-api,beta-web") {
+      throw new Error("project search should keep projects visible when the machine label matches");
+    }
+    const byProject = filterProjectMachineGroupsBySearch(groups, "beta");
+    if (byProject.length !== 1 || byProject[0]?.projects.map((project) => project.name).join(",") !== "beta-web") {
+      throw new Error("project search should still narrow projects when only a project matches");
+    }
+    const byMachineId = filterProjectMachineGroupsBySearch(groups, "remote-a");
+    if (byMachineId.length !== 1 || byMachineId[0]?.projects.length !== 2) {
+      throw new Error("project search should keep projects visible when the machine id matches");
+    }
+    if (filterProjectMachineGroupsBySearch(groups, "missing-project").length !== 0) {
+      throw new Error("project search should expose empty results for unmatched queries");
+    }
+  } finally {
+    if (hadWindow) {
+      Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
   }
 };
 
