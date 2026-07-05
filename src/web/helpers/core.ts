@@ -265,6 +265,19 @@ export const taskThreadOptionsFor = (project: ProjectSummary | undefined, sessio
   return [...threads.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 };
 
+export const taskThreadSearchMatches = (
+  thread: Pick<ThreadSummary, "threadId" | "title">,
+  query: string
+) => {
+  const normalized = compactLine(query).toLowerCase();
+  if (!normalized) return true;
+  return [
+    threadDisplayTitle(thread),
+    thread.threadId,
+    shortId(thread.threadId)
+  ].some((value) => value.toLowerCase().includes(normalized));
+};
+
 export const taskStatusLabel = (task: LocalTask) => {
   if (!task.enabled) return "paused";
   if (task.lastStatus === "queued") return "queued";

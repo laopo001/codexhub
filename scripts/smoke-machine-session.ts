@@ -95,7 +95,30 @@ type TaskRunResponse = TaskResponse & {
   command?: string;
 };
 
+const assertTaskThreadSearchMatches = async () => {
+  const globalWithWindow = globalThis as unknown as { window?: { location: { search: string } } };
+  const previousWindow = globalWithWindow.window;
+  globalWithWindow.window = { location: { search: "" } };
+  try {
+    const { taskThreadSearchMatches } = await import("../src/web/helpers/core.js");
+    const thread = {
+      threadId: "thread-release-abcdef",
+      title: "Release planning",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    };
+    if (!taskThreadSearchMatches(thread, "")) throw new Error("task thread search should match an empty query");
+    if (!taskThreadSearchMatches(thread, "release")) throw new Error("task thread search should match titles");
+    if (!taskThreadSearchMatches(thread, "abcdef")) throw new Error("task thread search should match thread ids");
+    if (taskThreadSearchMatches(thread, "billing")) throw new Error("task thread search should reject unrelated queries");
+  } finally {
+    if (previousWindow) globalWithWindow.window = previousWindow;
+    else delete globalWithWindow.window;
+  }
+};
+
 const main = async () => {
+  await assertTaskThreadSearchMatches();
+
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state."));
   const pluginDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-plugins."));
   const projectDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-project."));
