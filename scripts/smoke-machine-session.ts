@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveCodexAppServerLaunchOptions } from "../src/cli/codexAppServerProcess.js";
 import { accountRateLimitsPayloadFromValue } from "../src/core/threadUsage.js";
+import type { MachineDirectoryEntry } from "../src/shared/machineTypes.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { SessionEventInput } from "../src/shared/threadTypes.js";
 import type { OpenThreadState } from "../src/web/types.js";
@@ -147,6 +148,7 @@ const main = async () => {
   await assertEmbeddedServerDataDirOptionOverridesEnvironment();
   await assertTaskCronSemantics();
   await assertComposerAttachmentClear();
+  await assertProjectDirectorySearchMatches();
   await assertServerStateSnapshotPure();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
@@ -404,6 +406,55 @@ const assertComposerAttachmentClear = async () => {
     }
   } finally {
     URL.revokeObjectURL = originalRevoke;
+    if (hadWindow) {
+      Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
+};
+
+const assertProjectDirectorySearchMatches = async () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: { search: "" },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+        removeItem: () => undefined
+      },
+      history: {
+        state: null,
+        replaceState: () => undefined
+      }
+    }
+  });
+  try {
+    const { filterProjectDirectoryEntries } = await import("../src/web/helpers/core.js");
+    const entries: MachineDirectoryEntry[] = [
+      { name: "alpha-risk", path: "/workspace/client-alpha/alpha-risk" },
+      { name: "Beta Reports", path: "/workspace/beta/reports" },
+      { name: "codexhub", path: "/home/laop/projects/codexhub" }
+    ];
+    if (filterProjectDirectoryEntries(entries, "").length !== entries.length) {
+      throw new Error("empty project directory search should keep all entries visible");
+    }
+    if (filterProjectDirectoryEntries(entries, "ALPHA").map((entry) => entry.name).join(",") !== "alpha-risk") {
+      throw new Error("project directory search should match names case-insensitively");
+    }
+    if (filterProjectDirectoryEntries(entries, "projects codex").map((entry) => entry.name).join(",") !== "codexhub") {
+      throw new Error("project directory search should match path tokens");
+    }
+    if (filterProjectDirectoryEntries(entries, "client risk").map((entry) => entry.name).join(",") !== "alpha-risk") {
+      throw new Error("project directory search should require every query token");
+    }
+    if (filterProjectDirectoryEntries(entries, "missing-token").length !== 0) {
+      throw new Error("project directory search should expose empty results");
+    }
+  } finally {
     if (hadWindow) {
       Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
     } else {

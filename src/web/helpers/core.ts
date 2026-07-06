@@ -3,7 +3,7 @@ import type { ModelCatalogItem, StoredMachine } from "../../shared/apiContract.j
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
 import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../core/taskCron.js";
 import { modelOptions, reasoningOptions, serviceTierOptions } from "../appConfig.js";
-import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
+import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -609,6 +609,15 @@ export const worktreeTargetPreview = (workingDirectory: string, branch: string, 
   const branchName = branch.trim();
   if (!branchName) return "Target pending";
   return joinProjectPath(workingDirectory, ".codexhub", "worktrees", worktreePathSegment(branchName));
+};
+
+export const filterProjectDirectoryEntries = (entries: MachineDirectoryEntry[], query: string) => {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return entries;
+  return entries.filter((entry) => {
+    const haystack = `${entry.name}\n${entry.path}`.toLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+  });
 };
 
 export const sshHostMeta = (host: SshHost) => [

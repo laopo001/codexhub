@@ -566,10 +566,17 @@
   min-width: 0;
 }
 
-.projectPickerField span {
+.projectPickerField span,
+.projectPickerSearchField span {
   color: #51604f;
   font-size: 12px;
   font-weight: 750;
+}
+
+.projectPickerSearchField {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
 }
 
 .projectPickerPathForm {
@@ -584,6 +591,21 @@
   padding: 7px 9px;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
+}
+
+.projectPickerSearchField input {
+  min-height: 34px;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17211a;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+
+.projectPickerSearchField input:disabled {
+  background: #edf1ea;
+  color: #8a9586;
 }
 
 .projectPickerPathButton,

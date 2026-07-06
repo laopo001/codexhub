@@ -3,6 +3,7 @@ import { Select, Switch } from "antd";
 import { Target } from "lucide-react";
 import {
   apiRouteJson,
+  filterProjectDirectoryEntries,
   formatInspectTitle,
   formatThreadCandidateTime,
   machineProjectCatalogEditable,
@@ -88,6 +89,14 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const projectPickerOpening = projectPicker
     ? openingProjectKey === `${projectPicker.machineId}:${projectPicker.path.trim()}`
     : false;
+  const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
+  React.useEffect(() => {
+    setProjectPickerSearch("");
+  }, [projectPicker?.machineId, projectPicker?.entries]);
+  const visibleProjectPickerEntries = projectPicker
+    ? filterProjectDirectoryEntries(projectPicker.entries, projectPickerSearch)
+    : [];
+  const projectPickerQuery = projectPickerSearch.trim();
   const threadPickerSession = threadPicker
     ? sessionList.find((session) => session.sessionId === threadPicker.sessionId)
     : undefined;
@@ -531,12 +540,22 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   </button>
                 </form>
               </div>
+              <label className="projectPickerSearchField">
+                <span>Search folders</span>
+                <input
+                  value={projectPickerSearch}
+                  onChange={(event) => setProjectPickerSearch(event.target.value)}
+                  disabled={projectPicker.loading || projectPicker.entries.length === 0}
+                  placeholder="Filter current folder"
+                  spellCheck={false}
+                />
+              </label>
               <div className="projectPickerList" role="listbox" aria-label="Folders">
                 {projectPicker.loading ? (
                   <div className="projectPickerEmpty">Loading folders</div>
-                ) : projectPicker.entries.length === 0 ? (
-                  <div className="projectPickerEmpty">No folders</div>
-                ) : projectPicker.entries.map((entry) => (
+                ) : visibleProjectPickerEntries.length === 0 ? (
+                  <div className="projectPickerEmpty">{projectPickerQuery ? "No matching folders" : "No folders"}</div>
+                ) : visibleProjectPickerEntries.map((entry) => (
                   <button
                     type="button"
                     className="projectPickerRow"
