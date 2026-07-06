@@ -16,6 +16,9 @@ import {
   serviceTierOptionLabel,
   shortId,
   statusLabel,
+  threadCandidateHoverTitle,
+  threadCandidateSnippet,
+  threadCandidateStats,
   threadCandidateTitle,
   threadDisplayTitle,
   ToolInspectBody,
@@ -389,6 +392,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               ) : filteredThreadCandidates.map((candidate) => {
                 const isOpen = threadPickerOpenThreadIds.has(candidate.threadId);
                 const acting = threadPicker.acting === candidate.threadId;
+                const candidateSnippet = threadCandidateSnippet(candidate);
+                const candidateStats = threadCandidateStats(candidate);
                 return (
                   <button
                     type="button"
@@ -396,12 +401,14 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                     key={candidate.threadId}
                     onClick={() => void chooseThreadCandidate(candidate)}
                     disabled={threadPicker.acting !== null}
-                    title={candidate.threadId}
+                    title={threadCandidateHoverTitle(candidate)}
                   >
                     <span className="threadPickerRowTitle">{threadCandidateTitle(candidate)}</span>
+                    {candidateSnippet ? <span className="threadPickerRowSnippet">{candidateSnippet}</span> : null}
                     <span className="threadPickerRowMeta">
                       <code>{shortId(candidate.threadId)}</code>
                       <span>{formatThreadCandidateTime(candidate.updatedAt)}</span>
+                      {candidateStats ? <span>{candidateStats}</span> : null}
                       {isOpen ? <strong>open</strong> : null}
                       {acting ? <strong>restoring</strong> : null}
                     </span>

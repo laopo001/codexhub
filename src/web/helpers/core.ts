@@ -847,6 +847,28 @@ export const filterThreadCandidates = (candidates: CodexThreadCandidate[], query
 
 export const formatThreadCandidateTime = (value: string) => relativeTime(value);
 
+export const threadCandidateSnippet = (candidate: CodexThreadCandidate) => {
+  const title = compactLine(candidate.title);
+  const firstUserMessage = compactLine(candidate.firstUserMessage);
+  const lastAssistantMessage = compactLine(candidate.lastAssistantMessage);
+  if (firstUserMessage && firstUserMessage !== title) return firstUserMessage;
+  if (lastAssistantMessage && lastAssistantMessage !== title) return lastAssistantMessage;
+  return "";
+};
+
+export const threadCandidateStats = (candidate: CodexThreadCandidate) => [
+  candidate.messageCount > 0 ? `${candidate.messageCount} messages` : null,
+  candidate.artifactCount > 0 ? `${candidate.artifactCount} artifacts` : null
+].filter(Boolean).join(" · ");
+
+export const threadCandidateHoverTitle = (candidate: CodexThreadCandidate) => [
+  candidate.threadId,
+  candidate.cwd || candidate.path,
+  candidate.firstUserMessage ? `First: ${compactLine(candidate.firstUserMessage)}` : null,
+  candidate.lastAssistantMessage ? `Last: ${compactLine(candidate.lastAssistantMessage)}` : null,
+  threadCandidateStats(candidate) || null
+].filter(Boolean).join("\n");
+
 export const compactLine = (value: string) => value.replace(/\s+/g, " ").trim();
 
 export const threadDisplayTitle = (thread: Pick<ThreadSummary, "threadId" | "title">) => {
