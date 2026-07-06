@@ -1003,8 +1003,27 @@ export const fastCommandAction = (text: string) => {
 
 export const rawModelLabel = (model: ModelSelection) => model === "auto" ? "Auto" : model;
 
+type SearchableModelOption = {
+  value?: string;
+  label?: string;
+  searchText?: string;
+};
+
 export const modelOptionLabel = (option: { value: string; label: string }) =>
   option.value;
+
+export const modelOptionSearchText = (option: SearchableModelOption) => [
+  option.value,
+  option.label,
+  option.searchText
+].filter(Boolean).join("\n").toLowerCase();
+
+export const modelOptionSearchMatches = (option: SearchableModelOption | undefined, query: string) => {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const searchText = option ? modelOptionSearchText(option) : "";
+  return terms.every((term) => searchText.includes(term));
+};
 
 export const reasoningOptionLabel = (option: { value: string; label: string }) =>
   option.value;
@@ -1018,7 +1037,8 @@ export const modelOptionsForSelection = (model: ModelSelection, catalog: ModelCa
     .filter((item) => !item.hidden)
     .map((item) => ({
       value: modelCatalogValue(item),
-      label: modelCatalogValue(item)
+      label: modelCatalogValue(item),
+      searchText: modelCatalogSearchText(item)
     }))
     .filter((option) => option.value);
   const options = catalogOptions.length ? [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)] : modelOptions;
@@ -1061,6 +1081,13 @@ export const serviceTierOptionsForSelection = (
 };
 
 const modelCatalogValue = (item: Pick<ModelCatalogItem, "model" | "id">) => item.model || item.id;
+
+const modelCatalogSearchText = (item: Pick<ModelCatalogItem, "id" | "model" | "displayName" | "description">) => [
+  item.id,
+  item.model,
+  item.displayName,
+  item.description
+].filter(Boolean).join("\n");
 
 const modelCatalogItemForSelection = (catalog: ModelCatalogItem[], model: ModelSelection) => {
   if (!model || model === "auto") return undefined;

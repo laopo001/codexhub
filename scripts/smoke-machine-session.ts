@@ -152,6 +152,7 @@ const main = async () => {
   await assertProjectMachineGroupSearchMatches();
   await assertTaskSearchMatches();
   await assertSshHostSearch();
+  await assertModelOptionSearch();
   await assertServerStateSnapshotPure();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
@@ -709,6 +710,57 @@ const writeRemoteClientFixture = async (root: string) => {
     path: filePath,
     hash: createHash("sha256").update(content).digest("hex")
   };
+};
+
+const assertModelOptionSearch = async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { modelOptionSearchMatches, modelOptionsForSelection } = await import("../src/web/helpers/core.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  const options = modelOptionsForSelection("auto", [
+    {
+      id: "catalog-gpt-codex",
+      model: "gpt-5.3-codex",
+      displayName: "Codex Max",
+      description: "Deep agent model",
+      hidden: false,
+      supportedReasoningEfforts: [],
+      serviceTiers: []
+    },
+    {
+      id: "hidden-model",
+      model: "hidden-model",
+      displayName: "Hidden Model",
+      hidden: true,
+      supportedReasoningEfforts: [],
+      serviceTiers: []
+    }
+  ]);
+  const codexOption = options.find((option) => option.value === "gpt-5.3-codex");
+  if (!codexOption) throw new Error("model catalog option missing");
+  if (!modelOptionSearchMatches(codexOption, "codex max")) {
+    throw new Error(`model option search did not match display name: ${JSON.stringify(codexOption)}`);
+  }
+  if (!modelOptionSearchMatches(codexOption, "deep agent")) {
+    throw new Error(`model option search did not match description: ${JSON.stringify(codexOption)}`);
+  }
+  if (modelOptionSearchMatches(codexOption, "hidden")) {
+    throw new Error(`model option search matched unrelated text: ${JSON.stringify(codexOption)}`);
+  }
+  if (options.some((option) => option.value === "hidden-model")) {
+    throw new Error("hidden model catalog option should not be searchable");
+  }
+
+  const manualOptions = modelOptionsForSelection("manual-model", []);
+  const manualOption = manualOptions.find((option) => option.value === "manual-model");
+  if (!modelOptionSearchMatches(manualOption, "manual")) {
+    throw new Error(`manual model option should be searchable: ${JSON.stringify(manualOption)}`);
+  }
 };
 
 const writeStartupSshHostState = async (dataDir: string, alias: string) => {
