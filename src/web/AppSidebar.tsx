@@ -12,6 +12,7 @@ import {
   machineProjectCatalogEditable,
   machineProjectLauncher,
   projectKeyForProject,
+  shortId,
   sshConnectionDoctorLines,
   sshConnectionDetail,
   sshConnectionStatusClass,
@@ -196,6 +197,16 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const sshQuery = sshSearch.trim();
   const visibleSshConfigHostOptions = sshConfigHostOptions.filter((host) => sshHostSearchMatches(host, sshQuery));
   const visibleSshHosts = sshHosts.filter((host) => sshHostSearchMatches(host, sshQuery));
+  const taskThreadTargetSummary = !selectedTaskProject
+    ? "Select a project before choosing a thread."
+    : selectedTaskThread
+    ? `Pinned to ${threadDisplayTitle(selectedTaskThread)} (${shortId(selectedTaskThread.threadId)})`
+    : taskThreadOptions.length
+    ? "Uses the project thread created or reused when the task runs."
+    : "No live threads for this project yet; the first run will create one.";
+  const taskThreadTargetTitle = selectedTaskThread
+    ? selectedTaskThread.threadId
+    : selectedTaskProject?.path;
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
@@ -823,6 +834,9 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                 {taskThreadQueryActive && matchingTaskThreadOptions.length === 0 ? (
                   <small className="taskThreadSearchEmpty">No matching threads</small>
                 ) : null}
+                <small className="taskThreadTargetSummary" title={taskThreadTargetTitle}>
+                  {taskThreadTargetSummary}
+                </small>
               </label>
               <label className="taskField">
                 <span>Schedule</span>
