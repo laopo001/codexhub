@@ -30,6 +30,7 @@ import {
   taskTargetLabel,
   taskTargetTitle,
   taskThreadOptionsFor,
+  taskThreadSearchMatches,
   threadDisplayTitle,
   uniqueMachines
 } from "./appHelpers.js";
@@ -54,6 +55,7 @@ const parentRegistrationStatusLabel = (status: AppSidebarViewModel["parentRegist
 };
 
 export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
+  const [taskThreadQuery, setTaskThreadQuery] = React.useState("");
   const {
     activeProjectKey,
     addSshHost,
@@ -172,6 +174,19 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const taskSubmitBusy = editingTaskId ? taskBusyId === editingTaskId : taskBusyId === "create";
   const taskThreadEmptyLabel = editingTask?.threadId ? "Keep current thread" : "Current thread";
   const taskSubmitLabel = taskSubmitBusy ? "Saving" : editingTaskId ? "Update" : "Save";
+  const taskThreadScopeKey = `${taskDraft.machineId}\0${taskDraft.projectPath}`;
+  React.useEffect(() => {
+    setTaskThreadQuery("");
+  }, [taskThreadScopeKey, taskFormOpen]);
+  const matchingTaskThreadOptions = taskThreadOptions.filter((thread) => taskThreadSearchMatches(thread, taskThreadQuery));
+  const selectedTaskThread = taskDraft.threadId
+    ? taskThreadOptions.find((thread) => thread.threadId === taskDraft.threadId)
+    : undefined;
+  const visibleTaskThreadOptions = selectedTaskThread
+    && !matchingTaskThreadOptions.some((thread) => thread.threadId === selectedTaskThread.threadId)
+    ? [selectedTaskThread, ...matchingTaskThreadOptions]
+    : matchingTaskThreadOptions;
+  const taskThreadQueryActive = Boolean(taskThreadQuery.trim());
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
@@ -744,18 +759,31 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               </label>
               <label className="taskField">
                 <span>Thread</span>
+                {selectedTaskProject && taskThreadOptions.length ? (
+                  <input
+                    value={taskThreadQuery}
+                    onChange={(event) => setTaskThreadQuery(event.target.value)}
+                    placeholder="Filter threads"
+                    aria-label="Filter task threads"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                ) : null}
                 <select
                   value={taskDraft.threadId}
                   onChange={(event) => setTaskDraft((current) => ({ ...current, threadId: event.target.value }))}
                   disabled={!selectedTaskProject}
                 >
                   <option value="">{taskThreadEmptyLabel}</option>
-                  {taskThreadOptions.map((thread) => (
+                  {visibleTaskThreadOptions.map((thread) => (
                     <option value={thread.threadId} key={thread.threadId}>
                       {threadDisplayTitle(thread)}
                     </option>
                   ))}
                 </select>
+                {taskThreadQueryActive && matchingTaskThreadOptions.length === 0 ? (
+                  <small className="taskThreadSearchEmpty">No matching threads</small>
+                ) : null}
               </label>
               <label className="taskField">
                 <span>Schedule</span>
