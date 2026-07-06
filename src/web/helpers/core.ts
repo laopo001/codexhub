@@ -827,6 +827,24 @@ export const goalStatusClass = (status: string) => {
 export const threadCandidateTitle = (candidate: CodexThreadCandidate) =>
   compactLine(candidate.title || candidate.firstUserMessage || candidate.lastAssistantMessage || shortId(candidate.threadId));
 
+const threadCandidateSearchText = (candidate: CodexThreadCandidate) => [
+  threadCandidateTitle(candidate),
+  candidate.title,
+  candidate.firstUserMessage,
+  candidate.lastAssistantMessage,
+  candidate.threadId,
+  shortId(candidate.threadId)
+].map((value) => compactLine(value ?? "").toLowerCase()).filter(Boolean).join("\n");
+
+export const filterThreadCandidates = (candidates: CodexThreadCandidate[], query: string) => {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return candidates;
+  return candidates.filter((candidate) => {
+    const searchText = threadCandidateSearchText(candidate);
+    return tokens.every((token) => searchText.includes(token));
+  });
+};
+
 export const formatThreadCandidateTime = (value: string) => relativeTime(value);
 
 export const compactLine = (value: string) => value.replace(/\s+/g, " ").trim();

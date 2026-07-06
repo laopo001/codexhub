@@ -4,6 +4,7 @@ import { Target } from "lucide-react";
 import {
   apiRouteJson,
   filterProjectDirectoryEntries,
+  filterThreadCandidates,
   formatInspectTitle,
   formatThreadCandidateTime,
   machineProjectCatalogEditable,
@@ -107,6 +108,11 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     ...(threadPicker ? threadOrderBySession[threadPicker.sessionId] ?? [] : []),
     ...openThreads.map((thread) => thread.threadId)
   ]);
+  const threadPickerSearchQuery = threadPicker?.searchQuery ?? "";
+  const filteredThreadCandidates = threadPicker
+    ? filterThreadCandidates(threadPicker.candidates, threadPickerSearchQuery)
+    : [];
+  const threadPickerHasSearch = threadPickerSearchQuery.trim().length > 0;
   const threadTabContextThread = threadTabContextMenu
     ? openThreads.find((thread) => thread.threadId === threadTabContextMenu.threadId)
     : undefined;
@@ -354,11 +360,26 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   <code>{worktreePreview}</code>
                 </div>
               </form>
+              <label className="threadPickerSearch">
+                <span>Search</span>
+                <input
+                  value={threadPicker.searchQuery}
+                  onChange={(event) => setThreadPicker((current) => current ? {
+                    ...current,
+                    searchQuery: event.target.value
+                  } : current)}
+                  disabled={threadPicker.acting !== null || threadPicker.loading || threadPicker.candidates.length === 0}
+                  placeholder="Title, message, or thread ID"
+                  spellCheck={false}
+                />
+              </label>
               {threadPicker.loading ? (
                 <div className="threadPickerEmpty">Loading threads</div>
               ) : threadPicker.candidates.length === 0 ? (
                 <div className="threadPickerEmpty">No local threads</div>
-              ) : threadPicker.candidates.map((candidate) => {
+              ) : filteredThreadCandidates.length === 0 ? (
+                <div className="threadPickerEmpty">{threadPickerHasSearch ? "No matching threads" : "No local threads"}</div>
+              ) : filteredThreadCandidates.map((candidate) => {
                 const isOpen = threadPickerOpenThreadIds.has(candidate.threadId);
                 const acting = threadPicker.acting === candidate.threadId;
                 return (

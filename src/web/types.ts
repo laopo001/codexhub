@@ -121,6 +121,7 @@ export type ThreadPickerState = {
   loading: boolean;
   error: string;
   candidates: CodexThreadCandidate[];
+  searchQuery: string;
   acting: "new" | "worktree" | string | null;
   worktreeBranch: string;
   worktreeBaseRef: string;
