@@ -15,7 +15,8 @@ import {
   statusLabel,
   threadCandidateTitle,
   threadDisplayTitle,
-  ToolInspectBody
+  ToolInspectBody,
+  worktreeTargetPreview
 } from "./appHelpers.js";
 import { apiRoutes } from "../shared/apiRoutes.js";
 import { writeTextToClipboard } from "./helpers/composer.js";
@@ -102,6 +103,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const dialogModelOptions = optionsWithoutAutoWhenResolved(modelOptions, effectiveModelSelection);
   const dialogReasoningOptions = optionsWithoutAutoWhenResolved(reasoningOptions, effectiveReasoningSelection);
   const dialogServiceTierOptions = optionsWithoutAutoWhenResolved(serviceTierOptions, effectiveServiceTierSelection);
+  const worktreePreview = threadPicker
+    ? worktreeTargetPreview(threadPicker.workingDirectory, threadPicker.worktreeBranch, threadPicker.worktreePath)
+    : "";
 
   return (
     <>
@@ -324,6 +328,10 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                       placeholder="auto"
                     />
                   </label>
+                </div>
+                <div className="threadPickerWorktreePreview" title={worktreePreview}>
+                  <span>Target</span>
+                  <code>{worktreePreview}</code>
                 </div>
               </form>
               {threadPicker.loading ? (
