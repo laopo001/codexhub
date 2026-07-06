@@ -19,6 +19,7 @@ import {
   sshConnectionTitle,
   sshHostMeta,
   taskBelongsToProject,
+  taskDraftSchedulePreview,
   taskPromptPreview,
   taskRunDetailTitle,
   taskRunLine,
@@ -189,10 +190,12 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     ? [selectedTaskThread, ...matchingTaskThreadOptions]
     : matchingTaskThreadOptions;
   const taskThreadQueryActive = Boolean(taskThreadQuery.trim());
+  const taskSchedulePreview = taskDraftSchedulePreview(taskDraft.schedule);
   const canCreateTask = Boolean(
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
     && taskDraft.schedule.trim()
+    && taskSchedulePreview.kind === "valid"
     && taskDraft.input.trim()
   );
   React.useEffect(() => {
@@ -231,7 +234,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     const projectPath = taskDraft.projectPath.trim();
     const input = taskDraft.input.trim();
     const threadId = taskDraft.threadId.trim();
-    if (!machineId || !projectPath || !schedule || !input) return;
+    if (!machineId || !projectPath || !schedule || taskSchedulePreview.kind !== "valid" || !input) return;
     const project = projectList.find((item) => item.machineId === machineId && item.path === projectPath);
     const saved = await patchTask(editingTaskId, {
       name,
@@ -820,6 +823,9 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                     </button>
                   ))}
                 </div>
+                <small className={`taskSchedulePreview ${taskSchedulePreview.kind}`} title={taskSchedulePreview.title}>
+                  {taskSchedulePreview.text}
+                </small>
               </label>
               <label className="taskField">
                 <span>Prompt</span>
