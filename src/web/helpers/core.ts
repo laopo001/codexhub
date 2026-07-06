@@ -620,6 +620,33 @@ export const filterProjectDirectoryEntries = (entries: MachineDirectoryEntry[], 
   });
 };
 
+export const projectMachineGroupSearchMatches = (group: ProjectMachineGroup, query: string) => {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    group.label,
+    group.machineId,
+    group.machineType,
+    group.badgeLabel
+  ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalized));
+};
+
+export const filterProjectMachineGroupsBySearch = (groups: ProjectMachineGroup[], query: string) => {
+  const normalized = query.trim();
+  if (!normalized) return groups;
+  return groups
+    .map((group) => {
+      const groupMatches = projectMachineGroupSearchMatches(group, normalized);
+      return {
+        ...group,
+        projects: groupMatches
+          ? group.projects
+          : group.projects.filter((project) => projectSearchMatches(project, normalized))
+      };
+    })
+    .filter((group) => group.projects.length > 0 || projectMachineGroupSearchMatches(group, normalized));
+};
+
 export const sshHostMeta = (host: SshHost) => [
   host.user,
   host.hostName,

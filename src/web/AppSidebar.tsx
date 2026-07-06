@@ -7,11 +7,11 @@ import {
   activeSshConnectionForHost,
   defaultTaskDraft,
   fixedProject,
+  filterProjectMachineGroupsBySearch,
   latestSshConnectionForHost,
   machineProjectCatalogEditable,
   machineProjectLauncher,
   projectKeyForProject,
-  projectSearchMatches,
   sshConnectionDoctorLines,
   sshConnectionDetail,
   sshConnectionStatusClass,
@@ -133,12 +133,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const [editingTaskId, setEditingTaskId] = React.useState("");
 
   const projectQuery = projectSearch.trim();
-  const visibleProjectGroups = projectGroups
-    .map((machine) => ({
-      ...machine,
-      projects: machine.projects.filter((project) => projectSearchMatches(project, projectQuery))
-    }))
-    .filter((machine) => !projectQuery || machine.projects.length || machine.label.toLowerCase().includes(projectQuery.toLowerCase()));
+  const visibleProjectGroups = filterProjectMachineGroupsBySearch(projectGroups, projectQuery);
   const onlineProjectGroups = visibleProjectGroups.filter((machine) => machine.online);
   const offlineProjectGroups = visibleProjectGroups.filter((machine) => !machine.online);
   const projectAddMachine = projectScopeLocked
