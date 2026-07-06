@@ -212,6 +212,7 @@ export type AppViewModel = AppSidebarViewModel & {
   openSelectedProjectThreadPicker: () => MaybePromise;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   projectPicker: ProjectPickerState | null;
+  clearThreadAttachments: (threadId: string) => void;
   removeThreadImage: (threadId: string, attachmentId: string) => void;
   removeThreadTextAttachment: (threadId: string, attachmentId: string) => void;
   renderComposerThreadControls: (mode: "inline" | "popover") => React.ReactNode;

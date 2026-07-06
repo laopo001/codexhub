@@ -83,6 +83,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     addSshHost,
     changeProjectPickerMachine,
     chooseThreadCandidate,
+    clearThreadAttachments,
     clearThreadGoal,
     closeThread,
     collapsedProjectMachineKeys,
@@ -561,6 +562,16 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                         <div className="composerInput">
                           {activeThread.textAttachments.length || activeThread.imageAttachments.length ? (
                             <div className="composerAttachmentList">
+                              <div className="composerAttachmentToolbar">
+                                <span>
+                                  {activeThread.textAttachments.length + activeThread.imageAttachments.length}
+                                  {" "}
+                                  attached
+                                </span>
+                                <button type="button" onClick={() => clearThreadAttachments(activeThread.threadId)}>
+                                  Clear all
+                                </button>
+                              </div>
                               {activeThread.textAttachments.map((item) => (
                                 <div className="textAttachment" key={item.id} title={item.text}>
                                   <span className="textAttachmentLabel">文本</span>
