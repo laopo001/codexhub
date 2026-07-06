@@ -726,6 +726,38 @@
   gap: 10px;
 }
 
+.threadPickerHeaderTitle {
+  min-width: 0;
+}
+
+.threadPickerHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+.threadPickerRefreshButton {
+  min-height: 30px;
+  border: 1px solid #d8dfd4;
+  border-radius: 8px;
+  background: #f7f9f5;
+  color: #3f4d3d;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.threadPickerRefreshButton:hover:not(:disabled) {
+  border-color: #9fb0a0;
+  background: #eef3eb;
+}
+
+.threadPickerRefreshButton:disabled {
+  color: #9ca79a;
+  opacity: 0.7;
+}
+
 .threadPickerHeader h2 {
   margin: 0;
   font-size: 20px;

@@ -41,6 +41,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     inspectContextMessage,
     inspectMessage,
     loadProjectPickerDirectory,
+    loadThreadPickerCandidates,
     machines,
     messageContextMenu,
     effectiveModelSelection,
@@ -256,11 +257,21 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
         }}>
           <section className="threadPickerModal" role="dialog" aria-modal="true" aria-labelledby="threadPickerTitle">
             <header className="threadPickerHeader">
-              <div>
+              <div className="threadPickerHeaderTitle">
                 <h2 id="threadPickerTitle">Add Thread</h2>
                 <p title={threadPicker.workingDirectory}>{threadPicker.workingDirectory}</p>
               </div>
-              <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
+              <div className="threadPickerHeaderActions">
+                <button
+                  type="button"
+                  className="threadPickerRefreshButton"
+                  onClick={() => void loadThreadPickerCandidates(threadPicker.sessionId)}
+                  disabled={threadPicker.loading || threadPicker.acting !== null}
+                >
+                  {threadPicker.loading ? "Refreshing" : "Refresh"}
+                </button>
+                <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
+              </div>
             </header>
             <div className="threadPickerList" role="listbox" aria-label="Thread candidates">
               <button

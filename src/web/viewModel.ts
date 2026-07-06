@@ -210,6 +210,7 @@ export type AppViewModel = AppSidebarViewModel & {
     message: WebRecordView,
     canInspect: boolean
   ) => void;
+  loadThreadPickerCandidates: (sessionId: string) => MaybePromise;
   openThreadPicker: (session: SessionView, workingDirectory?: string) => MaybePromise;
   openSelectedProjectThreadPicker: () => MaybePromise;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
