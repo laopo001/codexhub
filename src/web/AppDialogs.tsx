@@ -18,6 +18,7 @@ import {
   ToolInspectBody
 } from "./appHelpers.js";
 import { apiRoutes } from "../shared/apiRoutes.js";
+import { writeTextToClipboard } from "./helpers/composer.js";
 import type { ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
 import type { AppViewModel } from "./viewModel.js";
 
@@ -374,6 +375,16 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
             onMouseDown={(event) => event.stopPropagation()}
             onContextMenu={(event) => event.preventDefault()}
           >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void writeTextToClipboard(threadTabContextThread.threadId).catch(() => undefined);
+                setThreadTabContextMenu(null);
+              }}
+            >
+              Copy thread ID
+            </button>
             <button
               type="button"
               role="menuitem"
