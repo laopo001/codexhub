@@ -50,6 +50,17 @@
   font-weight: 750;
 }
 
+.taskSearchInput {
+  min-height: 30px;
+  min-width: 0;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #101410;
+  color: #f8fbf4;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
 .taskList {
   display: grid;
   gap: 5px;

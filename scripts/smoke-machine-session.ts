@@ -150,6 +150,7 @@ const main = async () => {
   await assertComposerAttachmentClear();
   await assertProjectDirectorySearchMatches();
   await assertProjectMachineGroupSearchMatches();
+  await assertTaskSearchMatches();
   await assertServerStateSnapshotPure();
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
@@ -546,6 +547,68 @@ const assertProjectMachineGroupSearchMatches = async () => {
     } else {
       delete (globalThis as { window?: unknown }).window;
     }
+  }
+};
+
+const assertTaskSearchMatches = async () => {
+  const runtimeGlobal = globalThis as unknown as { window?: { location: { search: string } } };
+  const previousWindow = runtimeGlobal.window;
+  if (!previousWindow) runtimeGlobal.window = { location: { search: "" } };
+  try {
+    const { taskSearchMatches } = await import("../src/web/helpers/core.js");
+    const projects = [{
+      projectId: "project-alpha",
+      machineId: "machine-local",
+      path: "/work/alpha",
+      name: "alpha",
+      machineOnline: true,
+      online: true,
+      running: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lastOpenedAt: "2026-01-01T00:00:00.000Z"
+    }];
+    const machines = [{
+      machineId: "machine-local",
+      type: "local" as const,
+      name: "local dev",
+      hostname: "devhost",
+      online: true,
+      status: "online" as const,
+      lastSeenAt: "2026-01-01T00:00:00.000Z",
+      capabilities: { projectLauncher: true }
+    }];
+    const task = {
+      taskId: "task-daily-risk",
+      name: "daily-risk",
+      enabled: true,
+      schedule: "0 9 * * 1-5",
+      machineId: "machine-local",
+      projectPath: "/work/alpha",
+      input: "检查最近的变更并总结风险",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lastStatus: "failed" as const,
+      lastError: "model catalog timeout",
+      runs: [{
+        runId: "run-1",
+        status: "failed" as const,
+        startedAt: "2026-01-02T00:00:00.000Z",
+        finishedAt: "2026-01-02T00:00:05.000Z",
+        durationMs: 5000,
+        threadId: "thread-risk-12345678",
+        error: "model catalog timeout"
+      }]
+    };
+    if (!taskSearchMatches(task, "", projects, machines)) throw new Error("empty task search should keep tasks visible");
+    if (!taskSearchMatches(task, "daily risk", projects, machines)) throw new Error("task search should match task name tokens");
+    if (!taskSearchMatches(task, "1-5 alpha", projects, machines)) throw new Error("task search should match schedule target context");
+    if (!taskSearchMatches(task, "catalog timeout", projects, machines)) throw new Error("task search should match recent errors");
+    if (!taskSearchMatches(task, "总结 风险", projects, machines)) throw new Error("task search should match prompt text");
+    if (taskSearchMatches(task, "missing-token", projects, machines)) throw new Error("task search should expose empty results");
+  } finally {
+    if (previousWindow) runtimeGlobal.window = previousWindow;
+    else delete runtimeGlobal.window;
   }
 };
 

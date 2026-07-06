@@ -394,6 +394,31 @@ export const taskRunTitle = (task: LocalTask) => {
   }).join("\n");
 };
 
+export const taskSearchMatches = (
+  task: LocalTask,
+  query: string,
+  projects: ProjectSummary[] = [],
+  machines: MachineSummary[] = []
+) => {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  const runs = task.runs ?? [];
+  const searchText = [
+    task.name,
+    task.input,
+    task.schedule,
+    taskStatusLabel(task),
+    task.enabled ? "enabled" : "paused disabled",
+    taskTargetLabel(task, projects, machines),
+    taskTargetTitle(task, projects, machines),
+    taskRunSummary(task),
+    taskRunTitle(task),
+    task.lastError,
+    ...runs.flatMap((run) => [run.status, run.threadId, run.sessionId, run.error])
+  ].map((value) => compactLine(value ?? "").toLowerCase()).filter(Boolean).join("\n");
+  return tokens.every((token) => searchText.includes(token));
+};
+
 export const taskRunStatusLabel = (run: LocalTaskRun) => run.status === "completed" ? "done" : run.status;
 
 export const taskRunLine = (run: LocalTaskRun) => {
