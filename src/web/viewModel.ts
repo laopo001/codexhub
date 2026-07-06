@@ -94,7 +94,7 @@ export type AppSidebarViewModel = {
   parentRegistrationBusy: boolean;
   parentRegistrationDraft: ParentRegistrationDraft;
   parentRegistrationError: string;
-  patchTask: (taskId: string, input: TaskPatchInput) => MaybePromise;
+  patchTask: (taskId: string, input: TaskPatchInput) => MaybePromise<boolean>;
   plugins: PluginSummary[];
   projectGroups: ProjectMachineGroup[];
   projectList: ProjectSummary[];

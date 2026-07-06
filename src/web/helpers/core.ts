@@ -243,6 +243,16 @@ export const defaultTaskDraft = (): TaskDraft => ({
   input: "检查这个项目最近的变更，给我总结风险和下一步。"
 });
 
+export const taskDraftFromTask = (task: LocalTask): TaskDraft => ({
+  name: task.name,
+  enabled: task.enabled,
+  schedule: task.schedule,
+  machineId: task.machineId,
+  projectPath: task.projectPath,
+  threadId: task.threadId ?? "",
+  input: task.input
+});
+
 export const taskThreadOptionsFor = (project: ProjectSummary | undefined, sessions: SessionView[] = []) => {
   const threads = new Map<string, Pick<ThreadSummary, "threadId" | "title" | "updatedAt">>();
   const pushThread = (thread: Pick<ThreadSummary, "threadId" | "title" | "updatedAt">) => {

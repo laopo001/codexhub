@@ -46,7 +46,7 @@ export type TaskActions = {
   focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
   primeTaskCompletionFeedback: () => void;
   createTask: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
-  patchTask: (taskId: string, patch: TaskUpdateInput) => Promise<void>;
+  patchTask: (taskId: string, patch: TaskUpdateInput) => Promise<boolean>;
   deleteTask: (taskId: string) => Promise<void>;
   runTaskNow: (task: LocalTask) => Promise<void>;
 };
@@ -168,8 +168,10 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
       } else {
         await refreshTasks();
       }
+      return true;
     } catch (error) {
       ctx.setTaskError(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
       ctx.setTaskBusyId((current) => current === taskId ? "" : current);
     }
