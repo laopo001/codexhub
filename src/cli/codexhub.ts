@@ -60,6 +60,7 @@ type LocalTask = {
   threadId?: string;
   input: string;
   updatedAt: string;
+  nextRunAt?: string | null;
   lastRunAt?: string;
   lastStatus?: "queued" | "completed" | "failed" | "skipped";
   lastError?: string;
@@ -351,6 +352,7 @@ function printLocalTasks(tasks: LocalTask[]) {
     id: task.taskId.slice(0, 8),
     enabled: task.enabled ? "yes" : "no",
     schedule: task.schedule,
+    nextRun: task.nextRunAt ? formatLocalTime(task.nextRunAt) : "",
     status: task.lastStatus ?? "",
     lastRun: task.lastRunAt ? formatLocalTime(task.lastRunAt) : "",
     machine: task.machineId,
