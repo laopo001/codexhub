@@ -52,6 +52,7 @@ export const useAppState = () => {
   const [sshConfigHosts, setSshConfigHosts] = useState<SshHost[]>([]);
   const [sshConnections, setSshConnections] = useState<SshConnection[]>([]);
   const [sshHostDraft, setSshHostDraft] = useState("");
+  const [sshSearch, setSshSearch] = useState("");
   const [sshConnectingHost, setSshConnectingHost] = useState("");
   const [sshHostBusy, setSshHostBusy] = useState("");
   const [sshError, setSshError] = useState("");
@@ -249,6 +250,7 @@ export const useAppState = () => {
     setSshHostBusy,
     setSshHostDraft,
     setSshHosts,
+    setSshSearch,
     setSystemStatus,
     setTaskBusyId,
     setTaskDraft,
@@ -270,6 +272,7 @@ export const useAppState = () => {
     sshHostBusy,
     sshHostDraft,
     sshHosts,
+    sshSearch,
     systemStatus,
     taskBusyId,
     taskDraft,
