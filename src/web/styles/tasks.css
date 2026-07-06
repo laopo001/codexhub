@@ -155,6 +155,10 @@
   color: #b8c5b4;
 }
 
+.taskRow .taskPromptPreview {
+  color: #d8e2d5;
+}
+
 .taskRow.paused .taskLastError {
   color: #9daa98;
 }
