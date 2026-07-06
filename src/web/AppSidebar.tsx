@@ -1,6 +1,6 @@
 import React from "react";
 import { Switch } from "antd";
-import { Copy, History, Pencil, Pin, PinOff, Play, Settings, Trash2, Unplug } from "lucide-react";
+import { Copy, History, MessageSquare, Pencil, Pin, PinOff, Play, Settings, Trash2, Unplug } from "lucide-react";
 import type { ProjectMachineGroup } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
@@ -94,6 +94,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     registeredMachines,
     removeSshHost,
     runTaskNow,
+    openTaskRunThread,
     selectedProject,
     selectProject,
     selectProjectSession,
@@ -663,6 +664,17 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                           {recentRuns.map((run) => (
                             <li className={`taskRunItem ${run.status}`} key={run.runId} title={taskRunDetailTitle(run)}>
                               <span>{taskRunLine(run)}</span>
+                              {run.threadId ? (
+                                <button
+                                  type="button"
+                                  className="taskRunThreadButton"
+                                  onClick={() => void openTaskRunThread(run.threadId ?? "")}
+                                  aria-label={`Open thread for ${task.name} run`}
+                                  title="Open run thread"
+                                >
+                                  <MessageSquare size={12} strokeWidth={2.2} aria-hidden="true" />
+                                </button>
+                              ) : null}
                               {run.error ? <em>{run.error}</em> : null}
                             </li>
                           ))}

@@ -107,6 +107,7 @@ export type AppSidebarViewModel = {
   registeredMachines: MachineSummary[];
   removeSshHost: (host: SshHost, activeConnection?: SshConnection) => MaybePromise;
   runTaskNow: (task: LocalTask) => MaybePromise;
+  openTaskRunThread: (threadId: string) => MaybePromise;
   selectedProject?: ProjectSummary | null;
   selectProject: (project: ProjectSummary) => MaybePromise;
   selectProjectSession: (session: SessionView) => MaybePromise;
