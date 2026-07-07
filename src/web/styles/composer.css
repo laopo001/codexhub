@@ -310,6 +310,276 @@
   min-width: 0;
 }
 
+.composerAttachmentStrip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid #dbe3d7;
+  border-radius: 10px;
+  background: #f8faf5;
+  padding: 4px 5px;
+}
+
+.composerAttachmentCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 34px;
+  height: 26px;
+  border: 1px solid #d4ded0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5a48;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 780;
+  line-height: 1;
+}
+
+.composerAttachmentCount svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.4;
+}
+
+.composerAttachmentScroller {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.composerAttachmentChip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  flex: 0 1 min(280px, 58vw);
+  min-width: 0;
+  max-width: min(280px, 58vw);
+  height: 30px;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #26342a;
+  padding: 2px 3px 2px 7px;
+}
+
+.composerAttachmentChip.image {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 112px;
+  width: 112px;
+  max-width: 112px;
+  height: auto;
+  padding: 4px;
+}
+
+.composerAttachmentChip.text {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 112px;
+  width: 112px;
+  max-width: 112px;
+  height: 112px;
+  padding: 4px;
+}
+
+.composerAttachmentIcon,
+.composerAttachmentThumb {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  overflow: hidden;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+
+.composerAttachmentIcon {
+  background: #eef5fa;
+  color: #2f6f9f;
+}
+
+.composerAttachmentIcon svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.35;
+}
+
+.composerAttachmentChip.text .composerAttachmentIcon {
+  grid-column: 1;
+  grid-row: 2;
+  width: 24px;
+  height: 24px;
+}
+
+.composerAttachmentThumb {
+  border: 1px solid #d7ded4;
+  background: #f4f6f1;
+}
+
+.composerAttachmentChip.image .composerAttachmentThumb {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  border-radius: 6px;
+}
+
+.composerAttachmentThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.composerAttachmentText {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.1;
+}
+
+.composerAttachmentChip.text .composerAttachmentText {
+  display: contents;
+}
+
+.composerAttachmentChip.image .composerAttachmentText {
+  padding-left: 1px;
+}
+
+.composerAttachmentChip.image .composerAttachmentPreview {
+  display: none;
+}
+
+.composerAttachmentName,
+.composerAttachmentPreview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composerAttachmentName {
+  color: #17211a;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.composerAttachmentPreview {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: #6f7a69;
+  font-size: 10px;
+}
+
+.composerAttachmentChip.text .composerAttachmentName {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+.composerAttachmentChip.text .composerAttachmentPreview {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: -webkit-box;
+  min-height: 0;
+  align-self: stretch;
+  border: 1px solid #e2e9de;
+  border-radius: 6px;
+  background: #f8faf5;
+  padding: 5px;
+  overflow: hidden;
+  color: #53604f;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.composerAttachmentPreview svg {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  stroke-width: 2.4;
+}
+
+.composerAttachmentRemoveButton,
+.composerAttachmentClearButton {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.composerAttachmentRemoveButton {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: transparent;
+  color: #7b8676;
+  padding: 0;
+}
+
+.composerAttachmentChip.image .composerAttachmentRemoveButton {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+}
+
+.composerAttachmentChip.text .composerAttachmentRemoveButton {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: center;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+}
+
+.composerAttachmentRemoveButton svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.6;
+}
+
+.composerAttachmentRemoveButton:hover {
+  background: #eef3eb;
+  color: #17211a;
+}
+
+.composerAttachmentClearButton {
+  min-height: 26px;
+  border-radius: 8px;
+  background: #e8eee4;
+  color: #3f4c3b;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.composerAttachmentClearButton:hover {
+  background: #dfe8da;
+  color: #17211a;
+}
+
 .composer textarea {
   min-height: calc(2 * 1.4em);
   max-height: 180px;

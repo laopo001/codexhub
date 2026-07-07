@@ -1,6 +1,16 @@
 import React from "react";
 import { Tabs } from "antd";
-import { Gauge, ListChecks, MessageCircle, Target, type LucideIcon } from "lucide-react";
+import {
+  FileText,
+  Gauge,
+  Image as ImageIcon,
+  ListChecks,
+  MessageCircle,
+  Paperclip,
+  Target,
+  X,
+  type LucideIcon
+} from "lucide-react";
 import { Virtuoso, type Components } from "react-virtuoso";
 import { approvalPolicyOptions, composerModeOptions, sandboxPolicyOptions } from "./appConfig.js";
 import { AppDialogs } from "./AppDialogs.js";
@@ -32,6 +42,33 @@ const weeklyGoalPolicyLabel = (targetRemainingPercent: number) =>
 
 const formatGoalPolicyPercent = (value: number) =>
   `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
+
+const firstContentLine = (text: string) =>
+  text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+
+const clippedText = (text: string, maxLength: number) =>
+  text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+
+const textAttachmentTitle = (text: string) => {
+  const firstLine = firstContentLine(text);
+  const fileMatch = /^File:\s*(.+)$/i.exec(firstLine);
+  return clippedText(fileMatch?.[1] || "Text selection", 80);
+};
+
+const textAttachmentPreview = (text: string) => {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const previewLines = /^File:/i.test(lines[0] ?? "") ? lines.slice(1) : lines;
+  return clippedText((previewLines.join(" ") || lines[0] || "Text").replace(/\s+/g, " "), 160);
+};
+
+const textAttachmentTooltip = (text: string) => {
+  const title = textAttachmentTitle(text);
+  const preview = textAttachmentPreview(text);
+  return title === preview ? title : `${title}\n${preview}`;
+};
+
+const attachmentCountLabel = (count: number) =>
+  `${count} attachment${count === 1 ? "" : "s"}`;
 
 const messagesBottomThreshold = 48;
 const messagesScrollbarHitArea = 20;
@@ -207,6 +244,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   } = viewModel;
   const canAddThreadForProject = Boolean(activeRuntimeSession?.online || selectedProject?.machineOnline);
   const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
+  const activeAttachmentCount = activeThread
+    ? activeThread.textAttachments.length + activeThread.imageAttachments.length
+    : 0;
   const showThreadTabs = Boolean(activeThreadKey || canAddThreadForProject);
   const showTurnLoadingMessage = Boolean(activeThread?.running || turnUiState.kind === "running");
   const messagesVirtuosoContext = React.useMemo(
@@ -560,31 +600,69 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           </div>
                         ) : null}
                         <div className="composerInput">
-                          {activeThread.textAttachments.length || activeThread.imageAttachments.length ? (
-                            <div className="composerAttachmentList">
-                              <div className="composerAttachmentToolbar">
-                                <span>
-                                  {activeThread.textAttachments.length + activeThread.imageAttachments.length}
-                                  {" "}
-                                  attached
-                                </span>
-                                <button type="button" onClick={() => clearThreadAttachments(activeThread.threadId)}>
+                          {activeAttachmentCount ? (
+                            <div
+                              className="composerAttachmentStrip"
+                              aria-label={`${attachmentCountLabel(activeAttachmentCount)} selected`}
+                            >
+                              <div className="composerAttachmentCount" title={`${attachmentCountLabel(activeAttachmentCount)} selected`}>
+                                <Paperclip aria-hidden="true" />
+                                <span>{activeAttachmentCount}</span>
+                              </div>
+                              <div className="composerAttachmentScroller">
+                                {activeThread.textAttachments.map((item) => (
+                                  <div className="composerAttachmentChip text" key={item.id} title={textAttachmentTooltip(item.text)}>
+                                    <span className="composerAttachmentIcon" aria-hidden="true">
+                                      <FileText />
+                                    </span>
+                                    <span className="composerAttachmentText">
+                                      <span className="composerAttachmentName">{textAttachmentTitle(item.text)}</span>
+                                      <span className="composerAttachmentPreview">{textAttachmentPreview(item.text)}</span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="composerAttachmentRemoveButton"
+                                      onClick={() => removeThreadTextAttachment(activeThread.threadId, item.id)}
+                                      aria-label={`Remove ${textAttachmentTitle(item.text)}`}
+                                      title="Remove attachment"
+                                    >
+                                      <X aria-hidden="true" />
+                                    </button>
+                                  </div>
+                                ))}
+                                {activeThread.imageAttachments.map((image) => (
+                                  <div className="composerAttachmentChip image" key={image.id} title={image.name || "Image attachment"}>
+                                    <span className="composerAttachmentThumb">
+                                      <img src={image.previewUrl} alt="" />
+                                    </span>
+                                    <span className="composerAttachmentText">
+                                      <span className="composerAttachmentName">{image.name || "Image"}</span>
+                                      <span className="composerAttachmentPreview">
+                                        <ImageIcon aria-hidden="true" />
+                                        Image
+                                      </span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="composerAttachmentRemoveButton"
+                                      onClick={() => removeThreadImage(activeThread.threadId, image.id)}
+                                      aria-label={`Remove ${image.name || "image attachment"}`}
+                                      title="Remove attachment"
+                                    >
+                                      <X aria-hidden="true" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              {activeAttachmentCount > 1 ? (
+                                <button
+                                  type="button"
+                                  className="composerAttachmentClearButton"
+                                  onClick={() => clearThreadAttachments(activeThread.threadId)}
+                                >
                                   Clear all
                                 </button>
-                              </div>
-                              {activeThread.textAttachments.map((item) => (
-                                <div className="textAttachment" key={item.id} title={item.text}>
-                                  <span className="textAttachmentLabel">文本</span>
-                                  <p>{item.text}</p>
-                                  <button type="button" onClick={() => removeThreadTextAttachment(activeThread.threadId, item.id)} aria-label="Remove selected text">x</button>
-                                </div>
-                              ))}
-                              {activeThread.imageAttachments.map((image) => (
-                                <div className="imageAttachment" key={image.id}>
-                                  <img src={image.previewUrl} alt={image.name} />
-                                  <button type="button" onClick={() => removeThreadImage(activeThread.threadId, image.id)} aria-label={`Remove ${image.name}`}>x</button>
-                                </div>
-                              ))}
+                              ) : null}
                             </div>
                           ) : null}
                           <textarea

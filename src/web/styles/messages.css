@@ -1324,8 +1324,6 @@
 .composerMenuItem,
 .composerMenuChoice,
 .composerModeOption,
-.imageAttachment button,
-.textAttachment button,
 .messageContextMenu button,
 .iconButton {
   cursor: pointer;
@@ -1340,8 +1338,6 @@
 .composerMenuItem:disabled,
 .composerMenuChoice:disabled,
 .composerModeOption:disabled,
-.imageAttachment button:disabled,
-.textAttachment button:disabled,
 .messageContextMenu button:disabled,
 .iconButton:disabled {
   cursor: not-allowed;
