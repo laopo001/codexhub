@@ -7,6 +7,8 @@
   "command.openInBrowser.shortTitle": "在浏览器中打开",
   "command.openConfig.title": "打开配置文件",
   "command.openConfig.shortTitle": "打开配置",
+  "command.sendSelection.title": "发送选中代码到 Codex Hub",
+  "command.sendSelection.shortTitle": "发送到 Codex Hub",
   "viewsContainer.codexhub.title": "Codex Hub",
   "view.workspace.name": "Workspace"
 }

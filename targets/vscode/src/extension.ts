@@ -6,6 +6,7 @@ import { startEmbeddedServer } from "../../../src/server/embedded.js";
 
 const viewId = "codexhub.workspaceView";
 const vscodeWorkspaceGroupId = "workspace";
+const maxSelectionAttachmentBytes = 512 * 1024;
 
 type VscodeCodexHubServer = {
   url: string;
@@ -21,6 +22,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("codexhub.refresh", () => provider.refresh()),
     vscode.commands.registerCommand("codexhub.openInBrowser", () => provider.openInBrowser()),
     vscode.commands.registerCommand("codexhub.openConfig", () => provider.openConfig()),
+    vscode.commands.registerCommand("codexhub.sendSelectionToChat", () => provider.sendSelectionToChat()),
     provider
   );
 }
@@ -34,6 +36,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   private static currentServerStart: Promise<VscodeCodexHubServer> | null = null;
   private view: vscode.WebviewView | null = null;
   private webviewMessageSubscription: vscode.Disposable | null = null;
+  private renderPromise: Promise<void> | null = null;
   private disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
@@ -58,7 +61,8 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       enableScripts: true
     };
     view.webview.html = statusHtml("Starting Codex Hub...");
-    void this.render();
+    this.renderPromise = this.render();
+    void this.renderPromise;
   }
 
   dispose() {
@@ -70,7 +74,8 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   async refresh() {
     if (!this.view || this.disposed) return;
     this.view.webview.html = statusHtml("Refreshing Codex Hub...");
-    await this.render();
+    this.renderPromise = this.render();
+    await this.renderPromise;
   }
 
   async openInBrowser() {
@@ -83,6 +88,35 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     await ensureConfigFile(configPath);
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(configPath));
     await vscode.window.showTextDocument(document, { preview: false });
+  }
+
+  async sendSelectionToChat() {
+    const attachment = selectedCodeAttachmentFromEditor();
+    if (!attachment.ok) {
+      await vscode.window.showInformationMessage(attachment.message);
+      return;
+    }
+
+    if (this.view) {
+      this.view.show(false);
+    } else {
+      await vscode.commands.executeCommand(`${viewId}.focus`);
+    }
+    const view = await this.waitForView();
+    if (!view) {
+      await vscode.window.showWarningMessage("Codex Hub view is not available.");
+      return;
+    }
+    await this.renderPromise?.catch(() => undefined);
+    await delay(100);
+
+    const delivered = await view.webview.postMessage({
+      type: "codexhub.addTextAttachment",
+      text: attachment.text
+    });
+    if (!delivered) {
+      await vscode.window.showWarningMessage("Codex Hub could not receive the selected code.");
+    }
   }
 
   private async handleWebviewMessage(message: unknown) {
@@ -151,6 +185,14 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     return CodexHubWorkspaceViewProvider.currentServer;
   }
 
+  private async waitForView(timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!this.view && !this.disposed && Date.now() < deadline) {
+      await delay(100);
+    }
+    return this.view;
+  }
+
   private async startWindowServer(): Promise<VscodeCodexHubServer> {
     const staticDirectory = this.context.asAbsolutePath("dist");
     const buildId = await vscodeWindowBuildId(this.context, staticDirectory);
@@ -190,6 +232,56 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 type VscodeWorkspaceFolder = {
   path: string;
   name: string;
+};
+
+type SelectedCodeAttachment =
+  | { ok: true; text: string }
+  | { ok: false; message: string };
+
+const selectedCodeAttachmentFromEditor = (): SelectedCodeAttachment => {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return { ok: false, message: "Open a file and select code to send to Codex Hub." };
+
+  const selections = editor.selections
+    .filter((selection) => !selection.isEmpty)
+    .map((selection) => ({
+      selection,
+      text: editor.document.getText(selection)
+    }))
+    .filter((item) => item.text.trim().length > 0);
+  if (!selections.length) return { ok: false, message: "Select code to send to Codex Hub." };
+
+  const document = editor.document;
+  const documentPath = document.uri.scheme === "file" ? document.uri.fsPath : document.fileName;
+  const displayName = path.basename(documentPath || "Untitled");
+  const ranges = selections.map((item) => selectionRangeLabel(item.selection));
+  const body = selections.length === 1
+    ? selections[0].text
+    : selections.map((item, index) => [
+      `--- Selection ${index + 1}: ${selectionRangeLabel(item.selection)} ---`,
+      item.text
+    ].join("\n")).join("\n\n");
+  const lines = [
+    `File: ${displayName}${ranges.length ? `:${ranges.join(",")}` : ""}`,
+    document.uri.scheme === "file" ? `Path: ${document.uri.fsPath}` : `Document: ${document.fileName}`,
+    document.languageId ? `Language: ${document.languageId}` : null,
+    "",
+    body
+  ];
+  const text = lines.filter((line): line is string => line !== null).join("\n");
+  if (Buffer.byteLength(text, "utf8") > maxSelectionAttachmentBytes) {
+    return {
+      ok: false,
+      message: "Selected code is larger than 512KB. Send a smaller selection to Codex Hub."
+    };
+  }
+  return { ok: true, text };
+};
+
+const selectionRangeLabel = (selection: vscode.Selection) => {
+  const startLine = selection.start.line + 1;
+  const endLine = selection.end.line + 1;
+  return startLine === endLine ? `L${startLine}` : `L${startLine}-L${endLine}`;
 };
 
 const fileWorkspaceFolders = (): VscodeWorkspaceFolder[] =>
@@ -313,11 +405,28 @@ const iframeHtml = (src: string, workspacePath: string) => {
     "const vscode = acquireVsCodeApi();",
     "const codexhubFrame = document.getElementById('codexhubFrame');",
     `const codexhubOrigin = ${scriptOrigin};`,
+    "const pendingCodexHubMessages = [];",
+    "let codexhubFrameLoaded = false;",
+    "const postToCodexHubFrame = (data) => {",
+    "  if (!codexhubFrameLoaded) {",
+    "    pendingCodexHubMessages.push(data);",
+    "    return;",
+    "  }",
+    "  codexhubFrame.contentWindow?.postMessage(data, codexhubOrigin);",
+    "};",
+    "codexhubFrame.addEventListener('load', () => {",
+    "  codexhubFrameLoaded = true;",
+    "  while (pendingCodexHubMessages.length) postToCodexHubFrame(pendingCodexHubMessages.shift());",
+    "});",
     "window.addEventListener('message', (event) => {",
-    "  if (event.source !== codexhubFrame.contentWindow || event.origin !== codexhubOrigin) return;",
     "  const data = event.data;",
-    "  if (!data || (data.type !== 'codexhub.taskCompleteNotification' && data.type !== 'codexhub.openFile')) return;",
-    "  vscode.postMessage(data);",
+    "  if (!data) return;",
+    "  if (event.source === codexhubFrame.contentWindow && event.origin === codexhubOrigin) {",
+    "    if (data.type !== 'codexhub.taskCompleteNotification' && data.type !== 'codexhub.openFile') return;",
+    "    vscode.postMessage(data);",
+    "    return;",
+    "  }",
+    "  if (data.type === 'codexhub.addTextAttachment') postToCodexHubFrame(data);",
     "});",
     "</script>",
     "</body>",

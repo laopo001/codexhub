@@ -15,8 +15,24 @@ export const clipboardImageFiles = (clipboardData: DataTransfer) => {
 
 export const composeUserInputText = (typedText: string, textAttachments: TextAttachment[]) => [
   typedText.trim(),
-  ...textAttachments.map((item) => normalizeSelectedText(item.text))
+  ...formatTextAttachmentReferences(textAttachments)
 ].filter(Boolean).join("\n\n");
+
+export const formatTextAttachmentReferences = (textAttachments: TextAttachment[]) =>
+  textAttachments
+    .map((item) => normalizeSelectedText(item.text))
+    .filter(Boolean)
+    .map((text, index) => formatTextAttachmentReference(index + 1, text));
+
+export const formatTextAttachmentReference = (index: number, text: string) => {
+  const fence = codeFenceFor(text);
+  return [`## 引用${index}`, fence, text, fence].join("\n");
+};
+
+const codeFenceFor = (text: string) => {
+  const longestBacktickRun = text.match(/`+/g)?.reduce((longest, run) => Math.max(longest, run.length), 0) ?? 0;
+  return "`".repeat(Math.max(3, longestBacktickRun + 1));
+};
 
 export const normalizeSelectedText = (value: string) =>
   value.replace(/\r\n/g, "\n").split("\n").map((line) => line.trimEnd()).join("\n").trim();

@@ -267,6 +267,29 @@ const App = () => {
     ...composerActions,
     ...projectActions
   };
+  React.useEffect(() => {
+    if (!isVscodeSurface) return undefined;
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== window.parent) return;
+      const record = event.data && typeof event.data === "object" && !Array.isArray(event.data)
+        ? event.data as Record<string, unknown>
+        : null;
+      if (record?.type !== "codexhub.addTextAttachment") return;
+      const text = typeof record.text === "string" ? record.text : "";
+      if (!text.trim()) return;
+      if (!activeThread?.threadId) {
+        window.alert("Open a Codex Hub thread before sending selected code from VS Code.");
+        return;
+      }
+      composerActions.addThreadTextAttachment(activeThread.threadId, text);
+      window.requestAnimationFrame(() => {
+        composerTextareaRef.current?.focus();
+        resizeComposerTextarea(composerTextareaRef.current);
+      });
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [activeThread?.threadId, composerActions, composerTextareaRef]);
   const {
     addContextSelectionToConversation,
     addThreadFiles,

@@ -32,7 +32,8 @@
     "onView:codexhub.workspaceView",
     "onCommand:codexhub.refresh",
     "onCommand:codexhub.openInBrowser",
-    "onCommand:codexhub.openConfig"
+    "onCommand:codexhub.openConfig",
+    "onCommand:codexhub.sendSelectionToChat"
   ],
   "main": "./extension.cjs",
   "contributes": {
@@ -54,8 +55,23 @@
         "category": "%command.category%",
         "title": "%command.openConfig.title%",
         "shortTitle": "%command.openConfig.shortTitle%"
+      },
+      {
+        "command": "codexhub.sendSelectionToChat",
+        "category": "%command.category%",
+        "title": "%command.sendSelection.title%",
+        "shortTitle": "%command.sendSelection.shortTitle%"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codexhub.sendSelectionToChat",
+          "when": "editorHasSelection",
+          "group": "navigation@92"
+        }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [
         {

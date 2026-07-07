@@ -7,6 +7,8 @@
   "command.openInBrowser.shortTitle": "Open in Browser",
   "command.openConfig.title": "Open Config File",
   "command.openConfig.shortTitle": "Open Config",
+  "command.sendSelection.title": "Send Selection to Codex Hub",
+  "command.sendSelection.shortTitle": "Send to Codex Hub",
   "viewsContainer.codexhub.title": "Codex Hub",
   "view.workspace.name": "Workspace"
 }
