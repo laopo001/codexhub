@@ -30,6 +30,20 @@ export type ComposerActionsDependencies = {
 
 type ComposerHistoryDirection = "previous" | "next";
 
+const insertTextBlock = (value: string, text: string, start = value.length, end = start) => {
+  const safeStart = Math.max(0, Math.min(start, value.length));
+  const safeEnd = Math.max(safeStart, Math.min(end, value.length));
+  const before = value.slice(0, safeStart);
+  const after = value.slice(safeEnd);
+  const leading = before && !before.endsWith("\n") ? "\n" : "";
+  const trailing = after && !after.startsWith("\n") ? "\n" : "";
+  const inserted = `${leading}${text}${trailing}`;
+  return {
+    value: `${before}${inserted}${after}`,
+    cursor: before.length + leading.length + text.length
+  };
+};
+
 export type ComposerActions = {
   updateThreadInput: (threadId: string, input: string) => void;
   resetComposerHistory: (threadId: string) => void;
@@ -46,6 +60,12 @@ export type ComposerActions = {
     history: string[]
   ) => void;
   addThreadTextAttachment: (threadId: string, text: string) => void;
+  insertThreadPathText: (
+    threadId: string,
+    paths: string[],
+    textarea: HTMLTextAreaElement | null,
+    caretIndex?: number | null
+  ) => void;
   addThreadImageFiles: (threadId: string, files: File[]) => void;
   addThreadImages: (threadId: string, files: FileList | null) => void;
   addThreadFiles: (threadId: string, files: FileList | null) => Promise<void>;
@@ -148,6 +168,35 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
       ? { ...thread, textAttachments: [...thread.textAttachments, { id: browserId(), text: normalizedText }] }
       : thread));
+  };
+
+  const insertThreadPathText = (
+    threadId: string,
+    paths: string[],
+    textarea: HTMLTextAreaElement | null,
+    caretIndex?: number | null
+  ) => {
+    const text = paths.map((path) => normalizeSelectedText(path)).filter(Boolean).join("\n");
+    if (!text) return;
+    ctx.composerHistoryRef.current = null;
+    const hasDropCaret = typeof caretIndex === "number";
+    const selection = textarea
+      ? {
+          start: hasDropCaret ? caretIndex : textarea.selectionStart,
+          end: hasDropCaret ? caretIndex : textarea.selectionEnd,
+          value: textarea.value
+        }
+      : null;
+    const inserted = selection ? insertTextBlock(selection.value, text, selection.start, selection.end) : null;
+    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
+      ? { ...thread, input: inserted?.value ?? insertTextBlock(thread.input, text).value }
+      : thread));
+    if (!textarea || !inserted) return;
+    window.requestAnimationFrame(() => {
+      ctx.resizeComposerTextarea(textarea);
+      textarea.focus();
+      textarea.setSelectionRange(inserted.cursor, inserted.cursor);
+    });
   };
 
   const addThreadImageFiles = (threadId: string, files: File[]) => {
@@ -284,6 +333,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     navigateComposerHistory,
     handleComposerKeyDown,
     addThreadTextAttachment,
+    insertThreadPathText,
     addThreadImageFiles,
     addThreadImages,
     addThreadFiles,

@@ -13,6 +13,31 @@ export const clipboardImageFiles = (clipboardData: DataTransfer) => {
   return [...clipboardData.files].filter((file) => file.type.startsWith("image/"));
 };
 
+export const dataTransferHasPathPayload = (dataTransfer: DataTransfer) =>
+  dataTransferTypes(dataTransfer).length === 0 || dataTransferTypes(dataTransfer).some((type) => {
+    const normalized = type.toLowerCase();
+    return normalized === "text/uri-list"
+      || normalized === "text/plain"
+      || normalized === "text"
+      || normalized === "url"
+      || normalized === "files"
+      || normalized.includes("uri-list")
+      || normalized.includes("vscode")
+      || normalized.includes("code.tree")
+      || normalized.includes("resource");
+  });
+
+export const droppedPathsFromDataTransfer = (dataTransfer: DataTransfer) => {
+  const candidates = preferredDropTypes(dataTransfer)
+    .map((type, priority) => ({
+      paths: uniquePaths(pathsFromDropPayload(safeDataTransferText(dataTransfer, type))),
+      priority
+    }))
+    .filter((item) => item.paths.length > 0)
+    .sort((left, right) => right.paths.length - left.paths.length || left.priority - right.priority);
+  return candidates[0]?.paths ?? [];
+};
+
 export const composeUserInputText = (typedText: string, textAttachments: TextAttachment[]) => [
   typedText.trim(),
   ...formatTextAttachmentReferences(textAttachments)
@@ -26,7 +51,7 @@ export const formatTextAttachmentReferences = (textAttachments: TextAttachment[]
 
 export const formatTextAttachmentReference = (index: number, text: string) => {
   const fence = codeFenceFor(text);
-  return [`## 引用${index}`, fence, text, fence].join("\n");
+  return [`## Reference ${index}`, fence, text, fence].join("\n");
 };
 
 const codeFenceFor = (text: string) => {
@@ -36,6 +61,236 @@ const codeFenceFor = (text: string) => {
 
 export const normalizeSelectedText = (value: string) =>
   value.replace(/\r\n/g, "\n").split("\n").map((line) => line.trimEnd()).join("\n").trim();
+
+export const textareaCaretIndexFromPoint = (
+  textarea: HTMLTextAreaElement,
+  clientX: number,
+  clientY: number
+) => {
+  const value = textarea.value;
+  if (!value) return 0;
+
+  const style = window.getComputedStyle(textarea);
+  const fontSize = cssPixelValue(style.fontSize, 14);
+  const lineHeight = cssPixelValue(style.lineHeight, fontSize * 1.4);
+  const paddingLeft = cssPixelValue(style.paddingLeft, 0);
+  const paddingRight = cssPixelValue(style.paddingRight, 0);
+  const paddingTop = cssPixelValue(style.paddingTop, 0);
+  const rect = textarea.getBoundingClientRect();
+  const x = Math.max(0, clientX - rect.left - textarea.clientLeft - paddingLeft + textarea.scrollLeft);
+  const y = Math.max(0, clientY - rect.top - textarea.clientTop - paddingTop + textarea.scrollTop);
+  const measure = textMeasurer(style, fontSize);
+  const rows = textareaVisualRows(
+    value,
+    Math.max(1, textarea.clientWidth - paddingLeft - paddingRight),
+    measure
+  );
+  const row = rows[clampNumber(Math.floor(y / Math.max(1, lineHeight)), 0, rows.length - 1)];
+  if (!row) return value.length;
+  return clampNumber(row.start + caretOffsetInRow(row.text, x, measure), 0, value.length);
+};
+
+const dataTransferTypes = (dataTransfer: DataTransfer) => [...dataTransfer.types];
+
+const safeDataTransferText = (dataTransfer: DataTransfer, type: string) => {
+  try {
+    return dataTransfer.getData(type);
+  } catch {
+    return "";
+  }
+};
+
+const preferredDropTypes = (dataTransfer: DataTransfer) => {
+  const types = dataTransferTypes(dataTransfer);
+  const ordered = [
+    "text/uri-list",
+    ...types.filter((type) => {
+      const normalized = type.toLowerCase();
+      return normalized !== "text/uri-list" && (
+        normalized.includes("uri")
+        || normalized.includes("vscode")
+        || normalized.includes("code.tree")
+        || normalized.includes("resource")
+        || normalized.includes("file")
+      );
+    }),
+    "text/plain"
+  ];
+  return [...new Set(ordered)];
+};
+
+const uniquePaths = (paths: string[]) => {
+  const candidates = new Map<string, string>();
+  for (const path of paths) {
+    const normalized = normalizePathForDisplay(path);
+    const key = canonicalPathKey(normalized);
+    if (!candidates.has(key)) candidates.set(key, normalized);
+  }
+  return [...candidates.values()];
+};
+
+const pathsFromDropPayload = (payload: string): string[] => {
+  const normalized = payload.trim();
+  if (!normalized) return [];
+  return [
+    ...pathsFromJsonPayload(normalized),
+    ...normalized.split(/\r?\n/).flatMap((line) => pathsFromDropLine(line))
+  ];
+};
+
+const pathsFromJsonPayload = (payload: string): string[] => {
+  if (!payload.startsWith("{") && !payload.startsWith("[")) return [];
+  try {
+    return pathsFromJsonValue(JSON.parse(payload));
+  } catch {
+    return [];
+  }
+};
+
+const pathsFromJsonValue = (value: unknown): string[] => {
+  if (typeof value === "string") {
+    const path = pathFromDroppedString(value);
+    return path ? [path] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap(pathsFromJsonValue);
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => {
+    if (
+      key === "fsPath"
+      || key === "path"
+      || key === "uri"
+      || key === "resource"
+      || key === "resources"
+      || key === "resourceUri"
+    ) return pathsFromJsonValue(item);
+    return [];
+  });
+};
+
+const pathsFromDropLine = (line: string): string[] => {
+  const text = line.trim();
+  if (!text || text.startsWith("#")) return [];
+  const path = pathFromDroppedString(stripDropQuotes(text));
+  return path ? [path] : [];
+};
+
+const stripDropQuotes = (value: string) =>
+  value.replace(/^['"]|['"]$/g, "");
+
+const pathFromDroppedString = (value: string) =>
+  pathFromUriString(value) || (isAbsolutePathLike(value) ? value : "");
+
+const pathFromUriString = (value: string) => {
+  try {
+    const url = new URL(value);
+    if (url.protocol === "file:") return pathFromFileUrl(url);
+    if (url.protocol === "vscode-remote:") return decodeURIComponent(url.pathname);
+    return "";
+  } catch {
+    return "";
+  }
+};
+
+const pathFromFileUrl = (url: URL) => {
+  const pathname = decodeURIComponent(url.pathname);
+  if (/^\/[A-Za-z]:\//.test(pathname)) return normalizePathForDisplay(pathname.slice(1).replace(/\//g, "\\"));
+  if (url.hostname) return `\\\\${url.hostname}${pathname.replace(/\//g, "\\")}`;
+  return pathname;
+};
+
+const isAbsolutePathLike = (value: string) =>
+  value.startsWith("/")
+  || /^[A-Za-z]:[\\/]/.test(value)
+  || /^\\\\[^\\]+\\[^\\]+/.test(value);
+
+const canonicalPathKey = (path: string) => {
+  const normalized = path.trim().replace(/\//g, "\\");
+  if (/^[A-Za-z]:\\/.test(normalized) || /^\\\\[^\\]+\\[^\\]+/.test(normalized)) return normalized.toLowerCase();
+  return path.trim();
+};
+
+const normalizePathForDisplay = (path: string) =>
+  path.replace(/^([a-z]):([\\/])/, (_, drive: string, slash: string) => `${drive.toUpperCase()}:${slash}`);
+
+const cssPixelValue = (value: string, fallback: number) => {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const textMeasurer = (style: CSSStyleDeclaration, fontSize: number) => {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) return (text: string) => text.length * fontSize * 0.6;
+  context.font = style.font || [
+    style.fontStyle,
+    style.fontVariant,
+    style.fontWeight,
+    style.fontSize,
+    style.fontFamily
+  ].filter(Boolean).join(" ");
+  return (text: string) => context.measureText(text).width;
+};
+
+type TextareaVisualRow = {
+  start: number;
+  text: string;
+};
+
+const textareaVisualRows = (
+  value: string,
+  maxWidth: number,
+  measure: (text: string) => number
+): TextareaVisualRow[] => {
+  const rows: TextareaVisualRow[] = [];
+  let absoluteStart = 0;
+  for (const line of value.split("\n")) {
+    rows.push(...wrapTextareaLine(line, absoluteStart, maxWidth, measure));
+    absoluteStart += line.length + 1;
+  }
+  return rows.length ? rows : [{ start: 0, text: "" }];
+};
+
+const wrapTextareaLine = (
+  line: string,
+  absoluteStart: number,
+  maxWidth: number,
+  measure: (text: string) => number
+): TextareaVisualRow[] => {
+  if (!line) return [{ start: absoluteStart, text: "" }];
+  const rows: TextareaVisualRow[] = [];
+  let segment = "";
+  let segmentStart = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    const nextSegment = `${segment}${line[index]}`;
+    if (segment && measure(nextSegment) > maxWidth) {
+      rows.push({ start: absoluteStart + segmentStart, text: segment });
+      segment = line[index] ?? "";
+      segmentStart = index;
+    } else {
+      segment = nextSegment;
+    }
+  }
+  rows.push({ start: absoluteStart + segmentStart, text: segment });
+  return rows;
+};
+
+const caretOffsetInRow = (
+  text: string,
+  x: number,
+  measure: (text: string) => number
+) => {
+  if (x <= 0 || !text) return 0;
+  let previousWidth = 0;
+  for (let offset = 1; offset <= text.length; offset += 1) {
+    const width = measure(text.slice(0, offset));
+    if (width >= x) return x - previousWidth < width - x ? offset - 1 : offset;
+    previousWidth = width;
+  }
+  return text.length;
+};
+
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(value, max));
 
 export const userMessageHistoryFromRecords = (records: CodexRecord[]) => {
   const history: string[] = [];

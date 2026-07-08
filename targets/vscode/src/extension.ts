@@ -23,6 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("codexhub.openInBrowser", () => provider.openInBrowser()),
     vscode.commands.registerCommand("codexhub.openConfig", () => provider.openConfig()),
     vscode.commands.registerCommand("codexhub.sendSelectionToChat", () => provider.sendSelectionToChat()),
+    vscode.commands.registerCommand("codexhub.sendPathToChat", (uri?: vscode.Uri, selectedUris?: vscode.Uri[]) => provider.sendPathToChat(uri, selectedUris)),
     provider
   );
 }
@@ -96,7 +97,21 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       await vscode.window.showInformationMessage(attachment.message);
       return;
     }
+    await this.sendTextAttachmentsToChat([attachment.text]);
+  }
 
+  async sendPathToChat(uri?: vscode.Uri, selectedUris?: vscode.Uri[]) {
+    const attachment = pathAttachmentsFromExplorerSelection(uri, selectedUris);
+    if (!attachment.ok) {
+      await vscode.window.showInformationMessage(attachment.message);
+      return;
+    }
+    await this.sendTextAttachmentsToChat(attachment.texts);
+  }
+
+  private async sendTextAttachmentsToChat(texts: string[]) {
+    const normalized = texts.map((text) => text.trim()).filter(Boolean);
+    if (!normalized.length) return;
     if (this.view) {
       this.view.show(false);
     } else {
@@ -110,12 +125,15 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     await this.renderPromise?.catch(() => undefined);
     await delay(100);
 
-    const delivered = await view.webview.postMessage({
-      type: "codexhub.addTextAttachment",
-      text: attachment.text
-    });
-    if (!delivered) {
-      await vscode.window.showWarningMessage("Codex Hub could not receive the selected code.");
+    for (const text of normalized) {
+      const delivered = await view.webview.postMessage({
+        type: "codexhub.addTextAttachment",
+        text
+      });
+      if (!delivered) {
+        await vscode.window.showWarningMessage("Codex Hub could not receive the selected content.");
+        return;
+      }
     }
   }
 
@@ -238,6 +256,10 @@ type SelectedCodeAttachment =
   | { ok: true; text: string }
   | { ok: false; message: string };
 
+type PathAttachments =
+  | { ok: true; texts: string[] }
+  | { ok: false; message: string };
+
 const selectedCodeAttachmentFromEditor = (): SelectedCodeAttachment => {
   const editor = vscode.window.activeTextEditor;
   if (!editor) return { ok: false, message: "Open a file and select code to send to Codex Hub." };
@@ -276,6 +298,35 @@ const selectedCodeAttachmentFromEditor = (): SelectedCodeAttachment => {
     };
   }
   return { ok: true, text };
+};
+
+const pathAttachmentsFromExplorerSelection = (uri?: vscode.Uri, selectedUris?: vscode.Uri[]): PathAttachments => {
+  const uris = uniqueUris([
+    ...(Array.isArray(selectedUris) && selectedUris.length ? selectedUris : []),
+    ...(uri ? [uri] : [])
+  ]);
+  const paths = uris
+    .map(pathTextFromUri)
+    .filter((item): item is string => Boolean(item));
+  if (!paths.length) {
+    return { ok: false, message: "Select a file in Explorer to send its path to Codex Hub." };
+  }
+  return { ok: true, texts: paths.map((item) => `Path: ${item}`) };
+};
+
+const uniqueUris = (uris: vscode.Uri[]) => {
+  const seen = new Set<string>();
+  return uris.filter((uri) => {
+    const key = uri.toString();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const pathTextFromUri = (uri: vscode.Uri) => {
+  if (uri.scheme === "file") return uri.fsPath;
+  return uri.toString(true);
 };
 
 const selectionRangeLabel = (selection: vscode.Selection) => {

@@ -9,6 +9,8 @@
   "command.openConfig.shortTitle": "打开配置",
   "command.sendSelection.title": "发送选中代码到 Codex Hub",
   "command.sendSelection.shortTitle": "发送到 Codex Hub",
+  "command.sendPath.title": "发送路径到 Codex Hub",
+  "command.sendPath.shortTitle": "发送路径",
   "viewsContainer.codexhub.title": "Codex Hub",
   "view.workspace.name": "Workspace"
 }

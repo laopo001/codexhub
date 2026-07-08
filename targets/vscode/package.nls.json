@@ -9,6 +9,8 @@
   "command.openConfig.shortTitle": "Open Config",
   "command.sendSelection.title": "Send Selection to Codex Hub",
   "command.sendSelection.shortTitle": "Send to Codex Hub",
+  "command.sendPath.title": "Send Path to Codex Hub",
+  "command.sendPath.shortTitle": "Send Path",
   "viewsContainer.codexhub.title": "Codex Hub",
   "view.workspace.name": "Workspace"
 }

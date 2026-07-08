@@ -12,7 +12,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { Virtuoso, type Components } from "react-virtuoso";
-import { approvalPolicyOptions, composerModeOptions, sandboxPolicyOptions } from "./appConfig.js";
+import { approvalPolicyOptions, composerModeOptions, isVscodeSurface, sandboxPolicyOptions } from "./appConfig.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import type { AppViewModel } from "./viewModel.js";
@@ -25,6 +25,9 @@ import {
   goalStatusClass,
   goalStatusLabel,
   MessageCard,
+  dataTransferHasPathPayload,
+  droppedPathsFromDataTransfer,
+  textareaCaretIndexFromPoint,
 } from "./appHelpers.js";
 
 type AppViewProps = {
@@ -52,12 +55,13 @@ const clippedText = (text: string, maxLength: number) =>
 const textAttachmentTitle = (text: string) => {
   const firstLine = firstContentLine(text);
   const fileMatch = /^File:\s*(.+)$/i.exec(firstLine);
-  return clippedText(fileMatch?.[1] || "Text selection", 80);
+  const pathMatch = /^Path:\s*(.+)$/i.exec(firstLine);
+  return clippedText(fileMatch?.[1] || pathMatch?.[1] || "Text selection", 80);
 };
 
 const textAttachmentPreview = (text: string) => {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const previewLines = /^File:/i.test(lines[0] ?? "") ? lines.slice(1) : lines;
+  const previewLines = /^(File|Path):/i.test(lines[0] ?? "") ? lines.slice(1) : lines;
   return clippedText((previewLines.join(" ") || lines[0] || "Text").replace(/\s+/g, " "), 160);
 };
 
@@ -144,6 +148,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     goalDialog,
     handleComposerKeyDown,
     imageFileInputRef,
+    insertThreadPathText,
     inspectContextMessage,
     inspectMessage,
     latestTurnStatusScope,
@@ -260,6 +265,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   const messagesUserScrollIntentRef = React.useRef(false);
   const messagesUserScrollIntentTimerRef = React.useRef<number | null>(null);
   const messagesStickScrollFrameRef = React.useRef<number | null>(null);
+  const composerDropCaretRef = React.useRef<Record<string, number>>({});
   const openGoalRunPolicyDialog = () => {
     if (!activeThread) return;
     const goalRunPolicy = activeThread.goalRunPolicy?.type === "consumeUntilWeeklyRemainingAtOrBelow"
@@ -676,6 +682,29 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                             onPaste={(event) => {
                               if (!pasteThreadImages(activeThread.threadId, event.clipboardData)) return;
                               event.preventDefault();
+                            }}
+                            onDragOver={(event) => {
+                              if (!isVscodeSurface || !dataTransferHasPathPayload(event.dataTransfer)) return;
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "copy";
+                              const caretIndex = textareaCaretIndexFromPoint(
+                                event.currentTarget,
+                                event.clientX,
+                                event.clientY
+                              );
+                              composerDropCaretRef.current[activeThread.threadId] = caretIndex;
+                              event.currentTarget.focus();
+                              event.currentTarget.setSelectionRange(caretIndex, caretIndex);
+                            }}
+                            onDrop={(event) => {
+                              if (!isVscodeSurface) return;
+                              const paths = droppedPathsFromDataTransfer(event.dataTransfer);
+                              if (!paths.length) return;
+                              event.preventDefault();
+                              const caretIndex = composerDropCaretRef.current[activeThread.threadId]
+                                ?? textareaCaretIndexFromPoint(event.currentTarget, event.clientX, event.clientY);
+                              delete composerDropCaretRef.current[activeThread.threadId];
+                              insertThreadPathText(activeThread.threadId, paths, event.currentTarget, caretIndex);
                             }}
                             onKeyDown={(event) => handleComposerKeyDown(event, activeThread.threadId, activeUserMessageHistory)}
                             placeholder="例如：检查这个 repo 的结构并给我下一步建议"

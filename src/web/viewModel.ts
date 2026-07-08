@@ -212,6 +212,12 @@ export type AppViewModel = AppSidebarViewModel & {
     message: WebRecordView,
     canInspect: boolean
   ) => void;
+  insertThreadPathText: (
+    threadId: string,
+    paths: string[],
+    textarea: HTMLTextAreaElement | null,
+    caretIndex?: number | null
+  ) => void;
   loadThreadPickerCandidates: (sessionId: string) => MaybePromise;
   openThreadPicker: (session: SessionView, workingDirectory?: string) => MaybePromise;
   openSelectedProjectThreadPicker: () => MaybePromise;
