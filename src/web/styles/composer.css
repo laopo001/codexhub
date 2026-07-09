@@ -370,6 +370,10 @@
   background: #eef3eb;
 }
 
+.commandPalette.keyboardNavigation .commandPaletteItem:hover:not(.active) {
+  background: transparent;
+}
+
 .commandPaletteItem.disabled {
   color: #8a9584;
   cursor: default;
