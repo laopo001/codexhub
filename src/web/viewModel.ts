@@ -3,6 +3,7 @@ import type { VirtuosoHandle } from "react-virtuoso";
 import type {
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
+  CommandPalette,
   TaskUpdateInput as ApiTaskUpdateInput,
   ThreadGoalUpdateInput as ApiThreadGoalUpdateInput
 } from "../shared/apiContract.js";
@@ -171,6 +172,9 @@ export type AppViewModel = AppSidebarViewModel & {
   chooseThreadCandidate: (candidate: CodexThreadCandidate) => MaybePromise;
   clearThreadGoal: (threadId: string) => MaybePromise;
   closeThread: (threadId: string) => MaybePromise;
+  compactThread: (threadId: string) => MaybePromise;
+  commandPaletteByScope: Record<string, CommandPalette>;
+  commandPaletteLoadingScopes: Record<string, boolean>;
   composerMenuOpen: boolean;
   composerMode: ComposerMode;
   composerTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -192,6 +196,7 @@ export type AppViewModel = AppSidebarViewModel & {
   inspectContextMessage: () => void;
   inspectMessage: WebRecordView | null;
   latestTurnStatusScope: TurnStatusScope;
+  loadCommandPalette: (sessionId: string, cwd: string) => MaybePromise;
   loadProjectPickerDirectory: (machineId: string, path: string) => MaybePromise;
   messageContextMenu: MessageContextMenuState | null;
   messageDisplayMode: MessageDisplayMode;

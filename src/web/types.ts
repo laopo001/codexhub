@@ -1,6 +1,8 @@
 import type React from "react";
 import type {
   ConnectionsStreamEvent as ApiConnectionsStreamEvent,
+  CommandPalette as ApiCommandPalette,
+  CommandPaletteEntry as ApiCommandPaletteEntry,
   MachineDirectoryListing as ApiMachineDirectoryListing,
   MachineSummary as ApiMachineSummary,
   ModelCatalogItem as ApiModelCatalogItem,
@@ -62,6 +64,8 @@ export type ThreadRenameDialogState = {
 export type SessionSummary = ApiSessionSummary;
 export type SessionView = ApiSessionView;
 export type ModelCatalogItem = ApiModelCatalogItem;
+export type CommandPalette = ApiCommandPalette;
+export type CommandPaletteEntry = ApiCommandPaletteEntry;
 export type MachineSummary = ApiMachineSummary;
 export type MachineDirectoryListing = ApiMachineDirectoryListing;
 export type MachineDirectoryEntry = MachineDirectoryListing["entries"][number];

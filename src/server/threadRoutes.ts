@@ -11,6 +11,7 @@ import {
   webEventsMessageSchema,
   type SessionModelsPayload,
   type SessionsPayload,
+  type CommandPalettePayload,
   type ThreadCandidatesPayload,
   type ThreadCompactPayload,
   type ThreadDeletePayload,
@@ -216,6 +217,19 @@ export const registerThreadRoutes = <
     try {
       const result = await ctx.threads.listSessionModels(params.sessionId, query.includeHidden === "true");
       return result satisfies SessionModelsPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Session not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.get("/api/sessions/:sessionId/command-palette", async (request, reply) => {
+    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
+    const query = z.object({ cwd: z.string().min(1).optional() }).parse(request.query);
+    try {
+      const result = await ctx.threads.listSessionCommandPalette(params.sessionId, query.cwd);
+      return result satisfies CommandPalettePayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Session not found:") ? 404 : 409);

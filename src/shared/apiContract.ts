@@ -24,6 +24,8 @@ import type { ModelReasoningEffort, ThreadRateLimits, ThreadRateLimitUsage, Thre
 import type {
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
+  CommandPalette,
+  CommandPaletteEntry,
   ModelCatalogItem,
   SessionStreamEvent,
   SessionSummary,
@@ -48,6 +50,8 @@ export type {
   ServerUiConfig,
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
+  CommandPalette,
+  CommandPaletteEntry,
   ModelCatalogItem,
   StoredMachine,
   StoredProject,
@@ -218,6 +222,11 @@ export type ThreadCandidatesPayload = {
 /** app-server model catalog 接口返回的 payload。 */
 export type SessionModelsPayload = {
   models?: ModelCatalogItem[];
+};
+
+/** app-server backed composer command palette 接口返回的 payload。 */
+export type CommandPalettePayload = {
+  palette?: CommandPalette;
 };
 
 /** session/thread turn mutation 返回值。 */

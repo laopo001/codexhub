@@ -4,6 +4,9 @@ import { defaultAppSettings, isVscodeSurface, legacyStorageKey, storageKey } fro
 import type { AppSettings, MessageDisplayMode, TextAttachment } from "../types.js";
 import { browserId, formatDate } from "./common.js";
 
+export const commandPaletteCacheKey = (sessionId: string, cwd: string) =>
+  `${sessionId}\u0000${cwd}`;
+
 export const clipboardImageFiles = (clipboardData: DataTransfer) => {
   const itemFiles = [...clipboardData.items]
     .filter((item) => item.kind === "file" && item.type.startsWith("image/"))

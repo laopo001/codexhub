@@ -47,6 +47,12 @@ type ThreadDetail = {
   records?: unknown[];
 };
 
+type CommandPalettePayload = {
+  palette?: {
+    entries?: unknown[];
+  };
+};
+
 type RealtimeMessage = {
   type?: string;
   kind?: string;
@@ -213,6 +219,8 @@ const main = async () => {
     console.log(`project ok: ${sessionId} ${threadId}`);
     await assertSessionTurnRequiresThread(apiBase, sessionId);
     console.log("session turn target validation ok");
+    await assertCommandPalette(apiBase, sessionId, projectDir);
+    console.log("command palette ok");
 
     await assertWebRealtime(apiBase, threadId, async () => {
       await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
@@ -383,9 +391,13 @@ const assertComposerAttachmentClear = async () => {
     ] as OpenThreadState[];
     const actions = createComposerActions({
       activeCanSend: false,
+      commandPaletteByScope: {},
+      commandPaletteLoadingScopes: {},
       composerHistoryRef: { current: null },
       messageContextMenu: null,
       resizeComposerTextarea: () => undefined,
+      setCommandPaletteByScope: () => undefined,
+      setCommandPaletteLoadingScopes: () => undefined,
       setComposerMenuOpen: () => undefined,
       setInspectMessage: () => undefined,
       setMessageContextMenu: () => undefined,
@@ -3133,6 +3145,29 @@ const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: Re
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) throw new Error(`HTTP ${response.status} ${pathname}: ${text}`);
   return data as T;
+};
+
+const assertCommandPalette = async (apiBase: string, sessionId: string, cwd: string) => {
+  const payload = await apiJson<CommandPalettePayload>(
+    apiBase,
+    `/api/sessions/${encodeURIComponent(sessionId)}/command-palette?cwd=${encodeURIComponent(cwd)}`
+  );
+  assertNoWorkerId(payload, "/api/sessions/:sessionId/command-palette");
+  assertNoCurrentThread(payload, "/api/sessions/:sessionId/command-palette");
+  const entries = Array.isArray(payload.palette?.entries) ? payload.palette.entries.map(asRecord) : [];
+  if (!entries.length) throw new Error("command palette did not return entries");
+  const builtins = entries.filter((entry) => entry.kind === "builtin");
+  const plugins = entries.filter((entry) => entry.kind === "plugin");
+  const skills = entries.filter((entry) => entry.kind === "skill");
+  if (!builtins.some((entry) => entry.name === "model" && entry.insertText === "/model")) {
+    throw new Error(`command palette missing /model builtin: ${JSON.stringify(entries.slice(0, 10))}`);
+  }
+  if (!plugins.length) throw new Error("command palette did not include app-server plugins");
+  if (!skills.length) throw new Error("command palette did not include app-server skills");
+  const staleDollar = [...plugins, ...skills].find((entry) => typeof entry.insertText === "string" && entry.insertText.startsWith("$"));
+  if (staleDollar) throw new Error(`command palette still uses $ trigger: ${JSON.stringify(staleDollar)}`);
+  const nonAtEntry = [...plugins, ...skills].find((entry) => typeof entry.insertText !== "string" || !entry.insertText.startsWith("@"));
+  if (nonAtEntry) throw new Error(`command palette plugin/skill entry does not use @ trigger: ${JSON.stringify(nonAtEntry)}`);
 };
 
 const assertNoWorkerId = (value: unknown, label: string) => {

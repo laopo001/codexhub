@@ -5,6 +5,7 @@ import type {
   ParentRegistrationConnectInput,
   ParentRegistrationPayload,
   PluginsPayload,
+  CommandPalettePayload,
   ProjectMutationPayload,
   ProjectThreadStartPayload,
   ProjectUpdateInput,
@@ -155,6 +156,9 @@ export const apiRoutes = {
   ),
   sessionModels: get<SessionModelsPayload, (sessionId: string, includeHidden?: boolean) => string>(
     (sessionId, includeHidden) => `/api/sessions/${encode(sessionId)}/models${queryString({ includeHidden: includeHidden ? "true" : undefined })}`
+  ),
+  commandPalette: get<CommandPalettePayload, (sessionId: string, cwd?: string) => string>(
+    (sessionId, cwd) => `/api/sessions/${encode(sessionId)}/command-palette${queryString({ cwd })}`
   ),
   thread: get<ThreadDetail, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}`

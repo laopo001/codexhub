@@ -6,6 +6,7 @@ import { defaultAppSettings } from "./appConfig.js";
 import { defaultTaskDraft, initAuthTokenFromUrl } from "./appHelpers.js";
 import type {
   AppSettings,
+  CommandPalette,
   ComposerHistoryState,
   ConnectionMode,
   GoalDialogState,
@@ -92,6 +93,8 @@ export const useAppState = () => {
     contextWindowTokens: null
   });
   const [modelCatalogBySession, setModelCatalogBySession] = useState<Record<string, ModelCatalogItem[]>>({});
+  const [commandPaletteByScope, setCommandPaletteByScope] = useState<Record<string, CommandPalette>>({});
+  const [commandPaletteLoadingScopes, setCommandPaletteLoadingScopes] = useState<Record<string, boolean>>({});
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -155,6 +158,8 @@ export const useAppState = () => {
     composerHistoryRef,
     composerMenuOpen,
     composerTextareaRef,
+    commandPaletteByScope,
+    commandPaletteLoadingScopes,
     connectionMode,
     connectionsLastSeq,
     controlReconnectTimer,
@@ -210,6 +215,8 @@ export const useAppState = () => {
     setAuthTokenDraft,
     setCollapsedProjectMachineKeys,
     setComposerMenuOpen,
+    setCommandPaletteByScope,
+    setCommandPaletteLoadingScopes,
     setConnectionMode,
     setDeletingProjectId,
     setExpandedStatusKeys,

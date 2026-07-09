@@ -1,7 +1,10 @@
 import type React from "react";
+import { apiRoutes } from "../../shared/apiRoutes.js";
 import {
+  apiRouteJson,
   browserId,
   clipboardImageFiles,
+  commandPaletteCacheKey,
   composerCursorOnFirstLine,
   composerCursorOnLastLine,
   contextMenuPosition,
@@ -9,13 +12,24 @@ import {
   selectedTextWithin,
   writeTextToClipboard
 } from "../appHelpers.js";
-import type { OpenThreadState, ComposerHistoryState, MessageContextMenuState, MessageRenderMode, WebRecordView } from "../types.js";
+import type {
+  CommandPalette,
+  OpenThreadState,
+  ComposerHistoryState,
+  MessageContextMenuState,
+  MessageRenderMode,
+  WebRecordView
+} from "../types.js";
 
 type ComposerActionsContext = {
   activeCanSend: boolean;
+  commandPaletteByScope: Record<string, CommandPalette>;
+  commandPaletteLoadingScopes: Record<string, boolean>;
   composerHistoryRef: React.MutableRefObject<ComposerHistoryState | null>;
   messageContextMenu: MessageContextMenuState | null;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
+  setCommandPaletteByScope: React.Dispatch<React.SetStateAction<Record<string, CommandPalette>>>;
+  setCommandPaletteLoadingScopes: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setComposerMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
   setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
@@ -45,6 +59,7 @@ const insertTextBlock = (value: string, text: string, start = value.length, end 
 };
 
 export type ComposerActions = {
+  loadCommandPalette: (sessionId: string, cwd: string) => Promise<void>;
   updateThreadInput: (threadId: string, input: string) => void;
   resetComposerHistory: (threadId: string) => void;
   setComposerHistoryInput: (threadId: string, textarea: HTMLTextAreaElement, input: string) => void;
@@ -86,6 +101,31 @@ export type ComposerActions = {
 };
 
 export const createComposerActions = (ctx: ComposerActionsContext, deps: ComposerActionsDependencies): ComposerActions => {
+  const loadCommandPalette = async (sessionId: string, cwd: string) => {
+    const key = commandPaletteCacheKey(sessionId, cwd);
+    if (ctx.commandPaletteByScope[key] || ctx.commandPaletteLoadingScopes[key]) return;
+    ctx.setCommandPaletteLoadingScopes((current) => ({ ...current, [key]: true }));
+    try {
+      const payload = await apiRouteJson(apiRoutes.commandPalette, sessionId, cwd);
+      ctx.setCommandPaletteByScope((current) => ({
+        ...current,
+        [key]: payload.palette ?? { cwd, generatedAt: new Date().toISOString(), entries: [] }
+      }));
+    } catch (error) {
+      console.error(error);
+      ctx.setCommandPaletteByScope((current) => ({
+        ...current,
+        [key]: { cwd, generatedAt: new Date().toISOString(), entries: [] }
+      }));
+    } finally {
+      ctx.setCommandPaletteLoadingScopes((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    }
+  };
+
   const updateThreadInput = (threadId: string, input: string) => {
     ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId ? { ...thread, input } : thread));
   };
@@ -327,6 +367,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
   };
 
   return {
+    loadCommandPalette,
     updateThreadInput,
     resetComposerHistory,
     setComposerHistoryInput,

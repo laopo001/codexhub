@@ -18,6 +18,7 @@ import type {
   AppServerUserInputAnswers,
   AppServerUserInputRequest,
   SessionCommand,
+  SessionCommandPaletteResult,
   SessionEventInput,
   SessionModelCatalogResult,
   SessionOfflineReason,
@@ -439,6 +440,26 @@ export class ThreadHub {
       workingDirectory: session.workingDirectory,
       createdAt: new Date().toISOString(),
       includeHidden
+    });
+    return await promise;
+  }
+
+  async listSessionCommandPalette(sessionId: string, workingDirectory?: string): Promise<SessionCommandPaletteResult> {
+    const session = this.requireOnlineSession(sessionId);
+    const cwd = workingDirectory || session.workingDirectory;
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<SessionCommandPaletteResult>(
+      commandId,
+      "list_command_palette",
+      undefined,
+      60_000,
+      cwd
+    );
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "list_command_palette",
+      workingDirectory: cwd,
+      createdAt: new Date().toISOString()
     });
     return await promise;
   }

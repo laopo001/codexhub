@@ -179,6 +179,41 @@ export type ModelCatalogItem = {
   serviceTiers: ModelCatalogServiceTier[];
 };
 
+/** Web composer command palette 中展示的命令/技能来源。 */
+export type CommandPaletteEntryKind = "builtin" | "plugin" | "skill";
+
+/** Web 对 palette 选择项可直接执行的本地动作。 */
+export type CommandPaletteAction =
+  | "insert"
+  | "open_model"
+  | "set_plan_mode"
+  | "set_goal_mode"
+  | "review_changes"
+  | "compact_thread";
+
+/** 由 app-server metadata 和 codexhub 本地命令合成的 composer palette 条目。 */
+export type CommandPaletteEntry = {
+  id: string;
+  kind: CommandPaletteEntryKind;
+  name: string;
+  title: string;
+  description: string;
+  shortDescription?: string;
+  detail?: string;
+  insertText?: string;
+  action?: CommandPaletteAction;
+  enabled: boolean;
+  source?: string;
+  scope?: string;
+};
+
+/** 当前 runtime 可见的 composer command palette。 */
+export type CommandPalette = {
+  cwd: string;
+  generatedAt: string;
+  entries: CommandPaletteEntry[];
+};
+
 /** `/api/events/ws` 下发的 thread 增量事件。 */
 export type ThreadStreamEvent = {
   seq: number;
@@ -226,6 +261,7 @@ export type SessionCommand = {
     | "stop"
     | "list_threads"
     | "list_models"
+    | "list_command_palette"
     | "start_thread"
     | "resume_thread"
     | "subscribe_thread_records"
@@ -261,6 +297,11 @@ export type SessionModelCatalogResult = {
   models: ModelCatalogItem[];
 };
 
+/** list_command_palette 命令返回的 composer palette。 */
+export type SessionCommandPaletteResult = {
+  palette: CommandPalette;
+};
+
 /** start_thread/resume_thread 命令返回的 thread 标识和可选 app-server metadata。 */
 export type SessionThreadCommandResult = {
   threadId: string;
@@ -271,6 +312,7 @@ export type SessionThreadCommandResult = {
 export type SessionCommandResult =
   | SessionThreadCandidatesResult
   | SessionModelCatalogResult
+  | SessionCommandPaletteResult
   | SessionThreadCommandResult
   | { ok?: boolean }
   | ThreadDetail;
