@@ -1,6 +1,6 @@
 {
   "name": "@dadigua/codexhub",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "description": "Local-first Codex control plane for local, SSH, and registered machines.",
   "type": "module",
   "license": "MIT",
