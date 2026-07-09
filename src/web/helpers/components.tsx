@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import { Switch } from "antd";
 import { ChevronDown, GripHorizontal } from "lucide-react";
 import remarkGfm from "remark-gfm";
@@ -574,7 +574,7 @@ export const MessageText = ({
     if (isVscodeSurface) {
       window.parent?.postMessage({
         type: "codexhub.openFile",
-        path: target.path,
+        path: target.fullPath,
         line: target.line,
         column: target.column
       }, "*");
@@ -608,7 +608,7 @@ export const MessageText = ({
   if (!markdownEnabled || mode === "raw") return <pre>{text}</pre>;
   return (
     <div className="messageMarkdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={markdownUrlTransform}>
         {text}
       </ReactMarkdown>
       {fileLinkMenu ? (
@@ -616,6 +616,11 @@ export const MessageText = ({
       ) : null}
     </div>
   );
+};
+
+const markdownUrlTransform: UrlTransform = (url, key) => {
+  if (key === "href" && localFileLinkTargetFromHref(url, undefined)) return url;
+  return defaultUrlTransform(url);
 };
 
 type FileLinkMenuState = {
@@ -656,9 +661,9 @@ const FileLinkCopyMenu = ({
 
 const fileLinkCopyActions = (target: LocalFileLinkTarget) => {
   const actions = [
-    { key: "shown", label: "Copy shown path", value: target.label },
-    { key: "full", label: "Copy path with line", value: target.title },
-    { key: "path", label: "Copy file path", value: target.fullPath }
+    { key: "relative", label: "Copy relative path", value: target.label },
+    { key: "path", label: "Copy file path", value: target.fullPath },
+    { key: "full", label: "Copy path with line", value: target.title }
   ];
   const seen = new Set<string>();
   return actions.filter((action) => {
