@@ -21,6 +21,8 @@ type ShellCommandDisplay = {
   wrapper?: string;
 };
 
+type ShellKind = "posix" | "powershell" | "cmd";
+
 export const UpdatePlanPreview = ({
   plan,
   status,
@@ -846,7 +848,7 @@ const splitFlagAssignment = (word: string) => {
 
 const classifyShellValue = (word: string) => {
   if (/^https?:\/\//.test(word)) return "url";
-  if (/^(?:~|\.{1,2}|\/)/.test(word)) return "path";
+  if (/^(?:~|\.{1,2}|\/|[a-zA-Z]:[\\/]|\\\\)/.test(word)) return "path";
   if (/^-?\d+(?:\.\d+)?$/.test(word)) return "number";
   return "plain";
 };
@@ -886,29 +888,87 @@ const unwrapShellInvocation = (parts: string[] | null, raw: string) => {
 
 const unwrapShellParts = (parts: string[] | null) => {
   if (!parts || parts.length < 3) return null;
-  const [shellPath, flag, command] = parts;
-  if (!isShellExecutable(shellPath) || !isShellCommandFlag(flag) || !command) return null;
+  const [shellPath] = parts;
+  const shellKind = shellExecutableKind(shellPath);
+  if (!shellKind) return null;
+  const flagIndex = parts.findIndex((part, index) => index > 0 && isShellCommandFlag(part, shellKind));
+  if (flagIndex === -1) return null;
+  const command = parts.slice(flagIndex + 1).join(" ").trim();
+  if (!command) return null;
   return {
     command,
-    wrapper: `${shellPath} ${flag}`
+    wrapper: parts.slice(0, flagIndex + 1).join(" ")
   };
 };
 
 const unwrapShellString = (raw: string) => {
   const trimmed = raw.trim();
-  const match = /^(\S+)\s+(-\S*c\S*)\s+([\s\S]+)$/.exec(trimmed);
+  const shell = readLeadingShellToken(trimmed);
+  if (!shell) return null;
+  const shellKind = shellExecutableKind(shell.value);
+  if (!shellKind) return null;
+  const wrapperTokens = [shell.raw];
+  let rest = shell.rest.trimStart();
+  while (rest) {
+    const token = readLeadingShellToken(rest);
+    if (!token) return null;
+    wrapperTokens.push(token.raw);
+    if (isShellCommandFlag(token.value, shellKind)) {
+      const commandText = token.rest.trim();
+      if (!commandText) return null;
+      return {
+        command: stripMatchingOuterQuotes(commandText),
+        wrapper: wrapperTokens.join(" ")
+      };
+    }
+    rest = token.rest.trimStart();
+  }
+  return null;
+};
+
+const readLeadingShellToken = (value: string) => {
+  const trimmed = value.trimStart();
+  if (!trimmed) return null;
+  const quote = trimmed[0] === "\"" || trimmed[0] === "'" ? trimmed[0] : "";
+  if (quote) {
+    const end = trimmed.indexOf(quote, 1);
+    if (end === -1) return null;
+    return {
+      raw: trimmed.slice(0, end + 1),
+      value: trimmed.slice(1, end),
+      rest: trimmed.slice(end + 1)
+    };
+  }
+  const match = /^(\S+)([\s\S]*)$/.exec(trimmed);
   if (!match) return null;
-  const [, shellPath, flag, commandText] = match;
-  if (!isShellExecutable(shellPath) || !isShellCommandFlag(flag)) return null;
   return {
-    command: stripMatchingOuterQuotes(commandText.trim()),
-    wrapper: `${shellPath} ${flag}`
+    raw: match[1],
+    value: match[1],
+    rest: match[2]
   };
 };
 
-const isShellExecutable = (value: string) => /(^|\/)(?:bash|zsh|sh|dash|fish)$/.test(value);
+const shellExecutableKind = (value: string): ShellKind | null => {
+  const executable = value
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .split(/[\\/]/)
+    .pop()
+    ?.toLowerCase()
+    .replace(/\.(?:exe|cmd|bat)$/, "");
+  if (!executable) return null;
+  if (["bash", "zsh", "sh", "dash", "fish"].includes(executable)) return "posix";
+  if (["powershell", "pwsh"].includes(executable)) return "powershell";
+  if (executable === "cmd") return "cmd";
+  return null;
+};
 
-const isShellCommandFlag = (value: string) => value.startsWith("-") && value.includes("c");
+const isShellCommandFlag = (value: string, shellKind: ShellKind) => {
+  const normalized = value.trim().toLowerCase();
+  if (shellKind === "posix") return normalized.startsWith("-") && normalized.includes("c");
+  if (shellKind === "powershell") return normalized === "-command" || normalized === "-c";
+  return normalized === "/c" || normalized === "-c" || normalized === "/k" || normalized === "-k";
+};
 
 const stripMatchingOuterQuotes = (value: string) => {
   if (value.length < 2) return value;
