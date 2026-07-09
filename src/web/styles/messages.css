@@ -1357,6 +1357,8 @@
   border: 1px solid #cbd6c7;
   border-radius: 8px;
   background: #ffffff;
+  padding: 0;
+  cursor: zoom-in;
 }
 
 .messageImage img {
@@ -1364,4 +1366,23 @@
   width: 100%;
   max-height: 220px;
   object-fit: contain;
+}
+
+.messageMarkdownImage {
+  display: block;
+  max-width: min(320px, 100%);
+  max-height: 240px;
+  object-fit: contain;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.messageMarkdownImage.interactive {
+  cursor: zoom-in;
+}
+
+.messageMarkdownImage.interactive:focus-visible {
+  outline: 2px solid #2f7d5a;
+  outline-offset: 2px;
 }

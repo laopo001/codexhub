@@ -359,6 +359,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setExpandedToolBatchKeys,
     setGoalDialog,
     setHiddenStatusTurns,
+    setImagePreview,
     setInspectMessage,
     setMessageContextMenu,
     setMessageDisplayMode,
@@ -827,6 +828,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
                           onContextMenu={(event) => openMessageContextMenu(event, activeThread.threadId, message, inspectable)}
                           onInspect={inspectable && message.role === "tool" ? () => setInspectMessage(message) : undefined}
+                          onOpenImage={setImagePreview}
                           onToggleToolBatch={toolBatchKey ? () => {
                             setExpandedToolBatchKeys((current) => {
                               const keys = new Set(current[activeThread.threadId] ?? []);
@@ -984,9 +986,16 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                 ))}
                                 {activeThread.imageAttachments.map((image) => (
                                   <div className="composerAttachmentChip image" key={image.id} title={image.name || "Image attachment"}>
-                                    <span className="composerAttachmentThumb">
+                                    {/* Local composer thumbnails use the same preview dialog as rendered transcript images. */}
+                                    <button
+                                      type="button"
+                                      className="composerAttachmentThumb composerAttachmentThumbButton"
+                                      onClick={() => setImagePreview({ url: image.previewUrl, title: image.name || "Image attachment" })}
+                                      aria-label={`Preview ${image.name || "image attachment"}`}
+                                      title="Preview image"
+                                    >
                                       <img src={image.previewUrl} alt="" />
-                                    </span>
+                                    </button>
                                     <span className="composerAttachmentText">
                                       <span className="composerAttachmentName">{image.name || "Image"}</span>
                                       <span className="composerAttachmentPreview">

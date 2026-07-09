@@ -321,6 +321,7 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
   }
 
   if (payload.type === "image_view") {
+    const attachments = imageViewAttachments(payload);
     return {
       id: record.id,
       role: "tool",
@@ -329,6 +330,7 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
       at: record.timestamp,
       status: "completed",
       statusText: recordViewStatusText(payload.status),
+      attachments,
       record
     };
   }
@@ -472,6 +474,15 @@ export const isActiveRecordStatus = (status: CodexRecordView["status"] | undefin
 export const imageGenerationAttachments = (payload: Record<string, unknown>): Array<{ type: "image"; url: string }> => {
   const url = imageGenerationResultUrl(payload);
   return url ? [{ type: "image", url }] : [];
+};
+
+export const imageViewAttachments = (payload: Record<string, unknown>): Array<{ type: "image"; url: string }> => {
+  if (payload.type !== "image_view" || typeof payload.path !== "string") return [];
+  const filePath = payload.path.trim();
+  if (!filePath) return [];
+  // app-server image_view gives us a filesystem path; the browser loads it through the authenticated image-only API.
+  const params = new URLSearchParams({ path: filePath });
+  return [{ type: "image", url: `/api/file?${params.toString()}` }];
 };
 
 export const imageGenerationResultUrl = (payload: Record<string, unknown>): string | null => {

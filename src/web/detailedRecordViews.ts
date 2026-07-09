@@ -1,4 +1,4 @@
-import { imageGenerationAttachments, imageGenerationStatus, isActiveRecordStatus, recordViewStatusFromAppStatus, recordViewStatusText, withRecordViewStatusDuration } from "../core/codexRecordView.js";
+import { imageGenerationAttachments, imageGenerationStatus, imageViewAttachments, isActiveRecordStatus, recordViewStatusFromAppStatus, recordViewStatusText, withRecordViewStatusDuration } from "../core/codexRecordView.js";
 import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage } from "../shared/recordTypes.js";
 
 export const recordsToDetailedViews = (records: CodexRecord[]): CodexRecordView[] => {
@@ -108,7 +108,11 @@ const agentMessageToView = (record: CodexRecord, payload: Record<string, unknown
 
 const responseItemToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
   const status = responseStatus(payload);
-  const attachments = payload.type === "image_generation_call" ? imageGenerationAttachments(payload) : undefined;
+  const attachments = payload.type === "image_generation_call"
+    ? imageGenerationAttachments(payload)
+    : payload.type === "image_view"
+      ? imageViewAttachments(payload)
+      : undefined;
   return {
     id: record.id,
     role: payload.type === "error" ? "error" : payload.type === "reasoning" ? "thinking" : "tool",

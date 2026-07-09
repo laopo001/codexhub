@@ -44,6 +44,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     createSessionThread,
     createWorktreeThread,
     goalDialog,
+    imagePreview,
     inspectContextMessage,
     inspectMessage,
     loadProjectPickerDirectory,
@@ -68,6 +69,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     sessionList,
     openThreads,
     setGoalDialog,
+    setImagePreview,
     setInspectMessage,
     setAppSettings,
     setMessageContextMenu,
@@ -666,7 +668,24 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               </div>
               <button type="button" className="iconButton" onClick={() => setInspectMessage(null)} aria-label="Close">x</button>
             </header>
-            <ToolInspectBody message={inspectMessage} />
+            <ToolInspectBody message={inspectMessage} onOpenImage={setImagePreview} />
+          </section>
+        </div>
+      ) : null}
+
+      {imagePreview ? (
+        <div className="modalOverlay imagePreviewOverlay" role="dialog" aria-modal="true" onClick={() => setImagePreview(null)}>
+          <section className="modal imagePreviewModal" onClick={(event) => event.stopPropagation()}>
+            <header className="modalHeader">
+              <div>
+                <h2>Image</h2>
+                {imagePreview.title ? <p>{imagePreview.title}</p> : null}
+              </div>
+              <button type="button" className="iconButton" onClick={() => setImagePreview(null)} aria-label="Close">x</button>
+            </header>
+            <div className="imagePreviewBody">
+              <img src={imagePreview.url} alt={imagePreview.title ?? "preview"} />
+            </div>
           </section>
         </div>
       ) : null}

@@ -571,6 +571,16 @@
   background: #f4f6f1;
 }
 
+.composerAttachmentThumbButton {
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.composerAttachmentThumbButton:focus-visible {
+  outline: 2px solid #2f7d5a;
+  outline-offset: 2px;
+}
+
 .composerAttachmentChip.image .composerAttachmentThumb {
   grid-column: 1 / -1;
   width: 100%;

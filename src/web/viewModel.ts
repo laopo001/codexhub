@@ -18,6 +18,7 @@ import type {
   ComposerMode,
   ConnectionMode,
   GoalDialogState,
+  ImagePreviewState,
   LocalTask,
   MachineSummary,
   MessageContextMenuState,
@@ -193,6 +194,7 @@ export type AppViewModel = AppSidebarViewModel & {
     history: string[]
   ) => void;
   imageFileInputRef: React.RefObject<HTMLInputElement | null>;
+  imagePreview: ImagePreviewState | null;
   inspectContextMessage: () => void;
   inspectMessage: WebRecordView | null;
   latestTurnStatusScope: TurnStatusScope;
@@ -254,6 +256,7 @@ export type AppViewModel = AppSidebarViewModel & {
   setExpandedToolBatchKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
   setHiddenStatusTurns: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setImagePreview: React.Dispatch<React.SetStateAction<ImagePreviewState | null>>;
   setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
   setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
   setMessageDisplayMode: React.Dispatch<React.SetStateAction<MessageDisplayMode>>;

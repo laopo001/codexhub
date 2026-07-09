@@ -10,6 +10,7 @@ import type {
   ComposerHistoryState,
   ConnectionMode,
   GoalDialogState,
+  ImagePreviewState,
   LocalTask,
   MachineSummary,
   MessageContextMenuState,
@@ -85,6 +86,7 @@ export const useAppState = () => {
   const [threadOrderBySession, setThreadOrderBySession] = useState<Record<string, string[]>>({});
   const [initialized, setInitialized] = useState(false);
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
+  const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const [messageContextMenu, setMessageContextMenu] = useState<MessageContextMenuState | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     model: null,
@@ -169,6 +171,7 @@ export const useAppState = () => {
     goalDialog,
     hiddenStatusTurns,
     imageFileInputRef,
+    imagePreview,
     initialized,
     inspectMessage,
     latestRequestedThreadId,
@@ -223,6 +226,7 @@ export const useAppState = () => {
     setExpandedToolBatchKeys,
     setGoalDialog,
     setHiddenStatusTurns,
+    setImagePreview,
     setInitialized,
     setInspectMessage,
     setMachines,

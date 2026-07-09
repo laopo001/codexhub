@@ -207,6 +207,10 @@ export type ComposerMode = "chat" | "plan" | "goal";
 export type MessageDisplayMode = "compact" | "detailed";
 export type MessageRenderMode = "markdown" | "raw";
 export type ConnectionMode = "local" | "ssh" | "registered";
+export type ImagePreviewState = {
+  url: string;
+  title?: string;
+};
 export type WebRecordView = CompactRecordView;
 export type ActivityStatusView = {
   key: string;

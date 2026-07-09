@@ -4,10 +4,11 @@ import { Switch } from "antd";
 import { ChevronDown, GripHorizontal } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusView, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadTurnMeta, WebRecordView } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadTurnMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
 import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { statusLabel } from "./common.js";
+import { authToken } from "./core.js";
 import { contextMenuPosition, writeTextToClipboard } from "./composer.js";
 import { formatInspectDetail, formatInspectTitle, renderToolMessageBody } from "./toolPreview.js";
 import { activityStatusOverlayClass, activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
@@ -29,6 +30,32 @@ type ActivityStatusDragState = {
 const ACTIVITY_STATUS_DEFAULT_LEFT = 12;
 const ACTIVITY_STATUS_DEFAULT_TOP = 8;
 const ACTIVITY_STATUS_EDGE_GAP = 8;
+
+// <img> requests cannot carry Authorization headers, so auth-protected file previews use the existing query token path.
+const authenticatedImageUrl = (url: string) => {
+  if (!isFileApiUrl(url)) return url;
+  if (typeof window === "undefined") return url;
+  const token = authToken();
+  if (!token) return url;
+  const parsed = new URL(url, window.location.origin);
+  if (!parsed.searchParams.has("codexhub_token") && !parsed.searchParams.has("token")) {
+    parsed.searchParams.set("codexhub_token", token);
+  }
+  return url.startsWith("http://") || url.startsWith("https://")
+    ? parsed.toString()
+    : `${parsed.pathname}${parsed.search}`;
+};
+
+const isFileApiUrl = (url: string) => {
+  if (url.startsWith("/api/file?") || url === "/api/file") return true;
+  if (typeof window === "undefined") return false;
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return parsed.origin === window.location.origin && parsed.pathname === "/api/file";
+  } catch {
+    return false;
+  }
+};
 
 const clampActivityStatusOffset = (element: HTMLDivElement | null, offset: ActivityStatusOffset): ActivityStatusOffset => {
   const parent = element?.offsetParent;
@@ -58,7 +85,8 @@ export const MessageCard = ({
   onApprovalDecision,
   onUserInputResponse,
   onFork,
-  onRollback
+  onRollback,
+  onOpenImage
 }: {
   message: WebRecordView;
   showStatus?: boolean;
@@ -75,6 +103,7 @@ export const MessageCard = ({
   onUserInputResponse?: (userInputId: string, answers: AppServerUserInputAnswers) => void | Promise<void>;
   onFork?: () => void;
   onRollback?: () => void;
+  onOpenImage?: (image: ImagePreviewState) => void;
 }) => {
   const isThinkingMessage = message.role === "thinking";
   const isToolBatch = Boolean(message.toolBatch);
@@ -151,6 +180,7 @@ export const MessageCard = ({
           mode={renderMode}
           markdownEnabled={markdownEnabled}
           threadWorkingDirectory={threadWorkingDirectory}
+          onOpenImage={onOpenImage}
         />
       ) : null}
       {!isThinkingMessage && (memoryCitation.entries.length || memoryCitation.rolloutIds.length) ? (
@@ -158,18 +188,24 @@ export const MessageCard = ({
       ) : null}
       {!isThinkingMessage && message.attachments?.length ? (
         <div className="messageAttachments">
-          {message.attachments.map((attachment) => attachment.type === "image" ? (
-            <a
-              href={attachment.url}
-              target="_blank"
-              rel="noreferrer"
-              className="messageImage"
-              key={attachment.url}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <img src={attachment.url} alt="attachment" />
-            </a>
-          ) : null)}
+          {message.attachments.map((attachment) => {
+            if (attachment.type !== "image") return null;
+            const imageUrl = authenticatedImageUrl(attachment.url);
+            return (
+              <button
+                type="button"
+                className="messageImage"
+                key={attachment.url}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenImage?.({ url: imageUrl, title: message.text || message.label });
+                }}
+                aria-label="View image"
+              >
+                <img src={imageUrl} alt="attachment" />
+              </button>
+            );
+          })}
         </div>
       ) : null}
       {hasMessageMeta ? (
@@ -522,12 +558,14 @@ export const MessageText = ({
   text,
   mode,
   markdownEnabled,
-  threadWorkingDirectory
+  threadWorkingDirectory,
+  onOpenImage
 }: {
   text: string;
   mode: MessageRenderMode;
   markdownEnabled: boolean;
   threadWorkingDirectory?: string;
+  onOpenImage?: (image: ImagePreviewState) => void;
 }) => {
   const [fileLinkMenu, setFileLinkMenu] = useState<FileLinkMenuState | null>(null);
   const handleFileLinkClick = useCallback((target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => {
@@ -548,8 +586,8 @@ export const MessageText = ({
     });
   }, []);
   const components = useMemo(
-    () => markdownComponents(threadWorkingDirectory, handleFileLinkClick),
-    [handleFileLinkClick, threadWorkingDirectory]
+    () => markdownComponents(threadWorkingDirectory, handleFileLinkClick, onOpenImage),
+    [handleFileLinkClick, onOpenImage, threadWorkingDirectory]
   );
   useEffect(() => {
     if (!fileLinkMenu) return undefined;
@@ -632,7 +670,8 @@ const fileLinkCopyActions = (target: LocalFileLinkTarget) => {
 
 export const markdownComponents = (
   threadWorkingDirectory: string | undefined,
-  onFileLinkClick: (target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => void
+  onFileLinkClick: (target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => void,
+  onOpenImage?: (image: ImagePreviewState) => void
 ): Components => ({
   a: ({ children, href, className, title, ...props }) => {
     const fileTarget = localFileLinkTargetFromHref(href, threadWorkingDirectory);
@@ -650,6 +689,33 @@ export const markdownComponents = (
       >
         {fileTarget?.label ?? children}
       </a>
+    );
+  },
+  img: ({ src, alt, className, title, ...props }) => {
+    // Markdown images and attachment thumbnails share the same preview dialog behavior.
+    const imageUrl = typeof src === "string" ? authenticatedImageUrl(src) : src;
+    const imageTitle = title || alt || imageUrl || "Image";
+    const imageClassName = [className, onOpenImage ? "messageMarkdownImage interactive" : "messageMarkdownImage"].filter(Boolean).join(" ");
+    const openImage = (event: React.MouseEvent<HTMLImageElement> | React.KeyboardEvent<HTMLImageElement>) => {
+      if (!onOpenImage || typeof imageUrl !== "string") return;
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenImage({ url: imageUrl, title: imageTitle });
+    };
+    return (
+      <img
+        {...props}
+        src={imageUrl}
+        alt={alt ?? ""}
+        className={imageClassName}
+        title={imageTitle}
+        role={onOpenImage ? "button" : undefined}
+        tabIndex={onOpenImage ? 0 : undefined}
+        onClick={onOpenImage ? openImage : undefined}
+        onKeyDown={onOpenImage ? (event) => {
+          if (event.key === "Enter" || event.key === " ") openImage(event);
+        } : undefined}
+      />
     );
   },
   pre: ({ children }) => (
@@ -959,7 +1025,13 @@ export const ActivityStatusFiles = ({ files }: { files: ActivityStatusFile[] }) 
   </div>
 );
 
-export const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
+export const ToolInspectBody = ({
+  message,
+  onOpenImage
+}: {
+  message: WebRecordView;
+  onOpenImage?: (image: ImagePreviewState) => void;
+}) => {
   const detail = formatInspectDetail(message);
   return (
     <div className="detailBody">
@@ -995,11 +1067,20 @@ export const ToolInspectBody = ({ message }: { message: WebRecordView }) => {
         <section className="detailSection">
           <h3>Images</h3>
           <div className="messageAttachments">
-            {detail.imageUrls.map((url) => (
-              <a href={url} target="_blank" rel="noreferrer" className="messageImage" key={url}>
-                <img src={url} alt="generated" />
-              </a>
-            ))}
+            {detail.imageUrls.map((url) => {
+              const imageUrl = authenticatedImageUrl(url);
+              return (
+                <button
+                  type="button"
+                  className="messageImage"
+                  key={url}
+                  onClick={() => onOpenImage?.({ url: imageUrl, title: message.text || message.label })}
+                  aria-label="View image"
+                >
+                  <img src={imageUrl} alt="generated" />
+                </button>
+              );
+            })}
           </div>
         </section>
       ) : null}

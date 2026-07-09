@@ -3,7 +3,7 @@ import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { open, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,6 +93,7 @@ const sessionOfflineRetentionMs = () =>
 const sessionSweepIntervalMs = () =>
   envMs("CODEX_HUB_SESSION_SWEEP_INTERVAL_MS", 5_000);
 const taskScanIntervalMs = () => envMs("CODEX_HUB_TASK_SCAN_INTERVAL_MS", 30_000);
+const maxPreviewImageBytes = () => envMs("CODEX_HUB_MAX_PREVIEW_IMAGE_BYTES", 50 * 1024 * 1024);
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
@@ -792,6 +793,23 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return {
       config: state.config()
     } satisfies ServerConfigPayload;
+  });
+
+  app.get("/api/file", async (request, reply) => {
+    const query = z.object({ path: z.string().min(1) }).parse(request.query);
+    try {
+      const image = await resolvePreviewImage(query.path);
+      reply.type(image.contentType);
+      reply.header("cache-control", "private, max-age=60");
+      reply.header("content-length", String(image.size));
+      reply.header("content-security-policy", "default-src 'none'; img-src 'self' data: blob:");
+      reply.header("x-content-type-options", "nosniff");
+      return reply.send(createReadStream(image.path));
+    } catch (error) {
+      const statusCode = previewImageErrorStatus(error);
+      reply.code(statusCode);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   registerThreadRoutes(app, {
@@ -1745,6 +1763,83 @@ const delay = async (ms: number) => await new Promise<void>((resolve) => {
   const timer = setTimeout(resolve, ms);
   timer.unref?.();
 });
+
+// Global file previews intentionally serve images only; this keeps external screenshots usable without exposing arbitrary file contents.
+const resolvePreviewImage = async (inputPath: string) => {
+  const rawPath = normalizePreviewImagePath(inputPath);
+  const resolvedPath = await realpath(rawPath);
+  const fileStat = await stat(resolvedPath);
+  if (!fileStat.isFile()) {
+    throw previewImageError("file_not_found", 404);
+  }
+  if (fileStat.size <= 0) {
+    throw previewImageError("empty_file", 415);
+  }
+  const maxBytes = maxPreviewImageBytes();
+  if (fileStat.size > maxBytes) {
+    throw previewImageError("file_too_large", 413);
+  }
+  const contentType = await sniffPreviewImageType(resolvedPath, fileStat.size);
+  if (!contentType) {
+    throw previewImageError("unsupported_image_type", 415);
+  }
+  return { path: resolvedPath, contentType, size: fileStat.size };
+};
+
+const normalizePreviewImagePath = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.includes("\0")) {
+    throw previewImageError("invalid_path", 400);
+  }
+  const normalized = process.platform === "win32" ? trimmed : windowsDrivePathToWslPath(trimmed);
+  if (!path.isAbsolute(normalized)) {
+    throw previewImageError("absolute_path_required", 400);
+  }
+  return normalized;
+};
+
+const windowsDrivePathToWslPath = (value: string) => {
+  const match = /^([a-zA-Z]):[\\/](.*)$/.exec(value);
+  if (!match) return value;
+  return `/mnt/${match[1].toLowerCase()}/${match[2].replace(/[\\/]+/g, "/")}`;
+};
+
+// Use file signatures instead of extensions so renamed text or binary files cannot be rendered through /api/file.
+const sniffPreviewImageType = async (filePath: string, fileSize: number) => {
+  const headerLength = Math.min(fileSize, 64);
+  const buffer = Buffer.alloc(headerLength);
+  const file = await open(filePath, "r");
+  try {
+    await file.read(buffer, 0, headerLength, 0);
+  } finally {
+    await file.close();
+  }
+  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg";
+  const ascii = buffer.toString("ascii");
+  if (ascii.startsWith("GIF87a") || ascii.startsWith("GIF89a")) return "image/gif";
+  if (ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP") return "image/webp";
+  if (ascii.startsWith("BM")) return "image/bmp";
+  if (buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0x01 && buffer[3] === 0x00) return "image/x-icon";
+  if (isAvifImage(buffer)) return "image/avif";
+  return null;
+};
+
+const isAvifImage = (buffer: Buffer) => {
+  if (buffer.length < 12 || buffer.subarray(4, 8).toString("ascii") !== "ftyp") return false;
+  const brands = buffer.subarray(8).toString("ascii");
+  return brands.includes("avif") || brands.includes("avis");
+};
+
+const previewImageError = (message: string, statusCode: number) =>
+  Object.assign(new Error(message), { statusCode });
+
+const previewImageErrorStatus = (error: unknown) => {
+  const statusCode = typeof (error as { statusCode?: unknown })?.statusCode === "number"
+    ? (error as { statusCode: number }).statusCode
+    : undefined;
+  return statusCode && statusCode >= 400 && statusCode < 600 ? statusCode : 404;
+};
 
 const contentType = (filePath: string) => {
   const extension = path.extname(filePath).toLowerCase();
