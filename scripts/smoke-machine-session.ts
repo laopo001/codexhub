@@ -237,6 +237,7 @@ const main = async () => {
     const thread = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
     assertNoWorkerId(thread, "/api/threads/:threadId");
     if ((thread.records ?? []).length < 2) throw new Error("/status did not write thread records");
+    assertStatusMarkdown(thread);
     await assertThreadApprovalPolicy(apiBase, threadId, "on-request");
     console.log("app-server launch approval policy ok");
     console.log("thread stream ok");
@@ -3197,6 +3198,42 @@ const assertCommandPalette = async (apiBase: string, sessionId: string, cwd: str
   }
   if (pluginEntries.some((entry) => entry.kind === "builtin")) {
     throw new Error(`command palette plugins part included builtins: ${JSON.stringify(pluginEntries.filter((entry) => entry.kind === "builtin").slice(0, 5))}`);
+  }
+};
+
+const assertStatusMarkdown = (thread: ThreadDetail) => {
+  const messages = (thread.records ?? [])
+    .map((record) => asRecord(asRecord(record).payload))
+    .filter((payload) => payload.type === "agent_message")
+    .map((payload) => typeof payload.message === "string" ? payload.message : "");
+  const statusMessage = messages.find((message) => message.includes("Codex Hub Status"));
+  if (!statusMessage) throw new Error(`status markdown message was missing: ${JSON.stringify(messages)}`);
+  const requiredSnippets = [
+    "## Codex Hub Status",
+    "**Thread**",
+    "- ID: `",
+    "- Folder: `",
+    "- State: `",
+    "**Runtime**",
+    "- Session: `",
+    "- Model: `",
+    "**Policy**",
+    "- Approval: `",
+    "- Sandbox: `",
+    "**Usage**",
+    "- Tokens: `",
+    "- Context: `",
+    "- 5h limit: `",
+    "- Weekly limit: `",
+    "- Observed: `"
+  ];
+  for (const snippet of requiredSnippets) {
+    if (!statusMessage.includes(snippet)) {
+      throw new Error(`status markdown missing ${JSON.stringify(snippet)}: ${JSON.stringify(statusMessage)}`);
+    }
+  }
+  if (statusMessage.includes("Codex Hub status\nthread:")) {
+    throw new Error(`status still used the old plaintext format: ${JSON.stringify(statusMessage)}`);
   }
 };
 

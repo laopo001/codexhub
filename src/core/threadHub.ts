@@ -3,7 +3,7 @@ import { recordsToViews } from "./codexRecordView.js";
 import { emptyThreadUsage, threadRateLimitsFromValue, threadUsageFromRecords } from "./threadUsage.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
-import type { ThreadOptions, ThreadRateLimitUsage, ThreadUsage, Usage } from "../shared/usageTypes.js";
+import type { ThreadOptions, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "../shared/usageTypes.js";
 import type {
   InternalSessionRegistration,
   PendingCommand,
@@ -2148,8 +2148,17 @@ export class ThreadHub {
     return { online: false, runnable: false };
   }
 
+  private threadAccountRateLimits(thread: ThreadState): ThreadRateLimits | null {
+    const session = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
+    if (session?.accountRateLimits) return session.accountRateLimits;
+    const replacement = this.uniqueOnlineSessionForWorkspace(thread.workingDirectory);
+    return replacement?.accountRateLimits ?? session?.accountRateLimits ?? null;
+  }
+
   private localCommandMessage(thread: ThreadState, command: string, args: string[]) {
-    if (command === "status") return threadStatusMessage(thread, this.threadSessionSummary(thread));
+    if (command === "status") {
+      return threadStatusMessage(thread, this.threadSessionSummary(thread), this.threadAccountRateLimits(thread));
+    }
     if (command === "help") return slashHelpMessage();
     if (command === "model") return modelCommandMessage(thread);
     if (command === "fast") return fastCommandMessage(thread, args);
@@ -3202,20 +3211,32 @@ const parseLocalSlashCommand = (input: ProxyInput) => {
   };
 };
 
-const threadStatusMessage = (thread: ThreadState, session: ThreadSessionSummary) => [
-  "Codex Hub status",
-  `thread: ${thread.threadId}`,
-  `folder: ${thread.workingDirectory}`,
-  `state: ${thread.running ? "running" : "idle"}`,
-  `session: ${formatSession(session)}`,
-  `model: ${formatModel(thread.threadOptions)}`,
-  `reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
-  `service tier: ${formatServiceTier(thread.threadOptions)}`,
-  `approval policy: ${formatApprovalPolicy(thread.threadOptions)}`,
-  `sandbox policy: ${formatSandboxPolicy(thread.threadOptions)}`,
-  `records: ${thread.records.length}`,
-  `updated: ${thread.updatedAt}`,
-  `usage: ${formatUsage(thread.lastUsage)}`
+const threadStatusMessage = (
+  thread: ThreadState,
+  session: ThreadSessionSummary,
+  accountRateLimits: ThreadRateLimits | null
+) => [
+  "## Codex Hub Status",
+  "",
+  "**Thread**",
+  `- ID: ${markdownCode(thread.threadId)}`,
+  `- Folder: ${markdownCode(thread.workingDirectory)}`,
+  `- State: ${markdownCode(thread.running ? "running" : "idle")}`,
+  `- Records: ${thread.records.length}`,
+  `- Updated: ${markdownCode(thread.updatedAt)}`,
+  "",
+  "**Runtime**",
+  `- Session: ${markdownCode(formatSession(session))}`,
+  `- Model: ${markdownCode(formatModel(thread.threadOptions))}`,
+  `- Reasoning: ${markdownCode(thread.threadOptions.modelReasoningEffort ?? "auto")}`,
+  `- Service tier: ${markdownCode(formatServiceTier(thread.threadOptions))}`,
+  "",
+  "**Policy**",
+  `- Approval: ${markdownCode(formatApprovalPolicy(thread.threadOptions))}`,
+  `- Sandbox: ${markdownCode(formatSandboxPolicy(thread.threadOptions))}`,
+  "",
+  "**Usage**",
+  ...formatStatusUsage(thread, accountRateLimits)
 ].join("\n");
 
 const modelCommandMessage = (thread: ThreadState) => [
@@ -3359,18 +3380,72 @@ const formatSession = (summary: ThreadSessionSummary) => {
   return `${state}${session}`;
 };
 
+const formatStatusUsage = (thread: ThreadState, accountRateLimits: ThreadRateLimits | null) => {
+  const usage = thread.threadUsage ?? emptyThreadUsage();
+  const primaryRateLimit = usage.primaryRateLimit ?? accountRateLimits?.primaryRateLimit ?? null;
+  const secondaryRateLimit = usage.secondaryRateLimit ?? accountRateLimits?.secondaryRateLimit ?? null;
+  const observedAt = usage.observedAt ?? accountRateLimits?.observedAt ?? null;
+  return [
+    `- Tokens: ${markdownCode(formatUsage(thread.lastUsage))}`,
+    `- Context: ${markdownCode(formatContextUsage(usage))}`,
+    `- 5h limit: ${markdownCode(formatRateLimitUsage(primaryRateLimit))}`,
+    `- Weekly limit: ${markdownCode(formatRateLimitUsage(secondaryRateLimit))}`,
+    `- Observed: ${markdownCode(observedAt ?? "n/a")}`
+  ];
+};
+
 const formatUsage = (usage: Usage | undefined) => {
   const record = asRecord(usage);
   if (!record) return "n/a";
   const total = numberValue(record.total_tokens) ?? numberValue(record.totalTokens);
   const input = numberValue(record.input_tokens) ?? numberValue(record.inputTokens);
+  const cachedInput = numberValue(record.cached_input_tokens) ?? numberValue(record.cachedInputTokens);
   const output = numberValue(record.output_tokens) ?? numberValue(record.outputTokens);
-  if (total == null && input == null && output == null) return "n/a";
+  const reasoningOutput = numberValue(record.reasoning_output_tokens) ?? numberValue(record.reasoningOutputTokens);
+  if (total == null && input == null && cachedInput == null && output == null && reasoningOutput == null) return "n/a";
   return [
     total == null ? null : `total=${total}`,
     input == null ? null : `input=${input}`,
-    output == null ? null : `output=${output}`
+    cachedInput == null ? null : `cached_input=${cachedInput}`,
+    output == null ? null : `output=${output}`,
+    reasoningOutput == null ? null : `reasoning_output=${reasoningOutput}`
   ].filter(Boolean).join(", ");
+};
+
+const formatContextUsage = (usage: ThreadUsage) => {
+  const context = usage.context;
+  if (!context) return "n/a";
+  const usedPercent = context.windowTokens > 0
+    ? (context.usedTokens / context.windowTokens) * 100
+    : 0;
+  const remainingTokens = Math.max(0, context.windowTokens - context.usedTokens);
+  return [
+    `${context.usedTokens}/${context.windowTokens} tokens`,
+    `${formatPercent(usedPercent)} used`,
+    `${remainingTokens} remaining`
+  ].join(", ");
+};
+
+const formatRateLimitUsage = (usage: ThreadRateLimitUsage | null) => {
+  if (!usage) return "n/a";
+  const remainingPercent = Math.max(0, 100 - usage.usedPercent);
+  return [
+    `${formatPercent(usage.usedPercent)} used`,
+    `${formatPercent(remainingPercent)} remaining`,
+    `resets ${formatRateLimitReset(usage.resetsAt)}`
+  ].join(", ");
+};
+
+const formatRateLimitReset = (value: number) => {
+  const millis = value > 10_000_000_000 ? value : value * 1000;
+  return Number.isFinite(millis) ? new Date(millis).toISOString() : "n/a";
+};
+
+const markdownCode = (value: string) => {
+  const longestBacktickRun = (value.match(/`+/g) ?? []).reduce((max, run) => Math.max(max, run.length), 0);
+  const fence = "`".repeat(longestBacktickRun + 1);
+  const padding = value.startsWith("`") || value.endsWith("`") ? " " : "";
+  return `${fence}${padding}${value}${padding}${fence}`;
 };
 
 const numberValue = (value: unknown) => typeof value === "number" ? value : undefined;
