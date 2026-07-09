@@ -53,6 +53,7 @@ export type MaybePromise<T = void> = T | Promise<T>;
 export type ModelOption = {
   value: string;
   label: string;
+  searchText?: string;
 };
 
 export type TaskPatchInput = ApiTaskUpdateInput;
@@ -204,6 +205,8 @@ export type AppViewModel = AppSidebarViewModel & {
   messageDisplayMode: MessageDisplayMode;
   messageRenderModes: Record<string, MessageRenderMode>;
   activeThreadApprovalPolicySelection?: ApprovalPolicySelection;
+  activeModelCatalogError: string;
+  activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
   activeThreadModelDraft: ModelSelection;
   activeThreadReasoningDraft: ReasoningSelection;
   activeThreadServiceTierDraft: ServiceTierSelection;
@@ -238,6 +241,7 @@ export type AppViewModel = AppSidebarViewModel & {
   respondToApproval: (threadId: string, approvalId: string, decision: AppServerApprovalDecision) => MaybePromise;
   respondToUserInput: (threadId: string, userInputId: string, answers: AppServerUserInputAnswers) => MaybePromise;
   reviewThread: (threadId: string) => MaybePromise;
+  retryModelCatalog: () => void;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
   rollbackMessage: (threadId: string, messageId: string) => MaybePromise;
   saveGoalDialog: () => MaybePromise;

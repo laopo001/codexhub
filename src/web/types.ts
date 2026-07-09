@@ -64,6 +64,11 @@ export type ThreadRenameDialogState = {
 export type SessionSummary = ApiSessionSummary;
 export type SessionView = ApiSessionView;
 export type ModelCatalogItem = ApiModelCatalogItem;
+export type ModelCatalogLoadState = {
+  status: "loading" | "ready" | "error";
+  models: ModelCatalogItem[];
+  error?: string;
+};
 export type CommandPalette = ApiCommandPalette;
 export type CommandPaletteEntry = ApiCommandPaletteEntry;
 export type MachineSummary = ApiMachineSummary;

@@ -769,6 +769,9 @@ const assertModelOptionSearch = async () => {
   }
 
   const manualOptions = modelOptionsForSelection("manual-model", []);
+  if (manualOptions.some((option) => option.value.startsWith("gpt-"))) {
+    throw new Error(`model options should not fall back to static models: ${JSON.stringify(manualOptions)}`);
+  }
   const manualOption = manualOptions.find((option) => option.value === "manual-model");
   if (!modelOptionSearchMatches(manualOption, "manual")) {
     throw new Error(`manual model option should be searchable: ${JSON.stringify(manualOption)}`);

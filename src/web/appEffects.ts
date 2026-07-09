@@ -181,23 +181,37 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     if (!state.initialized || !state.threadModelDialogOpen) return undefined;
     const sessionId = selectors.activeRuntimeSession?.sessionId;
     if (!sessionId) return undefined;
-    if (Object.prototype.hasOwnProperty.call(state.modelCatalogBySession, sessionId)) return undefined;
-    let cancelled = false;
+    const currentCatalog = state.modelCatalogBySession[sessionId];
+    if (
+      currentCatalog?.status === "loading"
+      || currentCatalog?.status === "ready"
+      || currentCatalog?.status === "error"
+    ) return undefined;
+    state.setModelCatalogBySession((current) => ({
+      ...current,
+      [sessionId]: { status: "loading", models: [] }
+    }));
     void apiRouteJson(apiRoutes.sessionModels, sessionId)
       .then((payload) => {
-        if (cancelled) return;
         state.setModelCatalogBySession((current) => ({
           ...current,
-          [sessionId]: Array.isArray(payload.models) ? payload.models : []
+          [sessionId]: {
+            status: "ready",
+            models: Array.isArray(payload.models) ? payload.models : []
+          }
         }));
       })
-      .catch(() => {
-        if (cancelled) return;
-        state.setModelCatalogBySession((current) => ({ ...current, [sessionId]: [] }));
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        state.setModelCatalogBySession((current) => ({
+          ...current,
+          [sessionId]: {
+            status: "error",
+            models: [],
+            error: message || "Model catalog unavailable."
+          }
+        }));
       });
-    return () => {
-      cancelled = true;
-    };
   }, [
     selectors.activeRuntimeSession?.sessionId,
     state.initialized,

@@ -51,6 +51,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     loadThreadPickerCandidates,
     machines,
     messageContextMenu,
+    activeModelCatalogError,
+    activeModelCatalogStatus,
     effectiveModelSelection,
     effectiveReasoningSelection,
     effectiveServiceTierSelection,
@@ -60,6 +62,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     onlineMachines,
     openingProjectKey,
     projectPicker,
+    retryModelCatalog,
     saveGoalDialog,
     saveThreadRenameDialog,
     threadModelDialogOpen,
@@ -132,6 +135,16 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     ...option,
     label: modelOptionLabel(option)
   }));
+  const modelCatalogLoading = activeModelCatalogStatus === "idle" || activeModelCatalogStatus === "loading";
+  const modelCatalogError = activeModelCatalogStatus === "error";
+  const modelCatalogNotice = activeModelCatalogStatus === "unavailable"
+    ? "No online runtime session."
+    : modelCatalogLoading
+      ? "Loading model catalog..."
+      : modelCatalogError
+        ? activeModelCatalogError || "Model catalog unavailable."
+        : "";
+  const threadModelSelectDisabled = activeModelCatalogStatus !== "ready";
 
   return (
     <>
@@ -151,6 +164,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 showSearch
                 value={effectiveModelSelection}
                 options={dialogModelSelectOptions}
+                disabled={threadModelSelectDisabled}
+                loading={modelCatalogLoading}
                 filterOption={(input, option) => modelOptionSearchMatches(selectOptionSearchPayload(option), input)}
                 onChange={(value) => setActiveThreadModelDraft(value as ModelSelection)}
               />
@@ -161,6 +176,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 className="threadModelSelect"
                 value={effectiveReasoningSelection}
                 options={dialogReasoningOptions.map((option) => ({ value: option.value, label: reasoningOptionLabel(option) }))}
+                disabled={threadModelSelectDisabled}
+                loading={modelCatalogLoading}
                 onChange={(value) => setActiveThreadReasoningDraft(value as ReasoningSelection)}
               />
             </label>
@@ -170,9 +187,19 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 className="threadModelSelect"
                 value={effectiveServiceTierSelection}
                 options={dialogServiceTierOptions.map((option) => ({ value: option.value, label: serviceTierOptionLabel(option) }))}
+                disabled={threadModelSelectDisabled}
+                loading={modelCatalogLoading}
                 onChange={(value) => setActiveThreadServiceTierDraft(value as ServiceTierSelection)}
               />
             </label>
+            {modelCatalogNotice ? (
+              <div className={`sessionDialogNotice${modelCatalogError ? " error" : ""}`}>
+                <span>{modelCatalogNotice}</span>
+                {modelCatalogError ? (
+                  <button type="button" className="textButton" onClick={retryModelCatalog}>Retry</button>
+                ) : null}
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}

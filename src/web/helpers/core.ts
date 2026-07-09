@@ -2,7 +2,6 @@ import { asRecord } from "../../shared/recordTypes.js";
 import type { ModelCatalogItem, StoredMachine } from "../../shared/apiContract.js";
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
 import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../core/taskCron.js";
-import { modelOptions, reasoningOptions, serviceTierOptions } from "../appConfig.js";
 import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
@@ -1063,7 +1062,7 @@ export const modelOptionsForSelection = (model: ModelSelection, catalog: ModelCa
       searchText: modelCatalogSearchText(item)
     }))
     .filter((option) => option.value);
-  const options = catalogOptions.length ? [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)] : modelOptions;
+  const options = [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)];
   return ensureOption(options, model);
 };
 
@@ -1073,13 +1072,14 @@ export const reasoningOptionsForSelection = (
   model: ModelSelection = "auto"
 ) => {
   const catalogModel = modelCatalogItemForSelection(catalog, model);
-  const catalogOptions = (catalogModel?.supportedReasoningEfforts ?? [])
-    .filter((option) => reasoningOptions.some((staticOption) => staticOption.value === option.value))
-    .map((option) => ({
-      value: option.value,
-      label: option.value
-    }));
-  const options = catalogOptions.length ? [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)] : reasoningOptions;
+  const sourceReasoningEfforts = catalogModel?.supportedReasoningEfforts.length
+    ? catalogModel.supportedReasoningEfforts
+    : catalog.flatMap((item) => item.supportedReasoningEfforts);
+  const catalogOptions = sourceReasoningEfforts.map((option) => ({
+    value: option.value,
+    label: option.label ?? option.value
+  }));
+  const options = [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)];
   return ensureOption(options, reasoning);
 };
 
@@ -1094,11 +1094,9 @@ export const serviceTierOptionsForSelection = (
     : catalog.flatMap((item) => item.serviceTiers);
   const catalogOptions = sourceTiers.map((option) => ({
     value: option.value,
-    label: option.value
+    label: option.label ?? option.value
   }));
-  const options = catalogOptions.length
-    ? [{ value: "auto", label: "Auto" }, ...dedupeOptions([...catalogOptions, { value: "default", label: "default" }])]
-    : serviceTierOptions;
+  const options = [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)];
   return ensureOption(options, serviceTier, serviceTierDisplayLabel(serviceTier));
 };
 

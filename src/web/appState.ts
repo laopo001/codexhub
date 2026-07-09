@@ -16,7 +16,7 @@ import type {
   MessageContextMenuState,
   MessageDisplayMode,
   MessageRenderMode,
-  ModelCatalogItem,
+  ModelCatalogLoadState,
   OpenThreadState,
   ParentRegistrationDraft,
   ParentRegistrationStatus,
@@ -94,7 +94,7 @@ export const useAppState = () => {
     serviceTier: null,
     contextWindowTokens: null
   });
-  const [modelCatalogBySession, setModelCatalogBySession] = useState<Record<string, ModelCatalogItem[]>>({});
+  const [modelCatalogBySession, setModelCatalogBySession] = useState<Record<string, ModelCatalogLoadState>>({});
   const [commandPaletteByScope, setCommandPaletteByScope] = useState<Record<string, CommandPalette>>({});
   const [commandPaletteLoadingScopes, setCommandPaletteLoadingScopes] = useState<Record<string, boolean>>({});
   const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");

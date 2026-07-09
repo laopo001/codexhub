@@ -64,6 +64,35 @@
   box-shadow: 0 0 0 2px rgb(84 114 80 / 0.14) !important;
 }
 
+.sessionDialogNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #51604f;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.sessionDialogNotice.error {
+  color: #9f3f3f;
+}
+
+.sessionDialogNotice .textButton {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0;
+}
+
+.sessionDialogNotice .textButton:hover {
+  text-decoration: underline;
+}
+
 .settingsDialogOverlay {
   background: rgb(18 32 24 / 0.42);
 }

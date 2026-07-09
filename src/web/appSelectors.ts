@@ -383,9 +383,18 @@ export const useAppSelectors = (state: AppState) => {
   const effectiveServiceTierSelection: ServiceTierSelection = activeThreadServiceTierDraft === "auto" && activeThreadServiceTier
     ? activeThreadServiceTier
     : activeThreadServiceTierDraft;
-  const activeModelCatalog = activeRuntimeSession?.sessionId
-    ? state.modelCatalogBySession[activeRuntimeSession.sessionId] ?? []
+  const activeModelCatalogState = activeRuntimeSession?.sessionId
+    ? state.modelCatalogBySession[activeRuntimeSession.sessionId]
+    : undefined;
+  const activeModelCatalog = activeModelCatalogState?.status === "ready"
+    ? activeModelCatalogState.models
     : [];
+  const activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error" = activeRuntimeSession?.sessionId
+    ? activeModelCatalogState?.status ?? "idle"
+    : "unavailable";
+  const activeModelCatalogError = activeModelCatalogState?.status === "error"
+    ? activeModelCatalogState.error ?? "Model catalog unavailable."
+    : "";
   const modelOptions = useMemo(
     () => modelOptionsForSelection(effectiveModelSelection, activeModelCatalog),
     [effectiveModelSelection, activeModelCatalog]
@@ -413,6 +422,8 @@ export const useAppSelectors = (state: AppState) => {
     activeThreadIsOpen,
     activeThreadModelDraft,
     activeThreadApprovalPolicySelection,
+    activeModelCatalogError,
+    activeModelCatalogStatus,
     activeThreadReasoning,
     activeThreadReasoningDraft,
     activeThreadServiceTier,

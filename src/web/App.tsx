@@ -112,6 +112,7 @@ const App = () => {
     setMessageContextMenu,
     setMessageDisplayMode,
     setMessageRenderModes,
+    setModelCatalogBySession,
     setNowMs,
     setOfflineProjectsCollapsed,
     setOpeningProjectKey,
@@ -191,6 +192,8 @@ const App = () => {
     activeThread,
     activeThreadIsOpen,
     activeThreadApprovalPolicySelection,
+    activeModelCatalogError,
+    activeModelCatalogStatus,
     activeThreadModelDraft,
     activeThreadReasoningDraft,
     activeThreadServiceTierDraft,
@@ -405,6 +408,17 @@ const App = () => {
     window.setTimeout(() => setServerShareCopied(false), 1200);
   };
 
+  const retryModelCatalog = () => {
+    const sessionId = activeRuntimeSession?.sessionId;
+    if (!sessionId) return;
+    setModelCatalogBySession((current) => {
+      if (!Object.prototype.hasOwnProperty.call(current, sessionId)) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  };
+
   const viewModel = {
     activeCanSend,
     activeCanStop,
@@ -476,6 +490,8 @@ const App = () => {
     messageDisplayMode,
     messageRenderModes,
     activeThreadApprovalPolicySelection,
+    activeModelCatalogError,
+    activeModelCatalogStatus,
     activeThreadModelDraft,
     activeThreadReasoningDraft,
     activeThreadServiceTierDraft,
@@ -520,6 +536,7 @@ const App = () => {
     respondToApproval,
     respondToUserInput,
     reviewThread,
+    retryModelCatalog,
     resizeComposerTextarea,
     rollbackMessage,
     runTaskNow,
