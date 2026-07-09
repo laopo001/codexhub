@@ -1965,7 +1965,7 @@ const commandPaletteEntryFromSkill = (
     shortDescription: shortDescription || undefined,
     description,
     detail: pluginDisplayName || skillScopeLabel(scope),
-    insertText: `@${name}`,
+    insertText: pluginDisplayName ? `@${name}` : `$${name}`,
     action: "insert",
     enabled,
     source: pluginDisplayName || pathValue || undefined,

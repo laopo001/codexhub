@@ -134,10 +134,15 @@ const commandPaletteEntriesForTrigger = (
   const query = trigger.query.toLowerCase();
   const filtered = entries
     .filter((entry) => entry.enabled)
-    .filter((entry) => trigger.marker !== "@" || (entry.kind === "skill" && !commandPaletteEntryIsPluginSkill(entry)))
+    .filter((entry) => {
+      if (trigger.marker === "@") {
+        return entry.kind === "plugin" || (entry.kind === "skill" && !commandPaletteEntryIsPluginSkill(entry));
+      }
+      return true;
+    })
     .filter((entry) => !query || commandPaletteSearchText(entry).includes(query))
     .sort((left, right) => {
-      if (trigger.marker === "/") {
+      if (trigger.marker === "/" || trigger.marker === "@") {
         const groupRank = commandPaletteGroupRank(left) - commandPaletteGroupRank(right);
         if (groupRank) return groupRank;
       }
@@ -204,6 +209,31 @@ const commandPaletteEntryDescription = (entry: CommandPaletteEntry) =>
 
 const commandPaletteEntryIcon = (entry: CommandPaletteEntry) =>
   entry.kind === "plugin" ? Package : entry.kind === "skill" ? Sparkles : CommandIcon;
+
+const commandPaletteTriggerLabel = (marker: CommandPaletteTrigger["marker"] | undefined) => {
+  if (marker === "@") return "技能、插件";
+  return "命令、技能、插件";
+};
+
+const commandPaletteTriggerAriaLabel = (marker: CommandPaletteTrigger["marker"] | undefined) => {
+  if (marker === "@") return "Skills and plugins";
+  return "Commands";
+};
+
+const commandPaletteReplacementText = (entry: CommandPaletteEntry, trigger: CommandPaletteTrigger) => {
+  const replacement = entry.insertText || `${trigger.marker}${entry.name}`;
+  if (entry.kind !== "skill" && entry.kind !== "plugin") {
+    return replacement;
+  }
+  return /\s$/.test(replacement) ? replacement : `${replacement} `;
+};
+
+const commandPaletteEntryLabel = (entry: CommandPaletteEntry) => {
+  if (entry.kind === "builtin") return `/${entry.name}`;
+  const insertText = entry.insertText?.trim();
+  if (insertText && /^[$@]/.test(insertText)) return insertText;
+  return `${entry.kind === "skill" ? "$" : "@"}${entry.name}`;
+};
 
 type MessagesVirtuosoContext = {
   turnLoadingDuration: string;
@@ -527,7 +557,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       if (!activeThread.running) void compactThread(activeThread.threadId);
       return;
     }
-    const replacement = entry.insertText || `${commandPaletteTrigger.marker}${entry.name}`;
+    const replacement = commandPaletteReplacementText(entry, commandPaletteTrigger);
     setDismissedCommandPaletteKey(`${activeThread.threadId}:${replacement}`);
     replaceCommandPaletteTrigger(replacement);
   }, [
@@ -991,11 +1021,11 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                             <div
                               className={`commandPalette${commandPaletteKeyboardNavigation ? " keyboardNavigation" : ""}`}
                               role="listbox"
-                              aria-label={commandPaletteTrigger?.marker === "@" ? "Skills" : "Commands"}
+                              aria-label={commandPaletteTriggerAriaLabel(commandPaletteTrigger?.marker)}
                               onMouseDown={(event) => event.preventDefault()}
                             >
                               <div className="commandPaletteHeader">
-                                <span>{commandPaletteTrigger?.marker === "@" ? "技能" : "命令、技能、插件"}</span>
+                                <span>{commandPaletteTriggerLabel(commandPaletteTrigger?.marker)}</span>
                                 {commandPaletteLoading ? <span>Loading</span> : null}
                               </div>
                               {commandPaletteRows.map((row) => {
@@ -1035,7 +1065,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                     </span>
                                     <span className="commandPaletteText">
                                       <span className="commandPaletteTitle">
-                                        {entry.kind === "builtin" ? `/${entry.name}` : `@${entry.name}`}
+                                        {commandPaletteEntryLabel(entry)}
                                       </span>
                                       <span className="commandPaletteDescription">
                                         {commandPaletteEntryDescription(entry)}
