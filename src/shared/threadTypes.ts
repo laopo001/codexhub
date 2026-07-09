@@ -207,6 +207,9 @@ export type CommandPaletteEntry = {
   scope?: string;
 };
 
+/** composer command palette 的加载分片。 */
+export type CommandPalettePart = "core" | "plugins" | "all";
+
 /** 当前 runtime 可见的 composer command palette。 */
 export type CommandPalette = {
   cwd: string;
@@ -281,6 +284,7 @@ export type SessionCommand = {
   keepTurns?: number;
   limit?: number;
   includeHidden?: boolean;
+  commandPalettePart?: CommandPalettePart;
   title?: string;
   goal?: ThreadGoalUpdate;
   reviewTarget?: { type: "uncommittedChanges" };

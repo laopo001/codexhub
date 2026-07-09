@@ -232,7 +232,7 @@ const commandPaletteEntryLabel = (entry: CommandPaletteEntry) => {
   if (entry.kind === "builtin") return `/${entry.name}`;
   const insertText = entry.insertText?.trim();
   if (insertText && /^[$@]/.test(insertText)) return insertText;
-  return `${entry.kind === "skill" ? "$" : "@"}${entry.name}`;
+  return `@${entry.name}`;
 };
 
 type MessagesVirtuosoContext = {
@@ -465,7 +465,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     ? commandPaletteEntries[Math.min(commandPaletteActiveIndex, Math.max(commandPaletteEntries.length - 1, 0))]
     : undefined;
   React.useEffect(() => {
-    if (!activeThread?.session.sessionId || !commandPaletteTrigger) return;
+    if (!activeThread?.session.sessionId) return;
     if (commandPalette || commandPaletteLoading) return;
     void loadCommandPalette(activeThread.session.sessionId, activeThread.workingDirectory);
   }, [
@@ -473,7 +473,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeThread?.workingDirectory,
     commandPalette,
     commandPaletteLoading,
-    commandPaletteTrigger,
     loadCommandPalette
   ]);
   React.useEffect(() => {

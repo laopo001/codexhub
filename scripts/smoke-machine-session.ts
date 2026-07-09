@@ -3171,6 +3171,33 @@ const assertCommandPalette = async (apiBase: string, sessionId: string, cwd: str
   if (staleDollar) throw new Error(`command palette still uses $ trigger: ${JSON.stringify(staleDollar)}`);
   const nonAtEntry = [...plugins, ...skills].find((entry) => typeof entry.insertText !== "string" || !entry.insertText.startsWith("@"));
   if (nonAtEntry) throw new Error(`command palette plugin/skill entry does not use @ trigger: ${JSON.stringify(nonAtEntry)}`);
+
+  const corePayload = await apiJson<CommandPalettePayload>(
+    apiBase,
+    `/api/sessions/${encodeURIComponent(sessionId)}/command-palette?cwd=${encodeURIComponent(cwd)}&part=core`
+  );
+  const coreEntries = Array.isArray(corePayload.palette?.entries) ? corePayload.palette.entries.map(asRecord) : [];
+  if (!coreEntries.some((entry) => entry.kind === "builtin" && entry.name === "model")) {
+    throw new Error(`command palette core part missing builtins: ${JSON.stringify(coreEntries.slice(0, 10))}`);
+  }
+  if (!coreEntries.some((entry) => entry.kind === "skill")) {
+    throw new Error(`command palette core part missing direct skills: ${JSON.stringify(coreEntries.slice(0, 10))}`);
+  }
+  if (coreEntries.some((entry) => entry.kind === "plugin")) {
+    throw new Error(`command palette core part included plugin entries: ${JSON.stringify(coreEntries.filter((entry) => entry.kind === "plugin").slice(0, 5))}`);
+  }
+
+  const pluginPayload = await apiJson<CommandPalettePayload>(
+    apiBase,
+    `/api/sessions/${encodeURIComponent(sessionId)}/command-palette?cwd=${encodeURIComponent(cwd)}&part=plugins`
+  );
+  const pluginEntries = Array.isArray(pluginPayload.palette?.entries) ? pluginPayload.palette.entries.map(asRecord) : [];
+  if (!pluginEntries.some((entry) => entry.kind === "plugin")) {
+    throw new Error(`command palette plugins part missing plugin entries: ${JSON.stringify(pluginEntries.slice(0, 10))}`);
+  }
+  if (pluginEntries.some((entry) => entry.kind === "builtin")) {
+    throw new Error(`command palette plugins part included builtins: ${JSON.stringify(pluginEntries.filter((entry) => entry.kind === "builtin").slice(0, 5))}`);
+  }
 };
 
 const assertNoWorkerId = (value: unknown, label: string) => {

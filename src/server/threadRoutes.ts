@@ -226,9 +226,12 @@ export const registerThreadRoutes = <
 
   app.get("/api/sessions/:sessionId/command-palette", async (request, reply) => {
     const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
-    const query = z.object({ cwd: z.string().min(1).optional() }).parse(request.query);
+    const query = z.object({
+      cwd: z.string().min(1).optional(),
+      part: z.enum(["core", "plugins", "all"]).optional()
+    }).parse(request.query);
     try {
-      const result = await ctx.threads.listSessionCommandPalette(params.sessionId, query.cwd);
+      const result = await ctx.threads.listSessionCommandPalette(params.sessionId, query.cwd, query.part);
       return result satisfies CommandPalettePayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

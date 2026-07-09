@@ -17,6 +17,7 @@ import type {
   AppServerApprovalRequest,
   AppServerUserInputAnswers,
   AppServerUserInputRequest,
+  CommandPalettePart,
   SessionCommand,
   SessionCommandPaletteResult,
   SessionEventInput,
@@ -444,7 +445,11 @@ export class ThreadHub {
     return await promise;
   }
 
-  async listSessionCommandPalette(sessionId: string, workingDirectory?: string): Promise<SessionCommandPaletteResult> {
+  async listSessionCommandPalette(
+    sessionId: string,
+    workingDirectory?: string,
+    part: CommandPalettePart = "all"
+  ): Promise<SessionCommandPaletteResult> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
     const commandId = randomUUID();
@@ -459,6 +464,7 @@ export class ThreadHub {
       commandId,
       type: "list_command_palette",
       workingDirectory: cwd,
+      commandPalettePart: part,
       createdAt: new Date().toISOString()
     });
     return await promise;

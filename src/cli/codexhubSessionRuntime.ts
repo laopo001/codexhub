@@ -25,6 +25,7 @@ import type {
   AppServerUserInputAnswers,
   CommandPalette,
   CommandPaletteEntry,
+  CommandPalettePart,
   ModelCatalogItem,
   SessionCommand,
   SessionEventInput,
@@ -835,7 +836,7 @@ class CodexAppServerBridge {
 
     if (command.type === "list_command_palette") {
       return {
-        palette: await this.listAppServerCommandPalette(command.workingDirectory)
+        palette: await this.listAppServerCommandPalette(command.workingDirectory, command.commandPalettePart)
       };
     }
 
@@ -1355,20 +1356,32 @@ class CodexAppServerBridge {
     return models;
   }
 
-  private async listAppServerCommandPalette(cwd: string): Promise<CommandPalette> {
-    const config = await this.readCommandPaletteConfig(cwd).catch((error) => {
-      console.error(`codexhub bridge failed to read app-server config for command palette: ${errorText(error)}`);
-      return null;
-    });
-    const directSkills = await this.listAppServerSkillPaletteEntries(cwd).catch((error) => {
-      console.error(`codexhub bridge failed to list app-server skills: ${errorText(error)}`);
-      return [] as CommandPaletteEntry[];
-    });
+  private async listAppServerCommandPalette(cwd: string, part: CommandPalettePart = "all"): Promise<CommandPalette> {
+    if (part === "plugins") {
+      const directSkills = await this.listCommandPaletteDirectSkills(cwd);
+      const skillPluginNames = new Set(directSkills.flatMap((entry) => pluginNameFromSkillName(entry.name)));
+      const pluginEntries = await this.listCommandPalettePluginEntries(cwd, skillPluginNames);
+      return {
+        cwd,
+        generatedAt: new Date().toISOString(),
+        entries: dedupeCommandPaletteEntries(pluginEntries)
+      };
+    }
+
+    const { config, directSkills } = await this.listCommandPaletteCoreEntries(cwd);
+    if (part === "core") {
+      return {
+        cwd,
+        generatedAt: new Date().toISOString(),
+        entries: dedupeCommandPaletteEntries([
+          ...builtinCommandPaletteEntries(config),
+          ...directSkills
+        ])
+      };
+    }
+
     const skillPluginNames = new Set(directSkills.flatMap((entry) => pluginNameFromSkillName(entry.name)));
-    const pluginEntries = await this.listAppServerPluginPaletteEntries(cwd, skillPluginNames).catch((error) => {
-      console.error(`codexhub bridge failed to list app-server plugins: ${errorText(error)}`);
-      return [] as CommandPaletteEntry[];
-    });
+    const pluginEntries = await this.listCommandPalettePluginEntries(cwd, skillPluginNames);
     return {
       cwd,
       generatedAt: new Date().toISOString(),
@@ -1378,6 +1391,31 @@ class CodexAppServerBridge {
         ...directSkills
       ])
     };
+  }
+
+  private async listCommandPaletteCoreEntries(cwd: string) {
+    const [config, directSkills] = await Promise.all([
+      this.readCommandPaletteConfig(cwd).catch((error) => {
+        console.error(`codexhub bridge failed to read app-server config for command palette: ${errorText(error)}`);
+        return null;
+      }),
+      this.listCommandPaletteDirectSkills(cwd)
+    ]);
+    return { config, directSkills };
+  }
+
+  private async listCommandPaletteDirectSkills(cwd: string) {
+    return await this.listAppServerSkillPaletteEntries(cwd).catch((error) => {
+      console.error(`codexhub bridge failed to list app-server skills: ${errorText(error)}`);
+      return [] as CommandPaletteEntry[];
+    });
+  }
+
+  private async listCommandPalettePluginEntries(cwd: string, skillPluginNames: ReadonlySet<string>) {
+    return await this.listAppServerPluginPaletteEntries(cwd, skillPluginNames).catch((error) => {
+      console.error(`codexhub bridge failed to list app-server plugins: ${errorText(error)}`);
+      return [] as CommandPaletteEntry[];
+    });
   }
 
   private async readCommandPaletteConfig(cwd: string) {
@@ -1965,7 +2003,7 @@ const commandPaletteEntryFromSkill = (
     shortDescription: shortDescription || undefined,
     description,
     detail: pluginDisplayName || skillScopeLabel(scope),
-    insertText: pluginDisplayName ? `@${name}` : `$${name}`,
+    insertText: `@${name}`,
     action: "insert",
     enabled,
     source: pluginDisplayName || pathValue || undefined,

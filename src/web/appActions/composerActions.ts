@@ -14,6 +14,7 @@ import {
 } from "../appHelpers.js";
 import type {
   CommandPalette,
+  CommandPaletteEntry,
   OpenThreadState,
   ComposerHistoryState,
   MessageContextMenuState,
@@ -43,6 +44,43 @@ export type ComposerActionsDependencies = {
 };
 
 type ComposerHistoryDirection = "previous" | "next";
+
+const emptyCommandPalette = (cwd: string): CommandPalette => ({
+  cwd,
+  generatedAt: new Date().toISOString(),
+  entries: []
+});
+
+const commandPaletteEntryMergeKey = (entry: CommandPaletteEntry) => `${entry.kind}:${entry.name}`;
+
+const mergeCommandPaletteEntries = (
+  baseEntries: CommandPaletteEntry[],
+  nextEntries: CommandPaletteEntry[]
+) => {
+  const merged = [...baseEntries];
+  const indexByKey = new Map(merged.map((entry, index) => [commandPaletteEntryMergeKey(entry), index]));
+  for (const entry of nextEntries) {
+    const key = commandPaletteEntryMergeKey(entry);
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex === undefined) {
+      indexByKey.set(key, merged.length);
+      merged.push(entry);
+    } else {
+      merged[existingIndex] = entry;
+    }
+  }
+  return merged;
+};
+
+const mergeCommandPalette = (
+  current: CommandPalette | undefined,
+  next: CommandPalette,
+  cwd: string
+): CommandPalette => ({
+  cwd: next.cwd || current?.cwd || cwd,
+  generatedAt: next.generatedAt || current?.generatedAt || new Date().toISOString(),
+  entries: mergeCommandPaletteEntries(current?.entries ?? [], next.entries ?? [])
+});
 
 const insertTextBlock = (value: string, text: string, start = value.length, end = start) => {
   const safeStart = Math.max(0, Math.min(start, value.length));
@@ -106,17 +144,27 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     if (ctx.commandPaletteByScope[key] || ctx.commandPaletteLoadingScopes[key]) return;
     ctx.setCommandPaletteLoadingScopes((current) => ({ ...current, [key]: true }));
     try {
-      const payload = await apiRouteJson(apiRoutes.commandPalette, sessionId, cwd);
+      const payload = await apiRouteJson(apiRoutes.commandPalette, sessionId, cwd, "core");
       ctx.setCommandPaletteByScope((current) => ({
         ...current,
-        [key]: payload.palette ?? { cwd, generatedAt: new Date().toISOString(), entries: [] }
+        [key]: payload.palette ?? emptyCommandPalette(cwd)
       }));
     } catch (error) {
       console.error(error);
       ctx.setCommandPaletteByScope((current) => ({
         ...current,
-        [key]: { cwd, generatedAt: new Date().toISOString(), entries: [] }
+        [key]: current[key] ?? emptyCommandPalette(cwd)
       }));
+    }
+
+    try {
+      const payload = await apiRouteJson(apiRoutes.commandPalette, sessionId, cwd, "plugins");
+      ctx.setCommandPaletteByScope((current) => ({
+        ...current,
+        [key]: mergeCommandPalette(current[key], payload.palette ?? emptyCommandPalette(cwd), cwd)
+      }));
+    } catch (error) {
+      console.error(error);
     } finally {
       ctx.setCommandPaletteLoadingScopes((current) => {
         const next = { ...current };

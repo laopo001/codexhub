@@ -40,7 +40,7 @@ import type {
   WorktreeThreadStartPayload
 } from "./apiContract.js";
 import type { ProxyInput } from "./inputTypes.js";
-import type { ThreadRunOptions } from "./threadTypes.js";
+import type { CommandPalettePart, ThreadRunOptions } from "./threadTypes.js";
 
 /** HTTP method 枚举，作为 typed API route map 的 method 维度。 */
 export type ApiHttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
@@ -157,8 +157,8 @@ export const apiRoutes = {
   sessionModels: get<SessionModelsPayload, (sessionId: string, includeHidden?: boolean) => string>(
     (sessionId, includeHidden) => `/api/sessions/${encode(sessionId)}/models${queryString({ includeHidden: includeHidden ? "true" : undefined })}`
   ),
-  commandPalette: get<CommandPalettePayload, (sessionId: string, cwd?: string) => string>(
-    (sessionId, cwd) => `/api/sessions/${encode(sessionId)}/command-palette${queryString({ cwd })}`
+  commandPalette: get<CommandPalettePayload, (sessionId: string, cwd?: string, part?: CommandPalettePart) => string>(
+    (sessionId, cwd, part) => `/api/sessions/${encode(sessionId)}/command-palette${queryString({ cwd, part })}`
   ),
   thread: get<ThreadDetail, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}`
