@@ -2539,17 +2539,19 @@ const codexRecordFromAppServerUsage = (
   const last = asRecord(usage.last);
   if (!last) return null;
   const total = asRecord(usage.total);
+  const normalizedLast = tokenUsageBreakdown(last);
+  const normalizedTotal = total ? tokenUsageBreakdown(total) : null;
   const rateLimits = tokenUsageRateLimits(usage.rateLimits ?? usage.rate_limits);
   const modelContextWindow = tokenUsageNumber(usage.modelContextWindow ?? usage.model_context_window);
   return {
-    id: `app:${threadId}:${turnId}:usage`,
+    id: `app:${threadId}:${turnId}:usage:${tokenUsageRecordKey(normalizedTotal ?? normalizedLast)}`,
     timestamp: new Date().toISOString(),
     type: "event_msg",
     payload: {
       type: "token_count",
       info: {
-        last_token_usage: tokenUsageBreakdown(last),
-        ...(total ? { total_token_usage: tokenUsageBreakdown(total) } : {}),
+        last_token_usage: normalizedLast,
+        ...(normalizedTotal ? { total_token_usage: normalizedTotal } : {}),
         model_context_window: modelContextWindow
       },
       ...(rateLimits ? { rate_limits: rateLimits } : {})
@@ -2557,6 +2559,14 @@ const codexRecordFromAppServerUsage = (
     sourceThreadId: threadId
   };
 };
+
+const tokenUsageRecordKey = (usage: NormalizedTokenUsage) => [
+  usage.input_tokens,
+  usage.cached_input_tokens,
+  usage.output_tokens,
+  usage.reasoning_output_tokens,
+  usage.total_tokens
+].join(":");
 
 const statusUsageRecordFromAppServerUsage = (
   thread: ThreadState,

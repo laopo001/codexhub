@@ -170,6 +170,46 @@ const assertStatusUsageFormatting = async () => {
       throw new Error(`status usage summary formatting mismatch: ${JSON.stringify(usageStatuses[0])}`);
     }
 
+    const perMessageUsageRecords: CodexRecord[] = [
+      {
+        id: "app:thread:turn:agent:commentary",
+        order: 1,
+        type: "event_msg",
+        payload: { type: "agent_message", phase: "commentary", message: "checking" }
+      },
+      {
+        id: "app:thread:turn:usage:commentary",
+        order: 2,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: { input_tokens: 29323, output_tokens: 66, total_tokens: 29389 } }
+        }
+      },
+      {
+        id: "app:thread:turn:agent:final",
+        order: 3,
+        type: "event_msg",
+        payload: { type: "agent_message", phase: "final_answer", message: "done" }
+      },
+      {
+        id: "app:thread:turn:usage:final",
+        order: 4,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: { input_tokens: 29484, output_tokens: 80, total_tokens: 29564 } }
+        }
+      }
+    ];
+    for (const views of [recordsToViews(perMessageUsageRecords), recordsToDetailedViews(perMessageUsageRecords)]) {
+      const commentary = views.find((view) => view.role === "codex" && view.label === "commentary");
+      const finalAnswer = views.find((view) => view.role === "codex" && view.label === "final_answer");
+      if (commentary?.usage?.total_tokens !== 29389 || finalAnswer?.usage?.total_tokens !== 29564) {
+        throw new Error(`message usage was not bound by model call: ${JSON.stringify(views)}`);
+      }
+    }
+
     const scopedRecords: CodexRecord[] = [
       {
         id: "app:thread:goal:user-1",

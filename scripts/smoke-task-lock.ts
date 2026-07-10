@@ -73,6 +73,7 @@ type PartialThreadUsage = {
 type ThreadDetail = {
   threadUsage?: PartialThreadUsage;
   records?: Array<{
+    id: string;
     type?: string;
     payload?: unknown;
   }>;
@@ -303,6 +304,7 @@ const main = async () => {
         modelContextWindow: 200000
       }
     });
+    await assertTurnTokenUsageRecords(apiBase, fake.threadId, activeWebTurnId, [1300, 340]);
     fake.emitTokenUsageForTurnId(fake.threadId, activeWebTurnId, {
       rateLimits: {
         primary: { usedPercent: 12.5, windowMinutes: 300, resetsAt: 1781058359 },
@@ -1578,6 +1580,32 @@ const assertStatusUsage = async (
     await delay(100);
   }
   throw new Error(`thread ${threadId} did not reach status usage ${JSON.stringify(expected)}`);
+};
+
+const assertTurnTokenUsageRecords = async (
+  apiBase: string,
+  threadId: string,
+  turnId: string,
+  expectedTotals: number[]
+) => {
+  const idPrefix = `app:${threadId}:${turnId}:usage:`;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
+    const totals = (detail.records ?? [])
+      .filter((record) => record.id.startsWith(idPrefix))
+      .map((record) => {
+        const payload = objectValue(record.payload);
+        const info = objectValue(payload?.info);
+        return objectValue(info?.last_token_usage)?.total_tokens;
+      })
+      .filter((value): value is number => typeof value === "number")
+      .sort((left, right) => left - right);
+    const expected = [...expectedTotals].sort((left, right) => left - right);
+    if (JSON.stringify(totals) === JSON.stringify(expected)) return;
+    await delay(100);
+  }
+  throw new Error(`turn ${turnId} did not preserve token usage records ${JSON.stringify(expectedTotals)}`);
 };
 
 const waitForThreadUsage = async (apiBase: string, threadId: string) => {
