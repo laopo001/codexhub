@@ -468,7 +468,7 @@ export const latestTurnActivityScope = (records: CodexRecord[]): TurnActivitySco
   const turnStatus = latestTurnStatusFromRecords(records);
   const turnId = latestLifecycleTurnId(records);
   return {
-    key: "thread",
+    key: turnId ? `turn:${turnId}` : "thread",
     label: "thread status",
     records,
     ...(turnId ? { turnId } : {}),
