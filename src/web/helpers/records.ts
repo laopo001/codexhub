@@ -446,8 +446,13 @@ export const formatStatusScopeTime = (timestamp: string | undefined) =>
 export const activityStatusesFromRecords = (records: CodexRecord[]): ActivityStatusView[] => {
   const statuses = new Map<string, ActivityStatusView>();
   let fileStatus: ActivityStatusView | null = null;
+  let scopedUsageStatus: ActivityStatusView | null = null;
   for (const record of records) {
     const payload = asRecord(record.payload);
+    if (record.type === "event_msg" && payload?.type === "status_usage") {
+      scopedUsageStatus = activityStatusFromRecord(record);
+      continue;
+    }
     if (record.type === "response_item" && asRecord(payload?.approval)) {
       statuses.set("approval", approvalActivityStatus(record, payload));
       continue;
@@ -460,6 +465,7 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
     if (status && isActivityStatusDetail(status)) statuses.set(status.key, status);
   }
   if (fileStatus) statuses.set(fileStatus.key, fileStatus);
+  if (scopedUsageStatus) statuses.set(scopedUsageStatus.key, scopedUsageStatus);
   return [...statuses.values()]
     .filter(isActivityStatusDetail)
     .sort((left, right) => activityStatusPriority(left.key) - activityStatusPriority(right.key));
@@ -467,7 +473,7 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
 
 const isActivityStatusDetail = (status: ActivityStatusView) => {
   if (status.key === "approval" || status.key === "userInput") return status.status !== "completed";
-  return status.key === "files" || status.key === "context" || status.key === "rollback";
+  return status.key === "files" || status.key === "usage" || status.key === "context" || status.key === "rollback";
 };
 
 export const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivityStatusView | null => {
@@ -544,6 +550,16 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
       status: "completed",
       at: record.timestamp,
       text: formatTokenStatus(payload)
+    };
+  }
+
+  if (type === "status_usage") {
+    return {
+      key: "usage",
+      label: "Usage",
+      status: "completed",
+      at: record.timestamp,
+      text: formatUsageBreakdown(asRecord(payload.usage))
     };
   }
 
@@ -710,8 +726,9 @@ export const activityStatusPriority = (key: string) => {
     approval: 0,
     userInput: 1,
     files: 2,
-    context: 3,
-    rollback: 4
+    usage: 3,
+    context: 4,
+    rollback: 5
   };
   return order[key] ?? 10;
 };
@@ -723,11 +740,15 @@ export const formatTokenStatus = (payload: Record<string, unknown>) => {
   const info = asRecord(payload.info);
   const usage = asRecord(info?.last_token_usage);
   if (!usage) return "Token usage updated";
+  return formatUsageBreakdown(usage);
+};
+
+const formatUsageBreakdown = (usage: Record<string, unknown> | null) => {
+  if (!usage) return "Token usage updated";
   const total = typeof usage.total_tokens === "number" ? `total ${formatCompactNumber(usage.total_tokens)}` : null;
   const input = typeof usage.input_tokens === "number" ? `input ${formatCompactNumber(usage.input_tokens)}` : null;
   const output = typeof usage.output_tokens === "number" ? `output ${formatCompactNumber(usage.output_tokens)}` : null;
-  const context = typeof info?.model_context_window === "number" ? `window ${formatCompactNumber(info.model_context_window)}` : null;
-  return [total, input, output, context].filter(Boolean).join(" · ") || "Token usage updated";
+  return [total, input, output].filter(Boolean).join(" · ") || "Token usage updated";
 };
 
 export const formatStatusDuration = (value: number) => {

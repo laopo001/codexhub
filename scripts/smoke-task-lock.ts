@@ -260,6 +260,8 @@ const main = async () => {
       })
     });
     const activeWebTurn = await fake.nextTurn();
+    const activeWebTurnId = activeWebTurn.turnId;
+    if (!activeWebTurnId) throw new Error(`active web turn missing turnId: ${JSON.stringify(activeWebTurn)}`);
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -275,7 +277,104 @@ const main = async () => {
     if (steer.turnId !== activeWebTurn.turnId) {
       throw new Error(`web steer used wrong turnId: ${JSON.stringify({ expected: activeWebTurn.turnId, actual: steer.turnId })}`);
     }
+    const usageScopeItemId = `${activeWebTurnId}-usage-user`;
+    fake.emitUserMessage(activeWebTurnId, usageScopeItemId, "steered web follow-up");
     fake.emitTokenUsage(activeWebTurn);
+    fake.emitTokenUsageForTurnId(fake.threadId, activeWebTurnId, {
+      rateLimits: {
+        primary: { usedPercent: 12.5, windowMinutes: 300, resetsAt: 1781058359 },
+        secondary: { usedPercent: 64, windowMinutes: 10080, resetsAt: 1781140554 }
+      },
+      tokenUsage: {
+        last: {
+          inputTokens: 300,
+          cachedInputTokens: 200,
+          outputTokens: 40,
+          reasoningOutputTokens: 5,
+          totalTokens: 340
+        },
+        total: {
+          inputTokens: 1500,
+          cachedInputTokens: 1000,
+          outputTokens: 130,
+          reasoningOutputTokens: 15,
+          totalTokens: 1630
+        },
+        modelContextWindow: 200000
+      }
+    });
+    fake.emitTokenUsageForTurnId(fake.threadId, activeWebTurnId, {
+      rateLimits: {
+        primary: { usedPercent: 12.5, windowMinutes: 300, resetsAt: 1781058359 },
+        secondary: { usedPercent: 64, windowMinutes: 10080, resetsAt: 1781140554 }
+      },
+      tokenUsage: {
+        last: {
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningOutputTokens: 0,
+          totalTokens: 29329
+        },
+        total: {
+          inputTokens: 1500,
+          cachedInputTokens: 1000,
+          outputTokens: 130,
+          reasoningOutputTokens: 15,
+          totalTokens: 1630
+        },
+        modelContextWindow: 200000
+      }
+    });
+    await assertStatusUsage(apiBase, fake.threadId, { input: 1500, output: 130, total: 1630 });
+    fake.emitTurnsSnapshot(activeWebTurnId);
+    fake.emitTokenUsageForTurnId(fake.threadId, `${activeWebTurnId}-goal-next`, {
+      rateLimits: {
+        primary: { usedPercent: 12.5, windowMinutes: 300, resetsAt: 1781058359 },
+        secondary: { usedPercent: 64, windowMinutes: 10080, resetsAt: 1781140554 }
+      },
+      tokenUsage: {
+        last: {
+          inputTokens: 200,
+          cachedInputTokens: 100,
+          outputTokens: 50,
+          reasoningOutputTokens: 8,
+          totalTokens: 250
+        },
+        total: {
+          inputTokens: 1700,
+          cachedInputTokens: 1100,
+          outputTokens: 180,
+          reasoningOutputTokens: 23,
+          totalTokens: 1880
+        },
+        modelContextWindow: 200000
+      }
+    });
+    await assertStatusUsage(apiBase, fake.threadId, { input: 1700, output: 180, total: 1880 });
+    const nextUsageTurnId = `${activeWebTurnId}-next-user`;
+    const nextUsageScopeItemId = `${nextUsageTurnId}-usage-user`;
+    fake.emitUserMessage(nextUsageTurnId, nextUsageScopeItemId, "start a fresh usage scope");
+    fake.emitTokenUsageForTurnId(fake.threadId, nextUsageTurnId, {
+      tokenUsage: {
+        last: {
+          inputTokens: 100,
+          cachedInputTokens: 50,
+          outputTokens: 20,
+          reasoningOutputTokens: 3,
+          totalTokens: 120
+        },
+        total: {
+          inputTokens: 1800,
+          cachedInputTokens: 1150,
+          outputTokens: 200,
+          reasoningOutputTokens: 26,
+          totalTokens: 2000
+        },
+        modelContextWindow: 200000
+      }
+    });
+    await assertStatusUsage(apiBase, fake.threadId, { input: 100, output: 20, total: 120 });
     await assertThreadUsageRateLimits(apiBase, fake.threadId);
     fake.emitTokenUsageWithoutRateLimits("context-only-usage");
     await assertThreadUsageRateLimits(apiBase, fake.threadId);
@@ -284,6 +383,9 @@ const main = async () => {
     await assertThreadUsageRateLimits(apiBase, fake.threadId);
     console.log("app-server token usage rate limits ok");
     fake.completeTurn(activeWebTurn);
+    fake.emitTurnsSnapshotWithUser(nextUsageTurnId, nextUsageScopeItemId, "start a fresh usage scope");
+    await assertStatusUsage(apiBase, fake.threadId, { input: 1621, output: 332, total: 1953 });
+    console.log("status usage accumulation and snapshot retention ok");
     console.log("web running turn steer ok");
 
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
@@ -887,12 +989,19 @@ class FakeMachine {
           reasoning_output_tokens: 111,
           total_tokens: 654
         },
+        total: {
+          input_tokens: 321,
+          cached_input_tokens: 123,
+          output_tokens: 222,
+          reasoning_output_tokens: 111,
+          total_tokens: 543
+        },
         model_context_window: 456000
       }
     });
   }
 
-  private emitTokenUsageForTurnId(
+  emitTokenUsageForTurnId(
     threadId: string,
     turnId: string,
     options: {
@@ -924,6 +1033,13 @@ class FakeMachine {
                   reasoningOutputTokens: 10,
                   totalTokens: 1300
                 },
+                total: {
+                  inputTokens: 1200,
+                  cachedInputTokens: 800,
+                  outputTokens: 90,
+                  reasoningOutputTokens: 10,
+                  totalTokens: 1290
+                },
                 modelContextWindow: 200000
               }),
               ...(options.rateLimits
@@ -943,6 +1059,51 @@ class FakeMachine {
             }
           }
         }
+      }
+    });
+  }
+
+  emitUserMessage(turnId: string, itemId: string, text: string) {
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "thread_event",
+        threadId: this.options.threadId,
+        heartbeat: false,
+        message: {
+          method: "item/completed",
+          params: {
+            threadId: this.options.threadId,
+            turnId,
+            item: {
+              id: itemId,
+              type: "userMessage",
+              content: [{ type: "text", text }]
+            }
+          }
+        }
+      }
+    });
+  }
+
+  emitTurnsSnapshotWithUser(turnId: string, itemId: string, text: string) {
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "thread_turns_snapshot",
+        threadId: this.options.threadId,
+        heartbeat: false,
+        turns: [{
+          id: turnId,
+          startedAt: 1781058300,
+          completedAt: 1781058360,
+          items: [
+            { id: itemId, type: "userMessage", content: [{ type: "text", text }] },
+            { id: `${turnId}-agent`, type: "agentMessage", text: "usage snapshot final answer" }
+          ]
+        }]
       }
     });
   }
@@ -1394,6 +1555,29 @@ const assertThreadUsageContext = async (
   ) {
     throw new Error(`token_count record did not normalize usage context: ${JSON.stringify(usageRecord)}`);
   }
+};
+
+const assertStatusUsage = async (
+  apiBase: string,
+  threadId: string,
+  expected: { input: number; output: number; total: number }
+) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
+    const usageRecord = detail.records?.find((record) => {
+      const payload = objectValue(record.payload);
+      const usage = objectValue(payload?.usage);
+      return record.type === "event_msg"
+        && payload?.type === "status_usage"
+        && usage?.input_tokens === expected.input
+        && usage.output_tokens === expected.output
+        && usage.total_tokens === expected.total;
+    });
+    if (usageRecord) return;
+    await delay(100);
+  }
+  throw new Error(`thread ${threadId} did not reach status usage ${JSON.stringify(expected)}`);
 };
 
 const waitForThreadUsage = async (apiBase: string, threadId: string) => {

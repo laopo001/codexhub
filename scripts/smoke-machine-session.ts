@@ -124,8 +124,51 @@ const assertTaskThreadSearchMatches = async () => {
   }
 };
 
+const assertStatusUsageFormatting = async () => {
+  const runtimeGlobal = globalThis as Record<string, unknown>;
+  const previousWindow = runtimeGlobal.window;
+  if (!previousWindow) runtimeGlobal.window = { location: { search: "" } };
+  try {
+    const { activityStatusesFromRecords } = await import("../src/web/helpers/records.js");
+    const records: CodexRecord[] = [
+      {
+        id: "app:thread:turn:statusUsage:scope",
+        order: 2,
+        type: "event_msg",
+        payload: {
+          type: "status_usage",
+          usage: { input_tokens: 1700, output_tokens: 180, total_tokens: 1880 }
+        }
+      },
+      {
+        id: "app:thread:turn:usage",
+        order: 3,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: { input_tokens: 200, output_tokens: 50, total_tokens: 250 },
+            model_context_window: 353400
+          }
+        }
+      }
+    ];
+    const usageStatuses = activityStatusesFromRecords(records).filter((status) => status.key === "usage");
+    if (usageStatuses.length !== 1 || usageStatuses[0].text !== "total 1.9k · input 1.7k · output 180") {
+      throw new Error(`status usage formatting mismatch: ${JSON.stringify(usageStatuses)}`);
+    }
+    if (usageStatuses[0].text.includes("window")) {
+      throw new Error(`status usage should not include window: ${JSON.stringify(usageStatuses[0])}`);
+    }
+  } finally {
+    if (previousWindow) runtimeGlobal.window = previousWindow;
+    else delete runtimeGlobal.window;
+  }
+};
+
 const main = async () => {
   await assertTaskThreadSearchMatches();
+  await assertStatusUsageFormatting();
 
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state."));
   const pluginDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-plugins."));
@@ -2650,8 +2693,8 @@ const assertAppServerApprovalRequestFlow = async () => {
   }
   const answeredUserInputStatuses = activityStatusesFromRecords(records);
   const answeredUserInputStatus = answeredUserInputStatuses.find((item) => item.key === "userInput");
-  if (answeredUserInputStatus?.status !== "completed" || !answeredUserInputStatus.text.includes("Answered")) {
-    throw new Error(`user input status was not completed: ${JSON.stringify(answeredUserInputStatuses)}`);
+  if (answeredUserInputStatus) {
+    throw new Error(`answered user input should not remain in status details: ${JSON.stringify(answeredUserInputStatuses)}`);
   }
   const answeredLatestStatus = latestTurnStatusFromRecords(records);
   if (answeredLatestStatus?.key !== "userInput" || answeredLatestStatus.status !== "completed") {

@@ -1323,12 +1323,13 @@ export class ThreadHub {
     const turnIds = new Set(turnRecords.map((turn) => typeof turn.id === "string" ? turn.id : "").filter(Boolean));
     thread.records = thread.records.filter((record) => {
       const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
-      return !turnId || !turnIds.has(turnId);
+      return !turnId || !turnIds.has(turnId) || isStatusUsageRecord(record);
     });
     thread.recordSeq = thread.records.reduce((max, record) => (
       typeof record.order === "number" && record.order > max ? record.order : max
     ), 0);
     for (const turnRecord of turnRecords) this.applyAppServerTurn(thread, turnRecord, { historicalRecords: true });
+    repositionStatusUsageRecords(thread);
     thread.records = orderThreadRecords(thread.records);
     thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
@@ -1366,6 +1367,7 @@ export class ThreadHub {
     if (options.replaceTurnRecords) {
       thread.records = thread.records.filter((record) => {
         if (turnIdFromAppRecordId(thread.threadId, record.id) !== turnId) return true;
+        if (isStatusUsageRecord(record)) return true;
         previousTurnRecords.set(record.id, record);
         return false;
       });
@@ -1391,6 +1393,7 @@ export class ThreadHub {
     for (const record of lifecycleRecords.filter(isTaskCompleteRecord)) {
       this.upsertRecord(thread, record, { historical: options.historicalRecords });
     }
+    if (options.replaceTurnRecords) repositionStatusUsageRecords(thread);
   }
 
   private applyAppServerItemEvent(thread: ThreadState, params: Record<string, unknown>, fallbackStatus?: string) {
@@ -1501,6 +1504,8 @@ export class ThreadHub {
     if (!turnId || !usage) return;
     const record = codexRecordFromAppServerUsage(thread.threadId, turnId, usage);
     if (record) this.upsertRecord(thread, record);
+    const statusRecord = statusUsageRecordFromAppServerUsage(thread, turnId, usage);
+    if (statusRecord) this.upsertRecord(thread, statusRecord);
   }
 
   private applyAppServerThread(thread: ThreadState, appThread: Record<string, unknown>) {
@@ -2520,6 +2525,7 @@ const codexRecordFromAppServerUsage = (
 ): CodexRecord | null => {
   const last = asRecord(usage.last);
   if (!last) return null;
+  const total = asRecord(usage.total);
   const rateLimits = tokenUsageRateLimits(usage.rateLimits ?? usage.rate_limits);
   const modelContextWindow = tokenUsageNumber(usage.modelContextWindow ?? usage.model_context_window);
   return {
@@ -2530,11 +2536,58 @@ const codexRecordFromAppServerUsage = (
       type: "token_count",
       info: {
         last_token_usage: tokenUsageBreakdown(last),
+        ...(total ? { total_token_usage: tokenUsageBreakdown(total) } : {}),
         model_context_window: modelContextWindow
       },
       ...(rateLimits ? { rate_limits: rateLimits } : {})
     },
     sourceThreadId: threadId
+  };
+};
+
+const statusUsageRecordFromAppServerUsage = (
+  thread: ThreadState,
+  turnId: string,
+  usage: Record<string, unknown>
+): CodexRecord | null => {
+  const last = asRecord(usage.last);
+  if (!last) return null;
+  const normalizedLast = tokenUsageBreakdown(last);
+  const total = asRecord(usage.total);
+  const normalizedTotal = total ? tokenUsageBreakdown(total) : null;
+  const scopeRecord = latestUserMessageRecord(thread.records);
+  const previousStatusRecord = latestStatusUsageRecord(thread.records);
+  const previousStatusPayload = asRecord(previousStatusRecord?.payload);
+  const previousScopeKey = typeof previousStatusPayload?.scope_key === "string"
+    ? previousStatusPayload.scope_key
+    : null;
+  const scopeKey = scopeRecord?.id ?? previousScopeKey ?? `turn:${turnId}`;
+  const scopeTurnId = scopeRecord
+    ? turnIdFromAppRecordId(thread.threadId, scopeRecord.id) ?? turnId
+    : previousStatusRecord
+      ? turnIdFromAppRecordId(thread.threadId, previousStatusRecord.id) ?? turnId
+      : turnId;
+  const id = `app:${thread.threadId}:${scopeTurnId}:statusUsage:${stablePayloadKey(scopeKey)}`;
+  const existing = thread.records.find((record) => record.id === id);
+  const existingPayload = asRecord(existing?.payload);
+  const existingUsage = tokenUsageBreakdown(asRecord(existingPayload?.usage) ?? {});
+  const previousTotal = asRecord(existingPayload?.cumulative_usage);
+  // App-server total usage is monotonic across model calls and compaction.
+  const increment = normalizedTotal && previousTotal
+    ? tokenUsageDelta(normalizedTotal, tokenUsageBreakdown(previousTotal), normalizedLast)
+    : normalizedLast;
+  const scopedUsage = tokenUsageAdd(existingUsage, increment);
+  return {
+    id,
+    timestamp: new Date().toISOString(),
+    type: "event_msg",
+    payload: {
+      type: "status_usage",
+      scope_key: scopeKey,
+      usage: scopedUsage,
+      ...(normalizedTotal ? { cumulative_usage: normalizedTotal } : {})
+    },
+    sourceThreadId: thread.threadId
   };
 };
 
@@ -2554,6 +2607,66 @@ const tokenUsageBreakdown = (value: Record<string, unknown>) => ({
   reasoning_output_tokens: tokenUsageNumber(value.reasoningOutputTokens ?? value.reasoning_output_tokens),
   total_tokens: tokenUsageNumber(value.totalTokens ?? value.total_tokens)
 });
+
+type NormalizedTokenUsage = ReturnType<typeof tokenUsageBreakdown>;
+
+const tokenUsageDelta = (
+  current: NormalizedTokenUsage,
+  previous: NormalizedTokenUsage,
+  fallback: NormalizedTokenUsage
+): NormalizedTokenUsage => {
+  if (current.input_tokens < previous.input_tokens || current.output_tokens < previous.output_tokens) return fallback;
+  return tokenUsageBreakdown({
+    input_tokens: current.input_tokens - previous.input_tokens,
+    cached_input_tokens: Math.max(0, current.cached_input_tokens - previous.cached_input_tokens),
+    output_tokens: current.output_tokens - previous.output_tokens,
+    reasoning_output_tokens: Math.max(0, current.reasoning_output_tokens - previous.reasoning_output_tokens),
+    total_tokens: Math.max(0, current.total_tokens - previous.total_tokens)
+  });
+};
+
+const tokenUsageAdd = (left: NormalizedTokenUsage, right: NormalizedTokenUsage): NormalizedTokenUsage => {
+  const inputTokens = left.input_tokens + right.input_tokens;
+  const outputTokens = left.output_tokens + right.output_tokens;
+  return {
+    input_tokens: inputTokens,
+    cached_input_tokens: left.cached_input_tokens + right.cached_input_tokens,
+    output_tokens: outputTokens,
+    reasoning_output_tokens: left.reasoning_output_tokens + right.reasoning_output_tokens,
+    total_tokens: inputTokens + outputTokens
+  };
+};
+
+const latestUserMessageRecord = (records: CodexRecord[]) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const payload = asRecord(records[index].payload);
+    if (records[index].type === "event_msg" && payload?.type === "user_message") return records[index];
+  }
+  return null;
+};
+
+const latestStatusUsageRecord = (records: CodexRecord[]) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (isStatusUsageRecord(records[index])) return records[index];
+  }
+  return null;
+};
+
+const isStatusUsageRecord = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  return record.type === "event_msg" && payload?.type === "status_usage";
+};
+
+const repositionStatusUsageRecords = (thread: ThreadState) => {
+  for (const record of thread.records) {
+    if (!isStatusUsageRecord(record)) continue;
+    const payload = asRecord(record.payload);
+    const scopeKey = typeof payload?.scope_key === "string" ? payload.scope_key : "";
+    const scopeRecord = scopeKey ? thread.records.find((candidate) => candidate.id === scopeKey) : null;
+    if (typeof scopeRecord?.order === "number") record.order = scopeRecord.order + 0.5;
+  }
+  thread.records = orderThreadRecords(thread.records);
+};
 
 const tokenUsageRateLimits = (value: unknown) => {
   const record = asRecord(value);
