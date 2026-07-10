@@ -230,10 +230,12 @@ export const formatMessageMetaTitle = (message: CodexRecordView, options: { show
   ].filter(Boolean).join(" · ");
 };
 
+const messageTimeFormatter = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
+
 export const formatMessageTime = (value: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return messageTimeFormatter.format(date);
 };
 
 export const usageTotal = (usage: Usage) =>
@@ -265,13 +267,32 @@ export const formatResetTitle = (window: RateLimitWindow | null | undefined) => 
 
 export const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
   const existingIndex = records.findIndex((record) => record.id === incoming.id);
-  if (existingIndex === -1) {
-    return orderRecords([
-      ...records.filter((record) => !isMatchingAppServerTranscriptRecord(record, incoming)),
-      incoming
-    ]);
+  if (existingIndex !== -1) {
+    if (records[existingIndex] === incoming) return records;
+    const next = records.slice();
+    next[existingIndex] = incoming;
+    const previous = next[existingIndex - 1];
+    const following = next[existingIndex + 1];
+    if (
+      (!previous || compareRecords(previous, incoming) <= 0)
+      && (!following || compareRecords(incoming, following) <= 0)
+    ) return next;
+    next.splice(existingIndex, 1);
+    return insertOrderedRecord(next, incoming);
   }
-  return orderRecords(records.map((record, index) => index === existingIndex ? incoming : record));
+  const withoutTranscriptDuplicate = records.filter((record) => !isMatchingAppServerTranscriptRecord(record, incoming));
+  return insertOrderedRecord(withoutTranscriptDuplicate, incoming);
+};
+
+const insertOrderedRecord = (records: CodexRecord[], incoming: CodexRecord) => {
+  let low = 0;
+  let high = records.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (compareRecords(records[middle], incoming) <= 0) low = middle + 1;
+    else high = middle;
+  }
+  return [...records.slice(0, low), incoming, ...records.slice(low)];
 };
 
 export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) => {

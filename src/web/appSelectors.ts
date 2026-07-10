@@ -214,13 +214,6 @@ export const useAppSelectors = (state: AppState) => {
     () => state.openThreads.map((thread) => thread.threadId),
     [state.openThreads]
   );
-  const runningOpenThreadIds = useMemo(
-    () => state.openThreads.filter((thread) => {
-      const turnStatus = latestTurnStatusFromRecords(threadDisplayRecords(thread.threadId, thread));
-      return threadExecutionIsRunning(thread.running, turnStatus);
-    }).map((thread) => thread.threadId).join("\n"),
-    [state.openThreads]
-  );
   const activeThreadSummary = useMemo(
     () => {
       if (activeThread) return activeThread;
@@ -301,12 +294,11 @@ export const useAppSelectors = (state: AppState) => {
         state.messageDisplayMode === "compact"
           ? collapseHistoricalToolBatches(compactToolViews(baseViews), activeExpandedToolBatchKeys)
           : detailedViews,
-        state.nowMs,
         turnDurations
       ),
       activityStatusSnapshots
     ),
-    [activeExpandedToolBatchKeys, activityStatusSnapshots, baseViews, detailedViews, state.messageDisplayMode, state.nowMs, turnDurations]
+    [activeExpandedToolBatchKeys, activityStatusSnapshots, baseViews, detailedViews, state.messageDisplayMode, turnDurations]
   );
   const activeUserMessageHistory = useMemo(
     () => userMessageHistoryFromRecords(displayRecords),
@@ -437,7 +429,6 @@ export const useAppSelectors = (state: AppState) => {
     registeredCommandIncludesToken,
     registeredMachines,
     reasoningOptions,
-    runningOpenThreadIds,
     selectedProject,
     setActiveThreadApprovalPolicyDraft,
     setActiveThreadModelDraft,
@@ -456,18 +447,9 @@ export const useAppSelectors = (state: AppState) => {
 
 const withStatusDurations = <T extends CodexRecordView>(
   views: T[],
-  nowMs: number,
   turnDurations: Map<string, number>
 ): T[] =>
   views.map((view) => {
-    if (view.status === "pending" || view.status === "in_progress") {
-      const startedMs = Date.parse(view.at ?? "");
-      if (!Number.isFinite(startedMs)) return view;
-      return {
-        ...view,
-        statusDurationMs: Math.max(0, nowMs - startedMs)
-      };
-    }
     if (!isFinalAnswerView(view) || view.statusDurationMs != null) return view;
     if (view.status !== "completed" && view.status !== "failed") return view;
     const turnId = turnIdFromRecordView(view);

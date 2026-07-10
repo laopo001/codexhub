@@ -7,9 +7,9 @@ import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appCo
 import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
 import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
-import { statusLabel } from "./common.js";
 import { authToken } from "./core.js";
 import { contextMenuPosition, writeTextToClipboard } from "./composer.js";
+import { LiveStatusLabel, LiveThreadExecutionText, StatusStartedAtContext } from "./liveTime.js";
 import { formatInspectDetail, formatInspectTitle, renderToolMessageBody } from "./toolPreview.js";
 import { activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
 
@@ -122,7 +122,11 @@ export const MessageCard = ({
           <span className="toolBatchChevron" aria-hidden="true">{isExpanded ? "v" : ">"}</span>
           <span className="toolBatchTitle">tools</span>
           <span className="toolBatchCount">{message.toolBatch.count} call{message.toolBatch.count === 1 ? "" : "s"}</span>
-          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status, message.statusText, message.statusDurationMs)}</em> : null}
+          {showStatus && message.status ? (
+            <em className={`messageStatus ${message.status}`}>
+              <LiveStatusLabel status={message.status} statusText={message.statusText} statusDurationMs={message.statusDurationMs} startedAt={message.at} />
+            </em>
+          ) : null}
           <span className="toolBatchSummary">{message.toolBatch.labels.join(", ")}</span>
         </button>
       </article>
@@ -140,11 +144,15 @@ export const MessageCard = ({
       {hasToolBody ? null : (
         <span className="messageHeader">
           <b>{message.label ?? message.role}</b>
-          {showStatus && message.status ? <em className={`messageStatus ${message.status}`}>{statusLabel(message.status, message.statusText, message.statusDurationMs)}</em> : null}
+          {showStatus && message.status ? (
+            <em className={`messageStatus ${message.status}`}>
+              <LiveStatusLabel status={message.status} statusText={message.statusText} statusDurationMs={message.statusDurationMs} startedAt={message.at} />
+            </em>
+          ) : null}
         </span>
       )}
       {hasToolBody ? (
-        toolBody
+        <StatusStartedAtContext.Provider value={message.at}>{toolBody}</StatusStartedAtContext.Provider>
       ) : messageText ? (
         <MessageText
           text={messageText}
@@ -857,7 +865,9 @@ export const ActivityStatusBar = ({
         <span className={`activityStatusSummary ${executionMeta.status}`}>
           <span className="activityStatusIndicator" aria-hidden="true" />
           <strong>{executionMeta.label}</strong>
-          {executionMeta.duration ? <span className="activityStatusDuration">{executionMeta.duration}</span> : null}
+          {executionMeta.duration || executionMeta.startedAt ? (
+            <span className="activityStatusDuration"><LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} /></span>
+          ) : null}
         </span>
         {summaryStatuses.length ? (
           <span className="activityStatusHeaderMetrics">

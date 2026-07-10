@@ -6,7 +6,7 @@ import { normalizeUpdatePlanStatus, parseUpdatePlanArguments, updatePlanStatusIc
 import type { InspectDetail, ParsedToolCall, WebRecordView, WebToolPresenter } from "../types.js";
 import { emptyMemoryCitation, parseMemoryCitationText, shouldExtractMemoryCitation } from "./components.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
-import { statusLabel } from "./common.js";
+import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
 import { formatCompactNumber } from "./records.js";
 
 type ToolPreviewIcon = React.ComponentType<{
@@ -107,24 +107,31 @@ export const ToolPreview = ({
   metaExtra?: React.ReactNode;
   icon?: ToolPreviewIcon;
   children: React.ReactNode;
-}) => (
-  <div className={`toolPreview ${className}`.trim()}>
-    <div className="toolPreviewTitle">
-      <span className="toolPreviewTitleMark" aria-hidden="true">
-        {Icon ? <Icon className="toolPreviewIcon" size={16} strokeWidth={2.2} /> : "•"}
-      </span>
-      <strong>{title}</strong>
-      {status ? <em className={`messageStatus ${status}`}>{statusLabel(status, statusText, statusDurationMs)}</em> : null}
-    </div>
-    {meta?.length || metaExtra ? (
-      <div className="toolPreviewMeta">
-        {meta?.map((item) => <span className="toolPreviewMetaItem" key={item} title={item}>{item}</span>)}
-        {metaExtra}
+}) => {
+  const startedAt = React.useContext(StatusStartedAtContext);
+  return (
+    <div className={`toolPreview ${className}`.trim()}>
+      <div className="toolPreviewTitle">
+        <span className="toolPreviewTitleMark" aria-hidden="true">
+          {Icon ? <Icon className="toolPreviewIcon" size={16} strokeWidth={2.2} /> : "•"}
+        </span>
+        <strong>{title}</strong>
+        {status ? (
+          <em className={`messageStatus ${status}`}>
+            <LiveStatusLabel status={status} statusText={statusText} statusDurationMs={statusDurationMs} startedAt={startedAt} />
+          </em>
+        ) : null}
       </div>
-    ) : null}
-    {children}
-  </div>
-);
+      {meta?.length || metaExtra ? (
+        <div className="toolPreviewMeta">
+          {meta?.map((item) => <span className="toolPreviewMetaItem" key={item} title={item}>{item}</span>)}
+          {metaExtra}
+        </div>
+      ) : null}
+      {children}
+    </div>
+  );
+};
 
 export const FileChangePreview = ({
   payload,

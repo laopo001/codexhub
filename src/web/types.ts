@@ -236,6 +236,7 @@ export type ThreadExecutionMeta = {
   label: "Running" | "Idle";
   duration: string;
   text: string;
+  startedAt?: string;
 };
 export type ActivityStatusFile = {
   path: string;

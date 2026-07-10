@@ -10,7 +10,8 @@ import {
   normalizeSessions,
   normalizeTasks,
   primeTaskCompletionSound,
-  primeTaskNotificationPermission
+  primeTaskNotificationPermission,
+  type SidebarDraftStore
 } from "../appHelpers.js";
 import type { AppSettings, LocalTask, MachineSummary, ProjectSummary, ProjectsPayload, SessionView, TaskDraft } from "../types.js";
 
@@ -19,13 +20,12 @@ type TaskActionsContext = {
   notificationAudioContext: React.MutableRefObject<AudioContext | null>;
   projectList: ProjectSummary[];
   sessionList: SessionView[];
-  taskDraft: TaskDraft;
+  sidebarDraftStore: SidebarDraftStore;
   setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
   setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
   setTaskBusyId: React.Dispatch<React.SetStateAction<string>>;
-  setTaskDraft: React.Dispatch<React.SetStateAction<TaskDraft>>;
   setTaskError: React.Dispatch<React.SetStateAction<string>>;
   setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setTasks: React.Dispatch<React.SetStateAction<LocalTask[]>>;
@@ -53,6 +53,9 @@ export type TaskActions = {
 };
 
 export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDependencies): TaskActions => {
+  const setTaskDraft = (update: React.SetStateAction<TaskDraft>) => {
+    ctx.sidebarDraftStore.set("taskDraft", update);
+  };
   const refreshSessions = async () => {
     const freshSessions = await apiRouteJson(apiRoutes.sessions)
       .then((data) => normalizeSessions(data.sessions));
@@ -75,7 +78,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
 
   const updateTaskDraftMachine = (machineId: string) => {
     const nextProject = ctx.projectList.find((project) => project.machineId === machineId);
-    ctx.setTaskDraft((current) => ({
+    setTaskDraft((current) => ({
       ...current,
       machineId,
       projectPath: nextProject?.path ?? "",
@@ -84,7 +87,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
   };
 
   const updateTaskDraftProject = (projectPath: string) => {
-    ctx.setTaskDraft((current) => ({
+    setTaskDraft((current) => ({
       ...current,
       projectPath,
       threadId: ""
@@ -92,7 +95,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
   };
 
   const focusTaskDraftProject = (project: Pick<ProjectSummary, "machineId" | "path">) => {
-    ctx.setTaskDraft((current) => {
+    setTaskDraft((current) => {
       if (current.machineId === project.machineId && current.projectPath === project.path) return current;
       return {
         ...current,
@@ -113,12 +116,13 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
   const createTask = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     primeTaskCompletionFeedback();
-    const name = ctx.taskDraft.name.trim() || "Scheduled task";
-    const schedule = ctx.taskDraft.schedule.trim();
-    const machineId = ctx.taskDraft.machineId.trim();
-    const projectPath = ctx.taskDraft.projectPath.trim();
-    const input = ctx.taskDraft.input.trim();
-    const threadId = ctx.taskDraft.threadId.trim();
+    const taskDraft = ctx.sidebarDraftStore.getSnapshot().taskDraft;
+    const name = taskDraft.name.trim() || "Scheduled task";
+    const schedule = taskDraft.schedule.trim();
+    const machineId = taskDraft.machineId.trim();
+    const projectPath = taskDraft.projectPath.trim();
+    const input = taskDraft.input.trim();
+    const threadId = taskDraft.threadId.trim();
     if (!machineId || !projectPath || !schedule || !input) {
       ctx.setTaskError("Missing task fields");
       return;
@@ -129,7 +133,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
     try {
       const payload = await apiRouteJson(apiRoutes.createTask, {
         name,
-        enabled: ctx.taskDraft.enabled,
+        enabled: taskDraft.enabled,
         schedule,
         machineId,
         projectId: project?.projectId,
@@ -143,7 +147,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
       } else {
         await refreshTasks();
       }
-      ctx.setTaskDraft((current) => ({
+      setTaskDraft((current) => ({
         ...defaultTaskDraft(),
         machineId,
         projectPath,

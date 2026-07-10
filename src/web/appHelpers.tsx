@@ -5,3 +5,5 @@ export * from "./helpers/fileChanges.js";
 export * from "./helpers/core.js";
 export * from "./helpers/records.js";
 export * from "./helpers/composer.js";
+export * from "./helpers/sidebarDrafts.js";
+export * from "./helpers/liveTime.js";

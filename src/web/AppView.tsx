@@ -16,6 +16,7 @@ import { approvalPolicyOptions, composerModeOptions, sandboxPolicyOptions } from
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
+import { LiveThreadExecutionText } from "./helpers/liveTime.js";
 import type { AppViewModel } from "./viewModel.js";
 import {
   ActivityStatusBar,
@@ -78,20 +79,22 @@ const messagesUserScrollIntentMs = 900;
 const messagesScrollKeys = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
 type MessagesVirtuosoContext = {
-  turnLoadingDuration: string;
+  executionMeta: NonNullable<AppViewModel["activeThreadExecutionMeta"]> | null;
 };
 
 const MessagesTurnLoadingFooter = ({ context }: { context?: MessagesVirtuosoContext }) => {
-  const duration = context?.turnLoadingDuration;
+  const executionMeta = context?.executionMeta;
   return (
     <div
       className="turnLoadingMessage"
       role="status"
       aria-live="polite"
-      aria-label={duration ? `Running ${duration}` : "Running"}
+      aria-label="Running"
     >
       <span className="turnLoadingText">Running</span>
-      {duration ? <span className="turnLoadingDuration">· {duration}</span> : null}
+      {executionMeta?.startedAt || executionMeta?.duration ? (
+        <span className="turnLoadingDuration">· <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} /></span>
+      ) : null}
     </div>
   );
 };
@@ -103,7 +106,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeGoal,
     activeProjectKey,
     activeRuntimeSession,
-    activeRunningExecutionDuration,
     activeThread,
     activeThreadIsOpen,
     activeThreadExecutionMeta,
@@ -212,8 +214,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
     setSidebarCollapsed,
-    setSshHostDraft,
-    setTaskDraft,
     setTaskFormOpen,
     setThreadPicker,
     showComposerSendButton,
@@ -226,7 +226,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     sshConnections,
     sshError,
     sshHostBusy,
-    sshHostDraft,
     sshHosts,
     statusScopeKey,
     turnStatusItems,
@@ -235,7 +234,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     submitProjectPickerPath,
     switchSessionThread,
     taskBusyId,
-    taskDraft,
     taskError,
     taskFormOpen,
     tasks,
@@ -262,8 +260,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   const composerRuntimeReady = Boolean(activeThread?.session.online && activeThread.session.runnable !== false);
   const showTurnLoadingMessage = executionStatus === "running";
   const messagesVirtuosoContext = React.useMemo(
-    () => ({ turnLoadingDuration: activeRunningExecutionDuration }),
-    [activeRunningExecutionDuration]
+    () => ({ executionMeta: activeThreadExecutionMeta }),
+    [activeThreadExecutionMeta]
   );
   const messagesVirtuosoComponents = React.useMemo<Components<(typeof activeViews)[number], MessagesVirtuosoContext>>(() => ({
     EmptyPlaceholder: EmptyMessages,

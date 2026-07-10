@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import type { CodexRecord } from "../shared/recordTypes.js";
 import { defaultAppSettings } from "./appConfig.js";
-import { createComposerDraftStore, defaultTaskDraft, initAuthTokenFromUrl } from "./appHelpers.js";
+import { createComposerDraftStore, createSidebarDraftStore, initAuthTokenFromUrl } from "./appHelpers.js";
 import type {
   AppSettings,
   CommandPalette,
@@ -18,7 +18,6 @@ import type {
   MessageRenderMode,
   ModelCatalogLoadState,
   OpenThreadState,
-  ParentRegistrationDraft,
   ParentRegistrationStatus,
   PluginSummary,
   ProjectPickerState,
@@ -27,24 +26,16 @@ import type {
   SshConnection,
   SshHost,
   SystemStatus,
-  TaskDraft,
   ThreadRenameDialogState,
   ThreadTabContextMenuState,
   ThreadPickerState,
   WebRecordView
 } from "./types.js";
 
-const defaultParentRegistrationDraft = (): ParentRegistrationDraft => ({
-  url: "",
-  machineId: "",
-  name: ""
-});
-
 export const useAppState = () => {
   useState(() => initAuthTokenFromUrl());
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [openThreads, setOpenThreads] = useState<OpenThreadState[]>([]);
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
   const [sessionList, setSessionList] = useState<SessionView[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
@@ -53,20 +44,16 @@ export const useAppState = () => {
   const [sshHosts, setSshHosts] = useState<SshHost[]>([]);
   const [sshConfigHosts, setSshConfigHosts] = useState<SshHost[]>([]);
   const [sshConnections, setSshConnections] = useState<SshConnection[]>([]);
-  const [sshHostDraft, setSshHostDraft] = useState("");
-  const [sshSearch, setSshSearch] = useState("");
   const [sshConnectingHost, setSshConnectingHost] = useState("");
   const [sshHostBusy, setSshHostBusy] = useState("");
   const [sshError, setSshError] = useState("");
   const [parentRegistration, setParentRegistration] = useState<ParentRegistrationStatus>({ status: "idle" });
-  const [parentRegistrationDraft, setParentRegistrationDraft] = useState<ParentRegistrationDraft>(() => defaultParentRegistrationDraft());
   const [parentRegistrationBusy, setParentRegistrationBusy] = useState(false);
   const [parentRegistrationError, setParentRegistrationError] = useState("");
   const [registeredCommandCopied, setRegisteredCommandCopied] = useState(false);
   const [serverShareCopied, setServerShareCopied] = useState(false);
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [tasks, setTasks] = useState<LocalTask[]>([]);
-  const [taskDraft, setTaskDraft] = useState<TaskDraft>(() => defaultTaskDraft());
   const [taskFormOpen, setTaskFormOpen] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState("");
   const [taskError, setTaskError] = useState("");
@@ -74,7 +61,6 @@ export const useAppState = () => {
   const [selectedProjectKey, setSelectedProjectKey] = useState("");
   const [openingProjectKey, setOpeningProjectKey] = useState("");
   const [projectActionError, setProjectActionError] = useState("");
-  const [projectSearch, setProjectSearch] = useState("");
   const [authRequired, setAuthRequired] = useState(false);
   const [serverAuthRequired, setServerAuthRequired] = useState(false);
   const [authError, setAuthError] = useState("");
@@ -113,6 +99,7 @@ export const useAppState = () => {
   const [expandedStatusTurns, setExpandedStatusTurns] = useState<Record<string, string>>({});
   const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
   const [expandedToolBatchKeys, setExpandedToolBatchKeys] = useState<Record<string, string[]>>({});
+  const [sidebarDraftStore] = useState(createSidebarDraftStore);
   const realtimeSocket = useRef<WebSocket | null>(null);
   const sessionsLastSeq = useRef(0);
   const projectsLastSeq = useRef(0);
@@ -187,20 +174,17 @@ export const useAppState = () => {
     notificationAudioContext,
     notificationRecordsByThread,
     notifiedTaskCompletions,
-    nowMs,
     offlineProjectsCollapsed,
     openingProjectKey,
     openingThreads,
     openThreads,
     parentRegistration,
     parentRegistrationBusy,
-    parentRegistrationDraft,
     parentRegistrationError,
     plugins,
     projectActionError,
     projectPicker,
     projects,
-    projectSearch,
     projectsLastSeq,
     realtimeSocket,
     realtimeThreadSubscriptions,
@@ -236,19 +220,16 @@ export const useAppState = () => {
     setMessageDisplayMode,
     setMessageRenderModes,
     setModelCatalogBySession,
-    setNowMs,
     setOfflineProjectsCollapsed,
     setOpeningProjectKey,
     setOpenThreads,
     setParentRegistration,
     setParentRegistrationBusy,
-    setParentRegistrationDraft,
     setParentRegistrationError,
     setPlugins,
     setProjectActionError,
     setProjectPicker,
     setProjects,
-    setProjectSearch,
     setRegisteredCommandCopied,
     setSelectedProjectKey,
     setServerAuthRequired,
@@ -261,12 +242,9 @@ export const useAppState = () => {
     setSshConnections,
     setSshError,
     setSshHostBusy,
-    setSshHostDraft,
     setSshHosts,
-    setSshSearch,
     setSystemStatus,
     setTaskBusyId,
-    setTaskDraft,
     setTaskError,
     setTaskFormOpen,
     setTasks,
@@ -277,18 +255,16 @@ export const useAppState = () => {
     setThreadTabContextMenu,
     setThreadPicker,
     settingsDialogOpen,
+    sidebarDraftStore,
     sidebarCollapsed,
     sshConfigHosts,
     sshConnectingHost,
     sshConnections,
     sshError,
     sshHostBusy,
-    sshHostDraft,
     sshHosts,
-    sshSearch,
     systemStatus,
     taskBusyId,
-    taskDraft,
     taskError,
     taskFormOpen,
     tasks,

@@ -8,7 +8,7 @@ import type {
   ThreadGoalUpdateInput as ApiThreadGoalUpdateInput
 } from "../shared/apiContract.js";
 import type { CodexRecord } from "../shared/recordTypes.js";
-import type { ComposerDraftStore } from "./appHelpers.js";
+import type { ComposerDraftStore, SidebarDraftStore } from "./appHelpers.js";
 import type {
   ActivityStatusView,
   AppSettings,
@@ -26,7 +26,6 @@ import type {
   MessageDisplayMode,
   MessageRenderMode,
   ModelSelection,
-  ParentRegistrationDraft,
   ParentRegistrationStatus,
   PluginSummary,
   ProjectMachineGroup,
@@ -39,7 +38,6 @@ import type {
   SessionView,
   SshConnection,
   SshHost,
-  TaskDraft,
   ThreadGoalView,
   ThreadPickerState,
   ThreadRenameDialogState,
@@ -95,7 +93,6 @@ export type AppSidebarViewModel = {
   showProjectPicker: (machine: ProjectMachineGroup) => MaybePromise;
   parentRegistration: ParentRegistrationStatus;
   parentRegistrationBusy: boolean;
-  parentRegistrationDraft: ParentRegistrationDraft;
   parentRegistrationError: string;
   patchTask: (taskId: string, input: TaskPatchInput) => MaybePromise<boolean>;
   plugins: PluginSummary[];
@@ -103,7 +100,6 @@ export type AppSidebarViewModel = {
   projectList: ProjectSummary[];
   projectScopeLocked: boolean;
   projectActionError: string;
-  projectSearch: string;
   registeredCommand: string;
   registeredCommandIncludesToken: boolean;
   registeredCommandCopied: boolean;
@@ -117,15 +113,11 @@ export type AppSidebarViewModel = {
   selectSessionThread: (session: SessionView, threadId: string) => MaybePromise;
   sessionList: SessionView[];
   serverShareCopied: boolean;
+  sidebarDraftStore: SidebarDraftStore;
   settingsDialogOpen: boolean;
   setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
   setConnectionMode: React.Dispatch<React.SetStateAction<ConnectionMode>>;
   setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
-  setParentRegistrationDraft: React.Dispatch<React.SetStateAction<ParentRegistrationDraft>>;
-  setProjectSearch: React.Dispatch<React.SetStateAction<string>>;
-  setSshHostDraft: React.Dispatch<React.SetStateAction<string>>;
-  setSshSearch: React.Dispatch<React.SetStateAction<string>>;
-  setTaskDraft: React.Dispatch<React.SetStateAction<TaskDraft>>;
   setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setSettingsDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   stopSshConnection: (connectionId: string) => MaybePromise;
@@ -135,11 +127,8 @@ export type AppSidebarViewModel = {
   sshConnections: SshConnection[];
   sshError: string;
   sshHostBusy: string;
-  sshHostDraft: string;
   sshHosts: SshHost[];
-  sshSearch: string;
   taskBusyId: string;
-  taskDraft: TaskDraft;
   taskError: string;
   taskFormOpen: boolean;
   tasks: LocalTask[];
@@ -155,7 +144,6 @@ export type AppViewModel = AppSidebarViewModel & {
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
   activeRuntimeSession?: SessionView;
-  activeRunningExecutionDuration: string;
   activeThread?: OpenThreadState;
   activeThreadIsOpen: boolean;
   activeThreadExecutionMeta: ThreadExecutionMeta | null;

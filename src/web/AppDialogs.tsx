@@ -89,6 +89,23 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     threadOrderBySession,
     threadPicker
   } = viewModel;
+  const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
+  React.useEffect(() => {
+    setProjectPickerSearch("");
+  }, [projectPicker?.machineId, projectPicker?.entries]);
+  const hasOpenDialog = Boolean(
+    threadModelDialogOpen
+    || settingsDialogOpen
+    || projectPicker
+    || threadPicker
+    || inspectMessage
+    || imagePreview
+    || goalDialog
+    || threadRenameDialog
+    || threadTabContextMenu
+    || messageContextMenu
+  );
+  if (!hasOpenDialog) return null;
 
   const projectPickerMachine = projectPicker
     ? machines.find((machine) => machine.machineId === projectPicker.machineId)
@@ -99,10 +116,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const projectPickerOpening = projectPicker
     ? openingProjectKey === `${projectPicker.machineId}:${projectPicker.path.trim()}`
     : false;
-  const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
-  React.useEffect(() => {
-    setProjectPickerSearch("");
-  }, [projectPicker?.machineId, projectPicker?.entries]);
   const visibleProjectPickerEntries = projectPicker
     ? filterProjectDirectoryEntries(projectPicker.entries, projectPickerSearch)
     : [];

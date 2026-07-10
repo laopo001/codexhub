@@ -26,6 +26,7 @@ import {
   projectKeyForProject,
   readStoredUiState,
   runtimeSessionForProject,
+  type SidebarDraftStore,
   streamEventRecords,
   taskCompleteNotification,
   taskCompletionNotificationKey,
@@ -63,6 +64,7 @@ type RealtimeActionsContext = {
   projectsLastSeq: React.MutableRefObject<number>;
   realtimeSocket: React.MutableRefObject<WebSocket | null>;
   realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
+  sidebarDraftStore: SidebarDraftStore;
   sessionsLastSeq: React.MutableRefObject<number>;
   tasksLastSeq: React.MutableRefObject<number>;
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
@@ -81,7 +83,6 @@ type RealtimeActionsContext = {
   setParentRegistration: React.Dispatch<React.SetStateAction<ParentRegistrationStatus>>;
   setPlugins: React.Dispatch<React.SetStateAction<PluginSummary[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
-  setProjectSearch: React.Dispatch<React.SetStateAction<string>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
   setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
@@ -214,7 +215,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     ctx.setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     ctx.setSelectedProjectKey(initialProjectFromUrl ? projectKeyForProject(initialProjectFromUrl) : saved?.selectedProjectKey ?? "");
-    ctx.setProjectSearch(saved?.projectSearch ?? "");
+    ctx.sidebarDraftStore.set("projectSearch", saved?.projectSearch ?? "");
     ctx.setCollapsedProjectMachineKeys(saved?.collapsedProjectMachineKeys ?? []);
     ctx.setMachines(loadedMachines);
     ctx.setProjects(loadedProjects);
@@ -383,11 +384,16 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       Math.max(ctx.threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
     );
     notifyTaskCompletionsFromStreamEvent(payload);
-    ctx.setOpenThreads((current) => current.map((thread) => {
-      if (thread.threadId !== payload.thread.threadId) return thread;
-      const records = payload.record ? mergeRecord(thread.records, payload.record) : thread.records;
-      return { ...thread, ...payload.thread, records };
-    }));
+    ctx.setOpenThreads((current) => {
+      let matched = false;
+      const next = current.map((thread) => {
+        if (thread.threadId !== payload.thread.threadId) return thread;
+        matched = true;
+        const records = payload.record ? mergeRecord(thread.records, payload.record) : thread.records;
+        return { ...thread, ...payload.thread, records };
+      });
+      return matched ? next : current;
+    });
     const sessionId = payload.thread.session.sessionId;
     if (sessionId) {
       ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, payload.thread.threadId));

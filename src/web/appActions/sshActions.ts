@@ -1,15 +1,13 @@
 import type React from "react";
 import { apiRoutes } from "../../shared/apiRoutes.js";
-import { apiRouteJson } from "../appHelpers.js";
-import type { ParentRegistrationDraft, ParentRegistrationStatus, SshConnection, SshHost } from "../types.js";
+import { apiRouteJson, type SidebarDraftStore } from "../appHelpers.js";
+import type { ParentRegistrationStatus, SshConnection, SshHost } from "../types.js";
 
 type SshActionsContext = {
-  parentRegistrationDraft: ParentRegistrationDraft;
   registeredCommand: string;
-  sshHostDraft: string;
+  sidebarDraftStore: SidebarDraftStore;
   setParentRegistration: React.Dispatch<React.SetStateAction<ParentRegistrationStatus>>;
   setParentRegistrationBusy: React.Dispatch<React.SetStateAction<boolean>>;
-  setParentRegistrationDraft: React.Dispatch<React.SetStateAction<ParentRegistrationDraft>>;
   setParentRegistrationError: React.Dispatch<React.SetStateAction<string>>;
   setRegisteredCommandCopied: React.Dispatch<React.SetStateAction<boolean>>;
   setSshConfigHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
@@ -17,7 +15,6 @@ type SshActionsContext = {
   setSshConnections: React.Dispatch<React.SetStateAction<SshConnection[]>>;
   setSshError: React.Dispatch<React.SetStateAction<string>>;
   setSshHostBusy: React.Dispatch<React.SetStateAction<string>>;
-  setSshHostDraft: React.Dispatch<React.SetStateAction<string>>;
   setSshHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
 };
 
@@ -56,7 +53,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
 
   const addSshHost = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const alias = ctx.sshHostDraft.trim();
+    const alias = ctx.sidebarDraftStore.getSnapshot().sshHostDraft.trim();
     if (!alias) return;
     ctx.setSshError("");
     ctx.setSshHostBusy(alias);
@@ -64,7 +61,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
       const payload = await apiRouteJson(apiRoutes.addSshHost, { alias });
       ctx.setSshHosts(Array.isArray(payload.hosts) ? payload.hosts : []);
       await refreshSshHosts().catch(() => undefined);
-      ctx.setSshHostDraft("");
+      ctx.sidebarDraftStore.set("sshHostDraft", "");
     } catch (error) {
       ctx.setSshError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -129,9 +126,10 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
 
   const connectParentRegistration = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const parentRegistrationDraft = ctx.sidebarDraftStore.getSnapshot().parentRegistrationDraft;
     let parsed: ReturnType<typeof parseParentRegistrationInput>;
     try {
-      parsed = parseParentRegistrationInput(ctx.parentRegistrationDraft.url);
+      parsed = parseParentRegistrationInput(parentRegistrationDraft.url);
     } catch (error) {
       ctx.setParentRegistrationError(error instanceof Error ? error.message : String(error));
       return;
@@ -142,8 +140,8 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
       const payload = await apiRouteJson(apiRoutes.connectParentRegistration, {
         url: parsed.url,
         authToken: parsed.authToken,
-        machineId: ctx.parentRegistrationDraft.machineId.trim() || undefined,
-        name: ctx.parentRegistrationDraft.name.trim() || undefined
+        machineId: parentRegistrationDraft.machineId.trim() || undefined,
+        name: parentRegistrationDraft.name.trim() || undefined
       });
       ctx.setParentRegistration(payload.registration ?? { status: "idle" });
     } catch (error) {

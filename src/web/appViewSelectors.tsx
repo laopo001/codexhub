@@ -17,6 +17,7 @@ import {
   threadExecutionIsRunning,
   threadDisplayTitle
 } from "./appHelpers.js";
+import { formatThreadDuration, LiveThreadExecutionText } from "./helpers/liveTime.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { contextMenuPosition } from "./helpers/composer.js";
@@ -49,17 +50,13 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
     if (!activeThread) return null;
     const records = threadDisplayRecords(activeThread.threadId, activeThread);
     const turnStatus = latestTurnStatusFromRecords(records);
-    return threadExecutionMeta(activeThread, records, turnStatus, state.nowMs);
-  }, [selectors.activeThread, state.nowMs]);
-  const activeRunningExecutionDuration = activeThreadExecutionMeta?.status === "running"
-    ? activeThreadExecutionMeta.duration
-    : "";
+    return threadExecutionMeta(activeThread, records, turnStatus);
+  }, [selectors.activeThread]);
   const openThreadTabs = useMemo(() => state.openThreads.map((thread) => ({
     key: thread.threadId,
     label: (
       <OpenThreadTabLabel
         thread={thread}
-        nowMs={state.nowMs}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -70,7 +67,7 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
         }}
       />
     )
-  })), [state.nowMs, state.openThreads, state.setThreadTabContextMenu]);
+  })), [state.openThreads, state.setThreadTabContextMenu]);
 
   const renderComposerThreadControls = (mode: ComposerThreadControlsMode) => (
     <ComposerThreadControls
@@ -90,7 +87,6 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
   );
 
   return {
-    activeRunningExecutionDuration,
     activeThreadExecutionMeta,
     openThreadTabs,
     renderComposerThreadControls
@@ -101,19 +97,16 @@ export type AppViewSelectors = ReturnType<typeof useAppViewSelectors>;
 
 const OpenThreadTabLabel = ({
   thread,
-  nowMs,
   onContextMenu
 }: {
   thread: OpenThreadState;
-  nowMs: number;
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void;
 }) => {
   const title = threadDisplayTitle(thread);
   const workspaceName = compactWorkspaceName(thread.workingDirectory);
   const records = threadDisplayRecords(thread.threadId, thread);
   const turnStatus = latestTurnStatusFromRecords(records);
-  const executionMeta = threadExecutionMeta(thread, records, turnStatus, nowMs);
-  const badgeText = executionMeta.text;
+  const executionMeta = threadExecutionMeta(thread, records, turnStatus);
   const details = (
     <div className="openThreadTabDetails">
       <div>
@@ -130,7 +123,7 @@ const OpenThreadTabLabel = ({
       </div>
       <div>
         <span>Status</span>
-        <code>{badgeText}</code>
+        <code><LiveThreadExecutionText executionMeta={executionMeta} /></code>
       </div>
       {thread.session.sessionId ? (
         <div>
@@ -156,7 +149,7 @@ const OpenThreadTabLabel = ({
         <span className="openThreadTabTitle">{title}</span>
         <span className="openThreadTabMeta">
           <code title={`${thread.workingDirectory}\n${thread.threadId}`}>{workspaceName} · {shortId(thread.threadId)}</code>
-          <em className={`openThreadTabBadge ${executionMeta.status}`}>{badgeText}</em>
+          <em className={`openThreadTabBadge ${executionMeta.status}`}><LiveThreadExecutionText executionMeta={executionMeta} /></em>
         </span>
       </span>
     </Popover>
@@ -262,34 +255,31 @@ const contextUsagePercent = (threadUsage: AppSelectors["activeThreadUsage"]) => 
 export const threadExecutionMeta = (
   thread: OpenThreadState,
   records: CodexRecord[],
-  turnStatus: ActivityStatusView | null,
-  nowMs: number
+  turnStatus: ActivityStatusView | null
 ): ThreadExecutionMeta => {
   const running = threadExecutionIsRunning(thread.running, turnStatus);
   const statusScope = latestUserTurnStatusScope(records);
-  const durationMs = activityElapsedMs(
-    statusScope.records,
-    running,
-    nowMs,
-    statusScope.startedAt,
-    turnStatus?.at
-  );
+  const startedAt = statusScope.startedAt ?? turnStatus?.at;
+  const durationMs = running ? null : activityElapsedMs(statusScope.records, startedAt, turnStatus?.at);
   const status = running ? "running" : "idle";
   const label = running ? "Running" : "Idle";
   const duration = durationMs == null ? "" : formatThreadDuration(durationMs);
-  return { status, label, duration, text: [label, duration].filter(Boolean).join(" · ") };
+  return {
+    status,
+    label,
+    duration,
+    text: [label, duration].filter(Boolean).join(" · "),
+    ...(running && startedAt ? { startedAt } : {})
+  };
 };
 
 const activityElapsedMs = (
   records: CodexRecord[],
-  running: boolean,
-  nowMs: number,
   startedAt?: string,
   endedAtFallback?: string
 ) => {
   const startedMs = parseTimestamp(startedAt);
   if (startedMs === null) return null;
-  if (running) return Math.max(0, nowMs - startedMs);
 
   let endedMs: number | null = null;
   for (let index = records.length - 1; index >= 0; index -= 1) {
@@ -310,14 +300,4 @@ const parseTimestamp = (value: string | undefined) => {
   if (!value) return null;
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : null;
-};
-
-export const formatThreadDuration = (durationMs: number) => {
-  const seconds = Math.max(0, Math.round(durationMs / 1000));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainder = seconds % 60;
-  if (hours) return `${hours}h${minutes}m${remainder}s`;
-  if (minutes) return `${minutes}m${remainder}s`;
-  return `${remainder}s`;
 };

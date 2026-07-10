@@ -63,7 +63,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       openThreadIds: selectors.openThreadIds,
       threadOrderBySession: state.threadOrderBySession,
       selectedProjectKey: state.selectedProjectKey,
-      projectSearch: state.projectSearch,
+      projectSearch: state.sidebarDraftStore.getSnapshot().projectSearch,
       messageDisplayMode: state.messageDisplayMode,
       sidebarCollapsed: state.sidebarCollapsed,
       collapsedProjectMachineKeys: state.collapsedProjectMachineKeys
@@ -75,7 +75,6 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.activeTabThreadId,
     selectors.openThreadIds,
     state.selectedProjectKey,
-    state.projectSearch,
     state.messageDisplayMode,
     state.sidebarCollapsed,
     state.collapsedProjectMachineKeys,
@@ -84,8 +83,37 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
   ]);
 
   useEffect(() => {
+    let projectSearch = state.sidebarDraftStore.getSnapshot().projectSearch;
+    let timer: number | null = null;
+    const persistProjectSearch = () => {
+      timer = null;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+        const stored = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        localStorage.setItem(storageKey, JSON.stringify({ ...stored, projectSearch }));
+      } catch {
+        // Ignore storage failures; project search remains available for this page.
+      }
+    };
+    const unsubscribe = state.sidebarDraftStore.subscribe(() => {
+      const nextProjectSearch = state.sidebarDraftStore.getSnapshot().projectSearch;
+      if (nextProjectSearch === projectSearch) return;
+      projectSearch = nextProjectSearch;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(persistProjectSearch, 200);
+    });
+    return () => {
+      unsubscribe();
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        persistProjectSearch();
+      }
+    };
+  }, [state.sidebarDraftStore]);
+
+  useEffect(() => {
     if (!state.initialized) return;
-    state.setTaskDraft((current) => {
+    state.sidebarDraftStore.set("taskDraft", (current) => {
       if (current.machineId && current.projectPath) return current;
       const preferredMachine = selectors.onlineMachines.find(machineProjectLauncher)
         ?? state.machines.find(machineProjectLauncher)
@@ -108,7 +136,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
   useEffect(() => {
     if (!state.initialized || !selectors.selectedProject) return;
     const selectedProject = selectors.selectedProject;
-    state.setTaskDraft((current) => {
+    state.sidebarDraftStore.set("taskDraft", (current) => {
       if (current.machineId === selectedProject.machineId && current.projectPath === selectedProject.path) return current;
       return {
         ...current,
@@ -218,13 +246,6 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.modelCatalogBySession,
     state.threadModelDialogOpen
   ]);
-
-  useEffect(() => {
-    if (!selectors.runningOpenThreadIds) return;
-    state.setNowMs(Date.now());
-    const timer = window.setInterval(() => state.setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [selectors.runningOpenThreadIds]);
 
   useEffect(() => {
     if (!state.activeTabThreadId) return;

@@ -1,7 +1,7 @@
 import React from "react";
 import { Switch } from "antd";
 import { Copy, History, MessageSquare, Pencil, Pin, PinOff, Play, Settings, Trash2, Unplug } from "lucide-react";
-import type { ProjectMachineGroup } from "./types.js";
+import type { ParentRegistrationDraft, ProjectMachineGroup, TaskDraft } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
   activeSshConnectionForHost,
@@ -86,13 +86,11 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     showProjectPicker,
     parentRegistration,
     parentRegistrationBusy,
-    parentRegistrationDraft,
     parentRegistrationError,
     patchTask,
     projectGroups,
     projectList,
     projectScopeLocked,
-    projectSearch,
     projectActionError,
     registeredCommand,
     registeredCommandIncludesToken,
@@ -107,14 +105,10 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     selectSessionThread,
     sessionList,
     serverShareCopied,
+    sidebarDraftStore,
     setConnectionMode,
     setOfflineProjectsCollapsed,
-    setParentRegistrationDraft,
-    setProjectSearch,
     setSettingsDialogOpen,
-    setSshHostDraft,
-    setSshSearch,
-    setTaskDraft,
     setTaskFormOpen,
     stopSshConnection,
     sshConfigHostOptions,
@@ -123,11 +117,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     sshConnections,
     sshError,
     sshHostBusy,
-    sshHostDraft,
     sshHosts,
-    sshSearch,
     taskBusyId,
-    taskDraft,
     taskError,
     taskFormOpen,
     tasks,
@@ -136,6 +127,37 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     updateTaskDraftMachine,
     updateTaskDraftProject
   } = viewModel;
+  const {
+    parentRegistrationDraft,
+    projectSearch,
+    sshHostDraft,
+    sshSearch,
+    taskDraft
+  } = React.useSyncExternalStore(
+    sidebarDraftStore.subscribe,
+    sidebarDraftStore.getSnapshot,
+    sidebarDraftStore.getSnapshot
+  );
+  const setParentRegistrationDraft = React.useCallback(
+    (update: React.SetStateAction<ParentRegistrationDraft>) => sidebarDraftStore.set("parentRegistrationDraft", update),
+    [sidebarDraftStore]
+  );
+  const setProjectSearch = React.useCallback(
+    (value: string) => sidebarDraftStore.set("projectSearch", value),
+    [sidebarDraftStore]
+  );
+  const setSshHostDraft = React.useCallback(
+    (value: string) => sidebarDraftStore.set("sshHostDraft", value),
+    [sidebarDraftStore]
+  );
+  const setSshSearch = React.useCallback(
+    (value: string) => sidebarDraftStore.set("sshSearch", value),
+    [sidebarDraftStore]
+  );
+  const setTaskDraft = React.useCallback(
+    (update: React.SetStateAction<TaskDraft>) => sidebarDraftStore.set("taskDraft", update),
+    [sidebarDraftStore]
+  );
   const [editingTaskId, setEditingTaskId] = React.useState("");
 
   const projectQuery = projectSearch.trim();
@@ -168,14 +190,18 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const taskPanelContextLabel = selectedProject?.name ?? (projectScopeLocked ? "Workspace" : "All projects");
   const taskPanelContextTitle = selectedProject ? `${selectedProject.name}\n${selectedProject.path}` : projectScopeLocked ? "VSCode workspace projects" : "All projects";
   const taskFormProjectLocked = Boolean(selectedProject);
-  const taskMachineOptions = uniqueMachines(machines)
+  const taskMachineOptions = taskFormOpen ? uniqueMachines(machines)
     .filter(machineProjectLauncher)
-    .filter((machine) => !projectScopeLocked || visibleProjectTaskTargets.size === 0 || projectList.some((project) => project.machineId === machine.machineId));
-  const taskProjectOptions = projectList.filter((project) => !taskDraft.machineId || project.machineId === taskDraft.machineId);
+    .filter((machine) => !projectScopeLocked || visibleProjectTaskTargets.size === 0 || projectList.some((project) => project.machineId === machine.machineId)) : [];
+  const taskProjectOptions = taskFormOpen
+    ? projectList.filter((project) => !taskDraft.machineId || project.machineId === taskDraft.machineId)
+    : [];
   const parentRegistrationStatus = parentRegistrationStatusLabel(parentRegistration.status);
   const parentRegistrationActive = parentRegistration.status !== "idle" && parentRegistration.status !== "stopped";
-  const selectedTaskProject = taskProjectOptions.find((project) => project.path === taskDraft.projectPath);
-  const taskThreadOptions = taskThreadOptionsFor(selectedTaskProject, sessionList);
+  const selectedTaskProject = taskFormOpen
+    ? taskProjectOptions.find((project) => project.path === taskDraft.projectPath)
+    : undefined;
+  const taskThreadOptions = taskFormOpen ? taskThreadOptionsFor(selectedTaskProject, sessionList) : [];
   const editingTask = editingTaskId ? tasks.find((task) => task.taskId === editingTaskId) : undefined;
   const taskSubmitBusy = editingTaskId ? taskBusyId === editingTaskId : taskBusyId === "create";
   const taskThreadEmptyLabel = editingTask?.threadId ? "Keep current thread" : "Current thread";
@@ -184,7 +210,9 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   React.useEffect(() => {
     setTaskThreadQuery("");
   }, [taskThreadScopeKey, taskFormOpen]);
-  const matchingTaskThreadOptions = taskThreadOptions.filter((thread) => taskThreadSearchMatches(thread, taskThreadQuery));
+  const matchingTaskThreadOptions = taskFormOpen
+    ? taskThreadOptions.filter((thread) => taskThreadSearchMatches(thread, taskThreadQuery))
+    : [];
   const selectedTaskThread = taskDraft.threadId
     ? taskThreadOptions.find((thread) => thread.threadId === taskDraft.threadId)
     : undefined;

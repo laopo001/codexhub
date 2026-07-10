@@ -7,8 +7,8 @@ import { resolveCodexAppServerLaunchOptions } from "../src/cli/codexAppServerPro
 import { accountRateLimitsPayloadFromValue } from "../src/core/threadUsage.js";
 import type { MachineDirectoryEntry } from "../src/shared/machineTypes.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
-import type { SessionEventInput } from "../src/shared/threadTypes.js";
-import type { OpenThreadState, ProjectMachineGroup, ProjectSummary } from "../src/web/types.js";
+import type { SessionEventInput, ThreadSummary } from "../src/shared/threadTypes.js";
+import type { OpenThreadState, ProjectMachineGroup, ProjectSummary, SessionView } from "../src/web/types.js";
 
 type MachineSummary = {
   machineId: string;
@@ -507,7 +507,64 @@ const assertComposerAttachmentClear = async () => {
   try {
     const { createComposerActions } = await import("../src/web/appActions/composerActions.js");
     const { createComposerDraftStore } = await import("../src/web/helpers/composer.js");
+    const { createSidebarDraftStore } = await import("../src/web/helpers/sidebarDrafts.js");
+    const { mergeRecord } = await import("../src/web/helpers/records.js");
+    const { patchProjectsThread, patchSessionsThread } = await import("../src/web/helpers/core.js");
     const composerDraftStore = createComposerDraftStore();
+    const sidebarDraftStore = createSidebarDraftStore();
+    let sidebarDraftNotifications = 0;
+    const unsubscribeSidebarDrafts = sidebarDraftStore.subscribe(() => {
+      sidebarDraftNotifications += 1;
+    });
+    sidebarDraftStore.set("projectSearch", "codexhub");
+    sidebarDraftStore.set("taskDraft", (current) => ({ ...current, input: "isolated task draft" }));
+    unsubscribeSidebarDrafts();
+    if (
+      sidebarDraftStore.getSnapshot().projectSearch !== "codexhub"
+      || sidebarDraftStore.getSnapshot().taskDraft.input !== "isolated task draft"
+      || sidebarDraftNotifications !== 2
+    ) {
+      throw new Error("sidebar draft store did not isolate high-frequency form state");
+    }
+    const orderedRecords: CodexRecord[] = [
+      { id: "record-a", timestamp: "2026-06-08T09:00:00.000Z", type: "event_msg", payload: {} },
+      { id: "record-b", timestamp: "2026-06-08T09:02:00.000Z", type: "event_msg", payload: {} }
+    ];
+    const reorderedRecords = mergeRecord(orderedRecords, {
+      ...orderedRecords[1],
+      timestamp: "2026-06-08T08:59:00.000Z"
+    });
+    const appendedRecords = mergeRecord(reorderedRecords, {
+      id: "record-c",
+      timestamp: "2026-06-08T09:03:00.000Z",
+      type: "event_msg",
+      payload: {}
+    });
+    if (appendedRecords.map((record) => record.id).join(",") !== "record-b,record-a,record-c") {
+      throw new Error(`incremental record merge lost ordering: ${appendedRecords.map((record) => record.id).join(",")}`);
+    }
+    const project = { projectId: "project-a", path: "/tmp/a", lastThreadId: "thread-a", running: true } as ProjectSummary;
+    const unchangedProjects = [project];
+    const patchedProjects = patchProjectsThread(unchangedProjects, {
+      threadId: "thread-a",
+      workingDirectory: "/tmp/a",
+      status: "running",
+      running: true
+    } as ThreadSummary);
+    if (patchedProjects !== unchangedProjects) {
+      throw new Error("unchanged project thread projection did not preserve the project array");
+    }
+    const threadSummary = {
+      threadId: "thread-a",
+      workingDirectory: "/tmp/a",
+      status: "running",
+      running: true,
+      session: { sessionId: "session-a", online: true, runnable: true }
+    } as ThreadSummary;
+    const unchangedSessions = [{ sessionId: "session-a", threads: [threadSummary] }] as SessionView[];
+    if (patchSessionsThread(unchangedSessions, threadSummary) !== unchangedSessions) {
+      throw new Error("unchanged session thread projection did not preserve the session array");
+    }
     let openThreads = [
       {
         threadId: "thread-a",

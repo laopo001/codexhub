@@ -936,25 +936,37 @@ export const adjacentThreadId = (threadIds: string[], threadId: string) => {
   return threadIds[index + 1] ?? threadIds[index - 1] ?? "";
 };
 
-export const patchSessionsThread = (sessionList: SessionView[], thread: ThreadSummary) =>
-  sessionList.map((session) => {
+export const patchSessionsThread = (sessionList: SessionView[], thread: ThreadSummary) => {
+  let changed = false;
+  const next = sessionList.map((session) => {
     if (session.sessionId !== thread.session.sessionId) return session;
+    const threads = upsertThreadSummary(session.threads ?? [], thread);
+    if (threads === session.threads) return session;
+    changed = true;
     return {
       ...session,
-      threads: upsertThreadSummary(session.threads ?? [], thread)
+      threads
     };
   });
+  return changed ? next : sessionList;
+};
 
-export const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) =>
-  projects.map((project) => {
+export const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) => {
+  let changed = false;
+  const next = projects.map((project) => {
     const matchesPath = project.path === thread.workingDirectory;
     if (!matchesPath) return project;
+    const running = thread.running || thread.status === "running" || project.running;
+    if (project.lastThreadId === thread.threadId && project.running === running) return project;
+    changed = true;
     return {
       ...project,
       lastThreadId: thread.threadId,
-      running: thread.running || thread.status === "running" || project.running
+      running
     };
   });
+  return changed ? next : projects;
+};
 
 export const removeSessionsThread = (sessionList: SessionView[], threadId: string) =>
   sessionList.map((session) => ({
@@ -971,12 +983,41 @@ export const removeProjectsThread = (projects: ProjectSummary[], threadId: strin
   });
 
 export const upsertThreadSummary = (threads: ThreadSummary[], thread: ThreadSummary) => {
-  const byId = new Map(threads.map((item) => [item.threadId, item]));
-  byId.set(thread.threadId, { ...byId.get(thread.threadId), ...thread });
-  return [...byId.values()].sort((left, right) => {
+  const existingIndex = threads.findIndex((item) => item.threadId === thread.threadId);
+  if (existingIndex >= 0 && threadSummariesEqual(threads[existingIndex], thread)) return threads;
+  const next = existingIndex >= 0
+    ? threads.map((item, index) => index === existingIndex ? thread : item)
+    : [...threads, thread];
+  return next.sort((left, right) => {
     return Number(right.running) - Number(left.running)
       || right.updatedAt.localeCompare(left.updatedAt);
   });
+};
+
+const threadSummariesEqual = (left: ThreadSummary, right: ThreadSummary) => {
+  if (
+    left.threadId !== right.threadId
+    || left.workingDirectory !== right.workingDirectory
+    || left.model !== right.model
+    || left.modelReasoningEffort !== right.modelReasoningEffort
+    || left.serviceTier !== right.serviceTier
+    || left.approvalPolicy !== right.approvalPolicy
+    || left.status !== right.status
+    || left.running !== right.running
+    || left.title !== right.title
+    || left.updatedAt !== right.updatedAt
+    || left.messageCount !== right.messageCount
+    || left.session.sessionId !== right.session.sessionId
+    || left.session.name !== right.session.name
+    || left.session.appServerUrl !== right.session.appServerUrl
+    || left.session.online !== right.session.online
+    || left.session.runnable !== right.session.runnable
+    || left.session.lastSeenAt !== right.session.lastSeenAt
+  ) return false;
+  return JSON.stringify(left.sandboxPolicy) === JSON.stringify(right.sandboxPolicy)
+    && JSON.stringify(left.lastUsage) === JSON.stringify(right.lastUsage)
+    && JSON.stringify(left.threadUsage) === JSON.stringify(right.threadUsage)
+    && JSON.stringify(left.goalRunPolicy) === JSON.stringify(right.goalRunPolicy);
 };
 
 export const selectedThreadOptions = (
