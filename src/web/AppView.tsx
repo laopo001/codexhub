@@ -6,34 +6,27 @@ import {
   Image as ImageIcon,
   ListChecks,
   MessageCircle,
-  Package,
   Paperclip,
-  Command as CommandIcon,
-  Sparkles,
   Target,
   X,
   type LucideIcon
 } from "lucide-react";
 import { Virtuoso, type Components } from "react-virtuoso";
-import { approvalPolicyOptions, composerModeOptions, isVscodeSurface, sandboxPolicyOptions } from "./appConfig.js";
+import { approvalPolicyOptions, composerModeOptions, sandboxPolicyOptions } from "./appConfig.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
+import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
 import type { AppViewModel } from "./viewModel.js";
 import {
   ActivityStatusBar,
   canForkAtMessage,
   canRenderMarkdown,
-  commandPaletteCacheKey,
   EmptyMessages,
   formatGoalAge,
   goalStatusClass,
   goalStatusLabel,
   MessageCard,
-  dataTransferHasPathPayload,
-  droppedPathsFromDataTransfer,
-  textareaCaretIndexFromPoint,
 } from "./appHelpers.js";
-import type { CommandPaletteEntry } from "./types.js";
 
 type AppViewProps = {
   viewModel: AppViewModel;
@@ -84,157 +77,6 @@ const messagesScrollbarHitArea = 20;
 const messagesUserScrollIntentMs = 900;
 const messagesScrollKeys = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
-type CommandPaletteTrigger = {
-  marker: "/" | "@";
-  query: string;
-  start: number;
-  end: number;
-  key: string;
-};
-
-type CommandPaletteGroupId = "commands" | "skills" | "plugins";
-
-type CommandPaletteRow =
-  | { type: "group"; group: CommandPaletteGroupId; label: string }
-  | { type: "entry"; entry: CommandPaletteEntry; index: number };
-
-const commandPaletteTriggerForInput = (input: string, caretIndex: number): CommandPaletteTrigger | null => {
-  const end = Math.max(0, Math.min(caretIndex, input.length));
-  const beforeCaret = input.slice(0, end);
-  if (!beforeCaret || /\s$/.test(beforeCaret)) return null;
-  const match = /(^|\s)([/@])([^\s]*)$/.exec(beforeCaret);
-  if (!match) return null;
-  const marker = match[2] as "/" | "@";
-  const query = match[3] ?? "";
-  const start = match.index + (match[1]?.length ?? 0);
-  return {
-    marker,
-    query,
-    start,
-    end,
-    key: `${marker}${query}`
-  };
-};
-
-const commandPaletteSearchText = (entry: CommandPaletteEntry) => [
-  entry.name,
-  entry.title,
-  entry.shortDescription,
-  entry.description,
-  entry.detail,
-  entry.source,
-  entry.scope
-].filter(Boolean).join(" ").toLowerCase();
-
-const commandPaletteEntriesForTrigger = (
-  entries: CommandPaletteEntry[],
-  trigger: CommandPaletteTrigger | null
-) => {
-  if (!trigger) return [];
-  const query = trigger.query.toLowerCase();
-  const filtered = entries
-    .filter((entry) => entry.enabled)
-    .filter((entry) => {
-      if (trigger.marker === "@") {
-        return entry.kind === "plugin" || (entry.kind === "skill" && !commandPaletteEntryIsPluginSkill(entry));
-      }
-      return true;
-    })
-    .filter((entry) => !query || commandPaletteSearchText(entry).includes(query))
-    .sort((left, right) => {
-      if (trigger.marker === "/" || trigger.marker === "@") {
-        const groupRank = commandPaletteGroupRank(left) - commandPaletteGroupRank(right);
-        if (groupRank) return groupRank;
-      }
-      return commandPaletteEntryRank(left, query) - commandPaletteEntryRank(right, query);
-    });
-  return filtered;
-};
-
-const commandPaletteEntryIsPluginSkill = (entry: CommandPaletteEntry) =>
-  entry.kind === "skill" && entry.name.includes(":");
-
-const commandPaletteEntryGroup = (entry: CommandPaletteEntry): CommandPaletteGroupId => {
-  if (entry.kind === "builtin") return "commands";
-  if (entry.kind === "skill" && !commandPaletteEntryIsPluginSkill(entry)) return "skills";
-  return "plugins";
-};
-
-const commandPaletteGroupRank = (entry: CommandPaletteEntry) => {
-  const group = commandPaletteEntryGroup(entry);
-  if (group === "commands") return 0;
-  if (group === "skills") return 1;
-  return 2;
-};
-
-const commandPaletteGroupLabel = (group: CommandPaletteGroupId) => {
-  if (group === "commands") return "命令";
-  if (group === "skills") return "技能";
-  return "插件 + 插件技能";
-};
-
-const commandPaletteRowsForTrigger = (
-  entries: CommandPaletteEntry[],
-  trigger: CommandPaletteTrigger | null
-): CommandPaletteRow[] => {
-  if (trigger?.marker !== "/") {
-    return entries.map((entry, index) => ({ type: "entry", entry, index }));
-  }
-  const rows: CommandPaletteRow[] = [];
-  let previousGroup: CommandPaletteGroupId | null = null;
-  entries.forEach((entry, index) => {
-    const group = commandPaletteEntryGroup(entry);
-    if (group !== previousGroup) {
-      rows.push({ type: "group", group, label: commandPaletteGroupLabel(group) });
-      previousGroup = group;
-    }
-    rows.push({ type: "entry", entry, index });
-  });
-  return rows;
-};
-
-const commandPaletteEntryRank = (entry: CommandPaletteEntry, query: string) => {
-  if (!query) return entry.kind === "builtin" ? 0 : 20;
-  const name = entry.name.toLowerCase();
-  const title = entry.title.toLowerCase();
-  if (name === query || title === query) return 0;
-  if (name.startsWith(query)) return 1;
-  if (title.startsWith(query)) return 2;
-  if (entry.kind === "plugin") return 8;
-  return entry.kind === "builtin" ? 10 : 20;
-};
-
-const commandPaletteEntryDescription = (entry: CommandPaletteEntry) =>
-  entry.shortDescription || entry.description;
-
-const commandPaletteEntryIcon = (entry: CommandPaletteEntry) =>
-  entry.kind === "plugin" ? Package : entry.kind === "skill" ? Sparkles : CommandIcon;
-
-const commandPaletteTriggerLabel = (marker: CommandPaletteTrigger["marker"] | undefined) => {
-  if (marker === "@") return "技能、插件";
-  return "命令、技能、插件";
-};
-
-const commandPaletteTriggerAriaLabel = (marker: CommandPaletteTrigger["marker"] | undefined) => {
-  if (marker === "@") return "Skills and plugins";
-  return "Commands";
-};
-
-const commandPaletteReplacementText = (entry: CommandPaletteEntry, trigger: CommandPaletteTrigger) => {
-  const replacement = entry.insertText || `${trigger.marker}${entry.name}`;
-  if (entry.kind !== "skill" && entry.kind !== "plugin") {
-    return replacement;
-  }
-  return /\s$/.test(replacement) ? replacement : `${replacement} `;
-};
-
-const commandPaletteEntryLabel = (entry: CommandPaletteEntry) => {
-  if (entry.kind === "builtin") return `/${entry.name}`;
-  const insertText = entry.insertText?.trim();
-  if (insertText && /^[$@]/.test(insertText)) return insertText;
-  return `@${entry.name}`;
-};
-
 type MessagesVirtuosoContext = {
   turnLoadingDuration: string;
 };
@@ -256,9 +98,7 @@ const MessagesTurnLoadingFooter = ({ context }: { context?: MessagesVirtuosoCont
 
 export const AppView = ({ viewModel }: AppViewProps) => {
   const {
-    activeCanSend,
     activeCanStop,
-    activeCanSubmit,
     activeExpandedStatusKeys,
     activeGoal,
     activeProjectKey,
@@ -287,6 +127,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     compactThread,
     commandPaletteByScope,
     commandPaletteLoadingScopes,
+    composerDraftStore,
     composerMenuOpen,
     composerMode,
     composerTextareaRef,
@@ -418,6 +259,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   const executionStatus = activeThreadExecutionMeta?.status ?? "idle";
   const executionLabel = activeThreadExecutionMeta?.label ?? "Idle";
   const executionText = activeThreadExecutionMeta?.text ?? executionLabel;
+  const composerRuntimeReady = Boolean(activeThread?.session.online && activeThread.session.runnable !== false);
   const showTurnLoadingMessage = executionStatus === "running";
   const messagesVirtuosoContext = React.useMemo(
     () => ({ turnLoadingDuration: activeRunningExecutionDuration }),
@@ -430,191 +272,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   const messagesUserScrollIntentRef = React.useRef(false);
   const messagesUserScrollIntentTimerRef = React.useRef<number | null>(null);
   const messagesStickScrollFrameRef = React.useRef<number | null>(null);
-  const composerDropCaretRef = React.useRef<Record<string, number>>({});
-  const commandPaletteItemRefs = React.useRef<Record<number, HTMLButtonElement | null>>({});
-  const [commandPaletteActiveIndex, setCommandPaletteActiveIndex] = React.useState(0);
-  const [commandPaletteKeyboardNavigation, setCommandPaletteKeyboardNavigation] = React.useState(false);
-  const [dismissedCommandPaletteKey, setDismissedCommandPaletteKey] = React.useState("");
-  const [composerCaret, setComposerCaret] = React.useState<{ threadId: string; index: number } | null>(null);
-  const activeComposerCaretIndex = activeThread && composerCaret?.threadId === activeThread.threadId
-    ? Math.min(composerCaret.index, activeThread.input.length)
-    : activeThread?.input.length ?? 0;
-  const commandPaletteTrigger = React.useMemo(
-    () => commandPaletteTriggerForInput(activeThread?.input ?? "", activeComposerCaretIndex),
-    [activeComposerCaretIndex, activeThread?.input]
-  );
-  const commandPaletteScopeKey = activeThread?.session.sessionId
-    ? commandPaletteCacheKey(activeThread.session.sessionId, activeThread.workingDirectory)
-    : "";
-  const commandPalette = commandPaletteScopeKey ? commandPaletteByScope[commandPaletteScopeKey] : undefined;
-  const commandPaletteLoading = commandPaletteScopeKey ? Boolean(commandPaletteLoadingScopes[commandPaletteScopeKey]) : false;
-  const commandPaletteEntries = React.useMemo(
-    () => commandPaletteEntriesForTrigger(commandPalette?.entries ?? [], commandPaletteTrigger),
-    [commandPalette?.entries, commandPaletteTrigger]
-  );
-  const commandPaletteRows = React.useMemo(
-    () => commandPaletteRowsForTrigger(commandPaletteEntries, commandPaletteTrigger),
-    [commandPaletteEntries, commandPaletteTrigger]
-  );
-  const commandPaletteDismissKey = activeThread && commandPaletteTrigger
-    ? `${activeThread.threadId}:${commandPaletteTrigger.key}`
-    : "";
-  const commandPaletteOpen = Boolean(
-    commandPaletteTrigger
-    && commandPaletteDismissKey !== dismissedCommandPaletteKey
-    && (commandPaletteEntries.length || commandPaletteLoading)
-  );
-  const activeCommandPaletteEntry = commandPaletteOpen
-    ? commandPaletteEntries[Math.min(commandPaletteActiveIndex, Math.max(commandPaletteEntries.length - 1, 0))]
-    : undefined;
-  React.useEffect(() => {
-    if (!activeThread?.session.sessionId) return;
-    if (commandPalette || commandPaletteLoading) return;
-    void loadCommandPalette(activeThread.session.sessionId, activeThread.workingDirectory);
-  }, [
-    activeThread?.session.sessionId,
-    activeThread?.workingDirectory,
-    commandPalette,
-    commandPaletteLoading,
-    loadCommandPalette
-  ]);
-  React.useEffect(() => {
-    setCommandPaletteActiveIndex(0);
-    setCommandPaletteKeyboardNavigation(false);
-  }, [commandPaletteTrigger?.key, activeThread?.threadId]);
-  React.useEffect(() => {
-    if (!commandPaletteTrigger) setDismissedCommandPaletteKey("");
-  }, [commandPaletteTrigger]);
-  React.useEffect(() => {
-    setCommandPaletteActiveIndex((current) =>
-      commandPaletteEntries.length ? Math.min(current, commandPaletteEntries.length - 1) : 0
-    );
-  }, [commandPaletteEntries.length]);
-  React.useEffect(() => {
-    if (!commandPaletteOpen) return;
-    if (!commandPaletteKeyboardNavigation) return;
-    commandPaletteItemRefs.current[commandPaletteActiveIndex]?.scrollIntoView({ block: "nearest" });
-  }, [commandPaletteActiveIndex, commandPaletteKeyboardNavigation, commandPaletteOpen]);
-  const rememberComposerCaret = React.useCallback((threadId: string, textarea: HTMLTextAreaElement | null) => {
-    if (!textarea) return;
-    setComposerCaret({ threadId, index: textarea.selectionStart });
-  }, []);
-  const replaceCommandPaletteTrigger = React.useCallback((replacement: string) => {
-    if (!activeThread || !commandPaletteTrigger) return;
-    const nextInput = [
-      activeThread.input.slice(0, commandPaletteTrigger.start),
-      replacement,
-      activeThread.input.slice(commandPaletteTrigger.end)
-    ].join("");
-    const cursor = commandPaletteTrigger.start + replacement.length;
-    resetComposerHistory(activeThread.threadId);
-    updateThreadInput(activeThread.threadId, nextInput);
-    setComposerCaret({ threadId: activeThread.threadId, index: cursor });
-    window.requestAnimationFrame(() => {
-      const textarea = composerTextareaRef.current;
-      if (!textarea) return;
-      resizeComposerTextarea(textarea);
-      textarea.focus();
-      textarea.setSelectionRange(cursor, cursor);
-    });
-  }, [
-    activeThread,
-    commandPaletteTrigger,
-    composerTextareaRef,
-    setComposerCaret,
-    resetComposerHistory,
-    resizeComposerTextarea,
-    updateThreadInput
-  ]);
-  const selectCommandPaletteEntry = React.useCallback((entry: CommandPaletteEntry | undefined) => {
-    if (!entry || !activeThread || !commandPaletteTrigger) return;
-    const action = entry.action ?? "insert";
-    if (activeThread.running && (action === "review_changes" || action === "compact_thread")) return;
-    if (action === "open_model") {
-      setDismissedCommandPaletteKey(commandPaletteDismissKey);
-      replaceCommandPaletteTrigger("");
-      setThreadModelDialogOpen(true);
-      return;
-    }
-    if (action === "set_plan_mode") {
-      setDismissedCommandPaletteKey(commandPaletteDismissKey);
-      replaceCommandPaletteTrigger("");
-      setComposerMode("plan");
-      return;
-    }
-    if (action === "set_goal_mode") {
-      setDismissedCommandPaletteKey(commandPaletteDismissKey);
-      replaceCommandPaletteTrigger("");
-      setComposerMode("goal");
-      return;
-    }
-    if (action === "review_changes") {
-      setDismissedCommandPaletteKey(commandPaletteDismissKey);
-      replaceCommandPaletteTrigger("");
-      if (!activeThread.running) void reviewThread(activeThread.threadId);
-      return;
-    }
-    if (action === "compact_thread") {
-      setDismissedCommandPaletteKey(commandPaletteDismissKey);
-      replaceCommandPaletteTrigger("");
-      if (!activeThread.running) void compactThread(activeThread.threadId);
-      return;
-    }
-    const replacement = commandPaletteReplacementText(entry, commandPaletteTrigger);
-    setDismissedCommandPaletteKey(`${activeThread.threadId}:${replacement}`);
-    replaceCommandPaletteTrigger(replacement);
-  }, [
-    activeThread,
-    commandPaletteDismissKey,
-    commandPaletteTrigger,
-    compactThread,
-    replaceCommandPaletteTrigger,
-    reviewThread,
-    setComposerMode,
-    setThreadModelDialogOpen
-  ]);
-  const handleComposerTextareaKeyDown = React.useCallback((
-    event: React.KeyboardEvent<HTMLTextAreaElement>,
-    threadId: string,
-    history: string[]
-  ) => {
-    if (commandPaletteOpen && !event.nativeEvent.isComposing) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setCommandPaletteKeyboardNavigation(true);
-        setCommandPaletteActiveIndex((current) =>
-          commandPaletteEntries.length ? (current + 1) % commandPaletteEntries.length : 0
-        );
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setCommandPaletteKeyboardNavigation(true);
-        setCommandPaletteActiveIndex((current) =>
-          commandPaletteEntries.length ? (current - 1 + commandPaletteEntries.length) % commandPaletteEntries.length : 0
-        );
-        return;
-      }
-      if ((event.key === "Enter" || event.key === "Tab") && activeCommandPaletteEntry) {
-        event.preventDefault();
-        selectCommandPaletteEntry(activeCommandPaletteEntry);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        if (commandPaletteDismissKey) setDismissedCommandPaletteKey(commandPaletteDismissKey);
-        return;
-      }
-    }
-    handleComposerKeyDown(event, threadId, history);
-  }, [
-    activeCommandPaletteEntry,
-    commandPaletteDismissKey,
-    commandPaletteEntries.length,
-    commandPaletteOpen,
-    handleComposerKeyDown,
-    selectCommandPaletteEntry
-  ]);
   const openGoalRunPolicyDialog = () => {
     if (!activeThread) return;
     const goalRunPolicy = activeThread.goalRunPolicy?.type === "consumeUntilWeeklyRemainingAtOrBelow"
@@ -622,7 +279,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       : null;
     setGoalDialog({
       threadId: activeThread.threadId,
-      objective: activeGoal?.objective ?? activeThread.input,
+      objective: activeGoal?.objective ?? composerDraftStore.get(activeThread.threadId),
       targetRemainingPercent: goalRunPolicy
         ? String(goalRunPolicy.targetRemainingPercent)
         : "",
@@ -854,7 +511,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                     className="composer"
                     onSubmit={(event) => {
                       event.preventDefault();
-                      if (activeCanSend) void send(activeThread.threadId);
+                      if (composerRuntimeReady) void send(activeThread.threadId);
                     }}
                   >
                     <div className="composerLayout">
@@ -1028,111 +685,24 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                               ) : null}
                             </div>
                           ) : null}
-                          {commandPaletteOpen ? (
-                            <div
-                              className={`commandPalette${commandPaletteKeyboardNavigation ? " keyboardNavigation" : ""}`}
-                              role="listbox"
-                              aria-label={commandPaletteTriggerAriaLabel(commandPaletteTrigger?.marker)}
-                              onMouseDown={(event) => event.preventDefault()}
-                            >
-                              <div className="commandPaletteHeader">
-                                <span>{commandPaletteTriggerLabel(commandPaletteTrigger?.marker)}</span>
-                                {commandPaletteLoading ? <span>Loading</span> : null}
-                              </div>
-                              {commandPaletteRows.map((row) => {
-                                if (row.type === "group") {
-                                  return (
-                                    <div className="commandPaletteGroup" key={`group:${row.group}`}>
-                                      {row.label}
-                                    </div>
-                                  );
-                                }
-                                const { entry, index } = row;
-                                const EntryIcon = commandPaletteEntryIcon(entry);
-                                const blocked = activeThread.running && (
-                                  entry.action === "review_changes"
-                                  || entry.action === "compact_thread"
-                                );
-                                return (
-                                  <button
-                                    key={entry.id}
-                                    ref={(node) => {
-                                      commandPaletteItemRefs.current[index] = node;
-                                    }}
-                                    type="button"
-                                    role="option"
-                                    aria-selected={index === commandPaletteActiveIndex}
-                                    aria-disabled={blocked}
-                                    className={`commandPaletteItem${index === commandPaletteActiveIndex ? " active" : ""}${blocked ? " disabled" : ""}`}
-                                    onMouseMove={() => {
-                                      setCommandPaletteKeyboardNavigation(false);
-                                      setCommandPaletteActiveIndex(index);
-                                    }}
-                                    onClick={() => selectCommandPaletteEntry(entry)}
-                                    title={blocked ? "Stop the running turn before using this command" : entry.description}
-                                  >
-                                    <span className={`commandPaletteIcon ${entry.kind}`} aria-hidden="true">
-                                      <EntryIcon />
-                                    </span>
-                                    <span className="commandPaletteText">
-                                      <span className="commandPaletteTitle">
-                                        {commandPaletteEntryLabel(entry)}
-                                      </span>
-                                      <span className="commandPaletteDescription">
-                                        {commandPaletteEntryDescription(entry)}
-                                      </span>
-                                    </span>
-                                    {entry.detail ? <span className="commandPaletteDetail">{entry.detail}</span> : null}
-                                  </button>
-                                );
-                              })}
-                              {commandPaletteLoading && !commandPaletteEntries.length ? (
-                                <div className="commandPaletteEmpty">Loading app-server commands</div>
-                              ) : null}
-                            </div>
-                          ) : null}
-                          <textarea
-                            ref={composerTextareaRef}
-                            value={activeThread.input}
-                            onChange={(event) => {
-                              resetComposerHistory(activeThread.threadId);
-                              rememberComposerCaret(activeThread.threadId, event.currentTarget);
-                              resizeComposerTextarea(event.currentTarget);
-                              updateThreadInput(activeThread.threadId, event.target.value);
-                            }}
-                            onSelect={(event) => rememberComposerCaret(activeThread.threadId, event.currentTarget)}
-                            onKeyUp={(event) => rememberComposerCaret(activeThread.threadId, event.currentTarget)}
-                            onMouseUp={(event) => rememberComposerCaret(activeThread.threadId, event.currentTarget)}
-                            onPaste={(event) => {
-                              if (!pasteThreadImages(activeThread.threadId, event.clipboardData)) return;
-                              event.preventDefault();
-                            }}
-                            onDragOver={(event) => {
-                              if (!isVscodeSurface || !dataTransferHasPathPayload(event.dataTransfer)) return;
-                              event.preventDefault();
-                              event.dataTransfer.dropEffect = "copy";
-                              const caretIndex = textareaCaretIndexFromPoint(
-                                event.currentTarget,
-                                event.clientX,
-                                event.clientY
-                              );
-                              composerDropCaretRef.current[activeThread.threadId] = caretIndex;
-                              event.currentTarget.focus();
-                              event.currentTarget.setSelectionRange(caretIndex, caretIndex);
-                            }}
-                            onDrop={(event) => {
-                              if (!isVscodeSurface) return;
-                              const paths = droppedPathsFromDataTransfer(event.dataTransfer);
-                              if (!paths.length) return;
-                              event.preventDefault();
-                              const caretIndex = composerDropCaretRef.current[activeThread.threadId]
-                                ?? textareaCaretIndexFromPoint(event.currentTarget, event.clientX, event.clientY);
-                              delete composerDropCaretRef.current[activeThread.threadId];
-                              insertThreadPathText(activeThread.threadId, paths, event.currentTarget, caretIndex);
-                            }}
-                            onKeyDown={(event) => handleComposerTextareaKeyDown(event, activeThread.threadId, activeUserMessageHistory)}
-                            placeholder="例如：检查这个 repo 的结构并给我下一步建议"
-                            rows={2}
+                          <ComposerTextInput
+                            activeUserMessageHistory={activeUserMessageHistory}
+                            commandPaletteByScope={commandPaletteByScope}
+                            commandPaletteLoadingScopes={commandPaletteLoadingScopes}
+                            compactThread={compactThread}
+                            composerDraftStore={composerDraftStore}
+                            composerTextareaRef={composerTextareaRef}
+                            handleComposerKeyDown={handleComposerKeyDown}
+                            insertThreadPathText={insertThreadPathText}
+                            loadCommandPalette={loadCommandPalette}
+                            pasteThreadImages={pasteThreadImages}
+                            resetComposerHistory={resetComposerHistory}
+                            resizeComposerTextarea={resizeComposerTextarea}
+                            reviewThread={reviewThread}
+                            setComposerMode={setComposerMode}
+                            setThreadModelDialogOpen={setThreadModelDialogOpen}
+                            thread={activeThread}
+                            updateThreadInput={updateThreadInput}
                           />
                         </div>
                         <div className="composerActions">
@@ -1266,15 +836,13 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                               aria-label={`Thread status: ${executionLabel}`}
                             >
                               {showComposerSendButton ? (
-                                <button
-                                  type="submit"
-                                  className="composerSendButton composerActionButton"
-                                  disabled={!activeCanSubmit}
-                                  aria-label="Send message"
+                                <ComposerSubmitButton
+                                  attachmentCount={activeAttachmentCount}
+                                  composerDraftStore={composerDraftStore}
+                                  runtimeReady={composerRuntimeReady}
+                                  threadId={activeThread.threadId}
                                   title={`Send message · ${executionText}`}
-                                >
-                                  ↑
-                                </button>
+                                />
                               ) : null}
                               {activeThread.running ? (
                                 <button

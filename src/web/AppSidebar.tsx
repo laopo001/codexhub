@@ -193,7 +193,10 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     ? [selectedTaskThread, ...matchingTaskThreadOptions]
     : matchingTaskThreadOptions;
   const taskThreadQueryActive = Boolean(taskThreadQuery.trim());
-  const taskSchedulePreview = taskDraftSchedulePreview(taskDraft.schedule);
+  const taskSchedulePreview = React.useMemo(
+    () => taskFormOpen ? taskDraftSchedulePreview(taskDraft.schedule) : null,
+    [taskDraft.schedule, taskFormOpen]
+  );
   const sshQuery = sshSearch.trim();
   const visibleSshConfigHostOptions = sshConfigHostOptions.filter((host) => sshHostSearchMatches(host, sshQuery));
   const visibleSshHosts = sshHosts.filter((host) => sshHostSearchMatches(host, sshQuery));
@@ -211,7 +214,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     taskDraft.machineId.trim()
     && taskDraft.projectPath.trim()
     && taskDraft.schedule.trim()
-    && taskSchedulePreview.kind === "valid"
+    && taskSchedulePreview?.kind === "valid"
     && taskDraft.input.trim()
   );
   React.useEffect(() => {
@@ -250,7 +253,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     const projectPath = taskDraft.projectPath.trim();
     const input = taskDraft.input.trim();
     const threadId = taskDraft.threadId.trim();
-    if (!machineId || !projectPath || !schedule || taskSchedulePreview.kind !== "valid" || !input) return;
+    if (!machineId || !projectPath || !schedule || taskSchedulePreview?.kind !== "valid" || !input) return;
     const project = projectList.find((item) => item.machineId === machineId && item.path === projectPath);
     const saved = await patchTask(editingTaskId, {
       name,
@@ -858,8 +861,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                     </button>
                   ))}
                 </div>
-                <small className={`taskSchedulePreview ${taskSchedulePreview.kind}`} title={taskSchedulePreview.title}>
-                  {taskSchedulePreview.text}
+                <small className={`taskSchedulePreview ${taskSchedulePreview?.kind ?? "empty"}`} title={taskSchedulePreview?.title ?? ""}>
+                  {taskSchedulePreview?.text ?? ""}
                 </small>
               </label>
               <label className="taskField">

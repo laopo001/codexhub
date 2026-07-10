@@ -146,7 +146,6 @@ export type OpenThreadState = ThreadDetail & {
   serviceTierDraft: ServiceTierSelection;
   approvalPolicyDraft: ApprovalPolicyDraft;
   sandboxPolicyDraft: SandboxPolicyDraft;
-  input: string;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];
 };

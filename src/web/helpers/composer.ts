@@ -4,6 +4,42 @@ import { defaultAppSettings, isVscodeSurface, legacyStorageKey, storageKey } fro
 import type { AppSettings, MessageDisplayMode, TextAttachment } from "../types.js";
 import { browserId, formatDate } from "./common.js";
 
+export type ComposerDraftStore = {
+  delete: (threadId: string) => void;
+  get: (threadId: string) => string;
+  set: (threadId: string, value: string) => void;
+  subscribe: (threadId: string, listener: () => void) => () => void;
+};
+
+export const createComposerDraftStore = (): ComposerDraftStore => {
+  const drafts = new Map<string, string>();
+  const listeners = new Map<string, Set<() => void>>();
+  const notify = (threadId: string) => {
+    for (const listener of listeners.get(threadId) ?? []) listener();
+  };
+  return {
+    delete: (threadId) => {
+      drafts.delete(threadId);
+      listeners.delete(threadId);
+    },
+    get: (threadId) => drafts.get(threadId) ?? "",
+    set: (threadId, value) => {
+      if (drafts.get(threadId) === value) return;
+      drafts.set(threadId, value);
+      notify(threadId);
+    },
+    subscribe: (threadId, listener) => {
+      const threadListeners = listeners.get(threadId) ?? new Set<() => void>();
+      threadListeners.add(listener);
+      listeners.set(threadId, threadListeners);
+      return () => {
+        threadListeners.delete(listener);
+        if (!threadListeners.size) listeners.delete(threadId);
+      };
+    }
+  };
+};
+
 export const commandPaletteCacheKey = (sessionId: string, cwd: string) =>
   `${sessionId}\u0000${cwd}`;
 

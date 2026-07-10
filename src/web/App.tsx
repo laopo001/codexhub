@@ -40,6 +40,7 @@ const App = () => {
     authTokenDraft,
     closedThreadIds,
     collapsedProjectMachineKeys,
+    composerDraftStore,
     composerHistoryRef,
     composerMenuOpen,
     composerTextareaRef,
@@ -181,9 +182,7 @@ const App = () => {
 
   const selectors = useAppSelectors(appState);
   const {
-    activeCanSend,
     activeCanStop,
-    activeCanSubmit,
     activeDisplayThreadId,
     activeExpandedStatusKeys,
     activeGoal,
@@ -419,9 +418,7 @@ const App = () => {
   };
 
   const viewModel = {
-    activeCanSend,
     activeCanStop,
-    activeCanSubmit,
     activeDisplayThreadId,
     activeExpandedStatusKeys,
     activeGoal,
@@ -448,6 +445,7 @@ const App = () => {
     closeThread,
     collapsedProjectMachineKeys,
     compactThread,
+    composerDraftStore,
     composerMenuOpen,
     composerMode,
     composerTextareaRef,

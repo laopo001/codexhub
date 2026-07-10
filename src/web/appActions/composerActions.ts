@@ -10,6 +10,7 @@ import {
   contextMenuPosition,
   normalizeSelectedText,
   selectedTextWithin,
+  type ComposerDraftStore,
   writeTextToClipboard
 } from "../appHelpers.js";
 import type {
@@ -23,9 +24,9 @@ import type {
 } from "../types.js";
 
 type ComposerActionsContext = {
-  activeCanSend: boolean;
   commandPaletteByScope: Record<string, CommandPalette>;
   commandPaletteLoadingScopes: Record<string, boolean>;
+  composerDraftStore: ComposerDraftStore;
   composerHistoryRef: React.MutableRefObject<ComposerHistoryState | null>;
   messageContextMenu: MessageContextMenuState | null;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
@@ -110,7 +111,8 @@ export type ComposerActions = {
   handleComposerKeyDown: (
     event: React.KeyboardEvent<HTMLTextAreaElement>,
     threadId: string,
-    history: string[]
+    history: string[],
+    canSend: boolean
   ) => void;
   addThreadTextAttachment: (threadId: string, text: string) => void;
   insertThreadPathText: (
@@ -175,7 +177,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
   };
 
   const updateThreadInput = (threadId: string, input: string) => {
-    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId ? { ...thread, input } : thread));
+    ctx.composerDraftStore.set(threadId, input);
   };
 
   const resetComposerHistory = (threadId: string) => {
@@ -216,7 +218,8 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
   const handleComposerKeyDown = (
     event: React.KeyboardEvent<HTMLTextAreaElement>,
     threadId: string,
-    history: string[]
+    history: string[],
+    canSend: boolean
   ) => {
     if (
       (event.key === "ArrowUp" || event.key === "ArrowDown")
@@ -247,7 +250,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
 
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    if (ctx.activeCanSend) void deps.send(threadId);
+    if (canSend) void deps.send(threadId);
   };
 
   const addThreadTextAttachment = (threadId: string, text: string) => {
@@ -276,9 +279,11 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
         }
       : null;
     const inserted = selection ? insertTextBlock(selection.value, text, selection.start, selection.end) : null;
-    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
-      ? { ...thread, input: inserted?.value ?? insertTextBlock(thread.input, text).value }
-      : thread));
+    const currentInput = ctx.composerDraftStore.get(threadId);
+    ctx.composerDraftStore.set(
+      threadId,
+      inserted?.value ?? insertTextBlock(currentInput, text).value
+    );
     if (!textarea || !inserted) return;
     window.requestAnimationFrame(() => {
       ctx.resizeComposerTextarea(textarea);

@@ -314,16 +314,8 @@ export const useAppSelectors = (state: AppState) => {
   );
   const activeDisplayThreadId = activeThread?.threadId ?? state.activeTabThreadId;
   const activeThreadIsOpen = Boolean(activeThread && openThreadIds.includes(activeThread.threadId));
-  const activeHasDraft = Boolean(activeThread?.input.trim() || activeThread?.imageAttachments.length || activeThread?.textAttachments.length);
   const activeRuntimeOnline = Boolean(activeThread?.session.online && activeThread.session.runnable !== false);
-  const activeCanSend = Boolean(
-    activeThread
-    && activeThreadIsOpen
-    && activeRuntimeOnline
-    && activeHasDraft
-  );
   const activeCanStop = Boolean(activeThreadIsOpen && activeRuntimeOnline && activeThread?.running);
-  const activeCanSubmit = activeCanSend;
   const showComposerSendButton = Boolean(activeThread && !activeThread.running);
   const openThreadEmptyMessage = openThreadIds.length
     ? selectedProject
@@ -404,9 +396,7 @@ export const useAppSelectors = (state: AppState) => {
     [effectiveServiceTierSelection, effectiveModelSelection, activeModelCatalog]
   );
   return {
-    activeCanSend,
     activeCanStop,
-    activeCanSubmit,
     activeDisplayThreadId,
     activeExpandedStatusKeys,
     activeGoal,

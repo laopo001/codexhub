@@ -20,6 +20,7 @@ import {
   removeSessionsThread,
   removeThreadOrder,
   selectedThreadOptions,
+  type ComposerDraftStore,
   threadRecordsForNotifications
 } from "../appHelpers.js";
 import type {
@@ -38,6 +39,7 @@ type ThreadActionsContext = {
   activeRuntimeSession?: SessionView | null;
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
+  composerDraftStore: ComposerDraftStore;
   goalDialog: GoalDialogState | null;
   threadRenameDialog: ThreadRenameDialogState | null;
   latestRequestedThreadId: React.MutableRefObject<string>;
@@ -83,7 +85,6 @@ const openThreadStateFromDetail = (
   serviceTierDraft: existing?.serviceTierDraft ?? serviceTierDraftFromThread(thread.serviceTier),
   approvalPolicyDraft: existing?.approvalPolicyDraft ?? "auto",
   sandboxPolicyDraft: existing?.sandboxPolicyDraft ?? "auto",
-  input: existing?.input ?? "",
   imageAttachments: existing?.imageAttachments ?? [],
   textAttachments: existing?.textAttachments ?? []
 });
@@ -209,6 +210,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
   function removeThreadFromUi(threadId: string, sessionId: string, nextThreadId: string) {
     ctx.openingThreads.current.delete(threadId);
+    ctx.composerDraftStore.delete(threadId);
     ctx.threadLastSeqs.current.delete(threadId);
     unsubscribeThread(threadId);
     ctx.setOpenThreads((current) => {
@@ -348,7 +350,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     deps.primeTaskCompletionFeedback();
     const openThread = ctx.openThreads.find((item) => item.threadId === threadId);
     if (!openThread) return;
-    const typedText = openThread.input.trim();
+    const typedText = ctx.composerDraftStore.get(threadId).trim();
     const textAttachments = openThread.textAttachments;
     const text = composeUserInputText(typedText, textAttachments);
     const imageAttachments = openThread.imageAttachments;
@@ -356,7 +358,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     if (!text && !imageAttachments.length) return;
     if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {
       deps.resetComposerHistory(threadId);
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "" } : item));
+      ctx.composerDraftStore.set(threadId, "");
       ctx.setThreadModelDialogOpen(true);
       return;
     }
@@ -367,16 +369,17 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
         : item));
     }
     deps.resetComposerHistory(threadId);
-    ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId ? { ...item, input: "", imageAttachments: [], textAttachments: [] } : item));
+    ctx.composerDraftStore.set(threadId, "");
+    ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId ? { ...item, imageAttachments: [], textAttachments: [] } : item));
     let encodedImages: Array<{ url: string }>;
     try {
       encodedImages = await Promise.all(imageAttachments.map(async (image) => ({ url: await fileToDataUrl(image.file) })));
       for (const image of imageAttachments) URL.revokeObjectURL(image.previewUrl);
     } catch (error) {
+      ctx.composerDraftStore.set(threadId, typedText);
       ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
         ? {
           ...item,
-          input: typedText,
           imageAttachments,
           textAttachments,
           records: [...item.records, errorRecord("image encode failed", error)]

@@ -450,7 +450,7 @@ const assertEmbeddedServerDataDirOptionOverridesEnvironment = async () => {
 };
 
 const assertTaskCronSemantics = async () => {
-  const { cronMatches, cronMinuteKey, cronMinuteKeyFromIso } = await import("../src/core/taskCron.js");
+  const { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, nextCronRun } = await import("../src/core/taskCron.js");
   const mondayNotFirst = new Date("2026-06-08T09:00:00.000Z");
   const mondayFirst = new Date("2026-06-01T09:00:00.000Z");
   if (!cronMatches("0 9 1 * 1", mondayNotFirst, "UTC")) {
@@ -467,6 +467,17 @@ const assertTaskCronSemantics = async () => {
   }
   if (cronMinuteKeyFromIso(mondayNotFirst.toISOString(), "UTC") !== cronMinuteKey(mondayNotFirst, "UTC")) {
     throw new Error("cron lastRunAt minute key did not match date minute key");
+  }
+  const sameDayRun = nextCronRun("0 9 * * *", new Date("2026-06-08T08:59:30.000Z"), "UTC");
+  if (sameDayRun?.toISOString() !== "2026-06-08T09:00:00.000Z") {
+    throw new Error(`cron next run did not select the next matching minute: ${sameDayRun?.toISOString()}`);
+  }
+  const nextDayRun = nextCronRun("0 9 * * *", mondayNotFirst, "UTC");
+  if (nextDayRun?.toISOString() !== "2026-06-09T09:00:00.000Z") {
+    throw new Error(`cron next run did not advance past the current minute: ${nextDayRun?.toISOString()}`);
+  }
+  if (nextCronRun("invalid", mondayNotFirst, "UTC") !== null) {
+    throw new Error("invalid cron expression unexpectedly produced a next run");
   }
 };
 
@@ -495,6 +506,8 @@ const assertComposerAttachmentClear = async () => {
   };
   try {
     const { createComposerActions } = await import("../src/web/appActions/composerActions.js");
+    const { createComposerDraftStore } = await import("../src/web/helpers/composer.js");
+    const composerDraftStore = createComposerDraftStore();
     let openThreads = [
       {
         threadId: "thread-a",
@@ -516,9 +529,9 @@ const assertComposerAttachmentClear = async () => {
       }
     ] as OpenThreadState[];
     const actions = createComposerActions({
-      activeCanSend: false,
       commandPaletteByScope: {},
       commandPaletteLoadingScopes: {},
+      composerDraftStore,
       composerHistoryRef: { current: null },
       messageContextMenu: null,
       resizeComposerTextarea: () => undefined,
@@ -535,6 +548,14 @@ const assertComposerAttachmentClear = async () => {
     }, {
       send: async () => undefined
     });
+    actions.updateThreadInput("thread-a", "isolated draft");
+    if (composerDraftStore.get("thread-a") !== "isolated draft") {
+      throw new Error("composer draft store did not retain the thread-scoped input");
+    }
+    const threadWithDraft = openThreads.find((thread) => thread.threadId === "thread-a");
+    if (threadWithDraft && "input" in threadWithDraft) {
+      throw new Error("composer input unexpectedly appeared in the open thread state");
+    }
     actions.clearThreadAttachments("thread-a");
     const cleared = openThreads.find((thread) => thread.threadId === "thread-a");
     const untouched = openThreads.find((thread) => thread.threadId === "thread-b");

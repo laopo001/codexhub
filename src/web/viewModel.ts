@@ -8,6 +8,7 @@ import type {
   ThreadGoalUpdateInput as ApiThreadGoalUpdateInput
 } from "../shared/apiContract.js";
 import type { CodexRecord } from "../shared/recordTypes.js";
+import type { ComposerDraftStore } from "./appHelpers.js";
 import type {
   ActivityStatusView,
   AppSettings,
@@ -149,9 +150,7 @@ export type AppSidebarViewModel = {
 };
 
 export type AppViewModel = AppSidebarViewModel & {
-  activeCanSend: boolean;
   activeCanStop: boolean;
-  activeCanSubmit: boolean;
   activeDisplayThreadId: string;
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
@@ -176,6 +175,7 @@ export type AppViewModel = AppSidebarViewModel & {
   compactThread: (threadId: string) => MaybePromise;
   commandPaletteByScope: Record<string, CommandPalette>;
   commandPaletteLoadingScopes: Record<string, boolean>;
+  composerDraftStore: ComposerDraftStore;
   composerMenuOpen: boolean;
   composerMode: ComposerMode;
   composerTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -191,7 +191,8 @@ export type AppViewModel = AppSidebarViewModel & {
   handleComposerKeyDown: (
     event: React.KeyboardEvent<HTMLTextAreaElement>,
     threadId: string,
-    history: string[]
+    history: string[],
+    canSend: boolean
   ) => void;
   imageFileInputRef: React.RefObject<HTMLInputElement | null>;
   imagePreview: ImagePreviewState | null;

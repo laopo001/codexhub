@@ -1,9 +1,28 @@
 export const defaultTaskTimezone = "Asia/Shanghai";
 
+type CronField = {
+  values: Set<number>;
+  wildcard: boolean;
+};
+
+type ParsedCron = {
+  minute: CronField;
+  hour: CronField;
+  dayOfMonth: CronField;
+  month: CronField;
+  dayOfWeek: CronField;
+};
+
+const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+
 export function cronMatches(expression: string, now = new Date(), timezone = defaultTaskTimezone) {
   const parts = cronParts(expression);
   if (!parts) return false;
-  const local = localDateParts(now, timezone);
+  return parsedCronMatches(parts, now, dateTimeFormatter(timezone));
+}
+
+function parsedCronMatches(parts: ParsedCron, now: Date, formatter: Intl.DateTimeFormat) {
+  const local = localDateParts(now, formatter);
   const dayOfMonthMatches = parts.dayOfMonth.values.has(local.dayOfMonth);
   const dayOfWeekMatches = parts.dayOfWeek.values.has(local.dayOfWeek);
   const dayMatches = parts.dayOfMonth.wildcard || parts.dayOfWeek.wildcard
@@ -20,7 +39,7 @@ export function isCronExpression(expression: string) {
 }
 
 export function cronMinuteKey(date: Date, timezone = defaultTaskTimezone) {
-  const local = localDateParts(date, timezone);
+  const local = localDateParts(date, dateTimeFormatter(timezone));
   return `${local.year}-${local.month}-${local.dayOfMonth}-${local.hour}-${local.minute}`;
 }
 
@@ -31,19 +50,21 @@ export function cronMinuteKeyFromIso(value: string | undefined, timezone = defau
 }
 
 export function nextCronRun(expression: string, from = new Date(), timezone = defaultTaskTimezone) {
-  if (!cronParts(expression)) return null;
+  const parts = cronParts(expression);
+  if (!parts) return null;
+  const formatter = dateTimeFormatter(timezone);
   const start = new Date(from.getTime());
   start.setSeconds(0, 0);
   start.setMinutes(start.getMinutes() + 1);
   const maxMinutes = 366 * 24 * 60;
   for (let offset = 0; offset < maxMinutes; offset += 1) {
     const candidate = new Date(start.getTime() + offset * 60_000);
-    if (cronMatches(expression, candidate, timezone)) return candidate;
+    if (parsedCronMatches(parts, candidate, formatter)) return candidate;
   }
   return null;
 }
 
-function cronParts(expression: string) {
+function cronParts(expression: string): ParsedCron | null {
   const fields = expression.trim().split(/\s+/);
   if (fields.length !== 5) return null;
   const [minute, hour, dayOfMonth, month, dayOfWeek] = fields;
@@ -96,8 +117,10 @@ function rangeBounds(value: string, min: number, max: number): [number | null, n
   return Number.isInteger(number) ? [number, number] : [null, null];
 }
 
-function localDateParts(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
+function dateTimeFormatter(timezone: string) {
+  const cached = dateTimeFormatters.get(timezone);
+  if (cached) return cached;
+  const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     minute: "numeric",
     hour: "numeric",
@@ -107,7 +130,13 @@ function localDateParts(date: Date, timezone: string) {
     weekday: "short",
     hourCycle: "h23",
     hour12: false
-  }).formatToParts(date);
+  });
+  dateTimeFormatters.set(timezone, formatter);
+  return formatter;
+}
+
+function localDateParts(date: Date, formatter: Intl.DateTimeFormat) {
+  const parts = formatter.formatToParts(date);
   const getNumber = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value);
   const weekday = parts.find((part) => part.type === "weekday")?.value ?? "Sun";
   return {

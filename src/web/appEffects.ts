@@ -29,7 +29,7 @@ type AppEffectsInput = {
 export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, state }: AppEffectsInput) => {
   useEffect(() => {
     resizeComposerTextarea(state.composerTextareaRef.current);
-  }, [selectors.activeThread?.threadId, selectors.activeThread?.input]);
+  }, [selectors.activeThread?.threadId]);
 
   useEffect(() => {
     void actions.initialize();

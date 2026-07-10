@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import type { CodexRecord } from "../shared/recordTypes.js";
 import { defaultAppSettings } from "./appConfig.js";
-import { defaultTaskDraft, initAuthTokenFromUrl } from "./appHelpers.js";
+import { createComposerDraftStore, defaultTaskDraft, initAuthTokenFromUrl } from "./appHelpers.js";
 import type {
   AppSettings,
   CommandPalette,
@@ -129,6 +129,7 @@ export const useAppState = () => {
   const imageFileInputRef = useRef<HTMLInputElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerHistoryRef = useRef<ComposerHistoryState | null>(null);
+  const composerDraftStore = useRef(createComposerDraftStore()).current;
   const notificationRecordsByThread = useRef(new Map<string, CodexRecord[]>());
   const notifiedTaskCompletions = useRef(new Set<string>());
   const notificationAudioContext = useRef<AudioContext | null>(null);
@@ -158,6 +159,7 @@ export const useAppState = () => {
     closedThreadIds,
     collapsedProjectMachineKeys,
     composerHistoryRef,
+    composerDraftStore,
     composerMenuOpen,
     composerTextareaRef,
     commandPaletteByScope,
