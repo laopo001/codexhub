@@ -232,6 +232,11 @@ export const ComposerTextInput = ({
   const [commandPaletteKeyboardNavigation, setCommandPaletteKeyboardNavigation] = React.useState(false);
   const [dismissedCommandPaletteKey, setDismissedCommandPaletteKey] = React.useState("");
   const [caretIndex, setCaretIndex] = React.useState(input.length);
+
+  React.useLayoutEffect(() => {
+    resizeComposerTextarea(composerTextareaRef.current);
+  }, [composerTextareaRef, input, resizeComposerTextarea]);
+
   const safeCaretIndex = Math.min(caretIndex, input.length);
   const commandPaletteTrigger = React.useMemo(
     () => commandPaletteTriggerForInput(input, safeCaretIndex),
