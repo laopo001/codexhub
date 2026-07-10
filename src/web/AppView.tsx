@@ -75,8 +75,9 @@ const attachmentCountLabel = (count: number) =>
 
 const messagesBottomThreshold = 48;
 const messagesScrollbarHitArea = 20;
-const messagesUserScrollIntentMs = 900;
-const messagesScrollKeys = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+const messagesScrollbarIntentMs = 900;
+const messagesUpScrollKeys = new Set(["ArrowUp", "PageUp", "Home"]);
+const messagesDownScrollKeys = new Set(["ArrowDown", "PageDown", "End"]);
 
 type MessagesVirtuosoContext = {
   executionMeta: NonNullable<AppViewModel["activeThreadExecutionMeta"]> | null;
@@ -267,8 +268,10 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     EmptyPlaceholder: EmptyMessages,
     Footer: showTurnLoadingMessage ? MessagesTurnLoadingFooter : undefined
   }), [showTurnLoadingMessage]);
-  const messagesUserScrollIntentRef = React.useRef(false);
-  const messagesUserScrollIntentTimerRef = React.useRef<number | null>(null);
+  const messagesScrollbarIntentRef = React.useRef(false);
+  const messagesScrollbarIntentTimerRef = React.useRef<number | null>(null);
+  const messagesLastScrollTopRef = React.useRef<number | null>(null);
+  const messagesLastTouchYRef = React.useRef<number | null>(null);
   const messagesStickScrollFrameRef = React.useRef<number | null>(null);
   const openGoalRunPolicyDialog = () => {
     if (!activeThread) return;
@@ -286,9 +289,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     });
   };
   React.useEffect(() => () => {
-    if (messagesUserScrollIntentTimerRef.current !== null) {
-      window.clearTimeout(messagesUserScrollIntentTimerRef.current);
-      messagesUserScrollIntentTimerRef.current = null;
+    if (messagesScrollbarIntentTimerRef.current !== null) {
+      window.clearTimeout(messagesScrollbarIntentTimerRef.current);
+      messagesScrollbarIntentTimerRef.current = null;
     }
     if (messagesStickScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(messagesStickScrollFrameRef.current);
@@ -296,10 +299,12 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     }
   }, []);
   React.useEffect(() => {
-    messagesUserScrollIntentRef.current = false;
-    if (messagesUserScrollIntentTimerRef.current !== null) {
-      window.clearTimeout(messagesUserScrollIntentTimerRef.current);
-      messagesUserScrollIntentTimerRef.current = null;
+    messagesScrollbarIntentRef.current = false;
+    messagesLastScrollTopRef.current = null;
+    messagesLastTouchYRef.current = null;
+    if (messagesScrollbarIntentTimerRef.current !== null) {
+      window.clearTimeout(messagesScrollbarIntentTimerRef.current);
+      messagesScrollbarIntentTimerRef.current = null;
     }
     if (messagesStickScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(messagesStickScrollFrameRef.current);
@@ -307,61 +312,93 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     }
   }, [activeThread?.threadId]);
   const scrollMessagesToBottom = React.useCallback(() => {
-    if (messagesStickScrollFrameRef.current !== null) return;
+    if (!messagesShouldFollowRef.current) return;
+    if (messagesStickScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(messagesStickScrollFrameRef.current);
+    }
     messagesStickScrollFrameRef.current = window.requestAnimationFrame(() => {
       messagesStickScrollFrameRef.current = null;
       if (!messagesShouldFollowRef.current) return;
-      messagesRef.current?.scrollTo({
-        top: Number.MAX_SAFE_INTEGER,
-        behavior: "auto"
+      messagesRef.current?.autoscrollToBottom();
+      messagesStickScrollFrameRef.current = window.requestAnimationFrame(() => {
+        messagesStickScrollFrameRef.current = null;
+        if (!messagesShouldFollowRef.current) return;
+        messagesRef.current?.scrollTo({
+          top: Number.MAX_SAFE_INTEGER,
+          behavior: "auto"
+        });
       });
     });
   }, [messagesRef, messagesShouldFollowRef]);
   React.useEffect(() => {
     if (showTurnLoadingMessage && messagesShouldFollowRef.current) scrollMessagesToBottom();
   }, [messagesShouldFollowRef, scrollMessagesToBottom, showTurnLoadingMessage]);
-  const updateMessagesFollowFromUserScroll = React.useCallback((scroller: HTMLElement) => {
-    const distanceFromBottom = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
-    if (distanceFromBottom > messagesBottomThreshold) {
+  const markMessagesScrollbarIntent = React.useCallback((scroller: HTMLElement) => {
+    messagesScrollbarIntentRef.current = true;
+    messagesLastScrollTopRef.current = scroller.scrollTop;
+    if (messagesScrollbarIntentTimerRef.current !== null) {
+      window.clearTimeout(messagesScrollbarIntentTimerRef.current);
+    }
+    messagesScrollbarIntentTimerRef.current = window.setTimeout(() => {
+      messagesScrollbarIntentRef.current = false;
+      messagesScrollbarIntentTimerRef.current = null;
+      messagesLastScrollTopRef.current = null;
+    }, messagesScrollbarIntentMs);
+  }, []);
+  const clearMessagesScrollbarIntent = React.useCallback(() => {
+    messagesScrollbarIntentRef.current = false;
+    messagesLastScrollTopRef.current = null;
+    if (messagesScrollbarIntentTimerRef.current !== null) {
+      window.clearTimeout(messagesScrollbarIntentTimerRef.current);
+      messagesScrollbarIntentTimerRef.current = null;
+    }
+  }, []);
+  const handleMessagesScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    if (!messagesScrollbarIntentRef.current) return;
+    const previousScrollTop = messagesLastScrollTopRef.current;
+    const nextScrollTop = event.currentTarget.scrollTop;
+    messagesLastScrollTopRef.current = nextScrollTop;
+    if (previousScrollTop !== null && nextScrollTop < previousScrollTop) {
       messagesShouldFollowRef.current = false;
-    } else {
-      messagesShouldFollowRef.current = true;
     }
   }, [messagesShouldFollowRef]);
-  const markMessagesUserScrollIntent = React.useCallback((scroller: HTMLElement, shouldLeaveBottom = true) => {
-    messagesUserScrollIntentRef.current = true;
-    if (shouldLeaveBottom) messagesShouldFollowRef.current = false;
-    if (messagesUserScrollIntentTimerRef.current !== null) {
-      window.clearTimeout(messagesUserScrollIntentTimerRef.current);
-    }
-    messagesUserScrollIntentTimerRef.current = window.setTimeout(() => {
-      messagesUserScrollIntentRef.current = false;
-      messagesUserScrollIntentTimerRef.current = null;
-    }, messagesUserScrollIntentMs);
-    window.requestAnimationFrame(() => updateMessagesFollowFromUserScroll(scroller));
-  }, [messagesShouldFollowRef, updateMessagesFollowFromUserScroll]);
-  const handleMessagesScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    if (!messagesUserScrollIntentRef.current) return;
-    updateMessagesFollowFromUserScroll(event.currentTarget);
-  }, [updateMessagesFollowFromUserScroll]);
   const handleMessagesWheel = React.useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.defaultPrevented) return;
-    markMessagesUserScrollIntent(event.currentTarget, event.deltaY < 0);
-  }, [markMessagesUserScrollIntent]);
+    if (event.deltaY < 0) messagesShouldFollowRef.current = false;
+  }, [messagesShouldFollowRef]);
+  const handleMessagesTouchStart = React.useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    messagesLastTouchYRef.current = event.touches[0]?.clientY ?? null;
+  }, []);
   const handleMessagesTouchMove = React.useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     if (event.defaultPrevented) return;
-    markMessagesUserScrollIntent(event.currentTarget);
-  }, [markMessagesUserScrollIntent]);
+    const nextTouchY = event.touches[0]?.clientY ?? null;
+    const previousTouchY = messagesLastTouchYRef.current;
+    messagesLastTouchYRef.current = nextTouchY;
+    if (nextTouchY !== null && previousTouchY !== null && nextTouchY > previousTouchY) {
+      messagesShouldFollowRef.current = false;
+    }
+  }, [messagesShouldFollowRef]);
+  const handleMessagesTouchEnd = React.useCallback(() => {
+    messagesLastTouchYRef.current = null;
+  }, []);
   const handleMessagesPointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.target !== event.currentTarget) return;
     const rect = event.currentTarget.getBoundingClientRect();
     if (event.clientX < rect.right - messagesScrollbarHitArea) return;
-    markMessagesUserScrollIntent(event.currentTarget);
-  }, [markMessagesUserScrollIntent]);
+    markMessagesScrollbarIntent(event.currentTarget);
+  }, [markMessagesScrollbarIntent]);
   const handleMessagesKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented || !messagesScrollKeys.has(event.key)) return;
-    markMessagesUserScrollIntent(event.currentTarget);
-  }, [markMessagesUserScrollIntent]);
+    if (event.defaultPrevented) return;
+    const scrollsUp = messagesUpScrollKeys.has(event.key) || (event.key === " " && event.shiftKey);
+    const scrollsDown = messagesDownScrollKeys.has(event.key) || (event.key === " " && !event.shiftKey);
+    if (!scrollsUp && !scrollsDown) return;
+    if (scrollsUp) {
+      messagesShouldFollowRef.current = false;
+    } else if (event.key === "End") {
+      messagesShouldFollowRef.current = true;
+      scrollMessagesToBottom();
+    }
+  }, [messagesShouldFollowRef, scrollMessagesToBottom]);
   if (authRequired) {
     return (
       <main className="authShell">
@@ -445,23 +482,26 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                     className="messages"
                     data={activeViews}
                     onKeyDown={handleMessagesKeyDown}
+                    onPointerCancel={clearMessagesScrollbarIntent}
                     onPointerDown={handleMessagesPointerDown}
+                    onPointerUp={clearMessagesScrollbarIntent}
                     onScroll={handleMessagesScroll}
+                    onTouchCancel={handleMessagesTouchEnd}
+                    onTouchEnd={handleMessagesTouchEnd}
                     onTouchMove={handleMessagesTouchMove}
+                    onTouchStart={handleMessagesTouchStart}
                     onWheel={handleMessagesWheel}
                     atBottomStateChange={(atBottom) => {
                       if (atBottom) {
                         messagesShouldFollowRef.current = true;
-                      } else if (messagesShouldFollowRef.current && !messagesUserScrollIntentRef.current) {
+                      } else if (messagesShouldFollowRef.current) {
                         scrollMessagesToBottom();
                       }
                     }}
                     atBottomThreshold={messagesBottomThreshold}
-                    followOutput={(isAtBottom) => {
-                      if (isAtBottom) {
-                        messagesShouldFollowRef.current = true;
-                      }
-                      return messagesShouldFollowRef.current ? "auto" : false;
+                    followOutput={() => messagesShouldFollowRef.current ? "auto" : false}
+                    totalListHeightChanged={() => {
+                      if (messagesShouldFollowRef.current) scrollMessagesToBottom();
                     }}
                     initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
                     increaseViewportBy={{ top: 360, bottom: 720 }}
