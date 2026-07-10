@@ -6,7 +6,7 @@ export {
 } from "../../shared/taskNotifications.js";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { isVscodeSurface, reasoningOptions } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
@@ -471,6 +471,57 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
     .sort((left, right) => activityStatusPriority(left.key) - activityStatusPriority(right.key));
 };
 
+export const activityStatusSnapshotsFromRecords = (
+  records: CodexRecord[],
+  currentScopeRunning: boolean
+): ActivityStatusSnapshot[] => {
+  const userRecordIndexes = records.flatMap((record, index) => isUserInputRecord(record) ? [index] : []);
+  return userRecordIndexes.flatMap((userRecordIndex, scopeIndex) => {
+    const isCurrentScope = scopeIndex === userRecordIndexes.length - 1;
+    if (isCurrentScope && currentScopeRunning) return [];
+    const nextUserRecordIndex = userRecordIndexes[scopeIndex + 1] ?? records.length;
+    const scopeRecords = records.slice(userRecordIndex + 1, nextUserRecordIndex);
+    const targetRecordId = activityStatusSnapshotTargetRecordId(scopeRecords);
+    if (!targetRecordId) return [];
+    const statuses = activityStatusesFromRecords(scopeRecords);
+    if (!statuses.length) return [];
+    return [{
+      targetRecordId,
+      statuses: statuses.map((status) => ({
+        ...status,
+        files: status.files?.map((file) => ({ ...file }))
+      }))
+    }];
+  });
+};
+
+export const withActivityStatusSnapshots = (
+  views: WebRecordView[],
+  snapshots: ActivityStatusSnapshot[]
+): WebRecordView[] => {
+  if (!snapshots.length) return views;
+  const statusesByRecordId = new Map(
+    snapshots.map((snapshot) => [snapshot.targetRecordId, snapshot.statuses] as const)
+  );
+  return views.map((view) => {
+    const activityStatuses = statusesByRecordId.get(view.record.id);
+    return activityStatuses ? { ...view, activityStatuses } : view;
+  });
+};
+
+const activityStatusSnapshotTargetRecordId = (records: CodexRecord[]) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    const payload = asRecord(record.payload);
+    if (record.type === "error") return record.id;
+    if (record.type === "event_msg" && payload?.type === "agent_message") return record.id;
+    if (record.type === "response_item" && payload?.type === "message" && payload.role === "assistant") {
+      return record.id;
+    }
+  }
+  return null;
+};
+
 const isActivityStatusDetail = (status: ActivityStatusView) => {
   if (status.key === "approval" || status.key === "userInput") return status.status !== "completed";
   return status.key === "files" || status.key === "usage" || status.key === "context" || status.key === "rollback";
@@ -554,12 +605,14 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
   }
 
   if (type === "status_usage") {
+    const usage = asRecord(payload.usage);
     return {
       key: "usage",
       label: "Usage",
       status: "completed",
       at: record.timestamp,
-      text: formatUsageBreakdown(asRecord(payload.usage))
+      text: formatUsageBreakdown(usage),
+      summaryText: formatUsageSummary(usage)
     };
   }
 
@@ -682,6 +735,7 @@ export const fileChangeActivityStatus = (record: CodexRecord, payload: Record<st
       changed ? `${changed} file${changed === 1 ? "" : "s"}` : "files changed",
       fileChangeTotalsText(added, removed)
     ].filter(Boolean).join(" · "),
+    summaryText: fileChangeSummaryText(changed, added, removed, payload.status === "failed"),
     files
   };
 };
@@ -712,9 +766,16 @@ export const mergeFileChangeStatus = (
       files.length ? `${files.length} file${files.length === 1 ? "" : "s"}` : "files changed",
       fileChangeTotalsText(added, removed)
     ].filter(Boolean).join(" · "),
+    summaryText: fileChangeSummaryText(files.length, added, removed, failed),
     files
   };
 };
+
+const fileChangeSummaryText = (changed: number, added: number, removed: number, failed: boolean) => [
+  failed ? "failed" : null,
+  changed || "changed",
+  fileChangeTotalsText(added, removed)
+].filter(Boolean).join(" · ");
 
 export const fileChangeTotalsText = (added: number, removed: number) => [
   `+${added}`,
@@ -749,6 +810,14 @@ const formatUsageBreakdown = (usage: Record<string, unknown> | null) => {
   const input = typeof usage.input_tokens === "number" ? `input ${formatCompactNumber(usage.input_tokens)}` : null;
   const output = typeof usage.output_tokens === "number" ? `output ${formatCompactNumber(usage.output_tokens)}` : null;
   return [total, input, output].filter(Boolean).join(" · ") || "Token usage updated";
+};
+
+const formatUsageSummary = (usage: Record<string, unknown> | null) => {
+  if (!usage) return "updated";
+  const total = typeof usage.total_tokens === "number" ? formatCompactNumber(usage.total_tokens) : null;
+  const input = typeof usage.input_tokens === "number" ? `in ${formatCompactNumber(usage.input_tokens)}` : null;
+  const output = typeof usage.output_tokens === "number" ? `out ${formatCompactNumber(usage.output_tokens)}` : null;
+  return [total, input, output].filter(Boolean).join(" · ") || "updated";
 };
 
 export const formatStatusDuration = (value: number) => {

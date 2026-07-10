@@ -216,14 +216,21 @@ export type ImagePreviewState = {
   url: string;
   title?: string;
 };
-export type WebRecordView = CompactRecordView;
 export type ActivityStatusView = {
   key: string;
   label: string;
   text: string;
+  summaryText?: string;
   at?: string;
   status?: CodexRecordView["status"];
   files?: ActivityStatusFile[];
+};
+export type WebRecordView = CompactRecordView & {
+  activityStatuses?: ActivityStatusView[];
+};
+export type ActivityStatusSnapshot = {
+  targetRecordId: string;
+  statuses: ActivityStatusView[];
 };
 export type ThreadExecutionMeta = {
   status: "running" | "idle";

@@ -76,6 +76,46 @@
   color: #245d88;
 }
 
+.activityStatusHeaderMetrics {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.activityStatusHeaderMetric {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0 7px;
+  border-left: 1px solid rgba(104, 115, 145, 0.18);
+  color: #4f5e53;
+  font-size: 10px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.activityStatusHeaderMetric strong {
+  color: #2f7d5a;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.activityStatusHeaderMetric > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.activityStatusHeaderMetric.usage {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
 .activityStatusIndicator {
   width: 7px;
   height: 7px;
@@ -234,6 +274,18 @@
   padding: 4px 6px;
   border-top: 1px solid rgba(104, 115, 145, 0.12);
   background: #fbfcf8;
+}
+
+.messageActivityStatusSnapshot {
+  min-width: 0;
+  margin-top: 2px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(104, 115, 145, 0.12);
+}
+
+.messageActivityStatusSnapshot .activityStatusRows {
+  max-height: none;
+  padding: 0;
 }
 
 .empty {

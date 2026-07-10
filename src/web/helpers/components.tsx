@@ -224,6 +224,9 @@ export const MessageCard = ({
       {userInput && onUserInputResponse ? (
         <UserInputRequestForm request={userInput} onSubmit={onUserInputResponse} />
       ) : null}
+      {message.activityStatuses?.length ? (
+        <MessageActivityStatusSnapshot statuses={message.activityStatuses} />
+      ) : null}
     </article>
   );
 };
@@ -842,6 +845,7 @@ export const ActivityStatusBar = ({
   const title = [executionMeta.text, statuses.length ? activityStatusTitle(statuses) : null]
     .filter(Boolean)
     .join("\n");
+  const summaryStatuses = statuses.filter((status) => status.summaryText);
   const ToggleIcon = expanded ? ChevronUp : ChevronDown;
   return (
     <div
@@ -855,6 +859,16 @@ export const ActivityStatusBar = ({
           <strong>{executionMeta.label}</strong>
           {executionMeta.duration ? <span className="activityStatusDuration">{executionMeta.duration}</span> : null}
         </span>
+        {summaryStatuses.length ? (
+          <span className="activityStatusHeaderMetrics">
+            {summaryStatuses.map((status) => (
+              <span className={`activityStatusHeaderMetric ${status.key}`} title={`${status.label}: ${status.text}`} key={status.key}>
+                <strong>{status.label}</strong>
+                <span>{renderActivityStatusText(status.summaryText ?? status.text)}</span>
+              </span>
+            ))}
+          </span>
+        ) : null}
         {statuses.length ? (
           <button
             type="button"
@@ -921,6 +935,24 @@ export const ActivityStatusRows = ({
     })}
   </div>
 );
+
+const MessageActivityStatusSnapshot = ({ statuses }: { statuses: ActivityStatusView[] }) => {
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
+  return (
+    <div className="messageActivityStatusSnapshot" aria-label="Run status details">
+      <ActivityStatusRows
+        statuses={statuses}
+        expandedKeys={expandedKeys}
+        onToggle={(key) => setExpandedKeys((current) => {
+          const next = new Set(current);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        })}
+      />
+    </div>
+  );
+};
 
 const renderActivityStatusText = (text: string) =>
   text.split(/([+-]\d+)/g).map((part, index) => {

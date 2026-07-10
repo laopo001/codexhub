@@ -6,6 +6,7 @@ import { recordsToDetailedViews } from "./detailedRecordViews.js";
 import { isVscodeSurface, vscodeWorkspacePaths } from "./appConfig.js";
 import {
   activityStatusesFromRecords,
+  activityStatusSnapshotsFromRecords,
   authToken,
   combineRecordSources,
   groupProjectsByMachine,
@@ -29,7 +30,8 @@ import {
   threadDisplayRecords,
   threadExecutionIsRunning,
   threadUsageFromSessionRateLimits,
-  userMessageHistoryFromRecords
+  userMessageHistoryFromRecords,
+  withActivityStatusSnapshots
 } from "./appHelpers.js";
 import type { AppState } from "./appState.js";
 import type {
@@ -260,6 +262,14 @@ export const useAppSelectors = (state: AppState) => {
     [latestTurnStatusScope.records]
   );
   const turnStatusItems = latestTurnStatuses;
+  const latestTurnRunning = Boolean(
+    activeThread
+    && threadExecutionIsRunning(activeThread.running, latestTurnStatusFromRecords(displayRecords))
+  );
+  const activityStatusSnapshots = useMemo(
+    () => activityStatusSnapshotsFromRecords(displayRecords, latestTurnRunning),
+    [displayRecords, latestTurnRunning]
+  );
   const activeGoal = useMemo(
     () => latestThreadGoalFromRecords(goalRecords, activeThread?.threadId),
     [activeThread?.threadId, goalRecords]
@@ -269,7 +279,7 @@ export const useAppSelectors = (state: AppState) => {
     && latestTurnStatusScope.key
     && state.expandedStatusTurns[activeThread.threadId] === latestTurnStatusScope.key
   );
-  const statusPanelAvailable = Boolean(activeThread);
+  const statusPanelAvailable = latestTurnRunning;
   const statusScopeKey = activeThread?.threadId && latestTurnStatusScope.key
     ? `${activeThread.threadId}:${latestTurnStatusScope.key}`
     : "";
@@ -286,14 +296,17 @@ export const useAppSelectors = (state: AppState) => {
     [displayRecords]
   );
   const activeViews = useMemo<WebRecordView[]>(
-    () => withStatusDurations(
-      state.messageDisplayMode === "compact"
-        ? collapseHistoricalToolBatches(compactToolViews(baseViews), activeExpandedToolBatchKeys)
-        : detailedViews,
-      state.nowMs,
-      turnDurations
+    () => withActivityStatusSnapshots(
+      withStatusDurations(
+        state.messageDisplayMode === "compact"
+          ? collapseHistoricalToolBatches(compactToolViews(baseViews), activeExpandedToolBatchKeys)
+          : detailedViews,
+        state.nowMs,
+        turnDurations
+      ),
+      activityStatusSnapshots
     ),
-    [activeExpandedToolBatchKeys, baseViews, detailedViews, state.messageDisplayMode, state.nowMs, turnDurations]
+    [activeExpandedToolBatchKeys, activityStatusSnapshots, baseViews, detailedViews, state.messageDisplayMode, state.nowMs, turnDurations]
   );
   const activeUserMessageHistory = useMemo(
     () => userMessageHistoryFromRecords(displayRecords),

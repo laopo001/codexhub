@@ -129,7 +129,13 @@ const assertStatusUsageFormatting = async () => {
   const previousWindow = runtimeGlobal.window;
   if (!previousWindow) runtimeGlobal.window = { location: { search: "" } };
   try {
-    const { activityStatusesFromRecords } = await import("../src/web/helpers/records.js");
+    const {
+      activityStatusesFromRecords,
+      activityStatusSnapshotsFromRecords,
+      withActivityStatusSnapshots
+    } = await import("../src/web/helpers/records.js");
+    const { recordsToViews } = await import("../src/core/codexRecordView.js");
+    const { recordsToDetailedViews } = await import("../src/web/detailedRecordViews.js");
     const records: CodexRecord[] = [
       {
         id: "app:thread:turn:statusUsage:scope",
@@ -159,6 +165,82 @@ const assertStatusUsageFormatting = async () => {
     }
     if (usageStatuses[0].text.includes("window")) {
       throw new Error(`status usage should not include window: ${JSON.stringify(usageStatuses[0])}`);
+    }
+    if (usageStatuses[0].summaryText !== "1.9k · in 1.7k · out 180") {
+      throw new Error(`status usage summary formatting mismatch: ${JSON.stringify(usageStatuses[0])}`);
+    }
+
+    const scopedRecords: CodexRecord[] = [
+      {
+        id: "app:thread:goal:user-1",
+        order: 1,
+        type: "event_msg",
+        payload: { type: "user_message", message: "first run" }
+      },
+      {
+        id: "app:thread:goal:file-1",
+        order: 2,
+        type: "response_item",
+        payload: {
+          type: "file_change",
+          status: "completed",
+          changes: [{ path: "src/example.ts", diff: "--- a/src/example.ts\n+++ b/src/example.ts\n-old\n+new\n+extra" }]
+        }
+      },
+      {
+        id: "app:thread:goal:usage-1",
+        order: 3,
+        type: "event_msg",
+        payload: { type: "status_usage", usage: { input_tokens: 3000, output_tokens: 120, total_tokens: 3120 } }
+      },
+      {
+        id: "app:thread:goal:final-1",
+        order: 4,
+        type: "event_msg",
+        payload: { type: "agent_message", phase: "final_answer", message: "first complete" }
+      },
+      {
+        id: "app:thread:goal:user-2",
+        order: 5,
+        type: "event_msg",
+        payload: { type: "user_message", message: "second run" }
+      },
+      {
+        id: "app:thread:goal:usage-2",
+        order: 6,
+        type: "event_msg",
+        payload: { type: "status_usage", usage: { input_tokens: 800, output_tokens: 40, total_tokens: 840 } }
+      },
+      {
+        id: "app:thread:goal:final-2",
+        order: 7,
+        type: "event_msg",
+        payload: { type: "agent_message", phase: "final_answer", message: "second complete" }
+      }
+    ];
+    const runningSnapshots = activityStatusSnapshotsFromRecords(scopedRecords, true);
+    if (runningSnapshots.length !== 1 || runningSnapshots[0].targetRecordId !== "app:thread:goal:final-1") {
+      throw new Error(`running scope should only clone completed status snapshots: ${JSON.stringify(runningSnapshots)}`);
+    }
+    const firstFiles = runningSnapshots[0].statuses.find((status) => status.key === "files");
+    const firstUsage = runningSnapshots[0].statuses.find((status) => status.key === "usage");
+    if (firstFiles?.summaryText !== "1 · +2 -1" || firstFiles.files?.[0]?.path !== "src/example.ts") {
+      throw new Error(`completed file status snapshot mismatch: ${JSON.stringify(firstFiles)}`);
+    }
+    if (firstUsage?.text !== "total 3.1k · input 3.0k · output 120") {
+      throw new Error(`completed usage status snapshot mismatch: ${JSON.stringify(firstUsage)}`);
+    }
+    for (const views of [recordsToViews(scopedRecords), recordsToDetailedViews(scopedRecords)]) {
+      const viewsWithSnapshots = withActivityStatusSnapshots(views, runningSnapshots);
+      const firstFinal = viewsWithSnapshots.find((view) => view.record.id === "app:thread:goal:final-1");
+      const secondFinal = viewsWithSnapshots.find((view) => view.record.id === "app:thread:goal:final-2");
+      if (firstFinal?.activityStatuses?.length !== 2 || secondFinal?.activityStatuses) {
+        throw new Error(`status snapshots were not bound to the correct message view: ${JSON.stringify(viewsWithSnapshots)}`);
+      }
+    }
+    const completedSnapshots = activityStatusSnapshotsFromRecords(scopedRecords, false);
+    if (completedSnapshots.length !== 2 || completedSnapshots[1].targetRecordId !== "app:thread:goal:final-2") {
+      throw new Error(`completed current scope should clone its status snapshot: ${JSON.stringify(completedSnapshots)}`);
     }
   } finally {
     if (previousWindow) runtimeGlobal.window = previousWindow;
