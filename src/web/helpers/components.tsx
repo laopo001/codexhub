@@ -1,35 +1,19 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import { Switch } from "antd";
-import { ChevronDown, GripHorizontal } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadTurnMeta, WebRecordView } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
 import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { statusLabel } from "./common.js";
 import { authToken } from "./core.js";
 import { contextMenuPosition, writeTextToClipboard } from "./composer.js";
 import { formatInspectDetail, formatInspectTitle, renderToolMessageBody } from "./toolPreview.js";
-import { activityStatusOverlayClass, activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
+import { activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
 
 const SyntaxCodeBlock = lazy(() => import("../SyntaxCodeBlock.js"));
-
-type ActivityStatusOffset = {
-  x: number;
-  y: number;
-};
-
-type ActivityStatusDragState = {
-  pointerId: number;
-  startX: number;
-  startY: number;
-  origin: ActivityStatusOffset;
-};
-
-const ACTIVITY_STATUS_DEFAULT_LEFT = 12;
-const ACTIVITY_STATUS_DEFAULT_TOP = 8;
-const ACTIVITY_STATUS_EDGE_GAP = 8;
 
 // <img> requests cannot carry Authorization headers, so auth-protected file previews use the existing query token path.
 const authenticatedImageUrl = (url: string) => {
@@ -55,19 +39,6 @@ const isFileApiUrl = (url: string) => {
   } catch {
     return false;
   }
-};
-
-const clampActivityStatusOffset = (element: HTMLDivElement | null, offset: ActivityStatusOffset): ActivityStatusOffset => {
-  const parent = element?.offsetParent;
-  if (!(element && parent instanceof HTMLElement)) return offset;
-  const minX = ACTIVITY_STATUS_EDGE_GAP - ACTIVITY_STATUS_DEFAULT_LEFT;
-  const minY = ACTIVITY_STATUS_EDGE_GAP - ACTIVITY_STATUS_DEFAULT_TOP;
-  const maxX = Math.max(minX, parent.clientWidth - element.offsetWidth - ACTIVITY_STATUS_DEFAULT_LEFT - ACTIVITY_STATUS_EDGE_GAP);
-  const maxY = Math.max(minY, parent.clientHeight - element.offsetHeight - ACTIVITY_STATUS_DEFAULT_TOP - ACTIVITY_STATUS_EDGE_GAP);
-  return {
-    x: Math.min(maxX, Math.max(minX, offset.x)),
-    y: Math.min(maxY, Math.max(minY, offset.y))
-  };
 };
 
 export const MessageCard = ({
@@ -853,114 +824,55 @@ export const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
 );
 
-export const ActivityStatusOverlay = ({
+export const ActivityStatusBar = ({
   statuses,
-  turnMeta,
+  executionMeta,
+  expanded,
   expandedKeys,
-  onToggleRows,
+  onToggleExpanded,
   onToggle
 }: {
   statuses: ActivityStatusView[];
-  turnMeta: ThreadTurnMeta | null;
+  executionMeta: ThreadExecutionMeta;
+  expanded: boolean;
   expandedKeys: Set<string>;
-  onToggleRows: () => void;
+  onToggleExpanded: () => void;
   onToggle: (key: string) => void;
 }) => {
-  const overlayRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<ActivityStatusDragState | null>(null);
-  const [offset, setOffset] = useState<ActivityStatusOffset>({ x: 0, y: 0 });
-  const [dragging, setDragging] = useState(false);
-  const overlayClass = statuses.length
-    ? activityStatusOverlayClass(statuses)
-    : turnMeta?.status === "running" ? "in_progress" : "idle";
-  const summaryClass = turnMeta?.status ?? "idle";
-  const summaryLabel = activityStatusSummaryLabel(summaryClass);
-  const summaryStatusText = [
-    summaryLabel,
-    turnMeta?.duration || null
-  ].filter(Boolean).join(" | ");
-  const title = statuses.length ? activityStatusTitle(statuses) : summaryStatusText;
-  const summaryDetails = `${statuses.length} item${statuses.length === 1 ? "" : "s"}`;
-  const overlayStyle: React.CSSProperties = {
-    transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`
-  };
-  const startDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 && event.pointerType === "mouse") return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      origin: offset
-    };
-    setDragging(true);
-  };
-  const moveDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const next = {
-      x: drag.origin.x + event.clientX - drag.startX,
-      y: drag.origin.y + event.clientY - drag.startY
-    };
-    setOffset(clampActivityStatusOffset(overlayRef.current, next));
-  };
-  const endDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (dragRef.current?.pointerId !== event.pointerId) return;
-    dragRef.current = null;
-    setDragging(false);
-    try {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    } catch {
-      // Pointer capture may already be released by the browser on cancel.
-    }
-  };
+  const title = [executionMeta.text, statuses.length ? activityStatusTitle(statuses) : null]
+    .filter(Boolean)
+    .join("\n");
+  const ToggleIcon = expanded ? ChevronUp : ChevronDown;
   return (
     <div
-      ref={overlayRef}
-      className={`activityStatusOverlay ${overlayClass}${dragging ? " dragging" : ""}`}
+      className={`activityStatusBar ${executionMeta.status}${expanded ? " expanded" : ""}`}
       aria-live="polite"
       title={title}
-      style={overlayStyle}
     >
-      <div className="activityStatusHeader">
-        <span className="activityStatusHeaderTitle">Status</span>
-        <span className={`activityStatusHeaderState ${summaryClass}`}>{summaryStatusText}</span>
-        {statuses.length ? <span className="activityStatusHeaderCount">{summaryDetails}</span> : null}
+      <div className="activityStatusHeader" aria-label={`Status: ${executionMeta.text}`}>
+        <span className={`activityStatusSummary ${executionMeta.status}`}>
+          <span className="activityStatusIndicator" aria-hidden="true" />
+          <strong>{executionMeta.label}</strong>
+          {executionMeta.duration ? <span className="activityStatusDuration">{executionMeta.duration}</span> : null}
+        </span>
+        {statuses.length ? (
+          <button
+            type="button"
+            className="activityStatusToggle"
+            onClick={onToggleExpanded}
+            aria-expanded={expanded}
+            aria-label={expanded ? "Collapse status details" : "Expand status details"}
+            title={expanded ? "Collapse status details" : "Expand status details"}
+          >
+            <ToggleIcon size={14} strokeWidth={2.4} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
-      {statuses.length ? <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} /> : null}
-      <button
-        type="button"
-        className="activityStatusDragHandle"
-        onPointerDown={startDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onLostPointerCapture={() => {
-          dragRef.current = null;
-          setDragging(false);
-        }}
-        aria-label="Drag status"
-        title="Drag status"
-      >
-        <GripHorizontal size={13} strokeWidth={2.4} aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        className="activityStatusMinimize"
-        onClick={onToggleRows}
-        aria-label="Hide status card"
-        title="Hide status card"
-      >
-        <ChevronDown size={13} strokeWidth={2.4} aria-hidden="true" />
-      </button>
+      {expanded && statuses.length ? (
+        <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} />
+      ) : null}
     </div>
   );
-};
-
-const activityStatusSummaryLabel = (status: string) => {
-  if (status === "running") return "Running";
-  return "Idle";
 };
 
 export const ActivityStatusRows = ({

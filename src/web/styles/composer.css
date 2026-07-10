@@ -5,6 +5,8 @@
 }
 
 .composerLayout {
+  display: grid;
+  gap: 6px;
   width: min(1522px, 100%);
   margin: 0 auto;
 }
@@ -779,18 +781,6 @@
   --composer-status-ring: #f28c28;
 }
 
-.composerActionButtons.status-completed {
-  --composer-status-ring: #2f7d4a;
-}
-
-.composerActionButtons.status-aborted {
-  --composer-status-ring: #b86b17;
-}
-
-.composerActionButtons.status-failed {
-  --composer-status-ring: #c4362f;
-}
-
 .composerSessionControls {
   display: flex;
   align-items: center;
@@ -815,13 +805,6 @@
   background: #f4f6f1;
   padding: 3px 7px;
   white-space: nowrap;
-}
-
-.statusPill {
-  min-height: 25px;
-  color: #66715f;
-  font: inherit;
-  cursor: pointer;
 }
 
 .contextCompactButton {
@@ -859,35 +842,6 @@
     radial-gradient(circle at center, #ffffff 0 42%, transparent 44%),
     conic-gradient(currentColor var(--context-progress), #d3d8d1 0);
   box-shadow: inset 0 0 0 1px #d3d8d1;
-}
-
-.statusPill.available {
-  border-color: #cbded1;
-  background: #ffffff;
-  color: #26342a;
-  font-weight: 750;
-}
-
-.statusPill.available.collapsed {
-  border-color: #26342a;
-  background: #26342a;
-  color: #ffffff;
-  box-shadow: 0 2px 7px rgba(38, 52, 42, 0.18);
-}
-
-.statusPill:hover:not(:disabled) {
-  background: #eef3eb;
-}
-
-.statusPill.available.collapsed:hover:not(:disabled) {
-  border-color: #1d2821;
-  background: #1d2821;
-  color: #ffffff;
-}
-
-.statusPill:disabled {
-  cursor: default;
-  opacity: 0.55;
 }
 
 .composerSessionMenuHost {

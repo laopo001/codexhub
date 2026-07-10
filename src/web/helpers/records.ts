@@ -6,7 +6,7 @@ export {
 } from "../../shared/taskNotifications.js";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { isVscodeSurface, reasoningOptions } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, TurnUiState, Usage } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
@@ -421,12 +421,14 @@ export const latestUserTurnStatusScope = (records: CodexRecord[]) => {
     return {
       key: record.id,
       label: `after ${formatStatusScopeTime(record.timestamp)}`,
+      startedAt: record.timestamp,
       records: records.slice(index + 1)
     };
   }
   return {
     key: "thread",
     label: "thread status",
+    startedAt: undefined,
     records
   };
 };
@@ -455,10 +457,17 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
       continue;
     }
     const status = activityStatusFromRecord(record);
-    if (status) statuses.set(status.key, status);
+    if (status && isActivityStatusDetail(status)) statuses.set(status.key, status);
   }
   if (fileStatus) statuses.set(fileStatus.key, fileStatus);
-  return [...statuses.values()].sort((left, right) => activityStatusPriority(left.key) - activityStatusPriority(right.key));
+  return [...statuses.values()]
+    .filter(isActivityStatusDetail)
+    .sort((left, right) => activityStatusPriority(left.key) - activityStatusPriority(right.key));
+};
+
+const isActivityStatusDetail = (status: ActivityStatusView) => {
+  if (status.key === "approval" || status.key === "userInput") return status.status !== "completed";
+  return status.key === "files" || status.key === "context" || status.key === "rollback";
 };
 
 export const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivityStatusView | null => {
@@ -468,6 +477,15 @@ export const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivitySta
   }
   return null;
 };
+
+export const threadExecutionIsRunning = (
+  running: boolean,
+  turnStatus: ActivityStatusView | null
+) => Boolean(
+  running
+  || turnStatus?.status === "pending"
+  || turnStatus?.status === "in_progress"
+);
 
 export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusView | null => {
   const payload = asRecord(record.payload);
@@ -644,7 +662,7 @@ export const fileChangeActivityStatus = (record: CodexRecord, payload: Record<st
     status: payload.status === "failed" ? "failed" : "completed",
     at: record.timestamp,
     text: [
-      typeof payload.status === "string" ? payload.status : "completed",
+      payload.status === "failed" ? "failed" : null,
       changed ? `${changed} file${changed === 1 ? "" : "s"}` : "files changed",
       fileChangeTotalsText(added, removed)
     ].filter(Boolean).join(" · "),
@@ -674,7 +692,7 @@ export const mergeFileChangeStatus = (
     ...incoming,
     status: failed ? "failed" : "completed",
     text: [
-      failed ? "failed" : "completed",
+      failed ? "failed" : null,
       files.length ? `${files.length} file${files.length === 1 ? "" : "s"}` : "files changed",
       fileChangeTotalsText(added, removed)
     ].filter(Boolean).join(" · "),
@@ -689,80 +707,17 @@ export const fileChangeTotalsText = (added: number, removed: number) => [
 
 export const activityStatusPriority = (key: string) => {
   const order: Record<string, number> = {
-    turn: 0,
+    approval: 0,
     userInput: 1,
-    goal: 2,
-    usage: 3,
-    files: 4,
-    context: 5,
-    rollback: 6,
-    item: 7
+    files: 2,
+    context: 3,
+    rollback: 4
   };
   return order[key] ?? 10;
 };
 
-export const activityStatusOverlayClass = (statuses: ActivityStatusView[]) => {
-  if (statuses.some((status) => status.status === "failed")) return "failed";
-  if (statuses.some((status) => status.status === "in_progress")) return "in_progress";
-  if (statuses.some((status) => status.status === "pending")) return "pending";
-  if (statuses.some((status) => status.status === "completed")) return "completed";
-  return "idle";
-};
-
 export const activityStatusTitle = (statuses: ActivityStatusView[]) =>
   statuses.map((status) => `${status.label}: ${status.text}`).join("\n");
-
-export const turnUiStateFromStatus = (
-  turnStatus: ActivityStatusView | null,
-  running: boolean
-): TurnUiState => {
-  if (running) {
-    return {
-      kind: "running",
-      label: "Running",
-      title: turnStatus
-        ? `Running · ${turnStatus.text}`
-        : "Running current turn"
-    };
-  }
-
-  if (turnStatus) {
-    if (turnStatus.label.toLowerCase().includes("abort")) {
-      return {
-        kind: "aborted",
-        label: "Aborted",
-        title: `${turnStatus.label} · ${turnStatus.text}`
-      };
-    }
-    if (turnStatus.status === "failed") {
-      return {
-        kind: "failed",
-        label: turnStatus.label || "Failed",
-        title: `${turnStatus.label || "Failed"} · ${turnStatus.text}`
-      };
-    }
-    if (turnStatus.status === "pending" || turnStatus.status === "in_progress") {
-      return {
-        kind: "running",
-        label: turnStatus.label || "Running",
-        title: `${turnStatus.label || "Running"} · ${turnStatus.text}`
-      };
-    }
-    if (turnStatus.status === "completed") {
-      return {
-        kind: "completed",
-        label: turnStatus.label || "Done",
-        title: `${turnStatus.label || "Done"} · ${turnStatus.text}`
-      };
-    }
-  }
-
-  return {
-    kind: "idle",
-    label: "Idle",
-    title: "Idle"
-  };
-};
 
 export const formatTokenStatus = (payload: Record<string, unknown>) => {
   const info = asRecord(payload.info);

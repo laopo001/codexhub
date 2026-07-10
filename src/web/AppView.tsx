@@ -20,7 +20,7 @@ import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import type { AppViewModel } from "./viewModel.js";
 import {
-  ActivityStatusOverlay,
+  ActivityStatusBar,
   canForkAtMessage,
   canRenderMarkdown,
   commandPaletteCacheKey,
@@ -263,10 +263,10 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeGoal,
     activeProjectKey,
     activeRuntimeSession,
-    activeRunningTurnDuration,
+    activeRunningExecutionDuration,
     activeThread,
     activeThreadIsOpen,
-    activeThreadTurnMeta,
+    activeThreadExecutionMeta,
     activeThreadApprovalPolicySelection,
     activeThreadSandboxPolicySelection,
     activeUserMessageHistory,
@@ -358,7 +358,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setExpandedStatusKeys,
     setExpandedToolBatchKeys,
     setGoalDialog,
-    setHiddenStatusTurns,
+    setExpandedStatusTurns,
     setImagePreview,
     setInspectMessage,
     setMessageContextMenu,
@@ -376,7 +376,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setTaskFormOpen,
     setThreadPicker,
     showComposerSendButton,
-    showInlineStatusPanel,
+    statusPanelAvailable,
+    statusPanelExpanded,
     sidebarCollapsed,
     sshConfigHostOptions,
     sshConfigHosts,
@@ -400,7 +401,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     threadOrderBySession,
     threadPicker,
     toggleProjectMachineGroup,
-    turnUiState,
     updateMessageRenderMode,
     updateThreadInput,
     updateTaskDraftMachine,
@@ -415,10 +415,13 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     ? activeThread.textAttachments.length + activeThread.imageAttachments.length
     : 0;
   const showThreadTabs = Boolean(activeThreadKey || canAddThreadForProject);
-  const showTurnLoadingMessage = Boolean(activeThread?.running || turnUiState.kind === "running");
+  const executionStatus = activeThreadExecutionMeta?.status ?? "idle";
+  const executionLabel = activeThreadExecutionMeta?.label ?? "Idle";
+  const executionText = activeThreadExecutionMeta?.text ?? executionLabel;
+  const showTurnLoadingMessage = executionStatus === "running";
   const messagesVirtuosoContext = React.useMemo(
-    () => ({ turnLoadingDuration: activeRunningTurnDuration }),
-    [activeRunningTurnDuration]
+    () => ({ turnLoadingDuration: activeRunningExecutionDuration }),
+    [activeRunningExecutionDuration]
   );
   const messagesVirtuosoComponents = React.useMemo<Components<(typeof activeViews)[number], MessagesVirtuosoContext>>(() => ({
     EmptyPlaceholder: EmptyMessages,
@@ -847,37 +850,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                       );
                     }}
                   />
-                  {showInlineStatusPanel ? (
-                    <ActivityStatusOverlay
-                      statuses={turnStatusItems}
-                      turnMeta={activeThreadTurnMeta}
-                      expandedKeys={activeExpandedStatusKeys}
-                      onToggleRows={() => {
-                        if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
-                        setHiddenStatusTurns((current) => {
-                          if (current[activeThread.threadId] !== latestTurnStatusScope.key) {
-                            return {
-                              ...current,
-                              [activeThread.threadId]: latestTurnStatusScope.key
-                            };
-                          }
-                          const next = { ...current };
-                          delete next[activeThread.threadId];
-                          return next;
-                        });
-                      }}
-                      onToggle={(key) => {
-                        if (!statusScopeKey) return;
-                        setExpandedStatusKeys((current) => {
-                          const keys = new Set(current[statusScopeKey] ?? []);
-                          if (keys.has(key)) keys.delete(key);
-                          else keys.add(key);
-                          return { ...current, [statusScopeKey]: [...keys] };
-                        });
-                      }}
-                    />
-                  ) : null}
-
                   <form
                     className="composer"
                     onSubmit={(event) => {
@@ -886,6 +858,37 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                     }}
                   >
                     <div className="composerLayout">
+                      {statusPanelAvailable && activeThreadExecutionMeta ? (
+                        <ActivityStatusBar
+                          statuses={turnStatusItems}
+                          executionMeta={activeThreadExecutionMeta}
+                          expanded={statusPanelExpanded}
+                          expandedKeys={activeExpandedStatusKeys}
+                          onToggleExpanded={() => {
+                            if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
+                            setExpandedStatusTurns((current) => {
+                              if (current[activeThread.threadId] === latestTurnStatusScope.key) {
+                                const next = { ...current };
+                                delete next[activeThread.threadId];
+                                return next;
+                              }
+                              return {
+                                ...current,
+                                [activeThread.threadId]: latestTurnStatusScope.key
+                              };
+                            });
+                          }}
+                          onToggle={(key) => {
+                            if (!statusScopeKey) return;
+                            setExpandedStatusKeys((current) => {
+                              const keys = new Set(current[statusScopeKey] ?? []);
+                              if (keys.has(key)) keys.delete(key);
+                              else keys.add(key);
+                              return { ...current, [statusScopeKey]: [...keys] };
+                            });
+                          }}
+                        />
+                      ) : null}
                       <div className="composerSurface">
                         {activeGoal && activeThread ? (
                           <div
@@ -1258,9 +1261,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                               ) : null}
                             </div>
                             <div
-                              className={`composerActionButtons status-${turnUiState.kind}`}
-                              title={turnUiState.title}
-                              aria-label={`Turn status: ${turnUiState.label}`}
+                              className={`composerActionButtons status-${executionStatus}`}
+                              title={executionText}
+                              aria-label={`Thread status: ${executionLabel}`}
                             >
                               {showComposerSendButton ? (
                                 <button
@@ -1268,7 +1271,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                   className="composerSendButton composerActionButton"
                                   disabled={!activeCanSubmit}
                                   aria-label="Send message"
-                                  title={`Send message · ${turnUiState.title}`}
+                                  title={`Send message · ${executionText}`}
                                 >
                                   ↑
                                 </button>
@@ -1279,7 +1282,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                   className="composerStopButton composerActionButton"
                                   disabled={!activeCanStop}
                                   aria-label="Stop current turn"
-                                  title={`Stop current turn · ${turnUiState.title}`}
+                                  title={`Stop current turn · ${executionText}`}
                                   onClick={() => void stopTurn(activeThread.threadId)}
                                 >
                                   ■

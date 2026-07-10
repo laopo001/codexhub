@@ -51,7 +51,7 @@ const App = () => {
     deletingProjectId,
     expandedStatusKeys,
     goalDialog,
-    hiddenStatusTurns,
+    expandedStatusTurns,
     imageFileInputRef,
     imagePreview,
     initialized,
@@ -104,7 +104,7 @@ const App = () => {
     setExpandedStatusKeys,
     setExpandedToolBatchKeys,
     setGoalDialog,
-    setHiddenStatusTurns,
+    setExpandedStatusTurns,
     setImagePreview,
     setInitialized,
     setInspectMessage,
@@ -228,12 +228,11 @@ const App = () => {
     setActiveThreadSandboxPolicyDraft,
     setComposerMode,
     showComposerSendButton,
-    showInlineStatusPanel,
+    statusPanelExpanded,
     statusPanelAvailable,
     sshConfigHostOptions,
     statusScopeKey,
-    turnStatusItems,
-    turnUiState
+    turnStatusItems
   } = selectors;
   const actionContext = { ...appState, ...selectors, resizeComposerTextarea };
   let threadActions: ThreadActions | null = null;
@@ -368,8 +367,8 @@ const App = () => {
 
   const viewSelectors = useAppViewSelectors(appState, selectors, { compactThread });
   const {
-    activeRunningTurnDuration,
-    activeThreadTurnMeta,
+    activeRunningExecutionDuration,
+    activeThreadExecutionMeta,
     openThreadTabs,
     renderComposerThreadControls
   } = viewSelectors;
@@ -428,10 +427,10 @@ const App = () => {
     activeGoal,
     activeProjectKey,
     activeRuntimeSession,
-    activeRunningTurnDuration,
+    activeRunningExecutionDuration,
     activeThread,
     activeThreadIsOpen,
-    activeThreadTurnMeta,
+    activeThreadExecutionMeta,
     activeUserMessageHistory,
     activeViews,
     activeWorkspacePath,
@@ -562,7 +561,7 @@ const App = () => {
     setExpandedStatusKeys,
     setExpandedToolBatchKeys,
     setGoalDialog,
-    setHiddenStatusTurns,
+    setExpandedStatusTurns,
     setImagePreview,
     setInspectMessage,
     setMessageContextMenu,
@@ -589,7 +588,7 @@ const App = () => {
     setTaskFormOpen,
     setThreadPicker,
     showComposerSendButton,
-    showInlineStatusPanel,
+    statusPanelExpanded,
     sidebarCollapsed,
     statusPanelAvailable,
     stopSshConnection,
@@ -617,7 +616,6 @@ const App = () => {
     toggleProjectMachineGroup,
     toggleProjectPinned,
     turnStatusItems,
-    turnUiState,
     updateMessageRenderMode,
     updateThreadInput,
     updateTaskDraftMachine,

@@ -4,7 +4,6 @@ import { Popover } from "antd";
 import { Zap } from "lucide-react";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import {
-  activityStatusTitle,
   formatComposerModelButtonLabel,
   formatComposerModelTitle,
   formatContextTitle,
@@ -15,12 +14,13 @@ import {
   latestUserTurnStatusScope,
   shortId,
   threadDisplayRecords,
+  threadExecutionIsRunning,
   threadDisplayTitle
 } from "./appHelpers.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { contextMenuPosition } from "./helpers/composer.js";
-import type { ActivityStatusView, OpenThreadState, ThreadTurnMeta } from "./types.js";
+import type { ActivityStatusView, OpenThreadState, ThreadExecutionMeta } from "./types.js";
 
 type ComposerThreadControlsMode = "inline" | "popover";
 
@@ -34,15 +34,9 @@ type ComposerThreadControlsProps = {
   activeThreadServiceTierDraft: AppSelectors["activeThreadServiceTierDraft"];
   activeThreadUsage: AppSelectors["activeThreadUsage"];
   compactThread: AppViewActions["compactThread"];
-  latestTurnStatusScope: AppSelectors["latestTurnStatusScope"];
   mode: ComposerThreadControlsMode;
-  setHiddenStatusTurns: AppState["setHiddenStatusTurns"];
   setThreadControlsMenuOpen: AppState["setThreadControlsMenuOpen"];
   setThreadModelDialogOpen: AppState["setThreadModelDialogOpen"];
-  showInlineStatusPanel: AppSelectors["showInlineStatusPanel"];
-  statusPanelAvailable: AppSelectors["statusPanelAvailable"];
-  turnStatusItems: AppSelectors["turnStatusItems"];
-  turnUiState: AppSelectors["turnUiState"];
 };
 
 type AppViewActions = {
@@ -50,15 +44,15 @@ type AppViewActions = {
 };
 
 export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, actions: AppViewActions) => {
-  const activeThreadTurnMeta = useMemo(() => {
+  const activeThreadExecutionMeta = useMemo(() => {
     const activeThread = selectors.activeThread;
     if (!activeThread) return null;
     const records = threadDisplayRecords(activeThread.threadId, activeThread);
     const turnStatus = latestTurnStatusFromRecords(records);
-    return threadTurnMeta(activeThread, records, turnStatus, state.nowMs);
+    return threadExecutionMeta(activeThread, records, turnStatus, state.nowMs);
   }, [selectors.activeThread, state.nowMs]);
-  const activeRunningTurnDuration = activeThreadTurnMeta?.status === "running"
-    ? activeThreadTurnMeta.duration
+  const activeRunningExecutionDuration = activeThreadExecutionMeta?.status === "running"
+    ? activeThreadExecutionMeta.duration
     : "";
   const openThreadTabs = useMemo(() => state.openThreads.map((thread) => ({
     key: thread.threadId,
@@ -89,21 +83,15 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
       activeThreadServiceTierDraft={selectors.activeThreadServiceTierDraft}
       activeThreadUsage={selectors.activeThreadUsage}
       compactThread={actions.compactThread}
-      latestTurnStatusScope={selectors.latestTurnStatusScope}
       mode={mode}
-      setHiddenStatusTurns={state.setHiddenStatusTurns}
       setThreadControlsMenuOpen={state.setThreadControlsMenuOpen}
       setThreadModelDialogOpen={state.setThreadModelDialogOpen}
-      showInlineStatusPanel={selectors.showInlineStatusPanel}
-      statusPanelAvailable={selectors.statusPanelAvailable}
-      turnStatusItems={selectors.turnStatusItems}
-      turnUiState={selectors.turnUiState}
     />
   );
 
   return {
-    activeRunningTurnDuration,
-    activeThreadTurnMeta,
+    activeRunningExecutionDuration,
+    activeThreadExecutionMeta,
     openThreadTabs,
     renderComposerThreadControls
   };
@@ -124,10 +112,8 @@ const OpenThreadTabLabel = ({
   const workspaceName = compactWorkspaceName(thread.workingDirectory);
   const records = threadDisplayRecords(thread.threadId, thread);
   const turnStatus = latestTurnStatusFromRecords(records);
-  const turnMeta = threadTurnMeta(thread, records, turnStatus, nowMs);
-  const badgeText = turnMeta.duration
-    ? `${turnMeta.status} | ${turnMeta.duration}`
-    : turnMeta.status;
+  const executionMeta = threadExecutionMeta(thread, records, turnStatus, nowMs);
+  const badgeText = executionMeta.text;
   const details = (
     <div className="openThreadTabDetails">
       <div>
@@ -170,7 +156,7 @@ const OpenThreadTabLabel = ({
         <span className="openThreadTabTitle">{title}</span>
         <span className="openThreadTabMeta">
           <code title={`${thread.workingDirectory}\n${thread.threadId}`}>{workspaceName} · {shortId(thread.threadId)}</code>
-          <em className={`openThreadTabBadge ${turnMeta.status}`}>{badgeText}</em>
+          <em className={`openThreadTabBadge ${executionMeta.status}`}>{badgeText}</em>
         </span>
       </span>
     </Popover>
@@ -187,45 +173,10 @@ const ComposerThreadControls = ({
   activeThreadServiceTierDraft,
   activeThreadUsage,
   compactThread,
-  latestTurnStatusScope,
   mode,
-  setHiddenStatusTurns,
   setThreadControlsMenuOpen,
-  setThreadModelDialogOpen,
-  showInlineStatusPanel,
-  statusPanelAvailable,
-  turnStatusItems,
-  turnUiState
+  setThreadModelDialogOpen
 }: ComposerThreadControlsProps) => {
-  const statusItemCount = turnStatusItems.length;
-  const statusButtonLabel = statusItemCount ? `Status ${statusItemCount}` : "Status";
-  const statusPanelExpanded = Boolean(statusPanelAvailable && showInlineStatusPanel);
-  const statusButtonClass = [
-    "usagePill",
-    "statusPill",
-    statusPanelAvailable ? "available" : "",
-    statusPanelAvailable && !statusPanelExpanded ? "collapsed" : ""
-  ].filter(Boolean).join(" ");
-  const statusButtonTitle = statusPanelAvailable
-    ? [
-        `${statusPanelExpanded ? "Hide" : "Show"} turn status`,
-        statusItemCount ? activityStatusTitle(turnStatusItems) : turnUiState.title
-      ].filter(Boolean).join("\n")
-    : turnUiState.title;
-  const toggleStatusPanel = () => {
-    if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
-    setHiddenStatusTurns((current) => {
-      if (current[activeThread.threadId] !== latestTurnStatusScope.key) {
-        return {
-          ...current,
-          [activeThread.threadId]: latestTurnStatusScope.key
-        };
-      }
-      const next = { ...current };
-      delete next[activeThread.threadId];
-      return next;
-    });
-  };
   const composerModelButtonLabel = formatComposerModelButtonLabel(
     activeThreadModelDraft,
     activeThreadReasoningDraft,
@@ -262,16 +213,6 @@ const ComposerThreadControls = ({
   return (
     <div className={`composerSessionControls ${mode}`} aria-label="Thread usage and model">
       <div className="composerUsagePills" aria-label="Thread usage">
-        <button
-          type="button"
-          className={statusButtonClass}
-          disabled={!statusPanelAvailable}
-          title={statusButtonTitle}
-          aria-pressed={statusPanelAvailable ? statusPanelExpanded : undefined}
-          onClick={toggleStatusPanel}
-        >
-          {statusButtonLabel}
-        </button>
         <button
           type="button"
           className="usagePill contextCompactButton"
@@ -318,64 +259,49 @@ const contextUsagePercent = (threadUsage: AppSelectors["activeThreadUsage"]) => 
   return Math.min(100, Math.max(0, Math.round((context.usedTokens / context.windowTokens) * 100)));
 };
 
-export const threadTurnMeta = (
+export const threadExecutionMeta = (
   thread: OpenThreadState,
   records: CodexRecord[],
   turnStatus: ActivityStatusView | null,
   nowMs: number
-): ThreadTurnMeta => {
-  const activeStatus = turnStatus?.status === "pending" || turnStatus?.status === "in_progress";
-  const running = Boolean(thread.running || activeStatus);
-  const durationMs = activityDurationMs(
-    latestUserTurnStatusScope(records).records,
+): ThreadExecutionMeta => {
+  const running = threadExecutionIsRunning(thread.running, turnStatus);
+  const statusScope = latestUserTurnStatusScope(records);
+  const durationMs = activityElapsedMs(
+    statusScope.records,
     running,
     nowMs,
-    activeStatus ? turnStatus?.at : undefined
+    statusScope.startedAt,
+    turnStatus?.at
   );
-  return {
-    status: running ? "running" : "idle",
-    duration: durationMs == null ? "" : formatThreadDuration(durationMs)
-  };
+  const status = running ? "running" : "idle";
+  const label = running ? "Running" : "Idle";
+  const duration = durationMs == null ? "" : formatThreadDuration(durationMs);
+  return { status, label, duration, text: [label, duration].filter(Boolean).join(" · ") };
 };
 
-const activityDurationMs = (
+const activityElapsedMs = (
   records: CodexRecord[],
   running: boolean,
   nowMs: number,
-  runningFallbackAt?: string
+  startedAt?: string,
+  endedAtFallback?: string
 ) => {
-  let totalMs = 0;
-  let hasDuration = false;
-  let openStartedMs: number | null = null;
-  for (const record of records) {
+  const startedMs = parseTimestamp(startedAt);
+  if (startedMs === null) return null;
+  if (running) return Math.max(0, nowMs - startedMs);
+
+  let endedMs: number | null = null;
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
     const payload = asRecord(record.payload);
     if (record.type !== "event_msg" || !payload) continue;
-    if (payload.type === "task_started") {
-      openStartedMs = parseRecordTimestamp(record);
-      continue;
-    }
     if (payload.type !== "task_complete" && payload.type !== "turn_aborted") continue;
-    const duration = payload.duration_ms;
-    if (typeof duration === "number" && Number.isFinite(duration)) {
-      totalMs += Math.max(0, duration);
-      hasDuration = true;
-    } else {
-      const finishedMs = parseRecordTimestamp(record);
-      if (openStartedMs !== null && finishedMs !== null) {
-        totalMs += Math.max(0, finishedMs - openStartedMs);
-        hasDuration = true;
-      }
-    }
-    openStartedMs = null;
+    endedMs = parseRecordTimestamp(record);
+    if (endedMs !== null) break;
   }
-  if (running) {
-    const startedMs = openStartedMs ?? parseTimestamp(runningFallbackAt);
-    if (startedMs !== null) {
-      totalMs += Math.max(0, nowMs - startedMs);
-      hasDuration = true;
-    }
-  }
-  return hasDuration ? totalMs : null;
+  endedMs ??= parseTimestamp(endedAtFallback);
+  return endedMs === null ? null : Math.max(0, endedMs - startedMs);
 };
 
 const parseRecordTimestamp = (record: CodexRecord) => parseTimestamp(record.timestamp);

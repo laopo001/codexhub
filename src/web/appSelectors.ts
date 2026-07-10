@@ -27,8 +27,8 @@ import {
   runtimeSessionForProject,
   serviceTierOptionsForSelection,
   threadDisplayRecords,
+  threadExecutionIsRunning,
   threadUsageFromSessionRateLimits,
-  turnUiStateFromStatus,
   userMessageHistoryFromRecords
 } from "./appHelpers.js";
 import type { AppState } from "./appState.js";
@@ -214,9 +214,8 @@ export const useAppSelectors = (state: AppState) => {
   );
   const runningOpenThreadIds = useMemo(
     () => state.openThreads.filter((thread) => {
-      if (thread.running) return true;
       const turnStatus = latestTurnStatusFromRecords(threadDisplayRecords(thread.threadId, thread));
-      return turnStatus?.status === "pending" || turnStatus?.status === "in_progress";
+      return threadExecutionIsRunning(thread.running, turnStatus);
     }).map((thread) => thread.threadId).join("\n"),
     [state.openThreads]
   );
@@ -260,33 +259,17 @@ export const useAppSelectors = (state: AppState) => {
     () => activityStatusesFromRecords(latestTurnStatusScope.records),
     [latestTurnStatusScope.records]
   );
-  const latestTurnStatus = useMemo(
-    () => latestTurnStatusFromRecords(displayRecords),
-    [displayRecords]
-  );
   const turnStatusItems = latestTurnStatuses;
   const activeGoal = useMemo(
     () => latestThreadGoalFromRecords(goalRecords, activeThread?.threadId),
     [activeThread?.threadId, goalRecords]
   );
-  const turnUiState = useMemo(
-    () => turnUiStateFromStatus(latestTurnStatus, Boolean(activeThread?.running)),
-    [activeThread?.running, latestTurnStatus]
-  );
-  const statusPanelClosed = Boolean(
+  const statusPanelExpanded = Boolean(
     activeThread?.threadId
     && latestTurnStatusScope.key
-    && state.hiddenStatusTurns[activeThread.threadId] === latestTurnStatusScope.key
+    && state.expandedStatusTurns[activeThread.threadId] === latestTurnStatusScope.key
   );
-  const statusPanelAvailable = Boolean(
-    activeThread
-    && (
-      turnStatusItems.length
-      || activeThread.running
-      || turnUiState.kind === "running"
-    )
-  );
-  const showInlineStatusPanel = Boolean(statusPanelAvailable && !statusPanelClosed);
+  const statusPanelAvailable = Boolean(activeThread);
   const statusScopeKey = activeThread?.threadId && latestTurnStatusScope.key
     ? `${activeThread.threadId}:${latestTurnStatusScope.key}`
     : "";
@@ -460,12 +443,11 @@ export const useAppSelectors = (state: AppState) => {
     setActiveThreadSandboxPolicyDraft,
     setComposerMode,
     showComposerSendButton,
-    showInlineStatusPanel,
+    statusPanelExpanded,
     statusPanelAvailable,
     sshConfigHostOptions,
     statusScopeKey,
-    turnStatusItems,
-    turnUiState
+    turnStatusItems
   };
 };
 

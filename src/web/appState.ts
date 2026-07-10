@@ -110,7 +110,7 @@ export const useAppState = () => {
   const [goalDialog, setGoalDialog] = useState<GoalDialogState | null>(null);
   const [threadRenameDialog, setThreadRenameDialog] = useState<ThreadRenameDialogState | null>(null);
   const [threadTabContextMenu, setThreadTabContextMenu] = useState<ThreadTabContextMenuState | null>(null);
-  const [hiddenStatusTurns, setHiddenStatusTurns] = useState<Record<string, string>>({});
+  const [expandedStatusTurns, setExpandedStatusTurns] = useState<Record<string, string>>({});
   const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
   const [expandedToolBatchKeys, setExpandedToolBatchKeys] = useState<Record<string, string[]>>({});
   const realtimeSocket = useRef<WebSocket | null>(null);
@@ -169,7 +169,7 @@ export const useAppState = () => {
     expandedStatusKeys,
     expandedToolBatchKeys,
     goalDialog,
-    hiddenStatusTurns,
+    expandedStatusTurns,
     imageFileInputRef,
     imagePreview,
     initialized,
@@ -225,7 +225,7 @@ export const useAppState = () => {
     setExpandedStatusKeys,
     setExpandedToolBatchKeys,
     setGoalDialog,
-    setHiddenStatusTurns,
+    setExpandedStatusTurns,
     setImagePreview,
     setInitialized,
     setInspectMessage,

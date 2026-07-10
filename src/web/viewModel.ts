@@ -43,8 +43,7 @@ import type {
   ThreadPickerState,
   ThreadRenameDialogState,
   ThreadTabContextMenuState,
-  ThreadTurnMeta,
-  TurnUiState,
+  ThreadExecutionMeta,
   WebRecordView
 } from "./types.js";
 
@@ -157,10 +156,10 @@ export type AppViewModel = AppSidebarViewModel & {
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
   activeRuntimeSession?: SessionView;
-  activeRunningTurnDuration: string;
+  activeRunningExecutionDuration: string;
   activeThread?: OpenThreadState;
   activeThreadIsOpen: boolean;
-  activeThreadTurnMeta: ThreadTurnMeta | null;
+  activeThreadExecutionMeta: ThreadExecutionMeta | null;
   activeUserMessageHistory: string[];
   activeViews: WebRecordView[];
   activeWorkspacePath: string;
@@ -259,7 +258,7 @@ export type AppViewModel = AppSidebarViewModel & {
   setExpandedStatusKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   setExpandedToolBatchKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
-  setHiddenStatusTurns: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setExpandedStatusTurns: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setImagePreview: React.Dispatch<React.SetStateAction<ImagePreviewState | null>>;
   setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
   setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
@@ -277,7 +276,7 @@ export type AppViewModel = AppSidebarViewModel & {
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadPicker: React.Dispatch<React.SetStateAction<ThreadPickerState | null>>;
   showComposerSendButton: boolean;
-  showInlineStatusPanel: boolean;
+  statusPanelExpanded: boolean;
   sidebarCollapsed: boolean;
   statusPanelAvailable: boolean;
   statusScopeKey: string;
@@ -288,7 +287,6 @@ export type AppViewModel = AppSidebarViewModel & {
   threadOrderBySession: Record<string, string[]>;
   threadPicker: ThreadPickerState | null;
   turnStatusItems: ActivityStatusView[];
-  turnUiState: TurnUiState;
   updateMessageRenderMode: (messageId: string, mode: MessageRenderMode) => void;
   updateThreadInput: (threadId: string, input: string) => void;
   updateThreadGoal: (threadId: string, goal: ThreadGoalUpdateInput) => MaybePromise<boolean>;
