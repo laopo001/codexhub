@@ -854,7 +854,7 @@ export const ActivityStatusBar = ({
     .filter(Boolean)
     .join("\n");
   const summaryStatuses = statuses.filter((status) => status.summaryText);
-  const ToggleIcon = expanded ? ChevronUp : ChevronDown;
+  const ToggleIcon = expanded ? ChevronDown : ChevronUp;
   return (
     <div
       className={`activityStatusBar ${executionMeta.status}${expanded ? " expanded" : ""}`}
