@@ -435,24 +435,46 @@ export const hideSupersededSimpleThinkingViews = (views: CodexRecordView[]) => {
   return nextViews.reverse();
 };
 
-export const latestUserTurnStatusScope = (records: CodexRecord[]) => {
+export type TurnActivityScope = {
+  key: string;
+  label: string;
+  records: CodexRecord[];
+  turnId?: string;
+  userRecordId?: string;
+  startedAt?: string;
+  endedAt?: string;
+  turnStatus: ActivityStatusView | null;
+};
+
+export const latestTurnActivityScope = (records: CodexRecord[]): TurnActivityScope => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     if (!isUserInputRecord(records[index])) continue;
     const record = records[index];
-    const turnStartedAt = userTurnStartedAt(records, index);
+    const turnId = recordTurnId(record);
+    const turnStartedAt = turnId ? turnStartedAtFromRecords(records, turnId) : undefined;
     const startedAt = turnStartedAt ?? record.timestamp;
+    const scopeRecords = records.slice(index + 1);
     return {
-      key: record.id,
-      label: turnStartedAt ? `after ${formatStatusScopeTime(turnStartedAt, "turn")}` : `after ${formatStatusScopeTime(record.timestamp, "user")}`,
+      key: turnId ? `turn:${turnId}` : record.id,
+      label: turnStartedAt ? `after ${formatTurnActivityScopeTime(turnStartedAt, "turn")}` : `after ${formatTurnActivityScopeTime(record.timestamp, "user")}`,
+      records: scopeRecords,
+      ...(turnId ? { turnId } : {}),
+      userRecordId: record.id,
       startedAt,
-      records: records.slice(index + 1)
+      ...(turnId ? { endedAt: turnEndedAtFromRecords(records, turnId) } : {}),
+      turnStatus: latestTurnStatusFromRecords(scopeRecords) ?? (turnId ? latestTurnStatusForTurn(records, turnId) : null)
     };
   }
+  const turnStatus = latestTurnStatusFromRecords(records);
+  const turnId = latestLifecycleTurnId(records);
   return {
     key: "thread",
     label: "thread status",
-    startedAt: undefined,
-    records
+    records,
+    ...(turnId ? { turnId } : {}),
+    ...(turnId ? { startedAt: turnStartedAtFromRecords(records, turnId) } : {}),
+    ...(turnId ? { endedAt: turnEndedAtFromRecords(records, turnId) } : {}),
+    turnStatus
   };
 };
 
@@ -463,26 +485,9 @@ export const isUserInputRecord = (record: CodexRecord) => {
   return record.type === "response_item" && payload.type === "message" && payload.role === "user";
 };
 
-export const formatStatusScopeTime = (timestamp: string | undefined, source: "turn" | "user" = "user") => {
+const formatTurnActivityScopeTime = (timestamp: string | undefined, source: "turn" | "user" = "user") => {
   if (!timestamp) return source === "turn" ? "latest turn" : "latest user message";
   return source === "turn" ? `turn started at ${formatDate(timestamp)}` : `user message at ${formatDate(timestamp)}`;
-};
-
-const userTurnStartedAt = (records: CodexRecord[], userRecordIndex: number) => {
-  const userRecord = records[userRecordIndex];
-  const threadId = userRecord.sourceThreadId;
-  const turnId = threadId ? turnIdFromAppRecordId(threadId, userRecord.id) : null;
-  if (!turnId) return undefined;
-  for (let index = userRecordIndex; index >= 0; index -= 1) {
-    const record = records[index];
-    const payload = asRecord(record.payload);
-    if (record.type !== "event_msg" || payload?.type !== "task_started") continue;
-    const recordTurnId = typeof payload.turn_id === "string"
-      ? payload.turn_id
-      : typeof payload.turnId === "string" ? payload.turnId : "";
-    if (recordTurnId === turnId) return record.timestamp;
-  }
-  return undefined;
 };
 
 export const activityStatusesFromRecords = (records: CodexRecord[]): ActivityStatusView[] => {
@@ -576,6 +581,57 @@ export const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivitySta
   }
   return null;
 };
+
+const latestTurnStatusForTurn = (records: CodexRecord[], turnId: string): ActivityStatusView | null => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (recordTurnId(records[index]) !== turnId) continue;
+    const status = activityStatusFromRecord(records[index]);
+    if (status?.key === "turn" || status?.key === "userInput") return status;
+  }
+  return null;
+};
+
+const latestLifecycleTurnId = (records: CodexRecord[]) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const payload = asRecord(records[index].payload);
+    if (records[index].type !== "event_msg" || !isTurnLifecycleType(payload?.type)) continue;
+    const turnId = recordTurnId(records[index]);
+    if (turnId) return turnId;
+  }
+  return undefined;
+};
+
+const turnStartedAtFromRecords = (records: CodexRecord[], turnId: string) => {
+  for (const record of records) {
+    const payload = asRecord(record.payload);
+    if (record.type !== "event_msg" || payload?.type !== "task_started") continue;
+    if (recordTurnId(record) === turnId) return record.timestamp;
+  }
+  return undefined;
+};
+
+const turnEndedAtFromRecords = (records: CodexRecord[], turnId: string) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    const payload = asRecord(record.payload);
+    if (record.type !== "event_msg" || !isTurnTerminalType(payload?.type)) continue;
+    if (recordTurnId(record) === turnId) return record.timestamp;
+  }
+  return undefined;
+};
+
+const recordTurnId = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  return stringField(payload, "turn_id")
+    ?? stringField(payload, "turnId")
+    ?? (record.sourceThreadId ? turnIdFromAppRecordId(record.sourceThreadId, record.id) ?? undefined : undefined);
+};
+
+const isTurnLifecycleType = (type: unknown) =>
+  type === "task_started" || isTurnTerminalType(type);
+
+const isTurnTerminalType = (type: unknown) =>
+  type === "task_complete" || type === "turn_aborted";
 
 export const threadExecutionIsRunning = (
   running: boolean,

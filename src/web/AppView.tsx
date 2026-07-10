@@ -153,7 +153,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     insertThreadPathText,
     inspectContextMessage,
     inspectMessage,
-    latestTurnStatusScope,
+    latestTurnActivityScope,
     loadCommandPalette,
     loadProjectPickerDirectory,
     localMachines,
@@ -520,16 +520,16 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           expanded={statusPanelExpanded}
                           expandedKeys={activeExpandedStatusKeys}
                           onToggleExpanded={() => {
-                            if (!activeThread?.threadId || !latestTurnStatusScope.key) return;
+                            if (!activeThread?.threadId || !latestTurnActivityScope.key) return;
                             setExpandedStatusTurns((current) => {
-                              if (current[activeThread.threadId] === latestTurnStatusScope.key) {
+                              if (current[activeThread.threadId] === latestTurnActivityScope.key) {
                                 const next = { ...current };
                                 delete next[activeThread.threadId];
                                 return next;
                               }
                               return {
                                 ...current,
-                                [activeThread.threadId]: latestTurnStatusScope.key
+                                [activeThread.threadId]: latestTurnActivityScope.key
                               };
                             });
                           }}

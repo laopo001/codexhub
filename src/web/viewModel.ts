@@ -7,8 +7,7 @@ import type {
   TaskUpdateInput as ApiTaskUpdateInput,
   ThreadGoalUpdateInput as ApiThreadGoalUpdateInput
 } from "../shared/apiContract.js";
-import type { CodexRecord } from "../shared/recordTypes.js";
-import type { ComposerDraftStore, SidebarDraftStore } from "./appHelpers.js";
+import type { ComposerDraftStore, SidebarDraftStore, TurnActivityScope } from "./appHelpers.js";
 import type {
   ActivityStatusView,
   AppSettings,
@@ -59,11 +58,6 @@ export type TaskPatchInput = ApiTaskUpdateInput;
 export type ThreadTabItem = {
   key: string;
   label: React.ReactNode;
-};
-
-export type TurnStatusScope = {
-  key: string;
-  records: CodexRecord[];
 };
 
 export type ThreadGoalUpdateInput = ApiThreadGoalUpdateInput;
@@ -186,7 +180,7 @@ export type AppViewModel = AppSidebarViewModel & {
   imagePreview: ImagePreviewState | null;
   inspectContextMessage: () => void;
   inspectMessage: WebRecordView | null;
-  latestTurnStatusScope: TurnStatusScope;
+  latestTurnActivityScope: TurnActivityScope;
   loadCommandPalette: (sessionId: string, cwd: string) => MaybePromise;
   loadProjectPickerDirectory: (machineId: string, path: string) => MaybePromise;
   messageContextMenu: MessageContextMenuState | null;

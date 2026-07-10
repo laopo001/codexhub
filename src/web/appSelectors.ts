@@ -16,8 +16,7 @@ import {
   latestThreadConfigFromRecords,
   latestThreadGoalFromRecords,
   latestThreadUsageFromRecords,
-  latestTurnStatusFromRecords,
-  latestUserTurnStatusScope,
+  latestTurnActivityScope,
   machineProjectLauncher,
   mergeThreadUsage,
   modelOptionsForSelection,
@@ -246,18 +245,18 @@ export const useAppSelectors = (state: AppState) => {
     () => recordsToDetailedViews(displayRecords),
     [displayRecords]
   );
-  const latestTurnStatusScope = useMemo(
-    () => latestUserTurnStatusScope(displayRecords),
+  const latestTurnActivity = useMemo(
+    () => latestTurnActivityScope(displayRecords),
     [displayRecords]
   );
   const latestTurnStatuses = useMemo(
-    () => activityStatusesFromRecords(latestTurnStatusScope.records),
-    [latestTurnStatusScope.records]
+    () => activityStatusesFromRecords(latestTurnActivity.records),
+    [latestTurnActivity.records]
   );
   const turnStatusItems = latestTurnStatuses;
   const latestTurnRunning = Boolean(
     activeThread
-    && threadExecutionIsRunning(activeThread.running, latestTurnStatusFromRecords(displayRecords))
+    && threadExecutionIsRunning(activeThread.running, latestTurnActivity.turnStatus)
   );
   const activityStatusSnapshots = useMemo(
     () => activityStatusSnapshotsFromRecords(displayRecords, latestTurnRunning),
@@ -269,12 +268,12 @@ export const useAppSelectors = (state: AppState) => {
   );
   const statusPanelExpanded = Boolean(
     activeThread?.threadId
-    && latestTurnStatusScope.key
-    && state.expandedStatusTurns[activeThread.threadId] === latestTurnStatusScope.key
+    && latestTurnActivity.key
+    && state.expandedStatusTurns[activeThread.threadId] === latestTurnActivity.key
   );
   const statusPanelAvailable = latestTurnRunning;
-  const statusScopeKey = activeThread?.threadId && latestTurnStatusScope.key
-    ? `${activeThread.threadId}:${latestTurnStatusScope.key}`
+  const statusScopeKey = activeThread?.threadId && latestTurnActivity.key
+    ? `${activeThread.threadId}:${latestTurnActivity.key}`
     : "";
   const activeExpandedStatusKeys = useMemo(
     () => new Set(statusScopeKey ? state.expandedStatusKeys[statusScopeKey] ?? [] : []),
@@ -323,8 +322,8 @@ export const useAppSelectors = (state: AppState) => {
     ? selectedProject.machineOnline ? "No threads" : "Machine offline"
     : "No session";
   const latestThreadUsage = useMemo(
-    () => latestThreadUsageFromRecords(latestTurnStatusScope.records) ?? latestThreadUsageFromRecords(displayRecords),
-    [displayRecords, latestTurnStatusScope.records]
+    () => latestThreadUsageFromRecords(latestTurnActivity.records) ?? latestThreadUsageFromRecords(displayRecords),
+    [displayRecords, latestTurnActivity.records]
   );
   const summaryThreadUsage = activeThread?.threadUsage
     ?? activeThreadSummary?.threadUsage
@@ -338,8 +337,8 @@ export const useAppSelectors = (state: AppState) => {
     sessionRateLimitUsage
   );
   const latestThreadConfig = useMemo(
-    () => latestThreadConfigFromRecords(latestTurnStatusScope.records) ?? latestThreadConfigFromRecords(displayRecords),
-    [displayRecords, latestTurnStatusScope.records]
+    () => latestThreadConfigFromRecords(latestTurnActivity.records) ?? latestThreadConfigFromRecords(displayRecords),
+    [displayRecords, latestTurnActivity.records]
   );
   const activeThreadModel = latestThreadConfig?.model
     ?? activeThread?.model
@@ -415,7 +414,7 @@ export const useAppSelectors = (state: AppState) => {
     effectiveModelSelection,
     effectiveReasoningSelection,
     effectiveServiceTierSelection,
-    latestTurnStatusScope,
+    latestTurnActivityScope: latestTurnActivity,
     localMachines,
     modelOptions,
     serviceTierOptions,

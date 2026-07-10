@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import type React from "react";
 import { Popover } from "antd";
 import { Zap } from "lucide-react";
-import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import {
   formatComposerModelButtonLabel,
   formatComposerModelTitle,
@@ -10,18 +9,18 @@ import {
   formatContextUsage,
   formatRateLimitRemaining,
   formatResetTitle,
-  latestTurnStatusFromRecords,
-  latestUserTurnStatusScope,
+  latestTurnActivityScope,
   shortId,
   threadDisplayRecords,
   threadExecutionIsRunning,
   threadDisplayTitle
 } from "./appHelpers.js";
+import type { TurnActivityScope } from "./appHelpers.js";
 import { formatThreadDuration, LiveThreadExecutionText } from "./helpers/liveTime.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { contextMenuPosition } from "./helpers/composer.js";
-import type { ActivityStatusView, OpenThreadState, ThreadExecutionMeta } from "./types.js";
+import type { OpenThreadState, ThreadExecutionMeta } from "./types.js";
 
 type ComposerThreadControlsMode = "inline" | "popover";
 
@@ -48,10 +47,8 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
   const activeThreadExecutionMeta = useMemo(() => {
     const activeThread = selectors.activeThread;
     if (!activeThread) return null;
-    const records = threadDisplayRecords(activeThread.threadId, activeThread);
-    const turnStatus = latestTurnStatusFromRecords(records);
-    return threadExecutionMeta(activeThread, records, turnStatus);
-  }, [selectors.activeThread]);
+    return threadExecutionMeta(activeThread, selectors.latestTurnActivityScope);
+  }, [selectors.activeThread, selectors.latestTurnActivityScope]);
   const openThreadTabs = useMemo(() => state.openThreads.map((thread) => ({
     key: thread.threadId,
     label: (
@@ -105,8 +102,8 @@ const OpenThreadTabLabel = ({
   const title = threadDisplayTitle(thread);
   const workspaceName = compactWorkspaceName(thread.workingDirectory);
   const records = threadDisplayRecords(thread.threadId, thread);
-  const turnStatus = latestTurnStatusFromRecords(records);
-  const executionMeta = threadExecutionMeta(thread, records, turnStatus);
+  const activityScope = latestTurnActivityScope(records);
+  const executionMeta = threadExecutionMeta(thread, activityScope);
   const details = (
     <div className="openThreadTabDetails">
       <div>
@@ -254,14 +251,14 @@ const contextUsagePercent = (threadUsage: AppSelectors["activeThreadUsage"]) => 
 
 export const threadExecutionMeta = (
   thread: OpenThreadState,
-  records: CodexRecord[],
-  turnStatus: ActivityStatusView | null
+  activityScope: TurnActivityScope
 ): ThreadExecutionMeta => {
-  const running = threadExecutionIsRunning(thread.running, turnStatus);
-  const statusScope = latestUserTurnStatusScope(records);
-  const runningStartedAt = thread.activeTurnStartedAt ?? latestActiveTaskStartedAt(records);
-  const startedAt = running ? runningStartedAt : statusScope.startedAt ?? turnStatus?.at;
-  const durationMs = running ? null : activityElapsedMs(statusScope.records, startedAt, turnStatus?.at);
+  const running = threadExecutionIsRunning(thread.running, activityScope.turnStatus);
+  const startedAt = running
+    ? thread.activeTurnStartedAt ?? activityScope.startedAt
+    : activityScope.startedAt ?? activityScope.turnStatus?.at;
+  const endedAt = activityScope.endedAt ?? activityScope.turnStatus?.at;
+  const durationMs = running ? null : activityElapsedMs(startedAt, endedAt);
   const status = running ? "running" : "idle";
   const label = running ? "Running" : "Idle";
   const duration = durationMs == null ? "" : formatThreadDuration(durationMs);
@@ -275,38 +272,14 @@ export const threadExecutionMeta = (
 };
 
 const activityElapsedMs = (
-  records: CodexRecord[],
   startedAt?: string,
   endedAtFallback?: string
 ) => {
   const startedMs = parseTimestamp(startedAt);
   if (startedMs === null) return null;
-
-  let endedMs: number | null = null;
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    const record = records[index];
-    const payload = asRecord(record.payload);
-    if (record.type !== "event_msg" || !payload) continue;
-    if (payload.type !== "task_complete" && payload.type !== "turn_aborted") continue;
-    endedMs = parseRecordTimestamp(record);
-    if (endedMs !== null) break;
-  }
-  endedMs ??= parseTimestamp(endedAtFallback);
+  const endedMs = parseTimestamp(endedAtFallback);
   return endedMs === null ? null : Math.max(0, endedMs - startedMs);
 };
-
-const latestActiveTaskStartedAt = (records: CodexRecord[]) => {
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    const record = records[index];
-    const payload = asRecord(record.payload);
-    if (record.type !== "event_msg" || !payload) continue;
-    if (payload.type === "task_started") return record.timestamp;
-    if (payload.type === "task_complete" || payload.type === "turn_aborted") return undefined;
-  }
-  return undefined;
-};
-
-const parseRecordTimestamp = (record: CodexRecord) => parseTimestamp(record.timestamp);
 
 const parseTimestamp = (value: string | undefined) => {
   if (!value) return null;
