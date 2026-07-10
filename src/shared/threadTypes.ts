@@ -20,6 +20,7 @@ export type ThreadSummary = {
   session: ThreadSessionSummary;
   status: "running" | "idle";
   running: boolean;
+  activeTurnStartedAt?: string;
   title: string;
   updatedAt: string;
   messageCount: number;

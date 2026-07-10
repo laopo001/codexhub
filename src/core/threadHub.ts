@@ -577,6 +577,7 @@ export class ThreadHub {
   async deleteThread(threadId: string) {
     const thread = this.requireThread(threadId);
     thread.running = false;
+    thread.activeTurnStartedAt = undefined;
     this.rejectQueuedTurns(thread.threadId, new Error(`Thread deleted: ${thread.threadId}`));
     this.threads.delete(threadId);
     this.publish(thread, "done");
@@ -636,14 +637,16 @@ export class ThreadHub {
     );
     this.activeTurnCommands.set(thread.threadId, commandId);
     if (thread.title === thread.threadId) thread.title = "Review changes";
+    const startedAt = new Date().toISOString();
     thread.running = true;
-    thread.updatedAt = new Date().toISOString();
+    thread.activeTurnStartedAt = startedAt;
+    thread.updatedAt = startedAt;
     this.publish(thread, "thread");
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "review_thread",
       workingDirectory: thread.workingDirectory,
-      createdAt: new Date().toISOString(),
+      createdAt: startedAt,
       threadId: thread.threadId,
       reviewTarget: { type: "uncommittedChanges" }
     });
@@ -784,15 +787,17 @@ export class ThreadHub {
     const userText = summarizeInput(input);
     const userTitle = compactThreadTitle(userText);
     if (userTitle && thread.title === thread.threadId) thread.title = userTitle;
+    const startedAt = new Date().toISOString();
     thread.running = true;
-    thread.updatedAt = new Date().toISOString();
+    thread.activeTurnStartedAt = startedAt;
+    thread.updatedAt = startedAt;
     this.publish(thread, "thread");
 
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "turn",
       workingDirectory: thread.workingDirectory,
-      createdAt: new Date().toISOString(),
+      createdAt: startedAt,
       input,
       threadId: thread.threadId,
       options: commandOptions
@@ -1048,6 +1053,7 @@ export class ThreadHub {
             const thread = this.threads.get(threadId);
             if (thread) {
               thread.running = false;
+              thread.activeTurnStartedAt = undefined;
               this.publish(thread, "done");
             }
           }
@@ -1595,8 +1601,9 @@ export class ThreadHub {
         this.finishSessionTurn(thread);
         return;
       }
-      if (thread.appServerTurnId !== undefined) {
+      if (thread.appServerTurnId !== undefined || thread.activeTurnStartedAt !== undefined) {
         thread.appServerTurnId = undefined;
+        thread.activeTurnStartedAt = undefined;
         thread.updatedAt = new Date().toISOString();
         this.publish(thread, "thread");
       }
@@ -1605,6 +1612,10 @@ export class ThreadHub {
     let changed = false;
     if (thread.running !== running) {
       thread.running = running;
+      changed = true;
+    }
+    if (!thread.activeTurnStartedAt) {
+      thread.activeTurnStartedAt = new Date().toISOString();
       changed = true;
     }
     if (thread.appServerTurnId !== turnId) {
@@ -1930,6 +1941,7 @@ export class ThreadHub {
     const wasRunning = thread.running;
     thread.running = false;
     thread.appServerTurnId = undefined;
+    thread.activeTurnStartedAt = undefined;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, wasRunning ? "done" : "thread");
     const startedQueuedTurn = this.startNextQueuedTurn(thread);
@@ -2051,6 +2063,7 @@ export class ThreadHub {
       session: this.threadSessionSummary(thread),
       status: thread.running ? "running" : "idle",
       running: thread.running,
+      ...(thread.running && thread.activeTurnStartedAt ? { activeTurnStartedAt: thread.activeTurnStartedAt } : {}),
       title: thread.title,
       updatedAt: thread.updatedAt,
       messageCount: recordsToViews(thread.records).length,

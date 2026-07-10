@@ -259,7 +259,8 @@ export const threadExecutionMeta = (
 ): ThreadExecutionMeta => {
   const running = threadExecutionIsRunning(thread.running, turnStatus);
   const statusScope = latestUserTurnStatusScope(records);
-  const startedAt = statusScope.startedAt ?? turnStatus?.at;
+  const runningStartedAt = thread.activeTurnStartedAt ?? latestActiveTaskStartedAt(records);
+  const startedAt = running ? runningStartedAt : statusScope.startedAt ?? turnStatus?.at;
   const durationMs = running ? null : activityElapsedMs(statusScope.records, startedAt, turnStatus?.at);
   const status = running ? "running" : "idle";
   const label = running ? "Running" : "Idle";
@@ -292,6 +293,17 @@ const activityElapsedMs = (
   }
   endedMs ??= parseTimestamp(endedAtFallback);
   return endedMs === null ? null : Math.max(0, endedMs - startedMs);
+};
+
+const latestActiveTaskStartedAt = (records: CodexRecord[]) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    const payload = asRecord(record.payload);
+    if (record.type !== "event_msg" || !payload) continue;
+    if (payload.type === "task_started") return record.timestamp;
+    if (payload.type === "task_complete" || payload.type === "turn_aborted") return undefined;
+  }
+  return undefined;
 };
 
 const parseRecordTimestamp = (record: CodexRecord) => parseTimestamp(record.timestamp);

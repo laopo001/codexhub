@@ -1004,6 +1004,7 @@ const threadSummariesEqual = (left: ThreadSummary, right: ThreadSummary) => {
     || left.approvalPolicy !== right.approvalPolicy
     || left.status !== right.status
     || left.running !== right.running
+    || left.activeTurnStartedAt !== right.activeTurnStartedAt
     || left.title !== right.title
     || left.updatedAt !== right.updatedAt
     || left.messageCount !== right.messageCount

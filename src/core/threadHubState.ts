@@ -35,6 +35,7 @@ export type ThreadState = {
   goalRunPolicyTurnActive?: boolean;
   skipNextGoalRunPolicyRun?: boolean;
   running: boolean;
+  activeTurnStartedAt?: string;
   title: string;
   updatedAt: string;
   records: CodexRecord[];

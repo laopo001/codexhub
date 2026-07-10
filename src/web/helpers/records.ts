@@ -439,10 +439,12 @@ export const latestUserTurnStatusScope = (records: CodexRecord[]) => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     if (!isUserInputRecord(records[index])) continue;
     const record = records[index];
+    const turnStartedAt = userTurnStartedAt(records, index);
+    const startedAt = turnStartedAt ?? record.timestamp;
     return {
       key: record.id,
-      label: `after ${formatStatusScopeTime(record.timestamp)}`,
-      startedAt: record.timestamp,
+      label: turnStartedAt ? `after ${formatStatusScopeTime(turnStartedAt, "turn")}` : `after ${formatStatusScopeTime(record.timestamp, "user")}`,
+      startedAt,
       records: records.slice(index + 1)
     };
   }
@@ -461,8 +463,27 @@ export const isUserInputRecord = (record: CodexRecord) => {
   return record.type === "response_item" && payload.type === "message" && payload.role === "user";
 };
 
-export const formatStatusScopeTime = (timestamp: string | undefined) =>
-  timestamp ? `user message at ${formatDate(timestamp)}` : "latest user message";
+export const formatStatusScopeTime = (timestamp: string | undefined, source: "turn" | "user" = "user") => {
+  if (!timestamp) return source === "turn" ? "latest turn" : "latest user message";
+  return source === "turn" ? `turn started at ${formatDate(timestamp)}` : `user message at ${formatDate(timestamp)}`;
+};
+
+const userTurnStartedAt = (records: CodexRecord[], userRecordIndex: number) => {
+  const userRecord = records[userRecordIndex];
+  const threadId = userRecord.sourceThreadId;
+  const turnId = threadId ? turnIdFromAppRecordId(threadId, userRecord.id) : null;
+  if (!turnId) return undefined;
+  for (let index = userRecordIndex; index >= 0; index -= 1) {
+    const record = records[index];
+    const payload = asRecord(record.payload);
+    if (record.type !== "event_msg" || payload?.type !== "task_started") continue;
+    const recordTurnId = typeof payload.turn_id === "string"
+      ? payload.turn_id
+      : typeof payload.turnId === "string" ? payload.turnId : "";
+    if (recordTurnId === turnId) return record.timestamp;
+  }
+  return undefined;
+};
 
 export const activityStatusesFromRecords = (records: CodexRecord[]): ActivityStatusView[] => {
   const statuses = new Map<string, ActivityStatusView>();
