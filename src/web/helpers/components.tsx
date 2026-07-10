@@ -189,6 +189,18 @@ export const MessageCard = ({
       ) : null}
       {hasMessageMeta ? (
         <footer className="messageMeta" title={formatMessageMetaTitle(message, { showTimestamp })} onClick={(event) => event.stopPropagation()}>
+          {onFork ? (
+            <a href="#" onClick={(event) => {
+              event.preventDefault();
+              onFork();
+            }}>Fork</a>
+          ) : null}
+          {onRollback ? (
+            <a href="#" onClick={(event) => {
+              event.preventDefault();
+              onRollback();
+            }}>Rollback</a>
+          ) : null}
           <span>{formatMessageMeta(message, { showTimestamp })}</span>
           {markdownEnabled && onRenderModeChange ? (
             <Switch
@@ -214,18 +226,6 @@ export const MessageCard = ({
                 </button>
               ))}
             </span>
-          ) : null}
-          {onFork ? (
-            <a href="#" onClick={(event) => {
-              event.preventDefault();
-              onFork();
-            }}>Fork</a>
-          ) : null}
-          {onRollback ? (
-            <a href="#" onClick={(event) => {
-              event.preventDefault();
-              onRollback();
-            }}>Rollback</a>
           ) : null}
         </footer>
       ) : null}
