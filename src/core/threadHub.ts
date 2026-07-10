@@ -2584,8 +2584,11 @@ const statusUsageRecordFromAppServerUsage = (
   const existing = thread.records.find((record) => record.id === id);
   const existingPayload = asRecord(existing?.payload);
   const existingUsage = tokenUsageBreakdown(asRecord(existingPayload?.usage) ?? {});
-  const previousTotal = asRecord(existingPayload?.cumulative_usage);
+  const previousTotal = asRecord(existingPayload?.cumulative_usage)
+    ?? asRecord(previousStatusPayload?.cumulative_usage);
   // App-server total usage is monotonic across model calls and compaction.
+  // A fresh user scope has no existing record yet, so use the previous scope's
+  // cumulative total as its baseline instead of counting the full prompt in `last`.
   const increment = normalizedTotal && previousTotal
     ? tokenUsageDelta(normalizedTotal, tokenUsageBreakdown(previousTotal), normalizedLast)
     : normalizedLast;

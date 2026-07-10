@@ -358,23 +358,23 @@ const main = async () => {
     fake.emitTokenUsageForTurnId(fake.threadId, nextUsageTurnId, {
       tokenUsage: {
         last: {
-          inputTokens: 100,
-          cachedInputTokens: 50,
-          outputTokens: 20,
+          inputTokens: 89_000,
+          cachedInputTokens: 88_000,
+          outputTokens: 31,
           reasoningOutputTokens: 3,
-          totalTokens: 120
+          totalTokens: 89_031
         },
         total: {
-          inputTokens: 1800,
-          cachedInputTokens: 1150,
-          outputTokens: 200,
+          inputTokens: 2600,
+          cachedInputTokens: 1900,
+          outputTokens: 211,
           reasoningOutputTokens: 26,
-          totalTokens: 2000
+          totalTokens: 2811
         },
         modelContextWindow: 200000
       }
     });
-    await assertStatusUsage(apiBase, fake.threadId, { input: 100, output: 20, total: 120 });
+    await assertStatusUsage(apiBase, fake.threadId, { input: 900, output: 31, total: 931 });
     await assertThreadUsageRateLimits(apiBase, fake.threadId);
     fake.emitTokenUsageWithoutRateLimits("context-only-usage");
     await assertThreadUsageRateLimits(apiBase, fake.threadId);
@@ -384,7 +384,7 @@ const main = async () => {
     console.log("app-server token usage rate limits ok");
     fake.completeTurn(activeWebTurn);
     fake.emitTurnsSnapshotWithUser(nextUsageTurnId, nextUsageScopeItemId, "start a fresh usage scope");
-    await assertStatusUsage(apiBase, fake.threadId, { input: 1621, output: 332, total: 1953 });
+    await assertStatusUsage(apiBase, fake.threadId, { input: 2421, output: 343, total: 2764 });
     console.log("status usage accumulation and snapshot retention ok");
     console.log("web running turn steer ok");
 
