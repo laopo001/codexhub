@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { recordsToViews } from "./codexRecordView.js";
-import { emptyThreadUsage, threadRateLimitsFromValue, threadUsageFromRecords } from "./threadUsage.js";
+import {
+  emptyThreadUsage,
+  fiveHourRateLimitWindowMinutes,
+  rateLimitUsageForWindowMinutes,
+  sevenDayRateLimitWindowMinutes,
+  threadRateLimitsFromValue,
+  threadUsageFromRecords
+} from "./threadUsage.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import type { ThreadOptions, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "../shared/usageTypes.js";
@@ -1742,8 +1749,11 @@ export class ThreadHub {
   }
 
   private weeklyRemainingPercent(thread: ThreadState) {
-    const limit = weeklyRateLimitUsage(thread.threadUsage.secondaryRateLimit)
-      ?? weeklyRateLimitUsage(this.sessions.get(thread.sessionId ?? "")?.accountRateLimits?.secondaryRateLimit)
+    const limit = rateLimitUsageForWindowMinutes(thread.threadUsage, sevenDayRateLimitWindowMinutes)
+      ?? rateLimitUsageForWindowMinutes(
+        this.sessions.get(thread.sessionId ?? "")?.accountRateLimits,
+        sevenDayRateLimitWindowMinutes
+      )
       ?? null;
     if (!limit || !Number.isFinite(limit.usedPercent)) return null;
     return Math.max(0, Math.min(100, 100 - limit.usedPercent));
@@ -1794,12 +1804,12 @@ export class ThreadHub {
       this.appendThreadGoalUpdatedRecord(thread, {
         threadId: thread.threadId,
         goal: appServerGoal,
-        message: `Weekly remaining ${formatPercent(weeklyRemainingPercent)} reached target ${formatPercent(targetRemainingPercent)}; switching goal to wrap-up.`
+        message: `7d remaining ${formatPercent(weeklyRemainingPercent)} reached target ${formatPercent(targetRemainingPercent)}; switching goal to wrap-up.`
       });
     }, (error) => {
       this.appendHubRecord(thread, "error", {
         type: "error",
-        message: `Failed to switch weekly goal to wrap-up: ${errorText(error)}`
+        message: `Failed to switch 7d goal to wrap-up: ${errorText(error)}`
       });
     });
     return true;
@@ -3322,12 +3332,7 @@ const normalizeThreadGoalRunPolicy = (policy: ThreadGoalUpdate["runPolicy"]): Th
   };
 };
 
-const weeklyRateLimitWindowMinutes = 7 * 24 * 60;
-
 const weeklyGoalWrapUpObjective = "收尾工作";
-
-const weeklyRateLimitUsage = (limit: ThreadRateLimitUsage | null | undefined) =>
-  limit?.windowMinutes === weeklyRateLimitWindowMinutes ? limit : null;
 
 const formatPercent = (value: number) =>
   Number.isInteger(value) ? `${value}%` : `${value.toFixed(1)}%`;
@@ -3521,14 +3526,16 @@ const formatSession = (summary: ThreadSessionSummary) => {
 
 const formatStatusUsage = (thread: ThreadState, accountRateLimits: ThreadRateLimits | null) => {
   const usage = thread.threadUsage ?? emptyThreadUsage();
-  const primaryRateLimit = usage.primaryRateLimit ?? accountRateLimits?.primaryRateLimit ?? null;
-  const secondaryRateLimit = usage.secondaryRateLimit ?? accountRateLimits?.secondaryRateLimit ?? null;
+  const fiveHourRateLimit = rateLimitUsageForWindowMinutes(usage, fiveHourRateLimitWindowMinutes)
+    ?? rateLimitUsageForWindowMinutes(accountRateLimits, fiveHourRateLimitWindowMinutes);
+  const sevenDayRateLimit = rateLimitUsageForWindowMinutes(usage, sevenDayRateLimitWindowMinutes)
+    ?? rateLimitUsageForWindowMinutes(accountRateLimits, sevenDayRateLimitWindowMinutes);
   const observedAt = usage.observedAt ?? accountRateLimits?.observedAt ?? null;
   return [
     `- Tokens: ${markdownCode(formatUsage(thread.lastUsage))}`,
     `- Context: ${markdownCode(formatContextUsage(usage))}`,
-    `- 5h limit: ${markdownCode(formatRateLimitUsage(primaryRateLimit))}`,
-    `- Weekly limit: ${markdownCode(formatRateLimitUsage(secondaryRateLimit))}`,
+    `- 5h limit: ${markdownCode(formatRateLimitUsage(fiveHourRateLimit))}`,
+    `- 7d limit: ${markdownCode(formatRateLimitUsage(sevenDayRateLimit))}`,
     `- Observed: ${markdownCode(observedAt ?? "n/a")}`
   ];
 };

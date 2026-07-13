@@ -4,7 +4,12 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { resolveCodexAppServerLaunchOptions } from "../src/cli/codexAppServerProcess.js";
-import { accountRateLimitsPayloadFromValue } from "../src/core/threadUsage.js";
+import {
+  accountRateLimitsPayloadFromValue,
+  fiveHourRateLimitWindowMinutes,
+  rateLimitUsageForWindowMinutes,
+  sevenDayRateLimitWindowMinutes
+} from "../src/core/threadUsage.js";
 import type { MachineDirectoryEntry } from "../src/shared/machineTypes.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { SessionEventInput, ThreadSummary } from "../src/shared/threadTypes.js";
@@ -2398,6 +2403,32 @@ const assertSessionAccountRateLimits = async () => {
   ) {
     throw new Error(`session account rate limits should prefer codex aggregate limit: ${JSON.stringify(updated)}`);
   }
+
+  const weeklyOnlySelected = accountRateLimitsPayloadFromValue({
+    result: {
+      rateLimits: {
+        limitId: "codex",
+        primary: { usedPercent: 1, windowDurationMins: 10080, resetsAt: 1784487618 },
+        secondary: null
+      }
+    }
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "account_rate_limits_updated",
+    heartbeat: false,
+    rateLimits: weeklyOnlySelected
+  });
+  const weeklyOnly = hub.listSessions().find((item) => item.sessionId === sessionId)?.accountRateLimits;
+  const fiveHourWindow = rateLimitUsageForWindowMinutes(weeklyOnly, fiveHourRateLimitWindowMinutes);
+  const sevenDayWindow = rateLimitUsageForWindowMinutes(weeklyOnly, sevenDayRateLimitWindowMinutes);
+  if (
+    fiveHourWindow !== null
+    || sevenDayWindow?.usedPercent !== 1
+    || sevenDayWindow.windowMinutes !== 10080
+    || sevenDayWindow.resetsAt !== 1784487618
+  ) {
+    throw new Error(`weekly-only primary rate limit was classified incorrectly: ${JSON.stringify(weeklyOnly)}`);
+  }
 };
 
 const agentMessageRecord = (records: unknown[], itemId: string): CodexRecord | undefined => {
@@ -3467,7 +3498,7 @@ const assertStatusMarkdown = (thread: ThreadDetail) => {
     "- Tokens: `",
     "- Context: `",
     "- 5h limit: `",
-    "- Weekly limit: `",
+    "- 7d limit: `",
     "- Observed: `"
   ];
   for (const snippet of requiredSnippets) {

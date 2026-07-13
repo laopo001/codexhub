@@ -571,7 +571,7 @@ const main = async () => {
     ) {
       throw new Error(`consume policy-only retarget missing from thread detail: ${JSON.stringify(retargetDetail.goalRunPolicy)}`);
     }
-    fake.emitTokenUsage(retryTurn, 84);
+    fake.emitWeeklyOnlyTokenUsage(retryTurn, 84);
     const wrapUpSetGoal = await fake.nextSessionCommand("set_goal");
     const wrapUpGoal = objectValue(wrapUpSetGoal.goal);
     if (
@@ -977,6 +977,21 @@ class FakeMachine {
     });
   }
 
+  emitWeeklyOnlyTokenUsage(command: SessionCommand, usedPercent: number) {
+    const threadId = command.threadId ?? this.options.threadId;
+    if (!command.turnId) throw new Error(`fake turn missing turnId: ${JSON.stringify(command)}`);
+    this.emitTokenUsageForTurnId(threadId, command.turnId, {
+      rateLimits: {
+        primary: {
+          usedPercent,
+          windowMinutes: 10080,
+          resetsAt: 1781140554
+        },
+        secondary: null
+      }
+    });
+  }
+
   emitTokenUsageWithoutRateLimits(turnId: string) {
     this.emitTokenUsageForTurnId(this.options.threadId, turnId);
   }
@@ -1008,8 +1023,8 @@ class FakeMachine {
     turnId: string,
     options: {
       rateLimits?: {
-        primary: { usedPercent: number; windowMinutes: number; resetsAt: number };
-        secondary: { usedPercent: number; windowMinutes: number; resetsAt: number };
+        primary: { usedPercent: number; windowMinutes: number; resetsAt: number } | null;
+        secondary: { usedPercent: number; windowMinutes: number; resetsAt: number } | null;
       };
       tokenUsage?: Record<string, unknown>;
     } = {}

@@ -286,7 +286,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               autoFocus
             />
             <label className="goalPolicyField">
-              <span>消耗到 weekly 剩余</span>
+              <span>消耗到 7d 剩余</span>
               <span className="goalPolicyPercentInput">
                 <input
                   type="number"

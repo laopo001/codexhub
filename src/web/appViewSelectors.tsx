@@ -3,6 +3,11 @@ import type React from "react";
 import { Popover } from "antd";
 import { Zap } from "lucide-react";
 import {
+  fiveHourRateLimitWindowMinutes,
+  rateLimitUsageForWindowMinutes,
+  sevenDayRateLimitWindowMinutes
+} from "../core/threadUsage.js";
+import {
   formatComposerModelButtonLabel,
   formatComposerModelTitle,
   formatContextTitle,
@@ -193,6 +198,14 @@ const ComposerThreadControls = ({
   const contextProgressStyle = contextPercent == null
     ? undefined
     : ({ "--context-progress": `${contextPercent}%` } as React.CSSProperties);
+  const fiveHourRateLimit = rateLimitUsageForWindowMinutes(
+    activeThreadUsage,
+    fiveHourRateLimitWindowMinutes
+  );
+  const sevenDayRateLimit = rateLimitUsageForWindowMinutes(
+    activeThreadUsage,
+    sevenDayRateLimitWindowMinutes
+  );
   const compactTitle = activeThread?.running
     ? "Stop the running turn before compacting context"
     : [
@@ -219,8 +232,12 @@ const ComposerThreadControls = ({
           <span className="contextUsageIcon" aria-hidden="true" />
         </button>
 
-        <span className="usagePill" title={formatResetTitle(activeThreadUsage?.primaryRateLimit)}>5h {formatRateLimitRemaining(activeThreadUsage?.primaryRateLimit)}</span>
-        <span className="usagePill" title={formatResetTitle(activeThreadUsage?.secondaryRateLimit)}>weekly {formatRateLimitRemaining(activeThreadUsage?.secondaryRateLimit)}</span>
+        {fiveHourRateLimit ? (
+          <span className="usagePill" title={formatResetTitle(fiveHourRateLimit)}>5h {formatRateLimitRemaining(fiveHourRateLimit)}</span>
+        ) : null}
+        {sevenDayRateLimit ? (
+          <span className="usagePill" title={formatResetTitle(sevenDayRateLimit)}>7d {formatRateLimitRemaining(sevenDayRateLimit)}</span>
+        ) : null}
       </div>
       <button
         type="button"

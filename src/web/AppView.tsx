@@ -40,7 +40,7 @@ const composerModeIconByValue: Record<(typeof composerModeOptions)[number]["valu
 };
 
 const weeklyGoalPolicyLabel = (targetRemainingPercent: number) =>
-  `weekly ≤ ${formatGoalPolicyPercent(targetRemainingPercent)}`;
+  `7d ≤ ${formatGoalPolicyPercent(targetRemainingPercent)}`;
 
 const formatGoalPolicyPercent = (value: number) =>
   `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
@@ -842,8 +842,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                             <button
                               type="button"
                               className="composerIconButton composerGoalRunPolicyButton"
-                              aria-label="消耗到 weekly 剩余"
-                              title="消耗到 weekly 剩余"
+                              aria-label="消耗到 7d 剩余"
+                              title="消耗到 7d 剩余"
                               disabled={!activeThread}
                               onClick={openGoalRunPolicyDialog}
                             >

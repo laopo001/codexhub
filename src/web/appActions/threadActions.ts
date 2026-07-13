@@ -531,7 +531,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       || targetRemainingPercent < 0
       || targetRemainingPercent >= 100
     ) {
-      ctx.setGoalDialog((current) => current ? { ...current, error: "weekly 剩余目标必须在 0 到小于 100 之间" } : current);
+      ctx.setGoalDialog((current) => current ? { ...current, error: "7d 剩余目标必须在 0 到小于 100 之间" } : current);
       return;
     }
     ctx.setGoalDialog((current) => current ? { ...current, saving: true, error: "" } : current);

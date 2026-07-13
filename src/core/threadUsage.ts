@@ -2,6 +2,19 @@ import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import type { ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage } from "../shared/usageTypes.js";
 export type { ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage } from "../shared/usageTypes.js";
 
+export const fiveHourRateLimitWindowMinutes = 5 * 60;
+export const sevenDayRateLimitWindowMinutes = 7 * 24 * 60;
+
+type RateLimitWindows = Pick<ThreadRateLimits, "primaryRateLimit" | "secondaryRateLimit">;
+
+export const rateLimitUsageForWindowMinutes = (
+  rateLimits: RateLimitWindows | null | undefined,
+  windowMinutes: number
+): ThreadRateLimitUsage | null => {
+  const windows = [rateLimits?.primaryRateLimit, rateLimits?.secondaryRateLimit];
+  return windows.find((window) => window?.windowMinutes === windowMinutes) ?? null;
+};
+
 export const emptyThreadUsage = (): ThreadUsage => ({
   context: null,
   primaryRateLimit: null,
