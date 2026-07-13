@@ -10,9 +10,9 @@ export type MachineCapabilities = {
   projectCatalog?: MachineProjectCatalog;
 };
 
-/** 机器注册时附带的项目来源标记，目前用于 VSCode workspace 临时项目。 */
+/** 机器注册时附带的项目来源标记，用于嵌入 IDE workspace 临时项目。 */
 export type MachineRegistrationProjectSource = {
-  kind: "vscode";
+  kind: "vscode" | "theia";
   groupId: string;
   label?: string;
 };

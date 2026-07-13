@@ -12,5 +12,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "scripts", "targets", "vite.config.ts"]
+  "include": ["src", "scripts", "targets/vscode", "targets/electron", "vite.config.ts"]
 }

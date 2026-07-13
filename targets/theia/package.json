@@ -1,0 +1,48 @@
+{
+  "name": "@dadigua/codexhub-theia",
+  "version": "0.0.0",
+  "description": "Eclipse Theia target for Codex Hub with native Electron notifications.",
+  "license": "MIT",
+  "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/laopo001/codexhub.git"
+  },
+  "files": [
+    "lib",
+    "dist",
+    "dist-node",
+    "README.md",
+    "LICENSE"
+  ],
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/codexhub-frontend-module",
+      "backend": "lib/node/codexhub-backend-module"
+    },
+    {
+      "frontendElectron": "lib/electron-browser/codexhub-electron-frontend-module",
+      "electronMain": "lib/electron-main/codexhub-electron-main-module"
+    }
+  ],
+  "peerDependencies": {
+    "@theia/core": "^1.73.1",
+    "@theia/electron": "^1.73.1",
+    "@theia/workspace": "^1.73.1"
+  },
+  "peerDependenciesMeta": {
+    "@theia/electron": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@theia/core": "1.73.1",
+    "@theia/electron": "1.73.1",
+    "@theia/workspace": "1.73.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "check": "node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
+  }
+}

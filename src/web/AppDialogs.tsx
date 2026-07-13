@@ -230,7 +230,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <div className="settingsRow">
                 <span className="settingsRowText">
                   <strong id="settingTaskCompletePopups">Task complete popups</strong>
-                  <em>Browser or VSCode notification</em>
+                  <em>Browser or IDE notification</em>
                 </span>
                 <Switch
                   checked={appSettings.taskCompleteSystemNotifications}

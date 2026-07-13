@@ -117,7 +117,7 @@ export type ProjectThreadStartInput = {
   machineId?: string;
   reuse?: boolean;
   persist?: boolean;
-  source?: { kind: "vscode"; groupId: string; label?: string };
+  source?: { kind: "vscode" | "theia"; groupId: string; label?: string };
 };
 
 export type SessionThreadInput =

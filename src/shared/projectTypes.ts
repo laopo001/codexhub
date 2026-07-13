@@ -37,7 +37,7 @@ export type StoredProject = {
 
 /** 项目来源标记；用于区分普通持久项目和嵌入 surface 提供的临时项目。 */
 export type ProjectSource = {
-  kind: "vscode";
+  kind: "vscode" | "theia";
   groupId: string;
   label?: string;
 };

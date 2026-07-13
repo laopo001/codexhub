@@ -1,5 +1,6 @@
 import net from "node:net";
 import { loadDotEnv } from "../core/dotenv.js";
+import type { CodexHubSurface } from "../shared/surfaceTypes.js";
 import { startServer, type ServerFeatureOptions, type ServerHandle } from "./index.js";
 
 export type EmbeddedServerOptions = {
@@ -9,7 +10,7 @@ export type EmbeddedServerOptions = {
   explicitPort?: boolean;
   dataDir?: string;
   staticDirectory?: string;
-  surface?: "default" | "vscode";
+  surface?: CodexHubSurface;
   buildId?: string | null;
   features?: Partial<ServerFeatureOptions>;
   logPrefix?: string;

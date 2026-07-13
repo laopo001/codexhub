@@ -2,7 +2,7 @@ import type React from "react";
 import type { RealtimeOutgoingMessage } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import type { CodexRecord } from "../../shared/recordTypes.js";
-import { defaultAppSettings, initialWorkspacePath, isVscodeSurface } from "../appConfig.js";
+import { defaultAppSettings, initialWorkspacePath, isEmbeddedHostSurface } from "../appConfig.js";
 import {
   apiRouteJson,
   authToken,
@@ -447,7 +447,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
   function dispatchTaskCompleteNotification(notification: TaskCompleteNotification) {
     playTaskCompletionSound(ctx.notificationAudioContext);
     if (!ctx.appSettingsRef.current.taskCompleteSystemNotifications) return;
-    if (isVscodeSurface) {
+    if (isEmbeddedHostSurface) {
       window.parent?.postMessage({
         type: "codexhub.taskCompleteNotification",
         notification

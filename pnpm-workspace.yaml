@@ -1,5 +1,12 @@
+packages:
+  - "targets/theia"
+
 allowBuilds:
+  '@parcel/watcher': false
   '@vscode/vsce-sign': true
+  drivelist: false
   electron: true
   esbuild: true
   keytar: true
+  msgpackr-extract: false
+  native-keymap: false

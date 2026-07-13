@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { isVscodeSurface, storageKey } from "./appConfig.js";
+import { storageKey } from "./appConfig.js";
 import {
   apiRouteJson,
   machineProjectLauncher,

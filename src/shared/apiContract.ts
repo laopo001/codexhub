@@ -21,6 +21,7 @@ import type {
 } from "./projectTypes.js";
 import type { SshHostConfig, SshMachineConnectInput, SshMachineConnection } from "./sshTypes.js";
 import type { ModelReasoningEffort, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "./usageTypes.js";
+import type { CodexHubSurface } from "./surfaceTypes.js";
 import type {
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
@@ -125,7 +126,7 @@ export type HealthPayload = AuthStatusPayload & {
   build?: string | null;
   host?: string;
   port?: number;
-  surface?: "default" | "vscode";
+  surface?: CodexHubSurface;
   features?: Record<string, boolean>;
   staticDirectory?: string;
   configPath?: string;
@@ -484,7 +485,7 @@ export const threadRenameSchema = z.object({
 }).strict();
 
 export const projectSourceSchema = z.object({
-  kind: z.literal("vscode"),
+  kind: z.enum(["vscode", "theia"]),
   groupId: z.string().min(1),
   label: z.string().min(1).optional()
 }).strict();

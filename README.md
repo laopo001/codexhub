@@ -175,7 +175,7 @@ pnpm codexhub task run daily-summary
 
 server 每 30 秒扫描一次本地 task 状态，间隔可用 `CODEX_HUB_TASK_SCAN_INTERVAL_MS` 调整。task 的 `schedule` 会在保存时校验为五字段 cron 表达式；无效表达式会被 API 拒绝，而不是静默保存后永远不触发。task 不再写入 `.codexp/tasks`，也不由远端 workspace 持有。
 
-任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VSCode notification；这个开关默认开启并保存在本地 UI state。
+任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VSCode notification；Theia Electron surface 则在 Electron main process 创建原生系统通知，点击后恢复并聚焦通知来源窗口，再打开对应 `threadId`。这个开关默认开启并保存在本地 UI state。
 
 需要自定义通知集成时，可以在 server 进程上设置 hook 环境变量。hook 在 app-server turn 完成并归一成非历史 `task_complete` record 时触发，不依赖浏览器 tab 是否打开：
 
@@ -368,6 +368,34 @@ pnpm run install:vscode
 ```
 
 `build:vscode` 会先跑完整 `pnpm build`，再把 extension 打成 Node CJS bundle，显式把 extension host 里的 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；staging 目录会包含 Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE。仓库内的 VSCode Marketplace 发布 workflow 会在 `main` 分支 push 后自动触发，也支持手动 `workflow_dispatch`，会运行 `pnpm run package:vscode`，并要求仓库 secret `VSCE_PAT`，发布时使用 `vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate`。
+
+## Eclipse Theia
+
+官方 Theia IDE 可以直接安装 CodexHub 的 VSIX，不需要 Theia 源码、不需要修改 `app.asar`，也不需要重编 Theia。Windows Theia Electron 通过 Remote WSL 打开工作区时，CodexHub extension/server 仍运行在 WSL extension host；系统通知由 Windows Theia webview 创建。
+
+通知点击后会先激活发出通知的 Theia 窗口和 Codex Hub view，再把 `threadId` 发送给内嵌 Web UI，跳转到对应 thread。如果当前 Theia 不提供 Web Notification API 或权限没有授予，会自动退回 IDE 自带的 `showInformationMessage`。
+
+```bash
+pnpm run install:theia
+```
+
+默认目标是 `C:\Users\0laop\AppData\Local\Programs\TheiaIDE\TheiaIDE.exe`。命令会构建同一份 `dist-vscode/codexhub.vsix`，为 Windows frontend 和当前 WSL remote backend 各放置一份 user VSIX，替换同版本的旧部署，再调用 Theia 官方的 `--install-plugin` 参数。已有 Theia 窗口通常会收到安装请求；若 WSL remote backend 没有自动重新加载，断开并重新连接该 WSL 窗口（或完整重启 Theia）即可。
+
+也可以覆盖安装位置：
+
+```bash
+pnpm run install:theia -- 'C:\path\to\TheiaIDE'
+CODEX_HUB_THEIA_IDE_DIR=/mnt/c/path/to/TheiaIDE pnpm run install:theia
+```
+
+仓库仍保留 `@dadigua/codexhub-theia` 编译期 target，供需要深度定制 Theia 产品本身的场景使用：
+
+```bash
+pnpm run package:theia
+pnpm run smoke:theia
+```
+
+该高级产物位于 `dist-theia/`，接入方式见 `targets/theia/README.md`；普通 Theia IDE 用户不需要它。
 
 ## API
 

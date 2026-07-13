@@ -5,7 +5,7 @@ export {
   taskCompletionNotificationKey
 } from "../../shared/taskNotifications.js";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
-import { isVscodeSurface, reasoningOptions } from "../appConfig.js";
+import { isTheiaSurface, isTheiaVscodeHost, isVscodeSurface, reasoningOptions } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
@@ -389,6 +389,10 @@ export const ensureNotificationAudioContext = (audioContextRef: React.MutableRef
 };
 
 export const primeTaskNotificationPermission = () => {
+  if (isTheiaSurface || isTheiaVscodeHost) {
+    window.parent?.postMessage({ type: "codexhub.requestNotificationPermission" }, "*");
+    return;
+  }
   if (isVscodeSurface) return;
   const NotificationApi = window.Notification;
   if (!NotificationApi || NotificationApi.permission !== "default") return;

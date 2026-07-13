@@ -231,6 +231,7 @@ const codexCommandCandidates = () => {
   const pathCandidates = (process.env.PATH ?? "")
     .split(path.delimiter)
     .filter(Boolean)
+    .filter((entry) => isCodexPathEntryUsableOnPlatform(entry))
     .flatMap((entry) => executableNames.map((name) => path.join(entry, name)));
   return [
     process.env.CODEX_HUB_CODEX_CLI,
@@ -241,6 +242,14 @@ const codexCommandCandidates = () => {
     ...windowsGlobalDirs.flatMap((entry) => entry ? executableNames.map((name) => path.join(entry, name)) : [])
   ].filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0);
 };
+
+// WSL 会把 Windows PATH 注入 Linux 进程。那些目录里的 npm/pnpm shim 会由
+// Linux node 执行 Windows node_modules，进而加载错误平台的 Codex 可选依赖。
+// 显式 CODEX_HUB_CODEX_CLI/CODEX_CLI_PATH 仍保留覆盖能力；这里只过滤 PATH 自动发现。
+export const isCodexPathEntryUsableOnPlatform = (
+  entry: string,
+  platform: NodeJS.Platform = process.platform
+) => platform !== "linux" || !/^\/mnt\/[a-z](?:\/|$)/i.test(entry);
 
 const needsWindowsCommandShell = (command: string) =>
   process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command);

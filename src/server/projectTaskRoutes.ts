@@ -5,6 +5,7 @@ import type { MachineHub } from "../core/machineHub.js";
 import type { CodexhubServerState } from "../core/serverState.js";
 import type { ThreadHub } from "../core/threadHub.js";
 import type { ProjectRelation, ProjectSource, StoredTask } from "../shared/projectTypes.js";
+import type { CodexHubSurface } from "../shared/surfaceTypes.js";
 import {
   projectSourceSchema,
   projectUpdateSchema,
@@ -22,7 +23,7 @@ import {
 export type ProjectTaskRoutesContext = {
   features: { tasks: boolean };
   fixedProjectPathExists: (machineId: string, projectPath: string) => boolean;
-  isVscodeWorkspaceSource: (source: ProjectSource | undefined) => boolean;
+  isEmbeddedWorkspaceSource: (source: ProjectSource | undefined) => boolean;
   localTaskView: (task: StoredTask) => TaskView;
   localTaskViews: () => TaskView[];
   machines: MachineHub;
@@ -36,7 +37,7 @@ export type ProjectTaskRoutesContext = {
   ) => ReturnType<MachineHub["listMachines"]>[number];
   runLocalTask: (taskId: string) => Promise<TaskMutationPayload>;
   state: CodexhubServerState;
-  surface: "default" | "vscode";
+  surface: CodexHubSurface;
   threads: ThreadHub;
   waitForSession: (sessionId: string) => Promise<unknown>;
 };
@@ -148,7 +149,9 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
     try {
       const machine = ctx.resolveTargetMachine(ctx.machines.listMachines(), payload.machineId);
       const fixedCatalog = machine.capabilities?.projectCatalog === "fixed";
-      const providerSeed = ctx.surface === "vscode" && machine.type === "local" && ctx.isVscodeWorkspaceSource(payload.source);
+      const providerSeed = ctx.surface !== "default"
+        && machine.type === "local"
+        && ctx.isEmbeddedWorkspaceSource(payload.source);
       if (fixedCatalog && !providerSeed && !ctx.fixedProjectPathExists(machine.machineId, payload.path)) {
         reply.code(409);
         return { error: "This machine exposes a fixed workspace project list." };

@@ -3,7 +3,7 @@ import { recordsToViews } from "../core/codexRecordView.js";
 import { collapseHistoricalToolBatches, compactToolViews } from "../shared/compactRecordViews.js";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../shared/recordTypes.js";
 import { recordsToDetailedViews } from "./detailedRecordViews.js";
-import { isVscodeSurface, vscodeWorkspacePaths } from "./appConfig.js";
+import { embeddedWorkspacePaths, isEmbeddedHostSurface, webSurface } from "./appConfig.js";
 import {
   activityStatusesFromRecords,
   activityStatusSnapshotsFromRecords,
@@ -47,7 +47,7 @@ import type {
   WebRecordView
 } from "./types.js";
 
-const currentVscodeWorkspacePaths = new Set(vscodeWorkspacePaths);
+const currentEmbeddedWorkspacePaths = new Set(embeddedWorkspacePaths);
 
 export const useAppSelectors = (state: AppState) => {
   const activeThread = useMemo(
@@ -123,8 +123,8 @@ export const useAppSelectors = (state: AppState) => {
     }));
   };
   const projectList = useMemo(
-    () => isVscodeSurface
-      ? state.projects.filter(isCurrentVscodeWorkspaceProject)
+    () => isEmbeddedHostSurface
+      ? state.projects.filter(isCurrentEmbeddedWorkspaceProject)
       : state.projects,
     [state.projects]
   );
@@ -161,7 +161,7 @@ export const useAppSelectors = (state: AppState) => {
   const projectGroups = useMemo(
     () => {
       const groups = groupProjectsByMachine(projectList, state.machines);
-      return isVscodeSurface ? groups.filter((group) => group.projects.length > 0) : groups;
+      return isEmbeddedHostSurface ? groups.filter((group) => group.projects.length > 0) : groups;
     },
     [projectList, state.machines]
   );
@@ -515,9 +515,9 @@ const sandboxPolicySelectionFromThread = (policy: ThreadSummary["sandboxPolicy"]
   return undefined;
 };
 
-const isCurrentVscodeWorkspaceProject = (project: ProjectSummary) =>
-  project.source?.kind === "vscode"
-  && (!currentVscodeWorkspacePaths.size || currentVscodeWorkspacePaths.has(project.path));
+const isCurrentEmbeddedWorkspaceProject = (project: ProjectSummary) =>
+  project.source?.kind === webSurface
+  && (!currentEmbeddedWorkspacePaths.size || currentEmbeddedWorkspacePaths.has(project.path));
 
 const registeredMachineCommand = (origin: string, token: string) => {
   const command = `codexhub server --register-to ${shellQuote(origin)}`;

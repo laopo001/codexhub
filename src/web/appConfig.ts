@@ -5,6 +5,7 @@ import type {
   ReasoningSelection,
   SandboxPolicySelection,
 } from "./types.js";
+import { isCodexHubSurface, isEmbeddedCodexHubSurface } from "../shared/surfaceTypes.js";
 
 const normalizedSearch = () => {
   const raw = window.location.search;
@@ -25,11 +26,19 @@ const uniqueTrimmedParams = (names: string[]) => {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 };
 
-export const webSurface = searchParams.get("surface") === "vscode" ? "vscode" : "default";
+const requestedSurface = searchParams.get("surface");
+export const webSurface = isCodexHubSurface(requestedSurface) ? requestedSurface : "default";
 export const isVscodeSurface = webSurface === "vscode";
+export const isTheiaSurface = webSurface === "theia";
+export const isTheiaVscodeHost = isVscodeSurface && searchParams.get("host") === "theia";
+export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
 export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ?? "";
-export const vscodeWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "workspacePath"]);
-export const storageKey = isVscodeSurface ? "codexhub-ui-state-vscode-v1" : "codexhub-ui-state-v5";
+export const embeddedWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "workspacePath"]);
+export const storageKey = isVscodeSurface
+  ? "codexhub-ui-state-vscode-v1"
+  : isTheiaSurface
+    ? "codexhub-ui-state-theia-v1"
+    : "codexhub-ui-state-v5";
 export const legacyStorageKey = "codexhub-ui-state-v4";
 export const defaultAppSettings = (): AppSettings => ({
   taskCompleteSystemNotifications: false

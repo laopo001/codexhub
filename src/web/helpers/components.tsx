@@ -3,7 +3,7 @@ import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform 
 import { Switch } from "antd";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import remarkGfm from "remark-gfm";
-import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
+import { highlightedLanguages, isEmbeddedHostSurface, languageAliases } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
 import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
@@ -553,7 +553,7 @@ export const MessageText = ({
   const handleFileLinkClick = useCallback((target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (isVscodeSurface) {
+    if (isEmbeddedHostSurface) {
       window.parent?.postMessage({
         type: "codexhub.openFile",
         path: target.fullPath,

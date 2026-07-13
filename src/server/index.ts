@@ -49,6 +49,11 @@ import {
 import type { MachineDirectoryListing } from "../shared/machineTypes.js";
 import type { MachineRegistrationProject } from "../shared/machineTypes.js";
 import type { ProjectSource, StoredTask } from "../shared/projectTypes.js";
+import {
+  isCodexHubSurface,
+  isEmbeddedCodexHubSurface,
+  type CodexHubSurface
+} from "../shared/surfaceTypes.js";
 import type { SessionCommand, SessionEventInput, SessionRegistration } from "../shared/threadTypes.js";
 import { registerProjectTaskRoutes } from "./projectTaskRoutes.js";
 import { registerThreadRoutes } from "./threadRoutes.js";
@@ -151,8 +156,8 @@ const moduleFilePath = () => {
     return "";
   }
 };
-const parseSurface = (value: string | undefined): "default" | "vscode" =>
-  value === "vscode" ? "vscode" : "default";
+const parseSurface = (value: string | undefined): CodexHubSurface =>
+  isCodexHubSurface(value) ? value : "default";
 const resolveServerFeatures = (overrides: Partial<ServerFeatureOptions> = {}): ServerFeatureOptions => ({
   localMachine: overrides.localMachine ?? localMachineEnabled(),
   ssh: overrides.ssh ?? true,
@@ -165,7 +170,7 @@ export type ServerStartOptions = {
   port?: number;
   dataDir?: string;
   staticDirectory?: string;
-  surface?: "default" | "vscode";
+  surface?: CodexHubSurface;
   authToken?: string | null;
   buildId?: string | null;
   appServerLaunch?: CodexAppServerLaunchOptions;
@@ -198,14 +203,15 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const buildId = options.buildId ?? process.env.CODEX_HUB_BUILD_ID ?? null;
   const serverInstanceId = randomUUID();
   const notificationHooks = notificationHookRunnerFromEnv(process.env);
-  const shouldPersistMachine = (machine: { type?: string }) => !(surface === "vscode" && machine.type === "local");
+  const embeddedSurface = isEmbeddedCodexHubSurface(surface);
+  const shouldPersistMachine = (machine: { type?: string }) => !(embeddedSurface && machine.type === "local");
   let threads: ThreadHub;
   const captureSessionState = () => {
     state.captureSessions({
       sessions: threads.listSessions({ includeOffline: true }),
       threads: threads.listThreads()
     }, {
-      persistMachines: surface !== "vscode"
+      persistMachines: !embeddedSurface
     });
   };
   threads = new ThreadHub(config.defaultThreadOptions, {
@@ -317,10 +323,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     } satisfies ProjectsStreamEvent;
   }
 
-  function vscodeParentRegistrationProjects(): MachineRegistrationProject[] {
-    if (surface !== "vscode" || !localMachine) return [];
+  function embeddedParentRegistrationProjects(): MachineRegistrationProject[] {
+    if (!embeddedSurface || !localMachine) return [];
     return projectSnapshot().projects
-      .filter((project) => project.machineId === localMachine?.machineId && project.source?.kind === "vscode")
+      .filter((project) => project.machineId === localMachine?.machineId && project.source?.kind === surface)
       .map((project) => ({
         path: project.path,
         source: project.source
@@ -343,7 +349,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   function registeredProjectSource(machineId: string, source: ProjectSource): ProjectSource {
-    if (source.kind !== "vscode") return source;
     return {
       ...source,
       groupId: `registered:${machineId}:${source.groupId}`
@@ -359,8 +364,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return projectSnapshot().projects.some((project) => project.machineId === machineId && project.path === projectPath);
   }
 
-  function isVscodeWorkspaceSource(source: ProjectSource | undefined) {
-    return source?.kind === "vscode";
+  function isEmbeddedWorkspaceSource(source: ProjectSource | undefined) {
+    return embeddedSurface && source?.kind === surface;
   }
 
   function publishProjects() {
@@ -528,8 +533,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       type: "registered",
       name,
       appServerLaunch,
-      capabilities: surface === "vscode" ? { projectCatalog: "fixed" } : undefined,
-      projects: vscodeParentRegistrationProjects,
+      capabilities: embeddedSurface ? { projectCatalog: "fixed" } : undefined,
+      projects: embeddedParentRegistrationProjects,
       onStatus: (status) => {
         parentRegistrationStatus = {
           status: status.status,
@@ -1017,7 +1022,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   registerProjectTaskRoutes(app, {
     features,
     fixedProjectPathExists,
-    isVscodeWorkspaceSource,
+    isEmbeddedWorkspaceSource,
     localTaskView,
     localTaskViews,
     machines,
@@ -1407,7 +1412,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       type: "local",
       name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "local",
       appServerLaunch,
-      capabilities: surface === "vscode" ? { projectCatalog: "fixed" } : undefined
+      capabilities: embeddedSurface ? { projectCatalog: "fixed" } : undefined
     });
   }
 

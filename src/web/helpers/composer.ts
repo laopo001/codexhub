@@ -1,6 +1,6 @@
 import { recordsToViews } from "../../core/codexRecordView.js";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
-import { defaultAppSettings, isVscodeSurface, legacyStorageKey, storageKey } from "../appConfig.js";
+import { defaultAppSettings, isEmbeddedHostSurface, legacyStorageKey, storageKey } from "../appConfig.js";
 import type { AppSettings, MessageDisplayMode, TextAttachment } from "../types.js";
 import { browserId, formatDate } from "./common.js";
 
@@ -466,7 +466,7 @@ export const readStoredUiState = (): {
   collapsedProjectMachineKeys?: string[];
 } | null => {
   try {
-    const fallback = isVscodeSurface ? null : localStorage.getItem(legacyStorageKey);
+    const fallback = isEmbeddedHostSurface ? null : localStorage.getItem(legacyStorageKey);
     const parsed = JSON.parse(localStorage.getItem(storageKey) ?? fallback ?? "null");
     if (!parsed || typeof parsed !== "object") return null;
     return {

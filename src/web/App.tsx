@@ -15,8 +15,9 @@ import { createThreadActions, type ThreadActions } from "./appActions/threadActi
 import "antd/dist/antd.css";
 import "./style.css";
 
-import { isVscodeSurface } from "./appConfig.js";
+import { isEmbeddedHostSurface } from "./appConfig.js";
 import { setAuthToken } from "./appHelpers.js";
+import { parseCodexHubHostIncomingMessage } from "./hostBridge.js";
 const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
   if (!textarea) return;
   textarea.style.height = "auto";
@@ -261,20 +262,20 @@ const App = () => {
     ...projectActions
   };
   React.useEffect(() => {
-    if (!isVscodeSurface) return undefined;
+    if (!isEmbeddedHostSurface) return undefined;
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== window.parent) return;
-      const record = event.data && typeof event.data === "object" && !Array.isArray(event.data)
-        ? event.data as Record<string, unknown>
-        : null;
-      if (record?.type !== "codexhub.addTextAttachment") return;
-      const text = typeof record.text === "string" ? record.text : "";
-      if (!text.trim()) return;
-      if (!activeThread?.threadId) {
-        window.alert("Open a Codex Hub thread before sending selected code from VS Code.");
+      const message = parseCodexHubHostIncomingMessage(event.data);
+      if (!message) return;
+      if (message.type === "codexhub.openThread") {
+        void threadActions.openThread(message.threadId);
         return;
       }
-      composerActions.addThreadTextAttachment(activeThread.threadId, text);
+      if (!activeThread?.threadId) {
+        window.alert("Open a Codex Hub thread before sending selected content from the IDE.");
+        return;
+      }
+      composerActions.addThreadTextAttachment(activeThread.threadId, message.text);
       window.requestAnimationFrame(() => {
         composerTextareaRef.current?.focus();
         resizeComposerTextarea(composerTextareaRef.current);
@@ -501,7 +502,7 @@ const App = () => {
     plugins,
     projectGroups,
     projectList,
-    projectScopeLocked: isVscodeSurface,
+    projectScopeLocked: isEmbeddedHostSurface,
     projectActionError,
     projectPicker,
     registeredCommand,

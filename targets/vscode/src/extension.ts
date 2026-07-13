@@ -3,10 +3,12 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import * as vscode from "vscode";
 import type { ServerHandle } from "../../../src/server/index.js";
 import { startEmbeddedServer } from "../../../src/server/embedded.js";
+import { buildWebviewBridgeScript } from "./webviewBridge.js";
 
 const viewId = "codexhub.workspaceView";
 const vscodeWorkspaceGroupId = "workspace";
 const maxSelectionAttachmentBytes = 512 * 1024;
+const isTheiaHost = /\btheia\b/i.test(`${vscode.env.appName} ${vscode.env.uriScheme}`);
 
 type VscodeCodexHubServer = {
   url: string;
@@ -143,6 +145,11 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       await this.openFileFromWebview(record);
       return;
     }
+    if (record?.type === "codexhub.notificationClicked") {
+      const threadId = stringValue(record.threadId);
+      if (threadId) await this.openThreadFromHost(threadId);
+      return;
+    }
     if (record?.type !== "codexhub.taskCompleteNotification") return;
     const notification = asRecord(record.notification);
     const title = stringValue(notification?.title) ?? "Codex task complete";
@@ -151,8 +158,29 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     const open = "Open";
     const selected = await vscode.window.showInformationMessage(text, open);
     if (selected !== open) return;
+    const threadId = stringValue(notification?.threadId);
+    if (threadId) await this.openThreadFromHost(threadId);
+    else if (this.view) this.view.show(false);
+    else await vscode.commands.executeCommand(`${viewId}.focus`);
+  }
+
+  private async openThreadFromHost(threadId: string) {
     if (this.view) this.view.show(false);
     else await vscode.commands.executeCommand(`${viewId}.focus`);
+    const view = await this.waitForView();
+    if (!view) {
+      await vscode.window.showWarningMessage("Codex Hub view is not available.");
+      return;
+    }
+    await this.renderPromise?.catch(() => undefined);
+    await delay(100);
+    const delivered = await view.webview.postMessage({
+      type: "codexhub.openThread",
+      threadId
+    });
+    if (!delivered) {
+      await vscode.window.showWarningMessage("Codex Hub could not open the completed thread.");
+    }
   }
 
   private async openFileFromWebview(record: Record<string, unknown>) {
@@ -185,10 +213,11 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       await openWorkspaceProjects(url, workspaceFolders, activeFolder.path);
       const iframeUrl = new URL("/", url);
       iframeUrl.searchParams.set("surface", "vscode");
+      if (isTheiaHost) iframeUrl.searchParams.set("host", "theia");
       iframeUrl.searchParams.set("workspacePath", activeFolder.path);
       for (const folder of workspaceFolders) iframeUrl.searchParams.append("workspaceFolder", folder.path);
       const externalIframeUri = await externalServerUri(iframeUrl.toString());
-      this.view.webview.html = iframeHtml(externalIframeUri.toString(), activeFolder.path);
+      this.view.webview.html = iframeHtml(externalIframeUri.toString(), activeFolder.path, isTheiaHost);
     } catch (error) {
       this.view.webview.html = statusHtml(`Codex Hub failed to start: ${errorText(error)}`);
     }
@@ -429,12 +458,11 @@ const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[]) => {
   return folderName ? `VSCode: ${folderName}` : "VSCode Workspace";
 };
 
-const iframeHtml = (src: string, workspacePath: string) => {
+const iframeHtml = (src: string, workspacePath: string, theiaHost: boolean) => {
   const nonce = randomNonce();
   const sourceOrigin = new URL(src).origin;
   const escapedSource = escapeHtml(src);
   const escapedOrigin = escapeHtml(sourceOrigin);
-  const scriptOrigin = JSON.stringify(sourceOrigin).replaceAll("<", "\\u003c");
   const escapedTitle = escapeHtml(`Codex Hub: ${path.basename(workspacePath) || workspacePath}`);
   return [
     "<!doctype html>",
@@ -453,32 +481,7 @@ const iframeHtml = (src: string, workspacePath: string) => {
     "<body>",
     `<iframe id="codexhubFrame" src="${escapedSource}" title="${escapedTitle}" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></iframe>`,
     `<script nonce="${nonce}">`,
-    "const vscode = acquireVsCodeApi();",
-    "const codexhubFrame = document.getElementById('codexhubFrame');",
-    `const codexhubOrigin = ${scriptOrigin};`,
-    "const pendingCodexHubMessages = [];",
-    "let codexhubFrameLoaded = false;",
-    "const postToCodexHubFrame = (data) => {",
-    "  if (!codexhubFrameLoaded) {",
-    "    pendingCodexHubMessages.push(data);",
-    "    return;",
-    "  }",
-    "  codexhubFrame.contentWindow?.postMessage(data, codexhubOrigin);",
-    "};",
-    "codexhubFrame.addEventListener('load', () => {",
-    "  codexhubFrameLoaded = true;",
-    "  while (pendingCodexHubMessages.length) postToCodexHubFrame(pendingCodexHubMessages.shift());",
-    "});",
-    "window.addEventListener('message', (event) => {",
-    "  const data = event.data;",
-    "  if (!data) return;",
-    "  if (event.source === codexhubFrame.contentWindow && event.origin === codexhubOrigin) {",
-    "    if (data.type !== 'codexhub.taskCompleteNotification' && data.type !== 'codexhub.openFile') return;",
-    "    vscode.postMessage(data);",
-    "    return;",
-    "  }",
-    "  if (data.type === 'codexhub.addTextAttachment') postToCodexHubFrame(data);",
-    "});",
+    buildWebviewBridgeScript(sourceOrigin, theiaHost),
     "</script>",
     "</body>",
     "</html>"
