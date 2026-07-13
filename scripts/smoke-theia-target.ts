@@ -5,6 +5,9 @@ import { projectSourceSchema } from "../src/shared/apiContract.js";
 import { isEmbeddedCodexHubSurface } from "../src/shared/surfaceTypes.js";
 import { parseCodexHubHostIncomingMessage } from "../src/web/hostBridge.js";
 import {
+  codexHubBrowserNotificationOptions,
+} from "../targets/theia/src/browser/codexhub-browser-notifications.js";
+import {
   CodexHubNativeNotificationServiceImpl,
   type CodexHubNativeNotificationHandle,
   type CodexHubNativeNotificationRuntime,
@@ -27,6 +30,7 @@ let failedListener: ((error: string) => void) | null = null;
 let notificationShown = false;
 let notificationClosed = false;
 let resolvedWindowId = 0;
+let notificationTimeoutType = "";
 const windowActions: string[] = [];
 const openedThreads: string[] = [];
 const connectionCloseListeners: Array<() => void> = [];
@@ -38,7 +42,10 @@ const handle: CodexHubNativeNotificationHandle = {
   show: () => { notificationShown = true; },
 };
 const runtime: CodexHubNativeNotificationRuntime = {
-  create: () => handle,
+  create: (options) => {
+    notificationTimeoutType = options.timeoutType;
+    return handle;
+  },
   isSupported: () => true,
   resolveWindow: (windowId) => {
     resolvedWindowId = windowId;
@@ -65,6 +72,12 @@ assert.equal(await service.show({
 }), true);
 assert.equal(resolvedWindowId, 42);
 assert.equal(notificationShown, true);
+assert.equal(notificationTimeoutType, "never");
+assert.equal(codexHubBrowserNotificationOptions({
+  title: "Done",
+  body: "Finished",
+  threadId: "thread-42",
+}).requireInteraction, true);
 assert.ok(clickListener);
 (clickListener as () => void)();
 assert.deepEqual(windowActions, ["restore", "show", "focus"]);

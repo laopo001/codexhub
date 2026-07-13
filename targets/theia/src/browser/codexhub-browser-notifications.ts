@@ -20,10 +20,10 @@ export class CodexHubBrowserNotificationService implements CodexHubHostNotificat
 
   async show(notification: CodexHubTaskCompleteNotification): Promise<boolean> {
     if (!await this.requestPermission()) return false;
-    const browserNotification = new window.Notification(notification.title, {
-      body: notification.body,
-      tag: `codexhub-task-complete:${notification.threadId}`,
-    });
+    const browserNotification = new window.Notification(
+      notification.title,
+      codexHubBrowserNotificationOptions(notification),
+    );
     browserNotification.onclick = () => {
       window.focus();
       void this.openThread(notification.threadId);
@@ -37,3 +37,11 @@ export class CodexHubBrowserNotificationService implements CodexHubHostNotificat
     this.openThreadEmitter.fire(threadId);
   }
 }
+
+export const codexHubBrowserNotificationOptions = (
+  notification: CodexHubTaskCompleteNotification,
+): NotificationOptions => ({
+  body: notification.body,
+  tag: `codexhub-task-complete:${notification.threadId}`,
+  requireInteraction: true,
+});

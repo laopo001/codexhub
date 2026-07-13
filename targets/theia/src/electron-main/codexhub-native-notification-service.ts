@@ -29,6 +29,7 @@ export type CodexHubNativeNotificationRuntime = {
     groupTitle: string;
     title: string;
     body: string;
+    timeoutType: "never";
   }): CodexHubNativeNotificationHandle;
   isSupported(): boolean;
   resolveWindow(windowId: number): CodexHubNotificationWindow | null;
@@ -65,6 +66,7 @@ export class CodexHubNativeNotificationServiceImpl implements CodexHubNativeNoti
       groupTitle: "Codex Hub",
       title: input.notification.title,
       body: input.notification.body,
+      timeoutType: "never",
     });
     this.activeNotifications.add(notification);
     const release = () => this.activeNotifications.delete(notification);

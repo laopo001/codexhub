@@ -105,6 +105,10 @@
     padding: 12px;
   }
 
+  .threadPickerModal {
+    max-height: min(600px, calc(100svh - 16px));
+  }
+
   .threadPickerList {
     min-height: 144px;
   }

@@ -84,6 +84,7 @@ theia.emitFromFrame({
 });
 assert.equal(theia.notifications.length, 1);
 assert.equal(theia.notifications[0]?.title, "Done");
+assert.equal(theia.notifications[0]?.options.requireInteraction, true);
 assert.deepEqual(theia.hostMessages, []);
 theia.notifications[0]?.onclick?.();
 assert.equal(theia.focused(), true);

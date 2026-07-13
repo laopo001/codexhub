@@ -379,14 +379,18 @@ pnpm run install:vscode
 pnpm run install:theia
 ```
 
-默认目标是 `C:\Users\0laop\AppData\Local\Programs\TheiaIDE\TheiaIDE.exe`。命令会构建同一份 `dist-vscode/codexhub.vsix`，为 Windows frontend 和当前 WSL remote backend 各放置一份 user VSIX，替换同版本的旧部署，再调用 Theia 官方的 `--install-plugin` 参数。已有 Theia 窗口通常会收到安装请求；若 WSL remote backend 没有自动重新加载，断开并重新连接该 WSL 窗口（或完整重启 Theia）即可。
+Theia IDE 与 VSCode 可以使用同一份 VSIX。Theia 1.73.x 后端支持 `--install-plugin`，并把 `--install-extension` 作为别名，但没有 VSCode `--force` 那样的同版本替换参数。`install:theia` 会构建 `dist-vscode/codexhub.vsix`，把完整 VSIX 结构原子部署到 Windows frontend 和当前 WSL remote backend；复制或校验失败时旧 deployment 不会被删除。安装器最后会分别让 Windows 与 WSL 的 Theia 后端执行插件列表检查，只有两边都实际列出对应的 `dadigua.codexhub@<version>` 才算成功。命令结束后重新连接 WSL 窗口即可激活新版本。
 
-也可以覆盖安装位置：
+也可以覆盖 user config 位置：
 
 ```bash
-pnpm run install:theia -- 'C:\path\to\TheiaIDE'
-CODEX_HUB_THEIA_IDE_DIR=/mnt/c/path/to/TheiaIDE pnpm run install:theia
+CODEX_HUB_THEIA_WSL_CONFIG_DIR=/path/to/.theia-ide pnpm run install:theia
+CODEX_HUB_THEIA_WINDOWS_CONFIG_DIR='C:\path\to\.theia-ide' pnpm run install:theia
+CODEX_HUB_THEIA_IDE_DIR='C:\path\to\TheiaIDE' pnpm run install:theia
+CODEX_HUB_THEIA_WSL_RUNTIME_DIR=/path/to/theia-remote-runtime pnpm run install:theia
 ```
+
+Theia 官方的交互式安装入口仍然可用：在命令面板运行 `Extensions: Install from VSIX...`，选择命令生成的 `D:\Downloads\codexhub-theia.vsix`。自动安装器不会把“VSIX 已复制”误当成安装完成，也不会在新部署就绪前删除现有 CodexHub。
 
 仓库仍保留 `@dadigua/codexhub-theia` 编译期 target，供需要深度定制 Theia 产品本身的场景使用：
 
