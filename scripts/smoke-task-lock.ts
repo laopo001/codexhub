@@ -2,6 +2,7 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { goalStatusControl } from "../src/web/helpers/core.js";
 
 type MachineSummary = {
   machineId: string;
@@ -112,6 +113,7 @@ type SessionCommand = {
 };
 
 const main = async () => {
+  assertGoalStatusControls();
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-task-lock."));
   const dataDir = path.join(root, "state");
   const projectDir = path.join(root, "project");
@@ -831,6 +833,24 @@ const main = async () => {
     fake.stop();
     await server.stop();
   }
+};
+
+const assertGoalStatusControls = () => {
+  const active = goalStatusControl("active");
+  if (active?.label !== "暂停目标" || active.icon !== "Ⅱ" || active.nextStatus !== "paused") {
+    throw new Error(`active goal control mismatch: ${JSON.stringify(active)}`);
+  }
+  for (const status of ["paused", "blocked", "usageLimited"] as const) {
+    const control = goalStatusControl(status);
+    if (control?.label !== "继续目标" || control.icon !== "▶" || control.nextStatus !== "active") {
+      throw new Error(`${status} goal control mismatch: ${JSON.stringify(control)}`);
+    }
+  }
+  for (const status of ["budgetLimited", "complete"] as const) {
+    const control = goalStatusControl(status);
+    if (control !== null) throw new Error(`${status} goal control should be hidden: ${JSON.stringify(control)}`);
+  }
+  console.log("goal status controls ok");
 };
 
 class FakeMachine {

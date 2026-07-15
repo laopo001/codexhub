@@ -25,6 +25,7 @@ import {
   EmptyMessages,
   formatGoalAge,
   goalStatusClass,
+  goalStatusControl,
   goalStatusLabel,
   MessageCard,
 } from "./appHelpers.js";
@@ -251,6 +252,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   } = viewModel;
   const canAddThreadForProject = Boolean(activeRuntimeSession?.online || selectedProject?.machineOnline);
   const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
+  const activeGoalStatusControl = activeGoal ? goalStatusControl(activeGoal.status) : null;
   const activeAttachmentCount = activeThread
     ? activeThread.textAttachments.length + activeThread.imageAttachments.length
     : 0;
@@ -625,17 +627,17 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                               >
                                 ✎
                               </button>
-                              {activeGoal.status !== "complete" ? (
+                              {activeGoalStatusControl ? (
                                 <button
                                   type="button"
                                   className="goalIconButton"
-                                  title={activeGoal.status === "paused" ? "继续目标" : "暂停目标"}
-                                  aria-label={activeGoal.status === "paused" ? "继续目标" : "暂停目标"}
+                                  title={activeGoalStatusControl.label}
+                                  aria-label={activeGoalStatusControl.label}
                                   onClick={() => void updateThreadGoal(activeThread.threadId, {
-                                    status: activeGoal.status === "paused" ? "active" : "paused"
+                                    status: activeGoalStatusControl.nextStatus
                                   })}
                                 >
-                                  {activeGoal.status === "paused" ? "▶" : "Ⅱ"}
+                                  {activeGoalStatusControl.icon}
                                 </button>
                               ) : null}
                               <button

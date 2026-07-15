@@ -1,5 +1,5 @@
 import { asRecord } from "../../shared/recordTypes.js";
-import type { ModelCatalogItem, StoredMachine } from "../../shared/apiContract.js";
+import type { ModelCatalogItem, StoredMachine, ThreadGoalStatus } from "../../shared/apiContract.js";
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
 import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../core/taskCron.js";
 import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
@@ -821,6 +821,16 @@ export const goalStatusClass = (status: string) => {
   if (status === "complete") return "complete";
   if (status === "blocked" || status === "usageLimited" || status === "budgetLimited") return "blocked";
   return "active";
+};
+
+export const goalStatusControl = (status: ThreadGoalStatus) => {
+  if (status === "active") {
+    return { label: "暂停目标", icon: "Ⅱ", nextStatus: "paused" as const };
+  }
+  if (status === "paused" || status === "blocked" || status === "usageLimited") {
+    return { label: "继续目标", icon: "▶", nextStatus: "active" as const };
+  }
+  return null;
 };
 
 export const threadCandidateTitle = (candidate: CodexThreadCandidate) =>
