@@ -375,6 +375,25 @@ pnpm run install:vscode
 
 通知点击后会先激活发出通知的 Theia 窗口和 Codex Hub view，再把 `threadId` 发送给内嵌 Web UI，跳转到对应 thread。如果当前 Theia 不提供 Web Notification API 或权限没有授予，会自动退回 IDE 自带的 `showInformationMessage`。
 
+发布后的 CodexHub CLI 会自带同版本的 Theia-compatible VSIX。在目标 extension host 的终端执行：
+
+```bash
+codexhub install-theia
+```
+
+命令会把插件原子部署到 `~/.theia-ide/deployedPlugins/dadigua.codexhub@<version>`；同版本重装也会安全替换，部署校验失败时保留旧版本。Theia 连接的是 SSH/WSL 远程工作区时，应在该远程工作区的终端执行，命令会自然安装到远端 extension host。完成后断开并重新连接 Theia 工作区。
+
+非默认配置目录或源码 checkout 中的自定义 VSIX 可以显式指定：
+
+```bash
+codexhub install-theia --config-dir ~/.theia-ide
+codexhub install-theia --vsix /path/to/codexhub.vsix
+```
+
+在源码仓库里直接运行 CLI 前，先用 `pnpm run package:vscode` 生成 `dist-vscode/codexhub.vsix`。
+
+仓库开发环境仍保留 Windows frontend + 当前 WSL backend 的双端安装器：
+
 ```bash
 pnpm run install:theia
 ```

@@ -39,6 +39,11 @@ type SshConnectCommandOptions = {
   remotePort?: string;
 };
 
+type InstallTheiaCommandOptions = {
+  configDir?: string;
+  vsix?: string;
+};
+
 type TaskCreateCommandOptions = {
   name: string;
   schedule: string;
@@ -216,6 +221,25 @@ sshCommand
     const connection = payload.connection;
     if (!connection) throw new Error("SSH connect did not return a connection.");
     console.log(`SSH connection ${connection.status}: ${connection.host} (${connection.connectionId}, remote port ${connection.remotePort})`);
+  });
+
+program
+  .command("install-theia")
+  .description("Install the bundled CodexHub extension into Theia on this machine")
+  .option("--vsix <path>", "CodexHub VSIX to install (defaults to the VSIX bundled with this CLI)")
+  .option("--config-dir <path>", "Theia config directory (defaults to ~/.theia-ide)")
+  .action(async (options: InstallTheiaCommandOptions = {}) => {
+    const { installTheiaExtension } = await import("../core/theiaExtensionInstaller.js");
+    const result = await installTheiaExtension({
+      configDir: options.configDir,
+      vsixPath: options.vsix,
+    });
+    console.log(`Installed Theia extension: ${result.extensionId}@${result.version}`);
+    console.log(`Deployment: ${result.deploymentPath}`);
+    if (result.replacedExisting) console.log("Replaced the existing deployment atomically.");
+    if (result.removedStaleDropIn) console.log(`Removed stale VSIX drop-in: ${result.removedStaleDropIn}`);
+    if (result.retainedBackupPath) console.warn(`Warning: retained old deployment backup: ${result.retainedBackupPath}`);
+    console.log("Reconnect the Theia workspace to activate the extension.");
   });
 
 registerRemovedTopLevelCommand("list", "codexhub list was removed. Use the Web UI, /api/projects, and /api/sessions for project and runtime state.");

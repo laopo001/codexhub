@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { access, copyFile, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { deployTheiaExtensionAtomically } from "./theia-extension-deployment.js";
+import { deployTheiaExtensionAtomically } from "../src/core/theiaExtensionDeployment.js";
 
 type ExtensionManifest = {
   name?: string;
