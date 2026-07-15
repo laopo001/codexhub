@@ -34,11 +34,8 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
   useEffect(() => {
     void actions.initialize();
     return () => {
-      state.realtimeSocket.current?.close();
-      if (state.controlReconnectTimer.current !== null) {
-        window.clearTimeout(state.controlReconnectTimer.current);
-        state.controlReconnectTimer.current = null;
-      }
+      state.realtimeClient.current?.disconnect();
+      state.realtimeClient.current = null;
       state.realtimeThreadSubscriptions.current.clear();
     };
   }, []);

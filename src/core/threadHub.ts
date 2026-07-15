@@ -2,16 +2,36 @@ import { randomUUID } from "node:crypto";
 import { recordsToViews } from "./codexRecordView.js";
 import {
   emptyThreadUsage,
-  fiveHourRateLimitWindowMinutes,
   rateLimitUsageForWindowMinutes,
   sevenDayRateLimitWindowMinutes,
   threadRateLimitsFromValue,
   threadUsageFromRecords
 } from "./threadUsage.js";
+import { localCommandMessage, parseLocalSlashCommand } from "./threadLocalCommands.js";
+import {
+  appServerGoalUpdate,
+  formatPercent,
+  formatThreadGoalMessage,
+  goalRunPolicyStatusCanRun,
+  goalUpdateCanStartRunPolicy,
+  goalUpdateFromInput,
+  hasThreadGoalPatch,
+  normalizeThreadGoalRunPolicy,
+  threadGoalRecordMatchesThread,
+  threadGoalsEqual,
+  threadGoalThreadId,
+  threadGoalTimestamp,
+  weeklyGoalWrapUpObjective
+} from "./threadGoalPolicy.js";
+import {
+  clampSessionCommandCursor as clampCommandCursor,
+  enqueueSessionCommand as enqueueCommand,
+  waitForSessionCommands
+} from "./sessionCommandQueue.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import { turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
-import type { ThreadOptions, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "../shared/usageTypes.js";
+import type { ThreadOptions, ThreadRateLimits, ThreadUsage } from "../shared/usageTypes.js";
 import type {
   InternalSessionRegistration,
   PendingCommand,
@@ -59,7 +79,6 @@ import type {
   SessionSummary,
   SessionThreadCandidatesResult,
   ThreadDetail,
-  ThreadGoalRunPolicy,
   ThreadGoalStatus,
   ThreadGoalUpdate,
   ThreadRunOptions,
@@ -241,32 +260,11 @@ export class ThreadHub {
   }
 
   async waitSessionCommands(sessionId: string, after: number, timeoutMs = 25000) {
-    const session = this.sessions.get(sessionId);
-    if (!session) return { sessionId, cursor: after, commands: [] };
-    if (sessionCommandsAfter(session, after).length === 0) {
-      await new Promise<void>((resolve) => {
-        let timer: NodeJS.Timeout;
-        const waiter = () => {
-          clearTimeout(timer);
-          session.waiters.delete(waiter);
-          resolve();
-        };
-        timer = setTimeout(waiter, timeoutMs);
-        session.waiters.add(waiter);
-      });
-    }
-    const commands = sessionCommandsAfter(session, after);
-    return {
-      sessionId,
-      cursor: commands.at(-1)?.seq ?? after,
-      commands
-    };
+    return waitForSessionCommands(this.sessions.get(sessionId), sessionId, after, timeoutMs);
   }
 
   clampSessionCommandCursor(sessionId: string, requestedCursor: number) {
-    const session = this.sessions.get(sessionId);
-    const maxCursor = session?.commands.at(-1)?.seq ?? 0;
-    return Math.min(requestedCursor, maxCursor);
+    return clampCommandCursor(this.sessions.get(sessionId), requestedCursor);
   }
 
   applySessionEvent(sessionId: string, input: SessionEventInput) {
@@ -773,7 +771,13 @@ export class ThreadHub {
     this.appendUserInputRecord(thread, input);
     this.appendHubRecord(thread, "event_msg", {
       type: "agent_message",
-      message: this.localCommandMessage(thread, parsed.command, parsed.args),
+      message: localCommandMessage(
+        thread,
+        this.threadSessionSummary(thread),
+        this.threadAccountRateLimits(thread),
+        parsed.command,
+        parsed.args
+      ),
       phase: "final_answer"
     });
     return { handled: true, command: parsed.command };
@@ -1043,14 +1047,7 @@ export class ThreadHub {
   private enqueueSessionCommand(sessionId: string, command: Omit<SessionCommand, "seq">) {
     const session = this.requireSession(sessionId);
     // 这里的 command 只入队到 session；真正执行发生在 machine/session bridge。
-    const next: SessionCommand = {
-      ...command,
-      seq: (session.commands.at(-1)?.seq ?? 0) + 1
-    };
-    session.commands.push(next);
-    if (session.commands.length > 500) session.commands.splice(0, session.commands.length - 500);
-    for (const waiter of [...session.waiters]) waiter();
-    return next;
+    return enqueueCommand(session, command);
   }
 
   private waitForCommand<T>(
@@ -2187,20 +2184,6 @@ export class ThreadHub {
     return replacement?.accountRateLimits ?? session?.accountRateLimits ?? null;
   }
 
-  private localCommandMessage(thread: ThreadState, command: string, args: string[]) {
-    if (command === "status") {
-      return threadStatusMessage(thread, this.threadSessionSummary(thread), this.threadAccountRateLimits(thread));
-    }
-    if (command === "help") return slashHelpMessage();
-    if (command === "model") return modelCommandMessage(thread);
-    if (command === "fast") return fastCommandMessage(thread, args);
-    return [
-      `Unsupported slash command: /${command}`,
-      "",
-      "Codex slash commands are local UI commands. codexhub handles only the supported commands listed below and does not forward unsupported slash commands as user turns.",
-      slashHelpMessage()
-    ].join("\n");
-  }
 }
 
 const threadSessionSummary = (session: SessionState): ThreadSessionSummary => ({
@@ -2225,9 +2208,6 @@ const threadSummarySnapshotKey = (thread: ThreadSummary) => ({
     lastSeenAt: undefined
   }
 });
-
-const sessionCommandsAfter = (session: SessionState, after: number) =>
-  session.commands.filter((command) => command.seq > after);
 
 const threadIdFromAppServerMessage = (message: Record<string, unknown>) => {
   const params = asRecord(message.params);
@@ -2300,311 +2280,12 @@ const appServerThreadTitle = (thread: Record<string, unknown>) => {
   return preview || undefined;
 };
 
-const goalUpdateFromInput = (input: ProxyInput, options: ThreadRunOptions): ThreadGoalUpdate => {
-  const configuredObjective = typeof options.goalObjective === "string" ? options.goalObjective.trim() : "";
-  const objective = configuredObjective || summarizeInput(input).trim();
-  return {
-    objective: objective ? objective.slice(0, 4000) : "Pursue the attached user request.",
-    status: "active",
-    ...(hasOwn(options, "goalTokenBudget") ? { tokenBudget: options.goalTokenBudget } : {})
-  };
-};
-
-const appServerGoalUpdate = (goal: ThreadGoalUpdate): ThreadGoalUpdate => ({
-  ...(hasOwn(goal, "objective") ? { objective: goal.objective } : {}),
-  ...(hasOwn(goal, "status") ? { status: goal.status } : {}),
-  ...(hasOwn(goal, "tokenBudget") ? { tokenBudget: goal.tokenBudget } : {})
-});
-
-const hasThreadGoalPatch = (goal: ThreadGoalUpdate) =>
-  hasOwn(goal, "objective") || hasOwn(goal, "status") || hasOwn(goal, "tokenBudget");
-
-const goalUpdateCanStartRunPolicy = (goal: ThreadGoalUpdate) =>
-  (!hasOwn(goal, "status") || goal.status === "active")
-  && (hasOwn(goal, "runPolicy") || hasOwn(goal, "objective") || goal.status === "active");
-
-const goalRunPolicyStatusCanRun = (status: string | null | undefined, allowComplete = false) =>
-  status === "active" || (allowComplete && status === "complete");
-
-const normalizeThreadGoalRunPolicy = (policy: ThreadGoalUpdate["runPolicy"]): ThreadGoalRunPolicy | null => {
-  if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return null;
-  if (
-    typeof policy.targetRemainingPercent !== "number"
-    || !Number.isFinite(policy.targetRemainingPercent)
-    || policy.targetRemainingPercent < 0
-    || policy.targetRemainingPercent >= 100
-  ) return null;
-  return {
-    type: "consumeUntilWeeklyRemainingAtOrBelow",
-    targetRemainingPercent: policy.targetRemainingPercent
-  };
-};
-
-const weeklyGoalWrapUpObjective = "收尾工作";
-
-const formatPercent = (value: number) =>
-  Number.isInteger(value) ? `${value}%` : `${value.toFixed(1)}%`;
-
 const imageUrls = (input: ProxyInput) => {
   if (typeof input === "string") return [];
   return input
     .filter((item) => item.type === "image")
     .map((item) => item.url);
 };
-
-const parseLocalSlashCommand = (input: ProxyInput) => {
-  if (typeof input !== "string") return null;
-  const trimmed = input.trim();
-  const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+(.*)|$)/.exec(trimmed);
-  if (!match) return null;
-  return {
-    command: match[1].toLowerCase(),
-    args: (match[2] ?? "").trim().split(/\s+/).filter(Boolean)
-  };
-};
-
-const threadStatusMessage = (
-  thread: ThreadState,
-  session: ThreadSessionSummary,
-  accountRateLimits: ThreadRateLimits | null
-) => [
-  "## Codex Hub Status",
-  "",
-  "**Thread**",
-  `- ID: ${markdownCode(thread.threadId)}`,
-  `- Folder: ${markdownCode(thread.workingDirectory)}`,
-  `- State: ${markdownCode(thread.running ? "running" : "idle")}`,
-  `- Records: ${thread.records.length}`,
-  `- Updated: ${markdownCode(thread.updatedAt)}`,
-  "",
-  "**Runtime**",
-  `- Session: ${markdownCode(formatSession(session))}`,
-  `- Model: ${markdownCode(formatModel(thread.threadOptions))}`,
-  `- Reasoning: ${markdownCode(thread.threadOptions.modelReasoningEffort ?? "auto")}`,
-  `- Service tier: ${markdownCode(formatServiceTier(thread.threadOptions))}`,
-  "",
-  "**Policy**",
-  `- Approval: ${markdownCode(formatApprovalPolicy(thread.threadOptions))}`,
-  `- Sandbox: ${markdownCode(formatSandboxPolicy(thread.threadOptions))}`,
-  "",
-  "**Usage**",
-  ...formatStatusUsage(thread, accountRateLimits)
-].join("\n");
-
-const modelCommandMessage = (thread: ThreadState) => [
-  "Model control",
-  `current model: ${formatModel(thread.threadOptions)}`,
-  `current reasoning: ${thread.threadOptions.modelReasoningEffort ?? "auto"}`,
-  `current service tier: ${formatServiceTier(thread.threadOptions)}`,
-  "",
-  "In Web, use the Model selector. The selected model and reasoning are sent with the next Web turn.",
-  "For API, Telegram, task, and session turns, pass model options with the next turn request."
-].join("\n");
-
-const fastCommandMessage = (thread: ThreadState, args: string[]) => {
-  const action = (args[0] ?? "status").toLowerCase();
-  if (action === "status") {
-    return [
-      "Fast mode",
-      `current service tier: ${formatServiceTier(thread.threadOptions)}`,
-      "",
-      "Use /fast on to request the app-server Fast service tier for subsequent turns.",
-      "Use /fast off to clear the explicit service tier and return to the configured default."
-    ].join("\n");
-  }
-  if (action === "on") {
-    thread.threadOptions = { ...thread.threadOptions, serviceTier: fastServiceTier };
-    return [
-      "Fast mode enabled",
-      `service tier: ${fastServiceTier}`,
-      "",
-      "Subsequent turns on this thread will request the app-server Fast service tier."
-    ].join("\n");
-  }
-  if (action === "off") {
-    thread.threadOptions = { ...thread.threadOptions };
-    delete thread.threadOptions.serviceTier;
-    return [
-      "Fast mode disabled",
-      "service tier: auto",
-      "",
-      "Subsequent turns on this thread will use the configured default service tier."
-    ].join("\n");
-  }
-  return [
-    `Unsupported /fast argument: ${action}`,
-    "",
-    "Usage: /fast on | /fast off | /fast status"
-  ].join("\n");
-};
-
-const slashHelpMessage = () => [
-  "Supported codexhub slash commands:",
-  "/status - show this thread session status",
-  "/model - explain model control",
-  "/fast on|off|status - toggle or inspect app-server Fast service tier",
-  "/help - show supported proxy commands"
-].join("\n");
-
-const formatModel = (options: ThreadOptions) => options.model ?? "auto";
-
-const fastServiceTier = "priority";
-
-const formatServiceTier = (options: ThreadOptions) => options.serviceTier ?? "auto";
-
-const formatApprovalPolicy = (options: ThreadOptions) => options.approvalPolicy ?? "auto";
-
-const formatSandboxPolicy = (options: ThreadOptions) => {
-  const policy = options.sandboxPolicy;
-  if (!policy) return "auto";
-  if (policy.type === "dangerFullAccess") return "danger-full-access";
-  if (policy.type === "readOnly") return `read-only${policy.networkAccess ? " + network" : ""}`;
-  if (policy.type === "workspaceWrite") return `workspace-write${policy.networkAccess ? " + network" : ""}`;
-  return `external-sandbox:${policy.networkAccess}`;
-};
-
-const formatThreadGoalMessage = (goal: Record<string, unknown> | null) => {
-  const status = typeof goal?.status === "string" ? goal.status : "active";
-  const objective = typeof goal?.objective === "string" && goal.objective.trim()
-    ? goal.objective.trim()
-    : "Untitled goal";
-  const tokenBudget = numberValue(goal?.tokenBudget) ?? numberValue(goal?.token_budget);
-  const budget = tokenBudget == null ? "" : ` (budget ${tokenBudget} tokens)`;
-  return `Goal ${status}: ${objective}${budget}`;
-};
-
-const threadGoalThreadId = (
-  payload: Record<string, unknown> | null,
-  goal: Record<string, unknown> | null
-) =>
-  stringValue(payload?.threadId)
-  ?? stringValue(payload?.thread_id)
-  ?? stringValue(goal?.threadId)
-  ?? stringValue(goal?.thread_id);
-
-const threadGoalRecordMatchesThread = (
-  payload: Record<string, unknown> | null,
-  goal: Record<string, unknown> | null,
-  threadId: string
-) => {
-  const payloadThreadId = stringValue(payload?.threadId) ?? stringValue(payload?.thread_id);
-  const goalThreadId = stringValue(goal?.threadId) ?? stringValue(goal?.thread_id);
-  return payloadThreadId === threadId || goalThreadId === threadId || (!payloadThreadId && !goalThreadId);
-};
-
-const threadGoalsEqual = (left: Record<string, unknown> | null, right: Record<string, unknown> | null) => {
-  if (!left || !right) return false;
-  return normalizedGoalObjective(left) === normalizedGoalObjective(right)
-    && normalizedGoalStatus(left) === normalizedGoalStatus(right)
-    && normalizedGoalTokenBudget(left) === normalizedGoalTokenBudget(right);
-};
-
-const normalizedGoalObjective = (goal: Record<string, unknown>) =>
-  typeof goal.objective === "string" ? goal.objective.trim() : "";
-
-const normalizedGoalStatus = (goal: Record<string, unknown>) =>
-  typeof goal.status === "string" && goal.status ? goal.status : "active";
-
-const normalizedGoalTokenBudget = (goal: Record<string, unknown>) =>
-  numberValue(goal.tokenBudget) ?? numberValue(goal.token_budget) ?? null;
-
-const threadGoalTimestamp = (payload: Record<string, unknown>, goal: Record<string, unknown> | null) =>
-  timestampFromEpochOrIso(payload.timestamp, "millis")
-  ?? timestampFromEpochOrIso(payload.createdAt ?? payload.created_at, "seconds")
-  ?? timestampFromEpochOrIso(payload.updatedAt ?? payload.updated_at, "seconds")
-  ?? timestampFromEpochOrIso(goal?.updatedAt ?? goal?.updated_at, "seconds")
-  ?? timestampFromEpochOrIso(goal?.createdAt ?? goal?.created_at, "seconds")
-  ?? new Date().toISOString();
-
-const timestampFromEpochOrIso = (value: unknown, numericUnit: "millis" | "seconds") => {
-  if (typeof value === "string" && value) {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  const millis = numericUnit === "millis" ? value : value * 1000;
-  return new Date(millis).toISOString();
-};
-
-const formatSession = (summary: ThreadSessionSummary) => {
-  const state = summary.runnable ? "runnable" : summary.online ? "online" : "offline";
-  const session = summary.sessionId ? ` session:${summary.name ?? summary.sessionId.slice(0, 8)}` : "";
-  return `${state}${session}`;
-};
-
-const formatStatusUsage = (thread: ThreadState, accountRateLimits: ThreadRateLimits | null) => {
-  const usage = thread.threadUsage ?? emptyThreadUsage();
-  const fiveHourRateLimit = rateLimitUsageForWindowMinutes(usage, fiveHourRateLimitWindowMinutes)
-    ?? rateLimitUsageForWindowMinutes(accountRateLimits, fiveHourRateLimitWindowMinutes);
-  const sevenDayRateLimit = rateLimitUsageForWindowMinutes(usage, sevenDayRateLimitWindowMinutes)
-    ?? rateLimitUsageForWindowMinutes(accountRateLimits, sevenDayRateLimitWindowMinutes);
-  const observedAt = usage.observedAt ?? accountRateLimits?.observedAt ?? null;
-  return [
-    `- Tokens: ${markdownCode(formatUsage(thread.lastUsage))}`,
-    `- Context: ${markdownCode(formatContextUsage(usage))}`,
-    `- 5h limit: ${markdownCode(formatRateLimitUsage(fiveHourRateLimit))}`,
-    `- 7d limit: ${markdownCode(formatRateLimitUsage(sevenDayRateLimit))}`,
-    `- Observed: ${markdownCode(observedAt ?? "n/a")}`
-  ];
-};
-
-const formatUsage = (usage: Usage | undefined) => {
-  const record = asRecord(usage);
-  if (!record) return "n/a";
-  const total = numberValue(record.total_tokens) ?? numberValue(record.totalTokens);
-  const input = numberValue(record.input_tokens) ?? numberValue(record.inputTokens);
-  const cachedInput = numberValue(record.cached_input_tokens) ?? numberValue(record.cachedInputTokens);
-  const output = numberValue(record.output_tokens) ?? numberValue(record.outputTokens);
-  const reasoningOutput = numberValue(record.reasoning_output_tokens) ?? numberValue(record.reasoningOutputTokens);
-  if (total == null && input == null && cachedInput == null && output == null && reasoningOutput == null) return "n/a";
-  return [
-    total == null ? null : `total=${total}`,
-    input == null ? null : `input=${input}`,
-    cachedInput == null ? null : `cached_input=${cachedInput}`,
-    output == null ? null : `output=${output}`,
-    reasoningOutput == null ? null : `reasoning_output=${reasoningOutput}`
-  ].filter(Boolean).join(", ");
-};
-
-const formatContextUsage = (usage: ThreadUsage) => {
-  const context = usage.context;
-  if (!context) return "n/a";
-  const usedPercent = context.windowTokens > 0
-    ? (context.usedTokens / context.windowTokens) * 100
-    : 0;
-  const remainingTokens = Math.max(0, context.windowTokens - context.usedTokens);
-  return [
-    `${context.usedTokens}/${context.windowTokens} tokens`,
-    `${formatPercent(usedPercent)} used`,
-    `${remainingTokens} remaining`
-  ].join(", ");
-};
-
-const formatRateLimitUsage = (usage: ThreadRateLimitUsage | null) => {
-  if (!usage) return "n/a";
-  const remainingPercent = Math.max(0, 100 - usage.usedPercent);
-  return [
-    `${formatPercent(usage.usedPercent)} used`,
-    `${formatPercent(remainingPercent)} remaining`,
-    `resets ${formatRateLimitReset(usage.resetsAt)}`
-  ].join(", ");
-};
-
-const formatRateLimitReset = (value: number) => {
-  const millis = value > 10_000_000_000 ? value : value * 1000;
-  return Number.isFinite(millis) ? new Date(millis).toISOString() : "n/a";
-};
-
-const markdownCode = (value: string) => {
-  const longestBacktickRun = (value.match(/`+/g) ?? []).reduce((max, run) => Math.max(max, run.length), 0);
-  const fence = "`".repeat(longestBacktickRun + 1);
-  const padding = value.startsWith("`") || value.endsWith("`") ? " " : "";
-  return `${fence}${padding}${value}${padding}${fence}`;
-};
-
-const numberValue = (value: unknown) => typeof value === "number" ? value : undefined;
-
-const stringValue = (value: unknown) => typeof value === "string" ? value : undefined;
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 

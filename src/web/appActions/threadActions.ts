@@ -31,6 +31,7 @@ import type {
   ThreadDetail,
   ThreadRenameDialogState,
 } from "../types.js";
+import type { OpenThreadAction } from "../openThreadReducer.js";
 
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
@@ -57,7 +58,7 @@ type ThreadActionsContext = {
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
-  setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
+  dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
   setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
 
@@ -72,24 +73,6 @@ export type ThreadActionsDependencies = {
 type ThreadGoalUpdateOptions = {
   dialog?: boolean;
 };
-
-const openThreadStateFromDetail = (
-  thread: ThreadDetail,
-  existing?: OpenThreadState
-): OpenThreadState => ({
-  ...thread,
-  composerMode: existing?.composerMode ?? "chat",
-  modelDraft: existing?.modelDraft ?? thread.model ?? "auto",
-  reasoningDraft: existing?.reasoningDraft ?? thread.modelReasoningEffort ?? "auto",
-  serviceTierDraft: existing?.serviceTierDraft ?? serviceTierDraftFromThread(thread.serviceTier),
-  approvalPolicyDraft: existing?.approvalPolicyDraft ?? "auto",
-  sandboxPolicyDraft: existing?.sandboxPolicyDraft ?? "auto",
-  imageAttachments: existing?.imageAttachments ?? [],
-  textAttachments: existing?.textAttachments ?? []
-});
-
-const serviceTierDraftFromThread = (serviceTier: string | null | undefined) =>
-  serviceTier && serviceTier !== "default" ? serviceTier : "auto";
 
 export type ThreadActions = {
   openThread: (threadId: string) => Promise<void>;
@@ -145,13 +128,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       ctx.setSessionList((current) => patchSessionsThread(current, thread));
       ctx.setProjects((current) => patchProjectsThread(current, thread));
       ctx.notificationRecordsByThread.current.set(thread.threadId, threadRecordsForNotifications(thread.threadId, thread));
-      ctx.setOpenThreads((current) => {
-        const existing = current.find((item) => item.threadId === thread.threadId);
-        const nextThread = openThreadStateFromDetail(thread, existing);
-        return current.some((item) => item.threadId === thread.threadId)
-          ? current.map((item) => item.threadId === thread.threadId ? nextThread : item)
-          : [...current, nextThread];
-      });
+      ctx.dispatchOpenThreads({ type: "upsert-detail", thread });
       if (ctx.latestRequestedThreadId.current !== thread.threadId) return;
       if (sessionId) {
         if (updateWorkspaceContext) ctx.setActiveSessionId(sessionId);
@@ -212,13 +189,10 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     ctx.composerDraftStore.delete(threadId);
     ctx.threadLastSeqs.current.delete(threadId);
     unsubscribeThread(threadId);
-    ctx.setOpenThreads((current) => {
-      for (const thread of current) {
-        if (thread.threadId !== threadId) continue;
-        for (const image of thread.imageAttachments) URL.revokeObjectURL(image.previewUrl);
-      }
-      return current.filter((thread) => thread.threadId !== threadId);
-    });
+    for (const image of ctx.openThreads.find((thread) => thread.threadId === threadId)?.imageAttachments ?? []) {
+      URL.revokeObjectURL(image.previewUrl);
+    }
+    ctx.dispatchOpenThreads({ type: "remove", threadId });
     ctx.setSessionList((current) => removeSessionsThread(current, threadId));
     ctx.setProjects((current) => removeProjectsThread(current, threadId));
     ctx.setThreadOrderBySession((current) => removeThreadOrder(current, threadId));
@@ -243,13 +217,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   };
 
   const applyThreadDetail = (thread: ThreadDetail) => {
-    ctx.setOpenThreads((current) => {
-      const existing = current.find((item) => item.threadId === thread.threadId);
-      const nextThread = openThreadStateFromDetail(thread, existing);
-      return current.some((item) => item.threadId === thread.threadId)
-        ? current.map((item) => item.threadId === thread.threadId ? nextThread : item)
-        : [...current, nextThread];
-    });
+    ctx.dispatchOpenThreads({ type: "upsert-detail", thread });
     ctx.setSessionList((current) => patchSessionsThread(current, thread));
     ctx.setProjects((current) => patchProjectsThread(current, thread));
   };
@@ -312,36 +280,20 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       }
       await openThread(thread.threadId);
     } catch (error) {
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? {
-          ...item,
-          records: [...item.records, errorRecord("fork failed", error)]
-        }
-        : item));
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("fork failed", error) });
     }
   };
 
   const rollbackMessage = async (threadId: string, messageId: string) => {
     try {
       const thread = await apiRouteJson(apiRoutes.rollbackThread, threadId, { messageId });
-      ctx.setOpenThreads((current) => {
-        const existing = current.find((item) => item.threadId === thread.threadId);
-        const nextThread = openThreadStateFromDetail(thread, existing);
-        return current.some((item) => item.threadId === thread.threadId)
-          ? current.map((item) => item.threadId === thread.threadId ? nextThread : item)
-          : [...current, nextThread];
-      });
+      ctx.dispatchOpenThreads({ type: "upsert-detail", thread });
       if (thread.session.sessionId) ctx.setActiveSessionId(thread.session.sessionId);
       ctx.setActiveWorkspacePath(thread.workingDirectory);
       ctx.setActiveTabThreadId(thread.threadId);
       subscribeThread(thread.threadId, thread.lastSeq);
     } catch (error) {
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? {
-          ...item,
-          records: [...item.records, errorRecord("rollback failed", error)]
-        }
-        : item));
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("rollback failed", error) });
     }
   };
 
@@ -363,27 +315,29 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
     const fastAction = !textAttachments.length && !imageAttachments.length ? fastCommandAction(typedText) : null;
     if (fastAction === "on" || fastAction === "off") {
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? { ...item, serviceTierDraft: fastAction === "on" ? "priority" : "auto" }
-        : item));
+      ctx.dispatchOpenThreads({
+        type: "set-draft",
+        threadId,
+        field: "serviceTierDraft",
+        value: fastAction === "on" ? "priority" : "auto"
+      });
     }
     deps.resetComposerHistory(threadId);
     ctx.composerDraftStore.set(threadId, "");
-    ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId ? { ...item, imageAttachments: [], textAttachments: [] } : item));
+    ctx.dispatchOpenThreads({ type: "clear-attachments", threadId });
     let encodedImages: Array<{ url: string }>;
     try {
       encodedImages = await Promise.all(imageAttachments.map(async (image) => ({ url: await fileToDataUrl(image.file) })));
       for (const image of imageAttachments) URL.revokeObjectURL(image.previewUrl);
     } catch (error) {
       ctx.composerDraftStore.set(threadId, typedText);
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? {
-          ...item,
-          imageAttachments,
-          textAttachments,
-          records: [...item.records, errorRecord("image encode failed", error)]
-        }
-        : item));
+      ctx.dispatchOpenThreads({
+        type: "restore-attachments-with-error",
+        threadId,
+        images: imageAttachments,
+        texts: textAttachments,
+        record: errorRecord("image encode failed", error)
+      });
       return;
     }
     const input: ProxyInput = encodedImages.length
@@ -411,13 +365,9 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     });
     if (!response.ok) {
       const text = await response.text();
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? { ...item, records: [...item.records, errorRecord("error", text)] }
-        : item));
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("error", text) });
     } else if (composerMode !== "chat") {
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? { ...item, composerMode: item.composerMode === composerMode ? "chat" : item.composerMode }
-        : item));
+      ctx.dispatchOpenThreads({ type: "reset-composer-mode", threadId, expected: composerMode });
     }
   };
 
@@ -425,9 +375,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/stop`, { method: "POST" });
     if (!response.ok) {
       const text = await response.text();
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? { ...item, records: [...item.records, errorRecord("stop failed", text)] }
-        : item));
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("stop failed", text) });
     }
   };
 
@@ -435,9 +383,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/compact`, { method: "POST" });
     if (!response.ok) {
       const text = await response.text();
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? { ...item, records: [...item.records, errorRecord("compact failed", text)] }
-        : item));
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("compact failed", text) });
     }
   };
 
@@ -445,9 +391,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/review`, { method: "POST" });
     if (!response.ok) {
       const text = await response.text();
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? { ...item, records: [...item.records, errorRecord("review failed", text)] }
-        : item));
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("review failed", text) });
     }
   };
 
@@ -460,9 +404,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       const payload = await apiRouteJson(apiRoutes.respondThreadApproval, threadId, { approvalId, decision });
       if (payload.thread) applyThreadDetail(payload.thread);
     } catch (error) {
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? { ...item, records: [...item.records, errorRecord("approval failed", error)] }
-        : item));
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("approval failed", error) });
     }
   };
 
@@ -475,9 +417,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       const payload = await apiRouteJson(apiRoutes.respondThreadUserInput, threadId, { userInputId, answers });
       if (payload.thread) applyThreadDetail(payload.thread);
     } catch (error) {
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? { ...item, records: [...item.records, errorRecord("user input failed", error)] }
-        : item));
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("user input failed", error) });
     }
   };
 
@@ -498,9 +438,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
         ? { ...current, saving: false, error: text || "保存失败" }
         : current);
     } else {
-      ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-        ? { ...item, records: [...item.records, errorRecord("goal update failed", text)] }
-        : item));
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("goal update failed", text) });
     }
     return false;
   };
@@ -509,9 +447,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" });
     if (response.ok) return;
     const text = await response.text();
-    ctx.setOpenThreads((current) => current.map((item) => item.threadId === threadId
-      ? { ...item, records: [...item.records, errorRecord("goal clear failed", text)] }
-      : item));
+    ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("goal clear failed", text) });
   };
 
   const saveGoalDialog = async () => {

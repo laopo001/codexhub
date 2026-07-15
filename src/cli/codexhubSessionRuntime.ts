@@ -14,6 +14,12 @@ import {
   type CodexAppServerProcessHandle
 } from "./codexAppServerProcess.js";
 import {
+  dispatchAppServerCommand,
+  permissionParams,
+  toAppServerInput,
+  turnRequestParams
+} from "./appServerCommandDispatcher.js";
+import {
   builtinCommandPaletteEntries,
   commandPaletteEntryFromPlugin,
   commandPaletteEntryFromSkill,
@@ -40,7 +46,6 @@ import type {
   SessionEventInput,
   SessionRegistration,
   ThreadCandidateSummary,
-  ThreadGoalUpdate,
   ThreadRunOptions
 } from "../shared/threadTypes.js";
 
@@ -96,14 +101,6 @@ type BridgeState = {
 type ThreadSettings = {
   model?: string | null;
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
-  serviceTier?: ThreadRunOptions["serviceTier"] | null;
-  approvalPolicy?: ThreadRunOptions["approvalPolicy"] | null;
-  sandboxPolicy?: ThreadRunOptions["sandboxPolicy"] | null;
-};
-
-type TurnRequestParams = {
-  model?: string | null;
-  effort?: ThreadRunOptions["modelReasoningEffort"];
   serviceTier?: ThreadRunOptions["serviceTier"] | null;
   approvalPolicy?: ThreadRunOptions["approvalPolicy"] | null;
   sandboxPolicy?: ThreadRunOptions["sandboxPolicy"] | null;
@@ -744,7 +741,7 @@ class CodexAppServerBridge {
     const result = asRecord(await this.request("thread/start", {
       cwd: this.options.cwd,
       ...(this.options.model === undefined ? {} : { model: this.options.model }),
-      ...codexPermissionParams(this.options),
+      ...permissionParams(this.options),
       threadSource: "user"
     }));
     const thread = asRecord(result?.thread);
@@ -826,240 +823,32 @@ class CodexAppServerBridge {
   }
 
   private async handleCommand(command: SessionCommand) {
-    // 这里把 server 下发的 session command 转换成官方 app-server 的 JSON-RPC 调用。
-    if (command.type === "list_threads") {
-      return {
-        threads: await this.listAppServerThreads(command.workingDirectory, command.limit)
-      };
-    }
-
-    if (command.type === "list_models") {
-      return {
-        models: await this.listAppServerModels(Boolean(command.includeHidden))
-      };
-    }
-
-    if (command.type === "list_command_palette") {
-      return {
-        palette: await this.listAppServerCommandPalette(command.workingDirectory, command.commandPalettePart)
-      };
-    }
-
-    if (command.type === "subscribe_thread_records") {
-      if (!command.threadId) throw new Error("subscribe_thread_records command requires threadId");
-      this.bindThread(command.threadId, command.workingDirectory);
-      await this.syncThreadAppServerTurns(command.threadId);
-      return;
-    }
-
-    if (command.type === "unsubscribe_thread_records") {
-      if (!command.threadId) throw new Error("unsubscribe_thread_records command requires threadId");
-      this.unbindThread(command.threadId);
-      return;
-    }
-
-    if (command.type === "start_thread") {
-      return await this.startNewThread(
-        command.workingDirectory,
-        commandModel(command.options, this.options.model),
-        command
-      );
-    }
-
-    if (command.type === "resume_thread") {
-      if (!command.threadId) throw new Error("resume_thread command requires threadId");
-      const resumed = await this.loadThread(
-        command.threadId,
-        command.workingDirectory,
-        commandModel(command.options, this.options.model),
-        command,
-        { markBridgeStarted: true }
-      );
-      await this.rememberDefaultThread(resumed.threadId);
-      return resumed;
-    }
-
-    if (command.type === "stop") {
-      if (command.threadId && command.turnId) {
-        await this.ensureThreadLoaded(command.threadId, command.workingDirectory, commandModel(command.options, this.options.model), undefined, {
-          markBridgeStarted: true
-        });
-        await this.request("turn/interrupt", {
-          threadId: command.threadId,
-          turnId: command.turnId
-        }, command);
-      }
-      return;
-    }
-
-    if (command.type === "rename_thread") {
-      if (!command.threadId) throw new Error("rename_thread command requires threadId");
-      const name = typeof command.title === "string" ? command.title.trim() : "";
-      if (!name) throw new Error("rename_thread command requires title");
-      await this.request("thread/name/set", {
-        threadId: command.threadId,
-        name
-      }, command);
-      return;
-    }
-
-    if (command.type === "compact_thread") {
-      if (!command.threadId) throw new Error("compact_thread command requires threadId");
-      const threadId = await this.ensureThreadLoaded(
-        command.threadId,
-        command.workingDirectory,
-        commandModel(command.options, this.options.model),
-        command,
-        { markBridgeStarted: true }
-      );
-      await this.request("thread/compact/start", { threadId }, command);
-      this.scheduleAppServerTurnsSync(threadId);
-      return { ok: true };
-    }
-
-    if (command.type === "review_thread") {
-      if (!command.threadId) throw new Error("review_thread command requires threadId");
-      const threadId = await this.ensureThreadLoaded(
-        command.threadId,
-        command.workingDirectory,
-        commandModel(command.options, this.options.model),
-        command,
-        { markBridgeStarted: true }
-      );
-      const result = asRecord(await this.request("review/start", {
-        threadId,
-        target: command.reviewTarget ?? { type: "uncommittedChanges" },
-        delivery: "inline"
-      }, command));
-      const turn = asRecord(result?.turn);
-      await this.forwardThreadExecutionChanged(threadId, true, typeof turn?.id === "string" ? turn.id : undefined);
-      this.scheduleAppServerTurnsSync(threadId);
-      return {
-        ok: true,
-        reviewThreadId: typeof result?.reviewThreadId === "string" ? result.reviewThreadId : threadId
-      };
-    }
-
-    if (command.type === "approval_decision") {
-      if (!command.approvalId) throw new Error("approval_decision command requires approvalId");
-      if (!command.approvalDecision) throw new Error("approval_decision command requires approvalDecision");
-      this.resolveApprovalRequest(command.approvalId, command.approvalDecision);
-      return { ok: true };
-    }
-
-    if (command.type === "user_input_response") {
-      if (!command.userInputId) throw new Error("user_input_response command requires userInputId");
-      this.resolveUserInputRequest(command.userInputId, command.userInputAnswers ?? {});
-      return { ok: true };
-    }
-
-    if (command.type === "steer") {
-      if (!command.threadId) throw new Error("steer command requires threadId");
-      if (!command.turnId) throw new Error("steer command requires active turnId");
-      if (!command.input) throw new Error("steer command requires input");
-      const threadId = await this.ensureThreadLoaded(
-        command.threadId,
-        command.workingDirectory,
-        commandModel(command.options, this.options.model),
-        undefined,
-        { markBridgeStarted: true }
-      );
-      await this.request("turn/steer", {
-        threadId,
-        expectedTurnId: command.turnId,
-        input: toAppServerInput(command.input)
-      }, command);
-      return;
-    }
-
-    if (command.type === "set_goal") {
-      if (!command.threadId) throw new Error("set_goal command requires threadId");
-      const threadId = await this.ensureThreadLoaded(
-        command.threadId,
-        command.workingDirectory,
-        commandModel(command.options, this.options.model),
-        command,
-        { markBridgeStarted: true }
-      );
-      await this.request("thread/goal/set", {
-        threadId,
-        ...goalUpdateParams(command.goal, command.input, command.options)
-      }, command);
-      return;
-    }
-
-    if (command.type === "clear_goal") {
-      if (!command.threadId) throw new Error("clear_goal command requires threadId");
-      const threadId = await this.ensureThreadLoaded(
-        command.threadId,
-        command.workingDirectory,
-        commandModel(command.options, this.options.model),
-        command,
-        { markBridgeStarted: true }
-      );
-      await this.request("thread/goal/clear", { threadId }, command);
-      return;
-    }
-
-    if (command.type === "fork_thread") {
-      if (!command.threadId) throw new Error("fork_thread command requires threadId");
-      const model = commandModel(command.options, this.options.model);
-      await this.ensureThreadLoaded(command.threadId, command.workingDirectory, model, undefined, {
-        markBridgeStarted: true
-      });
-      this.markBridgeStartedUnknownThread();
-      const result = asRecord(await this.request("thread/fork", {
-        threadId: command.threadId,
-        cwd: command.workingDirectory,
-        ...(model === undefined ? {} : { model }),
-        ...codexPermissionParams(this.options),
-        threadSource: "user"
-      }, command));
-      const thread = asRecord(result?.thread);
-      const threadId = typeof thread?.id === "string" ? thread.id : undefined;
-      if (!threadId) throw new Error("Codex app-server thread/fork did not return thread.id");
-      this.markThreadLoaded(threadId);
-      return;
-    }
-
-    if (command.type === "rollback_thread") {
-      if (!command.threadId) throw new Error("rollback_thread command requires threadId");
-      if (!command.numTurns || command.numTurns < 1) throw new Error("rollback_thread command requires numTurns >= 1");
-      await this.ensureThreadLoaded(command.threadId, command.workingDirectory, commandModel(command.options, this.options.model), undefined, {
-        markBridgeStarted: true
-      });
-      await this.request("thread/rollback", {
-        threadId: command.threadId,
-        numTurns: command.numTurns
-      }, command);
-      this.scheduleAppServerTurnsSync(command.threadId);
-      return;
-    }
-
-    if (!command.input || !command.threadId) return;
-    const threadId = command.threadId;
-    const model = commandModel(command.options, this.options.model);
-    const loadedThreadId = await this.ensureThreadLoaded(threadId, command.workingDirectory, model, command, {
-      markBridgeStarted: true
+    return await dispatchAppServerCommand(command, {
+      defaultModel: this.options.model,
+      permissionParams: permissionParams(this.options),
+      listThreads: (cwd, limit) => this.listAppServerThreads(cwd, limit),
+      listModels: (includeHidden) => this.listAppServerModels(includeHidden),
+      listCommandPalette: (cwd, part) => this.listAppServerCommandPalette(cwd, part),
+      bindThread: (threadId, cwd) => this.bindThread(threadId, cwd),
+      unbindThread: (threadId) => this.unbindThread(threadId),
+      syncThreadTurns: (threadId) => this.syncThreadAppServerTurns(threadId),
+      startThread: (cwd, model, context) => this.startNewThread(cwd, model, context),
+      loadThread: (threadId, cwd, model, context, options) =>
+        this.loadThread(threadId, cwd, model, context, options),
+      ensureThreadLoaded: (threadId, cwd, model, context, options) =>
+        this.ensureThreadLoaded(threadId, cwd, model, context, options),
+      rememberDefaultThread: (threadId) => this.rememberDefaultThread(threadId),
+      request: (method, params, context) => this.request(method, params, context),
+      scheduleThreadSync: (threadId) => this.scheduleAppServerTurnsSync(threadId),
+      forwardThreadExecutionChanged: (threadId, running, turnId) =>
+        this.forwardThreadExecutionChanged(threadId, running, turnId),
+      resolveApprovalRequest: (approvalId, decision) => this.resolveApprovalRequest(approvalId, decision),
+      resolveUserInputRequest: (userInputId, answers) => this.resolveUserInputRequest(userInputId, answers),
+      markBridgeStartedUnknownThread: () => this.markBridgeStartedUnknownThread(),
+      markThreadLoaded: (threadId) => this.markThreadLoaded(threadId),
+      markBridgeStartedThread: (threadId) => this.markBridgeStartedThread(threadId)
     });
-    await this.applyGoalMode(loadedThreadId, command.input, command.options);
-    this.markBridgeStartedThread(loadedThreadId);
-    await this.request("turn/start", {
-      threadId: loadedThreadId,
-      cwd: command.workingDirectory,
-      input: toAppServerInput(inputForCollaborationMode(command.input, command.options)),
-      ...turnRequestParams(command.options)
-    }, command);
   }
-
-  private async applyGoalMode(threadId: string, input: ProxyInput, options: ThreadRunOptions | undefined) {
-    if (!options?.goalMode) return;
-    await this.request("thread/goal/set", {
-      threadId,
-      ...goalUpdateParams(undefined, input, options)
-    }, { threadId });
-  }
-
   private async startNewThread(
     cwd: string,
     model: string | null | undefined,
@@ -1068,7 +857,7 @@ class CodexAppServerBridge {
     const result = asRecord(await this.request("thread/start", {
       cwd,
       ...(model === undefined ? {} : { model }),
-      ...codexPermissionParams(this.options),
+      ...permissionParams(this.options),
       threadSource: "user"
     }, command));
     const thread = asRecord(result?.thread);
@@ -1266,7 +1055,7 @@ class CodexAppServerBridge {
       threadId,
       cwd,
       ...(model === undefined ? {} : { model }),
-      ...codexPermissionParams(this.options)
+      ...permissionParams(this.options)
     }, command));
     const thread = asRecord(result?.thread);
     const loadedThreadId = typeof thread?.id === "string" ? thread.id : threadId;
@@ -1853,85 +1642,10 @@ const openWebSocket = async (url: string) => {
   return ws;
 };
 
-const toAppServerInput = (input: ProxyInput) => {
-  if (typeof input === "string") return [{ type: "text", text: input, text_elements: [] }];
-  return input.map((item) => {
-    if (item.type === "text") return { type: "text", text: item.text, text_elements: [] };
-    return {
-      type: "image",
-      url: item.url,
-      ...(item.detail ? { detail: item.detail } : {})
-    };
-  });
-};
-
-const inputForCollaborationMode = (input: ProxyInput, options: ThreadRunOptions | undefined): ProxyInput => {
-  if (options?.collaborationMode !== "plan") return input;
-  if (typeof input === "string") return `${planModePrefix()}\n\nUser request:\n${input}`;
-  return [{ type: "text", text: planModePrefix() }, ...input];
-};
-
-const planModePrefix = () => [
-  "Plan mode is active for this turn."
-].join(" ");
-
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
-
-const commandModel = (options: ThreadRunOptions | undefined, fallback?: string) => {
-  if (options && hasOwn(options, "model")) return options.model;
-  return fallback;
-};
-
-const codexPermissionParams = (options: Pick<BridgeOptions, "sandbox" | "approvalPolicy">) => ({
-  ...(options.approvalPolicy === undefined ? {} : { approvalPolicy: options.approvalPolicy }),
-  ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox })
-});
-
-const turnRequestParams = (options: ThreadRunOptions | undefined): TurnRequestParams => {
-  const params: TurnRequestParams = {};
-  if (!options) return params;
-  if (hasOwn(options, "model")) params.model = options.model;
-  if (hasOwn(options, "modelReasoningEffort")) params.effort = options.modelReasoningEffort;
-  if (hasOwn(options, "serviceTier")) params.serviceTier = options.serviceTier;
-  if (hasOwn(options, "approvalPolicy")) params.approvalPolicy = options.approvalPolicy;
-  if (hasOwn(options, "sandboxPolicy")) params.sandboxPolicy = options.sandboxPolicy;
-  return params;
-};
-
 const envPositiveInt = (name: string, fallback: number) => {
   const value = Number(process.env[name]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
-};
-
-const goalObjective = (input: ProxyInput, options: ThreadRunOptions) => {
-  if (typeof options.goalObjective === "string" && options.goalObjective.trim()) {
-    return options.goalObjective.trim();
-  }
-  const text = typeof input === "string"
-    ? input
-    : input
-      .filter((item) => item.type === "text")
-      .map((item) => item.text)
-      .join("\n\n");
-  const objective = text.trim();
-  return objective ? objective.slice(0, 4000) : "Pursue the attached user request.";
-};
-
-const goalUpdateParams = (
-  goal: ThreadGoalUpdate | undefined,
-  input: ProxyInput | undefined,
-  options: ThreadRunOptions | undefined
-) => {
-  const params: ThreadGoalUpdate = {};
-  if (goal && hasOwn(goal, "objective")) params.objective = goal.objective;
-  if (goal && hasOwn(goal, "status")) params.status = goal.status;
-  if (goal && hasOwn(goal, "tokenBudget")) params.tokenBudget = goal.tokenBudget;
-  if (params.objective === undefined && input && options) params.objective = goalObjective(input, options);
-  if (params.status === undefined && options?.goalMode) params.status = "active";
-  if (params.tokenBudget === undefined && options && hasOwn(options, "goalTokenBudget")) {
-    params.tokenBudget = options.goalTokenBudget;
-  }
-  return params;
 };
 
 const isModelReasoningEffort = (value: unknown): value is ThreadRunOptions["modelReasoningEffort"] =>

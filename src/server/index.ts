@@ -2,13 +2,12 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { createMachineId, MachineHub } from "../core/machineHub.js";
-import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
@@ -16,46 +15,33 @@ import { notificationHookRunnerFromEnv } from "../core/notificationHooks.js";
 import { CodexhubServerState } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
-import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
-import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, nextCronRun } from "../core/taskCron.js";
+import { resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { ThreadHub } from "../core/threadHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
-import { startAttachedCodexhubSession, type HeadlessCodexhubSessionHandle } from "../cli/codexhubConnect.js";
 import { resolveCodexAppServerLaunchOptions, type CodexAppServerLaunchOptions } from "../cli/codexAppServerProcess.js";
 import {
-  machineTransportMessageSchema,
   parentRegistrationConnectSchema,
-  sshConnectSchema,
-  sshHostAliasSchema,
-  type AuthStatusPayload,
   type ConnectionsStreamEvent,
-  type HealthPayload,
-  type MachinesPayload,
-  type ParentRegistrationPayload,
   type ParentRegistrationStatus,
-  type PluginsPayload,
   type ProjectsPayload,
-  type ProjectsStreamEvent,
-  type ServerConfigPayload,
-  type SshConnectionPayload,
-  type SshConnectionsPayload,
-  type SshHostsPayload,
-  type TaskMutationPayload,
-  type TasksStreamEvent,
-  type TaskView
+  type ProjectsStreamEvent
 } from "../shared/apiContract.js";
-import type { MachineDirectoryListing } from "../shared/machineTypes.js";
 import type { MachineRegistrationProject } from "../shared/machineTypes.js";
-import type { ProjectSource, StoredTask } from "../shared/projectTypes.js";
+import type { ProjectSource } from "../shared/projectTypes.js";
 import {
   isCodexHubSurface,
   isEmbeddedCodexHubSurface,
   type CodexHubSurface
 } from "../shared/surfaceTypes.js";
-import { DirectThreadHubSessionTransport } from "./directSessionTransport.js";
-import { contentType, previewImageErrorStatus, registerStaticRoutes, resolvePreviewImage } from "./serverFiles.js";
+import { registerStaticRoutes } from "./serverFiles.js";
 import { registerProjectTaskRoutes } from "./projectTaskRoutes.js";
 import { registerThreadRoutes } from "./threadRoutes.js";
+import { registerMachineTransportRoutes } from "./machineTransportRoutes.js";
+import { registerServerLifecycle } from "./serverLifecycle.js";
+import { TunneledSessionManager } from "./tunneledSessionManager.js";
+import { registerSystemRoutes } from "./systemRoutes.js";
+import { registerConnectionRoutes } from "./connectionRoutes.js";
+import { TaskScheduler } from "./taskScheduler.js";
 import {
   startTelegramPlugin,
   telegramBuiltinPlugin,
@@ -80,12 +66,6 @@ const envFlag = (name: string, fallback: boolean) => {
   return fallback;
 };
 const localMachineEnabled = () => envFlag("CODEX_HUB_LOCAL_MACHINE", true);
-
-const serverConfigUpdateSchema = z.object({
-  ui: z.object({
-    taskCompleteSystemNotifications: z.boolean().optional()
-  }).strict().optional()
-}).strict();
 
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
@@ -221,12 +201,17 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
   const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
   const projectSubscribers = new Set<(event: ReturnType<typeof projectSnapshotEvent>) => void>();
-  const taskSubscribers = new Set<(event: ReturnType<typeof taskSnapshotEvent>) => void>();
   const connectionSubscribers = new Set<(event: ReturnType<typeof connectionSnapshotEvent>) => void>();
   let projectSeq = 0;
-  let taskSeq = 0;
   let connectionSeq = 0;
   const machines = new MachineHub({ onChange: () => publishProjects() });
+  const taskScheduler = new TaskScheduler({
+    enabled: features.tasks,
+    state,
+    machines,
+    threads,
+    waitForSession: (sessionId) => waitForSession(sessionId)
+  });
   const sshRemoteClient = features.ssh ? await resolveSshRemoteClientBundle() : null;
   const sshMachines = new SshMachineManager({
     localHost: config.host,
@@ -250,12 +235,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let parentRegistrationStatus: ParentRegistrationStatus = { status: "idle" };
   const threadRecordSubscriptionCounts = new Map<string, number>();
   const threadRecordSubscriptionTimers = new Map<string, NodeJS.Timeout>();
-  const tunneledAppServerSessions = new Map<string, {
-    transportId: string;
-    machineId: string;
-    appServerId: string;
-    handle: HeadlessCodexhubSessionHandle;
-  }>();
+  const tunneledSessions = new TunneledSessionManager({
+    apiBase: localApiBaseUrl(config.host, config.port),
+    threads,
+    captureSessionState,
+    publishProjects,
+    refreshRetainedThreadRecordSubscriptions: () => refreshRetainedThreadRecordSubscriptions()
+  });
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
@@ -272,27 +258,27 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
   }, sessionSweepIntervalMs());
   sessionSweep.unref?.();
-  const runningTasks = new Set<string>();
-  const triggeredTaskMinutes = new Map<string, string>();
-  const taskSweep = features.tasks
-    ? setInterval(() => void scanLocalTasks(new Date()), taskScanIntervalMs())
-    : null;
-  taskSweep?.unref?.();
+  const taskSweep = taskScheduler.start(taskScanIntervalMs());
 
-  app.addHook("onClose", async () => {
-    clearInterval(sessionSweep);
-    if (taskSweep) clearInterval(taskSweep);
-    for (const timer of threadRecordSubscriptionTimers.values()) clearTimeout(timer);
-    threadRecordSubscriptionTimers.clear();
-    await Promise.allSettled([...tunneledAppServerSessions.values()].map((entry) => entry.handle.stop()));
-    tunneledAppServerSessions.clear();
-    await sshMachines.stopAll();
-    await parentRegistration?.stop();
-    parentRegistration = null;
-    await localMachine?.stop();
-    telegramBot?.stop("server closing");
-    plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
-    await state.flush();
+  registerServerLifecycle(app, {
+    intervals: [sessionSweep, taskSweep],
+    subscriptionTimers: threadRecordSubscriptionTimers,
+    stopTunneledSessions: () => tunneledSessions.stopAll(),
+    stopSshMachines: () => sshMachines.stopAll(),
+    stopParentRegistration: async () => {
+      await parentRegistration?.stop();
+      parentRegistration = null;
+    },
+    stopLocalMachine: async () => {
+      await localMachine?.stop();
+      localMachine = null;
+    },
+    stopIntegrations: () => {
+      telegramBot?.stop("server closing");
+      telegramBot = null;
+      plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
+    },
+    flushState: () => state.flush()
   });
   await app.register(cors, { origin: true });
   await app.register(websocket);
@@ -448,33 +434,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     threadRecordSubscriptionTimers.set(threadId, timer);
   }
 
-  function taskSnapshotEvent(): TasksStreamEvent {
-    return {
-      seq: taskSeq,
-      kind: "tasks" as const,
-      tasks: localTaskViews()
-    } satisfies TasksStreamEvent;
-  }
-
-  function localTaskView(task: StoredTask): TaskView {
-    return {
-      ...task,
-      nextRunAt: task.enabled ? nextCronRun(task.schedule, new Date(), defaultTaskTimezone)?.toISOString() ?? null : null
-    } satisfies TaskView;
-  }
-
-  function localTaskViews(): TaskView[] {
-    return state.listTasks().map(localTaskView);
-  }
-
-  function publishTasks() {
-    const event = {
-      seq: ++taskSeq,
-      kind: "tasks" as const,
-      tasks: localTaskViews()
-    } satisfies TasksStreamEvent;
-    for (const subscriber of taskSubscribers) subscriber(event);
-  }
 
   function connectionSnapshotEvent(): ConnectionsStreamEvent {
     return {
@@ -624,120 +583,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     throw new Error(`Session did not register: ${sessionId}`);
   }
 
-  async function runLocalTask(taskId: string): Promise<TaskMutationPayload> {
-    if (!features.tasks) throw new Error("Tasks are disabled for this codexhub surface.");
-    const task = state.getTask(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
-    const runId = randomUUID();
-    if (runningTasks.has(task.taskId)) {
-      state.startTaskRun(task.taskId, { runId });
-      const skippedTask = state.finishTaskRun(task.taskId, runId, {
-        status: "skipped",
-        error: "Task already running"
-      });
-      publishTasks();
-      return {
-        ok: true,
-        skipped: true,
-        task: localTaskView(skippedTask)
-      } satisfies TaskMutationPayload;
-    }
-    let releaseOnReturn = true;
-    runningTasks.add(task.taskId);
-    state.startTaskRun(task.taskId, { runId });
-    publishTasks();
-    try {
-      const started = machines.startSession(task.machineId, {
-        cwd: task.projectPath,
-        reuse: true
-      });
-      const session = await started.promise;
-      const sessionId = session.sessionId;
-      await waitForSession(sessionId);
-      let threadId = task.threadId ?? session.threadId;
-      if (task.threadId) {
-        const resumed = await threads.resumeSessionThread(sessionId, task.threadId, task.projectPath);
-        threadId = resumed.threadId;
-      } else {
-        threads.attachSessionThread(sessionId, threadId, session.cwd);
-      }
-      const localCommand = threads.runLocalCommand(threadId, task.input, "task");
-      if (localCommand.handled) {
-        const completedTask = state.finishTaskRun(task.taskId, runId, {
-          status: "completed",
-          sessionId,
-          threadId
-        });
-        publishTasks();
-        return {
-          ok: true,
-          task: localTaskView(completedTask),
-          sessionId,
-          threadId,
-          command: localCommand.command
-        } satisfies TaskMutationPayload;
-      }
-      const turn = threads.runTurn(threadId, task.input, "task");
-      const queuedTask = state.updateTaskRun(task.taskId, {
-        lastStatus: "queued",
-        threadId
-      });
-      publishTasks();
-      releaseOnReturn = false;
-      turn.then(() => {
-        state.finishTaskRun(task.taskId, runId, {
-          status: "completed",
-          sessionId,
-          threadId
-        });
-        publishTasks();
-      }).catch((error: unknown) => {
-        state.finishTaskRun(task.taskId, runId, {
-          status: "failed",
-          sessionId,
-          threadId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        publishTasks();
-      }).finally(() => {
-        runningTasks.delete(task.taskId);
-      });
-      return {
-        ok: true,
-        task: localTaskView(queuedTask),
-        sessionId,
-        threadId
-      } satisfies TaskMutationPayload;
-    } catch (error) {
-      state.finishTaskRun(task.taskId, runId, {
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error)
-      });
-      publishTasks();
-      throw error;
-    } finally {
-      if (releaseOnReturn) runningTasks.delete(task.taskId);
-    }
-  }
-
-  async function scanLocalTasks(now: Date) {
-    if (!features.tasks) return;
-    for (const task of state.listTasks()) {
-      if (!task.enabled) continue;
-      if (!cronMatches(task.schedule, now, defaultTaskTimezone)) continue;
-      const minuteKey = cronMinuteKey(now, defaultTaskTimezone);
-      if (triggeredTaskMinutes.get(task.taskId) === minuteKey) continue;
-      if (cronMinuteKeyFromIso(task.lastRunAt, defaultTaskTimezone) === minuteKey) {
-        triggeredTaskMinutes.set(task.taskId, minuteKey);
-        continue;
-      }
-      triggeredTaskMinutes.set(task.taskId, minuteKey);
-      void runLocalTask(task.taskId)
-        .catch((error: unknown) => {
-          console.error(`codexhub task failed: ${task.name}: ${error instanceof Error ? error.message : String(error)}`);
-        });
-    }
-  }
 
   async function startBuiltinIntegrations() {
     if (!features.integrations) {
@@ -755,64 +600,30 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   }
 
-  app.get("/api/auth/status", async (request) => ({
+  registerSystemRoutes(app, {
     authRequired: Boolean(serverAuthToken),
-    authenticated: !serverAuthToken || isAuthorizedRequest(request, serverAuthToken)
-  } satisfies AuthStatusPayload));
-
-  app.get("/api/health", async (request) => ({
-    ok: true,
-    serverInstanceId,
-    authRequired: Boolean(serverAuthToken),
-    authenticated: !serverAuthToken || isAuthorizedRequest(request, serverAuthToken),
-    env: process.env.CODEX_HUB_ENV ?? process.env.NODE_ENV ?? "development",
-    build: buildId,
-    host: config.host,
-    port: config.port,
-    surface,
-    features,
-    staticDirectory,
-    configPath: state.path,
-    statePath: state.path,
-    model: config.defaultThreadOptions.model ?? null,
-    modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
-    serviceTier: config.defaultThreadOptions.serviceTier ?? null,
-    contextWindowTokens,
-    ssh: {
-      connections: sshMachines.listConnections()
-    },
-    telegram: {
-      started: Boolean(telegramBot)
-    }
-  } satisfies HealthPayload));
-
-  app.get("/api/config", async () => ({
-    config: state.config()
-  } satisfies ServerConfigPayload));
-
-  app.patch("/api/config", async (request) => {
-    const payload = serverConfigUpdateSchema.parse(request.body);
-    if (payload.ui) state.updateUiConfig(payload.ui);
-    return {
-      config: state.config()
-    } satisfies ServerConfigPayload;
-  });
-
-  app.get("/api/file", async (request, reply) => {
-    const query = z.object({ path: z.string().min(1) }).parse(request.query);
-    try {
-      const image = await resolvePreviewImage(query.path);
-      reply.type(image.contentType);
-      reply.header("cache-control", "private, max-age=60");
-      reply.header("content-length", String(image.size));
-      reply.header("content-security-policy", "default-src 'none'; img-src 'self' data: blob:");
-      reply.header("x-content-type-options", "nosniff");
-      return reply.send(createReadStream(image.path));
-    } catch (error) {
-      const statusCode = previewImageErrorStatus(error);
-      reply.code(statusCode);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
+    isAuthorized: (request) => Boolean(serverAuthToken && isAuthorizedRequest(request, serverAuthToken)),
+    healthPayload: () => ({
+      ok: true,
+      serverInstanceId,
+      env: process.env.CODEX_HUB_ENV ?? process.env.NODE_ENV ?? "development",
+      build: buildId,
+      host: config.host,
+      port: config.port,
+      surface,
+      features,
+      staticDirectory,
+      configPath: state.path,
+      statePath: state.path,
+      model: config.defaultThreadOptions.model ?? null,
+      modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
+      serviceTier: config.defaultThreadOptions.serviceTier ?? null,
+      contextWindowTokens,
+      ssh: { connections: sshMachines.listConnections() },
+      telegram: { started: Boolean(telegramBot) }
+    }),
+    configPayload: () => ({ config: state.config() }),
+    updateUiConfig: (ui) => state.updateUiConfig(ui)
   });
 
   registerThreadRoutes(app, {
@@ -825,195 +636,34 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     publishProjects,
     releaseThreadRecordSubscription,
     retainThreadRecordSubscription,
-    taskSnapshotEvent,
-    taskSubscribers,
+    taskSnapshotEvent: () => taskScheduler.snapshotEvent(),
+    taskSubscribers: taskScheduler.subscribers,
     threads
   });
 
-  app.get("/api/machines", async () => ({
-    machines: machines.listMachines()
-  } satisfies MachinesPayload));
-
-  app.get("/api/ssh/config-hosts", async () => ({
-    hosts: features.ssh ? await listSshHosts() : []
-  } satisfies SshHostsPayload));
-
-  app.get("/api/ssh/hosts", async () => ({
-    hosts: await listCodexhubSshHosts()
-  } satisfies SshHostsPayload));
-
-  app.post("/api/ssh/hosts", async (request, reply) => {
-    if (!features.ssh) {
-      reply.code(404);
-      return { error: "ssh_disabled" };
-    }
-    const payload = sshHostAliasSchema.parse(request.body);
-    const alias = payload.alias.trim();
-    const configHostsByAlias = await localSshConfigHostsByAlias();
-    if (!configHostsByAlias.has(alias)) {
-      reply.code(404);
-      return { error: `SSH config host not found: ${alias}` };
-    }
-    const alreadySaved = state.listSshHosts().some((host) => host.alias === alias);
-    state.upsertSshHost({ alias });
-    if (!alreadySaved) void autoConnectSavedSshHost(alias, "host_added");
-    return {
-      ok: true,
-      hosts: await listCodexhubSshHosts()
-    } satisfies SshHostsPayload;
-  });
-
-  app.delete("/api/ssh/hosts/:alias", async (request, reply) => {
-    if (!features.ssh) {
-      reply.code(404);
-      return { error: "ssh_disabled" };
-    }
-    const params = sshHostAliasSchema.parse(request.params);
-    await stopSshConnectionsForHost(params.alias);
-    return {
-      ok: true,
-      deleted: state.deleteSshHost(params.alias),
-      hosts: await listCodexhubSshHosts()
-    } satisfies SshHostsPayload;
-  });
-
-  app.get("/api/ssh/connections", async () => ({
-    connections: features.ssh ? sshMachines.listConnections() : []
-  } satisfies SshConnectionsPayload));
-
-  app.get("/api/registered/parent", async () => ({
-    registration: parentRegistrationView()
-  } satisfies ParentRegistrationPayload));
-
-  app.post("/api/registered/parent", async (request) => {
-    const input = parentRegistrationConnectSchema.parse(request.body);
-    return {
-      registration: await startParentRegistration(input)
-    } satisfies ParentRegistrationPayload;
-  });
-
-  app.delete("/api/registered/parent", async () => ({
-    registration: await stopParentRegistration()
-  } satisfies ParentRegistrationPayload));
-
-  app.get("/api/registered/bootstrap", async (request, reply) => {
-    const query = z.object({
-      server: z.string().url().optional(),
-      name: z.string().min(1).optional()
-    }).parse(request.query);
-    const bundle = await resolveSshRemoteClientBundle();
-    if (!bundle) {
-      reply.code(404);
-      return { error: "remote_client_not_found" };
-    }
-    const serverBase = normalizeBaseUrl(query.server ?? requestBaseUrl(request, config.host, config.port));
-    const authToken = normalizedAuthToken(requestAuthToken(request));
-    const script = registeredBootstrapScript({
-      serverBase,
-      clientUrl: `${serverBase}/api/remote-client/${bundle.hash}`,
-      clientHash: bundle.hash,
-      authToken,
-      appServerLaunch,
-      name: query.name
-    });
-    reply.type("text/x-shellscript; charset=utf-8");
-    reply.header("cache-control", "no-cache");
-    return reply.send(script);
-  });
-
-  app.get("/api/remote-client/:hash", async (request, reply) => {
-    const params = z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(request.params);
-    const bundle = await readSshRemoteClientBundle(params.hash);
-    if (!bundle) {
-      reply.code(404);
-      return { error: "remote_client_not_found" };
-    }
-    reply.type("text/javascript; charset=utf-8");
-    reply.header("cache-control", "public, max-age=31536000, immutable");
-    reply.header("x-codexhub-remote-client-sha256", bundle.hash);
-    return reply.send(bundle.content);
-  });
-
-  app.get("/api/ssh/remote-client/:hash", async (request, reply) => {
-    if (!features.ssh) {
-      reply.code(404);
-      return { error: "ssh_disabled" };
-    }
-    const params = z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(request.params);
-    const bundle = await readSshRemoteClientBundle(params.hash);
-    if (!bundle) {
-      reply.code(404);
-      return { error: "ssh_remote_client_not_found" };
-    }
-    reply.type("text/javascript; charset=utf-8");
-    reply.header("cache-control", "public, max-age=31536000, immutable");
-    reply.header("x-codexhub-remote-client-sha256", bundle.hash);
-    return reply.send(bundle.content);
-  });
-
-  app.get("/api/plugins", async () => ({
-    plugins: await plugins.listPlugins()
-  } satisfies PluginsPayload));
-
-  app.get("/api/plugins/:pluginId/assets/*", async (request, reply) => {
-    const params = z.object({
-      pluginId: z.string().min(1),
-      "*": z.string().min(1)
-    }).parse(request.params);
-    try {
-      const filePath = await plugins.resolveAsset(params.pluginId, params["*"]);
-      reply.type(contentType(filePath));
-      return reply.send(createReadStream(filePath));
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.post("/api/ssh/connect", async (request, reply) => {
-    if (!features.ssh) {
-      reply.code(404);
-      return { error: "ssh_disabled" };
-    }
-    const payload = sshConnectSchema.parse(request.body);
-    try {
-      return {
-        ok: true,
-        connection: sshMachines.connect(payload)
-      } satisfies SshConnectionPayload;
-    } catch (error) {
-      reply.code(409);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.delete("/api/ssh/connections/:connectionId", async (request, reply) => {
-    if (!features.ssh) {
-      reply.code(404);
-      return { error: "ssh_disabled" };
-    }
-    const params = z.object({ connectionId: z.string().min(1) }).parse(request.params);
-    try {
-      return {
-        ok: true,
-        connection: await sshMachines.stop(params.connectionId)
-      } satisfies SshConnectionPayload;
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  app.get("/api/machines/:machineId/directories", async (request, reply) => {
-    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
-    const query = z.object({ path: z.string().optional() }).parse(request.query);
-    try {
-      const command = machines.listDirectory(params.machineId, { cwd: query.path });
-      const listing = await command.promise;
-      return listing satisfies MachineDirectoryListing;
-    } catch (error) {
-      reply.code(409);
-      return { error: error instanceof Error ? error.message : String(error) };
+  registerConnectionRoutes(app, {
+    sshEnabled: features.ssh,
+    machines,
+    plugins,
+    sshMachines,
+    state,
+    listCodexhubSshHosts,
+    hasSshConfigHost: async (alias) => (await localSshConfigHostsByAlias()).has(alias),
+    autoConnectSavedSshHost,
+    stopSshConnectionsForHost,
+    parentRegistrationView,
+    startParentRegistration,
+    stopParentRegistration,
+    buildRegisteredBootstrap: (request, bundle, input) => {
+      const serverBase = normalizeBaseUrl(input.server ?? requestBaseUrl(request, config.host, config.port));
+      return registeredBootstrapScript({
+        serverBase,
+        clientUrl: `${serverBase}/api/remote-client/${bundle.hash}`,
+        clientHash: bundle.hash,
+        authToken: normalizedAuthToken(requestAuthToken(request)),
+        appServerLaunch,
+        name: input.name
+      });
     }
   });
 
@@ -1021,381 +671,34 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     features,
     fixedProjectPathExists,
     isEmbeddedWorkspaceSource,
-    localTaskView,
-    localTaskViews,
+    localTaskView: (task) => taskScheduler.view(task),
+    localTaskViews: () => taskScheduler.views(),
     machines,
     projectIsFixed,
     projectSnapshot,
     publishProjects,
-    publishTasks,
+    publishTasks: () => taskScheduler.publish(),
     resolveTargetMachine,
-    runLocalTask,
+    runLocalTask: (taskId) => taskScheduler.run(taskId),
     state,
     surface,
     threads,
     waitForSession
   });
 
-  const stopTunneledAppServerSession = async (sessionId: string, transportId?: string) => {
-    const entry = tunneledAppServerSessions.get(sessionId);
-    if (!entry) return;
-    if (transportId && entry.transportId !== transportId) return;
-    tunneledAppServerSessions.delete(sessionId);
-    await entry.handle.stop().catch(() => undefined);
-    publishProjects();
-  };
-
-  const stopTunneledAppServerSessionsForTransport = async (transportId: string) => {
-    const sessionIds = [...tunneledAppServerSessions.entries()]
-      .filter(([, entry]) => entry.transportId === transportId)
-      .map(([sessionId]) => sessionId);
-    await Promise.allSettled(sessionIds.map((sessionId) => stopTunneledAppServerSession(sessionId, transportId)));
-  };
-
-  const attachTunneledAppServer = async (input: {
-    machineId: string;
-    transportId: string;
-    commandId: string;
-    sessionId: string;
-    appServerId: string;
-    cwd: string;
-    appServerUrl: string;
-    tunnel: AppServerTunnelPeer;
-  }) => {
-    const existing = tunneledAppServerSessions.get(input.sessionId);
-    if (existing && existing.transportId !== input.transportId) {
-      await stopTunneledAppServerSession(input.sessionId);
-    }
-    if (existing && existing.transportId === input.transportId) return existing.handle.threadId;
-    const sessionTransportId = `${input.transportId}:app-server:${input.sessionId}`;
-    // 已注册 machine 的 app-server 通过 tunnel 接入；ThreadHub 看到的仍是一条普通 session。
-    const handle = await startAttachedCodexhubSession({
-      apiBase: localApiBaseUrl(config.host, config.port),
-      appServerUrl: `tunnel://${input.appServerId}`,
-      appServerTransportFactory: () => input.tunnel.openStream(input.appServerId),
-      sessionId: input.sessionId,
-      machineId: input.machineId,
-      cwd: input.cwd,
-      readyLabel: "codexhub tunneled app-server ready",
-      transportFactory: (_context, callbacks) => new DirectThreadHubSessionTransport({
-        threads,
-        sessionId: input.sessionId,
-        machineId: input.machineId,
-        transportId: sessionTransportId,
-        onChange: () => {
-          captureSessionState();
-          publishProjects();
-        },
-        onRegister: () => refreshRetainedThreadRecordSubscriptions()
-      }, callbacks)
-    });
-    tunneledAppServerSessions.set(input.sessionId, {
-      transportId: input.transportId,
-      machineId: input.machineId,
-      appServerId: input.appServerId,
-      handle
-    });
-    publishProjects();
-    return handle.threadId;
-  };
-
-  const startTunneledAppServerThread = async (input: {
-    transportId: string;
-    sessionId: string;
-    cwd: string;
-    threadId?: string;
-  }) => {
-    const entry = tunneledAppServerSessions.get(input.sessionId);
-    if (!entry || entry.transportId !== input.transportId) {
-      throw new Error(`Tunneled app-server session not attached: ${input.sessionId}`);
-    }
-    // 同一个 tunneled runtime 按 cwd 启动/复用 thread，不新建 machine session。
-    const threadId = input.threadId
-      ? await entry.handle.ensureThread(input.threadId, input.cwd)
-      : await entry.handle.startThread(input.cwd);
-    publishProjects();
-    return threadId;
-  };
-
-  app.get("/api/machines/connect", { websocket: true }, (socket) => {
-    const transportId = randomUUID();
-    let machineId: string | null = null;
-    let commandCursor = 0;
-    let closed = false;
-    let commandPumpStarted = false;
-    const sessionIds = new Set<string>();
-    const sessionCursors = new Map<string, number>();
-    const sessionCommandPumps = new Set<string>();
-
-    const send = (message: unknown) => {
-      if (socket.readyState !== 1) return;
-      socket.send(JSON.stringify(message));
-    };
-    const tunnel = new AppServerTunnelPeer({
-      send: (frame) => send(frame),
-      label: `codexhub server machine transport ${transportId}`
-    });
-
-    const startCommandPump = () => {
-      if (commandPumpStarted) return;
-      commandPumpStarted = true;
-      void commandPump().catch((error: unknown) => {
-        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
-        socket.close();
-      });
-    };
-
-    const commandPump = async () => {
-      while (!closed && machineId) {
-        // 这里的 machine command 长轮询只负责 machine 级动作；thread 动作走 sessionCommandPump。
-        const response = await machines.waitMachineCommands(machineId, commandCursor, 60_000);
-        if (closed || !machineId) return;
-        commandCursor = Math.max(commandCursor, response.cursor);
-        if (response.commands.length) {
-          send({ type: "commands", cursor: commandCursor, commands: response.commands });
-        }
-      }
-    };
-
-    const sessionTransportId = (sessionId: string) => `${transportId}:${sessionId}`;
-
-    const startSessionCommandPump = (sessionId: string) => {
-      if (sessionCommandPumps.has(sessionId)) return;
-      sessionCommandPumps.add(sessionId);
-      void sessionCommandPump(sessionId)
-        .catch((error: unknown) => {
-          send({
-            type: "session_error",
-            sessionId,
-            message: error instanceof Error ? error.message : String(error)
-          });
-        })
-        .finally(() => {
-          sessionCommandPumps.delete(sessionId);
-        });
-    };
-
-    const sessionCommandPump = async (sessionId: string) => {
-      while (!closed && sessionIds.has(sessionId)) {
-        // 每条 session command pump 独立按 cursor replay，避免多个 session 相互阻塞。
-        const response = await threads.waitSessionCommands(sessionId, sessionCursors.get(sessionId) ?? 0, 60_000);
-        if (closed || !sessionIds.has(sessionId)) return;
-        sessionCursors.set(sessionId, Math.max(sessionCursors.get(sessionId) ?? 0, response.cursor));
-        if (response.commands.length) {
-          send({
-            type: "session_commands",
-            sessionId,
-            cursor: sessionCursors.get(sessionId) ?? response.cursor,
-            commands: response.commands
-          });
-        }
-      }
-    };
-
-    const disconnectSessions = () => {
-      for (const sessionId of [...sessionIds]) {
-        threads.disconnectSession(sessionId, sessionTransportId(sessionId));
-      }
-      sessionIds.clear();
-      sessionCursors.clear();
-    };
-
-    const handleMessage = async (data: unknown) => {
-      let parsed: z.infer<typeof machineTransportMessageSchema>;
-      try {
-        parsed = machineTransportMessageSchema.parse(JSON.parse(String(data)));
-      } catch (error) {
-        send({ type: "error", message: `invalid machine transport message: ${error instanceof Error ? error.message : String(error)}` });
-        return;
-      }
-
-      if (parsed.type !== "register" && !machineId) {
-        send({ type: "error", message: "machine transport must register before sending messages" });
-        return;
-      }
-
-      try {
-        if (isAppServerTunnelFrame(parsed)) {
-          tunnel.handleFrame(parsed);
-          return;
-        }
-
-        if (parsed.type === "register") {
-          const result = machines.registerMachine({ ...parsed.registration, transportId });
-          if (shouldPersistMachine(result.machine)) {
-            state.upsertMachine({
-              machineId: result.machineId,
-              type: result.machine.type,
-              hostname: result.machine.hostname,
-              name: result.machine.name,
-              lastSeenAt: result.machine.lastSeenAt,
-              capabilities: result.machine.capabilities
-            });
-          }
-          replaceMachineRegistrationProjects(result.machineId, parsed.registration.projects);
-          machineId = result.machineId;
-          commandCursor = machines.clampMachineCommandCursor(machineId, parsed.commandCursor ?? 0);
-          send({ type: "registered", machineId, machine: result.machine });
-          publishProjects();
-          startCommandPump();
-          return;
-        }
-
-        if (parsed.type === "app_server_ready") {
-          const threadId = await attachTunneledAppServer({
-            machineId: machineId!,
-            transportId,
-            commandId: parsed.commandId,
-            sessionId: parsed.sessionId,
-            appServerId: parsed.appServerId,
-            cwd: parsed.cwd,
-            appServerUrl: parsed.appServerUrl,
-            tunnel
-          });
-          send({
-            type: "app_server_attached",
-            commandId: parsed.commandId,
-            sessionId: parsed.sessionId,
-            threadId
-          });
-          return;
-        }
-
-        if (parsed.type === "app_server_start_thread") {
-          const threadId = await startTunneledAppServerThread({
-            transportId,
-            sessionId: parsed.sessionId,
-            cwd: parsed.cwd,
-            threadId: parsed.threadId
-          });
-          send({
-            type: "app_server_attached",
-            commandId: parsed.commandId,
-            sessionId: parsed.sessionId,
-            threadId
-          });
-          return;
-        }
-
-        if (parsed.type === "app_server_stopped") {
-          await stopTunneledAppServerSession(parsed.sessionId, transportId);
-          return;
-        }
-
-        if (parsed.type === "unregister") {
-          machines.unregisterMachine(machineId!, transportId);
-          clearMachineRegistrationProjects(machineId!);
-          await stopTunneledAppServerSessionsForTransport(transportId);
-          for (const sessionId of [...sessionIds]) {
-            threads.unregisterSession(sessionId, sessionTransportId(sessionId));
-          }
-          sessionIds.clear();
-          sessionCursors.clear();
-          publishProjects();
-          machineId = null;
-          socket.close();
-          return;
-        }
-
-        if (parsed.type === "heartbeat") {
-          machines.heartbeatMachine(machineId!, parsed.registration ?? {});
-          publishProjects();
-          return;
-        }
-
-        if (parsed.type === "session_register") {
-          // 历史 currentThreadId 只容忍丢弃；server 不恢复 current thread 状态。
-          const { currentThreadId: _legacyCurrentThreadId, ...registration } = parsed.registration;
-          const registered = threads.registerSession({
-            ...registration,
-            sessionId: parsed.sessionId,
-            machineId: machineId!,
-            transportId: sessionTransportId(parsed.sessionId)
-          });
-          const sessionId = registered.sessionId;
-          sessionIds.add(sessionId);
-          sessionCursors.set(sessionId, threads.clampSessionCommandCursor(sessionId, parsed.commandCursor ?? 0));
-          send({ type: "session_registered", sessionId, session: registered.session });
-          refreshRetainedThreadRecordSubscriptions();
-          publishProjects();
-          startSessionCommandPump(sessionId);
-          return;
-        }
-
-        if (parsed.type === "session_unregister") {
-          threads.unregisterSession(parsed.sessionId, sessionTransportId(parsed.sessionId));
-          sessionIds.delete(parsed.sessionId);
-          sessionCursors.delete(parsed.sessionId);
-          publishProjects();
-          return;
-        }
-
-        if (parsed.type === "session_heartbeat") {
-          const { currentThreadId: _legacyCurrentThreadId, ...registration } = parsed.registration ?? {};
-          threads.heartbeatSession(parsed.sessionId, registration);
-          return;
-        }
-
-        if (parsed.type === "session_event") {
-          threads.applySessionEvent(parsed.sessionId, parsed.event);
-          return;
-        }
-
-        if (parsed.type === "session_command_result") {
-          threads.resolveSessionCommand(parsed.sessionId, parsed.commandId, parsed.result);
-          return;
-        }
-
-        if (parsed.type === "session_command_error") {
-          threads.failSessionCommand(parsed.sessionId, parsed.commandId, parsed.message);
-          return;
-        }
-
-        if (parsed.type === "command_result") {
-          machines.resolveCommand(machineId!, parsed.commandId, parsed.result);
-          publishProjects();
-          return;
-        }
-
-        machines.failCommand(machineId!, parsed.commandId, parsed.message);
-        publishProjects();
-      } catch (error) {
-        if (parsed.type === "app_server_ready" || parsed.type === "app_server_start_thread") {
-          send({
-            type: "app_server_attach_error",
-            commandId: parsed.commandId,
-            sessionId: parsed.sessionId,
-            message: error instanceof Error ? error.message : String(error)
-          });
-          return;
-        }
-        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
-      }
-    };
-
-    socket.on("message", (data: unknown) => void handleMessage(data));
-    socket.on("close", () => {
-      closed = true;
-      tunnel.closeAll();
-      disconnectSessions();
-      void stopTunneledAppServerSessionsForTransport(transportId);
-      if (machineId) {
-        machines.disconnectMachine(machineId, transportId);
-        clearMachineRegistrationProjects(machineId);
-        publishProjects();
-      }
-    });
-    socket.on("error", () => {
-      closed = true;
-      tunnel.closeAll();
-      disconnectSessions();
-      void stopTunneledAppServerSessionsForTransport(transportId);
-      if (machineId) {
-        machines.disconnectMachine(machineId, transportId);
-        clearMachineRegistrationProjects(machineId);
-        publishProjects();
-      }
-    });
+  registerMachineTransportRoutes(app, {
+    attachTunneledAppServer: (input) => tunneledSessions.attach(input),
+    clearMachineRegistrationProjects,
+    machines,
+    publishProjects,
+    refreshRetainedThreadRecordSubscriptions,
+    replaceMachineRegistrationProjects,
+    shouldPersistMachine,
+    startTunneledAppServerThread: (input) => tunneledSessions.startThread(input),
+    state,
+    stopTunneledAppServerSession: (sessionId, transportId) => tunneledSessions.stop(sessionId, transportId),
+    stopTunneledAppServerSessionsForTransport: (transportId) => tunneledSessions.stopForTransport(transportId),
+    threads
   });
 
   if (staticDirectory) registerStaticRoutes(app, staticDirectory);

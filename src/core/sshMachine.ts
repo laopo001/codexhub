@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { SshRemoteClientBundle } from "./sshRemoteClient.js";
-import type { CodexAppServerLaunchOptions } from "../cli/codexAppServerProcess.js";
+import type { CodexAppServerLaunchOptions } from "../shared/appServerLaunch.js";
 import type {
   SshMachineConnectInput,
   SshMachineConnection,

@@ -6,6 +6,8 @@ export {
 } from "../../shared/taskNotifications.js";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { compareCodexRecords, orderCodexRecords, recordTimestampMs } from "../../shared/recordIdentity.js";
+import { formatCompactNumber } from "../../shared/toolFormatting.js";
+export { formatCompactNumber } from "../../shared/toolFormatting.js";
 import { isTheiaSurface, isTheiaVscodeHost, isVscodeSurface, reasoningOptions } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
@@ -203,12 +205,6 @@ export const formatContextTitle = (threadUsage: ThreadUsage | null) => {
     `${formatCompactNumber(context.usedTokens)} / ${formatCompactNumber(context.windowTokens)} input tokens`,
     threadUsage.observedAt ? `observed ${formatDate(threadUsage.observedAt)}` : null
   ].filter(Boolean).join(" · ");
-};
-
-export const formatCompactNumber = (value: number) => {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return String(value);
 };
 
 export const formatMessageMeta = (message: CodexRecordView, options: { showTimestamp?: boolean } = {}) => [

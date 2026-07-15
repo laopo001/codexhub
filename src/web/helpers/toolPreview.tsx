@@ -2,12 +2,12 @@ import React from "react";
 import { Tag } from "antd";
 import { FileDiff, Image, MessageSquareText, Plug, Search, ShieldCheck, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
+import { formatCompactNumber, formatWriteStdinSummary, parseJsonObject } from "../../shared/toolFormatting.js";
 import { normalizeUpdatePlanStatus, parseUpdatePlanArguments, updatePlanStatusIcon, updatePlanStatusLabel, type UpdatePlanView as UpdatePlanViewModel } from "../../shared/updatePlanView.js";
 import type { InspectDetail, ParsedToolCall, WebRecordView, WebToolPresenter } from "../types.js";
 import { emptyMemoryCitation, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
-import { formatCompactNumber } from "./records.js";
 
 type ToolPreviewIcon = React.ComponentType<{
   className?: string;
@@ -1170,10 +1170,7 @@ export const formatUpdatePlanInspectInput = (plan: UpdatePlanViewModel) => [
   ...plan.steps.map((step) => `${updatePlanStatusIcon(step.status)} ${step.step} [${updatePlanStatusLabel(step.status)}]`)
 ].filter((line): line is string => Boolean(line)).join("\n");
 
-export const formatWriteStdinSummary = (args: Record<string, unknown>) => {
-  const session = typeof args.session_id === "number" || typeof args.session_id === "string" ? `session ${args.session_id}` : "session";
-  return `stdin: ${formatWriteStdinChars(args)} -> ${session}`;
-};
+export { formatWriteStdinChars, formatWriteStdinSummary } from "../../shared/toolFormatting.js";
 
 export const describeWriteStdinAction = (args: Record<string, unknown>) => {
   const chars = typeof args.chars === "string" ? args.chars : "";
@@ -1182,14 +1179,6 @@ export const describeWriteStdinAction = (args: Record<string, unknown>) => {
   if (chars === "\n") return "send Enter";
   if (chars.length <= 48) return `send ${JSON.stringify(chars)}`;
   return `send ${chars.length} chars`;
-};
-
-export const formatWriteStdinChars = (args: Record<string, unknown>) => {
-  if (typeof args.chars !== "string") return "<missing>";
-  if (!args.chars) return "<empty> (poll only; no stdin was written)";
-  if (args.chars === "\u0003") return "Ctrl-C (\\u0003)";
-  if (args.chars === "\n") return "Enter (\\n)";
-  return JSON.stringify(args.chars);
 };
 
 export const formatWriteStdinBlock = (args: Record<string, unknown>) => {
@@ -1221,14 +1210,6 @@ const formatFunctionCallPreview = (name: string, args: Record<string, unknown>) 
     name,
     ...fields.map(([key, value]) => `${key}: ${formatArgumentValue(value)}`)
   ].join("\n");
-};
-
-const parseJsonObject = (value: string): Record<string, unknown> | null => {
-  try {
-    return asRecord(JSON.parse(value));
-  } catch {
-    return null;
-  }
 };
 
 const stringifyInspectJson = (value: unknown) => {

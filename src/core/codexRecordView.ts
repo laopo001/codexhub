@@ -1,4 +1,5 @@
 import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage } from "../shared/recordTypes.js";
+import { parseJsonObject } from "../shared/toolFormatting.js";
 export type { CodexRecordView, RecordUsage } from "../shared/recordTypes.js";
 
 export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
@@ -693,14 +694,6 @@ const collabAgentToolText = (payload: Record<string, unknown>) => [
     ? `receivers: ${payload.receiver_thread_ids.join(", ")}`
     : null
 ].filter(Boolean).join("\n");
-
-const parseJsonObject = (value: string): Record<string, unknown> | null => {
-  try {
-    return asRecord(JSON.parse(value));
-  } catch {
-    return null;
-  }
-};
 
 const formatJsonLike = (value: string) => {
   const parsed = parseJsonObject(value);

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isCronExpression } from "../core/taskCron.js";
+import { isCronExpression } from "./taskCron.js";
 import type {
   MachineDirectoryListing,
   MachineGitWorktreeResult,

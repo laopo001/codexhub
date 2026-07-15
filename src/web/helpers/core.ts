@@ -1,9 +1,11 @@
 import { turnIdFromAppRecordId } from "../../shared/recordIdentity.js";
 import { asRecord } from "../../shared/recordTypes.js";
+import { createCodexHubApiClient } from "../../shared/apiClient.js";
 import type { ModelCatalogItem, StoredMachine, ThreadGoalStatus } from "../../shared/apiContract.js";
-import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
-import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../core/taskCron.js";
-import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, RealtimeMessage, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
+import type { AnyApiRoute, ApiRouteCallArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
+export { parseRealtimeMessage } from "../../shared/realtimeClient.js";
+import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../shared/taskCron.js";
+import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -32,11 +34,6 @@ export const setAuthToken = (token: string) => {
   else window.localStorage.removeItem(authStorageKey);
 };
 
-export const clearAuthToken = () => {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(authStorageKey);
-};
-
 export const authFetch = (path: string, init: RequestInit = {}) => {
   const token = authToken();
   const headers = new Headers(init.headers);
@@ -44,75 +41,21 @@ export const authFetch = (path: string, init: RequestInit = {}) => {
   return fetch(path, { ...init, headers });
 };
 
-export const authWebSocketUrl = (path: string) => {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = new URL(path, `${protocol}//${window.location.host}`);
-  const token = authToken();
-  if (token) url.searchParams.set("codexhub_token", token);
-  return url.toString();
-};
+const webApiClient = createCodexHubApiClient({ authToken });
 
 export const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-  const response = await authFetch(path, init);
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-  return await response.json() as T;
+  return webApiClient.request<T>(path, init);
 };
 
 export const apiRouteJson = async <Route extends AnyApiRoute>(
   route: Route,
   ...args: ApiRouteCallArgs<Route>
 ): Promise<ApiRouteResponse<Route>> => {
-  const values = [...args] as unknown[];
-  const body = route.hasBody ? values.pop() : undefined;
-  const pathArgs = values as ApiRoutePathArgs<Route>;
-  const path = typeof route.path === "function"
-    ? route.path(...(pathArgs as never[]))
-    : route.path;
-  const init: RequestInit | undefined = route.method === "GET"
-    ? undefined
-    : {
-      method: route.method,
-      ...(route.hasBody
-        ? {
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body)
-        }
-        : {})
-    };
-  return apiJson<ApiRouteResponse<Route>>(path, init);
+  return webApiClient.route(route, ...args);
 };
 
 const hasNonBlankString = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0;
-
-export const realtimeMessageTypes = new Set([
-  "sessions",
-  "projects",
-  "tasks",
-  "connections",
-  "thread",
-  "record",
-  "done",
-  "ready",
-  "thread_subscribed",
-  "thread_unsubscribed",
-  "error"
-]);
-
-export const parseRealtimeMessage = (data: unknown): RealtimeMessage | null => {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(String(data));
-  } catch {
-    return null;
-  }
-  const record = asRecord(parsed);
-  const type = typeof record?.type === "string"
-    ? record.type
-    : typeof record?.kind === "string" ? record.kind : "";
-  if (!realtimeMessageTypes.has(type)) return null;
-  return { ...record, type } as RealtimeMessage;
-};
 
 export const canForkAtMessage = (threadId: string, message: { canFork?: boolean; record: { id: string } }) =>
   Boolean(message.canFork && turnIdFromAppRecordId(threadId, message.record.id));
@@ -143,28 +86,6 @@ const normalizeThreadGoalRunPolicy = (value: unknown): ThreadSummary["goalRunPol
     targetRemainingPercent: target
   };
 };
-
-const candidateText = (value: unknown) => typeof value === "string" ? value : "";
-const candidateCount = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : 0;
-
-export const normalizeThreadCandidates = (threads: CodexThreadCandidate[] | undefined): CodexThreadCandidate[] =>
-  Array.isArray(threads)
-    ? threads.flatMap((thread) => {
-      const record = asRecord(thread);
-      if (!record || !hasNonBlankString(record.threadId) || !hasNonBlankString(record.updatedAt)) return [];
-      return [{
-        threadId: record.threadId,
-        cwd: candidateText(record.cwd),
-        path: candidateText(record.path),
-        title: candidateText(record.title),
-        updatedAt: record.updatedAt,
-        firstUserMessage: candidateText(record.firstUserMessage),
-        lastAssistantMessage: candidateText(record.lastAssistantMessage),
-        artifactCount: candidateCount(record.artifactCount),
-        messageCount: candidateCount(record.messageCount)
-      }];
-    })
-    : [];
 
 const isSessionLike = (value: unknown): value is SessionSummary => {
   const record = asRecord(value);
@@ -743,37 +664,8 @@ export const sshConnectionDoctorLines = (host: SshHost, connection: SshConnectio
   connection?.lastOutput ? `last output:\n${connection.lastOutput}` : null
 ].filter(Boolean).join("\n");
 
-export const pluginIntegrationStatusLabel = (plugin: PluginSummary) => {
-  const integrations = plugin.contributions?.integrations ?? [];
-  if (!integrations.length) return plugin.contributions?.web?.styles?.length ? "style" : "metadata";
-  const started = integrations.filter((integration) => integration.started).length;
-  const configured = integrations.filter((integration) => integration.configured).length;
-  if (started) return `${started}/${integrations.length} running`;
-  if (configured) return `${configured}/${integrations.length} configured`;
-  return "not configured";
-};
-
-export const pluginStatusClass = (plugin: PluginSummary) => {
-  if (!plugin.enabled) return "disabled";
-  const integrations = plugin.contributions?.integrations ?? [];
-  if (integrations.some((integration) => integration.started)) return "running";
-  if (integrations.some((integration) => integration.configured)) return "configured";
-  return "idle";
-};
-
 export const compactSshOutput = (value: string | undefined) =>
   value?.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)?.slice(0, 180) ?? "";
-
-export const sessionStatusTitle = (session: SessionView) => {
-  if (session.online) return "Session online";
-  const reason = session.offlineReason === "heartbeat_timeout"
-    ? "heartbeat timeout"
-    : session.offlineReason === "transport_disconnected"
-      ? "connection lost"
-      : "recently disconnected";
-  const lastSeen = session.lastSeenAt ? `, last seen ${relativeTime(session.lastSeenAt)}` : "";
-  return `Session disconnected: ${reason}${lastSeen}`;
-};
 
 export const relativeTime = (iso: string | undefined) => {
   if (!iso) return "unknown";

@@ -1,14 +1,15 @@
-import { useRef, useState } from "react";
+import { useReducer, useRef, useState } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import type { CodexRecord } from "../shared/recordTypes.js";
+import type { CodexHubRealtimeClient } from "../shared/realtimeClient.js";
 import { createComposerDraftStore, initAuthTokenFromUrl } from "./appHelpers.js";
 import { useIntegrationState, useUiState } from "./appStateSlices.js";
+import { openThreadReducer } from "./openThreadReducer.js";
 import type {
   CommandPalette,
   ComposerHistoryState,
   MachineSummary,
   ModelCatalogLoadState,
-  OpenThreadState,
   ProjectPickerState,
   ProjectSummary,
   SessionView,
@@ -107,7 +108,7 @@ export const useAppState = () => {
     threadTabContextMenu
   } = uiState;
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
-  const [openThreads, setOpenThreads] = useState<OpenThreadState[]>([]);
+  const [openThreads, dispatchOpenThreads] = useReducer(openThreadReducer, []);
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
   const [sessionList, setSessionList] = useState<SessionView[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
@@ -131,12 +132,11 @@ export const useAppState = () => {
   const [modelCatalogBySession, setModelCatalogBySession] = useState<Record<string, ModelCatalogLoadState>>({});
   const [commandPaletteByScope, setCommandPaletteByScope] = useState<Record<string, CommandPalette>>({});
   const [commandPaletteLoadingScopes, setCommandPaletteLoadingScopes] = useState<Record<string, boolean>>({});
-  const realtimeSocket = useRef<WebSocket | null>(null);
+  const realtimeClient = useRef<CodexHubRealtimeClient | null>(null);
   const sessionsLastSeq = useRef(0);
   const projectsLastSeq = useRef(0);
   const tasksLastSeq = useRef(0);
   const connectionsLastSeq = useRef(0);
-  const controlReconnectTimer = useRef<number | null>(null);
   const realtimeThreadSubscriptions = useRef(new Set<string>());
   const threadLastSeqs = useRef(new Map<string, number>());
   const openingThreads = useRef(new Map<string, Promise<void>>());
@@ -171,7 +171,6 @@ export const useAppState = () => {
     commandPaletteLoadingScopes,
     connectionMode,
     connectionsLastSeq,
-    controlReconnectTimer,
     deletingProjectId,
     expandedStatusKeys,
     expandedToolBatchKeys,
@@ -204,7 +203,7 @@ export const useAppState = () => {
     projectPicker,
     projects,
     projectsLastSeq,
-    realtimeSocket,
+    realtimeClient,
     realtimeThreadSubscriptions,
     registeredCommandCopied,
     selectedProjectKey,
@@ -240,7 +239,7 @@ export const useAppState = () => {
     setModelCatalogBySession,
     setOfflineProjectsCollapsed,
     setOpeningProjectKey,
-    setOpenThreads,
+    dispatchOpenThreads,
     setParentRegistration,
     setParentRegistrationBusy,
     setParentRegistrationError,

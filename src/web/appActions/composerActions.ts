@@ -22,12 +22,14 @@ import type {
   MessageRenderMode,
   WebRecordView
 } from "../types.js";
+import type { OpenThreadAction } from "../openThreadReducer.js";
 
 type ComposerActionsContext = {
   commandPaletteByScope: Record<string, CommandPalette>;
   commandPaletteLoadingScopes: Record<string, boolean>;
   composerDraftStore: ComposerDraftStore;
   composerHistoryRef: React.MutableRefObject<ComposerHistoryState | null>;
+  openThreads: OpenThreadState[];
   messageContextMenu: MessageContextMenuState | null;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
   setCommandPaletteByScope: React.Dispatch<React.SetStateAction<Record<string, CommandPalette>>>;
@@ -37,7 +39,7 @@ type ComposerActionsContext = {
   setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
   setMessageRenderModes: React.Dispatch<React.SetStateAction<Record<string, MessageRenderMode>>>;
   setThreadControlsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
+  dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
 };
 
 export type ComposerActionsDependencies = {
@@ -256,9 +258,11 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
   const addThreadTextAttachment = (threadId: string, text: string) => {
     const normalizedText = normalizeSelectedText(text);
     if (!normalizedText) return;
-    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
-      ? { ...thread, textAttachments: [...thread.textAttachments, { id: browserId(), text: normalizedText }] }
-      : thread));
+    ctx.dispatchOpenThreads({
+      type: "add-texts",
+      threadId,
+      texts: [{ id: browserId(), text: normalizedText }]
+    });
   };
 
   const insertThreadPathText = (
@@ -303,9 +307,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
         previewUrl: URL.createObjectURL(file)
       }));
     if (!images.length) return;
-    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
-      ? { ...thread, imageAttachments: [...thread.imageAttachments, ...images] }
-      : thread));
+    ctx.dispatchOpenThreads({ type: "add-images", threadId, images });
   };
 
   const addThreadImages = (threadId: string, files: FileList | null) => {
@@ -332,9 +334,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     })));
     const normalized = textAttachments.filter((item) => item.text);
     if (normalized.length) {
-      ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
-        ? { ...thread, textAttachments: [...thread.textAttachments, ...normalized] }
-        : thread));
+      ctx.dispatchOpenThreads({ type: "add-texts", threadId, texts: normalized });
     }
     const rejected = [
       ...tooLarge.map((file) => `${file.name} is larger than 512KB`),
@@ -355,26 +355,22 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
   };
 
   const clearThreadAttachments = (threadId: string) => {
-    ctx.setOpenThreads((current) => current.map((thread) => {
-      if (thread.threadId !== threadId) return thread;
-      for (const image of thread.imageAttachments) URL.revokeObjectURL(image.previewUrl);
-      return { ...thread, imageAttachments: [], textAttachments: [] };
-    }));
+    for (const image of ctx.openThreads.find((thread) => thread.threadId === threadId)?.imageAttachments ?? []) {
+      URL.revokeObjectURL(image.previewUrl);
+    }
+    ctx.dispatchOpenThreads({ type: "clear-attachments", threadId });
   };
 
   const removeThreadImage = (threadId: string, imageId: string) => {
-    ctx.setOpenThreads((current) => current.map((thread) => {
-      if (thread.threadId !== threadId) return thread;
-      const image = thread.imageAttachments.find((item) => item.id === imageId);
-      if (image) URL.revokeObjectURL(image.previewUrl);
-      return { ...thread, imageAttachments: thread.imageAttachments.filter((item) => item.id !== imageId) };
-    }));
+    const image = ctx.openThreads
+      .find((thread) => thread.threadId === threadId)
+      ?.imageAttachments.find((item) => item.id === imageId);
+    if (image) URL.revokeObjectURL(image.previewUrl);
+    ctx.dispatchOpenThreads({ type: "remove-image", threadId, imageId });
   };
 
   const removeThreadTextAttachment = (threadId: string, textId: string) => {
-    ctx.setOpenThreads((current) => current.map((thread) => thread.threadId === threadId
-      ? { ...thread, textAttachments: thread.textAttachments.filter((item) => item.id !== textId) }
-      : thread));
+    ctx.dispatchOpenThreads({ type: "remove-text", threadId, textId });
   };
 
   const openMessageContextMenu = (

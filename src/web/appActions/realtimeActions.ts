@@ -2,23 +2,21 @@ import type React from "react";
 import type { RealtimeOutgoingMessage } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import type { CodexRecord } from "../../shared/recordTypes.js";
+import { CodexHubRealtimeClient, codexHubRealtimeUrl } from "../../shared/realtimeClient.js";
 import { defaultAppSettings, initialWorkspacePath, isEmbeddedHostSurface } from "../appConfig.js";
 import {
   apiRouteJson,
   authToken,
-  authWebSocketUrl,
   appendThreadOrder,
   formatDuration,
   isTaskCompleteRecord,
   mergeNotificationRecords,
-  mergeRecord,
   mergeThreadOrderBySession,
   normalizeMachines,
   normalizePlugins,
   normalizeProjects,
   normalizeSessions,
   normalizeTasks,
-  parseRealtimeMessage,
   patchProjectsThread,
   patchSessionsThread,
   playTaskCompletionSound,
@@ -32,7 +30,6 @@ import {
   taskCompletionNotificationKey
 } from "../appHelpers.js";
 import type {
-  OpenThreadState,
   AppSettings,
   LocalTask,
   MachineSummary,
@@ -49,17 +46,17 @@ import type {
   TaskCompleteNotification,
   LocalTaskRun
 } from "../types.js";
+import type { OpenThreadAction } from "../openThreadReducer.js";
 
 type RealtimeActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   connectionsLastSeq: React.MutableRefObject<number>;
-  controlReconnectTimer: React.MutableRefObject<number | null>;
   notificationAudioContext: React.MutableRefObject<AudioContext | null>;
   notificationRecordsByThread: React.MutableRefObject<Map<string, CodexRecord[]>>;
   notifiedTaskCompletions: React.MutableRefObject<Set<string>>;
   projectsLastSeq: React.MutableRefObject<number>;
-  realtimeSocket: React.MutableRefObject<WebSocket | null>;
+  realtimeClient: React.MutableRefObject<CodexHubRealtimeClient | null>;
   realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
   sidebarDraftStore: SidebarDraftStore;
   sessionsLastSeq: React.MutableRefObject<number>;
@@ -83,7 +80,7 @@ type RealtimeActionsContext = {
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
   setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
-  setOpenThreads: React.Dispatch<React.SetStateAction<OpenThreadState[]>>;
+  dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSshConfigHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
   setSshConnections: React.Dispatch<React.SetStateAction<SshConnection[]>>;
@@ -100,8 +97,6 @@ export type RealtimeActionsDependencies = {
 
 export type RealtimeActions = {
   initialize: () => Promise<void>;
-  clearControlReconnectTimer: () => void;
-  scheduleControlReconnect: () => void;
   sendRealtime: (message: RealtimeOutgoingMessage) => boolean;
   connectRealtimeEvents: () => void;
   handleRealtimeMessage: (message: RealtimeMessage) => void;
@@ -250,7 +245,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         }
       }
       if (restoredThreadIds.length) {
-        ctx.setOpenThreads((current) => orderOpenThreads(current, restoredThreadIds));
+        ctx.dispatchOpenThreads({ type: "reorder", threadIds: restoredThreadIds });
         if (restoredActiveThreadId) {
           ctx.latestRequestedThreadId.current = restoredActiveThreadId;
           ctx.setActiveTabThreadId(restoredActiveThreadId);
@@ -265,73 +260,27 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setInitialized(true);
   };
 
-  function clearControlReconnectTimer() {
-    if (ctx.controlReconnectTimer.current === null) return;
-    window.clearTimeout(ctx.controlReconnectTimer.current);
-    ctx.controlReconnectTimer.current = null;
-  }
-
-  function scheduleControlReconnect() {
-    clearControlReconnectTimer();
-    ctx.controlReconnectTimer.current = window.setTimeout(() => {
-      ctx.controlReconnectTimer.current = null;
-      connectRealtimeEvents();
-    }, 1000);
-  }
-
-  function realtimeUrl() {
-    return authWebSocketUrl("/api/events/ws");
-  }
-
   function sendRealtime(message: RealtimeOutgoingMessage) {
-    const socket = ctx.realtimeSocket.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-    socket.send(JSON.stringify(message));
-    return true;
-  }
-
-  function sendRealtimeHello() {
-    sendRealtime({
-      type: "hello",
-      sessionsAfter: ctx.sessionsLastSeq.current,
-      projectsAfter: ctx.projectsLastSeq.current,
-      tasksAfter: ctx.tasksLastSeq.current,
-      connectionsAfter: ctx.connectionsLastSeq.current
-    });
-  }
-
-  function resubscribeRealtimeThreads() {
-    for (const threadId of ctx.realtimeThreadSubscriptions.current) {
-      sendRealtime({
-        type: "subscribe_thread",
-        threadId,
-        after: ctx.threadLastSeqs.current.get(threadId) ?? 0
-      });
-    }
+    return ctx.realtimeClient.current?.send(message) ?? false;
   }
 
   function connectRealtimeEvents() {
-    clearControlReconnectTimer();
-    ctx.realtimeSocket.current?.close();
-    const socket = new WebSocket(realtimeUrl());
-    socket.addEventListener("open", () => {
-      sendRealtimeHello();
-      resubscribeRealtimeThreads();
+    ctx.realtimeClient.current?.disconnect();
+    const client = new CodexHubRealtimeClient({
+      url: () => codexHubRealtimeUrl(window.location.href, authToken()),
+      cursors: {
+        sessionsAfter: ctx.sessionsLastSeq.current,
+        projectsAfter: ctx.projectsLastSeq.current,
+        tasksAfter: ctx.tasksLastSeq.current,
+        connectionsAfter: ctx.connectionsLastSeq.current
+      },
+      onMessage: handleRealtimeMessage
     });
-    socket.addEventListener("message", (event) => {
-      const message = parseRealtimeMessage(event.data);
-      if (!message) return;
-      handleRealtimeMessage(message);
-    });
-    socket.addEventListener("error", () => {
-      if (ctx.realtimeSocket.current === socket) socket.close();
-    });
-    socket.addEventListener("close", () => {
-      if (ctx.realtimeSocket.current !== socket) return;
-      ctx.realtimeSocket.current = null;
-      scheduleControlReconnect();
-    });
-    ctx.realtimeSocket.current = socket;
+    for (const threadId of ctx.realtimeThreadSubscriptions.current) {
+      client.subscribeThread(threadId, ctx.threadLastSeqs.current.get(threadId) ?? 0);
+    }
+    ctx.realtimeClient.current = client;
+    client.connect();
   }
 
   function handleRealtimeMessage(message: RealtimeMessage) {
@@ -381,16 +330,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       Math.max(ctx.threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
     );
     notifyTaskCompletionsFromStreamEvent(payload);
-    ctx.setOpenThreads((current) => {
-      let matched = false;
-      const next = current.map((thread) => {
-        if (thread.threadId !== payload.thread.threadId) return thread;
-        matched = true;
-        const records = payload.record ? mergeRecord(thread.records, payload.record) : thread.records;
-        return { ...thread, ...payload.thread, records };
-      });
-      return matched ? next : current;
-    });
+    ctx.dispatchOpenThreads({ type: "merge-stream", thread: payload.thread, record: payload.record });
     const sessionId = payload.thread.session.sessionId;
     if (sessionId) {
       ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, payload.thread.threadId));
@@ -466,8 +406,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
 
   return {
     initialize,
-    clearControlReconnectTimer,
-    scheduleControlReconnect,
     sendRealtime,
     connectRealtimeEvents,
     handleRealtimeMessage,
@@ -486,16 +424,4 @@ const uniqueThreadIds = (threadIds: string[]) => {
     result.push(threadId);
   }
   return result;
-};
-
-const orderOpenThreads = (threads: OpenThreadState[], threadIds: string[]) => {
-  const order = new Map(threadIds.map((threadId, index) => [threadId, index]));
-  return [...threads].sort((left, right) => {
-    const leftIndex = order.get(left.threadId);
-    const rightIndex = order.get(right.threadId);
-    if (leftIndex == null && rightIndex == null) return 0;
-    if (leftIndex == null) return 1;
-    if (rightIndex == null) return -1;
-    return leftIndex - rightIndex;
-  });
 };

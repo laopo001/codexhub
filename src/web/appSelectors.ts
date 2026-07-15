@@ -54,9 +54,7 @@ export const useAppSelectors = (state: AppState) => {
   const composerMode = activeThread?.composerMode ?? "chat";
   const setComposerMode = (mode: ComposerMode) => {
     if (!state.activeTabThreadId) return;
-    state.setOpenThreads((current) => current.map((thread) => thread.threadId === state.activeTabThreadId
-      ? { ...thread, composerMode: mode }
-      : thread));
+    state.dispatchOpenThreads({ type: "set-composer-mode", threadId: state.activeTabThreadId, mode });
   };
   const activeThreadModelDraft = activeThread?.modelDraft ?? "auto";
   const activeThreadReasoningDraft = activeThread?.reasoningDraft ?? "auto";
@@ -71,53 +69,23 @@ export const useAppSelectors = (state: AppState) => {
     : activeThreadSandboxPolicyDraft;
   const setActiveThreadModelDraft: Dispatch<SetStateAction<ModelSelection>> = (value) => {
     if (!state.activeTabThreadId) return;
-    state.setOpenThreads((current) => current.map((thread) => {
-      if (thread.threadId !== state.activeTabThreadId) return thread;
-      const next = typeof value === "function"
-        ? (value as (current: ModelSelection) => ModelSelection)(thread.modelDraft)
-        : value;
-      return { ...thread, modelDraft: next };
-    }));
+    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "modelDraft", value });
   };
   const setActiveThreadReasoningDraft: Dispatch<SetStateAction<ReasoningSelection>> = (value) => {
     if (!state.activeTabThreadId) return;
-    state.setOpenThreads((current) => current.map((thread) => {
-      if (thread.threadId !== state.activeTabThreadId) return thread;
-      const next = typeof value === "function"
-        ? (value as (current: ReasoningSelection) => ReasoningSelection)(thread.reasoningDraft)
-        : value;
-      return { ...thread, reasoningDraft: next };
-    }));
+    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "reasoningDraft", value });
   };
   const setActiveThreadServiceTierDraft: Dispatch<SetStateAction<ServiceTierSelection>> = (value) => {
     if (!state.activeTabThreadId) return;
-    state.setOpenThreads((current) => current.map((thread) => {
-      if (thread.threadId !== state.activeTabThreadId) return thread;
-      const next = typeof value === "function"
-        ? (value as (current: ServiceTierSelection) => ServiceTierSelection)(thread.serviceTierDraft)
-        : value;
-      return { ...thread, serviceTierDraft: next };
-    }));
+    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "serviceTierDraft", value });
   };
   const setActiveThreadApprovalPolicyDraft: Dispatch<SetStateAction<ApprovalPolicyDraft>> = (value) => {
     if (!state.activeTabThreadId) return;
-    state.setOpenThreads((current) => current.map((thread) => {
-      if (thread.threadId !== state.activeTabThreadId) return thread;
-      const next = typeof value === "function"
-        ? (value as (current: ApprovalPolicyDraft) => ApprovalPolicyDraft)(thread.approvalPolicyDraft)
-        : value;
-      return { ...thread, approvalPolicyDraft: next };
-    }));
+    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "approvalPolicyDraft", value });
   };
   const setActiveThreadSandboxPolicyDraft: Dispatch<SetStateAction<SandboxPolicyDraft>> = (value) => {
     if (!state.activeTabThreadId) return;
-    state.setOpenThreads((current) => current.map((thread) => {
-      if (thread.threadId !== state.activeTabThreadId) return thread;
-      const next = typeof value === "function"
-        ? (value as (current: SandboxPolicyDraft) => SandboxPolicyDraft)(thread.sandboxPolicyDraft)
-        : value;
-      return { ...thread, sandboxPolicyDraft: next };
-    }));
+    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "sandboxPolicyDraft", value });
   };
   const projectList = useMemo(
     () => isEmbeddedHostSurface

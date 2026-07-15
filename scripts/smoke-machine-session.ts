@@ -554,6 +554,7 @@ const assertComposerAttachmentClear = async () => {
   };
   try {
     const { createComposerActions } = await import("../src/web/appActions/composerActions.js");
+    const { openThreadReducer } = await import("../src/web/openThreadReducer.js");
     const { createComposerDraftStore } = await import("../src/web/helpers/composer.js");
     const { createSidebarDraftStore } = await import("../src/web/helpers/sidebarDrafts.js");
     const { mergeRecord } = await import("../src/web/helpers/records.js");
@@ -639,6 +640,7 @@ const assertComposerAttachmentClear = async () => {
       composerDraftStore,
       composerHistoryRef: { current: null },
       messageContextMenu: null,
+      openThreads,
       resizeComposerTextarea: () => undefined,
       setCommandPaletteByScope: () => undefined,
       setCommandPaletteLoadingScopes: () => undefined,
@@ -647,8 +649,8 @@ const assertComposerAttachmentClear = async () => {
       setMessageContextMenu: () => undefined,
       setMessageRenderModes: () => undefined,
       setThreadControlsMenuOpen: () => undefined,
-      setOpenThreads: (update) => {
-        openThreads = typeof update === "function" ? update(openThreads) : update;
+      dispatchOpenThreads: (action) => {
+        openThreads = openThreadReducer(openThreads, action);
       }
     }, {
       send: async () => undefined
@@ -1077,6 +1079,18 @@ const assertSshConnect = async (
   sshConfigPath: string,
   remoteClientHash: string
 ) => {
+  const invalidResponse = await fetch(`${apiBase}/api/ssh/connect`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({})
+  });
+  const invalidBody = await invalidResponse.json().catch(() => null) as { error?: unknown } | null;
+  if (invalidResponse.status !== 400 || invalidBody?.error !== "invalid_request") {
+    throw new Error(
+      `invalid ssh connect request was not rejected as invalid_request: HTTP ${invalidResponse.status} ${JSON.stringify(invalidBody)}`
+    );
+  }
+
   const remotePort = 19001;
   const started = await apiJson<{ connection?: SshConnection }>(apiBase, "/api/ssh/connect", {
     method: "POST",

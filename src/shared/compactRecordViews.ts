@@ -1,4 +1,5 @@
 import { asRecord, type CodexRecord, type CodexRecordView } from "./recordTypes.js";
+import { formatCompactNumber, formatWriteStdinSummary, parseJsonObject } from "./toolFormatting.js";
 import { formatUpdatePlanCompact, parseUpdatePlanArguments } from "./updatePlanView.js";
 
 /** compact/simple 消息模式使用的 record view，保留 inspect 所需的原始信息。 */
@@ -414,31 +415,4 @@ const formatMilliseconds = (value: number) => {
   }
   if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
   return `${value}ms`;
-};
-
-const formatCompactNumber = (value: number) => {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return String(value);
-};
-
-const formatWriteStdinSummary = (args: Record<string, unknown>) => {
-  const session = typeof args.session_id === "number" || typeof args.session_id === "string" ? `session ${args.session_id}` : "session";
-  return `stdin: ${formatWriteStdinChars(args)} -> ${session}`;
-};
-
-const formatWriteStdinChars = (args: Record<string, unknown>) => {
-  if (typeof args.chars !== "string") return "<missing>";
-  if (!args.chars) return "<empty> (poll only; no stdin was written)";
-  if (args.chars === "\u0003") return "Ctrl-C (\\u0003)";
-  if (args.chars === "\n") return "Enter (\\n)";
-  return JSON.stringify(args.chars);
-};
-
-const parseJsonObject = (value: string): Record<string, unknown> | null => {
-  try {
-    return asRecord(JSON.parse(value));
-  } catch {
-    return null;
-  }
 };

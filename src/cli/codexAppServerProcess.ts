@@ -4,14 +4,10 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import type { CodexAppServerLaunchOptions, CodexApprovalPolicy, CodexSandboxMode } from "../shared/appServerLaunch.js";
+export type { CodexAppServerLaunchOptions, CodexApprovalPolicy, CodexSandboxMode } from "../shared/appServerLaunch.js";
 
 export type ChildExit = { code: number | null; signal: NodeJS.Signals | null };
-export type CodexApprovalPolicy = "untrusted" | "on-failure" | "on-request" | "never";
-export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
-export type CodexAppServerLaunchOptions = {
-  approvalPolicy?: CodexApprovalPolicy;
-  sandbox?: CodexSandboxMode;
-};
 
 export type CodexAppServerProcessHandle = {
   cwd: string;

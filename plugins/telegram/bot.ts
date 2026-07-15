@@ -6,12 +6,14 @@ import type { CodexRecord, CodexRecordView } from "../../src/shared/recordTypes.
 import type { ProxyInput } from "../../src/shared/inputTypes.js";
 import { loadDotEnv } from "../../src/core/dotenv.js";
 import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../../src/shared/compactRecordViews.js";
+import { createCodexHubApiClient, type CodexHubApiClient } from "../../src/shared/apiClient.js";
+import { apiRoutes } from "../../src/shared/apiRoutes.js";
+import { CodexHubRealtimeClient, codexHubRealtimeUrl } from "../../src/shared/realtimeClient.js";
 import type {
+  RealtimeMessage,
   SessionSummary,
-  ThreadDetail,
   ThreadRateLimitUsage,
   ThreadSummary,
-  ThreadTurnPayload,
   ThreadUsage
 } from "../../src/shared/apiContract.js";
 
@@ -23,17 +25,12 @@ type ChatState = {
 type ChatMirror = {
   sessionId: string;
   controller: AbortController;
-  threadController?: AbortController;
+  realtime?: CodexHubRealtimeClient;
   threadId?: string;
   knownRecordIds: Set<string>;
   compactState: ReturnType<typeof createCompactRecordViewState>;
   sentMessages: Map<string, { messageId: number; status: string }>;
-};
-
-type SessionStreamEvent = {
-  seq: number;
-  kind: "sessions";
-  sessions: SessionSummary[];
+  forwardQueue: Promise<void>;
 };
 
 export type TelegramBotOptions = {
@@ -54,6 +51,7 @@ let apiBaseUrl = "http://127.0.0.1:8788";
 let apiAuthToken: string | null = null;
 let allowedChatIds = new Set<number>();
 let logger: Pick<Console, "error" | "log"> = console;
+let apiClient: CodexHubApiClient;
 let startedBot: TelegramBotHandle | null = null;
 const chatStates = new Map<number, ChatState>();
 const selectionOptions = new Map<string, ChatState>();
@@ -318,7 +316,7 @@ const detachSession = (chatId: number) => {
 };
 
 const listSessions = async (): Promise<SessionSummary[]> => {
-  const data = await apiJson<{ sessions?: SessionSummary[] }>("/api/sessions");
+  const data = await apiClient.route(apiRoutes.sessions);
   return normalizeSessions(data.sessions);
 };
 
@@ -336,24 +334,13 @@ const resolveSelectedSession = async (state: ChatState) => {
   return resolveSession(state.sessionId);
 };
 
-const getThread = (threadId: string) => apiJson<ThreadDetail>(`/api/threads/${encodeURIComponent(threadId)}`);
+const getThread = (threadId: string) => apiClient.route(apiRoutes.thread, threadId);
 
 const createSessionThread = async (sessionId: string) =>
-  apiJson<ThreadDetail>(`/api/sessions/${encodeURIComponent(sessionId)}/threads`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "new" })
-  });
+  apiClient.route(apiRoutes.createSessionThread, sessionId, { action: "new" });
 
-const postThreadTurn = async (threadId: string, input: ProxyInput) => {
-  const response = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ input, source: "telegram" })
-  });
-  if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
-  return await response.json() as ThreadTurnPayload;
-};
+const postThreadTurn = async (threadId: string, input: ProxyInput) =>
+  apiClient.route(apiRoutes.sendThreadTurn, threadId, { input, source: "telegram" });
 
 const telegramImageUrl = async (fileId: string) => {
   const link = await bot.telegram.getFileLink(fileId);
@@ -371,14 +358,12 @@ const startChatMirror = (chatId: number, sessionId: string, threadId: string) =>
     threadId,
     knownRecordIds: new Set(),
     compactState: createCompactRecordViewState(),
-    sentMessages: new Map()
+    sentMessages: new Map(),
+    forwardQueue: Promise.resolve()
   };
   chatMirrors.set(chatId, mirror);
-  void switchMirrorThread(chatId, mirror, threadId).catch((error) => {
-    if (!isAbortError(error)) logger.error("telegram thread mirror failed", error);
-  });
-  void runSessionMirror(chatId, mirror).catch((error) => {
-    if (!isAbortError(error)) logger.error("telegram session mirror failed", error);
+  void initializeChatMirror(chatId, mirror, threadId).catch((error) => {
+    if (!isAbortError(error)) logger.error("telegram realtime mirror failed", error);
   });
   return mirror;
 };
@@ -387,47 +372,58 @@ const stopChatMirror = (chatId: number) => {
   const mirror = chatMirrors.get(chatId);
   if (!mirror) return false;
   mirror.controller.abort();
-  mirror.threadController?.abort();
+  mirror.realtime?.disconnect();
   chatMirrors.delete(chatId);
   return true;
 };
 
-const runSessionMirror = async (chatId: number, mirror: ChatMirror) => {
-  const stream = await openSessionEventStream(0, mirror.controller.signal);
-  for await (const event of stream) {
-    if (mirror.controller.signal.aborted) return;
-    const session = event.sessions.find((item) => item.sessionId === mirror.sessionId && item.online);
-    if (!session) {
-      await bot.telegram.sendMessage(chatId, "当前 Codex session 已离线。请用 /sessions 重新选择。").catch(() => undefined);
-      chatMirrors.delete(chatId);
-      mirror.controller.abort();
-      return;
-    }
-  }
-};
-
-const switchMirrorThread = async (chatId: number, mirror: ChatMirror, threadId: string) => {
-  mirror.threadController?.abort();
-  const threadController = new AbortController();
-  mirror.threadController = threadController;
+const initializeChatMirror = async (chatId: number, mirror: ChatMirror, threadId: string) => {
   mirror.threadId = threadId;
   mirror.compactState = createCompactRecordViewState();
   mirror.sentMessages.clear();
 
   const thread = await getThread(threadId);
+  if (mirror.controller.signal.aborted || chatMirrors.get(chatId) !== mirror) return;
   mirror.knownRecordIds = new Set(thread.records.map((record) => record.id));
-  const stream = await openThreadEventStream(thread.threadId, thread.lastSeq, threadController.signal);
-  void (async () => {
-    try {
-      for await (const event of stream) {
-        if (threadController.signal.aborted || mirror.controller.signal.aborted) return;
-        if (event.kind === "record" && event.record) await forwardRecordToChat(chatId, mirror, event.record);
-      }
-    } catch (error) {
-      if (!isAbortError(error)) logger.error("telegram thread mirror failed", error);
-    }
-  })();
+  const realtime = new CodexHubRealtimeClient({
+    url: () => codexHubRealtimeUrl(apiBaseUrl, apiAuthToken),
+    onMessage: (message) => handleMirrorRealtimeMessage(chatId, mirror, message),
+    onError: (error) => logger.error("telegram realtime mirror failed", error)
+  });
+  mirror.realtime = realtime;
+  realtime.subscribeThread(thread.threadId, thread.lastSeq);
+  realtime.connect();
 };
+
+const handleMirrorRealtimeMessage = async (chatId: number, mirror: ChatMirror, message: RealtimeMessage) => {
+  if (mirror.controller.signal.aborted || chatMirrors.get(chatId) !== mirror) return;
+  if (message.type === "sessions") {
+    const session = message.sessions.find((item) => item.sessionId === mirror.sessionId && item.online);
+    if (session) return;
+    await bot.telegram.sendMessage(chatId, "当前 Codex session 已离线。请用 /sessions 重新选择。").catch(() => undefined);
+    stopChatMirror(chatId);
+    return;
+  }
+  if (message.type !== "record" || !message.record || message.thread.threadId !== mirror.threadId) return;
+  mirror.forwardQueue = enqueueActiveTelegramMirrorTask(
+    mirror.forwardQueue,
+    () => !mirror.controller.signal.aborted && chatMirrors.get(chatId) === mirror,
+    () => forwardRecordToChat(chatId, mirror, message.record!),
+    (error) => logger.error("telegram record forwarding failed", error)
+  );
+};
+
+export const enqueueActiveTelegramMirrorTask = (
+  queue: Promise<void>,
+  isActive: () => boolean,
+  task: () => Promise<unknown>,
+  onError: (error: unknown) => void
+): Promise<void> => queue
+  .then(async () => {
+    if (!isActive()) return;
+    await task();
+  })
+  .catch(onError);
 
 const forwardRecordToChat = async (chatId: number, mirror: ChatMirror, record: CodexRecord) => {
   if (mirror.knownRecordIds.has(record.id)) return false;
@@ -452,55 +448,6 @@ const forwardRecordToChat = async (chatId: number, mirror: ChatMirror, record: C
   return true;
 };
 
-const openSessionEventStream = async (after: number, signal?: AbortSignal): Promise<AsyncGenerator<SessionStreamEvent>> => {
-  const response = await apiFetch(`/api/sessions/events?after=${after}`, { signal });
-  if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
-
-  return streamSseEvents<SessionStreamEvent>(response.body.getReader());
-};
-
-const openThreadEventStream = async (threadId: string, after: number, signal?: AbortSignal): Promise<AsyncGenerator<any>> => {
-  const response = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`, { signal });
-  if (!response.ok || !response.body) throw new Error(`API HTTP ${response.status}`);
-
-  return streamSseEvents(response.body.getReader());
-};
-
-const streamSseEvents = async function* <T>(reader: ReadableStreamDefaultReader<Uint8Array>): AsyncGenerator<T> {
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const chunks = buffer.split("\n\n");
-      buffer = chunks.pop() ?? "";
-      for (const chunk of chunks) {
-        const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
-        if (!dataLine) continue;
-        yield JSON.parse(dataLine.slice(6)) as T;
-      }
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
-  }
-};
-
-const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
-  const response = await apiFetch(path, init);
-  if (!response.ok) throw new Error(`API HTTP ${response.status}: ${await response.text()}`);
-  return await response.json() as T;
-};
-
-const apiUrl = (path: string) => new URL(path, apiBaseUrl).toString();
-const apiFetch = (path: string, init: RequestInit = {}) => {
-  const headers = new Headers(init.headers);
-  if (apiAuthToken && !headers.has("authorization")) headers.set("authorization", `Bearer ${apiAuthToken}`);
-  return fetch(apiUrl(path), { ...init, headers });
-};
 const shortId = (id: string) => id.slice(0, 8);
 const selectionKey = (chatId: number, token: string) => `${chatId}:${token}`;
 const rememberSelection = (chatId: number, state: ChatState) => {
@@ -589,12 +536,12 @@ export const startTelegramBot = async (options: TelegramBotOptions): Promise<Tel
   bot = currentBot;
   apiBaseUrl = options.apiBaseUrl ?? "http://127.0.0.1:8788";
   apiAuthToken = options.apiAuthToken ?? process.env.CODEX_HUB_AUTH_TOKEN?.trim() ?? null;
+  apiClient = createCodexHubApiClient({ baseUrl: apiBaseUrl, authToken: () => apiAuthToken });
   allowedChatIds = options.allowedChatIds ?? new Set<number>();
   logger = options.logger ?? console;
   chatStates.clear();
   selectionOptions.clear();
-  for (const mirror of chatMirrors.values()) mirror.controller.abort();
-  chatMirrors.clear();
+  for (const chatId of [...chatMirrors.keys()]) stopChatMirror(chatId);
   selectionSeq = 0;
   registerHandlers();
 
@@ -602,6 +549,7 @@ export const startTelegramBot = async (options: TelegramBotOptions): Promise<Tel
   startedBot = {
     apiBaseUrl,
     stop: (reason = "shutdown") => {
+      for (const chatId of [...chatMirrors.keys()]) stopChatMirror(chatId);
       currentBot.stop(reason);
       if (bot === currentBot) startedBot = null;
     }

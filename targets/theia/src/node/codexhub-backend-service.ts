@@ -116,65 +116,15 @@ const theiaDataDirectory = (key: string) => path.join(
 );
 
 const openWorkspaceProjects = async (serverUrl: string, input: CodexHubBackendStartInput) => {
-  if (!input.workspacePaths.length) return;
-  const ordered = [
-    ...input.workspacePaths.filter((item) => item === input.activeWorkspacePath),
-    ...input.workspacePaths.filter((item) => item !== input.activeWorkspacePath),
-  ];
-  for (const workspacePath of ordered) {
-    await openWorkspaceProject(serverUrl, workspacePath, input.workspaceLabel || "Theia Workspace");
-  }
-};
-
-const openWorkspaceProject = async (serverUrl: string, workspacePath: string, label: string) => {
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    try {
-      const machineId = await localMachineId(serverUrl);
-      const response = await fetch(new URL("/api/projects/open", serverUrl), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          machineId,
-          path: workspacePath,
-          reuse: true,
-          persist: false,
-          source: {
-            kind: "theia",
-            groupId: "theia-workspace",
-            label,
-          },
-        }),
-      });
-      if (response.ok) return;
-      const body = await response.text();
-      lastError = new Error(`HTTP ${response.status}: ${body}`);
-      if (!isLauncherStarting(response.status, body)) break;
-    } catch (error) {
-      lastError = error;
+  const { openEmbeddedWorkspaceProjects } = await import("../../../../src/core/embeddedWorkspaceProjects.js");
+  await openEmbeddedWorkspaceProjects({
+    serverUrl,
+    workspacePaths: input.workspacePaths,
+    activeWorkspacePath: input.activeWorkspacePath,
+    source: {
+      kind: "theia",
+      groupId: "theia-workspace",
+      label: input.workspaceLabel || "Theia Workspace"
     }
-    await delay(500);
-  }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  });
 };
-
-const localMachineId = async (serverUrl: string) => {
-  const response = await fetch(new URL("/api/machines", serverUrl));
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-  const body = asRecord(await response.json().catch(() => null));
-  const machines = Array.isArray(body?.machines) ? body.machines : [];
-  const local = machines
-    .map(asRecord)
-    .find((machine) => machine?.type === "local" && machine.online === true && asRecord(machine.capabilities)?.projectLauncher !== false);
-  const machineId = typeof local?.machineId === "string" ? local.machineId : "";
-  if (!machineId) throw new Error("Theia local project launcher is still starting.");
-  return machineId;
-};
-
-const isLauncherStarting = (status: number, body: string) =>
-  status === 409 && /launcher|machine|offline|starting/i.test(body);
-
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-
-const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
