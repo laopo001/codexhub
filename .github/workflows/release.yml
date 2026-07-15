@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'laopo001/codexhub'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.12.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Validate tag and package version
+        id: package
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          expected_tag="v${version}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+            echo "::error::Release must run from tag ${expected_tag}; got ${GITHUB_REF}."
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${expected_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build release artifacts
+        run: pnpm run package:release
+
+      - name: Run installer and integration smokes
+        run: |
+          pnpm run smoke:vscode-install
+          pnpm run smoke:theia
+          pnpm run smoke:theia-host
+          pnpm run smoke:theia-install
+          pnpm run smoke:notification-hooks
+
+      - name: Validate publish credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "::error::Missing NPM_TOKEN repository secret."
+            exit 1
+          fi
+          if [[ -z "${VSCE_PAT:-}" ]]; then
+            echo "::error::Missing VSCE_PAT repository secret."
+            exit 1
+          fi
+
+      - name: Publish CodexHub CLI to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          package="@dadigua/codexhub@${VERSION}"
+          if npm view "${package}" version >/dev/null 2>&1; then
+            echo "${package} already exists on npm; skipping publish."
+          else
+            npm publish "release-artifacts/dadigua-codexhub-${VERSION}.tgz" --access public --provenance
+          fi
+
+      - name: Publish native Theia package to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          package="@dadigua/codexhub-theia@${VERSION}"
+          if npm view "${package}" version >/dev/null 2>&1; then
+            echo "${package} already exists on npm; skipping publish."
+          else
+            npm publish "release-artifacts/dadigua-codexhub-theia-${VERSION}.tgz" --access public --provenance
+          fi
+
+      - name: Publish shared VSIX to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: pnpm exec vsce publish --packagePath dist-vsix/codexhub.vsix --skip-duplicate
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.package.outputs.tag }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" release-artifacts/* --clobber
+          else
+            gh release create "${TAG}" release-artifacts/* \
+              --verify-tag \
+              --title "CodexHub ${VERSION}" \
+              --generate-notes
+          fi

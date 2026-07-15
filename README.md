@@ -375,7 +375,7 @@ pnpm run package:vscode
 pnpm run install:vscode
 ```
 
-`build:vscode` 会先跑完整 `pnpm build`，再把 extension 打成 Node CJS bundle，显式把 extension host 里的 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；共享 VSIX staging 位于 `dist-vsix/`，会包含 Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE，供 VS Code 与官方 Theia IDE 共用。仓库内的 VSCode Marketplace 发布 workflow 会在 `main` 分支 push 后自动触发，也支持手动 `workflow_dispatch`，会运行 `pnpm run package:vscode`，并要求仓库 secret `VSCE_PAT`，发布时使用 `vsce publish --packagePath dist-vsix/codexhub.vsix --skip-duplicate`。
+`build:vscode` 会先跑完整 `pnpm build`，再把 extension 打成 Node CJS bundle，显式把 extension host 里的 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；共享 VSIX staging 位于 `dist-vsix/`，会包含 Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE，供 VS Code 与官方 Theia IDE 共用。
 
 ## Eclipse Theia
 
@@ -426,7 +426,37 @@ pnpm run package:theia
 pnpm run smoke:theia
 ```
 
-该高级产物位于 `dist-theia/`，接入方式见 `targets/theia/README.md`；普通 Theia IDE 用户不需要它。
+该高级产物位于 `dist-theia/`，接入方式见 `targets/theia/README.md`；普通 Theia IDE 用户不需要它。它与 `dist-vsix/codexhub.vsix` 是两种不同实现：VSIX 运行在兼容 VS Code Extension API 的 IDE extension host，`@dadigua/codexhub-theia` 则是编译进自定义 Theia 产品的原生 frontend/backend contribution。
+
+## 发布新版本
+
+仓库使用 `.github/workflows/release.yml` 统一发布，不再在每次 `main` push 时分别发布 npm 和 Marketplace。发布 workflow 只接受与根 `package.json` 版本严格一致的 `v<version>` 标签，一次构建并验证以下三个产物：
+
+- `release-artifacts/dadigua-codexhub-<version>.tgz`：CLI npm 包，内含同版本共享 VSIX
+- `release-artifacts/codexhub-<version>.vsix`：发布到 VS Code Marketplace，也可安装到官方 Theia IDE
+- `release-artifacts/dadigua-codexhub-theia-<version>.tgz`：供自定义 Theia 产品编译期接入的原生 npm 包
+
+本地预检可以运行：
+
+```bash
+pnpm run package:release
+pnpm run smoke:vscode-install
+pnpm run smoke:theia
+pnpm run smoke:theia-host
+pnpm run smoke:theia-install
+pnpm run smoke:notification-hooks
+```
+
+验证通过后提交版本修改，再推送 `main` 和对应标签：
+
+```bash
+VERSION=$(node -p "require('./package.json').version")
+git push origin main
+git tag -a "v${VERSION}" -m "CodexHub ${VERSION}"
+git push origin "v${VERSION}"
+```
+
+标签会依次发布 `@dadigua/codexhub`、`@dadigua/codexhub-theia`、VS Code Marketplace，并创建包含三个文件的 GitHub Release。npm 发布前会检查精确版本是否已存在，Marketplace 使用 `--skip-duplicate`，GitHub Release 采用 create-or-upload，因此失败后可以在 Actions 中选择同一标签手动重跑。仓库需要配置 `NPM_TOKEN` 和 `VSCE_PAT`。
 
 ## API
 

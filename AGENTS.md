@@ -181,4 +181,5 @@ pnpm build
 8. `smoke:task-lock` 覆盖 session model catalog、thread compact command、thread review command、task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close 和 token usage rate limits。
 9. `smoke:electron` 覆盖 Electron main process、嵌入 server 随机端口和 `/api/health`。
 10. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vsix/codexhub.vsix --force`。
-11. VSCode Marketplace 发布 workflow 在 `.github/workflows/publish-vscode.yml`，支持 `main` 分支 push 自动触发和 `workflow_dispatch` 手动触发，要求仓库 secret `VSCE_PAT`，先 `pnpm run package:vscode`，再用 `vsce publish --packagePath dist-vsix/codexhub.vsix --skip-duplicate`。
+11. 公开版本由 `.github/workflows/release.yml` 统一发布，只允许与根 `package.json` 版本一致的 `v<version>` 标签触发；`main` push 不应直接发布。workflow 需要 `NPM_TOKEN` 和 `VSCE_PAT`，并按可重试方式发布两个 npm 包、VS Code Marketplace 和 GitHub Release。
+12. `pnpm run package:release` 只做一次完整 build，再产出 `release-artifacts/dadigua-codexhub-<version>.tgz`、`release-artifacts/codexhub-<version>.vsix`、`release-artifacts/dadigua-codexhub-theia-<version>.tgz`。根 CLI npm 包必须内含 `dist-vsix/codexhub.vsix`；原生 Theia npm 包是另一种编译期实现，不能与共享 VSIX 混为同一产物。

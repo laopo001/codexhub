@@ -12,7 +12,7 @@ compose your Theia product:
 ```json
 {
   "dependencies": {
-    "@dadigua/codexhub-theia": "^0.4.16"
+    "@dadigua/codexhub-theia": "^0.4"
   }
 }
 ```

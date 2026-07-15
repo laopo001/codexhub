@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { installVSCodeExtension } from "../src/core/vscodeExtensionInstaller.js";
 
+const { version } = JSON.parse(await readFile("package.json", "utf8")) as { version: string };
 const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-vscode-installer-"));
 const previousLog = process.env.CODEXHUB_FAKE_CODE_LOG;
 
@@ -16,7 +17,7 @@ try {
     "#!/usr/bin/env node",
     "const fs = require('node:fs');",
     "fs.appendFileSync(process.env.CODEXHUB_FAKE_CODE_LOG, JSON.stringify(process.argv.slice(2)) + '\\n');",
-    "if (process.argv.includes('--list-extensions')) console.log('dadigua.codexhub@0.4.16');",
+    `if (process.argv.includes('--list-extensions')) console.log('dadigua.codexhub@${version}');`,
   ].join("\n"));
   await chmod(fakeCode, 0o755);
   process.env.CODEXHUB_FAKE_CODE_LOG = logPath;
@@ -26,7 +27,7 @@ try {
     installWindowsHost: false,
     vsixPath,
   });
-  assert.equal(result.localExtension, "dadigua.codexhub@0.4.16");
+  assert.equal(result.localExtension, `dadigua.codexhub@${version}`);
   assert.equal(result.windowsExtension, null);
   assert.equal(result.vsixPath, vsixPath);
 

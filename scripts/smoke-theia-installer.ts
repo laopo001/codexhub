@@ -5,7 +5,7 @@ import path from "node:path";
 import { deployTheiaExtensionAtomically } from "../src/core/theiaExtensionDeployment.js";
 
 const extensionId = "dadigua.codexhub";
-const version = "0.4.16";
+const { version } = JSON.parse(await readFile("package.json", "utf8")) as { version: string };
 const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-theia-installer-"));
 
 try {
