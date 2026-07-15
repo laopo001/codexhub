@@ -1,16 +1,17 @@
-import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import { Switch } from "antd";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isEmbeddedHostSurface, languageAliases } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationEntry, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
-import { asRecord, type CodexRecordView } from "../../shared/recordTypes.js";
+import { asRecord } from "../../shared/recordTypes.js";
 import { authToken } from "./core.js";
 import { contextMenuPosition, writeTextToClipboard } from "./composer.js";
 import { LiveStatusLabel, LiveThreadExecutionText, StatusStartedAtContext } from "./liveTime.js";
-import { formatInspectDetail, formatInspectTitle, renderToolMessageBody } from "./toolPreview.js";
+import { emptyMemoryCitation, formatMemoryCitationCount, formatMemoryCitationLines, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
+import { formatInspectDetail, renderToolMessageBody } from "./toolPreview.js";
 import { activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
 
 const SyntaxCodeBlock = lazy(() => import("../SyntaxCodeBlock.js"));
@@ -341,10 +342,6 @@ export const MemoryCitationPanel = ({ citation }: { citation: MemoryCitationView
   </details>
 );
 
-export const memoryCitationBlockPattern = /<oai-mem-citation>[\s\S]*?<\/oai-mem-citation>/g;
-
-export const emptyMemoryCitation = (text: string): MemoryCitationView => ({ text, entries: [], rolloutIds: [] });
-
 const pendingApprovalFromMessage = (message: WebRecordView) => {
   const payload = asRecord(message.record.payload);
   const approval = asRecord(payload?.approval);
@@ -444,83 +441,6 @@ const approvalDecisionActions = (kind: string): Array<{
     });
   }
   return actions;
-};
-
-export const shouldExtractMemoryCitation = (message: WebRecordView) =>
-  message.role === "codex" && message.label === "final_answer";
-
-export const parseMemoryCitationText = (text: string): MemoryCitationView => {
-  const blocks = text.match(memoryCitationBlockPattern) ?? [];
-  if (!blocks.length) return { text, entries: [], rolloutIds: [] };
-  const entries = blocks.flatMap(parseMemoryCitationEntries);
-  const rolloutIds = [...new Set(blocks.flatMap(parseMemoryCitationRolloutIds))];
-  return {
-    text: text.replace(memoryCitationBlockPattern, "").trimEnd(),
-    entries,
-    rolloutIds
-  };
-};
-
-export const parseMemoryCitationEntries = (block: string): MemoryCitationEntry[] =>
-  xmlSectionLines(block, "citation_entries").flatMap((line) => {
-    const parsed = parseMemoryCitationEntry(line);
-    return parsed ? [parsed] : [];
-  });
-
-export const parseMemoryCitationRolloutIds = (block: string) =>
-  xmlSectionLines(block, "rollout_ids").filter((line) => line.trim().length > 0);
-
-export const parseMemoryCitationEntry = (line: string): MemoryCitationEntry | null => {
-  const raw = line.trim();
-  if (!raw) return null;
-  const [location, notePart] = splitMemoryCitationNote(raw);
-  const match = /^(.*?)(?::(\d+)(?:-(\d+))?)?$/.exec(location.trim());
-  if (!match) return { source: location.trim() || raw, note: notePart, raw };
-  const source = match[1]?.trim() || raw;
-  const lineStart = match[2] ? Number(match[2]) : undefined;
-  const lineEnd = match[3] ? Number(match[3]) : lineStart;
-  return {
-    source,
-    lineStart,
-    lineEnd,
-    note: notePart,
-    raw
-  };
-};
-
-export const splitMemoryCitationNote = (line: string): [string, string | undefined] => {
-  const marker = "|note=";
-  const index = line.indexOf(marker);
-  if (index === -1) return [line, undefined];
-  const note = line.slice(index + marker.length).trim();
-  return [
-    line.slice(0, index),
-    note.startsWith("[") && note.endsWith("]") ? note.slice(1, -1) : note
-  ];
-};
-
-export const xmlSectionLines = (block: string, tag: string) => {
-  const match = new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*</${tag}>`).exec(block);
-  if (!match) return [];
-  return match[1]
-    .split(/\r?\n/)
-    .map((line) => decodeXmlText(line.trim()))
-    .filter(Boolean);
-};
-
-export const decodeXmlText = (text: string) => text
-  .replace(/&lt;/g, "<")
-  .replace(/&gt;/g, ">")
-  .replace(/&amp;/g, "&")
-  .replace(/&quot;/g, "\"")
-  .replace(/&#39;/g, "'");
-
-export const formatMemoryCitationCount = (count: number) => `${count} 条记忆引用`;
-
-export const formatMemoryCitationLines = (entry: MemoryCitationEntry) => {
-  if (!entry.lineStart) return "";
-  if (!entry.lineEnd || entry.lineEnd === entry.lineStart) return `${entry.lineStart} 行`;
-  return `${entry.lineStart}-${entry.lineEnd} 行`;
 };
 
 export const canRenderMarkdown = (message: WebRecordView) => {

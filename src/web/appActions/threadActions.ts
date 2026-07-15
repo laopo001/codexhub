@@ -13,7 +13,6 @@ import {
   fastCommandAction,
   fileToDataUrl,
   isModelCommand,
-  mergeRecord,
   patchProjectsThread,
   patchSessionsThread,
   removeProjectsThread,

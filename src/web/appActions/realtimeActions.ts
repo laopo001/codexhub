@@ -29,13 +29,11 @@ import {
   type SidebarDraftStore,
   streamEventRecords,
   taskCompleteNotification,
-  taskCompletionNotificationKey,
-  threadRecordsForNotifications
+  taskCompletionNotificationKey
 } from "../appHelpers.js";
 import type {
   OpenThreadState,
   AppSettings,
-  ConnectionsStreamEvent,
   LocalTask,
   MachineSummary,
   MessageDisplayMode,
@@ -49,8 +47,7 @@ import type {
   StreamEvent,
   SystemStatus,
   TaskCompleteNotification,
-  LocalTaskRun,
-  TasksStreamEvent
+  LocalTaskRun
 } from "../types.js";
 
 type RealtimeActionsContext = {

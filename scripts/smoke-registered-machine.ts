@@ -1,8 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, readlink } from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { assertNoWorkerId } from "./smoke/support/assertions.js";
+import { apiJson } from "./smoke/support/http.js";
+import { findFreePort } from "./smoke/support/network.js";
+import { delay } from "./smoke/support/time.js";
 
 type MachineSummary = {
   machineId: string;
@@ -413,61 +416,6 @@ const waitForChildExit = async (child: ChildProcess, timeoutMs: number) =>
       resolve(true);
     });
   });
-
-const apiJson = async <T = unknown>(
-  apiBase: string,
-  pathname: string,
-  init?: RequestInit,
-  timeoutMs = 30_000
-): Promise<T> => {
-  const response = await fetch(new URL(pathname, apiBase), {
-    ...init,
-    signal: init?.signal ?? AbortSignal.timeout(timeoutMs)
-  });
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(`HTTP ${response.status} ${pathname}: ${text}`);
-  return data as T;
-};
-
-const assertNoWorkerId = (value: unknown, label: string) => {
-  const path = findKey(value, "workerId");
-  if (path) throw new Error(`${label} exposed workerId at ${path}`);
-};
-
-const findKey = (value: unknown, key: string, trail = "$"): string | null => {
-  if (!value || typeof value !== "object") return null;
-  if (Array.isArray(value)) {
-    for (let index = 0; index < value.length; index += 1) {
-      const found = findKey(value[index], key, `${trail}[${index}]`);
-      if (found) return found;
-    }
-    return null;
-  }
-  for (const [entryKey, entryValue] of Object.entries(value)) {
-    const entryTrail = `${trail}.${entryKey}`;
-    if (entryKey === key) return entryTrail;
-    const found = findKey(entryValue, key, entryTrail);
-    if (found) return found;
-  }
-  return null;
-};
-
-const findFreePort = async () => await new Promise<number>((resolve, reject) => {
-  const server = net.createServer();
-  server.once("error", reject);
-  server.listen(0, "127.0.0.1", () => {
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      server.close(() => reject(new Error("could not allocate tcp port")));
-      return;
-    }
-    const port = address.port;
-    server.close(() => resolve(port));
-  });
-});
-
-const delay = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms));
 
 main().catch((error) => {
   console.error(error);

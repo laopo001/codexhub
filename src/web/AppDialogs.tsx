@@ -27,10 +27,10 @@ import {
 import { apiRoutes } from "../shared/apiRoutes.js";
 import { writeTextToClipboard } from "./helpers/composer.js";
 import type { ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
-import type { AppViewModel } from "./viewModel.js";
+import type { AppDialogsViewModel } from "./viewModel.js";
 
 type AppDialogsProps = {
-  viewModel: AppViewModel;
+  viewModel: AppDialogsViewModel;
 };
 
 export const AppDialogs = ({ viewModel }: AppDialogsProps) => {

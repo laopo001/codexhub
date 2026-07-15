@@ -268,7 +268,7 @@ const runPrompt = async (
     return;
   }
   const threadId = state.threadId;
-  const mirror = startChatMirror(ctx.chat.id, session.sessionId, threadId);
+  startChatMirror(ctx.chat.id, session.sessionId, threadId);
   const statusMessage = await ctx.reply([
     "Codex queued...",
     `folder: ${session.workingDirectory}`,

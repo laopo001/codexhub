@@ -101,8 +101,6 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     openTaskRunThread,
     selectedProject,
     selectProject,
-    selectProjectSession,
-    selectSessionThread,
     sessionList,
     serverShareCopied,
     sidebarDraftStore,

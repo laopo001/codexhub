@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { resolveCodexAppServerLaunchOptions } from "../src/cli/codexAppServerProcess.js";
@@ -14,6 +13,10 @@ import type { MachineDirectoryEntry } from "../src/shared/machineTypes.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { SessionEventInput, ThreadSummary } from "../src/shared/threadTypes.js";
 import type { OpenThreadState, ProjectMachineGroup, ProjectSummary, SessionView } from "../src/web/types.js";
+import { assertNoWorkerId, findKey } from "./smoke/support/assertions.js";
+import { apiJson } from "./smoke/support/http.js";
+import { findFreePort } from "./smoke/support/network.js";
+import { delay } from "./smoke/support/time.js";
 
 type MachineSummary = {
   machineId: string;
@@ -3417,14 +3420,6 @@ const subscribeThreadOnce = async (apiBase: string, threadId: string) => {
   }
 };
 
-const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(new URL(pathname, apiBase), init);
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(`HTTP ${response.status} ${pathname}: ${text}`);
-  return data as T;
-};
-
 const assertCommandPalette = async (apiBase: string, sessionId: string, cwd: string) => {
   const payload = await apiJson<CommandPalettePayload>(
     apiBase,
@@ -3511,34 +3506,11 @@ const assertStatusMarkdown = (thread: ThreadDetail) => {
   }
 };
 
-const assertNoWorkerId = (value: unknown, label: string) => {
-  const path = findKey(value, "workerId");
-  if (path) throw new Error(`${label} exposed workerId at ${path}`);
-};
-
 const assertNoCurrentThread = (value: unknown, label: string) => {
   const currentThreadId = findKey(value, "currentThreadId");
   if (currentThreadId) throw new Error(`${label} exposed currentThreadId at ${currentThreadId}`);
   const currentThread = findKey(value, "currentThread");
   if (currentThread) throw new Error(`${label} exposed currentThread at ${currentThread}`);
-};
-
-const findKey = (value: unknown, key: string, trail = "$"): string | null => {
-  if (!value || typeof value !== "object") return null;
-  if (Array.isArray(value)) {
-    for (let index = 0; index < value.length; index += 1) {
-      const found = findKey(value[index], key, `${trail}[${index}]`);
-      if (found) return found;
-    }
-    return null;
-  }
-  for (const [entryKey, entryValue] of Object.entries(value)) {
-    const entryTrail = `${trail}.${entryKey}`;
-    if (entryKey === key) return entryTrail;
-    const found = findKey(entryValue, key, entryTrail);
-    if (found) return found;
-  }
-  return null;
 };
 
 const assertPluginState = async (apiBase: string, value: unknown) => {
@@ -3667,22 +3639,6 @@ const closeWebSocket = async (ws: WebSocket) => {
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-
-const delay = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms));
-
-const findFreePort = async () => await new Promise<number>((resolve, reject) => {
-  const server = net.createServer();
-  server.once("error", reject);
-  server.listen(0, "127.0.0.1", () => {
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      server.close(() => reject(new Error("could not allocate tcp port")));
-      return;
-    }
-    const port = address.port;
-    server.close(() => resolve(port));
-  });
-});
 
 main().catch((error) => {
   console.error(error);

@@ -5,6 +5,7 @@ export {
   taskCompletionNotificationKey
 } from "../../shared/taskNotifications.js";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
+import { compareCodexRecords, orderCodexRecords, recordTimestampMs } from "../../shared/recordIdentity.js";
 import { isTheiaSurface, isTheiaVscodeHost, isVscodeSurface, reasoningOptions } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
@@ -115,10 +116,7 @@ export const goalRecordMatchesThread = (
   return payloadThreadId === threadId || goalThreadId === threadId || (!payloadThreadId && !goalThreadId);
 };
 
-export const recordTimestampMs = (record: CodexRecord) => {
-  const timestamp = Date.parse(record.timestamp ?? "");
-  return Number.isFinite(timestamp) ? timestamp : null;
-};
+export { recordTimestampMs } from "../../shared/recordIdentity.js";
 
 export const goalTimeMs = (value: unknown) => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -274,8 +272,8 @@ export const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
     const previous = next[existingIndex - 1];
     const following = next[existingIndex + 1];
     if (
-      (!previous || compareRecords(previous, incoming) <= 0)
-      && (!following || compareRecords(incoming, following) <= 0)
+      (!previous || compareCodexRecords(previous, incoming) <= 0)
+      && (!following || compareCodexRecords(incoming, following) <= 0)
     ) return next;
     next.splice(existingIndex, 1);
     return insertOrderedRecord(next, incoming);
@@ -289,7 +287,7 @@ const insertOrderedRecord = (records: CodexRecord[], incoming: CodexRecord) => {
   let high = records.length;
   while (low < high) {
     const middle = (low + high) >>> 1;
-    if (compareRecords(records[middle], incoming) <= 0) low = middle + 1;
+    if (compareCodexRecords(records[middle], incoming) <= 0) low = middle + 1;
     else high = middle;
   }
   return [...records.slice(0, low), incoming, ...records.slice(low)];
@@ -301,34 +299,13 @@ export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) 
   const byId = new Map<string, CodexRecord>();
   for (const record of left) byId.set(record.id, record);
   for (const record of right) byId.set(record.id, record);
-  return orderRecords([...byId.values()]);
+  return orderCodexRecords([...byId.values()]);
 };
 
 export const threadDisplayRecords = (
   _threadId: string,
   thread: Pick<ThreadDetail, "records"> | undefined
 ) => thread?.records ?? [];
-
-const orderRecords = (records: CodexRecord[]) =>
-  records
-    .map((record, index) => ({ record, index }))
-    .sort((left, right) => compareRecords(left.record, right.record) || left.index - right.index)
-    .map((entry) => entry.record);
-
-const compareRecords = (left: CodexRecord, right: CodexRecord) => {
-  const leftTime = recordTimestampMs(left);
-  const rightTime = recordTimestampMs(right);
-  const leftOrder = recordOrder(left);
-  const rightOrder = recordOrder(right);
-  if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
-  if (leftOrder !== null && rightOrder !== null && leftOrder !== rightOrder) return leftOrder - rightOrder;
-  if (leftTime !== null && rightTime === null) return -1;
-  if (leftTime === null && rightTime !== null) return 1;
-  return 0;
-};
-
-const recordOrder = (record: CodexRecord) =>
-  typeof record.order === "number" && Number.isFinite(record.order) ? record.order : null;
 
 export const threadRecordsForNotifications = (_threadId: string, thread: ThreadDetail) =>
   thread.records;

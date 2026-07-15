@@ -4,7 +4,7 @@ import { FileDiff, Image, MessageSquareText, Plug, Search, ShieldCheck, Sparkles
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { normalizeUpdatePlanStatus, parseUpdatePlanArguments, updatePlanStatusIcon, updatePlanStatusLabel, type UpdatePlanView as UpdatePlanViewModel } from "../../shared/updatePlanView.js";
 import type { InspectDetail, ParsedToolCall, WebRecordView, WebToolPresenter } from "../types.js";
-import { emptyMemoryCitation, parseMemoryCitationText, shouldExtractMemoryCitation } from "./components.js";
+import { emptyMemoryCitation, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
 import { formatCompactNumber } from "./records.js";
@@ -341,6 +341,215 @@ export const parseToolCallMessage = (message: WebRecordView): ParsedToolCall | n
   return { name, args: args ?? {} };
 };
 
+type AppServerToolPresenter = {
+  render?: (
+    message: WebRecordView,
+    payload: Record<string, unknown>,
+    status?: CodexRecordView["status"],
+    statusText?: string,
+    statusDurationMs?: number
+  ) => React.ReactNode;
+  inspect?: (message: WebRecordView, payload: Record<string, unknown>) => InspectDetail;
+};
+
+const appServerToolPresenters: Record<string, AppServerToolPresenter> = {
+  local_shell_call: {
+    render: (_message, payload, status, statusText, statusDurationMs) => {
+      const command = shellCommandDisplay(payload);
+      return (
+        <ToolPreview
+          title="tool: shell"
+          status={status}
+          statusText={statusText}
+          statusDurationMs={statusDurationMs}
+          meta={appServerToolMeta(payload)}
+          metaExtra={command.wrapper ? (
+            <Tag className="shellCommandWrapperTag" title={command.raw}>
+              {command.wrapper}
+            </Tag>
+          ) : null}
+          icon={Terminal}
+        >
+          <ShellCommandPreview command={command} />
+        </ToolPreview>
+      );
+    },
+    inspect: (_message, payload) => {
+      const output = typeof payload.aggregated_output === "string" ? cleanTerminalOutput(payload.aggregated_output).trimEnd() : "";
+      return {
+        inputMeta: appServerInspectMeta("tool: shell", payload),
+        inputBlockLabel: "Command",
+        inputBlock: shellCommandText(payload) || "<empty>",
+        outputMeta: appServerOutputMeta(payload),
+        outputBlockLabel: "Output",
+        outputBlock: output || undefined
+      };
+    }
+  },
+  file_change: {
+    render: (_message, payload, status, statusText, statusDurationMs) => (
+      <FileChangePreview payload={payload} status={status} statusText={statusText} statusDurationMs={statusDurationMs} />
+    ),
+    inspect: (_message, payload) => {
+      const files = fileChangePreviewFiles(payload);
+      return {
+        inputMeta: appServerInspectMeta("tool: file_change", payload),
+        inputBlockLabel: "Files",
+        inputBlock: files.length
+          ? files.map((file) => `${file.path} +${file.added ?? "?"} -${file.removed ?? "?"}`).join("\n")
+          : "No file changes",
+        outputMeta: payload.status === "failed" ? "Patch failed" : "Patch applied"
+      };
+    }
+  },
+  web_search_call: {
+    render: (message, payload, status, statusText, statusDurationMs) => (
+      <ToolPreview title="tool: web_search" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Search}>
+        <p className="toolPreviewBody">{typeof payload.query === "string" && payload.query ? payload.query : message.text}</p>
+      </ToolPreview>
+    ),
+    inspect: (_message, payload) => ({
+      inputMeta: appServerInspectMeta("tool: web_search", payload),
+      inputBlockLabel: "Query",
+      inputBlock: typeof payload.query === "string" && payload.query ? payload.query : "<empty>",
+      outputMeta: appServerOutputMeta(payload),
+      outputBlockLabel: "Action",
+      outputBlock: payload.action == null ? undefined : formatJsonBlock(payload.action)
+    })
+  },
+  mcp_tool_call: {
+    render: (_message, payload, status, statusText, statusDurationMs) => (
+      <ToolPreview title={`tool: ${mcpToolPreviewName(payload)}`} status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Plug}>
+        <p className="toolPreviewBody">{formatToolArgumentsPreview(payload.arguments)}</p>
+      </ToolPreview>
+    ),
+    inspect: (_message, payload) => inspectRequestResult(
+      `tool: ${mcpToolPreviewName(payload)}`,
+      "Arguments",
+      payload.arguments ?? {},
+      "Result",
+      payload,
+      payload.result
+    )
+  },
+  permission_request: {
+    render: (_message, payload, status, statusText, statusDurationMs) => (
+      <ToolPreview title="tool: permission_request" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={ShieldCheck}>
+        <p className="toolPreviewBody">{permissionRequestPreview(payload)}</p>
+      </ToolPreview>
+    ),
+    inspect: (_message, payload) => inspectRequestResult(
+      "tool: permission_request",
+      "Permissions",
+      payload.permissions ?? {},
+      "Result",
+      payload,
+      payload.result
+    )
+  },
+  user_input_request: {
+    render: (_message, payload, status, statusText, statusDurationMs) => (
+      <ToolPreview title="tool: request_user_input" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={MessageSquareText}>
+        <p className="toolPreviewBody">{userInputRequestPreview(payload)}</p>
+      </ToolPreview>
+    ),
+    inspect: (_message, payload) => inspectRequestResult(
+      "tool: request_user_input",
+      "Questions",
+      payload.questions ?? [],
+      "Response",
+      payload,
+      payload.response
+    )
+  },
+  collab_agent_tool_call: {
+    render: (_message, payload, status, statusText, statusDurationMs) => (
+      <ToolPreview title={`tool: ${collabAgentToolPreviewName(payload)}`} status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Users}>
+        <p className="toolPreviewBody">{collabAgentToolInputPreview(payload)}</p>
+      </ToolPreview>
+    ),
+    inspect: (_message, payload) => ({
+      inputMeta: appServerInspectMeta(`tool: ${collabAgentToolPreviewName(payload)}`, payload),
+      inputBlockLabel: "Prompt",
+      inputBlock: typeof payload.prompt === "string" && payload.prompt.trim() ? payload.prompt : "<empty>",
+      outputMeta: appServerOutputMeta(payload),
+      outputBlockLabel: "Agent State",
+      outputBlock: payload.agents_states == null ? undefined : formatJsonBlock(payload.agents_states)
+    })
+  },
+  image_view: {
+    render: (message, payload, status, statusText, statusDurationMs) => (
+      <ToolPreview title="tool: image_view" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Image}>
+        <p className="toolPreviewBody">{typeof payload.path === "string" && payload.path ? payload.path : message.text}</p>
+      </ToolPreview>
+    ),
+    inspect: (_message, payload) => ({
+      inputMeta: appServerInspectMeta("tool: image_view", payload),
+      inputBlockLabel: "Path",
+      inputBlock: typeof payload.path === "string" && payload.path ? payload.path : "<empty>",
+      outputMeta: "Image opened"
+    })
+  },
+  image_generation_call: {
+    render: (_message, payload, status, statusText, statusDurationMs) => (
+      <ToolPreview title="tool: image_generation" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Sparkles}>
+        <p className="toolPreviewBody">{imageGenerationInputPreview(payload)}</p>
+      </ToolPreview>
+    ),
+    inspect: (_message, payload) => ({
+      inputMeta: appServerInspectMeta("tool: image_generation", payload),
+      inputBlockLabel: "Prompt",
+      inputBlock: imageGenerationInputPreview(payload),
+      outputMeta: imageGenerationOutputMeta(payload),
+      outputBlockLabel: "Result",
+      outputBlock: imageGenerationOutputBlock(payload)
+    })
+  },
+  function_call_output: {
+    render: (message, payload, status, statusText, statusDurationMs) => (
+      <ToolPreview title="tool result" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)}>
+        <p className="toolPreviewBody">{message.text || "Completed"}</p>
+      </ToolPreview>
+    )
+  },
+  function_call: {
+    inspect: (message, payload) => {
+      const toolCall = parseToolCallMessage(message);
+      const name = toolCall?.name ?? (typeof payload.name === "string" ? payload.name : "tool");
+      const args = toolCall?.args ?? parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "") ?? {};
+      const output = dynamicToolOutputText(payload);
+      return {
+        inputMeta: appServerInspectMeta(`tool: ${formatNamespacedToolName(payload, name)}`, payload),
+        inputBlockLabel: "Arguments",
+        inputBlock: formatJsonBlock(args),
+        outputMeta: dynamicToolOutputMeta(payload),
+        outputBlockLabel: "Output",
+        outputBlock: output || undefined
+      };
+    }
+  }
+};
+
+const inspectRequestResult = (
+  title: string,
+  inputBlockLabel: string,
+  input: unknown,
+  outputBlockLabel: string,
+  payload: Record<string, unknown>,
+  output: unknown
+): InspectDetail => {
+  const error = asRecord(payload.error);
+  const errorMessage = typeof error?.message === "string" ? error.message : null;
+  return {
+    inputMeta: appServerInspectMeta(title, payload),
+    inputBlockLabel,
+    inputBlock: formatJsonBlock(input),
+    outputMeta: errorMessage ?? appServerOutputMeta(payload),
+    outputBlockLabel: errorMessage ? "Error" : outputBlockLabel,
+    outputBlock: output == null ? undefined : formatJsonBlock(output)
+  };
+};
+
 export const renderAppServerToolPreview = (
   message: WebRecordView,
   status?: CodexRecordView["status"],
@@ -350,223 +559,16 @@ export const renderAppServerToolPreview = (
   if (message.role !== "tool") return null;
   const payload = asRecord(message.record.payload);
   if (!payload) return null;
-
-  if (payload.type === "local_shell_call") {
-    const command = shellCommandDisplay(payload);
-    return (
-      <ToolPreview
-        title="tool: shell"
-        status={status}
-        statusText={statusText}
-        statusDurationMs={statusDurationMs}
-        meta={appServerToolMeta(payload)}
-        metaExtra={command.wrapper ? (
-          <Tag className="shellCommandWrapperTag" title={command.raw}>
-            {command.wrapper}
-          </Tag>
-        ) : null}
-        icon={Terminal}
-      >
-        <ShellCommandPreview command={command} />
-      </ToolPreview>
-    );
-  }
-
-  if (payload.type === "file_change") {
-    return (
-      <FileChangePreview payload={payload} status={status} statusText={statusText} statusDurationMs={statusDurationMs} />
-    );
-  }
-
-  if (payload.type === "web_search_call") {
-    return (
-      <ToolPreview title="tool: web_search" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Search}>
-        <p className="toolPreviewBody">{typeof payload.query === "string" && payload.query ? payload.query : message.text}</p>
-      </ToolPreview>
-    );
-  }
-
-  if (payload.type === "mcp_tool_call") {
-    return (
-      <ToolPreview title={`tool: ${mcpToolPreviewName(payload)}`} status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Plug}>
-        <p className="toolPreviewBody">{formatToolArgumentsPreview(payload.arguments)}</p>
-      </ToolPreview>
-    );
-  }
-
-  if (payload.type === "permission_request") {
-    return (
-      <ToolPreview title="tool: permission_request" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={ShieldCheck}>
-        <p className="toolPreviewBody">{permissionRequestPreview(payload)}</p>
-      </ToolPreview>
-    );
-  }
-
-  if (payload.type === "user_input_request") {
-    return (
-      <ToolPreview title="tool: request_user_input" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={MessageSquareText}>
-        <p className="toolPreviewBody">{userInputRequestPreview(payload)}</p>
-      </ToolPreview>
-    );
-  }
-
-  if (payload.type === "collab_agent_tool_call") {
-    return (
-      <ToolPreview title={`tool: ${collabAgentToolPreviewName(payload)}`} status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Users}>
-        <p className="toolPreviewBody">{collabAgentToolInputPreview(payload)}</p>
-      </ToolPreview>
-    );
-  }
-
-  if (payload.type === "image_view") {
-    return (
-      <ToolPreview title="tool: image_view" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Image}>
-        <p className="toolPreviewBody">{typeof payload.path === "string" && payload.path ? payload.path : message.text}</p>
-      </ToolPreview>
-    );
-  }
-
-  if (payload.type === "image_generation_call") {
-    return (
-      <ToolPreview title="tool: image_generation" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Sparkles}>
-        <p className="toolPreviewBody">{imageGenerationInputPreview(payload)}</p>
-      </ToolPreview>
-    );
-  }
-
-  if (payload.type === "function_call_output") {
-    return (
-      <ToolPreview title="tool result" status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)}>
-        <p className="toolPreviewBody">{message.text || "Completed"}</p>
-      </ToolPreview>
-    );
-  }
-
-  return null;
+  const type = typeof payload.type === "string" ? payload.type : "";
+  return appServerToolPresenters[type]?.render?.(message, payload, status, statusText, statusDurationMs) ?? null;
 };
 
 const formatAppServerInspectDetail = (
   message: WebRecordView,
   payload: Record<string, unknown>
 ): InspectDetail | null => {
-  if (payload.type === "local_shell_call") {
-    const output = typeof payload.aggregated_output === "string" ? cleanTerminalOutput(payload.aggregated_output).trimEnd() : "";
-    return {
-      inputMeta: appServerInspectMeta("tool: shell", payload),
-      inputBlockLabel: "Command",
-      inputBlock: shellCommandText(payload) || "<empty>",
-      outputMeta: appServerOutputMeta(payload),
-      outputBlockLabel: "Output",
-      outputBlock: output || undefined
-    };
-  }
-
-  if (payload.type === "file_change") {
-    const files = fileChangePreviewFiles(payload);
-    return {
-      inputMeta: appServerInspectMeta("tool: file_change", payload),
-      inputBlockLabel: "Files",
-      inputBlock: files.length
-        ? files.map((file) => `${file.path} +${file.added ?? "?"} -${file.removed ?? "?"}`).join("\n")
-        : "No file changes",
-      outputMeta: payload.status === "failed" ? "Patch failed" : "Patch applied"
-    };
-  }
-
-  if (payload.type === "mcp_tool_call") {
-    const error = asRecord(payload.error);
-    return {
-      inputMeta: appServerInspectMeta(`tool: ${mcpToolPreviewName(payload)}`, payload),
-      inputBlockLabel: "Arguments",
-      inputBlock: formatJsonBlock(payload.arguments ?? {}),
-      outputMeta: typeof error?.message === "string" ? error.message : appServerOutputMeta(payload),
-      outputBlockLabel: typeof error?.message === "string" ? "Error" : "Result",
-      outputBlock: payload.result == null ? undefined : formatJsonBlock(payload.result)
-    };
-  }
-
-  if (payload.type === "permission_request") {
-    const error = asRecord(payload.error);
-    return {
-      inputMeta: appServerInspectMeta("tool: permission_request", payload),
-      inputBlockLabel: "Permissions",
-      inputBlock: formatJsonBlock(payload.permissions ?? {}),
-      outputMeta: typeof error?.message === "string" ? error.message : appServerOutputMeta(payload),
-      outputBlockLabel: typeof error?.message === "string" ? "Error" : "Result",
-      outputBlock: payload.result == null ? undefined : formatJsonBlock(payload.result)
-    };
-  }
-
-  if (payload.type === "user_input_request") {
-    const error = asRecord(payload.error);
-    return {
-      inputMeta: appServerInspectMeta("tool: request_user_input", payload),
-      inputBlockLabel: "Questions",
-      inputBlock: formatJsonBlock(payload.questions ?? []),
-      outputMeta: typeof error?.message === "string" ? error.message : appServerOutputMeta(payload),
-      outputBlockLabel: typeof error?.message === "string" ? "Error" : "Response",
-      outputBlock: payload.response == null ? undefined : formatJsonBlock(payload.response)
-    };
-  }
-
-  if (payload.type === "function_call") {
-    const toolCall = parseToolCallMessage(message);
-    const name = toolCall?.name ?? (typeof payload.name === "string" ? payload.name : "tool");
-    const args = toolCall?.args ?? parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "") ?? {};
-    const output = dynamicToolOutputText(payload);
-    return {
-      inputMeta: appServerInspectMeta(`tool: ${formatNamespacedToolName(payload, name)}`, payload),
-      inputBlockLabel: "Arguments",
-      inputBlock: formatJsonBlock(args),
-      outputMeta: dynamicToolOutputMeta(payload),
-      outputBlockLabel: "Output",
-      outputBlock: output || undefined
-    };
-  }
-
-  if (payload.type === "web_search_call") {
-    return {
-      inputMeta: appServerInspectMeta("tool: web_search", payload),
-      inputBlockLabel: "Query",
-      inputBlock: typeof payload.query === "string" && payload.query ? payload.query : "<empty>",
-      outputMeta: appServerOutputMeta(payload),
-      outputBlockLabel: "Action",
-      outputBlock: payload.action == null ? undefined : formatJsonBlock(payload.action)
-    };
-  }
-
-  if (payload.type === "collab_agent_tool_call") {
-    return {
-      inputMeta: appServerInspectMeta(`tool: ${collabAgentToolPreviewName(payload)}`, payload),
-      inputBlockLabel: "Prompt",
-      inputBlock: typeof payload.prompt === "string" && payload.prompt.trim() ? payload.prompt : "<empty>",
-      outputMeta: appServerOutputMeta(payload),
-      outputBlockLabel: "Agent State",
-      outputBlock: payload.agents_states == null ? undefined : formatJsonBlock(payload.agents_states)
-    };
-  }
-
-  if (payload.type === "image_view") {
-    return {
-      inputMeta: appServerInspectMeta("tool: image_view", payload),
-      inputBlockLabel: "Path",
-      inputBlock: typeof payload.path === "string" && payload.path ? payload.path : "<empty>",
-      outputMeta: "Image opened"
-    };
-  }
-
-  if (payload.type === "image_generation_call") {
-    return {
-      inputMeta: appServerInspectMeta("tool: image_generation", payload),
-      inputBlockLabel: "Prompt",
-      inputBlock: imageGenerationInputPreview(payload),
-      outputMeta: imageGenerationOutputMeta(payload),
-      outputBlockLabel: "Result",
-      outputBlock: imageGenerationOutputBlock(payload)
-    };
-  }
-
-  return null;
+  const type = typeof payload.type === "string" ? payload.type : "";
+  return appServerToolPresenters[type]?.inspect?.(message, payload) ?? null;
 };
 
 export const normalizeWebToolOutput = (output: string) => {

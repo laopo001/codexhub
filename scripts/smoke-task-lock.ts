@@ -1,8 +1,11 @@
 import { mkdir, mkdtemp } from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { goalStatusControl } from "../src/web/helpers/core.js";
+import { assertNoWorkerId } from "./smoke/support/assertions.js";
+import { apiJson } from "./smoke/support/http.js";
+import { findFreePort } from "./smoke/support/network.js";
+import { delay } from "./smoke/support/time.js";
 
 type MachineSummary = {
   machineId: string;
@@ -1810,17 +1813,6 @@ const waitForRealtimeMessage = async (
   throw new Error(`timed out waiting for ${label}`);
 };
 
-const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(new URL(pathname, apiBase), {
-    ...init,
-    signal: init?.signal ?? AbortSignal.timeout(30_000)
-  });
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(`HTTP ${response.status} ${pathname}: ${text}`);
-  return data as T;
-};
-
 const expectApiError = async (
   apiBase: string,
   pathname: string,
@@ -1835,29 +1827,6 @@ const expectApiError = async (
   if (response.status !== expectedStatus) {
     throw new Error(`expected HTTP ${expectedStatus} ${pathname}, got ${response.status}: ${text}`);
   }
-};
-
-const assertNoWorkerId = (value: unknown, label: string) => {
-  const path = findKey(value, "workerId");
-  if (path) throw new Error(`${label} exposed workerId at ${path}`);
-};
-
-const findKey = (value: unknown, key: string, trail = "$"): string | null => {
-  if (!value || typeof value !== "object") return null;
-  if (Array.isArray(value)) {
-    for (let index = 0; index < value.length; index += 1) {
-      const found = findKey(value[index], key, `${trail}[${index}]`);
-      if (found) return found;
-    }
-    return null;
-  }
-  for (const [entryKey, entryValue] of Object.entries(value)) {
-    const entryTrail = `${trail}.${entryKey}`;
-    if (entryKey === key) return entryTrail;
-    const found = findKey(entryValue, key, entryTrail);
-    if (found) return found;
-  }
-  return null;
 };
 
 const machineTransportUrl = (apiBase: string) => {
@@ -1880,21 +1849,5 @@ const waitForWebSocketOpen = async (ws: WebSocket) => await new Promise<void>((r
   ws.addEventListener("open", () => resolve(), { once: true });
   ws.addEventListener("error", () => reject(new Error("fake machine websocket failed")), { once: true });
 });
-
-const findFreePort = async () => await new Promise<number>((resolve, reject) => {
-  const server = net.createServer();
-  server.once("error", reject);
-  server.listen(0, "127.0.0.1", () => {
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      server.close(() => reject(new Error("failed to allocate port")));
-      return;
-    }
-    const port = address.port;
-    server.close(() => resolve(port));
-  });
-});
-
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 await main();

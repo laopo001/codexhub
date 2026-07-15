@@ -17,7 +17,7 @@ import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
 import { LiveThreadExecutionText } from "./helpers/liveTime.js";
-import type { AppViewModel } from "./viewModel.js";
+import type { AppViewModel, AppWorkspaceViewModel } from "./viewModel.js";
 import {
   ActivityStatusBar,
   canForkAtMessage,
@@ -81,7 +81,7 @@ const messagesUpScrollKeys = new Set(["ArrowUp", "PageUp", "Home"]);
 const messagesDownScrollKeys = new Set(["ArrowDown", "PageDown", "End"]);
 
 type MessagesVirtuosoContext = {
-  executionMeta: NonNullable<AppViewModel["activeThreadExecutionMeta"]> | null;
+  executionMeta: NonNullable<AppWorkspaceViewModel["activeThreadExecutionMeta"]> | null;
 };
 
 const MessagesTurnLoadingFooter = ({ context }: { context?: MessagesVirtuosoContext }) => {
@@ -102,11 +102,11 @@ const MessagesTurnLoadingFooter = ({ context }: { context?: MessagesVirtuosoCont
 };
 
 export const AppView = ({ viewModel }: AppViewProps) => {
+  const { workspace, sidebar, dialogs } = viewModel;
   const {
     activeCanStop,
     activeExpandedStatusKeys,
     activeGoal,
-    activeProjectKey,
     activeRuntimeSession,
     activeThread,
     activeThreadIsOpen,
@@ -118,16 +118,10 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     authError,
     authRequired,
     authTokenDraft,
-    addContextSelectionToConversation,
     addThreadFiles,
-    addThreadImages,
-    addSshHost,
-    changeProjectPickerMachine,
-    chooseThreadCandidate,
     clearThreadAttachments,
     clearThreadGoal,
     closeThread,
-    collapsedProjectMachineKeys,
     compactThread,
     commandPaletteByScope,
     commandPaletteLoadingScopes,
@@ -135,54 +129,21 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     composerMenuOpen,
     composerMode,
     composerTextareaRef,
-    confirmProjectPicker,
-    connectionMode,
-    connectSshHost,
-    copyContextSelection,
-    copyRegisteredCommand,
-    createSessionThread,
-    createTask,
-    deleteProject,
-    deleteTask,
-    deletingProjectId,
-    effectiveModelSelection,
-    effectiveReasoningSelection,
-    focusTaskDraftProject,
     forkMessage,
-    goalDialog,
     handleComposerKeyDown,
     imageFileInputRef,
     insertThreadPathText,
-    inspectContextMessage,
-    inspectMessage,
     latestTurnActivityScope,
     loadCommandPalette,
-    loadProjectPickerDirectory,
-    localMachines,
-    messageContextMenu,
     messageDisplayMode,
     messageRenderModes,
     messagesRef,
     messagesShouldFollowRef,
-    modelOptions,
-    offlineProjectsCollapsed,
-    onlineMachines,
-    openingProjectKey,
     openMessageContextMenu,
-    showProjectPicker,
     openSelectedProjectThreadPicker,
     pasteThreadImages,
-    patchTask,
-    projectGroups,
-    projectList,
-    projectActionError,
-    projectPicker,
-    registeredCommand,
-    registeredCommandCopied,
-    registeredMachines,
     removeThreadImage,
     removeThreadTextAttachment,
-    removeSshHost,
     renderComposerThreadControls,
     resetComposerHistory,
     respondToApproval,
@@ -190,66 +151,39 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     reviewThread,
     resizeComposerTextarea,
     rollbackMessage,
-    runTaskNow,
-    saveGoalDialog,
-    selectProject,
     selectedProject,
     send,
-    sessionList,
     threadControlsMenuOpen,
     setComposerMenuOpen,
     setComposerMode,
-    setConnectionMode,
     setExpandedStatusKeys,
     setExpandedToolBatchKeys,
     setGoalDialog,
     setExpandedStatusTurns,
     setImagePreview,
     setInspectMessage,
-    setMessageContextMenu,
     setMessageDisplayMode,
     setActiveThreadApprovalPolicyDraft,
     setActiveThreadSandboxPolicyDraft,
-    setOfflineProjectsCollapsed,
-    setProjectPicker,
     setAuthTokenDraft,
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
     setSidebarCollapsed,
-    setTaskFormOpen,
-    setThreadPicker,
     showComposerSendButton,
     statusPanelAvailable,
     statusPanelExpanded,
     sidebarCollapsed,
-    sshConfigHostOptions,
-    sshConfigHosts,
-    sshConnectingHost,
-    sshConnections,
-    sshError,
-    sshHostBusy,
-    sshHosts,
     statusScopeKey,
     turnStatusItems,
     stopTurn,
     submitAuthToken,
-    submitProjectPickerPath,
     switchSessionThread,
-    taskBusyId,
-    taskError,
-    taskFormOpen,
-    tasks,
-    threadOrderBySession,
-    threadPicker,
-    toggleProjectMachineGroup,
     updateMessageRenderMode,
     updateThreadInput,
-    updateTaskDraftMachine,
-    updateTaskDraftProject,
     updateThreadGoal,
     openThreadEmptyMessage,
     openThreadTabs
-  } = viewModel;
+  } = workspace;
   const canAddThreadForProject = Boolean(activeRuntimeSession?.online || selectedProject?.machineOnline);
   const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
   const activeGoalStatusControl = activeGoal ? goalStatusControl(activeGoal.status) : null;
@@ -446,7 +380,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
           aria-label="Hide menu"
         />
       ) : null}
-      <AppSidebar viewModel={viewModel} />
+      <AppSidebar viewModel={sidebar} />
 
       <section className="workspace">
         {showThreadTabs ? (
@@ -935,7 +869,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
         )}
       </section>
 
-      <AppDialogs viewModel={viewModel} />
+      <AppDialogs viewModel={dialogs} />
 
     </main>
   );

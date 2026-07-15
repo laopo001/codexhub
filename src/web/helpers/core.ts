@@ -1,3 +1,4 @@
+import { turnIdFromAppRecordId } from "../../shared/recordIdentity.js";
 import { asRecord } from "../../shared/recordTypes.js";
 import type { ModelCatalogItem, StoredMachine, ThreadGoalStatus } from "../../shared/apiContract.js";
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRoutePathArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
@@ -116,14 +117,7 @@ export const parseRealtimeMessage = (data: unknown): RealtimeMessage | null => {
 export const canForkAtMessage = (threadId: string, message: { canFork?: boolean; record: { id: string } }) =>
   Boolean(message.canFork && turnIdFromAppRecordId(threadId, message.record.id));
 
-export const turnIdFromAppRecordId = (threadId: string, recordId: string) => {
-  const prefix = `app:${threadId}:`;
-  if (!recordId.startsWith(prefix)) return null;
-  const rest = recordId.slice(prefix.length);
-  const [turnId, kind] = rest.split(":");
-  if (!turnId || !kind) return null;
-  return turnId;
-};
+export { turnIdFromAppRecordId } from "../../shared/recordIdentity.js";
 
 const isThreadSummaryLike = (value: unknown): value is ThreadSummary => {
   const record = asRecord(value);

@@ -1,7 +1,9 @@
 import { mkdir, mkdtemp } from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { apiJson } from "./smoke/support/http.js";
+import { findFreePort } from "./smoke/support/network.js";
+import { delay } from "./smoke/support/time.js";
 
 const main = async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-auth."));
@@ -82,16 +84,6 @@ const assertMachineWebSocket = async (apiBase: string, token: string) => {
   ws.close();
 };
 
-const apiJson = async <T = unknown>(apiBase: string, pathname: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(new URL(pathname, apiBase), {
-    ...init,
-    signal: init?.signal ?? AbortSignal.timeout(30_000)
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`HTTP ${response.status} ${pathname}: ${text}`);
-  return (text ? JSON.parse(text) : null) as T;
-};
-
 const expectStatus = async (apiBase: string, pathname: string, status: number) => {
   const response = await fetch(new URL(pathname, apiBase), { signal: AbortSignal.timeout(30_000) });
   if (response.status !== status) throw new Error(`expected HTTP ${status} for ${pathname}, got ${response.status}: ${await response.text()}`);
@@ -134,21 +126,5 @@ const waitForMessage = async (
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === "object" && !Array.isArray(value));
-
-const findFreePort = async () => await new Promise<number>((resolve, reject) => {
-  const server = net.createServer();
-  server.once("error", reject);
-  server.listen(0, "127.0.0.1", () => {
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      server.close(() => reject(new Error("failed to allocate port")));
-      return;
-    }
-    const port = address.port;
-    server.close(() => resolve(port));
-  });
-});
-
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 await main();

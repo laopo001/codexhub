@@ -12,12 +12,12 @@ import { createRealtimeActions } from "./appActions/realtimeActions.js";
 import { createSshActions } from "./appActions/sshActions.js";
 import { createTaskActions } from "./appActions/taskActions.js";
 import { createThreadActions, type ThreadActions } from "./appActions/threadActions.js";
-import "antd/dist/antd.css";
 import "./style.css";
 
 import { isEmbeddedHostSurface } from "./appConfig.js";
 import { setAuthToken } from "./appHelpers.js";
 import { parseCodexHubHostIncomingMessage } from "./hostBridge.js";
+import { partitionAppViewModel } from "./viewModel.js";
 const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
   if (!textarea) return;
   textarea.style.height = "auto";
@@ -30,47 +30,31 @@ const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
 const App = () => {
   const appState = useAppState();
   const {
-    activeSessionId,
-    activeTabThreadBySession,
-    activeTabThreadId,
     activeWorkspacePath,
     appSettings,
-    appSettingsRef,
     authError,
     authRequired,
     authTokenDraft,
-    closedThreadIds,
     collapsedProjectMachineKeys,
     composerDraftStore,
-    composerHistoryRef,
     composerMenuOpen,
     composerTextareaRef,
     commandPaletteByScope,
     commandPaletteLoadingScopes,
     connectionMode,
-    connectionsLastSeq,
-    controlReconnectTimer,
     deletingProjectId,
-    expandedStatusKeys,
     goalDialog,
-    expandedStatusTurns,
     imageFileInputRef,
     imagePreview,
-    initialized,
     inspectMessage,
-    latestRequestedThreadId,
     machines,
     messageContextMenu,
     messageDisplayMode,
     messageRenderModes,
     messagesRef,
     messagesShouldFollowRef,
-    notificationAudioContext,
-    notificationRecordsByThread,
-    notifiedTaskCompletions,
     offlineProjectsCollapsed,
     openingProjectKey,
-    openingThreads,
     openThreads,
     parentRegistration,
     parentRegistrationBusy,
@@ -78,28 +62,15 @@ const App = () => {
     plugins,
     projectActionError,
     projectPicker,
-    projects,
-    projectsLastSeq,
-    realtimeSocket,
-    realtimeThreadSubscriptions,
     registeredCommandCopied,
-    selectedProjectKey,
-    serverAuthRequired,
     serverShareCopied,
     sessionList,
-    sessionsLastSeq,
-    setActiveSessionId,
-    setActiveTabThreadBySession,
-    setActiveTabThreadId,
-    setActiveWorkspacePath,
     setAppSettings,
     setAuthError,
     setAuthRequired,
     setAuthTokenDraft,
-    setCollapsedProjectMachineKeys,
     setComposerMenuOpen,
     setConnectionMode,
-    setDeletingProjectId,
     setExpandedStatusKeys,
     setExpandedToolBatchKeys,
     setGoalDialog,
@@ -107,42 +78,17 @@ const App = () => {
     setImagePreview,
     setInitialized,
     setInspectMessage,
-    setMachines,
     setMessageContextMenu,
     setMessageDisplayMode,
-    setMessageRenderModes,
     setModelCatalogBySession,
     setOfflineProjectsCollapsed,
-    setOpeningProjectKey,
-    setOpenThreads,
-    setParentRegistration,
-    setParentRegistrationBusy,
-    setParentRegistrationError,
-    setPlugins,
-    setProjectActionError,
     setProjectPicker,
-    setProjects,
-    setRegisteredCommandCopied,
-    setSelectedProjectKey,
-    setServerAuthRequired,
     setServerShareCopied,
-    setSessionList,
     setSettingsDialogOpen,
     setSidebarCollapsed,
-    setSshConfigHosts,
-    setSshConnectingHost,
-    setSshConnections,
-    setSshError,
-    setSshHostBusy,
-    setSshHosts,
-    setSystemStatus,
-    setTaskBusyId,
-    setTaskError,
     setTaskFormOpen,
-    setTasks,
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
-    setThreadOrderBySession,
     setThreadRenameDialog,
     setThreadTabContextMenu,
     setThreadPicker,
@@ -155,14 +101,11 @@ const App = () => {
     sshError,
     sshHostBusy,
     sshHosts,
-    systemStatus,
     taskBusyId,
     taskError,
     taskFormOpen,
     tasks,
-    tasksLastSeq,
     threadControlsMenuOpen,
-    threadLastSeqs,
     threadModelDialogOpen,
     threadOrderBySession,
     threadRenameDialog,
@@ -200,8 +143,6 @@ const App = () => {
     serviceTierOptions,
     onlineMachines,
     openThreadEmptyMessage,
-    openThreadIds,
-    openThreadIdsKey,
     projectGroups,
     projectList,
     registeredCommand,
@@ -600,14 +541,14 @@ const App = () => {
     openThreadEmptyMessage,
     openThreadTabs,
   };
-  return <AppView viewModel={viewModel} />;
+  return <AppView viewModel={partitionAppViewModel(viewModel)} />;
 };
 
 const root = document.getElementById("root");
 if (!root) throw new Error("root element not found");
 
 createRoot(root).render(
-  <ConfigProvider theme={{ zeroRuntime: true }}>
+  <ConfigProvider>
     <App />
   </ConfigProvider>
 );

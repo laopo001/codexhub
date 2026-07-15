@@ -19,14 +19,12 @@ import {
 import type {
   OpenThreadState,
   CodexThreadCandidate,
-  MachineDirectoryListing,
   MachineSummary,
   ProjectMachineGroup,
   ProjectPickerState,
   ProjectsPayload,
   ProjectSummary,
   SessionView,
-  ThreadDetail,
   ThreadPickerState
 } from "../types.js";
 

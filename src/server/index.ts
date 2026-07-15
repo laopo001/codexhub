@@ -3,7 +3,6 @@ import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { open, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,8 +19,8 @@ import { SshMachineManager } from "../core/sshMachine.js";
 import { readSshRemoteClientBundle, resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { cronMatches, cronMinuteKey, cronMinuteKeyFromIso, defaultTaskTimezone, nextCronRun } from "../core/taskCron.js";
 import { ThreadHub } from "../core/threadHub.js";
-import { startCodexhubMachine, type CodexhubMachineHandle, type CodexhubMachineStatus } from "../cli/codexhubMachine.js";
-import { startAttachedCodexhubSession, type HeadlessCodexhubSessionHandle, type HeadlessSessionTransport, type HeadlessSessionTransportCallbacks } from "../cli/codexhubConnect.js";
+import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
+import { startAttachedCodexhubSession, type HeadlessCodexhubSessionHandle } from "../cli/codexhubConnect.js";
 import { resolveCodexAppServerLaunchOptions, type CodexAppServerLaunchOptions } from "../cli/codexAppServerProcess.js";
 import {
   machineTransportMessageSchema,
@@ -38,7 +37,6 @@ import {
   type ProjectsPayload,
   type ProjectsStreamEvent,
   type ServerConfigPayload,
-  type SessionsPayload,
   type SshConnectionPayload,
   type SshConnectionsPayload,
   type SshHostsPayload,
@@ -54,7 +52,8 @@ import {
   isEmbeddedCodexHubSurface,
   type CodexHubSurface
 } from "../shared/surfaceTypes.js";
-import type { SessionCommand, SessionEventInput, SessionRegistration } from "../shared/threadTypes.js";
+import { DirectThreadHubSessionTransport } from "./directSessionTransport.js";
+import { contentType, previewImageErrorStatus, registerStaticRoutes, resolvePreviewImage } from "./serverFiles.js";
 import { registerProjectTaskRoutes } from "./projectTaskRoutes.js";
 import { registerThreadRoutes } from "./threadRoutes.js";
 import {
@@ -98,7 +97,6 @@ const sessionOfflineRetentionMs = () =>
 const sessionSweepIntervalMs = () =>
   envMs("CODEX_HUB_SESSION_SWEEP_INTERVAL_MS", 5_000);
 const taskScanIntervalMs = () => envMs("CODEX_HUB_TASK_SCAN_INTERVAL_MS", 30_000);
-const maxPreviewImageBytes = () => envMs("CODEX_HUB_MAX_PREVIEW_IMAGE_BYTES", 50 * 1024 * 1024);
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;
@@ -1434,99 +1432,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   };
 };
 
-class DirectThreadHubSessionTransport implements HeadlessSessionTransport {
-  private stopped = false;
-  private registered = false;
-  private commandCursor = 0;
-  private commandLoopStarted = false;
-
-  constructor(
-    private readonly options: {
-      threads: ThreadHub;
-      sessionId: string;
-      machineId?: string;
-      transportId: string;
-      onChange: () => void;
-      onRegister?: () => void;
-    },
-    private readonly callbacks: HeadlessSessionTransportCallbacks
-  ) {}
-
-  start() {
-    if (this.stopped || this.registered) return;
-    this.callbacks.onState("connecting", `codexhub direct session registering: ${this.options.sessionId}`);
-    // 这是 server 内部 transport，不再经 machine WebSocket 反绕一圈。
-    const { currentThreadId: _legacyCurrentThreadId, ...registration } = this.callbacks.registration() as SessionRegistration & { currentThreadId?: string };
-    this.options.threads.registerSession({
-      ...registration,
-      sessionId: this.options.sessionId,
-      machineId: this.options.machineId,
-      transportId: this.options.transportId
-    });
-    this.registered = true;
-    this.callbacks.onState("online", `codexhub direct session connected: ${this.options.sessionId}`);
-    this.options.onRegister?.();
-    this.options.onChange();
-    this.startCommandLoop();
-  }
-
-  stop(options: { unregister?: boolean } = {}) {
-    if (this.stopped) return;
-    this.stopped = true;
-    if (this.registered) {
-      if (options.unregister) this.options.threads.unregisterSession(this.options.sessionId, this.options.transportId);
-      else this.options.threads.disconnectSession(this.options.sessionId, this.options.transportId);
-    }
-    this.registered = false;
-    this.options.onChange();
-  }
-
-  sendEvent(event: SessionEventInput) {
-    if (this.stopped || !this.registered) return;
-    this.options.threads.applySessionEvent(this.options.sessionId, event);
-    this.options.onChange();
-  }
-
-  sendHeartbeat(registration: Partial<SessionRegistration>) {
-    if (this.stopped || !this.registered) return;
-    this.options.threads.heartbeatSession(this.options.sessionId, registration);
-  }
-
-  private startCommandLoop() {
-    if (this.commandLoopStarted) return;
-    this.commandLoopStarted = true;
-    void this.commandLoop().catch((error: unknown) => {
-      if (!this.stopped) this.callbacks.onState("offline", `codexhub direct session command loop failed: ${error instanceof Error ? error.message : String(error)}`);
-    });
-  }
-
-  private async commandLoop() {
-    while (!this.stopped && this.registered) {
-      // 直接 transport 同样使用 ThreadHub command cursor，保持和远端 session 一致的 replay 语义。
-      const response = await this.options.threads.waitSessionCommands(this.options.sessionId, this.commandCursor, 60_000);
-      if (this.stopped || !this.registered) return;
-      this.commandCursor = Math.max(this.commandCursor, response.cursor);
-      for (const command of response.commands) {
-        await this.handleCommand(command);
-      }
-    }
-  }
-
-  private async handleCommand(command: SessionCommand) {
-    try {
-      const result = await this.callbacks.handleCommand(command);
-      if (result !== undefined) {
-        this.options.threads.resolveSessionCommand(this.options.sessionId, command.commandId, result);
-      }
-    } catch (error) {
-      this.options.threads.failSessionCommand(this.options.sessionId, command.commandId, error instanceof Error ? error.message : String(error));
-    } finally {
-      this.commandCursor = Math.max(this.commandCursor, command.seq);
-      this.options.onChange();
-    }
-  }
-}
-
 const registeredBootstrapScript = (input: {
   serverBase: string;
   clientUrl: string;
@@ -1724,142 +1629,12 @@ const resolveTargetMachine = <T extends {
   throw new Error("Multiple online project launchers. Choose one before opening a project.");
 };
 
-const registerStaticRoutes = (app: FastifyInstance, root: string) => {
-  const sendIndex = async (_request: unknown, reply: any) => {
-    const indexPath = path.join(root, "index.html");
-    if (!await fileExists(indexPath)) {
-      reply.code(404);
-      return { error: "dist_index_not_found", path: indexPath };
-    }
-    reply.type("text/html; charset=utf-8");
-    reply.header("cache-control", "no-cache");
-    return reply.send(createReadStream(indexPath));
-  };
-
-  app.get("/", sendIndex);
-  app.get("/*", async (request, reply) => {
-    const rawPath = (request.params as { "*": string })["*"] ?? "";
-    if (rawPath === "api" || rawPath.startsWith("api/")) {
-      reply.code(404);
-      return { error: "api_route_not_found", path: `/${rawPath}` };
-    }
-    const requested = path.resolve(root, rawPath);
-    if (!requested.startsWith(`${root}${path.sep}`)) {
-      reply.code(403);
-      return { error: "forbidden_path" };
-    }
-    if (await fileExists(requested)) {
-      reply.type(contentType(requested));
-      return reply.send(createReadStream(requested));
-    }
-    return sendIndex(request, reply);
-  });
-};
-
-const fileExists = async (filePath: string) => {
-  try {
-    return (await stat(filePath)).isFile();
-  } catch {
-    return false;
-  }
-};
-
 const delay = async (ms: number) => await new Promise<void>((resolve) => {
   const timer = setTimeout(resolve, ms);
   timer.unref?.();
 });
 
 // Global file previews intentionally serve images only; this keeps external screenshots usable without exposing arbitrary file contents.
-const resolvePreviewImage = async (inputPath: string) => {
-  const rawPath = normalizePreviewImagePath(inputPath);
-  const resolvedPath = await realpath(rawPath);
-  const fileStat = await stat(resolvedPath);
-  if (!fileStat.isFile()) {
-    throw previewImageError("file_not_found", 404);
-  }
-  if (fileStat.size <= 0) {
-    throw previewImageError("empty_file", 415);
-  }
-  const maxBytes = maxPreviewImageBytes();
-  if (fileStat.size > maxBytes) {
-    throw previewImageError("file_too_large", 413);
-  }
-  const contentType = await sniffPreviewImageType(resolvedPath, fileStat.size);
-  if (!contentType) {
-    throw previewImageError("unsupported_image_type", 415);
-  }
-  return { path: resolvedPath, contentType, size: fileStat.size };
-};
-
-const normalizePreviewImagePath = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.includes("\0")) {
-    throw previewImageError("invalid_path", 400);
-  }
-  const normalized = process.platform === "win32" ? trimmed : windowsDrivePathToWslPath(trimmed);
-  if (!path.isAbsolute(normalized)) {
-    throw previewImageError("absolute_path_required", 400);
-  }
-  return normalized;
-};
-
-const windowsDrivePathToWslPath = (value: string) => {
-  const match = /^([a-zA-Z]):[\\/](.*)$/.exec(value);
-  if (!match) return value;
-  return `/mnt/${match[1].toLowerCase()}/${match[2].replace(/[\\/]+/g, "/")}`;
-};
-
-// Use file signatures instead of extensions so renamed text or binary files cannot be rendered through /api/file.
-const sniffPreviewImageType = async (filePath: string, fileSize: number) => {
-  const headerLength = Math.min(fileSize, 64);
-  const buffer = Buffer.alloc(headerLength);
-  const file = await open(filePath, "r");
-  try {
-    await file.read(buffer, 0, headerLength, 0);
-  } finally {
-    await file.close();
-  }
-  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
-  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg";
-  const ascii = buffer.toString("ascii");
-  if (ascii.startsWith("GIF87a") || ascii.startsWith("GIF89a")) return "image/gif";
-  if (ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP") return "image/webp";
-  if (ascii.startsWith("BM")) return "image/bmp";
-  if (buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0x01 && buffer[3] === 0x00) return "image/x-icon";
-  if (isAvifImage(buffer)) return "image/avif";
-  return null;
-};
-
-const isAvifImage = (buffer: Buffer) => {
-  if (buffer.length < 12 || buffer.subarray(4, 8).toString("ascii") !== "ftyp") return false;
-  const brands = buffer.subarray(8).toString("ascii");
-  return brands.includes("avif") || brands.includes("avis");
-};
-
-const previewImageError = (message: string, statusCode: number) =>
-  Object.assign(new Error(message), { statusCode });
-
-const previewImageErrorStatus = (error: unknown) => {
-  const statusCode = typeof (error as { statusCode?: unknown })?.statusCode === "number"
-    ? (error as { statusCode: number }).statusCode
-    : undefined;
-  return statusCode && statusCode >= 400 && statusCode < 600 ? statusCode : 404;
-};
-
-const contentType = (filePath: string) => {
-  const extension = path.extname(filePath).toLowerCase();
-  if (extension === ".html") return "text/html; charset=utf-8";
-  if (extension === ".js") return "text/javascript; charset=utf-8";
-  if (extension === ".css") return "text/css; charset=utf-8";
-  if (extension === ".json") return "application/json; charset=utf-8";
-  if (extension === ".svg") return "image/svg+xml";
-  if (extension === ".png") return "image/png";
-  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
-  if (extension === ".webp") return "image/webp";
-  if (extension === ".ico") return "image/x-icon";
-  return "application/octet-stream";
-};
-
 const sshRemoteMode = () => process.env.CODEX_HUB_SSH_REMOTE_MODE === "installed" ? "installed" : "bootstrap";
 
 const sshAutoConnectEnabled = () => process.env.CODEX_HUB_SSH_AUTOCONNECT !== "0";

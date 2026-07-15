@@ -1,8 +1,8 @@
 import { recordsToViews } from "../../core/codexRecordView.js";
-import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
+import type { CodexRecord, CodexRecordView } from "../../shared/recordTypes.js";
 import { defaultAppSettings, isEmbeddedHostSurface, legacyStorageKey, storageKey } from "../appConfig.js";
 import type { AppSettings, MessageDisplayMode, TextAttachment } from "../types.js";
-import { browserId, formatDate } from "./common.js";
+import { browserId } from "./common.js";
 
 export type ComposerDraftStore = {
   delete: (threadId: string) => void;
