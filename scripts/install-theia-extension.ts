@@ -19,12 +19,12 @@ if (args.length > 0) {
   throw new Error(`Unknown install:theia arguments: ${args.join(" ")}. Use environment variables to override config directories.`);
 }
 
-const stagingDir = path.resolve("dist-vscode");
+const stagingDir = path.resolve("dist-vsix");
 const vsixPath = path.join(stagingDir, "codexhub.vsix");
 const manifest = await readJson<ExtensionManifest>(path.join(stagingDir, "package.json"));
 const extensionId = extensionIdentifier(manifest);
 const version = manifest.version?.trim();
-if (!version) throw new Error("dist-vscode/package.json must include a version.");
+if (!version) throw new Error("dist-vsix/package.json must include a version.");
 await assertFile(vsixPath, "Theia-compatible VSIX not found. Run `pnpm package:vscode` first.");
 
 const wsl = await isWsl();
@@ -360,7 +360,7 @@ async function assertFile(filePath: string, message: string) {
 
 function extensionIdentifier(manifest: ExtensionManifest) {
   if (!manifest.publisher || !manifest.name) {
-    throw new Error("dist-vscode/package.json must include publisher and name.");
+    throw new Error("dist-vsix/package.json must include publisher and name.");
   }
   return `${manifest.publisher}.${manifest.name}`;
 }

@@ -2,10 +2,12 @@ import { mkdir, readFile, rm, writeFile, cp, stat, readdir } from "node:fs/promi
 import path from "node:path";
 import { build } from "esbuild";
 
-const outDir = "dist-vscode";
+const outDir = "dist-vsix";
+const legacyOutDir = "dist-vscode";
 const extensionOutfile = path.join(outDir, "extension.cjs");
 
 await rm(outDir, { recursive: true, force: true });
+await rm(legacyOutDir, { recursive: true, force: true });
 await mkdir(outDir, { recursive: true });
 
 await build({

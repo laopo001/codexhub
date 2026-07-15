@@ -2,6 +2,7 @@ import { access, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { codexHubExtensionId, resolveCodexHubVsixPath } from "./codexHubVsix.js";
 import { deployTheiaExtensionAtomically, type TheiaDeploymentResult } from "./theiaExtensionDeployment.js";
 
 type CodexHubPackageManifest = {
@@ -21,14 +22,12 @@ export type InstallTheiaExtensionResult = TheiaDeploymentResult & {
   vsixPath: string;
 };
 
-const extensionId = "dadigua.codexhub";
-
 export async function installTheiaExtension(
   options: InstallTheiaExtensionOptions = {},
 ): Promise<InstallTheiaExtensionResult> {
   const [manifest, vsixPath] = await Promise.all([
     readCodexHubPackageManifest(),
-    resolveTheiaVsixPath(options.vsixPath),
+    resolveCodexHubVsixPath(options.vsixPath),
   ]);
   if (manifest.name !== "@dadigua/codexhub" || !manifest.version?.trim()) {
     throw new Error("Could not resolve the @dadigua/codexhub package version for Theia installation.");
@@ -41,38 +40,17 @@ export async function installTheiaExtension(
 
   const deployment = await deployTheiaExtensionAtomically({
     configDir,
-    extensionId,
+    extensionId: codexHubExtensionId,
     version,
     vsixPath,
   });
   return {
     ...deployment,
-    extensionId,
+    extensionId: codexHubExtensionId,
     removedStaleDropIn,
     version,
     vsixPath,
   };
-}
-
-async function resolveTheiaVsixPath(input: string | undefined) {
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = input?.trim()
-    ? [path.resolve(expandHome(input.trim()))]
-    : [
-        process.env.CODEX_HUB_THEIA_VSIX?.trim(),
-        path.resolve(moduleDir, "../../dist-vscode/codexhub.vsix"),
-        path.resolve(moduleDir, "../../../dist-vscode/codexhub.vsix"),
-        path.resolve(process.cwd(), "dist-vscode/codexhub.vsix"),
-      ].filter((candidate): candidate is string => Boolean(candidate));
-  for (const candidate of [...new Set(candidates)]) {
-    const resolved = path.resolve(expandHome(candidate));
-    if (await isFile(resolved)) return resolved;
-  }
-  throw new Error([
-    "The Theia-compatible CodexHub VSIX was not found.",
-    "Reinstall a published @dadigua/codexhub package that includes it, or pass --vsix <path>.",
-    "From a source checkout, run `pnpm run package:vscode` first.",
-  ].join(" "));
 }
 
 async function readCodexHubPackageManifest() {

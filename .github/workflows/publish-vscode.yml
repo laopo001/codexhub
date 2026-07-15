@@ -46,4 +46,4 @@ jobs:
             echo "::error::Missing VSCE_PAT repository secret."
             exit 1
           fi
-          pnpm exec vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate
+          pnpm exec vsce publish --packagePath dist-vsix/codexhub.vsix --skip-duplicate

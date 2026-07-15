@@ -1,7 +1,7 @@
 node_modules/
 dist/
 dist-node/
-dist-vscode/
+dist-vsix/
 dist-theia/
 .codexp/
 .env

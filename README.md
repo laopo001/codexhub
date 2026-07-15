@@ -360,14 +360,22 @@ pnpm electron:start
 
 在 Electron 里连接宿主机 project launcher 的方式和 Web 相同；也可以从 Connections / Registered 复制包含当前实际端口的命令。
 
-VSCode extension 打包走独立链路：
+发布后的 CodexHub CLI 自带共享 VSIX，可以直接安装到 VS Code：
+
+```bash
+codexhub install-vscode
+```
+
+命令会先调用当前环境的 `code --install-extension ... --force` 并核对 `dadigua.codexhub@<version>`；在 WSL 中还会把 VSIX 复制到 Windows 本地路径，再额外调用 Windows `code.cmd` 安装和验收宿主版本。安装完成后 Reload Window。自定义包可以使用 `codexhub install-vscode --vsix /path/to/codexhub.vsix`。
+
+源码仓库里的 VS Code extension 打包和安装链路仍为：
 
 ```bash
 pnpm run package:vscode
 pnpm run install:vscode
 ```
 
-`build:vscode` 会先跑完整 `pnpm build`，再把 extension 打成 Node CJS bundle，显式把 extension host 里的 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；staging 目录会包含 Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE。仓库内的 VSCode Marketplace 发布 workflow 会在 `main` 分支 push 后自动触发，也支持手动 `workflow_dispatch`，会运行 `pnpm run package:vscode`，并要求仓库 secret `VSCE_PAT`，发布时使用 `vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate`。
+`build:vscode` 会先跑完整 `pnpm build`，再把 extension 打成 Node CJS bundle，显式把 extension host 里的 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；共享 VSIX staging 位于 `dist-vsix/`，会包含 Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE，供 VS Code 与官方 Theia IDE 共用。仓库内的 VSCode Marketplace 发布 workflow 会在 `main` 分支 push 后自动触发，也支持手动 `workflow_dispatch`，会运行 `pnpm run package:vscode`，并要求仓库 secret `VSCE_PAT`，发布时使用 `vsce publish --packagePath dist-vsix/codexhub.vsix --skip-duplicate`。
 
 ## Eclipse Theia
 
@@ -390,7 +398,7 @@ codexhub install-theia --config-dir ~/.theia-ide
 codexhub install-theia --vsix /path/to/codexhub.vsix
 ```
 
-在源码仓库里直接运行 CLI 前，先用 `pnpm run package:vscode` 生成 `dist-vscode/codexhub.vsix`。
+在源码仓库里直接运行 CLI 前，先用 `pnpm run package:vscode` 生成 `dist-vsix/codexhub.vsix`。
 
 仓库开发环境仍保留 Windows frontend + 当前 WSL backend 的双端安装器：
 
@@ -398,7 +406,7 @@ codexhub install-theia --vsix /path/to/codexhub.vsix
 pnpm run install:theia
 ```
 
-Theia IDE 与 VSCode 可以使用同一份 VSIX。Theia 1.73.x 后端支持 `--install-plugin`，并把 `--install-extension` 作为别名，但没有 VSCode `--force` 那样的同版本替换参数。`install:theia` 会构建 `dist-vscode/codexhub.vsix`，把完整 VSIX 结构原子部署到 Windows frontend 和当前 WSL remote backend；复制或校验失败时旧 deployment 不会被删除。安装器最后会分别让 Windows 与 WSL 的 Theia 后端执行插件列表检查，只有两边都实际列出对应的 `dadigua.codexhub@<version>` 才算成功。命令结束后重新连接 WSL 窗口即可激活新版本。
+Theia IDE 与 VSCode 可以使用同一份 `dist-vsix/codexhub.vsix`。Theia 1.73.x 后端支持 `--install-plugin`，并把 `--install-extension` 作为别名，但没有 VSCode `--force` 那样的同版本替换参数。`install:theia` 会构建这份共享 VSIX，把完整结构原子部署到 Windows frontend 和当前 WSL remote backend；复制或校验失败时旧 deployment 不会被删除。安装器最后会分别让 Windows 与 WSL 的 Theia 后端执行插件列表检查，只有两边都实际列出对应的 `dadigua.codexhub@<version>` 才算成功。命令结束后重新连接 WSL 窗口即可激活新版本。
 
 也可以覆盖 user config 位置：
 

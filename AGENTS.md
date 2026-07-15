@@ -95,7 +95,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 ## CLI 模型
 
-1. 顶层 CLI 保留 `server`、`machine`、`ssh`、`task`；默认 headless session 入口是 legacy/transient 行为，不作为 project path thread 主路径。`list`、`threads`、`resume`、`delete` 作为隐藏 removed commands 只返回迁移错误，不做兼容实现。
+1. 顶层 CLI 保留 `server`、`machine`、`ssh`、`task`、`install-vscode`、`install-theia`；两个 install 命令只负责把 npm 包内共享的 `dist-vsix/codexhub.vsix` 安装到对应 IDE，不扩展 project/runtime 语义。默认 headless session 入口是 legacy/transient 行为，不作为 project path thread 主路径。`list`、`threads`、`resume`、`delete` 作为隐藏 removed commands 只返回迁移错误，不做兼容实现。
 2. thread history browsing、thread resume 和 new thread 选择放在 Web/API：`/api/sessions/:sessionId/thread-candidates` 和 `/api/sessions/:sessionId/threads`。模型目录来自在线 session 的 app-server `model/list`，通过 `/api/sessions/:sessionId/models` 暴露给 Web，不在 `config.yaml` 持久化。
 3. `codexhub [prompt]` 是废弃的 legacy/transient headless 入口；它不是项目浏览 launcher，也不是 project path thread 主路径。不要为了它扩展新的 project/runtime 语义。
 4. `--sandbox`、`--approval-policy`、`--model` 只有用户显式传参时才作为 app-server override 转发；不要偷偷发明默认权限策略。
@@ -180,5 +180,5 @@ pnpm build
 7. `smoke:ssh-loopback` 覆盖真实本机 sshd、`ssh -R` reverse tunnel、SSH remote client、项目打开、session/thread 对话流和断开 lifecycle。
 8. `smoke:task-lock` 覆盖 session model catalog、thread compact command、thread review command、task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close 和 token usage rate limits。
 9. `smoke:electron` 覆盖 Electron main process、嵌入 server 随机端口和 `/api/health`。
-10. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vscode/codexhub.vsix --force`。
-11. VSCode Marketplace 发布 workflow 在 `.github/workflows/publish-vscode.yml`，支持 `main` 分支 push 自动触发和 `workflow_dispatch` 手动触发，要求仓库 secret `VSCE_PAT`，先 `pnpm run package:vscode`，再用 `vsce publish --packagePath dist-vscode/codexhub.vsix --skip-duplicate`。
+10. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vsix/codexhub.vsix --force`。
+11. VSCode Marketplace 发布 workflow 在 `.github/workflows/publish-vscode.yml`，支持 `main` 分支 push 自动触发和 `workflow_dispatch` 手动触发，要求仓库 secret `VSCE_PAT`，先 `pnpm run package:vscode`，再用 `vsce publish --packagePath dist-vsix/codexhub.vsix --skip-duplicate`。

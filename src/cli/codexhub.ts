@@ -44,6 +44,10 @@ type InstallTheiaCommandOptions = {
   vsix?: string;
 };
 
+type InstallVSCodeCommandOptions = {
+  vsix?: string;
+};
+
 type TaskCreateCommandOptions = {
   name: string;
   schedule: string;
@@ -221,6 +225,20 @@ sshCommand
     const connection = payload.connection;
     if (!connection) throw new Error("SSH connect did not return a connection.");
     console.log(`SSH connection ${connection.status}: ${connection.host} (${connection.connectionId}, remote port ${connection.remotePort})`);
+  });
+
+program
+  .command("install-vscode")
+  .description("Install the bundled CodexHub extension into VS Code")
+  .option("--vsix <path>", "CodexHub VSIX to install (defaults to the VSIX bundled with this CLI)")
+  .action(async (options: InstallVSCodeCommandOptions = {}) => {
+    const { installVSCodeExtension } = await import("../core/vscodeExtensionInstaller.js");
+    const result = await installVSCodeExtension({ vsixPath: options.vsix });
+    console.log(`Installed VS Code extension in current host: ${result.localExtension}`);
+    if (result.windowsExtension) {
+      console.log(`Installed VS Code extension in Windows host: ${result.windowsExtension}`);
+    }
+    console.log("Reload the VS Code window to activate the extension.");
   });
 
 program
