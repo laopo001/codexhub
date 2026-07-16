@@ -53,9 +53,12 @@ test("record config extraction preserves Ultra without adopting child-agent sett
 
 test("reasoning catalog stays model-specific and preserves descriptions", async () => {
   const {
+    effectiveReasoningSelectionForModel,
     modelSupportsReasoningEffort,
+    reasoningDraftForModelSelection,
     reasoningOptionLabel,
-    reasoningOptionsForSelection
+    reasoningOptionsForSelection,
+    selectedThreadOptions
   } = await import("../../src/web/helpers/core.js");
   const catalog = [
     {
@@ -83,6 +86,89 @@ test("reasoning catalog stays model-specific and preserves descriptions", async 
   assert.equal(ultraOption?.description, "Maximum reasoning with automatic task delegation");
   assert.equal(automaticOptions.some((option) => option.value === "max"), false);
   assert.equal(modelSupportsReasoningEffort(catalog, "gpt-5.6-luna", "ultra"), false);
+  const switchedDraft = reasoningDraftForModelSelection("ultra", catalog, "gpt-5.6-luna");
+  assert.equal(switchedDraft, "auto");
+  assert.equal(
+    effectiveReasoningSelectionForModel(switchedDraft, "ultra", catalog, "gpt-5.6-luna"),
+    "auto"
+  );
+  assert.equal(
+    selectedThreadOptions("gpt-5.6-luna", switchedDraft, "auto", "chat", "auto", "auto", "/tmp/project")
+      .modelReasoningEffort,
+    null
+  );
+  assert.equal(reasoningDraftForModelSelection("ultra", catalog, "gpt-5.6-sol"), "ultra");
+  assert.equal(
+    effectiveReasoningSelectionForModel("auto", "ultra", catalog, "gpt-5.6-sol"),
+    "ultra"
+  );
+
+  const catalogWithPlainDefault = [
+    {
+      id: "plain",
+      model: "gpt-plain",
+      isDefault: true,
+      supportedReasoningEfforts: [],
+      serviceTiers: []
+    },
+    {
+      id: "reasoning",
+      model: "gpt-reasoning",
+      supportedReasoningEfforts: [{ value: "ultra", label: "Ultra" }],
+      serviceTiers: []
+    }
+  ];
+  assert.deepEqual(
+    reasoningOptionsForSelection("auto", catalogWithPlainDefault, "gpt-plain").map((option) => option.value),
+    ["auto"]
+  );
+  assert.deepEqual(
+    reasoningOptionsForSelection("auto", catalogWithPlainDefault, "auto").map((option) => option.value),
+    ["auto"]
+  );
+});
+
+test("queued turns inherit sticky settings before command promise callbacks run", async () => {
+  const { ThreadHub } = await import("../../src/core/threadHub.js");
+  const hub = new ThreadHub();
+  const sessionId = "reasoning-queued-session";
+  const threadId = "reasoning-queued-thread";
+  hub.registerSession({
+    sessionId,
+    machineId: "machine-local",
+    workingDirectory: "/tmp/reasoning-queued"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_settings_changed",
+    threadId,
+    modelReasoningEffort: "max"
+  });
+
+  const firstTurn = hub.runTurn(threadId, "first", "task", {
+    modelReasoningEffort: "ultra",
+    collaborationMode: "plan"
+  });
+  const firstBatch = await hub.waitSessionCommands(sessionId, 0, 1);
+  const firstCommand = firstBatch.commands[0];
+  assert.equal(firstCommand?.options?.modelReasoningEffort, "ultra");
+  const queuedTurn = hub.runTurn(threadId, "queued", "task");
+
+  // Exercise the completion-before-command-result path that previously let the
+  // queued turn snapshot stale settings before the first promise callback ran.
+  hub.applySessionEvent(sessionId, {
+    type: "thread_execution_changed",
+    threadId,
+    running: false
+  });
+  const queuedBatch = await hub.waitSessionCommands(sessionId, firstCommand!.seq, 1);
+  const queuedCommand = queuedBatch.commands[0];
+  assert.equal(queuedCommand?.options?.modelReasoningEffort, "ultra");
+  assert.equal(queuedCommand?.options?.collaborationMode, undefined);
+  assert.equal(hub.getThread(threadId)?.modelReasoningEffort, "ultra");
+  await firstTurn;
+
+  hub.failSessionCommand(sessionId, queuedCommand!.commandId, "test cleanup");
+  await assert.rejects(queuedTurn, /test cleanup/);
 });
 
 test("failed or superseded effort overrides do not replace authoritative thread settings", async () => {

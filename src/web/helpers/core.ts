@@ -1027,7 +1027,7 @@ export const reasoningOptionsForSelection = (
   model: ModelSelection = "auto"
 ): Array<{ value: string; label: string; description?: string }> => {
   const catalogModel = modelCatalogItemForSelection(catalog, model);
-  const sourceReasoningEfforts = catalogModel?.supportedReasoningEfforts.length
+  const sourceReasoningEfforts = catalogModel
     ? catalogModel.supportedReasoningEfforts
     : catalog.flatMap((item) => item.supportedReasoningEfforts);
   const catalogOptions: Array<{ value: string; label: string; description?: string }> = sourceReasoningEfforts.map((option) => ({
@@ -1052,6 +1052,26 @@ export const modelSupportsReasoningEffort = (
   if (!catalogModel) return true;
   return catalogModel.supportedReasoningEfforts.some((option) => option.value === reasoning);
 };
+
+export const reasoningDraftForModelSelection = (
+  reasoningDraft: ReasoningSelection,
+  catalog: ModelCatalogItem[],
+  model: ModelSelection
+): ReasoningSelection => reasoningDraft !== "auto"
+  && !modelSupportsReasoningEffort(catalog, model, reasoningDraft)
+  ? "auto"
+  : reasoningDraft;
+
+export const effectiveReasoningSelectionForModel = (
+  reasoningDraft: ReasoningSelection,
+  threadReasoning: ReasoningSelection | null,
+  catalog: ModelCatalogItem[],
+  model: ModelSelection
+): ReasoningSelection => reasoningDraft === "auto"
+  && threadReasoning
+  && modelSupportsReasoningEffort(catalog, model, threadReasoning)
+  ? threadReasoning
+  : reasoningDraft;
 
 export const serviceTierOptionsForSelection = (
   serviceTier: ServiceTierSelection,

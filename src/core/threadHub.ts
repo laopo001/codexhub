@@ -101,6 +101,12 @@ export class ThreadHub {
   private readonly activeTurnCommands = new Map<string, string>();
   private readonly queuedTurns = new Map<string, QueuedTurn[]>();
   private readonly threadSettingsRevisions = new Map<string, number>();
+  private readonly pendingTurnSettingsCommits = new Map<string, {
+    thread: ThreadState;
+    options: ThreadRunOptions;
+    threadOptionsAtStart: ThreadOptions;
+    settingsRevisionAtStart: number;
+  }>();
   private readonly sessionEvents: SessionStreamEvent[] = [];
   private readonly sessionSubscribers = new Set<(event: SessionStreamEvent) => void>();
   private lastSessionSnapshotKey = "";
@@ -815,6 +821,14 @@ export class ThreadHub {
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "turn", thread.threadId, turnCommandTimeoutMs(), thread.workingDirectory);
     this.activeTurnCommands.set(thread.threadId, commandId);
+    if (options && hasStickyThreadRunOptions(options)) {
+      this.pendingTurnSettingsCommits.set(commandId, {
+        thread,
+        options: commandOptions,
+        threadOptionsAtStart,
+        settingsRevisionAtStart
+      });
+    }
 
     const userText = summarizeInput(input);
     const userTitle = compactThreadTitle(userText);
@@ -834,19 +848,7 @@ export class ThreadHub {
       threadId: thread.threadId,
       options: commandOptions
     });
-    return promise.then(() => {
-      // turn/start success confirms the requested settings only when no newer
-      // app-server settings event or local setting change won the race.
-      if (
-        options
-        && thread.threadOptions === threadOptionsAtStart
-        && (this.threadSettingsRevisions.get(thread.threadId) ?? 0) === settingsRevisionAtStart
-      ) {
-        thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
-        thread.updatedAt = new Date().toISOString();
-        this.publish(thread, "thread");
-      }
-    });
+    return promise;
   }
 
   private steerTurn(thread: ThreadState, input: ProxyInput, turnId: string) {
@@ -1085,6 +1087,7 @@ export class ThreadHub {
       const timer = typeof timeoutMs === "number" && timeoutMs > 0
         ? setTimeout(() => {
           this.pendingCommands.delete(commandId);
+          this.pendingTurnSettingsCommits.delete(commandId);
           if (threadId && this.activeTurnCommands.get(threadId) === commandId) {
             this.activeTurnCommands.delete(threadId);
             const thread = this.threads.get(threadId);
@@ -1127,16 +1130,38 @@ export class ThreadHub {
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
     this.pendingCommands.delete(commandId);
+    this.commitPendingTurnSettings(commandId);
     pending.resolve(value);
   }
 
   private rejectCommand(commandId: string | undefined, error: Error) {
     if (!commandId) return;
+    this.pendingTurnSettingsCommits.delete(commandId);
     const pending = this.pendingCommands.get(commandId);
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
     this.pendingCommands.delete(commandId);
     pending.reject(error);
+  }
+
+  private commitPendingTurnSettings(commandId: string) {
+    const pending = this.pendingTurnSettingsCommits.get(commandId);
+    if (!pending) return;
+    this.pendingTurnSettingsCommits.delete(commandId);
+    const { thread, options, threadOptionsAtStart, settingsRevisionAtStart } = pending;
+    // A successful command may settle either through an explicit command result
+    // or through turn completion. Commit before resolving its promise so queued
+    // turns cannot snapshot stale settings, while newer authoritative/local state wins.
+    if (
+      this.threads.get(thread.threadId) !== thread
+      || thread.threadOptions !== threadOptionsAtStart
+      || (this.threadSettingsRevisions.get(thread.threadId) ?? 0) !== settingsRevisionAtStart
+    ) {
+      return;
+    }
+    thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
   }
 
   private failSessionApprovals(sessionId: string, message: string) {
@@ -2338,6 +2363,17 @@ const turnCommandTimeoutMs = () => {
 };
 
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
+
+const stickyThreadRunOptionKeys = [
+  "model",
+  "modelReasoningEffort",
+  "serviceTier",
+  "approvalPolicy",
+  "sandboxPolicy"
+] as const;
+
+const hasStickyThreadRunOptions = (options: ThreadRunOptions) =>
+  stickyThreadRunOptionKeys.some((key) => hasOwn(options, key));
 
 const applyThreadRunOptions = (current: ThreadOptions, options: ThreadRunOptions) => {
   const next = { ...current };

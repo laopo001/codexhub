@@ -9,6 +9,7 @@ import {
   activityStatusSnapshotsFromRecords,
   authToken,
   combineRecordSources,
+  effectiveReasoningSelectionForModel,
   groupProjectsByMachine,
   hideSupersededSimpleThinkingViews,
   isSimpleMainView,
@@ -18,10 +19,10 @@ import {
   latestThreadUsageFromRecords,
   latestTurnActivityScope,
   mergeThreadUsage,
-  modelSupportsReasoningEffort,
   modelOptionsForSelection,
   normalizeReasoningEffort,
   projectKeyForProject,
+  reasoningDraftForModelSelection,
   reasoningOptionsForSelection,
   runtimeSessionForProject,
   serviceTierOptionsForSelection,
@@ -72,15 +73,17 @@ export const useAppSelectors = (state: AppState) => {
     if (!state.activeTabThreadId) return;
     const nextModel = typeof value === "function" ? value(activeThreadModelDraft) : value;
     state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "modelDraft", value: nextModel });
-    if (
-      activeThreadReasoningDraft !== "auto"
-      && !modelSupportsReasoningEffort(activeModelCatalog, nextModel, activeThreadReasoningDraft)
-    ) {
+    const nextReasoningDraft = reasoningDraftForModelSelection(
+      activeThreadReasoningDraft,
+      activeModelCatalog,
+      nextModel
+    );
+    if (nextReasoningDraft !== activeThreadReasoningDraft) {
       state.dispatchOpenThreads({
         type: "set-draft",
         threadId: state.activeTabThreadId,
         field: "reasoningDraft",
-        value: "auto"
+        value: nextReasoningDraft
       });
     }
   };
@@ -334,12 +337,6 @@ export const useAppSelectors = (state: AppState) => {
     ?? state.systemStatus.serviceTier
     ?? null;
   const effectiveModelSelection = activeThreadModelDraft === "auto" && activeThreadModel ? activeThreadModel : activeThreadModelDraft;
-  const effectiveReasoningSelection: ReasoningSelection = activeThreadReasoningDraft === "auto" && activeThreadReasoning
-    ? activeThreadReasoning
-    : activeThreadReasoningDraft;
-  const effectiveServiceTierSelection: ServiceTierSelection = activeThreadServiceTierDraft === "auto" && activeThreadServiceTier
-    ? activeThreadServiceTier
-    : activeThreadServiceTierDraft;
   const activeModelCatalogState = activeRuntimeSession?.sessionId
     ? state.modelCatalogBySession[activeRuntimeSession.sessionId]
     : undefined;
@@ -352,6 +349,15 @@ export const useAppSelectors = (state: AppState) => {
   const activeModelCatalogError = activeModelCatalogState?.status === "error"
     ? activeModelCatalogState.error ?? "Model catalog unavailable."
     : "";
+  const effectiveReasoningSelection = effectiveReasoningSelectionForModel(
+    activeThreadReasoningDraft,
+    activeThreadReasoning,
+    activeModelCatalog,
+    effectiveModelSelection
+  );
+  const effectiveServiceTierSelection: ServiceTierSelection = activeThreadServiceTierDraft === "auto" && activeThreadServiceTier
+    ? activeThreadServiceTier
+    : activeThreadServiceTierDraft;
   const modelOptions = useMemo(
     () => modelOptionsForSelection(effectiveModelSelection, activeModelCatalog),
     [effectiveModelSelection, activeModelCatalog]
