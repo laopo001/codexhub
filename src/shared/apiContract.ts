@@ -404,9 +404,11 @@ const sandboxPolicySchema = z.discriminatedUnion("type", [
   }).strict()
 ]);
 
+export const modelReasoningEffortSchema = z.string().min(1);
+
 export const threadRunOptionsSchema = z.object({
   model: z.string().min(1).nullable().optional(),
-  modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
+  modelReasoningEffort: modelReasoningEffortSchema.nullable().optional(),
   serviceTier: z.string().min(1).nullable().optional(),
   approvalPolicy: approvalPolicySchema.nullable().optional(),
   sandboxPolicy: sandboxPolicySchema.nullable().optional(),
@@ -532,7 +534,7 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     type: z.literal("thread_settings_changed"),
     threadId: z.string().min(1),
     model: z.string().min(1).nullable().optional(),
-    modelReasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable().optional(),
+    modelReasoningEffort: modelReasoningEffortSchema.nullable().optional(),
     serviceTier: z.string().min(1).nullable().optional(),
     approvalPolicy: approvalPolicySchema.nullable().optional(),
     sandboxPolicy: sandboxPolicySchema.nullable().optional(),

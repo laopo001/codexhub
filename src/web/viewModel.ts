@@ -50,6 +50,7 @@ export type ModelOption = {
   value: string;
   label: string;
   searchText?: string;
+  description?: string;
 };
 
 export type TaskPatchInput = ApiTaskUpdateInput;

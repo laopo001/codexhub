@@ -983,7 +983,13 @@ const assertModelOptionSearch = async () => {
     ? (globalThis as { window?: unknown }).window
     : undefined;
   (globalThis as { window?: unknown }).window = { location: { search: "" } };
-  const { modelOptionSearchMatches, modelOptionsForSelection } = await import("../src/web/helpers/core.js").finally(() => {
+  const {
+    modelOptionSearchMatches,
+    modelOptionsForSelection,
+    modelSupportsReasoningEffort,
+    reasoningOptionLabel,
+    reasoningOptionsForSelection
+  } = await import("../src/web/helpers/core.js").finally(() => {
     if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
     else (globalThis as { window?: unknown }).window = previousWindow;
   });
@@ -1029,6 +1035,59 @@ const assertModelOptionSearch = async () => {
   const manualOption = manualOptions.find((option) => option.value === "manual-model");
   if (!modelOptionSearchMatches(manualOption, "manual")) {
     throw new Error(`manual model option should be searchable: ${JSON.stringify(manualOption)}`);
+  }
+
+  const reasoningOptions = reasoningOptionsForSelection("ultra", [{
+    id: "catalog-gpt-5.6-sol",
+    model: "gpt-5.6-sol",
+    hidden: false,
+    supportedReasoningEfforts: [
+      { value: "xhigh", label: "xhigh", description: "Extended reasoning" },
+      {
+        value: "ultra",
+        label: "ultra",
+        description: "Maximum reasoning with automatic task delegation"
+      }
+    ],
+    serviceTiers: []
+  }], "gpt-5.6-sol");
+  const ultraOption = reasoningOptions.find((option) => option.value === "ultra");
+  const xhighOption = reasoningOptions.find((option) => option.value === "xhigh");
+  if (
+    !ultraOption
+    || ultraOption.description !== "Maximum reasoning with automatic task delegation"
+    || reasoningOptionLabel(ultraOption) !== "Ultra"
+    || !xhighOption
+    || reasoningOptionLabel(xhighOption) !== "Extra High"
+  ) {
+    throw new Error(`reasoning catalog labels/descriptions were not preserved: ${JSON.stringify(reasoningOptions)}`);
+  }
+  const modelSpecificCatalog = [
+    {
+      id: "catalog-gpt-5.6-sol",
+      model: "gpt-5.6-sol",
+      hidden: false,
+      isDefault: true,
+      supportedReasoningEfforts: [{ value: "ultra", label: "ultra" }],
+      serviceTiers: []
+    },
+    {
+      id: "catalog-gpt-5.6-luna",
+      model: "gpt-5.6-luna",
+      hidden: false,
+      supportedReasoningEfforts: [{ value: "max", label: "max" }],
+      serviceTiers: []
+    }
+  ];
+  if (modelSupportsReasoningEffort(modelSpecificCatalog, "gpt-5.6-luna", "ultra")) {
+    throw new Error("model-specific reasoning guard allowed Luna + Ultra");
+  }
+  const automaticReasoningOptions = reasoningOptionsForSelection("auto", modelSpecificCatalog, "auto");
+  if (
+    !automaticReasoningOptions.some((option) => option.value === "ultra")
+    || automaticReasoningOptions.some((option) => option.value === "max")
+  ) {
+    throw new Error(`auto model reasoning options did not follow the default model: ${JSON.stringify(automaticReasoningOptions)}`);
   }
 };
 
@@ -2002,7 +2061,7 @@ const assertAppServerServiceTierSettings = async () => {
     threadId,
     heartbeat: false,
     model: "gpt-service-tier-smoke",
-    modelReasoningEffort: "low",
+    modelReasoningEffort: "ultra",
     serviceTier: "fast",
     approvalPolicy: "on-failure",
     sandboxPolicy: {
@@ -2013,7 +2072,7 @@ const assertAppServerServiceTierSettings = async () => {
   let thread = hub.getThread(threadId);
   if (
     thread?.model !== "gpt-service-tier-smoke"
-    || thread.modelReasoningEffort !== "low"
+    || thread.modelReasoningEffort !== "ultra"
     || thread.serviceTier !== "fast"
     || thread.approvalPolicy !== "on-failure"
     || thread.sandboxPolicy?.type !== "readOnly"
@@ -2028,6 +2087,7 @@ const assertAppServerServiceTierSettings = async () => {
     excludeSlashTmp: false
   };
   const turn = hub.runTurn(threadId, "permission options smoke", "web", {
+    modelReasoningEffort: "max",
     approvalPolicy: "on-request",
     sandboxPolicy
   });
@@ -2036,6 +2096,7 @@ const assertAppServerServiceTierSettings = async () => {
   if (
     !turnCommand
     || turnCommand.type !== "turn"
+    || turnCommand.options?.modelReasoningEffort !== "max"
     || turnCommand.options?.approvalPolicy !== "on-request"
     || JSON.stringify(turnCommand.options.sandboxPolicy) !== JSON.stringify(sandboxPolicy)
   ) {
@@ -2043,16 +2104,43 @@ const assertAppServerServiceTierSettings = async () => {
   }
   hub.resolveSessionCommand(sessionId, turnCommand.commandId, { ok: true });
   await turn;
+  hub.applySessionEvent(sessionId, {
+    type: "thread_execution_changed",
+    threadId,
+    running: false,
+    heartbeat: false
+  });
   thread = hub.getThread(threadId);
-  if (thread?.approvalPolicy !== "on-request" || JSON.stringify(thread.sandboxPolicy) !== JSON.stringify(sandboxPolicy)) {
+  if (
+    thread?.modelReasoningEffort !== "max"
+    || thread.approvalPolicy !== "on-request"
+    || JSON.stringify(thread.sandboxPolicy) !== JSON.stringify(sandboxPolicy)
+  ) {
     throw new Error(`approval/sandbox turn options were not retained: ${JSON.stringify(thread)}`);
+  }
+  const rejectedTurn = hub.runTurn(threadId, "unsupported effort smoke", "web", {
+    modelReasoningEffort: "unsupported-effort"
+  });
+  const rejectedBatch = await hub.waitSessionCommands(sessionId, turnCommand.seq, 1);
+  const rejectedCommand = rejectedBatch.commands[0];
+  if (!rejectedCommand || rejectedCommand.type !== "turn") {
+    throw new Error(`unsupported effort turn command missing: ${JSON.stringify(rejectedCommand)}`);
+  }
+  hub.failSessionCommand(sessionId, rejectedCommand.commandId, "unsupported effort");
+  await rejectedTurn.then(
+    () => { throw new Error("unsupported effort turn unexpectedly succeeded"); },
+    () => undefined
+  );
+  thread = hub.getThread(threadId);
+  if (thread?.modelReasoningEffort !== "max") {
+    throw new Error(`rejected effort override was not rolled back: ${JSON.stringify(thread)}`);
   }
   hub.applySessionEvent(sessionId, {
     type: "thread_settings_changed",
     threadId,
     heartbeat: false,
     model: "gpt-service-tier-smoke",
-    modelReasoningEffort: "low",
+    modelReasoningEffort: "max",
     serviceTier: "fast"
   });
   thread = hub.getThread(threadId);

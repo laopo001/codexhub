@@ -18,6 +18,7 @@ import {
   latestThreadUsageFromRecords,
   latestTurnActivityScope,
   mergeThreadUsage,
+  modelSupportsReasoningEffort,
   modelOptionsForSelection,
   normalizeReasoningEffort,
   projectKeyForProject,
@@ -69,7 +70,19 @@ export const useAppSelectors = (state: AppState) => {
     : activeThreadSandboxPolicyDraft;
   const setActiveThreadModelDraft: Dispatch<SetStateAction<ModelSelection>> = (value) => {
     if (!state.activeTabThreadId) return;
-    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "modelDraft", value });
+    const nextModel = typeof value === "function" ? value(activeThreadModelDraft) : value;
+    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "modelDraft", value: nextModel });
+    if (
+      activeThreadReasoningDraft !== "auto"
+      && !modelSupportsReasoningEffort(activeModelCatalog, nextModel, activeThreadReasoningDraft)
+    ) {
+      state.dispatchOpenThreads({
+        type: "set-draft",
+        threadId: state.activeTabThreadId,
+        field: "reasoningDraft",
+        value: "auto"
+      });
+    }
   };
   const setActiveThreadReasoningDraft: Dispatch<SetStateAction<ReasoningSelection>> = (value) => {
     if (!state.activeTabThreadId) return;

@@ -984,8 +984,25 @@ export const modelOptionSearchMatches = (option: SearchableModelOption | undefin
   return terms.every((term) => searchText.includes(term));
 };
 
+const reasoningEffortLabels: Record<string, string> = {
+  auto: "Auto",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+  ultra: "Ultra"
+};
+
+export const reasoningDisplayLabel = (value: string, catalogLabel?: string) => {
+  const label = catalogLabel?.trim();
+  if (label && label !== value) return label;
+  return reasoningEffortLabels[value] ?? value;
+};
+
 export const reasoningOptionLabel = (option: { value: string; label: string }) =>
-  option.value;
+  reasoningDisplayLabel(option.value, option.label);
 
 export const serviceTierDisplayLabel = (tier: string) => tier;
 
@@ -1008,17 +1025,32 @@ export const reasoningOptionsForSelection = (
   reasoning: ReasoningSelection,
   catalog: ModelCatalogItem[] = [],
   model: ModelSelection = "auto"
-) => {
+): Array<{ value: string; label: string; description?: string }> => {
   const catalogModel = modelCatalogItemForSelection(catalog, model);
   const sourceReasoningEfforts = catalogModel?.supportedReasoningEfforts.length
     ? catalogModel.supportedReasoningEfforts
     : catalog.flatMap((item) => item.supportedReasoningEfforts);
-  const catalogOptions = sourceReasoningEfforts.map((option) => ({
+  const catalogOptions: Array<{ value: string; label: string; description?: string }> = sourceReasoningEfforts.map((option) => ({
     value: option.value,
-    label: option.label ?? option.value
+    label: option.label ?? option.value,
+    ...(option.description ? { description: option.description } : {})
   }));
-  const options = [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)];
+  const options: Array<{ value: string; label: string; description?: string }> = [
+    { value: "auto", label: "Auto" },
+    ...dedupeOptions(catalogOptions)
+  ];
   return ensureOption(options, reasoning);
+};
+
+export const modelSupportsReasoningEffort = (
+  catalog: ModelCatalogItem[],
+  model: ModelSelection,
+  reasoning: ReasoningSelection
+) => {
+  if (reasoning === "auto") return true;
+  const catalogModel = modelCatalogItemForSelection(catalog, model);
+  if (!catalogModel) return true;
+  return catalogModel.supportedReasoningEfforts.some((option) => option.value === reasoning);
 };
 
 export const serviceTierOptionsForSelection = (
@@ -1048,7 +1080,7 @@ const modelCatalogSearchText = (item: Pick<ModelCatalogItem, "id" | "model" | "d
 ].filter(Boolean).join("\n");
 
 const modelCatalogItemForSelection = (catalog: ModelCatalogItem[], model: ModelSelection) => {
-  if (!model || model === "auto") return undefined;
+  if (!model || model === "auto") return catalog.find((item) => !item.hidden && item.isDefault);
   return catalog.find((item) => modelCatalogValue(item) === model || item.id === model || item.displayName === model);
 };
 

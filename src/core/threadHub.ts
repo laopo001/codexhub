@@ -31,7 +31,12 @@ import {
 import type { ProxyInput } from "../shared/inputTypes.js";
 import { turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
-import type { ThreadOptions, ThreadRateLimits, ThreadUsage } from "../shared/usageTypes.js";
+import {
+  isModelReasoningEffort,
+  type ThreadOptions,
+  type ThreadRateLimits,
+  type ThreadUsage
+} from "../shared/usageTypes.js";
 import type {
   InternalSessionRegistration,
   PendingCommand,
@@ -95,6 +100,7 @@ export class ThreadHub {
   private readonly pendingUserInputs = new Map<string, PendingUserInput>();
   private readonly activeTurnCommands = new Map<string, string>();
   private readonly queuedTurns = new Map<string, QueuedTurn[]>();
+  private readonly threadSettingsRevisions = new Map<string, number>();
   private readonly sessionEvents: SessionStreamEvent[] = [];
   private readonly sessionSubscribers = new Set<(event: SessionStreamEvent) => void>();
   private lastSessionSnapshotKey = "";
@@ -319,6 +325,10 @@ export class ThreadHub {
       const thread = this.ensureThread(input.threadId, session, {
         params: { threadId: input.threadId, cwd: session.workingDirectory }
       });
+      this.threadSettingsRevisions.set(
+        thread.threadId,
+        (this.threadSettingsRevisions.get(thread.threadId) ?? 0) + 1
+      );
       this.applyThreadSettings(
         thread,
         input.model,
@@ -595,6 +605,7 @@ export class ThreadHub {
     thread.activeTurnStartedAt = undefined;
     this.rejectQueuedTurns(thread.threadId, new Error(`Thread deleted: ${thread.threadId}`));
     this.threads.delete(threadId);
+    this.threadSettingsRevisions.delete(threadId);
     this.publish(thread, "done");
     this.publishThreadCatalog();
     return { deleted: true };
@@ -799,7 +810,8 @@ export class ThreadHub {
     if (thread.running) throw new Error(`Thread is already running: ${thread.threadId}`);
     const session = this.requireThreadSession(thread);
     const commandOptions = options ? { ...options } : { ...thread.threadOptions };
-    if (options) thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
+    const threadOptionsAtStart = thread.threadOptions;
+    const settingsRevisionAtStart = this.threadSettingsRevisions.get(thread.threadId) ?? 0;
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "turn", thread.threadId, turnCommandTimeoutMs(), thread.workingDirectory);
     this.activeTurnCommands.set(thread.threadId, commandId);
@@ -822,7 +834,19 @@ export class ThreadHub {
       threadId: thread.threadId,
       options: commandOptions
     });
-    return promise;
+    return promise.then(() => {
+      // turn/start success confirms the requested settings only when no newer
+      // app-server settings event or local setting change won the race.
+      if (
+        options
+        && thread.threadOptions === threadOptionsAtStart
+        && (this.threadSettingsRevisions.get(thread.threadId) ?? 0) === settingsRevisionAtStart
+      ) {
+        thread.threadOptions = applyThreadRunOptions(thread.threadOptions, options);
+        thread.updatedAt = new Date().toISOString();
+        this.publish(thread, "thread");
+      }
+    });
   }
 
   private steerTurn(thread: ThreadState, input: ProxyInput, turnId: string) {
@@ -1574,7 +1598,7 @@ export class ThreadHub {
       if (!nextModel) delete thread.threadOptions.model;
       changed = true;
     }
-    const nextEffort = isThreadReasoningEffort(modelReasoningEffort) ? modelReasoningEffort : undefined;
+    const nextEffort = isModelReasoningEffort(modelReasoningEffort) ? modelReasoningEffort : undefined;
     if (thread.threadOptions.modelReasoningEffort !== nextEffort) {
       thread.threadOptions = { ...thread.threadOptions, modelReasoningEffort: nextEffort };
       if (!nextEffort) delete thread.threadOptions.modelReasoningEffort;
@@ -2288,9 +2312,6 @@ const imageUrls = (input: ProxyInput) => {
 };
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-
-const isThreadReasoningEffort = (value: unknown): value is ThreadOptions["modelReasoningEffort"] =>
-  value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
 
 const isThreadApprovalPolicy = (value: unknown): value is ThreadOptions["approvalPolicy"] =>
   value === "untrusted" || value === "on-failure" || value === "on-request" || value === "never";

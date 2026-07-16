@@ -148,6 +148,10 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     ...option,
     label: modelOptionLabel(option)
   }));
+  const dialogReasoningSelectOptions = dialogReasoningOptions.map((option) => ({
+    ...option,
+    label: reasoningOptionLabel(option)
+  }));
   const modelCatalogLoading = activeModelCatalogStatus === "idle" || activeModelCatalogStatus === "loading";
   const modelCatalogError = activeModelCatalogStatus === "error";
   const modelCatalogNotice = activeModelCatalogStatus === "unavailable"
@@ -188,9 +192,17 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <Select
                 className="threadModelSelect"
                 value={effectiveReasoningSelection}
-                options={dialogReasoningOptions.map((option) => ({ value: option.value, label: reasoningOptionLabel(option) }))}
+                options={dialogReasoningSelectOptions}
                 disabled={threadModelSelectDisabled}
                 loading={modelCatalogLoading}
+                virtual={false}
+                classNames={{ popup: { root: "threadModelReasoningPopup" } }}
+                optionRender={(option) => (
+                  <div className="threadModelReasoningOption">
+                    <strong>{option.label}</strong>
+                    {option.data.description ? <small>{option.data.description}</small> : null}
+                  </div>
+                )}
                 onChange={(value) => setActiveThreadReasoningDraft(value as ReasoningSelection)}
               />
             </label>

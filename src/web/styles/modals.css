@@ -64,6 +64,31 @@
   box-shadow: 0 0 0 2px rgb(84 114 80 / 0.14) !important;
 }
 
+.threadModelReasoningPopup .ant-select-item-option-content {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.threadModelReasoningOption {
+  display: grid;
+  gap: 3px;
+  padding: 2px 0;
+  white-space: normal;
+}
+
+.threadModelReasoningOption strong {
+  color: #17211a;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.threadModelReasoningOption small {
+  color: #66715f;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .sessionDialogNotice {
   display: flex;
   align-items: center;

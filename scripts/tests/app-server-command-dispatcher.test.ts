@@ -84,3 +84,27 @@ test("dispatcher applies one-turn plan and goal options before turn/start", asyn
     model: "gpt-test"
   });
 });
+
+test("dispatcher forwards ultra as turn/start effort", async () => {
+  const { host, requests } = createHost();
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "delegate this",
+    options: { modelReasoningEffort: "ultra" }
+  }), host);
+
+  assert.deepEqual(requests, [{
+    method: "turn/start",
+    params: {
+      threadId: "thread-1",
+      cwd: "/tmp/project",
+      input: [{
+        type: "text",
+        text: "delegate this",
+        text_elements: []
+      }],
+      effort: "ultra"
+    }
+  }]);
+});

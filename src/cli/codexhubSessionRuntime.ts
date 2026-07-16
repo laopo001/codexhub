@@ -34,6 +34,7 @@ import { accountRateLimitsPayloadFromValue } from "../core/threadUsage.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import type { MachineCommand, MachineRegistration } from "../shared/machineTypes.js";
+import { isModelReasoningEffort } from "../shared/usageTypes.js";
 import type {
   AppServerApprovalDecision,
   AppServerApprovalKind,
@@ -686,6 +687,7 @@ class CodexAppServerBridge {
   private closed = false;
   private defaultThreadId: string | undefined;
   private readonly forwardedThreadSettings = new Map<string, string>();
+  private readonly appServerThreadSettings = new Map<string, ThreadSettings>();
   private readonly bridgeStartedThreads = new Set<string>();
   private bridgeStartedUnknownCount = 0;
   private readonly closeSignal = new Deferred<void>();
@@ -1337,8 +1339,14 @@ class CodexAppServerBridge {
     if (!threadIds.length) return;
     try {
       await Promise.all(threadIds.map(async (threadId) => {
-        // 这里的 thread settings 是 cwd 相关配置，只同步差异，避免 Web 反复刷新。
-        const settings = await this.readThreadSettings(this.threadCwds.get(threadId) ?? this.options.cwd);
+        // app-server 的 per-thread settings 是权威值；config/read 只作为尚未收到
+        // thread/settings/updated 时的 cwd 初始兜底。
+        let settings = this.appServerThreadSettings.get(threadId);
+        if (!settings) {
+          const configSettings = await this.readThreadSettings(this.threadCwds.get(threadId) ?? this.options.cwd);
+          // A live notification may have arrived while config/read was pending.
+          settings = this.appServerThreadSettings.get(threadId) ?? configSettings;
+        }
         const snapshot = JSON.stringify(settings);
         if (this.forwardedThreadSettings.get(threadId) === snapshot) return;
         this.forwardedThreadSettings.set(threadId, snapshot);
@@ -1408,7 +1416,7 @@ class CodexAppServerBridge {
     const params = asRecord(message.params);
     const settings = asRecord(params?.threadSettings) ?? asRecord(params?.settings);
     if (!settings) return;
-    await this.forwardThreadSettings(threadId, {
+    const threadSettings: ThreadSettings = {
       model: typeof settings.model === "string" && settings.model ? settings.model : null,
       modelReasoningEffort: isModelReasoningEffort(settings.effort)
         ? settings.effort
@@ -1422,7 +1430,10 @@ class CodexAppServerBridge {
           : null,
       ...threadApprovalPolicySettings(settings),
       ...threadSandboxPolicySettings(settings)
-    });
+    };
+    this.appServerThreadSettings.set(threadId, threadSettings);
+    this.forwardedThreadSettings.set(threadId, JSON.stringify(threadSettings));
+    await this.forwardThreadSettings(threadId, threadSettings);
   }
 
   private async forwardExecutionStateFromMessage(threadId: string, message: JsonRecord) {
@@ -1647,9 +1658,6 @@ const envPositiveInt = (name: string, fallback: number) => {
   const value = Number(process.env[name]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
 };
-
-const isModelReasoningEffort = (value: unknown): value is ThreadRunOptions["modelReasoningEffort"] =>
-  value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
 
 const isThreadApprovalPolicy = (value: unknown): value is ThreadRunOptions["approvalPolicy"] =>
   value === "untrusted" || value === "on-failure" || value === "on-request" || value === "never";

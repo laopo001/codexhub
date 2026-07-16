@@ -7,11 +7,12 @@ export {
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { compareCodexRecords, orderCodexRecords, recordTimestampMs } from "../../shared/recordIdentity.js";
 import { formatCompactNumber } from "../../shared/toolFormatting.js";
+import { isModelReasoningEffort } from "../../shared/usageTypes.js";
 export { formatCompactNumber } from "../../shared/toolFormatting.js";
-import { isTheiaSurface, isTheiaVscodeHost, isVscodeSurface, reasoningOptions } from "../appConfig.js";
+import { isTheiaSurface, isTheiaVscodeHost, isVscodeSurface } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
-import { compactLine, rawModelLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
+import { compactLine, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
 
 export const latestThreadUsageFromRecords = (records: CodexRecord[]): ThreadUsage | null => {
@@ -133,6 +134,10 @@ export const goalTimeMs = (value: unknown) => {
 
 export const threadConfigFromRecord = (record: CodexRecord): { model?: string; reasoning?: ReasoningEffort; serviceTier?: string } => {
   const payload = asRecord(record.payload);
+  const payloadType = stringField(payload, "type");
+  // Tool records can carry a child agent's model/effort. Only transcript
+  // context records describe the parent thread configuration.
+  if (payloadType && payloadType !== "turn_context" && payloadType !== "session_meta") return {};
   const settings = asRecord(asRecord(payload?.collaboration_mode)?.settings);
   return {
     model: stringField(payload, "model")
@@ -152,10 +157,7 @@ export const threadConfigFromRecord = (record: CodexRecord): { model?: string; r
 };
 
 export const normalizeReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
-  if (typeof value !== "string") return undefined;
-  return reasoningOptions.some((option) => option.value === value && option.value !== "auto")
-    ? value as ReasoningEffort
-    : undefined;
+  return isModelReasoningEffort(value) ? value : undefined;
 };
 
 export const formatComposerModelTitle = (
@@ -168,8 +170,8 @@ export const formatComposerModelTitle = (
 ) => [
   `draft model ${rawModelLabel(modelDraft)}`,
   threadModel ? `thread model ${rawModelLabel(threadModel)}` : null,
-  `draft thinking ${reasoningDraft === "auto" ? "Auto" : reasoningDraft}`,
-  threadReasoning ? `thread thinking ${threadReasoning}` : null,
+  `draft thinking ${reasoningDisplayLabel(reasoningDraft)}`,
+  threadReasoning ? `thread thinking ${reasoningDisplayLabel(threadReasoning)}` : null,
   `draft tier ${serviceTierDraft === "auto" ? "Auto" : serviceTierDisplayLabel(serviceTierDraft)}`,
   threadServiceTier ? `thread tier ${serviceTierDisplayLabel(threadServiceTier)}` : null
 ].filter(Boolean).join(" · ");
@@ -189,7 +191,7 @@ export const formatComposerModelButtonLabel = (
   const visibleServiceTier = serviceTier && serviceTier !== "default" && serviceTier !== "priority"
     ? serviceTierDisplayLabel(serviceTier)
     : null;
-  return [reasoning ? `${label}:${reasoning}` : label, visibleServiceTier].filter(Boolean).join(" · ");
+  return [reasoning ? `${label}:${reasoningDisplayLabel(reasoning)}` : label, visibleServiceTier].filter(Boolean).join(" · ");
 };
 
 export const formatContextUsage = (threadUsage: ThreadUsage | null) => {

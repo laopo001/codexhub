@@ -58,7 +58,7 @@ export type SessionSummary = {
   threads: ThreadSummary[];
 };
 
-/** 单轮 turn 的可选运行参数，只作用于本次请求。 */
+/** turn/start 可选参数。模型/effort/tier/权限会延续到 thread，Plan/Goal 是单次 composer 行为。 */
 export type ThreadRunOptions = {
   model?: string | null;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;

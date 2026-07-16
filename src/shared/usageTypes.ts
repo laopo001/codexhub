@@ -1,5 +1,9 @@
-/** Codex 模型 reasoning effort 枚举。 */
-export type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+/** Codex 模型 reasoning effort。具体值由在线 app-server model catalog 决定。 */
+export type ModelReasoningEffort = string;
+
+/** app-server schema 将 reasoning effort 定义为非空开放字符串。 */
+export const isModelReasoningEffort = (value: unknown): value is ModelReasoningEffort =>
+  typeof value === "string" && value.length > 0;
 
 /** Codex app-server service tier。当前 Fast tier 常见值是 priority，但 catalog 可扩展。 */
 export type ThreadServiceTier = string;

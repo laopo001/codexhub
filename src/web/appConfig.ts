@@ -2,7 +2,6 @@ import type {
   AppSettings,
   ApprovalPolicySelection,
   ComposerMode,
-  ReasoningSelection,
   SandboxPolicySelection,
 } from "./types.js";
 import { isCodexHubSurface, isEmbeddedCodexHubSurface } from "../shared/surfaceTypes.js";
@@ -43,14 +42,6 @@ export const legacyStorageKey = "codexhub-ui-state-v4";
 export const defaultAppSettings = (): AppSettings => ({
   taskCompleteSystemNotifications: false
 });
-export const reasoningOptions: Array<{ value: ReasoningSelection; label: string }> = [
-  { value: "auto", label: "Auto" },
-  { value: "minimal", label: "Minimal" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "XHigh" }
-];
 export const approvalPolicyOptions: Array<{ value: ApprovalPolicySelection; label: string }> = [
   { value: "untrusted", label: "Untrusted" },
   { value: "on-failure", label: "On failure" },

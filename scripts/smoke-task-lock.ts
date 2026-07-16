@@ -107,6 +107,8 @@ type SessionCommand = {
     type?: string;
   };
   options?: {
+    model?: string | null;
+    modelReasoningEffort?: string | null;
     collaborationMode?: "default" | "plan" | null;
     goalMode?: boolean | null;
     goalObjective?: string | null;
@@ -157,7 +159,7 @@ const main = async () => {
     const modelCatalogPromise = apiJson<{
       models?: Array<{
         model?: string;
-        supportedReasoningEfforts?: Array<{ value?: string }>;
+        supportedReasoningEfforts?: Array<{ value?: string; description?: string }>;
         serviceTiers?: Array<{ value?: string }>;
       }>;
     }>(apiBase, `/api/sessions/${encodeURIComponent(fake.sessionId)}/models`);
@@ -166,12 +168,16 @@ const main = async () => {
       throw new Error(`model catalog command should not include hidden models by default: ${JSON.stringify(modelListCommand)}`);
     }
     const modelCatalog = await modelCatalogPromise;
-    const catalogModel = modelCatalog.models?.find((model) => model.model === "gpt-5.5");
+    const catalogModel = modelCatalog.models?.find((model) => model.model === "gpt-5.6-sol");
     if (!catalogModel) {
-      throw new Error(`model catalog response missing gpt-5.5: ${JSON.stringify(modelCatalog)}`);
+      throw new Error(`model catalog response missing gpt-5.6-sol: ${JSON.stringify(modelCatalog)}`);
     }
-    if (!catalogModel.supportedReasoningEfforts?.some((option) => option.value === "xhigh")) {
-      throw new Error(`model catalog response missing reasoning effort: ${JSON.stringify(modelCatalog)}`);
+    const ultraOption = catalogModel.supportedReasoningEfforts?.find((option) => option.value === "ultra");
+    if (
+      !catalogModel.supportedReasoningEfforts?.some((option) => option.value === "max")
+      || ultraOption?.description !== "Maximum reasoning with automatic task delegation"
+    ) {
+      throw new Error(`model catalog response missing max/ultra reasoning efforts: ${JSON.stringify(modelCatalog)}`);
     }
     if (!catalogModel.serviceTiers?.some((option) => option.value === "fast")) {
       throw new Error(`model catalog response missing fast service tier: ${JSON.stringify(modelCatalog)}`);
@@ -220,6 +226,8 @@ const main = async () => {
         input: "plan and pursue this smoke task",
         source: "web",
         options: {
+          model: "gpt-5.6-sol",
+          modelReasoningEffort: "ultra",
           collaborationMode: "plan",
           goalMode: true,
           goalObjective: "finish the plan and goal smoke",
@@ -238,6 +246,9 @@ const main = async () => {
     }
     if (modeTurn.options.serviceTier !== "priority") {
       throw new Error(`web turn service tier option was not forwarded: ${JSON.stringify(modeTurn.options)}`);
+    }
+    if (modeTurn.options.model !== "gpt-5.6-sol" || modeTurn.options.modelReasoningEffort !== "ultra") {
+      throw new Error(`web turn model/effort options were not forwarded: ${JSON.stringify(modeTurn.options)}`);
     }
     fake.completeTurn(modeTurn);
     console.log("web turn mode options ok");
@@ -1282,14 +1293,20 @@ class FakeMachine {
         result: {
           models: [
             {
-              id: "model-gpt-5.5",
-              model: "gpt-5.5",
-              displayName: "GPT-5.5",
+              id: "model-gpt-5.6-sol",
+              model: "gpt-5.6-sol",
+              displayName: "GPT-5.6 Sol",
               description: "Fake smoke model",
               defaultReasoningEffort: "high",
               supportedReasoningEfforts: [
                 { value: "high", label: "High" },
-                { value: "xhigh", label: "XHigh" }
+                { value: "xhigh", label: "Extra High" },
+                { value: "max", label: "Max", description: "Maximum reasoning depth" },
+                {
+                  value: "ultra",
+                  label: "Ultra",
+                  description: "Maximum reasoning with automatic task delegation"
+                }
               ],
               defaultServiceTier: "default",
               serviceTiers: [
