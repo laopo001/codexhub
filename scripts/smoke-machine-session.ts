@@ -3100,6 +3100,7 @@ const assertRollbackPreservesKeptTurnToolRecords = async () => {
   const hub = new ThreadHub();
   const sessionId = "rollback-tool-session";
   const threadId = "rollback-tool-thread";
+  const rewoundThreadId = "rollback-tool-rewind";
   const keptTurnId = "rollback-kept-turn";
   const removedTurnId = "rollback-removed-turn";
   hub.registerSession({
@@ -3151,18 +3152,23 @@ const assertRollbackPreservesKeptTurnToolRecords = async () => {
   const rollback = hub.rollbackThreadAfterRecord(threadId, `app:${threadId}:${keptTurnId}:agent:kept-agent`);
   const commandBatch = await hub.waitSessionCommands(sessionId, 0, 1);
   const command = commandBatch.commands[0];
-  if (!command || command.type !== "rollback_thread" || command.keepTurns !== 1 || command.numTurns !== 1) {
-    throw new Error(`rollback command did not preserve expected turn boundary: ${JSON.stringify(command)}`);
+  if (
+    !command
+    || command.type !== "fork_thread"
+    || command.threadId !== threadId
+    || asRecord(command).lastTurnId !== keptTurnId
+  ) {
+    throw new Error(`rewind fork command did not preserve expected turn boundary: ${JSON.stringify(command)}`);
   }
   hub.applySessionEvent(sessionId, {
     type: "thread_event",
-    threadId,
+    threadId: rewoundThreadId,
     commandId: command.commandId,
     heartbeat: false,
     message: {
       result: {
         thread: {
-          id: threadId,
+          id: rewoundThreadId,
           cwd: "/tmp/codexhub-rollback-tool",
           turns: [{
             id: keptTurnId,
@@ -3185,11 +3191,25 @@ const assertRollbackPreservesKeptTurnToolRecords = async () => {
   });
   const detail = await rollback;
   const records = detail.records ?? [];
-  if (!records.some((record) => asRecord(record).id === `app:${threadId}:${keptTurnId}:item:commandExecution:kept-tool`)) {
-    throw new Error(`rollback dropped kept turn tool record: ${JSON.stringify(records)}`);
+  if (detail.threadId !== rewoundThreadId) {
+    throw new Error(`rewind did not return a forked thread: ${JSON.stringify(detail)}`);
+  }
+  if (!records.some((record) => asRecord(record).id === `app:${rewoundThreadId}:${keptTurnId}:item:commandExecution:kept-tool`)) {
+    throw new Error(`rewind dropped kept turn tool record: ${JSON.stringify(records)}`);
   }
   if (records.some((record) => String(asRecord(record).id).includes(removedTurnId))) {
-    throw new Error(`rollback kept records from removed turn: ${JSON.stringify(records)}`);
+    throw new Error(`rewind kept records after the target turn: ${JSON.stringify(records)}`);
+  }
+  if (records.some((record) => String(asRecord(record).id).startsWith(`app:${threadId}:`))) {
+    throw new Error(`rewind leaked source thread record ids: ${JSON.stringify(records)}`);
+  }
+  const sourceRecords = hub.getThread(threadId)?.records ?? [];
+  if (!sourceRecords.some((record) => String(asRecord(record).id).includes(removedTurnId))) {
+    throw new Error(`rewind destructively cropped the source thread: ${JSON.stringify(sourceRecords)}`);
+  }
+  const followUpBatch = await hub.waitSessionCommands(sessionId, command.seq, 1);
+  if (followUpBatch.commands.length) {
+    throw new Error(`rewind unexpectedly issued a follow-up command: ${JSON.stringify(followUpBatch.commands)}`);
   }
 };
 
@@ -3250,61 +3270,18 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
   const fork = hub.forkThread(sourceThreadId, `app:${sourceThreadId}:${keptTurnId}:agent:kept-agent`);
   const forkBatch = await hub.waitSessionCommands(sessionId, 0, 1);
   const forkCommand = forkBatch.commands[0];
-  if (!forkCommand || forkCommand.type !== "fork_thread" || forkCommand.threadId !== sourceThreadId) {
-    throw new Error(`fork command did not target source thread: ${JSON.stringify(forkCommand)}`);
+  if (
+    !forkCommand
+    || forkCommand.type !== "fork_thread"
+    || forkCommand.threadId !== sourceThreadId
+    || asRecord(forkCommand).lastTurnId !== keptTurnId
+  ) {
+    throw new Error(`fork command did not target the expected source turn: ${JSON.stringify(forkCommand)}`);
   }
   hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId: forkedThreadId,
     commandId: forkCommand.commandId,
-    heartbeat: false,
-    message: {
-      result: {
-        thread: {
-          id: forkedThreadId,
-          cwd: "/tmp/codexhub-fork-tool",
-          turns: [{
-            id: keptTurnId,
-            startedAt: 1,
-            completedAt: 2,
-            items: [{
-              id: "kept-user",
-              type: "userMessage",
-              content: [{ type: "text", text: "run fork tool" }]
-            }, {
-              id: "kept-agent",
-              type: "agentMessage",
-              text: "kept",
-              phase: "final_answer"
-            }]
-          }, {
-            id: removedTurnId,
-            startedAt: 3,
-            completedAt: 4,
-            items: [{
-              id: "removed-user",
-              type: "userMessage",
-              content: [{ type: "text", text: "remove me" }]
-            }, {
-              id: "removed-agent",
-              type: "agentMessage",
-              text: "removed",
-              phase: "final_answer"
-            }]
-          }]
-        }
-      }
-    }
-  });
-  const rollbackBatch = await hub.waitSessionCommands(sessionId, forkCommand.seq, 1);
-  const rollbackCommand = rollbackBatch.commands[0];
-  if (!rollbackCommand || rollbackCommand.type !== "rollback_thread" || rollbackCommand.threadId !== forkedThreadId || rollbackCommand.keepTurns !== 1 || rollbackCommand.numTurns !== 1) {
-    throw new Error(`fork rollback command did not preserve expected boundary: ${JSON.stringify(rollbackCommand)}`);
-  }
-  hub.applySessionEvent(sessionId, {
-    type: "thread_event",
-    threadId: forkedThreadId,
-    commandId: rollbackCommand.commandId,
     heartbeat: false,
     message: {
       result: {
@@ -3340,6 +3317,14 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
   }
   if (records.some((record) => String(asRecord(record).id).startsWith(`app:${sourceThreadId}:`))) {
     throw new Error(`fork leaked source thread record ids: ${JSON.stringify(records)}`);
+  }
+  const sourceRecords = hub.getThread(sourceThreadId)?.records ?? [];
+  if (!sourceRecords.some((record) => String(asRecord(record).id).includes(removedTurnId))) {
+    throw new Error(`fork destructively cropped the source thread: ${JSON.stringify(sourceRecords)}`);
+  }
+  const followUpBatch = await hub.waitSessionCommands(sessionId, forkCommand.seq, 1);
+  if (followUpBatch.commands.length) {
+    throw new Error(`fork-at-record unexpectedly issued a follow-up command: ${JSON.stringify(followUpBatch.commands)}`);
   }
 };
 

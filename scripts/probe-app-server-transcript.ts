@@ -302,6 +302,11 @@ class JsonRpcClient {
       return;
     }
 
+    if (method === "currentTime/read") {
+      this.send({ id, result: { currentTimeAt: Math.floor(Date.now() / 1000) } });
+      return;
+    }
+
     if (method === "mcpServer/elicitation/request") {
       const params = asRecord(message.params);
       this.send({
@@ -413,7 +418,7 @@ const readItemsForTurns = async (client: JsonRpcClient, threadId: string, turnId
     const items: JsonRecord[] = [];
     let cursor: string | null | undefined;
     for (let page = 0; page < 20; page += 1) {
-      const result = await client.request<JsonRecord>("thread/turns/items/list", {
+      const result = await client.request<JsonRecord>("thread/items/list", {
         threadId,
         turnId,
         cursor,
@@ -469,10 +474,10 @@ const buildSummary = (input: {
     return arrayRecords(turn.items).map((item) => summarizeItem(item, turnId));
   });
   const threadTurnsListToolItems = threadTurnsListItems.filter((item) => toolItemTypes.has(item.type));
-  const threadTurnsItemsListItems = Object.entries(input.turnItems).flatMap(([turnId, items]) =>
+  const threadItemsListItems = Object.entries(input.turnItems).flatMap(([turnId, items]) =>
     items.map((item) => summarizeItem(item, turnId))
   );
-  const threadTurnsItemsListToolItems = threadTurnsItemsListItems.filter((item) => toolItemTypes.has(item.type));
+  const threadItemsListToolItems = threadItemsListItems.filter((item) => toolItemTypes.has(item.type));
   const liveItems = input.notifications
     .filter((message) => message.method === "item/started" || message.method === "item/completed")
     .map((message) => {
@@ -484,8 +489,7 @@ const buildSummary = (input: {
 
   const appServerSnapshotHasToolItems = threadReadToolItems.length > 0
     || threadTurnsListToolItems.length > 0
-    || threadTurnsItemsListToolItems.length > 0;
-
+    || threadItemsListToolItems.length > 0;
   return {
     appServerUrl: input.appServerUrl,
     threadId: input.threadId,
@@ -513,12 +517,12 @@ const buildSummary = (input: {
       hasToolItems: threadTurnsListToolItems.length > 0,
       toolItems: threadTurnsListToolItems
     },
-    threadTurnsItemsList: {
+    threadItemsList: {
       turnCount: Object.keys(input.turnItems).length,
-      itemCount: threadTurnsItemsListItems.length,
-      itemTypes: countValues(threadTurnsItemsListItems.map((item) => item.type)),
-      hasToolItems: threadTurnsItemsListToolItems.length > 0,
-      toolItems: threadTurnsItemsListToolItems,
+      itemCount: threadItemsListItems.length,
+      itemTypes: countValues(threadItemsListItems.map((item) => item.type)),
+      hasToolItems: threadItemsListToolItems.length > 0,
+      toolItems: threadItemsListToolItems,
       errors: input.turnItemsErrors
     },
     turnCompletedItems: turnCompletedItems(input.notifications)
@@ -765,7 +769,7 @@ const printHelp = () => {
 
 Starts or connects to codex app-server, then compares app-server transcript
 sources: live item events, thread/read includeTurns:true, thread/turns/list
-itemsView:"full", and thread/turns/items/list when that method is available.
+itemsView:"full", and thread/items/list.
 
 Options:
   --mode <read|shell-command|turn>   Probe mode. Default: shell-command

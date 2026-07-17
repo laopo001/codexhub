@@ -17,7 +17,8 @@ import {
   dispatchAppServerCommand,
   permissionParams,
   toAppServerInput,
-  turnRequestParams
+  turnRequestParams,
+  type AppServerCollaborationMode
 } from "./appServerCommandDispatcher.js";
 import {
   builtinCommandPaletteEntries,
@@ -105,6 +106,7 @@ type ThreadSettings = {
   serviceTier?: ThreadRunOptions["serviceTier"] | null;
   approvalPolicy?: ThreadRunOptions["approvalPolicy"] | null;
   sandboxPolicy?: ThreadRunOptions["sandboxPolicy"] | null;
+  collaborationMode?: "plan" | "default" | null;
 };
 
 type HubTransportSink = {
@@ -688,6 +690,7 @@ class CodexAppServerBridge {
   private defaultThreadId: string | undefined;
   private readonly forwardedThreadSettings = new Map<string, string>();
   private readonly appServerThreadSettings = new Map<string, ThreadSettings>();
+  private readonly planResetModes = new Map<string, AppServerCollaborationMode>();
   private readonly bridgeStartedThreads = new Set<string>();
   private bridgeStartedUnknownCount = 0;
   private readonly closeSignal = new Deferred<void>();
@@ -830,6 +833,18 @@ class CodexAppServerBridge {
       permissionParams: permissionParams(this.options),
       listThreads: (cwd, limit) => this.listAppServerThreads(cwd, limit),
       listModels: (includeHidden) => this.listAppServerModels(includeHidden),
+      listCollaborationModes: () => this.request("collaborationMode/list", {}),
+      cachedThreadSettings: (threadId) => this.appServerThreadSettings.get(threadId),
+      readThreadSettings: (cwd) => this.readThreadSettings(cwd),
+      cacheThreadCollaborationMode: (threadId, value) => {
+        this.appServerThreadSettings.set(threadId, {
+          ...this.appServerThreadSettings.get(threadId),
+          model: value.settings.model,
+          modelReasoningEffort: value.settings.reasoning_effort,
+          collaborationMode: value.mode
+        });
+      },
+      planResetModes: this.planResetModes,
       listCommandPalette: (cwd, part) => this.listAppServerCommandPalette(cwd, part),
       bindThread: (threadId, cwd) => this.bindThread(threadId, cwd),
       unbindThread: (threadId) => this.unbindThread(threadId),
@@ -1416,6 +1431,7 @@ class CodexAppServerBridge {
     const params = asRecord(message.params);
     const settings = asRecord(params?.threadSettings) ?? asRecord(params?.settings);
     if (!settings) return;
+    const collaborationMode = asRecord(settings.collaborationMode ?? settings.collaboration_mode);
     const threadSettings: ThreadSettings = {
       model: typeof settings.model === "string" && settings.model ? settings.model : null,
       modelReasoningEffort: isModelReasoningEffort(settings.effort)
@@ -1429,7 +1445,10 @@ class CodexAppServerBridge {
           ? settings.service_tier
           : null,
       ...threadApprovalPolicySettings(settings),
-      ...threadSandboxPolicySettings(settings)
+      ...threadSandboxPolicySettings(settings),
+      collaborationMode: collaborationMode?.mode === "plan" || collaborationMode?.mode === "default"
+        ? collaborationMode.mode
+        : null
     };
     this.appServerThreadSettings.set(threadId, threadSettings);
     this.forwardedThreadSettings.set(threadId, JSON.stringify(threadSettings));
@@ -1534,6 +1553,10 @@ class CodexAppServerBridge {
     }
     if (method === "item/tool/requestUserInput") {
       this.forwardUserInputRequest(message);
+      return;
+    }
+    if (method === "currentTime/read") {
+      this.ws.send(JSON.stringify({ id, result: { currentTimeAt: Math.floor(Date.now() / 1000) } }));
       return;
     }
     if (method === "mcpServer/elicitation/request") {

@@ -373,10 +373,6 @@ export class ThreadHub {
       const source = this.threads.get(pending.threadId);
       if (source && source.threadId !== thread.threadId) this.seedForkedThreadRecords(source, thread, pending.keepTurns);
     }
-    if (thread && pending?.type === "rollback_thread" && asRecord(asRecord(message.result)?.thread)) {
-      // 执行 rollback 后 app-server 会回传 thread 快照，本地先裁掉被回滚之后的 records。
-      this.applyRollbackRecordCrop(thread, pending.keepTurns);
-    }
     if (thread) this.applyAppServerMessage(thread, message);
 
     if (input.commandId) this.resolveCommandFromMessage(input.commandId, thread);
@@ -533,8 +529,8 @@ export class ThreadHub {
   async forkThread(threadId: string, recordId?: string): Promise<ThreadDetail> {
     const source = this.requireThread(threadId);
     const session = this.requireThreadSession(source);
-    const rollbackPlan = recordId ? rollbackPlanAfterRecord(source, recordId) : { rollbackTurns: 0, keepTurns: 0 };
-    const forkSeedTurns = recordId ? rollbackPlan.keepTurns : appServerTurnIds(source).length;
+    const forkTarget = recordId ? forkTargetAfterRecord(source, recordId) : undefined;
+    const forkSeedTurns = forkTarget?.keepTurns ?? appServerTurnIds(source).length;
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId, undefined, source.workingDirectory);
     const pending = this.pendingCommands.get(commandId);
@@ -545,22 +541,15 @@ export class ThreadHub {
       workingDirectory: source.workingDirectory,
       createdAt: new Date().toISOString(),
       threadId: source.threadId,
+      ...(forkTarget ? { lastTurnId: forkTarget.lastTurnId } : {}),
       options: { ...source.threadOptions }
     });
-    const forkedThread = await promise;
-    if (rollbackPlan.rollbackTurns <= 0) return forkedThread;
-    return await this.rollbackThread(forkedThread.threadId, rollbackPlan.rollbackTurns, rollbackPlan.keepTurns);
+    return await promise;
   }
 
   async rollbackThreadAfterRecord(threadId: string, recordId: string): Promise<ThreadDetail> {
-    const thread = this.requireThread(threadId);
-    const rollbackPlan = rollbackPlanAfterRecord(thread, recordId);
-    if (rollbackPlan.rollbackTurns <= 0) return this.detail(thread);
-    return await this.rollbackThread(thread.threadId, rollbackPlan.rollbackTurns, rollbackPlan.keepTurns);
-  }
-
-  async rollbackThreadTurns(threadId: string, numTurns: number, keepTurns?: number): Promise<ThreadDetail> {
-    return await this.rollbackThread(threadId, numTurns, keepTurns);
+    // app-server 的 thread/rollback 已废弃且会原地改历史；Rewind 改为 fork through turn。
+    return await this.forkThread(threadId, recordId);
   }
 
   async renameThread(threadId: string, title: string): Promise<ThreadDetail> {
@@ -581,28 +570,6 @@ export class ThreadHub {
     await promise;
     this.applyThreadTitle(thread, nextTitle);
     return this.detail(thread);
-  }
-
-  private async rollbackThread(threadId: string, numTurns: number, keepTurns?: number): Promise<ThreadDetail> {
-    const thread = this.requireThread(threadId);
-    const session = this.requireThreadSession(thread);
-    const commandId = randomUUID();
-    const effectiveKeepTurns = typeof keepTurns === "number" && Number.isFinite(keepTurns)
-      ? Math.max(0, Math.floor(keepTurns))
-      : Math.max(0, appServerTurnIds(thread).length - numTurns);
-    const promise = this.waitForCommand<ThreadDetail>(commandId, "rollback_thread", thread.threadId, undefined, thread.workingDirectory);
-    const pending = this.pendingCommands.get(commandId);
-    if (pending) pending.keepTurns = effectiveKeepTurns;
-    this.enqueueSessionCommand(session.sessionId, {
-      commandId,
-      type: "rollback_thread",
-      workingDirectory: thread.workingDirectory,
-      createdAt: new Date().toISOString(),
-      threadId: thread.threadId,
-      numTurns,
-      keepTurns: effectiveKeepTurns
-    });
-    return promise;
   }
 
   async deleteThread(threadId: string) {
@@ -1114,7 +1081,7 @@ export class ThreadHub {
   private resolveCommandFromMessage(commandId: string, thread: ThreadState | null) {
     const pending = this.pendingCommands.get(commandId);
     if (!pending) return;
-    if ((pending.type === "fork_thread" || pending.type === "rollback_thread") && thread) {
+    if (pending.type === "fork_thread" && thread) {
       this.resolveCommand(commandId, this.detail(thread));
       return;
     }
@@ -1389,14 +1356,19 @@ export class ThreadHub {
   private applyAppServerTurnsSnapshot(thread: ThreadState, turns: unknown[]) {
     const turnRecords = turns.map(asRecord).filter((turn): turn is Record<string, unknown> => Boolean(turn));
     const turnIds = new Set(turnRecords.map((turn) => typeof turn.id === "string" ? turn.id : "").filter(Boolean));
+    const previousTurnRecords = new Map<string, CodexRecord>();
     thread.records = thread.records.filter((record) => {
       const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
-      return !turnId || !turnIds.has(turnId) || isStatusUsageRecord(record);
+      if (!turnId || !turnIds.has(turnId) || isStatusUsageRecord(record)) return true;
+      previousTurnRecords.set(record.id, record);
+      return false;
     });
     thread.recordSeq = thread.records.reduce((max, record) => (
       typeof record.order === "number" && record.order > max ? record.order : max
     ), 0);
-    for (const turnRecord of turnRecords) this.applyAppServerTurn(thread, turnRecord, { historicalRecords: true });
+    for (const turnRecord of turnRecords) {
+      this.applyAppServerTurn(thread, turnRecord, { historicalRecords: true, previousTurnRecords });
+    }
     repositionStatusUsageRecords(thread);
     thread.records = orderThreadRecords(thread.records);
     thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
@@ -1426,19 +1398,26 @@ export class ThreadHub {
   private applyAppServerTurn(
     thread: ThreadState,
     turn: Record<string, unknown>,
-    options: { replaceTurnRecords?: boolean; historicalRecords?: boolean } = {}
+    options: {
+      replaceTurnRecords?: boolean;
+      historicalRecords?: boolean;
+      previousTurnRecords?: ReadonlyMap<string, CodexRecord>;
+    } = {}
   ) {
     // 这里把 app-server turn 统一展开成 records；来源可以是历史快照或实时完成事件。
     const turnId = typeof turn.id === "string" ? turn.id : "";
     if (!turnId) return;
-    const previousTurnRecords = new Map<string, CodexRecord>();
+    let previousTurnRecords = options.previousTurnRecords;
     if (options.replaceTurnRecords) {
+      let mutablePreviousTurnRecords: Map<string, CodexRecord> | undefined;
       thread.records = thread.records.filter((record) => {
         if (turnIdFromAppRecordId(thread.threadId, record.id) !== turnId) return true;
         if (isStatusUsageRecord(record)) return true;
-        previousTurnRecords.set(record.id, record);
+        mutablePreviousTurnRecords ??= new Map(previousTurnRecords);
+        mutablePreviousTurnRecords.set(record.id, record);
         return false;
       });
+      if (mutablePreviousTurnRecords) previousTurnRecords = mutablePreviousTurnRecords;
       thread.recordSeq = thread.records.reduce((max, record) => (
         typeof record.order === "number" && record.order > max ? record.order : max
       ), 0);
@@ -1448,12 +1427,17 @@ export class ThreadHub {
       this.upsertRecord(thread, record, { historical: options.historicalRecords });
     }
     const timestamp = timestampFromSeconds(turn.completedAt) ?? timestampFromSeconds(turn.startedAt);
+    const turnStatus = typeof turn.status === "string"
+      ? turn.status
+      : timestampFromSeconds(turn.completedAt) ? "completed" : undefined;
     if (Array.isArray(turn.items)) {
       for (const item of turn.items) {
         const itemRecord = asRecord(item);
-        const rawRecord = itemRecord ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp) : null;
+        const rawRecord = itemRecord
+          ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp, turnStatus)
+          : null;
         const record = itemRecord
-          ? withAppServerItemRecordTiming(rawRecord, { item: itemRecord, existing: rawRecord ? previousTurnRecords.get(rawRecord.id) : undefined })
+          ? withAppServerItemRecordTiming(rawRecord, { item: itemRecord, existing: rawRecord ? previousTurnRecords?.get(rawRecord.id) : undefined })
           : null;
         if (record) this.upsertRecord(thread, record, { historical: options.historicalRecords });
       }
@@ -1890,32 +1874,6 @@ export class ThreadHub {
     this.publish(thread, "record", record);
   }
 
-  private resetThreadRecords(thread: ThreadState) {
-    thread.records = [];
-    thread.recordSeq = 0;
-    thread.lastUsage = undefined;
-    thread.threadUsage = emptyThreadUsage();
-  }
-
-  private applyRollbackRecordCrop(thread: ThreadState, keepTurns: number | undefined) {
-    if (keepTurns == null || keepTurns <= 0) {
-      this.resetThreadRecords(thread);
-      return;
-    }
-    const keptTurnIds = new Set(appServerTurnIds(thread).slice(0, keepTurns));
-    thread.records = thread.records.filter((record) => {
-      const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
-      return !turnId || keptTurnIds.has(turnId);
-    });
-    thread.records = orderThreadRecords(thread.records);
-    thread.recordSeq = thread.records.reduce((max, record) => (
-      typeof record.order === "number" && record.order > max ? record.order : max
-    ), 0);
-    thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
-    thread.lastUsage = latestUsage(thread.records);
-    thread.threadUsage = threadUsageFromRecords(thread.records);
-  }
-
   private seedForkedThreadRecords(source: ThreadState, forked: ThreadState, keepTurns: number) {
     if (keepTurns <= 0) return;
     const keptTurnIds = new Set(appServerTurnIds(source).slice(0, keepTurns));
@@ -2291,14 +2249,14 @@ const appServerThreadFromMessage = (message: Record<string, unknown>) => {
   return asRecord(result?.thread) ?? asRecord(params?.thread);
 };
 
-const rollbackPlanAfterRecord = (thread: ThreadState, recordId: string) => {
+const forkTargetAfterRecord = (thread: ThreadState, recordId: string) => {
   const targetTurnId = turnIdFromAppRecordId(thread.threadId, recordId);
   if (!targetTurnId) throw new Error(`Cannot fork from record without app-server turn id: ${recordId}`);
   const turnIds = appServerTurnIds(thread);
   const targetIndex = turnIds.indexOf(targetTurnId);
   if (targetIndex === -1) throw new Error(`Cannot find fork target turn for record: ${recordId}`);
   return {
-    rollbackTurns: turnIds.length - targetIndex - 1,
+    lastTurnId: targetTurnId,
     keepTurns: targetIndex + 1
   };
 };

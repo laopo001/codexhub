@@ -197,10 +197,14 @@ export const MessageCard = ({
             }}>Fork</a>
           ) : null}
           {onRollback ? (
-            <a href="#" onClick={(event) => {
+            <a
+              href="#"
+              title="Creates a new thread from here; files are unchanged."
+              onClick={(event) => {
               event.preventDefault();
               onRollback();
-            }}>Rollback</a>
+              }}
+            >Rewind</a>
           ) : null}
           <span>{formatMessageMeta(message, { showTimestamp })}</span>
           {markdownEnabled && onRenderModeChange ? (

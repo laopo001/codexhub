@@ -181,6 +181,22 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
+  if (payload.type === "subAgentActivity") {
+    const text = [
+      typeof payload.kind === "string" ? `activity: ${payload.kind}` : null,
+      typeof payload.agentPath === "string" ? `agent: ${payload.agentPath}` : null,
+      typeof payload.agentThreadId === "string" ? `thread: ${payload.agentThreadId}` : null
+    ].filter(Boolean).join("\n");
+    return {
+      id: record.id,
+      role: "event",
+      label: "subagent activity",
+      text: text || stringify(payload),
+      at: record.timestamp,
+      record
+    };
+  }
+
   if (payload.type === "reasoning") {
     const text = reasoningText(payload);
     return {

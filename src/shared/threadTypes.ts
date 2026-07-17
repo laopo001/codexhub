@@ -58,7 +58,7 @@ export type SessionSummary = {
   threads: ThreadSummary[];
 };
 
-/** turn/start 可选参数。模型/effort/tier/权限会延续到 thread，Plan/Goal 是单次 composer 行为。 */
+/** turn/start 可选参数。模型/effort/tier/权限可延续；Plan 走官方 collaborationMode 后复位为 default，Ultra 只由 effort 表达，不发送已废弃的 multiAgentMode。 */
 export type ThreadRunOptions = {
   model?: string | null;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
@@ -254,7 +254,6 @@ export type SessionCommand = {
   commandId: string;
   type:
     | "fork_thread"
-    | "rollback_thread"
     | "turn"
     | "steer"
     | "set_goal"
@@ -277,12 +276,11 @@ export type SessionCommand = {
   threadId?: string;
   input?: ProxyInput;
   turnId?: string;
+  lastTurnId?: string;
   approvalId?: string;
   approvalDecision?: AppServerApprovalDecision;
   userInputId?: string;
   userInputAnswers?: AppServerUserInputAnswers;
-  numTurns?: number;
-  keepTurns?: number;
   limit?: number;
   includeHidden?: boolean;
   commandPalettePart?: CommandPalettePart;

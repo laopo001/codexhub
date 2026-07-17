@@ -113,7 +113,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 7. `POST /api/threads/:threadId/compact` 和 Web Context 旁的 Compact 控制只触发官方 app-server `thread/compact/start`，不改写 server transcript；compact 进度和结果仍来自 app-server record 流里的 `context_compaction` / `compacted`。
 8. `POST /api/threads/:threadId/review` 和 Web composer menu 的 Review changes 触发官方 app-server `review/start`，默认 target 为 `uncommittedChanges` 且 inline 跑在当前 thread。
 9. app-server `thread/archive` / `thread/unarchive` 尚未接 GUI；不要把普通 thread tab close 偷偷改成持久归档，归档需要显式产品入口。
-10. fork/rollback 依赖 app-server turn id 和 record 映射；改动 record id 或 compact/detailed view 时要验证 fork/rollback。
+10. fork/Rewind 依赖 app-server turn id 和 record 映射。`POST /api/threads/:threadId/rollback` 只作为兼容路由名，实际必须用 `thread/fork` + `lastTurnId` 创建新 thread，不能再调用已废弃的 `thread/rollback`，也不能原地改写源 thread；改动 record id 或 compact/detailed view 时要验证两条入口。
 
 ## Web 前端结构
 

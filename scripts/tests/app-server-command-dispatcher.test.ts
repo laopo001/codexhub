@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   dispatchAppServerCommand,
+  type AppServerCollaborationMode,
   type AppServerCommandHost
 } from "../../src/cli/appServerCommandDispatcher.js";
 import type { SessionCommand } from "../../src/shared/threadTypes.js";
@@ -14,14 +15,55 @@ const command = (value: Partial<SessionCommand> & Pick<SessionCommand, "type">):
   ...value
 });
 
-const createHost = () => {
+const createHost = (options: {
+  defaultModel?: string | null;
+  models?: unknown;
+  collaborationModes?: unknown;
+  cachedThreadSettings?: {
+    model?: string | null;
+    modelReasoningEffort?: string | null;
+    collaborationMode?: "plan" | "default" | null;
+  };
+  configThreadSettings?: {
+    model?: string | null;
+    modelReasoningEffort?: string | null;
+    collaborationMode?: "plan" | "default" | null;
+  };
+  failPlanResetCount?: number;
+} = {}) => {
   const requests: Array<{ method: string; params: unknown }> = [];
   const synced: string[] = [];
+  const settingsReads = { cached: 0, config: 0 };
+  const planResetModes: AppServerCommandHost["planResetModes"] = new Map();
+  let cachedThreadSettings = options.cachedThreadSettings;
+  let remainingPlanResetFailures = options.failPlanResetCount ?? 0;
   const host: AppServerCommandHost = {
-    defaultModel: "fallback-model",
+    defaultModel: options.defaultModel === null ? undefined : options.defaultModel ?? "fallback-model",
     permissionParams: { approvalPolicy: "never" },
     listThreads: async () => [],
-    listModels: async () => [{ id: "model-1" }],
+    listModels: async () => options.models ?? [{ id: "model-1" }],
+    listCollaborationModes: async () => options.collaborationModes ?? ({
+      data: [
+        { name: "Plan", mode: "plan", model: null, reasoning_effort: "medium" },
+        { name: "Default", mode: "default", model: null, reasoning_effort: null }
+      ]
+    }),
+    cachedThreadSettings: () => {
+      settingsReads.cached += 1;
+      return cachedThreadSettings;
+    },
+    readThreadSettings: async () => {
+      settingsReads.config += 1;
+      return options.configThreadSettings ?? { collaborationMode: "default" };
+    },
+    cacheThreadCollaborationMode: (_threadId, value) => {
+      cachedThreadSettings = {
+        model: value.settings.model,
+        modelReasoningEffort: value.settings.reasoning_effort,
+        collaborationMode: value.mode
+      };
+    },
+    planResetModes,
     listCommandPalette: async () => ({ entries: [] }),
     bindThread: () => undefined,
     unbindThread: () => undefined,
@@ -32,7 +74,15 @@ const createHost = () => {
     rememberDefaultThread: async () => undefined,
     request: async (method, params) => {
       requests.push({ method, params });
-      return method === "review/start" ? { turn: { id: "turn-review" } } : {};
+      if (method === "thread/settings/update") {
+        if (remainingPlanResetFailures > 0) {
+          remainingPlanResetFailures -= 1;
+          throw new Error("reset unavailable");
+        }
+      }
+      if (method === "review/start") return { turn: { id: "turn-review" } };
+      if (method === "thread/fork") return { thread: { id: "thread-forked" } };
+      return {};
     },
     scheduleThreadSync: (threadId) => synced.push(threadId),
     forwardThreadExecutionChanged: async () => undefined,
@@ -42,7 +92,16 @@ const createHost = () => {
     markThreadLoaded: () => undefined,
     markBridgeStartedThread: () => undefined
   };
-  return { host, requests, synced };
+  return {
+    host,
+    requests,
+    synced,
+    settingsReads,
+    planResetModes,
+    setCachedThreadSettings: (value: typeof cachedThreadSettings) => {
+      cachedThreadSettings = value;
+    }
+  };
 };
 
 test("dispatcher maps compact commands to official app-server RPC and sync", async () => {
@@ -63,7 +122,12 @@ test("dispatcher applies one-turn plan and goal options before turn/start", asyn
     type: "turn",
     threadId: "thread-1",
     input: "ship it",
-    options: { collaborationMode: "plan", goalMode: true, model: "gpt-test" }
+    options: {
+      collaborationMode: "plan",
+      goalMode: true,
+      model: "gpt-test",
+      modelReasoningEffort: "ultra"
+    }
   }), host);
 
   assert.equal(requests[0].method, "thread/goal/set");
@@ -78,15 +142,114 @@ test("dispatcher applies one-turn plan and goal options before turn/start", asyn
     cwd: "/tmp/project",
     input: [{
       type: "text",
-      text: "Plan mode is active for this turn.\n\nUser request:\nship it",
+      text: "ship it",
       text_elements: []
     }],
-    model: "gpt-test"
+    collaborationMode: {
+      mode: "plan",
+      settings: {
+        model: "gpt-test",
+        reasoning_effort: "medium",
+        developer_instructions: null
+      }
+    }
+  });
+  assert.deepEqual(requests[2], {
+    method: "thread/settings/update",
+    params: {
+      threadId: "thread-1",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-test",
+          reasoning_effort: "ultra",
+          developer_instructions: null
+        }
+      }
+    }
   });
 });
 
+test("dispatcher resolves structured Plan from the live default model catalog", async () => {
+  const { host, requests } = createHost({
+    defaultModel: null,
+    models: [
+      { id: "model-other", isDefault: false },
+      { id: "model-default", isDefault: true }
+    ],
+    configThreadSettings: { model: null, modelReasoningEffort: null }
+  });
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "plan it",
+    options: { collaborationMode: "plan", model: null }
+  }), host);
+
+  const modeModel = (request: typeof requests[number]) => (request.params as {
+    collaborationMode: { settings: { model: string } };
+  }).collaborationMode.settings.model;
+  assert.equal(modeModel(requests[0]), "model-default");
+  assert.equal(modeModel(requests[1]), "model-default");
+});
+
+test("dispatcher clears old Plan model and effort when Auto is explicit", async () => {
+  const { host, requests, settingsReads } = createHost({
+    defaultModel: null,
+    models: [{ id: "model-default", isDefault: true }],
+    cachedThreadSettings: {
+      model: "model-old",
+      modelReasoningEffort: "high",
+      collaborationMode: "default"
+    },
+    configThreadSettings: {
+      model: null,
+      modelReasoningEffort: null,
+      collaborationMode: "default"
+    }
+  });
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "plan with defaults",
+    options: {
+      collaborationMode: "plan",
+      model: null,
+      modelReasoningEffort: null
+    }
+  }), host);
+
+  const plan = (requests[0].params as { collaborationMode: AppServerCollaborationMode }).collaborationMode;
+  const reset = (requests[1].params as { collaborationMode: AppServerCollaborationMode }).collaborationMode;
+  assert.deepEqual(plan.settings, {
+    model: "model-default",
+    reasoning_effort: "medium",
+    developer_instructions: null
+  });
+  assert.deepEqual(reset.settings, {
+    model: "model-default",
+    reasoning_effort: null,
+    developer_instructions: null
+  });
+  assert.equal(settingsReads.config, 1);
+});
+
+test("dispatcher requires the official collaboration mode masks", async () => {
+  const { host } = createHost({
+    collaborationModes: {
+      data: [{ name: "Default", mode: "default", model: null, reasoning_effort: null }]
+    }
+  });
+  await assert.rejects(dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "plan it",
+    options: { collaborationMode: "plan", model: "gpt-test" }
+  }), host), /did not provide plan mode/);
+});
+
 test("dispatcher forwards ultra as turn/start effort", async () => {
-  const { host, requests } = createHost();
+  const { host, requests, settingsReads } = createHost();
   await dispatchAppServerCommand(command({
     type: "turn",
     threadId: "thread-1",
@@ -105,6 +268,170 @@ test("dispatcher forwards ultra as turn/start effort", async () => {
         text_elements: []
       }],
       effort: "ultra"
+    }
+  }]);
+  assert.equal("collaborationMode" in (requests[0].params as Record<string, unknown>), false);
+  assert.equal(settingsReads.cached, 1);
+  assert.equal(settingsReads.config, 0);
+});
+
+test("dispatcher repairs sticky Plan before starting an Ultra turn", async () => {
+  const { host, requests, settingsReads } = createHost({
+    cachedThreadSettings: {
+      model: "gpt-current",
+      modelReasoningEffort: "ultra",
+      collaborationMode: "plan"
+    },
+    configThreadSettings: {
+      model: "gpt-current",
+      modelReasoningEffort: "high",
+      collaborationMode: "default"
+    }
+  });
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "delegate this",
+    options: { modelReasoningEffort: "ultra" }
+  }), host);
+
+  assert.deepEqual(requests, [{
+    method: "thread/settings/update",
+    params: {
+      threadId: "thread-1",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-current",
+          reasoning_effort: "ultra",
+          developer_instructions: null
+        }
+      }
+    }
+  }, {
+    method: "turn/start",
+    params: {
+      threadId: "thread-1",
+      cwd: "/tmp/project",
+      input: [{ type: "text", text: "delegate this", text_elements: [] }],
+      effort: "ultra"
+    }
+  }]);
+  assert.equal(settingsReads.config, 1);
+});
+
+test("dispatcher retries the exact Default mode after a Plan reset fails", async (context) => {
+  const errors: string[] = [];
+  context.mock.method(console, "error", (...values: unknown[]) => errors.push(values.join(" ")));
+  const { host, requests, settingsReads, planResetModes, setCachedThreadSettings } = createHost({
+    failPlanResetCount: 1
+  });
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "plan this",
+    options: {
+      collaborationMode: "plan",
+      model: "gpt-test",
+      modelReasoningEffort: "high"
+    }
+  }), host);
+
+  assert.equal(requests[0]?.method, "turn/start");
+  assert.equal(requests[1]?.method, "thread/settings/update");
+  assert.match(errors.join("\n"), /failed to reset Plan collaboration mode/);
+  assert.deepEqual(planResetModes.get("thread-1"), {
+    mode: "default",
+    settings: {
+      model: "gpt-test",
+      reasoning_effort: "high",
+      developer_instructions: null
+    }
+  });
+  setCachedThreadSettings({
+    model: "gpt-test",
+    modelReasoningEffort: "medium",
+    collaborationMode: "plan"
+  });
+
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "implement this"
+  }), host);
+
+  assert.deepEqual(requests[2], requests[1]);
+  assert.equal(requests[3]?.method, "turn/start");
+  assert.equal(planResetModes.has("thread-1"), false);
+
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "continue"
+  }), host);
+
+  assert.equal(requests.length, 5);
+  assert.equal(requests[4]?.method, "turn/start");
+  assert.equal(settingsReads.config, 1);
+});
+
+test("dispatcher replaces a failed Plan reset with the next Plan settings", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const { host, requests, planResetModes } = createHost({ failPlanResetCount: 1 });
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "first plan",
+    options: {
+      collaborationMode: "plan",
+      model: "model-old",
+      modelReasoningEffort: "high"
+    }
+  }), host);
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "second plan",
+    options: {
+      collaborationMode: "plan",
+      model: "model-new",
+      modelReasoningEffort: "ultra"
+    }
+  }), host);
+
+  const secondReset = requests.at(-1);
+  assert.equal(secondReset?.method, "thread/settings/update");
+  assert.deepEqual(secondReset?.params, {
+    threadId: "thread-1",
+    collaborationMode: {
+      mode: "default",
+      settings: {
+        model: "model-new",
+        reasoning_effort: "ultra",
+        developer_instructions: null
+      }
+    }
+  });
+  assert.equal(planResetModes.has("thread-1"), false);
+});
+
+test("dispatcher rewinds with thread/fork and lastTurnId", async () => {
+  const { host, requests } = createHost();
+  await dispatchAppServerCommand(command({
+    type: "fork_thread",
+    threadId: "thread-1",
+    lastTurnId: "turn-3"
+  }), host);
+
+  assert.deepEqual(requests, [{
+    method: "thread/fork",
+    params: {
+      threadId: "thread-1",
+      lastTurnId: "turn-3",
+      cwd: "/tmp/project",
+      model: "fallback-model",
+      approvalPolicy: "never",
+      threadSource: "user"
     }
   }]);
 });

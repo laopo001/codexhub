@@ -101,6 +101,9 @@ export const codexRecordFromAppServerItem = (
         server: typeof item.server === "string" ? item.server : "",
         tool: typeof item.tool === "string" ? item.tool : "",
         arguments: item.arguments,
+        appContext: item.appContext,
+        mcpAppResourceUri: item.mcpAppResourceUri,
+        pluginId: item.pluginId,
         result: item.result,
         error: item.error,
         status
@@ -210,7 +213,18 @@ export const codexRecordFromAppServerItem = (
     };
   }
 
-  return null;
+  if (!itemType) return null;
+
+  // Preserve new app-server ThreadItem variants until they receive a richer
+  // normalized representation. Dropping them would make the transcript lossy.
+  return {
+    ...base,
+    type: "response_item",
+    payload: {
+      ...item,
+      ...(item.status === undefined && status ? { status } : {})
+    }
+  };
 };
 
 export const withAppServerItemRecordTiming = (
@@ -223,6 +237,11 @@ export const withAppServerItemRecordTiming = (
 
   const itemTiming = appServerItemTiming(options.item);
   const existingPayload = asRecord(options.existing?.payload);
+  const existingStatus = typeof existingPayload?.status === "string" ? existingPayload.status : undefined;
+  const preservedStatus = existingStatus && (
+    payload.status === undefined
+    || (isFinishedTimingPayload(existingPayload ?? {}) && isActiveTimingPayload(payload))
+  ) ? existingStatus : undefined;
   const startedAt = stringValue(payload.started_at)
     ?? stringValue(payload.startedAt)
     ?? itemTiming.startedAt
@@ -240,11 +259,12 @@ export const withAppServerItemRecordTiming = (
     ?? itemTiming.durationMs
     ?? (startedAt && completedAt ? timestampDeltaMs(startedAt, completedAt) : undefined);
 
-  if (!startedAt && !completedAt && durationMs == null) return record;
+  if (!preservedStatus && !startedAt && !completedAt && durationMs == null) return record;
   return {
     ...record,
     payload: {
       ...payload,
+      ...(preservedStatus ? { status: preservedStatus } : {}),
       ...(startedAt ? { started_at: startedAt } : {}),
       ...(completedAt ? { completed_at: completedAt } : {}),
       ...(durationMs == null ? {} : { duration_ms: durationMs })

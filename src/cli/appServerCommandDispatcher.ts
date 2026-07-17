@@ -14,11 +14,29 @@ type LoadedThread = {
   thread?: Record<string, unknown>;
 };
 
+type AppServerThreadSettings = Pick<ThreadRunOptions, "model" | "modelReasoningEffort"> & {
+  collaborationMode?: "plan" | "default" | null;
+};
+
+export type AppServerCollaborationMode = {
+  mode: "plan" | "default";
+  settings: {
+    model: string;
+    reasoning_effort: NonNullable<ThreadRunOptions["modelReasoningEffort"]> | null;
+    developer_instructions: null;
+  };
+};
+
 export type AppServerCommandHost = {
   defaultModel?: string;
   permissionParams: Record<string, unknown>;
   listThreads: (cwd: string, limit?: number) => Promise<unknown>;
   listModels: (includeHidden: boolean) => Promise<unknown>;
+  listCollaborationModes: () => Promise<unknown>;
+  cachedThreadSettings: (threadId: string) => AppServerThreadSettings | undefined;
+  readThreadSettings: (cwd: string) => Promise<AppServerThreadSettings>;
+  cacheThreadCollaborationMode: (threadId: string, value: AppServerCollaborationMode) => void;
+  planResetModes: Map<string, AppServerCollaborationMode>;
   listCommandPalette: (cwd: string, part: SessionCommand["commandPalettePart"]) => Promise<unknown>;
   bindThread: (threadId: string, cwd: string) => void;
   unbindThread: (threadId: string) => void;
@@ -168,6 +186,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     host.markBridgeStartedUnknownThread();
     const result = asRecord(await host.request("thread/fork", {
       threadId: sourceThreadId,
+      ...(command.lastTurnId ? { lastTurnId: command.lastTurnId } : {}),
       cwd: command.workingDirectory,
       ...(model === undefined ? {} : { model }),
       ...host.permissionParams,
@@ -179,22 +198,6 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     host.markThreadLoaded(threadId);
     return;
   }
-  if (command.type === "rollback_thread") {
-    const threadId = requireThreadId(command);
-    if (!command.numTurns || command.numTurns < 1) {
-      throw new Error("rollback_thread command requires numTurns >= 1");
-    }
-    await host.ensureThreadLoaded(
-      threadId,
-      command.workingDirectory,
-      modelForCommand(command, host.defaultModel),
-      undefined,
-      { markBridgeStarted: true }
-    );
-    await host.request("thread/rollback", { threadId, numTurns: command.numTurns }, command);
-    host.scheduleThreadSync(threadId);
-    return;
-  }
 
   if (!command.input || !command.threadId) return;
   const loadedThreadId = await host.ensureThreadLoaded(
@@ -204,6 +207,9 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     command,
     { markBridgeStarted: true }
   );
+  const planTurn = command.options?.collaborationMode === "plan";
+  const cachedSettings = host.cachedThreadSettings(loadedThreadId) ?? {};
+  const pendingPlanReset = host.planResetModes.get(loadedThreadId);
   if (command.options?.goalMode) {
     await host.request("thread/goal/set", {
       threadId: loadedThreadId,
@@ -211,12 +217,98 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     }, { threadId: loadedThreadId });
   }
   host.markBridgeStartedThread(loadedThreadId);
+  const params = turnRequestParams(command.options);
+  let resetCollaborationMode = pendingPlanReset;
+  if (planTurn) {
+    const clearModelOverride = command.options
+      && hasOwn(command.options, "model")
+      && command.options.model === null;
+    const resetBaseline = pendingPlanReset
+      ? {
+          model: pendingPlanReset.settings.model,
+          modelReasoningEffort: pendingPlanReset.settings.reasoning_effort
+        }
+      : cachedSettings;
+    const currentSettings = await defaultThreadSettings(
+      host,
+      loadedThreadId,
+      command.workingDirectory,
+      resetBaseline,
+      Boolean(clearModelOverride)
+    );
+    const modes = await resolveCollaborationModes(host, command.options, currentSettings);
+    // A failed reset belongs to the previous Plan turn. Rebuild it so this
+    // turn's explicit model/effort (including Auto/null) wins.
+    resetCollaborationMode = modes.reset;
+    host.planResetModes.set(loadedThreadId, resetCollaborationMode);
+    delete params.model;
+    delete params.effort;
+    params.collaborationMode = modes.plan;
+  } else if (!resetCollaborationMode && cachedSettings.collaborationMode === "plan") {
+    const currentSettings = await defaultThreadSettings(
+      host,
+      loadedThreadId,
+      command.workingDirectory,
+      cachedSettings
+    );
+    const latestSettings = host.cachedThreadSettings(loadedThreadId);
+    if (!latestSettings || latestSettings.collaborationMode === "plan") {
+      resetCollaborationMode = (await resolveCollaborationModes(
+        host,
+        command.options,
+        currentSettings
+      )).reset;
+      host.planResetModes.set(loadedThreadId, resetCollaborationMode);
+    }
+  }
+  if (!planTurn && resetCollaborationMode) {
+    await applyPlanReset(host, loadedThreadId, resetCollaborationMode);
+  }
   await host.request("turn/start", {
     threadId: loadedThreadId,
     cwd: command.workingDirectory,
-    input: toAppServerInput(inputForCollaborationMode(command.input, command.options)),
-    ...turnRequestParams(command.options)
+    input: toAppServerInput(command.input),
+    ...params
   }, command);
+  if (planTurn && resetCollaborationMode) {
+    // Plan is a one-turn composer mode, while app-server collaboration mode is
+    // sticky. Reset only subsequent turns after the Plan turn has started.
+    try {
+      await applyPlanReset(host, loadedThreadId, resetCollaborationMode);
+    } catch (error) {
+      // turn/start already succeeded. Keep the command successful; the next
+      // non-Plan turn retries this exact Default mode before starting.
+      console.error(`codexhub failed to reset Plan collaboration mode: ${errorText(error)}`);
+    }
+  }
+};
+
+const defaultThreadSettings = async (
+  host: AppServerCommandHost,
+  threadId: string,
+  cwd: string,
+  cached: AppServerThreadSettings,
+  preferConfig = false
+) => {
+  if (!preferConfig && cached.collaborationMode !== "plan" && Object.keys(cached).length) return cached;
+  const fallback = await host.readThreadSettings(cwd);
+  if (preferConfig) {
+    return cached.collaborationMode === "plan"
+      ? fallback
+      : { ...cached, model: fallback.model };
+  }
+  const latest = host.cachedThreadSettings(threadId);
+  return latest?.collaborationMode === "plan" ? fallback : latest ?? fallback;
+};
+
+const applyPlanReset = async (
+  host: AppServerCommandHost,
+  threadId: string,
+  reset: AppServerCollaborationMode
+) => {
+  await host.request("thread/settings/update", { threadId, collaborationMode: reset });
+  host.cacheThreadCollaborationMode(threadId, reset);
+  if (host.planResetModes.get(threadId) === reset) host.planResetModes.delete(threadId);
 };
 
 export const toAppServerInput = (input: ProxyInput) => {
@@ -250,6 +342,62 @@ export const turnRequestParams = (options: ThreadRunOptions | undefined) => {
   return params;
 };
 
+const resolveCollaborationModes = async (
+  host: AppServerCommandHost,
+  options: ThreadRunOptions | undefined,
+  currentSettings: AppServerThreadSettings
+) => {
+  const result = asRecord(await host.listCollaborationModes());
+  const masks = (Array.isArray(result?.data) ? result.data : []).map(asRecord);
+  const mask = (mode: AppServerCollaborationMode["mode"]) => {
+    const selected = masks.find((candidate) => candidate?.mode === mode);
+    if (!selected) throw new Error(`Codex app-server collaborationMode/list did not provide ${mode} mode.`);
+    return selected;
+  };
+  const defaultMask = mask("default");
+  const planMask = mask("plan");
+  const fallbackModel = stringValue(options?.model)
+    ?? stringValue(currentSettings.model)
+    ?? stringValue(host.defaultModel);
+  const models = fallbackModel || [defaultMask, planMask].every((item) => stringValue(item.model))
+    ? undefined
+    : await host.listModels(false);
+  const selectedEffort = options && hasOwn(options, "modelReasoningEffort")
+    ? options.modelReasoningEffort
+    : currentSettings.modelReasoningEffort;
+  const build = (
+    mode: AppServerCollaborationMode["mode"],
+    selectedMask: Record<string, unknown>
+  ): AppServerCollaborationMode => {
+    const model = stringValue(selectedMask.model) ?? fallbackModel ?? catalogModel(models);
+    if (!model) throw new Error(`${mode} mode requires an app-server mask, selected model, or live default model.`);
+    const maskEffort = stringValue(selectedMask.reasoning_effort ?? selectedMask.reasoningEffort);
+    return {
+      mode,
+      settings: {
+        model,
+        reasoning_effort: mode === "plan"
+          ? maskEffort ?? selectedEffort ?? null
+          : selectedEffort === undefined ? maskEffort ?? null : selectedEffort,
+        developer_instructions: null
+      }
+    };
+  };
+  return {
+    reset: build("default", defaultMask),
+    plan: build("plan", planMask)
+  };
+};
+
+const catalogModel = (value: unknown) => {
+  const result = asRecord(value);
+  const items = (Array.isArray(value) ? value : Array.isArray(result?.data) ? result.data : [])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => Boolean(item));
+  const selected = items.find((item) => item.isDefault === true) ?? items[0];
+  return stringValue(selected?.model) ?? stringValue(selected?.id);
+};
+
 const ensureCommandThread = async (
   command: SessionCommand,
   host: AppServerCommandHost,
@@ -265,13 +413,6 @@ const ensureCommandThread = async (
 const requireThreadId = (command: SessionCommand) => {
   if (!command.threadId) throw new Error(`${command.type} command requires threadId`);
   return command.threadId;
-};
-
-const inputForCollaborationMode = (input: ProxyInput, options: ThreadRunOptions | undefined): ProxyInput => {
-  if (options?.collaborationMode !== "plan") return input;
-  const prefix = "Plan mode is active for this turn.";
-  if (typeof input === "string") return `${prefix}\n\nUser request:\n${input}`;
-  return [{ type: "text", text: prefix }, ...input];
 };
 
 const goalUpdateParams = (
@@ -305,4 +446,5 @@ const goalObjective = (input: ProxyInput, options: ThreadRunOptions) => {
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const stringValue = (value: unknown) => typeof value === "string" ? value : undefined;
+const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);

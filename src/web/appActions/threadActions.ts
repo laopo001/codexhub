@@ -270,9 +270,14 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
   }
 
-  const forkMessage = async (threadId: string, messageId: string) => {
+  const branchMessage = async (
+    route: typeof apiRoutes.forkThread,
+    errorLabel: string,
+    threadId: string,
+    messageId: string
+  ) => {
     try {
-      const thread = await apiRouteJson(apiRoutes.forkThread, threadId, { messageId });
+      const thread = await apiRouteJson(route, threadId, { messageId });
       const sessionId = thread.session.sessionId ?? ctx.activeRuntimeSession?.sessionId;
       if (sessionId) {
         ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
@@ -280,22 +285,14 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       }
       await openThread(thread.threadId);
     } catch (error) {
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("fork failed", error) });
+      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord(errorLabel, error) });
     }
   };
 
-  const rollbackMessage = async (threadId: string, messageId: string) => {
-    try {
-      const thread = await apiRouteJson(apiRoutes.rollbackThread, threadId, { messageId });
-      ctx.dispatchOpenThreads({ type: "upsert-detail", thread });
-      if (thread.session.sessionId) ctx.setActiveSessionId(thread.session.sessionId);
-      ctx.setActiveWorkspacePath(thread.workingDirectory);
-      ctx.setActiveTabThreadId(thread.threadId);
-      subscribeThread(thread.threadId, thread.lastSeq);
-    } catch (error) {
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("rollback failed", error) });
-    }
-  };
+  const forkMessage = (threadId: string, messageId: string) =>
+    branchMessage(apiRoutes.forkThread, "fork failed", threadId, messageId);
+  const rollbackMessage = (threadId: string, messageId: string) =>
+    branchMessage(apiRoutes.rollbackThread, "rewind failed", threadId, messageId);
 
   const send = async (threadId: string) => {
     deps.primeTaskCompletionFeedback();
