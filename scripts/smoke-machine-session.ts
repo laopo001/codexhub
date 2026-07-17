@@ -351,7 +351,6 @@ const main = async () => {
   await assertThreadCandidateFiltering();
   await assertAppServerApprovalRequestFlow();
   await assertHistoricalToolBatchCollapse();
-  await assertRollbackPreservesKeptTurnToolRecords();
   await assertForkPreservesKeptTurnToolRecords();
   await assertProjectDeleteDoesNotWriteTombstone();
   await writeStartupSshHostState(dataDir, "included-host");
@@ -3092,124 +3091,6 @@ const assertHistoricalToolBatchCollapse = async () => {
   const collapsedAgain = collapseHistoricalToolBatches(views, new Set());
   if (collapsedAgain.some((view) => view.id === "tool-a" || view.id === "tool-aa" || view.id === "tool-b") || collapsedAgain.some((view) => view.toolBatch?.expanded)) {
     throw new Error(`historical tool batch did not collapse again: ${JSON.stringify(collapsedAgain)}`);
-  }
-};
-
-const assertRollbackPreservesKeptTurnToolRecords = async () => {
-  const { ThreadHub } = await import("../src/core/threadHub.js");
-  const hub = new ThreadHub();
-  const sessionId = "rollback-tool-session";
-  const threadId = "rollback-tool-thread";
-  const rewoundThreadId = "rollback-tool-rewind";
-  const keptTurnId = "rollback-kept-turn";
-  const removedTurnId = "rollback-removed-turn";
-  hub.registerSession({
-    sessionId,
-    machineId: "machine-local",
-    workingDirectory: "/tmp/codexhub-rollback-tool"
-  });
-  hub.applySessionEvent(sessionId, {
-    type: "thread_turns_snapshot",
-    threadId,
-    heartbeat: false,
-    turns: [{
-      id: keptTurnId,
-      startedAt: 1,
-      completedAt: 2,
-      items: [{
-        id: "kept-user",
-        type: "userMessage",
-        content: [{ type: "text", text: "run tool" }]
-      }, {
-        id: "kept-tool",
-        type: "commandExecution",
-        command: "pwd",
-        status: "completed",
-        output: "/tmp/codexhub-rollback-tool",
-        exitCode: 0
-      }, {
-        id: "kept-agent",
-        type: "agentMessage",
-        text: "kept",
-        phase: "final_answer"
-      }]
-    }, {
-      id: removedTurnId,
-      startedAt: 3,
-      completedAt: 4,
-      items: [{
-        id: "removed-user",
-        type: "userMessage",
-        content: [{ type: "text", text: "remove me" }]
-      }, {
-        id: "removed-agent",
-        type: "agentMessage",
-        text: "removed",
-        phase: "final_answer"
-      }]
-    }]
-  });
-  const rollback = hub.rollbackThreadAfterRecord(threadId, `app:${threadId}:${keptTurnId}:agent:kept-agent`);
-  const commandBatch = await hub.waitSessionCommands(sessionId, 0, 1);
-  const command = commandBatch.commands[0];
-  if (
-    !command
-    || command.type !== "fork_thread"
-    || command.threadId !== threadId
-    || asRecord(command).lastTurnId !== keptTurnId
-  ) {
-    throw new Error(`rewind fork command did not preserve expected turn boundary: ${JSON.stringify(command)}`);
-  }
-  hub.applySessionEvent(sessionId, {
-    type: "thread_event",
-    threadId: rewoundThreadId,
-    commandId: command.commandId,
-    heartbeat: false,
-    message: {
-      result: {
-        thread: {
-          id: rewoundThreadId,
-          cwd: "/tmp/codexhub-rollback-tool",
-          turns: [{
-            id: keptTurnId,
-            startedAt: 1,
-            completedAt: 2,
-            items: [{
-              id: "kept-user",
-              type: "userMessage",
-              content: [{ type: "text", text: "run tool" }]
-            }, {
-              id: "kept-agent",
-              type: "agentMessage",
-              text: "kept",
-              phase: "final_answer"
-            }]
-          }]
-        }
-      }
-    }
-  });
-  const detail = await rollback;
-  const records = detail.records ?? [];
-  if (detail.threadId !== rewoundThreadId) {
-    throw new Error(`rewind did not return a forked thread: ${JSON.stringify(detail)}`);
-  }
-  if (!records.some((record) => asRecord(record).id === `app:${rewoundThreadId}:${keptTurnId}:item:commandExecution:kept-tool`)) {
-    throw new Error(`rewind dropped kept turn tool record: ${JSON.stringify(records)}`);
-  }
-  if (records.some((record) => String(asRecord(record).id).includes(removedTurnId))) {
-    throw new Error(`rewind kept records after the target turn: ${JSON.stringify(records)}`);
-  }
-  if (records.some((record) => String(asRecord(record).id).startsWith(`app:${threadId}:`))) {
-    throw new Error(`rewind leaked source thread record ids: ${JSON.stringify(records)}`);
-  }
-  const sourceRecords = hub.getThread(threadId)?.records ?? [];
-  if (!sourceRecords.some((record) => String(asRecord(record).id).includes(removedTurnId))) {
-    throw new Error(`rewind destructively cropped the source thread: ${JSON.stringify(sourceRecords)}`);
-  }
-  const followUpBatch = await hub.waitSessionCommands(sessionId, command.seq, 1);
-  if (followUpBatch.commands.length) {
-    throw new Error(`rewind unexpectedly issued a follow-up command: ${JSON.stringify(followUpBatch.commands)}`);
   }
 };
 

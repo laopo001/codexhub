@@ -334,18 +334,6 @@ export const registerThreadRoutes = <
     }
   });
 
-  app.post("/api/threads/:threadId/rollback", async (request, reply) => {
-    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({ messageId: z.string().min(1) }).parse(request.body);
-    try {
-      const thread = await ctx.threads.rollbackThreadAfterRecord(params.threadId, payload.messageId);
-      return thread satisfies ThreadDetail;
-    } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
   app.post("/api/threads/:threadId/turn", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({

@@ -187,9 +187,6 @@ export const apiRoutes = {
   forkThread: post<ThreadForkInput, ThreadDetail, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/fork`
   ),
-  rollbackThread: post<ThreadForkInput, ThreadDetail, (threadId: string) => string>(
-    (threadId) => `/api/threads/${encode(threadId)}/rollback`
-  ),
   sendThreadTurn: post<ThreadTurnInput, ThreadTurnPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/turn`
   ),

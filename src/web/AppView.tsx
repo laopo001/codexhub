@@ -150,7 +150,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     respondToUserInput,
     reviewThread,
     resizeComposerTextarea,
-    rollbackMessage,
     selectedProject,
     send,
     threadControlsMenuOpen,
@@ -476,7 +475,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           onApprovalDecision={(approvalId, decision) => void respondToApproval(activeThread.threadId, approvalId, decision)}
                           onUserInputResponse={(userInputId, answers) => void respondToUserInput(activeThread.threadId, userInputId, answers)}
                           onFork={canForkAtMessage(activeThread.threadId, message) ? () => void forkMessage(activeThread.threadId, message.record.id) : undefined}
-                          onRollback={canForkAtMessage(activeThread.threadId, message) ? () => void rollbackMessage(activeThread.threadId, message.record.id) : undefined}
                         />
                       );
                     }}

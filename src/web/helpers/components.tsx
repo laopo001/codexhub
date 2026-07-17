@@ -57,7 +57,6 @@ export const MessageCard = ({
   onApprovalDecision,
   onUserInputResponse,
   onFork,
-  onRollback,
   onOpenImage
 }: {
   message: WebRecordView;
@@ -74,7 +73,6 @@ export const MessageCard = ({
   onApprovalDecision?: (approvalId: string, decision: AppServerApprovalDecision) => void;
   onUserInputResponse?: (userInputId: string, answers: AppServerUserInputAnswers) => void | Promise<void>;
   onFork?: () => void;
-  onRollback?: () => void;
   onOpenImage?: (image: ImagePreviewState) => void;
 }) => {
   const isThinkingMessage = message.role === "thinking";
@@ -96,7 +94,6 @@ export const MessageCard = ({
     || markdownEnabled
     || approval
     || onFork
-    || onRollback
   );
   const canClickInspect = Boolean(hasToolBody && onInspect);
   const inspectOnKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
@@ -195,16 +192,6 @@ export const MessageCard = ({
               event.preventDefault();
               onFork();
             }}>Fork</a>
-          ) : null}
-          {onRollback ? (
-            <a
-              href="#"
-              title="Creates a new thread from here; files are unchanged."
-              onClick={(event) => {
-              event.preventDefault();
-              onRollback();
-              }}
-            >Rewind</a>
           ) : null}
           <span>{formatMessageMeta(message, { showTimestamp })}</span>
           {markdownEnabled && onRenderModeChange ? (

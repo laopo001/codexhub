@@ -84,7 +84,6 @@ export type ThreadActions = {
   unsubscribeThread: (threadId: string) => void;
   syncThreadSubscriptions: (threadIds: string[]) => void;
   forkMessage: (threadId: string, messageId: string) => Promise<void>;
-  rollbackMessage: (threadId: string, messageId: string) => Promise<void>;
   send: (threadId: string) => Promise<void>;
   stopTurn: (threadId: string) => Promise<void>;
   compactThread: (threadId: string) => Promise<void>;
@@ -291,8 +290,6 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
   const forkMessage = (threadId: string, messageId: string) =>
     branchMessage(apiRoutes.forkThread, "fork failed", threadId, messageId);
-  const rollbackMessage = (threadId: string, messageId: string) =>
-    branchMessage(apiRoutes.rollbackThread, "rewind failed", threadId, messageId);
 
   const send = async (threadId: string) => {
     deps.primeTaskCompletionFeedback();
@@ -488,7 +485,6 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     unsubscribeThread,
     syncThreadSubscriptions,
     forkMessage,
-    rollbackMessage,
     send,
     stopTurn,
     compactThread,

@@ -220,7 +220,6 @@ export type AppViewModelSource = AppSidebarViewModel & {
   reviewThread: (threadId: string) => MaybePromise;
   retryModelCatalog: () => void;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
-  rollbackMessage: (threadId: string, messageId: string) => MaybePromise;
   saveGoalDialog: () => MaybePromise;
   saveThreadRenameDialog: () => MaybePromise;
   send: (threadId: string) => MaybePromise;
@@ -321,7 +320,6 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "respondToUserInput"
   | "reviewThread"
   | "resizeComposerTextarea"
-  | "rollbackMessage"
   | "selectedProject"
   | "send"
   | "threadControlsMenuOpen"
@@ -447,7 +445,7 @@ const workspaceKeys = [
   "messagesShouldFollowRef", "openMessageContextMenu", "openSelectedProjectThreadPicker",
   "pasteThreadImages", "removeThreadImage", "removeThreadTextAttachment", "renderComposerThreadControls",
   "resetComposerHistory", "respondToApproval", "respondToUserInput", "reviewThread",
-  "resizeComposerTextarea", "rollbackMessage", "selectedProject", "send", "threadControlsMenuOpen",
+  "resizeComposerTextarea", "selectedProject", "send", "threadControlsMenuOpen",
   "setComposerMenuOpen", "setComposerMode", "setExpandedStatusKeys", "setExpandedToolBatchKeys",
   "setGoalDialog", "setExpandedStatusTurns", "setImagePreview", "setInspectMessage",
   "setMessageDisplayMode", "setActiveThreadApprovalPolicyDraft", "setActiveThreadSandboxPolicyDraft",

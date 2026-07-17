@@ -547,11 +547,6 @@ export class ThreadHub {
     return await promise;
   }
 
-  async rollbackThreadAfterRecord(threadId: string, recordId: string): Promise<ThreadDetail> {
-    // app-server 的 thread/rollback 已废弃且会原地改历史；Rewind 改为 fork through turn。
-    return await this.forkThread(threadId, recordId);
-  }
-
   async renameThread(threadId: string, title: string): Promise<ThreadDetail> {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);

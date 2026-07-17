@@ -415,7 +415,7 @@ test("dispatcher replaces a failed Plan reset with the next Plan settings", asyn
   assert.equal(planResetModes.has("thread-1"), false);
 });
 
-test("dispatcher rewinds with thread/fork and lastTurnId", async () => {
+test("dispatcher forks through the selected lastTurnId", async () => {
   const { host, requests } = createHost();
   await dispatchAppServerCommand(command({
     type: "fork_thread",

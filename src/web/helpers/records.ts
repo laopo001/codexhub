@@ -550,7 +550,7 @@ const activityStatusSnapshotTargetRecordId = (records: CodexRecord[]) => {
 
 const isActivityStatusDetail = (status: ActivityStatusView) => {
   if (status.key === "approval" || status.key === "userInput") return status.status !== "completed";
-  return status.key === "files" || status.key === "usage" || status.key === "context" || status.key === "rollback";
+  return status.key === "files" || status.key === "usage" || status.key === "context";
 };
 
 export const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivityStatusView | null => {
@@ -726,17 +726,6 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
     return { key: "goal", label: "Goal", status: "completed", at: record.timestamp, text: "Goal cleared" };
   }
 
-  if (type === "thread_rolled_back") {
-    const turns = typeof payload.num_turns === "number" ? payload.num_turns : undefined;
-    return {
-      key: "rollback",
-      label: "Rollback",
-      status: "completed",
-      at: record.timestamp,
-      text: turns ? `Rolled back ${turns} turn${turns === 1 ? "" : "s"}` : "Thread rolled back"
-    };
-  }
-
   if (type === "item_completed") {
     const item = asRecord(payload.item);
     return {
@@ -865,8 +854,7 @@ export const activityStatusPriority = (key: string) => {
     userInput: 1,
     files: 2,
     usage: 3,
-    context: 4,
-    rollback: 5
+    context: 4
   };
   return order[key] ?? 10;
 };
