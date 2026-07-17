@@ -34,7 +34,7 @@ const detailedRecordToView = (record: CodexRecord): CodexRecordView | null => {
   if (record.type === "event_msg") {
     if (payload.type === "user_message") return userMessageToView(record, payload);
     if (payload.type === "agent_message") return agentMessageToView(record, payload);
-    if (isContextCompactionType(payload.type)) return contextCompactionToView(record, payload);
+    if (payload.type === "context_compaction") return contextCompactionToView(record, payload);
     return {
       id: record.id,
       role: "event",
@@ -70,9 +70,6 @@ const contextCompactionToView = (record: CodexRecord, payload: Record<string, un
     record
   };
 };
-
-const isContextCompactionType = (type: unknown) =>
-  type === "context_compaction" || type === "context_compacted" || type === "compacted";
 
 const userMessageToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
   const attachments = imageAttachments(payload);

@@ -79,11 +79,6 @@ export type {
 /** OpenAI reasoning effort 的 Web/API 别名。 */
 export type ReasoningEffort = ModelReasoningEffort;
 
-/** Web 使用的 session view；保持 sessionId 必填以兼容历史 UI 代码。 */
-export type SessionView = SessionSummary & {
-  sessionId: string;
-};
-
 /** SSH host 列表接口返回的 host 摘要，合并 SSH config 和 CodexHub 收纳状态。 */
 export type SshHostSummary = SshHostConfig & {
   configured?: boolean;
@@ -130,7 +125,6 @@ export type HealthPayload = AuthStatusPayload & {
   features?: Record<string, boolean>;
   staticDirectory?: string;
   configPath?: string;
-  statePath?: string;
   model: string | null;
   modelReasoningEffort: ModelReasoningEffort | null;
   serviceTier: string | null;
@@ -160,7 +154,6 @@ export type ProjectsPayload = {
   seq?: number;
   kind?: "projects";
   configPath: string;
-  statePath: string;
   machines: Array<MachineSummary | StoredMachine>;
   projects: ProjectSummary[];
 };
@@ -381,7 +374,7 @@ export const inputSchema = z.union([
   )
 ]);
 
-const approvalPolicySchema = z.enum(["untrusted", "on-failure", "on-request", "never"]);
+const approvalPolicySchema = z.enum(["untrusted", "on-request", "never"]);
 
 const sandboxPolicySchema = z.discriminatedUnion("type", [
   z.object({
@@ -416,7 +409,7 @@ export const threadRunOptionsSchema = z.object({
   goalMode: z.boolean().nullable().optional(),
   goalObjective: z.string().min(1).nullable().optional(),
   goalTokenBudget: z.number().int().positive().nullable().optional()
-});
+}).strict();
 
 export const threadGoalStatusSchema = z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]);
 
@@ -430,7 +423,7 @@ export const threadGoalUpdateSchema = z.object({
   status: threadGoalStatusSchema.nullable().optional(),
   tokenBudget: z.number().int().positive().nullable().optional(),
   runPolicy: threadGoalRunPolicySchema.nullable().optional()
-});
+}).strict();
 
 export const threadApprovalDecisionSchema = z.object({
   approvalId: z.string().min(1),
@@ -450,7 +443,7 @@ const appServerApprovalRequestSchema = z.object({
   approvalId: z.string().min(1),
   method: z.string().min(1),
   requestId: z.union([z.string().min(1), z.number()]),
-  kind: z.enum(["command_execution", "file_change", "mcp_elicitation", "permissions_request", "legacy_exec_command", "legacy_apply_patch"]),
+  kind: z.enum(["command_execution", "file_change", "mcp_elicitation", "permissions_request"]),
   threadId: z.string().min(1),
   turnId: z.string().min(1).optional(),
   itemId: z.string().min(1).optional(),
@@ -503,11 +496,10 @@ export const sessionRegistrationSchema = z.object({
   workingDirectory: z.string().min(1),
   appServerUrl: z.string().min(1).optional(),
   pid: z.number().int().optional(),
-  hostname: z.string().min(1).optional(),
-  currentThreadId: z.string().min(1).optional()
+  hostname: z.string().min(1).optional()
 }).strict();
 
-export const sessionHeartbeatSchema = sessionRegistrationSchema.partial();
+export const sessionHeartbeatSchema = sessionRegistrationSchema.partial().strict();
 
 export const sessionEventSchema = z.discriminatedUnion("type", [
   z.object({
@@ -515,6 +507,7 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     threadId: z.string().min(1),
     commandId: z.string().min(1).optional(),
     heartbeat: z.boolean().optional(),
+    historical: z.boolean().optional(),
     message: z.unknown()
   }),
   z.object({
@@ -570,11 +563,11 @@ export const machineRegistrationSchema = z.object({
   capabilities: z.object({
     projectLauncher: z.boolean().optional(),
     projectCatalog: z.enum(["editable", "fixed"]).optional()
-  }).optional(),
+  }).strict().optional(),
   projects: z.array(machineRegistrationProjectSchema).optional()
-});
+}).strict();
 
-export const machineHeartbeatSchema = machineRegistrationSchema.partial();
+export const machineHeartbeatSchema = machineRegistrationSchema.partial().strict();
 
 export const machineStartSessionResultSchema = z.object({
   sessionId: z.string().min(1),
@@ -746,9 +739,8 @@ export const webEventsMessageSchema = z.discriminatedUnion("type", [
 export const sshConnectSchema = z.object({
   host: z.string().min(1),
   name: z.string().min(1).optional(),
-  remotePort: z.number().int().min(1).max(65535).optional(),
-  remoteCommand: z.string().min(1).optional()
-}) satisfies z.ZodType<SshMachineConnectInput>;
+  remotePort: z.number().int().min(1).max(65535).optional()
+}).strict() satisfies z.ZodType<SshMachineConnectInput>;
 
 export const sshHostAliasSchema = z.object({
   alias: z.string().min(1)

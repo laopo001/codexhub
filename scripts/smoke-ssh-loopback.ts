@@ -22,8 +22,7 @@ type SshConnection = {
   host: string;
   status: "starting" | "running" | "exited";
   remotePort: number;
-  remoteMode?: "bootstrap" | "installed" | "custom";
-  remoteClientHash?: string;
+  remoteClientHash: string;
   lastOutput?: string;
 };
 
@@ -95,7 +94,7 @@ const main = async () => {
     assertNoWorkerId(connected, "POST /api/ssh/connect");
     const connection = connected.connection;
     if (!connection?.connectionId) throw new Error("ssh connect did not return a connection id");
-    if (connection.remoteMode !== "bootstrap" || !connection.remoteClientHash) {
+    if (!connection.remoteClientHash) {
       throw new Error(`ssh loopback did not use bootstrap remote client: ${JSON.stringify(connection)}`);
     }
     connectionId = connection.connectionId;
@@ -116,12 +115,12 @@ const main = async () => {
     if (open.result?.cwd !== projectDir) throw new Error(`remote machine opened unexpected cwd: ${open.result?.cwd}`);
     console.log(`project thread ok: ${sessionId} ${threadId}`);
 
-    const turn = await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
+    const turn = await apiJson(apiBase, `/api/threads/${encodeURIComponent(threadId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId, input: "/status", source: "web" })
+      body: JSON.stringify({ input: "/status", source: "web" })
     });
-    assertNoWorkerId(turn, "/api/sessions/:sessionId/turn");
+    assertNoWorkerId(turn, "/api/threads/:threadId/turn");
 
     const thread = await waitForThreadRecords(apiBase, threadId, 2);
     assertNoWorkerId(thread, "/api/threads/:threadId");

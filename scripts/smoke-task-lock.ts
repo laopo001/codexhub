@@ -61,8 +61,8 @@ type RealtimeMessage = {
 
 type PartialRateLimitWindow = {
   usedPercent?: number;
-  windowMinutes?: number;
-  resetsAt?: number;
+  windowMinutes?: number | null;
+  resetsAt?: number | null;
 };
 
 type PartialThreadUsage = {
@@ -72,6 +72,14 @@ type PartialThreadUsage = {
   } | null;
   primaryRateLimit?: PartialRateLimitWindow | null;
   secondaryRateLimit?: PartialRateLimitWindow | null;
+};
+
+type PartialSessionSummary = {
+  sessionId?: string;
+  accountRateLimits?: {
+    primaryRateLimit?: PartialRateLimitWindow | null;
+    secondaryRateLimit?: PartialRateLimitWindow | null;
+  } | null;
 };
 
 type ThreadDetail = {
@@ -296,12 +304,9 @@ const main = async () => {
     }
     const usageScopeItemId = `${activeWebTurnId}-usage-user`;
     fake.emitUserMessage(activeWebTurnId, usageScopeItemId, "steered web follow-up");
+    fake.emitAccountRateLimits();
     fake.emitTokenUsage(activeWebTurn);
     fake.emitTokenUsageForTurnId(fake.threadId, activeWebTurnId, {
-      rateLimits: {
-        primary: { usedPercent: 12.5, windowMinutes: 300, resetsAt: 1781058359 },
-        secondary: { usedPercent: 64, windowMinutes: 10080, resetsAt: 1781140554 }
-      },
       tokenUsage: {
         last: {
           inputTokens: 300,
@@ -322,10 +327,6 @@ const main = async () => {
     });
     await assertTurnTokenUsageRecords(apiBase, fake.threadId, activeWebTurnId, [1300, 340]);
     fake.emitTokenUsageForTurnId(fake.threadId, activeWebTurnId, {
-      rateLimits: {
-        primary: { usedPercent: 12.5, windowMinutes: 300, resetsAt: 1781058359 },
-        secondary: { usedPercent: 64, windowMinutes: 10080, resetsAt: 1781140554 }
-      },
       tokenUsage: {
         last: {
           inputTokens: 0,
@@ -347,10 +348,6 @@ const main = async () => {
     await assertStatusUsage(apiBase, fake.threadId, { input: 1500, output: 130, total: 1630 });
     fake.emitTurnsSnapshot(activeWebTurnId);
     fake.emitTokenUsageForTurnId(fake.threadId, `${activeWebTurnId}-goal-next`, {
-      rateLimits: {
-        primary: { usedPercent: 12.5, windowMinutes: 300, resetsAt: 1781058359 },
-        secondary: { usedPercent: 64, windowMinutes: 10080, resetsAt: 1781140554 }
-      },
       tokenUsage: {
         last: {
           inputTokens: 200,
@@ -393,13 +390,17 @@ const main = async () => {
       }
     });
     await assertStatusUsage(apiBase, fake.threadId, { input: 900, output: 31, total: 931 });
-    await assertThreadUsageRateLimits(apiBase, fake.threadId);
-    fake.emitTokenUsageWithoutRateLimits("context-only-usage");
-    await assertThreadUsageRateLimits(apiBase, fake.threadId);
-    fake.emitSnakeCaseTokenUsageWithoutRateLimits("snake-context-usage");
+    await assertSessionAccountRateLimits(apiBase, fake.sessionId);
+    fake.emitTokenUsageForTurnId(fake.threadId, "context-only-usage");
+    await assertSessionAccountRateLimits(apiBase, fake.sessionId);
+    fake.emitContextTokenUsage("context-usage");
     await assertThreadUsageContext(apiBase, fake.threadId, 321, 456000);
-    await assertThreadUsageRateLimits(apiBase, fake.threadId);
-    console.log("app-server token usage rate limits ok");
+    await assertSessionAccountRateLimits(apiBase, fake.sessionId);
+    fake.emitSparsePrimaryAccountRateLimit(27);
+    await assertSessionAccountRateLimits(apiBase, fake.sessionId, {
+      primaryUsedPercent: 27
+    });
+    console.log("app-server token usage and account rate limits ok");
     fake.completeTurn(activeWebTurn);
     fake.emitTurnsSnapshotWithUser(nextUsageTurnId, nextUsageScopeItemId, "start a fresh usage scope");
     await assertStatusUsage(apiBase, fake.threadId, { input: 2421, output: 343, total: 2764 });
@@ -456,26 +457,31 @@ const main = async () => {
     console.log("web running goal update ok");
 
     fake.emitGoalUpdated({
-      objective: "status-only app-server goal",
-      status: "active",
-      tokenBudget: 777
+      threadId: fake.threadId,
+      objective: "current app-server goal",
+      status: "paused",
+      tokenBudget: 777,
+      tokensUsed: 12,
+      timeUsedSeconds: 34,
+      createdAt: 1,
+      updatedAt: 2
     });
-    fake.emitGoalUpdated({ status: "paused" });
-    const statusOnlyGoalDetail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
-    const statusOnlyGoalRecords = statusOnlyGoalDetail.records?.filter((record) => {
+    const currentGoalDetail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    const currentGoalRecords = currentGoalDetail.records?.filter((record) => {
       const payload = objectValue(record.payload);
       return payload?.type === "thread_goal_updated";
     }) ?? [];
-    const latestStatusOnlyGoalPayload = objectValue(statusOnlyGoalRecords.at(-1)?.payload);
-    const latestStatusOnlyGoal = objectValue(latestStatusOnlyGoalPayload?.goal);
+    const latestCurrentGoalPayload = objectValue(currentGoalRecords.at(-1)?.payload);
+    const latestCurrentGoal = objectValue(latestCurrentGoalPayload?.goal);
     if (
-      latestStatusOnlyGoal?.objective !== "status-only app-server goal"
-      || latestStatusOnlyGoal.status !== "paused"
-      || latestStatusOnlyGoal.tokenBudget !== 777
+      latestCurrentGoal?.objective !== "current app-server goal"
+      || latestCurrentGoal.status !== "paused"
+      || latestCurrentGoal.tokenBudget !== 777
+      || latestCurrentGoal.tokensUsed !== 12
     ) {
-      throw new Error(`status-only goal update did not preserve goal fields: ${JSON.stringify(latestStatusOnlyGoal)}`);
+      throw new Error(`current goal update did not preserve goal fields: ${JSON.stringify(latestCurrentGoal)}`);
     }
-    console.log("app-server status-only goal update preserves objective ok");
+    console.log("app-server current goal update ok");
 
     await expectApiError(
       apiBase,
@@ -511,7 +517,8 @@ const main = async () => {
     });
     await fake.nextSessionCommand("set_goal");
     const nonWeeklyTurn = await fake.nextTurn();
-    fake.emitTokenUsage(nonWeeklyTurn, 64, 300);
+    fake.emitAccountRateLimits(64, 300);
+    fake.emitTokenUsage(nonWeeklyTurn);
     fake.completeTurn(nonWeeklyTurn);
     await fake.expectNoTurn(150);
     console.log("consume-until ignores non-weekly secondary window ok");
@@ -555,8 +562,18 @@ const main = async () => {
     ) {
       throw new Error(`consume goal initial turn mismatch: ${JSON.stringify(consumeTurn)}`);
     }
-    fake.emitTokenUsage(consumeTurn, 64);
-    fake.emitGoalUpdated({ objective: consumeObjective, status: "complete" });
+    fake.emitAccountRateLimits(64);
+    fake.emitTokenUsage(consumeTurn);
+    fake.emitGoalUpdated({
+      threadId: fake.threadId,
+      objective: consumeObjective,
+      status: "complete",
+      tokenBudget: null,
+      tokensUsed: 100,
+      timeUsedSeconds: 60,
+      createdAt: 3,
+      updatedAt: 4
+    });
     await waitForGoalStatus(apiBase, fake.threadId, "complete", consumeObjective);
     fake.completeTurn(consumeTurn);
     const retryTurn = await fake.nextTurn();
@@ -587,7 +604,8 @@ const main = async () => {
     ) {
       throw new Error(`consume policy-only retarget missing from thread detail: ${JSON.stringify(retargetDetail.goalRunPolicy)}`);
     }
-    fake.emitWeeklyOnlyTokenUsage(retryTurn, 84);
+    fake.emitWeeklyAccountRateLimits(84);
+    fake.emitTokenUsage(retryTurn);
     const wrapUpSetGoal = await fake.nextSessionCommand("set_goal");
     const wrapUpGoal = objectValue(wrapUpSetGoal.goal);
     if (
@@ -692,7 +710,8 @@ const main = async () => {
     ) {
       throw new Error(`consume goal resumed turn mismatch: ${JSON.stringify(resumedTurn)}`);
     }
-    fake.emitTokenUsage(resumedTurn, 95);
+    fake.emitAccountRateLimits(95);
+    fake.emitTokenUsage(resumedTurn);
     const resumedWrapUpSetGoal = await fake.nextSessionCommand("set_goal");
     const resumedWrapUpGoal = objectValue(resumedWrapUpSetGoal.goal);
     if (
@@ -769,7 +788,8 @@ const main = async () => {
     if (stopCommand.threadId !== fake.threadId || stopCommand.turnId !== stoppedTurn.turnId) {
       throw new Error(`consume policy stop command mismatch: ${JSON.stringify(stopCommand)}`);
     }
-    fake.emitTokenUsage(stoppedTurn, 64);
+    fake.emitAccountRateLimits(64);
+    fake.emitTokenUsage(stoppedTurn);
     fake.completeTurn(stoppedTurn);
     await fake.expectNoTurn(150);
     console.log("consume-until manual stop halts continuation ok");
@@ -992,62 +1012,106 @@ class FakeMachine {
     });
   }
 
-  emitTokenUsage(command: SessionCommand, secondaryUsedPercent = 64, secondaryWindowMinutes = 10080) {
+  emitTokenUsage(command: SessionCommand) {
     const threadId = command.threadId ?? this.options.threadId;
     if (!command.turnId) throw new Error(`fake turn missing turnId: ${JSON.stringify(command)}`);
-    this.emitTokenUsageForTurnId(threadId, command.turnId, {
-      rateLimits: {
-        primary: {
-          usedPercent: 12.5,
-          windowMinutes: 300,
-          resetsAt: 1781058359
-        },
-        secondary: {
-          usedPercent: secondaryUsedPercent,
-          windowMinutes: secondaryWindowMinutes,
-          resetsAt: 1781140554
+    this.emitTokenUsageForTurnId(threadId, command.turnId);
+  }
+
+  emitAccountRateLimits(secondaryUsedPercent = 64, secondaryWindowMinutes = 10080) {
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "account_rate_limits_updated",
+        heartbeat: false,
+        rateLimits: {
+          limitId: "codex",
+          limitName: null,
+          primary: {
+            usedPercent: 12.5,
+            windowDurationMins: 300,
+            resetsAt: 1781058359
+          },
+          secondary: {
+            usedPercent: secondaryUsedPercent,
+            windowDurationMins: secondaryWindowMinutes,
+            resetsAt: 1781140554
+          },
+          credits: null,
+          planType: "pro",
+          rateLimitReachedType: null
         }
       }
     });
   }
 
-  emitWeeklyOnlyTokenUsage(command: SessionCommand, usedPercent: number) {
-    const threadId = command.threadId ?? this.options.threadId;
-    if (!command.turnId) throw new Error(`fake turn missing turnId: ${JSON.stringify(command)}`);
-    this.emitTokenUsageForTurnId(threadId, command.turnId, {
-      rateLimits: {
-        primary: {
-          usedPercent,
-          windowMinutes: 10080,
-          resetsAt: 1781140554
-        },
-        secondary: null
+  emitWeeklyAccountRateLimits(usedPercent: number) {
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "account_rate_limits_updated",
+        heartbeat: false,
+        rateLimits: {
+          limitId: "codex",
+          limitName: null,
+          primary: {
+            usedPercent,
+            windowDurationMins: 10080,
+            resetsAt: 1781140554
+          },
+          secondary: null,
+          credits: null,
+          planType: "pro",
+          rateLimitReachedType: null
+        }
       }
     });
   }
 
-  emitTokenUsageWithoutRateLimits(turnId: string) {
-    this.emitTokenUsageForTurnId(this.options.threadId, turnId);
+  emitSparsePrimaryAccountRateLimit(usedPercent: number) {
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "account_rate_limits_updated",
+        heartbeat: false,
+        rateLimits: {
+          limitId: "codex",
+          limitName: null,
+          primary: {
+            usedPercent,
+            windowDurationMins: null,
+            resetsAt: null
+          },
+          secondary: null,
+          credits: null,
+          planType: "pro",
+          rateLimitReachedType: null
+        }
+      }
+    });
   }
 
-  emitSnakeCaseTokenUsageWithoutRateLimits(turnId: string) {
+  emitContextTokenUsage(turnId: string) {
     this.emitTokenUsageForTurnId(this.options.threadId, turnId, {
       tokenUsage: {
         last: {
-          input_tokens: 321,
-          cached_input_tokens: 123,
-          output_tokens: 222,
-          reasoning_output_tokens: 111,
-          total_tokens: 654
+          inputTokens: 321,
+          cachedInputTokens: 123,
+          outputTokens: 222,
+          reasoningOutputTokens: 111,
+          totalTokens: 654
         },
         total: {
-          input_tokens: 321,
-          cached_input_tokens: 123,
-          output_tokens: 222,
-          reasoning_output_tokens: 111,
-          total_tokens: 543
+          inputTokens: 321,
+          cachedInputTokens: 123,
+          outputTokens: 222,
+          reasoningOutputTokens: 111,
+          totalTokens: 543
         },
-        model_context_window: 456000
+        modelContextWindow: 456000
       }
     });
   }
@@ -1056,10 +1120,6 @@ class FakeMachine {
     threadId: string,
     turnId: string,
     options: {
-      rateLimits?: {
-        primary: { usedPercent: number; windowMinutes: number; resetsAt: number } | null;
-        secondary: { usedPercent: number; windowMinutes: number; resetsAt: number } | null;
-      };
       tokenUsage?: Record<string, unknown>;
     } = {}
   ) {
@@ -1092,21 +1152,7 @@ class FakeMachine {
                   totalTokens: 1290
                 },
                 modelContextWindow: 200000
-              }),
-              ...(options.rateLimits
-                ? {
-                  rateLimits: {
-                    limitId: "codex",
-                    limitName: null,
-                    primary: options.rateLimits.primary,
-                    secondary: options.rateLimits.secondary,
-                    credits: null,
-                    individualLimit: null,
-                    planType: "pro",
-                    rateLimitReachedType: null
-                  }
-                }
-                : {})
+              })
             }
           }
         }
@@ -1148,8 +1194,12 @@ class FakeMachine {
         heartbeat: false,
         turns: [{
           id: turnId,
+          status: "completed",
+          itemsView: "full",
+          error: null,
           startedAt: 1781058300,
           completedAt: 1781058360,
+          durationMs: 60_000,
           items: [
             { id: itemId, type: "userMessage", content: [{ type: "text", text }] },
             { id: `${turnId}-agent`, type: "agentMessage", text: "usage snapshot final answer" }
@@ -1170,8 +1220,12 @@ class FakeMachine {
         turns: [
           {
             id: turnId,
+            status: "completed",
+            itemsView: "full",
+            error: null,
             startedAt: 1781058300,
             completedAt: 1781058360,
+            durationMs: 60_000,
             items: [
               {
                 id: `${turnId}-agent`,
@@ -1228,6 +1282,20 @@ class FakeMachine {
             goal
           }
         }
+      }
+    });
+  }
+
+  emitGoalSnapshot(goal: Record<string, unknown> | null) {
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "thread_event",
+        threadId: this.options.threadId,
+        heartbeat: false,
+        historical: true,
+        message: { result: { goal } }
       }
     });
   }
@@ -1551,37 +1619,31 @@ const waitForTaskStatus = async (
   throw new Error(`task ${taskId} did not reach status ${status}`);
 };
 
-const assertThreadUsageRateLimits = async (apiBase: string, threadId: string) => {
-  const detail = await waitForThreadUsage(apiBase, threadId);
-  const primary = detail.threadUsage?.primaryRateLimit;
-  const secondary = detail.threadUsage?.secondaryRateLimit;
-  if (
-    primary?.usedPercent !== 12.5
-    || primary.windowMinutes !== 300
-    || primary.resetsAt !== 1781058359
-    || secondary?.usedPercent !== 64
-    || secondary.windowMinutes !== 10080
-    || secondary.resetsAt !== 1781140554
-  ) {
-    throw new Error(`thread usage did not include rate limits: ${JSON.stringify(detail.threadUsage)}`);
+const assertSessionAccountRateLimits = async (
+  apiBase: string,
+  sessionId: string,
+  expected: {
+    primaryUsedPercent?: number;
+    primaryResetsAt?: number;
+  } = {}
+) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const data = await apiJson<{ sessions?: PartialSessionSummary[] }>(apiBase, "/api/sessions");
+    const accountRateLimits = data.sessions?.find((session) => session.sessionId === sessionId)?.accountRateLimits;
+    const primary = accountRateLimits?.primaryRateLimit;
+    const secondary = accountRateLimits?.secondaryRateLimit;
+    if (
+      primary?.usedPercent === (expected.primaryUsedPercent ?? 12.5)
+      && primary.windowMinutes === 300
+      && primary.resetsAt === (expected.primaryResetsAt ?? 1781058359)
+      && secondary?.usedPercent === 64
+      && secondary.windowMinutes === 10080
+      && secondary.resetsAt === 1781140554
+    ) return;
+    await delay(100);
   }
-  const usageRecord = detail.records?.find((record) => {
-    const payload = objectValue(record.payload);
-    return record.type === "event_msg" && payload?.type === "token_count";
-  });
-  const rateLimits = objectValue(objectValue(usageRecord?.payload)?.rate_limits);
-  const recordPrimary = objectValue(rateLimits?.primary);
-  const recordSecondary = objectValue(rateLimits?.secondary);
-  if (
-    recordPrimary?.used_percent !== 12.5
-    || recordPrimary.window_minutes !== 300
-    || recordPrimary.resets_at !== 1781058359
-    || recordSecondary?.used_percent !== 64
-    || recordSecondary.window_minutes !== 10080
-    || recordSecondary.resets_at !== 1781140554
-  ) {
-    throw new Error(`token_count record did not preserve rate_limits: ${JSON.stringify(usageRecord)}`);
-  }
+  throw new Error(`session ${sessionId} did not receive account rate limits`);
 };
 
 const assertThreadUsageContext = async (
@@ -1663,16 +1725,6 @@ const assertTurnTokenUsageRecords = async (
   throw new Error(`turn ${turnId} did not preserve token usage records ${JSON.stringify(expectedTotals)}`);
 };
 
-const waitForThreadUsage = async (apiBase: string, threadId: string) => {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 5000) {
-    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
-    if (detail.threadUsage?.primaryRateLimit && detail.threadUsage.secondaryRateLimit) return detail;
-    await delay(100);
-  }
-  throw new Error(`thread ${threadId} did not receive token usage rate limits`);
-};
-
 const waitForThreadUsageContext = async (
   apiBase: string,
   threadId: string,
@@ -1720,6 +1772,32 @@ const assertHistoricalSnapshotPublishesMarkedRecordEvents = async (apiBase: stri
     const subscribe = await fake.nextSessionCommand("subscribe_thread_records");
     if (subscribe.threadId !== threadId) throw new Error(`subscribe command used wrong thread: ${JSON.stringify(subscribe)}`);
     subscription.messages.length = 0;
+
+    fake.emitGoalSnapshot({
+      threadId,
+      objective: "historical goal/get snapshot",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 1,
+      timeUsedSeconds: 2,
+      createdAt: 1,
+      updatedAt: 2
+    });
+    await waitForRealtimeMessage(
+      subscription.messages,
+      (message) => message.type === "record"
+        && message.historical === true
+        && objectValue(message.record?.payload)?.type === "thread_goal_updated",
+      "historical goal/get snapshot"
+    );
+    fake.emitGoalSnapshot(null);
+    await waitForRealtimeMessage(
+      subscription.messages,
+      (message) => message.type === "record"
+        && message.historical === true
+        && objectValue(message.record?.payload)?.type === "thread_goal_cleared",
+      "historical empty goal/get snapshot"
+    );
 
     const turnId = `historical-turn-${process.pid}`;
     fake.emitTurnsSnapshot(turnId);

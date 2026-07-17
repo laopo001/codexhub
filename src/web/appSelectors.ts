@@ -516,7 +516,6 @@ const currentServerRegisterUrlWithToken = () => {
   if (typeof window === "undefined") return "";
   const url = new URL(window.location.origin);
   url.searchParams.delete("codexhub_token");
-  url.searchParams.delete("token");
   const token = authToken();
   if (token) url.searchParams.set("codexhub_token", token);
   return url.toString();

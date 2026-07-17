@@ -259,34 +259,6 @@ export const registerThreadRoutes = <
     }
   });
 
-  app.post("/api/sessions/:sessionId/turn", async (request, reply) => {
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
-    const payload = z.object({
-      threadId: z.string().min(1),
-      input: inputSchema,
-      source: z.enum(["web", "telegram", "task"]).optional(),
-      options: threadRunOptionsSchema.optional(),
-      cwd: z.string().min(1).optional()
-    }).parse(request.body);
-
-    try {
-      const result = ctx.threads.runSessionThreadTurn(
-        params.sessionId,
-        payload.threadId,
-        payload.input,
-        payload.source ?? "web",
-        payload.options,
-        payload.cwd
-      );
-      result.promise.catch(() => undefined);
-      return { ok: true, thread: result.thread, command: result.command } satisfies ThreadTurnPayload;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session not found:") || message.startsWith("Thread not found:") ? 404 : 409);
-      return { error: message };
-    }
-  });
-
   app.get("/api/threads/:threadId", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const thread = ctx.threads.getThread(params.threadId);

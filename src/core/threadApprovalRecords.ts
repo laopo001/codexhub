@@ -78,7 +78,7 @@ export const approvalRecord = (approval: PendingApproval, errorMessage?: string)
       sourceThreadId: approval.threadId
     };
   }
-  if (approval.kind === "command_execution" || approval.kind === "legacy_exec_command") {
+  if (approval.kind === "command_execution") {
     return {
       id: approvalRecordId(approval),
       timestamp,
@@ -89,7 +89,7 @@ export const approvalRecord = (approval: PendingApproval, errorMessage?: string)
         status,
         action: {
           type: "exec",
-          command: approvalCommandParts(approval, params)
+          command: approvalCommandParts(params)
         },
         aggregated_output: approvalOutputText(approval, params, errorMessage),
         exit_code: approval.status === "denied" || approval.status === "failed" ? 1 : null,
@@ -145,7 +145,7 @@ export const fileChanges = (value: unknown) =>
       const kind = asRecord(record?.kind);
       return {
         path: typeof record?.path === "string" ? record.path : "",
-        kind: typeof kind?.type === "string" ? kind.type : typeof record?.kind === "string" ? record.kind : "update",
+        kind: typeof kind?.type === "string" ? kind.type : "update",
         diff: typeof record?.diff === "string" ? record.diff : undefined
       };
     })
@@ -221,15 +221,10 @@ const grantedPermissionsFromRequest = (params: Record<string, unknown> | null) =
   return granted;
 };
 
-const approvalCommandParts = (approval: PendingApproval, params: Record<string, unknown> | null) => {
+const approvalCommandParts = (params: Record<string, unknown> | null) => {
   const command = params?.command;
-  if (Array.isArray(command)) return command.filter((item): item is string => typeof item === "string" && Boolean(item));
   if (typeof command === "string" && command) return [command];
-  const action = asRecord(params?.action);
-  const actionCommand = action?.command;
-  if (Array.isArray(actionCommand)) return actionCommand.filter((item): item is string => typeof item === "string" && Boolean(item));
-  if (typeof actionCommand === "string" && actionCommand) return [actionCommand];
-  return approval.kind === "legacy_apply_patch" || approval.kind === "file_change" ? ["apply_patch"] : [];
+  return [];
 };
 
 const approvalOutputText = (
@@ -251,10 +246,7 @@ const approvalOutputText = (
 ].filter(Boolean).join("\n");
 
 const mcpElicitationServer = (params: Record<string, unknown> | null) =>
-  stringValue(params?.server)
-  ?? stringValue(params?.serverName)
-  ?? stringValue(params?.mcpServer)
-  ?? "mcp";
+  stringValue(params?.serverName) ?? "mcp";
 
 const mcpElicitationArguments = (params: Record<string, unknown> | null) => ({
   mode: stringValue(params?.mode) ?? "form",
@@ -275,19 +267,6 @@ const approvalNetworkText = (value: unknown) => {
 };
 
 const approvalFileChanges = (params: Record<string, unknown> | null) => {
-  const direct = fileChanges(params?.changes);
-  if (direct.length) return direct;
-  const legacy = asRecord(params?.fileChanges);
-  if (legacy) {
-    return Object.entries(legacy).map(([path, change]) => {
-      const record = asRecord(change);
-      return {
-        path,
-        kind: stringValue(record?.type) ?? stringValue(record?.kind) ?? "update",
-        diff: stringValue(record?.diff)
-      };
-    });
-  }
   const grantRoot = stringValue(params?.grantRoot);
   return grantRoot ? [{ path: grantRoot, kind: "grant", diff: stringValue(params?.reason) }] : [];
 };

@@ -19,6 +19,7 @@ const createHost = (options: {
   defaultModel?: string | null;
   models?: unknown;
   collaborationModes?: unknown;
+  reviewResult?: unknown;
   cachedThreadSettings?: {
     model?: string | null;
     modelReasoningEffort?: string | null;
@@ -41,7 +42,7 @@ const createHost = (options: {
     defaultModel: options.defaultModel === null ? undefined : options.defaultModel ?? "fallback-model",
     permissionParams: { approvalPolicy: "never" },
     listThreads: async () => [],
-    listModels: async () => options.models ?? [{ id: "model-1" }],
+    listModels: async () => options.models ?? [{ id: "model-1", model: "gpt-model-1" }],
     listCollaborationModes: async () => options.collaborationModes ?? ({
       data: [
         { name: "Plan", mode: "plan", model: null, reasoning_effort: "medium" },
@@ -80,7 +81,9 @@ const createHost = (options: {
           throw new Error("reset unavailable");
         }
       }
-      if (method === "review/start") return { turn: { id: "turn-review" } };
+      if (method === "review/start") {
+        return options.reviewResult ?? { reviewThreadId: "thread-1", turn: { id: "turn-review" } };
+      }
       if (method === "thread/fork") return { thread: { id: "thread-forked" } };
       return {};
     },
@@ -114,6 +117,29 @@ test("dispatcher maps compact commands to official app-server RPC and sync", asy
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(requests, [{ method: "thread/compact/start", params: { threadId: "thread-1" } }]);
   assert.deepEqual(synced, ["thread-1"]);
+});
+
+test("dispatcher requires the current review/start response", async () => {
+  const current = createHost({
+    reviewResult: { reviewThreadId: "review-thread-1", turn: { id: "review-turn-1" } }
+  });
+  assert.deepEqual(await dispatchAppServerCommand(command({
+    type: "review_thread",
+    threadId: "thread-1"
+  }), current.host), { ok: true, reviewThreadId: "review-thread-1" });
+  assert.deepEqual(current.synced, ["thread-1"]);
+
+  const missingThread = createHost({ reviewResult: { turn: { id: "review-turn-1" } } });
+  await assert.rejects(dispatchAppServerCommand(command({
+    type: "review_thread",
+    threadId: "thread-1"
+  }), missingThread.host), /did not return reviewThreadId and turn\.id/);
+
+  const missingTurn = createHost({ reviewResult: { reviewThreadId: "review-thread-1", turn: {} } });
+  await assert.rejects(dispatchAppServerCommand(command({
+    type: "review_thread",
+    threadId: "thread-1"
+  }), missingTurn.host), /did not return reviewThreadId and turn\.id/);
 });
 
 test("dispatcher applies one-turn plan and goal options before turn/start", async () => {
@@ -174,8 +200,8 @@ test("dispatcher resolves structured Plan from the live default model catalog", 
   const { host, requests } = createHost({
     defaultModel: null,
     models: [
-      { id: "model-other", isDefault: false },
-      { id: "model-default", isDefault: true }
+      { id: "catalog-other", model: "model-other", isDefault: false },
+      { id: "catalog-default", model: "model-default", isDefault: true }
     ],
     configThreadSettings: { model: null, modelReasoningEffort: null }
   });
@@ -196,7 +222,7 @@ test("dispatcher resolves structured Plan from the live default model catalog", 
 test("dispatcher clears old Plan model and effort when Auto is explicit", async () => {
   const { host, requests, settingsReads } = createHost({
     defaultModel: null,
-    models: [{ id: "model-default", isDefault: true }],
+    models: [{ id: "catalog-default", model: "model-default", isDefault: true }],
     cachedThreadSettings: {
       model: "model-old",
       modelReasoningEffort: "high",

@@ -153,9 +153,8 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
     };
 
     const registerSession = (parsed: Extract<MachineTransportIncomingMessage, { type: "session_register" }>) => {
-      const { currentThreadId: _legacyCurrentThreadId, ...registration } = parsed.registration;
       const registered = ctx.threads.registerSession({
-        ...registration,
+        ...parsed.registration,
         sessionId: parsed.sessionId,
         machineId: machineId!,
         transportId: sessionTransportId(parsed.sessionId)
@@ -242,8 +241,7 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
           return;
         }
         if (parsed.type === "session_heartbeat") {
-          const { currentThreadId: _legacyCurrentThreadId, ...registration } = parsed.registration ?? {};
-          ctx.threads.heartbeatSession(parsed.sessionId, registration);
+          ctx.threads.heartbeatSession(parsed.sessionId, parsed.registration ?? {});
           return;
         }
         if (parsed.type === "session_event") return ctx.threads.applySessionEvent(parsed.sessionId, parsed.event);

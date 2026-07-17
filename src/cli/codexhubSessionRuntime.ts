@@ -2,13 +2,8 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { Command } from "commander";
 import {
-  findFreePort,
-  signalExitCode,
-  startCodexAppServer,
   startCodexAppServerProcess,
-  terminateChild,
   type ChildExit,
   type CodexAppServerLaunchOptions,
   type CodexAppServerProcessHandle
@@ -29,12 +24,9 @@ import {
   pluginNameFromSkillName,
   stringField
 } from "./commandPalette.js";
-import { machineTransportUrl, parseMachineTransportMessage } from "../core/machineTransportProtocol.js";
-import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
 import { accountRateLimitsPayloadFromValue } from "../core/threadUsage.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
-import type { MachineCommand, MachineRegistration } from "../shared/machineTypes.js";
 import { isModelReasoningEffort } from "../shared/usageTypes.js";
 import type {
   AppServerApprovalDecision,
@@ -53,15 +45,6 @@ import type {
 
 export { startCodexAppServerProcess };
 export type { CodexAppServerProcessHandle };
-
-type ConnectOptions = {
-  server?: string;
-  cd?: string;
-  port?: string;
-  model?: string;
-  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
-  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
-};
 
 type JsonRecord = Record<string, unknown>;
 
@@ -151,8 +134,8 @@ type BridgeOptions = {
   readyLabel?: string;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
-  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
-  transportFactory?: HeadlessSessionTransportFactory;
+  approvalPolicy?: "untrusted" | "on-request" | "never";
+  transportFactory: HeadlessSessionTransportFactory;
 };
 
 export type HeadlessCodexhubSessionOptions = {
@@ -164,8 +147,8 @@ export type HeadlessCodexhubSessionOptions = {
   readyLabel?: string;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
-  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
-  transportFactory?: HeadlessSessionTransportFactory;
+  approvalPolicy?: "untrusted" | "on-request" | "never";
+  transportFactory: HeadlessSessionTransportFactory;
 };
 
 export type HeadlessCodexhubSessionHandle = {
@@ -183,96 +166,6 @@ export type HeadlessCodexhubSessionHandle = {
 export type AttachedCodexhubSessionOptions = Omit<BridgeOptions, "sessionId" | "ensureDefaultThread"> & {
   sessionId?: string;
 };
-
-export const registerCodexHubSessionCommands = (program: Command) => {
-  program
-    .argument("[prompt]", "optional prompt to start the Codex session")
-    .option("-C, --cd <dir>", "Codex working directory")
-    .option("--port <port>", "local Codex app-server websocket port")
-    .option("-m, --model <model>", "model for remote turns")
-    .option("-s, --sandbox <mode>", "sandbox mode for remote turns")
-    .option("-a, --approval-policy <policy>", "approval policy for remote turns")
-    .action(async (prompt: string | undefined) => {
-      await runCodexhubSession(program, program.opts<ConnectOptions>(), prompt);
-    });
-};
-
-async function runCodexhubSession(program: Command, options: ConnectOptions, prompt?: string) {
-  const rootOptions = program.opts<{ server: string }>();
-  const apiBase = options.server ?? rootOptions.server;
-  const cwd = path.resolve(options.cd ?? process.cwd());
-  const port = options.port ? Number(options.port) : await findFreePort();
-  if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${options.port}`);
-
-  const appServerUrl = `ws://127.0.0.1:${port}`;
-  const sessionId = createSessionId();
-  const machineId = createSessionMachineId(sessionId);
-  const appServer = await startCodexAppServer(cwd, appServerUrl, port, {
-    approvalPolicy: options.approvalPolicy,
-    sandbox: options.sandbox
-  });
-  let bridgeRunner: ProxyBridgeRunner | null = null;
-  let cleanedUp = false;
-  const appServerStopped = appServer.stopped.then(({ code, signal }) => {
-    if (!cleanedUp) process.exitCode = code ?? (signal ? 1 : 1);
-    return { code, signal };
-  });
-  const cleanup = cleanupOnce(async () => {
-    cleanedUp = true;
-    await bridgeRunner?.stop();
-    await terminateChild(appServer.child, appServerStopped);
-  });
-  const onSignal = (signal: NodeJS.Signals) => {
-    void cleanup().finally(() => process.exit(signalExitCode(signal)));
-  };
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
-  process.once("SIGHUP", onSignal);
-
-  try {
-    console.error([
-      `codexhub session started: ${sessionId}`,
-      `server: ${apiBase} (optional)`,
-      `cwd: ${cwd}`,
-      `app-server: ${appServerUrl}`
-    ].join("\n"));
-
-    bridgeRunner = new ProxyBridgeRunner({
-      apiBase,
-      appServerUrl,
-      sessionId,
-      machineId,
-      cwd,
-      ensureDefaultThread: true,
-      model: options.model,
-      sandbox: options.sandbox,
-      approvalPolicy: options.approvalPolicy,
-      transportFactory: (_context, callbacks) => new MachineBackedSessionTransport({
-        apiBase,
-        sessionId: sessionId,
-        machineId,
-        machineName: `codexhub session ${sessionId.slice(-8)}`,
-        cwd
-      }, callbacks)
-    });
-    bridgeRunner.start();
-    const ready = await Promise.race([
-      bridgeRunner.waitForReady(),
-      appServerStopped.then(({ code, signal }) => {
-        throw new Error(`codex app-server exited before session was ready: code=${code ?? ""} signal=${signal ?? ""}`);
-      })
-    ]);
-    if (prompt) {
-      await bridgeRunner.runTurn(prompt, ready.threadId);
-    }
-    await Promise.race([waitForShutdown(), appServerStopped]);
-  } finally {
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
-    process.off("SIGHUP", onSignal);
-    await cleanup();
-  }
-}
 
 export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSessionOptions): Promise<HeadlessCodexhubSessionHandle> {
   const cwd = path.resolve(options.cwd);
@@ -447,15 +340,7 @@ class ProxyBridgeRunner {
             cwd: this.options.cwd,
             appServerUrl: this.options.appServerUrl
           };
-          this.transport = this.options.transportFactory
-            ? this.options.transportFactory(transportContext, callbacks)
-            : new MachineBackedSessionTransport({
-              apiBase: this.options.apiBase,
-              sessionId: this.options.sessionId,
-              machineId: this.options.machineId ?? createSessionMachineId(this.options.sessionId),
-              machineName: `codexhub session ${this.options.sessionId.slice(-8)}`,
-              cwd: this.options.cwd
-          }, callbacks);
+          this.transport = this.options.transportFactory(transportContext, callbacks);
           if (this.options.ensureDefaultThread) {
             const threadId = await this.bridge.ensureDefaultThread();
             this.bridgeState = this.bridge.snapshotState();
@@ -513,168 +398,6 @@ class ProxyBridgeRunner {
       `  sessionId: ${this.options.sessionId}`,
       `  threadId: ${threadId}`
     ].join("\n"));
-  }
-}
-
-class MachineBackedSessionTransport implements HeadlessSessionTransport {
-  private ws: WebSocket | null = null;
-  private stopped = false;
-  private loopStarted = false;
-  private machineRegistered = false;
-  private machineCursor = 0;
-  private readonly sessionPeer: SessionTransportPeer;
-
-  constructor(
-    private readonly options: {
-      apiBase: string;
-      sessionId: string;
-      machineId: string;
-      machineName: string;
-      cwd: string;
-    },
-    private readonly callbacks: HeadlessSessionTransportCallbacks
-  ) {
-    this.sessionPeer = new SessionTransportPeer({
-      sessionId: options.sessionId,
-      send: (message) => this.sendRaw(message),
-      callbacks,
-      messages: {
-        connecting: (sessionId) => `codexhub session registering through machine: ${sessionId}`,
-        online: (sessionId) => `codexhub session connected through machine: ${sessionId}`,
-        serverError: "codexhub machine session server error",
-        commandQueueFailed: "codexhub machine session command queue failed"
-      }
-    });
-  }
-
-  start() {
-    if (this.loopStarted) return;
-    this.loopStarted = true;
-    void this.runLoop();
-  }
-
-  stop(options: { unregister?: boolean } = {}) {
-    this.stopped = true;
-    if (options.unregister && this.ws?.readyState === WebSocket.OPEN) {
-      this.sessionPeer.stop({ unregister: true });
-      if (this.machineRegistered) this.sendRaw({ type: "unregister" });
-    } else {
-      this.sessionPeer.stop();
-    }
-    this.ws?.close();
-    this.ws = null;
-  }
-
-  sendEvent(event: SessionEventInput) {
-    this.sessionPeer.sendEvent(event);
-  }
-
-  sendHeartbeat(registration: Partial<SessionRegistration>) {
-    this.sessionPeer.sendHeartbeat(registration);
-  }
-
-  private async runLoop() {
-    while (!this.stopped) {
-      this.callbacks.onState("connecting", `codexhub machine transport connecting: ${this.options.machineId}`);
-      try {
-        await this.connectOnce();
-        if (!this.stopped) this.callbacks.onState("offline", "codexhub machine transport offline: websocket closed");
-      } catch (error) {
-        if (!this.stopped) this.callbacks.onState("offline", `codexhub machine transport offline: ${errorText(error)}`);
-      } finally {
-        this.machineRegistered = false;
-        this.sessionPeer.markDisconnected();
-        this.ws?.close();
-        this.ws = null;
-      }
-      if (!this.stopped) await delay(5000);
-    }
-  }
-
-  private async connectOnce() {
-    const ws = await openWebSocket(machineTransportUrl(this.options.apiBase));
-    this.ws = ws;
-    const closed = new Deferred<void>();
-    const heartbeat = setInterval(() => this.sendMachineHeartbeat(), 10_000);
-    heartbeat.unref?.();
-    ws.addEventListener("message", (event) => this.handleMessage(event.data));
-    ws.addEventListener("error", () => {
-      if (!this.stopped) console.error("codexhub machine transport websocket error");
-      ws.close();
-    });
-    ws.addEventListener("close", () => {
-      clearInterval(heartbeat);
-      this.sessionPeer.markDisconnected();
-      closed.resolve();
-    }, { once: true });
-    this.sendRaw({
-      type: "register",
-      commandCursor: this.machineCursor,
-      registration: this.machineRegistration()
-    });
-    await closed.promise;
-  }
-
-  private machineRegistration(): MachineRegistration {
-    return {
-      machineId: this.options.machineId,
-      type: "local",
-      name: this.options.machineName,
-      hostname: os.hostname(),
-      pid: process.pid,
-      platform: `${process.platform}-${process.arch}`,
-      cwd: this.options.cwd,
-      // 这里的 legacy/transient headless 只承载当前 session，不能作为项目 launcher。
-      capabilities: { projectLauncher: false }
-    };
-  }
-
-  private sendMachineHeartbeat() {
-    if (!this.machineRegistered) return;
-    this.sendRaw({ type: "heartbeat", registration: this.machineRegistration() });
-  }
-
-  private handleMessage(data: unknown) {
-    const message = parseMachineTransportMessage(data);
-    if (!message) {
-      console.error("codexhub machine transport received invalid message");
-      return;
-    }
-    if (message.type === "registered") {
-      this.machineRegistered = true;
-      // 当 machine 注册成功后再注册 session，确保 server 先知道承载它的 machine。
-      this.sessionPeer.reconnect();
-      return;
-    }
-    if (message.type === "commands") {
-      this.machineCursor = Math.max(this.machineCursor, message.cursor);
-      this.failUnsupportedMachineCommands(message.commands);
-      return;
-    }
-    if (message.type === "session_registered" || message.type === "session_commands" || message.type === "session_error") {
-      this.sessionPeer.handleServerMessage(message);
-      return;
-    }
-    if (message.type === "error") {
-      console.error(`codexhub machine transport server error: ${message.message}`);
-    }
-  }
-
-  private failUnsupportedMachineCommands(commands: MachineCommand[]) {
-    for (const command of commands) {
-      // 这里的 transient machine 不处理目录浏览或 start_session，避免被误当项目入口。
-      this.sendRaw({
-        type: "command_error",
-        commandId: command.commandId,
-        message: "This transient Codex session is not a project launcher. Run `codexhub machine` for project browsing."
-      });
-      this.machineCursor = Math.max(this.machineCursor, command.seq);
-    }
-  }
-
-  private sendRaw(message: unknown) {
-    if (this.ws?.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify(message));
   }
 }
 
@@ -932,8 +655,8 @@ class CodexAppServerBridge {
       if (pending.timeout) clearTimeout(pending.timeout);
       const error = asRecord(message.error);
       const threadId = threadIdForPendingMessage(pending, message);
-      if (threadId && (!error || pending.method !== "thread/read")) {
-        await this.forwardThreadEvent(threadId, pending.commandId, message, { heartbeat: pending.method !== "thread/read" });
+      if (threadId) {
+        await this.forwardThreadEvent(threadId, pending.commandId, message);
         if (!error) await this.forwardExecutionStateFromMessage(threadId, message);
       }
       if (error) pending.reject(new Error(JSON.stringify(error)));
@@ -971,7 +694,7 @@ class CodexAppServerBridge {
 
   private rememberLoadedThread(pending: PendingRequest, message: JsonRecord) {
     if (pending.method !== "thread/start" && pending.method !== "thread/resume" && pending.method !== "thread/fork") return;
-    const threadId = resultThreadIdForMessage(message) ?? pending.threadId;
+    const threadId = resultThreadIdForMessage(message);
     if (threadId) {
       this.markThreadLoaded(threadId);
     }
@@ -997,7 +720,6 @@ class CodexAppServerBridge {
       const result = await this.request("account/rateLimits/read", undefined);
       return this.forwardAccountRateLimits(result);
     } catch {
-      // 旧版 app-server 可能没有账号级 rate limits。
       return false;
     }
   }
@@ -1075,10 +797,13 @@ class CodexAppServerBridge {
       ...permissionParams(this.options)
     }, command));
     const thread = asRecord(result?.thread);
-    const loadedThreadId = typeof thread?.id === "string" ? thread.id : threadId;
+    if (!thread || typeof thread.id !== "string") {
+      throw new Error("Codex app-server thread/resume did not return thread.id");
+    }
+    const loadedThreadId = thread.id;
     this.rememberThreadCwd(loadedThreadId, typeof thread?.cwd === "string" ? thread.cwd : cwd);
     this.markThreadLoaded(loadedThreadId);
-    return { threadId: loadedThreadId, ...(thread ? { thread } : {}) };
+    return { threadId: loadedThreadId, thread };
   }
 
   private scheduleAppServerTurnsSync(
@@ -1113,6 +838,18 @@ class CodexAppServerBridge {
       const loadedThreadId = await this.ensureThreadLoaded(threadId, cwd, this.options.model, undefined, {
         markBridgeStarted: true
       });
+      if (!stillObserved()) return;
+      const goalResult = asRecord(await this.request("thread/goal/get", { threadId: loadedThreadId }));
+      if (!goalResult || !hasOwn(goalResult, "goal")) {
+        throw new Error("Codex app-server thread/goal/get did not return goal");
+      }
+      if (!stillObserved()) return;
+      await this.forwardThreadEvent(
+        loadedThreadId,
+        undefined,
+        { result: goalResult },
+        { heartbeat: false, historical: true }
+      );
       if (!stillObserved()) return;
       // 快照补历史 records；实时 app-server 消息会单独转发。
       const turns = await this.listAppServerThreadTurnsOrEmpty(loadedThreadId);
@@ -1390,7 +1127,7 @@ class CodexAppServerBridge {
       ...(config && hasOwn(config, "approval_policy")
         ? { approvalPolicy: isThreadApprovalPolicy(approvalPolicy) ? approvalPolicy : null }
         : {}),
-      ...(config && (hasOwn(config, "sandbox_policy") || hasOwn(config, "sandbox_mode"))
+      ...(config && hasOwn(config, "sandbox_mode")
         ? { sandboxPolicy: sandboxPolicy ?? null }
         : {})
     };
@@ -1400,10 +1137,17 @@ class CodexAppServerBridge {
     threadId: string,
     commandId: string | undefined,
     message: JsonRecord,
-    options: { heartbeat?: boolean } = {}
+    options: { heartbeat?: boolean; historical?: boolean } = {}
   ) {
     // 原始 app-server 消息保留给 ThreadHub 归一化为 transcript records。
-    this.hub.sendEvent({ type: "thread_event", threadId, commandId, message, heartbeat: options.heartbeat });
+    this.hub.sendEvent({
+      type: "thread_event",
+      threadId,
+      commandId,
+      message,
+      heartbeat: options.heartbeat,
+      historical: options.historical
+    });
   }
 
   private async forwardAppServerThreadNotification(threadId: string, message: JsonRecord) {
@@ -1429,21 +1173,15 @@ class CodexAppServerBridge {
 
     if (method !== "thread/settings/updated") return;
     const params = asRecord(message.params);
-    const settings = asRecord(params?.threadSettings) ?? asRecord(params?.settings);
+    const settings = asRecord(params?.threadSettings);
     if (!settings) return;
-    const collaborationMode = asRecord(settings.collaborationMode ?? settings.collaboration_mode);
+    const collaborationMode = asRecord(settings.collaborationMode);
     const threadSettings: ThreadSettings = {
       model: typeof settings.model === "string" && settings.model ? settings.model : null,
-      modelReasoningEffort: isModelReasoningEffort(settings.effort)
-        ? settings.effort
-        : isModelReasoningEffort(settings.modelReasoningEffort)
-          ? settings.modelReasoningEffort
-          : null,
+      modelReasoningEffort: isModelReasoningEffort(settings.effort) ? settings.effort : null,
       serviceTier: typeof settings.serviceTier === "string" && settings.serviceTier
         ? settings.serviceTier
-        : typeof settings.service_tier === "string" && settings.service_tier
-          ? settings.service_tier
-          : null,
+        : null,
       ...threadApprovalPolicySettings(settings),
       ...threadSandboxPolicySettings(settings),
       collaborationMode: collaborationMode?.mode === "plan" || collaborationMode?.mode === "default"
@@ -1468,14 +1206,13 @@ class CodexAppServerBridge {
       return;
     }
     if (method === "thread/status/changed") {
-      const thread = asRecord(params?.thread);
-      const status = asRecord(params?.status) ?? asRecord(thread?.status);
+      const status = asRecord(params?.status);
       const type = typeof status?.type === "string" ? status.type : "";
-      if (type === "active" || type === "running") {
+      if (type === "active") {
         await this.forwardThreadExecutionChanged(threadId, true);
         return;
       }
-      if (type === "idle" || type === "complete" || type === "completed") {
+      if (type === "idle" || type === "notLoaded" || type === "systemError") {
         await this.forwardThreadExecutionChanged(threadId, false);
       }
     }
@@ -1543,14 +1280,6 @@ class CodexAppServerBridge {
       }));
       return;
     }
-    if (method === "execCommandApproval") {
-      this.forwardApprovalRequest(message, "legacy_exec_command");
-      return;
-    }
-    if (method === "applyPatchApproval") {
-      this.forwardApprovalRequest(message, "legacy_apply_patch");
-      return;
-    }
     if (method === "item/tool/requestUserInput") {
       this.forwardUserInputRequest(message);
       return;
@@ -1577,7 +1306,7 @@ class CodexAppServerBridge {
     const requestId = message.id;
     if (typeof requestId !== "string" && typeof requestId !== "number") return;
     const params = asRecord(message.params) ?? {};
-    const threadId = approvalThreadId(params) ?? this.defaultThreadId;
+    const threadId = approvalThreadId(params);
     if (!threadId) {
       this.ws.send(JSON.stringify({ id: requestId, result: approvalResponse(method, "deny", params) }));
       return;
@@ -1618,7 +1347,7 @@ class CodexAppServerBridge {
     const requestId = message.id;
     if (typeof requestId !== "string" && typeof requestId !== "number") return;
     const params = asRecord(message.params) ?? {};
-    const threadId = approvalThreadId(params) ?? this.defaultThreadId;
+    const threadId = approvalThreadId(params);
     if (!threadId) {
       this.ws.send(JSON.stringify({ id: requestId, result: { answers: {} } }));
       return;
@@ -1683,14 +1412,11 @@ const envPositiveInt = (name: string, fallback: number) => {
 };
 
 const isThreadApprovalPolicy = (value: unknown): value is ThreadRunOptions["approvalPolicy"] =>
-  value === "untrusted" || value === "on-failure" || value === "on-request" || value === "never";
+  value === "untrusted" || value === "on-request" || value === "never";
 
 const threadApprovalPolicySettings = (settings: Record<string, unknown>): Pick<ThreadSettings, "approvalPolicy"> => {
   if (hasOwn(settings, "approvalPolicy")) {
     return { approvalPolicy: isThreadApprovalPolicy(settings.approvalPolicy) ? settings.approvalPolicy : null };
-  }
-  if (hasOwn(settings, "approval_policy")) {
-    return { approvalPolicy: isThreadApprovalPolicy(settings.approval_policy) ? settings.approval_policy : null };
   }
   return {};
 };
@@ -1699,16 +1425,11 @@ const threadSandboxPolicySettings = (settings: Record<string, unknown>): Pick<Th
   if (hasOwn(settings, "sandboxPolicy")) {
     return { sandboxPolicy: asThreadSandboxPolicy(settings.sandboxPolicy) ?? null };
   }
-  if (hasOwn(settings, "sandbox_policy")) {
-    return { sandboxPolicy: asThreadSandboxPolicy(settings.sandbox_policy) ?? null };
-  }
   return {};
 };
 
 const sandboxPolicyFromConfig = (config: JsonRecord | null): ThreadRunOptions["sandboxPolicy"] | undefined => {
   if (!config) return undefined;
-  const structured = asThreadSandboxPolicy(config.sandbox_policy);
-  if (structured) return structured;
   const mode = config.sandbox_mode;
   if (mode === "danger-full-access") return { type: "dangerFullAccess" };
   if (mode === "read-only") return { type: "readOnly", networkAccess: false };
@@ -1769,9 +1490,6 @@ const approvalResponse = (
   if (method === "item/permissions/requestApproval") {
     return permissionsApprovalResponse(decision, params);
   }
-  if (method === "execCommandApproval" || method === "applyPatchApproval") {
-    return { decision: legacyApprovalDecision(decision) };
-  }
   return { decision: modernApprovalDecision(decision) };
 };
 
@@ -1780,13 +1498,6 @@ const modernApprovalDecision = (decision: AppServerApprovalDecision) => {
   if (decision === "approve_for_session") return "acceptForSession";
   if (decision === "cancel") return "cancel";
   return "decline";
-};
-
-const legacyApprovalDecision = (decision: AppServerApprovalDecision) => {
-  if (decision === "approve") return "approved";
-  if (decision === "approve_for_session") return "approved_for_session";
-  if (decision === "cancel") return "abort";
-  return "denied";
 };
 
 const permissionsApprovalResponse = (
@@ -1858,16 +1569,13 @@ const userInputOptions = (value: unknown) => {
 };
 
 const approvalThreadId = (params: Record<string, unknown>) => {
-  const direct = stringValue(params.threadId);
-  if (direct) return direct;
-  return stringValue(params.conversationId);
+  return stringValue(params.threadId);
 };
 
 const approvalTurnId = (params: Record<string, unknown>) =>
   stringValue(params.turnId);
 
-const approvalItemId = (params: Record<string, unknown>) =>
-  stringValue(params.itemId) ?? stringValue(params.callId) ?? stringValue(params.approvalId);
+const approvalItemId = (params: Record<string, unknown>) => stringValue(params.itemId);
 
 const approvalCreatedAt = (params: Record<string, unknown>) => {
   const startedAtMs = typeof params.startedAtMs === "number" && Number.isFinite(params.startedAtMs)
@@ -1891,8 +1599,12 @@ const threadIdForMessage = (message: JsonRecord) => {
 };
 
 const threadIdForPendingMessage = (pending: Pick<PendingRequest, "method" | "threadId">, message: JsonRecord) => {
-  if (pending.method === "thread/fork") {
-    return resultThreadIdForMessage(message) ?? threadIdForMessage(message) ?? pending.threadId;
+  if (
+    pending.method === "thread/start"
+    || pending.method === "thread/resume"
+    || pending.method === "thread/fork"
+  ) {
+    return resultThreadIdForMessage(message);
   }
   return threadIdForMessage(message) ?? pending.threadId;
 };
@@ -1902,7 +1614,7 @@ const appServerThreadSummary = (
   workingDirectory: string
 ): ThreadCandidateSummary | null => {
   const threadId = typeof thread?.id === "string" ? thread.id : "";
-  const cwd = typeof thread?.cwd === "string" ? thread.cwd : workingDirectory;
+  const cwd = typeof thread?.cwd === "string" ? thread.cwd : "";
   if (!threadId || cwd !== workingDirectory) return null;
   return {
     threadId,
@@ -1918,15 +1630,11 @@ const appServerThreadSummary = (
 };
 
 const appServerModelCatalogItem = (model: JsonRecord | null): ModelCatalogItem | null => {
-  const modelName = stringValue(model?.model) ?? stringValue(model?.name) ?? stringValue(model?.id);
-  const id = stringValue(model?.id) ?? modelName;
+  const modelName = stringValue(model?.model);
+  const id = stringValue(model?.id);
   if (!id || !modelName) return null;
-  const defaultReasoningEffort = stringValue(model?.defaultReasoningEffort)
-    ?? stringValue(model?.default_reasoning_effort)
-    ?? null;
-  const defaultServiceTier = stringValue(model?.defaultServiceTier)
-    ?? stringValue(model?.default_service_tier)
-    ?? null;
+  const defaultReasoningEffort = stringValue(model?.defaultReasoningEffort) ?? null;
+  const defaultServiceTier = stringValue(model?.defaultServiceTier) ?? null;
   return {
     id,
     model: modelName,
@@ -1956,14 +1664,7 @@ const appServerReasoningOptions = (value: unknown, defaultReasoningEffort: strin
   };
   for (const item of Array.isArray(value) ? value : []) {
     const record = asRecord(item);
-    if (record) {
-      push(
-        record.reasoningEffort ?? record.reasoning_effort ?? record.value ?? record.id,
-        record.description
-      );
-    } else {
-      push(item);
-    }
+    if (record) push(record.reasoningEffort, record.description);
   }
   push(defaultReasoningEffort);
   return options;
@@ -1986,16 +1687,7 @@ const appServerServiceTierOptions = (model: JsonRecord | null, defaultServiceTie
   const rawServiceTiers = Array.isArray(model?.serviceTiers) ? model.serviceTiers : [];
   for (const item of rawServiceTiers) {
     const tier = asRecord(item);
-    if (tier) {
-      push(tier.id ?? tier.value ?? tier.name, tier.name ?? tier.label, tier.description);
-    } else {
-      push(item);
-    }
-  }
-  if (!rawServiceTiers.length) {
-    for (const item of Array.isArray(model?.additionalSpeedTiers) ? model.additionalSpeedTiers : []) {
-      push(item);
-    }
+    if (tier) push(tier.id, tier.name, tier.description);
   }
   push(defaultServiceTier);
   return options;
@@ -2005,7 +1697,6 @@ const stringValue = (value: unknown) => typeof value === "string" && value.trim(
 
 const appServerTimestamp = (value: unknown) => {
   if (typeof value === "number" && Number.isFinite(value)) return new Date(value * 1000).toISOString();
-  if (typeof value === "string" && value) return value;
   return new Date(0).toISOString();
 };
 
@@ -2018,8 +1709,6 @@ const resultThreadIdForMessage = (message: JsonRecord) => {
 export const createCodexhubSessionId = () => createSessionId();
 
 const createSessionId = () => `local-${safeSessionPart(os.hostname())}-${process.pid}-${randomUUID().slice(0, 8)}`;
-
-const createSessionMachineId = (sessionId: string) => `machine-session-${safeSessionPart(sessionId)}`;
 
 const sessionDisplayName = (sessionId: string) => `codexhub-${sessionId.split("-").at(-1) ?? sessionId.slice(-8)}`;
 
@@ -2039,11 +1728,6 @@ const asRecord = (value: unknown): JsonRecord | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as JsonRecord;
 };
-
-const waitForShutdown = async () => await new Promise<void>((resolve) => {
-  process.once("SIGINT", resolve);
-  process.once("SIGTERM", resolve);
-});
 
 const cleanupOnce = <T>(cleanup: () => T | Promise<T>) => {
   let called = false;

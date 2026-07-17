@@ -24,12 +24,12 @@ import type {
   ProjectPickerState,
   ProjectsPayload,
   ProjectSummary,
-  SessionView,
+  SessionSummary,
   ThreadPickerState
 } from "../types.js";
 
 type ProjectActionsContext = {
-  activeRuntimeSession?: SessionView | null;
+  activeRuntimeSession?: SessionSummary | null;
   activeTabThreadBySession: Record<string, string>;
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
@@ -38,7 +38,7 @@ type ProjectActionsContext = {
   projectList: ProjectSummary[];
   projectPicker: ProjectPickerState | null;
   selectedProjectKey: string;
-  sessionList: SessionView[];
+  sessionList: SessionSummary[];
   openThreads: OpenThreadState[];
   threadOrderBySession: Record<string, string[]>;
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
@@ -55,7 +55,7 @@ type ProjectActionsContext = {
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
-  setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
+  setSessionList: React.Dispatch<React.SetStateAction<SessionSummary[]>>;
   setTaskError: React.Dispatch<React.SetStateAction<string>>;
   setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   setThreadPicker: React.Dispatch<React.SetStateAction<ThreadPickerState | null>>;
@@ -74,8 +74,8 @@ type StartProjectThreadOptions = {
 };
 
 export type ProjectActions = {
-  selectProjectSession: (session: SessionView) => Promise<void>;
-  selectSessionThread: (session: SessionView, threadId: string) => Promise<void>;
+  selectProjectSession: (session: SessionSummary) => Promise<void>;
+  selectSessionThread: (session: SessionSummary, threadId: string) => Promise<void>;
   selectProject: (project: ProjectSummary) => Promise<void>;
   loadProjectPickerDirectory: (machineId: string, targetPath?: string) => Promise<void>;
   showProjectPicker: (machine: ProjectMachineGroup) => void;
@@ -83,7 +83,7 @@ export type ProjectActions = {
   submitProjectPickerPath: (event: React.FormEvent<HTMLFormElement>) => void;
   confirmProjectPicker: () => Promise<void>;
   loadThreadPickerCandidates: (sessionId: string) => Promise<void>;
-  openThreadPicker: (session: SessionView, workingDirectory?: string) => void;
+  openThreadPicker: (session: SessionSummary, workingDirectory?: string) => void;
   openSelectedProjectThreadPicker: () => Promise<void>;
   activateSessionThread: (sessionId: string, threadId: string) => Promise<void>;
   threadIsOpenForSession: (sessionId: string, threadId: string) => boolean;
@@ -108,7 +108,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       && machineProjectCatalogEditable(machine)
     );
 
-  const selectProjectSession = async (session: SessionView) => {
+  const selectProjectSession = async (session: SessionSummary) => {
     ctx.setActiveSessionId(session.sessionId);
     const selectedProject = ctx.selectedProjectKey
       ? ctx.projectList.find((item) => projectKeyForProject(item) === ctx.selectedProjectKey)
@@ -133,7 +133,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     }
   };
 
-  const selectSessionThread = async (session: SessionView, threadId: string) => {
+  const selectSessionThread = async (session: SessionSummary, threadId: string) => {
     ctx.setSelectedProjectKey("");
     ctx.setTaskError("");
     ctx.setProjectActionError("");
@@ -191,7 +191,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
   };
 
   const showProjectPicker = (machine: ProjectMachineGroup) => {
-    const browseMachineId = machine.machineId ?? machine.key;
+    const browseMachineId = machine.machineId;
     const summary = editableProjectPickerMachine(browseMachineId);
     if (!summary) return;
     const initialPath = summary?.cwd ?? machine.projects[0]?.path ?? "";
@@ -262,7 +262,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     }
   };
 
-  const openThreadPicker = (session: SessionView, workingDirectory = session.workingDirectory) => {
+  const openThreadPicker = (session: SessionSummary, workingDirectory = session.workingDirectory) => {
     ctx.setActiveSessionId(session.sessionId);
     ctx.setActiveWorkspacePath(workingDirectory);
     ctx.setThreadPicker({

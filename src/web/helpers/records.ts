@@ -63,7 +63,7 @@ export const latestThreadGoalFromRecords = (records: CodexRecord[], threadId?: s
     const goal = asRecord(payload.goal);
     if (!goalRecordMatchesThread(payload, goal, threadId)) continue;
     if (clearedAt !== null) {
-      const goalCreatedAt = goalTimeMs(goal?.createdAt) ?? goalTimeMs(goal?.created_at);
+      const goalCreatedAt = goalTimeMs(goal?.createdAt);
       const recordTime = recordTimestampMs(records[index]);
       const isOldGoal = goalCreatedAt !== null ? goalCreatedAt <= clearedAt : recordTime !== null && recordTime <= clearedAt;
       if (isOldGoal) continue;
@@ -72,14 +72,9 @@ export const latestThreadGoalFromRecords = (records: CodexRecord[], threadId?: s
     if (!objective) return null;
     const status = threadGoalStatusFromValue(goal?.status);
     if (status === "complete") return null;
-    const tokenBudget = typeof goal?.tokenBudget === "number"
-      ? goal.tokenBudget
-      : typeof goal?.token_budget === "number"
-        ? goal.token_budget
-        : undefined;
+    const tokenBudget = typeof goal?.tokenBudget === "number" ? goal.tokenBudget : undefined;
     const updatedAt = records[index].timestamp
-      ?? (typeof goal?.updatedAt === "number" ? new Date(goal.updatedAt * 1000).toISOString() : undefined)
-      ?? (typeof goal?.updated_at === "number" ? new Date(goal.updated_at * 1000).toISOString() : undefined);
+      ?? (typeof goal?.updatedAt === "number" ? new Date(goal.updatedAt * 1000).toISOString() : undefined);
     return { objective, status, tokenBudget, updatedAt };
   }
   return null;
@@ -114,8 +109,8 @@ export const goalRecordMatchesThread = (
   threadId: string | undefined
 ) => {
   if (!threadId) return true;
-  const payloadThreadId = stringField(payload, "threadId") ?? stringField(payload, "thread_id");
-  const goalThreadId = stringField(goal, "threadId") ?? stringField(goal, "thread_id");
+  const payloadThreadId = stringField(payload, "threadId");
+  const goalThreadId = stringField(goal, "threadId");
   return payloadThreadId === threadId || goalThreadId === threadId || (!payloadThreadId && !goalThreadId);
 };
 
@@ -251,13 +246,12 @@ export const formatPercent = (value: number) => {
 
 export const formatResetTitle = (window: RateLimitWindow | null | undefined) => {
   if (!window) return undefined;
-  const resetAt = new Date(window.resetsAt * 1000);
-  if (Number.isNaN(resetAt.getTime())) return undefined;
+  const resetAt = window.resetsAt === null ? null : new Date(window.resetsAt * 1000);
   return [
     `${formatPercent(100 - window.usedPercent)} remaining`,
     `${formatPercent(window.usedPercent)} used`,
-    `${window.windowMinutes}m window`,
-    `resets ${resetAt.toLocaleString()}`
+    ...(window.windowMinutes === null ? [] : [`${window.windowMinutes}m window`]),
+    ...(resetAt && !Number.isNaN(resetAt.getTime()) ? [`resets ${resetAt.toLocaleString()}`] : [])
   ].join(", ");
 };
 
@@ -901,7 +895,7 @@ export const stringField = (record: Record<string, unknown> | null | undefined, 
 };
 
 const isContextCompactionType = (type: unknown) =>
-  type === "context_compaction" || type === "context_compacted" || type === "compacted";
+  type === "context_compaction";
 
 const activityRecordStatus = (status: unknown): ActivityStatusView["status"] | undefined => {
   if (typeof status !== "string") return undefined;

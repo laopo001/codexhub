@@ -12,7 +12,7 @@ import {
 import type { MachineDirectoryEntry } from "../src/shared/machineTypes.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { SessionEventInput, ThreadSummary } from "../src/shared/threadTypes.js";
-import type { OpenThreadState, ProjectMachineGroup, ProjectSummary, SessionView } from "../src/web/types.js";
+import type { OpenThreadState, ProjectMachineGroup, ProjectSummary, SessionSummary } from "../src/web/types.js";
 import { assertNoWorkerId, findKey } from "./smoke/support/assertions.js";
 import { apiJson } from "./smoke/support/http.js";
 import { findFreePort } from "./smoke/support/network.js";
@@ -97,8 +97,7 @@ type SshConnection = {
   remotePort: number;
   localHost: string;
   localPort: number;
-  remoteMode?: "bootstrap" | "installed" | "custom";
-  remoteClientHash?: string;
+  remoteClientHash: string;
 };
 
 type TaskResponse = {
@@ -323,7 +322,7 @@ const main = async () => {
   process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY = "on-request";
   process.env.TELEGRAM_BOT_TOKEN = "";
 
-  assertAppServerLaunchApprovalPolicyDefault();
+  assertAppServerLaunchOverrides();
   await assertEmbeddedServerDataDirOptionOverridesEnvironment();
   await assertTaskCronSemantics();
   await assertComposerAttachmentClear();
@@ -389,16 +388,14 @@ const main = async () => {
     if (!sessionId || !threadId || !projectId) throw new Error("project thread start did not return project/runtime/thread ids");
     await assertProjectRuntimeView(apiBase, projectId, sessionId);
     console.log(`project ok: ${sessionId} ${threadId}`);
-    await assertSessionTurnRequiresThread(apiBase, sessionId);
-    console.log("session turn target validation ok");
-    await assertCommandPalette(apiBase, sessionId, projectDir);
+    await assertCoreCommandPalette(apiBase, sessionId, projectDir);
     console.log("command palette ok");
 
     await assertWebRealtime(apiBase, threadId, async () => {
-      await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
+      await apiJson(apiBase, `/api/threads/${encodeURIComponent(threadId)}/turn`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ threadId, input: "/status", source: "web" })
+        body: JSON.stringify({ input: "/status", source: "web" })
       });
     });
     console.log("web realtime ok");
@@ -476,7 +473,6 @@ const assertEmbeddedServerDataDirOptionOverridesEnvironment = async () => {
     host: "127.0.0.1",
     portMode: "preferred",
     preferredPort: port,
-    explicitPort: true,
     dataDir: explicitDataDir,
     features: {
       localMachine: false,
@@ -486,10 +482,13 @@ const assertEmbeddedServerDataDirOptionOverridesEnvironment = async () => {
     }
   });
   try {
-    const health = await apiJson<{ configPath?: string; statePath?: string }>(`http://127.0.0.1:${port}`, "/api/health");
+    const health = await apiJson<{ configPath?: string }>(`http://127.0.0.1:${port}`, "/api/health");
     const expectedConfigPath = path.join(explicitDataDir, "config.yaml");
-    if (health.configPath !== expectedConfigPath || health.statePath !== expectedConfigPath) {
+    if (health.configPath !== expectedConfigPath) {
       throw new Error(`embedded server used unexpected config path: ${JSON.stringify(health)}, expected ${expectedConfigPath}`);
+    }
+    if ("statePath" in health) {
+      throw new Error(`embedded server exposed removed statePath alias: ${JSON.stringify(health)}`);
     }
   } finally {
     await server.stop();
@@ -609,7 +608,7 @@ const assertComposerAttachmentClear = async () => {
       running: true,
       session: { sessionId: "session-a", online: true, runnable: true }
     } as ThreadSummary;
-    const unchangedSessions = [{ sessionId: "session-a", threads: [threadSummary] }] as SessionView[];
+    const unchangedSessions = [{ sessionId: "session-a", threads: [threadSummary] }] as SessionSummary[];
     if (patchSessionsThread(unchangedSessions, threadSummary) !== unchangedSessions) {
       throw new Error("unchanged session thread projection did not preserve the session array");
     }
@@ -830,7 +829,6 @@ const assertTaskSearchMatches = async () => {
       path: "/work/alpha",
       name: "alpha",
       machineOnline: true,
-      online: true,
       running: false,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -1149,6 +1147,18 @@ const assertSshConnect = async (
     );
   }
 
+  const customCommandResponse = await fetch(`${apiBase}/api/ssh/connect`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ host: "included-host", remoteCommand: "custom command" })
+  });
+  const customCommandBody = await customCommandResponse.json().catch(() => null) as { error?: unknown } | null;
+  if (customCommandResponse.status !== 400 || customCommandBody?.error !== "invalid_request") {
+    throw new Error(
+      `removed ssh remoteCommand was not rejected: HTTP ${customCommandResponse.status} ${JSON.stringify(customCommandBody)}`
+    );
+  }
+
   const remotePort = 19001;
   const started = await apiJson<{ connection?: SshConnection }>(apiBase, "/api/ssh/connect", {
     method: "POST",
@@ -1164,7 +1174,7 @@ const assertSshConnect = async (
   if (!connection?.connectionId || connection.host !== "included-host" || connection.remotePort !== remotePort) {
     throw new Error(`ssh connect did not return expected connection: ${JSON.stringify(connection)}`);
   }
-  if (connection.remoteMode !== "bootstrap" || connection.remoteClientHash !== remoteClientHash) {
+  if (connection.remoteClientHash !== remoteClientHash) {
     throw new Error(`ssh connect did not use bootstrap remote client: ${JSON.stringify(connection)}`);
   }
 
@@ -1219,7 +1229,7 @@ const assertSshStartupConnect = async (
   remoteClientHash: string
 ) => {
   const connection = await waitForSshConnection(apiBase, "included-host");
-  if (connection.remoteMode !== "bootstrap" || connection.remoteClientHash !== remoteClientHash) {
+  if (connection.remoteClientHash !== remoteClientHash) {
     throw new Error(`startup ssh connection did not use bootstrap remote client: ${JSON.stringify(connection)}`);
   }
   const args = await waitForFakeSshArgs(argsPath);
@@ -1803,6 +1813,9 @@ const assertProjectSessionProjection = async () => {
   const onlineSnapshot = state.snapshot({ machines: [machine], sessions: [session], threads: [thread] });
   const onlineProject = onlineSnapshot.projects.find((item) => item.projectId === project.projectId);
   if (!onlineProject?.machineOnline) throw new Error("project snapshot did not expose machineOnline");
+  if ("online" in asRecord(onlineProject)) {
+    throw new Error(`project snapshot exposed removed online alias: ${JSON.stringify(onlineProject)}`);
+  }
   if ("session" in asRecord(onlineProject)) {
     throw new Error(`project snapshot should not expose runtime session: ${JSON.stringify(onlineProject)}`);
   }
@@ -1849,9 +1862,12 @@ const assertAppServerTurnLifecycleRecords = async () => {
     heartbeat: false,
     turns: [{
       id: turnId,
+      status: "completed",
+      itemsView: "full",
+      error: null,
       startedAt: 1,
       completedAt: 3.5,
-      timeToFirstTokenMs: 750,
+      durationMs: 2500,
       items: [{
         id: "user-1",
         type: "userMessage",
@@ -1876,7 +1892,6 @@ const assertAppServerTurnLifecycleRecords = async () => {
     !completed
     || completedPayload.type !== "task_complete"
     || completedPayload.duration_ms !== 2500
-    || completedPayload.time_to_first_token_ms !== 750
   ) {
     throw new Error(`app-server turn snapshot did not create task_complete duration: ${JSON.stringify(records)}`);
   }
@@ -1904,6 +1919,9 @@ const assertAppServerGoalRecords = async () => {
           objective: "goal from app-server response",
           status: "active",
           tokenBudget: 111,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1,
           updatedAt: 1
         }
       }
@@ -1931,10 +1949,15 @@ const assertAppServerGoalRecords = async () => {
       method: "thread/goal/updated",
       params: {
         threadId,
+        turnId: null,
         goal: {
+          threadId,
           objective: "keep the goal strip visible",
           status: "active",
           tokenBudget: 123,
+          tokensUsed: 1,
+          timeUsedSeconds: 1,
+          createdAt: 1,
           updatedAt: 2
         }
       }
@@ -1958,16 +1981,18 @@ const assertAppServerGoalRecords = async () => {
     type: "thread_event",
     threadId,
     heartbeat: false,
+    historical: true,
     message: {
       result: {
-        thread: {
-          id: threadId,
-          goal: {
-            objective: "goal from app-server snapshot",
-            status: "paused",
-            token_budget: 456,
-            updated_at: 3
-          }
+        goal: {
+          threadId,
+          objective: "goal from app-server snapshot",
+          status: "paused",
+          tokenBudget: 456,
+          tokensUsed: 12,
+          timeUsedSeconds: 34,
+          createdAt: 2,
+          updatedAt: 3
         }
       }
     }
@@ -1980,28 +2005,26 @@ const assertAppServerGoalRecords = async () => {
     goalRecords.length !== 3
     || goal.objective !== "goal from app-server snapshot"
     || goal.status !== "paused"
-    || goal.token_budget !== 456
+    || goal.tokenBudget !== 456
   ) {
-    throw new Error(`app-server thread snapshot did not create goal record: ${JSON.stringify(records)}`);
+    throw new Error(`app-server goal/get snapshot did not create goal record: ${JSON.stringify(records)}`);
   }
 
   hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
     heartbeat: false,
+    historical: true,
     message: {
       result: {
-        thread: {
-          id: threadId,
-          goal: null
-        }
+        goal: null
       }
     }
   });
   records = hub.getThread(threadId)?.records ?? [];
   const latestGoalPayload = asRecord(asRecord(records[records.length - 1]).payload);
   if (latestGoalPayload.type !== "thread_goal_cleared" || latestGoalPayload.threadId !== threadId) {
-    throw new Error(`app-server empty goal snapshot did not clear goal record: ${JSON.stringify(records)}`);
+    throw new Error(`app-server empty goal/get snapshot did not clear goal record: ${JSON.stringify(records)}`);
   }
 };
 
@@ -2062,7 +2085,7 @@ const assertAppServerServiceTierSettings = async () => {
     model: "gpt-service-tier-smoke",
     modelReasoningEffort: "ultra",
     serviceTier: "fast",
-    approvalPolicy: "on-failure",
+    approvalPolicy: "untrusted",
     sandboxPolicy: {
       type: "readOnly",
       networkAccess: false
@@ -2073,7 +2096,7 @@ const assertAppServerServiceTierSettings = async () => {
     thread?.model !== "gpt-service-tier-smoke"
     || thread.modelReasoningEffort !== "ultra"
     || thread.serviceTier !== "fast"
-    || thread.approvalPolicy !== "on-failure"
+    || thread.approvalPolicy !== "untrusted"
     || thread.sandboxPolicy?.type !== "readOnly"
   ) {
     throw new Error(`app-server service tier settings were not mirrored: ${JSON.stringify(thread)}`);
@@ -2184,8 +2207,12 @@ const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
     heartbeat: false,
     turns: [{
       id: turnId,
+      status: "completed",
+      itemsView: "full",
+      error: null,
       startedAt: 1,
       completedAt: 2,
+      durationMs: 1000,
       items: [{
         id: "user-1",
         type: "userMessage",
@@ -2234,6 +2261,12 @@ const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
     heartbeat: false,
     turns: [{
       id: "app-server-untimed-order-old-turn",
+      status: "completed",
+      itemsView: "full",
+      error: null,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null,
       items: [{
         id: "agent-untimed",
         type: "agentMessage",
@@ -2248,8 +2281,9 @@ const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
     message: {
       method: "item/completed",
       params: {
+        threadId: untimedThreadId,
         turnId: "app-server-untimed-order-new-turn",
-        timestamp: 3000,
+        completedAtMs: 3000,
         item: {
           id: "agent-later",
           type: "agentMessage",
@@ -2303,8 +2337,7 @@ const assertAppServerAgentMessageDeltaStreams = async () => {
             threadId,
             turnId,
             itemId,
-            delta,
-            phase: "final_answer"
+            delta
           }
         }
       });
@@ -2335,6 +2368,7 @@ const assertAppServerAgentMessageDeltaStreams = async () => {
         params: {
           threadId,
           turnId,
+          completedAtMs: 2000,
           item: {
             id: itemId,
             type: "agentMessage",
@@ -2386,6 +2420,7 @@ const assertAppServerReasoningItemStatusViews = async () => {
       params: {
         threadId,
         turnId,
+        startedAtMs: 1000,
         item: {
           id: itemId,
           type: "reasoning",
@@ -2410,6 +2445,7 @@ const assertAppServerReasoningItemStatusViews = async () => {
       params: {
         threadId,
         turnId,
+        completedAtMs: 2000,
         item: {
           id: itemId,
           type: "reasoning",
@@ -2441,13 +2477,13 @@ const assertSessionAccountRateLimits = async () => {
     rateLimits: {
       primary: {
         usedPercent: 25,
-        windowMinutes: 300,
+        windowDurationMins: 300,
         resetsAt: 1781058359
       },
       secondary: {
-        used_percent: 50,
+        usedPercent: 50,
         windowDurationMins: 10080,
-        resets_at: 1781140554
+        resetsAt: 1781140554
       }
     }
   });
@@ -2691,7 +2727,7 @@ const assertAppServerApprovalRequestFlow = async () => {
     approval: {
       method: string;
       requestId: number;
-      kind: "command_execution" | "file_change" | "mcp_elicitation" | "permissions_request" | "legacy_exec_command" | "legacy_apply_patch";
+      kind: "command_execution" | "file_change" | "mcp_elicitation" | "permissions_request";
       turnId?: string;
       itemId: string;
       params: Record<string, unknown>;
@@ -2860,7 +2896,7 @@ const assertAppServerApprovalRequestFlow = async () => {
         threadId,
         turnId: "approval-turn",
         itemId: "google-calendar-create-event",
-        server: "codex_apps",
+        serverName: "codex_apps",
         message: "Allow Google Calendar to create this event?",
         requestedSchema: {
           type: "object",
@@ -2880,68 +2916,6 @@ const assertAppServerApprovalRequestFlow = async () => {
       }
       if (approval.kind !== "mcp_elicitation" || approval.itemId !== "google-calendar-create-event") {
         throw new Error(`mcp elicitation approval metadata was not preserved: ${JSON.stringify(payload)}`);
-      }
-    }
-  );
-
-  await exerciseApproval(
-    "legacy-exec-approval",
-    "approve",
-    {
-      method: "execCommandApproval",
-      requestId: 103,
-      kind: "legacy_exec_command",
-      itemId: "legacy-call-1",
-      params: {
-        conversationId: threadId,
-        callId: "legacy-call-1",
-        approvalId: "legacy-exec-callback",
-        command: ["echo", "legacy"],
-        cwd,
-        reason: "legacy exec approval",
-        parsedCmd: []
-      }
-    },
-    (payload) => {
-      const action = asRecord(payload.action);
-      const command = action.command;
-      const approval = asRecord(payload.approval);
-      if (payload.type !== "local_shell_call" || !Array.isArray(command) || command.join(" ") !== "echo legacy") {
-        throw new Error(`legacy exec approval payload was not rendered as shell call: ${JSON.stringify(payload)}`);
-      }
-      if (approval.kind !== "legacy_exec_command" || approval.itemId !== "legacy-call-1") {
-        throw new Error(`legacy exec approval metadata was not preserved: ${JSON.stringify(payload)}`);
-      }
-    }
-  );
-
-  await exerciseApproval(
-    "legacy-patch-approval",
-    "deny",
-    {
-      method: "applyPatchApproval",
-      requestId: 104,
-      kind: "legacy_apply_patch",
-      itemId: "legacy-patch-1",
-      params: {
-        conversationId: threadId,
-        callId: "legacy-patch-1",
-        fileChanges: {
-          "src/example.ts": { type: "update", diff: "@@ -1 +1 @@" }
-        },
-        reason: "legacy patch approval",
-        grantRoot: null
-      }
-    },
-    (payload) => {
-      const changes = Array.isArray(payload.changes) ? payload.changes : [];
-      const first = asRecord(changes[0]);
-      const approval = asRecord(payload.approval);
-      if (payload.type !== "file_change" || first.path !== "src/example.ts" || first.kind !== "update") {
-        throw new Error(`legacy applyPatch approval payload was not rendered as file change: ${JSON.stringify(payload)}`);
-      }
-      if (approval.kind !== "legacy_apply_patch" || approval.itemId !== "legacy-patch-1") {
-        throw new Error(`legacy applyPatch approval metadata was not preserved: ${JSON.stringify(payload)}`);
       }
     }
   );
@@ -3113,8 +3087,12 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
     heartbeat: false,
     turns: [{
       id: keptTurnId,
+      status: "completed",
+      itemsView: "full",
+      error: null,
       startedAt: 1,
       completedAt: 2,
+      durationMs: 1000,
       items: [{
         id: "kept-user",
         type: "userMessage",
@@ -3134,8 +3112,12 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
       }]
     }, {
       id: removedTurnId,
+      status: "completed",
+      itemsView: "full",
+      error: null,
       startedAt: 3,
       completedAt: 4,
+      durationMs: 1000,
       items: [{
         id: "removed-user",
         type: "userMessage",
@@ -3171,8 +3153,12 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
           cwd: "/tmp/codexhub-fork-tool",
           turns: [{
             id: keptTurnId,
+            status: "completed",
+            itemsView: "full",
+            error: null,
             startedAt: 1,
             completedAt: 2,
+            durationMs: 1000,
             items: [{
               id: "kept-user",
               type: "userMessage",
@@ -3217,10 +3203,9 @@ const assertProjectDeleteDoesNotWriteTombstone = async () => {
   const projectPath = "/tmp/codexhub-delete-smoke";
   const now = "2026-01-01T00:00:00.000Z";
   const project = state.upsertProject({ machineId, path: projectPath, now });
-  const legacyProjectId = `${machineId}\0${projectPath}`;
   if (!project) throw new Error("explicit project upsert was suppressed");
-  if (!state.deleteProject(legacyProjectId)) throw new Error("legacy project delete did not report success");
-  if (state.deleteProject(legacyProjectId)) throw new Error("project delete should not be idempotent without tombstones");
+  if (!state.deleteProject(project.projectId)) throw new Error("project delete did not report success");
+  if (state.deleteProject(project.projectId)) throw new Error("project delete should not be idempotent without tombstones");
 
   const machine = {
     machineId,
@@ -3263,25 +3248,13 @@ const assertProjectDeleteDoesNotWriteTombstone = async () => {
   }
 };
 
-const assertSessionTurnRequiresThread = async (apiBase: string, sessionId: string) => {
-  const response = await fetch(new URL(`/api/sessions/${encodeURIComponent(sessionId)}/turn`, apiBase), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ input: "/status", source: "web" })
-  });
-  if (response.ok) throw new Error("/api/sessions/:sessionId/turn accepted a missing threadId");
-  if (response.status !== 400) {
-    throw new Error(`/api/sessions/:sessionId/turn missing threadId returned HTTP ${response.status}: ${await response.text()}`);
-  }
-};
-
-const assertAppServerLaunchApprovalPolicyDefault = () => {
+const assertAppServerLaunchOverrides = () => {
   const previous = process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
   try {
     delete process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
     const defaults = resolveCodexAppServerLaunchOptions();
-    if (defaults.approvalPolicy !== "never") {
-      throw new Error(`app-server launch approval policy default was not never: ${JSON.stringify(defaults)}`);
+    if (defaults.approvalPolicy !== undefined) {
+      throw new Error(`app-server launch invented an approval policy override: ${JSON.stringify(defaults)}`);
     }
     const explicit = resolveCodexAppServerLaunchOptions({ approvalPolicy: "on-request" });
     if (explicit.approvalPolicy !== "on-request") {
@@ -3296,10 +3269,11 @@ const assertAppServerLaunchApprovalPolicyDefault = () => {
 const assertProjectRuntimeView = async (apiBase: string, projectId: string, sessionId: string) => {
   const payload = await apiJson<ProjectsPayload>(apiBase, "/api/projects");
   assertNoWorkerId(payload, "/api/projects");
+  if ("statePath" in asRecord(payload)) throw new Error("/api/projects exposed removed statePath alias");
   const project = (payload.projects ?? []).map(asRecord).find((item) => item.projectId === projectId);
   if (!project) throw new Error(`/api/projects missing opened project ${projectId}`);
   if (project.machineOnline !== true) throw new Error(`/api/projects did not expose machineOnline for ${projectId}`);
-  if ("session" in project || "sessions" in project || "threads" in project) {
+  if ("online" in project || "session" in project || "sessions" in project || "threads" in project) {
     throw new Error(`/api/projects exposed runtime fields for ${projectId}: ${JSON.stringify(project)}`);
   }
   const sessionsPayload = await apiJson<SessionsPayload>(apiBase, "/api/sessions");
@@ -3388,54 +3362,28 @@ const subscribeThreadOnce = async (apiBase: string, threadId: string) => {
   }
 };
 
-const assertCommandPalette = async (apiBase: string, sessionId: string, cwd: string) => {
+const assertCoreCommandPalette = async (apiBase: string, sessionId: string, cwd: string) => {
   const payload = await apiJson<CommandPalettePayload>(
     apiBase,
-    `/api/sessions/${encodeURIComponent(sessionId)}/command-palette?cwd=${encodeURIComponent(cwd)}`
+    `/api/sessions/${encodeURIComponent(sessionId)}/command-palette?cwd=${encodeURIComponent(cwd)}&part=core`
   );
   assertNoWorkerId(payload, "/api/sessions/:sessionId/command-palette");
   assertNoCurrentThread(payload, "/api/sessions/:sessionId/command-palette");
   const entries = Array.isArray(payload.palette?.entries) ? payload.palette.entries.map(asRecord) : [];
   if (!entries.length) throw new Error("command palette did not return entries");
   const builtins = entries.filter((entry) => entry.kind === "builtin");
-  const plugins = entries.filter((entry) => entry.kind === "plugin");
   const skills = entries.filter((entry) => entry.kind === "skill");
   if (!builtins.some((entry) => entry.name === "model" && entry.insertText === "/model")) {
     throw new Error(`command palette missing /model builtin: ${JSON.stringify(entries.slice(0, 10))}`);
   }
-  if (!plugins.length) throw new Error("command palette did not include app-server plugins");
   if (!skills.length) throw new Error("command palette did not include app-server skills");
-  const staleDollar = [...plugins, ...skills].find((entry) => typeof entry.insertText === "string" && entry.insertText.startsWith("$"));
+  if (entries.some((entry) => entry.kind === "plugin")) {
+    throw new Error(`command palette core part included plugin entries: ${JSON.stringify(entries.filter((entry) => entry.kind === "plugin").slice(0, 5))}`);
+  }
+  const staleDollar = skills.find((entry) => typeof entry.insertText === "string" && entry.insertText.startsWith("$"));
   if (staleDollar) throw new Error(`command palette still uses $ trigger: ${JSON.stringify(staleDollar)}`);
-  const nonAtEntry = [...plugins, ...skills].find((entry) => typeof entry.insertText !== "string" || !entry.insertText.startsWith("@"));
+  const nonAtEntry = skills.find((entry) => typeof entry.insertText !== "string" || !entry.insertText.startsWith("@"));
   if (nonAtEntry) throw new Error(`command palette plugin/skill entry does not use @ trigger: ${JSON.stringify(nonAtEntry)}`);
-
-  const corePayload = await apiJson<CommandPalettePayload>(
-    apiBase,
-    `/api/sessions/${encodeURIComponent(sessionId)}/command-palette?cwd=${encodeURIComponent(cwd)}&part=core`
-  );
-  const coreEntries = Array.isArray(corePayload.palette?.entries) ? corePayload.palette.entries.map(asRecord) : [];
-  if (!coreEntries.some((entry) => entry.kind === "builtin" && entry.name === "model")) {
-    throw new Error(`command palette core part missing builtins: ${JSON.stringify(coreEntries.slice(0, 10))}`);
-  }
-  if (!coreEntries.some((entry) => entry.kind === "skill")) {
-    throw new Error(`command palette core part missing direct skills: ${JSON.stringify(coreEntries.slice(0, 10))}`);
-  }
-  if (coreEntries.some((entry) => entry.kind === "plugin")) {
-    throw new Error(`command palette core part included plugin entries: ${JSON.stringify(coreEntries.filter((entry) => entry.kind === "plugin").slice(0, 5))}`);
-  }
-
-  const pluginPayload = await apiJson<CommandPalettePayload>(
-    apiBase,
-    `/api/sessions/${encodeURIComponent(sessionId)}/command-palette?cwd=${encodeURIComponent(cwd)}&part=plugins`
-  );
-  const pluginEntries = Array.isArray(pluginPayload.palette?.entries) ? pluginPayload.palette.entries.map(asRecord) : [];
-  if (!pluginEntries.some((entry) => entry.kind === "plugin")) {
-    throw new Error(`command palette plugins part missing plugin entries: ${JSON.stringify(pluginEntries.slice(0, 10))}`);
-  }
-  if (pluginEntries.some((entry) => entry.kind === "builtin")) {
-    throw new Error(`command palette plugins part included builtins: ${JSON.stringify(pluginEntries.filter((entry) => entry.kind === "builtin").slice(0, 5))}`);
-  }
 };
 
 const assertStatusMarkdown = (thread: ThreadDetail) => {

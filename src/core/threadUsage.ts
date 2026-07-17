@@ -44,30 +44,50 @@ export const threadUsageFromRecord = (record: CodexRecord): ThreadUsage | null =
 
   const info = asRecord(payload.info);
   const lastTokenUsage = asRecord(info?.last_token_usage);
-  const usedTokens = numberValue(lastTokenUsage?.input_tokens)
-    ?? numberValue(lastTokenUsage?.total_tokens);
+  const usedTokens = numberValue(lastTokenUsage?.input_tokens);
   const windowTokens = numberValue(info?.model_context_window);
-  const rateLimits = asRecord(payload.rate_limits);
-  const rateLimitUsage = threadRateLimitsFromValue(rateLimits, record.timestamp ?? null);
 
   const usage: ThreadUsage = {
     context: usedTokens !== null && windowTokens !== null && windowTokens > 0
       ? { usedTokens, windowTokens }
       : null,
-    primaryRateLimit: rateLimitUsage?.primaryRateLimit ?? null,
-    secondaryRateLimit: rateLimitUsage?.secondaryRateLimit ?? null,
+    primaryRateLimit: null,
+    secondaryRateLimit: null,
     observedAt: record.timestamp ?? null
   };
 
   return usage.context || usage.primaryRateLimit || usage.secondaryRateLimit ? usage : null;
 };
 
-export const threadRateLimitsFromValue = (value: unknown, observedAt: string | null = null): ThreadRateLimits | null => {
+export const appServerThreadRateLimitsFromValue = (
+  value: unknown,
+  observedAt: string | null = null
+): ThreadRateLimits | null => {
   const record = asRecord(value);
   if (!record) return null;
-  const primaryRateLimit = rateLimitWindowUsage(record.primary);
-  const secondaryRateLimit = rateLimitWindowUsage(record.secondary);
+  const primaryRateLimit = appServerRateLimitWindowUsage(record.primary);
+  const secondaryRateLimit = appServerRateLimitWindowUsage(record.secondary);
   if (!primaryRateLimit && !secondaryRateLimit) return null;
+  return {
+    primaryRateLimit,
+    secondaryRateLimit,
+    observedAt
+  };
+};
+
+export const mergeAppServerThreadRateLimits = (
+  previous: ThreadRateLimits | null | undefined,
+  value: unknown,
+  observedAt: string | null = null
+): ThreadRateLimits | null => {
+  const record = asRecord(value);
+  if (!record) return previous ?? null;
+  const primaryUpdate = asRecord(record.primary);
+  const secondaryUpdate = asRecord(record.secondary);
+  if (!primaryUpdate && !secondaryUpdate) return previous ?? null;
+  const primaryRateLimit = mergeAppServerRateLimitWindow(previous?.primaryRateLimit, primaryUpdate);
+  const secondaryRateLimit = mergeAppServerRateLimitWindow(previous?.secondaryRateLimit, secondaryUpdate);
+  if (!primaryRateLimit && !secondaryRateLimit) return previous ?? null;
   return {
     primaryRateLimit,
     secondaryRateLimit,
@@ -83,33 +103,35 @@ export const accountRateLimitsPayloadFromValue = (value: unknown): Record<string
   const params = asRecord(record.params);
   if (params) return accountRateLimitsPayloadFromValue(params);
 
-  const byLimitId = asRecord(record.rateLimitsByLimitId ?? record.rate_limits_by_limit_id);
+  const byLimitId = asRecord(record.rateLimitsByLimitId);
   const codexLimit = rateLimitPayloadById(byLimitId, "codex");
   if (codexLimit) return codexLimit;
 
-  const direct = asRecord(record.rateLimits)
-    ?? asRecord(record.rate_limits)
-    ?? asRecord(record.accountRateLimits)
-    ?? asRecord(record.account_rate_limits)
-    ?? asRecord(record.limits);
+  const direct = asRecord(record.rateLimits);
   if (direct) return direct;
 
-  const firstLimit = firstRateLimitPayload(byLimitId);
-  if (firstLimit) return firstLimit;
-
-  return isRateLimitPayload(record) ? record : null;
+  return null;
 };
 
-const rateLimitWindowUsage = (value: unknown): ThreadRateLimitUsage | null => {
+const appServerRateLimitWindowUsage = (value: unknown): ThreadRateLimitUsage | null => {
   const record = asRecord(value);
   if (!record) return null;
-  const usedPercent = numberValue(record.used_percent) ?? numberValue(record.usedPercent);
-  const windowMinutes = numberValue(record.window_minutes)
-    ?? numberValue(record.windowMinutes)
-    ?? numberValue(record.window_duration_mins)
-    ?? numberValue(record.windowDurationMins);
-  const resetsAt = numberValue(record.resets_at) ?? numberValue(record.resetsAt);
-  if (usedPercent === null || windowMinutes === null || resetsAt === null) return null;
+  const usedPercent = numberValue(record.usedPercent);
+  const windowMinutes = numberValue(record.windowDurationMins);
+  const resetsAt = numberValue(record.resetsAt);
+  if (usedPercent === null) return null;
+  return { usedPercent, windowMinutes, resetsAt };
+};
+
+const mergeAppServerRateLimitWindow = (
+  previous: ThreadRateLimitUsage | null | undefined,
+  update: Record<string, unknown> | null
+): ThreadRateLimitUsage | null => {
+  if (!update) return previous ?? null;
+  const usedPercent = numberValue(update.usedPercent) ?? previous?.usedPercent ?? null;
+  const windowMinutes = numberValue(update.windowDurationMins) ?? previous?.windowMinutes ?? null;
+  const resetsAt = numberValue(update.resetsAt) ?? previous?.resetsAt ?? null;
+  if (usedPercent === null) return previous ?? null;
   return { usedPercent, windowMinutes, resetsAt };
 };
 
@@ -118,16 +140,8 @@ const rateLimitPayloadById = (byLimitId: Record<string, unknown> | null, limitId
   if (isRateLimitPayload(direct)) return direct;
   for (const value of Object.values(byLimitId ?? {})) {
     const record = asRecord(value);
-    const recordLimitId = typeof record?.limitId === "string" ? record.limitId : record?.limit_id;
+    const recordLimitId = typeof record?.limitId === "string" ? record.limitId : undefined;
     if (recordLimitId === limitId && isRateLimitPayload(record)) return record;
-  }
-  return null;
-};
-
-const firstRateLimitPayload = (byLimitId: Record<string, unknown> | null) => {
-  for (const value of Object.values(byLimitId ?? {})) {
-    const record = asRecord(value);
-    if (isRateLimitPayload(record)) return record;
   }
   return null;
 };

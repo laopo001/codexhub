@@ -44,11 +44,7 @@ const candidateRemoteClientPaths = () => {
     path.resolve(moduleDir, "ssh/remote-client.cjs"),
     path.resolve(moduleDir, "../ssh/remote-client.cjs"),
     path.resolve(packageRoot, "dist-node/ssh/remote-client.cjs"),
-    path.resolve(process.cwd(), "dist-node/ssh/remote-client.cjs"),
-    path.resolve(moduleDir, "ssh/remote-client.mjs"),
-    path.resolve(moduleDir, "../ssh/remote-client.mjs"),
-    path.resolve(packageRoot, "dist-node/ssh/remote-client.mjs"),
-    path.resolve(process.cwd(), "dist-node/ssh/remote-client.mjs")
+    path.resolve(process.cwd(), "dist-node/ssh/remote-client.cjs")
   ];
 };
 

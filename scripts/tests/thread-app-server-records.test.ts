@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { recordToView } from "../../src/core/codexRecordView.js";
+import { fileChanges } from "../../src/core/threadApprovalRecords.js";
 import { ThreadHub } from "../../src/core/threadHub.js";
 import {
   codexRecordFromAppServerItem,
+  codexRecordFromAppServerUsage,
   withAppServerItemRecordTiming
 } from "../../src/core/threadAppServerRecords.js";
+
+test("file changes only consume current structured kind values", () => {
+  assert.deepEqual(fileChanges([
+    { path: "/tmp/current", kind: { type: "add" }, diff: "+current" },
+    { path: "/tmp/legacy", kind: "delete", diff: "-legacy" }
+  ]), [
+    { path: "/tmp/current", kind: "add", diff: "+current" },
+    { path: "/tmp/legacy", kind: "update", diff: "-legacy" }
+  ]);
+});
 
 test("subAgentActivity remains lossless and gets a readable record view", () => {
   const item = {
@@ -84,17 +96,65 @@ test("mcpToolCall preserves the current app context fields", () => {
     status: "completed",
     arguments: { title: "Protocol review" },
     appContext,
-    mcpAppResourceUri: "calendar://events/1",
     pluginId: "calendar-plugin",
     result: { content: [] },
     error: null
   });
 
   assert.ok(record);
-  const payload = record.payload as Record<string, unknown>;
-  assert.deepEqual(payload.appContext, appContext);
-  assert.equal(payload.mcpAppResourceUri, "calendar://events/1");
-  assert.equal(payload.pluginId, "calendar-plugin");
+  assert.deepEqual(record.payload, {
+    type: "mcp_tool_call",
+    server: "apps",
+    tool: "create_event",
+    arguments: { title: "Protocol review" },
+    appContext,
+    pluginId: "calendar-plugin",
+    result: { content: [] },
+    error: null,
+    status: "completed"
+  });
+});
+
+test("token usage reads current camelCase protocol fields into stable snake_case records", () => {
+  const record = codexRecordFromAppServerUsage("thread-usage", "turn-usage", {
+    last: {
+      inputTokens: 120,
+      cachedInputTokens: 20,
+      outputTokens: 30,
+      reasoningOutputTokens: 10,
+      totalTokens: 150
+    },
+    total: {
+      inputTokens: 240,
+      cachedInputTokens: 40,
+      outputTokens: 60,
+      reasoningOutputTokens: 20,
+      totalTokens: 300
+    },
+    modelContextWindow: 200_000
+  });
+
+  assert.ok(record);
+  assert.deepEqual(record.payload, {
+    type: "token_count",
+    info: {
+      last_token_usage: {
+        input_tokens: 120,
+        cached_input_tokens: 20,
+        output_tokens: 30,
+        reasoning_output_tokens: 10,
+        total_tokens: 150
+      },
+      total_token_usage: {
+        input_tokens: 240,
+        cached_input_tokens: 40,
+        output_tokens: 60,
+        reasoning_output_tokens: 20,
+        total_tokens: 300
+      },
+      model_context_window: 200_000
+    }
+  });
 });
 
 test("new and future ThreadItem variants fall back without losing wire fields", () => {
@@ -181,18 +241,29 @@ test("ThreadHub terminal snapshots finish live status-less items", () => {
     threadId,
     message: {
       method: "item/started",
-      params: { threadId, turnId, item }
+      params: { threadId, turnId, item, startedAtMs: 1000 }
     }
   });
   const started = hub.getThread(threadId)?.records.find((candidate) =>
     candidate.id === `app:${threadId}:${turnId}:item:sleep:sleep-live`
   );
   assert.equal((started?.payload as Record<string, unknown>)?.status, "in_progress");
+  assert.equal(started?.timestamp, "1970-01-01T00:00:01.000Z");
+  assert.equal((started?.payload as Record<string, unknown>)?.started_at, "1970-01-01T00:00:01.000Z");
 
   hub.applySessionEvent(sessionId, {
     type: "thread_turns_snapshot",
     threadId,
-    turns: [{ id: turnId, status: "completed", startedAt: 1, completedAt: 2, items: [item] }]
+    turns: [{
+      id: turnId,
+      status: "completed",
+      itemsView: "full",
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1000,
+      items: [item]
+    }]
   });
 
   const record = hub.getThread(threadId)?.records.find((candidate) =>
@@ -213,13 +284,22 @@ test("ThreadHub stale active snapshots do not regress completed status-less item
     threadId,
     message: {
       method: "item/completed",
-      params: { threadId, turnId, item }
+      params: { threadId, turnId, item, completedAtMs: 2000 }
     }
   });
   hub.applySessionEvent(sessionId, {
     type: "thread_turns_snapshot",
     threadId,
-    turns: [{ id: turnId, status: "inProgress", startedAt: 1, completedAt: null, items: [item] }]
+    turns: [{
+      id: turnId,
+      status: "inProgress",
+      itemsView: "full",
+      error: null,
+      startedAt: 1,
+      completedAt: null,
+      durationMs: null,
+      items: [item]
+    }]
   });
 
   const record = hub.getThread(threadId)?.records.find((candidate) =>

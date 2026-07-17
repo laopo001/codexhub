@@ -9,7 +9,7 @@ export const isModelReasoningEffort = (value: unknown): value is ModelReasoningE
 export type ThreadServiceTier = string;
 
 /** Codex app-server approval policy。granular policy 暂不在 Web 菜单暴露。 */
-export type ThreadApprovalPolicy = "untrusted" | "on-failure" | "on-request" | "never";
+export type ThreadApprovalPolicy = "untrusted" | "on-request" | "never";
 
 /** Codex app-server turn/start 使用的结构化 sandbox policy。 */
 export type ThreadSandboxPolicy =
@@ -33,25 +33,20 @@ export type ThreadOptions = {
   sandboxPolicy?: ThreadSandboxPolicy;
 };
 
-/** app-server 可能返回的新旧命名 token usage 字段。 */
+/** CodexHub 对外稳定的 snake_case token usage 投影。 */
 export type Usage = {
   input_tokens?: number;
   cached_input_tokens?: number;
   output_tokens?: number;
   reasoning_output_tokens?: number;
   total_tokens?: number;
-  inputTokens?: number;
-  cachedInputTokens?: number;
-  outputTokens?: number;
-  reasoningOutputTokens?: number;
-  totalTokens?: number;
 };
 
 /** 某个 rate limit window 的使用情况。 */
 export type ThreadRateLimitUsage = {
   usedPercent: number;
-  windowMinutes: number;
-  resetsAt: number;
+  windowMinutes: number | null;
+  resetsAt: number | null;
 };
 
 /** session 或 thread 观察到的账号 rate limit 状态。 */

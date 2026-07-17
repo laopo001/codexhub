@@ -24,7 +24,6 @@ export type StartedCodexAppServerProcess = {
 
 const codexAppServerReadyTimeoutMs = () => envPositiveInt("CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", 60_000);
 const codexAppServerStderrTailLimit = 4000;
-const defaultCodexAppServerApprovalPolicy: CodexApprovalPolicy = "never";
 
 // 启动官方 Codex app-server，并保留足够 stderr 方便解释 ready 失败。
 export const startCodexAppServer = async (
@@ -130,7 +129,7 @@ export const resolveCodexAppServerLaunchOptions = (
 ): CodexAppServerLaunchOptions => {
   const envOptions = codexAppServerLaunchOptionsFromEnv();
   return {
-    approvalPolicy: overrides.approvalPolicy ?? envOptions.approvalPolicy ?? defaultCodexAppServerApprovalPolicy,
+    approvalPolicy: overrides.approvalPolicy ?? envOptions.approvalPolicy,
     sandbox: overrides.sandbox ?? envOptions.sandbox
   };
 };
@@ -146,7 +145,7 @@ export const parseCodexApprovalPolicy = (
 ): CodexApprovalPolicy | undefined => {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
-  if (trimmed === "untrusted" || trimmed === "on-failure" || trimmed === "on-request" || trimmed === "never") return trimmed;
+  if (trimmed === "untrusted" || trimmed === "on-request" || trimmed === "never") return trimmed;
   throw new Error(`Invalid ${label}: ${value}`);
 };
 
@@ -231,7 +230,6 @@ const codexCommandCandidates = () => {
     .flatMap((entry) => executableNames.map((name) => path.join(entry, name)));
   return [
     process.env.CODEX_HUB_CODEX_CLI,
-    process.env.CODEX_CLI_PATH,
     ...pathCandidates,
     ...executableNames.map((name) => path.join(os.homedir(), ".local", "share", "pnpm", "bin", name)),
     ...executableNames.map((name) => path.join(os.homedir(), ".npm-global", "bin", name)),
@@ -241,7 +239,7 @@ const codexCommandCandidates = () => {
 
 // WSL 会把 Windows PATH 注入 Linux 进程。那些目录里的 npm/pnpm shim 会由
 // Linux node 执行 Windows node_modules，进而加载错误平台的 Codex 可选依赖。
-// 显式 CODEX_HUB_CODEX_CLI/CODEX_CLI_PATH 仍保留覆盖能力；这里只过滤 PATH 自动发现。
+// 显式 CODEX_HUB_CODEX_CLI 仍保留覆盖能力；这里只过滤 PATH 自动发现。
 export const isCodexPathEntryUsableOnPlatform = (
   entry: string,
   platform: NodeJS.Platform = process.platform

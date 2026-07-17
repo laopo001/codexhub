@@ -5,7 +5,7 @@ import type { ModelCatalogItem, StoredMachine, ThreadGoalStatus } from "../../sh
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
 export { parseRealtimeMessage } from "../../shared/realtimeClient.js";
 import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../shared/taskCron.js";
-import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, SessionSummary, SessionView, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
+import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, SessionSummary, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -13,11 +13,10 @@ const authStorageKey = "codexhub.authToken";
 export const initAuthTokenFromUrl = () => {
   if (typeof window === "undefined") return "";
   const url = new URL(window.location.href);
-  const token = url.searchParams.get("codexhub_token")?.trim() || url.searchParams.get("token")?.trim() || "";
+  const token = url.searchParams.get("codexhub_token")?.trim() || "";
   if (!token) return authToken();
   window.localStorage.setItem(authStorageKey, token);
   url.searchParams.delete("codexhub_token");
-  url.searchParams.delete("token");
   window.history.replaceState(window.history.state, "", url);
   return token;
 };
@@ -92,7 +91,7 @@ const isSessionLike = (value: unknown): value is SessionSummary => {
   return Boolean(record && hasNonBlankString(record.sessionId));
 };
 
-export const normalizeSessions = (sessions: SessionSummary[] | undefined): SessionView[] =>
+export const normalizeSessions = (sessions: SessionSummary[] | undefined): SessionSummary[] =>
   Array.isArray(sessions)
     ? sessions
       .filter(isSessionLike)
@@ -121,7 +120,7 @@ export const normalizeProjects = (projects: ProjectSummary[] | undefined) =>
   Array.isArray(projects)
     ? projects.map((project) => ({
       ...project,
-      machineOnline: Boolean(project.machineOnline ?? (project.machine && "online" in project.machine && project.machine.online))
+      machineOnline: Boolean(project.machineOnline)
     }))
     : [];
 
@@ -168,7 +167,7 @@ export const taskDraftFromTask = (task: LocalTask): TaskDraft => ({
   input: task.input
 });
 
-export const taskThreadOptionsFor = (project: ProjectSummary | undefined, sessions: SessionView[] = []) => {
+export const taskThreadOptionsFor = (project: ProjectSummary | undefined, sessions: SessionSummary[] = []) => {
   const threads = new Map<string, Pick<ThreadSummary, "threadId" | "title" | "updatedAt">>();
   const pushThread = (thread: Pick<ThreadSummary, "threadId" | "title" | "updatedAt">) => {
     if (!thread.threadId) return;
@@ -787,7 +786,7 @@ export const removeThreadOrder = (current: Record<string, string[]>, threadId: s
   return next;
 };
 
-export const mergeThreadOrderBySession = (current: Record<string, string[]>, sessionList: SessionView[]) => {
+export const mergeThreadOrderBySession = (current: Record<string, string[]>, sessionList: SessionSummary[]) => {
   const next: Record<string, string[]> = {};
   for (const session of sessionList) {
     const threadIds = sessionThreadIds(session);
@@ -799,7 +798,7 @@ export const mergeThreadOrderBySession = (current: Record<string, string[]>, ses
   return next;
 };
 
-export const sessionThreadIds = (session: SessionView) => {
+export const sessionThreadIds = (session: SessionSummary) => {
   const threadIds: string[] = [];
   const pushThreadId = (threadId?: string) => {
     if (threadId && !threadIds.includes(threadId)) threadIds.push(threadId);
@@ -808,7 +807,7 @@ export const sessionThreadIds = (session: SessionView) => {
   return threadIds;
 };
 
-export const preferredThreadIdForSession = (session: SessionView, project?: ProjectSummary) => {
+export const preferredThreadIdForSession = (session: SessionSummary, project?: ProjectSummary) => {
   const sessionThreads = session.threads ?? [];
   if (!project) return sessionThreads[0]?.threadId ?? "";
   const projectThreads = sessionThreads.filter((thread) => thread.workingDirectory === project.path);
@@ -817,13 +816,13 @@ export const preferredThreadIdForSession = (session: SessionView, project?: Proj
   return projectThreads[0]?.threadId ?? "";
 };
 
-export const runtimeSessionForMachine = (sessions: SessionView[], machineId?: string) => {
+export const runtimeSessionForMachine = (sessions: SessionSummary[], machineId?: string) => {
   if (!machineId) return undefined;
   return sessions.find((session) => session.machineId === machineId && session.online)
     ?? sessions.find((session) => session.machineId === machineId);
 };
 
-export const runtimeSessionForProject = (project: ProjectSummary | undefined, sessions: SessionView[]) =>
+export const runtimeSessionForProject = (project: ProjectSummary | undefined, sessions: SessionSummary[]) =>
   project ? runtimeSessionForMachine(sessions, project.machineId) : undefined;
 
 export const adjacentThreadId = (threadIds: string[], threadId: string) => {
@@ -832,7 +831,7 @@ export const adjacentThreadId = (threadIds: string[], threadId: string) => {
   return threadIds[index + 1] ?? threadIds[index - 1] ?? "";
 };
 
-export const patchSessionsThread = (sessionList: SessionView[], thread: ThreadSummary) => {
+export const patchSessionsThread = (sessionList: SessionSummary[], thread: ThreadSummary) => {
   let changed = false;
   const next = sessionList.map((session) => {
     if (session.sessionId !== thread.session.sessionId) return session;
@@ -864,7 +863,7 @@ export const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSu
   return changed ? next : projects;
 };
 
-export const removeSessionsThread = (sessionList: SessionView[], threadId: string) =>
+export const removeSessionsThread = (sessionList: SessionSummary[], threadId: string) =>
   sessionList.map((session) => ({
     ...session,
     threads: (session.threads ?? []).filter((thread) => thread.threadId !== threadId)

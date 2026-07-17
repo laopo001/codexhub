@@ -58,7 +58,7 @@ export type SessionSummary = {
   threads: ThreadSummary[];
 };
 
-/** turn/start 可选参数。模型/effort/tier/权限可延续；Plan 走官方 collaborationMode 后复位为 default，Ultra 只由 effort 表达，不发送已废弃的 multiAgentMode。 */
+/** turn/start 可选参数。模型/effort/tier/权限可延续；Plan 走官方 collaborationMode 后复位为 default，Ultra 只由 effort 表达。 */
 export type ThreadRunOptions = {
   model?: string | null;
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
@@ -87,9 +87,7 @@ export type AppServerApprovalKind =
   | "command_execution"
   | "file_change"
   | "mcp_elicitation"
-  | "permissions_request"
-  | "legacy_exec_command"
-  | "legacy_apply_patch";
+  | "permissions_request";
 
 /** CodexHub Web 对 app-server 审批请求的稳定决策。 */
 export type AppServerApprovalDecision = "approve" | "approve_for_session" | "deny" | "cancel";
@@ -327,6 +325,7 @@ export type SessionEventInput =
       threadId: string;
       commandId?: string;
       heartbeat?: boolean;
+      historical?: boolean;
       message: unknown;
     }
   | {

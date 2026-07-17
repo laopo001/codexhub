@@ -249,7 +249,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       host: process.env.CODEX_HUB_HOST ?? "0.0.0.0",
       portMode: explicitPort ? "preferred" : "random",
       preferredPort: explicitPort,
-      explicitPort: Boolean(explicitPort),
       dataDir: this.context.globalStorageUri.fsPath,
       staticDirectory,
       surface: "vscode",
@@ -269,7 +268,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       const response = await fetch(new URL("/api/health", server.url));
       if (!response.ok) return fallbackPath;
       const body = asRecord(await response.json().catch(() => null));
-      return stringValue(body?.configPath) ?? stringValue(body?.statePath) ?? fallbackPath;
+      return stringValue(body?.configPath) ?? fallbackPath;
     } catch (error) {
       console.warn(`codexhub vscode config path fallback: ${errorText(error)}`);
       return fallbackPath;

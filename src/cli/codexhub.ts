@@ -10,7 +10,6 @@ import {
   type CodexAppServerLaunchOptions
 } from "./codexAppServerProcess.js";
 import { runCodexhubMachine, startCodexhubMachine, type CodexhubMachineHandle } from "./codexhubMachine.js";
-import { registerCodexHubSessionCommands } from "./codexhubConnect.js";
 
 type ServerCommandOptions = {
   host?: string;
@@ -92,7 +91,7 @@ program
   .option("--register-auth-token <token>", "parent CodexHub auth token (defaults to CODEX_HUB_REGISTER_AUTH_TOKEN)")
   .option("--register-machine-id <id>", "stable machine id for parent registration")
   .option("--register-name <name>", "display name for parent registration")
-  .option("--approval-policy <policy>", "default approval policy for launched Codex app-server (defaults to never)")
+  .option("--approval-policy <policy>", "approval policy override for launched Codex app-server")
   .option("--sandbox <mode>", "default sandbox mode for launched Codex app-server")
   .action(async (options: ServerCommandOptions = {}) => {
     const rootOptions = program.opts<{ port?: string }>();
@@ -125,7 +124,7 @@ program
   .option("--machine-id <id>", "stable machine id")
   .option("--type <type>", "machine connection type: local, ssh, or registered", "registered")
   .option("--name <name>", "display name")
-  .option("--approval-policy <policy>", "default approval policy for launched Codex app-server (defaults to never)")
+  .option("--approval-policy <policy>", "approval policy override for launched Codex app-server")
   .option("--sandbox <mode>", "default sandbox mode for launched Codex app-server")
   .action(async (options: MachineCommandOptions = {}) => {
     const appServerLaunch = appServerLaunchOptions(options);
@@ -260,13 +259,6 @@ program
     console.log("Reconnect the Theia workspace to activate the extension.");
   });
 
-registerRemovedTopLevelCommand("list", "codexhub list was removed. Use the Web UI, /api/projects, and /api/sessions for project and runtime state.");
-registerRemovedTopLevelCommand("delete", "codexhub delete was removed. Delete threads from the Web UI when needed.");
-registerRemovedTopLevelCommand("threads", "codexhub threads was removed. Use the Web thread picker to select or resume local Codex threads.");
-registerRemovedTopLevelCommand("resume", "codexhub resume was removed. Start a session with codexhub, then select or resume the thread from Web/API.");
-
-registerCodexHubSessionCommands(program);
-
 const taskCommand = program
   .command("task")
   .description("Manage local server-scheduled tasks")
@@ -367,16 +359,6 @@ function withAuth(init: RequestInit = {}): RequestInit {
   const headers = new Headers(init.headers);
   if (!headers.has("authorization")) headers.set("authorization", `Bearer ${token}`);
   return { ...init, headers };
-}
-
-function registerRemovedTopLevelCommand(name: string, message: string) {
-  program
-    .command(name, { hidden: true })
-    .allowUnknownOption(true)
-    .allowExcessArguments(true)
-    .action(() => {
-      throw new Error(message);
-    });
 }
 
 async function listLocalTasks() {
@@ -543,7 +525,6 @@ function authTokenFromUrl(value: string | undefined) {
   if (!trimmed) return undefined;
   const url = new URL(trimmed);
   return url.searchParams.get("codexhub_token")?.trim()
-    || url.searchParams.get("token")?.trim()
     || undefined;
 }
 

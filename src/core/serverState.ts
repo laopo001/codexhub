@@ -87,13 +87,11 @@ export class CodexhubServerState {
   }
 
   hasStoredProject(projectId: string) {
-    const resolvedProjectId = this.resolveProjectId(projectId);
-    return this.data.projects.some((project) => project.projectId === resolvedProjectId);
+    return this.data.projects.some((project) => project.projectId === projectId);
   }
 
   deleteProject(projectId: string) {
-    const resolvedProjectId = this.resolveProjectId(projectId);
-    const index = this.data.projects.findIndex((project) => project.projectId === resolvedProjectId);
+    const index = this.data.projects.findIndex((project) => project.projectId === projectId);
     if (index === -1) return false;
     this.data.projects.splice(index, 1);
     this.touch();
@@ -101,8 +99,7 @@ export class CodexhubServerState {
   }
 
   deleteTransientProject(projectId: string) {
-    const resolvedProjectId = this.resolveProjectId(projectId);
-    return this.transientProjects.delete(resolvedProjectId);
+    return this.transientProjects.delete(projectId);
   }
 
   deleteTransientProjectsForMachine(machineId: string) {
@@ -116,12 +113,11 @@ export class CodexhubServerState {
   }
 
   isTransientProject(projectId: string) {
-    return this.transientProjects.has(this.resolveProjectId(projectId));
+    return this.transientProjects.has(projectId);
   }
 
   persistTransientProject(projectId: string, input: { pinned?: boolean | null } = {}) {
-    const resolvedProjectId = this.resolveProjectId(projectId);
-    const transient = this.transientProjects.get(resolvedProjectId);
+    const transient = this.transientProjects.get(projectId);
     if (!transient) return null;
     const project = this.upsertProject({
       machineId: transient.machineId,
@@ -135,14 +131,13 @@ export class CodexhubServerState {
       project.pinned = input.pinned;
       this.touch();
     }
-    this.transientProjects.delete(resolvedProjectId);
+    this.transientProjects.delete(projectId);
     return project;
   }
 
   projectTarget(projectId: string): Pick<StoredProject, "projectId" | "machineId" | "path"> | null {
-    const resolvedProjectId = this.resolveProjectId(projectId);
-    const project = this.data.projects.find((item) => item.projectId === resolvedProjectId)
-      ?? this.transientProjects.get(resolvedProjectId);
+    const project = this.data.projects.find((item) => item.projectId === projectId)
+      ?? this.transientProjects.get(projectId);
     if (project) {
       return {
         projectId: project.projectId,
@@ -150,19 +145,11 @@ export class CodexhubServerState {
         path: project.path
       };
     }
-    const legacyProject = this.parseLegacyProjectId(projectId);
-    return legacyProject
-      ? {
-        projectId: projectIdFor(legacyProject.machineId, legacyProject.path),
-        machineId: legacyProject.machineId,
-        path: legacyProject.path
-      }
-      : null;
+    return null;
   }
 
   updateProject(projectId: string, input: { pinned?: boolean | null }) {
-    const resolvedProjectId = this.resolveProjectId(projectId);
-    const project = this.data.projects.find((item) => item.projectId === resolvedProjectId);
+    const project = this.data.projects.find((item) => item.projectId === projectId);
     if (!project) return null;
     let changed = false;
     if (input.pinned !== undefined && input.pinned !== null && project.pinned !== input.pinned) {
@@ -492,14 +479,12 @@ export class CodexhubServerState {
         name: projectName(project.path),
         machine,
         machineOnline,
-        online: machineOnline,
         running: threads.some((thread) => thread.running || thread.status === "running")
       };
     });
 
     return {
       configPath: this.filePath,
-      statePath: this.filePath,
       machines: [...machinesById.values()].sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt)),
       projects
     };
@@ -544,18 +529,6 @@ export class CodexhubServerState {
     const storedIds = new Set(stored.map((project) => project.projectId));
     const transient = [...this.transientProjects.values()].filter((project) => !storedIds.has(project.projectId));
     return [...stored, ...transient].sort(compareStoredProjects);
-  }
-
-  private resolveProjectId(projectId: string) {
-    if (projectId.startsWith("project-")) return projectId;
-    const legacyProject = this.parseLegacyProjectId(projectId);
-    return legacyProject ? projectIdFor(legacyProject.machineId, legacyProject.path) : projectId;
-  }
-
-  private parseLegacyProjectId(projectId: string) {
-    const [machineId, projectPath, extra] = projectId.split("\0");
-    if (!machineId || !projectPath || extra !== undefined) return null;
-    return { machineId, path: projectPath };
   }
 
   private touch() {

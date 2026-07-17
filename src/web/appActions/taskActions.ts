@@ -13,18 +13,18 @@ import {
   primeTaskNotificationPermission,
   type SidebarDraftStore
 } from "../appHelpers.js";
-import type { AppSettings, LocalTask, MachineSummary, ProjectSummary, ProjectsPayload, SessionView, TaskDraft } from "../types.js";
+import type { AppSettings, LocalTask, MachineSummary, ProjectSummary, ProjectsPayload, SessionSummary, TaskDraft } from "../types.js";
 
 type TaskActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
   notificationAudioContext: React.MutableRefObject<AudioContext | null>;
   projectList: ProjectSummary[];
-  sessionList: SessionView[];
+  sessionList: SessionSummary[];
   sidebarDraftStore: SidebarDraftStore;
   setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
   setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
-  setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
+  setSessionList: React.Dispatch<React.SetStateAction<SessionSummary[]>>;
   setTaskBusyId: React.Dispatch<React.SetStateAction<string>>;
   setTaskError: React.Dispatch<React.SetStateAction<string>>;
   setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -38,7 +38,7 @@ export type TaskActionsDependencies = {
 };
 
 export type TaskActions = {
-  refreshSessions: () => Promise<SessionView[]>;
+  refreshSessions: () => Promise<SessionSummary[]>;
   refreshProjects: () => Promise<ProjectsPayload>;
   refreshTasks: () => Promise<void>;
   updateTaskDraftMachine: (machineId: string) => void;

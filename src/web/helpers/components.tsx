@@ -23,7 +23,7 @@ const authenticatedImageUrl = (url: string) => {
   const token = authToken();
   if (!token) return url;
   const parsed = new URL(url, window.location.origin);
-  if (!parsed.searchParams.has("codexhub_token") && !parsed.searchParams.has("token")) {
+  if (!parsed.searchParams.has("codexhub_token")) {
     parsed.searchParams.set("codexhub_token", token);
   }
   return url.startsWith("http://") || url.startsWith("https://")

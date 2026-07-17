@@ -187,9 +187,7 @@ const parseParentRegistrationInput = (value: string) => {
   } catch {
     throw new Error("Parent register URL must be a valid URL.");
   }
-  const authToken = url.searchParams.get("codexhub_token")?.trim()
-    || url.searchParams.get("token")?.trim()
-    || undefined;
+  const authToken = url.searchParams.get("codexhub_token")?.trim() || undefined;
   return {
     url: url.origin,
     authToken

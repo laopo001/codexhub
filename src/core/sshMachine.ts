@@ -4,8 +4,7 @@ import type { SshRemoteClientBundle } from "./sshRemoteClient.js";
 import type { CodexAppServerLaunchOptions } from "../shared/appServerLaunch.js";
 import type {
   SshMachineConnectInput,
-  SshMachineConnection,
-  SshMachineRemoteMode
+  SshMachineConnection
 } from "../shared/sshTypes.js";
 
 type SshMachineConnectionState = SshMachineConnection & {
@@ -16,7 +15,6 @@ type SshMachineManagerOptions = {
   localHost: string;
   localPort: number;
   sshConfigPath?: string;
-  remoteMode?: SshMachineRemoteMode;
   remoteClient?: Pick<SshRemoteClientBundle, "hash" | "endpointPath">;
   appServerLaunch?: CodexAppServerLaunchOptions;
   authToken?: string | null;
@@ -60,12 +58,13 @@ export class SshMachineManager {
     const connectionId = randomUUID();
     const localHost = loopbackHost(this.options.localHost);
     const remoteApiBase = `http://127.0.0.1:${remotePort}`;
-    const remoteMode = input.remoteCommand ? "custom" : this.resolveRemoteMode();
-    const remoteClientHash = remoteMode === "bootstrap" ? this.options.remoteClient?.hash : undefined;
-    const remoteCommand = input.remoteCommand ?? (
-      remoteMode === "bootstrap"
-        ? sshBootstrapRemoteCommand(remoteApiBase, this.requireRemoteClient(), input, this.options.authToken, this.options.appServerLaunch)
-        : installedRemoteCommand(remoteApiBase, input, this.options.authToken, this.options.appServerLaunch)
+    const remoteClient = this.requireRemoteClient();
+    const remoteCommand = sshBootstrapRemoteCommand(
+      remoteApiBase,
+      remoteClient,
+      input,
+      this.options.authToken,
+      this.options.appServerLaunch
     );
 
     const args = [
@@ -86,8 +85,7 @@ export class SshMachineManager {
       connectionId,
       host,
       name: input.name,
-      remoteMode,
-      remoteClientHash,
+      remoteClientHash: remoteClient.hash,
       status: "starting",
       startedAt: now,
       updatedAt: now,
@@ -155,17 +153,10 @@ export class SshMachineManager {
     this.options.onChange?.();
   }
 
-  private resolveRemoteMode(): SshMachineRemoteMode {
-    const mode = this.options.remoteMode ?? "bootstrap";
-    if (mode === "installed") return "installed";
-    this.requireRemoteClient();
-    return "bootstrap";
-  }
-
   private requireRemoteClient() {
     const remoteClient = this.options.remoteClient;
     if (!remoteClient) {
-      throw new Error("SSH remote client bundle not found. Run `pnpm build` or set CODEX_HUB_SSH_REMOTE_MODE=installed.");
+      throw new Error("SSH remote client bundle not found. Run `pnpm build` or set CODEX_HUB_SSH_REMOTE_CLIENT_PATH.");
     }
     return remoteClient;
   }
@@ -182,24 +173,6 @@ const randomRemotePort = () => 18_000 + Math.floor(Math.random() * 30_000);
 
 const trimOutput = (value: string) =>
   value.length <= outputLimit ? value : value.slice(value.length - outputLimit);
-
-const installedRemoteCommand = (
-  remoteApiBase: string,
-  input: Pick<SshMachineConnectInput, "name">,
-  authToken?: string | null,
-  appServerLaunch?: CodexAppServerLaunchOptions
-) => [
-  `PATH=${shellDoubleQuote(defaultRemotePath)}`,
-  ...(authToken ? [`CODEX_HUB_AUTH_TOKEN=${shellQuote(authToken)}`] : []),
-  ...appServerLaunchEnvAssignments(appServerLaunch),
-  "codexhub",
-  "machine",
-  "--server",
-  shellQuote(remoteApiBase),
-  "--type",
-  "ssh",
-  ...(input.name ? ["--name", shellQuote(input.name)] : [])
-].join(" ");
 
 const sshBootstrapRemoteCommand = (
   remoteApiBase: string,

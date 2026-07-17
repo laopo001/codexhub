@@ -12,7 +12,7 @@ import type {
   ModelCatalogLoadState,
   ProjectPickerState,
   ProjectSummary,
-  SessionView,
+  SessionSummary,
   SystemStatus,
   ThreadPickerState
 } from "./types.js";
@@ -110,7 +110,7 @@ export const useAppState = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [openThreads, dispatchOpenThreads] = useReducer(openThreadReducer, []);
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
-  const [sessionList, setSessionList] = useState<SessionView[]>([]);
+  const [sessionList, setSessionList] = useState<SessionSummary[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");

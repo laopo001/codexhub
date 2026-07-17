@@ -102,7 +102,6 @@ export const codexRecordFromAppServerItem = (
         tool: typeof item.tool === "string" ? item.tool : "",
         arguments: item.arguments,
         appContext: item.appContext,
-        mcpAppResourceUri: item.mcpAppResourceUri,
         pluginId: item.pluginId,
         result: item.result,
         error: item.error,
@@ -180,7 +179,7 @@ export const codexRecordFromAppServerItem = (
       payload: {
         type: "image_generation_call",
         call_id: itemId,
-        status: typeof item.status === "string" ? item.status : undefined,
+        status: appServerStatus(item.status),
         prompt: typeof item.revisedPrompt === "string" ? item.revisedPrompt : undefined,
         revised_prompt: typeof item.revisedPrompt === "string" ? item.revisedPrompt : undefined,
         saved_path: typeof item.savedPath === "string" ? item.savedPath : undefined,
@@ -222,7 +221,7 @@ export const codexRecordFromAppServerItem = (
     type: "response_item",
     payload: {
       ...item,
-      ...(item.status === undefined && status ? { status } : {})
+      ...(status ? { status } : {})
     }
   };
 };
@@ -243,19 +242,12 @@ export const withAppServerItemRecordTiming = (
     || (isFinishedTimingPayload(existingPayload ?? {}) && isActiveTimingPayload(payload))
   ) ? existingStatus : undefined;
   const startedAt = stringValue(payload.started_at)
-    ?? stringValue(payload.startedAt)
-    ?? itemTiming.startedAt
     ?? stringValue(existingPayload?.started_at)
-    ?? stringValue(existingPayload?.startedAt)
     ?? (isActiveTimingPayload(payload) ? record.timestamp : options.existing?.timestamp);
   const completedAt = stringValue(payload.completed_at)
-    ?? stringValue(payload.completedAt)
-    ?? itemTiming.completedAt
     ?? stringValue(existingPayload?.completed_at)
-    ?? stringValue(existingPayload?.completedAt)
     ?? (isFinishedTimingPayload(payload) ? record.timestamp : undefined);
   const durationMs = numberValue(payload.duration_ms)
-    ?? numberValue(payload.durationMs)
     ?? itemTiming.durationMs
     ?? (startedAt && completedAt ? timestampDeltaMs(startedAt, completedAt) : undefined);
 
@@ -274,50 +266,29 @@ export const withAppServerItemRecordTiming = (
 
 const appServerItemTiming = (item: Record<string, unknown> | undefined) => {
   if (!item) return {};
-  const startedAt = timestampFromEpochOrIso(item.startedAtMs ?? item.started_at_ms, "millis")
-    ?? timestampFromEpochOrIso(item.startedAt ?? item.started_at ?? item.createdAt ?? item.created_at, "seconds");
-  const completedAt = timestampFromEpochOrIso(item.completedAtMs ?? item.completed_at_ms ?? item.finishedAtMs ?? item.finished_at_ms, "millis")
-    ?? timestampFromEpochOrIso(item.completedAt ?? item.completed_at ?? item.finishedAt ?? item.finished_at, "seconds");
-  const durationMs = numberValue(item.durationMs) ?? numberValue(item.duration_ms);
+  const durationMs = numberValue(item.durationMs);
   return {
-    ...(startedAt ? { startedAt } : {}),
-    ...(completedAt ? { completedAt } : {}),
     ...(durationMs == null ? {} : { durationMs: Math.max(0, durationMs) })
   };
 };
 
 const isActiveTimingPayload = (payload: Record<string, unknown>) => {
   const status = normalizedTimingStatus(payload.status);
-  return status === "pending"
-    || status === "queued"
-    || status === "pending_approval"
+  return status === "pending_approval"
     || status === "pending_user_input"
-    || status === "in_progress"
-    || status === "inprogress"
-    || status === "running"
-    || status === "generating";
+    || status === "in_progress";
 };
 
 const isFinishedTimingPayload = (payload: Record<string, unknown>) => {
   if (typeof payload.exit_code === "number") return true;
   const status = normalizedTimingStatus(payload.status);
   return status === "completed"
-    || status === "complete"
-    || status === "done"
-    || status === "success"
-    || status === "succeeded"
     || status === "approved"
-    || status === "accepted"
     || status === "failed"
-    || status === "failure"
-    || status === "error"
-    || status === "errored"
     || status === "declined"
     || status === "denied"
     || status === "interrupted"
-    || status === "aborted"
-    || status === "cancelled"
-    || status === "canceled";
+    || status === "cancelled";
 };
 
 const normalizedTimingStatus = (status: unknown) =>
@@ -348,10 +319,9 @@ export const codexRecordFromAppServerUsage = (
   const last = asRecord(usage.last);
   if (!last) return null;
   const total = asRecord(usage.total);
-  const normalizedLast = tokenUsageBreakdown(last);
-  const normalizedTotal = total ? tokenUsageBreakdown(total) : null;
-  const rateLimits = tokenUsageRateLimits(usage.rateLimits ?? usage.rate_limits);
-  const modelContextWindow = tokenUsageNumber(usage.modelContextWindow ?? usage.model_context_window);
+  const normalizedLast = appServerTokenUsageBreakdown(last);
+  const normalizedTotal = total ? appServerTokenUsageBreakdown(total) : null;
+  const modelContextWindow = tokenUsageNumber(usage.modelContextWindow);
   return {
     id: `app:${threadId}:${turnId}:usage:${tokenUsageRecordKey(normalizedTotal ?? normalizedLast)}`,
     timestamp: new Date().toISOString(),
@@ -362,8 +332,7 @@ export const codexRecordFromAppServerUsage = (
         last_token_usage: normalizedLast,
         ...(normalizedTotal ? { total_token_usage: normalizedTotal } : {}),
         model_context_window: modelContextWindow
-      },
-      ...(rateLimits ? { rate_limits: rateLimits } : {})
+      }
     },
     sourceThreadId: threadId
   };
@@ -384,9 +353,9 @@ export const statusUsageRecordFromAppServerUsage = (
 ): CodexRecord | null => {
   const last = asRecord(usage.last);
   if (!last) return null;
-  const normalizedLast = tokenUsageBreakdown(last);
+  const normalizedLast = appServerTokenUsageBreakdown(last);
   const total = asRecord(usage.total);
-  const normalizedTotal = total ? tokenUsageBreakdown(total) : null;
+  const normalizedTotal = total ? appServerTokenUsageBreakdown(total) : null;
   const scopeRecord = latestUserMessageRecord(thread.records);
   const previousStatusRecord = latestStatusUsageRecord(thread.records);
   const previousStatusPayload = asRecord(previousStatusRecord?.payload);
@@ -402,14 +371,14 @@ export const statusUsageRecordFromAppServerUsage = (
   const id = `app:${thread.threadId}:${scopeTurnId}:statusUsage:${stablePayloadKey(scopeKey)}`;
   const existing = thread.records.find((record) => record.id === id);
   const existingPayload = asRecord(existing?.payload);
-  const existingUsage = tokenUsageBreakdown(asRecord(existingPayload?.usage) ?? {});
+  const existingUsage = internalTokenUsageBreakdown(asRecord(existingPayload?.usage) ?? {});
   const previousTotal = asRecord(existingPayload?.cumulative_usage)
     ?? asRecord(previousStatusPayload?.cumulative_usage);
   // App-server total usage is monotonic across model calls and compaction.
   // A fresh user scope has no existing record yet, so use the previous scope's
   // cumulative total as its baseline instead of counting the full prompt in `last`.
   const increment = normalizedTotal && previousTotal
-    ? tokenUsageDelta(normalizedTotal, tokenUsageBreakdown(previousTotal), normalizedLast)
+    ? tokenUsageDelta(normalizedTotal, internalTokenUsageBreakdown(previousTotal), normalizedLast)
     : normalizedLast;
   const scopedUsage = tokenUsageAdd(existingUsage, increment);
   return {
@@ -435,15 +404,23 @@ const normalizeRawResponseItem = (item: Record<string, unknown>) => {
   };
 };
 
-const tokenUsageBreakdown = (value: Record<string, unknown>) => ({
-  input_tokens: tokenUsageNumber(value.inputTokens ?? value.input_tokens),
-  cached_input_tokens: tokenUsageNumber(value.cachedInputTokens ?? value.cached_input_tokens),
-  output_tokens: tokenUsageNumber(value.outputTokens ?? value.output_tokens),
-  reasoning_output_tokens: tokenUsageNumber(value.reasoningOutputTokens ?? value.reasoning_output_tokens),
-  total_tokens: tokenUsageNumber(value.totalTokens ?? value.total_tokens)
+const appServerTokenUsageBreakdown = (value: Record<string, unknown>) => ({
+  input_tokens: tokenUsageNumber(value.inputTokens),
+  cached_input_tokens: tokenUsageNumber(value.cachedInputTokens),
+  output_tokens: tokenUsageNumber(value.outputTokens),
+  reasoning_output_tokens: tokenUsageNumber(value.reasoningOutputTokens),
+  total_tokens: tokenUsageNumber(value.totalTokens)
 });
 
-type NormalizedTokenUsage = ReturnType<typeof tokenUsageBreakdown>;
+const internalTokenUsageBreakdown = (value: Record<string, unknown>) => ({
+  input_tokens: tokenUsageNumber(value.input_tokens),
+  cached_input_tokens: tokenUsageNumber(value.cached_input_tokens),
+  output_tokens: tokenUsageNumber(value.output_tokens),
+  reasoning_output_tokens: tokenUsageNumber(value.reasoning_output_tokens),
+  total_tokens: tokenUsageNumber(value.total_tokens)
+});
+
+type NormalizedTokenUsage = ReturnType<typeof appServerTokenUsageBreakdown>;
 
 const tokenUsageDelta = (
   current: NormalizedTokenUsage,
@@ -451,13 +428,13 @@ const tokenUsageDelta = (
   fallback: NormalizedTokenUsage
 ): NormalizedTokenUsage => {
   if (current.input_tokens < previous.input_tokens || current.output_tokens < previous.output_tokens) return fallback;
-  return tokenUsageBreakdown({
+  return {
     input_tokens: current.input_tokens - previous.input_tokens,
     cached_input_tokens: Math.max(0, current.cached_input_tokens - previous.cached_input_tokens),
     output_tokens: current.output_tokens - previous.output_tokens,
     reasoning_output_tokens: Math.max(0, current.reasoning_output_tokens - previous.reasoning_output_tokens),
     total_tokens: Math.max(0, current.total_tokens - previous.total_tokens)
-  });
+  };
 };
 
 const tokenUsageAdd = (left: NormalizedTokenUsage, right: NormalizedTokenUsage): NormalizedTokenUsage => {
@@ -503,46 +480,6 @@ export const repositionStatusUsageRecords = (thread: ThreadState) => {
   thread.records = orderThreadRecords(thread.records);
 };
 
-const tokenUsageRateLimits = (value: unknown) => {
-  const record = asRecord(value);
-  if (!record) return undefined;
-  const primary = tokenUsageRateLimitWindow(record.primary);
-  const secondary = tokenUsageRateLimitWindow(record.secondary);
-  if (!primary && !secondary) return undefined;
-  return {
-    limit_id: stringOrNullValue(record.limit_id ?? record.limitId),
-    limit_name: stringOrNullValue(record.limit_name ?? record.limitName),
-    primary,
-    secondary,
-    credits: record.credits ?? null,
-    individual_limit: record.individual_limit ?? record.individualLimit ?? null,
-    plan_type: stringOrNullValue(record.plan_type ?? record.planType),
-    rate_limit_reached_type: stringOrNullValue(record.rate_limit_reached_type ?? record.rateLimitReachedType)
-  };
-};
-
-const tokenUsageRateLimitWindow = (value: unknown) => {
-  const record = asRecord(value);
-  if (!record) return undefined;
-  const usedPercent = tokenUsageNumber(record.usedPercent ?? record.used_percent);
-  const windowMinutes = tokenUsageNumber(
-    record.windowMinutes
-    ?? record.window_minutes
-    ?? record.windowDurationMins
-    ?? record.window_duration_mins
-  );
-  const resetsAt = tokenUsageNumber(record.resetsAt ?? record.resets_at);
-  if (usedPercent === undefined || windowMinutes === undefined || resetsAt === undefined) return undefined;
-  return {
-    used_percent: usedPercent,
-    window_minutes: windowMinutes,
-    resets_at: resetsAt
-  };
-};
-
-const stringOrNullValue = (value: unknown) =>
-  typeof value === "string" ? value : value === null ? null : undefined;
-
 const userMessageText = (content: unknown) =>
   userMessageContent(content)
     .map((item) => typeof item.text === "string" ? item.text : null)
@@ -564,24 +501,16 @@ const stringArray = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
 const commandExecutionCommand = (item: Record<string, unknown>) => {
-  const action = asRecord(item.action);
-  const value = item.command ?? item.cmd ?? action?.command ?? action?.cmd;
-  if (Array.isArray(value)) return value.filter((part): part is string => typeof part === "string" && Boolean(part));
+  const value = item.command;
   return typeof value === "string" && value ? [value] : [];
 };
 
 const commandExecutionOutput = (item: Record<string, unknown>) => {
-  const direct = item.aggregatedOutput ?? item.aggregated_output ?? item.output;
-  if (typeof direct === "string") return direct;
-  const output = [
-    typeof item.stdout === "string" ? item.stdout : "",
-    typeof item.stderr === "string" ? item.stderr : ""
-  ].filter(Boolean);
-  return output.join("\n");
+  return typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : "";
 };
 
 const commandExecutionExitCode = (item: Record<string, unknown>) => {
-  const value = item.exitCode ?? item.exit_code;
+  const value = item.exitCode;
   return typeof value === "number" ? value : null;
 };
 
@@ -625,8 +554,8 @@ export const codexRecordsFromAppServerTurnLifecycle = (
 ): CodexRecord[] => {
   const startedAt = timestampFromSeconds(turn.startedAt);
   const completedAt = timestampFromSeconds(turn.completedAt);
-  const durationMs = startedAt && completedAt ? timestampDeltaMs(startedAt, completedAt) : undefined;
-  const firstTokenMs = appServerFirstTokenMs(turn, startedAt);
+  const durationMs = numberValue(turn.durationMs)
+    ?? (startedAt && completedAt ? timestampDeltaMs(startedAt, completedAt) : undefined);
   const records: CodexRecord[] = [];
   if (startedAt) {
     records.push({
@@ -648,8 +577,7 @@ export const codexRecordsFromAppServerTurnLifecycle = (
       payload: {
         type: "task_complete",
         turn_id: turnId,
-        ...(durationMs == null ? {} : { duration_ms: durationMs }),
-        ...(firstTokenMs == null ? {} : { time_to_first_token_ms: firstTokenMs })
+        ...(durationMs == null ? {} : { duration_ms: durationMs })
       },
       sourceThreadId: threadId
     });
@@ -669,13 +597,6 @@ const timestampDeltaMs = (startedAt: string, completedAt: string) => {
   return Number.isFinite(startedMs) && Number.isFinite(completedMs)
     ? Math.max(0, completedMs - startedMs)
     : undefined;
-};
-
-const appServerFirstTokenMs = (turn: Record<string, unknown>, startedAt: string | undefined) => {
-  const direct = numberValue(turn.timeToFirstTokenMs) ?? numberValue(turn.time_to_first_token_ms);
-  if (direct != null && Number.isFinite(direct)) return Math.max(0, direct);
-  const firstTokenAt = timestampFromSeconds(turn.firstTokenAt) ?? timestampFromSeconds(turn.first_token_at);
-  return startedAt && firstTokenAt ? timestampDeltaMs(startedAt, firstTokenAt) : undefined;
 };
 
 const tokenUsageNumber = (value: unknown) =>
@@ -714,17 +635,6 @@ export const remapAppRecordThreadId = (record: CodexRecord, sourceThreadId: stri
   id: record.id.replace(`app:${sourceThreadId}:`, `app:${forkedThreadId}:`),
   sourceThreadId: forkedThreadId
 });
-
-
-const timestampFromEpochOrIso = (value: unknown, numericUnit: "millis" | "seconds") => {
-  if (typeof value === "string" && value) {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  const millis = numericUnit === "millis" ? value : value * 1000;
-  return new Date(millis).toISOString();
-};
 
 const numberValue = (value: unknown) => typeof value === "number" ? value : undefined;
 

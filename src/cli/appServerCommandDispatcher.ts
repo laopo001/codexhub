@@ -135,11 +135,16 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
       delivery: "inline"
     }, command));
     const turn = asRecord(result?.turn);
-    await host.forwardThreadExecutionChanged(threadId, true, stringValue(turn?.id));
+    const reviewThreadId = stringValue(result?.reviewThreadId);
+    const turnId = stringValue(turn?.id);
+    if (!reviewThreadId || !turnId) {
+      throw new Error("Codex app-server review/start did not return reviewThreadId and turn.id");
+    }
+    await host.forwardThreadExecutionChanged(threadId, true, turnId);
     host.scheduleThreadSync(threadId);
     return {
       ok: true,
-      reviewThreadId: stringValue(result?.reviewThreadId) ?? threadId
+      reviewThreadId
     };
   }
   if (command.type === "approval_decision") {
@@ -325,7 +330,7 @@ export const modelForCommand = (command: Pick<SessionCommand, "options">, fallba
 
 export const permissionParams = (options: {
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
-  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
+  approvalPolicy?: "untrusted" | "on-request" | "never";
 }) => ({
   ...(options.approvalPolicy === undefined ? {} : { approvalPolicy: options.approvalPolicy }),
   ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox })
@@ -371,7 +376,7 @@ const resolveCollaborationModes = async (
   ): AppServerCollaborationMode => {
     const model = stringValue(selectedMask.model) ?? fallbackModel ?? catalogModel(models);
     if (!model) throw new Error(`${mode} mode requires an app-server mask, selected model, or live default model.`);
-    const maskEffort = stringValue(selectedMask.reasoning_effort ?? selectedMask.reasoningEffort);
+    const maskEffort = stringValue(selectedMask.reasoning_effort);
     return {
       mode,
       settings: {
@@ -390,12 +395,11 @@ const resolveCollaborationModes = async (
 };
 
 const catalogModel = (value: unknown) => {
-  const result = asRecord(value);
-  const items = (Array.isArray(value) ? value : Array.isArray(result?.data) ? result.data : [])
+  const items = (Array.isArray(value) ? value : [])
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => Boolean(item));
   const selected = items.find((item) => item.isDefault === true) ?? items[0];
-  return stringValue(selected?.model) ?? stringValue(selected?.id);
+  return stringValue(selected?.model);
 };
 
 const ensureCommandThread = async (

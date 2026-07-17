@@ -24,9 +24,8 @@ export class DirectThreadHubSessionTransport implements HeadlessSessionTransport
     if (this.stopped || this.registered) return;
     this.callbacks.onState("connecting", `codexhub direct session registering: ${this.options.sessionId}`);
     // 这是 server 内部 transport，不再经 machine WebSocket 反绕一圈。
-    const { currentThreadId: _legacyCurrentThreadId, ...registration } = this.callbacks.registration() as SessionRegistration & { currentThreadId?: string };
     this.options.threads.registerSession({
-      ...registration,
+      ...this.callbacks.registration(),
       sessionId: this.options.sessionId,
       machineId: this.options.machineId,
       transportId: this.options.transportId
@@ -94,4 +93,3 @@ export class DirectThreadHubSessionTransport implements HeadlessSessionTransport
     }
   }
 }
-

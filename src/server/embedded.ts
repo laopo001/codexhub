@@ -5,9 +5,8 @@ import { startServer, type ServerFeatureOptions, type ServerHandle } from "./ind
 
 export type EmbeddedServerOptions = {
   host?: string;
-  portMode?: "preferred" | "random";
+  portMode: "preferred" | "random";
   preferredPort?: number;
-  explicitPort?: boolean;
   dataDir?: string;
   staticDirectory?: string;
   surface?: CodexHubSurface;
@@ -16,12 +15,13 @@ export type EmbeddedServerOptions = {
   logPrefix?: string;
 };
 
-export const startEmbeddedServer = async (options: EmbeddedServerOptions = {}) => {
+export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
   await loadDotEnv();
   const host = options.host ?? "0.0.0.0";
   const preferredPort = options.portMode === "random"
     ? await findFreePort(host)
-    : options.preferredPort ?? 18788;
+    : options.preferredPort;
+  if (preferredPort === undefined) throw new Error("preferred embedded server mode requires preferredPort");
   try {
     return await startServer({
       host,
@@ -33,7 +33,7 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions = {}) =
       features: options.features
     });
   } catch (error) {
-    if (options.explicitPort || !isAddressInUse(error)) throw error;
+    if (options.portMode !== "random" || !isAddressInUse(error)) throw error;
     const fallbackPort = await findFreePort(host);
     const prefix = options.logPrefix ?? "codexhub embedded";
     console.error(`${prefix} port ${preferredPort} is busy; using ${fallbackPort}`);

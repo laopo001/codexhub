@@ -51,7 +51,6 @@ const startElectronServer = async () => {
     host,
     portMode: explicitPort ? "preferred" : "random",
     preferredPort: explicitPort ? parseEmbeddedPort(explicitPort, "Electron server port") : undefined,
-    explicitPort: Boolean(explicitPort),
     logPrefix: "codexhub electron"
   });
 };

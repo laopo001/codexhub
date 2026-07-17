@@ -105,13 +105,16 @@ const requestAuthToken = (request: FastifyRequest) => {
     const match = authorization.match(/^Bearer\s+(.+)$/i);
     if (match?.[1]) return match[1].trim();
   }
-  const headerToken = request.headers["x-codexhub-token"];
-  if (typeof headerToken === "string" && headerToken.trim()) return headerToken.trim();
+  if (!allowsQueryAuthToken(request)) return "";
   const url = new URL(request.url, "http://codexhub.local");
   return url.searchParams.get("codexhub_token")?.trim()
-    || url.searchParams.get("token")?.trim()
     || "";
 };
+const allowsQueryAuthToken = (request: FastifyRequest) => request.method === "GET" && [
+  "/api/events/ws",
+  "/api/machines/connect",
+  "/api/file"
+].includes(requestPath(request));
 const safeTokenEqual = (actual: string, expected: string) => {
   const actualBuffer = Buffer.from(actual);
   const expectedBuffer = Buffer.from(expected);
@@ -217,7 +220,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     localHost: config.host,
     localPort: config.port,
     sshConfigPath: process.env.CODEX_HUB_SSH_CONFIG,
-    remoteMode: sshRemoteMode(),
     remoteClient: sshRemoteClient ?? undefined,
     appServerLaunch,
     authToken: serverAuthToken,
@@ -614,7 +616,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       features,
       staticDirectory,
       configPath: state.path,
-      statePath: state.path,
       model: config.defaultThreadOptions.model ?? null,
       modelReasoningEffort: config.defaultThreadOptions.modelReasoningEffort ?? null,
       serviceTier: config.defaultThreadOptions.serviceTier ?? null,
@@ -853,7 +854,6 @@ const normalizeBaseUrl = (value: string) => {
 const authTokenFromUrl = (value: string) => {
   const url = new URL(value);
   return url.searchParams.get("codexhub_token")?.trim()
-    || url.searchParams.get("token")?.trim()
     || undefined;
 };
 
@@ -936,9 +936,6 @@ const delay = async (ms: number) => await new Promise<void>((resolve) => {
   const timer = setTimeout(resolve, ms);
   timer.unref?.();
 });
-
-// Global file previews intentionally serve images only; this keeps external screenshots usable without exposing arbitrary file contents.
-const sshRemoteMode = () => process.env.CODEX_HUB_SSH_REMOTE_MODE === "installed" ? "installed" : "bootstrap";
 
 const sshAutoConnectEnabled = () => process.env.CODEX_HUB_SSH_AUTOCONNECT !== "0";
 

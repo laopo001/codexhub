@@ -2,14 +2,15 @@ import { randomUUID } from "node:crypto";
 import { recordsToViews } from "./codexRecordView.js";
 import {
   emptyThreadUsage,
+  mergeAppServerThreadRateLimits,
   rateLimitUsageForWindowMinutes,
   sevenDayRateLimitWindowMinutes,
-  threadRateLimitsFromValue,
   threadUsageFromRecords
 } from "./threadUsage.js";
 import { localCommandMessage, parseLocalSlashCommand } from "./threadLocalCommands.js";
 import {
   appServerGoalUpdate,
+  appServerThreadGoalFromValue,
   formatPercent,
   formatThreadGoalMessage,
   goalRunPolicyStatusCanRun,
@@ -18,6 +19,7 @@ import {
   hasThreadGoalPatch,
   normalizeThreadGoalRunPolicy,
   threadGoalRecordMatchesThread,
+  threadGoalPatchFromValue,
   threadGoalsEqual,
   threadGoalThreadId,
   threadGoalTimestamp,
@@ -283,8 +285,12 @@ export class ThreadHub {
     if (input.heartbeat !== false) this.heartbeatSession(sessionId);
     const session = this.requireSession(sessionId);
     if (input.type === "account_rate_limits_updated") {
-      const rateLimits = threadRateLimitsFromValue(input.rateLimits, new Date().toISOString());
-      if (rateLimits) {
+      const rateLimits = mergeAppServerThreadRateLimits(
+        session.accountRateLimits,
+        input.rateLimits,
+        new Date().toISOString()
+      );
+      if (rateLimits && rateLimits !== session.accountRateLimits) {
         session.accountRateLimits = rateLimits;
         this.publishSessions();
       }
@@ -373,7 +379,7 @@ export class ThreadHub {
       const source = this.threads.get(pending.threadId);
       if (source && source.threadId !== thread.threadId) this.seedForkedThreadRecords(source, thread, pending.keepTurns);
     }
-    if (thread) this.applyAppServerMessage(thread, message);
+    if (thread) this.applyAppServerMessage(thread, message, { historical: input.historical });
 
     if (input.commandId) this.resolveCommandFromMessage(input.commandId, thread);
     return { ok: true, thread: thread ? this.summary(thread) : undefined };
@@ -944,31 +950,6 @@ export class ThreadHub {
     });
   }
 
-  runSessionThreadTurn(
-    sessionId: string,
-    threadId: string,
-    input: ProxyInput,
-    source: "web" | "telegram" | "task" = "web",
-    options?: ThreadRunOptions,
-    workingDirectory?: string
-  ) {
-    const session = this.requireOnlineSession(sessionId);
-    const existing = this.threads.get(threadId);
-    const thread = this.ensureThread(threadId, session, {
-      params: { threadId, cwd: workingDirectory ?? existing?.workingDirectory ?? session.workingDirectory }
-    });
-    const command = this.runLocalCommand(thread.threadId, input, source);
-    if (command.handled) {
-      return {
-        thread: this.summary(thread),
-        promise: Promise.resolve(),
-        command: command.command
-      };
-    }
-    const promise = this.runTurn(thread.threadId, input, source, options);
-    return { thread: this.summary(thread), promise };
-  }
-
   subscribe(threadId: string, after: number, callback: (event: ThreadStreamEvent) => void) {
     const thread = this.requireThread(threadId);
     for (const event of thread.events.filter((item) => item.seq > after)) callback(event);
@@ -1247,7 +1228,11 @@ export class ThreadHub {
     return thread;
   }
 
-  private applyAppServerMessage(thread: ThreadState, message: unknown) {
+  private applyAppServerMessage(
+    thread: ThreadState,
+    message: unknown,
+    options: { historical?: boolean } = {}
+  ) {
     const record = asRecord(message);
     if (!record) return;
 
@@ -1258,8 +1243,22 @@ export class ThreadHub {
       this.applyAppServerThread(thread, resultThread);
       this.applyAppServerThreadTurns(thread, resultThread, { historicalRecords: true });
     }
-    const resultGoal = asRecord(result?.goal);
-    if (resultGoal) this.appendThreadGoalUpdatedRecord(thread, { threadId: thread.threadId, goal: resultGoal });
+    if (result && hasOwn(result, "goal")) {
+      const resultGoal = asRecord(result.goal);
+      if (resultGoal) {
+        this.appendThreadGoalUpdatedRecord(
+          thread,
+          { threadId: thread.threadId, goal: resultGoal },
+          { historical: options.historical }
+        );
+      } else {
+        this.appendThreadGoalClearedRecord(
+          thread,
+          { threadId: thread.threadId },
+          { ifKnownGoal: true, historical: options.historical }
+        );
+      }
+    }
 
     const method = typeof record.method === "string" ? record.method : "";
     const params = asRecord(record.params);
@@ -1328,7 +1327,7 @@ export class ThreadHub {
     }
 
     if (method === "item/started" || method === "item/completed") {
-      this.applyAppServerItemEvent(thread, params, method === "item/completed" ? "completed" : "inProgress");
+      this.applyAppServerItemEvent(thread, params, method);
       return;
     }
 
@@ -1401,7 +1400,8 @@ export class ThreadHub {
   ) {
     // 这里把 app-server turn 统一展开成 records；来源可以是历史快照或实时完成事件。
     const turnId = typeof turn.id === "string" ? turn.id : "";
-    if (!turnId) return;
+    const turnStatus = isAppServerTurnStatus(turn.status) ? turn.status : null;
+    if (!turnId || !turnStatus) return;
     let previousTurnRecords = options.previousTurnRecords;
     if (options.replaceTurnRecords) {
       let mutablePreviousTurnRecords: Map<string, CodexRecord> | undefined;
@@ -1422,9 +1422,6 @@ export class ThreadHub {
       this.upsertRecord(thread, record, { historical: options.historicalRecords });
     }
     const timestamp = timestampFromSeconds(turn.completedAt) ?? timestampFromSeconds(turn.startedAt);
-    const turnStatus = typeof turn.status === "string"
-      ? turn.status
-      : timestampFromSeconds(turn.completedAt) ? "completed" : undefined;
     if (Array.isArray(turn.items)) {
       for (const item of turn.items) {
         const itemRecord = asRecord(item);
@@ -1443,11 +1440,16 @@ export class ThreadHub {
     if (options.replaceTurnRecords) repositionStatusUsageRecords(thread);
   }
 
-  private applyAppServerItemEvent(thread: ThreadState, params: Record<string, unknown>, fallbackStatus?: string) {
+  private applyAppServerItemEvent(
+    thread: ThreadState,
+    params: Record<string, unknown>,
+    method: "item/started" | "item/completed"
+  ) {
     const turnId = typeof params.turnId === "string" ? params.turnId : "";
     const item = asRecord(params.item);
     if (!turnId || !item) return;
-    const timestamp = timestampFromMillis(params.timestamp) ?? timestampFromSeconds(params.createdAt);
+    const timestamp = timestampFromMillis(method === "item/started" ? params.startedAtMs : params.completedAtMs);
+    const fallbackStatus = method === "item/completed" ? "completed" : "inProgress";
     const record = codexRecordFromAppServerItem(thread.threadId, turnId, item, timestamp, fallbackStatus);
     if (!record) return;
     const existing = thread.records.find((item) => item.id === record.id);
@@ -1460,29 +1462,18 @@ export class ThreadHub {
 
   private applyAppServerAgentMessageDeltaEvent(thread: ThreadState, params: Record<string, unknown>) {
     const turnId = typeof params.turnId === "string" ? params.turnId : "";
-    const item = asRecord(params.item);
-    const itemId = typeof params.itemId === "string" && params.itemId
-      ? params.itemId
-      : typeof item?.id === "string" && item.id ? item.id : "";
-    const delta = typeof params.delta === "string"
-      ? params.delta
-      : typeof params.textDelta === "string"
-        ? params.textDelta
-        : "";
+    const itemId = typeof params.itemId === "string" ? params.itemId : "";
+    const delta = typeof params.delta === "string" ? params.delta : "";
     if (!turnId || !itemId || !delta) return;
 
     const id = `app:${thread.threadId}:${turnId}:agent:${itemId}`;
     const existing = thread.records.find((record) => record.id === id);
     const existingPayload = asRecord(existing?.payload);
     const existingMessage = typeof existingPayload?.message === "string" ? existingPayload.message : "";
-    const phase = typeof params.phase === "string"
-      ? params.phase
-      : typeof item?.phase === "string"
-        ? item.phase
-        : typeof existingPayload?.phase === "string" ? existingPayload.phase : "assistant";
+    const phase = typeof existingPayload?.phase === "string" ? existingPayload.phase : "assistant";
     this.upsertRecord(thread, {
       id,
-      timestamp: existing?.timestamp ?? timestampFromMillis(params.timestamp) ?? timestampFromSeconds(params.createdAt) ?? new Date().toISOString(),
+      timestamp: existing?.timestamp ?? new Date().toISOString(),
       type: "event_msg",
       payload: {
         type: "agent_message",
@@ -1496,16 +1487,8 @@ export class ThreadHub {
 
   private applyAppServerCommandExecutionOutputDelta(thread: ThreadState, params: Record<string, unknown>) {
     const turnId = typeof params.turnId === "string" ? params.turnId : "";
-    const itemId = typeof params.itemId === "string"
-      ? params.itemId
-      : typeof params.callId === "string"
-        ? params.callId
-        : "";
-    const delta = typeof params.delta === "string"
-      ? params.delta
-      : typeof params.outputDelta === "string"
-        ? params.outputDelta
-        : "";
+    const itemId = typeof params.itemId === "string" ? params.itemId : "";
+    const delta = typeof params.delta === "string" ? params.delta : "";
     if (!turnId || !itemId || !delta) return;
 
     const id = `app:${thread.threadId}:${turnId}:item:commandExecution:${itemId}`;
@@ -1539,15 +1522,15 @@ export class ThreadHub {
 
   private applyAppServerRawResponseItemEvent(thread: ThreadState, params: Record<string, unknown>) {
     const turnId = typeof params.turnId === "string" ? params.turnId : "";
-    const item = asRecord(params.item) ?? asRecord(params.rawResponseItem);
+    const item = asRecord(params.item);
     if (!turnId || !item) return;
     const record = codexRecordFromRawResponseItem(thread.threadId, turnId, item);
     if (record) this.upsertRecord(thread, record);
   }
 
   private applyAppServerTokenUsageEvent(thread: ThreadState, params: Record<string, unknown>) {
-    const turnId = typeof params.turnId === "string" ? params.turnId : thread.appServerTurnId ?? "";
-    const usage = asRecord(params.tokenUsage) ?? asRecord(params.usage);
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const usage = asRecord(params.tokenUsage);
     if (!turnId || !usage) return;
     const record = codexRecordFromAppServerUsage(thread.threadId, turnId, usage);
     if (record) this.upsertRecord(thread, record);
@@ -1570,13 +1553,6 @@ export class ThreadHub {
       thread.updatedAt = new Date().toISOString();
       this.publish(thread, "thread");
     }
-    if (!hasOwn(appThread, "goal")) return;
-    const goal = asRecord(appThread.goal);
-    if (goal) {
-      this.appendThreadGoalUpdatedRecord(thread, { threadId: thread.threadId, goal }, { historical: true });
-      return;
-    }
-    this.appendThreadGoalClearedRecord(thread, { threadId: thread.threadId }, { ifKnownGoal: true });
   }
 
   private applyThreadTitle(thread: ThreadState, title: string) {
@@ -1692,9 +1668,14 @@ export class ThreadHub {
   private appendThreadGoalUpdatedRecord(
     thread: ThreadState,
     payload: Record<string, unknown> = {},
-    options: { historical?: boolean } = {}
+    options: { historical?: boolean; allowPartial?: boolean } = {}
   ) {
-    const rawGoal = asRecord(payload.goal) ?? payload;
+    const payloadGoal = asRecord(payload.goal);
+    if (!payloadGoal) return;
+    const rawGoal = options.allowPartial
+      ? threadGoalPatchFromValue(payloadGoal)
+      : appServerThreadGoalFromValue(payloadGoal);
+    if (!rawGoal) return;
     const threadId = threadGoalThreadId(payload, rawGoal) ?? thread.threadId;
     const latest = this.latestThreadGoalRecord(thread, threadId);
     const previousGoal = latest?.type === "thread_goal_updated"
@@ -1706,9 +1687,6 @@ export class ThreadHub {
     }
     if (!hasOwn(rawGoal, "tokenBudget") && typeof previousGoal?.tokenBudget === "number") {
       inheritedGoalFields.tokenBudget = previousGoal.tokenBudget;
-    }
-    if (!hasOwn(rawGoal, "token_budget") && typeof previousGoal?.token_budget === "number") {
-      inheritedGoalFields.token_budget = previousGoal.token_budget;
     }
     const goal: Record<string, unknown> = {
       ...inheritedGoalFields,
@@ -1723,18 +1701,18 @@ export class ThreadHub {
     }
     if (this.latestThreadGoalMatches(thread, threadId, goal)) return;
     this.appendHubRecord(thread, "event_msg", {
-      ...payload,
       type: "thread_goal_updated",
       threadId,
+      ...(typeof payload.turnId === "string" ? { turnId: payload.turnId } : {}),
       goal,
       message: typeof payload.message === "string" ? payload.message : formatThreadGoalMessage(goal)
-    }, threadGoalTimestamp(payload, goal), { historical: options.historical });
+    }, threadGoalTimestamp(goal), { historical: options.historical });
   }
 
   private appendThreadGoalClearedRecord(
     thread: ThreadState,
     payload: Record<string, unknown> = {},
-    options: { ifKnownGoal?: boolean } = {}
+    options: { ifKnownGoal?: boolean; historical?: boolean } = {}
   ) {
     const threadId = threadGoalThreadId(payload, null) ?? thread.threadId;
     const latest = this.latestThreadGoalRecord(thread, threadId);
@@ -1747,11 +1725,10 @@ export class ThreadHub {
       thread.skipNextGoalRunPolicyRun = false;
     }
     this.appendHubRecord(thread, "event_msg", {
-      ...payload,
       type: "thread_goal_cleared",
       threadId,
       message: typeof payload.message === "string" ? payload.message : "Goal cleared"
-    }, threadGoalTimestamp(payload, null));
+    }, threadGoalTimestamp(null), { historical: options.historical });
   }
 
   private latestThreadGoalMatches(thread: ThreadState, threadId: string, goal: Record<string, unknown>) {
@@ -1839,7 +1816,7 @@ export class ThreadHub {
         threadId: thread.threadId,
         goal: appServerGoal,
         message: `7d remaining ${formatPercent(weeklyRemainingPercent)} reached target ${formatPercent(targetRemainingPercent)}; switching goal to wrap-up.`
-      });
+      }, { allowPartial: true });
     }, (error) => {
       this.appendHubRecord(thread, "error", {
         type: "error",
@@ -2033,7 +2010,7 @@ export class ThreadHub {
         status: "paused"
       },
       message: "Goal paused"
-    });
+    }, { allowPartial: true });
   }
 
   private rejectQueuedTurns(threadId: string, error: Error) {
@@ -2292,7 +2269,10 @@ const imageUrls = (input: ProxyInput) => {
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 const isThreadApprovalPolicy = (value: unknown): value is ThreadOptions["approvalPolicy"] =>
-  value === "untrusted" || value === "on-failure" || value === "on-request" || value === "never";
+  value === "untrusted" || value === "on-request" || value === "never";
+
+const isAppServerTurnStatus = (value: unknown): value is "completed" | "interrupted" | "failed" | "inProgress" =>
+  value === "completed" || value === "interrupted" || value === "failed" || value === "inProgress";
 
 const isThreadSandboxPolicy = (value: unknown): value is ThreadOptions["sandboxPolicy"] => {
   const policy = asRecord(value);

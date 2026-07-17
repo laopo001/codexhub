@@ -1,6 +1,6 @@
 import { recordsToViews } from "../../core/codexRecordView.js";
 import type { CodexRecord, CodexRecordView } from "../../shared/recordTypes.js";
-import { defaultAppSettings, isEmbeddedHostSurface, legacyStorageKey, storageKey } from "../appConfig.js";
+import { defaultAppSettings, storageKey } from "../appConfig.js";
 import type { AppSettings, MessageDisplayMode, TextAttachment } from "../types.js";
 import { browserId } from "./common.js";
 
@@ -466,8 +466,7 @@ export const readStoredUiState = (): {
   collapsedProjectMachineKeys?: string[];
 } | null => {
   try {
-    const fallback = isEmbeddedHostSurface ? null : localStorage.getItem(legacyStorageKey);
-    const parsed = JSON.parse(localStorage.getItem(storageKey) ?? fallback ?? "null");
+    const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
     if (!parsed || typeof parsed !== "object") return null;
     return {
       activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,
@@ -478,9 +477,7 @@ export const readStoredUiState = (): {
       threadOrderBySession: storedStringArrayRecord(parsed.threadOrderBySession),
       selectedProjectKey: typeof parsed.selectedProjectKey === "string" ? parsed.selectedProjectKey : undefined,
       projectSearch: typeof parsed.projectSearch === "string" ? parsed.projectSearch : undefined,
-      messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode)
-        ? parsed.messageDisplayMode
-        : isMessageDisplayMode(parsed.toolDisplayMode) ? parsed.toolDisplayMode : undefined,
+      messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode) ? parsed.messageDisplayMode : undefined,
       settings: storedAppSettings(parsed.settings),
       sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined,
       collapsedProjectMachineKeys: Array.isArray(parsed.collapsedProjectMachineKeys)

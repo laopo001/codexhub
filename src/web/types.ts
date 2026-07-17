@@ -14,7 +14,6 @@ import type {
   RealtimeMessage as ApiRealtimeMessage,
   SessionStreamEvent as ApiSessionStreamEvent,
   SessionSummary as ApiSessionSummary,
-  SessionView as ApiSessionView,
   SshConnectionSummary,
   SshHostSummary,
   StoredTaskRun,
@@ -62,7 +61,6 @@ export type ThreadRenameDialogState = {
 };
 
 export type SessionSummary = ApiSessionSummary;
-export type SessionView = ApiSessionView;
 export type ModelCatalogItem = ApiModelCatalogItem;
 export type ModelCatalogLoadState = {
   status: "loading" | "ready" | "error";

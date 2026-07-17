@@ -1,6 +1,5 @@
 export {
   createCodexhubSessionId,
-  registerCodexHubSessionCommands,
   startAttachedCodexhubSession,
   startCodexAppServerProcess,
   startHeadlessCodexhubSession

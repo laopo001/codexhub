@@ -17,8 +17,11 @@ const main = async () => {
     const payload = parseSmokePayload(output);
     if (payload.health.port === 18788) throw new Error("Electron smoke reused occupied legacy default port.");
     const expectedConfigPath = path.join(dataDir, "config.yaml");
-    if (payload.health.configPath !== expectedConfigPath || payload.health.statePath !== expectedConfigPath) {
+    if (payload.health.configPath !== expectedConfigPath) {
       throw new Error(`Electron smoke used unexpected config path: ${JSON.stringify(payload.health)}`);
+    }
+    if ("statePath" in payload.health) {
+      throw new Error(`Electron health exposed removed statePath alias: ${JSON.stringify(payload.health)}`);
     }
     console.log(`electron ok: ${payload.url}`);
   } finally {
@@ -86,7 +89,7 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir:
 const parseSmokePayload = (output: string): {
   ok: true;
   url: string;
-  health: { port: number; configPath: string; statePath: string };
+  health: { port: number; configPath: string };
 } => {
   for (const line of output.split(/\r?\n/)) {
     if (!line.trim().startsWith("{")) continue;
@@ -94,14 +97,13 @@ const parseSmokePayload = (output: string): {
       const parsed = JSON.parse(line) as {
         ok?: unknown;
         url?: unknown;
-        health?: { port?: unknown; configPath?: unknown; statePath?: unknown };
+        health?: { port?: unknown; configPath?: unknown };
       };
       if (parsed.ok === true
         && typeof parsed.url === "string"
         && typeof parsed.health?.port === "number"
-        && typeof parsed.health?.configPath === "string"
-        && typeof parsed.health?.statePath === "string") {
-        return parsed as { ok: true; url: string; health: { port: number; configPath: string; statePath: string } };
+        && typeof parsed.health?.configPath === "string") {
+        return parsed as { ok: true; url: string; health: { port: number; configPath: string } };
       }
     } catch {
       // Keep looking for the smoke JSON line; Fastify logs are also JSON.

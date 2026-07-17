@@ -33,7 +33,7 @@ import type {
   SandboxPolicyDraft,
   SandboxPolicySelection,
   ServiceTierSelection,
-  SessionView,
+  SessionSummary,
   SshConnection,
   SshHost,
   ThreadGoalView,
@@ -101,7 +101,7 @@ export type AppSidebarViewModel = {
   openTaskRunThread: (threadId: string) => MaybePromise;
   selectedProject?: ProjectSummary | null;
   selectProject: (project: ProjectSummary) => MaybePromise;
-  sessionList: SessionView[];
+  sessionList: SessionSummary[];
   serverShareCopied: boolean;
   sidebarDraftStore: SidebarDraftStore;
   setConnectionMode: React.Dispatch<React.SetStateAction<ConnectionMode>>;
@@ -132,7 +132,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   activeDisplayThreadId: string;
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
-  activeRuntimeSession?: SessionView;
+  activeRuntimeSession?: SessionSummary;
   activeThread?: OpenThreadState;
   activeThreadIsOpen: boolean;
   activeThreadExecutionMeta: ThreadExecutionMeta | null;
@@ -206,7 +206,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
     caretIndex?: number | null
   ) => void;
   loadThreadPickerCandidates: (sessionId: string) => MaybePromise;
-  openThreadPicker: (session: SessionView, workingDirectory?: string) => MaybePromise;
+  openThreadPicker: (session: SessionSummary, workingDirectory?: string) => MaybePromise;
   openSelectedProjectThreadPicker: () => MaybePromise;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   projectPicker: ProjectPickerState | null;
@@ -224,7 +224,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   saveThreadRenameDialog: () => MaybePromise;
   send: (threadId: string) => MaybePromise;
   threadModelDialogOpen: boolean;
-  sessionList: SessionView[];
+  sessionList: SessionSummary[];
   threadControlsMenuOpen: boolean;
   threadRenameDialog: ThreadRenameDialogState | null;
   threadTabContextMenu: ThreadTabContextMenuState | null;

@@ -156,11 +156,11 @@ const formatStatusUsage = (thread: ThreadState, accountRateLimits: ThreadRateLim
 const formatUsage = (usage: Usage | undefined) => {
   const record = asRecord(usage);
   if (!record) return "n/a";
-  const total = numberValue(record.total_tokens) ?? numberValue(record.totalTokens);
-  const input = numberValue(record.input_tokens) ?? numberValue(record.inputTokens);
-  const cached = numberValue(record.cached_input_tokens) ?? numberValue(record.cachedInputTokens);
-  const output = numberValue(record.output_tokens) ?? numberValue(record.outputTokens);
-  const reasoning = numberValue(record.reasoning_output_tokens) ?? numberValue(record.reasoningOutputTokens);
+  const total = numberValue(record.total_tokens);
+  const input = numberValue(record.input_tokens);
+  const cached = numberValue(record.cached_input_tokens);
+  const output = numberValue(record.output_tokens);
+  const reasoning = numberValue(record.reasoning_output_tokens);
   if (total == null && input == null && cached == null && output == null && reasoning == null) return "n/a";
   return [
     total == null ? null : `total=${total}`,
@@ -186,11 +186,13 @@ const formatRateLimitUsage = (usage: ThreadRateLimitUsage | null) => usage
   ? [
     `${formatPercent(usage.usedPercent)} used`,
     `${formatPercent(Math.max(0, 100 - usage.usedPercent))} remaining`,
+    ...(usage.windowMinutes === null ? [] : [`${usage.windowMinutes}m window`]),
     `resets ${formatRateLimitReset(usage.resetsAt)}`
   ].join(", ")
   : "n/a";
 
-const formatRateLimitReset = (value: number) => {
+const formatRateLimitReset = (value: number | null) => {
+  if (value === null) return "n/a";
   const millis = value > 10_000_000_000 ? value : value * 1000;
   return Number.isFinite(millis) ? new Date(millis).toISOString() : "n/a";
 };

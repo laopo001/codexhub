@@ -27,7 +27,7 @@ import type {
   GoalDialogState,
   ProjectSummary,
   ProjectsPayload,
-  SessionView,
+  SessionSummary,
   ThreadDetail,
   ThreadRenameDialogState,
 } from "../types.js";
@@ -36,7 +36,7 @@ import type { OpenThreadAction } from "../openThreadReducer.js";
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
 type ThreadActionsContext = {
-  activeRuntimeSession?: SessionView | null;
+  activeRuntimeSession?: SessionSummary | null;
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   composerDraftStore: ComposerDraftStore;
@@ -57,7 +57,7 @@ type ThreadActionsContext = {
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;
-  setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
+  setSessionList: React.Dispatch<React.SetStateAction<SessionSummary[]>>;
   dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
   setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
@@ -65,7 +65,7 @@ type ThreadActionsContext = {
 export type ThreadActionsDependencies = {
   primeTaskCompletionFeedback: () => void;
   refreshProjects: () => Promise<ProjectsPayload>;
-  refreshSessions: () => Promise<SessionView[]>;
+  refreshSessions: () => Promise<SessionSummary[]>;
   resetComposerHistory: (threadId: string) => void;
   sendRealtime: (message: RealtimeThreadMessage) => boolean;
 };

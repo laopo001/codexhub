@@ -113,6 +113,5 @@ export type ProjectSummary = StoredProject & {
   source?: ProjectSource;
   machine?: MachineSummary | StoredMachine;
   machineOnline: boolean;
-  online: boolean;
   running: boolean;
 };

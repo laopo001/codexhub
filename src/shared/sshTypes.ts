@@ -11,16 +11,12 @@ export type SshHostConfig = {
 /** server 管理的 SSH reverse tunnel 连接状态。 */
 export type SshMachineConnectionStatus = "starting" | "running" | "exited";
 
-/** 远端 client 启动方式；bootstrap 表示由本机 server 下发 remote-client bundle。 */
-export type SshMachineRemoteMode = "bootstrap" | "installed";
-
 /** SSH machine 连接摘要，包含 reverse tunnel 参数和最近输出。 */
 export type SshMachineConnection = {
   connectionId: string;
   host: string;
   name?: string;
-  remoteMode: SshMachineRemoteMode | "custom";
-  remoteClientHash?: string;
+  remoteClientHash: string;
   status: SshMachineConnectionStatus;
   startedAt: string;
   updatedAt: string;
@@ -38,5 +34,4 @@ export type SshMachineConnectInput = {
   host: string;
   name?: string;
   remotePort?: number;
-  remoteCommand?: string;
 };

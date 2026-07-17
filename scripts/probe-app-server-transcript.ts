@@ -287,16 +287,6 @@ class JsonRpcClient {
       return;
     }
 
-    if (method === "execCommandApproval") {
-      this.send({ id, result: { decision: this.options.autoApprove ? "approved" : "denied" } });
-      return;
-    }
-
-    if (method === "applyPatchApproval") {
-      this.send({ id, result: { decision: this.options.autoApprove ? "approved" : "denied" } });
-      return;
-    }
-
     if (method === "item/tool/requestUserInput") {
       this.send({ id, result: { answers: {} } });
       return;

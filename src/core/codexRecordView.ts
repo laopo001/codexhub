@@ -102,7 +102,7 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
     } : null;
   }
 
-  if (payload.type === "context_compaction" || payload.type === "context_compacted" || payload.type === "compacted") {
+  if (payload.type === "context_compaction") {
     const status = contextCompactionStatus(payload);
     return {
       id: record.id,

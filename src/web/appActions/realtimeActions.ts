@@ -38,7 +38,7 @@ import type {
   PluginSummary,
   ProjectSummary,
   RealtimeMessage,
-  SessionView,
+  SessionSummary,
   SshConnection,
   SshHost,
   StreamEvent,
@@ -79,7 +79,7 @@ type RealtimeActionsContext = {
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
   setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
-  setSessionList: React.Dispatch<React.SetStateAction<SessionView[]>>;
+  setSessionList: React.Dispatch<React.SetStateAction<SessionSummary[]>>;
   dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSshConfigHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;

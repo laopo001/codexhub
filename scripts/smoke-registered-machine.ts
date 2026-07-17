@@ -95,7 +95,7 @@ const main = async () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        url: `${apiBase}?token=dynamic-smoke-token`,
+        url: `${apiBase}?codexhub_token=dynamic-smoke-token`,
         machineId: dynamicMachineId,
         name: dynamicMachineName
       })
@@ -159,12 +159,12 @@ const runRegisteredScenario = async (input: {
     }
     console.log(`${label} project thread ok: ${sessionId} ${threadId}`);
 
-    const turn = await apiJson(apiBase, `/api/sessions/${encodeURIComponent(sessionId)}/turn`, {
+    const turn = await apiJson(apiBase, `/api/threads/${encodeURIComponent(threadId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId, input: "/status", source: "web" })
+      body: JSON.stringify({ input: "/status", source: "web" })
     });
-    assertNoWorkerId(turn, "/api/sessions/:sessionId/turn");
+    assertNoWorkerId(turn, "/api/threads/:threadId/turn");
 
     const thread = await waitForThreadRecords(apiBase, threadId, 2);
     assertNoWorkerId(thread, "/api/threads/:threadId");

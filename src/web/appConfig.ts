@@ -38,13 +38,11 @@ export const storageKey = isVscodeSurface
   : isTheiaSurface
     ? "codexhub-ui-state-theia-v1"
     : "codexhub-ui-state-v5";
-export const legacyStorageKey = "codexhub-ui-state-v4";
 export const defaultAppSettings = (): AppSettings => ({
   taskCompleteSystemNotifications: false
 });
 export const approvalPolicyOptions: Array<{ value: ApprovalPolicySelection; label: string }> = [
   { value: "untrusted", label: "Untrusted" },
-  { value: "on-failure", label: "On failure" },
   { value: "on-request", label: "On request" },
   { value: "never", label: "Never" }
 ];
