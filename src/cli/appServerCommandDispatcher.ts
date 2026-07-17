@@ -39,7 +39,7 @@ export type AppServerCommandHost = {
   planResetModes: Map<string, AppServerCollaborationMode>;
   listCommandPalette: (cwd: string, part: SessionCommand["commandPalettePart"]) => Promise<unknown>;
   bindThread: (threadId: string, cwd: string) => void;
-  unbindThread: (threadId: string) => void;
+  unbindThread: (threadId: string) => Promise<void>;
   syncThreadTurns: (threadId: string) => Promise<void>;
   startThread: (cwd: string, model: string | null | undefined, command: CommandContext) => Promise<unknown>;
   loadThread: (
@@ -84,7 +84,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     return;
   }
   if (command.type === "unsubscribe_thread_records") {
-    host.unbindThread(requireThreadId(command));
+    await host.unbindThread(requireThreadId(command));
     return;
   }
   if (command.type === "start_thread") {

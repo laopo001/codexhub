@@ -52,8 +52,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate app-server protocol
+        run: pnpm run check:app-server-protocol
+
       - name: Build release artifacts
         run: pnpm run package:release
+
+      - name: Run core smokes
+        run: pnpm run smoke:core
 
       - name: Run installer and integration smokes
         run: |

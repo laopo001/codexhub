@@ -1,9 +1,10 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { access } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 import type { CodexAppServerLaunchOptions, CodexApprovalPolicy, CodexSandboxMode } from "../shared/appServerLaunch.js";
 export type { CodexAppServerLaunchOptions, CodexApprovalPolicy, CodexSandboxMode } from "../shared/appServerLaunch.js";
 
@@ -13,6 +14,7 @@ export type CodexAppServerProcessHandle = {
   cwd: string;
   port: number;
   appServerUrl: string;
+  cliVersion: string;
   stop: () => Promise<void>;
   wait: () => Promise<ChildExit>;
 };
@@ -20,10 +22,19 @@ export type CodexAppServerProcessHandle = {
 export type StartedCodexAppServerProcess = {
   child: ChildProcess;
   stopped: Promise<ChildExit>;
+  cliVersion: string;
 };
 
+export const minimumCodexCliVersion = "0.144.4";
+export class UnsupportedCodexCliVersionError extends Error {
+  constructor(readonly version: string, readonly minimumVersion = minimumCodexCliVersion) {
+    super(`Codex CLI ${minimumVersion} or newer is required for the current app-server protocol; found ${version}.`);
+    this.name = "UnsupportedCodexCliVersionError";
+  }
+}
 const codexAppServerReadyTimeoutMs = () => envPositiveInt("CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", 60_000);
 const codexAppServerStderrTailLimit = 4000;
+const execFileAsync = promisify(execFile);
 
 // 启动官方 Codex app-server，并保留足够 stderr 方便解释 ready 失败。
 export const startCodexAppServer = async (
@@ -56,7 +67,7 @@ export const startCodexAppServer = async (
       timeoutMs: codexAppServerReadyTimeoutMs(),
       stderr: () => stderrTail
     });
-    return { child, stopped };
+    return { child, stopped, cliVersion: launch.cliVersion };
   } catch (error) {
     await terminateChild(child, stopped).catch((cleanupError: unknown) => {
       console.error(`codex app-server cleanup after failed startup failed: ${errorText(cleanupError)}`);
@@ -74,7 +85,7 @@ export const startCodexAppServerProcess = async (
   const port = portInput ?? await findFreePort();
   if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${portInput}`);
   const appServerUrl = `ws://127.0.0.1:${port}`;
-  const { child, stopped } = await startCodexAppServer(cwd, appServerUrl, port, options);
+  const { child, stopped, cliVersion } = await startCodexAppServer(cwd, appServerUrl, port, options);
   const stop = cleanupOnce(async () => {
     await terminateChild(child, stopped);
   });
@@ -82,6 +93,7 @@ export const startCodexAppServerProcess = async (
     cwd,
     port,
     appServerUrl,
+    cliVersion,
     stop,
     wait: () => stopped
   };
@@ -161,26 +173,31 @@ export const parseCodexSandboxMode = (
 
 const codexAppServerLaunch = async (appServerUrl: string, options: CodexAppServerLaunchOptions) => {
   const codexCommand = await resolveCodexCommand();
+  const cliVersion = await readCodexCliVersion(codexCommand);
+  assertSupportedCodexCliVersion(cliVersion);
   const appServerArgs = codexAppServerArgs(appServerUrl, options);
   if (process.platform === "linux" && await fileExists("/usr/bin/setpriv")) {
     // 在 Linux 下把子进程绑定到当前进程，避免崩溃后留下孤儿 app-server。
     return {
       command: "/usr/bin/setpriv",
       args: ["--pdeathsig", "TERM", codexCommand, ...appServerArgs],
-      codexCommand
+      codexCommand,
+      cliVersion
     };
   }
   if (needsWindowsCommandShell(codexCommand)) {
     return {
       command: process.env.ComSpec || "cmd.exe",
       args: ["/d", "/s", "/c", "call", codexCommand, ...appServerArgs],
-      codexCommand
+      codexCommand,
+      cliVersion
     };
   }
   return {
     command: codexCommand,
     args: appServerArgs,
-    codexCommand
+    codexCommand,
+    cliVersion
   };
 };
 
@@ -205,11 +222,77 @@ const codexAppServerEnv = (codexCommand: string) => ({
   ]).join(path.delimiter)
 });
 
-const resolveCodexCommand = async () => {
+export const resolveCodexCommand = async () => {
   for (const candidate of codexCommandCandidates()) {
     if (candidate && await fileExists(candidate)) return candidate;
   }
   throw new Error("codex CLI not found. Install @openai/codex or set CODEX_HUB_CODEX_CLI to the codex executable path.");
+};
+
+export const readCodexCliVersion = async (codexCommand: string) => {
+  const command = needsWindowsCommandShell(codexCommand)
+    ? process.env.ComSpec || "cmd.exe"
+    : codexCommand;
+  const args = needsWindowsCommandShell(codexCommand)
+    ? ["/d", "/s", "/c", "call", codexCommand, "--version"]
+    : ["--version"];
+  let output: string;
+  try {
+    const result = await execFileAsync(command, args, {
+      encoding: "utf8",
+      env: codexAppServerEnv(codexCommand),
+      timeout: 10_000,
+      windowsHide: true
+    });
+    output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  } catch (error) {
+    throw new Error(`Unable to read Codex CLI version from ${codexCommand}: ${errorText(error)}`);
+  }
+  const version = parseCodexCliVersion(output);
+  if (!version) {
+    throw new Error(`Unable to parse Codex CLI version from ${codexCommand}: ${output.trim() || "empty output"}`);
+  }
+  return version;
+};
+
+export const parseCodexCliVersion = (value: string) =>
+  value.match(/\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/)?.[1];
+
+export const assertSupportedCodexCliVersion = (
+  version: string,
+  minimumVersion = minimumCodexCliVersion
+) => {
+  if (compareSemver(version, minimumVersion) >= 0) return;
+  throw new UnsupportedCodexCliVersionError(version, minimumVersion);
+};
+
+const compareSemver = (left: string, right: string) => {
+  const [leftCore, leftPrerelease] = left.split("-", 2);
+  const [rightCore, rightPrerelease] = right.split("-", 2);
+  const leftParts = leftCore.split(".").map(Number);
+  const rightParts = rightCore.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference) return difference;
+  }
+  if (leftPrerelease === undefined) return rightPrerelease === undefined ? 0 : 1;
+  if (rightPrerelease === undefined) return -1;
+  const leftIdentifiers = leftPrerelease.split(".");
+  const rightIdentifiers = rightPrerelease.split(".");
+  for (let index = 0; index < Math.max(leftIdentifiers.length, rightIdentifiers.length); index += 1) {
+    const leftIdentifier = leftIdentifiers[index];
+    const rightIdentifier = rightIdentifiers[index];
+    if (leftIdentifier === undefined) return -1;
+    if (rightIdentifier === undefined) return 1;
+    if (leftIdentifier === rightIdentifier) continue;
+    const leftNumber = /^\d+$/.test(leftIdentifier) ? Number(leftIdentifier) : null;
+    const rightNumber = /^\d+$/.test(rightIdentifier) ? Number(rightIdentifier) : null;
+    if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
+    if (leftNumber !== null) return -1;
+    if (rightNumber !== null) return 1;
+    return leftIdentifier.localeCompare(rightIdentifier);
+  }
+  return 0;
 };
 
 const codexCommandCandidates = () => {

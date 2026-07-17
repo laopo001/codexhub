@@ -1,6 +1,6 @@
 {
   "name": "@dadigua/codexhub",
-  "version": "0.4.17",
+  "version": "0.5.0",
   "description": "Local-first Codex control plane for local, SSH, and registered machines.",
   "type": "module",
   "license": "MIT",
@@ -28,6 +28,7 @@
     "dist-vsix/codexhub.vsix",
     "index.html",
     "README.md",
+    "MIGRATION.md",
     "LICENSE",
     "AGENTS.md",
     ".env.example",
@@ -58,7 +59,9 @@
     "smoke:theia-host": "tsx scripts/smoke-theia-vscode-host.ts",
     "smoke:theia-install": "tsx scripts/smoke-theia-installer.ts",
     "smoke:electron": "pnpm build && tsx scripts/smoke-electron.ts",
+    "smoke:core": "pnpm run smoke:auth && pnpm run smoke:machine-session && pnpm run smoke:task-lock && pnpm run smoke:registered-machine",
     "test:unit": "tsx --test scripts/tests/*.test.ts",
+    "check:app-server-protocol": "tsx scripts/check-app-server-protocol.ts",
     "probe:app-server-transcript": "tsx scripts/probe-app-server-transcript.ts",
     "clean": "node -e \"const fs=require('node:fs'); for (const path of ['dist','dist-node']) fs.rmSync(path,{recursive:true,force:true});\"",
     "check": "tsc --noEmit && pnpm --dir targets/theia check && pnpm run test:unit",
@@ -95,6 +98,7 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@openai/codex": "0.144.4",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

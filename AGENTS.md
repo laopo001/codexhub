@@ -123,7 +123,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 6. Workspace thread tabs 使用 Ant Design Tabs 的官方 editable-card 行为和 pane 高度契约；不要为 add/remove 重新写一套自定义 tabs 外观。
 7. VSCode surface 使用同一套 Web UI 和完整左侧控制面。`surface=vscode` 只用于 VSCode 通知桥、daemon 兼容判断、workspace project group 等嵌入环境差异，不应隐藏 sidebar 或关闭 SSH/tasks/plugins/Registered 能力。
 8. 任务完成通知：完成音效总是由 Web 播放；Settings 里的 `taskCompleteSystemNotifications` 只控制系统弹窗，普通 Web 走 browser Notification，VSCode 走 iframe `postMessage` 到 extension，再由 VSCode notification 展示。
-9. Thread Model 弹窗的 model/reasoning/service tier 选项优先使用当前在线 app-server `model/list` catalog；catalog 不可用时才回退本地静态兜底，不能把 catalog 保存进 `config.yaml`。
+9. Thread Model 弹窗的 model/reasoning/service tier 选项只使用当前在线 app-server `model/list` catalog；catalog 不可用时显示加载/错误状态并禁用选择，不提供本地静态 fallback，也不能把 catalog 保存进 `config.yaml`。
 10. UI 文案和交互不要重新暴露已删除概念：worker、instance、project rename、project thread/history count、per-project runtime restart/stop。
 
 ## 插件和集成
@@ -161,12 +161,10 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 3. 关键验证命令：
 
 ```bash
+pnpm run check:app-server-protocol
 pnpm check
-pnpm run smoke:auth
-pnpm run smoke:machine-session
-pnpm run smoke:registered-machine
+pnpm run smoke:core
 pnpm run smoke:ssh-loopback
-pnpm run smoke:task-lock
 pnpm run smoke:electron
 pnpm build
 ```
@@ -180,3 +178,6 @@ pnpm build
 10. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vsix/codexhub.vsix --force`。
 11. 公开版本由 `.github/workflows/release.yml` 统一发布，只允许与根 `package.json` 版本一致的 `v<version>` 标签触发；`main` push 不应直接发布。workflow 需要 `NPM_TOKEN` 和 `VSCE_PAT`，并按可重试方式发布两个 npm 包、VS Code Marketplace 和 GitHub Release。
 12. `pnpm run package:release` 只做一次完整 build，再产出 `release-artifacts/dadigua-codexhub-<version>.tgz`、`release-artifacts/codexhub-<version>.vsix`、`release-artifacts/dadigua-codexhub-theia-<version>.tgz`。根 CLI npm 包必须内含 `dist-vsix/codexhub.vsix`；原生 Theia npm 包是另一种编译期实现，不能与共享 VSIX 混为同一产物。
+13. 当前最低支持 Codex CLI `0.144.4`。`@openai/codex` devDependency 固定为该版本，`pnpm run check:app-server-protocol` 必须用它生成包含 experimental API 的 TypeScript schema 并校验 CodexHub 依赖的当前 contract；CI 和 release 都要运行这条检查及 `smoke:core`。
+14. 删除公开 API、CLI、环境变量、存储 key 或旧协议兼容层属于 breaking change；发版前必须 bump 新版本并更新 `MIGRATION.md`，不能移动或复用已经发布的 tag。
+15. `publish:prod` 必须注入非空 `CODEX_HUB_BUILD_ID`，验证 health 返回相同 build，并让 PM2 直接执行仓库 `bin/codexhub`；不要把 VSCode Server 自带的版本化 Node 路径保存成 PM2 script。

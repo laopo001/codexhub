@@ -425,9 +425,24 @@ export const threadGoalUpdateSchema = z.object({
   runPolicy: threadGoalRunPolicySchema.nullable().optional()
 }).strict();
 
+const appServerApprovalDecisionSchema: z.ZodType<AppServerApprovalDecision> = z.union([
+  z.enum(["approve", "approve_for_session", "deny", "cancel"]),
+  z.object({
+    type: z.literal("accept_with_execpolicy_amendment"),
+    execpolicyAmendment: z.array(z.string())
+  }).strict(),
+  z.object({
+    type: z.literal("apply_network_policy_amendment"),
+    networkPolicyAmendment: z.object({
+      host: z.string().min(1),
+      action: z.enum(["allow", "deny"])
+    }).strict()
+  }).strict()
+]);
+
 export const threadApprovalDecisionSchema = z.object({
   approvalId: z.string().min(1),
-  decision: z.enum(["approve", "approve_for_session", "deny", "cancel"])
+  decision: appServerApprovalDecisionSchema
 }).strict();
 
 const threadUserInputAnswerSchema = z.object({
@@ -448,6 +463,7 @@ const appServerApprovalRequestSchema = z.object({
   turnId: z.string().min(1).optional(),
   itemId: z.string().min(1).optional(),
   createdAt: z.string().min(1),
+  availableDecisions: z.array(appServerApprovalDecisionSchema).nullable().optional(),
   params: z.unknown()
 }).strict();
 
@@ -496,7 +512,8 @@ export const sessionRegistrationSchema = z.object({
   workingDirectory: z.string().min(1),
   appServerUrl: z.string().min(1).optional(),
   pid: z.number().int().optional(),
-  hostname: z.string().min(1).optional()
+  hostname: z.string().min(1).optional(),
+  cliVersion: z.string().min(1).optional()
 }).strict();
 
 export const sessionHeartbeatSchema = sessionRegistrationSchema.partial().strict();

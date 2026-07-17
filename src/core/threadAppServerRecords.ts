@@ -194,7 +194,8 @@ export const codexRecordFromAppServerItem = (
       type: "event_msg",
       payload: {
         type: "plan",
-        message: typeof item.text === "string" ? item.text : stringify(item)
+        message: typeof item.text === "string" ? item.text : stringify(item),
+        ...(status ? { status } : {})
       }
     };
   }

@@ -2,6 +2,8 @@
 
 一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
+CodexHub 0.5.0 要求运行 machine 上的官方 Codex CLI 不低于 `0.144.4`。从 0.4.x 升级前请先阅读 [0.5.0 迁移说明](./MIGRATION.md)。
+
 - 共享核心：API server 统一管理 machines、machine runtime sessions 和 threads，并把轻量 project 元数据投影到 `/api/projects`；Web 左侧按项目优先展示，点击 project 只切换 active path，Add Tab/thread picker 基于该 path 创建或恢复 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
@@ -233,12 +235,10 @@ SSH 继续保留为 machine transport 类型；Telegram 是内建 integration pl
 ## 验证
 
 ```bash
+pnpm run check:app-server-protocol
 pnpm check
-pnpm run smoke:auth
-pnpm run smoke:machine-session
-pnpm run smoke:registered-machine
+pnpm run smoke:core
 pnpm run smoke:ssh-loopback
-pnpm run smoke:task-lock
 pnpm run smoke:electron
 pnpm build
 ```
@@ -269,7 +269,7 @@ pnpm run publish:prod
 - `codexhub-prod`: 端口跟随 `.env` 里的 `CODEX_HUB_PORT`
 - Telegram bot 内置在 `codexhub-prod`，由同一个 server 进程启动
 
-发布脚本会先运行 `pnpm check` 和 `pnpm build`，再通过 PM2 启动或重启 `codexhub-prod`，最后检查 `/api/health` 和 `/`。
+发布脚本会先备份当前生产产物，再运行 `pnpm check` 和 `pnpm build`，用 `v<version>+<git-sha>[.dirty]` 注入非空 `CODEX_HUB_BUILD_ID`，然后通过 PM2 的仓库 `bin/codexhub` 入口启动或重启 `codexhub-prod`，最后检查 `/api/health`、build ID 和 `/`。任一步失败会恢复先前的 `dist`、`dist-node` 和 PM2 进程快照。
 
 常用命令：
 
@@ -422,6 +422,8 @@ pnpm run smoke:theia
 本地预检可以运行：
 
 ```bash
+pnpm run check:app-server-protocol
+pnpm run smoke:core
 pnpm run package:release
 pnpm run smoke:vscode-install
 pnpm run smoke:theia
@@ -439,7 +441,7 @@ git tag -a "v${VERSION}" -m "CodexHub ${VERSION}"
 git push origin "v${VERSION}"
 ```
 
-标签会依次发布 `@dadigua/codexhub`、`@dadigua/codexhub-theia`、VS Code Marketplace，并创建包含三个文件的 GitHub Release。npm 发布前会检查精确版本是否已存在，Marketplace 使用 `--skip-duplicate`，GitHub Release 采用 create-or-upload，因此失败后可以在 Actions 中选择同一标签手动重跑。仓库需要配置 `NPM_TOKEN` 和 `VSCE_PAT`。
+标签会依次发布 `@dadigua/codexhub`、`@dadigua/codexhub-theia`、VS Code Marketplace，并创建包含三个文件的 GitHub Release。npm 发布前会检查精确版本是否已存在，Marketplace 使用 `--skip-duplicate`，GitHub Release 采用 create-or-upload，因此失败后可以在 Actions 中选择同一标签手动重跑；不得移动或复用已经指向其他提交的版本标签。仓库需要配置 `NPM_TOKEN` 和 `VSCE_PAT`。
 
 ## API
 
@@ -493,7 +495,7 @@ curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
 curl -sS "http://127.0.0.1:8788/api/sessions/$SESSION_ID/models"
 ```
 
-`/api/sessions/:sessionId/models` 由在线 machine/session bridge 调用官方 app-server `model/list`，返回当前账号/配置可见的 model、supported reasoning efforts 和 service tiers；Web Thread Model 弹窗用它生成下拉选项，失败时才回退本地静态兜底。
+`/api/sessions/:sessionId/models` 由在线 machine/session bridge 调用官方 app-server `model/list`，返回当前账号/配置可见的 model、supported reasoning efforts 和 service tiers；Web Thread Model 弹窗只使用这份在线 catalog。catalog 尚未就绪或读取失败时会禁用选择并显示加载/错误状态，不使用本地静态 model fallback。
 
 `POST /api/threads/:threadId/compact` 由在线 machine/session bridge 调用官方 app-server `thread/compact/start`。它只触发 app-server 对该 thread 的上下文压缩，不改写 CodexHub server 本地 records；Web 通过 app-server `contextCompaction` item 归一化出的 `context_compaction` record 显示进度和结果。
 

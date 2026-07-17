@@ -535,8 +535,12 @@ const mcpToolText = (payload: Record<string, unknown>) => {
   ].filter(Boolean).join(".");
   const status = typeof payload.status === "string" ? payload.status : "";
   const error = asRecord(payload.error);
+  const progressMessages = Array.isArray(payload.progress_messages)
+    ? payload.progress_messages.filter((item): item is string => typeof item === "string")
+    : [];
   if (typeof error?.message === "string") return `${label}: ${status}\n${error.message}`;
   if (payload.result != null) return `${label}: ${status}\n${stringify(payload.result)}`;
+  if (progressMessages.length) return `${label}: ${status}\n${progressMessages[progressMessages.length - 1]}`;
   if (payload.arguments != null) return `${label}: ${status}\n${stringify(payload.arguments)}`;
   return `${label}: ${status}`.trim();
 };

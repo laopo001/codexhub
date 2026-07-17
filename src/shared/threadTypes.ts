@@ -54,6 +54,7 @@ export type SessionSummary = {
   offlineReason?: SessionOfflineReason;
   pid?: number;
   hostname?: string;
+  cliVersion?: string;
   accountRateLimits?: ThreadRateLimits | null;
   threads: ThreadSummary[];
 };
@@ -89,8 +90,23 @@ export type AppServerApprovalKind =
   | "mcp_elicitation"
   | "permissions_request";
 
-/** CodexHub Web 对 app-server 审批请求的稳定决策。 */
-export type AppServerApprovalDecision = "approve" | "approve_for_session" | "deny" | "cancel";
+/** CodexHub Web 对当前 app-server 审批请求的决策。 */
+export type AppServerApprovalDecision =
+  | "approve"
+  | "approve_for_session"
+  | "deny"
+  | "cancel"
+  | {
+    type: "accept_with_execpolicy_amendment";
+    execpolicyAmendment: string[];
+  }
+  | {
+    type: "apply_network_policy_amendment";
+    networkPolicyAmendment: {
+      host: string;
+      action: "allow" | "deny";
+    };
+  };
 
 /** server/Web 可见的 app-server 审批请求。 */
 export type AppServerApprovalRequest = {
@@ -102,6 +118,8 @@ export type AppServerApprovalRequest = {
   turnId?: string;
   itemId?: string;
   createdAt: string;
+  /** 当前 app-server 明确允许展示的稳定决策；null/缺省表示未提供限制。 */
+  availableDecisions?: AppServerApprovalDecision[] | null;
   params: unknown;
 };
 
@@ -234,6 +252,7 @@ export type SessionRegistration = {
   appServerUrl?: string;
   pid?: number;
   hostname?: string;
+  cliVersion?: string;
 };
 
 /** session 离线原因；用于 Web 区分心跳超时、transport 断开和主动注销。 */

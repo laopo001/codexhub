@@ -3,11 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  assertSupportedCodexCliVersion,
+  parseCodexCliVersion,
   startCodexAppServerProcess,
+  UnsupportedCodexCliVersionError,
   type ChildExit,
   type CodexAppServerLaunchOptions,
   type CodexAppServerProcessHandle
 } from "./codexAppServerProcess.js";
+import { codexhubVersion } from "../shared/version.js";
 import {
   dispatchAppServerCommand,
   permissionParams,
@@ -56,6 +60,17 @@ type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 };
+
+export class AppServerRpcError extends Error {
+  constructor(
+    readonly code: number | undefined,
+    message: string,
+    readonly data?: unknown
+  ) {
+    super(message);
+    this.name = "AppServerRpcError";
+  }
+}
 
 type PendingApprovalRequest = {
   requestId: string | number;
@@ -135,6 +150,7 @@ type BridgeOptions = {
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy?: "untrusted" | "on-request" | "never";
+  expectedCliVersion?: string;
   transportFactory: HeadlessSessionTransportFactory;
 };
 
@@ -183,6 +199,7 @@ export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSess
     model: options.model,
     sandbox: options.sandbox,
     approvalPolicy: options.approvalPolicy,
+    expectedCliVersion: appServer.cliVersion,
     transportFactory: options.transportFactory
   });
   const appServerStopped = appServer.wait();
@@ -321,6 +338,7 @@ class ProxyBridgeRunner {
                 name: sessionDisplayName(this.options.sessionId),
                 workingDirectory: this.options.cwd,
                 appServerUrl: this.options.appServerUrl,
+                cliVersion: this.bridge?.cliVersion(),
                 pid: process.pid,
                 hostname: os.hostname()
               };
@@ -352,6 +370,10 @@ class ProxyBridgeRunner {
         } catch (error) {
           if (this.stopping) return;
           this.logState("offline", `codexhub local bridge offline: ${errorText(error)}`);
+          if (error instanceof UnsupportedCodexCliVersionError) {
+            this.ready.reject(error);
+            return;
+          }
         } finally {
           if (this.bridge) this.bridgeState = this.bridge.snapshotState();
           this.transport?.stop({ unregister: this.stopping });
@@ -407,6 +429,7 @@ class CodexAppServerBridge {
   private readonly pendingUserInputs = new Map<string, PendingUserInputRequest>();
   private readonly syncedThreads = new Map<string, SyncedThread>();
   private readonly loadedThreads = new Set<string>();
+  private readonly threadUnsubscribeTasks = new Map<string, Promise<void>>();
   private readonly threadCwds = new Map<string, string>();
   private nextId = 1;
   private closed = false;
@@ -417,6 +440,7 @@ class CodexAppServerBridge {
   private readonly bridgeStartedThreads = new Set<string>();
   private bridgeStartedUnknownCount = 0;
   private readonly closeSignal = new Deferred<void>();
+  private cliVersionValue: string | undefined;
 
   private constructor(
     private readonly options: BridgeOptions,
@@ -442,13 +466,34 @@ class CodexAppServerBridge {
     });
     ws.addEventListener("close", () => bridge.markClosed());
     // 官方 app-server 通过这条 socket 说 JSON-RPC，必须先 initialize。
-    await bridge.request("initialize", {
-      clientInfo: { name: "codexhub", title: "codexhub bridge", version: "0.1.0" },
+    const initializeResult = asRecord(await bridge.request("initialize", {
+      clientInfo: {
+        name: "codexhub",
+        title: "codexhub bridge",
+        version: codexhubVersion
+      },
       capabilities: { experimentalApi: true, requestAttestation: false }
-    });
+    }));
+    bridge.rememberAppServerIdentity(initializeResult);
     bridge.notify("initialized");
     void bridge.syncAccountRateLimits();
     return bridge;
+  }
+
+  cliVersion() {
+    return this.cliVersionValue;
+  }
+
+  private rememberAppServerIdentity(initializeResult: JsonRecord | null) {
+    const userAgent = typeof initializeResult?.userAgent === "string"
+      ? initializeResult.userAgent
+      : "";
+    const cliVersion = parseCodexCliVersion(userAgent) ?? this.options.expectedCliVersion;
+    if (!cliVersion) {
+      throw new UnsupportedCodexCliVersionError("unknown");
+    }
+    assertSupportedCodexCliVersion(cliVersion);
+    this.cliVersionValue = cliVersion;
   }
 
   snapshotState(): BridgeState {
@@ -609,7 +654,19 @@ class CodexAppServerBridge {
     return { threadId, ...(thread ? { thread } : {}) };
   }
 
-  private request(method: string, params: unknown, command?: { threadId?: string; commandId?: string }) {
+  private async request(method: string, params: unknown, command?: { threadId?: string; commandId?: string }) {
+    const maxRetries = 3;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.sendRequest(method, params, command);
+      } catch (error) {
+        if (!(error instanceof AppServerRpcError) || error.code !== -32001 || attempt >= maxRetries) throw error;
+        await delay(appServerOverloadRetryDelayMs(attempt));
+      }
+    }
+  }
+
+  private sendRequest(method: string, params: unknown, command?: { threadId?: string; commandId?: string }) {
     // 每个请求都登记 pending，响应回来时才能把结果和 command/thread 对上。
     const id = this.nextId++;
     const message = { id, method, params };
@@ -654,12 +711,17 @@ class CodexAppServerBridge {
       this.pending.delete(message.id);
       if (pending.timeout) clearTimeout(pending.timeout);
       const error = asRecord(message.error);
+      const rpcError = error ? appServerRpcError(error) : undefined;
+      if (rpcError?.code === -32001) {
+        pending.reject(rpcError);
+        return;
+      }
       const threadId = threadIdForPendingMessage(pending, message);
       if (threadId) {
         await this.forwardThreadEvent(threadId, pending.commandId, message);
         if (!error) await this.forwardExecutionStateFromMessage(threadId, message);
       }
-      if (error) pending.reject(new Error(JSON.stringify(error)));
+      if (rpcError) pending.reject(rpcError);
       else {
         this.rememberLoadedThread(pending, message);
         pending.resolve(message.result);
@@ -738,19 +800,49 @@ class CodexAppServerBridge {
   private bindThread(threadId: string, cwd?: string) {
     if (cwd) this.rememberThreadCwd(threadId, cwd);
     if (this.syncedThreads.has(threadId)) return;
-    this.syncedThreads.set(threadId, {
+    const state: SyncedThread = {
       appServerTurnsSyncing: false,
       appServerTurnsPending: false
-    });
-    this.scheduleAppServerTurnsSync(threadId);
+    };
+    this.syncedThreads.set(threadId, state);
+    const pendingUnsubscribe = this.threadUnsubscribeTasks.get(threadId);
+    if (!pendingUnsubscribe) {
+      this.scheduleAppServerTurnsSync(threadId);
+      return;
+    }
+    void pendingUnsubscribe.then(
+      () => this.scheduleReboundThreadSync(threadId, state),
+      () => this.scheduleReboundThreadSync(threadId, state)
+    );
   }
 
-  private unbindThread(threadId: string) {
+  private async unbindThread(threadId: string) {
     const state = this.syncedThreads.get(threadId);
-    if (!state) return;
+    if (!state) return await this.threadUnsubscribeTasks.get(threadId);
     this.closeAppServerTurnsSync(state);
     this.syncedThreads.delete(threadId);
+    this.loadedThreads.delete(threadId);
     this.forwardedThreadSettings.delete(threadId);
+    const task = (async () => {
+      const result = asRecord(await this.request("thread/unsubscribe", { threadId }));
+      const status = typeof result?.status === "string" ? result.status : "";
+      if (status !== "notLoaded" && status !== "notSubscribed" && status !== "unsubscribed") {
+        throw new Error("Codex app-server thread/unsubscribe returned an invalid status.");
+      }
+    })();
+    this.threadUnsubscribeTasks.set(threadId, task);
+    try {
+      await task;
+    } finally {
+      if (this.threadUnsubscribeTasks.get(threadId) === task) this.threadUnsubscribeTasks.delete(threadId);
+    }
+  }
+
+  private scheduleReboundThreadSync(threadId: string, state: SyncedThread) {
+    if (this.syncedThreads.get(threadId) !== state || this.closed) return;
+    // An unsubscribe response can arrive after the Web re-binds. Resume again only after it settles.
+    this.loadedThreads.delete(threadId);
+    this.scheduleAppServerTurnsSync(threadId, { delayMs: 0 });
   }
 
   private markThreadLoaded(threadId: string) {
@@ -793,6 +885,7 @@ class CodexAppServerBridge {
     const result = asRecord(await this.request("thread/resume", {
       threadId,
       cwd,
+      excludeTurns: true,
       ...(model === undefined ? {} : { model }),
       ...permissionParams(this.options)
     }, command));
@@ -834,6 +927,13 @@ class CodexAppServerBridge {
     state.appServerTurnsSyncing = true;
     state.appServerTurnsPending = false;
     try {
+      const pendingUnsubscribe = this.threadUnsubscribeTasks.get(threadId);
+      if (pendingUnsubscribe) {
+        await pendingUnsubscribe;
+        if (!stillObserved()) return;
+        // Never let a resume race ahead of the previous unsubscribe response.
+        this.loadedThreads.delete(threadId);
+      }
       const cwd = this.threadCwds.get(threadId) ?? this.options.cwd;
       const loadedThreadId = await this.ensureThreadLoaded(threadId, cwd, this.options.model, undefined, {
         markBridgeStarted: true
@@ -1313,6 +1413,9 @@ class CodexAppServerBridge {
     }
 
     const approvalId = randomUUID();
+    const availableDecisions = kind === "command_execution" && hasOwn(params, "availableDecisions")
+      ? appServerApprovalDecisions(params.availableDecisions)
+      : undefined;
     this.pendingApprovals.set(approvalId, { requestId, method, params });
     this.hub.sendEvent({
       type: "approval_request",
@@ -1326,6 +1429,7 @@ class CodexAppServerBridge {
         ...(approvalTurnId(params) ? { turnId: approvalTurnId(params) } : {}),
         ...(approvalItemId(params) ? { itemId: approvalItemId(params) } : {}),
         createdAt: approvalCreatedAt(params),
+        ...(availableDecisions !== undefined ? { availableDecisions } : {}),
         params
       },
       heartbeat: false
@@ -1387,6 +1491,7 @@ class CodexAppServerBridge {
     this.hub.sendHeartbeat({
       workingDirectory: this.options.cwd,
       appServerUrl: this.options.appServerUrl,
+      cliVersion: this.cliVersionValue,
       pid: process.pid,
       hostname: os.hostname()
     });
@@ -1395,6 +1500,16 @@ class CodexAppServerBridge {
 }
 
 const appServerRequestTimeoutMs = () => envPositiveInt("CODEX_HUB_APP_SERVER_REQUEST_TIMEOUT_MS", 60_000);
+const appServerOverloadRetryDelayMs = (attempt: number) => {
+  const exponentialMs = Math.min(2_000, 100 * 2 ** attempt);
+  return Math.floor(exponentialMs * (0.5 + Math.random() * 0.5));
+};
+
+const appServerRpcError = (error: JsonRecord) => new AppServerRpcError(
+  typeof error.code === "number" ? error.code : undefined,
+  typeof error.message === "string" ? error.message : JSON.stringify(error),
+  error.data
+);
 
 const openWebSocket = async (url: string) => {
   const ws = new WebSocket(url);
@@ -1406,6 +1521,46 @@ const openWebSocket = async (url: string) => {
 };
 
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
+const appServerApprovalDecisions = (value: unknown): AppServerApprovalDecision[] | null | undefined => {
+  if (value === null) return null;
+  if (!Array.isArray(value)) return undefined;
+  const decisions: AppServerApprovalDecision[] = [];
+  for (const item of value) {
+    const decision = appServerApprovalDecision(item);
+    if (decision && !decisions.some((candidate) => approvalDecisionKey(candidate) === approvalDecisionKey(decision))) {
+      decisions.push(decision);
+    }
+  }
+  return decisions;
+};
+
+const appServerApprovalDecision = (value: unknown): AppServerApprovalDecision | null => {
+  if (value === "accept") return "approve";
+  if (value === "acceptForSession") return "approve_for_session";
+  if (value === "decline") return "deny";
+  if (value === "cancel") return "cancel";
+  const record = asRecord(value);
+  const exec = asRecord(record?.acceptWithExecpolicyAmendment);
+  const execpolicyAmendment = Array.isArray(exec?.execpolicy_amendment)
+    ? exec.execpolicy_amendment.filter((part): part is string => typeof part === "string")
+    : null;
+  if (execpolicyAmendment) {
+    return { type: "accept_with_execpolicy_amendment", execpolicyAmendment };
+  }
+  const network = asRecord(record?.applyNetworkPolicyAmendment);
+  const networkPolicyAmendment = asRecord(network?.network_policy_amendment);
+  const host = typeof networkPolicyAmendment?.host === "string" ? networkPolicyAmendment.host : "";
+  const action = networkPolicyAmendment?.action;
+  if (host && (action === "allow" || action === "deny")) {
+    return {
+      type: "apply_network_policy_amendment",
+      networkPolicyAmendment: { host, action }
+    };
+  }
+  return null;
+};
+
+const approvalDecisionKey = (decision: AppServerApprovalDecision) => JSON.stringify(decision);
 const envPositiveInt = (name: string, fallback: number) => {
   const value = Number(process.env[name]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
@@ -1494,6 +1649,20 @@ const approvalResponse = (
 };
 
 const modernApprovalDecision = (decision: AppServerApprovalDecision) => {
+  if (typeof decision !== "string") {
+    if (decision.type === "accept_with_execpolicy_amendment") {
+      return {
+        acceptWithExecpolicyAmendment: {
+          execpolicy_amendment: decision.execpolicyAmendment
+        }
+      };
+    }
+    return {
+      applyNetworkPolicyAmendment: {
+        network_policy_amendment: decision.networkPolicyAmendment
+      }
+    };
+  }
   if (decision === "approve") return "accept";
   if (decision === "approve_for_session") return "acceptForSession";
   if (decision === "cancel") return "cancel";

@@ -21,7 +21,7 @@ export type PendingUserInput = AppServerUserInputRequest & {
 type ApprovalDecisionStatus = "approved" | "denied" | "cancelled";
 
 export const approvalDecisionStatus = (decision: AppServerApprovalDecision): ApprovalDecisionStatus => {
-  if (decision === "approve" || decision === "approve_for_session") return "approved";
+  if (typeof decision !== "string" || decision === "approve" || decision === "approve_for_session") return "approved";
   if (decision === "cancel") return "cancelled";
   return "denied";
 };
@@ -197,6 +197,9 @@ const approvalPayload = (
   method: approval.method,
   requestId: approval.requestId,
   status: approval.status,
+  ...(Object.prototype.hasOwnProperty.call(approval, "availableDecisions")
+    ? { availableDecisions: approval.availableDecisions }
+    : {}),
   ...(approval.decision ? { decision: approval.decision } : {}),
   reason: stringValue(params?.reason) ?? null,
   ...(approval.turnId ? { turnId: approval.turnId } : {}),

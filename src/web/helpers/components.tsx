@@ -87,7 +87,7 @@ export const MessageCard = ({
   const messageText = memoryCitation.text;
   const approval = pendingApprovalFromMessage(message);
   const userInput = pendingUserInputFromMessage(message);
-  const approvalActions = approval ? approvalDecisionActions(approval.kind) : [];
+  const approvalActions = approval ? approvalDecisionActions(approval.kind, approval.availableDecisions) : [];
   const hasMessageMeta = !isThinkingMessage && (
     (showTimestamp && message.at)
     || message.usage
@@ -212,7 +212,7 @@ export const MessageCard = ({
                   className={`approvalButton ${action.className}`}
                   onClick={() => onApprovalDecision(approval.approvalId, action.decision)}
                   title={action.title}
-                  key={action.decision}
+                  key={action.key}
                 >
                   {action.label}
                 </button>
@@ -339,7 +339,10 @@ const pendingApprovalFromMessage = (message: WebRecordView) => {
   const approvalId = typeof approval?.approvalId === "string" ? approval.approvalId : "";
   const status = typeof approval?.status === "string" ? approval.status : "";
   const kind = typeof approval?.kind === "string" ? approval.kind : "";
-  return approvalId && status === "pending" ? { approvalId, kind } : null;
+  const availableDecisions = Array.isArray(approval?.availableDecisions)
+    ? approval.availableDecisions.filter(isAppServerApprovalDecision)
+    : null;
+  return approvalId && status === "pending" ? { approvalId, kind, availableDecisions } : null;
 };
 
 const pendingUserInputFromMessage = (message: WebRecordView): PendingUserInputView | null => {
@@ -392,46 +395,97 @@ const userInputAnswers = (
     { answers: (values[question.id]?.trim() ? [values[question.id].trim()] : []) }
   ]));
 
-const approvalDecisionActions = (kind: string): Array<{
+const isAppServerApprovalDecision = (value: unknown): value is AppServerApprovalDecision => {
+  if (value === "approve" || value === "approve_for_session" || value === "deny" || value === "cancel") return true;
+  const decision = asRecord(value);
+  if (decision?.type === "accept_with_execpolicy_amendment") {
+    return Array.isArray(decision.execpolicyAmendment)
+      && decision.execpolicyAmendment.every((part) => typeof part === "string");
+  }
+  if (decision?.type !== "apply_network_policy_amendment") return false;
+  const amendment = asRecord(decision.networkPolicyAmendment);
+  return typeof amendment?.host === "string"
+    && (amendment.action === "allow" || amendment.action === "deny");
+};
+
+export const approvalDecisionActions = (
+  kind: string,
+  availableDecisions: AppServerApprovalDecision[] | null = null
+): Array<{
   decision: AppServerApprovalDecision;
+  key: string;
   label: string;
   className: string;
   title: string;
 }> => {
-  const actions: Array<{
+  const stableActions: Record<"approve" | "approve_for_session" | "deny" | "cancel", {
     decision: AppServerApprovalDecision;
+    key: string;
     label: string;
     className: string;
     title: string;
-  }> = [{
-    decision: "approve",
-    label: "Approve",
-    className: "approve",
-    title: "Approve this request once"
-  }];
-  if (kind !== "mcp_elicitation") {
-    actions.push({
+  }> = {
+    approve: {
+      decision: "approve",
+      key: "approve",
+      label: "Approve",
+      className: "approve",
+      title: "Approve this request once"
+    },
+    approve_for_session: {
       decision: "approve_for_session",
+      key: "approve_for_session",
       label: "Session",
       className: "approve session",
       title: "Approve similar requests for this session"
-    });
-  }
-  actions.push({
-    decision: "deny",
-    label: "Deny",
-    className: "deny",
-    title: "Decline this request"
-  });
-  if (kind !== "permissions_request") {
-    actions.push({
+    },
+    deny: {
+      decision: "deny",
+      key: "deny",
+      label: "Deny",
+      className: "deny",
+      title: "Decline this request"
+    },
+    cancel: {
       decision: "cancel",
+      key: "cancel",
       label: "Cancel",
       className: "cancel",
       title: "Cancel this request"
-    });
-  }
-  return actions;
+    }
+  };
+  const defaultDecisions: AppServerApprovalDecision[] = [
+    "approve",
+    ...(kind === "mcp_elicitation" ? [] : ["approve_for_session"] as AppServerApprovalDecision[]),
+    "deny",
+    ...(kind === "permissions_request" ? [] : ["cancel"] as AppServerApprovalDecision[])
+  ];
+  const decisions = availableDecisions ?? defaultDecisions;
+  const seen = new Set<string>();
+  return decisions.flatMap((decision) => {
+    const key = JSON.stringify(decision);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    if (typeof decision === "string") return [stableActions[decision]];
+    if (decision.type === "accept_with_execpolicy_amendment") {
+      const command = decision.execpolicyAmendment.join(" ");
+      return [{
+        decision,
+        key,
+        label: "Allow pattern",
+        className: "approve session",
+        title: command ? `Allow commands starting with: ${command}` : "Allow this command pattern"
+      }];
+    }
+    const { host, action } = decision.networkPolicyAmendment;
+    return [{
+      decision,
+      key,
+      label: action === "allow" ? "Allow host" : "Block host",
+      className: action === "allow" ? "approve session" : "deny",
+      title: `${action === "allow" ? "Allow" : "Block"} ${host} in the network policy`
+    }];
+  });
 };
 
 export const canRenderMarkdown = (message: WebRecordView) => {

@@ -47,6 +47,7 @@ import type {
   LocalTaskRun
 } from "../types.js";
 import type { OpenThreadAction } from "../openThreadReducer.js";
+import { restorePersistedThreadTabs } from "../helpers/threadRestore.js";
 
 type RealtimeActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
@@ -232,28 +233,20 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       ctx.setActiveWorkspacePath(initialProject?.path ?? (initialWorkspace || initialSession.workingDirectory));
     }
     if (restoredThreadIds) {
-      let restoredCount = 0;
-      const openOrder = restoredActiveThreadId
-        ? [...restoredThreadIds.filter((threadId) => threadId !== restoredActiveThreadId), restoredActiveThreadId]
-        : restoredThreadIds;
-      for (const threadId of openOrder) {
-        try {
-          await deps.openThread(threadId);
-          restoredCount += 1;
-        } catch {
-          deps.clearActiveThreadIfLatest(threadId);
-        }
-      }
-      if (restoredThreadIds.length) {
-        ctx.dispatchOpenThreads({ type: "reorder", threadIds: restoredThreadIds });
-        if (restoredActiveThreadId) {
-          ctx.latestRequestedThreadId.current = restoredActiveThreadId;
-          ctx.setActiveTabThreadId(restoredActiveThreadId);
-        }
-      }
-      if (restoredThreadIds.length && restoredCount === 0 && initialThreadId) {
-        await deps.openThread(initialThreadId).catch(() => deps.clearActiveThreadIfLatest(initialThreadId));
-      }
+      const restored = await restorePersistedThreadTabs({
+        threadIds: restoredThreadIds,
+        activeThreadId: restoredActiveThreadId,
+        openThread: deps.openThread,
+        clearActiveThreadIfLatest: deps.clearActiveThreadIfLatest
+      });
+      const restoredSet = new Set(restored.threadIds);
+      ctx.dispatchOpenThreads({ type: "reorder", threadIds: restored.threadIds });
+      ctx.setActiveTabThreadBySession((current) => Object.fromEntries(
+        Object.entries(current).filter(([, threadId]) => restoredSet.has(threadId))
+      ));
+      ctx.latestRequestedThreadId.current = restored.activeThreadId;
+      ctx.setActiveTabThreadId(restored.activeThreadId);
+      // 全部 persisted tabs 失败时保持空状态；initialized 后的默认 thread effect 会重试 initialThreadId。
     } else if (initialThreadId) {
       await deps.openThread(initialThreadId).catch(() => deps.clearActiveThreadIfLatest(initialThreadId));
     }

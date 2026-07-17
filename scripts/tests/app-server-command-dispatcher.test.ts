@@ -67,7 +67,7 @@ const createHost = (options: {
     planResetModes,
     listCommandPalette: async () => ({ entries: [] }),
     bindThread: () => undefined,
-    unbindThread: () => undefined,
+    unbindThread: async () => undefined,
     syncThreadTurns: async () => undefined,
     startThread: async () => ({ threadId: "started" }),
     loadThread: async (threadId) => ({ threadId }),

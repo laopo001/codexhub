@@ -49,6 +49,7 @@ import type {
 import {
   approvalDecisionStatus,
   approvalRecord,
+  fileChanges,
   userInputRecord,
   type PendingApproval,
   type PendingUserInput
@@ -142,6 +143,7 @@ export class ThreadHub {
       lastSeenAt: now,
       pid: registration.pid,
       hostname: registration.hostname,
+      cliVersion: registration.cliVersion,
       accountRateLimits: existing?.accountRateLimits ?? null,
       threads: [],
       transportId: registration.transportId,
@@ -170,6 +172,7 @@ export class ThreadHub {
     session.appServerUrl = registration.appServerUrl ?? session.appServerUrl;
     session.pid = registration.pid ?? session.pid;
     session.hostname = registration.hostname ?? session.hostname;
+    session.cliVersion = registration.cliVersion ?? session.cliVersion;
     session.online = true;
     session.status = "online";
     session.lastSeenAt = now;
@@ -666,6 +669,12 @@ export class ThreadHub {
     const session = this.requireOnlineSession(approval.sessionId);
     if (thread.sessionId !== session.sessionId) {
       throw new Error(`Approval belongs to a different session: ${approvalId}`);
+    }
+    if (
+      Array.isArray(approval.availableDecisions)
+      && !approval.availableDecisions.some((candidate) => approvalDecisionsEqual(candidate, decision))
+    ) {
+      throw new Error(`Approval decision is not available for this request: ${JSON.stringify(decision)}`);
     }
 
     const commandId = randomUUID();
@@ -1310,6 +1319,16 @@ export class ThreadHub {
       return;
     }
 
+    if (method === "turn/plan/updated") {
+      this.applyAppServerTurnPlanUpdated(thread, params);
+      return;
+    }
+
+    if (method === "turn/diff/updated") {
+      this.applyAppServerTurnDiffUpdated(thread, params);
+      return;
+    }
+
     if (method === "error") {
       const error = asRecord(params.error);
       this.appendHubRecord(thread, "error", {
@@ -1326,6 +1345,26 @@ export class ThreadHub {
       return;
     }
 
+    if (method === "item/reasoning/summaryPartAdded") {
+      this.applyAppServerReasoningSummaryEvent(thread, params, false);
+      return;
+    }
+
+    if (method === "item/reasoning/summaryTextDelta") {
+      this.applyAppServerReasoningSummaryEvent(thread, params, true);
+      return;
+    }
+
+    if (method === "item/reasoning/textDelta") {
+      this.applyAppServerReasoningTextDelta(thread, params);
+      return;
+    }
+
+    if (method === "item/plan/delta") {
+      this.applyAppServerPlanDelta(thread, params);
+      return;
+    }
+
     if (method === "item/started" || method === "item/completed") {
       this.applyAppServerItemEvent(thread, params, method);
       return;
@@ -1333,6 +1372,16 @@ export class ThreadHub {
 
     if (method === "item/commandExecution/outputDelta") {
       this.applyAppServerCommandExecutionOutputDelta(thread, params);
+      return;
+    }
+
+    if (method === "item/fileChange/patchUpdated") {
+      this.applyAppServerFileChangePatchUpdated(thread, params);
+      return;
+    }
+
+    if (method === "item/mcpToolCall/progress") {
+      this.applyAppServerMcpToolCallProgress(thread, params);
       return;
     }
 
@@ -1485,6 +1534,155 @@ export class ThreadHub {
     });
   }
 
+  private applyAppServerTurnPlanUpdated(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    if (!turnId || !Array.isArray(params.plan) || appServerTurnIsComplete(thread, turnId)) return;
+    const explanation = typeof params.explanation === "string" ? params.explanation : null;
+    const plan = params.plan.flatMap((item) => {
+      const step = asRecord(item);
+      if (typeof step?.step !== "string" || !step.step) return [];
+      const status = step.status === "inProgress" ? "in_progress" : step.status;
+      if (status !== "pending" && status !== "in_progress" && status !== "completed") return [];
+      return [{ step: step.step, status }];
+    });
+    const message = [
+      explanation,
+      ...plan.map((step) => `${step.status === "completed" ? "[x]" : step.status === "in_progress" ? "[~]" : "[ ]"} ${step.step}`)
+    ].filter((line): line is string => Boolean(line)).join("\n");
+    const id = `app:${thread.threadId}:${turnId}:event:turn_plan_updated`;
+    const existing = thread.records.find((record) => record.id === id);
+    this.upsertRecord(thread, {
+      id,
+      timestamp: existing?.timestamp ?? new Date().toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "turn_plan_updated",
+        explanation,
+        plan,
+        message
+      },
+      sourceThreadId: thread.threadId
+    });
+  }
+
+  private applyAppServerTurnDiffUpdated(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const diff = typeof params.diff === "string" ? params.diff : "";
+    if (!turnId || appServerTurnIsComplete(thread, turnId)) return;
+    const id = `app:${thread.threadId}:${turnId}:event:turn_diff_updated`;
+    const existing = thread.records.find((record) => record.id === id);
+    this.upsertRecord(thread, {
+      id,
+      timestamp: existing?.timestamp ?? new Date().toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "turn_diff_updated",
+        diff,
+        message: diff
+      },
+      sourceThreadId: thread.threadId
+    });
+  }
+
+  private applyAppServerReasoningSummaryEvent(
+    thread: ThreadState,
+    params: Record<string, unknown>,
+    appendDelta: boolean
+  ) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const itemId = typeof params.itemId === "string" ? params.itemId : "";
+    const summaryIndex = params.summaryIndex;
+    const delta = appendDelta && typeof params.delta === "string" ? params.delta : "";
+    if (!turnId || !itemId || !Number.isInteger(summaryIndex) || (summaryIndex as number) < 0) return;
+    if (appendDelta && !delta) return;
+
+    const id = `app:${thread.threadId}:${turnId}:item:reasoning:${itemId}`;
+    const existing = thread.records.find((record) => record.id === id);
+    if (isTerminalAppServerItemRecord(existing)) return;
+    const existingPayload = asRecord(existing?.payload);
+    const summary = Array.isArray(existingPayload?.summary)
+      ? existingPayload.summary.map((part) => typeof part === "string" ? part : "")
+      : [];
+    while (summary.length <= (summaryIndex as number)) summary.push("");
+    if (appendDelta) summary[summaryIndex as number] += delta;
+    const content = typeof existingPayload?.content === "string" ? existingPayload.content : "";
+    this.upsertRecord(thread, {
+      id,
+      timestamp: existing?.timestamp ?? new Date().toISOString(),
+      type: "response_item",
+      payload: {
+        ...(existingPayload?.type === "reasoning" ? existingPayload : {}),
+        type: "reasoning",
+        summary,
+        content,
+        status: "in_progress"
+      },
+      sourceThreadId: thread.threadId
+    });
+  }
+
+  private applyAppServerReasoningTextDelta(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const itemId = typeof params.itemId === "string" ? params.itemId : "";
+    const contentIndex = params.contentIndex;
+    const delta = typeof params.delta === "string" ? params.delta : "";
+    if (!turnId || !itemId || !delta || !Number.isInteger(contentIndex) || (contentIndex as number) < 0) return;
+
+    const id = `app:${thread.threadId}:${turnId}:item:reasoning:${itemId}`;
+    const existing = thread.records.find((record) => record.id === id);
+    if (isTerminalAppServerItemRecord(existing)) return;
+    const existingPayload = asRecord(existing?.payload);
+    const contentParts = Array.isArray(existingPayload?.content_parts)
+      ? existingPayload.content_parts.map((part) => typeof part === "string" ? part : "")
+      : typeof existingPayload?.content === "string" && existingPayload.content
+        ? [existingPayload.content]
+        : [];
+    while (contentParts.length <= (contentIndex as number)) contentParts.push("");
+    contentParts[contentIndex as number] += delta;
+    const summary = Array.isArray(existingPayload?.summary)
+      ? existingPayload.summary.map((part) => typeof part === "string" ? part : "")
+      : [];
+    this.upsertRecord(thread, {
+      id,
+      timestamp: existing?.timestamp ?? new Date().toISOString(),
+      type: "response_item",
+      payload: {
+        ...(existingPayload?.type === "reasoning" ? existingPayload : {}),
+        type: "reasoning",
+        summary,
+        content: contentParts.join("\n"),
+        content_parts: contentParts,
+        status: "in_progress"
+      },
+      sourceThreadId: thread.threadId
+    });
+  }
+
+  private applyAppServerPlanDelta(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const itemId = typeof params.itemId === "string" ? params.itemId : "";
+    const delta = typeof params.delta === "string" ? params.delta : "";
+    if (!turnId || !itemId || !delta) return;
+
+    const id = `app:${thread.threadId}:${turnId}:item:plan:${itemId}`;
+    const existing = thread.records.find((record) => record.id === id);
+    if (isTerminalAppServerItemRecord(existing)) return;
+    const existingPayload = asRecord(existing?.payload);
+    const message = typeof existingPayload?.message === "string" ? existingPayload.message : "";
+    this.upsertRecord(thread, {
+      id,
+      timestamp: existing?.timestamp ?? new Date().toISOString(),
+      type: "event_msg",
+      payload: {
+        ...(existingPayload?.type === "plan" ? existingPayload : {}),
+        type: "plan",
+        message: message + delta,
+        status: "in_progress"
+      },
+      sourceThreadId: thread.threadId
+    });
+  }
+
   private applyAppServerCommandExecutionOutputDelta(thread: ThreadState, params: Record<string, unknown>) {
     const turnId = typeof params.turnId === "string" ? params.turnId : "";
     const itemId = typeof params.itemId === "string" ? params.itemId : "";
@@ -1516,6 +1714,64 @@ export class ThreadHub {
       timestamp: existing?.timestamp ?? new Date().toISOString(),
       type: "response_item",
       payload,
+      sourceThreadId: thread.threadId
+    });
+  }
+
+  private applyAppServerFileChangePatchUpdated(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const itemId = typeof params.itemId === "string" ? params.itemId : "";
+    if (!turnId || !itemId || !Array.isArray(params.changes)) return;
+
+    const id = `app:${thread.threadId}:${turnId}:item:fileChange:${itemId}`;
+    const existing = thread.records.find((record) => record.id === id);
+    if (isTerminalAppServerItemRecord(existing)) return;
+    const existingPayload = asRecord(existing?.payload);
+    this.upsertRecord(thread, {
+      id,
+      timestamp: existing?.timestamp ?? new Date().toISOString(),
+      type: "response_item",
+      payload: {
+        ...(existingPayload?.type === "file_change" ? existingPayload : {}),
+        type: "file_change",
+        changes: fileChanges(params.changes),
+        status: "in_progress"
+      },
+      sourceThreadId: thread.threadId
+    });
+  }
+
+  private applyAppServerMcpToolCallProgress(thread: ThreadState, params: Record<string, unknown>) {
+    const turnId = typeof params.turnId === "string" ? params.turnId : "";
+    const itemId = typeof params.itemId === "string" ? params.itemId : "";
+    const message = typeof params.message === "string" ? params.message : "";
+    if (!turnId || !itemId || !message) return;
+
+    const id = `app:${thread.threadId}:${turnId}:item:mcpToolCall:${itemId}`;
+    const existing = thread.records.find((record) => record.id === id);
+    if (isTerminalAppServerItemRecord(existing)) return;
+    const existingPayload = asRecord(existing?.payload);
+    const progressMessages = Array.isArray(existingPayload?.progress_messages)
+      ? existingPayload.progress_messages.filter((item): item is string => typeof item === "string")
+      : [];
+    if (progressMessages.at(-1) !== message) progressMessages.push(message);
+    this.upsertRecord(thread, {
+      id,
+      timestamp: existing?.timestamp ?? new Date().toISOString(),
+      type: "response_item",
+      payload: {
+        ...(existingPayload?.type === "mcp_tool_call" ? existingPayload : {}),
+        type: "mcp_tool_call",
+        server: typeof existingPayload?.server === "string" ? existingPayload.server : "",
+        tool: typeof existingPayload?.tool === "string" ? existingPayload.tool : "",
+        arguments: existingPayload?.arguments ?? {},
+        appContext: existingPayload?.appContext ?? null,
+        pluginId: existingPayload?.pluginId ?? null,
+        result: existingPayload?.result ?? null,
+        error: existingPayload?.error ?? null,
+        progress_messages: progressMessages,
+        status: "in_progress"
+      },
       sourceThreadId: thread.threadId
     });
   }
@@ -2087,6 +2343,7 @@ export class ThreadHub {
       offlineReason: session.offlineReason,
       pid: session.pid,
       hostname: session.hostname,
+      cliVersion: session.cliVersion,
       accountRateLimits: session.accountRateLimits ?? null,
       threads
     };
@@ -2115,6 +2372,7 @@ export class ThreadHub {
       offlineReason: session.offlineReason,
       pid: session.pid,
       hostname: session.hostname,
+      cliVersion: session.cliVersion,
       accountRateLimits: session.accountRateLimits ?? null
     });
   }
@@ -2267,6 +2525,19 @@ const imageUrls = (input: ProxyInput) => {
 };
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const isTerminalAppServerItemRecord = (record: CodexRecord | undefined) => {
+  const status = asRecord(record?.payload)?.status;
+  return status === "completed" || status === "failed" || status === "declined";
+};
+
+const approvalDecisionsEqual = (
+  left: AppServerApprovalDecision,
+  right: AppServerApprovalDecision
+) => JSON.stringify(left) === JSON.stringify(right);
+
+const appServerTurnIsComplete = (thread: ThreadState, turnId: string) =>
+  thread.records.some((record) => record.id === `app:${thread.threadId}:${turnId}:event:task_complete`);
 
 const isThreadApprovalPolicy = (value: unknown): value is ThreadOptions["approvalPolicy"] =>
   value === "untrusted" || value === "on-request" || value === "never";

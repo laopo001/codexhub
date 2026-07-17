@@ -184,7 +184,7 @@ const prepareLoopbackSsh = async (root: string, port: number, codexHomeDir: stri
     "ChallengeResponseAuthentication no",
     "PubkeyAuthentication yes",
     "UsePAM no",
-    `SetEnv CODEX_HOME=${codexHomeDir}`,
+    `SetEnv CODEX_HOME=${codexHomeDir} CODEX_HUB_CODEX_CLI=${path.join(repoRoot, "node_modules", "@openai", "codex", "bin", "codex.js")}`,
     "StrictModes no",
     `AllowUsers ${user}`,
     "LogLevel ERROR",

@@ -420,7 +420,7 @@ const appServerToolPresenters: Record<string, AppServerToolPresenter> = {
   mcp_tool_call: {
     render: (_message, payload, status, statusText, statusDurationMs) => (
       <ToolPreview title={`tool: ${mcpToolPreviewName(payload)}`} status={status} statusText={statusText} statusDurationMs={statusDurationMs} meta={appServerToolMeta(payload)} icon={Plug}>
-        <p className="toolPreviewBody">{formatToolArgumentsPreview(payload.arguments)}</p>
+        <p className="toolPreviewBody">{latestMcpProgressMessage(payload) ?? formatToolArgumentsPreview(payload.arguments)}</p>
       </ToolPreview>
     ),
     inspect: (_message, payload) => inspectRequestResult(
@@ -1160,6 +1160,15 @@ export const mcpToolPreviewName = (payload: Record<string, unknown>) => [
   typeof payload.server === "string" ? payload.server : null,
   typeof payload.tool === "string" ? payload.tool : null
 ].filter(Boolean).join(".") || "mcp";
+
+const latestMcpProgressMessage = (payload: Record<string, unknown>) => {
+  if (!Array.isArray(payload.progress_messages)) return null;
+  for (let index = payload.progress_messages.length - 1; index >= 0; index -= 1) {
+    const message = payload.progress_messages[index];
+    if (typeof message === "string" && message) return message;
+  }
+  return null;
+};
 
 export const collabAgentToolPreviewName = (payload: Record<string, unknown>) =>
   typeof payload.tool === "string" && payload.tool ? `agent.${payload.tool}` : "agent";
