@@ -93,6 +93,7 @@ restore_source() {
 trap restore_source EXIT
 
 git switch --detach "$EXPECTED_COMMIT"
+export CI=true
 pnpm install --frozen-lockfile
 
 export CODEX_HUB_BUILD_ID="v${PACKAGE_VERSION}+${EXPECTED_COMMIT:0:12}"
