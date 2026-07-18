@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import * as vscode from "vscode";
@@ -8,6 +9,7 @@ import { buildWebviewBridgeScript } from "./webviewBridge.js";
 
 const viewId = "codexhub.workspaceView";
 const vscodeWorkspaceGroupId = "workspace";
+const parentRegistrationMachineIdKey = "codexhub.parentRegistrationMachineId.v1";
 const maxSelectionAttachmentBytes = 512 * 1024;
 const isTheiaHost = /\btheia\b/i.test(`${vscode.env.appName} ${vscode.env.uriScheme}`);
 
@@ -245,6 +247,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     const staticDirectory = this.context.asAbsolutePath("dist");
     const buildId = await vscodeWindowBuildId(this.context, staticDirectory);
     const explicitPort = parsePort(process.env.CODEX_HUB_PORT);
+    const parentRegistrationIdentity = await this.parentRegistrationIdentity();
     const owned = await startEmbeddedServer({
       host: process.env.CODEX_HUB_HOST ?? "0.0.0.0",
       portMode: explicitPort ? "preferred" : "random",
@@ -253,12 +256,27 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       staticDirectory,
       surface: "vscode",
       buildId,
+      parentRegistrationIdentity,
       features: {
         localMachine: true
       },
       logPrefix: "codexhub vscode window"
     });
     return { url: serverUrl(owned.host, owned.port), owned };
+  }
+
+  private async parentRegistrationIdentity() {
+    const storedMachineId = this.context.workspaceState.get<string>(parentRegistrationMachineIdKey)?.trim();
+    const machineId = storedMachineId || `machine-vscode-${randomUUID()}`;
+    if (!storedMachineId) await this.context.workspaceState.update(parentRegistrationMachineIdKey, machineId);
+    const workspaceNames = fileWorkspaceFolders().map((folder) => folder.name);
+    const workspaceLabel = workspaceNames.length
+      ? workspaceNames.slice(0, 2).join(" + ") + (workspaceNames.length > 2 ? ` +${workspaceNames.length - 2}` : "")
+      : "window";
+    return {
+      machineId,
+      name: `CodexHub VSCode · ${workspaceLabel}`
+    };
   }
 
   private async resolveConfigPath() {

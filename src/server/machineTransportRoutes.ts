@@ -228,7 +228,11 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
         }
         if (parsed.type === "unregister") return await unregisterMachine();
         if (parsed.type === "heartbeat") {
-          ctx.machines.heartbeatMachine(machineId!, parsed.registration ?? {});
+          const registration = parsed.registration ?? {};
+          ctx.machines.heartbeatMachine(machineId!, registration);
+          if (Object.hasOwn(registration, "projects")) {
+            ctx.replaceMachineRegistrationProjects(machineId!, registration.projects);
+          }
           ctx.publishProjects();
           return;
         }

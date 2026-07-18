@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readdir, readFile, readlink, stat } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
+import { startCodexhubMachine } from "../src/cli/codexhubMachine.js";
+import type { MachineRegistrationProject } from "../src/shared/machineTypes.js";
 import { assertNoWorkerId } from "./smoke/support/assertions.js";
 import { apiJson } from "./smoke/support/http.js";
 import { findFreePort } from "./smoke/support/network.js";
@@ -49,17 +51,21 @@ const main = async () => {
   const dynamicProjectDir = path.join(root, "project-dynamic-server-register");
   const childServerDataDir = path.join(root, "child-server-state");
   const dynamicServerDataDir = path.join(root, "dynamic-server-state");
+  const sharedProfileDataDir = path.join(root, "shared-vscode-profile-state");
   await mkdir(dataDir, { recursive: true });
   await mkdir(commandProjectDir, { recursive: true });
   await mkdir(serverProjectDir, { recursive: true });
   await mkdir(dynamicProjectDir, { recursive: true });
   await mkdir(childServerDataDir, { recursive: true });
   await mkdir(dynamicServerDataDir, { recursive: true });
+  await mkdir(sharedProfileDataDir, { recursive: true });
 
   process.env.CODEX_HUB_DATA_DIR = dataDir;
   process.env.CODEX_HUB_LOCAL_MACHINE = "0";
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "0";
   process.env.TELEGRAM_BOT_TOKEN = "";
+  process.env.CODEX_HUB_AUTH_TOKEN = "";
+  process.env.CODEX_HUB_REGISTER_AUTH_TOKEN = "";
 
   const port = await findFreePort();
   const { startServer } = await import("../src/server/index.js");
@@ -67,6 +73,8 @@ const main = async () => {
   const apiBase = `http://127.0.0.1:${port}`;
 
   try {
+    await assertRegisteredProjectCatalogRefresh(apiBase, root);
+
     const commandMachineId = `registered-machine-smoke-${process.pid}`;
     const commandMachineName = "Registered Machine Command Smoke";
     await runRegisteredScenario({
@@ -133,9 +141,146 @@ const main = async () => {
     } finally {
       await stopChild(dynamicChild).catch(() => undefined);
     }
+
+    const sharedMachineA = `registered-vscode-workspace-a-${process.pid}`;
+    const sharedMachineB = `registered-vscode-workspace-b-${process.pid}`;
+    const sharedMachineAName = "VSCode Workspace A";
+    const sharedMachineBName = "VSCode Workspace B";
+    const seedPort = await findFreePort();
+    const seed = await startServer({
+      host: "127.0.0.1",
+      port: seedPort,
+      dataDir: sharedProfileDataDir,
+      surface: "vscode",
+      parentRegistrationIdentity: { machineId: sharedMachineA, name: sharedMachineAName },
+      features: { localMachine: false, ssh: false, tasks: false, integrations: false }
+    });
+    try {
+      await apiJson(`http://127.0.0.1:${seedPort}`, "/api/registered/parent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: apiBase, authToken: "" })
+      });
+      await waitForOnlineMachine(apiBase, sharedMachineA, sharedMachineAName);
+    } finally {
+      await seed.stop();
+    }
+    await waitForMachineUnregistered(apiBase, sharedMachineA);
+    await assertSharedParentProfile(sharedProfileDataDir, apiBase);
+
+    const sharedPortA = await findFreePort();
+    const sharedPortB = await findFreePort();
+    const sharedA = await startServer({
+      host: "127.0.0.1",
+      port: sharedPortA,
+      dataDir: sharedProfileDataDir,
+      surface: "vscode",
+      parentRegistrationIdentity: { machineId: sharedMachineA, name: sharedMachineAName },
+      features: { localMachine: false, ssh: false, tasks: false, integrations: false }
+    });
+    const sharedB = await startServer({
+      host: "127.0.0.1",
+      port: sharedPortB,
+      dataDir: sharedProfileDataDir,
+      surface: "vscode",
+      parentRegistrationIdentity: { machineId: sharedMachineB, name: sharedMachineBName },
+      features: { localMachine: false, ssh: false, tasks: false, integrations: false }
+    });
+    try {
+      await Promise.all([
+        waitForOnlineMachine(apiBase, sharedMachineA, sharedMachineAName),
+        waitForOnlineMachine(apiBase, sharedMachineB, sharedMachineBName)
+      ]);
+      console.log("registered server shared profile distinct workspace identities ok");
+    } finally {
+      await Promise.all([sharedA.stop(), sharedB.stop()]);
+    }
+    await Promise.all([
+      waitForMachineUnregistered(apiBase, sharedMachineA),
+      waitForMachineUnregistered(apiBase, sharedMachineB)
+    ]);
   } finally {
     await server.stop();
   }
+};
+
+const assertRegisteredProjectCatalogRefresh = async (apiBase: string, root: string) => {
+  const machineId = `registered-project-catalog-smoke-${process.pid}`;
+  const machineName = "Registered Project Catalog Smoke";
+  const projectA = path.join(root, "catalog-workspace-a");
+  const projectB = path.join(root, "catalog-workspace-b");
+  await Promise.all([mkdir(projectA, { recursive: true }), mkdir(projectB, { recursive: true })]);
+  let projects: MachineRegistrationProject[] = [];
+  const runner = startCodexhubMachine({
+    apiBase,
+    machineId,
+    name: machineName,
+    capabilities: { projectCatalog: "fixed" },
+    projects: () => projects
+  });
+  try {
+    await waitForOnlineMachine(apiBase, machineId, machineName);
+    projects = [
+      { path: projectA, source: { kind: "vscode", groupId: "workspace-a", label: "VSCode: A" } },
+      { path: projectB, source: { kind: "vscode", groupId: "workspace-b", label: "VSCode: B" } }
+    ];
+    runner.refreshRegistration();
+    await waitForRegisteredProjectPaths(apiBase, machineId, [projectA, projectB]);
+
+    projects = [projects[1]!];
+    runner.refreshRegistration();
+    await waitForRegisteredProjectPaths(apiBase, machineId, [projectB]);
+    console.log("registered machine heartbeat project catalog refresh ok");
+  } finally {
+    await runner.stop();
+  }
+  await waitForMachineUnregistered(apiBase, machineId);
+  await waitForRegisteredProjectPaths(apiBase, machineId, []);
+};
+
+const waitForRegisteredProjectPaths = async (apiBase: string, machineId: string, expectedPaths: string[]) => {
+  const expected = [...expectedPaths].sort();
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const data = await apiJson<{ projects?: Array<{ machineId?: string; path?: string }> }>(apiBase, "/api/projects")
+      .catch(() => ({ projects: [] }));
+    const actual = (data.projects ?? [])
+      .filter((project) => project.machineId === machineId)
+      .map((project) => project.path ?? "")
+      .sort();
+    if (JSON.stringify(actual) === JSON.stringify(expected)) return;
+    await delay(50);
+  }
+  throw new Error(`registered project catalog did not refresh for ${machineId}: ${expected.join(", ")}`);
+};
+
+const assertSharedParentProfile = async (dataDir: string, apiBase: string) => {
+  const raw = await readFile(path.join(dataDir, "config.yaml"), "utf8");
+  const parsed = YAML.parse(raw) as { parentRegistration?: Record<string, unknown> };
+  const registration = parsed.parentRegistration;
+  if (
+    registration?.url !== apiBase
+    || "authToken" in registration
+    || "machineId" in registration
+    || "name" in registration
+  ) {
+    throw new Error(`shared parent profile persisted runtime identity or empty token: ${raw}`);
+  }
+};
+
+const waitForOnlineMachine = async (apiBase: string, machineId: string, machineName: string) => {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const data = await apiJson<{ machines?: MachineSummary[] }>(apiBase, "/api/machines").catch(() => ({ machines: [] }));
+    const machine = data.machines?.find((item) =>
+      item.machineId === machineId
+      && item.name === machineName
+      && item.online
+    );
+    if (machine) return machine;
+    await delay(250);
+  }
+  throw new Error(`registered machine did not become online: ${machineId}`);
 };
 
 const assertSelfRegistrationRejected = async (apiBase: string) => {
@@ -153,15 +298,27 @@ const assertSelfRegistrationRejected = async (apiBase: string) => {
 };
 
 const connectDynamicParent = async (childApiBase: string, parentApiBase: string, machineId: string, name: string) => {
+  const parentUrl = new URL(parentApiBase);
+  parentUrl.username = "dynamic-smoke-user";
+  parentUrl.password = "dynamic-smoke-password";
+  parentUrl.searchParams.set("codexhub_token", "dynamic-smoke-token");
   const parentRegistration = await apiJson<{ registration?: { status?: string } }>(childApiBase, "/api/registered/parent", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      url: `${parentApiBase}?codexhub_token=dynamic-smoke-token`,
+      url: parentUrl.toString(),
       machineId,
       name
     })
   });
+  const publicPayload = JSON.stringify(parentRegistration);
+  if (
+    publicPayload.includes("dynamic-smoke-user")
+    || publicPayload.includes("dynamic-smoke-password")
+    || publicPayload.includes("dynamic-smoke-token")
+  ) {
+    throw new Error(`dynamic server registration exposed URL credentials: ${publicPayload}`);
+  }
   if (!parentRegistration.registration || parentRegistration.registration.status === "idle") {
     throw new Error(`dynamic server registration did not start: ${JSON.stringify(parentRegistration)}`);
   }

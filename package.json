@@ -94,6 +94,7 @@
     "remark-gfm": "^4.0.1",
     "telegraf": "^4.16.3",
     "tsx": "^4.21.0",
+    "ws": "^8.21.0",
     "yaml": "^2.9.0",
     "zod": "^4.1.13"
   },
@@ -104,6 +105,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@types/vscode": "^1.120.0",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.1",
     "@vscode/vsce": "^3.9.2",
     "electron": "^42.3.3",

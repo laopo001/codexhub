@@ -157,7 +157,13 @@ export type ServerStartOptions = {
   buildId?: string | null;
   appServerLaunch?: CodexAppServerLaunchOptions;
   parentRegistration?: Partial<ParentRegistrationConnectInput>;
+  parentRegistrationIdentity?: ParentRegistrationIdentity;
   features?: Partial<ServerFeatureOptions>;
+};
+
+export type ParentRegistrationIdentity = {
+  machineId: string;
+  name?: string;
 };
 
 export type ServerHandle = {
@@ -185,7 +191,12 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const serverAuthToken = normalizedAuthToken(options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN);
   const buildId = options.buildId ?? process.env.CODEX_HUB_BUILD_ID ?? null;
   const serverInstanceId = randomUUID();
-  const startupParentRegistration = resolveStartupParentRegistration(options.parentRegistration, state.parentRegistration());
+  const parentRegistrationIdentity = normalizeParentRegistrationIdentity(options.parentRegistrationIdentity);
+  const startupParentRegistration = resolveStartupParentRegistration(
+    options.parentRegistration,
+    state.parentRegistration(),
+    parentRegistrationIdentity
+  );
   const notificationHooks = notificationHookRunnerFromEnv(process.env);
   const embeddedSurface = isEmbeddedCodexHubSurface(surface);
   const shouldPersistMachine = (machine: { type?: string }) => !(embeddedSurface && machine.type === "local");
@@ -472,23 +483,27 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     });
     await stopParentRegistration({ forget: false });
     const storedRegistration = state.parentRegistration();
-    const inputAuthToken = input.authToken?.trim()
-      || authTokenFromUrl(input.url)
-      || (storedRegistration?.url === url ? storedRegistration.authToken : undefined);
-    const authToken = inputAuthToken
-      || process.env.CODEX_HUB_REGISTER_AUTH_TOKEN;
-    const machineId = input.machineId?.trim()
+    const hasExplicitAuthToken = Object.hasOwn(input, "authToken");
+    const inputAuthToken = hasExplicitAuthToken
+      ? normalizedOptionalValue(input.authToken)
+      : authTokenFromUrl(input.url)
+        || (storedRegistration?.url === url ? storedRegistration.authToken : undefined);
+    const authToken = hasExplicitAuthToken
+      ? inputAuthToken
+      : inputAuthToken || normalizedOptionalValue(process.env.CODEX_HUB_REGISTER_AUTH_TOKEN);
+    const machineId = parentRegistrationIdentity?.machineId
+      || input.machineId?.trim()
       || process.env.CODEX_HUB_REGISTER_MACHINE_ID
       || createMachineId(`${os.hostname()}-server-${config.port}`);
-    const name = input.name?.trim()
+    const name = parentRegistrationIdentity?.name
+      || input.name?.trim()
       || process.env.CODEX_HUB_REGISTER_NAME
       || `CodexHub Server ${localApiBaseUrl(config.host, config.port)}`;
     if (options.persist !== false) {
       state.setParentRegistration({
         url,
         ...(inputAuthToken ? { authToken: inputAuthToken } : {}),
-        machineId,
-        name
+        ...(parentRegistrationIdentity ? {} : { machineId, name })
       });
     }
     parentRegistrationStatus = {
@@ -695,6 +710,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     projectIsFixed,
     projectSnapshot,
     publishProjects,
+    refreshParentRegistration: () => parentRegistration?.refreshRegistration(),
     publishTasks: () => taskScheduler.publish(),
     resolveTargetMachine,
     runLocalTask: (taskId) => taskScheduler.run(taskId),
@@ -880,6 +896,8 @@ const requestBaseUrl = (request: FastifyRequest, host: string, port: number) => 
 
 const normalizeBaseUrl = (value: string) => {
   const url = new URL(value);
+  url.username = "";
+  url.password = "";
   url.pathname = "";
   url.search = "";
   url.hash = "";
@@ -896,25 +914,49 @@ const safeNormalizeBaseUrl = (value: string) => {
 
 const resolveStartupParentRegistration = (
   override: Partial<ParentRegistrationConnectInput> | undefined,
-  stored: ReturnType<CodexhubServerState["parentRegistration"]>
+  stored: ReturnType<CodexhubServerState["parentRegistration"]>,
+  identity?: ParentRegistrationIdentity
 ): ParentRegistrationConnectInput | undefined => {
   const overrideUrl = override?.url?.trim();
   const envUrl = process.env.CODEX_HUB_REGISTER_TO?.trim();
   const useStored = !overrideUrl && !envUrl;
   const url = overrideUrl || envUrl || stored?.url;
   if (!url) return undefined;
+  const overrideAuthToken = override?.authToken;
+  const authToken = overrideAuthToken !== undefined
+    ? overrideAuthToken.trim()
+    : normalizedOptionalValue(process.env.CODEX_HUB_REGISTER_AUTH_TOKEN)
+      || (useStored ? stored?.authToken : undefined);
   return {
     url,
-    authToken: override?.authToken?.trim()
-      || process.env.CODEX_HUB_REGISTER_AUTH_TOKEN?.trim()
-      || (useStored ? stored?.authToken : undefined),
-    machineId: override?.machineId?.trim()
+    ...(overrideAuthToken !== undefined || authToken ? { authToken: authToken ?? "" } : {}),
+    machineId: identity?.machineId
+      || override?.machineId?.trim()
       || process.env.CODEX_HUB_REGISTER_MACHINE_ID?.trim()
       || (useStored ? stored?.machineId : undefined),
-    name: override?.name?.trim()
+    name: identity?.name
+      || override?.name?.trim()
       || process.env.CODEX_HUB_REGISTER_NAME?.trim()
       || (useStored ? stored?.name : undefined)
   };
+};
+
+const normalizeParentRegistrationIdentity = (
+  value: ParentRegistrationIdentity | undefined
+): ParentRegistrationIdentity | undefined => {
+  if (!value) return undefined;
+  const machineId = value.machineId.trim();
+  if (!machineId) throw new Error("Parent registration identity machineId is required.");
+  const name = value.name?.trim();
+  return {
+    machineId,
+    ...(name ? { name } : {})
+  };
+};
+
+const normalizedOptionalValue = (value: string | undefined) => {
+  const normalized = value?.trim();
+  return normalized || undefined;
 };
 
 const authTokenFromUrl = (value: string) => {

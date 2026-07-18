@@ -786,13 +786,13 @@ const normalizeStoredParentRegistration = (value: unknown): StoredParentRegistra
   const url = normalizedStoredUrl(item.url);
   const machineId = typeof item.machineId === "string" ? item.machineId.trim() : "";
   const name = typeof item.name === "string" ? item.name.trim() : "";
-  if (!url || !machineId || !name) return undefined;
+  if (!url) return undefined;
   const authToken = typeof item.authToken === "string" ? item.authToken.trim() : "";
   return {
     url,
     ...(authToken ? { authToken } : {}),
-    machineId,
-    name,
+    ...(machineId ? { machineId } : {}),
+    ...(name ? { name } : {}),
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString()
   };
 };
@@ -801,6 +801,8 @@ const normalizedStoredUrl = (value: unknown) => {
   if (typeof value !== "string" || !value.trim()) return undefined;
   try {
     const url = new URL(value.trim());
+    url.username = "";
+    url.password = "";
     url.pathname = "";
     url.search = "";
     url.hash = "";

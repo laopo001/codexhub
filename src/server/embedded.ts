@@ -1,7 +1,12 @@
 import net from "node:net";
 import { loadDotEnv } from "../core/dotenv.js";
 import type { CodexHubSurface } from "../shared/surfaceTypes.js";
-import { startServer, type ServerFeatureOptions, type ServerHandle } from "./index.js";
+import {
+  startServer,
+  type ParentRegistrationIdentity,
+  type ServerFeatureOptions,
+  type ServerHandle
+} from "./index.js";
 
 export type EmbeddedServerOptions = {
   host?: string;
@@ -11,6 +16,7 @@ export type EmbeddedServerOptions = {
   staticDirectory?: string;
   surface?: CodexHubSurface;
   buildId?: string | null;
+  parentRegistrationIdentity?: ParentRegistrationIdentity;
   features?: Partial<ServerFeatureOptions>;
   logPrefix?: string;
 };
@@ -30,6 +36,7 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       staticDirectory: options.staticDirectory,
       surface: options.surface,
       buildId: options.buildId,
+      parentRegistrationIdentity: options.parentRegistrationIdentity,
       features: options.features
     });
   } catch (error) {
@@ -44,6 +51,7 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       staticDirectory: options.staticDirectory,
       surface: options.surface,
       buildId: options.buildId,
+      parentRegistrationIdentity: options.parentRegistrationIdentity,
       features: options.features
     });
   }

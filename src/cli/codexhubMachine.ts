@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import WebSocket from "ws";
 import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
 import { machineTransportUrl, parseMachineTransportMessage } from "../core/machineTransportProtocol.js";
 import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
@@ -43,6 +44,7 @@ export type MachineRunnerOptions = {
 
 export type CodexhubMachineHandle = {
   machineId: string;
+  refreshRegistration: () => void;
   stop: () => Promise<void>;
 };
 
@@ -82,6 +84,7 @@ export const startCodexhubMachine = (options: MachineRunnerOptions): CodexhubMac
   runner.start();
   return {
     machineId: runner.id,
+    refreshRegistration: () => runner.refreshRegistration(),
     stop: () => runner.stop()
   };
 };
@@ -92,6 +95,9 @@ class CodexhubMachineRunner {
   private stopped = false;
   private registered = false;
   private loopStarted = false;
+  private loopPromise: Promise<void> | null = null;
+  private stopPromise: Promise<void> | null = null;
+  private readonly lifecycleAbort = new AbortController();
   private commandCursor = 0;
   private commandChain = Promise.resolve();
   private runtimeSession: ManagedSession | null = null;
@@ -107,16 +113,32 @@ class CodexhubMachineRunner {
     return this.machineId;
   }
 
+  refreshRegistration() {
+    if (this.stopped || this.ws?.readyState !== WebSocket.OPEN) return;
+    this.sendHeartbeat();
+  }
+
   start() {
     if (this.loopStarted) return;
     this.loopStarted = true;
     console.error(`codexhub machine starting: ${this.machineId}`);
     this.updateStatus("starting", "codexhub machine starting");
-    void this.runLoop();
+    this.loopPromise = this.runLoop().catch((error: unknown) => {
+      if (this.stopped) return;
+      const message = redactMachineRunnerError(errorText(error), this.options.authToken);
+      console.error(`codexhub machine offline: ${message}`);
+      this.updateStatus("offline", message);
+    });
   }
 
-  async stop() {
+  stop() {
+    this.stopPromise ??= this.stopInternal();
+    return this.stopPromise;
+  }
+
+  private async stopInternal() {
     this.stopped = true;
+    this.lifecycleAbort.abort();
     await this.stopSessions();
     if (this.registered) {
       this.sendRaw({ type: "unregister" });
@@ -127,15 +149,17 @@ class CodexhubMachineRunner {
     this.tunnel = null;
     this.rejectPendingAppServerAttaches(new Error("codexhub machine stopped"));
     this.sessionTransports.clear();
-    this.ws?.close();
+    closeWebSocket(this.ws);
+    await this.loopPromise;
     this.updateStatus("stopped", "codexhub machine stopped");
   }
 
   private async runLoop() {
     while (!this.stopped) {
       try {
-        console.error(`codexhub machine connecting: ${this.options.apiBase}`);
-        this.updateStatus("connecting", `connecting to ${this.options.apiBase}`);
+        const connectionTarget = publicConnectionTarget(this.options.apiBase);
+        console.error(`codexhub machine connecting: ${connectionTarget}`);
+        this.updateStatus("connecting", `connecting to ${connectionTarget}`);
         await this.connectOnce();
         if (!this.stopped) {
           console.error("codexhub machine offline: websocket closed");
@@ -143,7 +167,7 @@ class CodexhubMachineRunner {
         }
       } catch (error) {
         if (!this.stopped) {
-          const message = errorText(error);
+          const message = redactMachineRunnerError(errorText(error), this.options.authToken);
           console.error(`codexhub machine offline: ${message}`);
           this.updateStatus("offline", message);
         }
@@ -153,15 +177,22 @@ class CodexhubMachineRunner {
           await this.stopSessions();
         }
         this.registered = false;
-        this.ws?.close();
+        closeWebSocket(this.ws);
         this.ws = null;
       }
-      if (!this.stopped) await delay(5000);
+      if (!this.stopped) await abortableDelay(5000, this.lifecycleAbort.signal);
     }
   }
 
   private async connectOnce() {
-    const ws = await openWebSocket(machineTransportUrl(this.options.apiBase, this.options.authToken));
+    const ws = await openWebSocket(
+      machineTransportUrl(this.options.apiBase, this.options.authToken),
+      this.lifecycleAbort.signal
+    );
+    if (this.stopped) {
+      closeWebSocket(ws);
+      return;
+    }
     this.ws = ws;
     const closed = new Deferred<void>();
     const heartbeat = setInterval(() => this.sendHeartbeat(), 10_000);
@@ -204,7 +235,7 @@ class CodexhubMachineRunner {
       platform: `${process.platform}-${process.arch}`,
       cwd: process.cwd(),
       capabilities: { projectLauncher: true, ...this.options.capabilities },
-      projects: projects?.length ? projects : undefined
+      projects
     };
   }
 
@@ -561,7 +592,7 @@ class CodexhubMachineRunner {
     this.options.onStatus?.({
       status,
       machineId: this.machineId,
-      apiBase: this.options.apiBase,
+      apiBase: publicConnectionTarget(this.options.apiBase),
       message,
       updatedAt: new Date().toISOString()
     });
@@ -646,13 +677,95 @@ const expandHome = (input: string) => {
   return input;
 };
 
-const openWebSocket = async (url: string) => {
-  const ws = new WebSocket(url);
+const openWebSocket = async (url: string, signal: AbortSignal) => {
+  if (signal.aborted) throw new Error("WebSocket connection aborted");
+  const target = publicConnectionTarget(url);
+  let ws: WebSocket;
+  try {
+    ws = new WebSocket(url);
+  } catch {
+    throw new Error(`WebSocket failed: ${target}`);
+  }
   await new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener("error", () => reject(new Error(`WebSocket failed: ${url}`)), { once: true });
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      ws.removeEventListener("open", onOpen);
+      ws.removeEventListener("error", onError);
+      ws.removeEventListener("close", onClose);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onOpen = () => finish();
+    const onError = () => {
+      closeWebSocket(ws);
+      finish(new Error(`WebSocket failed: ${target}`));
+    };
+    const onClose = () => finish(new Error(`WebSocket closed before opening: ${target}`));
+    const onAbort = () => {
+      closeWebSocket(ws);
+      finish(new Error("WebSocket connection aborted"));
+    };
+    const timer = setTimeout(() => {
+      closeWebSocket(ws);
+      finish(new Error(`WebSocket connection timed out: ${target}`));
+    }, 15_000);
+    timer.unref?.();
+    signal.addEventListener("abort", onAbort, { once: true });
+    ws.addEventListener("open", onOpen, { once: true });
+    ws.addEventListener("error", onError, { once: true });
+    ws.addEventListener("close", onClose, { once: true });
   });
   return ws;
+};
+
+const closeWebSocket = (ws: WebSocket | null) => {
+  if (!ws) return;
+  try {
+    if (ws.readyState === WebSocket.CONNECTING) ws.once("error", () => undefined);
+    ws.terminate();
+  } catch {
+    // The socket may already be fully closed.
+  }
+};
+
+const publicConnectionTarget = (value: string) => {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "CodexHub server";
+  }
+};
+
+const redactMachineRunnerError = (value: string, authToken: string | undefined) => {
+  const token = authToken?.trim();
+  if (!token) return value;
+  return [token, encodeURIComponent(token)].reduce(
+    (message, secret) => secret ? message.replaceAll(secret, "[redacted]") : message,
+    value
+  );
+};
+
+const abortableDelay = async (ms: number, signal: AbortSignal) => {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    timer.unref?.();
+    signal.addEventListener("abort", finish, { once: true });
+  });
 };
 
 const waitForShutdown = async () => await new Promise<void>((resolve) => {

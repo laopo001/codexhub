@@ -14,7 +14,8 @@ await build({
   target: "node20",
   banner: { js: "#!/usr/bin/env node" },
   sourcemap: false,
-  minify: false,
+  // Keep bundled dependency module ids from embedding pnpm store paths.
+  minify: true,
   treeShaking: true,
   logLevel: "silent"
 });

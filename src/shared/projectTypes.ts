@@ -98,8 +98,8 @@ export type ServerConfig = {
 export type StoredParentRegistration = {
   url: string;
   authToken?: string;
-  machineId: string;
-  name: string;
+  machineId?: string;
+  name?: string;
   updatedAt: string;
 };
 

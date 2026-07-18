@@ -30,6 +30,7 @@ export type ProjectTaskRoutesContext = {
   projectIsFixed: (projectId: string) => boolean | undefined;
   projectSnapshot: () => ProjectsPayload;
   publishProjects: () => void;
+  refreshParentRegistration: () => void;
   publishTasks: () => void;
   resolveTargetMachine: (
     machines: ReturnType<MachineHub["listMachines"]>,
@@ -90,6 +91,7 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
       });
     if (!project) throw new Error("Project could not be opened.");
     ctx.publishProjects();
+    ctx.refreshParentRegistration();
     return { ok: true, machine: input.machine, project, result, ...ctx.projectSnapshot() } satisfies ProjectThreadStartPayload;
   };
 
