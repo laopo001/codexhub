@@ -196,6 +196,14 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     : [];
   const parentRegistrationStatus = parentRegistrationStatusLabel(parentRegistration.status);
   const parentRegistrationActive = parentRegistration.status !== "idle" && parentRegistration.status !== "stopped";
+  React.useEffect(() => {
+    if (!parentRegistration.url) return;
+    setParentRegistrationDraft((current) => ({
+      url: current.url || parentRegistration.url || "",
+      machineId: current.machineId || parentRegistration.machineId || "",
+      name: current.name || parentRegistration.name || ""
+    }));
+  }, [parentRegistration.machineId, parentRegistration.name, parentRegistration.url, setParentRegistrationDraft]);
   const selectedTaskProject = taskFormOpen
     ? taskProjectOptions.find((project) => project.path === taskDraft.projectPath)
     : undefined;

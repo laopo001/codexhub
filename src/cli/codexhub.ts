@@ -1,15 +1,13 @@
 #!/usr/bin/env tsx
 import { Command } from "commander";
-import os from "node:os";
 import { loadDotEnv } from "../core/dotenv.js";
-import { createMachineId } from "../core/machineHub.js";
 import {
   parseCodexApprovalPolicy,
   parseCodexSandboxMode,
   resolveCodexAppServerLaunchOptions,
   type CodexAppServerLaunchOptions
 } from "./codexAppServerProcess.js";
-import { runCodexhubMachine, startCodexhubMachine, type CodexhubMachineHandle } from "./codexhubMachine.js";
+import { runCodexhubMachine } from "./codexhubMachine.js";
 
 type ServerCommandOptions = {
   host?: string;
@@ -98,20 +96,23 @@ program
     const { startServer } = await import("../server/index.js");
     const appServerLaunch = appServerLaunchOptions(options);
     let handle: Awaited<ReturnType<typeof startServer>> | null = null;
-    let parentMachine: CodexhubMachineHandle | null = null;
     try {
       handle = await startServer({
         host: options.host,
         port: parsePortOption(options.port ?? rootOptions.port),
         staticDirectory: options.serveStatic,
-        appServerLaunch
+        appServerLaunch,
+        parentRegistration: {
+          url: options.registerTo,
+          authToken: options.registerAuthToken,
+          machineId: options.registerMachineId,
+          name: options.registerName
+        }
       });
       const localUrl = serverUrl(handle.host, handle.port);
       console.error(`codexhub server listening: ${localUrl}`);
-      parentMachine = await startParentRegistration(options, localUrl, handle.host, handle.port, handle.serverInstanceId);
       await waitForShutdown();
     } finally {
-      await parentMachine?.stop();
       await handle?.stop();
     }
   });
@@ -480,98 +481,6 @@ function appServerLaunchOptions(options: Pick<ServerCommandOptions, "approvalPol
     sandbox: parseCodexSandboxMode(options.sandbox, "--sandbox")
   });
 }
-
-async function startParentRegistration(
-  options: ServerCommandOptions,
-  localUrl: string,
-  localHost: string,
-  localPort: number,
-  serverInstanceId: string
-) {
-  const registerToInput = options.registerTo ?? process.env.CODEX_HUB_REGISTER_TO;
-  const registerTo = normalizedOptionalUrl(registerToInput);
-  if (!registerTo) return null;
-  await assertNotSelfRegistrationTarget(registerToInput ?? registerTo, localHost, localPort, serverInstanceId);
-  const machineId = options.registerMachineId
-    ?? process.env.CODEX_HUB_REGISTER_MACHINE_ID
-    ?? createMachineId(`${os.hostname()}-server-${localPort}`);
-  const name = options.registerName
-    ?? process.env.CODEX_HUB_REGISTER_NAME
-    ?? `CodexHub Server ${localUrl}`;
-  const authToken = options.registerAuthToken ?? authTokenFromUrl(registerToInput) ?? process.env.CODEX_HUB_REGISTER_AUTH_TOKEN;
-  console.error(`codexhub server registering to parent: ${registerTo}`);
-  return startCodexhubMachine({
-    apiBase: registerTo,
-    authToken,
-    machineId,
-    type: "registered",
-    name,
-    appServerLaunch: appServerLaunchOptions(options)
-  });
-}
-
-function normalizedOptionalUrl(value: string | undefined) {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  const url = new URL(trimmed);
-  url.pathname = "";
-  url.search = "";
-  url.hash = "";
-  return url.toString().replace(/\/$/, "");
-}
-
-function authTokenFromUrl(value: string | undefined) {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  const url = new URL(trimmed);
-  return url.searchParams.get("codexhub_token")?.trim()
-    || undefined;
-}
-
-async function assertNotSelfRegistrationTarget(value: string, localHost: string, localPort: number, serverInstanceId: string) {
-  if (isSameLocalEndpoint(value, localHost, localPort)) {
-    throw new Error("Cannot register this CodexHub server to itself.");
-  }
-  const targetInstanceId = await fetchServerInstanceId(value);
-  if (targetInstanceId && targetInstanceId === serverInstanceId) {
-    throw new Error("Cannot register this CodexHub server to itself.");
-  }
-}
-
-async function fetchServerInstanceId(value: string) {
-  try {
-    const response = await fetch(new URL("/api/health", value), { signal: AbortSignal.timeout(1000) });
-    if (!response.ok) return undefined;
-    const data = await response.json() as { serverInstanceId?: unknown };
-    return typeof data.serverInstanceId === "string" ? data.serverInstanceId : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function isSameLocalEndpoint(value: string, localHost: string, localPort: number) {
-  const url = new URL(value);
-  if (urlPort(url) !== localPort) return false;
-  const targetHost = normalizedUrlHost(url.hostname);
-  const listenHost = normalizedUrlHost(localHost);
-  if (isWildcardHost(targetHost)) return true;
-  if (targetHost === listenHost) return true;
-  return isLoopbackHost(targetHost) && (isLoopbackHost(listenHost) || isWildcardHost(listenHost));
-}
-
-const urlPort = (url: URL) => url.port
-  ? Number(url.port)
-  : url.protocol === "https:" ? 443 : 80;
-
-const normalizedUrlHost = (value: string) => value.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
-
-const isLoopbackHost = (host: string) =>
-  host === "localhost"
-  || host === "::1"
-  || host === "0:0:0:0:0:0:0:1"
-  || host.startsWith("127.");
-
-const isWildcardHost = (host: string) => host === "0.0.0.0" || host === "::";
 
 function serverUrl(host: string, port: number) {
   const displayHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
@@ -13,6 +13,7 @@ import type {
   ServerStateData,
   ServerUiConfig,
   StoredMachine,
+  StoredParentRegistration,
   StoredProject,
   StoredSshHost,
   StoredTask,
@@ -64,6 +65,27 @@ export class CodexhubServerState {
 
   config() {
     return cloneServerConfig(this.data.config);
+  }
+
+  parentRegistration() {
+    return this.data.parentRegistration ? { ...this.data.parentRegistration } : undefined;
+  }
+
+  setParentRegistration(input: Omit<StoredParentRegistration, "updatedAt"> & { updatedAt?: string }) {
+    const registration: StoredParentRegistration = {
+      ...input,
+      updatedAt: input.updatedAt ?? new Date().toISOString()
+    };
+    this.data.parentRegistration = registration;
+    this.touch();
+    return { ...registration };
+  }
+
+  clearParentRegistration() {
+    if (!this.data.parentRegistration) return false;
+    delete this.data.parentRegistration;
+    this.touch();
+    return true;
   }
 
   updateUiConfig(input: Partial<ServerUiConfig>) {
@@ -553,7 +575,8 @@ export class CodexhubServerState {
     if (text === this.lastSavedText) return;
     await mkdir(path.dirname(this.filePath), { recursive: true });
     const tmpPath = `${this.filePath}.${process.pid}.tmp`;
-    await writeFile(tmpPath, text, "utf8");
+    await writeFile(tmpPath, text, { encoding: "utf8", mode: 0o600 });
+    await chmod(tmpPath, 0o600);
     await rename(tmpPath, this.filePath);
     this.lastSavedText = text;
   }
@@ -638,6 +661,7 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
         updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
         config: normalizeServerConfig(parsed.config),
         env: normalizeStateEnv(parsed.env),
+        parentRegistration: normalizeStoredParentRegistration(parsed.parentRegistration),
         machines: Array.isArray(parsed.machines) ? parsed.machines.map(normalizeStoredMachine).filter(isStoredMachine) : [],
         projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
         tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : [],
@@ -678,6 +702,7 @@ const emptyState = (): ServerStateData => ({
   updatedAt: new Date().toISOString(),
   config: defaultServerConfig(),
   env: {},
+  parentRegistration: undefined,
   machines: [],
   projects: [],
   tasks: [],
@@ -753,6 +778,36 @@ const normalizeStoredMachine = (value: unknown): unknown => {
     type: normalizeMachineType(item.type as MachineType | undefined),
     capabilities: normalizeMachineCapabilities(asMachineCapabilities(item.capabilities))
   };
+};
+
+const normalizeStoredParentRegistration = (value: unknown): StoredParentRegistration | undefined => {
+  const item = objectRecord(value);
+  if (!item) return undefined;
+  const url = normalizedStoredUrl(item.url);
+  const machineId = typeof item.machineId === "string" ? item.machineId.trim() : "";
+  const name = typeof item.name === "string" ? item.name.trim() : "";
+  if (!url || !machineId || !name) return undefined;
+  const authToken = typeof item.authToken === "string" ? item.authToken.trim() : "";
+  return {
+    url,
+    ...(authToken ? { authToken } : {}),
+    machineId,
+    name,
+    updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString()
+  };
+};
+
+const normalizedStoredUrl = (value: unknown) => {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  try {
+    const url = new URL(value.trim());
+    url.pathname = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
 };
 
 const asMachineCapabilities = (value: unknown): Partial<MachineCapabilities> | undefined => {

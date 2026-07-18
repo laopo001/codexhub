@@ -48,7 +48,7 @@ codexhub server --register-to http://127.0.0.1:8788
 
 也可以在 Web 的 Connections / Registered 里复制当前 server 的 register 命令。远端只需要能从 `PATH` 找到 `codexhub`、`node` 和官方 `codex` 命令；远端 server 会在提供自身 Web/API 的同时，额外用 machine WebSocket 连回父 server。父 server 只把它看成一台 `registered` machine，不同步子 server 的 projects、tasks、config 或 thread transcript 权威数据。打开项目时，父 server 会把请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用 machine 级 runtime session。Registered machine 只启动远端官方 `codex app-server` 并通过同一条 machine WebSocket 反向多路复用 app-server WebSocket 帧；父 server 在本地消费官方 app-server 协议并为该目录创建或复用 thread。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
 
-父 server Web 左下角会显示可一键复制的 Register URL；如果当前浏览器已经保存父 server auth token，它会生成 `http://host:port?codexhub_token=...`，否则就是不带 token 的 base URL。已经打开远端 server 的 Web UI 时，可以在 Connections / Registered 里把这个 Register URL 粘贴到唯一的 Parent register URL 输入框并 Connect；动态连接只保存在当前进程内，重启后如需自动连接仍使用 `codexhub server --register-to` 或 `CODEX_HUB_REGISTER_TO`。CLI 和动态 API 从 `?codexhub_token=` 提取父 server auth token，也可以使用 `--register-auth-token` 或 `CODEX_HUB_REGISTER_AUTH_TOKEN`。
+父 server Web 左下角会显示可一键复制的 Register URL；如果当前浏览器已经保存父 server auth token，它会生成 `http://host:port?codexhub_token=...`，否则就是不带 token 的 base URL。已经打开远端 server 的 Web UI 时，可以在 Connections / Registered 里把这个 Register URL 粘贴到唯一的 Parent register URL 输入框并 Connect。连接成功发起后，子 server 会把规范化后的父 URL、machine identity 和可选 CodexHub auth token 保存在自身 `config.yaml` 的 `parentRegistration` 中；普通 Web、VSCode、Electron 下次启动都由共享 `startServer()` 自动恢复并继续断线重连。Disconnect 会停止连接并删除这份自动注册配置。CLI 和动态 API 从 `?codexhub_token=` 提取父 server auth token，也可以使用 `--register-auth-token` 或 `CODEX_HUB_REGISTER_AUTH_TOKEN`；CLI / 环境变量的启动时 override 仍只作用于当前进程，不覆盖已保存的 GUI 配置。
 
 CodexHub 会拒绝把一个 server 注册到它自己：同一本机地址且同端口会直接返回错误，目标 `/api/health` 的 `serverInstanceId` 与当前实例相同也会被拒绝。为了本机测试，同一台电脑上不同端口的多个 server 可以互相注册，例如 `127.0.0.1:8789` 注册到 `127.0.0.1:8788` 是允许的。
 
@@ -79,7 +79,7 @@ CODEX_HUB_SSH_AUTOCONNECT=0
 ~/.config/codexhub/config.yaml
 ```
 
-可以通过 `CODEX_HUB_DATA_DIR` 覆盖配置目录。这个 YAML 保存共享 UI 偏好、projects、tasks、SSH hosts、machines 等本机控制面配置，也会包含 `updatedAt`、task 最近 run 摘要这类轻量状态字段。它也可以保存一个 `env` 映射；server 启动时会先读取它，只把尚未存在的键填入 `process.env`，不会覆盖 shell 或 `.env`。它不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。旧版 `~/.local/share/codexhub/server-state.yaml` 或同一 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml` 会在首次启动时迁移写入新的 `config.yaml`。
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖配置目录。这个 YAML 保存共享 UI 偏好、parent registration、projects、tasks、SSH hosts、machines 等本机控制面配置，也会包含 `updatedAt`、task 最近 run 摘要这类轻量状态字段。包含 parent auth token 时配置文件会以 `0600` 写入；token 只由后端用于 machine WebSocket，不通过配置或 registration API 返回给 Web。它也可以保存一个 `env` 映射；server 启动时会先读取它，只把尚未存在的键填入 `process.env`，不会覆盖 shell 或 `.env`。它不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。旧版 `~/.local/share/codexhub/server-state.yaml` 或同一 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml` 会在首次启动时迁移写入新的 `config.yaml`。
 
 `config.yaml` 里的 `env` 适合 VSCode embedded server 这类不方便配置 shell 环境变量的场景。例如：
 
@@ -247,7 +247,7 @@ pnpm build
 
 `smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，验证 project path thread bootstrap、跨 project 共享 machine runtime、`/api/projects` 不暴露 runtime session/thread 列表、`/api/sessions`、session account rate limits、thread detail 不暴露 `workerId` 或 current thread，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认 machine/session registration 会拒绝未知旧字段。`smoke:task-lock` 额外覆盖 `/api/sessions/:sessionId/models` 的 session command 通道和 model/reasoning/service tier catalog 响应。
 
-`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?codexhub_token=` 提取、自注册拒绝、同机不同端口注册、project path thread bootstrap、machine runtime 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。
+`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?codexhub_token=` 提取、`config.yaml` 持久化与 `0600` 权限、server 重启自动恢复、Disconnect 清除自动连接、自注册拒绝、同机不同端口注册、project path thread bootstrap、machine runtime 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。
 
 `smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、project path thread bootstrap、machine runtime 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
 

@@ -22,6 +22,7 @@ import { resolveCodexAppServerLaunchOptions, type CodexAppServerLaunchOptions } 
 import {
   parentRegistrationConnectSchema,
   type ConnectionsStreamEvent,
+  type ParentRegistrationConnectInput,
   type ParentRegistrationStatus,
   type ProjectsPayload,
   type ProjectsStreamEvent
@@ -155,6 +156,7 @@ export type ServerStartOptions = {
   authToken?: string | null;
   buildId?: string | null;
   appServerLaunch?: CodexAppServerLaunchOptions;
+  parentRegistration?: Partial<ParentRegistrationConnectInput>;
   features?: Partial<ServerFeatureOptions>;
 };
 
@@ -183,6 +185,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const serverAuthToken = normalizedAuthToken(options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN);
   const buildId = options.buildId ?? process.env.CODEX_HUB_BUILD_ID ?? null;
   const serverInstanceId = randomUUID();
+  const startupParentRegistration = resolveStartupParentRegistration(options.parentRegistration, state.parentRegistration());
   const notificationHooks = notificationHookRunnerFromEnv(process.env);
   const embeddedSurface = isEmbeddedCodexHubSurface(surface);
   const shouldPersistMachine = (machine: { type?: string }) => !(embeddedSurface && machine.type === "local");
@@ -267,10 +270,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     subscriptionTimers: threadRecordSubscriptionTimers,
     stopTunneledSessions: () => tunneledSessions.stopAll(),
     stopSshMachines: () => sshMachines.stopAll(),
-    stopParentRegistration: async () => {
-      await parentRegistration?.stop();
-      parentRegistration = null;
-    },
+    stopParentRegistration: () => stopParentRegistration({ forget: false }).then(() => undefined),
     stopLocalMachine: async () => {
       await localMachine?.stop();
       localMachine = null;
@@ -460,16 +460,22 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return { ...parentRegistrationStatus } satisfies ParentRegistrationStatus;
   }
 
-  async function startParentRegistration(input: z.infer<typeof parentRegistrationConnectSchema>) {
+  async function startParentRegistration(
+    input: z.infer<typeof parentRegistrationConnectSchema>,
+    options: { persist?: boolean } = {}
+  ) {
     const url = normalizeBaseUrl(input.url);
     await assertNotSelfRegistrationTarget(input.url, {
       host: config.host,
       port: config.port,
       serverInstanceId
     });
-    await stopParentRegistration();
-    const authToken = input.authToken?.trim()
+    await stopParentRegistration({ forget: false });
+    const storedRegistration = state.parentRegistration();
+    const inputAuthToken = input.authToken?.trim()
       || authTokenFromUrl(input.url)
+      || (storedRegistration?.url === url ? storedRegistration.authToken : undefined);
+    const authToken = inputAuthToken
       || process.env.CODEX_HUB_REGISTER_AUTH_TOKEN;
     const machineId = input.machineId?.trim()
       || process.env.CODEX_HUB_REGISTER_MACHINE_ID
@@ -477,6 +483,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     const name = input.name?.trim()
       || process.env.CODEX_HUB_REGISTER_NAME
       || `CodexHub Server ${localApiBaseUrl(config.host, config.port)}`;
+    if (options.persist !== false) {
+      state.setParentRegistration({
+        url,
+        ...(inputAuthToken ? { authToken: inputAuthToken } : {}),
+        machineId,
+        name
+      });
+    }
     parentRegistrationStatus = {
       status: "starting",
       url,
@@ -509,16 +523,19 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return parentRegistrationView();
   }
 
-  async function stopParentRegistration() {
+  async function stopParentRegistration(options: { forget?: boolean } = {}) {
     const current = parentRegistration;
     parentRegistration = null;
     if (current) await current.stop();
+    if (options.forget) state.clearParentRegistration();
     parentRegistrationStatus = {
       status: "idle",
       updatedAt: new Date().toISOString()
     };
     return parentRegistrationView();
   }
+
+  const disconnectParentRegistration = () => stopParentRegistration({ forget: true });
 
   async function localSshConfigHostsByAlias() {
     if (!features.ssh) return new Map();
@@ -654,7 +671,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     stopSshConnectionsForHost,
     parentRegistrationView,
     startParentRegistration,
-    stopParentRegistration,
+    stopParentRegistration: disconnectParentRegistration,
     buildRegisteredBootstrap: (request, bundle, input) => {
       const serverBase = normalizeBaseUrl(input.server ?? requestBaseUrl(request, config.host, config.port));
       return registeredBootstrapScript({
@@ -716,6 +733,24 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       appServerLaunch,
       capabilities: embeddedSurface ? { projectCatalog: "fixed" } : undefined
     });
+  }
+
+  if (startupParentRegistration) {
+    try {
+      await startParentRegistration(startupParentRegistration, { persist: false });
+    } catch (error) {
+      const url = safeNormalizeBaseUrl(startupParentRegistration.url);
+      parentRegistrationStatus = {
+        status: "offline",
+        ...(url ? { url } : {}),
+        machineId: startupParentRegistration.machineId,
+        name: startupParentRegistration.name,
+        message: error instanceof Error ? error.message : String(error),
+        updatedAt: new Date().toISOString()
+      };
+      console.error(`codexhub parent registration startup failed: ${parentRegistrationStatus.message}`);
+      publishConnections();
+    }
   }
 
   if (features.ssh) await autoConnectSavedSshHosts("startup");
@@ -849,6 +884,37 @@ const normalizeBaseUrl = (value: string) => {
   url.search = "";
   url.hash = "";
   return url.toString().replace(/\/$/, "");
+};
+
+const safeNormalizeBaseUrl = (value: string) => {
+  try {
+    return normalizeBaseUrl(value);
+  } catch {
+    return undefined;
+  }
+};
+
+const resolveStartupParentRegistration = (
+  override: Partial<ParentRegistrationConnectInput> | undefined,
+  stored: ReturnType<CodexhubServerState["parentRegistration"]>
+): ParentRegistrationConnectInput | undefined => {
+  const overrideUrl = override?.url?.trim();
+  const envUrl = process.env.CODEX_HUB_REGISTER_TO?.trim();
+  const useStored = !overrideUrl && !envUrl;
+  const url = overrideUrl || envUrl || stored?.url;
+  if (!url) return undefined;
+  return {
+    url,
+    authToken: override?.authToken?.trim()
+      || process.env.CODEX_HUB_REGISTER_AUTH_TOKEN?.trim()
+      || (useStored ? stored?.authToken : undefined),
+    machineId: override?.machineId?.trim()
+      || process.env.CODEX_HUB_REGISTER_MACHINE_ID?.trim()
+      || (useStored ? stored?.machineId : undefined),
+    name: override?.name?.trim()
+      || process.env.CODEX_HUB_REGISTER_NAME?.trim()
+      || (useStored ? stored?.name : undefined)
+  };
 };
 
 const authTokenFromUrl = (value: string) => {

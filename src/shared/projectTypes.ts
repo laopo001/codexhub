@@ -94,12 +94,22 @@ export type ServerConfig = {
   ui: ServerUiConfig;
 };
 
+/** GUI 配置的父 server 注册；存在即表示 server 启动后应主动恢复连接。 */
+export type StoredParentRegistration = {
+  url: string;
+  authToken?: string;
+  machineId: string;
+  name: string;
+  updatedAt: string;
+};
+
 /** config.yaml 的持久化结构。 */
 export type ServerStateData = {
   version: 1;
   updatedAt: string;
   config: ServerConfig;
   env: Record<string, string>;
+  parentRegistration?: StoredParentRegistration;
   machines: StoredMachine[];
   projects: StoredProject[];
   tasks: StoredTask[];

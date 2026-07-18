@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, readlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, readlink, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import YAML from "yaml";
 import { assertNoWorkerId } from "./smoke/support/assertions.js";
 import { apiJson } from "./smoke/support/http.js";
 import { findFreePort } from "./smoke/support/network.js";
@@ -88,29 +89,50 @@ const main = async () => {
     });
     const dynamicMachineId = `registered-dynamic-server-smoke-${process.pid}`;
     const dynamicMachineName = "Registered Dynamic Server Smoke";
-    const dynamicChild = await startDynamicRegisteredServer(dynamicServerDataDir);
-    await waitForChildServer(dynamicChild.apiBase, dynamicChild);
-    await assertSelfRegistrationRejected(dynamicChild.apiBase);
-    const parentRegistration = await apiJson<{ registration?: { status?: string } }>(dynamicChild.apiBase, "/api/registered/parent", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        url: `${apiBase}?codexhub_token=dynamic-smoke-token`,
+    let dynamicChild = await startDynamicRegisteredServer(dynamicServerDataDir);
+    try {
+      await waitForChildServer(dynamicChild.apiBase, dynamicChild);
+      await assertSelfRegistrationRejected(dynamicChild.apiBase);
+      await connectDynamicParent(dynamicChild.apiBase, apiBase, dynamicMachineId, dynamicMachineName);
+      await waitForRegisteredMachine(apiBase, dynamicMachineId, dynamicMachineName, dynamicChild);
+      await stopChild(dynamicChild);
+      await waitForMachineUnregistered(apiBase, dynamicMachineId);
+      await assertPersistedParentRegistration(dynamicServerDataDir, apiBase, dynamicMachineId, dynamicMachineName, true);
+
+      dynamicChild = await startDynamicRegisteredServer(dynamicServerDataDir);
+      await waitForChildServer(dynamicChild.apiBase, dynamicChild);
+      await waitForRegisteredMachine(apiBase, dynamicMachineId, dynamicMachineName, dynamicChild);
+      await waitForParentRegistrationOnline(dynamicChild.apiBase);
+      console.log("registered server persisted startup reconnect ok");
+
+      const disconnected = await apiJson<{ registration?: { status?: string } }>(dynamicChild.apiBase, "/api/registered/parent", {
+        method: "DELETE"
+      });
+      if (disconnected.registration?.status !== "idle") {
+        throw new Error(`dynamic server disconnect did not return idle: ${JSON.stringify(disconnected)}`);
+      }
+      await waitForMachineUnregistered(apiBase, dynamicMachineId);
+      await stopChild(dynamicChild);
+      await assertPersistedParentRegistration(dynamicServerDataDir, apiBase, dynamicMachineId, dynamicMachineName, false);
+
+      dynamicChild = await startDynamicRegisteredServer(dynamicServerDataDir);
+      await waitForChildServer(dynamicChild.apiBase, dynamicChild);
+      await assertParentRegistrationIdle(dynamicChild.apiBase);
+      await assertMachineStaysOffline(apiBase, dynamicMachineId);
+      console.log("registered server disconnect persistence clear ok");
+
+      await connectDynamicParent(dynamicChild.apiBase, apiBase, dynamicMachineId, dynamicMachineName);
+      await runRegisteredScenario({
+        label: "registered server dynamic",
+        apiBase,
         machineId: dynamicMachineId,
-        name: dynamicMachineName
-      })
-    });
-    if (!parentRegistration.registration || parentRegistration.registration.status === "idle") {
-      throw new Error(`dynamic server registration did not start: ${JSON.stringify(parentRegistration)}`);
+        machineName: dynamicMachineName,
+        projectDir: dynamicProjectDir,
+        child: dynamicChild
+      });
+    } finally {
+      await stopChild(dynamicChild).catch(() => undefined);
     }
-    await runRegisteredScenario({
-      label: "registered server dynamic",
-      apiBase,
-      machineId: dynamicMachineId,
-      machineName: dynamicMachineName,
-      projectDir: dynamicProjectDir,
-      child: dynamicChild
-    });
   } finally {
     await server.stop();
   }
@@ -128,6 +150,76 @@ const assertSelfRegistrationRejected = async (apiBase: string) => {
     throw new Error(`self registration was not rejected: HTTP ${response.status}: ${text}`);
   }
   console.log("registered server self-registration rejection ok");
+};
+
+const connectDynamicParent = async (childApiBase: string, parentApiBase: string, machineId: string, name: string) => {
+  const parentRegistration = await apiJson<{ registration?: { status?: string } }>(childApiBase, "/api/registered/parent", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      url: `${parentApiBase}?codexhub_token=dynamic-smoke-token`,
+      machineId,
+      name
+    })
+  });
+  if (!parentRegistration.registration || parentRegistration.registration.status === "idle") {
+    throw new Error(`dynamic server registration did not start: ${JSON.stringify(parentRegistration)}`);
+  }
+};
+
+const assertPersistedParentRegistration = async (
+  dataDir: string,
+  apiBase: string,
+  machineId: string,
+  name: string,
+  expected: boolean
+) => {
+  const configPath = path.join(dataDir, "config.yaml");
+  const raw = await readFile(configPath, "utf8");
+  const parsed = YAML.parse(raw) as { parentRegistration?: Record<string, unknown> };
+  if (!expected) {
+    if (parsed.parentRegistration) throw new Error(`parent registration was not cleared: ${raw}`);
+    return;
+  }
+  const registration = parsed.parentRegistration;
+  if (
+    registration?.url !== apiBase
+    || registration.machineId !== machineId
+    || registration.name !== name
+    || registration.authToken !== "dynamic-smoke-token"
+  ) {
+    throw new Error(`parent registration was not persisted: ${raw}`);
+  }
+  const mode = (await stat(configPath)).mode & 0o777;
+  if (mode !== 0o600) throw new Error(`config with parent auth token is not mode 0600: ${mode.toString(8)}`);
+};
+
+const waitForParentRegistrationOnline = async (apiBase: string) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 15_000) {
+    const data = await apiJson<{ registration?: { status?: string; url?: string } }>(apiBase, "/api/registered/parent");
+    if (data.registration?.status === "online") return data.registration;
+    await delay(250);
+  }
+  throw new Error("persisted parent registration did not become online");
+};
+
+const assertParentRegistrationIdle = async (apiBase: string) => {
+  const data = await apiJson<{ registration?: { status?: string } }>(apiBase, "/api/registered/parent");
+  if (data.registration?.status !== "idle") {
+    throw new Error(`cleared parent registration restarted unexpectedly: ${JSON.stringify(data)}`);
+  }
+};
+
+const assertMachineStaysOffline = async (apiBase: string, machineId: string) => {
+  const deadline = Date.now() + 1500;
+  while (Date.now() < deadline) {
+    const data = await apiJson<{ machines?: MachineSummary[] }>(apiBase, "/api/machines");
+    if (data.machines?.find((machine) => machine.machineId === machineId)?.online) {
+      throw new Error(`cleared parent registration reconnected unexpectedly: ${machineId}`);
+    }
+    await delay(250);
+  }
 };
 
 const runRegisteredScenario = async (input: {

@@ -157,6 +157,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
     try {
       const payload = await apiRouteJson(apiRoutes.disconnectParentRegistration);
       ctx.setParentRegistration(payload.registration ?? { status: "idle" });
+      ctx.sidebarDraftStore.set("parentRegistrationDraft", { url: "", machineId: "", name: "" });
     } catch (error) {
       ctx.setParentRegistrationError(error instanceof Error ? error.message : String(error));
     } finally {
