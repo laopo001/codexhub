@@ -66,6 +66,18 @@ pm2 save --force >/dev/null
 PM2_SNAPSHOT_SAVED=1
 pm2 delete codexhub-next >/dev/null 2>&1 || true
 pm2 delete codexhub-tg >/dev/null 2>&1 || true
+LEGACY_PROD_CWD="$(
+  pm2 jlist | node -e '
+    const fs = require("node:fs");
+    const processes = JSON.parse(fs.readFileSync(0, "utf8"));
+    const processEntry = processes.find((entry) => entry.name === "codexhub");
+    process.stdout.write(processEntry?.pm2_env?.pm_cwd ?? "");
+  '
+)"
+if [[ "$LEGACY_PROD_CWD" == "$ROOT_DIR" ]]; then
+  echo "Removing legacy codexhub PM2 process from ${ROOT_DIR}."
+  pm2 delete codexhub >/dev/null 2>&1
+fi
 EXPECTED_PROD_SCRIPT="${ROOT_DIR}/bin/codexhub"
 CURRENT_PROD_SCRIPT="$(
   pm2 jlist | node -e '

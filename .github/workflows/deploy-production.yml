@@ -1,0 +1,92 @@
+name: Deploy Production
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codexhub-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      DEPLOY_COMMIT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      - name: Checkout deployment commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.DEPLOY_COMMIT }}
+
+      - name: Validate production configuration
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_PORT: ${{ secrets.PROD_PORT }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_PATH: ${{ secrets.PROD_PATH }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          for variable_name in PROD_HOST PROD_PORT PROD_USER PROD_PATH PROD_SSH_KEY PROD_KNOWN_HOSTS; do
+            if [[ -z "${!variable_name:-}" ]]; then
+              echo "::error::Missing production secret ${variable_name}."
+              exit 1
+            fi
+          done
+          [[ "${PROD_HOST}" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "${PROD_PORT}" =~ ^[0-9]+$ ]]
+          [[ "${PROD_USER}" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "${PROD_PATH}" =~ ^/[A-Za-z0-9._/-]+$ ]]
+
+      - name: Configure production SSH key
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          install -d -m 700 "${HOME}/.ssh"
+          umask 077
+          printf '%s\n' "${PROD_SSH_KEY}" > "${HOME}/.ssh/codexhub-production"
+          printf '%s\n' "${PROD_KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          ssh-keygen -y -f "${HOME}/.ssh/codexhub-production" >/dev/null
+
+      - name: Deploy exact main commit
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_PORT: ${{ secrets.PROD_PORT }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_PATH: ${{ secrets.PROD_PATH }}
+        shell: bash
+        run: |
+          printf -v remote_command 'bash -s -- %q %q' \
+            "${DEPLOY_COMMIT}" "${PROD_PATH}"
+          ssh \
+            -i "${HOME}/.ssh/codexhub-production" \
+            -p "${PROD_PORT}" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${PROD_USER}@${PROD_HOST}" \
+            "${remote_command}" \
+            < scripts/deploy-prod-commit.sh

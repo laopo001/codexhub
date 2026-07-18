@@ -271,6 +271,8 @@ pnpm run publish:prod
 
 发布脚本会先备份当前生产产物，再运行 `pnpm check` 和 `pnpm build`，用 `v<version>+<git-sha>[.dirty]` 注入非空 `CODEX_HUB_BUILD_ID`，然后通过 PM2 的仓库 `bin/codexhub` 入口启动或重启 `codexhub-prod`，最后检查 `/api/health`、build ID 和 `/`。任一步失败会恢复先前的 `dist`、`dist-node` 和 PM2 进程快照。
 
+`main` push 的 CI 全部通过后，`Deploy Production` workflow 会进入 GitHub `production` environment，通过专用 SSH key 把 `scripts/deploy-prod-commit.sh` 发送到生产服务器。服务器只检出这次 push 的精确 commit；如果已有更新的 `main`，旧部署会直接跳过。随后服务器安装 lockfile 依赖并调用同一个 `publish:prod`。自动部署需要在 `production` environment 配置 `PROD_HOST`、`PROD_PORT`、`PROD_USER`、`PROD_PATH`、`PROD_SSH_KEY` 和固定主机指纹 `PROD_KNOWN_HOSTS`；不要保存 SSH 密码。
+
 常用命令：
 
 ```bash
