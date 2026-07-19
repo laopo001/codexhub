@@ -24,6 +24,7 @@ import {
   projectKeyForProject,
   readStoredUiState,
   runtimeSessionForProject,
+  createRegisteredMachineConnectionTracker,
   type SidebarDraftStore,
   streamEventRecords,
   taskCompleteNotification,
@@ -93,6 +94,8 @@ type RealtimeActionsContext = {
 
 export type RealtimeActionsDependencies = {
   clearActiveThreadIfLatest: (threadId: string) => void;
+  notifyRegisteredMachineConnected: (machine: MachineSummary) => void;
+  notifyRegisteredMachineDisconnected: (machine: MachineSummary) => void;
   openThread: (threadId: string) => Promise<void>;
 };
 
@@ -119,6 +122,7 @@ const taskRunCompleteNotification = (task: LocalTask, run: LocalTaskRun): TaskCo
 };
 
 export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: RealtimeActionsDependencies): RealtimeActions => {
+  const registeredMachineConnections = createRegisteredMachineConnectionTracker();
   const loadInitialPayloads = async () => Promise.all([
     apiRouteJson(apiRoutes.sessions),
     apiRouteJson(apiRoutes.config),
@@ -167,6 +171,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const loadedSessions = normalizeSessions(sessionData.sessions);
     const loadedMachines = normalizeMachines(projectData.machines);
     const loadedProjects = normalizeProjects(projectData.projects);
+    registeredMachineConnections.seed(loadedMachines);
     const saved = readStoredUiState();
     const shouldRestoreSavedTabs = !initialWorkspacePath && Array.isArray(saved?.openThreadIds);
     const restoredThreadIds = shouldRestoreSavedTabs
@@ -288,7 +293,15 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     if (message.type === "projects") {
       const payload = message;
       if (typeof payload.seq === "number") ctx.projectsLastSeq.current = Math.max(ctx.projectsLastSeq.current, payload.seq);
-      ctx.setMachines(normalizeMachines(payload.machines));
+      const nextMachines = normalizeMachines(payload.machines);
+      const registeredMachineChanges = registeredMachineConnections.update(nextMachines);
+      for (const machine of registeredMachineChanges.connected) {
+        deps.notifyRegisteredMachineConnected(machine);
+      }
+      for (const machine of registeredMachineChanges.disconnected) {
+        deps.notifyRegisteredMachineDisconnected(machine);
+      }
+      ctx.setMachines(nextMachines);
       ctx.setProjects(normalizeProjects(payload.projects));
       return;
     }

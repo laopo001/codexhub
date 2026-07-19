@@ -8,3 +8,4 @@ export * from "./helpers/composer.js";
 export * from "./helpers/sidebarDrafts.js";
 export * from "./helpers/liveTime.js";
 export * from "./helpers/memoryCitation.js";
+export * from "./helpers/registeredMachines.js";

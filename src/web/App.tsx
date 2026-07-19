@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { ConfigProvider } from "antd";
+import { ConfigProvider, message } from "antd";
 import { AppView } from "./AppView.js";
 import { useAppEffects } from "./appEffects.js";
 import { useAppSelectors } from "./appSelectors.js";
@@ -28,6 +28,7 @@ const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
 };
 
 const App = () => {
+  const [messageApi, messageContextHolder] = message.useMessage();
   const appState = useAppState();
   const {
     activeWorkspacePath,
@@ -170,6 +171,18 @@ const App = () => {
   };
   const realtimeActions = createRealtimeActions(actionContext, {
     clearActiveThreadIfLatest: (threadId) => requireThreadActions().clearActiveThreadIfLatest(threadId),
+    notifyRegisteredMachineConnected: (machine) => {
+      void messageApi.success({
+        key: `registered-machine-connection:${machine.machineId}`,
+        content: `Registered machine connected · ${machine.name ?? machine.hostname ?? machine.machineId}`
+      });
+    },
+    notifyRegisteredMachineDisconnected: (machine) => {
+      void messageApi.warning({
+        key: `registered-machine-connection:${machine.machineId}`,
+        content: `Registered machine disconnected · ${machine.name ?? machine.hostname ?? machine.machineId}`
+      });
+    },
     openThread: (threadId) => requireThreadActions().openThread(threadId)
   });
   const sshActions = createSshActions(actionContext);
@@ -533,7 +546,12 @@ const App = () => {
     openThreadEmptyMessage,
     openThreadTabs,
   };
-  return <AppView viewModel={partitionAppViewModel(viewModel)} />;
+  return (
+    <>
+      {messageContextHolder}
+      <AppView viewModel={partitionAppViewModel(viewModel)} />
+    </>
+  );
 };
 
 const root = document.getElementById("root");
