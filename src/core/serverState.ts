@@ -47,13 +47,8 @@ export class CodexhubServerState {
     const filePath = configFilePath(options);
     const result = await readConfigFileWithLegacyFallback(filePath, options);
     const state = new CodexhubServerState(filePath, result.data);
-    const legacyStateFields = result.missingConfig
-      || result.legacyThreads
-      || result.legacyProjectNames
-      || result.legacyProjectSessionIds
-      || result.legacyRegisteredMachines;
-    state.lastSavedText = result.path !== filePath ? "" : legacyStateFields ? result.rawText ?? "" : YAML.stringify(result.data);
-    if (legacyStateFields || result.path !== filePath) await state.save();
+    state.lastSavedText = result.path !== filePath ? "" : result.needsRewrite ? result.rawText ?? "" : YAML.stringify(result.data);
+    if (result.needsRewrite || result.path !== filePath) await state.save();
     return state;
   }
 
@@ -628,11 +623,7 @@ type StateFileReadResult = {
   found: boolean;
   path: string;
   data: ServerStateData;
-  legacyThreads: boolean;
-  legacyProjectNames: boolean;
-  legacyProjectSessionIds: boolean;
-  legacyRegisteredMachines: boolean;
-  missingConfig: boolean;
+  needsRewrite: boolean;
   rawText?: string;
 };
 
@@ -655,16 +646,17 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
     rawText = await readFile(filePath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { found: false, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, legacyRegisteredMachines: false, missingConfig: false };
+      return { found: false, path: filePath, data: emptyState(), needsRewrite: false };
     }
-    return { found: false, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, legacyRegisteredMachines: false, missingConfig: false };
+    return { found: false, path: filePath, data: emptyState(), needsRewrite: false };
   }
 
   try {
     const parsed = YAML.parse(rawText) as (Partial<ServerStateData> & { threads?: unknown }) | null;
-    if (parsed?.version !== 1) return { found: true, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, legacyRegisteredMachines: false, missingConfig: false, rawText };
+    if (parsed?.version !== 1) return { found: true, path: filePath, data: emptyState(), needsRewrite: false, rawText };
     const parsedMachines = Array.isArray(parsed.machines) ? parsed.machines : [];
     const normalizedMachines = parsedMachines.map(normalizeStoredMachine).filter(isStoredMachine);
+    const projects = Array.isArray(parsed.projects) ? parsed.projects : [];
     return {
       found: true,
       path: filePath,
@@ -675,21 +667,18 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
         env: normalizeStateEnv(parsed.env),
         parentRegistration: normalizeStoredParentRegistration(parsed.parentRegistration),
         machines: normalizedMachines.filter((machine) => machine.type !== "registered"),
-        projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeStoredProject).filter(isStoredProject) : [],
+        projects: projects.map(normalizeStoredProject).filter(isStoredProject),
         tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : [],
         sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : []
       },
-      legacyThreads: Array.isArray(parsed.threads),
-      legacyProjectNames: Array.isArray(parsed.projects)
-        && parsed.projects.some((project) => Boolean(project && typeof project === "object" && !Array.isArray(project) && "name" in project)),
-      legacyProjectSessionIds: Array.isArray(parsed.projects)
-        && parsed.projects.some((project) => Boolean(project && typeof project === "object" && !Array.isArray(project) && "lastSessionId" in project)),
-      legacyRegisteredMachines: normalizedMachines.some((machine) => machine.type === "registered"),
-      missingConfig: !isCompleteServerConfig(parsed.config),
+      needsRewrite: Array.isArray(parsed.threads)
+        || projects.some((project) => Boolean(project && typeof project === "object" && !Array.isArray(project) && ("name" in project || "lastSessionId" in project)))
+        || normalizedMachines.some((machine) => machine.type === "registered")
+        || !isCompleteServerConfig(parsed.config),
       rawText
     };
   } catch {
-    return { found: true, path: filePath, data: emptyState(), legacyThreads: false, legacyProjectNames: false, legacyProjectSessionIds: false, legacyRegisteredMachines: false, missingConfig: false, rawText };
+    return { found: true, path: filePath, data: emptyState(), needsRewrite: false, rawText };
   }
 };
 

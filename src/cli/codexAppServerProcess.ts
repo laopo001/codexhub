@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import type { CodexAppServerLaunchOptions, CodexApprovalPolicy, CodexSandboxMode } from "../shared/appServerLaunch.js";
+import { readPositiveIntEnv } from "../shared/env.js";
 export type { CodexAppServerLaunchOptions, CodexApprovalPolicy, CodexSandboxMode } from "../shared/appServerLaunch.js";
 
 export type ChildExit = { code: number | null; signal: NodeJS.Signals | null };
@@ -32,7 +33,7 @@ export class UnsupportedCodexCliVersionError extends Error {
     this.name = "UnsupportedCodexCliVersionError";
   }
 }
-const codexAppServerReadyTimeoutMs = () => envPositiveInt("CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", 60_000);
+const codexAppServerReadyTimeoutMs = () => readPositiveIntEnv(process.env, "CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", 60_000);
 const codexAppServerStderrTailLimit = 4000;
 const execFileAsync = promisify(execFile);
 
@@ -423,11 +424,6 @@ const cleanupOnce = <T>(cleanup: () => T | Promise<T>) => {
     called = true;
     return await cleanup();
   };
-};
-
-const envPositiveInt = (name: string, fallback: number) => {
-  const value = Number(process.env[name]);
-  return Number.isInteger(value) && value > 0 ? value : fallback;
 };
 
 const textTail = (value: string, limit: number) => value.length <= limit ? value : value.slice(-limit);

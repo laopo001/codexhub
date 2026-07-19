@@ -29,6 +29,7 @@ import {
 } from "../shared/apiContract.js";
 import type { MachineRegistrationProject } from "../shared/machineTypes.js";
 import type { ProjectSource } from "../shared/projectTypes.js";
+import { readBooleanEnv, readNonNegativeNumberEnv } from "../shared/env.js";
 import {
   isCodexHubSurface,
   isEmbeddedCodexHubSurface,
@@ -51,33 +52,18 @@ import {
   type TelegramBotHandle
 } from "../../plugins/telegram/index.js";
 
-const envMs = (name: string, fallback: number) => {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-};
-
-const envFlag = (name: string, fallback: boolean) => {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const value = raw.trim().toLowerCase();
-  if (["0", "false", "no", "off"].includes(value)) return false;
-  if (["1", "true", "yes", "on"].includes(value)) return true;
-  return fallback;
-};
-const localMachineEnabled = () => envFlag("CODEX_HUB_LOCAL_MACHINE", true);
+const localMachineEnabled = () => readBooleanEnv(process.env, "CODEX_HUB_LOCAL_MACHINE", true);
 
 const staticRoot = (override?: string) => override
   ? path.resolve(override)
   : path.resolve(process.env.CODEX_HUB_STATIC_DIR ?? path.join(packageRoot(), "dist"));
 const sessionOfflineTimeoutMs = () =>
-  envMs("CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS", 45_000);
+  readNonNegativeNumberEnv(process.env, "CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS", 45_000);
 const sessionOfflineRetentionMs = () =>
-  envMs("CODEX_HUB_SESSION_OFFLINE_RETENTION_MS", 30 * 60_000);
+  readNonNegativeNumberEnv(process.env, "CODEX_HUB_SESSION_OFFLINE_RETENTION_MS", 30 * 60_000);
 const sessionSweepIntervalMs = () =>
-  envMs("CODEX_HUB_SESSION_SWEEP_INTERVAL_MS", 5_000);
-const taskScanIntervalMs = () => envMs("CODEX_HUB_TASK_SCAN_INTERVAL_MS", 30_000);
+  readNonNegativeNumberEnv(process.env, "CODEX_HUB_SESSION_SWEEP_INTERVAL_MS", 5_000);
+const taskScanIntervalMs = () => readNonNegativeNumberEnv(process.env, "CODEX_HUB_TASK_SCAN_INTERVAL_MS", 30_000);
 const localApiBaseUrl = (host: string, port: number) => {
   const apiHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${apiHost}:${port}`;

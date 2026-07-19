@@ -61,7 +61,6 @@ type ManagedSession = {
   session: RuntimeSessionHandle;
   cwd: string;
   projectsByCwd: Map<string, MachineStartSessionResult>;
-  threadReplacements: Map<string, string | null>;
 };
 
 type RuntimeSessionHandle = Pick<HeadlessCodexhubSessionHandle, "sessionId" | "threadId" | "appServerUrl" | "cwd" | "stop" | "wait"> & {
@@ -334,7 +333,7 @@ class CodexhubMachineRunner {
     const cwd = await resolveDirectory(command.cwd);
     if (this.runtimeSession) await this.ensureRuntimeAttached(this.runtimeSession, command.commandId);
     const requestedThreadId = typeof command.threadId === "string" && command.threadId.trim()
-      ? this.resolveRuntimeThreadId(this.runtimeSession, command.threadId.trim())
+      ? command.threadId.trim()
       : undefined;
     const existing = command.reuse !== false ? this.runtimeSession?.projectsByCwd.get(cwd) : undefined;
     if (existing && (!requestedThreadId || existing.threadId === requestedThreadId)) {
@@ -374,28 +373,9 @@ class CodexhubMachineRunner {
   private async ensureRuntimeAttached(runtime: ManagedSession, commandId: string) {
     if (!runtime.session.ensureAttached) return runtime.session.threadId;
     const previousThreadId = runtime.session.threadId;
-    const previousProjects = [...runtime.projectsByCwd.values()];
     const threadId = await runtime.session.ensureAttached(commandId);
     if (threadId === previousThreadId) return threadId;
     runtime.session.threadId = threadId;
-    const previousPrimaryThreadIds = new Set(
-      previousProjects.filter((result) => result.cwd === runtime.cwd).map((result) => result.threadId)
-    );
-    const previousThreadIds = new Set(previousProjects.map((result) => result.threadId));
-    previousThreadIds.add(previousThreadId);
-    for (const [sourceThreadId, targetThreadId] of runtime.threadReplacements) {
-      if (!targetThreadId || !previousThreadIds.has(targetThreadId)) continue;
-      runtime.threadReplacements.set(sourceThreadId, previousPrimaryThreadIds.has(targetThreadId) ? threadId : null);
-    }
-    for (const previousProject of previousProjects) {
-      runtime.threadReplacements.set(
-        previousProject.threadId,
-        previousProject.cwd === runtime.cwd ? threadId : null
-      );
-    }
-    if (!previousProjects.some((result) => result.threadId === previousThreadId)) {
-      runtime.threadReplacements.set(previousThreadId, null);
-    }
     // app_server_ready 只为 runtime 初始 cwd 创建新 thread；其他 project 必须在再次打开时各自新建。
     runtime.projectsByCwd.clear();
     runtime.projectsByCwd.set(runtime.cwd, {
@@ -405,20 +385,6 @@ class CodexhubMachineRunner {
       cwd: runtime.cwd
     });
     return threadId;
-  }
-
-  private resolveRuntimeThreadId(runtime: ManagedSession | null, threadId: string) {
-    if (!runtime) return threadId;
-    let resolved = threadId;
-    const visited = new Set<string>();
-    while (!visited.has(resolved)) {
-      visited.add(resolved);
-      const replacement = runtime.threadReplacements.get(resolved);
-      if (replacement === undefined) return resolved;
-      if (replacement === null) return undefined;
-      resolved = replacement;
-    }
-    return resolved;
   }
 
   private async ensureRuntimeSession(cwd: string, commandId: string): Promise<ManagedSession> {
@@ -447,8 +413,7 @@ class CodexhubMachineRunner {
     const runtime = {
       session,
       cwd,
-      projectsByCwd: new Map<string, MachineStartSessionResult>(),
-      threadReplacements: new Map<string, string | null>()
+      projectsByCwd: new Map<string, MachineStartSessionResult>()
     };
     this.runtimeSession = runtime;
     void session.wait().then(() => {

@@ -54,22 +54,22 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
   }): Promise<ProjectThreadStartPayload> => {
     const previousProject = ctx.state.listStoredProjects()
       .find((project) => project.machineId === input.machine.machineId && project.path === input.path);
-    const knownLastThread = previousProject?.lastThreadId
+    const projectedLastThread = previousProject?.lastThreadId
       ? ctx.threads.listThreads().find((thread) => thread.threadId === previousProject.lastThreadId)
       : undefined;
     const relation = input.relation ?? previousProject?.relation;
-    const knownLastThreadMismatches = Boolean(knownLastThread && knownLastThread.workingDirectory !== input.path);
-    const worktreeNeedsKnownThread = relation?.type === "worktree";
-    const reusableThreadId = input.reuse === false || knownLastThreadMismatches || (worktreeNeedsKnownThread && !knownLastThread)
-      ? undefined
-      : previousProject?.lastThreadId;
-    const reuseExistingProjectRuntime = input.reuse === false
-      ? false
-      : !knownLastThreadMismatches && (!worktreeNeedsKnownThread || Boolean(knownLastThread));
+    const projectedThreadCwdMismatch = Boolean(projectedLastThread && projectedLastThread.workingDirectory !== input.path);
+    const worktreeRequiresProjectedThread = relation?.type === "worktree";
+    const reuseProjectThread = input.reuse !== false
+      && !projectedThreadCwdMismatch
+      && (!worktreeRequiresProjectedThread || Boolean(projectedLastThread));
+    const resumeThreadId = reuseProjectThread && input.machine.type !== "registered"
+      ? projectedLastThread?.threadId ?? previousProject?.lastThreadId
+      : undefined;
     const started = ctx.machines.startSession(input.machine.machineId, {
       cwd: input.path,
-      reuse: reuseExistingProjectRuntime,
-      threadId: reusableThreadId
+      reuse: reuseProjectThread,
+      threadId: resumeThreadId
     });
     const result = await started.promise;
     const sessionId = result.sessionId;

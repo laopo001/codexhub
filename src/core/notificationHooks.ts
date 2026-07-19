@@ -8,6 +8,7 @@ import {
   type TaskCompleteNotification
 } from "../shared/taskNotifications.js";
 import type { CodexRecord } from "../shared/recordTypes.js";
+import { readPositiveIntEnv } from "../shared/env.js";
 import type { ThreadStreamEvent, ThreadSummary } from "../shared/threadTypes.js";
 
 export type NotificationHookConfig = {
@@ -114,7 +115,7 @@ export class NotificationHookRunner {
 export const notificationHookConfigFromEnv = (env: NodeJS.ProcessEnv = process.env): NotificationHookConfig | null => {
   const command = env.CODEX_HUB_NOTIFICATION_COMMAND?.trim() || undefined;
   if (!command) return null;
-  const timeoutMs = envPositiveInt(env.CODEX_HUB_NOTIFICATION_TIMEOUT_MS, 5000);
+  const timeoutMs = readPositiveIntEnv(env, "CODEX_HUB_NOTIFICATION_TIMEOUT_MS", 5000);
   return { command, timeoutMs };
 };
 
@@ -198,11 +199,6 @@ const notificationCommandLaunch = (command: string, args: string[]) => {
 const isWindowsCommandScript = (command: string) => {
   const extension = path.extname(command).toLowerCase();
   return extension === ".cmd" || extension === ".bat";
-};
-
-const envPositiveInt = (value: string | undefined, fallback: number) => {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 };
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);

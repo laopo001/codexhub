@@ -30,6 +30,7 @@ import {
 } from "./commandPalette.js";
 import { accountRateLimitsPayloadFromValue } from "../core/threadUsage.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
+import { readPositiveIntEnv } from "../shared/env.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import { isModelReasoningEffort } from "../shared/usageTypes.js";
 import type {
@@ -1499,7 +1500,7 @@ class CodexAppServerBridge {
 
 }
 
-const appServerRequestTimeoutMs = () => envPositiveInt("CODEX_HUB_APP_SERVER_REQUEST_TIMEOUT_MS", 60_000);
+const appServerRequestTimeoutMs = () => readPositiveIntEnv(process.env, "CODEX_HUB_APP_SERVER_REQUEST_TIMEOUT_MS", 60_000);
 const appServerOverloadRetryDelayMs = (attempt: number) => {
   const exponentialMs = Math.min(2_000, 100 * 2 ** attempt);
   return Math.floor(exponentialMs * (0.5 + Math.random() * 0.5));
@@ -1561,11 +1562,6 @@ const appServerApprovalDecision = (value: unknown): AppServerApprovalDecision | 
 };
 
 const approvalDecisionKey = (decision: AppServerApprovalDecision) => JSON.stringify(decision);
-const envPositiveInt = (name: string, fallback: number) => {
-  const value = Number(process.env[name]);
-  return Number.isInteger(value) && value > 0 ? value : fallback;
-};
-
 const isThreadApprovalPolicy = (value: unknown): value is ThreadRunOptions["approvalPolicy"] =>
   value === "untrusted" || value === "on-request" || value === "never";
 
