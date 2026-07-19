@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { recordViewStatusDurationMs } from "../../src/core/codexRecordView.js";
 import type { CodexRecord, CodexRecordView } from "../../src/shared/recordTypes.js";
+import { liveDurationMsFromAnchor } from "../../src/web/helpers/liveTime.js";
 import {
   finalAnswerViewsWithTurnDurations,
-  turnDurationMapFromRecords
+  turnDurationMapFromRecords,
+  turnDurationMsForTurn
 } from "../../src/web/helpers/turnDurations.js";
 
 test("final answer displays the whole turn duration instead of its shorter item duration", () => {
@@ -22,13 +25,41 @@ test("final answer keeps its item duration when turn timing is unavailable", () 
   assert.equal(view.statusDurationMs, 1_000);
 });
 
-test("turn duration falls back to backend lifecycle timestamps", () => {
+test("completed duration never falls back to frontend timestamp subtraction", () => {
   const turnDurations = turnDurationMapFromRecords([
     lifecycleRecord("task_started", "2026-07-19T02:00:00.000Z"),
     lifecycleRecord("task_complete", "2026-07-19T02:02:12.000Z")
   ]);
 
-  assert.equal(turnDurations.get("turn-test"), 132_000);
+  assert.equal(turnDurations.get("turn-test"), undefined);
+  assert.equal(turnDurationMsForTurn([
+    lifecycleRecord("task_started", "2026-07-19T02:00:00.000Z"),
+    lifecycleRecord("task_complete", "2026-07-19T02:02:12.000Z")
+  ], "turn-test"), undefined);
+  assert.equal(recordViewStatusDurationMs({
+    started_at: "2026-07-19T02:00:00.000Z",
+    completed_at: "2026-07-19T02:02:12.000Z"
+  }), undefined);
+});
+
+test("idle duration comes from the backend terminal record", () => {
+  const durationMs = turnDurationMsForTurn([
+    lifecycleRecord("task_started", "2026-07-19T02:00:00.000Z"),
+    lifecycleRecord("task_complete", "2026-07-19T02:02:12.000Z", 132_000)
+  ], "turn-test");
+
+  assert.equal(durationMs, 132_000);
+});
+
+test("running duration uses a backend clock anchor and catches up after a background pause", () => {
+  const durationMs = liveDurationMsFromAnchor({
+    startedAt: "2026-07-19T02:00:00.000Z",
+    observedAt: "2026-07-19T02:00:10.000Z",
+    observedClientAtMs: 5_000_000,
+    currentClientNowMs: 5_120_000
+  });
+
+  assert.equal(durationMs, 130_000);
 });
 
 const lifecycleRecord = (

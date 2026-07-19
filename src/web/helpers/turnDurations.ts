@@ -17,7 +17,6 @@ export const finalAnswerViewsWithTurnDurations = <T extends CodexRecordView>(
   });
 
 export const turnDurationMapFromRecords = (records: CodexRecord[]) => {
-  const startedByTurn = new Map<string, number>();
   const durationByTurn = new Map<string, number>();
   for (const record of records) {
     const payload = asRecord(record.payload);
@@ -26,26 +25,30 @@ export const turnDurationMapFromRecords = (records: CodexRecord[]) => {
       ? payload.turn_id
       : typeof payload.turnId === "string" ? payload.turnId : "";
     if (!turnId) continue;
-    if (payload.type === "task_started") {
-      const startedMs = timestampMsFromRecord(record);
-      if (startedMs != null) startedByTurn.set(turnId, startedMs);
-      continue;
-    }
     if (payload.type !== "task_complete" && payload.type !== "turn_aborted") continue;
     const direct = typeof payload.duration_ms === "number" && Number.isFinite(payload.duration_ms)
       ? Math.max(0, payload.duration_ms)
       : undefined;
-    if (direct != null) {
-      durationByTurn.set(turnId, direct);
-      continue;
-    }
-    const startedMs = startedByTurn.get(turnId);
-    const finishedMs = timestampMsFromRecord(record);
-    if (startedMs != null && finishedMs != null) {
-      durationByTurn.set(turnId, Math.max(0, finishedMs - startedMs));
-    }
+    if (direct != null) durationByTurn.set(turnId, direct);
   }
   return durationByTurn;
+};
+
+export const turnDurationMsForTurn = (records: CodexRecord[], turnId: string) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    const payload = asRecord(record.payload);
+    if (record.type !== "event_msg") continue;
+    if (payload?.type !== "task_complete" && payload?.type !== "turn_aborted") continue;
+    const recordTurnId = typeof payload.turn_id === "string"
+      ? payload.turn_id
+      : typeof payload.turnId === "string" ? payload.turnId : "";
+    if (recordTurnId !== turnId) continue;
+    return typeof payload.duration_ms === "number" && Number.isFinite(payload.duration_ms)
+      ? Math.max(0, payload.duration_ms)
+      : undefined;
+  }
+  return undefined;
 };
 
 const isFinalAnswerView = (view: CodexRecordView) =>
@@ -54,9 +57,4 @@ const isFinalAnswerView = (view: CodexRecordView) =>
 const turnIdFromRecordView = (view: CodexRecordView) => {
   const parts = view.record.id.split(":");
   return parts[0] === "app" && parts.length >= 3 ? parts[2] : "";
-};
-
-const timestampMsFromRecord = (record: CodexRecord) => {
-  const parsed = Date.parse(record.timestamp ?? "");
-  return Number.isFinite(parsed) ? parsed : undefined;
 };

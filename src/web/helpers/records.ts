@@ -14,6 +14,7 @@ import type { ActivityStatusFile, ActivityStatusSnapshot, ActivityStatusView, Mo
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
+import { turnDurationMsForTurn } from "./turnDurations.js";
 
 export const latestThreadUsageFromRecords = (records: CodexRecord[]): ThreadUsage | null => {
   const usage = threadUsageFromRecords(records);
@@ -416,6 +417,7 @@ export type TurnActivityScope = {
   userRecordId?: string;
   startedAt?: string;
   endedAt?: string;
+  durationMs?: number;
   turnStatus: ActivityStatusView | null;
 };
 
@@ -435,6 +437,7 @@ export const latestTurnActivityScope = (records: CodexRecord[]): TurnActivitySco
       userRecordId: record.id,
       startedAt,
       ...(turnId ? { endedAt: turnEndedAtFromRecords(records, turnId) } : {}),
+      ...(turnId ? optionalDuration(turnDurationMsForTurn(records, turnId)) : {}),
       turnStatus: latestTurnStatusFromRecords(scopeRecords) ?? (turnId ? latestTurnStatusForTurn(records, turnId) : null)
     };
   }
@@ -447,6 +450,7 @@ export const latestTurnActivityScope = (records: CodexRecord[]): TurnActivitySco
     ...(turnId ? { turnId } : {}),
     ...(turnId ? { startedAt: turnStartedAtFromRecords(records, turnId) } : {}),
     ...(turnId ? { endedAt: turnEndedAtFromRecords(records, turnId) } : {}),
+    ...(turnId ? optionalDuration(turnDurationMsForTurn(records, turnId)) : {}),
     turnStatus
   };
 };
@@ -592,6 +596,9 @@ const turnEndedAtFromRecords = (records: CodexRecord[], turnId: string) => {
   }
   return undefined;
 };
+
+const optionalDuration = (durationMs: number | undefined) =>
+  durationMs == null ? {} : { durationMs };
 
 const recordTurnId = (record: CodexRecord) => {
   const payload = asRecord(record.payload);

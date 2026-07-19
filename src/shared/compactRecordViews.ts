@@ -139,7 +139,7 @@ export const compactRecordView = (
     at: view.at ?? callView.at,
     status: view.status,
     statusText: view.statusText,
-    statusDurationMs: view.statusDurationMs ?? durationMsBetweenViews(callView, view) ?? callView.statusDurationMs,
+    statusDurationMs: view.statusDurationMs ?? callView.statusDurationMs,
     record: callView.record,
     inspectRecord: view.record,
     inspectText: view.text
@@ -346,18 +346,6 @@ const compactToolBatchDurationMs = (views: CompactRecordView[]) => {
 };
 
 const isBatchableToolView = (view: CompactRecordView) => view.role === "tool" && !view.toolBatch;
-
-const durationMsBetweenViews = (started: CompactRecordView, finished: CompactRecordView) => {
-  const startedMs = timestampMs(started.at);
-  const finishedMs = timestampMs(finished.at);
-  return startedMs != null && finishedMs != null ? Math.max(0, finishedMs - startedMs) : undefined;
-};
-
-const timestampMs = (value: string | undefined) => {
-  if (!value) return undefined;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
 
 const compactTurnId = (view: CodexRecordView) => {
   const parts = view.record.id.split(":");

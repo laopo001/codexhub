@@ -83,6 +83,9 @@ type PartialSessionSummary = {
 };
 
 type ThreadDetail = {
+  running?: boolean;
+  activeTurnStartedAt?: string;
+  activeTurnObservedAt?: string;
   threadUsage?: PartialThreadUsage;
   records?: Array<{
     id: string;
@@ -246,6 +249,20 @@ const main = async () => {
     });
     const modeTurn = await fake.nextTurn();
     await fake.expectNoSessionCommand("subscribe_thread_records", 100);
+    const runningTimingDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    const runningStartedAtMs = Date.parse(runningTimingDetail.activeTurnStartedAt ?? "");
+    const runningObservedAtMs = Date.parse(runningTimingDetail.activeTurnObservedAt ?? "");
+    if (
+      !runningTimingDetail.running
+      || !Number.isFinite(runningStartedAtMs)
+      || !Number.isFinite(runningObservedAtMs)
+      || runningObservedAtMs < runningStartedAtMs
+    ) {
+      throw new Error(`running timing anchor missing from thread detail: ${JSON.stringify(runningTimingDetail)}`);
+    }
     if (modeTurn.options?.collaborationMode !== "plan" || modeTurn.options?.goalMode !== true) {
       throw new Error(`web turn mode options were not forwarded: ${JSON.stringify(modeTurn.options)}`);
     }

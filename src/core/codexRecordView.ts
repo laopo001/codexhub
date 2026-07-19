@@ -47,11 +47,7 @@ export const withRecordViewStatusDuration = <T extends CodexRecordView | null>(
 };
 
 export const recordViewStatusDurationMs = (payload: Record<string, unknown>) => {
-  const direct = durationMsValue(payload.duration_ms) ?? durationMsValue(payload.durationMs);
-  if (direct != null) return direct;
-  const startedAt = timestampMsValue(payload.started_at) ?? timestampMsValue(payload.startedAt);
-  const completedAt = timestampMsValue(payload.completed_at) ?? timestampMsValue(payload.completedAt);
-  return startedAt != null && completedAt != null ? Math.max(0, completedAt - startedAt) : undefined;
+  return durationMsValue(payload.duration_ms) ?? durationMsValue(payload.durationMs);
 };
 
 const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
@@ -475,15 +471,6 @@ export const recordViewStatusText = (status: unknown): string | undefined => {
 
 const durationMsValue = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : undefined;
-
-const timestampMsValue = (value: unknown) => {
-  if (typeof value === "string" && value) {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return value < 10_000_000_000 ? value * 1000 : value;
-};
 
 export const isActiveRecordStatus = (status: CodexRecordView["status"] | undefined) =>
   status === "pending" || status === "in_progress";

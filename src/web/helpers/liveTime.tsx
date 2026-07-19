@@ -12,31 +12,79 @@ const tick = () => {
   for (const listener of listeners) listener();
 };
 
+const refreshForVisiblePage = () => {
+  if (document.visibilityState === "visible") tick();
+};
+
+const startClock = () => {
+  timer = window.setInterval(tick, 1000);
+  window.addEventListener("pageshow", tick);
+  document.addEventListener("visibilitychange", refreshForVisiblePage);
+  document.addEventListener("resume", refreshForVisiblePage);
+};
+
+const stopClock = () => {
+  if (timer !== null) window.clearInterval(timer);
+  timer = null;
+  window.removeEventListener("pageshow", tick);
+  document.removeEventListener("visibilitychange", refreshForVisiblePage);
+  document.removeEventListener("resume", refreshForVisiblePage);
+};
+
 const subscribe = (listener: () => void) => {
   nowMs = Date.now();
   listeners.add(listener);
-  if (timer === null) timer = window.setInterval(tick, 1000);
+  if (timer === null) startClock();
   return () => {
     listeners.delete(listener);
-    if (!listeners.size && timer !== null) {
-      window.clearInterval(timer);
-      timer = null;
-    }
+    if (!listeners.size) stopClock();
   };
 };
 
 const subscribeNever = () => () => undefined;
 const getSnapshot = () => nowMs;
 
-const useLiveDurationMs = (active: boolean, startedAt: string | undefined) => {
+export const liveDurationMsFromAnchor = ({
+  startedAt,
+  observedAt,
+  observedClientAtMs,
+  currentClientNowMs
+}: {
+  startedAt: string | undefined;
+  observedAt?: string;
+  observedClientAtMs: number;
+  currentClientNowMs: number;
+}) => {
+  if (!startedAt) return undefined;
+  const startedMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedMs)) return undefined;
+  const observedMs = observedAt ? Date.parse(observedAt) : Number.NaN;
+  if (Number.isFinite(observedMs)) {
+    const backendElapsedMs = Math.max(0, observedMs - startedMs);
+    const clientElapsedMs = Math.max(0, currentClientNowMs - observedClientAtMs);
+    return backendElapsedMs + clientElapsedMs;
+  }
+  return Math.max(0, currentClientNowMs - startedMs);
+};
+
+const useLiveDurationMs = (
+  active: boolean,
+  startedAt: string | undefined,
+  observedAt?: string
+) => {
+  const observedClientAtMs = React.useMemo(() => Date.now(), [startedAt, observedAt]);
   const currentNowMs = React.useSyncExternalStore(
     active ? subscribe : subscribeNever,
     getSnapshot,
     getSnapshot
   );
-  if (!active || !startedAt) return undefined;
-  const startedMs = Date.parse(startedAt);
-  return Number.isFinite(startedMs) ? Math.max(0, currentNowMs - startedMs) : undefined;
+  if (!active) return undefined;
+  return liveDurationMsFromAnchor({
+    startedAt,
+    observedAt,
+    observedClientAtMs,
+    currentClientNowMs: currentNowMs
+  });
 };
 
 export const StatusStartedAtContext = React.createContext<string | undefined>(undefined);
@@ -63,7 +111,11 @@ export const LiveThreadExecutionText = ({
   executionMeta: ThreadExecutionMeta;
   includeLabel?: boolean;
 }) => {
-  const liveDurationMs = useLiveDurationMs(executionMeta.status === "running", executionMeta.startedAt);
+  const liveDurationMs = useLiveDurationMs(
+    executionMeta.status === "running",
+    executionMeta.startedAt,
+    executionMeta.observedAt
+  );
   const duration = liveDurationMs === undefined ? executionMeta.duration : formatThreadDuration(liveDurationMs);
   return <>{[includeLabel ? executionMeta.label : "", duration].filter(Boolean).join(" · ")}</>;
 };

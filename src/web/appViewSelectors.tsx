@@ -274,8 +274,7 @@ export const threadExecutionMeta = (
   const startedAt = running
     ? thread.activeTurnStartedAt ?? activityScope.startedAt
     : activityScope.startedAt ?? activityScope.turnStatus?.at;
-  const endedAt = activityScope.endedAt ?? activityScope.turnStatus?.at;
-  const durationMs = running ? null : activityElapsedMs(startedAt, endedAt);
+  const durationMs = running ? undefined : activityScope.durationMs;
   const status = running ? "running" : "idle";
   const label = running ? "Running" : "Idle";
   const duration = durationMs == null ? "" : formatThreadDuration(durationMs);
@@ -284,22 +283,7 @@ export const threadExecutionMeta = (
     label,
     duration,
     text: [label, duration].filter(Boolean).join(" · "),
-    ...(running && startedAt ? { startedAt } : {})
+    ...(running && startedAt ? { startedAt } : {}),
+    ...(running && thread.activeTurnObservedAt ? { observedAt: thread.activeTurnObservedAt } : {})
   };
-};
-
-const activityElapsedMs = (
-  startedAt?: string,
-  endedAtFallback?: string
-) => {
-  const startedMs = parseTimestamp(startedAt);
-  if (startedMs === null) return null;
-  const endedMs = parseTimestamp(endedAtFallback);
-  return endedMs === null ? null : Math.max(0, endedMs - startedMs);
-};
-
-const parseTimestamp = (value: string | undefined) => {
-  if (!value) return null;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : null;
 };

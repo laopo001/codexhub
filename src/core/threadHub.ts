@@ -2298,6 +2298,9 @@ export class ThreadHub {
   }
 
   private summary(thread: ThreadState): ThreadSummary {
+    const activeTurnObservedAt = thread.running && thread.activeTurnStartedAt
+      ? new Date().toISOString()
+      : undefined;
     return {
       threadId: thread.threadId,
       workingDirectory: thread.workingDirectory,
@@ -2310,6 +2313,7 @@ export class ThreadHub {
       status: thread.running ? "running" : "idle",
       running: thread.running,
       ...(thread.running && thread.activeTurnStartedAt ? { activeTurnStartedAt: thread.activeTurnStartedAt } : {}),
+      ...(activeTurnObservedAt ? { activeTurnObservedAt } : {}),
       title: thread.title,
       updatedAt: thread.updatedAt,
       messageCount: recordsToViews(thread.records).length,
