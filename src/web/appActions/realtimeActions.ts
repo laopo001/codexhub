@@ -24,6 +24,7 @@ import {
   projectKeyForProject,
   readStoredUiState,
   runtimeSessionForProject,
+  showBrowserTaskCompleteNotification,
   createRegisteredMachineConnectionTracker,
   type SidebarDraftStore,
   streamEventRecords,
@@ -309,8 +310,8 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       const payload = message;
       ctx.tasksLastSeq.current = Math.max(ctx.tasksLastSeq.current, payload.seq);
       const nextTasks = normalizeTasks(payload.tasks);
-      notifyTaskCompletionsFromTasksEvent(nextTasks);
       ctx.setTasks(nextTasks);
+      notifyTaskCompletionsFromTasksEvent(nextTasks);
       return;
     }
     if (message.type === "connections") {
@@ -335,7 +336,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       payload.thread.threadId,
       Math.max(ctx.threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
     );
-    notifyTaskCompletionsFromStreamEvent(payload);
     ctx.dispatchOpenThreads({ type: "merge-stream", thread: payload.thread, record: payload.record });
     const sessionId = payload.thread.session.sessionId;
     if (sessionId) {
@@ -343,6 +343,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     }
     ctx.setSessionList((current) => patchSessionsThread(current, payload.thread));
     ctx.setProjects((current) => patchProjectsThread(current, payload.thread));
+    notifyTaskCompletionsFromStreamEvent(payload);
   }
 
   function notifyTaskCompletionsFromStreamEvent(event: StreamEvent) {
@@ -388,26 +389,24 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
   }
 
   function dispatchTaskCompleteNotification(notification: TaskCompleteNotification) {
-    playTaskCompletionSound(ctx.notificationAudioContext);
+    try {
+      playTaskCompletionSound(ctx.notificationAudioContext);
+    } catch {
+      // Completion feedback must never interrupt realtime state processing.
+    }
     if (!ctx.appSettingsRef.current.taskCompleteSystemNotifications) return;
     if (isEmbeddedHostSurface) {
-      window.parent?.postMessage({
-        type: "codexhub.taskCompleteNotification",
-        notification
-      }, "*");
+      try {
+        window.parent?.postMessage({
+          type: "codexhub.taskCompleteNotification",
+          notification
+        }, "*");
+      } catch {
+        // Embedded host notification failures are isolated from the event stream.
+      }
       return;
     }
-
-    const NotificationApi = window.Notification;
-    if (!NotificationApi || NotificationApi.permission !== "granted") return;
-    const browserNotification = new NotificationApi(notification.title, {
-      body: notification.body,
-      tag: `codexhub-task-complete:${notification.threadId}`
-    });
-    browserNotification.onclick = () => {
-      window.focus();
-      browserNotification.close();
-    };
+    void showBrowserTaskCompleteNotification(notification);
   }
 
   return {
