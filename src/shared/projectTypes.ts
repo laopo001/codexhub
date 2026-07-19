@@ -4,7 +4,7 @@ import type {
   MachineType
 } from "./machineTypes.js";
 
-/** config.yaml 中持久化的 machine 元数据，不表示当前在线状态。 */
+/** config.yaml 中持久化的 local/SSH machine 元数据；registered machine 只存在于运行时。 */
 export type StoredMachine = {
   machineId: string;
   type: MachineType;

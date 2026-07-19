@@ -199,7 +199,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   );
   const notificationHooks = notificationHookRunnerFromEnv(process.env);
   const embeddedSurface = isEmbeddedCodexHubSurface(surface);
-  const shouldPersistMachine = (machine: { type?: string }) => !(embeddedSurface && machine.type === "local");
+  const shouldPersistMachine = (machine: { type?: string }) =>
+    machine.type !== "registered" && !(embeddedSurface && machine.type === "local");
   let threads: ThreadHub;
   const captureSessionState = () => {
     state.captureSessions({

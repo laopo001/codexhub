@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import YAML from "yaml";
 import { resolveCodexAppServerLaunchOptions } from "../src/cli/codexAppServerProcess.js";
 import {
   accountRateLimitsPayloadFromValue,
@@ -335,6 +336,7 @@ const main = async () => {
   await assertServerStateDoesNotPersistThreadHistory();
   await assertTransientProjectsStayInMemory();
   await assertVscodeLocalMachineStaysInMemory();
+  await assertRegisteredMachinesStayRuntimeOnly();
   await assertProjectSessionIdsAreNotPersisted();
   await assertProjectNamesArePathBasenames();
   await assertProjectSessionProjection();
@@ -1674,6 +1676,83 @@ const assertVscodeLocalMachineStaysInMemory = async () => {
   });
   if (machineId && (saved.includes(machineId) || saved.includes("\nmachines:\n  -"))) {
     throw new Error(`VSCode local machine was persisted on shutdown:\n${saved}`);
+  }
+};
+
+const assertRegisteredMachinesStayRuntimeOnly = async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-registered-machine."));
+  const configPath = path.join(dataDir, "config.yaml");
+  const registeredMachineId = "machine-registered-history-smoke";
+  await writeFile(configPath, [
+    "version: 1",
+    "updatedAt: 2026-01-01T00:00:00.000Z",
+    "machines:",
+    "  - machineId: machine-local-history-smoke",
+    "    type: local",
+    "    hostname: local-history-smoke",
+    "    lastSeenAt: 2026-01-01T00:00:00.000Z",
+    "    capabilities:",
+    "      projectLauncher: true",
+    `  - machineId: ${registeredMachineId}`,
+    "    type: registered",
+    "    name: stale registered machine",
+    "    hostname: registered-history-smoke",
+    "    lastSeenAt: 2026-01-01T00:00:00.000Z",
+    "    capabilities:",
+    "      projectLauncher: true",
+    "projects:",
+    "  - projectId: project-registered-history-smoke",
+    `    machineId: ${registeredMachineId}`,
+    "    path: /tmp/registered-history-smoke",
+    "    createdAt: 2026-01-01T00:00:00.000Z",
+    "    lastOpenedAt: 2026-01-01T00:00:00.000Z",
+    "tasks: []",
+    "sshHosts: []",
+    ""
+  ].join("\n"), "utf8");
+
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
+  const state = await CodexhubServerState.load({ dataDir });
+  if (state.listStoredMachines().some((machine) => machine.machineId === registeredMachineId)) {
+    throw new Error("legacy registered machine metadata survived config migration");
+  }
+  if (!state.listStoredProjects().some((project) => project.machineId === registeredMachineId)) {
+    throw new Error("registered machine migration removed its persisted project metadata");
+  }
+
+  state.upsertMachine({
+    machineId: registeredMachineId,
+    type: "registered",
+    name: "runtime registered machine",
+    hostname: "registered-history-smoke",
+    capabilities: { projectLauncher: true }
+  });
+  state.captureSessions({
+    sessions: [{
+      sessionId: "session-registered-history-smoke",
+      machineId: registeredMachineId,
+      name: "runtime registered machine",
+      workingDirectory: "/tmp/registered-history-smoke",
+      online: true,
+      status: "online",
+      lastSeenAt: "2026-01-01T00:01:00.000Z",
+      hostname: "registered-history-smoke",
+      threads: []
+    }],
+    threads: []
+  });
+  await state.flush();
+
+  const saved = await readFile(configPath, "utf8");
+  const parsed = YAML.parse(saved) as { machines?: Array<{ machineId?: string }> };
+  if ((parsed.machines ?? []).some((machine) => machine.machineId === registeredMachineId)) {
+    throw new Error(`registered machine metadata was persisted again:\n${saved}`);
+  }
+  if (!saved.includes("machine-local-history-smoke")) {
+    throw new Error(`local machine metadata was removed with registered history:\n${saved}`);
+  }
+  if (!saved.includes("project-registered-history-smoke")) {
+    throw new Error(`registered machine project metadata was removed:\n${saved}`);
   }
 };
 

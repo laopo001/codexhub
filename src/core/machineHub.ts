@@ -284,6 +284,7 @@ export class MachineHub {
     machine.offlineReason = reason;
     for (const command of machine.commands) this.failCommand(machine.machineId, command.commandId, message);
     for (const waiter of [...machine.waiters]) waiter();
+    if (machine.type === "registered") this.machines.delete(machine.machineId);
     if (previousState !== machineVisibleState(machine)) this.options.onChange?.();
   }
 }

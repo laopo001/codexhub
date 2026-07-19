@@ -104,7 +104,7 @@ const main = async () => {
       await connectDynamicParent(dynamicChild.apiBase, apiBase, dynamicMachineId, dynamicMachineName);
       await waitForRegisteredMachine(apiBase, dynamicMachineId, dynamicMachineName, dynamicChild);
       await stopChild(dynamicChild);
-      await waitForMachineUnregistered(apiBase, dynamicMachineId);
+      await waitForRegisteredMachineRemoved(apiBase, dynamicMachineId);
       await assertPersistedParentRegistration(dynamicServerDataDir, apiBase, dynamicMachineId, dynamicMachineName, true);
 
       dynamicChild = await startDynamicRegisteredServer(dynamicServerDataDir);
@@ -119,7 +119,7 @@ const main = async () => {
       if (disconnected.registration?.status !== "idle") {
         throw new Error(`dynamic server disconnect did not return idle: ${JSON.stringify(disconnected)}`);
       }
-      await waitForMachineUnregistered(apiBase, dynamicMachineId);
+      await waitForRegisteredMachineRemoved(apiBase, dynamicMachineId);
       await stopChild(dynamicChild);
       await assertPersistedParentRegistration(dynamicServerDataDir, apiBase, dynamicMachineId, dynamicMachineName, false);
 
@@ -165,7 +165,7 @@ const main = async () => {
     } finally {
       await seed.stop();
     }
-    await waitForMachineUnregistered(apiBase, sharedMachineA);
+    await waitForRegisteredMachineRemoved(apiBase, sharedMachineA);
     await assertSharedParentProfile(sharedProfileDataDir, apiBase);
 
     const sharedPortA = await findFreePort();
@@ -196,12 +196,13 @@ const main = async () => {
       await Promise.all([sharedA.stop(), sharedB.stop()]);
     }
     await Promise.all([
-      waitForMachineUnregistered(apiBase, sharedMachineA),
-      waitForMachineUnregistered(apiBase, sharedMachineB)
+      waitForRegisteredMachineRemoved(apiBase, sharedMachineA),
+      waitForRegisteredMachineRemoved(apiBase, sharedMachineB)
     ]);
   } finally {
     await server.stop();
   }
+  await assertParentDidNotPersistRegisteredMachines(dataDir);
 };
 
 const assertRegisteredProjectCatalogRefresh = async (apiBase: string, root: string) => {
@@ -234,7 +235,7 @@ const assertRegisteredProjectCatalogRefresh = async (apiBase: string, root: stri
   } finally {
     await runner.stop();
   }
-  await waitForMachineUnregistered(apiBase, machineId);
+  await waitForRegisteredMachineRemoved(apiBase, machineId);
   await waitForRegisteredProjectPaths(apiBase, machineId, []);
 };
 
@@ -266,6 +267,16 @@ const assertSharedParentProfile = async (dataDir: string, apiBase: string) => {
   ) {
     throw new Error(`shared parent profile persisted runtime identity or empty token: ${raw}`);
   }
+};
+
+const assertParentDidNotPersistRegisteredMachines = async (dataDir: string) => {
+  const raw = await readFile(path.join(dataDir, "config.yaml"), "utf8");
+  const parsed = YAML.parse(raw) as { machines?: Array<{ machineId?: string; type?: string }> };
+  const registered = (parsed.machines ?? []).filter((machine) => machine.type === "registered");
+  if (registered.length) {
+    throw new Error(`parent server persisted dynamic registered machines: ${JSON.stringify(registered)}\n${raw}`);
+  }
+  console.log("parent server registered machines stayed runtime-only ok");
 };
 
 const waitForOnlineMachine = async (apiBase: string, machineId: string, machineName: string) => {
@@ -420,7 +431,7 @@ const runRegisteredScenario = async (input: {
     console.log(`${label} thread flow ok`);
 
     await stopChild(child);
-    await waitForMachineUnregistered(apiBase, machine.machineId);
+    await waitForRegisteredMachineRemoved(apiBase, machine.machineId);
     await waitForSessionStopped(apiBase, sessionId);
     await waitForNoCodexAppServerForCwd(projectDir);
     console.log(`${label} lifecycle ok`);
@@ -586,15 +597,15 @@ const waitForRegisteredMachine = async (
   throw new Error(`registered machine did not appear: ${machineId}\n${child.output()}`);
 };
 
-const waitForMachineUnregistered = async (apiBase: string, machineId: string) => {
+const waitForRegisteredMachineRemoved = async (apiBase: string, machineId: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 15_000) {
     const data = await apiJson<{ machines?: MachineSummary[] }>(apiBase, "/api/machines").catch(() => ({ machines: [] }));
     const machine = data.machines?.find((item) => item.machineId === machineId);
-    if (machine && !machine.online && machine.offlineReason === "unregistered") return machine;
+    if (!machine) return;
     await delay(250);
   }
-  throw new Error(`registered machine did not unregister cleanly: ${machineId}`);
+  throw new Error(`registered machine did not disappear after disconnect: ${machineId}`);
 };
 
 const waitForSessionStopped = async (apiBase: string, sessionId: string) => {
