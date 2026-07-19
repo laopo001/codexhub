@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { access, appendFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -60,9 +61,11 @@ type ManagedSession = {
   session: RuntimeSessionHandle;
   cwd: string;
   projectsByCwd: Map<string, MachineStartSessionResult>;
+  threadReplacements: Map<string, string | null>;
 };
 
 type RuntimeSessionHandle = Pick<HeadlessCodexhubSessionHandle, "sessionId" | "threadId" | "appServerUrl" | "cwd" | "stop" | "wait"> & {
+  ensureAttached?: (commandId: string) => Promise<string>;
   ensureThread: (threadId: string, cwd: string, commandId?: string) => Promise<string>;
   startThread: (cwd: string, commandId?: string) => Promise<string>;
 };
@@ -258,6 +261,14 @@ class CodexhubMachineRunner {
       console.error(`codexhub machine connected: ${message.machineId}`);
       this.updateStatus("online", `registered as ${message.machineId}`);
       for (const transport of this.sessionTransports.values()) transport.reconnect();
+      const runtime = this.runtimeSession;
+      if (runtime?.session.ensureAttached) {
+        void this.ensureRuntimeAttached(runtime, `reattach-${randomUUID()}`).catch((error: unknown) => {
+          if (!this.stopped && this.registered) {
+            console.error(`codexhub machine app-server reattach failed: ${errorText(error)}`);
+          }
+        });
+      }
       return;
     }
     if (message.type === "commands") {
@@ -321,8 +332,9 @@ class CodexhubMachineRunner {
   private async startSession(command: MachineCommand): Promise<MachineStartSessionResult> {
     if (command.type !== "start_session") throw new Error(`Unexpected command: ${command.type}`);
     const cwd = await resolveDirectory(command.cwd);
+    if (this.runtimeSession) await this.ensureRuntimeAttached(this.runtimeSession, command.commandId);
     const requestedThreadId = typeof command.threadId === "string" && command.threadId.trim()
-      ? command.threadId.trim()
+      ? this.resolveRuntimeThreadId(this.runtimeSession, command.threadId.trim())
       : undefined;
     const existing = command.reuse !== false ? this.runtimeSession?.projectsByCwd.get(cwd) : undefined;
     if (existing && (!requestedThreadId || existing.threadId === requestedThreadId)) {
@@ -359,6 +371,56 @@ class CodexhubMachineRunner {
     return result;
   }
 
+  private async ensureRuntimeAttached(runtime: ManagedSession, commandId: string) {
+    if (!runtime.session.ensureAttached) return runtime.session.threadId;
+    const previousThreadId = runtime.session.threadId;
+    const previousProjects = [...runtime.projectsByCwd.values()];
+    const threadId = await runtime.session.ensureAttached(commandId);
+    if (threadId === previousThreadId) return threadId;
+    runtime.session.threadId = threadId;
+    const previousPrimaryThreadIds = new Set(
+      previousProjects.filter((result) => result.cwd === runtime.cwd).map((result) => result.threadId)
+    );
+    const previousThreadIds = new Set(previousProjects.map((result) => result.threadId));
+    previousThreadIds.add(previousThreadId);
+    for (const [sourceThreadId, targetThreadId] of runtime.threadReplacements) {
+      if (!targetThreadId || !previousThreadIds.has(targetThreadId)) continue;
+      runtime.threadReplacements.set(sourceThreadId, previousPrimaryThreadIds.has(targetThreadId) ? threadId : null);
+    }
+    for (const previousProject of previousProjects) {
+      runtime.threadReplacements.set(
+        previousProject.threadId,
+        previousProject.cwd === runtime.cwd ? threadId : null
+      );
+    }
+    if (!previousProjects.some((result) => result.threadId === previousThreadId)) {
+      runtime.threadReplacements.set(previousThreadId, null);
+    }
+    // app_server_ready 只为 runtime 初始 cwd 创建新 thread；其他 project 必须在再次打开时各自新建。
+    runtime.projectsByCwd.clear();
+    runtime.projectsByCwd.set(runtime.cwd, {
+      sessionId: runtime.session.sessionId,
+      threadId,
+      appServerUrl: runtime.session.appServerUrl,
+      cwd: runtime.cwd
+    });
+    return threadId;
+  }
+
+  private resolveRuntimeThreadId(runtime: ManagedSession | null, threadId: string) {
+    if (!runtime) return threadId;
+    let resolved = threadId;
+    const visited = new Set<string>();
+    while (!visited.has(resolved)) {
+      visited.add(resolved);
+      const replacement = runtime.threadReplacements.get(resolved);
+      if (replacement === undefined) return resolved;
+      if (replacement === null) return undefined;
+      resolved = replacement;
+    }
+    return resolved;
+  }
+
   private async ensureRuntimeSession(cwd: string, commandId: string): Promise<ManagedSession> {
     if (this.runtimeSession) return this.runtimeSession;
     console.error(`codexhub machine app-server starting: ${cwd}`);
@@ -382,7 +444,12 @@ class CodexhubMachineRunner {
           return transport;
         }
       });
-    const runtime = { session, cwd, projectsByCwd: new Map<string, MachineStartSessionResult>() };
+    const runtime = {
+      session,
+      cwd,
+      projectsByCwd: new Map<string, MachineStartSessionResult>(),
+      threadReplacements: new Map<string, string | null>()
+    };
     this.runtimeSession = runtime;
     void session.wait().then(() => {
       if (this.runtimeSession?.session.sessionId === session.sessionId) this.runtimeSession = null;
@@ -400,24 +467,58 @@ class CodexhubMachineRunner {
     const appServer = await startCodexAppServerProcess(cwd, undefined, this.options.appServerLaunch);
     const sessionId = createCodexhubSessionId();
     const appServerId = sessionId;
-    // 官方 app-server 仍跑在 registered machine，父 server 只通过 tunnel 访问它。
-    this.tunnel?.registerTarget(appServerId, appServer.appServerUrl);
-    try {
-      const attached = await this.requestParentAppServerAttach({
+    let attachedTunnel: AppServerTunnelPeer | null = null;
+    let attachPromise: Promise<{ sessionId: string; threadId: string }> | null = null;
+    let defaultThreadId: string | undefined;
+    const attachToParent = async (nextCommandId: string) => {
+      const tunnel = this.tunnel;
+      if (!this.registered || !tunnel) throw new Error("Cannot attach app-server before machine registration.");
+      if (attachedTunnel === tunnel && defaultThreadId) {
+        return { sessionId, threadId: defaultThreadId };
+      }
+      if (attachPromise) return await attachPromise;
+      // 新的 machine WebSocket 会创建新的 tunnel；现有 app-server target 必须重新注册。
+      tunnel.registerTarget(appServerId, appServer.appServerUrl);
+      const pending = this.requestParentAppServerAttach({
         type: "app_server_ready",
-        commandId,
+        commandId: nextCommandId,
         sessionId,
         appServerId,
         cwd,
         appServerUrl: appServer.appServerUrl
+      }).then((attached) => {
+        if (!this.registered || this.tunnel !== tunnel) {
+          throw new Error("Machine transport changed while app-server was attaching.");
+        }
+        attachedTunnel = tunnel;
+        defaultThreadId = attached.threadId;
+        return attached;
+      }).catch((error) => {
+        tunnel.unregisterTarget(appServerId);
+        throw error;
       });
-      return {
+      attachPromise = pending;
+      try {
+        return await pending;
+      } finally {
+        if (attachPromise === pending) attachPromise = null;
+      }
+    };
+    try {
+      const attached = await attachToParent(commandId);
+      const handle: RuntimeSessionHandle = {
         sessionId,
         threadId: attached.threadId,
         appServerUrl: `tunnel://${appServerId}`,
         cwd,
+        ensureAttached: async (nextCommandId: string) => {
+          const threadId = (await attachToParent(nextCommandId)).threadId;
+          handle.threadId = threadId;
+          return threadId;
+        },
         ensureThread: async (threadId: string, nextCwd: string, nextCommandId?: string) => {
           if (!nextCommandId) throw new Error("Tunneled app-server ensureThread requires a machine command id.");
+          await attachToParent(nextCommandId);
           const started = await this.requestParentAppServerAttach({
             type: "app_server_start_thread",
             commandId: nextCommandId,
@@ -425,16 +526,21 @@ class CodexhubMachineRunner {
             cwd: nextCwd,
             threadId
           });
+          defaultThreadId = started.threadId;
+          handle.threadId = started.threadId;
           return started.threadId;
         },
         startThread: async (nextCwd: string, nextCommandId?: string) => {
           if (!nextCommandId) throw new Error("Tunneled app-server startThread requires a machine command id.");
+          await attachToParent(nextCommandId);
           const started = await this.requestParentAppServerAttach({
             type: "app_server_start_thread",
             commandId: nextCommandId,
             sessionId,
             cwd: nextCwd
           });
+          defaultThreadId = started.threadId;
+          handle.threadId = started.threadId;
           return started.threadId;
         },
         stop: async () => {
@@ -444,6 +550,7 @@ class CodexhubMachineRunner {
         },
         wait: appServer.wait
       };
+      return handle;
     } catch (error) {
       this.tunnel?.unregisterTarget(appServerId);
       await appServer.stop();

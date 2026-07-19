@@ -47,6 +47,7 @@ const main = async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-registered-smoke."));
   const dataDir = path.join(root, "parent-state");
   const commandProjectDir = path.join(root, "project-machine-command");
+  const commandSecondaryProjectDir = path.join(root, "project-machine-command-secondary");
   const serverProjectDir = path.join(root, "project-server-register");
   const dynamicProjectDir = path.join(root, "project-dynamic-server-register");
   const childServerDataDir = path.join(root, "child-server-state");
@@ -54,6 +55,7 @@ const main = async () => {
   const sharedProfileDataDir = path.join(root, "shared-vscode-profile-state");
   await mkdir(dataDir, { recursive: true });
   await mkdir(commandProjectDir, { recursive: true });
+  await mkdir(commandSecondaryProjectDir, { recursive: true });
   await mkdir(serverProjectDir, { recursive: true });
   await mkdir(dynamicProjectDir, { recursive: true });
   await mkdir(childServerDataDir, { recursive: true });
@@ -69,7 +71,7 @@ const main = async () => {
 
   const port = await findFreePort();
   const { startServer } = await import("../src/server/index.js");
-  const server = await startServer({ host: "127.0.0.1", port });
+  let server = await startServer({ host: "127.0.0.1", port });
   const apiBase = `http://127.0.0.1:${port}`;
 
   try {
@@ -77,13 +79,18 @@ const main = async () => {
 
     const commandMachineId = `registered-machine-smoke-${process.pid}`;
     const commandMachineName = "Registered Machine Command Smoke";
-    await runRegisteredScenario({
-      label: "registered machine command",
+    await runRegisteredParentRestartScenario({
+      label: "registered machine parent restart",
       apiBase,
       machineId: commandMachineId,
       machineName: commandMachineName,
       projectDir: commandProjectDir,
-      child: startRegisteredMachine(apiBase, commandMachineId, commandMachineName)
+      secondaryProjectDir: commandSecondaryProjectDir,
+      child: startRegisteredMachine(apiBase, commandMachineId, commandMachineName),
+      restartParent: async () => {
+        await server.stop();
+        server = await startServer({ host: "127.0.0.1", port });
+      }
     });
     const serverMachineId = `registered-server-smoke-${process.pid}`;
     const serverMachineName = "Registered Server Smoke";
@@ -432,6 +439,114 @@ const runRegisteredScenario = async (input: {
 
     await stopChild(child);
     await waitForRegisteredMachineRemoved(apiBase, machine.machineId);
+    await waitForSessionStopped(apiBase, sessionId);
+    await waitForNoCodexAppServerForCwd(projectDir);
+    console.log(`${label} lifecycle ok`);
+  } catch (error) {
+    const output = child.output();
+    if (output.trim()) console.error(`${label} output:\n${output}`);
+    throw error;
+  } finally {
+    await stopChild(child).catch(() => undefined);
+  }
+};
+
+const runRegisteredParentRestartScenario = async (input: {
+  label: string;
+  apiBase: string;
+  machineId: string;
+  machineName: string;
+  projectDir: string;
+  secondaryProjectDir: string;
+  child: ChildProcess & { output: () => string };
+  restartParent: () => Promise<void>;
+}) => {
+  const { label, apiBase, machineId, machineName, projectDir, secondaryProjectDir, child, restartParent } = input;
+  let sessionId = "";
+  try {
+    await waitForRegisteredMachine(apiBase, machineId, machineName, child);
+    const firstOpen = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ machineId, path: projectDir })
+    }, 120_000);
+    sessionId = firstOpen.result?.sessionId ?? "";
+    const initialThreadId = firstOpen.result?.threadId ?? "";
+    if (!sessionId || !initialThreadId) {
+      throw new Error(`initial project open did not return session/thread: ${JSON.stringify(firstOpen)}`);
+    }
+    const firstSecondaryOpen = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ machineId, path: secondaryProjectDir })
+    }, 120_000);
+    const initialSecondaryThreadId = firstSecondaryOpen.result?.threadId ?? "";
+    if (firstSecondaryOpen.result?.sessionId !== sessionId || !initialSecondaryThreadId || initialSecondaryThreadId === initialThreadId) {
+      throw new Error(`initial secondary project open did not share runtime with a distinct thread: ${JSON.stringify(firstSecondaryOpen)}`);
+    }
+    const initialSession = await waitForSessionOnline(apiBase, sessionId);
+    if (!initialSession.appServerUrl?.startsWith("tunnel://")) {
+      throw new Error(`initial registered session did not use app-server tunnel: ${initialSession.appServerUrl ?? ""}`);
+    }
+
+    await restartParent();
+    await waitForRegisteredMachine(apiBase, machineId, machineName, child);
+    const reattachedSession = await waitForSessionOnline(apiBase, sessionId);
+    if (!reattachedSession.appServerUrl?.startsWith("tunnel://")) {
+      throw new Error(`reattached registered session did not use app-server tunnel: ${reattachedSession.appServerUrl ?? ""}`);
+    }
+
+    const reopened = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ machineId, path: projectDir })
+    }, 120_000);
+    const threadId = reopened.result?.threadId ?? "";
+    if (reopened.result?.sessionId !== sessionId || !threadId) {
+      throw new Error(`parent restart did not reuse registered runtime: ${JSON.stringify(reopened)}`);
+    }
+    if (threadId === initialThreadId) {
+      throw new Error(`parent restart unexpectedly restored the previous thread: ${threadId}`);
+    }
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(threadId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: "/status", source: "web" })
+    });
+    await waitForThreadRecords(apiBase, threadId, 2);
+
+    const reopenedSecondary = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ machineId, path: secondaryProjectDir })
+    }, 120_000);
+    const secondaryThreadId = reopenedSecondary.result?.threadId ?? "";
+    if (reopenedSecondary.result?.sessionId !== sessionId || !secondaryThreadId) {
+      throw new Error(`secondary project did not reuse registered runtime after parent restart: ${JSON.stringify(reopenedSecondary)}`);
+    }
+    if (secondaryThreadId === initialSecondaryThreadId || secondaryThreadId === threadId) {
+      throw new Error(`secondary project did not create its own new thread after parent restart: ${secondaryThreadId}`);
+    }
+
+    await restartParent();
+    await waitForRegisteredMachine(apiBase, machineId, machineName, child);
+    await waitForSessionOnline(apiBase, sessionId);
+    const resumed = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ machineId, path: projectDir })
+    }, 120_000);
+    const resumedThreadId = resumed.result?.threadId ?? "";
+    if (resumed.result?.sessionId !== sessionId || !resumedThreadId) {
+      throw new Error(`second parent restart did not reuse registered runtime: ${JSON.stringify(resumed)}`);
+    }
+    if (resumedThreadId === threadId) {
+      throw new Error(`second parent restart unexpectedly restored the previous thread: ${threadId}`);
+    }
+    console.log(`${label} reattach ok: ${sessionId} ${initialThreadId} -> ${threadId} -> ${resumedThreadId}`);
+
+    await stopChild(child);
+    await waitForRegisteredMachineRemoved(apiBase, machineId);
     await waitForSessionStopped(apiBase, sessionId);
     await waitForNoCodexAppServerForCwd(projectDir);
     console.log(`${label} lifecycle ok`);
