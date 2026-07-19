@@ -3312,7 +3312,10 @@ const assertProjectDeleteDoesNotWriteTombstone = async () => {
     throw new Error("deleted project was restored by session capture");
   }
   await state.flush();
-  const deletedSaved = await readFile(state.path, "utf8");
+  const deletedSaved = await readFile(state.path, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
   if (deletedSaved.includes("deletedProjects")) throw new Error(`project delete wrote a tombstone:\n${deletedSaved}`);
 
   const restored = state.upsertProject({
