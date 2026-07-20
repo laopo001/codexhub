@@ -226,11 +226,15 @@ const sshBootstrapRemoteCommand = (
 
 const appServerLaunchEnvAssignments = (options: CodexAppServerLaunchOptions | undefined) => [
   ...(options?.approvalPolicy ? [`CODEX_HUB_APP_SERVER_APPROVAL_POLICY=${shellQuote(options.approvalPolicy)}`] : []),
+  ...(options?.approvalsReviewer
+    ? [`CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER=${shellQuote(options.approvalsReviewer)}`]
+    : []),
   ...(options?.sandbox ? [`CODEX_HUB_APP_SERVER_SANDBOX=${shellQuote(options.sandbox)}`] : [])
 ];
 
 const appServerLaunchEnvNames = (options: CodexAppServerLaunchOptions | undefined) => [
   ...(options?.approvalPolicy ? ["CODEX_HUB_APP_SERVER_APPROVAL_POLICY"] : []),
+  ...(options?.approvalsReviewer ? ["CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER"] : []),
   ...(options?.sandbox ? ["CODEX_HUB_APP_SERVER_SANDBOX"] : [])
 ];
 

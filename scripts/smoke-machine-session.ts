@@ -53,6 +53,7 @@ type SessionsPayload = {
 type ThreadDetail = {
   threadId: string;
   approvalPolicy?: string;
+  approvalsReviewer?: string;
   records?: unknown[];
 };
 
@@ -321,6 +322,7 @@ const main = async () => {
   process.env.CODEX_HUB_LOCAL_MACHINE = "1";
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "1";
   process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY = "on-request";
+  process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER = "auto_review";
   process.env.TELEGRAM_BOT_TOKEN = "";
 
   assertAppServerLaunchOverrides();
@@ -409,8 +411,8 @@ const main = async () => {
     assertNoWorkerId(thread, "/api/threads/:threadId");
     if ((thread.records ?? []).length < 2) throw new Error("/status did not write thread records");
     assertStatusMarkdown(thread);
-    await assertThreadApprovalPolicy(apiBase, threadId, "on-request");
-    console.log("app-server launch approval policy ok");
+    await assertThreadApprovalSettings(apiBase, threadId, "on-request", "auto_review");
+    console.log("app-server launch approval settings ok");
     console.log("thread stream ok");
 
     const task = await createAndRunTask(apiBase, {
@@ -1198,6 +1200,8 @@ const assertSshConnect = async (
     || !remoteCommand.includes("sh -lc")
     || !remoteCommand.includes(`/api/ssh/remote-client/${remoteClientHash}`)
     || !remoteCommand.includes("CODEXHUB_REMOTE_CLIENT_HASH")
+    || !remoteCommand.includes("CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER=")
+    || !remoteCommand.includes("auto_review")
     || !remoteCommand.includes("export CODEXHUB_REMOTE_CLIENT_HASH CODEXHUB_REMOTE_CLIENT_URL")
     || !remoteCommand.includes("node \"$client\"")
     || !remoteCommand.includes("http://127.0.0.1:19001")
@@ -1246,7 +1250,10 @@ const assertSshStartupConnect = async (
     throw new Error(`startup ssh reverse tunnel did not target server port ${serverPort}: ${reverse}`);
   }
   const remoteCommand = args.at(-1) ?? "";
-  if (!remoteCommand.includes(`/api/ssh/remote-client/${remoteClientHash}`) || !remoteCommand.includes("--type ssh")) {
+  if (!remoteCommand.includes(`/api/ssh/remote-client/${remoteClientHash}`)
+    || !remoteCommand.includes("CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER=")
+    || !remoteCommand.includes("auto_review")
+    || !remoteCommand.includes("--type ssh")) {
     throw new Error(`startup ssh remote command did not use remote client: ${remoteCommand}`);
   }
   await apiJson(apiBase, `/api/ssh/connections/${encodeURIComponent(connection.connectionId)}`, { method: "DELETE" });
@@ -3331,20 +3338,27 @@ const assertProjectDeleteDoesNotWriteTombstone = async () => {
 };
 
 const assertAppServerLaunchOverrides = () => {
-  const previous = process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
+  const previousApprovalPolicy = process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
+  const previousApprovalsReviewer = process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER;
   try {
     delete process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
+    delete process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER;
     const defaults = resolveCodexAppServerLaunchOptions();
-    if (defaults.approvalPolicy !== undefined) {
-      throw new Error(`app-server launch invented an approval policy override: ${JSON.stringify(defaults)}`);
+    if (defaults.approvalPolicy !== undefined || defaults.approvalsReviewer !== undefined) {
+      throw new Error(`app-server launch invented an approval override: ${JSON.stringify(defaults)}`);
     }
-    const explicit = resolveCodexAppServerLaunchOptions({ approvalPolicy: "on-request" });
-    if (explicit.approvalPolicy !== "on-request") {
-      throw new Error(`explicit app-server launch approval policy was not preserved: ${JSON.stringify(explicit)}`);
+    const explicit = resolveCodexAppServerLaunchOptions({
+      approvalPolicy: "on-request",
+      approvalsReviewer: "auto_review"
+    });
+    if (explicit.approvalPolicy !== "on-request" || explicit.approvalsReviewer !== "auto_review") {
+      throw new Error(`explicit app-server launch approval settings were not preserved: ${JSON.stringify(explicit)}`);
     }
   } finally {
-    if (previous === undefined) delete process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
-    else process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY = previous;
+    if (previousApprovalPolicy === undefined) delete process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
+    else process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY = previousApprovalPolicy;
+    if (previousApprovalsReviewer === undefined) delete process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER;
+    else process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER = previousApprovalsReviewer;
   }
 };
 
@@ -3365,15 +3379,22 @@ const assertProjectRuntimeView = async (apiBase: string, projectId: string, sess
   }
 };
 
-const assertThreadApprovalPolicy = async (apiBase: string, threadId: string, expected: string) => {
+const assertThreadApprovalSettings = async (
+  apiBase: string,
+  threadId: string,
+  expectedPolicy: string,
+  expectedReviewer: string
+) => {
   const startedAt = Date.now();
   let latest: ThreadDetail | null = null;
   while (Date.now() - startedAt < 5000) {
     latest = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
-    if (latest.approvalPolicy === expected) return;
+    if (latest.approvalPolicy === expectedPolicy && latest.approvalsReviewer === expectedReviewer) return;
     await delay(100);
   }
-  throw new Error(`thread approval policy did not sync to ${expected}: ${JSON.stringify(latest)}`);
+  throw new Error(
+    `thread approval settings did not sync to ${expectedPolicy}/${expectedReviewer}: ${JSON.stringify(latest)}`
+  );
 };
 
 const assertProjectDeleteKeepsSharedSession = async (apiBase: string, projectId: string, sessionId: string) => {
@@ -3486,7 +3507,8 @@ const assertStatusMarkdown = (thread: ThreadDetail) => {
     "- Model: `",
     "**Policy**",
     "- Approval: `",
-    "- Sandbox: `",
+    "- Approval reviewer: `",
+    "- Permissions: `",
     "**Usage**",
     "- Tokens: `",
     "- Context: `",

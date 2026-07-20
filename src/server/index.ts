@@ -825,11 +825,15 @@ const registeredBootstrapScript = (input: {
 
 const registeredAppServerLaunchEnvAssignments = (options: CodexAppServerLaunchOptions | undefined) => [
   ...(options?.approvalPolicy ? [`CODEX_HUB_APP_SERVER_APPROVAL_POLICY=${shellQuote(options.approvalPolicy)}`] : []),
+  ...(options?.approvalsReviewer
+    ? [`CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER=${shellQuote(options.approvalsReviewer)}`]
+    : []),
   ...(options?.sandbox ? [`CODEX_HUB_APP_SERVER_SANDBOX=${shellQuote(options.sandbox)}`] : [])
 ];
 
 const registeredAppServerLaunchEnvNames = (options: CodexAppServerLaunchOptions | undefined) => [
   ...(options?.approvalPolicy ? ["CODEX_HUB_APP_SERVER_APPROVAL_POLICY"] : []),
+  ...(options?.approvalsReviewer ? ["CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER"] : []),
   ...(options?.sandbox ? ["CODEX_HUB_APP_SERVER_SANDBOX"] : [])
 ];
 

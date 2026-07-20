@@ -9,7 +9,10 @@ import {
   threadGoalUpdateSchema,
   threadRunOptionsSchema
 } from "../../src/shared/apiContract.js";
-import { parseCodexApprovalPolicy } from "../../src/cli/codexAppServerProcess.js";
+import {
+  parseCodexApprovalPolicy,
+  parseCodexApprovalsReviewer
+} from "../../src/cli/codexAppServerProcess.js";
 
 test("machine registration and heartbeat reject unknown compatibility fields", () => {
   const registration = {
@@ -57,6 +60,12 @@ test("approval policy rejects the removed on-failure value", () => {
   assert.equal(threadRunOptionsSchema.safeParse({ multiAgentMode: "auto" }).success, false);
   assert.throws(() => parseCodexApprovalPolicy("on-failure"), /Invalid approval policy/);
   assert.equal(parseCodexApprovalPolicy("on-request"), "on-request");
+});
+
+test("app-server launch reviewer follows the current protocol values", () => {
+  assert.equal(parseCodexApprovalsReviewer("auto_review"), "auto_review");
+  assert.equal(parseCodexApprovalsReviewer("guardian_subagent"), "guardian_subagent");
+  assert.throws(() => parseCodexApprovalsReviewer("future-reviewer"), /Invalid approvals reviewer/);
 });
 
 test("thread permissions follow the current granular, reviewer, and named-profile protocol", () => {

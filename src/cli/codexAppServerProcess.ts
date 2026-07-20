@@ -5,9 +5,19 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import type { CodexAppServerLaunchOptions, CodexApprovalPolicy, CodexSandboxMode } from "../shared/appServerLaunch.js";
+import type {
+  CodexAppServerLaunchOptions,
+  CodexApprovalPolicy,
+  CodexApprovalsReviewer,
+  CodexSandboxMode
+} from "../shared/appServerLaunch.js";
 import { readPositiveIntEnv } from "../shared/env.js";
-export type { CodexAppServerLaunchOptions, CodexApprovalPolicy, CodexSandboxMode } from "../shared/appServerLaunch.js";
+export type {
+  CodexAppServerLaunchOptions,
+  CodexApprovalPolicy,
+  CodexApprovalsReviewer,
+  CodexSandboxMode
+} from "../shared/appServerLaunch.js";
 
 export type ChildExit = { code: number | null; signal: NodeJS.Signals | null };
 
@@ -143,12 +153,17 @@ export const resolveCodexAppServerLaunchOptions = (
   const envOptions = codexAppServerLaunchOptionsFromEnv();
   return {
     approvalPolicy: overrides.approvalPolicy ?? envOptions.approvalPolicy,
+    approvalsReviewer: overrides.approvalsReviewer ?? envOptions.approvalsReviewer,
     sandbox: overrides.sandbox ?? envOptions.sandbox
   };
 };
 
 export const codexAppServerLaunchOptionsFromEnv = (): CodexAppServerLaunchOptions => ({
   approvalPolicy: parseCodexApprovalPolicy(process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY, "CODEX_HUB_APP_SERVER_APPROVAL_POLICY"),
+  approvalsReviewer: parseCodexApprovalsReviewer(
+    process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER,
+    "CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER"
+  ),
   sandbox: parseCodexSandboxMode(process.env.CODEX_HUB_APP_SERVER_SANDBOX, "CODEX_HUB_APP_SERVER_SANDBOX")
 });
 
@@ -169,6 +184,16 @@ export const parseCodexSandboxMode = (
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
   if (trimmed === "read-only" || trimmed === "workspace-write" || trimmed === "danger-full-access") return trimmed;
+  throw new Error(`Invalid ${label}: ${value}`);
+};
+
+export const parseCodexApprovalsReviewer = (
+  value: string | undefined,
+  label = "approvals reviewer"
+): CodexApprovalsReviewer | undefined => {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed === "user" || trimmed === "auto_review" || trimmed === "guardian_subagent") return trimmed;
   throw new Error(`Invalid ${label}: ${value}`);
 };
 
@@ -211,6 +236,7 @@ const codexAppServerArgs = (appServerUrl: string, options: CodexAppServerLaunchO
 
 const codexConfigArgs = (options: CodexAppServerLaunchOptions) => [
   ...(options.approvalPolicy ? ["-c", `approval_policy="${options.approvalPolicy}"`] : []),
+  ...(options.approvalsReviewer ? ["-c", `approvals_reviewer="${options.approvalsReviewer}"`] : []),
   ...(options.sandbox ? ["-c", `sandbox_mode="${options.sandbox}"`] : [])
 ];
 

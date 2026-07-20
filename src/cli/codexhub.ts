@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { loadDotEnv } from "../core/dotenv.js";
 import {
   parseCodexApprovalPolicy,
+  parseCodexApprovalsReviewer,
   parseCodexSandboxMode,
   resolveCodexAppServerLaunchOptions,
   type CodexAppServerLaunchOptions
@@ -18,6 +19,7 @@ type ServerCommandOptions = {
   registerMachineId?: string;
   registerName?: string;
   approvalPolicy?: string;
+  approvalsReviewer?: string;
   sandbox?: string;
 };
 
@@ -28,6 +30,7 @@ type MachineCommandOptions = {
   type?: "local" | "ssh" | "registered";
   name?: string;
   approvalPolicy?: string;
+  approvalsReviewer?: string;
   sandbox?: string;
 };
 
@@ -90,6 +93,7 @@ program
   .option("--register-machine-id <id>", "stable machine id for parent registration")
   .option("--register-name <name>", "display name for parent registration")
   .option("--approval-policy <policy>", "approval policy override for launched Codex app-server")
+  .option("--approvals-reviewer <reviewer>", "approval reviewer override for launched Codex app-server")
   .option("--sandbox <mode>", "default sandbox mode for launched Codex app-server")
   .action(async (options: ServerCommandOptions = {}) => {
     const rootOptions = program.opts<{ port?: string }>();
@@ -126,6 +130,7 @@ program
   .option("--type <type>", "machine connection type: local, ssh, or registered", "registered")
   .option("--name <name>", "display name")
   .option("--approval-policy <policy>", "approval policy override for launched Codex app-server")
+  .option("--approvals-reviewer <reviewer>", "approval reviewer override for launched Codex app-server")
   .option("--sandbox <mode>", "default sandbox mode for launched Codex app-server")
   .action(async (options: MachineCommandOptions = {}) => {
     const appServerLaunch = appServerLaunchOptions(options);
@@ -475,9 +480,12 @@ function parseMachineType(value: string | undefined): "local" | "ssh" | "registe
   throw new Error(`Invalid machine type: ${value}`);
 }
 
-function appServerLaunchOptions(options: Pick<ServerCommandOptions, "approvalPolicy" | "sandbox">): CodexAppServerLaunchOptions {
+function appServerLaunchOptions(
+  options: Pick<ServerCommandOptions, "approvalPolicy" | "approvalsReviewer" | "sandbox">
+): CodexAppServerLaunchOptions {
   return resolveCodexAppServerLaunchOptions({
     approvalPolicy: parseCodexApprovalPolicy(options.approvalPolicy, "--approval-policy"),
+    approvalsReviewer: parseCodexApprovalsReviewer(options.approvalsReviewer, "--approvals-reviewer"),
     sandbox: parseCodexSandboxMode(options.sandbox, "--sandbox")
   });
 }

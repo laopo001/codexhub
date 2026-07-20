@@ -237,6 +237,16 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     EmptyPlaceholder: EmptyMessages,
     Footer: showTurnLoadingMessage ? MessagesTurnLoadingFooter : undefined
   }), [showTurnLoadingMessage]);
+  const toggleComposerMenu = () => {
+    if (composerMenuOpen) {
+      setComposerMenuOpen(false);
+      return;
+    }
+    setActiveThreadApprovalPolicyDraft("auto");
+    setActiveThreadApprovalsReviewerDraft("auto");
+    setActiveThreadPermissionProfileDraft(null);
+    setComposerMenuOpen(true);
+  };
   const messagesScrollbarIntentRef = React.useRef(false);
   const messagesScrollbarIntentTimerRef = React.useRef<number | null>(null);
   const messagesLastScrollTopRef = React.useRef<number | null>(null);
@@ -719,7 +729,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                 className="composerIconButton"
                                 aria-label="Open composer menu"
                                 aria-expanded={composerMenuOpen}
-                                onClick={() => setComposerMenuOpen((open) => !open)}
+                                onClick={toggleComposerMenu}
                               >
                                 +
                               </button>
