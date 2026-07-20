@@ -1,8 +1,7 @@
 import type {
   AppSettings,
-  ApprovalPolicySelection,
+  ApprovalsReviewerSelection,
   ComposerMode,
-  SandboxPolicySelection,
 } from "./types.js";
 import { isCodexHubSurface, isEmbeddedCodexHubSurface } from "../shared/surfaceTypes.js";
 
@@ -41,15 +40,17 @@ export const storageKey = isVscodeSurface
 export const defaultAppSettings = (): AppSettings => ({
   taskCompleteSystemNotifications: false
 });
-export const approvalPolicyOptions: Array<{ value: ApprovalPolicySelection; label: string }> = [
+export type ApprovalPolicyOptionValue = "untrusted" | "on-request" | "never" | "granular";
+
+export const approvalPolicyOptions: Array<{ value: ApprovalPolicyOptionValue; label: string }> = [
   { value: "untrusted", label: "Untrusted" },
   { value: "on-request", label: "On request" },
-  { value: "never", label: "Never" }
+  { value: "never", label: "Never" },
+  { value: "granular", label: "Granular" }
 ];
-export const sandboxPolicyOptions: Array<{ value: SandboxPolicySelection; label: string }> = [
-  { value: "read-only", label: "Read only" },
-  { value: "workspace-write", label: "Workspace write" },
-  { value: "danger-full-access", label: "Danger full access" }
+export const approvalsReviewerOptions: Array<{ value: ApprovalsReviewerSelection; label: string }> = [
+  { value: "user", label: "Ask me" },
+  { value: "auto_review", label: "Auto review" }
 ];
 export const composerModeOptions: Array<{ value: ComposerMode; label: string }> = [
   { value: "chat", label: "Chat" },

@@ -16,6 +16,9 @@ export type ThreadSummary = {
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"];
   serviceTier?: ThreadOptions["serviceTier"];
   approvalPolicy?: ThreadOptions["approvalPolicy"];
+  approvalsReviewer?: ThreadOptions["approvalsReviewer"];
+  permissions?: ThreadOptions["permissions"];
+  activePermissionProfile?: ThreadOptions["activePermissionProfile"] | null;
   sandboxPolicy?: ThreadOptions["sandboxPolicy"];
   session: ThreadSessionSummary;
   status: "running" | "idle";
@@ -67,6 +70,8 @@ export type ThreadRunOptions = {
   modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
   serviceTier?: ThreadOptions["serviceTier"] | null;
   approvalPolicy?: ThreadOptions["approvalPolicy"] | null;
+  approvalsReviewer?: ThreadOptions["approvalsReviewer"] | null;
+  permissions?: ThreadOptions["permissions"] | null;
   sandboxPolicy?: ThreadOptions["sandboxPolicy"] | null;
   collaborationMode?: "default" | "plan" | null;
   goalMode?: boolean | null;
@@ -198,6 +203,13 @@ export type ModelCatalogItem = {
   serviceTiers: ModelCatalogServiceTier[];
 };
 
+/** app-server permissionProfile/list 返回的单个 runtime profile。 */
+export type PermissionProfileSummary = {
+  id: string;
+  description: string | null;
+  allowed: boolean;
+};
+
 /** Web composer command palette 中展示的命令/技能来源。 */
 export type CommandPaletteEntryKind = "builtin" | "plugin" | "skill";
 
@@ -283,6 +295,7 @@ export type SessionCommand = {
     | "stop"
     | "list_threads"
     | "list_models"
+    | "list_permission_profiles"
     | "list_command_palette"
     | "start_thread"
     | "resume_thread"
@@ -319,6 +332,11 @@ export type SessionModelCatalogResult = {
   models: ModelCatalogItem[];
 };
 
+/** list_permission_profiles 命令返回的 app-server permission profile 目录。 */
+export type SessionPermissionProfilesResult = {
+  profiles: PermissionProfileSummary[];
+};
+
 /** list_command_palette 命令返回的 composer palette。 */
 export type SessionCommandPaletteResult = {
   palette: CommandPalette;
@@ -334,6 +352,7 @@ export type SessionThreadCommandResult = {
 export type SessionCommandResult =
   | SessionThreadCandidatesResult
   | SessionModelCatalogResult
+  | SessionPermissionProfilesResult
   | SessionCommandPaletteResult
   | SessionThreadCommandResult
   | { ok?: boolean }
@@ -381,6 +400,8 @@ export type SessionEventInput =
       modelReasoningEffort?: ThreadOptions["modelReasoningEffort"] | null;
       serviceTier?: ThreadOptions["serviceTier"] | null;
       approvalPolicy?: ThreadOptions["approvalPolicy"] | null;
+      approvalsReviewer?: ThreadOptions["approvalsReviewer"] | null;
+      activePermissionProfile?: ThreadOptions["activePermissionProfile"] | null;
       sandboxPolicy?: ThreadOptions["sandboxPolicy"] | null;
       heartbeat?: boolean;
     }

@@ -13,6 +13,8 @@ import type {
   AppSettings,
   ApprovalPolicyDraft,
   ApprovalPolicySelection,
+  ApprovalsReviewerDraft,
+  ApprovalsReviewerSelection,
   OpenThreadState,
   CodexThreadCandidate,
   ComposerMode,
@@ -30,8 +32,8 @@ import type {
   ProjectPickerState,
   ProjectSummary,
   ReasoningSelection,
-  SandboxPolicyDraft,
-  SandboxPolicySelection,
+  PermissionProfileDraft,
+  PermissionProfileSummary,
   ServiceTierSelection,
   SessionSummary,
   SshConnection,
@@ -182,12 +184,20 @@ export type AppViewModelSource = AppSidebarViewModel & {
   messageDisplayMode: MessageDisplayMode;
   messageRenderModes: Record<string, MessageRenderMode>;
   activeThreadApprovalPolicySelection?: ApprovalPolicySelection;
+  activeThreadApprovalPolicyDraft: ApprovalPolicyDraft;
+  activeThreadApprovalPolicyKind?: "auto" | "untrusted" | "on-request" | "never" | "granular";
+  activeThreadApprovalsReviewerDraft: ApprovalsReviewerDraft;
+  activeThreadApprovalsReviewerSelection?: ApprovalsReviewerSelection;
+  activeThreadPermissionProfileDraft: PermissionProfileDraft;
+  activeThreadPermissionProfileSelection?: string;
+  activePermissionProfiles: PermissionProfileSummary[];
+  activePermissionProfilesError: string;
+  activePermissionProfilesStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
   activeModelCatalogError: string;
   activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
   activeThreadModelDraft: ModelSelection;
   activeThreadReasoningDraft: ReasoningSelection;
   activeThreadServiceTierDraft: ServiceTierSelection;
-  activeThreadSandboxPolicySelection?: SandboxPolicySelection;
   messagesRef: React.RefObject<VirtuosoHandle | null>;
   messagesShouldFollowRef: React.MutableRefObject<boolean>;
   modelOptions: ModelOption[];
@@ -243,10 +253,11 @@ export type AppViewModelSource = AppSidebarViewModel & {
   setMessageDisplayMode: React.Dispatch<React.SetStateAction<MessageDisplayMode>>;
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
   setActiveThreadApprovalPolicyDraft: React.Dispatch<React.SetStateAction<ApprovalPolicyDraft>>;
+  setActiveThreadApprovalsReviewerDraft: React.Dispatch<React.SetStateAction<ApprovalsReviewerDraft>>;
   setActiveThreadModelDraft: React.Dispatch<React.SetStateAction<ModelSelection>>;
   setActiveThreadReasoningDraft: React.Dispatch<React.SetStateAction<ReasoningSelection>>;
   setActiveThreadServiceTierDraft: React.Dispatch<React.SetStateAction<string>>;
-  setActiveThreadSandboxPolicyDraft: React.Dispatch<React.SetStateAction<SandboxPolicyDraft>>;
+  setActiveThreadPermissionProfileDraft: React.Dispatch<React.SetStateAction<PermissionProfileDraft>>;
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadControlsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;
@@ -281,8 +292,16 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "activeThread"
   | "activeThreadIsOpen"
   | "activeThreadExecutionMeta"
+  | "activeThreadApprovalPolicyDraft"
+  | "activeThreadApprovalPolicyKind"
   | "activeThreadApprovalPolicySelection"
-  | "activeThreadSandboxPolicySelection"
+  | "activeThreadApprovalsReviewerDraft"
+  | "activeThreadApprovalsReviewerSelection"
+  | "activeThreadPermissionProfileDraft"
+  | "activeThreadPermissionProfileSelection"
+  | "activePermissionProfiles"
+  | "activePermissionProfilesError"
+  | "activePermissionProfilesStatus"
   | "activeUserMessageHistory"
   | "activeViews"
   | "authError"
@@ -333,7 +352,8 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "setInspectMessage"
   | "setMessageDisplayMode"
   | "setActiveThreadApprovalPolicyDraft"
-  | "setActiveThreadSandboxPolicyDraft"
+  | "setActiveThreadApprovalsReviewerDraft"
+  | "setActiveThreadPermissionProfileDraft"
   | "setAuthTokenDraft"
   | "setThreadControlsMenuOpen"
   | "setThreadModelDialogOpen"
@@ -435,8 +455,12 @@ const sidebarKeys = [
 
 const workspaceKeys = [
   "activeCanStop", "activeExpandedStatusKeys", "activeGoal", "activeRuntimeSession", "activeThread",
-  "activeThreadIsOpen", "activeThreadExecutionMeta", "activeThreadApprovalPolicySelection",
-  "activeThreadSandboxPolicySelection", "activeUserMessageHistory", "activeViews", "authError",
+  "activeThreadIsOpen", "activeThreadExecutionMeta", "activeThreadApprovalPolicyDraft",
+  "activeThreadApprovalPolicyKind", "activeThreadApprovalPolicySelection",
+  "activeThreadApprovalsReviewerDraft", "activeThreadApprovalsReviewerSelection",
+  "activeThreadPermissionProfileDraft", "activeThreadPermissionProfileSelection",
+  "activePermissionProfiles", "activePermissionProfilesError", "activePermissionProfilesStatus",
+  "activeUserMessageHistory", "activeViews", "authError",
   "authRequired", "authTokenDraft", "addThreadFiles", "clearThreadAttachments", "clearThreadGoal",
   "closeThread", "compactThread", "commandPaletteByScope", "commandPaletteLoadingScopes",
   "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "forkMessage",
@@ -448,7 +472,8 @@ const workspaceKeys = [
   "resizeComposerTextarea", "selectedProject", "send", "threadControlsMenuOpen",
   "setComposerMenuOpen", "setComposerMode", "setExpandedStatusKeys", "setExpandedToolBatchKeys",
   "setGoalDialog", "setExpandedStatusTurns", "setImagePreview", "setInspectMessage",
-  "setMessageDisplayMode", "setActiveThreadApprovalPolicyDraft", "setActiveThreadSandboxPolicyDraft",
+  "setMessageDisplayMode", "setActiveThreadApprovalPolicyDraft", "setActiveThreadApprovalsReviewerDraft",
+  "setActiveThreadPermissionProfileDraft",
   "setAuthTokenDraft", "setThreadControlsMenuOpen", "setThreadModelDialogOpen", "setSidebarCollapsed",
   "showComposerSendButton", "statusPanelAvailable", "statusPanelExpanded", "sidebarCollapsed",
   "statusScopeKey", "turnStatusItems", "stopTurn", "submitAuthToken", "switchSessionThread",

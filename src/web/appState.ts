@@ -10,6 +10,7 @@ import type {
   ComposerHistoryState,
   MachineSummary,
   ModelCatalogLoadState,
+  PermissionProfileCatalogLoadState,
   ProjectPickerState,
   ProjectSummary,
   SessionSummary,
@@ -130,6 +131,7 @@ export const useAppState = () => {
     contextWindowTokens: null
   });
   const [modelCatalogBySession, setModelCatalogBySession] = useState<Record<string, ModelCatalogLoadState>>({});
+  const [permissionProfilesByScope, setPermissionProfilesByScope] = useState<Record<string, PermissionProfileCatalogLoadState>>({});
   const [commandPaletteByScope, setCommandPaletteByScope] = useState<Record<string, CommandPalette>>({});
   const [commandPaletteLoadingScopes, setCommandPaletteLoadingScopes] = useState<Record<string, boolean>>({});
   const realtimeClient = useRef<CodexHubRealtimeClient | null>(null);
@@ -186,6 +188,7 @@ export const useAppState = () => {
     messageDisplayMode,
     messageRenderModes,
     modelCatalogBySession,
+    permissionProfilesByScope,
     messagesRef,
     messagesShouldFollowRef,
     notificationAudioContext,
@@ -237,6 +240,7 @@ export const useAppState = () => {
     setMessageDisplayMode,
     setMessageRenderModes,
     setModelCatalogBySession,
+    setPermissionProfilesByScope,
     setOfflineProjectsCollapsed,
     setOpeningProjectKey,
     dispatchOpenThreads,

@@ -106,6 +106,7 @@ type SessionCommand = {
   commandId: string;
   type: string;
   threadId?: string;
+  workingDirectory?: string;
   includeHidden?: boolean;
   input?: unknown;
   turnId?: string;
@@ -194,6 +195,23 @@ const main = async () => {
       throw new Error(`model catalog response missing fast service tier: ${JSON.stringify(modelCatalog)}`);
     }
     console.log("session model catalog ok");
+    const permissionProfilesPromise = apiJson<{
+      profiles?: Array<{ id?: string; description?: string | null; allowed?: boolean }>;
+    }>(
+      apiBase,
+      `/api/sessions/${encodeURIComponent(fake.sessionId)}/permission-profiles?cwd=${encodeURIComponent(projectDir)}`
+    );
+    const permissionProfilesCommand = await fake.nextSessionCommand("list_permission_profiles");
+    if (permissionProfilesCommand.workingDirectory !== projectDir) {
+      throw new Error(`permission profile cwd mismatch: ${JSON.stringify(permissionProfilesCommand)}`);
+    }
+    const permissionProfiles = await permissionProfilesPromise;
+    if (JSON.stringify(permissionProfiles.profiles) !== JSON.stringify([
+      { id: "team-safe", description: "Fake runtime profile", allowed: true }
+    ])) {
+      throw new Error(`permission profile response was not runtime-authoritative: ${JSON.stringify(permissionProfiles)}`);
+    }
+    console.log("runtime permission profile catalog ok");
     await fake.expectNoSessionCommand("subscribe_thread_records", 100);
     await assertThreadRecordSubscription(apiBase, fake.threadId, fake);
     console.log("thread record subscription ok");
@@ -1400,6 +1418,17 @@ class FakeMachine {
               ]
             }
           ]
+        }
+      });
+      return;
+    }
+    if (command.type === "list_permission_profiles") {
+      this.send({
+        type: "session_command_result",
+        sessionId: this.options.sessionId,
+        commandId: command.commandId,
+        result: {
+          profiles: [{ id: "team-safe", description: "Fake runtime profile", allowed: true }]
         }
       });
       return;

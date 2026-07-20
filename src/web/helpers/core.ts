@@ -5,7 +5,8 @@ import type { ModelCatalogItem, StoredMachine, ThreadGoalStatus } from "../../sh
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
 export { parseRealtimeMessage } from "../../shared/realtimeClient.js";
 import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../shared/taskCron.js";
-import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, SessionSummary, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, SandboxPolicyDraft } from "../types.js";
+import { threadGranularApprovalKeys, type ThreadGranularApprovalKey } from "../../shared/usageTypes.js";
+import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, SessionSummary, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, ApprovalsReviewerDraft, PermissionProfileDraft } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -896,7 +897,8 @@ const threadSummariesEqual = (left: ThreadSummary, right: ThreadSummary) => {
     || left.model !== right.model
     || left.modelReasoningEffort !== right.modelReasoningEffort
     || left.serviceTier !== right.serviceTier
-    || left.approvalPolicy !== right.approvalPolicy
+    || left.approvalsReviewer !== right.approvalsReviewer
+    || left.permissions !== right.permissions
     || left.status !== right.status
     || left.running !== right.running
     || left.activeTurnStartedAt !== right.activeTurnStartedAt
@@ -911,7 +913,9 @@ const threadSummariesEqual = (left: ThreadSummary, right: ThreadSummary) => {
     || left.session.runnable !== right.session.runnable
     || left.session.lastSeenAt !== right.session.lastSeenAt
   ) return false;
-  return JSON.stringify(left.sandboxPolicy) === JSON.stringify(right.sandboxPolicy)
+  return JSON.stringify(left.approvalPolicy) === JSON.stringify(right.approvalPolicy)
+    && JSON.stringify(left.activePermissionProfile) === JSON.stringify(right.activePermissionProfile)
+    && JSON.stringify(left.sandboxPolicy) === JSON.stringify(right.sandboxPolicy)
     && JSON.stringify(left.lastUsage) === JSON.stringify(right.lastUsage)
     && JSON.stringify(left.threadUsage) === JSON.stringify(right.threadUsage)
     && JSON.stringify(left.goalRunPolicy) === JSON.stringify(right.goalRunPolicy);
@@ -923,32 +927,45 @@ export const selectedThreadOptions = (
   serviceTier: ServiceTierSelection,
   composerMode: ComposerMode,
   approvalPolicy: ApprovalPolicyDraft,
-  sandboxPolicy: SandboxPolicyDraft,
-  workingDirectory: string
+  approvalsReviewer: ApprovalsReviewerDraft,
+  permissionProfile: PermissionProfileDraft
 ) => ({
   model: model === "auto" ? null : model,
   modelReasoningEffort: reasoning === "auto" ? null : reasoning,
   serviceTier: serviceTier === "auto" ? null : serviceTier,
   approvalPolicy: approvalPolicy === "auto" ? null : approvalPolicy,
-  sandboxPolicy: sandboxPolicyFromSelection(sandboxPolicy, workingDirectory),
+  approvalsReviewer: approvalsReviewer === "auto" ? null : approvalsReviewer,
+  permissions: permissionProfile,
   ...(composerMode === "plan" ? { collaborationMode: "plan" as const } : {}),
   ...(composerMode === "goal" ? { goalMode: true } : {})
 });
 
-const sandboxPolicyFromSelection = (selection: SandboxPolicyDraft, workingDirectory: string) => {
-  if (selection === "auto") return null;
-  if (selection === "read-only") return { type: "readOnly" as const, networkAccess: false };
-  if (selection === "workspace-write") {
-    return {
-      type: "workspaceWrite" as const,
-      writableRoots: [workingDirectory],
-      networkAccess: false,
-      excludeTmpdirEnvVar: false,
-      excludeSlashTmp: false
-    };
-  }
-  return { type: "dangerFullAccess" as const };
+export const defaultGranularApprovalPolicy = () => ({
+  granular: Object.fromEntries(threadGranularApprovalKeys.map((key) => [key, true])) as Record<ThreadGranularApprovalKey, boolean>
+});
+
+export const approvalPolicyKind = (
+  policy: ApprovalPolicyDraft | undefined
+): "auto" | "untrusted" | "on-request" | "never" | "granular" | undefined =>
+  policy && typeof policy === "object" ? "granular" : policy;
+
+export const updateGranularApprovalPolicy = (
+  policy: ApprovalPolicyDraft,
+  key: ThreadGranularApprovalKey,
+  enabled: boolean
+) => {
+  const granular = policy && typeof policy === "object" ? policy.granular : defaultGranularApprovalPolicy().granular;
+  return { granular: { ...granular, [key]: enabled } };
 };
+
+export const permissionProfileLabel = (id: string) => id
+  .replace(/^:/, "")
+  .split(/[-_\s]+/)
+  .filter(Boolean)
+  .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+  .join(" ") || id;
+
+export const permissionProfileScopeKey = (sessionId: string, cwd: string) => `${sessionId}\u0000${cwd}`;
 
 export const isModelCommand = (text: string) => /^\/model\s*$/i.test(text);
 

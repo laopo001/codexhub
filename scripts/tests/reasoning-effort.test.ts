@@ -93,7 +93,7 @@ test("reasoning catalog stays model-specific and preserves descriptions", async 
     "auto"
   );
   assert.equal(
-    selectedThreadOptions("gpt-5.6-luna", switchedDraft, "auto", "chat", "auto", "auto", "/tmp/project")
+    selectedThreadOptions("gpt-5.6-luna", switchedDraft, "auto", "chat", "auto", "auto", null)
       .modelReasoningEffort,
     null
   );

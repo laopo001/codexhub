@@ -7,6 +7,7 @@ import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from ".
 import { embeddedWorkspacePaths, isEmbeddedHostSurface, webSurface } from "./appConfig.js";
 import {
   activityStatusesFromRecords,
+  approvalPolicyKind,
   activityStatusSnapshotsFromRecords,
   authToken,
   combineRecordSources,
@@ -23,6 +24,7 @@ import {
   modelOptionsForSelection,
   normalizeReasoningEffort,
   projectKeyForProject,
+  permissionProfileScopeKey,
   reasoningDraftForModelSelection,
   reasoningOptionsForSelection,
   runtimeSessionForProject,
@@ -37,11 +39,11 @@ import type { AppState } from "./appState.js";
 import type {
   ComposerMode,
   ApprovalPolicyDraft,
+  ApprovalsReviewerDraft,
   ModelSelection,
   ProjectSummary,
   ReasoningSelection,
-  SandboxPolicyDraft,
-  SandboxPolicySelection,
+  PermissionProfileDraft,
   ServiceTierSelection,
   ThreadSummary,
   WebRecordView
@@ -63,13 +65,18 @@ export const useAppSelectors = (state: AppState) => {
   const activeThreadReasoningDraft = activeThread?.reasoningDraft ?? "auto";
   const activeThreadServiceTierDraft = activeThread?.serviceTierDraft ?? "auto";
   const activeThreadApprovalPolicyDraft = activeThread?.approvalPolicyDraft ?? "auto";
-  const activeThreadSandboxPolicyDraft = activeThread?.sandboxPolicyDraft ?? "auto";
+  const activeThreadApprovalsReviewerDraft = activeThread?.approvalsReviewerDraft ?? "auto";
+  const activeThreadPermissionProfileDraft = activeThread?.permissionProfileDraft ?? null;
   const activeThreadApprovalPolicySelection = activeThreadApprovalPolicyDraft === "auto"
     ? activeThread?.approvalPolicy
     : activeThreadApprovalPolicyDraft;
-  const activeThreadSandboxPolicySelection = activeThreadSandboxPolicyDraft === "auto"
-    ? sandboxPolicySelectionFromThread(activeThread?.sandboxPolicy)
-    : activeThreadSandboxPolicyDraft;
+  const activeThreadApprovalPolicyKind = approvalPolicyKind(activeThreadApprovalPolicySelection);
+  const activeThreadApprovalsReviewerSelection = activeThreadApprovalsReviewerDraft === "auto"
+    ? activeThread?.approvalsReviewer
+    : activeThreadApprovalsReviewerDraft;
+  const activeThreadPermissionProfileSelection = activeThreadPermissionProfileDraft
+    ?? activeThread?.activePermissionProfile?.id
+    ?? activeThread?.permissions;
   const setActiveThreadModelDraft: Dispatch<SetStateAction<ModelSelection>> = (value) => {
     if (!state.activeTabThreadId) return;
     const nextModel = typeof value === "function" ? value(activeThreadModelDraft) : value;
@@ -100,9 +107,13 @@ export const useAppSelectors = (state: AppState) => {
     if (!state.activeTabThreadId) return;
     state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "approvalPolicyDraft", value });
   };
-  const setActiveThreadSandboxPolicyDraft: Dispatch<SetStateAction<SandboxPolicyDraft>> = (value) => {
+  const setActiveThreadApprovalsReviewerDraft: Dispatch<SetStateAction<ApprovalsReviewerDraft>> = (value) => {
     if (!state.activeTabThreadId) return;
-    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "sandboxPolicyDraft", value });
+    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "approvalsReviewerDraft", value });
+  };
+  const setActiveThreadPermissionProfileDraft: Dispatch<SetStateAction<PermissionProfileDraft>> = (value) => {
+    if (!state.activeTabThreadId) return;
+    state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "permissionProfileDraft", value });
   };
   const projectList = useMemo(
     () => isEmbeddedHostSurface
@@ -350,6 +361,21 @@ export const useAppSelectors = (state: AppState) => {
   const activeModelCatalogError = activeModelCatalogState?.status === "error"
     ? activeModelCatalogState.error ?? "Model catalog unavailable."
     : "";
+  const activePermissionProfileScopeKey = activeThread?.session.sessionId && activeThread.workingDirectory
+    ? permissionProfileScopeKey(activeThread.session.sessionId, activeThread.workingDirectory)
+    : "";
+  const activePermissionProfileCatalogState = activePermissionProfileScopeKey
+    ? state.permissionProfilesByScope[activePermissionProfileScopeKey]
+    : undefined;
+  const activePermissionProfiles = activePermissionProfileCatalogState?.status === "ready"
+    ? activePermissionProfileCatalogState.profiles
+    : [];
+  const activePermissionProfilesStatus: "unavailable" | "idle" | "loading" | "ready" | "error" = activeThread?.session.sessionId
+    ? activePermissionProfileCatalogState?.status ?? "idle"
+    : "unavailable";
+  const activePermissionProfilesError = activePermissionProfileCatalogState?.status === "error"
+    ? activePermissionProfileCatalogState.error ?? "Permission profiles unavailable."
+    : "";
   const effectiveReasoningSelection = effectiveReasoningSelectionForModel(
     activeThreadReasoningDraft,
     activeThreadReasoning,
@@ -383,14 +409,22 @@ export const useAppSelectors = (state: AppState) => {
     activeThreadModel,
     activeThreadIsOpen,
     activeThreadModelDraft,
+    activeThreadApprovalPolicyDraft,
+    activeThreadApprovalPolicyKind,
     activeThreadApprovalPolicySelection,
+    activeThreadApprovalsReviewerDraft,
+    activeThreadApprovalsReviewerSelection,
+    activeThreadPermissionProfileDraft,
+    activeThreadPermissionProfileSelection,
+    activePermissionProfiles,
+    activePermissionProfilesError,
+    activePermissionProfilesStatus,
     activeModelCatalogError,
     activeModelCatalogStatus,
     activeThreadReasoning,
     activeThreadReasoningDraft,
     activeThreadServiceTier,
     activeThreadServiceTierDraft,
-    activeThreadSandboxPolicySelection,
     activeThreadUsage,
     activeUserMessageHistory,
     activeViews,
@@ -415,10 +449,11 @@ export const useAppSelectors = (state: AppState) => {
     reasoningOptions,
     selectedProject,
     setActiveThreadApprovalPolicyDraft,
+    setActiveThreadApprovalsReviewerDraft,
     setActiveThreadModelDraft,
     setActiveThreadReasoningDraft,
     setActiveThreadServiceTierDraft,
-    setActiveThreadSandboxPolicyDraft,
+    setActiveThreadPermissionProfileDraft,
     setComposerMode,
     showComposerSendButton,
     statusPanelExpanded,
@@ -431,13 +466,6 @@ export const useAppSelectors = (state: AppState) => {
 
 export type AppSelectors = ReturnType<typeof useAppSelectors>;
 
-const sandboxPolicySelectionFromThread = (policy: ThreadSummary["sandboxPolicy"]): SandboxPolicySelection | undefined => {
-  if (!policy) return undefined;
-  if (policy.type === "readOnly") return "read-only";
-  if (policy.type === "workspaceWrite") return "workspace-write";
-  if (policy.type === "dangerFullAccess") return "danger-full-access";
-  return undefined;
-};
 
 const isCurrentEmbeddedWorkspaceProject = (project: ProjectSummary) =>
   project.source?.kind === webSurface

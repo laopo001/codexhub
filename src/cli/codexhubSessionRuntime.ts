@@ -32,7 +32,13 @@ import { accountRateLimitsPayloadFromValue } from "../core/threadUsage.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import { readPositiveIntEnv } from "../shared/env.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
-import { isModelReasoningEffort } from "../shared/usageTypes.js";
+import {
+  asActivePermissionProfile,
+  isModelReasoningEffort,
+  isThreadApprovalPolicy,
+  isThreadApprovalsReviewer,
+  type ActivePermissionProfile
+} from "../shared/usageTypes.js";
 import type {
   AppServerApprovalDecision,
   AppServerApprovalKind,
@@ -41,6 +47,7 @@ import type {
   CommandPaletteEntry,
   CommandPalettePart,
   ModelCatalogItem,
+  PermissionProfileSummary,
   SessionCommand,
   SessionEventInput,
   SessionRegistration,
@@ -104,6 +111,8 @@ type ThreadSettings = {
   modelReasoningEffort?: ThreadRunOptions["modelReasoningEffort"] | null;
   serviceTier?: ThreadRunOptions["serviceTier"] | null;
   approvalPolicy?: ThreadRunOptions["approvalPolicy"] | null;
+  approvalsReviewer?: ThreadRunOptions["approvalsReviewer"] | null;
+  activePermissionProfile?: ActivePermissionProfile | null;
   sandboxPolicy?: ThreadRunOptions["sandboxPolicy"] | null;
   collaborationMode?: "plan" | "default" | null;
 };
@@ -522,6 +531,7 @@ class CodexAppServerBridge {
     const threadId = typeof thread?.id === "string" ? thread.id : undefined;
     if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
     this.markThreadLoaded(threadId);
+    await this.captureThreadSettingsResponse(threadId, result);
     await this.rememberDefaultThread(threadId);
     return threadId;
   }
@@ -602,6 +612,7 @@ class CodexAppServerBridge {
       permissionParams: permissionParams(this.options),
       listThreads: (cwd, limit) => this.listAppServerThreads(cwd, limit),
       listModels: (includeHidden) => this.listAppServerModels(includeHidden),
+      listPermissionProfiles: (cwd) => this.listAppServerPermissionProfiles(cwd),
       listCollaborationModes: () => this.request("collaborationMode/list", {}),
       cachedThreadSettings: (threadId) => this.appServerThreadSettings.get(threadId),
       readThreadSettings: (cwd) => this.readThreadSettings(cwd),
@@ -613,6 +624,7 @@ class CodexAppServerBridge {
           collaborationMode: value.mode
         });
       },
+      captureThreadSettingsResponse: (threadId, value) => this.captureThreadSettingsResponse(threadId, value),
       planResetModes: this.planResetModes,
       listCommandPalette: (cwd, part) => this.listAppServerCommandPalette(cwd, part),
       bindThread: (threadId, cwd) => this.bindThread(threadId, cwd),
@@ -651,6 +663,7 @@ class CodexAppServerBridge {
     if (!threadId) throw new Error("Codex app-server thread/start did not return thread.id");
     this.rememberThreadCwd(threadId, cwd);
     this.markThreadLoaded(threadId);
+    await this.captureThreadSettingsResponse(threadId, result);
     await this.rememberDefaultThread(threadId);
     return { threadId, ...(thread ? { thread } : {}) };
   }
@@ -897,6 +910,7 @@ class CodexAppServerBridge {
     const loadedThreadId = thread.id;
     this.rememberThreadCwd(loadedThreadId, typeof thread?.cwd === "string" ? thread.cwd : cwd);
     this.markThreadLoaded(loadedThreadId);
+    await this.captureThreadSettingsResponse(loadedThreadId, result);
     return { threadId: loadedThreadId, thread };
   }
 
@@ -1003,6 +1017,25 @@ class CodexAppServerBridge {
       if (!cursor) break;
     }
     return models;
+  }
+
+  private async listAppServerPermissionProfiles(cwd: string): Promise<PermissionProfileSummary[]> {
+    const profiles: PermissionProfileSummary[] = [];
+    let cursor: string | null | undefined;
+    for (let page = 0; page < 20; page += 1) {
+      const result = asRecord(await this.request("permissionProfile/list", {
+        cwd,
+        ...(cursor ? { cursor } : {}),
+        limit: 200
+      }));
+      const data = Array.isArray(result?.data) ? result.data : [];
+      profiles.push(...data
+        .map((item) => appServerPermissionProfile(asRecord(item)))
+        .filter((item): item is PermissionProfileSummary => Boolean(item)));
+      cursor = typeof result?.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
+      if (!cursor) break;
+    }
+    return profiles;
   }
 
   private async listAppServerCommandPalette(cwd: string, part: CommandPalettePart = "all"): Promise<CommandPalette> {
@@ -1220,6 +1253,8 @@ class CodexAppServerBridge {
     const modelReasoningEffort = config?.model_reasoning_effort;
     const serviceTier = config?.service_tier;
     const approvalPolicy = config?.approval_policy;
+    const approvalsReviewer = config?.approvals_reviewer;
+    const defaultPermissions = config?.default_permissions;
     const sandboxPolicy = sandboxPolicyFromConfig(config);
     return {
       model: typeof model === "string" && model ? model : null,
@@ -1227,6 +1262,12 @@ class CodexAppServerBridge {
       serviceTier: typeof serviceTier === "string" && serviceTier ? serviceTier : null,
       ...(config && hasOwn(config, "approval_policy")
         ? { approvalPolicy: isThreadApprovalPolicy(approvalPolicy) ? approvalPolicy : null }
+        : {}),
+      ...(config && hasOwn(config, "approvals_reviewer")
+        ? { approvalsReviewer: isThreadApprovalsReviewer(approvalsReviewer) ? approvalsReviewer : null }
+        : {}),
+      ...(config && !hasOwn(config, "sandbox_mode") && typeof defaultPermissions === "string" && defaultPermissions
+        ? { activePermissionProfile: { id: defaultPermissions, extends: null } }
         : {}),
       ...(config && hasOwn(config, "sandbox_mode")
         ? { sandboxPolicy: sandboxPolicy ?? null }
@@ -1284,6 +1325,8 @@ class CodexAppServerBridge {
         ? settings.serviceTier
         : null,
       ...threadApprovalPolicySettings(settings),
+      ...threadApprovalsReviewerSettings(settings),
+      ...threadActivePermissionProfileSettings(settings),
       ...threadSandboxPolicySettings(settings),
       collaborationMode: collaborationMode?.mode === "plan" || collaborationMode?.mode === "default"
         ? collaborationMode.mode
@@ -1342,6 +1385,31 @@ class CodexAppServerBridge {
     this.hub.sendEvent({ type: "thread_execution_changed", threadId, running, turnId, heartbeat: false });
   }
 
+  private async captureThreadSettingsResponse(threadId: string, value: unknown) {
+    const response = asRecord(value);
+    if (!response) return;
+    const current = this.appServerThreadSettings.get(threadId) ?? {};
+    const next: ThreadSettings = {
+      ...current,
+      ...(typeof response.model === "string" && response.model ? { model: response.model } : {}),
+      ...(hasOwn(response, "reasoningEffort")
+        ? { modelReasoningEffort: isModelReasoningEffort(response.reasoningEffort) ? response.reasoningEffort : null }
+        : {}),
+      ...(hasOwn(response, "serviceTier")
+        ? { serviceTier: typeof response.serviceTier === "string" && response.serviceTier ? response.serviceTier : null }
+        : {}),
+      ...threadApprovalPolicySettings(response),
+      ...threadApprovalsReviewerSettings(response),
+      ...threadActivePermissionProfileSettings(response),
+      ...(hasOwn(response, "sandbox")
+        ? { sandboxPolicy: asThreadSandboxPolicy(response.sandbox) ?? null }
+        : {})
+    };
+    this.appServerThreadSettings.set(threadId, next);
+    this.forwardedThreadSettings.set(threadId, JSON.stringify(next));
+    await this.forwardThreadSettings(threadId, next);
+  }
+
   private async forwardThreadSettings(threadId: string, settings: ThreadSettings) {
     this.hub.sendEvent({
       type: "thread_settings_changed",
@@ -1350,6 +1418,8 @@ class CodexAppServerBridge {
       modelReasoningEffort: settings.modelReasoningEffort,
       serviceTier: settings.serviceTier,
       approvalPolicy: settings.approvalPolicy,
+      approvalsReviewer: settings.approvalsReviewer,
+      activePermissionProfile: settings.activePermissionProfile,
       sandboxPolicy: settings.sandboxPolicy,
       heartbeat: false
     });
@@ -1562,12 +1632,25 @@ const appServerApprovalDecision = (value: unknown): AppServerApprovalDecision | 
 };
 
 const approvalDecisionKey = (decision: AppServerApprovalDecision) => JSON.stringify(decision);
-const isThreadApprovalPolicy = (value: unknown): value is ThreadRunOptions["approvalPolicy"] =>
-  value === "untrusted" || value === "on-request" || value === "never";
-
 const threadApprovalPolicySettings = (settings: Record<string, unknown>): Pick<ThreadSettings, "approvalPolicy"> => {
   if (hasOwn(settings, "approvalPolicy")) {
     return { approvalPolicy: isThreadApprovalPolicy(settings.approvalPolicy) ? settings.approvalPolicy : null };
+  }
+  return {};
+};
+
+const threadApprovalsReviewerSettings = (settings: Record<string, unknown>): Pick<ThreadSettings, "approvalsReviewer"> => {
+  if (hasOwn(settings, "approvalsReviewer")) {
+    return { approvalsReviewer: isThreadApprovalsReviewer(settings.approvalsReviewer) ? settings.approvalsReviewer : null };
+  }
+  return {};
+};
+
+const threadActivePermissionProfileSettings = (
+  settings: Record<string, unknown>
+): Pick<ThreadSettings, "activePermissionProfile"> => {
+  if (hasOwn(settings, "activePermissionProfile")) {
+    return { activePermissionProfile: asActivePermissionProfile(settings.activePermissionProfile) ?? null };
   }
   return {};
 };
@@ -1811,6 +1894,16 @@ const appServerModelCatalogItem = (model: JsonRecord | null): ModelCatalogItem |
     supportedReasoningEfforts: appServerReasoningOptions(model?.supportedReasoningEfforts, defaultReasoningEffort),
     ...(defaultServiceTier ? { defaultServiceTier } : {}),
     serviceTiers: appServerServiceTierOptions(model, defaultServiceTier)
+  };
+};
+
+const appServerPermissionProfile = (value: JsonRecord | null): PermissionProfileSummary | null => {
+  const id = stringValue(value?.id);
+  if (!id || typeof value?.allowed !== "boolean") return null;
+  return {
+    id,
+    description: stringValue(value?.description) ?? null,
+    allowed: value.allowed
   };
 };
 

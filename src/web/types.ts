@@ -7,6 +7,7 @@ import type {
   MachineSummary as ApiMachineSummary,
   ModelCatalogItem as ApiModelCatalogItem,
   ParentRegistrationStatus as ApiParentRegistrationStatus,
+  PermissionProfileSummary as ApiPermissionProfileSummary,
   PluginSummary as ApiPluginSummary,
   ProjectSummary as ApiProjectSummary,
   ProjectsPayload as ApiProjectsPayload,
@@ -33,7 +34,7 @@ import type {
 import type { CompactRecordView } from "../shared/compactRecordViews.js";
 import type { CodexRecordView } from "../shared/recordTypes.js";
 import type { TaskCompleteNotification as ApiTaskCompleteNotification } from "../shared/taskNotifications.js";
-import type { ThreadApprovalPolicy } from "../shared/usageTypes.js";
+import type { ThreadApprovalPolicy, ThreadApprovalsReviewer } from "../shared/usageTypes.js";
 
 export type ThreadSummary = ApiThreadSummary;
 export type ThreadDetail = ApiThreadDetail;
@@ -65,6 +66,12 @@ export type ModelCatalogItem = ApiModelCatalogItem;
 export type ModelCatalogLoadState = {
   status: "loading" | "ready" | "error";
   models: ModelCatalogItem[];
+  error?: string;
+};
+export type PermissionProfileSummary = ApiPermissionProfileSummary;
+export type PermissionProfileCatalogLoadState = {
+  status: "loading" | "ready" | "error";
+  profiles: PermissionProfileSummary[];
   error?: string;
 };
 export type CommandPalette = ApiCommandPalette;
@@ -143,7 +150,8 @@ export type OpenThreadState = ThreadDetail & {
   reasoningDraft: ReasoningSelection;
   serviceTierDraft: ServiceTierSelection;
   approvalPolicyDraft: ApprovalPolicyDraft;
-  sandboxPolicyDraft: SandboxPolicyDraft;
+  approvalsReviewerDraft: ApprovalsReviewerDraft;
+  permissionProfileDraft: PermissionProfileDraft;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];
 };
@@ -202,9 +210,10 @@ export type ModelSelection = string;
 export type ReasoningSelection = "auto" | ReasoningEffort;
 export type ServiceTierSelection = string;
 export type ApprovalPolicySelection = ThreadApprovalPolicy;
-export type SandboxPolicySelection = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicyDraft = "auto" | ApprovalPolicySelection;
-export type SandboxPolicyDraft = "auto" | SandboxPolicySelection;
+export type ApprovalsReviewerSelection = ThreadApprovalsReviewer;
+export type ApprovalsReviewerDraft = "auto" | ApprovalsReviewerSelection;
+export type PermissionProfileDraft = string | null;
 export type ComposerMode = "chat" | "plan" | "goal";
 export type MessageDisplayMode = "compact" | "detailed";
 export type MessageRenderMode = "markdown" | "raw";

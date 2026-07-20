@@ -58,3 +58,29 @@ test("approval policy rejects the removed on-failure value", () => {
   assert.throws(() => parseCodexApprovalPolicy("on-failure"), /Invalid approval policy/);
   assert.equal(parseCodexApprovalPolicy("on-request"), "on-request");
 });
+
+test("thread permissions follow the current granular, reviewer, and named-profile protocol", () => {
+  const granular = {
+    granular: {
+      sandbox_approval: true,
+      rules: false,
+      skill_approval: true,
+      request_permissions: false,
+      mcp_elicitations: true
+    }
+  };
+  assert.deepEqual(threadRunOptionsSchema.parse({
+    approvalPolicy: granular,
+    approvalsReviewer: "auto_review",
+    permissions: "team-safe"
+  }), {
+    approvalPolicy: granular,
+    approvalsReviewer: "auto_review",
+    permissions: "team-safe"
+  });
+  assert.equal(threadRunOptionsSchema.safeParse({ approvalsReviewer: "future-reviewer" }).success, false);
+  assert.equal(threadRunOptionsSchema.safeParse({
+    permissions: ":workspace",
+    sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
+  }).success, false);
+});

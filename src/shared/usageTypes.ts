@@ -8,8 +8,32 @@ export const isModelReasoningEffort = (value: unknown): value is ModelReasoningE
 /** Codex app-server service tier。当前 Fast tier 常见值是 priority，但 catalog 可扩展。 */
 export type ThreadServiceTier = string;
 
-/** Codex app-server approval policy。granular policy 暂不在 Web 菜单暴露。 */
-export type ThreadApprovalPolicy = "untrusted" | "on-request" | "never";
+/** Codex app-server granular approval policy 的稳定分类。 */
+export const threadGranularApprovalKeys = [
+  "sandbox_approval",
+  "rules",
+  "skill_approval",
+  "request_permissions",
+  "mcp_elicitations"
+] as const;
+
+export type ThreadGranularApprovalKey = (typeof threadGranularApprovalKeys)[number];
+
+export type ThreadGranularApprovalPolicy = {
+  granular: Record<ThreadGranularApprovalKey, boolean>;
+};
+
+/** Codex app-server AskForApproval。 */
+export type ThreadApprovalPolicy = "untrusted" | "on-request" | ThreadGranularApprovalPolicy | "never";
+
+/** Codex app-server approval request reviewer。 */
+export type ThreadApprovalsReviewer = "user" | "auto_review" | "guardian_subagent";
+
+/** app-server 当前 thread 的命名 permission profile 来源。 */
+export type ActivePermissionProfile = {
+  id: string;
+  extends: string | null;
+};
 
 /** Codex app-server turn/start 使用的结构化 sandbox policy。 */
 export type ThreadSandboxPolicy =
@@ -30,7 +54,31 @@ export type ThreadOptions = {
   modelReasoningEffort?: ModelReasoningEffort;
   serviceTier?: ThreadServiceTier;
   approvalPolicy?: ThreadApprovalPolicy;
+  approvalsReviewer?: ThreadApprovalsReviewer;
+  permissions?: string;
+  activePermissionProfile?: ActivePermissionProfile;
   sandboxPolicy?: ThreadSandboxPolicy;
+};
+
+export const isThreadApprovalPolicy = (value: unknown): value is ThreadApprovalPolicy => {
+  if (value === "untrusted" || value === "on-request" || value === "never") return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const granular = (value as { granular?: unknown }).granular;
+  if (!granular || typeof granular !== "object" || Array.isArray(granular)) return false;
+  const keys = Object.keys(granular);
+  return keys.length === threadGranularApprovalKeys.length
+    && threadGranularApprovalKeys.every((key) => typeof (granular as Record<string, unknown>)[key] === "boolean");
+};
+
+export const isThreadApprovalsReviewer = (value: unknown): value is ThreadApprovalsReviewer =>
+  value === "user" || value === "auto_review" || value === "guardian_subagent";
+
+export const asActivePermissionProfile = (value: unknown): ActivePermissionProfile | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const profile = value as Record<string, unknown>;
+  if (typeof profile.id !== "string" || !profile.id) return undefined;
+  if (profile.extends !== undefined && profile.extends !== null && typeof profile.extends !== "string") return undefined;
+  return { id: profile.id, extends: profile.extends ?? null };
 };
 
 /** CodexHub 对外稳定的 snake_case token usage 投影。 */

@@ -3,6 +3,7 @@ import { storageKey } from "./appConfig.js";
 import {
   apiRouteJson,
   machineProjectLauncher,
+  permissionProfileScopeKey,
   preferredThreadIdForSession,
   primeTaskCompletionSound,
   runtimeSessionForProject
@@ -242,6 +243,50 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.initialized,
     state.modelCatalogBySession,
     state.threadModelDialogOpen
+  ]);
+
+  useEffect(() => {
+    if (!state.initialized || !state.composerMenuOpen) return undefined;
+    const sessionId = selectors.activeThread?.session.sessionId;
+    const cwd = selectors.activeThread?.workingDirectory;
+    if (!sessionId || !cwd) return undefined;
+    const scopeKey = permissionProfileScopeKey(sessionId, cwd);
+    let cancelled = false;
+    state.setPermissionProfilesByScope((current) => ({
+      ...current,
+      [scopeKey]: { status: "loading", profiles: [] }
+    }));
+    void apiRouteJson(apiRoutes.sessionPermissionProfiles, sessionId, cwd)
+      .then((payload) => {
+        if (cancelled) return;
+        state.setPermissionProfilesByScope((current) => ({
+          ...current,
+          [scopeKey]: {
+            status: "ready",
+            profiles: Array.isArray(payload.profiles) ? payload.profiles : []
+          }
+        }));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        state.setPermissionProfilesByScope((current) => ({
+          ...current,
+          [scopeKey]: {
+            status: "error",
+            profiles: [],
+            error: message || "Permission profiles unavailable."
+          }
+        }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectors.activeThread?.session.sessionId,
+    selectors.activeThread?.workingDirectory,
+    state.composerMenuOpen,
+    state.initialized
   ]);
 
   useEffect(() => {

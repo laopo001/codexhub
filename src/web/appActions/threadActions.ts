@@ -352,8 +352,8 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
           openThread.serviceTierDraft,
           composerMode,
           openThread.approvalPolicyDraft,
-          openThread.sandboxPolicyDraft,
-          openThread.workingDirectory
+          openThread.approvalsReviewerDraft,
+          openThread.permissionProfileDraft
         )
       })
     });

@@ -3,11 +3,12 @@ import type { CodexRecord } from "../shared/recordTypes.js";
 import type { ThreadSummary } from "../shared/threadTypes.js";
 import type {
   ApprovalPolicyDraft,
+  ApprovalsReviewerDraft,
   ComposerMode,
   ModelSelection,
   OpenThreadState,
   ReasoningSelection,
-  SandboxPolicyDraft,
+  PermissionProfileDraft,
   ServiceTierSelection,
   ThreadDetail
 } from "./types.js";
@@ -18,7 +19,8 @@ type DraftAction =
   | { field: "reasoningDraft"; value: SetStateAction<ReasoningSelection> }
   | { field: "serviceTierDraft"; value: SetStateAction<ServiceTierSelection> }
   | { field: "approvalPolicyDraft"; value: SetStateAction<ApprovalPolicyDraft> }
-  | { field: "sandboxPolicyDraft"; value: SetStateAction<SandboxPolicyDraft> };
+  | { field: "approvalsReviewerDraft"; value: SetStateAction<ApprovalsReviewerDraft> }
+  | { field: "permissionProfileDraft"; value: SetStateAction<PermissionProfileDraft> };
 
 export type OpenThreadAction =
   | { type: "upsert-detail"; thread: ThreadDetail }
@@ -56,7 +58,8 @@ export const openThreadStateFromDetail = (
   reasoningDraft: existing?.reasoningDraft ?? thread.modelReasoningEffort ?? "auto",
   serviceTierDraft: existing?.serviceTierDraft ?? serviceTierDraftFromThread(thread.serviceTier),
   approvalPolicyDraft: existing?.approvalPolicyDraft ?? "auto",
-  sandboxPolicyDraft: existing?.sandboxPolicyDraft ?? "auto",
+  approvalsReviewerDraft: existing?.approvalsReviewerDraft ?? "auto",
+  permissionProfileDraft: existing?.permissionProfileDraft ?? null,
   imageAttachments: existing?.imageAttachments ?? [],
   textAttachments: existing?.textAttachments ?? []
 });
@@ -137,9 +140,15 @@ export const openThreadReducer = (state: OpenThreadState[], action: OpenThreadAc
         approvalPolicyDraft: resolveStateAction(action.value, thread.approvalPolicyDraft)
       }));
     }
+    if (action.field === "approvalsReviewerDraft") {
+      return updateThread(state, action.threadId, (thread) => ({
+        ...thread,
+        approvalsReviewerDraft: resolveStateAction(action.value, thread.approvalsReviewerDraft)
+      }));
+    }
     return updateThread(state, action.threadId, (thread) => ({
       ...thread,
-      sandboxPolicyDraft: resolveStateAction(action.value, thread.sandboxPolicyDraft)
+      permissionProfileDraft: resolveStateAction(action.value, thread.permissionProfileDraft)
     }));
   }
   if (action.type === "add-images") {

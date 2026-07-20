@@ -88,14 +88,43 @@ try {
   await assertSchema("v2/AskForApproval.ts", [
     [/"untrusted"/, "AskForApproval must include untrusted"],
     [/"on-request"/, "AskForApproval must include on-request"],
+    [/"granular"/, "AskForApproval must include granular"],
+    [/sandbox_approval: boolean/, "granular approval must include sandbox_approval"],
+    [/rules: boolean/, "granular approval must include rules"],
+    [/skill_approval: boolean/, "granular approval must include skill_approval"],
+    [/request_permissions: boolean/, "granular approval must include request_permissions"],
+    [/mcp_elicitations: boolean/, "granular approval must include mcp_elicitations"],
     [/"never"/, "AskForApproval must include never"],
     [/^(?![\s\S]*"on-failure")[\s\S]*$/, "AskForApproval must not include removed on-failure"]
+  ]);
+  await assertSchema("v2/ApprovalsReviewer.ts", [
+    [/"user"/, "ApprovalsReviewer must include user"],
+    [/"auto_review"/, "ApprovalsReviewer must include auto_review"],
+    [/"guardian_subagent"/, "ApprovalsReviewer must include guardian_subagent"]
+  ]);
+  await assertSchema("v2/ThreadStartParams.ts", [
+    [/approvalsReviewer\?: ApprovalsReviewer \| null/, "thread/start must expose approvalsReviewer"],
+    [/permissions\?: string \| null/, "thread/start must expose named permissions"]
+  ]);
+  await assertSchema("v2/TurnStartParams.ts", [
+    [/approvalsReviewer\?: ApprovalsReviewer \| null/, "turn/start must expose approvalsReviewer"],
+    [/permissions\?: string \| null/, "turn/start must expose named permissions"]
+  ]);
+  await assertSchema("v2/PermissionProfileSummary.ts", [
+    [/id: string/, "permission profiles must expose id"],
+    [/description: string \| null/, "permission profiles must expose description"],
+    [/allowed: boolean/, "permission profiles must expose allowed"]
+  ]);
+  await assertSchema("v2/ThreadSettings.ts", [
+    [/approvalsReviewer: ApprovalsReviewer/, "thread settings must expose approvalsReviewer"],
+    [/activePermissionProfile: ActivePermissionProfile \| null/, "thread settings must expose activePermissionProfile"]
   ]);
   await assertSchema("ClientRequest.ts", [
     [/"method": "thread\/fork"/, "thread/fork must be available"],
     [/"method": "thread\/compact\/start"/, "thread/compact/start must be available"],
     [/"method": "thread\/goal\/set"/, "thread/goal/set must be available"],
     [/"method": "thread\/unsubscribe"/, "thread/unsubscribe must be available"],
+    [/"method": "permissionProfile\/list"/, "permissionProfile/list must be available"],
     [/"method": "review\/start"/, "review/start must be available"]
   ]);
   await assertSchema("ServerNotification.ts", [

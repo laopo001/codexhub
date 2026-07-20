@@ -64,7 +64,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 3. Registered parent：`GET /api/registered/parent`、`POST /api/registered/parent`、`DELETE /api/registered/parent`、`GET /api/registered/bootstrap`、`GET /api/remote-client/:hash`。GUI `POST` 会把规范化 URL、普通 server 的 machine identity 和可选 auth token 保存到当前 server 的 `config.yaml`，共享 `startServer()` 在普通 Web、VSCode、Electron 重启时自动恢复；VSCode 只持久化共享 parent profile，runtime identity 由 workspace `workspaceState` 覆盖。token 可以为空，显式空字符串表示不使用 parent auth。`DELETE` 必须中止连接中的 WebSocket、等待 runner 完全停止并删除自动注册配置。body `url` 可以携带 `?codexhub_token=`；bootstrap 脚本通过 `/api/remote-client/:hash` 拉当前 build 的 remote client。
 4. Realtime：`GET /api/events/ws` WebSocket。
 5. Projects：`GET /api/projects`、`POST /api/projects/open`、`PATCH /api/projects/:projectId`、`DELETE /api/projects/:projectId`。`PATCH` 目前只更新 `pinned`。
-6. Sessions：`GET /api/sessions`、`GET /api/sessions/:sessionId/thread-candidates`、`GET /api/sessions/:sessionId/models`、`POST /api/sessions/:sessionId/threads`。
+6. Sessions：`GET /api/sessions`、`GET /api/sessions/:sessionId/thread-candidates`、`GET /api/sessions/:sessionId/models`、`GET /api/sessions/:sessionId/permission-profiles`、`POST /api/sessions/:sessionId/threads`。
 7. Threads：`GET /api/threads`、`GET /api/threads/:threadId`、`PATCH /api/threads/:threadId/name`、`POST /api/threads/:threadId/turn`、`POST /api/threads/:threadId/stop`、`POST /api/threads/:threadId/compact`、`POST /api/threads/:threadId/review`、`POST /api/threads/:threadId/goal`、`DELETE /api/threads/:threadId/goal`、`POST /api/threads/:threadId/fork`、`DELETE /api/threads/:threadId`。
 8. Tasks：`GET /api/tasks`、`POST /api/tasks`、`PATCH /api/tasks/:taskId`、`DELETE /api/tasks/:taskId`、`POST /api/tasks/:taskId/run`。
 9. SSH：`GET /api/ssh/config-hosts`、`GET /api/ssh/hosts`、`POST /api/ssh/hosts`、`DELETE /api/ssh/hosts/:alias`、`GET /api/ssh/connections`、`POST /api/ssh/connect`、`DELETE /api/ssh/connections/:connectionId`、`GET /api/ssh/remote-client/:hash`。
@@ -103,7 +103,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 ## Thread 行为
 
 1. Slash command 不按普通 Codex turn 透传。server 本地只处理 `/status`、`/help`、`/model`、`/fast on|off|status`；其他 slash command 生成不支持说明。`/fast` 映射到 app-server Fast service tier（当前 catalog value 通常是 `priority`），`off` 清除显式 tier 回到 Codex 配置默认值。
-2. Web composer 有 Chat / Plan / Goal 三种模式。Plan/Goal 通过本轮 turn 的 `options` 传给 server，是一次性输入状态，不应泄漏到后续默认 turn。
+2. Web composer 有 Chat / Plan / Goal 三种模式。Plan/Goal 通过本轮 turn 的 `options` 传给 server，是一次性输入状态，不应泄漏到后续默认 turn。Permissions 必须从当前在线 app-server 的 `permissionProfile/list` 动态读取；`permissions` 与旧 `sandboxPolicy` 互斥，不能在 Web 写死 profile 目录。
 3. Web 在 thread running 时继续发送普通输入，应走 app-server `turn/steer`，并带当前 active `turnId`。没有 active turnId 或非 Web source 时才进入 queue fallback。
 4. Web 在 running thread 上用 Goal mode 发送，应更新 active goal，而不是启动新 turn 或追加 queue。
 5. Goal 状态来自 thread record 流里的 `thread_goal_updated` / `thread_goal_cleared`，需要合并 app-server snapshot 和 live records 提取；不要只看 composer 当前选中模式。
@@ -124,7 +124,8 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 7. VSCode surface 使用同一套 Web UI 和完整左侧控制面。`surface=vscode` 只用于 VSCode 通知桥、daemon 兼容判断、workspace project group 等嵌入环境差异，不应隐藏 sidebar 或关闭 SSH/tasks/plugins/Registered 能力。
 8. 任务完成通知：完成音效总是由 Web 播放；Settings 里的 `taskCompleteSystemNotifications` 只控制系统弹窗，普通 Web 走 browser Notification，VSCode 走 iframe `postMessage` 到 extension，再由 VSCode notification 展示。
 9. Thread Model 弹窗的 model/reasoning/service tier 选项只使用当前在线 app-server `model/list` catalog；catalog 不可用时显示加载/错误状态并禁用选择，不提供本地静态 fallback，也不能把 catalog 保存进 `config.yaml`。
-10. UI 文案和交互不要重新暴露已删除概念：worker、instance、project rename、project thread/history count、per-project runtime restart/stop。
+10. Composer 权限菜单的 permission profile 只使用当前在线 app-server `permissionProfile/list` catalog；允许展示协议固定的 approval policy / reviewer 枚举，但不能为 profile 提供本地静态 fallback，也不能把 profile catalog 保存进 `config.yaml`。
+11. UI 文案和交互不要重新暴露已删除概念：worker、instance、project rename、project thread/history count、per-project runtime restart/stop。
 
 ## 插件和集成
 

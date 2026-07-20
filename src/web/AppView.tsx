@@ -12,7 +12,11 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { Virtuoso, type Components } from "react-virtuoso";
-import { approvalPolicyOptions, composerModeOptions, sandboxPolicyOptions } from "./appConfig.js";
+import {
+  threadGranularApprovalKeys,
+  type ThreadSandboxPolicy,
+} from "../shared/usageTypes.js";
+import { approvalPolicyOptions, approvalsReviewerOptions, composerModeOptions } from "./appConfig.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
@@ -28,6 +32,9 @@ import {
   goalStatusControl,
   goalStatusLabel,
   MessageCard,
+  defaultGranularApprovalPolicy,
+  permissionProfileLabel,
+  updateGranularApprovalPolicy,
 } from "./appHelpers.js";
 
 type AppViewProps = {
@@ -74,6 +81,13 @@ const textAttachmentTooltip = (text: string) => {
 const attachmentCountLabel = (count: number) =>
   `${count} attachment${count === 1 ? "" : "s"}`;
 
+const sandboxPolicyLabel = (policy: ThreadSandboxPolicy) => {
+  if (policy.type === "dangerFullAccess") return "Danger Full Access";
+  if (policy.type === "readOnly") return "Read Only";
+  if (policy.type === "workspaceWrite") return "Workspace";
+  return "External Sandbox";
+};
+
 const messagesBottomThreshold = 48;
 const messagesScrollbarHitArea = 20;
 const messagesScrollbarIntentMs = 900;
@@ -111,8 +125,13 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeThread,
     activeThreadIsOpen,
     activeThreadExecutionMeta,
+    activeThreadApprovalPolicyKind,
     activeThreadApprovalPolicySelection,
-    activeThreadSandboxPolicySelection,
+    activeThreadApprovalsReviewerSelection,
+    activeThreadPermissionProfileSelection,
+    activePermissionProfiles,
+    activePermissionProfilesError,
+    activePermissionProfilesStatus,
     activeUserMessageHistory,
     activeViews,
     authError,
@@ -163,7 +182,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setInspectMessage,
     setMessageDisplayMode,
     setActiveThreadApprovalPolicyDraft,
-    setActiveThreadSandboxPolicyDraft,
+    setActiveThreadApprovalsReviewerDraft,
+    setActiveThreadPermissionProfileDraft,
     setAuthTokenDraft,
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
@@ -186,6 +206,20 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   const canAddThreadForProject = Boolean(activeRuntimeSession?.online || selectedProject?.machineOnline);
   const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
   const activeGoalStatusControl = activeGoal ? goalStatusControl(activeGoal.status) : null;
+  const activeGranularApprovalPolicy = activeThreadApprovalPolicySelection
+    && typeof activeThreadApprovalPolicySelection === "object"
+    ? activeThreadApprovalPolicySelection
+    : defaultGranularApprovalPolicy();
+  const activeThreadSandboxProfileLabel = activeThread?.sandboxPolicy
+    ? sandboxPolicyLabel(activeThread.sandboxPolicy)
+    : undefined;
+  const activeThreadPermissionProfileUiSelection = activeThreadPermissionProfileSelection
+    ?? (activeThreadSandboxProfileLabel
+      ? activePermissionProfiles.find((profile) =>
+        permissionProfileLabel(profile.id).toLowerCase()
+          === activeThreadSandboxProfileLabel.toLowerCase()
+      )?.id
+      : undefined);
   const activeAttachmentCount = activeThread
     ? activeThread.textAttachments.length + activeThread.imageAttachments.length
     : 0;
@@ -724,29 +758,90 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                         <button
                                           key={option.value}
                                           type="button"
-                                          className={`composerMenuChoice${activeThreadApprovalPolicySelection === option.value ? " active" : ""}`}
+                                          className={`composerMenuChoice${activeThreadApprovalPolicyKind === option.value ? " active" : ""}`}
                                           role="menuitemradio"
-                                          aria-checked={activeThreadApprovalPolicySelection === option.value}
-                                          onClick={() => setActiveThreadApprovalPolicyDraft(option.value)}
+                                          aria-checked={activeThreadApprovalPolicyKind === option.value}
+                                          onClick={() => setActiveThreadApprovalPolicyDraft(
+                                            option.value === "granular"
+                                              ? activeGranularApprovalPolicy
+                                              : option.value
+                                          )}
+                                        >
+                                          {option.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    {activeThreadApprovalPolicyKind === "granular" ? (
+                                      <div className="composerGranularGrid">
+                                        {threadGranularApprovalKeys.map((key) => {
+                                          const enabled = activeGranularApprovalPolicy.granular[key];
+                                          return (
+                                            <button
+                                              key={key}
+                                              type="button"
+                                              className={`composerMenuToggle${enabled ? " active" : ""}`}
+                                              role="checkbox"
+                                              aria-checked={enabled}
+                                              onClick={() => setActiveThreadApprovalPolicyDraft((current) =>
+                                                updateGranularApprovalPolicy(
+                                                  current === "auto" ? activeGranularApprovalPolicy : current,
+                                                  key,
+                                                  !enabled
+                                                )
+                                              )}
+                                            >
+                                              <span>{permissionProfileLabel(key)}</span>
+                                              <span aria-hidden="true">{enabled ? "On" : "Off"}</span>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                  <div className="composerMenuGroup" role="group" aria-label="Approval reviewer">
+                                    <div className="composerMenuGroupLabel">Approval reviewer</div>
+                                    <div className="composerMenuChoiceGrid">
+                                      {approvalsReviewerOptions.map((option) => (
+                                        <button
+                                          key={option.value}
+                                          type="button"
+                                          className={`composerMenuChoice${activeThreadApprovalsReviewerSelection === option.value ? " active" : ""}`}
+                                          role="menuitemradio"
+                                          aria-checked={activeThreadApprovalsReviewerSelection === option.value}
+                                          onClick={() => setActiveThreadApprovalsReviewerDraft(option.value)}
                                         >
                                           {option.label}
                                         </button>
                                       ))}
                                     </div>
                                   </div>
-                                  <div className="composerMenuGroup" role="group" aria-label="Sandbox policy">
-                                    <div className="composerMenuGroupLabel">Sandbox policy</div>
-                                    <div className="composerMenuChoiceGrid">
-                                      {sandboxPolicyOptions.map((option) => (
+                                  <div className="composerMenuGroup" role="group" aria-label="Permission profile">
+                                    <div className="composerMenuGroupLabel">Permissions</div>
+                                    <div className="composerPermissionProfileList">
+                                      {activePermissionProfilesStatus === "idle" || activePermissionProfilesStatus === "loading" ? (
+                                        <div className="composerMenuNotice">Loading permission profiles…</div>
+                                      ) : null}
+                                      {activePermissionProfilesStatus === "error" ? (
+                                        <div className="composerMenuNotice error">{activePermissionProfilesError}</div>
+                                      ) : null}
+                                      {activePermissionProfilesStatus === "unavailable" ? (
+                                        <div className="composerMenuNotice">Permission profiles require an online runtime.</div>
+                                      ) : null}
+                                      {activePermissionProfilesStatus === "ready" && activePermissionProfiles.length === 0 ? (
+                                        <div className="composerMenuNotice">No permission profiles are available.</div>
+                                      ) : null}
+                                      {activePermissionProfiles.map((profile) => (
                                         <button
-                                          key={option.value}
+                                          key={profile.id}
                                           type="button"
-                                          className={`composerMenuChoice${activeThreadSandboxPolicySelection === option.value ? " active" : ""}`}
+                                          className={`composerMenuChoice${activeThreadPermissionProfileUiSelection === profile.id ? " active" : ""}`}
                                           role="menuitemradio"
-                                          aria-checked={activeThreadSandboxPolicySelection === option.value}
-                                          onClick={() => setActiveThreadSandboxPolicyDraft(option.value)}
+                                          aria-checked={activeThreadPermissionProfileUiSelection === profile.id}
+                                          disabled={!profile.allowed}
+                                          title={profile.description || profile.id}
+                                          onClick={() => setActiveThreadPermissionProfileDraft(profile.id)}
                                         >
-                                          {option.label}
+                                          {permissionProfileLabel(profile.id)}
                                         </button>
                                       ))}
                                     </div>

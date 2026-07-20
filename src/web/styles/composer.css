@@ -1024,8 +1024,10 @@
   left: 0;
   z-index: 50;
   display: grid;
-  min-width: 248px;
-  overflow: hidden;
+  width: min(336px, calc(100vw - 32px));
+  max-height: min(70vh, 640px);
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid #cbd6c7;
   border-radius: 12px;
   background: #ffffff;
@@ -1100,4 +1102,49 @@
   background: #e9f2ff;
   color: #0d4f9e;
   font-weight: 700;
+}
+
+.composerGranularGrid {
+  display: grid;
+  gap: 4px;
+}
+
+.composerPermissionProfileList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.composerPermissionProfileList > .composerMenuNotice {
+  grid-column: 1 / -1;
+}
+
+.composerMenuToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: #f6f8f4;
+  color: #566052;
+  font-size: 11px;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.composerMenuToggle.active {
+  background: #edf5ff;
+  color: #0d4f9e;
+}
+
+.composerMenuNotice {
+  color: #748070;
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 5px 8px;
+}
+
+.composerMenuNotice.error {
+  color: #a43b34;
 }

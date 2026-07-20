@@ -32,10 +32,12 @@ export type AppServerCommandHost = {
   permissionParams: Record<string, unknown>;
   listThreads: (cwd: string, limit?: number) => Promise<unknown>;
   listModels: (includeHidden: boolean) => Promise<unknown>;
+  listPermissionProfiles: (cwd: string) => Promise<unknown>;
   listCollaborationModes: () => Promise<unknown>;
   cachedThreadSettings: (threadId: string) => AppServerThreadSettings | undefined;
   readThreadSettings: (cwd: string) => Promise<AppServerThreadSettings>;
   cacheThreadCollaborationMode: (threadId: string, value: AppServerCollaborationMode) => void;
+  captureThreadSettingsResponse: (threadId: string, value: unknown) => Promise<void>;
   planResetModes: Map<string, AppServerCollaborationMode>;
   listCommandPalette: (cwd: string, part: SessionCommand["commandPalettePart"]) => Promise<unknown>;
   bindThread: (threadId: string, cwd: string) => void;
@@ -73,6 +75,9 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
   }
   if (command.type === "list_models") {
     return { models: await host.listModels(Boolean(command.includeHidden)) };
+  }
+  if (command.type === "list_permission_profiles") {
+    return { profiles: await host.listPermissionProfiles(command.workingDirectory) };
   }
   if (command.type === "list_command_palette") {
     return { palette: await host.listCommandPalette(command.workingDirectory, command.commandPalettePart) };
@@ -194,13 +199,14 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
       ...(command.lastTurnId ? { lastTurnId: command.lastTurnId } : {}),
       cwd: command.workingDirectory,
       ...(model === undefined ? {} : { model }),
-      ...host.permissionParams,
+      ...threadCreationPermissionParams(command.options, host.permissionParams),
       threadSource: "user"
     }, command));
     const thread = asRecord(result?.thread);
     const threadId = stringValue(thread?.id);
     if (!threadId) throw new Error("Codex app-server thread/fork did not return thread.id");
     host.markThreadLoaded(threadId);
+    await host.captureThreadSettingsResponse(threadId, result);
     return;
   }
 
@@ -343,7 +349,27 @@ export const turnRequestParams = (options: ThreadRunOptions | undefined) => {
   if (hasOwn(options, "modelReasoningEffort")) params.effort = options.modelReasoningEffort;
   if (hasOwn(options, "serviceTier")) params.serviceTier = options.serviceTier;
   if (hasOwn(options, "approvalPolicy")) params.approvalPolicy = options.approvalPolicy;
-  if (hasOwn(options, "sandboxPolicy")) params.sandboxPolicy = options.sandboxPolicy;
+  if (hasOwn(options, "approvalsReviewer")) params.approvalsReviewer = options.approvalsReviewer;
+  if (hasOwn(options, "permissions")) {
+    params.permissions = options.permissions;
+  } else if (hasOwn(options, "sandboxPolicy")) {
+    params.sandboxPolicy = options.sandboxPolicy;
+  }
+  return params;
+};
+
+const threadCreationPermissionParams = (
+  options: ThreadRunOptions | undefined,
+  defaults: Record<string, unknown>
+) => {
+  const params = { ...defaults };
+  if (!options) return params;
+  if (hasOwn(options, "approvalPolicy")) params.approvalPolicy = options.approvalPolicy;
+  if (hasOwn(options, "approvalsReviewer")) params.approvalsReviewer = options.approvalsReviewer;
+  if (hasOwn(options, "permissions")) {
+    delete params.sandbox;
+    params.permissions = options.permissions;
+  }
   return params;
 };
 

@@ -29,6 +29,7 @@ import type {
   CommandPaletteEntry,
   CommandPalettePart,
   ModelCatalogItem,
+  PermissionProfileSummary,
   SessionStreamEvent,
   SessionSummary,
   ThreadGoalRunPolicy,
@@ -56,6 +57,7 @@ export type {
   CommandPaletteEntry,
   CommandPalettePart,
   ModelCatalogItem,
+  PermissionProfileSummary,
   StoredMachine,
   StoredProject,
   SessionStreamEvent,
@@ -220,6 +222,11 @@ export type SessionModelsPayload = {
   models?: ModelCatalogItem[];
 };
 
+/** app-server permission profile catalog 接口返回的 payload。 */
+export type SessionPermissionProfilesPayload = {
+  profiles?: PermissionProfileSummary[];
+};
+
 /** app-server backed composer command palette 接口返回的 payload。 */
 export type CommandPalettePayload = {
   palette?: CommandPalette;
@@ -374,7 +381,27 @@ export const inputSchema = z.union([
   )
 ]);
 
-const approvalPolicySchema = z.enum(["untrusted", "on-request", "never"]);
+const granularApprovalPolicySchema = z.object({
+  granular: z.object({
+    sandbox_approval: z.boolean(),
+    rules: z.boolean(),
+    skill_approval: z.boolean(),
+    request_permissions: z.boolean(),
+    mcp_elicitations: z.boolean()
+  }).strict()
+}).strict();
+
+const approvalPolicySchema = z.union([
+  z.enum(["untrusted", "on-request", "never"]),
+  granularApprovalPolicySchema
+]);
+
+const approvalsReviewerSchema = z.enum(["user", "auto_review", "guardian_subagent"]);
+
+const activePermissionProfileSchema = z.object({
+  id: z.string().min(1),
+  extends: z.string().min(1).nullable()
+}).strict();
 
 const sandboxPolicySchema = z.discriminatedUnion("type", [
   z.object({
@@ -404,12 +431,23 @@ export const threadRunOptionsSchema = z.object({
   modelReasoningEffort: modelReasoningEffortSchema.nullable().optional(),
   serviceTier: z.string().min(1).nullable().optional(),
   approvalPolicy: approvalPolicySchema.nullable().optional(),
+  approvalsReviewer: approvalsReviewerSchema.nullable().optional(),
+  permissions: z.string().min(1).nullable().optional(),
   sandboxPolicy: sandboxPolicySchema.nullable().optional(),
   collaborationMode: z.enum(["default", "plan"]).nullable().optional(),
   goalMode: z.boolean().nullable().optional(),
   goalObjective: z.string().min(1).nullable().optional(),
   goalTokenBudget: z.number().int().positive().nullable().optional()
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (Object.prototype.hasOwnProperty.call(value, "permissions")
+    && Object.prototype.hasOwnProperty.call(value, "sandboxPolicy")) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "permissions cannot be combined with sandboxPolicy",
+      path: ["permissions"]
+    });
+  }
+});
 
 export const threadGoalStatusSchema = z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]);
 
@@ -547,6 +585,8 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     modelReasoningEffort: modelReasoningEffortSchema.nullable().optional(),
     serviceTier: z.string().min(1).nullable().optional(),
     approvalPolicy: approvalPolicySchema.nullable().optional(),
+    approvalsReviewer: approvalsReviewerSchema.nullable().optional(),
+    activePermissionProfile: activePermissionProfileSchema.nullable().optional(),
     sandboxPolicy: sandboxPolicySchema.nullable().optional(),
     heartbeat: z.boolean().optional()
   }),

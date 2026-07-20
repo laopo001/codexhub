@@ -43,6 +43,7 @@ const createHost = (options: {
     permissionParams: { approvalPolicy: "never" },
     listThreads: async () => [],
     listModels: async () => options.models ?? [{ id: "model-1", model: "gpt-model-1" }],
+    listPermissionProfiles: async () => [],
     listCollaborationModes: async () => options.collaborationModes ?? ({
       data: [
         { name: "Plan", mode: "plan", model: null, reasoning_effort: "medium" },
@@ -88,6 +89,7 @@ const createHost = (options: {
       return {};
     },
     scheduleThreadSync: (threadId) => synced.push(threadId),
+    captureThreadSettingsResponse: async () => undefined,
     forwardThreadExecutionChanged: async () => undefined,
     resolveApprovalRequest: () => undefined,
     resolveUserInputRequest: () => undefined,
@@ -117,6 +119,62 @@ test("dispatcher maps compact commands to official app-server RPC and sync", asy
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(requests, [{ method: "thread/compact/start", params: { threadId: "thread-1" } }]);
   assert.deepEqual(synced, ["thread-1"]);
+});
+
+test("dispatcher exposes the runtime permission profile catalog without local choices", async () => {
+  const { host } = createHost();
+  host.listPermissionProfiles = async (cwd) => {
+    assert.equal(cwd, "/tmp/project");
+    return [{ id: "team-safe", description: "Team policy", allowed: true }];
+  };
+  assert.deepEqual(await dispatchAppServerCommand(command({
+    type: "list_permission_profiles"
+  }), host), {
+    profiles: [{ id: "team-safe", description: "Team policy", allowed: true }]
+  });
+});
+
+test("dispatcher forwards named permissions and current approval controls", async () => {
+  const { host, requests } = createHost();
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "apply it",
+    options: {
+      approvalPolicy: {
+        granular: {
+          sandbox_approval: true,
+          rules: false,
+          skill_approval: true,
+          request_permissions: false,
+          mcp_elicitations: true
+        }
+      },
+      approvalsReviewer: "guardian_subagent",
+      permissions: "team-safe",
+      sandboxPolicy: { type: "dangerFullAccess" }
+    }
+  }), host);
+
+  assert.deepEqual(requests, [{
+    method: "turn/start",
+    params: {
+      threadId: "thread-1",
+      cwd: "/tmp/project",
+      input: [{ type: "text", text: "apply it", text_elements: [] }],
+      approvalPolicy: {
+        granular: {
+          sandbox_approval: true,
+          rules: false,
+          skill_approval: true,
+          request_permissions: false,
+          mcp_elicitations: true
+        }
+      },
+      approvalsReviewer: "guardian_subagent",
+      permissions: "team-safe"
+    }
+  }]);
 });
 
 test("dispatcher requires the current review/start response", async () => {

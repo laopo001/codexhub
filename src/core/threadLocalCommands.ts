@@ -61,7 +61,8 @@ const threadStatusMessage = (
   "",
   "**Policy**",
   `- Approval: ${markdownCode(formatApprovalPolicy(thread.threadOptions))}`,
-  `- Sandbox: ${markdownCode(formatSandboxPolicy(thread.threadOptions))}`,
+  `- Approval reviewer: ${markdownCode(thread.threadOptions.approvalsReviewer ?? "auto")}`,
+  `- Permissions: ${markdownCode(formatPermissions(thread.threadOptions))}`,
   "",
   "**Usage**",
   ...formatStatusUsage(thread, accountRateLimits)
@@ -120,7 +121,14 @@ const slashHelpMessage = () => [
 
 const formatModel = (options: ThreadOptions) => options.model ?? "auto";
 const formatServiceTier = (options: ThreadOptions) => options.serviceTier ?? "auto";
-const formatApprovalPolicy = (options: ThreadOptions) => options.approvalPolicy ?? "auto";
+const formatApprovalPolicy = (options: ThreadOptions) => {
+  const policy = options.approvalPolicy;
+  if (!policy) return "auto";
+  return typeof policy === "string" ? policy : "granular";
+};
+
+const formatPermissions = (options: ThreadOptions) =>
+  options.activePermissionProfile?.id ?? options.permissions ?? formatSandboxPolicy(options);
 
 const formatSandboxPolicy = (options: ThreadOptions) => {
   const policy = options.sandboxPolicy;

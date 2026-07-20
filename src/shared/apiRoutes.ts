@@ -13,6 +13,7 @@ import type {
   ServerConfigPayload,
   ServerConfigUpdateInput,
   SessionModelsPayload,
+  SessionPermissionProfilesPayload,
   SessionsPayload,
   SshConnectionPayload,
   SshConnectionsPayload,
@@ -156,6 +157,9 @@ export const apiRoutes = {
   ),
   sessionModels: get<SessionModelsPayload, (sessionId: string, includeHidden?: boolean) => string>(
     (sessionId, includeHidden) => `/api/sessions/${encode(sessionId)}/models${queryString({ includeHidden: includeHidden ? "true" : undefined })}`
+  ),
+  sessionPermissionProfiles: get<SessionPermissionProfilesPayload, (sessionId: string, cwd: string) => string>(
+    (sessionId, cwd) => `/api/sessions/${encode(sessionId)}/permission-profiles${queryString({ cwd })}`
   ),
   commandPalette: get<CommandPalettePayload, (sessionId: string, cwd?: string, part?: CommandPalettePart) => string>(
     (sessionId, cwd, part) => `/api/sessions/${encode(sessionId)}/command-palette${queryString({ cwd, part })}`

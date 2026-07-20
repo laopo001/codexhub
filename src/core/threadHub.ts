@@ -34,7 +34,10 @@ import type { ProxyInput } from "../shared/inputTypes.js";
 import { turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import {
+  asActivePermissionProfile,
   isModelReasoningEffort,
+  isThreadApprovalPolicy,
+  isThreadApprovalsReviewer,
   type ThreadOptions,
   type ThreadRateLimits,
   type ThreadUsage
@@ -81,6 +84,7 @@ import type {
   SessionCommandPaletteResult,
   SessionEventInput,
   SessionModelCatalogResult,
+  SessionPermissionProfilesResult,
   SessionOfflineReason,
   SessionRegistration,
   SessionStreamEvent,
@@ -350,6 +354,8 @@ export class ThreadHub {
         input.modelReasoningEffort,
         input.serviceTier,
         input.approvalPolicy,
+        input.approvalsReviewer,
+        input.activePermissionProfile,
         input.sandboxPolicy
       );
       return { ok: true, thread: this.summary(thread) };
@@ -477,6 +483,29 @@ export class ThreadHub {
       workingDirectory: session.workingDirectory,
       createdAt: new Date().toISOString(),
       includeHidden
+    });
+    return await promise;
+  }
+
+  async listSessionPermissionProfiles(
+    sessionId: string,
+    workingDirectory?: string
+  ): Promise<SessionPermissionProfilesResult> {
+    const session = this.requireOnlineSession(sessionId);
+    const cwd = workingDirectory || session.workingDirectory;
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<SessionPermissionProfilesResult>(
+      commandId,
+      "list_permission_profiles",
+      undefined,
+      60_000,
+      cwd
+    );
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "list_permission_profiles",
+      workingDirectory: cwd,
+      createdAt: new Date().toISOString()
     });
     return await promise;
   }
@@ -1825,6 +1854,8 @@ export class ThreadHub {
     modelReasoningEffort: ThreadOptions["modelReasoningEffort"] | null | undefined,
     serviceTier: ThreadOptions["serviceTier"] | null | undefined,
     approvalPolicy: ThreadOptions["approvalPolicy"] | null | undefined,
+    approvalsReviewer: ThreadOptions["approvalsReviewer"] | null | undefined,
+    activePermissionProfile: ThreadOptions["activePermissionProfile"] | null | undefined,
     sandboxPolicy: ThreadOptions["sandboxPolicy"] | null | undefined
   ) {
     let changed = false;
@@ -1848,9 +1879,32 @@ export class ThreadHub {
     }
     if (approvalPolicy !== undefined) {
       const nextApprovalPolicy = isThreadApprovalPolicy(approvalPolicy) ? approvalPolicy : undefined;
-      if (thread.threadOptions.approvalPolicy !== nextApprovalPolicy) {
+      if (JSON.stringify(thread.threadOptions.approvalPolicy) !== JSON.stringify(nextApprovalPolicy)) {
         thread.threadOptions = { ...thread.threadOptions, approvalPolicy: nextApprovalPolicy };
         if (!nextApprovalPolicy) delete thread.threadOptions.approvalPolicy;
+        changed = true;
+      }
+    }
+    if (approvalsReviewer !== undefined) {
+      const nextApprovalsReviewer = isThreadApprovalsReviewer(approvalsReviewer) ? approvalsReviewer : undefined;
+      if (thread.threadOptions.approvalsReviewer !== nextApprovalsReviewer) {
+        thread.threadOptions = { ...thread.threadOptions, approvalsReviewer: nextApprovalsReviewer };
+        if (!nextApprovalsReviewer) delete thread.threadOptions.approvalsReviewer;
+        changed = true;
+      }
+    }
+    if (activePermissionProfile !== undefined) {
+      const nextActivePermissionProfile = asActivePermissionProfile(activePermissionProfile);
+      if (JSON.stringify(thread.threadOptions.activePermissionProfile) !== JSON.stringify(nextActivePermissionProfile)) {
+        thread.threadOptions = {
+          ...thread.threadOptions,
+          activePermissionProfile: nextActivePermissionProfile,
+          permissions: nextActivePermissionProfile?.id
+        };
+        if (!nextActivePermissionProfile) {
+          delete thread.threadOptions.activePermissionProfile;
+          delete thread.threadOptions.permissions;
+        }
         changed = true;
       }
     }
@@ -2308,6 +2362,9 @@ export class ThreadHub {
       modelReasoningEffort: thread.threadOptions.modelReasoningEffort,
       serviceTier: thread.threadOptions.serviceTier,
       approvalPolicy: thread.threadOptions.approvalPolicy,
+      approvalsReviewer: thread.threadOptions.approvalsReviewer,
+      permissions: thread.threadOptions.permissions,
+      activePermissionProfile: thread.threadOptions.activePermissionProfile ?? null,
       sandboxPolicy: thread.threadOptions.sandboxPolicy,
       session: this.threadSessionSummary(thread),
       status: thread.running ? "running" : "idle",
@@ -2543,9 +2600,6 @@ const approvalDecisionsEqual = (
 const appServerTurnIsComplete = (thread: ThreadState, turnId: string) =>
   thread.records.some((record) => record.id === `app:${thread.threadId}:${turnId}:event:task_complete`);
 
-const isThreadApprovalPolicy = (value: unknown): value is ThreadOptions["approvalPolicy"] =>
-  value === "untrusted" || value === "on-request" || value === "never";
-
 const isAppServerTurnStatus = (value: unknown): value is "completed" | "interrupted" | "failed" | "inProgress" =>
   value === "completed" || value === "interrupted" || value === "failed" || value === "inProgress";
 
@@ -2577,6 +2631,8 @@ const stickyThreadRunOptionKeys = [
   "modelReasoningEffort",
   "serviceTier",
   "approvalPolicy",
+  "approvalsReviewer",
+  "permissions",
   "sandboxPolicy"
 ] as const;
 
@@ -2600,6 +2656,19 @@ const applyThreadRunOptions = (current: ThreadOptions, options: ThreadRunOptions
   if (hasOwn(options, "approvalPolicy")) {
     if (isThreadApprovalPolicy(options.approvalPolicy)) next.approvalPolicy = options.approvalPolicy;
     else delete next.approvalPolicy;
+  }
+  if (hasOwn(options, "approvalsReviewer")) {
+    if (isThreadApprovalsReviewer(options.approvalsReviewer)) next.approvalsReviewer = options.approvalsReviewer;
+    else delete next.approvalsReviewer;
+  }
+  if (hasOwn(options, "permissions")) {
+    if (typeof options.permissions === "string" && options.permissions) {
+      next.permissions = options.permissions;
+      next.activePermissionProfile = { id: options.permissions, extends: null };
+    } else {
+      delete next.permissions;
+      delete next.activePermissionProfile;
+    }
   }
   if (hasOwn(options, "sandboxPolicy")) {
     if (isThreadSandboxPolicy(options.sandboxPolicy)) next.sandboxPolicy = options.sandboxPolicy;
