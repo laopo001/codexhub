@@ -1,14 +1,17 @@
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import type {
-  PetImportInput,
+  InvalidPetPackage,
   PetManifest,
   PetSpriteVersion,
+  PetsPayload,
 } from "../shared/petTypes.js";
+import { inspectPetImage, PetImageValidationError, type InspectedPetImage } from "./petImage.js";
 
-const maxImageBytes = 20 * 1024 * 1024;
+export const maxPetImageBytes = 20 * 1024 * 1024;
 const reservedPetIds = new Set(["red-spark"]);
 const petIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
@@ -24,15 +27,21 @@ const expectedDimensions = (version: PetSpriteVersion) => version === 2
   ? { width: 1536, height: 2288 }
   : { width: 1536, height: 1872 };
 
-type InspectedPetImage = {
-  contentType: "image/png" | "image/webp";
-  height: number;
-  width: number;
-};
-
 export type ResolvedPetImage = InspectedPetImage & {
   path: string;
   size: number;
+};
+
+export type PetInstallInput = {
+  image: Buffer;
+  manifest: unknown;
+  replace?: boolean;
+};
+
+export type PetFileInstallInput = {
+  imagePath: string;
+  manifest: unknown;
+  replace?: boolean;
 };
 
 export class PetStoreError extends Error {
@@ -44,51 +53,6 @@ export class PetStoreError extends Error {
     this.statusCode = statusCode;
   }
 }
-
-const readUint24LE = (buffer: Buffer, offset: number) =>
-  buffer[offset]! | (buffer[offset + 1]! << 8) | (buffer[offset + 2]! << 16);
-
-const inspectPng = (header: Buffer): InspectedPetImage | null => {
-  if (header.length < 24 || !header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
-    return null;
-  }
-  return {
-    contentType: "image/png",
-    width: header.readUInt32BE(16),
-    height: header.readUInt32BE(20),
-  };
-};
-
-const inspectWebp = (header: Buffer): InspectedPetImage | null => {
-  if (header.length < 30 || header.toString("ascii", 0, 4) !== "RIFF" || header.toString("ascii", 8, 12) !== "WEBP") {
-    return null;
-  }
-  const kind = header.toString("ascii", 12, 16);
-  if (kind === "VP8X") {
-    return {
-      contentType: "image/webp",
-      width: readUint24LE(header, 24) + 1,
-      height: readUint24LE(header, 27) + 1,
-    };
-  }
-  if (kind === "VP8L" && header[20] === 0x2f) {
-    return {
-      contentType: "image/webp",
-      width: 1 + header[21]! + ((header[22]! & 0x3f) << 8),
-      height: 1 + (header[22]! >> 6) + (header[23]! << 2) + ((header[24]! & 0x0f) << 10),
-    };
-  }
-  if (kind === "VP8 " && header[23] === 0x9d && header[24] === 0x01 && header[25] === 0x2a) {
-    return {
-      contentType: "image/webp",
-      width: header.readUInt16LE(26) & 0x3fff,
-      height: header.readUInt16LE(28) & 0x3fff,
-    };
-  }
-  return null;
-};
-
-const inspectImageHeader = (header: Buffer) => inspectPng(header) ?? inspectWebp(header);
 
 const assertImageContract = (image: InspectedPetImage, manifest: PetManifest) => {
   const expected = expectedDimensions(manifest.spriteVersionNumber);
@@ -105,7 +69,12 @@ const assertImageContract = (image: InspectedPetImage, manifest: PetManifest) =>
 };
 
 const parseManifest = (value: unknown): PetManifest => {
-  const manifest = manifestSchema.parse(value);
+  let manifest: PetManifest;
+  try {
+    manifest = manifestSchema.parse(value);
+  } catch {
+    throw new PetStoreError("pet.json does not match the Codex pet manifest contract.");
+  }
   if (path.basename(manifest.spritesheetPath) !== manifest.spritesheetPath) {
     throw new PetStoreError("spritesheetPath must be a filename without directories.");
   }
@@ -115,16 +84,26 @@ const parseManifest = (value: unknown): PetManifest => {
   return manifest;
 };
 
-const decodeBase64 = (value: string) => {
-  if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
-    throw new PetStoreError("The pet spritesheet is not valid base64 data.");
-  }
-  const buffer = Buffer.from(value, "base64");
-  if (!buffer.length || buffer.length > maxImageBytes) {
+const inspectImage = (image: Buffer) => {
+  if (!image.length || image.length > maxPetImageBytes) {
     throw new PetStoreError("Pet spritesheets must be 20 MiB or smaller.");
   }
-  return buffer;
+  try {
+    return inspectPetImage(image);
+  } catch (error) {
+    if (error instanceof PetImageValidationError) throw new PetStoreError(error.message);
+    throw error;
+  }
 };
+
+const diagnosticMessage = (error: unknown) => {
+  if (error instanceof PetStoreError) return error.message;
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") return "pet.json or the configured spritesheet is missing.";
+  if (error instanceof SyntaxError) return "pet.json is not valid JSON.";
+  return "CodexHub could not read this pet package.";
+};
+
+const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
 export const resolveCodexPetsRoot = (env: NodeJS.ProcessEnv = process.env, homeDirectory = os.homedir()) => {
   const configured = env.CODEX_HOME?.trim();
@@ -139,79 +118,74 @@ export class CodexPetStore {
     this.root = path.resolve(root);
   }
 
-  async list(): Promise<PetManifest[]> {
+  async list(): Promise<PetsPayload> {
     let entries;
     try {
       entries = await fs.readdir(this.root, { withFileTypes: true });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if (missing(error)) return { pets: [], invalidPets: [] };
       throw error;
     }
-    const pets = await Promise.all(entries
-      .filter((entry) => entry.isDirectory() && petIdPattern.test(entry.name) && !reservedPetIds.has(entry.name))
-      .map(async (entry) => {
-        try {
-          const manifest = parseManifest(JSON.parse(await fs.readFile(path.join(this.root, entry.name, "pet.json"), "utf8")));
-          if (manifest.id !== entry.name) return null;
-          await this.resolveImage(manifest.id, manifest);
-          return manifest;
-        } catch {
-          return null;
-        }
-      }));
-    return pets.filter((pet): pet is PetManifest => Boolean(pet))
-      .sort((left, right) => left.displayName.localeCompare(right.displayName));
+    const candidates = entries.filter((entry) => entry.isDirectory()
+      && !entry.name.startsWith(".")
+      && !reservedPetIds.has(entry.name));
+    const scanned = await Promise.all(candidates.map(async (entry) => {
+      if (!petIdPattern.test(entry.name)) {
+        return {
+          invalid: { id: entry.name, error: "The directory name is not a valid pet id." } satisfies InvalidPetPackage,
+        };
+      }
+      try {
+        const manifest = parseManifest(JSON.parse(await fs.readFile(path.join(this.root, entry.name, "pet.json"), "utf8")));
+        if (manifest.id !== entry.name) throw new PetStoreError("The manifest id does not match its directory name.");
+        await this.resolveImage(manifest.id, manifest);
+        return { pet: manifest };
+      } catch (error) {
+        return { invalid: { id: entry.name, error: diagnosticMessage(error) } satisfies InvalidPetPackage };
+      }
+    }));
+    return {
+      pets: scanned.flatMap((item) => item.pet ? [item.pet] : [])
+        .sort((left, right) => left.displayName.localeCompare(right.displayName)),
+      invalidPets: scanned.flatMap((item) => item.invalid ? [item.invalid] : [])
+        .sort((left, right) => left.id.localeCompare(right.id)),
+    };
   }
 
-  async install(input: PetImportInput): Promise<PetManifest> {
+  async install(input: PetInstallInput): Promise<PetManifest> {
     const manifest = parseManifest(input.manifest);
-    const image = decodeBase64(input.imageBase64);
-    const inspected = inspectImageHeader(image.subarray(0, 32));
-    if (!inspected) throw new PetStoreError("The pet spritesheet is not a valid PNG or WebP image.");
-    if (input.mimeType !== inspected.contentType) {
-      throw new PetStoreError(`The spritesheet content does not match ${input.mimeType}.`);
-    }
+    const inspected = inspectImage(input.image);
     assertImageContract(inspected, manifest);
+    return this.persistValidatedImage(manifest, input.image, input.replace === true);
+  }
 
-    const directory = path.join(this.root, manifest.id);
-    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-    const directoryStat = await fs.lstat(directory);
-    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
-      throw new PetStoreError(`Pet directory ${manifest.id} must not be a symbolic link.`, 409);
+  async installFromFile(input: PetFileInstallInput): Promise<PetManifest> {
+    const sourceStat = await fs.lstat(input.imagePath);
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || sourceStat.size <= 0 || sourceStat.size > maxPetImageBytes) {
+      throw new PetStoreError("Pet spritesheets must be regular files no larger than 20 MiB.");
     }
-    await fs.chmod(directory, 0o700);
-    const nonce = `${process.pid}-${Date.now()}`;
-    const imagePath = path.join(directory, manifest.spritesheetPath);
-    const manifestPath = path.join(directory, "pet.json");
-    const temporaryImagePath = `${imagePath}.${nonce}.tmp`;
-    const temporaryManifestPath = `${manifestPath}.${nonce}.tmp`;
-    try {
-      await fs.writeFile(temporaryImagePath, image, { mode: 0o600 });
-      await fs.writeFile(temporaryManifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
-      await fs.rename(temporaryImagePath, imagePath);
-      await fs.rename(temporaryManifestPath, manifestPath);
-      await Promise.all((await fs.readdir(directory, { withFileTypes: true }))
-        .filter((entry) => entry.isFile() && /\.(png|webp)$/i.test(entry.name) && entry.name !== manifest.spritesheetPath)
-        .map((entry) => fs.rm(path.join(directory, entry.name), { force: true })));
-      await Promise.all([fs.chmod(imagePath, 0o600), fs.chmod(manifestPath, 0o600)]);
-    } finally {
-      await Promise.all([
-        fs.rm(temporaryImagePath, { force: true }),
-        fs.rm(temporaryManifestPath, { force: true }),
-      ]);
-    }
-    return manifest;
+    return this.install({
+      image: await fs.readFile(input.imagePath),
+      manifest: input.manifest,
+      replace: input.replace,
+    });
   }
 
   async delete(id: string): Promise<boolean> {
     this.assertCustomId(id);
+    const directory = path.join(this.root, id);
+    let stat;
     try {
-      await fs.rm(path.join(this.root, id), { recursive: true });
-      return true;
+      stat = await fs.lstat(directory);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      if (missing(error)) return false;
       throw error;
     }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new PetStoreError(`Pet directory ${id} must be a regular directory.`, 409);
+    }
+    await this.moveToTrash(directory, id, "deleted");
+    return true;
   }
 
   async resolveImage(id: string, knownManifest?: PetManifest): Promise<ResolvedPetImage> {
@@ -221,24 +195,69 @@ export class CodexPetStore {
     if (manifest.id !== id) throw new PetStoreError("Pet manifest id does not match its directory.");
     const imagePath = path.join(directory, manifest.spritesheetPath);
     const imageStat = await fs.lstat(imagePath);
-    if (!imageStat.isFile() || imageStat.isSymbolicLink()) {
-      throw new PetStoreError("Pet spritesheets must be regular files.");
+    if (!imageStat.isFile() || imageStat.isSymbolicLink() || imageStat.size <= 0 || imageStat.size > maxPetImageBytes) {
+      throw new PetStoreError("Pet spritesheets must be regular files no larger than 20 MiB.");
     }
-    const file = await fs.open(imagePath, "r");
+    const image = await fs.readFile(imagePath);
+    if (image.length !== imageStat.size) throw new PetStoreError("The pet spritesheet changed while it was being validated.", 409);
+    const inspected = inspectImage(image);
+    assertImageContract(inspected, manifest);
+    return { ...inspected, path: imagePath, size: imageStat.size };
+  }
+
+  private async persistValidatedImage(manifest: PetManifest, image: Buffer, replace: boolean) {
+    await fs.mkdir(this.root, { recursive: true, mode: 0o700 });
+    await fs.chmod(this.root, 0o700);
+    const destination = path.join(this.root, manifest.id);
+    let existing = false;
     try {
-      const stat = await file.stat();
-      if (!stat.isFile() || stat.size <= 0 || stat.size > maxImageBytes) {
-        throw new PetStoreError("Pet spritesheets must be 20 MiB or smaller.");
+      const stat = await fs.lstat(destination);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        throw new PetStoreError(`Pet directory ${manifest.id} must be a regular directory.`, 409);
       }
-      const header = Buffer.alloc(32);
-      const { bytesRead } = await file.read(header, 0, header.length, 0);
-      const inspected = inspectImageHeader(header.subarray(0, bytesRead));
-      if (!inspected) throw new PetStoreError("The pet spritesheet is not a valid PNG or WebP image.");
-      assertImageContract(inspected, manifest);
-      return { ...inspected, path: imagePath, size: stat.size };
-    } finally {
-      await file.close();
+      existing = true;
+    } catch (error) {
+      if (!missing(error)) throw error;
     }
+    if (existing && !replace) {
+      throw new PetStoreError(`A pet with id ${manifest.id} is already installed. Confirm replacement to overwrite it.`, 409);
+    }
+
+    const temporaryDirectory = await fs.mkdtemp(path.join(this.root, `.${manifest.id}.install-`));
+    let previousTrashPath: string | null = null;
+    try {
+      await fs.chmod(temporaryDirectory, 0o700);
+      const imagePath = path.join(temporaryDirectory, manifest.spritesheetPath);
+      const manifestPath = path.join(temporaryDirectory, "pet.json");
+      await fs.writeFile(imagePath, image, { mode: 0o600, flag: "wx" });
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+      if (existing) previousTrashPath = await this.moveToTrash(destination, manifest.id, "replaced");
+      try {
+        await fs.rename(temporaryDirectory, destination);
+      } catch (error) {
+        if (previousTrashPath) await fs.rename(previousTrashPath, destination).catch(() => undefined);
+        if ((error as NodeJS.ErrnoException).code === "EEXIST" || (error as NodeJS.ErrnoException).code === "ENOTEMPTY") {
+          throw new PetStoreError(`A pet with id ${manifest.id} is already installed.`, 409);
+        }
+        throw error;
+      }
+    } finally {
+      await fs.rm(temporaryDirectory, { recursive: true, force: true });
+    }
+    return manifest;
+  }
+
+  private async moveToTrash(directory: string, id: string, reason: "deleted" | "replaced") {
+    const trashRoot = path.join(this.root, ".trash");
+    await fs.mkdir(trashRoot, { recursive: true, mode: 0o700 });
+    const trashStat = await fs.lstat(trashRoot);
+    if (!trashStat.isDirectory() || trashStat.isSymbolicLink()) {
+      throw new PetStoreError("The Codex pet trash location must be a regular directory.", 409);
+    }
+    await fs.chmod(trashRoot, 0o700);
+    const destination = path.join(trashRoot, `${id}-${Date.now()}-${reason}-${randomUUID()}`);
+    await fs.rename(directory, destination);
+    return destination;
   }
 
   private assertCustomId(id: string) {

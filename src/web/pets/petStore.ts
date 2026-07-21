@@ -1,5 +1,5 @@
-import type { PetImportInput, PetManifest } from "../../shared/petTypes.js";
-import { authToken } from "../helpers/core.js";
+import type { PetManifest, PetMutationPayload } from "../../shared/petTypes.js";
+import { authFetch, authToken } from "../helpers/core.js";
 import { petAtlasForVersion } from "./petAtlas.js";
 
 const redSparkSpriteUrl = new URL("./assets/red-spark.webp", import.meta.url).href;
@@ -10,6 +10,21 @@ export type PetDefinition = PetManifest & {
   kind: "builtin" | "imported";
   spriteUrl: string;
 };
+
+export type PetImportSelection = {
+  image: File;
+  manifest: PetManifest;
+};
+
+export class PetUploadError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "PetUploadError";
+    this.status = status;
+  }
+}
 
 const legacyDatabaseName = "codexhub-pets-v1";
 
@@ -73,19 +88,7 @@ const imageDimensions = async (file: File) => {
   }
 };
 
-const fileBase64 = (file: File) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => {
-    const result = typeof reader.result === "string" ? reader.result : "";
-    const separator = result.indexOf(",");
-    if (separator < 0) reject(new Error("Unable to encode the pet spritesheet."));
-    else resolve(result.slice(separator + 1));
-  };
-  reader.onerror = () => reject(reader.error ?? new Error("Unable to read the pet spritesheet."));
-  reader.readAsDataURL(file);
-});
-
-export const importedPetFromFiles = async (files: File[]): Promise<PetImportInput> => {
+export const importedPetFromFiles = async (files: File[]): Promise<PetImportSelection> => {
   const image = files.find((file) => file.type === "image/png" || file.type === "image/webp" || /\.(png|webp)$/i.test(file.name));
   if (!image) throw new Error("Choose a PNG or WebP spritesheet.");
 
@@ -106,10 +109,31 @@ export const importedPetFromFiles = async (files: File[]): Promise<PetImportInpu
     throw new Error(`Version ${manifest.spriteVersionNumber} pet spritesheets must be exactly ${atlas.width} x ${atlas.height} pixels.`);
   }
   return {
+    image,
     manifest,
-    imageBase64: await fileBase64(image),
-    mimeType: image.type === "image/png" || /\.png$/i.test(image.name) ? "image/png" : "image/webp",
   };
+};
+
+const errorMessage = (value: unknown, fallback: string) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return fallback;
+  const message = (value as Record<string, unknown>).error;
+  return typeof message === "string" && message.trim() ? message : fallback;
+};
+
+export const uploadImportedPet = async (selection: PetImportSelection, replace = false) => {
+  const form = new FormData();
+  form.append("manifest", JSON.stringify(selection.manifest));
+  form.append("spritesheet", selection.image, selection.image.name);
+  const response = await authFetch(`/api/pets${replace ? "?replace=true" : ""}`, {
+    method: "POST",
+    body: form,
+  });
+  const payload = await response.json().catch(() => null) as PetMutationPayload | null;
+  if (!response.ok) {
+    throw new PetUploadError(errorMessage(payload, `Pet import failed with HTTP ${response.status}.`), response.status);
+  }
+  if (!payload?.pet) throw new PetUploadError("The server did not return the installed pet.", 502);
+  return payload.pet;
 };
 
 export const clearLegacyPetDatabase = () => new Promise<void>((resolve) => {

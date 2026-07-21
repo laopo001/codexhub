@@ -1,5 +1,6 @@
 import React from "react";
 import { apiRoutes } from "../../shared/apiRoutes.js";
+import type { InvalidPetPackage } from "../../shared/petTypes.js";
 import type { OpenThreadState } from "../types.js";
 import { apiRouteJson } from "../helpers/core.js";
 import { parsePetCommand } from "./petCommands.js";
@@ -9,7 +10,9 @@ import {
   clearLegacyPetDatabase,
   importedPetFromFiles,
   installedPetDefinition,
+  PetUploadError,
   type PetDefinition,
+  uploadImportedPet,
 } from "./petStore.js";
 import type { PetPosition } from "./petMotion.js";
 import { derivePetActivities, headlinePetStatus } from "./petStatus.js";
@@ -47,6 +50,7 @@ const sameSet = (left: ReadonlySet<string>, right: ReadonlySet<string>) =>
 export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: string) => {
   const [preferences, setPreferences] = React.useState<PetPreferences>(loadPreferences);
   const [importedPets, setImportedPets] = React.useState<PetDefinition[]>([]);
+  const [invalidPets, setInvalidPets] = React.useState<InvalidPetPackage[]>([]);
   const [readyThreadIds, setReadyThreadIds] = React.useState<Set<string>>(() => new Set());
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [trayOpen, setTrayOpen] = React.useState(false);
@@ -57,13 +61,17 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
   const reloadImportedPets = React.useCallback(async () => {
     const payload = await apiRouteJson(apiRoutes.pets);
     setImportedPets(payload.pets.map(installedPetDefinition));
+    setInvalidPets(payload.invalidPets);
   }, []);
 
   React.useEffect(() => {
     let cancelled = false;
     void clearLegacyPetDatabase();
     void apiRouteJson(apiRoutes.pets).then((payload) => {
-      if (!cancelled) setImportedPets(payload.pets.map(installedPetDefinition));
+      if (!cancelled) {
+        setImportedPets(payload.pets.map(installedPetDefinition));
+        setInvalidPets(payload.invalidPets);
+      }
     }).catch((reason) => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
     });
@@ -164,25 +172,34 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
     return true;
   }, [openPicker, pets, preferences.enabled, selectPet, setEnabled]);
 
-  const importFiles = React.useCallback(async (files: File[]) => {
-    if (!files.length) return;
+  const importFiles = React.useCallback(async (files: File[], replace = false) => {
+    if (!files.length) return { status: "cancelled" as const };
     setImportBusy(true);
     setError("");
     try {
-      const pet = await importedPetFromFiles(files);
-      const payload = await apiRouteJson(apiRoutes.importPet, pet);
+      const selection = await importedPetFromFiles(files);
+      if (!replace && pets.some((pet) => pet.kind === "imported" && pet.id === selection.manifest.id)) {
+        return { status: "conflict" as const, pet: selection.manifest };
+      }
+      const installed = await uploadImportedPet(selection, replace);
       await reloadImportedPets();
       setPreferences((current) => ({
         ...current,
         enabled: true,
-        selectedPetId: payload.pet?.id ?? pet.manifest.id,
+        selectedPetId: installed.id,
       }));
+      return { status: "installed" as const, pet: installed };
     } catch (reason) {
+      if (!replace && reason instanceof PetUploadError && reason.status === 409) {
+        const selection = await importedPetFromFiles(files).catch(() => null);
+        if (selection) return { status: "conflict" as const, pet: selection.manifest };
+      }
       setError(reason instanceof Error ? reason.message : String(reason));
+      return { status: "failed" as const };
     } finally {
       setImportBusy(false);
     }
-  }, [reloadImportedPets]);
+  }, [pets, reloadImportedPets]);
 
   const removePet = React.useCallback(async (id: string) => {
     if (pets.some((pet) => pet.id === id && pet.kind === "builtin")) return;
@@ -219,6 +236,7 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
     handleLocalComposerCommand,
     importBusy,
     importFiles,
+    invalidPets,
     markThreadRead,
     openPicker,
     pets,

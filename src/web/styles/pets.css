@@ -53,8 +53,9 @@
 .petStatusBubble {
   position: absolute;
   z-index: 3;
-  top: 0;
-  right: 8px;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
   border: 1px solid #d9e2d5;
   border-radius: 999px;
   background: rgb(255 255 255 / 0.94);
@@ -279,6 +280,20 @@
   font-size: 12px;
 }
 
+.petPickerWarning {
+  border: 1px solid #e7cf9f;
+  border-radius: 8px;
+  background: #fffaf0;
+  color: #75511d;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.petPickerWarning strong { display: block; }
+.petPickerWarning ul { margin: 5px 0 0; padding-left: 18px; }
+.petPickerWarning li + li { margin-top: 3px; }
+.petPickerWarning code { font-size: 11px; }
+
 .petGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -317,6 +332,8 @@
   place-items: center;
   overflow: hidden;
 }
+
+.petCardPreviewPlaceholder { color: #aab5a7; }
 
 .petCardText { display: grid; gap: 3px; min-width: 0; }
 .petCardText strong { overflow: hidden; color: #263226; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }

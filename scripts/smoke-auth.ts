@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { apiJson } from "./smoke/support/http.js";
 import { findFreePort } from "./smoke/support/network.js";
 import { delay } from "./smoke/support/time.js";
@@ -20,14 +21,11 @@ const main = async () => {
     id: "auth-smoke-pet",
     displayName: "Auth Smoke Pet",
     description: "Tests authenticated pet image delivery",
-    spriteVersionNumber: 1,
-    spritesheetPath: "spritesheet.png"
+    spriteVersionNumber: 2,
+    spritesheetPath: "spritesheet.webp"
   }));
-  const petImage = Buffer.alloc(32);
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(petImage);
-  petImage.writeUInt32BE(1536, 16);
-  petImage.writeUInt32BE(1872, 20);
-  await writeFile(path.join(petDirectory, "spritesheet.png"), petImage);
+  const petImage = await readFile(fileURLToPath(new URL("../src/web/pets/assets/red-spark.webp", import.meta.url)));
+  await writeFile(path.join(petDirectory, "spritesheet.webp"), petImage);
 
   process.env.CODEX_HUB_DATA_DIR = dataDir;
   process.env.CODEX_HOME = codexHome;
@@ -72,6 +70,7 @@ const main = async () => {
 
     await assertFileQueryAuth(apiBase, token, previewPath);
     await assertPetQueryAuth(apiBase, token);
+    await assertPetMultipartCrud(apiBase, token, petImage);
     await assertRegisteredBootstrapBearer(apiBase, token);
     await assertRealtimeWebSocket(apiBase, token);
     await assertMachineWebSocket(apiBase, token);
@@ -81,15 +80,68 @@ const main = async () => {
   }
 };
 
+const petUploadForm = (image: Buffer) => {
+  const form = new FormData();
+  form.append("manifest", JSON.stringify({
+    id: "auth-import-pet",
+    displayName: "Auth Import Pet",
+    description: "Tests authenticated streaming pet imports",
+    spriteVersionNumber: 2,
+    spritesheetPath: "spritesheet.webp",
+  }));
+  const imageBuffer = new ArrayBuffer(image.length);
+  new Uint8Array(imageBuffer).set(image);
+  form.append("spritesheet", new Blob([imageBuffer], { type: "image/webp" }), "spritesheet.webp");
+  return form;
+};
+
+const assertPetMultipartCrud = async (apiBase: string, token: string, image: Buffer) => {
+  const endpoint = new URL("/api/pets", apiBase);
+  const unauthorized = await fetch(endpoint, {
+    method: "POST",
+    body: petUploadForm(image),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const unauthorizedBody = await unauthorized.text();
+  if (unauthorized.status !== 401) throw new Error(`unauthorized pet import returned HTTP ${unauthorized.status}: ${unauthorizedBody}`);
+
+  const importPet = (replace = false) => fetch(new URL(`/api/pets${replace ? "?replace=true" : ""}`, apiBase), {
+    ...authInit(token),
+    method: "POST",
+    body: petUploadForm(image),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const created = await importPet();
+  const createdBody = await created.text();
+  if (created.status !== 200) throw new Error(`pet multipart import failed: HTTP ${created.status} ${createdBody}`);
+  const conflict = await importPet();
+  const conflictBody = await conflict.text();
+  if (conflict.status !== 409) throw new Error(`pet replacement was not protected: HTTP ${conflict.status} ${conflictBody}`);
+  const replaced = await importPet(true);
+  const replacedBody = await replaced.text();
+  if (replaced.status !== 200) throw new Error(`confirmed pet replacement failed: HTTP ${replaced.status} ${replacedBody}`);
+
+  const removed = await fetch(new URL("/api/pets/auth-import-pet", apiBase), {
+    ...authInit(token),
+    method: "DELETE",
+    signal: AbortSignal.timeout(30_000),
+  });
+  const payload = await removed.json() as { deleted?: boolean; trashed?: boolean };
+  if (!removed.ok || !payload.deleted || !payload.trashed) {
+    throw new Error(`pet recoverable deletion failed: HTTP ${removed.status} ${JSON.stringify(payload)}`);
+  }
+};
+
 const assertPetQueryAuth = async (apiBase: string, token: string) => {
   const pathname = "/api/pets/auth-smoke-pet/spritesheet";
   await expectStatus(apiBase, pathname, 401);
   const url = new URL(pathname, apiBase);
   url.searchParams.set("codexhub_token", token);
   const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-  if (response.status !== 200 || response.headers.get("content-type") !== "image/png") {
+  if (response.status !== 200 || response.headers.get("content-type") !== "image/webp") {
     throw new Error(`pet query auth failed: HTTP ${response.status} ${await response.text()}`);
   }
+  await response.arrayBuffer();
 };
 
 const assertFileQueryAuth = async (apiBase: string, token: string, previewPath: string) => {

@@ -1,4 +1,5 @@
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -285,6 +286,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     flushState: () => state.flush()
   });
   await app.register(cors, { origin: true });
+  await app.register(multipart, {
+    limits: { fieldSize: 32 * 1024, fields: 1, fileSize: 20 * 1024 * 1024, files: 1, parts: 2 },
+  });
   await app.register(websocket);
   app.addHook("onRequest", async (request, reply) => {
     if (!serverAuthToken || isPublicRequest(request)) return;

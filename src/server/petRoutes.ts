@@ -1,49 +1,99 @@
-import type { FastifyInstance } from "fastify";
-import { createReadStream } from "node:fs";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { z } from "zod";
-import { CodexPetStore, PetStoreError } from "../core/petStore.js";
-import type { PetImportInput, PetMutationPayload, PetsPayload } from "../shared/petTypes.js";
-
-const maxBase64Length = Math.ceil((20 * 1024 * 1024) / 3) * 4;
-
-const manifestSchema = z.object({
-  id: z.string(),
-  displayName: z.string(),
-  description: z.string(),
-  spriteVersionNumber: z.union([z.literal(1), z.literal(2)]),
-  spritesheetPath: z.string(),
-}).strict();
-
-const importSchema = z.object({
-  manifest: manifestSchema,
-  imageBase64: z.string().min(1).max(maxBase64Length),
-  mimeType: z.union([z.literal("image/png"), z.literal("image/webp")]),
-}).strict();
+import { CodexPetStore, maxPetImageBytes, PetStoreError } from "../core/petStore.js";
+import type { PetMutationPayload, PetsPayload } from "../shared/petTypes.js";
 
 const petIdSchema = z.object({ id: z.string().min(1) }).strict();
+const maxManifestBytes = 32 * 1024;
 
-const petError = (error: unknown) => error instanceof PetStoreError
-  ? { status: error.statusCode, message: error.message }
-  : { status: (error as NodeJS.ErrnoException).code === "ENOENT" ? 404 : 500, message: error instanceof Error ? error.message : String(error) };
+const petError = (error: unknown) => {
+  if (error instanceof PetStoreError) return { status: error.statusCode, message: error.message };
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  if (typeof statusCode === "number" && statusCode >= 400 && statusCode < 600) {
+    return { status: statusCode, message: error instanceof Error ? error.message : String(error) };
+  }
+  return {
+    status: (error as NodeJS.ErrnoException).code === "ENOENT" ? 404 : 500,
+    message: error instanceof Error ? error.message : String(error),
+  };
+};
+
+const replacementRequested = (requestUrl: string) => {
+  const value = new URL(requestUrl, "http://codexhub.local").searchParams.get("replace");
+  if (value !== null && value !== "true") throw new PetStoreError("replace must be omitted or set to true.");
+  return value === "true";
+};
+
+const readMultipartPet = async (request: FastifyRequest) => {
+  if (!request.isMultipart()) throw new PetStoreError("Pet imports must use multipart/form-data.", 415);
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "codexhub-pet-upload-"));
+  const imagePath = path.join(temporaryDirectory, "spritesheet.upload");
+  let manifest: unknown = null;
+  let hasImage = false;
+  try {
+    const parts = request.parts({
+      limits: { fieldSize: maxManifestBytes, fields: 1, fileSize: maxPetImageBytes, files: 1, parts: 2 },
+    });
+    for await (const part of parts) {
+      if (part.type === "file") {
+        if (part.fieldname !== "spritesheet" || hasImage) {
+          part.file.resume();
+          throw new PetStoreError("The multipart upload must contain one spritesheet file.");
+        }
+        hasImage = true;
+        await pipeline(part.file, createWriteStream(imagePath, { flags: "wx", mode: 0o600 }));
+        if (part.file.truncated) throw new PetStoreError("Pet spritesheets must be 20 MiB or smaller.", 413);
+      } else {
+        if (part.fieldname !== "manifest" || manifest !== null || typeof part.value !== "string") {
+          throw new PetStoreError("The multipart upload must contain one manifest field.");
+        }
+        try {
+          manifest = JSON.parse(part.value);
+        } catch {
+          throw new PetStoreError("pet.json is not valid JSON.");
+        }
+      }
+    }
+    if (!hasImage || manifest === null) throw new PetStoreError("Select pet.json and its PNG or WebP spritesheet.");
+    return { imagePath, manifest, temporaryDirectory };
+  } catch (error) {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+    throw error;
+  }
+};
 
 export const registerPetRoutes = (app: FastifyInstance, store = new CodexPetStore()) => {
-  app.get("/api/pets", async () => ({ pets: await store.list() } satisfies PetsPayload));
+  app.get("/api/pets", async () => await store.list() satisfies PetsPayload);
 
   app.post("/api/pets", async (request, reply) => {
+    let temporaryDirectory: string | null = null;
     try {
-      const pet = await store.install(importSchema.parse(request.body) satisfies PetImportInput);
+      const upload = await readMultipartPet(request);
+      temporaryDirectory = upload.temporaryDirectory;
+      const pet = await store.installFromFile({
+        imagePath: upload.imagePath,
+        manifest: upload.manifest,
+        replace: replacementRequested(request.url),
+      });
       return { pet } satisfies PetMutationPayload;
     } catch (error) {
-      if (error instanceof z.ZodError) throw error;
       const response = petError(error);
       return reply.code(response.status).send({ error: response.message });
+    } finally {
+      if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
     }
   });
 
   app.delete("/api/pets/:id", async (request, reply) => {
     const { id } = petIdSchema.parse(request.params);
     try {
-      return { deleted: await store.delete(id) } satisfies PetMutationPayload;
+      const deleted = await store.delete(id);
+      return { deleted, trashed: deleted } satisfies PetMutationPayload;
     } catch (error) {
       const response = petError(error);
       return reply.code(response.status).send({ error: response.message });

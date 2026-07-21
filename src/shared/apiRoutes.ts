@@ -4,7 +4,6 @@ import type {
   MachinesPayload,
   ParentRegistrationConnectInput,
   ParentRegistrationPayload,
-  PetImportInput,
   PetMutationPayload,
   PetsPayload,
   PluginsPayload,
@@ -149,7 +148,6 @@ export const apiRoutes = {
   tasks: get<TasksPayload>("/api/tasks"),
   plugins: get<PluginsPayload>("/api/plugins"),
   pets: get<PetsPayload>("/api/pets"),
-  importPet: post<PetImportInput, PetMutationPayload>("/api/pets"),
   deletePet: del<PetMutationPayload, (petId: string) => string>(
     (petId) => `/api/pets/${encode(petId)}`
   ),

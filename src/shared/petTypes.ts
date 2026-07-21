@@ -8,17 +8,18 @@ export type PetManifest = {
   spritesheetPath: string;
 };
 
-export type PetsPayload = {
-  pets: PetManifest[];
+export type InvalidPetPackage = {
+  id: string;
+  error: string;
 };
 
-export type PetImportInput = {
-  manifest: PetManifest;
-  imageBase64: string;
-  mimeType: "image/png" | "image/webp";
+export type PetsPayload = {
+  invalidPets: InvalidPetPackage[];
+  pets: PetManifest[];
 };
 
 export type PetMutationPayload = {
   pet?: PetManifest;
   deleted?: boolean;
+  trashed?: boolean;
 };
