@@ -45,26 +45,16 @@ const userMessage = (record: CodexRecord) => {
   return payload.type === "message" && payload.role === "user";
 };
 
-const failedRecord = (record: CodexRecord) => {
-  if (record.type === "error") return true;
-  const payload = asRecord(record.payload);
-  if (!payload) return false;
-  const type = payloadType(record);
-  if (type === "turn_aborted") return true;
-  if (asRecord(payload.error)?.message) return true;
-  return normalizedStatus(payload.status) === "failed"
-    && type !== "file_change"
-    && type !== "user_input_request";
-};
-
 const threadHasPendingInteraction = (records: CodexRecord[]) =>
   records.some(pendingInteraction);
 
 const threadLatestTurnFailed = (records: CodexRecord[]) => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
-    if (failedRecord(record)) return true;
     if (userMessage(record)) return false;
+    const type = payloadType(record);
+    if (type === "task_complete") return false;
+    if (type === "turn_aborted" || record.type === "error") return true;
   }
   return false;
 };

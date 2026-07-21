@@ -73,11 +73,11 @@ test("pet position stays inside the viewport and keeps the desktop default", () 
   assert.deepEqual(defaultPetPosition({ width: 800, height: 600 }, false), { x: 654, y: 358 });
 });
 
-test("pet commands stay local and support toggle, picker, off, and direct selection", () => {
+test("pet commands stay local and support toggle, off, and direct selection", () => {
   assert.deepEqual(parsePetCommand("/pet"), { action: "toggle" });
-  assert.deepEqual(parsePetCommand(" /pets "), { action: "open_picker" });
-  assert.deepEqual(parsePetCommand("/pets off"), { action: "off" });
-  assert.deepEqual(parsePetCommand("/pets Little Spud"), { action: "select", query: "Little Spud" });
+  assert.deepEqual(parsePetCommand("/pet off"), { action: "off" });
+  assert.deepEqual(parsePetCommand("/pet Little Spud"), { action: "select", query: "Little Spud" });
+  assert.equal(parsePetCommand("/pets"), null);
   assert.equal(parsePetCommand("please /pet"), null);
 });
 
@@ -120,11 +120,23 @@ test("pet status prioritizes input, failure, ready, and running", () => {
     type: "event_msg",
     payload: { type: "turn_aborted", status: "failed" },
   };
+  const failedTool: CodexRecord = {
+    id: "failed-tool",
+    type: "response_item",
+    payload: { type: "local_shell_call", status: "failed", exit_code: 1 },
+  };
+  const completedTurn: CodexRecord = {
+    id: "completed-turn",
+    type: "event_msg",
+    payload: { type: "task_complete", status: "completed" },
+  };
   assert.equal(petStatusForThread(thread("thread-1", [pendingApproval], true), true), "needs_input");
   assert.equal(petStatusForThread(thread("thread-2", [failed]), true), "blocked");
   assert.equal(petStatusForThread(thread("thread-3"), true), "ready");
   assert.equal(petStatusForThread(thread("thread-4", [], true), false), "running");
   assert.equal(petStatusForThread(thread("thread-5"), false), "idle");
+  assert.equal(petStatusForThread(thread("thread-6", [failedTool, completedTurn]), true), "ready");
+  assert.equal(petStatusForThread(thread("thread-7", [failedTool]), false), "idle");
   assert.equal(petAnimationForStatus("needs_input"), "waiting");
   assert.equal(petAnimationForStatus("blocked"), "failed");
 });

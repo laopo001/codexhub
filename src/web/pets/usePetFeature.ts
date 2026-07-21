@@ -158,10 +158,6 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
       setEnabled(false);
       return true;
     }
-    if (command.action === "open_picker") {
-      openPicker();
-      return true;
-    }
     const query = command.query.toLowerCase();
     const match = pets.find((pet) => pet.id.toLowerCase() === query || pet.displayName.toLowerCase() === query);
     if (match) selectPet(match.id);
@@ -170,7 +166,7 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
       setPickerOpen(true);
     }
     return true;
-  }, [openPicker, pets, preferences.enabled, selectPet, setEnabled]);
+  }, [pets, preferences.enabled, selectPet, setEnabled]);
 
   const importFiles = React.useCallback(async (files: File[], replace = false) => {
     if (!files.length) return { status: "cancelled" as const };
