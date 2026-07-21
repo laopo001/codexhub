@@ -243,17 +243,29 @@
 
 .petEnabledControl {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   color: #344334;
   font-size: 12px;
   font-weight: 750;
 }
 
-.petEnabledControl input { accent-color: #d95f36; }
+.petEnabledControl input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  accent-color: #d95f36;
+}
+
+.petEnabledControl span { white-space: nowrap; }
 
 .petImportButton {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   min-height: 34px;
