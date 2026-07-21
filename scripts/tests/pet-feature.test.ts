@@ -13,7 +13,7 @@ import {
 import { parsePetCommand } from "../../src/web/pets/petCommands.js";
 import { clampPetPosition, defaultPetPosition } from "../../src/web/pets/petMotion.js";
 import { derivePetActivities, petAnimationForStatus, petStatusForThread } from "../../src/web/pets/petStatus.js";
-import { parsePetManifest } from "../../src/web/pets/petStore.js";
+import { nextAvailablePetManifest, parsePetManifest } from "../../src/web/pets/petStore.js";
 import { builtinPet, builtinPets } from "../../src/web/pets/petStore.js";
 
 const thread = (threadId: string, records: CodexRecord[] = [], running = false): OpenThreadState => ({
@@ -113,6 +113,36 @@ test("Codex pet manifests use safe ids and the selected spritesheet", () => {
     () => parsePetManifest({ id: "future", spriteVersionNumber: 3 }, "spritesheet.webp"),
     /must be 1 or 2/
   );
+});
+
+test("duplicate pet names receive the next available numeric suffix", () => {
+  const manifest = {
+    id: "little-spark",
+    displayName: "Little Spark",
+    description: "A helper",
+    spriteVersionNumber: 2 as const,
+    spritesheetPath: "spritesheet.webp",
+  };
+  assert.deepEqual(nextAvailablePetManifest(manifest, []), manifest);
+  assert.deepEqual(nextAvailablePetManifest(manifest, [
+    manifest,
+    { id: "little-spark-1", displayName: "Little Spark 1" },
+    { id: "little-spark-2", displayName: "Little Spark 2" },
+  ]), {
+    ...manifest,
+    id: "little-spark-3",
+    displayName: "Little Spark 3",
+  });
+  const longManifest = {
+    ...manifest,
+    id: "a".repeat(64),
+    displayName: "A".repeat(120),
+  };
+  const numbered = nextAvailablePetManifest(longManifest, [longManifest]);
+  assert.equal(numbered.id.length, 64);
+  assert.equal(numbered.displayName.length, 120);
+  assert.match(numbered.id, /-1$/);
+  assert.match(numbered.displayName, / 1$/);
 });
 
 test("pet status prioritizes input, failure, ready, and running", () => {

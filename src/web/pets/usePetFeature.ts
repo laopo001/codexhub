@@ -1,6 +1,6 @@
 import React from "react";
 import { apiRoutes } from "../../shared/apiRoutes.js";
-import { defaultPetId, type InvalidPetPackage } from "../../shared/petTypes.js";
+import { defaultPetId, type InvalidPetPackage, type PetManifest } from "../../shared/petTypes.js";
 import type { AppSettings, OpenThreadState } from "../types.js";
 import { apiRouteJson } from "../helpers/core.js";
 import { parsePetCommand } from "./petCommands.js";
@@ -10,6 +10,7 @@ import {
   clearLegacyPetDatabase,
   importedPetFromFiles,
   installedPetDefinition,
+  nextAvailablePetManifest,
   PetUploadError,
   type PetDefinition,
   uploadImportedPet,
@@ -40,6 +41,8 @@ const loadPreferences = (): PetPreferences => {
 
 const sameSet = (left: ReadonlySet<string>, right: ReadonlySet<string>) =>
   left.size === right.size && [...left].every((item) => right.has(item));
+
+type PetImportConflictAction = "reject" | "rename" | "replace";
 
 export const usePetFeature = (
   openThreads: OpenThreadState[],
@@ -215,24 +218,52 @@ export const usePetFeature = (
     return true;
   }, [enabled, pets, selectPet, setEnabled]);
 
-  const importFiles = React.useCallback(async (files: File[], replace = false) => {
+  const importFiles = React.useCallback(async (files: File[], conflictAction: PetImportConflictAction = "reject") => {
     if (!files.length) return { status: "cancelled" as const };
     setImportBusy(true);
     setError("");
     try {
       const selection = await importedPetFromFiles(files);
-      if (!replace && pets.some((pet) => pet.kind === "imported" && pet.id === selection.manifest.id)) {
-        return { status: "conflict" as const, pet: selection.manifest };
+      if (conflictAction === "reject" && pets.some((pet) => pet.kind === "imported" && pet.id === selection.manifest.id)) {
+        return {
+          status: "conflict" as const,
+          pet: selection.manifest,
+          renamedPet: nextAvailablePetManifest(selection.manifest, pets)
+        };
       }
-      const installed = await uploadImportedPet(selection, replace);
+      const attemptedPets: PetManifest[] = [...pets];
+      let uploadSelection = conflictAction === "rename"
+        ? { ...selection, manifest: nextAvailablePetManifest(selection.manifest, attemptedPets) }
+        : selection;
+      let installed: PetManifest | null = null;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try {
+          installed = await uploadImportedPet(uploadSelection, conflictAction === "replace");
+          break;
+        } catch (reason) {
+          if (conflictAction !== "rename" || !(reason instanceof PetUploadError) || reason.status !== 409) throw reason;
+          attemptedPets.push(uploadSelection.manifest);
+          uploadSelection = {
+            ...selection,
+            manifest: nextAvailablePetManifest(selection.manifest, attemptedPets)
+          };
+        }
+      }
+      if (!installed) throw new Error(`Unable to find an available name for ${selection.manifest.displayName}.`);
       await reloadImportedPets();
       setSelectedPetId(installed.id);
       setEnabled(true);
       return { status: "installed" as const, pet: installed };
     } catch (reason) {
-      if (!replace && reason instanceof PetUploadError && reason.status === 409) {
+      if (conflictAction === "reject" && reason instanceof PetUploadError && reason.status === 409) {
         const selection = await importedPetFromFiles(files).catch(() => null);
-        if (selection) return { status: "conflict" as const, pet: selection.manifest };
+        if (selection) {
+          return {
+            status: "conflict" as const,
+            pet: selection.manifest,
+            renamedPet: nextAvailablePetManifest(selection.manifest, pets)
+          };
+        }
       }
       setError(reason instanceof Error ? reason.message : String(reason));
       return { status: "failed" as const };

@@ -16,6 +16,33 @@ export type PetImportSelection = {
   manifest: PetManifest;
 };
 
+const numberedPetId = (id: string, index: number) => {
+  const suffix = `-${index}`;
+  return `${id.slice(0, 64 - suffix.length)}${suffix}`;
+};
+
+const numberedPetDisplayName = (displayName: string, index: number) => {
+  const suffix = ` ${index}`;
+  return `${displayName.slice(0, 120 - suffix.length).trimEnd()}${suffix}`;
+};
+
+export const nextAvailablePetManifest = (
+  manifest: PetManifest,
+  installedPets: ReadonlyArray<Pick<PetManifest, "id" | "displayName">>
+): PetManifest => {
+  const installedIds = new Set(installedPets.map((pet) => pet.id));
+  const installedNames = new Set(installedPets.map((pet) => pet.displayName.trim().toLowerCase()));
+  if (!installedIds.has(manifest.id) && !installedNames.has(manifest.displayName.trim().toLowerCase())) return manifest;
+  for (let index = 1; index < 10_000; index += 1) {
+    const id = numberedPetId(manifest.id, index);
+    const displayName = numberedPetDisplayName(manifest.displayName, index);
+    if (!installedIds.has(id) && !installedNames.has(displayName.toLowerCase())) {
+      return { ...manifest, id, displayName };
+    }
+  }
+  throw new Error(`Unable to find an available name for ${manifest.displayName}.`);
+};
+
 export class PetUploadError extends Error {
   readonly status: number;
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal } from "antd";
+import { Button, Modal } from "antd";
 import { Check, PawPrint, Trash2, Upload, X } from "lucide-react";
 import {
   petAnimationRows,
@@ -344,13 +344,24 @@ export const PetPicker = ({ controller }: { controller: PetFeatureController }) 
   const importFiles = React.useCallback(async (files: File[]) => {
     const result = await controller.importFiles(files);
     if (result.status !== "conflict") return;
-    Modal.confirm({
-      title: `Replace ${result.pet.displayName}?`,
-      content: `A pet with id “${result.pet.id}” is already installed. Its current package will be moved to ~/.codex/pets/.trash before replacement.`,
-      okText: "Replace pet",
+    const modal = Modal.confirm({
+      title: `${result.pet.displayName} already exists`,
+      content: `Keep both to import this pet as “${result.renamedPet.displayName}” with id “${result.renamedPet.id}”. Replacing moves the current package to ~/.codex/pets/.trash.`,
       cancelText: "Keep current",
-      okButtonProps: { danger: true },
-      onOk: async () => { await controller.importFiles(files, true); },
+      focusable: { autoFocusButton: null },
+      footer: (_originNode, { CancelBtn }) => (
+        <>
+          <CancelBtn />
+          <Button danger onClick={() => {
+            modal.destroy();
+            void controller.importFiles(files, "replace");
+          }}>Replace pet</Button>
+          <Button type="primary" onClick={() => {
+            modal.destroy();
+            void controller.importFiles(files, "rename");
+          }}>Keep both</Button>
+        </>
+      ),
     });
   }, [controller]);
 
