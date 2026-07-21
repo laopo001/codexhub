@@ -53,7 +53,7 @@
 .petStatusBubble {
   position: absolute;
   z-index: 3;
-  top: -8px;
+  top: -16px;
   left: 50%;
   transform: translateX(-50%);
   border: 1px solid #d9e2d5;
