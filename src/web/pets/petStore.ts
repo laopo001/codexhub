@@ -1,59 +1,17 @@
-import { petAtlas } from "./petAtlas.js";
+import type { PetImportInput, PetManifest } from "../../shared/petTypes.js";
+import { authToken } from "../helpers/core.js";
+import { petAtlasForVersion } from "./petAtlas.js";
 
-export type PetManifest = {
-  id: string;
-  displayName: string;
-  description: string;
-  spritesheetPath: string;
-};
+const redSparkSpriteUrl = new URL("./assets/red-spark.webp", import.meta.url).href;
 
-export type StoredPet = PetManifest & {
-  blob: Blob;
-  mimeType: string;
-  installedAt: string;
-};
+export type { PetManifest } from "../../shared/petTypes.js";
 
 export type PetDefinition = PetManifest & {
   kind: "builtin" | "imported";
-  spriteUrl?: string;
+  spriteUrl: string;
 };
 
-const databaseName = "codexhub-pets-v1";
-const storeName = "pets";
-
-const requestResult = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
-  request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error ?? new Error("Pet database request failed."));
-});
-
-const openDatabase = () => new Promise<IDBDatabase>((resolve, reject) => {
-  if (!window.indexedDB) {
-    reject(new Error("This browser does not support persistent pet storage."));
-    return;
-  }
-  const request = window.indexedDB.open(databaseName, 1);
-  request.onupgradeneeded = () => {
-    const database = request.result;
-    if (!database.objectStoreNames.contains(storeName)) database.createObjectStore(storeName, { keyPath: "id" });
-  };
-  request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error ?? new Error("Unable to open the pet database."));
-});
-
-const withStore = async <T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>) => {
-  const database = await openDatabase();
-  try {
-    return await requestResult(action(database.transaction(storeName, mode).objectStore(storeName)));
-  } finally {
-    database.close();
-  }
-};
-
-export const loadStoredPets = () => withStore("readonly", (store) => store.getAll() as IDBRequest<StoredPet[]>);
-
-export const saveStoredPet = (pet: StoredPet) => withStore("readwrite", (store) => store.put(pet));
-
-export const deleteStoredPet = (id: string) => withStore("readwrite", (store) => store.delete(id));
+const legacyDatabaseName = "codexhub-pets-v1";
 
 const jsonRecord = (value: unknown) => value && typeof value === "object" && !Array.isArray(value)
   ? value as Record<string, unknown>
@@ -75,15 +33,20 @@ export const parsePetManifest = (value: unknown, fallbackImageName: string): Pet
   const record = jsonRecord(value);
   const fallbackName = fallbackImageName.replace(/\.(png|webp)$/i, "") || "Custom pet";
   const id = petIdFromName(nonEmptyString(record?.id) || fallbackName);
-  if (id === "codexhub-spud") throw new Error("That pet id is reserved by CodexHub.");
+  if (id === "red-spark") throw new Error("That pet id is reserved by CodexHub.");
   const spritesheetPath = nonEmptyString(record?.spritesheetPath) || fallbackImageName;
   if (spritesheetPath.split(/[\\/]/).pop() !== fallbackImageName) {
     throw new Error(`pet.json expects ${spritesheetPath}, but ${fallbackImageName} was selected.`);
+  }
+  const spriteVersionValue = record?.spriteVersionNumber;
+  if (spriteVersionValue !== undefined && spriteVersionValue !== 1 && spriteVersionValue !== 2) {
+    throw new Error("pet.json spriteVersionNumber must be 1 or 2.");
   }
   return {
     id,
     displayName: nonEmptyString(record?.displayName) || fallbackName,
     description: nonEmptyString(record?.description) || "Imported Codex-compatible pet",
+    spriteVersionNumber: spriteVersionValue === 2 ? 2 : 1,
     spritesheetPath: fallbackImageName,
   };
 };
@@ -110,14 +73,21 @@ const imageDimensions = async (file: File) => {
   }
 };
 
-export const importedPetFromFiles = async (files: File[]): Promise<StoredPet> => {
+const fileBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = typeof reader.result === "string" ? reader.result : "";
+    const separator = result.indexOf(",");
+    if (separator < 0) reject(new Error("Unable to encode the pet spritesheet."));
+    else resolve(result.slice(separator + 1));
+  };
+  reader.onerror = () => reject(reader.error ?? new Error("Unable to read the pet spritesheet."));
+  reader.readAsDataURL(file);
+});
+
+export const importedPetFromFiles = async (files: File[]): Promise<PetImportInput> => {
   const image = files.find((file) => file.type === "image/png" || file.type === "image/webp" || /\.(png|webp)$/i.test(file.name));
   if (!image) throw new Error("Choose a PNG or WebP spritesheet.");
-  if (image.size > petAtlas.maxBytes) throw new Error("Pet spritesheets must be 20 MiB or smaller.");
-  const dimensions = await imageDimensions(image);
-  if (dimensions.width !== petAtlas.width || dimensions.height !== petAtlas.height) {
-    throw new Error(`Pet spritesheets must be exactly ${petAtlas.width} x ${petAtlas.height} pixels.`);
-  }
 
   const manifestFile = files.find((file) => /(^|\/)pet\.json$/i.test(file.name) || file.name.toLowerCase() === "pet.json");
   let manifestValue: unknown = null;
@@ -129,18 +99,55 @@ export const importedPetFromFiles = async (files: File[]): Promise<StoredPet> =>
     }
   }
   const manifest = parsePetManifest(manifestValue, image.name);
+  const atlas = petAtlasForVersion(manifest.spriteVersionNumber);
+  if (image.size > atlas.maxBytes) throw new Error("Pet spritesheets must be 20 MiB or smaller.");
+  const dimensions = await imageDimensions(image);
+  if (dimensions.width !== atlas.width || dimensions.height !== atlas.height) {
+    throw new Error(`Version ${manifest.spriteVersionNumber} pet spritesheets must be exactly ${atlas.width} x ${atlas.height} pixels.`);
+  }
   return {
-    ...manifest,
-    blob: image,
-    mimeType: image.type || (/\.png$/i.test(image.name) ? "image/png" : "image/webp"),
-    installedAt: new Date().toISOString(),
+    manifest,
+    imageBase64: await fileBase64(image),
+    mimeType: image.type === "image/png" || /\.png$/i.test(image.name) ? "image/png" : "image/webp",
   };
 };
 
-export const builtinPet: PetDefinition = {
-  id: "codexhub-spud",
-  displayName: "小地瓜",
-  description: "CodexHub built-in test pet",
-  spritesheetPath: "",
-  kind: "builtin",
+export const clearLegacyPetDatabase = () => new Promise<void>((resolve) => {
+  if (typeof window === "undefined" || !window.indexedDB) {
+    resolve();
+    return;
+  }
+  const request = window.indexedDB.deleteDatabase(legacyDatabaseName);
+  request.onsuccess = () => resolve();
+  request.onerror = () => resolve();
+  request.onblocked = () => resolve();
+});
+
+export const petSpriteUrl = (id: string) => {
+  const pathname = `/api/pets/${encodeURIComponent(id)}/spritesheet`;
+  if (typeof window === "undefined") return pathname;
+  const token = authToken();
+  if (!token) return pathname;
+  const url = new URL(pathname, window.location.origin);
+  url.searchParams.set("codexhub_token", token);
+  return `${url.pathname}${url.search}`;
 };
+
+export const installedPetDefinition = (manifest: PetManifest): PetDefinition => ({
+  ...manifest,
+  kind: "imported",
+  spriteUrl: petSpriteUrl(manifest.id),
+});
+
+export const redSparkPet: PetDefinition = {
+  id: "red-spark",
+  displayName: "Red Spark",
+  description: "A red-hatted chibi adventurer companion with a backpack, map, and white mascot bomb.",
+  spriteVersionNumber: 2,
+  spritesheetPath: "spritesheet.webp",
+  kind: "builtin",
+  spriteUrl: redSparkSpriteUrl,
+};
+
+export const builtinPet = redSparkPet;
+export const builtinPets = [redSparkPet] as const;

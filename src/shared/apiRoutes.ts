@@ -4,6 +4,9 @@ import type {
   MachinesPayload,
   ParentRegistrationConnectInput,
   ParentRegistrationPayload,
+  PetImportInput,
+  PetMutationPayload,
+  PetsPayload,
   PluginsPayload,
   CommandPalettePayload,
   ProjectMutationPayload,
@@ -145,6 +148,11 @@ export const apiRoutes = {
   projects: get<ProjectsPayload>("/api/projects"),
   tasks: get<TasksPayload>("/api/tasks"),
   plugins: get<PluginsPayload>("/api/plugins"),
+  pets: get<PetsPayload>("/api/pets"),
+  importPet: post<PetImportInput, PetMutationPayload>("/api/pets"),
+  deletePet: del<PetMutationPayload, (petId: string) => string>(
+    (petId) => `/api/pets/${encode(petId)}`
+  ),
   sshHosts: get<SshHostsPayload>("/api/ssh/hosts"),
   sshConfigHosts: get<SshHostsPayload>("/api/ssh/config-hosts"),
   sshConnections: get<SshConnectionsPayload>("/api/ssh/connections"),

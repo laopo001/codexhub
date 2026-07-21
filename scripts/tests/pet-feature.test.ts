@@ -3,10 +3,18 @@ import test from "node:test";
 import { emptyThreadUsage } from "../../src/core/threadUsage.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
 import type { OpenThreadState } from "../../src/web/types.js";
-import { petAnimationRows, petAtlas, petAtlasBackgroundPosition } from "../../src/web/pets/petAtlas.js";
+import {
+  petAnimationRows,
+  petAtlas,
+  petAtlasBackgroundPosition,
+  petAtlasForVersion,
+  petLookCellForVector,
+} from "../../src/web/pets/petAtlas.js";
 import { parsePetCommand } from "../../src/web/pets/petCommands.js";
+import { clampPetPosition, defaultPetPosition } from "../../src/web/pets/petMotion.js";
 import { derivePetActivities, petAnimationForStatus, petStatusForThread } from "../../src/web/pets/petStatus.js";
 import { parsePetManifest } from "../../src/web/pets/petStore.js";
+import { builtinPet, builtinPets } from "../../src/web/pets/petStore.js";
 
 const thread = (threadId: string, records: CodexRecord[] = [], running = false): OpenThreadState => ({
   threadId,
@@ -31,7 +39,7 @@ const thread = (threadId: string, records: CodexRecord[] = [], running = false):
   textAttachments: [],
 });
 
-test("pet atlas matches the Codex 8 x 9 sprite contract", () => {
+test("pet atlas supports the Codex V1 and V2 sprite contracts", () => {
   assert.deepEqual(
     [petAtlas.width, petAtlas.height, petAtlas.columns, petAtlas.rows, petAtlas.cellWidth, petAtlas.cellHeight],
     [1536, 1872, 8, 9, 192, 208]
@@ -40,6 +48,29 @@ test("pet atlas matches the Codex 8 x 9 sprite contract", () => {
   assert.equal(petAnimationRows.failed.durationsMs.length, 8);
   assert.deepEqual(petAtlasBackgroundPosition("idle", 0), { x: "0%", y: "0%" });
   assert.deepEqual(petAtlasBackgroundPosition("review", 5), { x: `${(5 / 7) * 100}%`, y: "100%" });
+  const v2 = petAtlasForVersion(2);
+  assert.deepEqual([v2.width, v2.height, v2.columns, v2.rows], [1536, 2288, 8, 11]);
+  assert.deepEqual(petAtlasBackgroundPosition("review", 5, 2), { x: `${(5 / 7) * 100}%`, y: "80%" });
+  assert.deepEqual(petLookCellForVector(0, -100), { angle: 0, column: 0, row: 9 });
+  assert.deepEqual(petLookCellForVector(100, 0), { angle: 90, column: 4, row: 9 });
+  assert.deepEqual(petLookCellForVector(0, 100), { angle: 180, column: 0, row: 10 });
+  assert.deepEqual(petLookCellForVector(-100, 0), { angle: 270, column: 4, row: 10 });
+  assert.equal(petLookCellForVector(2, 2), null);
+});
+
+test("Red Spark V2 is the bundled default pet", () => {
+  assert.equal(builtinPet.id, "red-spark");
+  assert.equal(builtinPet.spriteVersionNumber, 2);
+  assert.ok(builtinPet.spriteUrl?.includes("red-spark.webp"));
+  assert.deepEqual(builtinPets.map((pet) => pet.id), ["red-spark"]);
+});
+
+test("pet position stays inside the viewport and keeps the desktop default", () => {
+  assert.deepEqual(
+    clampPetPosition({ x: -20, y: 900 }, { width: 800, height: 600 }, { width: 126, height: 136 }),
+    { x: 8, y: 456 }
+  );
+  assert.deepEqual(defaultPetPosition({ width: 800, height: 600 }, false), { x: 654, y: 358 });
 });
 
 test("pet commands stay local and support toggle, picker, off, and direct selection", () => {
@@ -60,11 +91,21 @@ test("Codex pet manifests use safe ids and the selected spritesheet", () => {
     id: "my-pet",
     displayName: "My Pet",
     description: "A helper",
+    spriteVersionNumber: 1,
     spritesheetPath: "spritesheet.webp",
   });
+  assert.equal(parsePetManifest({
+    id: "V2 Pet",
+    spriteVersionNumber: 2,
+    spritesheetPath: "spritesheet.webp",
+  }, "spritesheet.webp").spriteVersionNumber, 2);
   assert.throws(
     () => parsePetManifest({ id: "bad", spritesheetPath: "other.webp" }, "spritesheet.webp"),
     /expects other\.webp/
+  );
+  assert.throws(
+    () => parsePetManifest({ id: "future", spriteVersionNumber: 3 }, "spritesheet.webp"),
+    /must be 1 or 2/
   );
 });
 

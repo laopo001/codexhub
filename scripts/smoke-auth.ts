@@ -10,11 +10,27 @@ const main = async () => {
   const dataDir = path.join(root, "state");
   const previewPath = path.join(root, "preview.png");
   const remoteClientPath = path.join(root, "remote-client.cjs");
+  const codexHome = path.join(root, "codex-home");
+  const petDirectory = path.join(codexHome, "pets", "auth-smoke-pet");
   await mkdir(dataDir, { recursive: true });
+  await mkdir(petDirectory, { recursive: true });
   await writeFile(previewPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   await writeFile(remoteClientPath, "console.log('auth smoke remote client');\n");
+  await writeFile(path.join(petDirectory, "pet.json"), JSON.stringify({
+    id: "auth-smoke-pet",
+    displayName: "Auth Smoke Pet",
+    description: "Tests authenticated pet image delivery",
+    spriteVersionNumber: 1,
+    spritesheetPath: "spritesheet.png"
+  }));
+  const petImage = Buffer.alloc(32);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(petImage);
+  petImage.writeUInt32BE(1536, 16);
+  petImage.writeUInt32BE(1872, 20);
+  await writeFile(path.join(petDirectory, "spritesheet.png"), petImage);
 
   process.env.CODEX_HUB_DATA_DIR = dataDir;
+  process.env.CODEX_HOME = codexHome;
   process.env.CODEX_HUB_LOCAL_MACHINE = "0";
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "0";
   process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH = remoteClientPath;
@@ -55,12 +71,24 @@ const main = async () => {
     if (!authStatus.authenticated) throw new Error(`auth status did not accept bearer token: ${JSON.stringify(authStatus)}`);
 
     await assertFileQueryAuth(apiBase, token, previewPath);
+    await assertPetQueryAuth(apiBase, token);
     await assertRegisteredBootstrapBearer(apiBase, token);
     await assertRealtimeWebSocket(apiBase, token);
     await assertMachineWebSocket(apiBase, token);
     console.log("auth smoke ok");
   } finally {
     await server.stop();
+  }
+};
+
+const assertPetQueryAuth = async (apiBase: string, token: string) => {
+  const pathname = "/api/pets/auth-smoke-pet/spritesheet";
+  await expectStatus(apiBase, pathname, 401);
+  const url = new URL(pathname, apiBase);
+  url.searchParams.set("codexhub_token", token);
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (response.status !== 200 || response.headers.get("content-type") !== "image/png") {
+    throw new Error(`pet query auth failed: HTTP ${response.status} ${await response.text()}`);
   }
 };
 

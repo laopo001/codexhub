@@ -1,29 +1,31 @@
 .petOverlay {
   position: fixed;
-  right: 20px;
-  bottom: 106px;
   z-index: 70;
-  display: grid;
-  justify-items: end;
+  width: 126px;
+  height: 136px;
   pointer-events: none;
 }
 
 .petButton,
-.petActivityTray,
-.petStatusBubble {
+.petActivityTray {
   pointer-events: auto;
 }
 
 .petButton {
-  position: relative;
+  position: absolute;
+  inset: 0;
   width: 126px;
   height: 136px;
   border: 0;
   background: transparent;
-  cursor: pointer;
+  cursor: grab;
   padding: 0;
   filter: drop-shadow(0 10px 14px rgb(28 45 31 / 0.2));
+  touch-action: none;
+  user-select: none;
 }
+
+.petOverlay[data-dragging="true"] .petButton { cursor: grabbing; }
 
 .petButton:focus-visible {
   outline: 3px solid rgb(217 95 54 / 0.38);
@@ -31,8 +33,7 @@
   border-radius: 24px;
 }
 
-.petSprite,
-.spudPet {
+.petSprite {
   position: relative;
   display: inline-block;
   width: 126px;
@@ -44,133 +45,16 @@
   background-color: transparent;
 }
 
-.petSprite.compact,
-.spudPet.compact {
+.petSprite.compact {
   width: 82px;
   height: 89px;
 }
 
-.spudPetBody {
-  position: absolute;
-  left: 20%;
-  top: 24%;
-  width: 62%;
-  height: 62%;
-  border: 3px solid #5c371f;
-  border-radius: 48% 45% 46% 50% / 44% 50% 47% 52%;
-  background:
-    radial-gradient(circle at 32% 25%, rgb(255 255 255 / 0.34) 0 5%, transparent 6%),
-    radial-gradient(circle at 74% 70%, #a96331 0 4%, transparent 5%),
-    radial-gradient(circle at 28% 68%, #b76d35 0 3%, transparent 4%),
-    linear-gradient(145deg, #efa25b, #c86c34 70%);
-  box-shadow: inset -8px -9px 0 rgb(103 48 24 / 0.13);
-  transform-origin: 50% 85%;
-  animation: spudIdle 1.4s ease-in-out infinite;
-}
-
-.spudPetLeaf {
-  position: absolute;
-  z-index: 2;
-  top: 10%;
-  width: 25%;
-  height: 20%;
-  border: 3px solid #315d34;
-  background: linear-gradient(145deg, #92c45e, #4d8a46);
-}
-
-.spudPetLeaf.left {
-  left: 33%;
-  border-radius: 90% 18% 85% 20%;
-  transform: rotate(15deg);
-}
-
-.spudPetLeaf.right {
-  left: 48%;
-  border-radius: 18% 90% 20% 85%;
-  transform: rotate(-17deg);
-}
-
-.spudPetEye {
-  position: absolute;
-  top: 38%;
-  width: 8%;
-  height: 10%;
-  border-radius: 50%;
-  background: #2b1a12;
-  animation: spudBlink 3.8s infinite;
-}
-
-.spudPetEye.left { left: 30%; }
-.spudPetEye.right { right: 30%; }
-
-.spudPetMouth {
-  position: absolute;
-  left: 44%;
-  top: 55%;
-  width: 13%;
-  height: 8%;
-  border-bottom: 3px solid #492719;
-  border-radius: 50%;
-}
-
-.spudPetArm {
-  position: absolute;
-  top: 50%;
-  width: 24%;
-  height: 10%;
-  border-radius: 999px;
-  background: #c76a33;
-  transform-origin: 90% 50%;
-}
-
-.spudPetArm.left { left: -17%; transform: rotate(28deg); }
-.spudPetArm.right { right: -17%; transform: rotate(152deg); }
-
-.spudPetShadow {
-  position: absolute;
-  left: 26%;
-  bottom: 7%;
-  width: 54%;
-  height: 9%;
-  border-radius: 50%;
-  background: rgb(40 45 35 / 0.2);
-  filter: blur(3px);
-}
-
-.spudPet[data-status="running"] .spudPetBody {
-  animation: spudWorking 0.72s ease-in-out infinite;
-}
-
-.spudPet[data-status="needs_input"] .spudPetBody {
-  animation: spudWaiting 0.85s ease-in-out infinite;
-}
-
-.spudPet[data-status="needs_input"] .spudPetArm.right {
-  animation: spudWave 0.7s ease-in-out infinite;
-}
-
-.spudPet[data-status="ready"] .spudPetBody {
-  animation: spudReady 0.75s ease-in-out infinite;
-}
-
-.spudPet[data-status="ready"] .spudPetArm.right {
-  animation: spudWave 0.55s ease-in-out infinite;
-}
-
-.spudPet[data-status="blocked"] .spudPetBody {
-  animation: spudFailed 1.5s ease-in-out infinite;
-  filter: saturate(0.65);
-}
-
-.spudPet[data-status="blocked"] .spudPetMouth {
-  top: 60%;
-  border-top: 3px solid #492719;
-  border-bottom: 0;
-}
-
 .petStatusBubble {
-  margin-right: 8px;
-  margin-bottom: -6px;
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: 8px;
   border: 1px solid #d9e2d5;
   border-radius: 999px;
   background: rgb(255 255 255 / 0.94);
@@ -204,6 +88,8 @@
 }
 
 .petActivityTray {
+  position: absolute;
+  z-index: 4;
   display: flex;
   flex-direction: column;
   width: min(310px, calc(100vw - 32px));
@@ -214,6 +100,11 @@
   background: rgb(255 255 255 / 0.98);
   box-shadow: 0 20px 54px rgb(23 37 26 / 0.24);
 }
+
+.petOverlay[data-tray-horizontal="left"] .petActivityTray { left: 0; }
+.petOverlay[data-tray-horizontal="right"] .petActivityTray { right: 0; }
+.petOverlay[data-tray-vertical="above"] .petActivityTray { bottom: calc(100% + 10px); }
+.petOverlay[data-tray-vertical="below"] .petActivityTray { top: calc(100% + 10px); }
 
 .petActivityTray header {
   display: flex;
@@ -471,52 +362,16 @@
   font-weight: 750;
 }
 
-@keyframes spudIdle {
-  0%, 100% { transform: translateY(0) scaleY(1); }
-  50% { transform: translateY(-3px) scaleY(1.02); }
-}
-
-@keyframes spudBlink {
-  0%, 43%, 47%, 100% { transform: scaleY(1); }
-  45% { transform: scaleY(0.12); }
-}
-
-@keyframes spudWorking {
-  0%, 100% { transform: translate(-2px, 0) rotate(-2deg); }
-  50% { transform: translate(3px, -4px) rotate(2deg); }
-}
-
-@keyframes spudWaiting {
-  0%, 100% { transform: translateY(0) rotate(-2deg); }
-  50% { transform: translateY(-5px) rotate(4deg); }
-}
-
-@keyframes spudReady {
-  0%, 100% { transform: translateY(0) rotate(-2deg); }
-  50% { transform: translateY(-9px) rotate(3deg); }
-}
-
-@keyframes spudFailed {
-  0%, 100% { transform: translateY(4px) rotate(3deg) scaleY(0.96); }
-  50% { transform: translateY(6px) rotate(-2deg) scaleY(0.93); }
-}
-
-@keyframes spudWave {
-  0%, 100% { transform: rotate(145deg); }
-  50% { transform: rotate(105deg); }
-}
-
 @keyframes petPulse {
   0%, 100% { opacity: 0.65; transform: scale(0.85); }
   50% { opacity: 1; transform: scale(1.1); }
 }
 
 @media (max-width: 700px) {
-  .petOverlay { right: 10px; bottom: 88px; }
+  .petOverlay { width: 96px; height: 104px; }
   .petActivityTray { max-height: min(380px, max(160px, calc(100vh - 220px))); }
   .petButton { width: 96px; height: 104px; }
-  .petButton .petSprite,
-  .petButton .spudPet { width: 96px; height: 104px; }
+  .petButton .petSprite { width: 96px; height: 104px; }
   .petPickerOverlay { padding: 12px; }
   .petPicker { max-height: calc(100vh - 24px); padding: 13px; }
   .petPickerToolbar { align-items: stretch; flex-direction: column; }
@@ -524,9 +379,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spudPetBody,
-  .spudPetEye,
-  .spudPetArm,
   .petActivityDot.running {
     animation: none !important;
   }

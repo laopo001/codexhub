@@ -11,6 +11,7 @@ import { createMachineId, MachineHub } from "../core/machineHub.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
+import { CodexPetStore } from "../core/petStore.js";
 import { notificationHookRunnerFromEnv } from "../core/notificationHooks.js";
 import { CodexhubServerState } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
@@ -42,6 +43,7 @@ import { registerMachineTransportRoutes } from "./machineTransportRoutes.js";
 import { registerServerLifecycle } from "./serverLifecycle.js";
 import { TunneledSessionManager } from "./tunneledSessionManager.js";
 import { registerSystemRoutes } from "./systemRoutes.js";
+import { registerPetRoutes } from "./petRoutes.js";
 import { registerConnectionRoutes } from "./connectionRoutes.js";
 import { TaskScheduler } from "./taskScheduler.js";
 import {
@@ -97,11 +99,12 @@ const requestAuthToken = (request: FastifyRequest) => {
   return url.searchParams.get("codexhub_token")?.trim()
     || "";
 };
-const allowsQueryAuthToken = (request: FastifyRequest) => request.method === "GET" && [
-  "/api/events/ws",
-  "/api/machines/connect",
-  "/api/file"
-].includes(requestPath(request));
+const allowsQueryAuthToken = (request: FastifyRequest) => {
+  if (request.method !== "GET") return false;
+  const pathname = requestPath(request);
+  return ["/api/events/ws", "/api/machines/connect", "/api/file"].includes(pathname)
+    || /^\/api\/pets\/[^/]+\/spritesheet$/.test(pathname);
+};
 const safeTokenEqual = (actual: string, expected: string) => {
   const actualBuffer = Buffer.from(actual);
   const expectedBuffer = Buffer.from(expected);
@@ -230,6 +233,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   });
   const plugins = new PluginHub({ builtins: [telegramBuiltinPlugin()] });
+  const pets = new CodexPetStore();
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
@@ -645,6 +649,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     configPayload: () => ({ config: state.config() }),
     updateUiConfig: (ui) => state.updateUiConfig(ui)
   });
+
+  registerPetRoutes(app, pets);
 
   registerThreadRoutes(app, {
     connectionSnapshotEvent,

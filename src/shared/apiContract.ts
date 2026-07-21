@@ -22,6 +22,7 @@ import type {
 import type { SshHostConfig, SshMachineConnectInput, SshMachineConnection } from "./sshTypes.js";
 import type { ModelReasoningEffort, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "./usageTypes.js";
 import type { CodexHubSurface } from "./surfaceTypes.js";
+import type { PetImportInput, PetManifest, PetMutationPayload, PetsPayload } from "./petTypes.js";
 import type {
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
@@ -48,6 +49,10 @@ export type {
   MachineStopSessionResult,
   MachineSummary,
   PluginSummary,
+  PetImportInput,
+  PetManifest,
+  PetMutationPayload,
+  PetsPayload,
   ProjectSummary,
   ServerConfig,
   ServerUiConfig,
