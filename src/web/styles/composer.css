@@ -40,13 +40,6 @@
   overflow: hidden;
 }
 
-.threadTabActions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
 .openThreadTabs > .ant-tabs-nav .sidebarPanelToggle {
   margin: 0 6px 0 10px;
 }

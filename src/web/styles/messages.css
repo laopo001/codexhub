@@ -1315,7 +1315,6 @@
 
 .sidebarScrim,
 .sidebarPanelToggle,
-.switchButton,
 .composerIconButton,
 .composerMoreButton,
 .composerSendButton,
@@ -1329,7 +1328,6 @@
 }
 
 .sidebarPanelToggle:disabled,
-.switchButton:disabled,
 .composerIconButton:disabled,
 .composerMoreButton:disabled,
 .composerSendButton:disabled,

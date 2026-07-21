@@ -353,7 +353,6 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "setExpandedStatusTurns"
   | "setImagePreview"
   | "setInspectMessage"
-  | "setMessageDisplayMode"
   | "setActiveThreadApprovalPolicyDraft"
   | "setActiveThreadApprovalsReviewerDraft"
   | "setActiveThreadPermissionProfileDraft"
@@ -394,6 +393,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "loadThreadPickerCandidates"
   | "machines"
   | "messageContextMenu"
+  | "messageDisplayMode"
   | "activeModelCatalogError"
   | "activeModelCatalogStatus"
   | "effectiveModelSelection"
@@ -422,6 +422,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "setInspectMessage"
   | "setAppSettings"
   | "setMessageContextMenu"
+  | "setMessageDisplayMode"
   | "setProjectPicker"
   | "setActiveThreadModelDraft"
   | "setActiveThreadReasoningDraft"
@@ -478,7 +479,7 @@ const workspaceKeys = [
   "resizeComposerTextarea", "selectedProject", "send", "threadControlsMenuOpen",
   "setComposerMenuOpen", "setComposerMode", "setExpandedStatusKeys", "setExpandedToolBatchKeys",
   "setGoalDialog", "setExpandedStatusTurns", "setImagePreview", "setInspectMessage",
-  "setMessageDisplayMode", "setActiveThreadApprovalPolicyDraft", "setActiveThreadApprovalsReviewerDraft",
+  "setActiveThreadApprovalPolicyDraft", "setActiveThreadApprovalsReviewerDraft",
   "setActiveThreadPermissionProfileDraft",
   "setAuthTokenDraft", "setThreadControlsMenuOpen", "setThreadModelDialogOpen", "setSidebarCollapsed",
   "showComposerSendButton", "statusPanelAvailable", "statusPanelExpanded", "sidebarCollapsed",
@@ -492,12 +493,14 @@ const dialogKeys = [
   "chooseThreadCandidate", "confirmProjectPicker", "copyContextSelection", "createSessionThread",
   "createWorktreeThread", "goalDialog", "imagePreview", "inspectContextMessage", "inspectMessage",
   "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageContextMenu",
+  "messageDisplayMode",
   "activeModelCatalogError", "activeModelCatalogStatus", "effectiveModelSelection",
   "effectiveReasoningSelection", "effectiveServiceTierSelection", "modelOptions", "reasoningOptions",
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
   "saveGoalDialog", "saveThreadRenameDialog", "threadModelDialogOpen", "threadRenameDialog",
   "threadTabContextMenu", "settingsDialogOpen", "sessionList", "openThreads", "setGoalDialog",
   "setImagePreview", "setInspectMessage", "setAppSettings", "setMessageContextMenu",
+  "setMessageDisplayMode",
   "setProjectPicker", "setActiveThreadModelDraft", "setActiveThreadReasoningDraft",
   "setActiveThreadServiceTierDraft", "setThreadModelDialogOpen", "setThreadRenameDialog",
   "setThreadTabContextMenu", "setSettingsDialogOpen", "setThreadPicker", "submitProjectPickerPath",

@@ -180,7 +180,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     setExpandedStatusTurns,
     setImagePreview,
     setInspectMessage,
-    setMessageDisplayMode,
     setActiveThreadApprovalPolicyDraft,
     setActiveThreadApprovalsReviewerDraft,
     setActiveThreadPermissionProfileDraft,
@@ -429,24 +428,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
         {showThreadTabs ? (
           <Tabs
             className="openThreadTabs"
-            tabBarExtraContent={{
-              left: sidebarToggle,
-              right: (
-                <div className="threadTabActions">
-                  <label className="switchControl">
-                    <span>View</span>
-                    <button
-                      type="button"
-                      className={`switchButton ${messageDisplayMode === "compact" ? "active" : ""}`}
-                      aria-pressed={messageDisplayMode === "compact"}
-                      onClick={() => setMessageDisplayMode((current) => current === "compact" ? "detailed" : "compact")}
-                    >
-                      {messageDisplayMode === "compact" ? "Simple" : "Detailed"}
-                    </button>
-                  </label>
-                </div>
-              )
-            }}
+            tabBarExtraContent={{ left: sidebarToggle }}
             size="small"
             type="editable-card"
             activeKey={activeThreadKey || undefined}
