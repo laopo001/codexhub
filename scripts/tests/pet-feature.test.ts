@@ -55,6 +55,12 @@ test("pet atlas supports the Codex V1 and V2 sprite contracts", () => {
   assert.deepEqual(petLookCellForVector(100, 0), { angle: 90, column: 4, row: 9 });
   assert.deepEqual(petLookCellForVector(0, 100), { angle: 180, column: 0, row: 10 });
   assert.deepEqual(petLookCellForVector(-100, 0), { angle: 270, column: 4, row: 10 });
+  assert.deepEqual(
+    petLookCellForVector(109, -191),
+    { angle: 67.5, column: 3, row: 9 },
+    "the pointer position from the top-right regression selects an unmistakable diagonal frame"
+  );
+  assert.deepEqual(petLookCellForVector(-109, -191), { angle: 292.5, column: 5, row: 10 });
   assert.equal(petLookCellForVector(2, 2), null);
 });
 

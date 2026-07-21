@@ -24,6 +24,8 @@ export type PetAnimationRow = {
   durationsMs: readonly number[];
 };
 
+const readablePetLookIndexes = [0, 3, 4, 5, 8, 11, 12, 13] as const;
+
 const petAtlasBase = {
   columns: 8,
   cellWidth: 192,
@@ -87,11 +89,14 @@ export const petAtlasBackgroundPosition = (
 
 export const petLookCellForVector = (x: number, y: number, deadzone = 28): PetLookCell | null => {
   if (!Number.isFinite(x) || !Number.isFinite(y) || Math.hypot(x, y) <= deadzone) return null;
-  const rawAngle = Math.atan2(x, -y) * (180 / Math.PI);
-  const angle = (Math.round(((rawAngle + 360) % 360) / 22.5) % 16) * 22.5;
-  const index = Math.round(angle / 22.5) % 16;
+  // Adjacent V2 frames near each diagonal are too similar at the rendered pet
+  // size. Map pointer octants to the frames with an unmistakable head turn so
+  // the gaze direction remains readable instead of merely changing pixels.
+  const rawAngle = (Math.atan2(x, -y) * (180 / Math.PI) + 360) % 360;
+  const octant = Math.round(rawAngle / 45) % 8;
+  const index = readablePetLookIndexes[octant];
   return {
-    angle,
+    angle: index * 22.5,
     column: index % 8,
     row: index < 8 ? 9 : 10,
   };
