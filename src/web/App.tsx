@@ -18,6 +18,7 @@ import { isEmbeddedHostSurface } from "./appConfig.js";
 import { setAuthToken } from "./appHelpers.js";
 import { parseCodexHubHostIncomingMessage } from "./hostBridge.js";
 import { partitionAppViewModel } from "./viewModel.js";
+import { PetOverlay, PetPicker, usePetFeature } from "./pets/index.js";
 const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
   if (!textarea) return;
   textarea.style.height = "auto";
@@ -32,6 +33,7 @@ const App = () => {
   const appState = useAppState();
   const {
     activeWorkspacePath,
+    activeTabThreadId,
     appSettings,
     authError,
     authRequired,
@@ -172,6 +174,7 @@ const App = () => {
     statusScopeKey,
     turnStatusItems
   } = selectors;
+  const petFeature = usePetFeature(openThreads, activeTabThreadId);
   const actionContext = { ...appState, ...selectors, resizeComposerTextarea };
   let threadActions: ThreadActions | null = null;
   const requireThreadActions = () => {
@@ -203,6 +206,7 @@ const App = () => {
     send: (threadId) => requireThreadActions().send(threadId)
   });
   threadActions = createThreadActions(actionContext, {
+    handleLocalComposerCommand: petFeature.handleLocalComposerCommand,
     primeTaskCompletionFeedback: taskActions.primeTaskCompletionFeedback,
     refreshProjects: taskActions.refreshProjects,
     refreshSessions: taskActions.refreshSessions,
@@ -563,11 +567,16 @@ const App = () => {
     updateThreadGoal,
     openThreadEmptyMessage,
     openThreadTabs,
+    openPetPicker: petFeature.openPicker,
+    petEnabled: petFeature.enabled,
+    petName: petFeature.selectedPet.displayName,
   };
   return (
     <>
       {messageContextHolder}
       <AppView viewModel={partitionAppViewModel(viewModel)} />
+      {!authRequired ? <PetOverlay controller={petFeature} onOpenThread={threadActions.openThread} /> : null}
+      <PetPicker controller={petFeature} />
     </>
   );
 };

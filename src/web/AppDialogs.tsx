@@ -61,6 +61,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     serviceTierOptions,
     onlineMachines,
     openingProjectKey,
+    openPetPicker,
+    petEnabled,
+    petName,
     projectPicker,
     retryModelCatalog,
     saveGoalDialog,
@@ -239,6 +242,16 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <button type="button" className="iconButton" onClick={() => setSettingsDialogOpen(false)} aria-label="Close">x</button>
             </header>
             <div className="settingsList">
+              <div className="settingsRow">
+                <span className="settingsRowText">
+                  <strong>Pet</strong>
+                  <em>{petEnabled ? `${petName} is awake` : `${petName} is tucked away`}</em>
+                </span>
+                <button type="button" className="petSettingsButton" onClick={() => {
+                  setSettingsDialogOpen(false);
+                  openPetPicker();
+                }}>Choose</button>
+              </div>
               <div className="settingsRow">
                 <span className="settingsRowText">
                   <strong id="settingTaskCompletePopups">Task complete popups</strong>

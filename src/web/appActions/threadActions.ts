@@ -63,6 +63,7 @@ type ThreadActionsContext = {
 };
 
 export type ThreadActionsDependencies = {
+  handleLocalComposerCommand: (input: string) => boolean;
   primeTaskCompletionFeedback: () => void;
   refreshProjects: () => Promise<ProjectsPayload>;
   refreshSessions: () => Promise<SessionSummary[]>;
@@ -292,13 +293,18 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     branchMessage(apiRoutes.forkThread, "fork failed", threadId, messageId);
 
   const send = async (threadId: string) => {
-    deps.primeTaskCompletionFeedback();
     const openThread = ctx.openThreads.find((item) => item.threadId === threadId);
     if (!openThread) return;
     const typedText = ctx.composerDraftStore.get(threadId).trim();
     const textAttachments = openThread.textAttachments;
-    const text = composeUserInputText(typedText, textAttachments);
     const imageAttachments = openThread.imageAttachments;
+    if (!textAttachments.length && !imageAttachments.length && deps.handleLocalComposerCommand(typedText)) {
+      deps.resetComposerHistory(threadId);
+      ctx.composerDraftStore.set(threadId, "");
+      return;
+    }
+    deps.primeTaskCompletionFeedback();
+    const text = composeUserInputText(typedText, textAttachments);
     const composerMode = openThread.composerMode;
     if (!text && !imageAttachments.length) return;
     if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {

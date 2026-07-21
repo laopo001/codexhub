@@ -130,6 +130,9 @@ export type AppSidebarViewModel = {
 
 export type AppViewModelSource = AppSidebarViewModel & {
   appSettings: AppSettings;
+  openPetPicker: () => void;
+  petEnabled: boolean;
+  petName: string;
   activeCanStop: boolean;
   activeDisplayThreadId: string;
   activeExpandedStatusKeys: Set<string>;
@@ -411,6 +414,9 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "settingsDialogOpen"
   | "sessionList"
   | "openThreads"
+  | "openPetPicker"
+  | "petEnabled"
+  | "petName"
   | "setGoalDialog"
   | "setImagePreview"
   | "setInspectMessage"
@@ -495,7 +501,7 @@ const dialogKeys = [
   "setProjectPicker", "setActiveThreadModelDraft", "setActiveThreadReasoningDraft",
   "setActiveThreadServiceTierDraft", "setThreadModelDialogOpen", "setThreadRenameDialog",
   "setThreadTabContextMenu", "setSettingsDialogOpen", "setThreadPicker", "submitProjectPickerPath",
-  "threadOrderBySession", "threadPicker"
+  "threadOrderBySession", "threadPicker", "openPetPicker", "petEnabled", "petName"
 ] as const satisfies readonly (keyof AppDialogsViewModel)[];
 
 const pickViewModel = <Source extends object, const Keys extends readonly (keyof Source)[]>(

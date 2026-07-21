@@ -101,6 +101,14 @@ env:
 
 server 在线时，machine runtime session 会同步官方 app-server 的 thread/turn/item/rawResponseItem/tokenUsage 事件，并接收 Web、Telegram、task 或 API 对具体 `threadId` 的远程 turn。Web 主列表以 projects/threads 为主，session 是 machine 级 runtime/debug 对象，同一个 `sessionId` 可以承载多个 project cwd 的 threads；`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread context usage 由 server 从 `thread/tokenUsage/updated` 计算；session 级账号 rate limits 独立从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 `/api/sessions`，Web 合并两者展示。Thread Model 的 model/reasoning/service tier 下拉优先从当前在线 session 的 app-server `model/list` catalog 读取，通过 `/api/sessions/:sessionId/models` 暴露，不写入 `config.yaml`。Composer 权限菜单同样通过 `/api/sessions/:sessionId/permission-profiles` 读取当前 cwd 的 app-server `permissionProfile/list`，不维护静态 profile fallback。Web Context 旁的 Compact 按钮和 `/api/threads/:threadId/compact` 会调用官方 app-server `thread/compact/start`，compact 进度继续由 app-server record 流显示。Composer menu 里的 Review changes 和 `/api/threads/:threadId/review` 会调用官方 app-server `review/start`，默认 review 当前 workspace 未提交改动并 inline 跑在当前 thread。
 
+## Codex 宠物
+
+Web Settings 的 Pet 入口可以启用悬浮宠物。它汇总当前打开 threads 的状态，按 `Needs input`、`Blocked`、`Ready`、`Running`、`Idle` 显示动画和活动面板；点宠物可以查看需要处理的 thread，并直接切回对应 tab。内置“小地瓜”用于开箱测试，也可以导入 Codex 宠物 spritesheet。
+
+导入格式与 Codex 桌面端一致：透明 PNG/WebP、`1536 x 1872`、`8 x 9` 网格、每格 `192 x 208`，文件不超过 20 MiB。可同时选择可选的 `pet.json`；当前读取 `id`、`displayName`、`description` 和 `spritesheetPath`。宠物文件和选择偏好只保存在当前浏览器的 IndexedDB/localStorage，不上传到 server。
+
+Composer 支持这些本地命令：`/pet` 切换显示，`/pets` 打开选择器，`/pets off` 收起宠物，`/pets <name>` 选择已安装宠物。这些命令在 Web 端处理，不会写进 Codex thread transcript。
+
 ## 连接方式
 
 CodexHub 只保留三种 machine 连接方式：

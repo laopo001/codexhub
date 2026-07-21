@@ -10,6 +10,7 @@ import {
   type ComposerDraftStore
 } from "./appHelpers.js";
 import type { CommandPalette, CommandPaletteEntry, OpenThreadState } from "./types.js";
+import { petCommandPaletteEntries } from "./pets/petCommands.js";
 
 type CommandPaletteTrigger = {
   marker: "/" | "@";
@@ -97,7 +98,11 @@ const commandPaletteEntriesForTrigger = (
 ) => {
   if (!trigger) return [];
   const query = trigger.query.toLowerCase();
-  return entries
+  const candidates = trigger.marker === "/"
+    ? [...entries, ...petCommandPaletteEntries].filter((entry, index, all) =>
+      all.findIndex((candidate) => `${candidate.kind}:${candidate.name}` === `${entry.kind}:${entry.name}`) === index)
+    : entries;
+  return candidates
     .filter((entry) => entry.enabled)
     .filter((entry) => {
       if (trigger.marker === "@") {
