@@ -1,7 +1,7 @@
 import React from "react";
 import { apiRoutes } from "../../shared/apiRoutes.js";
-import type { InvalidPetPackage } from "../../shared/petTypes.js";
-import type { OpenThreadState } from "../types.js";
+import { defaultPetId, type InvalidPetPackage } from "../../shared/petTypes.js";
+import type { AppSettings, OpenThreadState } from "../types.js";
 import { apiRouteJson } from "../helpers/core.js";
 import { parsePetCommand } from "./petCommands.js";
 import {
@@ -18,26 +18,20 @@ import type { PetPosition } from "./petMotion.js";
 import { derivePetActivities, headlinePetStatus } from "./petStatus.js";
 
 type PetPreferences = {
-  enabled: boolean;
   position?: PetPosition;
-  selectedPetId: string;
 };
 
 const preferencesKey = "codexhub-pet-preferences-v1";
-const defaultPreferences = (): PetPreferences => ({ enabled: false, selectedPetId: builtinPet.id });
+const defaultPreferences = (): PetPreferences => ({});
 
 const loadPreferences = (): PetPreferences => {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(preferencesKey) ?? "null") as Partial<PetPreferences> | null;
     const position = parsed?.position;
     return {
-      enabled: typeof parsed?.enabled === "boolean" ? parsed.enabled : false,
       position: position && Number.isFinite(position.x) && Number.isFinite(position.y)
         ? { x: position.x, y: position.y }
         : undefined,
-      selectedPetId: typeof parsed?.selectedPetId === "string" && parsed.selectedPetId.trim()
-        ? parsed.selectedPetId
-        : builtinPet.id,
     };
   } catch {
     return defaultPreferences();
@@ -47,21 +41,33 @@ const loadPreferences = (): PetPreferences => {
 const sameSet = (left: ReadonlySet<string>, right: ReadonlySet<string>) =>
   left.size === right.size && [...left].every((item) => right.has(item));
 
-export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: string) => {
+export const usePetFeature = (
+  openThreads: OpenThreadState[],
+  activeThreadId: string,
+  enabled: boolean,
+  selectedPetId: string,
+  setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>
+) => {
   const [preferences, setPreferences] = React.useState<PetPreferences>(loadPreferences);
   const [importedPets, setImportedPets] = React.useState<PetDefinition[]>([]);
   const [invalidPets, setInvalidPets] = React.useState<InvalidPetPackage[]>([]);
+  const [petCatalogReady, setPetCatalogReady] = React.useState(false);
   const [readyThreadIds, setReadyThreadIds] = React.useState<Set<string>>(() => new Set());
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [trayOpen, setTrayOpen] = React.useState(false);
   const [importBusy, setImportBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const previousRunning = React.useRef(new Map<string, boolean>());
+  const enabledRef = React.useRef(enabled);
+  enabledRef.current = enabled;
+  const selectedPetIdRef = React.useRef(selectedPetId);
+  selectedPetIdRef.current = selectedPetId;
 
   const reloadImportedPets = React.useCallback(async () => {
     const payload = await apiRouteJson(apiRoutes.pets);
     setImportedPets(payload.pets.map(installedPetDefinition));
     setInvalidPets(payload.invalidPets);
+    setPetCatalogReady(true);
   }, []);
 
   React.useEffect(() => {
@@ -71,6 +77,7 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
       if (!cancelled) {
         setImportedPets(payload.pets.map(installedPetDefinition));
         setInvalidPets(payload.invalidPets);
+        setPetCatalogReady(true);
       }
     }).catch((reason) => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
@@ -120,23 +127,63 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
   }, [activeThreadId]);
 
   const pets = React.useMemo(() => [...builtinPets, ...importedPets], [importedPets]);
-  const selectedPet = pets.find((pet) => pet.id === preferences.selectedPetId) ?? builtinPet;
+  const selectedPet = pets.find((pet) => pet.id === selectedPetId) ?? builtinPet;
   const activities = React.useMemo(
     () => derivePetActivities(openThreads, readyThreadIds),
     [openThreads, readyThreadIds]
   );
   const status = headlinePetStatus(activities);
 
-  const setEnabled = React.useCallback((enabled: boolean) => {
-    setPreferences((current) => ({ ...current, enabled }));
-    if (!enabled) setTrayOpen(false);
-  }, []);
+  const setEnabled = React.useCallback((nextEnabled: boolean) => {
+    const previousEnabled = enabledRef.current;
+    enabledRef.current = nextEnabled;
+    setAppSettings((current) => ({ ...current, showFloatingPet: nextEnabled }));
+    if (!nextEnabled) setTrayOpen(false);
+    void apiRouteJson(apiRoutes.updateConfig, {
+      ui: { showFloatingPet: nextEnabled }
+    }).then((payload) => {
+      if (enabledRef.current !== nextEnabled) return;
+      const savedEnabled = payload.config.ui.showFloatingPet;
+      enabledRef.current = savedEnabled;
+      setAppSettings((current) => ({ ...current, showFloatingPet: savedEnabled }));
+    }).catch((reason) => {
+      if (enabledRef.current !== nextEnabled) return;
+      enabledRef.current = previousEnabled;
+      setAppSettings((current) => ({ ...current, showFloatingPet: previousEnabled }));
+      setError(reason instanceof Error ? reason.message : String(reason));
+    });
+  }, [setAppSettings]);
+
+  const setSelectedPetId = React.useCallback((nextPetId: string) => {
+    const previousPetId = selectedPetIdRef.current;
+    selectedPetIdRef.current = nextPetId;
+    setAppSettings((current) => ({ ...current, selectedPetId: nextPetId }));
+    void apiRouteJson(apiRoutes.updateConfig, {
+      ui: { selectedPetId: nextPetId }
+    }).then((payload) => {
+      if (selectedPetIdRef.current !== nextPetId) return;
+      const savedPetId = payload.config.ui.selectedPetId;
+      selectedPetIdRef.current = savedPetId;
+      setAppSettings((current) => ({ ...current, selectedPetId: savedPetId }));
+    }).catch((reason) => {
+      if (selectedPetIdRef.current !== nextPetId) return;
+      selectedPetIdRef.current = previousPetId;
+      setAppSettings((current) => ({ ...current, selectedPetId: previousPetId }));
+      setError(reason instanceof Error ? reason.message : String(reason));
+    });
+  }, [setAppSettings]);
+
+  React.useEffect(() => {
+    if (!petCatalogReady || pets.some((pet) => pet.id === selectedPetId)) return;
+    setSelectedPetId(defaultPetId);
+  }, [petCatalogReady, pets, selectedPetId, setSelectedPetId]);
 
   const selectPet = React.useCallback((id: string) => {
     if (!pets.some((pet) => pet.id === id)) return;
-    setPreferences((current) => ({ ...current, enabled: true, selectedPetId: id }));
+    setSelectedPetId(id);
+    setEnabled(true);
     setError("");
-  }, [pets]);
+  }, [pets, setEnabled, setSelectedPetId]);
 
   const openPicker = React.useCallback(() => {
     setError("");
@@ -151,7 +198,7 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
     const command = parsePetCommand(input);
     if (!command) return false;
     if (command.action === "toggle") {
-      setEnabled(!preferences.enabled);
+      setEnabled(!enabled);
       return true;
     }
     if (command.action === "off") {
@@ -166,7 +213,7 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
       setPickerOpen(true);
     }
     return true;
-  }, [pets, preferences.enabled, selectPet, setEnabled]);
+  }, [enabled, pets, selectPet, setEnabled]);
 
   const importFiles = React.useCallback(async (files: File[], replace = false) => {
     if (!files.length) return { status: "cancelled" as const };
@@ -179,11 +226,8 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
       }
       const installed = await uploadImportedPet(selection, replace);
       await reloadImportedPets();
-      setPreferences((current) => ({
-        ...current,
-        enabled: true,
-        selectedPetId: installed.id,
-      }));
+      setSelectedPetId(installed.id);
+      setEnabled(true);
       return { status: "installed" as const, pet: installed };
     } catch (reason) {
       if (!replace && reason instanceof PetUploadError && reason.status === 409) {
@@ -195,7 +239,7 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
     } finally {
       setImportBusy(false);
     }
-  }, [pets, reloadImportedPets]);
+  }, [pets, reloadImportedPets, setEnabled, setSelectedPetId]);
 
   const removePet = React.useCallback(async (id: string) => {
     if (pets.some((pet) => pet.id === id && pet.kind === "builtin")) return;
@@ -203,13 +247,11 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
     try {
       await apiRouteJson(apiRoutes.deletePet, id);
       await reloadImportedPets();
-      setPreferences((current) => current.selectedPetId === id
-        ? { ...current, selectedPetId: builtinPet.id }
-        : current);
+      if (selectedPetIdRef.current === id) setSelectedPetId(defaultPetId);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [pets, reloadImportedPets]);
+  }, [pets, reloadImportedPets, setSelectedPetId]);
 
   const markThreadRead = React.useCallback((threadId: string) => {
     setReadyThreadIds((current) => {
@@ -227,7 +269,7 @@ export const usePetFeature = (openThreads: OpenThreadState[], activeThreadId: st
   return {
     activities,
     closePicker: () => setPickerOpen(false),
-    enabled: preferences.enabled,
+    enabled,
     error,
     handleLocalComposerCommand,
     importBusy,

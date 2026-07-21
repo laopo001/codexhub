@@ -1,3 +1,6 @@
+export const defaultPetId = "red-spark";
+export const petIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
 export type PetSpriteVersion = 1 | 2;
 
 export type PetManifest = {

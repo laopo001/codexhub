@@ -1,4 +1,5 @@
 import { recordsToViews } from "../../core/codexRecordView.js";
+import { petIdPattern } from "../../shared/petTypes.js";
 import type { CodexRecord, CodexRecordView } from "../../shared/recordTypes.js";
 import { defaultAppSettings, storageKey } from "../appConfig.js";
 import type { AppSettings, MessageDisplayMode, TextAttachment } from "../types.js";
@@ -421,8 +422,15 @@ export const isMessageDisplayMode = (value: unknown): value is MessageDisplayMod
 const storedAppSettings = (value: unknown): AppSettings | undefined => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
+  const selectedPetId = typeof record.selectedPetId === "string" ? record.selectedPetId.trim() : "";
   return {
     ...defaultAppSettings(),
+    selectedPetId: petIdPattern.test(selectedPetId)
+      ? selectedPetId
+      : defaultAppSettings().selectedPetId,
+    showFloatingPet: typeof record.showFloatingPet === "boolean"
+      ? record.showFloatingPet
+      : defaultAppSettings().showFloatingPet,
     taskCompleteSystemNotifications: typeof record.taskCompleteSystemNotifications === "boolean"
       ? record.taskCompleteSystemNotifications
       : defaultAppSettings().taskCompleteSystemNotifications

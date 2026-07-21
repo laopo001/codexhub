@@ -86,6 +86,8 @@ export type StoredSshHost = {
 
 /** config.yaml 中持久化的 Web/VSCode 共享 UI 偏好。 */
 export type ServerUiConfig = {
+  selectedPetId: string;
+  showFloatingPet: boolean;
   taskCompleteSystemNotifications: boolean;
 };
 

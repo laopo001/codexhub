@@ -3,17 +3,18 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import type {
-  InvalidPetPackage,
-  PetManifest,
-  PetSpriteVersion,
-  PetsPayload,
+import {
+  defaultPetId,
+  petIdPattern,
+  type InvalidPetPackage,
+  type PetManifest,
+  type PetSpriteVersion,
+  type PetsPayload,
 } from "../shared/petTypes.js";
 import { inspectPetImage, PetImageValidationError, type InspectedPetImage } from "./petImage.js";
 
 export const maxPetImageBytes = 20 * 1024 * 1024;
-const reservedPetIds = new Set(["red-spark"]);
-const petIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const reservedPetIds = new Set([defaultPetId]);
 
 const manifestSchema = z.object({
   id: z.string().regex(petIdPattern),

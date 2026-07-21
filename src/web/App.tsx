@@ -174,7 +174,13 @@ const App = () => {
     statusScopeKey,
     turnStatusItems
   } = selectors;
-  const petFeature = usePetFeature(openThreads, activeTabThreadId);
+  const petFeature = usePetFeature(
+    openThreads,
+    activeTabThreadId,
+    appSettings.showFloatingPet,
+    appSettings.selectedPetId,
+    setAppSettings
+  );
   const actionContext = { ...appState, ...selectors, resizeComposerTextarea };
   let threadActions: ThreadActions | null = null;
   const requireThreadActions = () => {

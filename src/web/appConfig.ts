@@ -3,6 +3,7 @@ import type {
   ApprovalsReviewerSelection,
   ComposerMode,
 } from "./types.js";
+import { defaultPetId } from "../shared/petTypes.js";
 import { isCodexHubSurface, isEmbeddedCodexHubSurface } from "../shared/surfaceTypes.js";
 
 const normalizedSearch = () => {
@@ -38,6 +39,8 @@ export const storageKey = isVscodeSurface
     ? "codexhub-ui-state-theia-v1"
     : "codexhub-ui-state-v5";
 export const defaultAppSettings = (): AppSettings => ({
+  selectedPetId: defaultPetId,
+  showFloatingPet: false,
   taskCompleteSystemNotifications: false
 });
 export type ApprovalPolicyOptionValue = "untrusted" | "on-request" | "never" | "granular";

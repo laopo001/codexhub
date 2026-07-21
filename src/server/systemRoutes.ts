@@ -7,6 +7,7 @@ import type {
   ServerConfigPayload,
   ServerConfigUpdateInput
 } from "../shared/apiContract.js";
+import { petIdPattern } from "../shared/petTypes.js";
 import { previewImageErrorStatus, resolvePreviewImage } from "./serverFiles.js";
 
 export type SystemRoutesContext = {
@@ -19,6 +20,8 @@ export type SystemRoutesContext = {
 
 const serverConfigUpdateSchema = z.object({
   ui: z.object({
+    selectedPetId: z.string().regex(petIdPattern).optional(),
+    showFloatingPet: z.boolean().optional(),
     taskCompleteSystemNotifications: z.boolean().optional()
   }).strict().optional()
 }).strict();

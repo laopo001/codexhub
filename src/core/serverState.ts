@@ -5,6 +5,7 @@ import path from "node:path";
 import YAML from "yaml";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
 import type { MachineCapabilities, MachineSummary, MachineType } from "../shared/machineTypes.js";
+import { defaultPetId, petIdPattern } from "../shared/petTypes.js";
 import type {
   ProjectRelation,
   ProjectSource,
@@ -92,7 +93,11 @@ export class CodexhubServerState {
       ...this.data.config.ui,
       ...input
     });
-    if (this.data.config.ui.taskCompleteSystemNotifications !== nextUi.taskCompleteSystemNotifications) {
+    if (
+      this.data.config.ui.selectedPetId !== nextUi.selectedPetId
+      || this.data.config.ui.showFloatingPet !== nextUi.showFloatingPet
+      || this.data.config.ui.taskCompleteSystemNotifications !== nextUi.taskCompleteSystemNotifications
+    ) {
       this.data.config.ui = nextUi;
       this.touch();
     }
@@ -717,6 +722,8 @@ const projectIdFor = (machineId: string, projectPath: string) =>
 const projectName = (projectPath: string) => path.basename(projectPath) || projectPath;
 
 const defaultServerUiConfig = (): ServerUiConfig => ({
+  selectedPetId: defaultPetId,
+  showFloatingPet: false,
   taskCompleteSystemNotifications: false
 });
 
@@ -737,7 +744,12 @@ const normalizeServerConfig = (value: unknown): ServerConfig => {
 
 const normalizeServerUiConfig = (value: unknown): ServerUiConfig => {
   const record = objectRecord(value);
+  const selectedPetId = typeof record?.selectedPetId === "string" ? record.selectedPetId.trim() : "";
   return {
+    selectedPetId: petIdPattern.test(selectedPetId) ? selectedPetId : defaultServerUiConfig().selectedPetId,
+    showFloatingPet: typeof record?.showFloatingPet === "boolean"
+      ? record.showFloatingPet
+      : defaultServerUiConfig().showFloatingPet,
     taskCompleteSystemNotifications: typeof record?.taskCompleteSystemNotifications === "boolean"
       ? record.taskCompleteSystemNotifications
       : defaultServerUiConfig().taskCompleteSystemNotifications
@@ -747,7 +759,10 @@ const normalizeServerUiConfig = (value: unknown): ServerUiConfig => {
 const isCompleteServerConfig = (value: unknown) => {
   const config = objectRecord(value);
   const ui = objectRecord(config?.ui);
-  return typeof ui?.taskCompleteSystemNotifications === "boolean";
+  return typeof ui?.selectedPetId === "string"
+    && petIdPattern.test(ui.selectedPetId)
+    && typeof ui.showFloatingPet === "boolean"
+    && typeof ui.taskCompleteSystemNotifications === "boolean";
 };
 
 const objectRecord = (value: unknown): Record<string, unknown> | null =>

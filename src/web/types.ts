@@ -190,6 +190,8 @@ export type ThreadTabContextMenuState = {
 };
 
 export type AppSettings = {
+  selectedPetId: string;
+  showFloatingPet: boolean;
   taskCompleteSystemNotifications: boolean;
 };
 

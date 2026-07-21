@@ -87,6 +87,8 @@ CODEX_HUB_SSH_AUTOCONNECT=0
 version: 1
 config:
   ui:
+    selectedPetId: red-spark
+    showFloatingPet: false
     taskCompleteSystemNotifications: false
 env:
   CODEX_HUB_NOTIFICATION_COMMAND: "C:\\Users\\0laop\\.codexhub\\notify.cmd"

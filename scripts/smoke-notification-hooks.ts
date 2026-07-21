@@ -17,6 +17,8 @@ const tmpdir = await mkdtemp(path.join(os.tmpdir(), "codexhub-notification-hooks
 const defaultConfigLines = [
   "config:",
   "  ui:",
+  "    selectedPetId: red-spark",
+  "    showFloatingPet: false",
   "    taskCompleteSystemNotifications: false"
 ];
 
@@ -147,10 +149,24 @@ async function assertServerUiConfig(root: string) {
   ].join("\n"));
 
   const state = await CodexhubServerState.load({ dataDir });
+  if (state.config().ui.selectedPetId !== "red-spark") {
+    throw new Error("missing UI config did not default the selected pet to red-spark");
+  }
+  if (state.config().ui.showFloatingPet !== false) {
+    throw new Error("missing UI config did not default floating pet to false");
+  }
   if (state.config().ui.taskCompleteSystemNotifications !== false) {
     throw new Error("missing UI config did not default task complete notifications to false");
   }
-  const migrated = YAML.parse(await readFile(configPath, "utf8")) as { config?: { ui?: { taskCompleteSystemNotifications?: unknown } } };
+  const migrated = YAML.parse(await readFile(configPath, "utf8")) as {
+    config?: { ui?: { selectedPetId?: unknown; showFloatingPet?: unknown; taskCompleteSystemNotifications?: unknown } };
+  };
+  if (migrated.config?.ui?.selectedPetId !== "red-spark") {
+    throw new Error(`missing selected pet config was not written to config.yaml: ${JSON.stringify(migrated.config)}`);
+  }
+  if (migrated.config?.ui?.showFloatingPet !== false) {
+    throw new Error(`missing floating pet config was not written to config.yaml: ${JSON.stringify(migrated.config)}`);
+  }
   if (migrated.config?.ui?.taskCompleteSystemNotifications !== false) {
     throw new Error(`missing UI config was not written to config.yaml: ${JSON.stringify(migrated.config)}`);
   }
@@ -163,15 +179,31 @@ async function assertServerUiConfig(root: string) {
   });
   try {
     const base = `http://127.0.0.1:${port}`;
-    const initial = await jsonFetch<{ config?: { ui?: { taskCompleteSystemNotifications?: unknown } } }>(`${base}/api/config`);
+    const initial = await jsonFetch<{
+      config?: { ui?: { selectedPetId?: unknown; showFloatingPet?: unknown; taskCompleteSystemNotifications?: unknown } };
+    }>(`${base}/api/config`);
+    if (initial.config?.ui?.selectedPetId !== "red-spark") {
+      throw new Error(`server selected pet config did not use the fallback: ${JSON.stringify(initial.config)}`);
+    }
+    if (initial.config?.ui?.showFloatingPet !== false) {
+      throw new Error(`server floating pet config default was not false: ${JSON.stringify(initial.config)}`);
+    }
     if (initial.config?.ui?.taskCompleteSystemNotifications !== false) {
       throw new Error(`server UI config default was not false: ${JSON.stringify(initial.config)}`);
     }
-    const updated = await jsonFetch<{ config?: { ui?: { taskCompleteSystemNotifications?: unknown } } }>(`${base}/api/config`, {
+    const updated = await jsonFetch<{
+      config?: { ui?: { selectedPetId?: unknown; showFloatingPet?: unknown; taskCompleteSystemNotifications?: unknown } };
+    }>(`${base}/api/config`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ui: { taskCompleteSystemNotifications: true } })
+      body: JSON.stringify({ ui: { selectedPetId: "custom-pet", showFloatingPet: true, taskCompleteSystemNotifications: true } })
     });
+    if (updated.config?.ui?.selectedPetId !== "custom-pet") {
+      throw new Error(`server selected pet config patch did not return the selection: ${JSON.stringify(updated.config)}`);
+    }
+    if (updated.config?.ui?.showFloatingPet !== true) {
+      throw new Error(`server floating pet config patch did not return true: ${JSON.stringify(updated.config)}`);
+    }
     if (updated.config?.ui?.taskCompleteSystemNotifications !== true) {
       throw new Error(`server UI config patch did not return true: ${JSON.stringify(updated.config)}`);
     }
@@ -179,7 +211,15 @@ async function assertServerUiConfig(root: string) {
     await handle.stop();
   }
 
-  const saved = YAML.parse(await readFile(configPath, "utf8")) as { config?: { ui?: { taskCompleteSystemNotifications?: unknown } } };
+  const saved = YAML.parse(await readFile(configPath, "utf8")) as {
+    config?: { ui?: { selectedPetId?: unknown; showFloatingPet?: unknown; taskCompleteSystemNotifications?: unknown } };
+  };
+  if (saved.config?.ui?.selectedPetId !== "custom-pet") {
+    throw new Error(`server selected pet config patch was not saved: ${JSON.stringify(saved.config)}`);
+  }
+  if (saved.config?.ui?.showFloatingPet !== true) {
+    throw new Error(`server floating pet config patch was not saved: ${JSON.stringify(saved.config)}`);
+  }
   if (saved.config?.ui?.taskCompleteSystemNotifications !== true) {
     throw new Error(`server UI config patch was not saved: ${JSON.stringify(saved.config)}`);
   }

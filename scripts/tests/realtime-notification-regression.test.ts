@@ -40,7 +40,7 @@ test("thread state is merged before a browser completion notification is attempt
 
   const { createRealtimeActions } = await import("../../src/web/appActions/realtimeActions.js");
   const context = {
-    appSettingsRef: { current: { taskCompleteSystemNotifications: true } },
+    appSettingsRef: { current: { selectedPetId: "red-spark", showFloatingPet: false, taskCompleteSystemNotifications: true } },
     closedThreadIds: { current: new Set<string>() },
     notificationAudioContext: { current: null },
     notificationRecordsByThread: { current: new Map<string, CodexRecord[]>() },

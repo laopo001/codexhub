@@ -1,4 +1,4 @@
-import type { PetManifest, PetMutationPayload } from "../../shared/petTypes.js";
+import { defaultPetId, type PetManifest, type PetMutationPayload } from "../../shared/petTypes.js";
 import { authFetch, authToken } from "../helpers/core.js";
 import { petAtlasForVersion } from "./petAtlas.js";
 
@@ -164,7 +164,7 @@ export const installedPetDefinition = (manifest: PetManifest): PetDefinition => 
 });
 
 export const redSparkPet: PetDefinition = {
-  id: "red-spark",
+  id: defaultPetId,
   displayName: "Red Spark",
   description: "A red-hatted chibi adventurer companion with a backpack, map, and white mascot bomb.",
   spriteVersionNumber: 2,
