@@ -12,7 +12,7 @@ import {
 } from "./petAtlas.js";
 import { clampPetPosition, defaultPetPosition, type PetPosition, type PetSize } from "./petMotion.js";
 import type { PetDefinition } from "./petStore.js";
-import { petAnimationForStatus, petStatusLabel, type PetActivity, type PetActivityStatus } from "./petStatus.js";
+import { petAnimationForPresentation, petStatusLabel, type PetActivity, type PetActivityStatus } from "./petStatus.js";
 import type { PetFeatureController } from "./usePetFeature.js";
 
 type PetDragDirection = "left" | "right" | null;
@@ -66,6 +66,7 @@ const usePetFrame = (animation: PetAnimationState, reducedMotion: boolean) => {
 };
 
 type PetVisualProps = {
+  composerRecentlyChanged?: boolean;
   pet: PetDefinition;
   status: PetActivityStatus;
   compact?: boolean;
@@ -74,10 +75,10 @@ type PetVisualProps = {
   lookCell?: PetLookCell | null;
 };
 
-export const PetVisual = ({ pet, status, compact = false, dragDirection = null, frame = 0, lookCell = null }: PetVisualProps) => {
-  const animation = dragDirection ? `running-${dragDirection}` as PetAnimationState : petAnimationForStatus(status);
+export const PetVisual = ({ composerRecentlyChanged = false, pet, status, compact = false, dragDirection = null, frame = 0, lookCell = null }: PetVisualProps) => {
+  const animation = petAnimationForPresentation(status, { composerRecentlyChanged, dragDirection });
   const atlas = petAtlasForVersion(pet.spriteVersionNumber);
-  const useLookCell = pet.spriteVersionNumber === 2 && status === "idle" && !dragDirection && lookCell;
+  const useLookCell = pet.spriteVersionNumber === 2 && status === "idle" && !composerRecentlyChanged && !dragDirection && lookCell;
   const position = useLookCell
     ? petAtlasCellBackgroundPosition(useLookCell.row, useLookCell.column, 2)
     : petAtlasBackgroundPosition(animation, frame, pet.spriteVersionNumber);
@@ -97,9 +98,10 @@ export const PetVisual = ({ pet, status, compact = false, dragDirection = null, 
 
 const AnimatedPetVisual = (props: Omit<PetVisualProps, "frame">) => {
   const reducedMotion = useReducedMotion();
-  const animation = props.dragDirection
-    ? `running-${props.dragDirection}` as PetAnimationState
-    : petAnimationForStatus(props.status);
+  const animation = petAnimationForPresentation(props.status, {
+    composerRecentlyChanged: props.composerRecentlyChanged,
+    dragDirection: props.dragDirection,
+  });
   const frame = usePetFrame(animation, reducedMotion);
   return <PetVisual {...props} frame={frame} />;
 };
@@ -130,11 +132,12 @@ const PetCardPreview = ({ pet, eager }: { pet: PetDefinition; eager: boolean }) 
 const activityStatusClass = (status: PetActivityStatus) => status.replace("_", "-");
 
 type PetOverlayProps = {
+  composerRecentlyChanged: boolean;
   controller: PetFeatureController;
   onOpenThread: (threadId: string) => void | Promise<void>;
 };
 
-export const PetOverlay = ({ controller, onOpenThread }: PetOverlayProps) => {
+export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }: PetOverlayProps) => {
   const buttonRef = React.useRef<HTMLButtonElement>(null);
   const dragSessionRef = React.useRef<PetDragSession | null>(null);
   const lastPointerRef = React.useRef<{ x: number; y: number } | null>(null);
@@ -277,6 +280,7 @@ export const PetOverlay = ({ controller, onOpenThread }: PetOverlayProps) => {
   return (
     <aside
       className="petOverlay"
+      data-composer-recently-changed={composerRecentlyChanged ? "true" : "false"}
       data-dragging={dragDirection ? "true" : "false"}
       data-status={controller.status}
       data-tray-horizontal={trayHorizontal}
@@ -328,6 +332,7 @@ export const PetOverlay = ({ controller, onOpenThread }: PetOverlayProps) => {
         aria-expanded={controller.trayOpen}
       >
         <AnimatedPetVisual
+          composerRecentlyChanged={composerRecentlyChanged}
           pet={controller.selectedPet}
           status={controller.status}
           dragDirection={dragDirection}

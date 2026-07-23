@@ -30,6 +30,8 @@ const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
 
 const App = () => {
   const [messageApi, messageContextHolder] = message.useMessage();
+  const [composerRecentlyChanged, setComposerRecentlyChanged] = React.useState(false);
+  const composerChangeTimerRef = React.useRef<number | null>(null);
   const appState = useAppState();
   const {
     activeWorkspacePath,
@@ -181,6 +183,32 @@ const App = () => {
     appSettings.selectedPetId,
     setAppSettings
   );
+  React.useEffect(() => {
+    setComposerRecentlyChanged(false);
+    if (composerChangeTimerRef.current !== null) {
+      window.clearTimeout(composerChangeTimerRef.current);
+      composerChangeTimerRef.current = null;
+    }
+    const handleComposerInput = (event: Event) => {
+      if (event.target !== composerTextareaRef.current) return;
+      setComposerRecentlyChanged(true);
+      if (composerChangeTimerRef.current !== null) {
+        window.clearTimeout(composerChangeTimerRef.current);
+      }
+      composerChangeTimerRef.current = window.setTimeout(() => {
+        composerChangeTimerRef.current = null;
+        setComposerRecentlyChanged(false);
+      }, 1_000);
+    };
+    document.addEventListener("input", handleComposerInput);
+    return () => {
+      document.removeEventListener("input", handleComposerInput);
+      if (composerChangeTimerRef.current !== null) {
+        window.clearTimeout(composerChangeTimerRef.current);
+        composerChangeTimerRef.current = null;
+      }
+    };
+  }, [activeTabThreadId, composerTextareaRef]);
   const actionContext = { ...appState, ...selectors, resizeComposerTextarea };
   let threadActions: ThreadActions | null = null;
   const requireThreadActions = () => {
@@ -581,7 +609,13 @@ const App = () => {
     <>
       {messageContextHolder}
       <AppView viewModel={partitionAppViewModel(viewModel)} />
-      {!authRequired ? <PetOverlay controller={petFeature} onOpenThread={threadActions.openThread} /> : null}
+      {!authRequired ? (
+        <PetOverlay
+          composerRecentlyChanged={composerRecentlyChanged}
+          controller={petFeature}
+          onOpenThread={threadActions.openThread}
+        />
+      ) : null}
       <PetPicker controller={petFeature} />
     </>
   );

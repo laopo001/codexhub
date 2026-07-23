@@ -90,6 +90,18 @@ export const petAnimationForStatus = (status: PetActivityStatus): PetAnimationSt
   return "idle";
 };
 
+export const petAnimationForPresentation = (
+  status: PetActivityStatus,
+  options: {
+    composerRecentlyChanged?: boolean;
+    dragDirection?: "left" | "right" | null;
+  } = {}
+): PetAnimationState => {
+  if (options.dragDirection) return `running-${options.dragDirection}`;
+  if (options.composerRecentlyChanged) return "waiting";
+  return petAnimationForStatus(status);
+};
+
 export const petStatusLabel = (status: PetActivityStatus) => {
   if (status === "needs_input") return "Needs input";
   if (status === "blocked") return "Blocked";

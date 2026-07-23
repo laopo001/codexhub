@@ -12,7 +12,12 @@ import {
 } from "../../src/web/pets/petAtlas.js";
 import { parsePetCommand } from "../../src/web/pets/petCommands.js";
 import { clampPetPosition, defaultPetPosition } from "../../src/web/pets/petMotion.js";
-import { derivePetActivities, petAnimationForStatus, petStatusForThread } from "../../src/web/pets/petStatus.js";
+import {
+  derivePetActivities,
+  petAnimationForPresentation,
+  petAnimationForStatus,
+  petStatusForThread,
+} from "../../src/web/pets/petStatus.js";
 import { nextAvailablePetManifest, parsePetManifest } from "../../src/web/pets/petStore.js";
 import { builtinPet, builtinPets } from "../../src/web/pets/petStore.js";
 
@@ -175,6 +180,12 @@ test("pet status prioritizes input, failure, ready, and running", () => {
   assert.equal(petStatusForThread(thread("thread-7", [failedTool]), false), "idle");
   assert.equal(petAnimationForStatus("needs_input"), "waiting");
   assert.equal(petAnimationForStatus("blocked"), "failed");
+  assert.equal(petAnimationForPresentation("idle", { composerRecentlyChanged: true }), "waiting");
+  assert.equal(petAnimationForPresentation("running", { composerRecentlyChanged: true }), "waiting");
+  assert.equal(
+    petAnimationForPresentation("running", { composerRecentlyChanged: true, dragDirection: "left" }),
+    "running-left"
+  );
 });
 
 test("pet activities sort using the official attention priority", () => {
