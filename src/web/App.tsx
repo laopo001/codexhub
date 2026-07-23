@@ -178,7 +178,6 @@ const App = () => {
   } = selectors;
   const petFeature = usePetFeature(
     openThreads,
-    activeTabThreadId,
     appSettings.showFloatingPet,
     appSettings.selectedPetId,
     setAppSettings
@@ -229,6 +228,7 @@ const App = () => {
         content: `Registered machine disconnected · ${machine.name ?? machine.hostname ?? machine.machineId}`
       });
     },
+    onThreadCompleted: petFeature.handleThreadCompleted,
     openThread: (threadId) => requireThreadActions().openThread(threadId)
   });
   const sshActions = createSshActions(actionContext);

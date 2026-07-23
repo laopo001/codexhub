@@ -56,11 +56,27 @@ test("thread state is merged before a browser completion notification is attempt
     clearActiveThreadIfLatest: () => undefined,
     notifyRegisteredMachineConnected: () => undefined,
     notifyRegisteredMachineDisconnected: () => undefined,
+    onThreadCompleted: (completionKey) => calls.push(`pet:${completionKey}`),
     openThread: async () => undefined
   });
 
   assert.doesNotThrow(() => actions.applyThreadStreamEvent(taskCompleteEvent()));
-  assert.deepEqual(calls, ["thread", "order", "sessions", "projects", "notification"]);
+  assert.deepEqual(calls, [
+    "thread",
+    "order",
+    "sessions",
+    "projects",
+    "pet:thread-test:turn-test",
+    "notification",
+  ]);
+
+  calls.length = 0;
+  assert.doesNotThrow(() => actions.applyThreadStreamEvent({
+    ...taskCompleteEvent(),
+    seq: 3,
+    historical: true,
+  }));
+  assert.deepEqual(calls, ["thread", "order", "sessions", "projects"]);
 });
 
 const taskCompleteEvent = (): ThreadStreamEvent => ({

@@ -12,7 +12,13 @@ import {
 } from "./petAtlas.js";
 import { clampPetPosition, defaultPetPosition, type PetPosition, type PetSize } from "./petMotion.js";
 import type { PetDefinition } from "./petStore.js";
-import { petAnimationForPresentation, petStatusLabel, type PetActivity, type PetActivityStatus } from "./petStatus.js";
+import {
+  petAnimationForPresentation,
+  petStatusLabel,
+  type PetActivity,
+  type PetActivityStatus,
+  type PetCompletionPhase,
+} from "./petStatus.js";
 import type { PetFeatureController } from "./usePetFeature.js";
 
 type PetDragDirection = "left" | "right" | null;
@@ -67,6 +73,7 @@ const usePetFrame = (animation: PetAnimationState, reducedMotion: boolean) => {
 
 type PetVisualProps = {
   composerRecentlyChanged?: boolean;
+  completionPhase?: PetCompletionPhase;
   pet: PetDefinition;
   status: PetActivityStatus;
   compact?: boolean;
@@ -75,10 +82,24 @@ type PetVisualProps = {
   lookCell?: PetLookCell | null;
 };
 
-export const PetVisual = ({ composerRecentlyChanged = false, pet, status, compact = false, dragDirection = null, frame = 0, lookCell = null }: PetVisualProps) => {
-  const animation = petAnimationForPresentation(status, { composerRecentlyChanged, dragDirection });
+export const PetVisual = ({
+  composerRecentlyChanged = false,
+  completionPhase = "none",
+  pet,
+  status,
+  compact = false,
+  dragDirection = null,
+  frame = 0,
+  lookCell = null,
+}: PetVisualProps) => {
+  const animation = petAnimationForPresentation(status, { composerRecentlyChanged, completionPhase, dragDirection });
   const atlas = petAtlasForVersion(pet.spriteVersionNumber);
-  const useLookCell = pet.spriteVersionNumber === 2 && status === "idle" && !composerRecentlyChanged && !dragDirection && lookCell;
+  const useLookCell = pet.spriteVersionNumber === 2
+    && status === "idle"
+    && !composerRecentlyChanged
+    && completionPhase === "none"
+    && !dragDirection
+    && lookCell;
   const position = useLookCell
     ? petAtlasCellBackgroundPosition(useLookCell.row, useLookCell.column, 2)
     : petAtlasBackgroundPosition(animation, frame, pet.spriteVersionNumber);
@@ -100,6 +121,7 @@ const AnimatedPetVisual = (props: Omit<PetVisualProps, "frame">) => {
   const reducedMotion = useReducedMotion();
   const animation = petAnimationForPresentation(props.status, {
     composerRecentlyChanged: props.composerRecentlyChanged,
+    completionPhase: props.completionPhase,
     dragDirection: props.dragDirection,
   });
   const frame = usePetFrame(animation, reducedMotion);
@@ -179,6 +201,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
     if (!controller.enabled
       || controller.selectedPet.spriteVersionNumber !== 2
       || controller.status !== "idle"
+      || controller.completionPhase !== "none"
       || dragSessionRef.current) {
       setLookCell((current) => current ? null : current);
       return;
@@ -187,7 +210,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
     if (!rect) return;
     const next = petLookCellForVector(clientX - (rect.left + rect.width / 2), clientY - (rect.top + rect.height / 2));
     setLookCell((current) => sameLookCell(current, next) ? current : next);
-  }, [controller.enabled, controller.selectedPet.spriteVersionNumber, controller.status]);
+  }, [controller.completionPhase, controller.enabled, controller.selectedPet.spriteVersionNumber, controller.status]);
 
   const scheduleLookForPointer = React.useCallback((clientX: number, clientY: number) => {
     lastPointerRef.current = { x: clientX, y: clientY };
@@ -200,7 +223,10 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
   }, [updateLookForPointer]);
 
   React.useEffect(() => {
-    if (!controller.enabled || controller.selectedPet.spriteVersionNumber !== 2 || controller.status !== "idle") {
+    if (!controller.enabled
+      || controller.selectedPet.spriteVersionNumber !== 2
+      || controller.status !== "idle"
+      || controller.completionPhase !== "none") {
       setLookCell(null);
       return undefined;
     }
@@ -211,7 +237,13 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
       if (lookFrameRef.current !== null) window.cancelAnimationFrame(lookFrameRef.current);
       lookFrameRef.current = null;
     };
-  }, [controller.enabled, controller.selectedPet.spriteVersionNumber, controller.status, scheduleLookForPointer]);
+  }, [
+    controller.completionPhase,
+    controller.enabled,
+    controller.selectedPet.spriteVersionNumber,
+    controller.status,
+    scheduleLookForPointer,
+  ]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!event.isPrimary || event.button !== 0) return;
@@ -273,7 +305,6 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
   const trayVertical = position.y + petSize.height / 2 > viewport.height / 2 ? "above" : "below";
   const trayHorizontal = position.x + petSize.width / 2 > viewport.width / 2 ? "right" : "left";
   const openActivity = (activity: PetActivity) => {
-    controller.markThreadRead(activity.threadId);
     controller.setTrayOpen(false);
     void onOpenThread(activity.threadId);
   };
@@ -281,6 +312,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
     <aside
       className="petOverlay"
       data-composer-recently-changed={composerRecentlyChanged ? "true" : "false"}
+      data-completion-phase={controller.completionPhase}
       data-dragging={dragDirection ? "true" : "false"}
       data-status={controller.status}
       data-tray-horizontal={trayHorizontal}
@@ -333,6 +365,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
       >
         <AnimatedPetVisual
           composerRecentlyChanged={composerRecentlyChanged}
+          completionPhase={controller.completionPhase}
           pet={controller.selectedPet}
           status={controller.status}
           dragDirection={dragDirection}

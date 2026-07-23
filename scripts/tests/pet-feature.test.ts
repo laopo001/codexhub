@@ -14,9 +14,14 @@ import { parsePetCommand } from "../../src/web/pets/petCommands.js";
 import { clampPetPosition, defaultPetPosition } from "../../src/web/pets/petMotion.js";
 import {
   derivePetActivities,
+  hasRunningPetThreads,
+  headlinePetStatus,
+  initialPetCompletionState,
   petAnimationForPresentation,
   petAnimationForStatus,
+  petCompletionJumpDurationMs,
   petStatusForThread,
+  transitionPetCompletionState,
 } from "../../src/web/pets/petStatus.js";
 import { nextAvailablePetManifest, parsePetManifest } from "../../src/web/pets/petStore.js";
 import { builtinPet, builtinPets } from "../../src/web/pets/petStore.js";
@@ -150,7 +155,7 @@ test("duplicate pet names receive the next available numeric suffix", () => {
   assert.match(numbered.displayName, / 1$/);
 });
 
-test("pet status prioritizes input, failure, ready, and running", () => {
+test("pet status prioritizes input, failure, and running", () => {
   const pendingApproval: CodexRecord = {
     id: "approval",
     type: "response_item",
@@ -171,17 +176,21 @@ test("pet status prioritizes input, failure, ready, and running", () => {
     type: "event_msg",
     payload: { type: "task_complete", status: "completed" },
   };
-  assert.equal(petStatusForThread(thread("thread-1", [pendingApproval], true), true), "needs_input");
-  assert.equal(petStatusForThread(thread("thread-2", [failed]), true), "blocked");
-  assert.equal(petStatusForThread(thread("thread-3"), true), "ready");
-  assert.equal(petStatusForThread(thread("thread-4", [], true), false), "running");
-  assert.equal(petStatusForThread(thread("thread-5"), false), "idle");
-  assert.equal(petStatusForThread(thread("thread-6", [failedTool, completedTurn]), true), "ready");
-  assert.equal(petStatusForThread(thread("thread-7", [failedTool]), false), "idle");
+  assert.equal(petStatusForThread(thread("thread-1", [pendingApproval], true)), "needs_input");
+  assert.equal(petStatusForThread(thread("thread-2", [failed])), "blocked");
+  assert.equal(petStatusForThread(thread("thread-3")), "idle");
+  assert.equal(petStatusForThread(thread("thread-4", [], true)), "running");
+  assert.equal(petStatusForThread(thread("thread-5")), "idle");
+  assert.equal(petStatusForThread(thread("thread-6", [failedTool, completedTurn])), "idle");
+  assert.equal(petStatusForThread(thread("thread-7", [failedTool])), "idle");
   assert.equal(petAnimationForStatus("needs_input"), "waiting");
   assert.equal(petAnimationForStatus("blocked"), "failed");
+  assert.equal(petAnimationForStatus("running"), "running");
+  assert.equal(petAnimationForStatus("idle"), "idle");
   assert.equal(petAnimationForPresentation("idle", { composerRecentlyChanged: true }), "waiting");
   assert.equal(petAnimationForPresentation("running", { composerRecentlyChanged: true }), "waiting");
+  assert.equal(petAnimationForPresentation("running", { completionPhase: "jumping" }), "jumping");
+  assert.equal(petAnimationForPresentation("running", { completionPhase: "waving" }), "waving");
   assert.equal(
     petAnimationForPresentation("running", { composerRecentlyChanged: true, dragDirection: "left" }),
     "running-left"
@@ -200,6 +209,104 @@ test("pet activities sort using the official attention priority", () => {
     thread("thread-3"),
     thread("thread-2", [failed]),
     thread("thread-1", [pendingInput], true),
-  ], new Set(["thread-3"]));
-  assert.deepEqual(activities.map((activity) => activity.status), ["needs_input", "blocked", "ready", "running"]);
+  ]);
+  assert.deepEqual(activities.map((activity) => activity.status), ["needs_input", "blocked", "running", "idle"]);
+});
+
+test("single-thread completion runs jumping for three seconds before idle", () => {
+  const completedTurn: CodexRecord = {
+    id: "completed-a",
+    type: "event_msg",
+    payload: { type: "task_complete", status: "completed" },
+  };
+  const runningThreads = [thread("thread-a", [], true)];
+  const completedThreads = [thread("thread-a", [completedTurn])];
+  let state = initialPetCompletionState();
+  const animation = (threads: OpenThreadState[]) => petAnimationForPresentation(
+    headlinePetStatus(derivePetActivities(threads)),
+    { completionPhase: state.phase }
+  );
+
+  assert.equal(animation(runningThreads), "running");
+  state = transitionPetCompletionState(state, { type: "completed", nowMs: 1_000 });
+  assert.equal(animation(completedThreads), "jumping");
+  state = transitionPetCompletionState(state, {
+    type: "sync",
+    nowMs: 1_000 + petCompletionJumpDurationMs - 1,
+    hasRunningThreads: hasRunningPetThreads(completedThreads),
+  });
+  assert.equal(animation(completedThreads), "jumping");
+  state = transitionPetCompletionState(state, {
+    type: "sync",
+    nowMs: 1_000 + petCompletionJumpDurationMs,
+    hasRunningThreads: hasRunningPetThreads(completedThreads),
+  });
+  assert.equal(animation(completedThreads), "idle");
+});
+
+test("multi-thread completion waves until every running thread completes", () => {
+  const completedA: CodexRecord = {
+    id: "completed-a",
+    type: "event_msg",
+    payload: { type: "task_complete", status: "completed" },
+  };
+  const completedB: CodexRecord = {
+    id: "completed-b",
+    type: "event_msg",
+    payload: { type: "task_complete", status: "completed" },
+  };
+  const partialThreads = [
+    thread("thread-a", [completedA]),
+    thread("thread-b", [], true),
+  ];
+  const completedThreads = [
+    thread("thread-a", [completedA]),
+    thread("thread-b", [completedB]),
+  ];
+  let state = transitionPetCompletionState(initialPetCompletionState(), {
+    type: "completed",
+    nowMs: 1_000,
+  });
+  const animation = (threads: OpenThreadState[]) => petAnimationForPresentation(
+    headlinePetStatus(derivePetActivities(threads)),
+    { completionPhase: state.phase }
+  );
+
+  assert.equal(animation(partialThreads), "jumping");
+  state = transitionPetCompletionState(state, {
+    type: "sync",
+    nowMs: 1_000 + petCompletionJumpDurationMs,
+    hasRunningThreads: hasRunningPetThreads(partialThreads),
+  });
+  assert.equal(animation(partialThreads), "waving");
+
+  state = transitionPetCompletionState(state, { type: "completed", nowMs: 5_000 });
+  assert.equal(animation(completedThreads), "jumping");
+  state = transitionPetCompletionState(state, {
+    type: "sync",
+    nowMs: 5_000 + petCompletionJumpDurationMs,
+    hasRunningThreads: hasRunningPetThreads(completedThreads),
+  });
+  assert.equal(animation(completedThreads), "idle");
+});
+
+test("a completion during jumping restarts the three-second deadline", () => {
+  let state = transitionPetCompletionState(initialPetCompletionState(), {
+    type: "completed",
+    nowMs: 1_000,
+  });
+  state = transitionPetCompletionState(state, { type: "completed", nowMs: 2_500 });
+  assert.equal(state.jumpingUntilMs, 2_500 + petCompletionJumpDurationMs);
+  state = transitionPetCompletionState(state, {
+    type: "sync",
+    nowMs: 1_000 + petCompletionJumpDurationMs,
+    hasRunningThreads: false,
+  });
+  assert.equal(state.phase, "jumping");
+  state = transitionPetCompletionState(state, {
+    type: "sync",
+    nowMs: 2_500 + petCompletionJumpDurationMs,
+    hasRunningThreads: false,
+  });
+  assert.equal(state.phase, "none");
 });

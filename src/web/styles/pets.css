@@ -68,7 +68,6 @@
 
 .petStatusBubble.needs-input { color: #9c5a16; border-color: #efcb9b; }
 .petStatusBubble.blocked { color: #a33f3f; border-color: #e7b2b2; }
-.petStatusBubble.ready { color: #2f6c46; border-color: #a9d4b7; }
 .petStatusBubble.running { color: #315f8a; border-color: #aec9e3; }
 
 .petAttentionCount {
@@ -174,7 +173,6 @@
 
 .petActivityDot.needs-input { background: #e19a39; box-shadow: 0 0 0 3px rgb(225 154 57 / 0.18); }
 .petActivityDot.blocked { background: #c75252; }
-.petActivityDot.ready { background: #4b9b65; }
 .petActivityDot.running { background: #568bbc; animation: petPulse 1.2s ease-in-out infinite; }
 
 .petActivityEmpty {

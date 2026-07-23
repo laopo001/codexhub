@@ -97,6 +97,7 @@ export type RealtimeActionsDependencies = {
   clearActiveThreadIfLatest: (threadId: string) => void;
   notifyRegisteredMachineConnected: (machine: MachineSummary) => void;
   notifyRegisteredMachineDisconnected: (machine: MachineSummary) => void;
+  onThreadCompleted: (completionKey: string) => void;
   openThread: (threadId: string) => Promise<void>;
 };
 
@@ -343,6 +344,9 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     }
     ctx.setSessionList((current) => patchSessionsThread(current, payload.thread));
     ctx.setProjects((current) => patchProjectsThread(current, payload.thread));
+    if (!payload.historical && payload.kind === "record" && payload.record && isTaskCompleteRecord(payload.record)) {
+      deps.onThreadCompleted(taskCompletionNotificationKey(payload.thread.threadId, payload.record));
+    }
     notifyTaskCompletionsFromStreamEvent(payload);
   }
 

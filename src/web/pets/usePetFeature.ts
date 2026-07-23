@@ -16,7 +16,13 @@ import {
   uploadImportedPet,
 } from "./petStore.js";
 import type { PetPosition } from "./petMotion.js";
-import { derivePetActivities, headlinePetStatus } from "./petStatus.js";
+import {
+  derivePetActivities,
+  hasRunningPetThreads,
+  headlinePetStatus,
+  initialPetCompletionState,
+  transitionPetCompletionState,
+} from "./petStatus.js";
 
 type PetPreferences = {
   position?: PetPosition;
@@ -39,14 +45,10 @@ const loadPreferences = (): PetPreferences => {
   }
 };
 
-const sameSet = (left: ReadonlySet<string>, right: ReadonlySet<string>) =>
-  left.size === right.size && [...left].every((item) => right.has(item));
-
 type PetImportConflictAction = "reject" | "rename" | "replace";
 
 export const usePetFeature = (
   openThreads: OpenThreadState[],
-  activeThreadId: string,
   enabled: boolean,
   selectedPetId: string,
   setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>
@@ -55,12 +57,14 @@ export const usePetFeature = (
   const [importedPets, setImportedPets] = React.useState<PetDefinition[]>([]);
   const [invalidPets, setInvalidPets] = React.useState<InvalidPetPackage[]>([]);
   const [petCatalogReady, setPetCatalogReady] = React.useState(false);
-  const [readyThreadIds, setReadyThreadIds] = React.useState<Set<string>>(() => new Set());
+  const [completionState, setCompletionState] = React.useState(initialPetCompletionState);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [trayOpen, setTrayOpen] = React.useState(false);
   const [importBusy, setImportBusy] = React.useState(false);
   const [error, setError] = React.useState("");
-  const previousRunning = React.useRef(new Map<string, boolean>());
+  const openThreadsRef = React.useRef(openThreads);
+  openThreadsRef.current = openThreads;
+  const completedTurnKeysRef = React.useRef(new Set<string>());
   const enabledRef = React.useRef(enabled);
   enabledRef.current = enabled;
   const selectedPetIdRef = React.useRef(selectedPetId);
@@ -93,47 +97,44 @@ export const usePetFeature = (
   }, [preferences]);
 
   React.useEffect(() => {
-    setReadyThreadIds((current) => {
-      const next = new Set(current);
-      const existingIds = new Set(openThreads.map((thread) => thread.threadId));
-      for (const id of next) {
-        if (!existingIds.has(id)) next.delete(id);
-      }
-      for (const thread of openThreads) {
-        const wasRunning = previousRunning.current.get(thread.threadId);
-        if (wasRunning === true && !thread.running && (thread.threadId !== activeThreadId || document.hidden)) {
-          next.add(thread.threadId);
-        }
-        previousRunning.current.set(thread.threadId, thread.running);
-      }
-      for (const id of previousRunning.current.keys()) {
-        if (!existingIds.has(id)) previousRunning.current.delete(id);
-      }
-      if (!document.hidden && activeThreadId) next.delete(activeThreadId);
-      return sameSet(current, next) ? current : next;
-    });
-  }, [activeThreadId, openThreads]);
+    setCompletionState((current) => transitionPetCompletionState(current, {
+      type: "sync",
+      nowMs: Date.now(),
+      hasRunningThreads: hasRunningPetThreads(openThreads),
+    }));
+  }, [openThreads]);
 
   React.useEffect(() => {
-    const markVisibleThreadRead = () => {
-      if (document.hidden || !activeThreadId) return;
-      setReadyThreadIds((current) => {
-        if (!current.has(activeThreadId)) return current;
-        const next = new Set(current);
-        next.delete(activeThreadId);
-        return next;
-      });
-    };
-    markVisibleThreadRead();
-    document.addEventListener("visibilitychange", markVisibleThreadRead);
-    return () => document.removeEventListener("visibilitychange", markVisibleThreadRead);
-  }, [activeThreadId]);
+    if (completionState.phase !== "jumping" || completionState.jumpingUntilMs === null) return undefined;
+    const deadline = completionState.jumpingUntilMs;
+    const timer = window.setTimeout(() => {
+      setCompletionState((current) => transitionPetCompletionState(current, {
+        type: "sync",
+        nowMs: Math.max(Date.now(), deadline),
+        hasRunningThreads: hasRunningPetThreads(openThreadsRef.current),
+      }));
+    }, Math.max(0, deadline - Date.now()) + 1);
+    return () => window.clearTimeout(timer);
+  }, [completionState.jumpingUntilMs, completionState.phase]);
+
+  const handleThreadCompleted = React.useCallback((completionKey: string) => {
+    if (completedTurnKeysRef.current.has(completionKey)) return;
+    completedTurnKeysRef.current.add(completionKey);
+    if (completedTurnKeysRef.current.size > 512) {
+      const oldestKey = completedTurnKeysRef.current.values().next().value;
+      if (oldestKey) completedTurnKeysRef.current.delete(oldestKey);
+    }
+    setCompletionState((current) => transitionPetCompletionState(current, {
+      type: "completed",
+      nowMs: Date.now(),
+    }));
+  }, []);
 
   const pets = React.useMemo(() => [...builtinPets, ...importedPets], [importedPets]);
   const selectedPet = pets.find((pet) => pet.id === selectedPetId) ?? builtinPet;
   const activities = React.useMemo(
-    () => derivePetActivities(openThreads, readyThreadIds),
-    [openThreads, readyThreadIds]
+    () => derivePetActivities(openThreads),
+    [openThreads]
   );
   const status = headlinePetStatus(activities);
 
@@ -284,15 +285,6 @@ export const usePetFeature = (
     }
   }, [pets, reloadImportedPets, setSelectedPetId]);
 
-  const markThreadRead = React.useCallback((threadId: string) => {
-    setReadyThreadIds((current) => {
-      if (!current.has(threadId)) return current;
-      const next = new Set(current);
-      next.delete(threadId);
-      return next;
-    });
-  }, []);
-
   const setPosition = React.useCallback((position: PetPosition) => {
     setPreferences((current) => ({ ...current, position }));
   }, []);
@@ -300,13 +292,14 @@ export const usePetFeature = (
   return {
     activities,
     closePicker: () => setPickerOpen(false),
+    completionPhase: completionState.phase,
     enabled,
     error,
     handleLocalComposerCommand,
+    handleThreadCompleted,
     importBusy,
     importFiles,
     invalidPets,
-    markThreadRead,
     openPicker,
     pets,
     pickerOpen,
