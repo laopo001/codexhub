@@ -4,32 +4,32 @@ import { apiRoutes } from "../../shared/apiRoutes.js";
 import {
   apiRouteJson,
   defaultTaskDraft,
-  mergeThreadOrderBySession,
+  mergeThreadOrderByMachine,
   normalizeMachines,
   normalizeProjects,
-  normalizeSessions,
+  normalizeRuntimes,
   normalizeTasks,
   primeTaskCompletionSound,
   primeTaskNotificationPermission,
   type SidebarDraftStore
 } from "../appHelpers.js";
-import type { AppSettings, LocalTask, MachineSummary, ProjectSummary, ProjectsPayload, SessionSummary, TaskDraft } from "../types.js";
+import type { AppSettings, LocalTask, MachineSummary, ProjectSummary, ProjectsPayload, RuntimeSummary, TaskDraft } from "../types.js";
 
 type TaskActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
   notificationAudioContext: React.MutableRefObject<AudioContext | null>;
   projectList: ProjectSummary[];
-  sessionList: SessionSummary[];
+  runtimeList: RuntimeSummary[];
   sidebarDraftStore: SidebarDraftStore;
-  setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
+  setActiveMachineId: React.Dispatch<React.SetStateAction<string>>;
   setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
-  setSessionList: React.Dispatch<React.SetStateAction<SessionSummary[]>>;
+  setRuntimeList: React.Dispatch<React.SetStateAction<RuntimeSummary[]>>;
   setTaskBusyId: React.Dispatch<React.SetStateAction<string>>;
   setTaskError: React.Dispatch<React.SetStateAction<string>>;
   setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setTasks: React.Dispatch<React.SetStateAction<LocalTask[]>>;
-  setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+  setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
 
 export type TaskActionsDependencies = {
@@ -38,7 +38,7 @@ export type TaskActionsDependencies = {
 };
 
 export type TaskActions = {
-  refreshSessions: () => Promise<SessionSummary[]>;
+  refreshRuntimes: () => Promise<RuntimeSummary[]>;
   refreshProjects: () => Promise<ProjectsPayload>;
   refreshTasks: () => Promise<void>;
   updateTaskDraftMachine: (machineId: string) => void;
@@ -56,12 +56,12 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
   const setTaskDraft = (update: React.SetStateAction<TaskDraft>) => {
     ctx.sidebarDraftStore.set("taskDraft", update);
   };
-  const refreshSessions = async () => {
-    const freshSessions = await apiRouteJson(apiRoutes.sessions)
-      .then((data) => normalizeSessions(data.sessions));
-    ctx.setSessionList(freshSessions);
-    ctx.setThreadOrderBySession((current) => mergeThreadOrderBySession(current, freshSessions));
-    return freshSessions;
+  const refreshRuntimes = async () => {
+    const freshRuntimes = await apiRouteJson(apiRoutes.runtimes)
+      .then((data) => normalizeRuntimes(data.runtimes));
+    ctx.setRuntimeList(freshRuntimes);
+    ctx.setThreadOrderByMachine((current) => mergeThreadOrderByMachine(current, freshRuntimes));
+    return freshRuntimes;
   };
 
   const refreshProjects = async () => {
@@ -206,10 +206,10 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
         ctx.setTasks((current) => normalizeTasks(current.map((item) => item.taskId === task.taskId ? updatedTask : item)));
       }
       await refreshTasks().catch(() => undefined);
-      const freshSessions = await refreshSessions().catch(() => ctx.sessionList);
-      if (payload.sessionId) {
-        const session = freshSessions.find((item) => item.sessionId === payload.sessionId);
-        if (session) ctx.setActiveSessionId(session.sessionId);
+      const freshRuntimes = await refreshRuntimes().catch(() => ctx.runtimeList);
+      if (payload.machineId) {
+        const runtime = freshRuntimes.find((item) => item.machineId === payload.machineId);
+        if (runtime) ctx.setActiveMachineId(runtime.machineId);
       }
       const threadId = payload.threadId;
       if (threadId) {
@@ -236,7 +236,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
   };
 
   return {
-    refreshSessions,
+    refreshRuntimes,
     refreshProjects,
     refreshTasks,
     updateTaskDraftMachine,

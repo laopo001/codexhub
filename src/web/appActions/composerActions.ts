@@ -100,7 +100,7 @@ const insertTextBlock = (value: string, text: string, start = value.length, end 
 };
 
 export type ComposerActions = {
-  loadCommandPalette: (sessionId: string, cwd: string) => Promise<void>;
+  loadCommandPalette: (machineId: string, cwd: string) => Promise<void>;
   updateThreadInput: (threadId: string, input: string) => void;
   resetComposerHistory: (threadId: string) => void;
   setComposerHistoryInput: (threadId: string, textarea: HTMLTextAreaElement, input: string) => void;
@@ -143,12 +143,12 @@ export type ComposerActions = {
 };
 
 export const createComposerActions = (ctx: ComposerActionsContext, deps: ComposerActionsDependencies): ComposerActions => {
-  const loadCommandPalette = async (sessionId: string, cwd: string) => {
-    const key = commandPaletteCacheKey(sessionId, cwd);
+  const loadCommandPalette = async (machineId: string, cwd: string) => {
+    const key = commandPaletteCacheKey(machineId, cwd);
     if (ctx.commandPaletteByScope[key] || ctx.commandPaletteLoadingScopes[key]) return;
     ctx.setCommandPaletteLoadingScopes((current) => ({ ...current, [key]: true }));
     try {
-      const payload = await apiRouteJson(apiRoutes.commandPalette, sessionId, cwd, "core");
+      const payload = await apiRouteJson(apiRoutes.commandPalette, machineId, cwd, "core");
       ctx.setCommandPaletteByScope((current) => ({
         ...current,
         [key]: payload.palette ?? emptyCommandPalette(cwd)
@@ -162,7 +162,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     }
 
     try {
-      const payload = await apiRouteJson(apiRoutes.commandPalette, sessionId, cwd, "plugins");
+      const payload = await apiRouteJson(apiRoutes.commandPalette, machineId, cwd, "plugins");
       ctx.setCommandPaletteByScope((current) => ({
         ...current,
         [key]: mergeCommandPalette(current[key], payload.palette ?? emptyCommandPalette(cwd), cwd)

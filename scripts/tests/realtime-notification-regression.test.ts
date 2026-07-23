@@ -48,8 +48,8 @@ test("thread state is merged before a browser completion notification is attempt
     realtimeThreadSubscriptions: { current: new Set<string>() },
     threadLastSeqs: { current: new Map<string, number>() },
     dispatchOpenThreads: () => calls.push("thread"),
-    setThreadOrderBySession: () => calls.push("order"),
-    setSessionList: () => calls.push("sessions"),
+    setThreadOrderByMachine: () => calls.push("order"),
+    setRuntimeList: () => calls.push("runtimes"),
     setProjects: () => calls.push("projects")
   } as unknown as Parameters<typeof createRealtimeActions>[0];
   const actions = createRealtimeActions(context, {
@@ -64,7 +64,7 @@ test("thread state is merged before a browser completion notification is attempt
   assert.deepEqual(calls, [
     "thread",
     "order",
-    "sessions",
+    "runtimes",
     "projects",
     "pet:thread-test:turn-test",
     "notification",
@@ -76,7 +76,7 @@ test("thread state is merged before a browser completion notification is attempt
     seq: 3,
     historical: true,
   }));
-  assert.deepEqual(calls, ["thread", "order", "sessions", "projects"]);
+  assert.deepEqual(calls, ["thread", "order", "runtimes", "projects"]);
 });
 
 const taskCompleteEvent = (): ThreadStreamEvent => ({
@@ -99,8 +99,8 @@ const taskCompleteEvent = (): ThreadStreamEvent => ({
 const threadSummary = (): ThreadSummary => ({
   threadId: "thread-test",
   workingDirectory: "/tmp/codexhub-test",
-  session: {
-    sessionId: "session-test",
+  runtime: {
+    machineId: "session-test",
     online: true,
     runnable: true
   },

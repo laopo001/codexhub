@@ -87,21 +87,23 @@ import type {
   SessionPermissionProfilesResult,
   SessionOfflineReason,
   SessionRegistration,
-  SessionStreamEvent,
   SessionSummary,
   SessionThreadCandidatesResult,
+  RuntimeStreamEvent,
+  RuntimeSummary,
   ThreadDetail,
   ThreadGoalStatus,
   ThreadGoalUpdate,
   ThreadRunOptions,
   ThreadStreamEvent,
   ThreadSummary,
-  ThreadSessionSummary
+  ThreadRuntimeSummary
 } from "../shared/threadTypes.js";
 
 export class ThreadHub {
   private readonly threads = new Map<string, ThreadState>();
   private readonly sessions = new Map<string, SessionState>();
+  private readonly sessionIdByMachine = new Map<string, string>();
   private readonly pendingCommands = new Map<string, PendingCommand>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly pendingUserInputs = new Map<string, PendingUserInput>();
@@ -114,10 +116,10 @@ export class ThreadHub {
     threadOptionsAtStart: ThreadOptions;
     settingsRevisionAtStart: number;
   }>();
-  private readonly sessionEvents: SessionStreamEvent[] = [];
-  private readonly sessionSubscribers = new Set<(event: SessionStreamEvent) => void>();
-  private lastSessionSnapshotKey = "";
-  private sessionSeq = 0;
+  private readonly runtimeEvents: RuntimeStreamEvent[] = [];
+  private readonly runtimeSubscribers = new Set<(event: RuntimeStreamEvent) => void>();
+  private lastRuntimeSnapshotKey = "";
+  private runtimeSeq = 0;
 
   constructor(
     private readonly defaultThreadOptions: ThreadOptions = {},
@@ -131,13 +133,27 @@ export class ThreadHub {
   registerSession(registration: InternalSessionRegistration): { sessionId: string; session: SessionSummary } {
     const now = new Date().toISOString();
     const sessionId = registration.sessionId?.trim() || randomUUID();
+    const machineId = registration.machineId?.trim() || undefined;
+    const previousSessionId = machineId ? this.sessionIdByMachine.get(machineId) : undefined;
+    const previousSession = previousSessionId && previousSessionId !== sessionId
+      ? this.sessions.get(previousSessionId)
+      : undefined;
+    if (previousSession) {
+      this.removeSession(
+        previousSession,
+        `Machine runtime replaced: ${machineId}`,
+        "unregistered",
+        Date.now(),
+        false
+      );
+    }
     const existing = this.sessions.get(sessionId);
     if (existing) {
       for (const waiter of [...existing.waiters]) waiter();
     }
     const session: SessionState = {
       sessionId,
-      machineId: registration.machineId,
+      machineId,
       name: registration.name,
       workingDirectory: registration.workingDirectory,
       appServerUrl: registration.appServerUrl,
@@ -155,13 +171,19 @@ export class ThreadHub {
       waiters: existing?.waiters ?? new Set()
     };
     this.sessions.set(sessionId, session);
+    if (machineId) this.sessionIdByMachine.set(machineId, sessionId);
     for (const thread of this.threads.values()) {
-      if (thread.sessionId === sessionId) {
+      if (
+        thread.sessionId === sessionId
+        || (machineId && thread.machineId === machineId)
+        || (previousSessionId && thread.sessionId === previousSessionId)
+      ) {
         thread.sessionId = sessionId;
+        thread.machineId = machineId;
         this.publish(thread, "thread");
       }
     }
-    this.publishSessions();
+    this.publishRuntimes();
     return { sessionId, session: this.sessionSummary(session) };
   }
 
@@ -169,6 +191,7 @@ export class ThreadHub {
     const session = this.sessions.get(sessionId);
     if (!session) return { ok: false };
     const previousState = this.sessionVisibleState(session);
+    const previousMachineId = session.machineId;
     const now = new Date().toISOString();
     session.name = registration.name ?? session.name;
     session.machineId = registration.machineId ?? session.machineId;
@@ -182,11 +205,15 @@ export class ThreadHub {
     session.lastSeenAt = now;
     delete session.offlineSinceAt;
     delete session.offlineReason;
+    if (previousMachineId && previousMachineId !== session.machineId && this.sessionIdByMachine.get(previousMachineId) === sessionId) {
+      this.sessionIdByMachine.delete(previousMachineId);
+    }
+    if (session.machineId) this.sessionIdByMachine.set(session.machineId, sessionId);
     if (previousState !== this.sessionVisibleState(session)) {
       for (const thread of this.threads.values()) {
         if (thread.sessionId === sessionId) this.publish(thread, "thread");
       }
-      this.publishSessions();
+      this.publishRuntimes();
     }
     return { ok: true, sessionId };
   }
@@ -269,15 +296,32 @@ export class ThreadHub {
       .map((session) => this.sessionSummary(session));
   }
 
-  subscribeSessions(after: number, callback: (event: SessionStreamEvent) => void) {
-    const events = after > 0 ? this.sessionEvents.filter((item) => item.seq > after) : [];
+  listRuntimes(options: { includeOffline?: boolean } = {}): RuntimeSummary[] {
+    return [...this.sessionIdByMachine.entries()]
+      .flatMap(([machineId, sessionId]) => {
+        const session = this.sessions.get(sessionId);
+        if (!session || (!options.includeOffline && !session.online && !session.offlineSinceAt)) return [];
+        return [this.runtimeSummary(machineId, session)];
+      })
+      .sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt));
+  }
+
+  runtimeForMachine(machineId: string, options: { includeOffline?: boolean } = {}): RuntimeSummary | null {
+    const sessionId = this.sessionIdByMachine.get(machineId);
+    const session = sessionId ? this.sessions.get(sessionId) : undefined;
+    if (!session || (!options.includeOffline && !session.online)) return null;
+    return this.runtimeSummary(machineId, session);
+  }
+
+  subscribeRuntimes(after: number, callback: (event: RuntimeStreamEvent) => void) {
+    const events = after > 0 ? this.runtimeEvents.filter((item) => item.seq > after) : [];
     if (events.length) {
       for (const event of events) callback(event);
     } else {
-      callback(this.sessionSnapshotEvent());
+      callback(this.runtimeSnapshotEvent());
     }
-    this.sessionSubscribers.add(callback);
-    return () => this.sessionSubscribers.delete(callback);
+    this.runtimeSubscribers.add(callback);
+    return () => this.runtimeSubscribers.delete(callback);
   }
 
   async waitSessionCommands(sessionId: string, after: number, timeoutMs = 25000) {
@@ -299,7 +343,7 @@ export class ThreadHub {
       );
       if (rateLimits && rateLimits !== session.accountRateLimits) {
         session.accountRateLimits = rateLimits;
-        this.publishSessions();
+        this.publishRuntimes();
       }
       return { ok: true, session: this.sessionSummary(session) };
     }
@@ -408,6 +452,7 @@ export class ThreadHub {
     const thread = this.ensureThread(threadId, session, {
       params: { threadId, cwd: workingDirectory ?? session.workingDirectory }
     });
+    thread.machineId = session.machineId;
     if (workingDirectory && thread.workingDirectory !== workingDirectory) {
       thread.workingDirectory = workingDirectory;
     }
@@ -467,6 +512,18 @@ export class ThreadHub {
     return await promise;
   }
 
+  async listMachineThreadCandidates(
+    machineId: string,
+    limit = 50,
+    workingDirectory?: string
+  ): Promise<SessionThreadCandidatesResult> {
+    return await this.listSessionThreadCandidates(
+      this.requireOnlineRuntimeSession(machineId).sessionId,
+      limit,
+      workingDirectory
+    );
+  }
+
   async listSessionModels(sessionId: string, includeHidden = false): Promise<SessionModelCatalogResult> {
     const session = this.requireOnlineSession(sessionId);
     const commandId = randomUUID();
@@ -485,6 +542,10 @@ export class ThreadHub {
       includeHidden
     });
     return await promise;
+  }
+
+  async listMachineModels(machineId: string, includeHidden = false): Promise<SessionModelCatalogResult> {
+    return await this.listSessionModels(this.requireOnlineRuntimeSession(machineId).sessionId, includeHidden);
   }
 
   async listSessionPermissionProfiles(
@@ -508,6 +569,16 @@ export class ThreadHub {
       createdAt: new Date().toISOString()
     });
     return await promise;
+  }
+
+  async listMachinePermissionProfiles(
+    machineId: string,
+    workingDirectory?: string
+  ): Promise<SessionPermissionProfilesResult> {
+    return await this.listSessionPermissionProfiles(
+      this.requireOnlineRuntimeSession(machineId).sessionId,
+      workingDirectory
+    );
   }
 
   async listSessionCommandPalette(
@@ -535,6 +606,18 @@ export class ThreadHub {
     return await promise;
   }
 
+  async listMachineCommandPalette(
+    machineId: string,
+    workingDirectory?: string,
+    part: CommandPalettePart = "all"
+  ): Promise<SessionCommandPaletteResult> {
+    return await this.listSessionCommandPalette(
+      this.requireOnlineRuntimeSession(machineId).sessionId,
+      workingDirectory,
+      part
+    );
+  }
+
   async startSessionThread(sessionId: string, workingDirectory?: string): Promise<ThreadDetail> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
@@ -547,6 +630,10 @@ export class ThreadHub {
       createdAt: new Date().toISOString()
     });
     return await promise;
+  }
+
+  async startMachineThread(machineId: string, workingDirectory?: string): Promise<ThreadDetail> {
+    return await this.startSessionThread(this.requireOnlineRuntimeSession(machineId).sessionId, workingDirectory);
   }
 
   async resumeSessionThread(sessionId: string, threadId: string, workingDirectory?: string): Promise<ThreadDetail> {
@@ -562,6 +649,14 @@ export class ThreadHub {
       threadId
     });
     return await promise;
+  }
+
+  async resumeMachineThread(machineId: string, threadId: string, workingDirectory?: string): Promise<ThreadDetail> {
+    return await this.resumeSessionThread(
+      this.requireOnlineRuntimeSession(machineId).sessionId,
+      threadId,
+      workingDirectory
+    );
   }
 
   async forkThread(threadId: string, recordId?: string): Promise<ThreadDetail> {
@@ -796,7 +891,7 @@ export class ThreadHub {
       type: "agent_message",
       message: localCommandMessage(
         thread,
-        this.threadSessionSummary(thread),
+        this.threadRuntimeSummary(thread),
         this.threadAccountRateLimits(thread),
         parsed.command,
         parsed.args
@@ -1007,6 +1102,15 @@ export class ThreadHub {
     return session;
   }
 
+  private requireOnlineRuntimeSession(machineId: string) {
+    const sessionId = this.sessionIdByMachine.get(machineId);
+    if (!sessionId) throw new Error(`Runtime not found for machine: ${machineId}`);
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Runtime not found for machine: ${machineId}`);
+    if (!session.online) throw new Error(`Runtime is offline for machine: ${machineId}`);
+    return session;
+  }
+
   private threadIdForSessionEvent(input: Extract<SessionEventInput, { type: "thread_event" }>, message: Record<string, unknown>) {
     const pending = input.commandId ? this.pendingCommands.get(input.commandId) : undefined;
     if (pending?.type === "fork_thread") {
@@ -1023,32 +1127,25 @@ export class ThreadHub {
     return thread;
   }
 
-  private onlineSessionsForWorkspace(workingDirectory: string) {
-    return [...this.sessions.values()]
-      .filter((session) => session.online && session.workingDirectory === workingDirectory)
-      .sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt));
-  }
-
-  private uniqueOnlineSessionForWorkspace(workingDirectory: string) {
-    const sessions = this.onlineSessionsForWorkspace(workingDirectory);
-    return sessions.length === 1 ? sessions[0] : null;
+  private onlineRuntimeSessionForMachine(machineId?: string) {
+    if (!machineId) return null;
+    const sessionId = this.sessionIdByMachine.get(machineId);
+    const session = sessionId ? this.sessions.get(sessionId) : undefined;
+    return session?.online ? session : null;
   }
 
   private requireThreadSession(thread: ThreadState) {
     const current = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
     if (current?.online) return current;
-    const sessions = this.onlineSessionsForWorkspace(thread.workingDirectory);
-    const replacement = sessions.length === 1 ? sessions[0] : null;
+    const replacement = this.onlineRuntimeSessionForMachine(thread.machineId ?? current?.machineId);
     if (replacement) {
       thread.sessionId = replacement.sessionId;
+      thread.machineId = replacement.machineId;
       this.publish(thread, "thread");
       this.publishThreadCatalog();
       return replacement;
     }
-    if (sessions.length > 1) {
-      throw new Error(`Multiple online sessions for workspace. Resume this thread in one codexhub instance before sending: ${thread.threadId}`);
-    }
-    throw new Error(`No online session for thread: ${thread.threadId}`);
+    throw new Error(`No online runtime for thread: ${thread.threadId}`);
   }
 
   private enqueueSessionCommand(sessionId: string, command: Omit<SessionCommand, "seq">) {
@@ -1190,14 +1287,15 @@ export class ThreadHub {
         this.publish(thread, "thread");
       }
     }
-    if (wasOnline) this.publishSessions();
+    if (wasOnline) this.publishRuntimes();
   }
 
   private removeSession(
     session: SessionState,
     message: string,
     reason: SessionOfflineReason,
-    now = Date.now()
+    now = Date.now(),
+    publishRuntimeSnapshot = true
   ) {
     const error = new Error(message);
     const offlineSinceAt = new Date(now).toISOString();
@@ -1210,6 +1308,9 @@ export class ThreadHub {
     this.failSessionUserInputs(session.sessionId, message);
     for (const waiter of [...session.waiters]) waiter();
     this.sessions.delete(session.sessionId);
+    if (session.machineId && this.sessionIdByMachine.get(session.machineId) === session.sessionId) {
+      this.sessionIdByMachine.delete(session.machineId);
+    }
     for (const thread of this.threads.values()) {
       if (thread.sessionId !== session.sessionId) continue;
       this.rejectQueuedTurns(thread.threadId, error);
@@ -1219,7 +1320,7 @@ export class ThreadHub {
         this.publish(thread, "thread");
       }
     }
-    this.publishSessions();
+    if (publishRuntimeSnapshot) this.publishRuntimes();
   }
 
   private rejectPendingSessionCommands(session: SessionState, error: Error) {
@@ -1231,6 +1332,7 @@ export class ThreadHub {
     if (existing) {
       if (existing.sessionId !== session.sessionId) {
         existing.sessionId = session.sessionId;
+        existing.machineId = session.machineId;
         this.publish(existing, "thread");
         this.publishThreadCatalog();
       }
@@ -1244,6 +1346,7 @@ export class ThreadHub {
     const thread: ThreadState = {
       threadId,
       workingDirectory,
+      machineId: session.machineId,
       sessionId: session.sessionId,
       threadOptions: { ...this.defaultThreadOptions },
       goalRunPolicy: null,
@@ -2366,7 +2469,7 @@ export class ThreadHub {
       permissions: thread.threadOptions.permissions,
       activePermissionProfile: thread.threadOptions.activePermissionProfile ?? null,
       sandboxPolicy: thread.threadOptions.sandboxPolicy,
-      session: this.threadSessionSummary(thread),
+      runtime: this.threadRuntimeSummary(thread),
       status: thread.running ? "running" : "idle",
       running: thread.running,
       ...(thread.running && thread.activeTurnStartedAt ? { activeTurnStartedAt: thread.activeTurnStartedAt } : {}),
@@ -2410,6 +2513,25 @@ export class ThreadHub {
     };
   }
 
+  private runtimeSummary(machineId: string, session: SessionState): RuntimeSummary {
+    return {
+      machineId,
+      name: session.name,
+      workingDirectory: session.workingDirectory,
+      online: session.online,
+      status: session.online ? "online" : "offline",
+      createdAt: session.createdAt,
+      lastSeenAt: session.lastSeenAt,
+      offlineSinceAt: session.offlineSinceAt,
+      offlineReason: session.offlineReason,
+      pid: session.pid,
+      hostname: session.hostname,
+      cliVersion: session.cliVersion,
+      accountRateLimits: session.accountRateLimits ?? null,
+      threads: this.sessionThreads(session)
+    };
+  }
+
   private sessionThreads(session: SessionState): ThreadSummary[] {
     const summaries = [...this.threads.values()]
       .filter((thread) => thread.sessionId === session.sessionId)
@@ -2438,71 +2560,70 @@ export class ThreadHub {
     });
   }
 
-  private sessionSnapshotEvent(): SessionStreamEvent {
+  private runtimeSnapshotEvent(): RuntimeStreamEvent {
     return {
-      seq: this.sessionSeq,
-      kind: "sessions",
-      sessions: this.listSessions()
+      seq: this.runtimeSeq,
+      kind: "runtimes",
+      runtimes: this.listRuntimes()
     };
   }
 
-  private publishSessions() {
-    const sessions = this.listSessions();
-    const snapshotKey = sessionSnapshotKey(sessions);
-    if (snapshotKey === this.lastSessionSnapshotKey) return;
-    this.lastSessionSnapshotKey = snapshotKey;
-    const event: SessionStreamEvent = {
-      seq: ++this.sessionSeq,
-      kind: "sessions",
-      sessions
+  private publishRuntimes() {
+    const runtimes = this.listRuntimes();
+    const snapshotKey = runtimeSnapshotKey(runtimes);
+    if (snapshotKey === this.lastRuntimeSnapshotKey) return;
+    this.lastRuntimeSnapshotKey = snapshotKey;
+    const event: RuntimeStreamEvent = {
+      seq: ++this.runtimeSeq,
+      kind: "runtimes",
+      runtimes
     };
-    this.sessionEvents.push(event);
-    if (this.sessionEvents.length > 1000) this.sessionEvents.splice(0, this.sessionEvents.length - 1000);
-    for (const subscriber of this.sessionSubscribers) subscriber(event);
+    this.runtimeEvents.push(event);
+    if (this.runtimeEvents.length > 1000) this.runtimeEvents.splice(0, this.runtimeEvents.length - 1000);
+    for (const subscriber of this.runtimeSubscribers) subscriber(event);
   }
 
   private publishThreadCatalog() {
-    this.publishSessions();
+    this.publishRuntimes();
     this.options.onCatalogChange?.();
   }
 
-  private threadSessionSummary(thread: ThreadState): ThreadSessionSummary {
+  private threadRuntimeSummary(thread: ThreadState): ThreadRuntimeSummary {
     const session = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
-    if (session?.online) return threadSessionSummary(session);
-    const replacement = this.uniqueOnlineSessionForWorkspace(thread.workingDirectory);
-    if (replacement) return threadSessionSummary(replacement);
-    if (session) return threadSessionSummary(session);
-    return { online: false, runnable: false };
+    if (session?.online) return threadRuntimeSummary(session);
+    const replacement = this.onlineRuntimeSessionForMachine(thread.machineId ?? session?.machineId);
+    if (replacement) return threadRuntimeSummary(replacement);
+    if (session) return threadRuntimeSummary(session);
+    return { machineId: thread.machineId, online: false, runnable: false };
   }
 
   private threadAccountRateLimits(thread: ThreadState): ThreadRateLimits | null {
     const session = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
     if (session?.accountRateLimits) return session.accountRateLimits;
-    const replacement = this.uniqueOnlineSessionForWorkspace(thread.workingDirectory);
+    const replacement = this.onlineRuntimeSessionForMachine(thread.machineId ?? session?.machineId);
     return replacement?.accountRateLimits ?? session?.accountRateLimits ?? null;
   }
 
 }
 
-const threadSessionSummary = (session: SessionState): ThreadSessionSummary => ({
-  sessionId: session.sessionId,
+const threadRuntimeSummary = (session: SessionState): ThreadRuntimeSummary => ({
+  machineId: session.machineId,
   name: session.name,
-  appServerUrl: session.appServerUrl,
   online: session.online,
   runnable: session.online,
   lastSeenAt: session.lastSeenAt
 });
 
-const sessionSnapshotKey = (sessions: SessionSummary[]) => JSON.stringify(sessions.map((session) => ({
-  ...session,
+const runtimeSnapshotKey = (runtimes: RuntimeSummary[]) => JSON.stringify(runtimes.map((runtime) => ({
+  ...runtime,
   lastSeenAt: undefined,
-  threads: session.threads.map(threadSummarySnapshotKey)
+  threads: runtime.threads.map(threadSummarySnapshotKey)
 })));
 
 const threadSummarySnapshotKey = (thread: ThreadSummary) => ({
   ...thread,
-  session: {
-    ...thread.session,
+  runtime: {
+    ...thread.runtime,
     lastSeenAt: undefined
   }
 });

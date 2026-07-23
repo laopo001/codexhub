@@ -45,7 +45,7 @@ type ComposerTextInputProps = {
     textarea: HTMLTextAreaElement | null,
     caretIndex?: number | null
   ) => void;
-  loadCommandPalette: (sessionId: string, cwd: string) => void | Promise<void>;
+  loadCommandPalette: (machineId: string, cwd: string) => void | Promise<void>;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   resetComposerHistory: (threadId: string) => void;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
@@ -206,8 +206,8 @@ const useComposerDraft = (store: ComposerDraftStore, threadId: string) => {
 };
 
 const composerCanSend = (thread: OpenThreadState, input: string) => Boolean(
-  thread.session.online
-  && thread.session.runnable !== false
+  thread.runtime.online
+  && thread.runtime.runnable !== false
   && (input.trim() || thread.imageAttachments.length || thread.textAttachments.length)
 );
 
@@ -247,8 +247,8 @@ export const ComposerTextInput = ({
     () => commandPaletteTriggerForInput(input, safeCaretIndex),
     [input, safeCaretIndex]
   );
-  const sessionId = thread.session.sessionId ?? "";
-  const commandPaletteScopeKey = commandPaletteCacheKey(sessionId, thread.workingDirectory);
+  const machineId = thread.runtime.machineId ?? "";
+  const commandPaletteScopeKey = commandPaletteCacheKey(machineId, thread.workingDirectory);
   const commandPalette = commandPaletteByScope[commandPaletteScopeKey];
   const commandPaletteLoading = Boolean(commandPaletteLoadingScopes[commandPaletteScopeKey]);
   const commandPaletteEntries = React.useMemo(
@@ -280,10 +280,10 @@ export const ComposerTextInput = ({
   const canSend = composerCanSend(thread, input);
 
   React.useEffect(() => {
-    if (!sessionId) return;
+    if (!machineId) return;
     if (commandPalette || commandPaletteLoading) return;
-    void loadCommandPalette(sessionId, thread.workingDirectory);
-  }, [commandPalette, commandPaletteLoading, loadCommandPalette, sessionId, thread.workingDirectory]);
+    void loadCommandPalette(machineId, thread.workingDirectory);
+  }, [commandPalette, commandPaletteLoading, loadCommandPalette, machineId, thread.workingDirectory]);
   React.useEffect(() => {
     setCommandPaletteActiveIndex(0);
     setCommandPaletteKeyboardNavigation(false);

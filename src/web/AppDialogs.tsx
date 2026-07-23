@@ -41,7 +41,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     chooseThreadCandidate,
     confirmProjectPicker,
     copyContextSelection,
-    createSessionThread,
+    createMachineThread,
     createWorktreeThread,
     goalDialog,
     imagePreview,
@@ -73,7 +73,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     threadRenameDialog,
     threadTabContextMenu,
     settingsDialogOpen,
-    sessionList,
+    runtimeList,
     openThreads,
     setGoalDialog,
     setImagePreview,
@@ -91,7 +91,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setSettingsDialogOpen,
     setThreadPicker,
     submitProjectPickerPath,
-    threadOrderBySession,
+    threadOrderByMachine,
     threadPicker
   } = viewModel;
   const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
@@ -125,15 +125,15 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     ? filterProjectDirectoryEntries(projectPicker.entries, projectPickerSearch)
     : [];
   const projectPickerQuery = projectPickerSearch.trim();
-  const threadPickerSession = threadPicker
-    ? sessionList.find((session) => session.sessionId === threadPicker.sessionId)
+  const threadPickerRuntime = threadPicker
+    ? runtimeList.find((runtime) => runtime.machineId === threadPicker.machineId)
     : undefined;
-  const threadPickerReady = Boolean(threadPicker?.sessionId) && !threadPicker?.preparingRuntime;
+  const threadPickerReady = Boolean(threadPicker?.machineId) && !threadPicker?.preparingRuntime;
   const threadPickerOpenThreadIds = new Set([
-    ...(threadPickerSession?.threads
+    ...(threadPickerRuntime?.threads
       ?.filter((thread) => !threadPicker?.workingDirectory || thread.workingDirectory === threadPicker.workingDirectory)
       .map((thread) => thread.threadId) ?? []),
-    ...(threadPicker ? threadOrderBySession[threadPicker.sessionId] ?? [] : []),
+    ...(threadPicker ? threadOrderByMachine[threadPicker.machineId] ?? [] : []),
     ...openThreads.map((thread) => thread.threadId)
   ]);
   const threadPickerSearchQuery = threadPicker?.searchQuery ?? "";
@@ -161,7 +161,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const modelCatalogLoading = activeModelCatalogStatus === "idle" || activeModelCatalogStatus === "loading";
   const modelCatalogError = activeModelCatalogStatus === "error";
   const modelCatalogNotice = activeModelCatalogStatus === "unavailable"
-    ? "No online runtime session."
+    ? "No online runtime."
     : modelCatalogLoading
       ? "Loading model catalog..."
       : modelCatalogError
@@ -377,7 +377,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   type="button"
                   className="threadPickerRefreshButton"
                   onClick={() => {
-                    if (threadPicker.sessionId) void loadThreadPickerCandidates(threadPicker.sessionId);
+                    if (threadPicker.machineId) void loadThreadPickerCandidates(threadPicker.machineId);
                   }}
                   disabled={!threadPickerReady || threadPicker.loading || threadPicker.acting !== null}
                 >
@@ -390,7 +390,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <button
                 type="button"
                 className="threadPickerRow newThread"
-                onClick={() => void createSessionThread()}
+                onClick={() => void createMachineThread()}
                 disabled={!threadPickerReady || threadPicker.acting !== null}
               >
                 <span className="threadPickerRowTitle">New thread</span>
@@ -479,7 +479,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               </label>
               {threadPicker.preparingRuntime ? (
                 <div className="threadPickerEmpty" role="status">Starting Codex runtime…</div>
-              ) : !threadPicker.sessionId ? (
+              ) : !threadPicker.machineId ? (
                 <div className="threadPickerEmpty">Codex runtime is not ready</div>
               ) : threadPicker.loading ? (
                 <div className="threadPickerEmpty">Loading threads</div>

@@ -14,9 +14,9 @@ import {
   fileToDataUrl,
   isModelCommand,
   patchProjectsThread,
-  patchSessionsThread,
+  patchRuntimesThread,
   removeProjectsThread,
-  removeSessionsThread,
+  removeRuntimesThread,
   removeThreadOrder,
   selectedThreadOptions,
   type ComposerDraftStore,
@@ -27,7 +27,7 @@ import type {
   GoalDialogState,
   ProjectSummary,
   ProjectsPayload,
-  SessionSummary,
+  RuntimeSummary,
   ThreadDetail,
   ThreadRenameDialogState,
 } from "../types.js";
@@ -36,7 +36,7 @@ import type { OpenThreadAction } from "../openThreadReducer.js";
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
 type ThreadActionsContext = {
-  activeRuntimeSession?: SessionSummary | null;
+  activeRuntime?: RuntimeSummary | null;
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   composerDraftStore: ComposerDraftStore;
@@ -49,24 +49,24 @@ type ThreadActionsContext = {
   selectedProjectKey: string;
   openThreads: OpenThreadState[];
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
-  setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
-  setActiveTabThreadBySession: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setActiveMachineId: React.Dispatch<React.SetStateAction<string>>;
+  setActiveTabThreadByMachine: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setActiveTabThreadId: React.Dispatch<React.SetStateAction<string>>;
   setActiveWorkspacePath: React.Dispatch<React.SetStateAction<string>>;
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;
-  setSessionList: React.Dispatch<React.SetStateAction<SessionSummary[]>>;
+  setRuntimeList: React.Dispatch<React.SetStateAction<RuntimeSummary[]>>;
   dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
-  setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+  setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
 
 export type ThreadActionsDependencies = {
   handleLocalComposerCommand: (input: string) => boolean;
   primeTaskCompletionFeedback: () => void;
   refreshProjects: () => Promise<ProjectsPayload>;
-  refreshSessions: () => Promise<SessionSummary[]>;
+  refreshRuntimes: () => Promise<RuntimeSummary[]>;
   resetComposerHistory: (threadId: string) => void;
   sendRealtime: (message: RealtimeThreadMessage) => boolean;
 };
@@ -79,7 +79,7 @@ export type ThreadActions = {
   openThread: (threadId: string) => Promise<void>;
   clearActiveThreadIfLatest: (threadId: string) => void;
   closeThread: (threadId: string) => Promise<void>;
-  removeThreadFromUi: (threadId: string, sessionId: string, nextThreadId: string) => void;
+  removeThreadFromUi: (threadId: string, machineId: string, nextThreadId: string) => void;
   deleteThread: (threadId: string) => Promise<void>;
   subscribeThread: (threadId: string, after: number) => void;
   unsubscribeThread: (threadId: string) => void;
@@ -107,10 +107,10 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const existingThread = ctx.openThreads.find((thread) => thread.threadId === threadId);
     if (existingThread) {
       subscribeThread(threadId, existingThread.lastSeq);
-      const sessionId = existingThread.session.sessionId;
-      if (sessionId) {
-        if (updateWorkspaceContext) ctx.setActiveSessionId(sessionId);
-        ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: threadId }));
+      const machineId = existingThread.runtime.machineId;
+      if (machineId) {
+        if (updateWorkspaceContext) ctx.setActiveMachineId(machineId);
+        ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: threadId }));
       }
       if (updateWorkspaceContext) ctx.setActiveWorkspacePath(existingThread.workingDirectory);
       return;
@@ -121,18 +121,18 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
     const open = (async () => {
       const thread = await apiRouteJson(apiRoutes.thread, threadId);
-      const sessionId = thread.session.sessionId;
-      if (sessionId) {
-        ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
+      const machineId = thread.runtime.machineId;
+      if (machineId) {
+        ctx.setThreadOrderByMachine((current) => appendThreadOrder(current, machineId, thread.threadId));
       }
-      ctx.setSessionList((current) => patchSessionsThread(current, thread));
+      ctx.setRuntimeList((current) => patchRuntimesThread(current, thread));
       ctx.setProjects((current) => patchProjectsThread(current, thread));
       ctx.notificationRecordsByThread.current.set(thread.threadId, threadRecordsForNotifications(thread.threadId, thread));
       ctx.dispatchOpenThreads({ type: "upsert-detail", thread });
       if (ctx.latestRequestedThreadId.current !== thread.threadId) return;
-      if (sessionId) {
-        if (updateWorkspaceContext) ctx.setActiveSessionId(sessionId);
-        ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
+      if (machineId) {
+        if (updateWorkspaceContext) ctx.setActiveMachineId(machineId);
+        ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: thread.threadId }));
       }
       if (updateWorkspaceContext) ctx.setActiveWorkspacePath(thread.workingDirectory);
       ctx.setActiveTabThreadId(thread.threadId);
@@ -162,13 +162,13 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     if (ctx.closedThreadIds.current.has(threadId)) return;
     const threadIds = ctx.openThreads.map((thread) => thread.threadId);
     const closingThread = ctx.openThreads.find((thread) => thread.threadId === threadId);
-    const sessionId = closingThread?.session.sessionId ?? ctx.activeRuntimeSession?.sessionId ?? "";
+    const machineId = closingThread?.runtime.machineId ?? ctx.activeRuntime?.machineId ?? "";
     const nextThreadId = ctx.activeTabThreadId === threadId
       ? adjacentThreadId(threadIds, threadId)
       : ctx.activeTabThreadId;
 
     ctx.closedThreadIds.current.add(threadId);
-    removeThreadFromUi(threadId, sessionId, nextThreadId);
+    removeThreadFromUi(threadId, machineId, nextThreadId);
     try {
       await deleteThread(threadId);
       if (ctx.activeTabThreadId === threadId && nextThreadId) {
@@ -178,13 +178,13 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       ctx.closedThreadIds.current.delete(threadId);
       window.alert(error instanceof Error ? error.message : String(error));
       await Promise.all([
-        deps.refreshSessions().catch(() => undefined),
+        deps.refreshRuntimes().catch(() => undefined),
         deps.refreshProjects().catch(() => undefined)
       ]);
     }
   };
 
-  function removeThreadFromUi(threadId: string, sessionId: string, nextThreadId: string) {
+  function removeThreadFromUi(threadId: string, machineId: string, nextThreadId: string) {
     ctx.openingThreads.current.delete(threadId);
     ctx.composerDraftStore.delete(threadId);
     ctx.threadLastSeqs.current.delete(threadId);
@@ -193,15 +193,15 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       URL.revokeObjectURL(image.previewUrl);
     }
     ctx.dispatchOpenThreads({ type: "remove", threadId });
-    ctx.setSessionList((current) => removeSessionsThread(current, threadId));
+    ctx.setRuntimeList((current) => removeRuntimesThread(current, threadId));
     ctx.setProjects((current) => removeProjectsThread(current, threadId));
-    ctx.setThreadOrderBySession((current) => removeThreadOrder(current, threadId));
-    ctx.setActiveTabThreadBySession((current) => {
+    ctx.setThreadOrderByMachine((current) => removeThreadOrder(current, threadId));
+    ctx.setActiveTabThreadByMachine((current) => {
       const next = { ...current };
       for (const [key, value] of Object.entries(current)) {
         if (value === threadId) delete next[key];
       }
-      if (sessionId && nextThreadId) next[sessionId] = nextThreadId;
+      if (machineId && nextThreadId) next[machineId] = nextThreadId;
       return next;
     });
     if (ctx.activeTabThreadId === threadId) {
@@ -218,7 +218,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
   const applyThreadDetail = (thread: ThreadDetail) => {
     ctx.dispatchOpenThreads({ type: "upsert-detail", thread });
-    ctx.setSessionList((current) => patchSessionsThread(current, thread));
+    ctx.setRuntimeList((current) => patchRuntimesThread(current, thread));
     ctx.setProjects((current) => patchProjectsThread(current, thread));
   };
 
@@ -278,10 +278,10 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   ) => {
     try {
       const thread = await apiRouteJson(route, threadId, { messageId });
-      const sessionId = thread.session.sessionId ?? ctx.activeRuntimeSession?.sessionId;
-      if (sessionId) {
-        ctx.setActiveTabThreadBySession((current) => ({ ...current, [sessionId]: thread.threadId }));
-        ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, thread.threadId));
+      const machineId = thread.runtime.machineId ?? ctx.activeRuntime?.machineId;
+      if (machineId) {
+        ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: thread.threadId }));
+        ctx.setThreadOrderByMachine((current) => appendThreadOrder(current, machineId, thread.threadId));
       }
       await openThread(thread.threadId);
     } catch (error) {

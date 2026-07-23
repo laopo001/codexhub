@@ -2,7 +2,7 @@ import type { RealtimeMessage, RealtimeOutgoingMessage } from "./apiContract.js"
 import { asRecord } from "./recordTypes.js";
 
 export type RealtimeControlCursors = {
-  sessionsAfter?: number;
+  runtimesAfter?: number;
   projectsAfter?: number;
   tasksAfter?: number;
   connectionsAfter?: number;
@@ -20,7 +20,7 @@ export type CodexHubRealtimeClientOptions = {
 };
 
 const realtimeMessageTypes = new Set([
-  "sessions",
+  "runtimes",
   "projects",
   "tasks",
   "connections",
@@ -69,7 +69,7 @@ export class CodexHubRealtimeClient {
 
   constructor(private readonly options: CodexHubRealtimeClientOptions) {
     this.cursors = {
-      sessionsAfter: options.cursors?.sessionsAfter ?? 0,
+      runtimesAfter: options.cursors?.runtimesAfter ?? 0,
       projectsAfter: options.cursors?.projectsAfter ?? 0,
       tasksAfter: options.cursors?.tasksAfter ?? 0,
       connectionsAfter: options.cursors?.connectionsAfter ?? 0
@@ -151,14 +151,14 @@ export class CodexHubRealtimeClient {
   }
 
   private rememberHello(message: Extract<RealtimeOutgoingMessage, { type: "hello" }>) {
-    this.cursors.sessionsAfter = maxCursor(this.cursors.sessionsAfter, message.sessionsAfter);
+    this.cursors.runtimesAfter = maxCursor(this.cursors.runtimesAfter, message.runtimesAfter);
     this.cursors.projectsAfter = maxCursor(this.cursors.projectsAfter, message.projectsAfter);
     this.cursors.tasksAfter = maxCursor(this.cursors.tasksAfter, message.tasksAfter);
     this.cursors.connectionsAfter = maxCursor(this.cursors.connectionsAfter, message.connectionsAfter);
   }
 
   private rememberIncoming(message: RealtimeMessage) {
-    if (message.type === "sessions") this.cursors.sessionsAfter = maxCursor(this.cursors.sessionsAfter, message.seq);
+    if (message.type === "runtimes") this.cursors.runtimesAfter = maxCursor(this.cursors.runtimesAfter, message.seq);
     if (message.type === "projects") this.cursors.projectsAfter = maxCursor(this.cursors.projectsAfter, message.seq);
     if (message.type === "tasks") this.cursors.tasksAfter = maxCursor(this.cursors.tasksAfter, message.seq);
     if (message.type === "connections") this.cursors.connectionsAfter = maxCursor(this.cursors.connectionsAfter, message.seq);

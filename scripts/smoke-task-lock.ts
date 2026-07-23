@@ -17,7 +17,7 @@ type MachineSummary = {
 
 type ProjectThreadStartResponse = {
   result?: {
-    sessionId?: string;
+    machineId?: string;
     threadId?: string;
     cwd?: string;
   };
@@ -74,8 +74,8 @@ type PartialThreadUsage = {
   secondaryRateLimit?: PartialRateLimitWindow | null;
 };
 
-type PartialSessionSummary = {
-  sessionId?: string;
+type PartialRuntimeSummary = {
+  machineId?: string;
   accountRateLimits?: {
     primaryRateLimit?: PartialRateLimitWindow | null;
     secondaryRateLimit?: PartialRateLimitWindow | null;
@@ -165,8 +165,8 @@ const main = async () => {
       body: JSON.stringify({ machineId: fake.machineId, path: projectDir })
     });
     assertNoWorkerId(open, "/api/projects/open");
-    if (open.result?.sessionId !== fake.sessionId || open.result?.threadId !== fake.threadId) {
-      throw new Error(`project thread start returned unexpected session/thread: ${JSON.stringify(open)}`);
+    if (open.result?.machineId !== fake.machineId || open.result?.threadId !== fake.threadId) {
+      throw new Error(`project thread start returned unexpected machine/thread: ${JSON.stringify(open)}`);
     }
     const modelCatalogPromise = apiJson<{
       models?: Array<{
@@ -174,7 +174,7 @@ const main = async () => {
         supportedReasoningEfforts?: Array<{ value?: string; description?: string }>;
         serviceTiers?: Array<{ value?: string }>;
       }>;
-    }>(apiBase, `/api/sessions/${encodeURIComponent(fake.sessionId)}/models`);
+    }>(apiBase, `/api/machines/${encodeURIComponent(fake.machineId)}/models`);
     const modelListCommand = await fake.nextSessionCommand("list_models");
     if (modelListCommand.includeHidden !== false) {
       throw new Error(`model catalog command should not include hidden models by default: ${JSON.stringify(modelListCommand)}`);
@@ -194,12 +194,12 @@ const main = async () => {
     if (!catalogModel.serviceTiers?.some((option) => option.value === "fast")) {
       throw new Error(`model catalog response missing fast service tier: ${JSON.stringify(modelCatalog)}`);
     }
-    console.log("session model catalog ok");
+    console.log("runtime model catalog ok");
     const permissionProfilesPromise = apiJson<{
       profiles?: Array<{ id?: string; description?: string | null; allowed?: boolean }>;
     }>(
       apiBase,
-      `/api/sessions/${encodeURIComponent(fake.sessionId)}/permission-profiles?cwd=${encodeURIComponent(projectDir)}`
+      `/api/machines/${encodeURIComponent(fake.machineId)}/permission-profiles?cwd=${encodeURIComponent(projectDir)}`
     );
     const permissionProfilesCommand = await fake.nextSessionCommand("list_permission_profiles");
     if (permissionProfilesCommand.workingDirectory !== projectDir) {
@@ -425,14 +425,14 @@ const main = async () => {
       }
     });
     await assertStatusUsage(apiBase, fake.threadId, { input: 900, output: 31, total: 931 });
-    await assertSessionAccountRateLimits(apiBase, fake.sessionId);
+    await assertRuntimeAccountRateLimits(apiBase, fake.machineId);
     fake.emitTokenUsageForTurnId(fake.threadId, "context-only-usage");
-    await assertSessionAccountRateLimits(apiBase, fake.sessionId);
+    await assertRuntimeAccountRateLimits(apiBase, fake.machineId);
     fake.emitContextTokenUsage("context-usage");
     await assertThreadUsageContext(apiBase, fake.threadId, 321, 456000);
-    await assertSessionAccountRateLimits(apiBase, fake.sessionId);
+    await assertRuntimeAccountRateLimits(apiBase, fake.machineId);
     fake.emitSparsePrimaryAccountRateLimit(27);
-    await assertSessionAccountRateLimits(apiBase, fake.sessionId, {
+    await assertRuntimeAccountRateLimits(apiBase, fake.machineId, {
       primaryUsedPercent: 27
     });
     console.log("app-server token usage and account rate limits ok");
@@ -1665,9 +1665,9 @@ const waitForTaskStatus = async (
   throw new Error(`task ${taskId} did not reach status ${status}`);
 };
 
-const assertSessionAccountRateLimits = async (
+const assertRuntimeAccountRateLimits = async (
   apiBase: string,
-  sessionId: string,
+  machineId: string,
   expected: {
     primaryUsedPercent?: number;
     primaryResetsAt?: number;
@@ -1675,8 +1675,8 @@ const assertSessionAccountRateLimits = async (
 ) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 5000) {
-    const data = await apiJson<{ sessions?: PartialSessionSummary[] }>(apiBase, "/api/sessions");
-    const accountRateLimits = data.sessions?.find((session) => session.sessionId === sessionId)?.accountRateLimits;
+    const data = await apiJson<{ runtimes?: PartialRuntimeSummary[] }>(apiBase, "/api/runtimes");
+    const accountRateLimits = data.runtimes?.find((runtime) => runtime.machineId === machineId)?.accountRateLimits;
     const primary = accountRateLimits?.primaryRateLimit;
     const secondary = accountRateLimits?.secondaryRateLimit;
     if (
@@ -1689,7 +1689,7 @@ const assertSessionAccountRateLimits = async (
     ) return;
     await delay(100);
   }
-  throw new Error(`session ${sessionId} did not receive account rate limits`);
+  throw new Error(`runtime ${machineId} did not receive account rate limits`);
 };
 
 const assertThreadUsageContext = async (

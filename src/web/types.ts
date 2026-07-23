@@ -13,8 +13,8 @@ import type {
   ProjectsPayload as ApiProjectsPayload,
   ReasoningEffort as ApiReasoningEffort,
   RealtimeMessage as ApiRealtimeMessage,
-  SessionStreamEvent as ApiSessionStreamEvent,
-  SessionSummary as ApiSessionSummary,
+  RuntimeStreamEvent as ApiRuntimeStreamEvent,
+  RuntimeSummary as ApiRuntimeSummary,
   SshConnectionSummary,
   SshHostSummary,
   StoredTaskRun,
@@ -61,7 +61,7 @@ export type ThreadRenameDialogState = {
   error: string;
 };
 
-export type SessionSummary = ApiSessionSummary;
+export type RuntimeSummary = ApiRuntimeSummary;
 export type ModelCatalogItem = ApiModelCatalogItem;
 export type ModelCatalogLoadState = {
   status: "loading" | "ready" | "error";
@@ -130,7 +130,7 @@ export type ProjectPickerState = {
 };
 
 export type ThreadPickerState = {
-  sessionId: string;
+  machineId: string;
   workingDirectory: string;
   preparingRuntime: boolean;
   bootstrapId?: string;
@@ -201,7 +201,7 @@ export type StreamEvent = ApiThreadStreamEvent;
 
 export type TaskCompleteNotification = ApiTaskCompleteNotification;
 
-export type SessionStreamEvent = ApiSessionStreamEvent;
+export type RuntimeStreamEvent = ApiRuntimeStreamEvent;
 export type TasksStreamEvent = ApiTasksStreamEvent;
 export type ConnectionsStreamEvent = ApiConnectionsStreamEvent;
 export type RealtimeMessage = ApiRealtimeMessage;

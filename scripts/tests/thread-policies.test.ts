@@ -37,7 +37,7 @@ test("local command parser and fast mode policy stay outside ThreadHub state orc
   const state = thread();
   const enabled = localCommandMessage(
     state,
-    { online: true, runnable: true, sessionId: "session-1" },
+    { online: true, runnable: true, machineId: "session-1" },
     null,
     "fast",
     ["on"]
@@ -123,7 +123,7 @@ test("goal records only consume current camelCase ThreadGoal fields", () => {
 
 test("ThreadHub stores goal notifications with only current camelCase fields", () => {
   const hub = new ThreadHub();
-  hub.registerSession({ sessionId: "session-1", workingDirectory: "/tmp/project" });
+  hub.registerSession({ sessionId: "session-1", machineId: "machine-1", workingDirectory: "/tmp/project" });
   hub.applySessionEvent("session-1", {
     type: "thread_event",
     threadId: "thread-1",
@@ -179,6 +179,41 @@ test("ThreadHub stores goal notifications with only current camelCase fields", (
   const clearedPayload = hub.getThread("thread-1")?.records.at(-1)?.payload as Record<string, unknown>;
   assert.equal(clearedPayload.type, "thread_goal_cleared");
   assert.equal("turnId" in clearedPayload, false);
+});
+
+test("ThreadHub keeps one runtime per machine and rebinds threads to its latest process", async () => {
+  const hub = new ThreadHub();
+  hub.registerSession({
+    sessionId: "runtime-process-a",
+    machineId: "machine-stable",
+    name: "stable machine",
+    workingDirectory: "/tmp/project-a"
+  });
+  hub.attachSessionThread("runtime-process-a", "thread-stable", "/tmp/project-a");
+
+  hub.registerSession({
+    sessionId: "runtime-process-b",
+    machineId: "machine-stable",
+    name: "stable machine",
+    workingDirectory: "/tmp/project-b"
+  });
+
+  assert.deepEqual(hub.listSessions().map((session) => session.sessionId), ["runtime-process-b"]);
+  const runtimes = hub.listRuntimes();
+  assert.equal(runtimes.length, 1);
+  assert.equal(runtimes[0]?.machineId, "machine-stable");
+  assert.equal("sessionId" in (runtimes[0] ?? {}), false);
+  const projectedThread = hub.getThread("thread-stable");
+  assert.equal(projectedThread?.runtime.machineId, "machine-stable");
+  assert.equal("sessionId" in (projectedThread?.runtime ?? {}), false);
+
+  const candidatesPromise = hub.listMachineThreadCandidates("machine-stable", 10, "/tmp/project-a");
+  const batch = await hub.waitSessionCommands("runtime-process-b", 0, 10);
+  assert.equal(batch.commands.length, 1);
+  assert.equal(batch.commands[0]?.type, "list_threads");
+  assert.equal(batch.commands[0]?.workingDirectory, "/tmp/project-a");
+  hub.resolveSessionCommand("runtime-process-b", batch.commands[0]!.commandId, { threads: [] });
+  assert.deepEqual(await candidatesPromise, { threads: [] });
 });
 
 test("ThreadHub projects goal/get snapshots and ignores removed Thread.goal", () => {

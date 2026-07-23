@@ -52,7 +52,7 @@ export type StoredTaskRun = {
   startedAt: string;
   finishedAt?: string;
   durationMs?: number;
-  sessionId?: string;
+  machineId?: string;
   threadId?: string;
   error?: string;
 };

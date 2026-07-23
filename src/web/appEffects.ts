@@ -4,9 +4,9 @@ import {
   apiRouteJson,
   machineProjectLauncher,
   permissionProfileScopeKey,
-  preferredThreadIdForSession,
+  preferredThreadIdForRuntime,
   primeTaskCompletionSound,
-  runtimeSessionForProject
+  runtimeForProject
 } from "./appHelpers.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
@@ -55,11 +55,11 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     if (!state.initialized) return;
     localStorage.setItem(storageKey, JSON.stringify({
       activeWorkspacePath: state.activeWorkspacePath,
-      activeSessionId: state.activeSessionId,
+      activeMachineId: state.activeMachineId,
       activeTabThreadId: state.activeTabThreadId,
-      activeTabThreadBySession: state.activeTabThreadBySession,
+      activeTabThreadByMachine: state.activeTabThreadByMachine,
       openThreadIds: selectors.openThreadIds,
-      threadOrderBySession: state.threadOrderBySession,
+      threadOrderByMachine: state.threadOrderByMachine,
       selectedProjectKey: state.selectedProjectKey,
       projectSearch: state.sidebarDraftStore.getSnapshot().projectSearch,
       messageDisplayMode: state.messageDisplayMode,
@@ -68,15 +68,15 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     }));
   }, [
     state.activeWorkspacePath,
-    state.activeSessionId,
-    state.activeTabThreadBySession,
+    state.activeMachineId,
+    state.activeTabThreadByMachine,
     state.activeTabThreadId,
     selectors.openThreadIds,
     state.selectedProjectKey,
     state.messageDisplayMode,
     state.sidebarCollapsed,
     state.collapsedProjectMachineKeys,
-    state.threadOrderBySession,
+    state.threadOrderByMachine,
     state.initialized
   ]);
 
@@ -147,38 +147,38 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
 
   useEffect(() => {
     if (!state.initialized) return;
-    const availableSessions = state.sessionList;
-    if (!availableSessions.length) {
-      if (state.activeSessionId) state.setActiveSessionId("");
+    const availableRuntimes = state.runtimeList;
+    if (!availableRuntimes.length) {
+      if (state.activeMachineId) state.setActiveMachineId("");
       if (state.activeTabThreadId) state.setActiveTabThreadId("");
       return;
     }
 
-    const selectedRuntimeSession = runtimeSessionForProject(selectors.selectedProject ?? undefined, state.sessionList);
+    const selectedRuntimeSession = runtimeForProject(selectors.selectedProject ?? undefined, state.runtimeList);
     if (state.selectedProjectKey && selectors.selectedProject) {
-      if (selectedRuntimeSession && state.activeSessionId !== selectedRuntimeSession.sessionId) {
-        state.setActiveSessionId(selectedRuntimeSession.sessionId);
-      } else if (!selectedRuntimeSession && !selectors.selectedProject.machineOnline && state.activeSessionId) {
-        state.setActiveSessionId("");
+      if (selectedRuntimeSession && state.activeMachineId !== selectedRuntimeSession.machineId) {
+        state.setActiveMachineId(selectedRuntimeSession.machineId);
+      } else if (!selectedRuntimeSession && !selectors.selectedProject.machineOnline && state.activeMachineId) {
+        state.setActiveMachineId("");
       }
       return;
     }
 
-    const activeTabSessionId = selectors.activeThread?.session.sessionId;
-    const preferredSession = activeTabSessionId
-      ? availableSessions.find((session) => session.sessionId === activeTabSessionId)
+    const activeTabMachineId = selectors.activeThread?.runtime.machineId;
+    const preferredSession = activeTabMachineId
+      ? availableRuntimes.find((runtime) => runtime.machineId === activeTabMachineId)
       : undefined;
-    const session = preferredSession ?? selectors.activeRuntimeSession ?? state.sessionList[0];
-    if (session && !state.activeSessionId) state.setActiveSessionId(session.sessionId);
+    const runtime = preferredSession ?? selectors.activeRuntime ?? state.runtimeList[0];
+    if (runtime && !state.activeMachineId) state.setActiveMachineId(runtime.machineId);
 
     if (state.activeTabThreadId || state.openThreads.length) return;
 
-    const initialThreadId = session
-      ? preferredThreadIdForSession(
-        session,
+    const initialThreadId = runtime
+      ? preferredThreadIdForRuntime(
+        runtime,
         selectors.projectList.find((project) =>
-          project.machineId === session.machineId
-          && project.path === session.workingDirectory
+          project.machineId === runtime.machineId
+          && project.path === runtime.workingDirectory
         )
       )
       : undefined;
@@ -186,15 +186,15 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       void actions.openThread(initialThreadId).catch(() => actions.clearActiveThreadIfLatest(initialThreadId));
     }
   }, [
-    selectors.activeThread?.session.sessionId,
-    state.activeSessionId,
+    selectors.activeThread?.runtime.machineId,
+    state.activeMachineId,
     state.activeTabThreadId,
-    selectors.activeRuntimeSession,
+    selectors.activeRuntime,
     state.initialized,
     selectors.projectList,
     selectors.selectedProject,
     state.selectedProjectKey,
-    state.sessionList,
+    state.runtimeList,
     state.openThreads.length
   ]);
 
@@ -205,23 +205,23 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
 
   useEffect(() => {
     if (!state.initialized || !state.threadModelDialogOpen) return undefined;
-    const sessionId = selectors.activeRuntimeSession?.sessionId;
-    if (!sessionId) return undefined;
-    const currentCatalog = state.modelCatalogBySession[sessionId];
+    const machineId = selectors.activeRuntime?.machineId;
+    if (!machineId) return undefined;
+    const currentCatalog = state.modelCatalogByMachine[machineId];
     if (
       currentCatalog?.status === "loading"
       || currentCatalog?.status === "ready"
       || currentCatalog?.status === "error"
     ) return undefined;
-    state.setModelCatalogBySession((current) => ({
+    state.setModelCatalogByMachine((current) => ({
       ...current,
-      [sessionId]: { status: "loading", models: [] }
+      [machineId]: { status: "loading", models: [] }
     }));
-    void apiRouteJson(apiRoutes.sessionModels, sessionId)
+    void apiRouteJson(apiRoutes.runtimeModels, machineId)
       .then((payload) => {
-        state.setModelCatalogBySession((current) => ({
+        state.setModelCatalogByMachine((current) => ({
           ...current,
-          [sessionId]: {
+          [machineId]: {
             status: "ready",
             models: Array.isArray(payload.models) ? payload.models : []
           }
@@ -229,9 +229,9 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       })
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        state.setModelCatalogBySession((current) => ({
+        state.setModelCatalogByMachine((current) => ({
           ...current,
-          [sessionId]: {
+          [machineId]: {
             status: "error",
             models: [],
             error: message || "Model catalog unavailable."
@@ -239,24 +239,24 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
         }));
       });
   }, [
-    selectors.activeRuntimeSession?.sessionId,
+    selectors.activeRuntime?.machineId,
     state.initialized,
-    state.modelCatalogBySession,
+    state.modelCatalogByMachine,
     state.threadModelDialogOpen
   ]);
 
   useEffect(() => {
     if (!state.initialized || !state.composerMenuOpen) return undefined;
-    const sessionId = selectors.activeThread?.session.sessionId;
+    const machineId = selectors.activeThread?.runtime.machineId;
     const cwd = selectors.activeThread?.workingDirectory;
-    if (!sessionId || !cwd) return undefined;
-    const scopeKey = permissionProfileScopeKey(sessionId, cwd);
+    if (!machineId || !cwd) return undefined;
+    const scopeKey = permissionProfileScopeKey(machineId, cwd);
     let cancelled = false;
     state.setPermissionProfilesByScope((current) => ({
       ...current,
       [scopeKey]: { status: "loading", profiles: [] }
     }));
-    void apiRouteJson(apiRoutes.sessionPermissionProfiles, sessionId, cwd)
+    void apiRouteJson(apiRoutes.runtimePermissionProfiles, machineId, cwd)
       .then((payload) => {
         if (cancelled) return;
         state.setPermissionProfilesByScope((current) => ({
@@ -283,7 +283,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       cancelled = true;
     };
   }, [
-    selectors.activeThread?.session.sessionId,
+    selectors.activeThread?.runtime.machineId,
     selectors.activeThread?.workingDirectory,
     state.composerMenuOpen,
     state.initialized

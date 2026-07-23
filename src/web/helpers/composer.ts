@@ -41,8 +41,8 @@ export const createComposerDraftStore = (): ComposerDraftStore => {
   };
 };
 
-export const commandPaletteCacheKey = (sessionId: string, cwd: string) =>
-  `${sessionId}\u0000${cwd}`;
+export const commandPaletteCacheKey = (machineId: string, cwd: string) =>
+  `${machineId}\u0000${cwd}`;
 
 export const clipboardImageFiles = (clipboardData: DataTransfer) => {
   const itemFiles = [...clipboardData.items]
@@ -461,11 +461,11 @@ const storedStringArrayRecord = (value: unknown) => {
 
 export const readStoredUiState = (): {
   activeWorkspacePath?: string;
-  activeSessionId?: string;
+  activeMachineId?: string;
   activeTabThreadId?: string;
-  activeTabThreadBySession?: Record<string, string>;
+  activeTabThreadByMachine?: Record<string, string>;
   openThreadIds?: string[];
-  threadOrderBySession?: Record<string, string[]>;
+  threadOrderByMachine?: Record<string, string[]>;
   selectedProjectKey?: string;
   projectSearch?: string;
   messageDisplayMode?: MessageDisplayMode;
@@ -478,11 +478,11 @@ export const readStoredUiState = (): {
     if (!parsed || typeof parsed !== "object") return null;
     return {
       activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,
-      activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : undefined,
+      activeMachineId: typeof parsed.activeMachineId === "string" ? parsed.activeMachineId : undefined,
       activeTabThreadId: typeof parsed.activeTabThreadId === "string" ? parsed.activeTabThreadId : undefined,
-      activeTabThreadBySession: storedStringRecord(parsed.activeTabThreadBySession),
+      activeTabThreadByMachine: storedStringRecord(parsed.activeTabThreadByMachine),
       openThreadIds: Array.isArray(parsed.openThreadIds) ? storedStringArray(parsed.openThreadIds) ?? [] : undefined,
-      threadOrderBySession: storedStringArrayRecord(parsed.threadOrderBySession),
+      threadOrderByMachine: storedStringArrayRecord(parsed.threadOrderByMachine),
       selectedProjectKey: typeof parsed.selectedProjectKey === "string" ? parsed.selectedProjectKey : undefined,
       projectSearch: typeof parsed.projectSearch === "string" ? parsed.projectSearch : undefined,
       messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode) ? parsed.messageDisplayMode : undefined,

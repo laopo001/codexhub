@@ -14,6 +14,7 @@ import {
   type MachineCapabilities,
   type MachineCommand,
   type MachineDirectoryListing,
+  type MachineEnsureRuntimeResult,
   type MachineGitWorktreeResult,
   type MachineRegistration,
   type MachineRegistrationProject,
@@ -321,11 +322,33 @@ class CodexhubMachineRunner {
   }
 
   private async runCommand(command: MachineCommand) {
+    if (command.type === "ensure_runtime") return await this.ensureRuntime(command);
     if (command.type === "start_session") return await this.startSession(command);
     if (command.type === "list_directory") return await this.listDirectory(command);
     if (command.type === "create_git_worktree") return await this.createGitWorktree(command);
     if (command.type === "stop_session") return await this.stopSession(command);
     throw new Error(`Unexpected command: ${(command as { type?: string }).type ?? "unknown"}`);
+  }
+
+  private async ensureRuntime(command: MachineCommand): Promise<MachineEnsureRuntimeResult> {
+    if (command.type !== "ensure_runtime") throw new Error(`Unexpected command: ${command.type}`);
+    const cwd = await resolveDirectory(command.cwd);
+    const existing = this.runtimeSession;
+    if (existing) {
+      await this.ensureRuntimeAttached(existing, command.commandId);
+      return {
+        sessionId: existing.session.sessionId,
+        appServerUrl: existing.session.appServerUrl,
+        cwd,
+        reused: true
+      };
+    }
+    const runtime = await this.ensureRuntimeSession(cwd, command.commandId);
+    return {
+      sessionId: runtime.session.sessionId,
+      appServerUrl: runtime.session.appServerUrl,
+      cwd
+    };
   }
 
   private async startSession(command: MachineCommand): Promise<MachineStartSessionResult> {

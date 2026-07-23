@@ -27,7 +27,7 @@ import {
   permissionProfileScopeKey,
   reasoningDraftForModelSelection,
   reasoningOptionsForSelection,
-  runtimeSessionForProject,
+  runtimeForProject,
   serviceTierOptionsForSelection,
   threadDisplayRecords,
   threadExecutionIsRunning,
@@ -127,13 +127,13 @@ export const useAppSelectors = (state: AppState) => {
       : undefined,
     [projectList, state.selectedProjectKey]
   );
-  const activeRuntimeSession = useMemo(
+  const activeRuntime = useMemo(
     () => {
-      if (selectedProjectByKey) return runtimeSessionForProject(selectedProjectByKey, state.sessionList);
-      return state.sessionList.find((session) => session.sessionId === state.activeSessionId)
+      if (selectedProjectByKey) return runtimeForProject(selectedProjectByKey, state.runtimeList);
+      return state.runtimeList.find((runtime) => runtime.machineId === state.activeMachineId)
       ?? undefined;
     },
-    [state.activeSessionId, state.activeWorkspacePath, projectList, selectedProjectByKey, state.sessionList]
+    [state.activeMachineId, state.activeWorkspacePath, projectList, selectedProjectByKey, state.runtimeList]
   );
   const onlineMachines = useMemo(() => state.machines.filter((machine) => machine.online), [state.machines]);
   const localMachines = useMemo(() => state.machines.filter((machine) => machine.type === "local"), [state.machines]);
@@ -160,38 +160,38 @@ export const useAppSelectors = (state: AppState) => {
   );
   const selectedProject = useMemo(() => {
     if (selectedProjectByKey) return selectedProjectByKey;
-    if (activeRuntimeSession) {
+    if (activeRuntime) {
       return projectList.find((project) =>
-        project.machineId === activeRuntimeSession.machineId
+        project.machineId === activeRuntime.machineId
         && Boolean(state.activeWorkspacePath)
         && project.path === state.activeWorkspacePath
         )
         ?? projectList.find((project) =>
-          project.machineId === activeRuntimeSession.machineId
-          && project.path === activeRuntimeSession.workingDirectory
+          project.machineId === activeRuntime.machineId
+          && project.path === activeRuntime.workingDirectory
         );
     }
-    if (state.activeSessionId) {
-      const session = state.sessionList.find((session) => session.sessionId === state.activeSessionId);
-      const sessionProject = session
+    if (state.activeMachineId) {
+      const runtime = state.runtimeList.find((runtime) => runtime.machineId === state.activeMachineId);
+      const sessionProject = runtime
         ? projectList.find((project) =>
-          project.machineId === session.machineId
-          && (!state.activeWorkspacePath || project.path === state.activeWorkspacePath || project.path === session.workingDirectory)
+          project.machineId === runtime.machineId
+          && (!state.activeWorkspacePath || project.path === state.activeWorkspacePath || project.path === runtime.workingDirectory)
         )
         : undefined;
       if (sessionProject) return sessionProject;
     }
     return state.activeWorkspacePath ? projectList.find((project) => project.path === state.activeWorkspacePath) : undefined;
-  }, [activeRuntimeSession, state.activeSessionId, state.activeWorkspacePath, projectList, selectedProjectByKey, state.sessionList]);
+  }, [activeRuntime, state.activeMachineId, state.activeWorkspacePath, projectList, selectedProjectByKey, state.runtimeList]);
   const activeProjectKey = selectedProject ? projectKeyForProject(selectedProject) : "";
   const activeProjectThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
     const projectPath = selectedProject?.path ?? state.activeWorkspacePath;
-    for (const thread of activeRuntimeSession?.threads ?? []) {
+    for (const thread of activeRuntime?.threads ?? []) {
       if (projectPath && thread.workingDirectory !== projectPath) continue;
       byId.set(thread.threadId, thread);
     }
-    const orderedIds = state.threadOrderBySession[activeRuntimeSession?.sessionId ?? ""] ?? [];
+    const orderedIds = state.threadOrderByMachine[activeRuntime?.machineId ?? ""] ?? [];
     return [
       ...orderedIds.flatMap((threadId) => {
         const thread = byId.get(threadId);
@@ -201,7 +201,7 @@ export const useAppSelectors = (state: AppState) => {
       }),
       ...byId.values()
     ];
-  }, [activeRuntimeSession, selectedProject?.path, state.activeWorkspacePath, state.threadOrderBySession]);
+  }, [activeRuntime, selectedProject?.path, state.activeWorkspacePath, state.threadOrderByMachine]);
   const openThreadIds = useMemo(
     () => state.openThreads.map((thread) => thread.threadId),
     [state.openThreads]
@@ -209,13 +209,13 @@ export const useAppSelectors = (state: AppState) => {
   const activeThreadSummary = useMemo(
     () => {
       if (activeThread) return activeThread;
-      for (const session of state.sessionList) {
-        const thread = session.threads?.find((item) => item.threadId === state.activeTabThreadId);
+      for (const runtime of state.runtimeList) {
+        const thread = runtime.threads?.find((item) => item.threadId === state.activeTabThreadId);
         if (thread) return thread;
       }
       return null;
     },
-    [activeThread, state.activeTabThreadId, state.sessionList]
+    [activeThread, state.activeTabThreadId, state.runtimeList]
   );
   const openThreadIdsKey = openThreadIds.join("\n");
   const displayRecords = useMemo(
@@ -298,22 +298,22 @@ export const useAppSelectors = (state: AppState) => {
   );
   const activeDisplayThreadId = activeThread?.threadId ?? state.activeTabThreadId;
   const activeThreadIsOpen = Boolean(activeThread && openThreadIds.includes(activeThread.threadId));
-  const activeRuntimeOnline = Boolean(activeThread?.session.online && activeThread.session.runnable !== false);
+  const activeRuntimeOnline = Boolean(activeThread?.runtime.online && activeThread.runtime.runnable !== false);
   const activeCanStop = Boolean(activeThreadIsOpen && activeRuntimeOnline && activeThread?.running);
   const showComposerSendButton = Boolean(activeThread && !activeThread.running);
   const openThreadEmptyMessage = openThreadIds.length
     ? selectedProject
-      ? activeRuntimeSession?.online
+      ? activeRuntime?.online
         ? activeProjectThreads.length ? "Select a thread" : "No threads"
         : selectedProject.machineOnline ? "No threads" : "Machine offline"
       : "Select a thread"
-    : activeRuntimeSession
-    ? activeRuntimeSession.online
+    : activeRuntime
+    ? activeRuntime.online
       ? activeProjectThreads.length ? "Select a thread" : "No threads"
-      : "Session disconnected"
+      : "Runtime disconnected"
     : selectedProject
     ? selectedProject.machineOnline ? "No threads" : "Machine offline"
-    : "No session";
+    : "No runtime";
   const latestThreadUsage = useMemo(
     () => latestThreadUsageFromRecords(latestTurnActivity.records) ?? latestThreadUsageFromRecords(displayRecords),
     [displayRecords, latestTurnActivity.records]
@@ -322,8 +322,8 @@ export const useAppSelectors = (state: AppState) => {
     ?? activeThreadSummary?.threadUsage
     ?? null;
   const sessionRateLimitUsage = useMemo(
-    () => threadUsageFromSessionRateLimits(activeRuntimeSession?.accountRateLimits),
-    [activeRuntimeSession?.accountRateLimits]
+    () => threadUsageFromSessionRateLimits(activeRuntime?.accountRateLimits),
+    [activeRuntime?.accountRateLimits]
   );
   const activeThreadUsage = mergeThreadUsage(
     mergeThreadUsage(latestThreadUsage, summaryThreadUsage),
@@ -349,20 +349,20 @@ export const useAppSelectors = (state: AppState) => {
     ?? state.systemStatus.serviceTier
     ?? null;
   const effectiveModelSelection = activeThreadModelDraft === "auto" && activeThreadModel ? activeThreadModel : activeThreadModelDraft;
-  const activeModelCatalogState = activeRuntimeSession?.sessionId
-    ? state.modelCatalogBySession[activeRuntimeSession.sessionId]
+  const activeModelCatalogState = activeRuntime?.machineId
+    ? state.modelCatalogByMachine[activeRuntime.machineId]
     : undefined;
   const activeModelCatalog = activeModelCatalogState?.status === "ready"
     ? activeModelCatalogState.models
     : [];
-  const activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error" = activeRuntimeSession?.sessionId
+  const activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error" = activeRuntime?.machineId
     ? activeModelCatalogState?.status ?? "idle"
     : "unavailable";
   const activeModelCatalogError = activeModelCatalogState?.status === "error"
     ? activeModelCatalogState.error ?? "Model catalog unavailable."
     : "";
-  const activePermissionProfileScopeKey = activeThread?.session.sessionId && activeThread.workingDirectory
-    ? permissionProfileScopeKey(activeThread.session.sessionId, activeThread.workingDirectory)
+  const activePermissionProfileScopeKey = activeThread?.runtime.machineId && activeThread.workingDirectory
+    ? permissionProfileScopeKey(activeThread.runtime.machineId, activeThread.workingDirectory)
     : "";
   const activePermissionProfileCatalogState = activePermissionProfileScopeKey
     ? state.permissionProfilesByScope[activePermissionProfileScopeKey]
@@ -370,7 +370,7 @@ export const useAppSelectors = (state: AppState) => {
   const activePermissionProfiles = activePermissionProfileCatalogState?.status === "ready"
     ? activePermissionProfileCatalogState.profiles
     : [];
-  const activePermissionProfilesStatus: "unavailable" | "idle" | "loading" | "ready" | "error" = activeThread?.session.sessionId
+  const activePermissionProfilesStatus: "unavailable" | "idle" | "loading" | "ready" | "error" = activeThread?.runtime.machineId
     ? activePermissionProfileCatalogState?.status ?? "idle"
     : "unavailable";
   const activePermissionProfilesError = activePermissionProfileCatalogState?.status === "error"
@@ -404,7 +404,7 @@ export const useAppSelectors = (state: AppState) => {
     activeGoal,
     activeProjectKey,
     activeProjectThreads,
-    activeRuntimeSession,
+    activeRuntime,
     activeThread,
     activeThreadModel,
     activeThreadIsOpen,

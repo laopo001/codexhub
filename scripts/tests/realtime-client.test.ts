@@ -57,11 +57,11 @@ test("realtime client replays advanced cursors and thread subscriptions after re
   client.subscribeThread("thread-1");
   sockets[0].open();
   assert.deepEqual(sockets[0].sent, [
-    { type: "hello", sessionsAfter: 0, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 },
+    { type: "hello", runtimesAfter: 0, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 },
     { type: "subscribe_thread", threadId: "thread-1", after: 0 }
   ]);
 
-  sockets[0].message({ type: "sessions", seq: 7 });
+  sockets[0].message({ type: "runtimes", seq: 7 });
   sockets[0].message({ type: "record", seq: 5, thread: { threadId: "thread-1" } });
   sockets[0].close();
   await new Promise((resolve) => setTimeout(resolve, 5));
@@ -69,7 +69,7 @@ test("realtime client replays advanced cursors and thread subscriptions after re
 
   sockets[1].open();
   assert.deepEqual(sockets[1].sent, [
-    { type: "hello", sessionsAfter: 7, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 },
+    { type: "hello", runtimesAfter: 7, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 },
     { type: "subscribe_thread", threadId: "thread-1", after: 5 }
   ]);
   client.disconnect();

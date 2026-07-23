@@ -54,7 +54,15 @@ export type MachineSummary = {
   capabilities: MachineCapabilities;
 };
 
-/** 机器启动或复用 machine runtime 后，按 cwd 创建/恢复 thread 的结果。 */
+/** machine 确保唯一 Codex runtime 已启动后的内部结果。 */
+export type MachineEnsureRuntimeResult = {
+  sessionId: string;
+  appServerUrl: string;
+  cwd: string;
+  reused?: boolean;
+};
+
+/** 机器启动或复用 machine runtime 后，按 cwd 创建/恢复 thread 的内部结果。 */
 export type MachineStartSessionResult = {
   sessionId: string;
   threadId: string;
@@ -95,6 +103,7 @@ export type MachineStopSessionResult = {
 
 /** machine command 的所有可能返回值。 */
 export type MachineCommandResult =
+  | MachineEnsureRuntimeResult
   | MachineStartSessionResult
   | MachineDirectoryListing
   | MachineGitWorktreeResult
@@ -107,6 +116,9 @@ type MachineCommandBase = {
 };
 
 type MachineCommandDetail = {
+  type: "ensure_runtime";
+  cwd: string;
+} | {
   type: "start_session";
   cwd: string;
   reuse?: boolean;

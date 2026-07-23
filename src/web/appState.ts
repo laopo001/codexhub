@@ -13,7 +13,7 @@ import type {
   PermissionProfileCatalogLoadState,
   ProjectPickerState,
   ProjectSummary,
-  SessionSummary,
+  RuntimeSummary,
   SystemStatus,
   ThreadPickerState
 } from "./types.js";
@@ -111,18 +111,18 @@ export const useAppState = () => {
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [openThreads, dispatchOpenThreads] = useReducer(openThreadReducer, []);
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
-  const [sessionList, setSessionList] = useState<SessionSummary[]>([]);
+  const [runtimeList, setRuntimeList] = useState<RuntimeSummary[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState("");
+  const [activeMachineId, setActiveMachineId] = useState("");
   const [selectedProjectKey, setSelectedProjectKey] = useState("");
   const [openingProjectKey, setOpeningProjectKey] = useState("");
   const [projectActionError, setProjectActionError] = useState("");
   const [deletingProjectId, setDeletingProjectId] = useState("");
   const [projectPicker, setProjectPicker] = useState<ProjectPickerState | null>(null);
   const [threadPicker, setThreadPicker] = useState<ThreadPickerState | null>(null);
-  const [activeTabThreadBySession, setActiveTabThreadBySession] = useState<Record<string, string>>({});
-  const [threadOrderBySession, setThreadOrderBySession] = useState<Record<string, string[]>>({});
+  const [activeTabThreadByMachine, setActiveTabThreadByMachine] = useState<Record<string, string>>({});
+  const [threadOrderByMachine, setThreadOrderByMachine] = useState<Record<string, string[]>>({});
   const [initialized, setInitialized] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     model: null,
@@ -130,12 +130,12 @@ export const useAppState = () => {
     serviceTier: null,
     contextWindowTokens: null
   });
-  const [modelCatalogBySession, setModelCatalogBySession] = useState<Record<string, ModelCatalogLoadState>>({});
+  const [modelCatalogByMachine, setModelCatalogByMachine] = useState<Record<string, ModelCatalogLoadState>>({});
   const [permissionProfilesByScope, setPermissionProfilesByScope] = useState<Record<string, PermissionProfileCatalogLoadState>>({});
   const [commandPaletteByScope, setCommandPaletteByScope] = useState<Record<string, CommandPalette>>({});
   const [commandPaletteLoadingScopes, setCommandPaletteLoadingScopes] = useState<Record<string, boolean>>({});
   const realtimeClient = useRef<CodexHubRealtimeClient | null>(null);
-  const sessionsLastSeq = useRef(0);
+  const runtimesLastSeq = useRef(0);
   const projectsLastSeq = useRef(0);
   const tasksLastSeq = useRef(0);
   const connectionsLastSeq = useRef(0);
@@ -154,8 +154,8 @@ export const useAppState = () => {
   const notifiedTaskCompletions = useRef(new Set<string>());
   const notificationAudioContext = useRef<AudioContext | null>(null);
   return {
-    activeSessionId,
-    activeTabThreadBySession,
+    activeMachineId,
+    activeTabThreadByMachine,
     activeTabThreadId,
     activeWorkspacePath,
     appSettings,
@@ -187,7 +187,7 @@ export const useAppState = () => {
     messageContextMenu,
     messageDisplayMode,
     messageRenderModes,
-    modelCatalogBySession,
+    modelCatalogByMachine,
     permissionProfilesByScope,
     messagesRef,
     messagesShouldFollowRef,
@@ -212,10 +212,10 @@ export const useAppState = () => {
     selectedProjectKey,
     serverAuthRequired,
     serverShareCopied,
-    sessionList,
-    sessionsLastSeq,
-    setActiveSessionId,
-    setActiveTabThreadBySession,
+    runtimeList,
+    runtimesLastSeq,
+    setActiveMachineId,
+    setActiveTabThreadByMachine,
     setActiveTabThreadId,
     setActiveWorkspacePath,
     setAppSettings,
@@ -239,7 +239,7 @@ export const useAppState = () => {
     setMessageContextMenu,
     setMessageDisplayMode,
     setMessageRenderModes,
-    setModelCatalogBySession,
+    setModelCatalogByMachine,
     setPermissionProfilesByScope,
     setOfflineProjectsCollapsed,
     setOpeningProjectKey,
@@ -255,7 +255,7 @@ export const useAppState = () => {
     setSelectedProjectKey,
     setServerAuthRequired,
     setServerShareCopied,
-    setSessionList,
+    setRuntimeList,
     setSettingsDialogOpen,
     setSidebarCollapsed,
     setSshConfigHosts,
@@ -271,7 +271,7 @@ export const useAppState = () => {
     setTasks,
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
-    setThreadOrderBySession,
+    setThreadOrderByMachine,
     setThreadRenameDialog,
     setThreadTabContextMenu,
     setThreadPicker,
@@ -293,7 +293,7 @@ export const useAppState = () => {
     threadControlsMenuOpen,
     threadLastSeqs,
     threadModelDialogOpen,
-    threadOrderBySession,
+    threadOrderByMachine,
     threadRenameDialog,
     threadTabContextMenu,
     threadPicker

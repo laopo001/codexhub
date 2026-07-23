@@ -20,7 +20,7 @@ export type ThreadSummary = {
   permissions?: ThreadOptions["permissions"];
   activePermissionProfile?: ThreadOptions["activePermissionProfile"] | null;
   sandboxPolicy?: ThreadOptions["sandboxPolicy"];
-  session: ThreadSessionSummary;
+  runtime: ThreadRuntimeSummary;
   status: "running" | "idle";
   running: boolean;
   activeTurnStartedAt?: string;
@@ -34,23 +34,40 @@ export type ThreadSummary = {
   goalRunPolicy?: ThreadGoalRunPolicy | null;
 };
 
-/** thread 所属 runtime session 的轻量信息。 */
-export type ThreadSessionSummary = {
-  sessionId?: string;
+/** thread 所属 machine runtime 的轻量信息；runtime incarnation id 不进入公开模型。 */
+export type ThreadRuntimeSummary = {
+  machineId?: string;
   name?: string;
-  appServerUrl?: string;
   online: boolean;
   runnable: boolean;
   lastSeenAt?: string;
 };
 
-/** Web/API 可见的 runtime session 摘要；session 是机器级 Codex runtime。 */
+/** server/machine bridge 内部的 runtime 进程代次摘要，不进入公共 HTTP/Web 模型。 */
 export type SessionSummary = {
   sessionId: string;
   machineId?: string;
   name?: string;
   workingDirectory: string;
   appServerUrl?: string;
+  online: boolean;
+  status: "online" | "offline";
+  createdAt?: string;
+  lastSeenAt: string;
+  offlineSinceAt?: string;
+  offlineReason?: SessionOfflineReason;
+  pid?: number;
+  hostname?: string;
+  cliVersion?: string;
+  accountRateLimits?: ThreadRateLimits | null;
+  threads: ThreadSummary[];
+};
+
+/** Web/API 可见的 machine runtime 摘要；每台 machine 最多只有一项。 */
+export type RuntimeSummary = {
+  machineId: string;
+  name?: string;
+  workingDirectory: string;
   online: boolean;
   status: "online" | "offline";
   createdAt?: string;
@@ -272,11 +289,11 @@ export type SessionRegistration = {
 /** session 离线原因；用于 Web 区分心跳超时、transport 断开和主动注销。 */
 export type SessionOfflineReason = "heartbeat_timeout" | "transport_disconnected" | "unregistered";
 
-/** `/api/events/ws` 下发的 sessions 控制面快照事件。 */
-export type SessionStreamEvent = {
+/** `/api/events/ws` 下发的 machine runtimes 控制面快照事件。 */
+export type RuntimeStreamEvent = {
   seq: number;
-  kind: "sessions";
-  sessions: SessionSummary[];
+  kind: "runtimes";
+  runtimes: RuntimeSummary[];
 };
 
 /** server 下发给 session bridge 的命令，最终由 machine/app-server 执行。 */

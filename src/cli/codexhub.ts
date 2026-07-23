@@ -314,12 +314,12 @@ taskCommand
   .description("Run one server-local task immediately")
   .action(async (target: string) => {
     const task = resolveTaskTarget(target, await listLocalTasks());
-    const payload = await apiJson<{ task?: LocalTask; threadId?: string; sessionId?: string }>(
+    const payload = await apiJson<{ task?: LocalTask; threadId?: string; machineId?: string }>(
       `/api/tasks/${encodeURIComponent(task.taskId)}/run`,
       { method: "POST" }
     );
     if (payload.task) printLocalTasks([payload.task]);
-    console.log(`Run queued on session ${payload.sessionId ?? "(unknown)"} thread ${payload.threadId ?? "(unknown)"}`);
+    console.log(`Run queued on machine ${payload.machineId ?? "(unknown)"} thread ${payload.threadId ?? "(unknown)"}`);
   });
 
 taskCommand

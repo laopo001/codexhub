@@ -13,7 +13,7 @@ const loadReducer = async () => {
 const detail = (threadId: string): ThreadDetail => ({
   threadId,
   workingDirectory: `/tmp/${threadId}`,
-  session: { online: true, runnable: true, sessionId: "session-1" },
+  runtime: { online: true, runnable: true, machineId: "session-1" },
   status: "idle",
   running: false,
   title: threadId,

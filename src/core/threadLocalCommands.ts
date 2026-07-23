@@ -7,7 +7,7 @@ import {
 import type { ThreadState } from "./threadHubState.js";
 import { asRecord } from "../shared/recordTypes.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
-import type { ThreadSessionSummary } from "../shared/threadTypes.js";
+import type { ThreadRuntimeSummary } from "../shared/threadTypes.js";
 import type { ThreadOptions, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "../shared/usageTypes.js";
 
 export const parseLocalSlashCommand = (input: ProxyInput) => {
@@ -22,12 +22,12 @@ export const parseLocalSlashCommand = (input: ProxyInput) => {
 
 export const localCommandMessage = (
   thread: ThreadState,
-  session: ThreadSessionSummary,
+  runtime: ThreadRuntimeSummary,
   accountRateLimits: ThreadRateLimits | null,
   command: string,
   args: string[]
 ) => {
-  if (command === "status") return threadStatusMessage(thread, session, accountRateLimits);
+  if (command === "status") return threadStatusMessage(thread, runtime, accountRateLimits);
   if (command === "help") return slashHelpMessage();
   if (command === "model") return modelCommandMessage(thread);
   if (command === "fast") return fastCommandMessage(thread, args);
@@ -41,7 +41,7 @@ export const localCommandMessage = (
 
 const threadStatusMessage = (
   thread: ThreadState,
-  session: ThreadSessionSummary,
+  runtime: ThreadRuntimeSummary,
   accountRateLimits: ThreadRateLimits | null
 ) => [
   "## Codex Hub Status",
@@ -54,7 +54,7 @@ const threadStatusMessage = (
   `- Updated: ${markdownCode(thread.updatedAt)}`,
   "",
   "**Runtime**",
-  `- Session: ${markdownCode(formatSession(session))}`,
+  `- Machine runtime: ${markdownCode(formatRuntime(runtime))}`,
   `- Model: ${markdownCode(formatModel(thread.threadOptions))}`,
   `- Reasoning: ${markdownCode(thread.threadOptions.modelReasoningEffort ?? "auto")}`,
   `- Service tier: ${markdownCode(formatServiceTier(thread.threadOptions))}`,
@@ -139,10 +139,10 @@ const formatSandboxPolicy = (options: ThreadOptions) => {
   return `external-sandbox:${policy.networkAccess}`;
 };
 
-const formatSession = (summary: ThreadSessionSummary) => {
+const formatRuntime = (summary: ThreadRuntimeSummary) => {
   const state = summary.runnable ? "runnable" : summary.online ? "online" : "offline";
-  const session = summary.sessionId ? ` session:${summary.name ?? summary.sessionId.slice(0, 8)}` : "";
-  return `${state}${session}`;
+  const machine = summary.machineId ? ` machine:${summary.name ?? summary.machineId}` : "";
+  return `${state}${machine}`;
 };
 
 const formatStatusUsage = (thread: ThreadState, accountRateLimits: ThreadRateLimits | null) => {

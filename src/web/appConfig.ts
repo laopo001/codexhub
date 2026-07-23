@@ -34,10 +34,10 @@ export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
 export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ?? "";
 export const embeddedWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "workspacePath"]);
 export const storageKey = isVscodeSurface
-  ? "codexhub-ui-state-vscode-v1"
+  ? "codexhub-ui-state-vscode-v2"
   : isTheiaSurface
-    ? "codexhub-ui-state-theia-v1"
-    : "codexhub-ui-state-v5";
+    ? "codexhub-ui-state-theia-v2"
+    : "codexhub-ui-state-v6";
 export const defaultAppSettings = (): AppSettings => ({
   selectedPetId: defaultPetId,
   showFloatingPet: false,

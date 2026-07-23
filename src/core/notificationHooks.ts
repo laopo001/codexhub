@@ -22,7 +22,7 @@ export type NotificationHookPayload = {
   title: string;
   body: string;
   threadId: string;
-  sessionId?: string;
+  machineId?: string;
   workingDirectory: string;
   turnId?: string;
   recordId: string;
@@ -138,7 +138,7 @@ export const notificationHookPayload = (
   title: notification.title,
   body: notification.body,
   threadId: thread.threadId,
-  ...(thread.session.sessionId ? { sessionId: thread.session.sessionId } : {}),
+  ...(thread.runtime.machineId ? { machineId: thread.runtime.machineId } : {}),
   workingDirectory: thread.workingDirectory,
   ...(turnIdFromRecord(record) ? { turnId: turnIdFromRecord(record) } : {}),
   recordId: record.id,

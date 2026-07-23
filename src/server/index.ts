@@ -661,6 +661,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     connectionSubscribers,
     forceReleaseThreadRecordSubscription,
     markStaleSessions: () => threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs()),
+    machines,
     projectSnapshotEvent,
     projectSubscribers,
     publishProjects,
@@ -668,7 +669,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     retainThreadRecordSubscription,
     taskSnapshotEvent: () => taskScheduler.snapshotEvent(),
     taskSubscribers: taskScheduler.subscribers,
-    threads
+    threads,
+    waitForSession
   });
 
   registerConnectionRoutes(app, {

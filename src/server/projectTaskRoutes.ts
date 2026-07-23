@@ -92,7 +92,17 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
     if (!project) throw new Error("Project could not be opened.");
     ctx.publishProjects();
     ctx.refreshParentRegistration();
-    return { ok: true, machine: input.machine, project, result, ...ctx.projectSnapshot() } satisfies ProjectThreadStartPayload;
+    return {
+      ok: true,
+      machine: input.machine,
+      project,
+      result: {
+        machineId: input.machine.machineId,
+        threadId: result.threadId,
+        cwd: result.cwd
+      },
+      ...ctx.projectSnapshot()
+    } satisfies ProjectThreadStartPayload;
   };
 
   app.get("/api/projects", async () => ctx.projectSnapshot() satisfies ProjectsPayload);

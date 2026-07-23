@@ -35,7 +35,7 @@ import type {
   PermissionProfileDraft,
   PermissionProfileSummary,
   ServiceTierSelection,
-  SessionSummary,
+  RuntimeSummary,
   SshConnection,
   SshHost,
   ThreadGoalView,
@@ -103,7 +103,7 @@ export type AppSidebarViewModel = {
   openTaskRunThread: (threadId: string) => MaybePromise;
   selectedProject?: ProjectSummary | null;
   selectProject: (project: ProjectSummary) => MaybePromise;
-  sessionList: SessionSummary[];
+  runtimeList: RuntimeSummary[];
   serverShareCopied: boolean;
   sidebarDraftStore: SidebarDraftStore;
   setConnectionMode: React.Dispatch<React.SetStateAction<ConnectionMode>>;
@@ -137,7 +137,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   activeDisplayThreadId: string;
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
-  activeRuntimeSession?: SessionSummary;
+  activeRuntime?: RuntimeSummary;
   activeThread?: OpenThreadState;
   activeThreadIsOpen: boolean;
   activeThreadExecutionMeta: ThreadExecutionMeta | null;
@@ -163,7 +163,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   composerTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
   confirmProjectPicker: () => MaybePromise;
   copyContextSelection: () => MaybePromise;
-  createSessionThread: () => MaybePromise;
+  createMachineThread: () => MaybePromise;
   createWorktreeThread: () => MaybePromise;
   effectiveModelSelection: ModelSelection;
   effectiveReasoningSelection: ReasoningSelection;
@@ -181,7 +181,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   inspectContextMessage: () => void;
   inspectMessage: WebRecordView | null;
   latestTurnActivityScope: TurnActivityScope;
-  loadCommandPalette: (sessionId: string, cwd: string) => MaybePromise;
+  loadCommandPalette: (machineId: string, cwd: string) => MaybePromise;
   loadProjectPickerDirectory: (machineId: string, path: string) => MaybePromise;
   messageContextMenu: MessageContextMenuState | null;
   messageDisplayMode: MessageDisplayMode;
@@ -218,8 +218,8 @@ export type AppViewModelSource = AppSidebarViewModel & {
     textarea: HTMLTextAreaElement | null,
     caretIndex?: number | null
   ) => void;
-  loadThreadPickerCandidates: (sessionId: string) => MaybePromise;
-  openThreadPicker: (session: SessionSummary, workingDirectory?: string) => MaybePromise;
+  loadThreadPickerCandidates: (machineId: string) => MaybePromise;
+  openThreadPicker: (session: RuntimeSummary, workingDirectory?: string) => MaybePromise;
   openSelectedProjectThreadPicker: () => MaybePromise;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   projectPicker: ProjectPickerState | null;
@@ -237,7 +237,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   saveThreadRenameDialog: () => MaybePromise;
   send: (threadId: string) => MaybePromise;
   threadModelDialogOpen: boolean;
-  sessionList: SessionSummary[];
+  runtimeList: RuntimeSummary[];
   threadControlsMenuOpen: boolean;
   threadRenameDialog: ThreadRenameDialogState | null;
   threadTabContextMenu: ThreadTabContextMenuState | null;
@@ -276,8 +276,8 @@ export type AppViewModelSource = AppSidebarViewModel & {
   stopTurn: (threadId: string) => MaybePromise;
   submitAuthToken: (event: React.FormEvent<HTMLFormElement>) => void;
   submitProjectPickerPath: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
-  switchSessionThread: (threadId: string) => MaybePromise;
-  threadOrderBySession: Record<string, string[]>;
+  switchMachineThread: (threadId: string) => MaybePromise;
+  threadOrderByMachine: Record<string, string[]>;
   threadPicker: ThreadPickerState | null;
   turnStatusItems: ActivityStatusView[];
   updateMessageRenderMode: (messageId: string, mode: MessageRenderMode) => void;
@@ -291,7 +291,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "activeCanStop"
   | "activeExpandedStatusKeys"
   | "activeGoal"
-  | "activeRuntimeSession"
+  | "activeRuntime"
   | "activeThread"
   | "activeThreadIsOpen"
   | "activeThreadExecutionMeta"
@@ -368,7 +368,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "turnStatusItems"
   | "stopTurn"
   | "submitAuthToken"
-  | "switchSessionThread"
+  | "switchMachineThread"
   | "updateMessageRenderMode"
   | "updateThreadInput"
   | "updateThreadGoal"
@@ -383,7 +383,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "chooseThreadCandidate"
   | "confirmProjectPicker"
   | "copyContextSelection"
-  | "createSessionThread"
+  | "createMachineThread"
   | "createWorktreeThread"
   | "goalDialog"
   | "imagePreview"
@@ -412,7 +412,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "threadRenameDialog"
   | "threadTabContextMenu"
   | "settingsDialogOpen"
-  | "sessionList"
+  | "runtimeList"
   | "openThreads"
   | "openPetPicker"
   | "petEnabled"
@@ -433,7 +433,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "setSettingsDialogOpen"
   | "setThreadPicker"
   | "submitProjectPickerPath"
-  | "threadOrderBySession"
+  | "threadOrderByMachine"
   | "threadPicker"
 >;
 
@@ -452,7 +452,7 @@ const sidebarKeys = [
   "parentRegistration", "parentRegistrationBusy", "parentRegistrationError", "patchTask",
   "projectGroups", "projectList", "projectScopeLocked", "projectActionError", "registeredCommand",
   "registeredCommandIncludesToken", "registeredCommandCopied", "registeredMachines", "removeSshHost",
-  "runTaskNow", "openTaskRunThread", "selectedProject", "selectProject", "sessionList",
+  "runTaskNow", "openTaskRunThread", "selectedProject", "selectProject", "runtimeList",
   "serverShareCopied", "sidebarDraftStore", "setConnectionMode", "setOfflineProjectsCollapsed",
   "setTaskFormOpen", "setSettingsDialogOpen", "stopSshConnection", "sshConfigHostOptions",
   "sshConfigHosts", "sshConnectingHost", "sshConnections", "sshError", "sshHostBusy", "sshHosts",
@@ -461,7 +461,7 @@ const sidebarKeys = [
 ] as const satisfies readonly (keyof AppSidebarViewModel)[];
 
 const workspaceKeys = [
-  "activeCanStop", "activeExpandedStatusKeys", "activeGoal", "activeRuntimeSession", "activeThread",
+  "activeCanStop", "activeExpandedStatusKeys", "activeGoal", "activeRuntime", "activeThread",
   "activeThreadIsOpen", "activeThreadExecutionMeta", "activeThreadApprovalPolicyDraft",
   "activeThreadApprovalPolicyKind", "activeThreadApprovalPolicySelection",
   "activeThreadApprovalsReviewerDraft", "activeThreadApprovalsReviewerSelection",
@@ -483,14 +483,14 @@ const workspaceKeys = [
   "setActiveThreadPermissionProfileDraft",
   "setAuthTokenDraft", "setThreadControlsMenuOpen", "setThreadModelDialogOpen", "setSidebarCollapsed",
   "showComposerSendButton", "statusPanelAvailable", "statusPanelExpanded", "sidebarCollapsed",
-  "statusScopeKey", "turnStatusItems", "stopTurn", "submitAuthToken", "switchSessionThread",
+  "statusScopeKey", "turnStatusItems", "stopTurn", "submitAuthToken", "switchMachineThread",
   "updateMessageRenderMode", "updateThreadInput", "updateThreadGoal", "openThreadEmptyMessage",
   "openThreadTabs"
 ] as const satisfies readonly (keyof AppWorkspaceViewModel)[];
 
 const dialogKeys = [
   "addContextSelectionToConversation", "appSettings", "changeProjectPickerMachine",
-  "chooseThreadCandidate", "confirmProjectPicker", "copyContextSelection", "createSessionThread",
+  "chooseThreadCandidate", "confirmProjectPicker", "copyContextSelection", "createMachineThread",
   "createWorktreeThread", "goalDialog", "imagePreview", "inspectContextMessage", "inspectMessage",
   "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageContextMenu",
   "messageDisplayMode",
@@ -498,13 +498,13 @@ const dialogKeys = [
   "effectiveReasoningSelection", "effectiveServiceTierSelection", "modelOptions", "reasoningOptions",
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
   "saveGoalDialog", "saveThreadRenameDialog", "threadModelDialogOpen", "threadRenameDialog",
-  "threadTabContextMenu", "settingsDialogOpen", "sessionList", "openThreads", "setGoalDialog",
+  "threadTabContextMenu", "settingsDialogOpen", "runtimeList", "openThreads", "setGoalDialog",
   "setImagePreview", "setInspectMessage", "setAppSettings", "setMessageContextMenu",
   "setMessageDisplayMode",
   "setProjectPicker", "setActiveThreadModelDraft", "setActiveThreadReasoningDraft",
   "setActiveThreadServiceTierDraft", "setThreadModelDialogOpen", "setThreadRenameDialog",
   "setThreadTabContextMenu", "setSettingsDialogOpen", "setThreadPicker", "submitProjectPickerPath",
-  "threadOrderBySession", "threadPicker", "openPetPicker", "petEnabled", "petName"
+  "threadOrderByMachine", "threadPicker", "openPetPicker", "petEnabled", "petName"
 ] as const satisfies readonly (keyof AppDialogsViewModel)[];
 
 const pickViewModel = <Source extends object, const Keys extends readonly (keyof Source)[]>(

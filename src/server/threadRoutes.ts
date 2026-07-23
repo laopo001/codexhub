@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { MachineHub } from "../core/machineHub.js";
 import type { ThreadHub } from "../core/threadHub.js";
 import {
   inputSchema,
@@ -9,9 +10,10 @@ import {
   threadRunOptionsSchema,
   threadUserInputResponseSchema,
   webEventsMessageSchema,
-  type SessionModelsPayload,
-  type SessionPermissionProfilesPayload,
-  type SessionsPayload,
+  type RuntimeEnsurePayload,
+  type RuntimeModelsPayload,
+  type RuntimePermissionProfilesPayload,
+  type RuntimesPayload,
   type CommandPalettePayload,
   type ThreadCandidatesPayload,
   type ThreadCompactPayload,
@@ -42,6 +44,7 @@ export type ThreadRoutesContext<
   connectionSubscribers: Set<(event: ConnectionEvent) => void>;
   forceReleaseThreadRecordSubscription: (threadId: string) => void;
   markStaleSessions: () => { offline: number; removed: number };
+  machines: MachineHub;
   projectSnapshotEvent: () => ProjectEvent;
   projectSubscribers: Set<(event: ProjectEvent) => void>;
   publishProjects: () => void;
@@ -50,6 +53,7 @@ export type ThreadRoutesContext<
   taskSnapshotEvent: () => TaskEvent;
   taskSubscribers: Set<(event: TaskEvent) => void>;
   threads: ThreadHub;
+  waitForSession: (sessionId: string) => Promise<unknown>;
 };
 
 export const registerThreadRoutes = <
@@ -65,17 +69,17 @@ export const registerThreadRoutes = <
     threads: ctx.threads.listThreads()
   } satisfies ThreadsPayload));
 
-  app.get("/api/sessions", async (request) => {
+  app.get("/api/runtimes", async (request) => {
     const query = z.object({ includeOffline: z.string().optional() }).parse(request.query);
     return {
       ...ctx.markStaleSessions(),
-      sessions: ctx.threads.listSessions({ includeOffline: query.includeOffline === "true" })
-    } satisfies SessionsPayload;
+      runtimes: ctx.threads.listRuntimes({ includeOffline: query.includeOffline === "true" })
+    } satisfies RuntimesPayload;
   });
 
   app.get("/api/events/ws", { websocket: true }, (socket) => {
     const threadUnsubscribers = new Map<string, () => void>();
-    let unsubscribeSessions: (() => void) | null = null;
+    let unsubscribeRuntimes: (() => void) | null = null;
     let projectSubscriber: ((event: ProjectEvent) => void) | null = null;
     let taskSubscriber: ((event: TaskEvent) => void) | null = null;
     let connectionSubscriber: ((event: ConnectionEvent) => void) | null = null;
@@ -90,8 +94,8 @@ export const registerThreadRoutes = <
     };
 
     const unsubscribeControl = () => {
-      unsubscribeSessions?.();
-      unsubscribeSessions = null;
+      unsubscribeRuntimes?.();
+      unsubscribeRuntimes = null;
       if (projectSubscriber) ctx.projectSubscribers.delete(projectSubscriber);
       if (taskSubscriber) ctx.taskSubscribers.delete(taskSubscriber);
       if (connectionSubscriber) ctx.connectionSubscribers.delete(connectionSubscriber);
@@ -104,12 +108,12 @@ export const registerThreadRoutes = <
       unsubscribeControl();
       ctx.markStaleSessions();
 
-      const sessionsAfter = input.sessionsAfter ?? 0;
+      const runtimesAfter = input.runtimesAfter ?? 0;
       const projectsAfter = input.projectsAfter ?? 0;
       const tasksAfter = input.tasksAfter ?? 0;
       const connectionsAfter = input.connectionsAfter ?? 0;
 
-      unsubscribeSessions = ctx.threads.subscribeSessions(sessionsAfter, (event) => {
+      unsubscribeRuntimes = ctx.threads.subscribeRuntimes(runtimesAfter, (event) => {
         sendEvent(event);
       });
       const projectSnapshot = ctx.projectSnapshotEvent();
@@ -196,79 +200,97 @@ export const registerThreadRoutes = <
     socket.on("close", closeSubscriptions);
   });
 
-  app.get("/api/sessions/:sessionId/thread-candidates", async (request, reply) => {
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
+  app.post("/api/machines/:machineId/runtime/ensure", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
+    const payload = z.object({ cwd: z.string().min(1) }).strict().parse(request.body);
+    try {
+      const current = ctx.threads.runtimeForMachine(params.machineId);
+      if (current?.online) return { ok: true, runtime: current } satisfies RuntimeEnsurePayload;
+      const ensured = await ctx.machines.ensureRuntime(params.machineId, { cwd: payload.cwd }).promise;
+      await ctx.waitForSession(ensured.sessionId);
+      const runtime = ctx.threads.runtimeForMachine(params.machineId);
+      if (!runtime?.online) throw new Error(`Runtime did not register for machine: ${params.machineId}`);
+      return { ok: true, runtime } satisfies RuntimeEnsurePayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Machine not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.get("/api/machines/:machineId/thread-candidates", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const query = z.object({
       limit: z.coerce.number().int().min(1).max(200).optional(),
       cwd: z.string().min(1).optional()
     }).parse(request.query);
     try {
-      const result = await ctx.threads.listSessionThreadCandidates(params.sessionId, query.limit ?? 50, query.cwd);
+      const result = await ctx.threads.listMachineThreadCandidates(params.machineId, query.limit ?? 50, query.cwd);
       return result satisfies ThreadCandidatesPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session not found:") ? 404 : 409);
+      reply.code(message.startsWith("Runtime not found") ? 404 : 409);
       return { error: message };
     }
   });
 
-  app.get("/api/sessions/:sessionId/models", async (request, reply) => {
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
+  app.get("/api/machines/:machineId/models", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const query = z.object({ includeHidden: z.string().optional() }).parse(request.query);
     try {
-      const result = await ctx.threads.listSessionModels(params.sessionId, query.includeHidden === "true");
-      return result satisfies SessionModelsPayload;
+      const result = await ctx.threads.listMachineModels(params.machineId, query.includeHidden === "true");
+      return result satisfies RuntimeModelsPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session not found:") ? 404 : 409);
+      reply.code(message.startsWith("Runtime not found") ? 404 : 409);
       return { error: message };
     }
   });
 
-  app.get("/api/sessions/:sessionId/permission-profiles", async (request, reply) => {
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
+  app.get("/api/machines/:machineId/permission-profiles", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const query = z.object({ cwd: z.string().min(1) }).parse(request.query);
     try {
-      const result = await ctx.threads.listSessionPermissionProfiles(params.sessionId, query.cwd);
-      return result satisfies SessionPermissionProfilesPayload;
+      const result = await ctx.threads.listMachinePermissionProfiles(params.machineId, query.cwd);
+      return result satisfies RuntimePermissionProfilesPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session not found:") ? 404 : 409);
+      reply.code(message.startsWith("Runtime not found") ? 404 : 409);
       return { error: message };
     }
   });
 
-  app.get("/api/sessions/:sessionId/command-palette", async (request, reply) => {
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
+  app.get("/api/machines/:machineId/command-palette", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const query = z.object({
       cwd: z.string().min(1).optional(),
       part: z.enum(["core", "plugins", "all"]).optional()
     }).parse(request.query);
     try {
-      const result = await ctx.threads.listSessionCommandPalette(params.sessionId, query.cwd, query.part);
+      const result = await ctx.threads.listMachineCommandPalette(params.machineId, query.cwd, query.part);
       return result satisfies CommandPalettePayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session not found:") ? 404 : 409);
+      reply.code(message.startsWith("Runtime not found") ? 404 : 409);
       return { error: message };
     }
   });
 
-  app.post("/api/sessions/:sessionId/threads", async (request, reply) => {
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
+  app.post("/api/machines/:machineId/threads", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const payload = z.discriminatedUnion("action", [
       z.object({ action: z.literal("new"), cwd: z.string().min(1).optional() }),
       z.object({ action: z.literal("resume"), threadId: z.string().min(1), cwd: z.string().min(1).optional() })
     ]).parse(request.body);
     try {
       const thread = payload.action === "new"
-        ? await ctx.threads.startSessionThread(params.sessionId, payload.cwd)
-        : await ctx.threads.resumeSessionThread(params.sessionId, payload.threadId, payload.cwd);
+        ? await ctx.threads.startMachineThread(params.machineId, payload.cwd)
+        : await ctx.threads.resumeMachineThread(params.machineId, payload.threadId, payload.cwd);
       ctx.publishProjects();
       return thread satisfies ThreadDetail;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      reply.code(message.startsWith("Session not found:") ? 404 : 409);
+      reply.code(message.startsWith("Runtime not found") ? 404 : 409);
       return { error: message };
     }
   });

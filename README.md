@@ -2,7 +2,7 @@
 
 一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
-CodexHub 0.5.0 要求运行 machine 上的官方 Codex CLI 不低于 `0.144.4`。从 0.4.x 升级前请先阅读 [0.5.0 迁移说明](./MIGRATION.md)。
+CodexHub 0.6.0 要求运行 machine 上的官方 Codex CLI 不低于 `0.144.4`。升级前请先阅读 [0.6.0 迁移说明](./MIGRATION.md)。
 
 - 共享核心：API server 统一管理 machines、machine runtime sessions 和 threads，并把轻量 project 元数据投影到 `/api/projects`；Web 左侧按项目优先展示，点击 project 只切换 active path，Add Tab/thread picker 基于该 path 创建或恢复 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
@@ -62,7 +62,7 @@ CodexHub 会拒绝把一个 server 注册到它自己：同一本机地址且同
 
 如果远端不想预装或升级 CodexHub，`/api/registered/bootstrap` 仍保留为 one-shot bootstrap 入口，会通过 `/api/remote-client/:hash` 下载父 server 当前 build 的 remote client 后以同样的 registered tunnel 模式连回。
 
-Project 名称来自目录 basename，不单独持久化展示名或提供重命名入口。Web project 卡片点击即打开或复用该 machine 的 runtime session，并为该 project path 创建或复用 thread；卡片不展示 open、history 或 thread 数量，也不提供手动重启/结束 session 按钮。runtime session 生命周期跟 machine/server 主进程走，project delete、watcher idle-close 和普通空闲都不会关闭它。
+Project 名称来自目录 basename，不单独持久化展示名或提供重命名入口。Web project 卡片点击只切换 active project path；点击 Add Thread 时才确保该 machine 的唯一 runtime 在线，并为 active path 创建或恢复 thread。卡片不展示 open、history 或 thread 数量，也不提供手动重启/结束 runtime 按钮。runtime 生命周期跟 machine/server 主进程走，project delete、watcher idle-close 和普通空闲都不会关闭它。
 
 也可以让本机 server 主动通过 SSH 管理远端机器。SSH host 发现默认读取本机 `~/.ssh/config`，支持 `Include` 引入的配置文件；需要覆盖路径时设置 `CODEX_HUB_SSH_CONFIG=/path/to/config`。连接和认证交给系统 `ssh`、`ssh-agent`、`known_hosts`、ProxyJump 等已有配置：
 
@@ -107,9 +107,9 @@ env:
 
 `cxh` 是 `codexhub` 的短别名。
 
-已有 thread 的选择、恢复和新建 thread tab 由 Web 或 `/api/sessions/:sessionId/threads` 完成。CLI 只提供明确的 `server`、`machine`、`ssh`、`task` 和安装命令，不提供根级 prompt、本地历史列表或 resume 兼容命令。
+已有 thread 的选择、恢复和新建 thread tab 由 Web 或 `/api/machines/:machineId/threads` 完成。CLI 只提供明确的 `server`、`machine`、`ssh`、`task` 和安装命令，不提供根级 prompt、本地历史列表或 resume 兼容命令。
 
-server 在线时，machine runtime session 会同步官方 app-server 的 thread/turn/item/rawResponseItem/tokenUsage 事件，并接收 Web、Telegram、task 或 API 对具体 `threadId` 的远程 turn。Web 主列表以 projects/threads 为主，session 是 machine 级 runtime/debug 对象，同一个 `sessionId` 可以承载多个 project cwd 的 threads；`/api/sessions` 保留为 session/debug 镜像，不作为 Web 主列表来源。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/sessions/tasks/connections 和页面 thread tabs 的事件订阅。Thread context usage 由 server 从 `thread/tokenUsage/updated` 计算；session 级账号 rate limits 独立从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 `/api/sessions`，Web 合并两者展示。Thread Model 的 model/reasoning/service tier 下拉优先从当前在线 session 的 app-server `model/list` catalog 读取，通过 `/api/sessions/:sessionId/models` 暴露，不写入 `config.yaml`。Composer 权限菜单同样通过 `/api/sessions/:sessionId/permission-profiles` 读取当前 cwd 的 app-server `permissionProfile/list`，不维护静态 profile fallback。Web Context 旁的 Compact 按钮和 `/api/threads/:threadId/compact` 会调用官方 app-server `thread/compact/start`，compact 进度继续由 app-server record 流显示。Composer menu 里的 Review changes 和 `/api/threads/:threadId/review` 会调用官方 app-server `review/start`，默认 review 当前 workspace 未提交改动并 inline 跑在当前 thread。
+server 在线时，每台 machine 最多维护一个官方 app-server runtime；内部进程代次使用 `sessionId` 传输，但公共 API、Web state、task history 和 thread 投影都以稳定 `machineId` 表达。该 runtime 会同步官方 app-server 的 thread/turn/item/rawResponseItem/tokenUsage 事件，并接收 Web、Telegram、task 或 API 对具体 `threadId` 的远程 turn。`/api/runtimes` 按 machine 投影当前状态，不暴露内部 session ID 或 app-server URL。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/runtimes/tasks/connections 和页面 thread tabs 的事件订阅。Thread context usage 由 server 从 `thread/tokenUsage/updated` 计算；账号 rate limits 独立从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 runtime 投影，Web 合并两者展示。Thread Model 和 Composer Permissions 分别通过 `/api/machines/:machineId/models`、`/api/machines/:machineId/permission-profiles` 读取当前在线 runtime 的 catalog，不写入 `config.yaml`，也不维护静态 fallback。Web Context 旁的 Compact 按钮和 `/api/threads/:threadId/compact` 会调用官方 app-server `thread/compact/start`，compact 进度继续由 app-server record 流显示。Composer menu 里的 Review changes 和 `/api/threads/:threadId/review` 会调用官方 app-server `review/start`，默认 review 当前 workspace 未提交改动并 inline 跑在当前 thread。
 
 ## Codex 宠物
 
@@ -129,9 +129,9 @@ CodexHub 只保留三种 machine 连接方式：
 
 不再支持 CodexHub server-to-server state bridge；也不再提供 `type=server` machine、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。`codexhub server --register-to` 只把当前 server 作为一台 `registered` machine 接入父 server，父 server 仍只通过 machine/app-server 协议操作它。
 
-当前在线 machine runtime 状态以 Web 和 `/api/sessions` 为准；project 只是 `machineId + path` 元数据。历史 thread 选择以 Web 的 thread picker 和 `/api/sessions/:sessionId/threads` 为准。
+当前在线 machine runtime 状态以 Web 和 `/api/runtimes` 为准；project 只是 `machineId + path` 元数据。历史 thread 选择以 Web 的 thread picker 和 `/api/machines/:machineId/threads` 为准。
 
-project bootstrap 或 thread 创建接口会返回 `sessionId` 和 `threadId`；Web、Telegram、task 或 API 都应显式用这个 `threadId` 继续投递消息。
+project bootstrap 或 thread 创建接口会返回 `machineId` 和 `threadId`；Web、Telegram、task 或 API 都应显式用这个 `threadId` 继续投递消息。
 
 `codexhub` 启动官方 Codex app-server 时不注入默认权限策略；未设置时沿用 Codex CLI 自身配置。需要覆盖时，可显式通过 `--approval-policy` 或 `CODEX_HUB_APP_SERVER_APPROVAL_POLICY` 设置 `untrusted`、`on-request` 或 `never`，通过 `--approvals-reviewer` 或 `CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER` 设置 `user`、`auto_review` 或当前协议保留的 `guardian_subagent`，通过 `--sandbox` 或 `CODEX_HUB_APP_SERVER_SANDBOX` 固定 sandbox。`codexhub server`、`codexhub machine` 和 SSH / registered machine 只会把这些显式 override 通过对应 `-c` 配置传给官方 `codex app-server`。
 
@@ -263,7 +263,7 @@ pnpm build
 
 `smoke:auth` 覆盖普通 API 仅接受 Bearer token、WebSocket 和文件预览仅在指定路径接受 `?codexhub_token=`，以及 registered bootstrap 传递 Bearer token。
 
-`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，验证 project path thread bootstrap、跨 project 共享 machine runtime、`/api/projects` 不暴露 runtime session/thread 列表、`/api/sessions`、session account rate limits、thread detail 不暴露 `workerId` 或 current thread，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认 machine/session registration 会拒绝未知旧字段。`smoke:task-lock` 额外覆盖 `/api/sessions/:sessionId/models`、`/api/sessions/:sessionId/permission-profiles` 的 session command 通道，以及 runtime-authoritative catalog 响应。
+`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，验证 machine runtime ensure 不写 project、project path thread bootstrap、跨 project 共享唯一 machine runtime、`/api/projects` 不暴露 runtime/thread 列表、`/api/runtimes` 不暴露内部 session ID、runtime account rate limits、thread detail 不暴露 `workerId` 或 current thread，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认 machine/session registration 会拒绝未知旧字段。`smoke:task-lock` 额外覆盖 machine-scoped model、permission profile 和 command palette 通道，以及 runtime-authoritative catalog 响应。
 
 `smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?codexhub_token=` 提取、空 token、子 server parent registration 的 `config.yaml` 持久化与 `0600` 权限、父 server 不持久化 registered machine、server 重启自动恢复、Disconnect 清除自动连接、共享父配置下的 VSCode workspace 独立 machine identity、自注册拒绝、同机不同端口注册、project path thread bootstrap、machine runtime 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。单元测试还覆盖 token 错误脱敏和连接握手期间的强制中止。
 
@@ -465,7 +465,7 @@ git push origin "v${VERSION}"
 
 ## API
 
-当前公开 API 分成三层：project 是 `machineId + path` 元数据，`sessionId` 标识在线 machine runtime，`threadId` 是 turn 投递、transcript、事件订阅和多 thread 操作的主键。机器和 project path thread bootstrap 入口负责把路径请求路由到在线 machine，再启动或复用 machine runtime：
+当前公开 API 分成三层：project 是 `machineId + path` 元数据，runtime 以稳定 `machineId` 标识，`threadId` 是 turn 投递、transcript、事件订阅和多 thread 操作的主键。机器和 project path thread bootstrap 入口负责把路径请求路由到在线 machine，再启动或复用它的唯一 runtime：
 
 设置 `CODEX_HUB_AUTH_TOKEN` 后，普通 API 使用 `Authorization: Bearer <token>`。`?codexhub_token=` 只用于 `/api/events/ws`、`/api/machines/connect` 和无法添加 Authorization header 的 `/api/file` 图片预览，不会授权其他 API 路径。
 
@@ -478,7 +478,7 @@ curl -sS -X POST http://127.0.0.1:8788/api/projects/open \
   -d '{"machineId":"machine-example","path":"/path/to/project"}'
 ```
 
-`/api/projects/open` 是 project path thread bootstrap 入口：它返回 machine runtime 的 `sessionId` 和创建/恢复的 `threadId`，但 project 本身不拥有 runtime lifecycle。CodexHub 不提供 per-project runtime stop/restart API；runtime 不由 watcher idle 或 project delete 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
+`/api/projects/open` 是显式 project path thread bootstrap/persistence 入口：它返回 `machineId` 和创建/恢复的 `threadId`，但 project 本身不拥有 runtime lifecycle。Add Thread 冷启动改用 `/api/machines/:machineId/runtime/ensure`，不会借由 project open 修改 project 状态。CodexHub 不提供 per-project runtime stop/restart API；runtime 不由 watcher idle 或 project delete 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
 
 Telegram、脚本和 Web 都直接针对明确的 `threadId` 投递：
 
@@ -490,10 +490,10 @@ curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
   -d '{"input":"继续这个 thread","source":"telegram"}'
 ```
 
-Web 这类多 thread UI 可以直接针对选中的 thread 投递，或让在线 session start/resume 一个 thread tab。Web 前端使用单条 `/api/events/ws` WebSocket 实时流，连接后发送 `hello` 订阅控制面事件，再用 `subscribe_thread` / `unsubscribe_thread` 在同一条连接里维护页面 thread tabs：
+Web 这类多 thread UI 可以直接针对选中的 thread 投递，或让 machine 当前 runtime start/resume 一个 thread tab。Web 前端使用单条 `/api/events/ws` WebSocket 实时流，连接后发送 `hello` 订阅控制面事件，再用 `subscribe_thread` / `unsubscribe_thread` 在同一条连接里维护页面 thread tabs：
 
 ```bash
-SESSION_ID=$(curl -sS http://127.0.0.1:8788/api/sessions | jq -r '.sessions[0].sessionId')
+MACHINE_ID=$(curl -sS http://127.0.0.1:8788/api/machines | jq -r '.machines[0].machineId')
 THREAD_ID=$(curl -sS http://127.0.0.1:8788/api/threads | jq -r '.threads[0].threadId')
 
 curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
@@ -501,29 +501,33 @@ curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
   -d '{"input":"看一下这个项目结构","source":"web"}'
 
 # /api/events/ws messages:
-# {"type":"hello","sessionsAfter":0,"projectsAfter":0,"tasksAfter":0,"connectionsAfter":0}
+# {"type":"hello","runtimesAfter":0,"projectsAfter":0,"tasksAfter":0,"connectionsAfter":0}
 # {"type":"subscribe_thread","threadId":"<threadId>","after":0}
 
-curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
+curl -sS -X POST "http://127.0.0.1:8788/api/machines/$MACHINE_ID/runtime/ensure" \
   -H 'content-type: application/json' \
-  -d '{"action":"resume","threadId":"019e..."}'
+  -d '{"cwd":"/path/to/project"}'
 
-curl -sS -X POST "http://127.0.0.1:8788/api/sessions/$SESSION_ID/threads" \
+curl -sS -X POST "http://127.0.0.1:8788/api/machines/$MACHINE_ID/threads" \
   -H 'content-type: application/json' \
-  -d '{"action":"new"}'
+  -d '{"action":"resume","threadId":"019e...","cwd":"/path/to/project"}'
 
-curl -sS "http://127.0.0.1:8788/api/sessions/$SESSION_ID/models"
+curl -sS -X POST "http://127.0.0.1:8788/api/machines/$MACHINE_ID/threads" \
+  -H 'content-type: application/json' \
+  -d '{"action":"new","cwd":"/path/to/project"}'
+
+curl -sS "http://127.0.0.1:8788/api/machines/$MACHINE_ID/models"
 ```
 
-`/api/sessions/:sessionId/models` 由在线 machine/session bridge 调用官方 app-server `model/list`，返回当前账号/配置可见的 model、supported reasoning efforts 和 service tiers；Web Thread Model 弹窗只使用这份在线 catalog。catalog 尚未就绪或读取失败时会禁用选择并显示加载/错误状态，不使用本地静态 model fallback。
+`/api/machines/:machineId/models` 由该 machine 当前在线 runtime 调用官方 app-server `model/list`，返回当前账号/配置可见的 model、supported reasoning efforts 和 service tiers；Web Thread Model 弹窗只使用这份在线 catalog。catalog 尚未就绪或读取失败时会禁用选择并显示加载/错误状态，不使用本地静态 model fallback。
 
-`/api/sessions/:sessionId/permission-profiles?cwd=<project-path>` 由在线 machine/session bridge 调用官方 app-server `permissionProfile/list`，返回该 cwd 当前可见的 profile `id`、`description` 和 `allowed`。Web Composer 权限菜单按打开时的实时结果渲染；被 requirements 禁止的 profile 会禁用，读取失败时显示错误，不补入 `:read-only`、`:workspace` 或 `:danger-full-access` 等静态选项。
+`/api/machines/:machineId/permission-profiles?cwd=<project-path>` 由该 machine 当前在线 runtime 调用官方 app-server `permissionProfile/list`，返回该 cwd 当前可见的 profile `id`、`description` 和 `allowed`。Web Composer 权限菜单按打开时的实时结果渲染；被 requirements 禁止的 profile 会禁用，读取失败时显示错误，不补入 `:read-only`、`:workspace` 或 `:danger-full-access` 等静态选项。
 
 `POST /api/threads/:threadId/compact` 由在线 machine/session bridge 调用官方 app-server `thread/compact/start`。它只触发 app-server 对该 thread 的上下文压缩，不改写 CodexHub server 本地 records；Web 通过 app-server `contextCompaction` item 归一化出的 `context_compaction` record 显示进度和结果。
 
 `POST /api/threads/:threadId/review` 由在线 machine/session bridge 调用官方 app-server `review/start`。当前 Web 入口是 composer `+` 菜单里的 Review changes，target 固定为 `uncommittedChanges`，delivery 为 `inline`，review turn 仍按普通 app-server record 流展示。
 
-`options` 可随 turn 传递 Web 运行选择：`model`、`modelReasoningEffort`、`serviceTier`、`approvalPolicy`、`approvalsReviewer`、`permissions`、`collaborationMode:"plan"`、`goalMode:true`、`goalObjective` 和 `goalTokenBudget`。`serviceTier` 应使用 `/api/sessions/:sessionId/models` 返回的 catalog value；当前 app-server 的 Fast tier 通常是 `priority`。`permissions` 应使用 `/api/sessions/:sessionId/permission-profiles` 返回的 profile id，且不能和兼容旧客户端的 `sandboxPolicy` 同时传递。Plan mode 只会把本轮输入标记为只规划不实施，不覆盖 app-server permissions。Goal mode 会先通过 app-server `thread/goal/set` 为该 thread 建立 active goal，再启动 turn；如果 Web 在 running thread 上用 Goal mode 发送，则只更新 active goal，不对当前 turn 做 `turn/steer`。
+`options` 可随 turn 传递 Web 运行选择：`model`、`modelReasoningEffort`、`serviceTier`、`approvalPolicy`、`approvalsReviewer`、`permissions`、`collaborationMode:"plan"`、`goalMode:true`、`goalObjective` 和 `goalTokenBudget`。`serviceTier` 应使用 `/api/machines/:machineId/models` 返回的 catalog value；当前 app-server 的 Fast tier 通常是 `priority`。`permissions` 应使用 `/api/machines/:machineId/permission-profiles` 返回的 profile id，且不能和兼容旧客户端的 `sandboxPolicy` 同时传递。Plan mode 只会把本轮输入标记为只规划不实施，不覆盖 app-server permissions。Goal mode 会先通过 app-server `thread/goal/set` 为该 thread 建立 active goal，再启动 turn；如果 Web 在 running thread 上用 Goal mode 发送，则只更新 active goal，不对当前 turn 做 `turn/steer`。
 
 Slash command 会在转发给 Codex 前先处理。`/status` 和 `/help` 返回本地代理状态/帮助记录；`/fast on`、`/fast off`、`/fast status` 会设置或查看当前 thread 的 app-server service tier；Web 里的 `/model` 是客户端命令，会打开 Session 选择器，下一次普通 turn 再把选中的 model/reasoning/service tier 发给 app-server。`codexhub` 会从 `thread/settings/updated` 或有效的 `config/read` 结果镜像 model/reasoning/service tier。不支持的 slash command 不会作为普通 user turn 发给 Codex app-server。
 

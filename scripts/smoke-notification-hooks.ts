@@ -305,8 +305,8 @@ function testThread(): ThreadSummary {
   return {
     threadId: "thread-test",
     workingDirectory: "/tmp/codexhub-test",
-    session: {
-      sessionId: "session-test",
+    runtime: {
+      machineId: "session-test",
       online: true,
       runnable: true
     },

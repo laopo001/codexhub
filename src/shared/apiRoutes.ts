@@ -14,9 +14,10 @@ import type {
   ProjectsPayload,
   ServerConfigPayload,
   ServerConfigUpdateInput,
-  SessionModelsPayload,
-  SessionPermissionProfilesPayload,
-  SessionsPayload,
+  RuntimeEnsurePayload,
+  RuntimeModelsPayload,
+  RuntimePermissionProfilesPayload,
+  RuntimesPayload,
   SshConnectionPayload,
   SshConnectionsPayload,
   SshHostsPayload,
@@ -123,7 +124,7 @@ export type ProjectThreadStartInput = {
   source?: { kind: "vscode" | "theia"; groupId: string; label?: string };
 };
 
-export type SessionThreadInput =
+export type MachineThreadInput =
   | { action: "new"; cwd?: string }
   | { action: "resume"; threadId: string; cwd?: string };
 
@@ -143,7 +144,7 @@ export const apiRoutes = {
   config: get<ServerConfigPayload>("/api/config"),
   updateConfig: patch<ServerConfigUpdateInput, ServerConfigPayload>("/api/config"),
   machines: get<MachinesPayload>("/api/machines"),
-  sessions: get<SessionsPayload>("/api/sessions"),
+  runtimes: get<RuntimesPayload>("/api/runtimes"),
   projects: get<ProjectsPayload>("/api/projects"),
   tasks: get<TasksPayload>("/api/tasks"),
   plugins: get<PluginsPayload>("/api/plugins"),
@@ -158,23 +159,26 @@ export const apiRoutes = {
   machineDirectories: get<MachineDirectoryListing, (machineId: string, path?: string) => string>(
     (machineId, path) => `/api/machines/${encode(machineId)}/directories${queryString({ path })}`
   ),
-  threadCandidates: get<ThreadCandidatesPayload, (sessionId: string, cwd?: string, limit?: number) => string>(
-    (sessionId, cwd, limit = 20) => `/api/sessions/${encode(sessionId)}/thread-candidates${queryString({ limit, cwd })}`
+  ensureRuntime: post<{ cwd: string }, RuntimeEnsurePayload, (machineId: string) => string>(
+    (machineId) => `/api/machines/${encode(machineId)}/runtime/ensure`
   ),
-  sessionModels: get<SessionModelsPayload, (sessionId: string, includeHidden?: boolean) => string>(
-    (sessionId, includeHidden) => `/api/sessions/${encode(sessionId)}/models${queryString({ includeHidden: includeHidden ? "true" : undefined })}`
+  threadCandidates: get<ThreadCandidatesPayload, (machineId: string, cwd?: string, limit?: number) => string>(
+    (machineId, cwd, limit = 20) => `/api/machines/${encode(machineId)}/thread-candidates${queryString({ limit, cwd })}`
   ),
-  sessionPermissionProfiles: get<SessionPermissionProfilesPayload, (sessionId: string, cwd: string) => string>(
-    (sessionId, cwd) => `/api/sessions/${encode(sessionId)}/permission-profiles${queryString({ cwd })}`
+  runtimeModels: get<RuntimeModelsPayload, (machineId: string, includeHidden?: boolean) => string>(
+    (machineId, includeHidden) => `/api/machines/${encode(machineId)}/models${queryString({ includeHidden: includeHidden ? "true" : undefined })}`
   ),
-  commandPalette: get<CommandPalettePayload, (sessionId: string, cwd?: string, part?: CommandPalettePart) => string>(
-    (sessionId, cwd, part) => `/api/sessions/${encode(sessionId)}/command-palette${queryString({ cwd, part })}`
+  runtimePermissionProfiles: get<RuntimePermissionProfilesPayload, (machineId: string, cwd: string) => string>(
+    (machineId, cwd) => `/api/machines/${encode(machineId)}/permission-profiles${queryString({ cwd })}`
+  ),
+  commandPalette: get<CommandPalettePayload, (machineId: string, cwd?: string, part?: CommandPalettePart) => string>(
+    (machineId, cwd, part) => `/api/machines/${encode(machineId)}/command-palette${queryString({ cwd, part })}`
   ),
   thread: get<ThreadDetail, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}`
   ),
-  createSessionThread: post<SessionThreadInput, ThreadDetail, (sessionId: string) => string>(
-    (sessionId) => `/api/sessions/${encode(sessionId)}/threads`
+  createMachineThread: post<MachineThreadInput, ThreadDetail, (machineId: string) => string>(
+    (machineId) => `/api/machines/${encode(machineId)}/threads`
   ),
   startProjectThread: post<ProjectThreadStartInput, ProjectThreadStartPayload>("/api/projects/open"),
   startWorktreeThread: post<WorktreeThreadStartInput, WorktreeThreadStartPayload>("/api/projects/worktree/open"),

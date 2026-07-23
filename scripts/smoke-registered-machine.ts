@@ -23,17 +23,16 @@ type MachineSummary = {
 
 type ProjectThreadStartResponse = {
   result?: {
-    sessionId?: string;
+    machineId?: string;
     threadId?: string;
     cwd?: string;
   };
 };
 
-type SessionState = {
-  sessionId: string;
+type RuntimeState = {
+  machineId: string;
   online?: boolean;
   offlineReason?: string;
-  appServerUrl?: string;
 };
 
 type ThreadDetail = {
@@ -416,15 +415,11 @@ const runRegisteredScenario = async (input: {
       body: JSON.stringify({ machineId: machine.machineId, path: projectDir })
     }, 120_000);
     assertNoWorkerId(open, "/api/projects/open");
-    const sessionId = open.result?.sessionId;
     const threadId = open.result?.threadId;
-    if (!sessionId || !threadId) throw new Error(`project thread start did not return session/thread: ${JSON.stringify(open)}`);
+    if (open.result?.machineId !== machineId || !threadId) throw new Error(`project thread start did not return machine/thread: ${JSON.stringify(open)}`);
     if (open.result?.cwd !== projectDir) throw new Error(`registered machine opened unexpected cwd: ${open.result?.cwd}`);
-    const session = await waitForSessionOnline(apiBase, sessionId);
-    if (!session.appServerUrl?.startsWith("tunnel://")) {
-      throw new Error(`registered session did not use app-server tunnel: ${session.appServerUrl ?? ""}`);
-    }
-    console.log(`${label} project thread ok: ${sessionId} ${threadId}`);
+    await waitForRuntimeOnline(apiBase, machineId);
+    console.log(`${label} project thread ok: ${machineId} ${threadId}`);
 
     const turn = await apiJson(apiBase, `/api/threads/${encodeURIComponent(threadId)}/turn`, {
       method: "POST",
@@ -439,7 +434,7 @@ const runRegisteredScenario = async (input: {
 
     await stopChild(child);
     await waitForRegisteredMachineRemoved(apiBase, machine.machineId);
-    await waitForSessionStopped(apiBase, sessionId);
+    await waitForRuntimeStopped(apiBase, machineId);
     await waitForNoCodexAppServerForCwd(projectDir);
     console.log(`${label} lifecycle ok`);
   } catch (error) {
@@ -462,7 +457,6 @@ const runRegisteredParentRestartScenario = async (input: {
   restartParent: () => Promise<void>;
 }) => {
   const { label, apiBase, machineId, machineName, projectDir, secondaryProjectDir, child, restartParent } = input;
-  let sessionId = "";
   try {
     await waitForRegisteredMachine(apiBase, machineId, machineName, child);
     const firstOpen = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
@@ -470,10 +464,9 @@ const runRegisteredParentRestartScenario = async (input: {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machineId, path: projectDir })
     }, 120_000);
-    sessionId = firstOpen.result?.sessionId ?? "";
     const initialThreadId = firstOpen.result?.threadId ?? "";
-    if (!sessionId || !initialThreadId) {
-      throw new Error(`initial project open did not return session/thread: ${JSON.stringify(firstOpen)}`);
+    if (firstOpen.result?.machineId !== machineId || !initialThreadId) {
+      throw new Error(`initial project open did not return machine/thread: ${JSON.stringify(firstOpen)}`);
     }
     const firstSecondaryOpen = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
       method: "POST",
@@ -481,20 +474,14 @@ const runRegisteredParentRestartScenario = async (input: {
       body: JSON.stringify({ machineId, path: secondaryProjectDir })
     }, 120_000);
     const initialSecondaryThreadId = firstSecondaryOpen.result?.threadId ?? "";
-    if (firstSecondaryOpen.result?.sessionId !== sessionId || !initialSecondaryThreadId || initialSecondaryThreadId === initialThreadId) {
+    if (firstSecondaryOpen.result?.machineId !== machineId || !initialSecondaryThreadId || initialSecondaryThreadId === initialThreadId) {
       throw new Error(`initial secondary project open did not share runtime with a distinct thread: ${JSON.stringify(firstSecondaryOpen)}`);
     }
-    const initialSession = await waitForSessionOnline(apiBase, sessionId);
-    if (!initialSession.appServerUrl?.startsWith("tunnel://")) {
-      throw new Error(`initial registered session did not use app-server tunnel: ${initialSession.appServerUrl ?? ""}`);
-    }
+    await waitForRuntimeOnline(apiBase, machineId);
 
     await restartParent();
     await waitForRegisteredMachine(apiBase, machineId, machineName, child);
-    const reattachedSession = await waitForSessionOnline(apiBase, sessionId);
-    if (!reattachedSession.appServerUrl?.startsWith("tunnel://")) {
-      throw new Error(`reattached registered session did not use app-server tunnel: ${reattachedSession.appServerUrl ?? ""}`);
-    }
+    await waitForRuntimeOnline(apiBase, machineId);
 
     const reopened = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
       method: "POST",
@@ -502,7 +489,7 @@ const runRegisteredParentRestartScenario = async (input: {
       body: JSON.stringify({ machineId, path: projectDir })
     }, 120_000);
     const threadId = reopened.result?.threadId ?? "";
-    if (reopened.result?.sessionId !== sessionId || !threadId) {
+    if (reopened.result?.machineId !== machineId || !threadId) {
       throw new Error(`parent restart did not reuse registered runtime: ${JSON.stringify(reopened)}`);
     }
     if (threadId === initialThreadId) {
@@ -521,7 +508,7 @@ const runRegisteredParentRestartScenario = async (input: {
       body: JSON.stringify({ machineId, path: secondaryProjectDir })
     }, 120_000);
     const secondaryThreadId = reopenedSecondary.result?.threadId ?? "";
-    if (reopenedSecondary.result?.sessionId !== sessionId || !secondaryThreadId) {
+    if (reopenedSecondary.result?.machineId !== machineId || !secondaryThreadId) {
       throw new Error(`secondary project did not reuse registered runtime after parent restart: ${JSON.stringify(reopenedSecondary)}`);
     }
     if (secondaryThreadId === initialSecondaryThreadId || secondaryThreadId === threadId) {
@@ -530,24 +517,24 @@ const runRegisteredParentRestartScenario = async (input: {
 
     await restartParent();
     await waitForRegisteredMachine(apiBase, machineId, machineName, child);
-    await waitForSessionOnline(apiBase, sessionId);
+    await waitForRuntimeOnline(apiBase, machineId);
     const resumed = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machineId, path: projectDir })
     }, 120_000);
     const resumedThreadId = resumed.result?.threadId ?? "";
-    if (resumed.result?.sessionId !== sessionId || !resumedThreadId) {
+    if (resumed.result?.machineId !== machineId || !resumedThreadId) {
       throw new Error(`second parent restart did not reuse registered runtime: ${JSON.stringify(resumed)}`);
     }
     if (resumedThreadId === threadId) {
       throw new Error(`second parent restart unexpectedly restored the previous thread: ${threadId}`);
     }
-    console.log(`${label} reattach ok: ${sessionId} ${initialThreadId} -> ${threadId} -> ${resumedThreadId}`);
+    console.log(`${label} reattach ok: ${machineId} ${initialThreadId} -> ${threadId} -> ${resumedThreadId}`);
 
     await stopChild(child);
     await waitForRegisteredMachineRemoved(apiBase, machineId);
-    await waitForSessionStopped(apiBase, sessionId);
+    await waitForRuntimeStopped(apiBase, machineId);
     await waitForNoCodexAppServerForCwd(projectDir);
     console.log(`${label} lifecycle ok`);
   } catch (error) {
@@ -676,15 +663,15 @@ const waitForChildServer = async (apiBase: string, child: ChildProcess & { outpu
   throw new Error(`child server did not become healthy: ${apiBase}\n${child.output()}`);
 };
 
-const waitForSessionOnline = async (apiBase: string, sessionId: string) => {
+const waitForRuntimeOnline = async (apiBase: string, machineId: string) => {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 15_000) {
-    const data = await apiJson<{ sessions?: SessionState[] }>(apiBase, "/api/sessions?includeOffline=true").catch(() => ({ sessions: [] }));
-    const session = data.sessions?.find((item) => item.sessionId === sessionId);
-    if (session?.online) return session;
+  while (Date.now() - startedAt < 90_000) {
+    const data = await apiJson<{ runtimes?: RuntimeState[] }>(apiBase, "/api/runtimes?includeOffline=true").catch(() => ({ runtimes: [] }));
+    const runtime = data.runtimes?.find((item) => item.machineId === machineId);
+    if (runtime?.online) return runtime;
     await delay(250);
   }
-  throw new Error(`registered session did not come online: ${sessionId}`);
+  throw new Error(`registered runtime did not come online: ${machineId}`);
 };
 
 const waitForRegisteredMachine = async (
@@ -723,15 +710,15 @@ const waitForRegisteredMachineRemoved = async (apiBase: string, machineId: strin
   throw new Error(`registered machine did not disappear after disconnect: ${machineId}`);
 };
 
-const waitForSessionStopped = async (apiBase: string, sessionId: string) => {
+const waitForRuntimeStopped = async (apiBase: string, machineId: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 15_000) {
-    const data = await apiJson<{ sessions?: SessionState[] }>(apiBase, "/api/sessions?includeOffline=true").catch(() => ({ sessions: [] }));
-    const session = data.sessions?.find((item) => item.sessionId === sessionId);
-    if (!session || (!session.online && session.offlineReason === "unregistered")) return session;
+    const data = await apiJson<{ runtimes?: RuntimeState[] }>(apiBase, "/api/runtimes?includeOffline=true").catch(() => ({ runtimes: [] }));
+    const runtime = data.runtimes?.find((item) => item.machineId === machineId);
+    if (!runtime || (!runtime.online && runtime.offlineReason === "unregistered")) return runtime;
     await delay(250);
   }
-  throw new Error(`registered session did not stop cleanly: ${sessionId}`);
+  throw new Error(`registered runtime did not stop cleanly: ${machineId}`);
 };
 
 const waitForNoCodexAppServerForCwd = async (cwd: string) => {

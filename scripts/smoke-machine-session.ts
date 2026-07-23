@@ -13,7 +13,7 @@ import {
 import type { MachineDirectoryEntry } from "../src/shared/machineTypes.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { SessionEventInput, ThreadSummary } from "../src/shared/threadTypes.js";
-import type { OpenThreadState, ProjectMachineGroup, ProjectSummary, SessionSummary } from "../src/web/types.js";
+import type { OpenThreadState, ProjectMachineGroup, ProjectSummary, RuntimeSummary } from "../src/web/types.js";
 import { assertNoWorkerId, findKey } from "./smoke/support/assertions.js";
 import { apiJson } from "./smoke/support/http.js";
 import { findFreePort } from "./smoke/support/network.js";
@@ -33,7 +33,7 @@ type ProjectThreadStartResponse = {
     projectId?: string;
   };
   result?: {
-    sessionId?: string;
+    machineId?: string;
     threadId?: string;
     cwd?: string;
   };
@@ -43,9 +43,9 @@ type ProjectsPayload = {
   projects?: unknown[];
 };
 
-type SessionsPayload = {
-  sessions?: Array<{
-    sessionId?: string;
+type RuntimesPayload = {
+  runtimes?: Array<{
+    machineId?: string;
     online?: boolean;
   }>;
 };
@@ -107,7 +107,7 @@ type TaskResponse = {
 };
 
 type TaskRunResponse = TaskResponse & {
-  sessionId?: string;
+  machineId?: string;
   threadId?: string;
   command?: string;
 };
@@ -366,6 +366,11 @@ const main = async () => {
   try {
     const machine = await waitForLocalMachine(apiBase);
     console.log(`machine ok: ${machine.machineId}`);
+    const removedSessionsRoute = await fetch(new URL("/api/sessions", apiBase));
+    if (removedSessionsRoute.status !== 404) {
+      throw new Error(`removed /api/sessions route returned HTTP ${removedSessionsRoute.status}`);
+    }
+    console.log("session-scoped public API removed");
 
     await assertSshStartupConnect(apiBase, port, fakeSshArgsPath, sshConfigPath, remoteClient.hash);
     console.log("ssh startup connect ok");
@@ -379,6 +384,26 @@ const main = async () => {
     await assertSshConnect(apiBase, port, fakeSshArgsPath, sshConfigPath, remoteClient.hash);
     console.log("ssh connect ok");
 
+    const projectsBeforeEnsure = await apiJson<ProjectsPayload>(apiBase, "/api/projects");
+    const ensured = await apiJson<{ runtime?: { machineId?: string; online?: boolean } }>(
+      apiBase,
+      `/api/machines/${encodeURIComponent(machine.machineId)}/runtime/ensure`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cwd: projectDir })
+      },
+      90_000
+    );
+    if (ensured.runtime?.machineId !== machine.machineId || ensured.runtime.online !== true || "sessionId" in asRecord(ensured.runtime)) {
+      throw new Error(`machine runtime ensure exposed an invalid public result: ${JSON.stringify(ensured)}`);
+    }
+    const projectsAfterEnsure = await apiJson<ProjectsPayload>(apiBase, "/api/projects");
+    if ((projectsAfterEnsure.projects ?? []).length !== (projectsBeforeEnsure.projects ?? []).length) {
+      throw new Error("machine runtime ensure mutated the project catalog");
+    }
+    console.log("machine runtime ensure ok");
+
     const open = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -386,13 +411,14 @@ const main = async () => {
     });
     assertNoWorkerId(open, "/api/projects/open");
     assertNoCurrentThread(open, "/api/projects/open");
-    const sessionId = open.result?.sessionId;
+    assertNoSessionId(open, "/api/projects/open");
+    const machineId = open.result?.machineId;
     const threadId = open.result?.threadId;
     const projectId = open.project?.projectId;
-    if (!sessionId || !threadId || !projectId) throw new Error("project thread start did not return project/runtime/thread ids");
-    await assertProjectRuntimeView(apiBase, projectId, sessionId);
-    console.log(`project ok: ${sessionId} ${threadId}`);
-    await assertCoreCommandPalette(apiBase, sessionId, projectDir);
+    if (machineId !== machine.machineId || !threadId || !projectId) throw new Error("project thread start did not return machine/thread ids");
+    await assertProjectRuntimeView(apiBase, projectId, machineId);
+    console.log(`project ok: ${machineId} ${threadId}`);
+    await assertCoreCommandPalette(apiBase, machineId, projectDir);
     console.log("command palette ok");
 
     await assertWebRealtime(apiBase, threadId, async () => {
@@ -404,11 +430,13 @@ const main = async () => {
     });
     console.log("web realtime ok");
 
-    const sessions = await apiJson(apiBase, "/api/sessions");
-    assertNoWorkerId(sessions, "/api/sessions");
-    assertNoCurrentThread(sessions, "/api/sessions");
+    const runtimes = await apiJson(apiBase, "/api/runtimes");
+    assertNoWorkerId(runtimes, "/api/runtimes");
+    assertNoCurrentThread(runtimes, "/api/runtimes");
+    assertNoSessionId(runtimes, "/api/runtimes");
     const thread = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
     assertNoWorkerId(thread, "/api/threads/:threadId");
+    assertNoSessionId(thread, "/api/threads/:threadId");
     if ((thread.records ?? []).length < 2) throw new Error("/status did not write thread records");
     assertStatusMarkdown(thread);
     await assertThreadApprovalSettings(apiBase, threadId, "on-request", "auto_review");
@@ -418,7 +446,6 @@ const main = async () => {
     const task = await createAndRunTask(apiBase, {
       machineId: machine.machineId,
       projectDir,
-      sessionId,
       threadId
     });
     assertNoWorkerId(task, "/api/tasks");
@@ -438,11 +465,11 @@ const main = async () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machineId: machine.machineId, path: secondProjectDir })
-    });
+    }, 90_000);
     const secondProjectId = secondOpen.project?.projectId;
     const secondThreadId = secondOpen.result?.threadId;
-    if (secondOpen.result?.sessionId !== sessionId || !secondProjectId || !secondThreadId) {
-      throw new Error(`second project did not reuse runtime session: ${JSON.stringify(secondOpen)}`);
+    if (secondOpen.result?.machineId !== machineId || !secondProjectId || !secondThreadId) {
+      throw new Error(`second project did not reuse machine runtime: ${JSON.stringify(secondOpen)}`);
     }
     if (secondOpen.result?.cwd !== secondProjectDir) {
       throw new Error(`second project thread started unexpected cwd: ${secondOpen.result?.cwd}`);
@@ -450,14 +477,14 @@ const main = async () => {
     if (secondThreadId === threadId) {
       throw new Error("second project reused the first project thread");
     }
-    await assertProjectRuntimeView(apiBase, secondProjectId, sessionId);
+    await assertProjectRuntimeView(apiBase, secondProjectId, machineId);
     console.log("shared machine runtime ok");
 
-    await assertProjectDeleteKeepsSharedSession(apiBase, projectId, sessionId);
-    console.log("project delete kept shared session ok");
+    await assertProjectDeleteKeepsSharedRuntime(apiBase, projectId, machineId);
+    console.log("project delete kept shared runtime ok");
 
-    await assertSessionStaysOnlineAfterWatcherIdle(apiBase, machine.machineId);
-    console.log("session stays online after watcher idle ok");
+    await assertRuntimeStaysOnlineAfterWatcherIdle(apiBase, machine.machineId);
+    console.log("runtime stays online after watcher idle ok");
 
     const legacyError = await sendLegacySessionRegistration(port);
     if (!legacyError.includes("workerId") || !legacyError.includes("unrecognized_keys")) {
@@ -560,7 +587,7 @@ const assertComposerAttachmentClear = async () => {
     const { createComposerDraftStore } = await import("../src/web/helpers/composer.js");
     const { createSidebarDraftStore } = await import("../src/web/helpers/sidebarDrafts.js");
     const { mergeRecord } = await import("../src/web/helpers/records.js");
-    const { patchProjectsThread, patchSessionsThread } = await import("../src/web/helpers/core.js");
+    const { patchProjectsThread, patchRuntimesThread } = await import("../src/web/helpers/core.js");
     const composerDraftStore = createComposerDraftStore();
     const sidebarDraftStore = createSidebarDraftStore();
     let sidebarDraftNotifications = 0;
@@ -610,11 +637,18 @@ const assertComposerAttachmentClear = async () => {
       workingDirectory: "/tmp/a",
       status: "running",
       running: true,
-      session: { sessionId: "session-a", online: true, runnable: true }
+      runtime: { machineId: "machine-a", online: true, runnable: true }
     } as ThreadSummary;
-    const unchangedSessions = [{ sessionId: "session-a", threads: [threadSummary] }] as SessionSummary[];
-    if (patchSessionsThread(unchangedSessions, threadSummary) !== unchangedSessions) {
-      throw new Error("unchanged session thread projection did not preserve the session array");
+    const unchangedRuntimes = [{
+      machineId: "machine-a",
+      workingDirectory: "/tmp/a",
+      online: true,
+      status: "online",
+      lastSeenAt: "2026-06-08T09:03:00.000Z",
+      threads: [threadSummary]
+    }] as RuntimeSummary[];
+    if (patchRuntimesThread(unchangedRuntimes, threadSummary) !== unchangedRuntimes) {
+      throw new Error("unchanged runtime thread projection did not preserve the runtime array");
     }
     let openThreads = [
       {
@@ -1305,7 +1339,7 @@ const assertWebRealtime = async (apiBase: string, threadId: string, trigger: () 
 
   try {
     await waitForWebSocketOpen(ws, "web realtime websocket failed");
-    ws.send(JSON.stringify({ type: "hello", sessionsAfter: 0, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 }));
+    ws.send(JSON.stringify({ type: "hello", runtimesAfter: 0, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 }));
     await waitForRealtimeMessage(messages, (message) => message.type === "ready", "web realtime ready");
 
     ws.send(JSON.stringify({ type: "subscribe_thread", threadId, after: 0 }));
@@ -1325,7 +1359,7 @@ const assertWebRealtime = async (apiBase: string, threadId: string, trigger: () 
     );
     const controlSnapshot = messages
       .slice(startIndex)
-      .find((message) => message.type === "sessions" || message.type === "projects");
+      .find((message) => message.type === "runtimes" || message.type === "projects");
     if (controlSnapshot) {
       throw new Error(`thread realtime emitted ${controlSnapshot.type} snapshot after record trigger`);
     }
@@ -1352,7 +1386,7 @@ const waitForRealtimeMessage = async (
 
 const createAndRunTask = async (
   apiBase: string,
-  input: { machineId: string; projectDir: string; sessionId: string; threadId: string }
+  input: { machineId: string; projectDir: string; threadId: string }
 ) => {
   const created = await apiJson<TaskResponse>(apiBase, "/api/tasks", {
     method: "POST",
@@ -1368,6 +1402,7 @@ const createAndRunTask = async (
     })
   });
   assertNoWorkerId(created, "POST /api/tasks");
+  assertNoSessionId(created, "POST /api/tasks");
   const taskId = created.task?.taskId;
   if (!taskId) throw new Error("task create did not return taskId");
 
@@ -1375,19 +1410,26 @@ const createAndRunTask = async (
     method: "POST"
   });
   assertNoWorkerId(run, "POST /api/tasks/:taskId/run");
-  if (run.sessionId !== input.sessionId || run.threadId !== input.threadId) {
-    throw new Error("task run did not target the expected session/thread");
+  assertNoSessionId(run, "POST /api/tasks/:taskId/run");
+  if (run.machineId !== input.machineId || run.threadId !== input.threadId) {
+    throw new Error("task run did not target the expected machine/thread");
   }
   if (run.command !== "status") throw new Error("task /status was not handled as a local command");
   if (run.task?.lastStatus !== "completed") throw new Error("task run did not complete");
 
   const listed = await apiJson<{ tasks?: LocalTask[] }>(apiBase, "/api/tasks");
   assertNoWorkerId(listed, "GET /api/tasks");
+  assertNoSessionId(listed, "GET /api/tasks");
   const stored = listed.tasks?.find((task) => task.taskId === taskId);
   if (!stored || stored.lastStatus !== "completed" || stored.threadId !== input.threadId) {
     throw new Error("task state was not persisted after run");
   }
   return run;
+};
+
+const assertNoSessionId = (value: unknown, label: string) => {
+  const found = findKey(value, "sessionId");
+  if (found) throw new Error(`${label} exposed internal sessionId at ${found}`);
 };
 
 const assertInvalidTaskSchedule = async (apiBase: string, machineId: string, projectDir: string) => {
@@ -1539,8 +1581,8 @@ const assertServerStateDoesNotPersistThreadHistory = async () => {
   const thread = {
     threadId: "thread-history-smoke",
     workingDirectory: projectPath,
-    session: {
-      sessionId: session.sessionId,
+    runtime: {
+      machineId,
       name: session.name,
       online: true,
       runnable: true,
@@ -1777,7 +1819,22 @@ const assertProjectSessionIdsAreNotPersisted = async () => {
     "    lastOpenedAt: 2026-01-01T00:00:00.000Z",
     "    lastSessionId: stale-session-id",
     "    lastThreadId: codex-thread-id",
-    "tasks: []",
+    "tasks:",
+    "  - taskId: task-session-id-smoke",
+    "    name: legacy task run",
+    "    enabled: false",
+    "    schedule: '* * * * *'",
+    "    machineId: machine-session-id-smoke",
+    "    projectPath: /tmp/codexhub-session-id-smoke",
+    "    input: /status",
+    "    createdAt: 2026-01-01T00:00:00.000Z",
+    "    updatedAt: 2026-01-01T00:00:00.000Z",
+    "    runs:",
+    "      - runId: legacy-run",
+    "        status: completed",
+    "        startedAt: 2026-01-01T00:00:00.000Z",
+    "        sessionId: stale-session-id",
+    "        threadId: codex-thread-id",
     "sshHosts: []",
     ""
   ].join("\n"), "utf8");
@@ -1786,6 +1843,11 @@ const assertProjectSessionIdsAreNotPersisted = async () => {
   const migrated = await readFile(state.path, "utf8");
   if (migrated.includes("lastSessionId")) throw new Error(`project lastSessionId was not migrated out:\n${migrated}`);
   if (!migrated.includes("lastThreadId: codex-thread-id")) throw new Error(`project lastThreadId was not preserved:\n${migrated}`);
+  if (migrated.includes("sessionId:")) throw new Error(`task run sessionId was not migrated out:\n${migrated}`);
+  const migratedRun = state.getTask("task-session-id-smoke")?.runs?.[0];
+  if (migratedRun?.machineId !== "machine-session-id-smoke") {
+    throw new Error(`task run did not inherit stable machineId: ${JSON.stringify(migratedRun)}`);
+  }
 
   state.upsertProject({
     machineId: "machine-session-id-smoke",
@@ -1863,8 +1925,8 @@ const assertProjectSessionProjection = async () => {
   const thread = {
     threadId: "thread-projection-smoke",
     workingDirectory: projectPath,
-    session: {
-      sessionId: session.sessionId,
+    runtime: {
+      machineId,
       name: session.name,
       online: true,
       runnable: true,
@@ -1918,8 +1980,8 @@ const assertProjectSessionProjection = async () => {
   };
   const offlineThread = {
     ...thread,
-    session: {
-      ...thread.session,
+    runtime: {
+      ...thread.runtime,
       online: false
     }
   };
@@ -3362,7 +3424,7 @@ const assertAppServerLaunchOverrides = () => {
   }
 };
 
-const assertProjectRuntimeView = async (apiBase: string, projectId: string, sessionId: string) => {
+const assertProjectRuntimeView = async (apiBase: string, projectId: string, machineId: string) => {
   const payload = await apiJson<ProjectsPayload>(apiBase, "/api/projects");
   assertNoWorkerId(payload, "/api/projects");
   if ("statePath" in asRecord(payload)) throw new Error("/api/projects exposed removed statePath alias");
@@ -3372,10 +3434,10 @@ const assertProjectRuntimeView = async (apiBase: string, projectId: string, sess
   if ("online" in project || "session" in project || "sessions" in project || "threads" in project) {
     throw new Error(`/api/projects exposed runtime fields for ${projectId}: ${JSON.stringify(project)}`);
   }
-  const sessionsPayload = await apiJson<SessionsPayload>(apiBase, "/api/sessions");
-  const session = (sessionsPayload.sessions ?? []).find((item) => item.sessionId === sessionId);
-  if (!session?.online) {
-    throw new Error(`/api/sessions did not expose online runtime ${sessionId}: ${JSON.stringify(sessionsPayload.sessions)}`);
+  const runtimesPayload = await apiJson<RuntimesPayload>(apiBase, "/api/runtimes");
+  const runtime = (runtimesPayload.runtimes ?? []).find((item) => item.machineId === machineId);
+  if (!runtime?.online) {
+    throw new Error(`/api/runtimes did not expose online runtime ${machineId}: ${JSON.stringify(runtimesPayload.runtimes)}`);
   }
 };
 
@@ -3397,7 +3459,7 @@ const assertThreadApprovalSettings = async (
   );
 };
 
-const assertProjectDeleteKeepsSharedSession = async (apiBase: string, projectId: string, sessionId: string) => {
+const assertProjectDeleteKeepsSharedRuntime = async (apiBase: string, projectId: string, machineId: string) => {
   const deleted = await apiJson<unknown>(apiBase, `/api/projects/${encodeURIComponent(projectId)}`, {
     method: "DELETE"
   });
@@ -3405,16 +3467,16 @@ const assertProjectDeleteKeepsSharedSession = async (apiBase: string, projectId:
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < 2000) {
-    const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
-    const session = (payload.sessions ?? []).map(asRecord).find((item) => item.sessionId === sessionId);
-    if (session?.online === true) return;
+    const payload = await apiJson<{ runtimes?: unknown[] }>(apiBase, "/api/runtimes?includeOffline=true");
+    const runtime = (payload.runtimes ?? []).map(asRecord).find((item) => item.machineId === machineId);
+    if (runtime?.online === true) return;
     await delay(100);
   }
-  const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
-  throw new Error(`machine runtime went offline after deleting project metadata: ${JSON.stringify(payload.sessions)}`);
+  const payload = await apiJson<{ runtimes?: unknown[] }>(apiBase, "/api/runtimes?includeOffline=true");
+  throw new Error(`machine runtime went offline after deleting project metadata: ${JSON.stringify(payload.runtimes)}`);
 };
 
-const assertSessionStaysOnlineAfterWatcherIdle = async (apiBase: string, machineId: string) => {
+const assertRuntimeStaysOnlineAfterWatcherIdle = async (apiBase: string, machineId: string) => {
   const previousTimeout = process.env.CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS;
   process.env.CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS = "25";
   try {
@@ -3423,18 +3485,17 @@ const assertSessionStaysOnlineAfterWatcherIdle = async (apiBase: string, machine
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machineId, path: projectDir })
-    });
-    const sessionId = open.result?.sessionId;
+    }, 90_000);
     const threadId = open.result?.threadId;
-    if (!sessionId || !threadId) throw new Error(`idle project thread start did not return session/thread ids: ${JSON.stringify(open)}`);
+    if (open.result?.machineId !== machineId || !threadId) throw new Error(`idle project thread start did not return machine/thread ids: ${JSON.stringify(open)}`);
     await subscribeThreadOnce(apiBase, threadId);
 
     const startedAt = Date.now();
     while (Date.now() - startedAt < 6000) {
-      const payload = await apiJson<{ sessions?: unknown[] }>(apiBase, "/api/sessions?includeOffline=true");
-      const session = (payload.sessions ?? []).map(asRecord).find((item) => item.sessionId === sessionId);
-      if (!session || session.online !== true) {
-        throw new Error(`runtime session went offline after watcher idle: ${JSON.stringify(payload.sessions)}`);
+      const payload = await apiJson<{ runtimes?: unknown[] }>(apiBase, "/api/runtimes?includeOffline=true");
+      const runtime = (payload.runtimes ?? []).map(asRecord).find((item) => item.machineId === machineId);
+      if (!runtime || runtime.online !== true) {
+        throw new Error(`runtime went offline after watcher idle: ${JSON.stringify(payload.runtimes)}`);
       }
       await delay(100);
     }
@@ -3452,7 +3513,7 @@ const subscribeThreadOnce = async (apiBase: string, threadId: string) => {
   });
   try {
     await waitForWebSocketOpen(ws, "idle websocket failed");
-    ws.send(JSON.stringify({ type: "hello", sessionsAfter: 0, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 }));
+    ws.send(JSON.stringify({ type: "hello", runtimesAfter: 0, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 }));
     await waitForRealtimeMessage(messages, (message) => message.type === "ready", "idle websocket ready");
     ws.send(JSON.stringify({ type: "subscribe_thread", threadId, after: 0 }));
     await waitForRealtimeMessage(
@@ -3465,13 +3526,13 @@ const subscribeThreadOnce = async (apiBase: string, threadId: string) => {
   }
 };
 
-const assertCoreCommandPalette = async (apiBase: string, sessionId: string, cwd: string) => {
+const assertCoreCommandPalette = async (apiBase: string, machineId: string, cwd: string) => {
   const payload = await apiJson<CommandPalettePayload>(
     apiBase,
-    `/api/sessions/${encodeURIComponent(sessionId)}/command-palette?cwd=${encodeURIComponent(cwd)}&part=core`
+    `/api/machines/${encodeURIComponent(machineId)}/command-palette?cwd=${encodeURIComponent(cwd)}&part=core`
   );
-  assertNoWorkerId(payload, "/api/sessions/:sessionId/command-palette");
-  assertNoCurrentThread(payload, "/api/sessions/:sessionId/command-palette");
+  assertNoWorkerId(payload, "/api/machines/:machineId/command-palette");
+  assertNoCurrentThread(payload, "/api/machines/:machineId/command-palette");
   const entries = Array.isArray(payload.palette?.entries) ? payload.palette.entries.map(asRecord) : [];
   if (!entries.length) throw new Error("command palette did not return entries");
   const builtins = entries.filter((entry) => entry.kind === "builtin");
@@ -3503,7 +3564,7 @@ const assertStatusMarkdown = (thread: ThreadDetail) => {
     "- Folder: `",
     "- State: `",
     "**Runtime**",
-    "- Session: `",
+    "- Machine runtime: `",
     "- Model: `",
     "**Policy**",
     "- Approval: `",

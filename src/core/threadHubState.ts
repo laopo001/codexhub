@@ -26,6 +26,7 @@ export type SessionState = SessionSummary & {
 export type ThreadState = {
   threadId: string;
   workingDirectory: string;
+  machineId?: string;
   sessionId?: string;
   appServerTurnId?: string;
   threadOptions: ThreadOptions;

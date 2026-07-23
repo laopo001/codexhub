@@ -28,14 +28,14 @@ type SshConnection = {
 
 type ProjectThreadStartResponse = {
   result?: {
-    sessionId?: string;
+    machineId?: string;
     threadId?: string;
     cwd?: string;
   };
 };
 
-type SessionState = {
-  sessionId: string;
+type RuntimeState = {
+  machineId: string;
   online?: boolean;
   offlineReason?: string;
 };
@@ -109,11 +109,10 @@ const main = async () => {
       body: JSON.stringify({ machineId: machine.machineId, path: projectDir })
     }, 120_000);
     assertNoWorkerId(open, "/api/projects/open");
-    const sessionId = open.result?.sessionId;
     const threadId = open.result?.threadId;
-    if (!sessionId || !threadId) throw new Error(`project thread start did not return session/thread: ${JSON.stringify(open)}`);
+    if (open.result?.machineId !== machine.machineId || !threadId) throw new Error(`project thread start did not return machine/thread: ${JSON.stringify(open)}`);
     if (open.result?.cwd !== projectDir) throw new Error(`remote machine opened unexpected cwd: ${open.result?.cwd}`);
-    console.log(`project thread ok: ${sessionId} ${threadId}`);
+    console.log(`project thread ok: ${machine.machineId} ${threadId}`);
 
     const turn = await apiJson(apiBase, `/api/threads/${encodeURIComponent(threadId)}/turn`, {
       method: "POST",
@@ -136,7 +135,7 @@ const main = async () => {
     }
     connectionId = undefined;
     await waitForMachineOffline(apiBase, machine.machineId);
-    await waitForSessionOffline(apiBase, sessionId);
+    await waitForRuntimeOffline(apiBase, machine.machineId);
     await waitForNoCodexAppServerForCwd(projectDir);
     console.log("disconnect lifecycle ok");
   } catch (error) {
@@ -269,15 +268,15 @@ const waitForMachineOffline = async (apiBase: string, machineId: string) => {
   throw new Error(`SSH machine did not go offline after tunnel stop: ${machineId}`);
 };
 
-const waitForSessionOffline = async (apiBase: string, sessionId: string) => {
+const waitForRuntimeOffline = async (apiBase: string, machineId: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 15_000) {
-    const data = await apiJson<{ sessions?: SessionState[] }>(apiBase, "/api/sessions?includeOffline=true").catch(() => ({ sessions: [] }));
-    const session = data.sessions?.find((item) => item.sessionId === sessionId);
-    if (session && !session.online && session.offlineReason === "transport_disconnected") return session;
+    const data = await apiJson<{ runtimes?: RuntimeState[] }>(apiBase, "/api/runtimes?includeOffline=true").catch(() => ({ runtimes: [] }));
+    const runtime = data.runtimes?.find((item) => item.machineId === machineId);
+    if (runtime && !runtime.online && runtime.offlineReason === "transport_disconnected") return runtime;
     await delay(250);
   }
-  throw new Error(`SSH session did not go offline after tunnel stop: ${sessionId}`);
+  throw new Error(`SSH runtime did not go offline after tunnel stop: ${machineId}`);
 };
 
 const waitForThreadRecords = async (apiBase: string, threadId: string, count: number) => {

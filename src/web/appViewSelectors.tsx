@@ -127,10 +127,10 @@ const OpenThreadTabLabel = ({
         <span>Status</span>
         <code><LiveThreadExecutionText executionMeta={executionMeta} /></code>
       </div>
-      {thread.session.sessionId ? (
+      {thread.runtime.machineId ? (
         <div>
-          <span>Session</span>
-          <code>{thread.session.sessionId}</code>
+          <span>Runtime</span>
+          <code>{thread.runtime.machineId}</code>
         </div>
       ) : null}
     </div>

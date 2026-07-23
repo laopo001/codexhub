@@ -11,19 +11,19 @@ import {
   formatDuration,
   isTaskCompleteRecord,
   mergeNotificationRecords,
-  mergeThreadOrderBySession,
+  mergeThreadOrderByMachine,
   normalizeMachines,
   normalizePlugins,
   normalizeProjects,
-  normalizeSessions,
+  normalizeRuntimes,
   normalizeTasks,
   patchProjectsThread,
-  patchSessionsThread,
+  patchRuntimesThread,
   playTaskCompletionSound,
-  preferredThreadIdForSession,
+  preferredThreadIdForRuntime,
   projectKeyForProject,
   readStoredUiState,
-  runtimeSessionForProject,
+  runtimeForProject,
   showBrowserTaskCompleteNotification,
   createRegisteredMachineConnectionTracker,
   type SidebarDraftStore,
@@ -40,7 +40,7 @@ import type {
   PluginSummary,
   ProjectSummary,
   RealtimeMessage,
-  SessionSummary,
+  RuntimeSummary,
   SshConnection,
   SshHost,
   StreamEvent,
@@ -62,12 +62,12 @@ type RealtimeActionsContext = {
   realtimeClient: React.MutableRefObject<CodexHubRealtimeClient | null>;
   realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
   sidebarDraftStore: SidebarDraftStore;
-  sessionsLastSeq: React.MutableRefObject<number>;
+  runtimesLastSeq: React.MutableRefObject<number>;
   tasksLastSeq: React.MutableRefObject<number>;
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
   latestRequestedThreadId: React.MutableRefObject<string>;
-  setActiveSessionId: React.Dispatch<React.SetStateAction<string>>;
-  setActiveTabThreadBySession: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setActiveMachineId: React.Dispatch<React.SetStateAction<string>>;
+  setActiveTabThreadByMachine: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setActiveTabThreadId: React.Dispatch<React.SetStateAction<string>>;
   setActiveWorkspacePath: React.Dispatch<React.SetStateAction<string>>;
   setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
@@ -82,7 +82,7 @@ type RealtimeActionsContext = {
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
   setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
-  setSessionList: React.Dispatch<React.SetStateAction<SessionSummary[]>>;
+  setRuntimeList: React.Dispatch<React.SetStateAction<RuntimeSummary[]>>;
   dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSshConfigHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
@@ -90,7 +90,7 @@ type RealtimeActionsContext = {
   setSshHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
   setSystemStatus: React.Dispatch<React.SetStateAction<SystemStatus>>;
   setTasks: React.Dispatch<React.SetStateAction<LocalTask[]>>;
-  setThreadOrderBySession: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+  setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
 
 export type RealtimeActionsDependencies = {
@@ -126,7 +126,7 @@ const taskRunCompleteNotification = (task: LocalTask, run: LocalTaskRun): TaskCo
 export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: RealtimeActionsDependencies): RealtimeActions => {
   const registeredMachineConnections = createRegisteredMachineConnectionTracker();
   const loadInitialPayloads = async () => Promise.all([
-    apiRouteJson(apiRoutes.sessions),
+    apiRouteJson(apiRoutes.runtimes),
     apiRouteJson(apiRoutes.config),
     apiRouteJson(apiRoutes.projects),
     apiRouteJson(apiRoutes.sshHosts).catch(() => ({ hosts: [] })),
@@ -159,7 +159,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       throw error;
     }
     const [
-      sessionData,
+      runtimeData,
       configData,
       projectData,
       sshHostData,
@@ -170,7 +170,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       taskData
     ] = initialPayloads;
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
-    const loadedSessions = normalizeSessions(sessionData.sessions);
+    const loadedRuntimes = normalizeRuntimes(runtimeData.runtimes);
     const loadedMachines = normalizeMachines(projectData.machines);
     const loadedProjects = normalizeProjects(projectData.projects);
     registeredMachineConnections.seed(loadedMachines);
@@ -188,11 +188,10 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const initialProjectFromUrl = initialWorkspacePath
       ? loadedProjects.find((project) => project.path === initialWorkspacePath)
       : undefined;
-    const availableSessions = loadedSessions;
-    const savedSession = saved?.activeSessionId
-      ? availableSessions.find((session) => session.sessionId === saved.activeSessionId)
+    const savedRuntime = saved?.activeMachineId
+      ? loadedRuntimes.find((runtime) => runtime.machineId === saved.activeMachineId)
       : undefined;
-    const initialSession = runtimeSessionForProject(initialProjectFromUrl, loadedSessions) ?? savedSession ?? loadedSessions[0];
+    const initialRuntime = runtimeForProject(initialProjectFromUrl, loadedRuntimes) ?? savedRuntime ?? loadedRuntimes[0];
     const initialWorkspace = initialWorkspacePath || saved?.activeWorkspacePath || defaultDirectory;
     const initialSettings = {
       ...defaultAppSettings(),
@@ -225,19 +224,19 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setParentRegistration(parentRegistrationData.registration ?? { status: "idle" });
     ctx.setPlugins(normalizePlugins(pluginData.plugins));
     ctx.setTasks(loadedTasks);
-    ctx.setSessionList(loadedSessions);
-    ctx.setActiveTabThreadBySession(saved?.activeTabThreadBySession ?? {});
-    ctx.setThreadOrderBySession(() => mergeThreadOrderBySession(saved?.threadOrderBySession ?? {}, loadedSessions));
+    ctx.setRuntimeList(loadedRuntimes);
+    ctx.setActiveTabThreadByMachine(saved?.activeTabThreadByMachine ?? {});
+    ctx.setThreadOrderByMachine(() => mergeThreadOrderByMachine(saved?.threadOrderByMachine ?? {}, loadedRuntimes));
     connectRealtimeEvents();
-    const initialProject = initialSession
+    const initialProject = initialRuntime
       ? initialProjectFromUrl
-        ?? loadedProjects.find((project) => project.machineId === initialSession.machineId && project.path === initialWorkspace)
-        ?? loadedProjects.find((project) => project.machineId === initialSession.machineId && project.path === initialSession.workingDirectory)
+        ?? loadedProjects.find((project) => project.machineId === initialRuntime.machineId && project.path === initialWorkspace)
+        ?? loadedProjects.find((project) => project.machineId === initialRuntime.machineId && project.path === initialRuntime.workingDirectory)
       : undefined;
-    const initialThreadId = initialSession ? preferredThreadIdForSession(initialSession, initialProject) : "";
-    if (initialSession) {
-      ctx.setActiveSessionId(initialSession.sessionId);
-      ctx.setActiveWorkspacePath(initialProject?.path ?? (initialWorkspace || initialSession.workingDirectory));
+    const initialThreadId = initialRuntime ? preferredThreadIdForRuntime(initialRuntime, initialProject) : "";
+    if (initialRuntime) {
+      ctx.setActiveMachineId(initialRuntime.machineId);
+      ctx.setActiveWorkspacePath(initialProject?.path ?? (initialWorkspace || initialRuntime.workingDirectory));
     }
     if (restoredThreadIds) {
       const restored = await restorePersistedThreadTabs({
@@ -248,7 +247,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       });
       const restoredSet = new Set(restored.threadIds);
       ctx.dispatchOpenThreads({ type: "reorder", threadIds: restored.threadIds });
-      ctx.setActiveTabThreadBySession((current) => Object.fromEntries(
+      ctx.setActiveTabThreadByMachine((current) => Object.fromEntries(
         Object.entries(current).filter(([, threadId]) => restoredSet.has(threadId))
       ));
       ctx.latestRequestedThreadId.current = restored.activeThreadId;
@@ -269,7 +268,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const client = new CodexHubRealtimeClient({
       url: () => codexHubRealtimeUrl(window.location.href, authToken()),
       cursors: {
-        sessionsAfter: ctx.sessionsLastSeq.current,
+        runtimesAfter: ctx.runtimesLastSeq.current,
         projectsAfter: ctx.projectsLastSeq.current,
         tasksAfter: ctx.tasksLastSeq.current,
         connectionsAfter: ctx.connectionsLastSeq.current
@@ -284,12 +283,12 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
   }
 
   function handleRealtimeMessage(message: RealtimeMessage) {
-    if (message.type === "sessions") {
+    if (message.type === "runtimes") {
       const payload = message;
-      ctx.sessionsLastSeq.current = Math.max(ctx.sessionsLastSeq.current, payload.seq);
-      const nextSessions = normalizeSessions(payload.sessions);
-      ctx.setSessionList(nextSessions);
-      ctx.setThreadOrderBySession((current) => mergeThreadOrderBySession(current, nextSessions));
+      ctx.runtimesLastSeq.current = Math.max(ctx.runtimesLastSeq.current, payload.seq);
+      const nextRuntimes = normalizeRuntimes(payload.runtimes);
+      ctx.setRuntimeList(nextRuntimes);
+      ctx.setThreadOrderByMachine((current) => mergeThreadOrderByMachine(current, nextRuntimes));
       return;
     }
     if (message.type === "projects") {
@@ -338,11 +337,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       Math.max(ctx.threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
     );
     ctx.dispatchOpenThreads({ type: "merge-stream", thread: payload.thread, record: payload.record });
-    const sessionId = payload.thread.session.sessionId;
-    if (sessionId) {
-      ctx.setThreadOrderBySession((current) => appendThreadOrder(current, sessionId, payload.thread.threadId));
+    const machineId = payload.thread.runtime.machineId;
+    if (machineId) {
+      ctx.setThreadOrderByMachine((current) => appendThreadOrder(current, machineId, payload.thread.threadId));
     }
-    ctx.setSessionList((current) => patchSessionsThread(current, payload.thread));
+    ctx.setRuntimeList((current) => patchRuntimesThread(current, payload.thread));
     ctx.setProjects((current) => patchProjectsThread(current, payload.thread));
     if (!payload.historical && payload.kind === "record" && payload.record && isTaskCompleteRecord(payload.record)) {
       deps.onThreadCompleted(taskCompletionNotificationKey(payload.thread.threadId, payload.record));

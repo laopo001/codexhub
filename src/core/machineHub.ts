@@ -4,6 +4,7 @@ import type {
   MachineCommand,
   MachineCommandResult,
   MachineDirectoryListing,
+  MachineEnsureRuntimeResult,
   MachineGitWorktreeResult,
   MachineRegistration,
   MachineSummary,
@@ -13,6 +14,7 @@ import type {
 } from "../shared/machineTypes.js";
 
 type MachineCommandInput =
+  | Omit<Extract<MachineCommand, { type: "ensure_runtime" }>, "seq">
   | Omit<Extract<MachineCommand, { type: "start_session" }>, "seq">
   | Omit<Extract<MachineCommand, { type: "list_directory" }>, "seq">
   | Omit<Extract<MachineCommand, { type: "create_git_worktree" }>, "seq">
@@ -110,6 +112,23 @@ export class MachineHub {
     return [...this.machines.values()]
       .sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt))
       .map(machineSummary);
+  }
+
+  ensureRuntime(machineId: string, input: { cwd: string }, timeoutMs = 90_000) {
+    const machine = this.requireMachine(machineId);
+    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
+    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot launch projects: ${machineId}`);
+    const commandId = randomUUID();
+    const command = this.enqueueMachineCommand(machine.machineId, {
+      commandId,
+      type: "ensure_runtime",
+      createdAt: new Date().toISOString(),
+      cwd: input.cwd
+    });
+    return {
+      command,
+      promise: this.waitForCommand<MachineEnsureRuntimeResult>(commandId, machine.machineId, "ensure_runtime", timeoutMs)
+    };
   }
 
   startSession(machineId: string, input: { cwd: string; reuse?: boolean; threadId?: string }, timeoutMs = 90_000) {

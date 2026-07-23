@@ -31,7 +31,8 @@ import type {
   CommandPalettePart,
   ModelCatalogItem,
   PermissionProfileSummary,
-  SessionStreamEvent,
+  RuntimeStreamEvent,
+  RuntimeSummary,
   SessionSummary,
   ThreadGoalRunPolicy,
   ThreadCandidateSummary,
@@ -65,7 +66,8 @@ export type {
   PermissionProfileSummary,
   StoredMachine,
   StoredProject,
-  SessionStreamEvent,
+  RuntimeStreamEvent,
+  RuntimeSummary,
   SessionSummary,
   StoredTask,
   StoredTaskRun,
@@ -170,9 +172,9 @@ export type MachinesPayload = {
   machines?: MachineSummary[];
 };
 
-/** `/api/sessions` 返回的 session 列表 payload。 */
-export type SessionsPayload = {
-  sessions?: SessionSummary[];
+/** `/api/runtimes` 返回的 machine runtime 列表 payload。 */
+export type RuntimesPayload = {
+  runtimes?: RuntimeSummary[];
   offline?: number;
   removed?: number;
 };
@@ -222,13 +224,13 @@ export type ThreadCandidatesPayload = {
   threads?: ThreadCandidateSummary[];
 };
 
-/** app-server model catalog 接口返回的 payload。 */
-export type SessionModelsPayload = {
+/** machine runtime model catalog 接口返回的 payload。 */
+export type RuntimeModelsPayload = {
   models?: ModelCatalogItem[];
 };
 
-/** app-server permission profile catalog 接口返回的 payload。 */
-export type SessionPermissionProfilesPayload = {
+/** machine runtime permission profile catalog 接口返回的 payload。 */
+export type RuntimePermissionProfilesPayload = {
   profiles?: PermissionProfileSummary[];
 };
 
@@ -237,7 +239,13 @@ export type CommandPalettePayload = {
   palette?: CommandPalette;
 };
 
-/** session/thread turn mutation 返回值。 */
+/** machine runtime ensure 接口返回值；不暴露内部 session incarnation id。 */
+export type RuntimeEnsurePayload = {
+  ok?: boolean;
+  runtime?: RuntimeSummary;
+};
+
+/** thread turn mutation 返回值。 */
 export type ThreadTurnPayload = {
   ok?: boolean;
   queued?: boolean;
@@ -299,7 +307,7 @@ export type ProjectThreadStartPayload = ProjectsPayload & {
   project?: ProjectRecordPayload | ProjectSummary;
   result?: {
     cwd?: string;
-    sessionId?: string;
+    machineId?: string;
     threadId?: string;
   };
 };
@@ -327,12 +335,12 @@ export type ProjectMutationPayload = ProjectsPayload & {
   project?: ProjectRecordPayload | ProjectSummary;
 };
 
-/** task create/update/run mutation 返回值；run 可能额外返回定位到的 session/thread。 */
+/** task create/update/run mutation 返回值；run 可能额外返回定位到的 machine/thread。 */
 export type TaskMutationPayload = {
   ok?: boolean;
   skipped?: boolean;
   task?: TaskView;
-  sessionId?: string;
+  machineId?: string;
   threadId?: string;
   command?: string;
 };
@@ -360,7 +368,7 @@ export type ConnectionsStreamEvent = {
 
 /** WebSocket 从 server 发给 Web 的所有入站消息。 */
 export type RealtimeMessage =
-  | ({ type: "sessions" } & SessionStreamEvent)
+  | ({ type: "runtimes" } & RuntimeStreamEvent)
   | ({ type: "projects" } & ProjectsStreamEvent)
   | ({ type: "tasks" } & TasksStreamEvent)
   | ({ type: "connections" } & ConnectionsStreamEvent)
@@ -631,6 +639,13 @@ export const machineRegistrationSchema = z.object({
 
 export const machineHeartbeatSchema = machineRegistrationSchema.partial().strict();
 
+export const machineEnsureRuntimeResultSchema = z.object({
+  sessionId: z.string().min(1),
+  appServerUrl: z.string().min(1),
+  cwd: z.string().min(1),
+  reused: z.boolean().optional()
+});
+
 export const machineStartSessionResultSchema = z.object({
   sessionId: z.string().min(1),
   threadId: z.string().min(1),
@@ -715,6 +730,7 @@ export const machineTransportMessageSchema = z.discriminatedUnion("type", [
     commandId: z.string().min(1),
     result: z.union([
       machineStartSessionResultSchema,
+      machineEnsureRuntimeResultSchema,
       machineDirectoryListingSchema,
       machineGitWorktreeResultSchema,
       machineStopSessionResultSchema
@@ -782,7 +798,7 @@ export const machineTransportMessageSchema = z.discriminatedUnion("type", [
 export const webEventsMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("hello"),
-    sessionsAfter: z.number().int().min(0).optional(),
+    runtimesAfter: z.number().int().min(0).optional(),
     projectsAfter: z.number().int().min(0).optional(),
     tasksAfter: z.number().int().min(0).optional(),
     connectionsAfter: z.number().int().min(0).optional()

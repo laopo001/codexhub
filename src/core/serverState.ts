@@ -264,7 +264,7 @@ export class CodexhubServerState {
     return task;
   }
 
-  startTaskRun(taskId: string, input: { runId: string; sessionId?: string; threadId?: string; startedAt?: string }) {
+  startTaskRun(taskId: string, input: { runId: string; machineId?: string; threadId?: string; startedAt?: string }) {
     const task = this.data.tasks.find((item) => item.taskId === taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
     const startedAt = input.startedAt ?? new Date().toISOString();
@@ -272,7 +272,7 @@ export class CodexhubServerState {
       runId: input.runId,
       status: "queued",
       startedAt,
-      sessionId: input.sessionId,
+      machineId: input.machineId,
       threadId: input.threadId
     };
     task.runs = [run, ...(task.runs ?? []).filter((item) => item.runId !== input.runId)].slice(0, 20);
@@ -288,7 +288,7 @@ export class CodexhubServerState {
 
   finishTaskRun(taskId: string, runId: string, input: {
     status: Exclude<TaskRunStatus, "queued">;
-    sessionId?: string;
+    machineId?: string;
     threadId?: string;
     error?: string;
     finishedAt?: string;
@@ -307,7 +307,7 @@ export class CodexhubServerState {
       runs.unshift(run);
     }
     run.status = input.status;
-    run.sessionId = input.sessionId ?? run.sessionId;
+    run.machineId = input.machineId ?? run.machineId;
     run.threadId = input.threadId ?? run.threadId;
     run.error = input.error;
     run.finishedAt = finishedAt;
@@ -486,14 +486,10 @@ export class CodexhubServerState {
     const machinesById = new Map<string, MachineSummary | StoredMachine>();
     for (const machine of this.data.machines) machinesById.set(machine.machineId, machine);
     for (const machine of snapshot.machines) machinesById.set(machine.machineId, machine);
-    const sessionsById = new Map(snapshot.sessions.map((session) => [session.sessionId, session]));
     const threadsByProject = new Map<string, ThreadSummary[]>();
     for (const thread of snapshot.threads) {
-      const session = thread.session.sessionId
-        ? sessionsById.get(thread.session.sessionId)
-        : undefined;
-      const project = session
-        ? this.findRuntimeProject(machineIdForSession(session), thread.workingDirectory)
+      const project = thread.runtime.machineId
+        ? this.findRuntimeProject(thread.runtime.machineId, thread.workingDirectory)
         : this.uniqueProjectForPath(thread.workingDirectory);
       if (!project) continue;
       const threads = threadsByProject.get(project.projectId) ?? [];
@@ -882,7 +878,7 @@ const normalizeStoredTask = (value: unknown): unknown => {
   const machineId = typeof item.machineId === "string" ? item.machineId : "";
   const projectPath = typeof item.projectPath === "string" ? item.projectPath : "";
   const runs = Array.isArray(item.runs)
-    ? item.runs.map(normalizeStoredTaskRun).filter(isStoredTaskRun).slice(0, 20)
+    ? item.runs.map((run) => normalizeStoredTaskRun(run, machineId)).filter(isStoredTaskRun).slice(0, 20)
     : [];
   return {
     ...item,
@@ -892,7 +888,7 @@ const normalizeStoredTask = (value: unknown): unknown => {
   };
 };
 
-const normalizeStoredTaskRun = (value: unknown): unknown => {
+const normalizeStoredTaskRun = (value: unknown, fallbackMachineId = ""): unknown => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const item = value as Record<string, unknown>;
   return {
@@ -901,7 +897,9 @@ const normalizeStoredTaskRun = (value: unknown): unknown => {
     startedAt: item.startedAt,
     finishedAt: item.finishedAt,
     durationMs: item.durationMs,
-    sessionId: item.sessionId,
+    machineId: typeof item.machineId === "string"
+      ? item.machineId
+      : fallbackMachineId || undefined,
     threadId: item.threadId,
     error: item.error
   };
@@ -985,7 +983,7 @@ const isStoredTaskRun = (value: unknown): value is StoredTaskRun => {
     && typeof item.startedAt === "string"
     && (item.finishedAt === undefined || typeof item.finishedAt === "string")
     && (item.durationMs === undefined || typeof item.durationMs === "number")
-    && (item.sessionId === undefined || typeof item.sessionId === "string")
+    && (item.machineId === undefined || typeof item.machineId === "string")
     && (item.threadId === undefined || typeof item.threadId === "string")
     && (item.error === undefined || typeof item.error === "string");
 };

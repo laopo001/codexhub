@@ -101,7 +101,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     openTaskRunThread,
     selectedProject,
     selectProject,
-    sessionList,
+    runtimeList,
     serverShareCopied,
     sidebarDraftStore,
     setConnectionMode,
@@ -207,7 +207,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const selectedTaskProject = taskFormOpen
     ? taskProjectOptions.find((project) => project.path === taskDraft.projectPath)
     : undefined;
-  const taskThreadOptions = taskFormOpen ? taskThreadOptionsFor(selectedTaskProject, sessionList) : [];
+  const taskThreadOptions = taskFormOpen ? taskThreadOptionsFor(selectedTaskProject, runtimeList) : [];
   const editingTask = editingTaskId ? tasks.find((task) => task.taskId === editingTaskId) : undefined;
   const taskSubmitBusy = editingTaskId ? taskBusyId === editingTaskId : taskBusyId === "create";
   const taskThreadEmptyLabel = editingTask?.threadId ? "Keep current thread" : "Current thread";

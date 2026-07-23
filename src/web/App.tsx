@@ -68,7 +68,7 @@ const App = () => {
     projectPicker,
     registeredCommandCopied,
     serverShareCopied,
-    sessionList,
+    runtimeList,
     setAppSettings,
     setAuthError,
     setAuthRequired,
@@ -84,7 +84,7 @@ const App = () => {
     setInspectMessage,
     setMessageContextMenu,
     setMessageDisplayMode,
-    setModelCatalogBySession,
+    setModelCatalogByMachine,
     setOfflineProjectsCollapsed,
     setProjectPicker,
     setServerShareCopied,
@@ -111,7 +111,7 @@ const App = () => {
     tasks,
     threadControlsMenuOpen,
     threadModelDialogOpen,
-    threadOrderBySession,
+    threadOrderByMachine,
     threadRenameDialog,
     threadTabContextMenu,
     threadPicker
@@ -124,7 +124,7 @@ const App = () => {
     activeExpandedStatusKeys,
     activeGoal,
     activeProjectKey,
-    activeRuntimeSession,
+    activeRuntime,
     activeThread,
     activeThreadIsOpen,
     activeThreadApprovalPolicyDraft,
@@ -243,7 +243,7 @@ const App = () => {
     handleLocalComposerCommand: petFeature.handleLocalComposerCommand,
     primeTaskCompletionFeedback: taskActions.primeTaskCompletionFeedback,
     refreshProjects: taskActions.refreshProjects,
-    refreshSessions: taskActions.refreshSessions,
+    refreshRuntimes: taskActions.refreshRuntimes,
     resetComposerHistory: composerActions.resetComposerHistory,
     sendRealtime: realtimeActions.sendRealtime
   });
@@ -300,7 +300,7 @@ const App = () => {
     connectSshHost,
     copyContextSelection,
     copyRegisteredCommand,
-    createSessionThread,
+    createMachineThread,
     createWorktreeThread,
     createTask,
     deleteProject,
@@ -339,7 +339,7 @@ const App = () => {
     stopSshConnection,
     stopTurn,
     submitProjectPickerPath,
-    switchSessionThread,
+    switchMachineThread,
     syncThreadSubscriptions,
     toggleProjectMachineGroup,
     toggleProjectPinned,
@@ -392,12 +392,12 @@ const App = () => {
   };
 
   const retryModelCatalog = () => {
-    const sessionId = activeRuntimeSession?.sessionId;
-    if (!sessionId) return;
-    setModelCatalogBySession((current) => {
-      if (!Object.prototype.hasOwnProperty.call(current, sessionId)) return current;
+    const machineId = activeRuntime?.machineId;
+    if (!machineId) return;
+    setModelCatalogByMachine((current) => {
+      if (!Object.prototype.hasOwnProperty.call(current, machineId)) return current;
       const next = { ...current };
-      delete next[sessionId];
+      delete next[machineId];
       return next;
     });
   };
@@ -408,7 +408,7 @@ const App = () => {
     activeExpandedStatusKeys,
     activeGoal,
     activeProjectKey,
-    activeRuntimeSession,
+    activeRuntime,
     activeThread,
     activeThreadIsOpen,
     activeThreadExecutionMeta,
@@ -442,7 +442,7 @@ const App = () => {
     copyCurrentServerShareUrl,
     copyContextSelection,
     copyRegisteredCommand,
-    createSessionThread,
+    createMachineThread,
     createWorktreeThread,
     createTask,
     currentServerShareUrl,
@@ -532,7 +532,7 @@ const App = () => {
     send,
     serverShareCopied,
     threadModelDialogOpen,
-    sessionList,
+    runtimeList,
     threadControlsMenuOpen,
     settingsDialogOpen,
     threadRenameDialog,
@@ -584,12 +584,12 @@ const App = () => {
     stopTurn,
     submitAuthToken,
     submitProjectPickerPath,
-    switchSessionThread,
+    switchMachineThread,
     taskBusyId,
     taskError,
     taskFormOpen,
     tasks,
-    threadOrderBySession,
+    threadOrderByMachine,
     threadPicker,
     toggleProjectMachineGroup,
     toggleProjectPinned,

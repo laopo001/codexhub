@@ -29,7 +29,7 @@ import { builtinPet, builtinPets } from "../../src/web/pets/petStore.js";
 const thread = (threadId: string, records: CodexRecord[] = [], running = false): OpenThreadState => ({
   threadId,
   workingDirectory: `/tmp/${threadId}`,
-  session: { online: true, runnable: true, sessionId: "session-1" },
+  runtime: { online: true, runnable: true, machineId: "session-1" },
   status: running ? "running" : "idle",
   running,
   title: threadId,

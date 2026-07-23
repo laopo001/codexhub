@@ -6,7 +6,7 @@ import type { AnyApiRoute, ApiRouteCallArgs, ApiRouteResponse } from "../../shar
 export { parseRealtimeMessage } from "../../shared/realtimeClient.js";
 import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../shared/taskCron.js";
 import { threadGranularApprovalKeys, type ThreadGranularApprovalKey } from "../../shared/usageTypes.js";
-import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, SessionSummary, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, ApprovalsReviewerDraft, PermissionProfileDraft } from "../types.js";
+import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, RuntimeSummary, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, ApprovalsReviewerDraft, PermissionProfileDraft } from "../types.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -87,19 +87,18 @@ const normalizeThreadGoalRunPolicy = (value: unknown): ThreadSummary["goalRunPol
   };
 };
 
-const isSessionLike = (value: unknown): value is SessionSummary => {
+const isRuntimeLike = (value: unknown): value is RuntimeSummary => {
   const record = asRecord(value);
-  return Boolean(record && hasNonBlankString(record.sessionId));
+  return Boolean(record && hasNonBlankString(record.machineId));
 };
 
-export const normalizeSessions = (sessions: SessionSummary[] | undefined): SessionSummary[] =>
-  Array.isArray(sessions)
-    ? sessions
-      .filter(isSessionLike)
-      .map((session) => ({
-        ...session,
-        sessionId: session.sessionId,
-        threads: normalizeThreads(session.threads)
+export const normalizeRuntimes = (runtimes: RuntimeSummary[] | undefined): RuntimeSummary[] =>
+  Array.isArray(runtimes)
+    ? runtimes
+      .filter(isRuntimeLike)
+      .map((runtime) => ({
+        ...runtime,
+        threads: normalizeThreads(runtime.threads)
       }))
     : [];
 
@@ -168,7 +167,7 @@ export const taskDraftFromTask = (task: LocalTask): TaskDraft => ({
   input: task.input
 });
 
-export const taskThreadOptionsFor = (project: ProjectSummary | undefined, sessions: SessionSummary[] = []) => {
+export const taskThreadOptionsFor = (project: ProjectSummary | undefined, sessions: RuntimeSummary[] = []) => {
   const threads = new Map<string, Pick<ThreadSummary, "threadId" | "title" | "updatedAt">>();
   const pushThread = (thread: Pick<ThreadSummary, "threadId" | "title" | "updatedAt">) => {
     if (!thread.threadId) return;
@@ -328,7 +327,7 @@ export const taskSearchMatches = (
     taskRunSummary(task),
     taskRunTitle(task),
     task.lastError,
-    ...runs.flatMap((run) => [run.status, run.threadId, run.sessionId, run.error])
+    ...runs.flatMap((run) => [run.status, run.machineId, run.threadId, run.error])
   ].map((value) => compactLine(value ?? "").toLowerCase()).filter(Boolean).join("\n");
   return tokens.every((token) => searchText.includes(token));
 };
@@ -348,7 +347,7 @@ export const taskRunDetailTitle = (run: LocalTaskRun) => [
   `started: ${formatDate(run.startedAt)}`,
   run.finishedAt ? `finished: ${formatDate(run.finishedAt)}` : null,
   run.durationMs != null ? `duration: ${formatDuration(run.durationMs)}` : null,
-  run.sessionId ? `session: ${run.sessionId}` : null,
+  run.machineId ? `machine: ${run.machineId}` : null,
   run.threadId ? `thread: ${run.threadId}` : null,
   run.error ? `error: ${run.error}` : null
 ].filter(Boolean).join("\n");
@@ -772,59 +771,59 @@ export const threadDisplayTitle = (thread: Pick<ThreadSummary, "threadId" | "tit
   return title && title !== thread.threadId && title !== threadShortId ? title : "New thread";
 };
 
-export const appendThreadOrder = (current: Record<string, string[]>, sessionId: string, threadId: string) => {
-  const existing = current[sessionId] ?? [];
+export const appendThreadOrder = (current: Record<string, string[]>, machineId: string, threadId: string) => {
+  const existing = current[machineId] ?? [];
   if (existing.includes(threadId)) return current;
-  return { ...current, [sessionId]: [...existing, threadId] };
+  return { ...current, [machineId]: [...existing, threadId] };
 };
 
 export const removeThreadOrder = (current: Record<string, string[]>, threadId: string) => {
   const next: Record<string, string[]> = {};
-  for (const [sessionId, threadIds] of Object.entries(current)) {
+  for (const [machineId, threadIds] of Object.entries(current)) {
     const filtered = threadIds.filter((item) => item !== threadId);
-    if (filtered.length) next[sessionId] = filtered;
+    if (filtered.length) next[machineId] = filtered;
   }
   return next;
 };
 
-export const mergeThreadOrderBySession = (current: Record<string, string[]>, sessionList: SessionSummary[]) => {
+export const mergeThreadOrderByMachine = (current: Record<string, string[]>, runtimeList: RuntimeSummary[]) => {
   const next: Record<string, string[]> = {};
-  for (const session of sessionList) {
-    const threadIds = sessionThreadIds(session);
+  for (const runtime of runtimeList) {
+    const threadIds = runtimeThreadIds(runtime);
     const liveThreadIds = new Set(threadIds);
-    const existing = (current[session.sessionId] ?? []).filter((threadId) => liveThreadIds.has(threadId));
+    const existing = (current[runtime.machineId] ?? []).filter((threadId) => liveThreadIds.has(threadId));
     const appended = threadIds.filter((threadId) => !existing.includes(threadId));
-    next[session.sessionId] = [...existing, ...appended];
+    next[runtime.machineId] = [...existing, ...appended];
   }
   return next;
 };
 
-export const sessionThreadIds = (session: SessionSummary) => {
+export const runtimeThreadIds = (runtime: RuntimeSummary) => {
   const threadIds: string[] = [];
   const pushThreadId = (threadId?: string) => {
     if (threadId && !threadIds.includes(threadId)) threadIds.push(threadId);
   };
-  for (const thread of session.threads ?? []) pushThreadId(thread.threadId);
+  for (const thread of runtime.threads ?? []) pushThreadId(thread.threadId);
   return threadIds;
 };
 
-export const preferredThreadIdForSession = (session: SessionSummary, project?: ProjectSummary) => {
-  const sessionThreads = session.threads ?? [];
-  if (!project) return sessionThreads[0]?.threadId ?? "";
-  const projectThreads = sessionThreads.filter((thread) => thread.workingDirectory === project.path);
+export const preferredThreadIdForRuntime = (runtime: RuntimeSummary, project?: ProjectSummary) => {
+  const runtimeThreads = runtime.threads ?? [];
+  if (!project) return runtimeThreads[0]?.threadId ?? "";
+  const projectThreads = runtimeThreads.filter((thread) => thread.workingDirectory === project.path);
   const projectThreadIds = new Set(projectThreads.map((thread) => thread.threadId));
   if (project.lastThreadId && projectThreadIds.has(project.lastThreadId)) return project.lastThreadId;
   return projectThreads[0]?.threadId ?? "";
 };
 
-export const runtimeSessionForMachine = (sessions: SessionSummary[], machineId?: string) => {
+export const runtimeForMachine = (runtimes: RuntimeSummary[], machineId?: string) => {
   if (!machineId) return undefined;
-  return sessions.find((session) => session.machineId === machineId && session.online)
-    ?? sessions.find((session) => session.machineId === machineId);
+  return runtimes.find((runtime) => runtime.machineId === machineId && runtime.online)
+    ?? runtimes.find((runtime) => runtime.machineId === machineId);
 };
 
-export const runtimeSessionForProject = (project: ProjectSummary | undefined, sessions: SessionSummary[]) =>
-  project ? runtimeSessionForMachine(sessions, project.machineId) : undefined;
+export const runtimeForProject = (project: ProjectSummary | undefined, runtimes: RuntimeSummary[]) =>
+  project ? runtimeForMachine(runtimes, project.machineId) : undefined;
 
 export const adjacentThreadId = (threadIds: string[], threadId: string) => {
   const index = threadIds.indexOf(threadId);
@@ -832,19 +831,19 @@ export const adjacentThreadId = (threadIds: string[], threadId: string) => {
   return threadIds[index + 1] ?? threadIds[index - 1] ?? "";
 };
 
-export const patchSessionsThread = (sessionList: SessionSummary[], thread: ThreadSummary) => {
+export const patchRuntimesThread = (runtimeList: RuntimeSummary[], thread: ThreadSummary) => {
   let changed = false;
-  const next = sessionList.map((session) => {
-    if (session.sessionId !== thread.session.sessionId) return session;
-    const threads = upsertThreadSummary(session.threads ?? [], thread);
-    if (threads === session.threads) return session;
+  const next = runtimeList.map((runtime) => {
+    if (runtime.machineId !== thread.runtime.machineId) return runtime;
+    const threads = upsertThreadSummary(runtime.threads ?? [], thread);
+    if (threads === runtime.threads) return runtime;
     changed = true;
     return {
-      ...session,
+      ...runtime,
       threads
     };
   });
-  return changed ? next : sessionList;
+  return changed ? next : runtimeList;
 };
 
 export const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) => {
@@ -864,10 +863,10 @@ export const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSu
   return changed ? next : projects;
 };
 
-export const removeSessionsThread = (sessionList: SessionSummary[], threadId: string) =>
-  sessionList.map((session) => ({
-    ...session,
-    threads: (session.threads ?? []).filter((thread) => thread.threadId !== threadId)
+export const removeRuntimesThread = (runtimeList: RuntimeSummary[], threadId: string) =>
+  runtimeList.map((runtime) => ({
+    ...runtime,
+    threads: (runtime.threads ?? []).filter((thread) => thread.threadId !== threadId)
   }));
 
 export const removeProjectsThread = (projects: ProjectSummary[], threadId: string) =>
@@ -906,12 +905,11 @@ const threadSummariesEqual = (left: ThreadSummary, right: ThreadSummary) => {
     || left.title !== right.title
     || left.updatedAt !== right.updatedAt
     || left.messageCount !== right.messageCount
-    || left.session.sessionId !== right.session.sessionId
-    || left.session.name !== right.session.name
-    || left.session.appServerUrl !== right.session.appServerUrl
-    || left.session.online !== right.session.online
-    || left.session.runnable !== right.session.runnable
-    || left.session.lastSeenAt !== right.session.lastSeenAt
+    || left.runtime.machineId !== right.runtime.machineId
+    || left.runtime.name !== right.runtime.name
+    || left.runtime.online !== right.runtime.online
+    || left.runtime.runnable !== right.runtime.runnable
+    || left.runtime.lastSeenAt !== right.runtime.lastSeenAt
   ) return false;
   return JSON.stringify(left.approvalPolicy) === JSON.stringify(right.approvalPolicy)
     && JSON.stringify(left.activePermissionProfile) === JSON.stringify(right.activePermissionProfile)
@@ -965,7 +963,7 @@ export const permissionProfileLabel = (id: string) => id
   .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
   .join(" ") || id;
 
-export const permissionProfileScopeKey = (sessionId: string, cwd: string) => `${sessionId}\u0000${cwd}`;
+export const permissionProfileScopeKey = (machineId: string, cwd: string) => `${machineId}\u0000${cwd}`;
 
 export const isModelCommand = (text: string) => /^\/model\s*$/i.test(text);
 

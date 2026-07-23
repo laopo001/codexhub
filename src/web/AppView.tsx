@@ -121,7 +121,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeCanStop,
     activeExpandedStatusKeys,
     activeGoal,
-    activeRuntimeSession,
+    activeRuntime,
     activeThread,
     activeThreadIsOpen,
     activeThreadExecutionMeta,
@@ -195,14 +195,14 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     turnStatusItems,
     stopTurn,
     submitAuthToken,
-    switchSessionThread,
+    switchMachineThread,
     updateMessageRenderMode,
     updateThreadInput,
     updateThreadGoal,
     openThreadEmptyMessage,
     openThreadTabs
   } = workspace;
-  const canAddThreadForProject = Boolean(activeRuntimeSession?.online || selectedProject?.machineOnline);
+  const canAddThreadForProject = Boolean(activeRuntime?.online || selectedProject?.machineOnline);
   const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
   const activeGoalStatusControl = activeGoal ? goalStatusControl(activeGoal.status) : null;
   const activeGranularApprovalPolicy = activeThreadApprovalPolicySelection
@@ -226,7 +226,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   const executionStatus = activeThreadExecutionMeta?.status ?? "idle";
   const executionLabel = activeThreadExecutionMeta?.label ?? "Idle";
   const executionText = activeThreadExecutionMeta?.text ?? executionLabel;
-  const composerRuntimeReady = Boolean(activeThread?.session.online && activeThread.session.runnable !== false);
+  const composerRuntimeReady = Boolean(activeThread?.runtime.online && activeThread.runtime.runnable !== false);
   const showTurnLoadingMessage = executionStatus === "running";
   const messagesVirtuosoContext = React.useMemo(
     () => ({ executionMeta: activeThreadExecutionMeta }),
@@ -935,7 +935,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                 </div>
               ) : null
             }))}
-            onChange={(threadId) => void switchSessionThread(threadId)}
+            onChange={(threadId) => void switchMachineThread(threadId)}
             onEdit={(targetKey, action) => {
               if (action === "add") {
                 if (canAddThreadForProject) void openSelectedProjectThreadPicker();

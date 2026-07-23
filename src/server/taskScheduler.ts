@@ -63,9 +63,10 @@ export class TaskScheduler {
     if (!task) throw new Error(`Task not found: ${taskId}`);
     const runId = randomUUID();
     if (this.runningTasks.has(task.taskId)) {
-      this.options.state.startTaskRun(task.taskId, { runId });
+      this.options.state.startTaskRun(task.taskId, { runId, machineId: task.machineId });
       const skippedTask = this.options.state.finishTaskRun(task.taskId, runId, {
         status: "skipped",
+        machineId: task.machineId,
         error: "Task already running"
       });
       this.publish();
@@ -74,7 +75,7 @@ export class TaskScheduler {
 
     let releaseOnReturn = true;
     this.runningTasks.add(task.taskId);
-    this.options.state.startTaskRun(task.taskId, { runId });
+    this.options.state.startTaskRun(task.taskId, { runId, machineId: task.machineId });
     this.publish();
     try {
       const started = this.options.machines.startSession(task.machineId, {
@@ -94,14 +95,14 @@ export class TaskScheduler {
       if (localCommand.handled) {
         const completedTask = this.options.state.finishTaskRun(task.taskId, runId, {
           status: "completed",
-          sessionId,
+          machineId: task.machineId,
           threadId
         });
         this.publish();
         return {
           ok: true,
           task: this.view(completedTask),
-          sessionId,
+          machineId: task.machineId,
           threadId,
           command: localCommand.command
         };
@@ -111,21 +112,26 @@ export class TaskScheduler {
       this.publish();
       releaseOnReturn = false;
       turn.then(() => {
-        this.options.state.finishTaskRun(task.taskId, runId, { status: "completed", sessionId, threadId });
+        this.options.state.finishTaskRun(task.taskId, runId, {
+          status: "completed",
+          machineId: task.machineId,
+          threadId
+        });
         this.publish();
       }).catch((error: unknown) => {
         this.options.state.finishTaskRun(task.taskId, runId, {
           status: "failed",
-          sessionId,
+          machineId: task.machineId,
           threadId,
           error: error instanceof Error ? error.message : String(error)
         });
         this.publish();
       }).finally(() => this.runningTasks.delete(task.taskId));
-      return { ok: true, task: this.view(queuedTask), sessionId, threadId };
+      return { ok: true, task: this.view(queuedTask), machineId: task.machineId, threadId };
     } catch (error) {
       this.options.state.finishTaskRun(task.taskId, runId, {
         status: "failed",
+        machineId: task.machineId,
         error: error instanceof Error ? error.message : String(error)
       });
       this.publish();
