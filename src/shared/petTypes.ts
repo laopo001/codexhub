@@ -1,4 +1,5 @@
-export const defaultPetId = "red-spark";
+export const defaultPetId = "guga";
+export const builtinPetIds = [defaultPetId, "red-spark"] as const;
 export const petIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 export type PetSpriteVersion = 1 | 2;

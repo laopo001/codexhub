@@ -17,7 +17,7 @@ const tmpdir = await mkdtemp(path.join(os.tmpdir(), "codexhub-notification-hooks
 const defaultConfigLines = [
   "config:",
   "  ui:",
-  "    selectedPetId: red-spark",
+  "    selectedPetId: guga",
   "    showFloatingPet: false",
   "    taskCompleteSystemNotifications: false"
 ];
@@ -149,8 +149,8 @@ async function assertServerUiConfig(root: string) {
   ].join("\n"));
 
   const state = await CodexhubServerState.load({ dataDir });
-  if (state.config().ui.selectedPetId !== "red-spark") {
-    throw new Error("missing UI config did not default the selected pet to red-spark");
+  if (state.config().ui.selectedPetId !== "guga") {
+    throw new Error("missing UI config did not default the selected pet to guga");
   }
   if (state.config().ui.showFloatingPet !== false) {
     throw new Error("missing UI config did not default floating pet to false");
@@ -161,7 +161,7 @@ async function assertServerUiConfig(root: string) {
   const migrated = YAML.parse(await readFile(configPath, "utf8")) as {
     config?: { ui?: { selectedPetId?: unknown; showFloatingPet?: unknown; taskCompleteSystemNotifications?: unknown } };
   };
-  if (migrated.config?.ui?.selectedPetId !== "red-spark") {
+  if (migrated.config?.ui?.selectedPetId !== "guga") {
     throw new Error(`missing selected pet config was not written to config.yaml: ${JSON.stringify(migrated.config)}`);
   }
   if (migrated.config?.ui?.showFloatingPet !== false) {
@@ -182,7 +182,7 @@ async function assertServerUiConfig(root: string) {
     const initial = await jsonFetch<{
       config?: { ui?: { selectedPetId?: unknown; showFloatingPet?: unknown; taskCompleteSystemNotifications?: unknown } };
     }>(`${base}/api/config`);
-    if (initial.config?.ui?.selectedPetId !== "red-spark") {
+    if (initial.config?.ui?.selectedPetId !== "guga") {
       throw new Error(`server selected pet config did not use the fallback: ${JSON.stringify(initial.config)}`);
     }
     if (initial.config?.ui?.showFloatingPet !== false) {

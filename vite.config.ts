@@ -1,7 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-const apiTarget = process.env.CODEX_HUB_DEV_API || "http://127.0.0.1:8788";
+const apiTarget = process.env.CODEX_HUB_DEV_API || "http://127.0.0.1:18788";
 
 export default defineConfig({
   plugins: [react()],

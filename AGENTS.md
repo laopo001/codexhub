@@ -4,9 +4,9 @@
 
 Agent 开发改动时按这套固定流程起本地服务并用 CDP 测试，不要临时发明端口或浏览器实例。
 
-1. 本地服务固定起两个：后端 `pnpm run dev:api`（监听 `127.0.0.1:8788`），前端 `pnpm run dev:web`（Vite 监听 `127.0.0.1:15173`，`/api` 代理到 `8788`）。前后端都改时两个都要起；只改后端可只起 `dev:api`，只改前端可只起 `dev:web`。不要改默认端口，也不要让两端的端口对不上。
+1. 默认使用 `pnpm dev` 同时启动两个本地服务：后端 `pnpm run dev:api`（监听 `127.0.0.1:18788`），前端 `pnpm run dev:web`（Vite 监听 `127.0.0.1:15173`，`/api` 代理到 `18788`）。只改后端可只起 `dev:api`，只改前端可只起 `dev:web`。不要改默认端口，也不要让两端的端口对不上。
 2. CDP 必须复用全局规则里的 Windows Chrome 实例（`http://127.0.0.1:19222`，user-data-dir `D:\Chrome\User Data`）。连不上就按全局 CDP 排查步骤处理，不要自启其他 Chrome/Chromium、不要换端口或 user-data-dir、不要用 Playwright 自带浏览器。
-3. 浏览测试入口是前端 `http://127.0.0.1:15173`；Vite 会把 `/api` 请求代理到 `8788`，所以单开一个 tab 即可覆盖前后端链路，不要再单独打开 `8788`。
+3. 浏览测试入口是前端 `http://127.0.0.1:15173`；Vite 会把 `/api` 请求代理到 `18788`，所以单开一个 tab 即可覆盖前后端链路，不要再单独打开 `18788`。
 4. 自动化优先新建 tab 工作，不复用用户已有 tab；任务结束只关闭本次任务创建的 tab，不要关闭 CDP 浏览器、Chrome 进程或整个 browser context。直接用 Playwright API 连接 CDP 时结束用 `browser.disconnect()`，不要用 `browser.close()`。
 5. 联网/页面测试要访问真实页面，验证完要说明访问了哪个 URL、观察到什么、结论是什么。遇到登录、验证码、端口未起或页面报错要明确说明卡点，不要编造结果。
 6. 跑改动验证前先 `pnpm check`；端到端验证按「发布和验证」章节的 smoke 命令选对应项。
@@ -23,7 +23,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 1. 包名是 `@dadigua/codexhub`，公开 bin 是 `codexhub` 和 `cxh`，两者指向同一个 CLI 入口。
 2. 生产/本地 server 入口是 `codexhub server`，默认监听 `0.0.0.0:8788`；本机访问 URL 仍显示为 `http://127.0.0.1:8788`，`CODEX_HUB_HOST`、`CODEX_HUB_PORT` 或 CLI 参数可以覆盖。
-3. 开发时 API 用 `pnpm run dev:api`，Web 用 `pnpm run dev:web`，Vite 默认 `15173` 并代理 `/api` 到 `8788`。
+3. 开发时默认用 `pnpm dev` 同时启动 API 和 Web；单独启动时 API 用 `pnpm run dev:api`，Web 用 `pnpm run dev:web`，Vite 默认 `15173` 并代理 `/api` 到 `18788`。
 4. `codexhub machine --type registered` 注册一台可为 project path 启动 thread 的 machine；内嵌 local machine 也走同一套 machine command 协议。
 5. `codexhub server --register-to <parent>` 会启动当前 server，并额外把它作为一台 `registered` machine 接入父 server；这不是 server-to-server state bridge。
 6. `codexhub ssh ...` 是 server-side SSH 管理入口；SSH remote client 由本机 server bootstrap 下发，不要求远端预装 codexhub。

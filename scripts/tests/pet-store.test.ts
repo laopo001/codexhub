@@ -64,19 +64,21 @@ test("Codex pet store reserves bundled ids and resolves CODEX_HOME", async () =>
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-pets-reserved."));
   try {
     const store = new CodexPetStore(root);
-    await assert.rejects(
-      store.install({
-        manifest: {
-          id: "red-spark",
-          displayName: "Override",
-          description: "Must not shadow the bundled default",
-          spriteVersionNumber: 2,
-          spritesheetPath: "spritesheet.webp",
-        },
-        image: Buffer.from("AAAA"),
-      }),
-      (error: unknown) => error instanceof PetStoreError && error.statusCode === 409
-    );
+    for (const id of ["guga", "red-spark"]) {
+      await assert.rejects(
+        store.install({
+          manifest: {
+            id,
+            displayName: "Override",
+            description: "Must not shadow a bundled pet",
+            spriteVersionNumber: 2,
+            spritesheetPath: "spritesheet.webp",
+          },
+          image: Buffer.from("AAAA"),
+        }),
+        (error: unknown) => error instanceof PetStoreError && error.statusCode === 409
+      );
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

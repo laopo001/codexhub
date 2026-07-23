@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import {
-  defaultPetId,
+  builtinPetIds,
   petIdPattern,
   type InvalidPetPackage,
   type PetManifest,
@@ -14,7 +14,7 @@ import {
 import { inspectPetImage, PetImageValidationError, type InspectedPetImage } from "./petImage.js";
 
 export const maxPetImageBytes = 20 * 1024 * 1024;
-const reservedPetIds = new Set([defaultPetId]);
+const reservedPetIds = new Set<string>(builtinPetIds);
 
 const manifestSchema = z.object({
   id: z.string().regex(petIdPattern),

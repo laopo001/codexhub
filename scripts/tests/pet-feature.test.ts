@@ -64,11 +64,11 @@ test("pet atlas supports the Codex V1 and V2 sprite contracts", () => {
   assert.equal(petLookCellForVector(2, 2), null);
 });
 
-test("Red Spark V2 is the bundled default pet", () => {
-  assert.equal(builtinPet.id, "red-spark");
+test("Guga V2 is the bundled default alongside Red Spark", () => {
+  assert.equal(builtinPet.id, "guga");
   assert.equal(builtinPet.spriteVersionNumber, 2);
-  assert.ok(builtinPet.spriteUrl?.includes("red-spark.webp"));
-  assert.deepEqual(builtinPets.map((pet) => pet.id), ["red-spark"]);
+  assert.ok(builtinPet.spriteUrl?.includes("guga.webp"));
+  assert.deepEqual(builtinPets.map((pet) => pet.id), ["guga", "red-spark"]);
 });
 
 test("pet position stays inside the viewport and keeps the desktop default", () => {

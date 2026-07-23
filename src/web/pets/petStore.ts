@@ -1,7 +1,8 @@
-import { defaultPetId, type PetManifest, type PetMutationPayload } from "../../shared/petTypes.js";
+import { builtinPetIds, defaultPetId, type PetManifest, type PetMutationPayload } from "../../shared/petTypes.js";
 import { authFetch, authToken } from "../helpers/core.js";
 import { petAtlasForVersion } from "./petAtlas.js";
 
+const gugaSpriteUrl = new URL("./assets/guga.webp", import.meta.url).href;
 const redSparkSpriteUrl = new URL("./assets/red-spark.webp", import.meta.url).href;
 
 export type { PetManifest } from "../../shared/petTypes.js";
@@ -75,7 +76,7 @@ export const parsePetManifest = (value: unknown, fallbackImageName: string): Pet
   const record = jsonRecord(value);
   const fallbackName = fallbackImageName.replace(/\.(png|webp)$/i, "") || "Custom pet";
   const id = petIdFromName(nonEmptyString(record?.id) || fallbackName);
-  if (id === "red-spark") throw new Error("That pet id is reserved by CodexHub.");
+  if ((builtinPetIds as readonly string[]).includes(id)) throw new Error("That pet id is reserved by CodexHub.");
   const spritesheetPath = nonEmptyString(record?.spritesheetPath) || fallbackImageName;
   if (spritesheetPath.split(/[\\/]/).pop() !== fallbackImageName) {
     throw new Error(`pet.json expects ${spritesheetPath}, but ${fallbackImageName} was selected.`);
@@ -190,8 +191,18 @@ export const installedPetDefinition = (manifest: PetManifest): PetDefinition => 
   spriteUrl: petSpriteUrl(manifest.id),
 });
 
-export const redSparkPet: PetDefinition = {
+export const gugaPet: PetDefinition = {
   id: defaultPetId,
+  displayName: "咕嘎",
+  description: "咕嘎是一个穿着黑色企鹅小鸭连体装、会咕咕也会嘎嘎的倔强 Q 版小家伙。",
+  spriteVersionNumber: 2,
+  spritesheetPath: "spritesheet.webp",
+  kind: "builtin",
+  spriteUrl: gugaSpriteUrl,
+};
+
+export const redSparkPet: PetDefinition = {
+  id: "red-spark",
   displayName: "Red Spark",
   description: "A red-hatted chibi adventurer companion with a backpack, map, and white mascot bomb.",
   spriteVersionNumber: 2,
@@ -200,5 +211,5 @@ export const redSparkPet: PetDefinition = {
   spriteUrl: redSparkSpriteUrl,
 };
 
-export const builtinPet = redSparkPet;
-export const builtinPets = [redSparkPet] as const;
+export const builtinPet = gugaPet;
+export const builtinPets = [gugaPet, redSparkPet] as const;
