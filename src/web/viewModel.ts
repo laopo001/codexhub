@@ -168,6 +168,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   effectiveModelSelection: ModelSelection;
   effectiveReasoningSelection: ReasoningSelection;
   effectiveServiceTierSelection: ServiceTierSelection;
+  forkingMessageKey: string;
   forkMessage: (threadId: string, messageId: string) => MaybePromise;
   goalDialog: GoalDialogState | null;
   handleComposerKeyDown: (
@@ -321,6 +322,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "composerMenuOpen"
   | "composerMode"
   | "composerTextareaRef"
+  | "forkingMessageKey"
   | "forkMessage"
   | "handleComposerKeyDown"
   | "imageFileInputRef"
@@ -470,7 +472,7 @@ const workspaceKeys = [
   "activeUserMessageHistory", "activeViews", "authError",
   "authRequired", "authTokenDraft", "addThreadFiles", "clearThreadAttachments", "clearThreadGoal",
   "closeThread", "compactThread", "commandPaletteByScope", "commandPaletteLoadingScopes",
-  "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "forkMessage",
+  "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "forkingMessageKey", "forkMessage",
   "handleComposerKeyDown", "imageFileInputRef", "insertThreadPathText", "latestTurnActivityScope",
   "loadCommandPalette", "messageDisplayMode", "messageRenderModes", "messagesRef",
   "messagesShouldFollowRef", "openMessageContextMenu", "openSelectedProjectThreadPicker",

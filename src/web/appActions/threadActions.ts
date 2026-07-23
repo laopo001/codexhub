@@ -32,6 +32,7 @@ import type {
   ThreadRenameDialogState,
 } from "../types.js";
 import type { OpenThreadAction } from "../openThreadReducer.js";
+import { forkErrorMessage } from "../helpers/apiErrors.js";
 
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
@@ -40,6 +41,7 @@ type ThreadActionsContext = {
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   composerDraftStore: ComposerDraftStore;
+  forkingMessageKey: string;
   goalDialog: GoalDialogState | null;
   threadRenameDialog: ThreadRenameDialogState | null;
   latestRequestedThreadId: React.MutableRefObject<string>;
@@ -53,6 +55,7 @@ type ThreadActionsContext = {
   setActiveTabThreadByMachine: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setActiveTabThreadId: React.Dispatch<React.SetStateAction<string>>;
   setActiveWorkspacePath: React.Dispatch<React.SetStateAction<string>>;
+  setForkingMessageKey: React.Dispatch<React.SetStateAction<string>>;
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -69,6 +72,7 @@ export type ThreadActionsDependencies = {
   refreshRuntimes: () => Promise<RuntimeSummary[]>;
   resetComposerHistory: (threadId: string) => void;
   sendRealtime: (message: RealtimeThreadMessage) => boolean;
+  showForkError: (message: string) => void;
 };
 
 type ThreadGoalUpdateOptions = {
@@ -98,6 +102,7 @@ export type ThreadActions = {
 };
 
 export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActionsDependencies): ThreadActions => {
+  let forkRequestPending = false;
   const openThread = async (threadId: string) => {
     ctx.closedThreadIds.current.delete(threadId);
     ctx.latestRequestedThreadId.current = threadId;
@@ -270,14 +275,13 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
   }
 
-  const branchMessage = async (
-    route: typeof apiRoutes.forkThread,
-    errorLabel: string,
-    threadId: string,
-    messageId: string
-  ) => {
+  const forkMessage = async (threadId: string, messageId: string) => {
+    if (forkRequestPending || ctx.forkingMessageKey) return;
+    const actionKey = `${threadId}:${messageId}`;
+    forkRequestPending = true;
+    ctx.setForkingMessageKey(actionKey);
     try {
-      const thread = await apiRouteJson(route, threadId, { messageId });
+      const thread = await apiRouteJson(apiRoutes.forkThread, threadId, { messageId });
       const machineId = thread.runtime.machineId ?? ctx.activeRuntime?.machineId;
       if (machineId) {
         ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: thread.threadId }));
@@ -285,12 +289,12 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       }
       await openThread(thread.threadId);
     } catch (error) {
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord(errorLabel, error) });
+      deps.showForkError(forkErrorMessage(error));
+    } finally {
+      forkRequestPending = false;
+      ctx.setForkingMessageKey((current) => current === actionKey ? "" : current);
     }
   };
-
-  const forkMessage = (threadId: string, messageId: string) =>
-    branchMessage(apiRoutes.forkThread, "fork failed", threadId, messageId);
 
   const send = async (threadId: string) => {
     const openThread = ctx.openThreads.find((item) => item.threadId === threadId);

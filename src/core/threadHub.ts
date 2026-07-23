@@ -665,7 +665,10 @@ export class ThreadHub {
     const forkTarget = recordId ? forkTargetAfterRecord(source, recordId) : undefined;
     const forkSeedTurns = forkTarget?.keepTurns ?? appServerTurnIds(source).length;
     const commandId = randomUUID();
-    const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId, undefined, source.workingDirectory);
+    // thread/fork can legitimately take longer than the server's generic 30s command window.
+    // Let the machine bridge's app-server request timeout remain authoritative so the HTTP
+    // request does not fail while the app-server is still creating the fork.
+    const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId, null, source.workingDirectory);
     const pending = this.pendingCommands.get(commandId);
     if (pending) pending.keepTurns = forkSeedTurns;
     this.enqueueSessionCommand(session.sessionId, {

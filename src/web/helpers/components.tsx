@@ -57,6 +57,8 @@ export const MessageCard = ({
   onApprovalDecision,
   onUserInputResponse,
   onFork,
+  forkDisabled = false,
+  forking = false,
   onOpenImage
 }: {
   message: WebRecordView;
@@ -73,6 +75,8 @@ export const MessageCard = ({
   onApprovalDecision?: (approvalId: string, decision: AppServerApprovalDecision) => void;
   onUserInputResponse?: (userInputId: string, answers: AppServerUserInputAnswers) => void | Promise<void>;
   onFork?: () => void;
+  forkDisabled?: boolean;
+  forking?: boolean;
   onOpenImage?: (image: ImagePreviewState) => void;
 }) => {
   const isThinkingMessage = message.role === "thinking";
@@ -188,10 +192,18 @@ export const MessageCard = ({
       {hasMessageMeta ? (
         <footer className="messageMeta" title={formatMessageMetaTitle(message, { showTimestamp })} onClick={(event) => event.stopPropagation()}>
           {onFork ? (
-            <a href="#" onClick={(event) => {
-              event.preventDefault();
-              onFork();
-            }}>Fork</a>
+            <button
+              type="button"
+              className="messageMetaAction"
+              disabled={forkDisabled}
+              aria-busy={forking}
+              onClick={() => {
+                if (forkDisabled) return;
+                onFork();
+              }}
+            >
+              {forking ? "Forking…" : "Fork"}
+            </button>
           ) : null}
           <span>{formatMessageMeta(message, { showTimestamp })}</span>
           {markdownEnabled && onRenderModeChange ? (

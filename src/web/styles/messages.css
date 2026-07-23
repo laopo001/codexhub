@@ -1207,10 +1207,13 @@
   white-space: normal;
 }
 
-.messageMeta a {
+.messageMetaAction {
+  border: 0;
+  background: transparent;
   color: #405244;
   cursor: pointer;
   font: inherit;
+  padding: 0;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -1309,8 +1312,14 @@
   justify-self: start;
 }
 
-.messageMeta a:hover {
+.messageMetaAction:hover:not(:disabled) {
   color: #df5b35;
+}
+
+.messageMetaAction:disabled {
+  color: #8a9584;
+  cursor: default;
+  text-decoration: none;
 }
 
 .sidebarScrim,

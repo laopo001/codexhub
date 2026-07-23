@@ -337,8 +337,15 @@ export const registerThreadRoutes = <
       const thread = await ctx.threads.forkThread(params.threadId, payload.messageId);
       return thread satisfies ThreadDetail;
     } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(
+        message.startsWith("Thread not found:")
+          ? 404
+          : message.toLowerCase().includes("timed out")
+            ? 504
+            : 409
+      );
+      return { error: message };
     }
   });
 

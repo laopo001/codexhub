@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { ConfigProvider, message } from "antd";
+import { ConfigProvider, message, Modal } from "antd";
 import { AppView } from "./AppView.js";
 import { useAppEffects } from "./appEffects.js";
 import { useAppSelectors } from "./appSelectors.js";
@@ -30,6 +30,7 @@ const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
 
 const App = () => {
   const [messageApi, messageContextHolder] = message.useMessage();
+  const [modalApi, modalContextHolder] = Modal.useModal();
   const [composerRecentlyChanged, setComposerRecentlyChanged] = React.useState(false);
   const composerChangeTimerRef = React.useRef<number | null>(null);
   const appState = useAppState();
@@ -48,6 +49,7 @@ const App = () => {
     commandPaletteLoadingScopes,
     connectionMode,
     deletingProjectId,
+    forkingMessageKey,
     goalDialog,
     imageFileInputRef,
     imagePreview,
@@ -245,7 +247,14 @@ const App = () => {
     refreshProjects: taskActions.refreshProjects,
     refreshRuntimes: taskActions.refreshRuntimes,
     resetComposerHistory: composerActions.resetComposerHistory,
-    sendRealtime: realtimeActions.sendRealtime
+    sendRealtime: realtimeActions.sendRealtime,
+    showForkError: (errorMessage) => {
+      modalApi.error({
+        title: "Fork failed",
+        content: errorMessage,
+        okText: "Close"
+      });
+    }
   });
   const projectActions = createProjectActions(actionContext, {
     clearActiveThreadIfLatest: threadActions.clearActiveThreadIfLatest,
@@ -454,6 +463,7 @@ const App = () => {
     effectiveReasoningSelection,
     effectiveServiceTierSelection,
     focusTaskDraftProject,
+    forkingMessageKey,
     forkMessage,
     goalDialog,
     handleComposerKeyDown,
@@ -607,6 +617,7 @@ const App = () => {
   };
   return (
     <>
+      {modalContextHolder}
       {messageContextHolder}
       <AppView viewModel={partitionAppViewModel(viewModel)} />
       {!authRequired ? (

@@ -118,6 +118,7 @@ export const useAppState = () => {
   const [selectedProjectKey, setSelectedProjectKey] = useState("");
   const [openingProjectKey, setOpeningProjectKey] = useState("");
   const [projectActionError, setProjectActionError] = useState("");
+  const [forkingMessageKey, setForkingMessageKey] = useState("");
   const [deletingProjectId, setDeletingProjectId] = useState("");
   const [projectPicker, setProjectPicker] = useState<ProjectPickerState | null>(null);
   const [threadPicker, setThreadPicker] = useState<ThreadPickerState | null>(null);
@@ -176,6 +177,7 @@ export const useAppState = () => {
     deletingProjectId,
     expandedStatusKeys,
     expandedToolBatchKeys,
+    forkingMessageKey,
     goalDialog,
     expandedStatusTurns,
     imageFileInputRef,
@@ -230,6 +232,7 @@ export const useAppState = () => {
     setDeletingProjectId,
     setExpandedStatusKeys,
     setExpandedToolBatchKeys,
+    setForkingMessageKey,
     setGoalDialog,
     setExpandedStatusTurns,
     setImagePreview,

@@ -148,6 +148,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     composerMenuOpen,
     composerMode,
     composerTextareaRef,
+    forkingMessageKey,
     forkMessage,
     handleComposerKeyDown,
     imageFileInputRef,
@@ -501,6 +502,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           onApprovalDecision={(approvalId, decision) => void respondToApproval(activeThread.threadId, approvalId, decision)}
                           onUserInputResponse={(userInputId, answers) => void respondToUserInput(activeThread.threadId, userInputId, answers)}
                           onFork={canForkAtMessage(activeThread.threadId, message) ? () => void forkMessage(activeThread.threadId, message.record.id) : undefined}
+                          forkDisabled={Boolean(forkingMessageKey)}
+                          forking={forkingMessageKey === `${activeThread.threadId}:${message.record.id}`}
                         />
                       );
                     }}
