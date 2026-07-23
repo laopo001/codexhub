@@ -132,6 +132,8 @@ export type ProjectPickerState = {
 export type ThreadPickerState = {
   sessionId: string;
   workingDirectory: string;
+  preparingRuntime: boolean;
+  bootstrapId?: string;
   loading: boolean;
   error: string;
   candidates: CodexThreadCandidate[];

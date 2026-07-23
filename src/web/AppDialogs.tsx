@@ -128,6 +128,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const threadPickerSession = threadPicker
     ? sessionList.find((session) => session.sessionId === threadPicker.sessionId)
     : undefined;
+  const threadPickerReady = Boolean(threadPicker?.sessionId) && !threadPicker?.preparingRuntime;
   const threadPickerOpenThreadIds = new Set([
     ...(threadPickerSession?.threads
       ?.filter((thread) => !threadPicker?.workingDirectory || thread.workingDirectory === threadPicker.workingDirectory)
@@ -375,10 +376,12 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 <button
                   type="button"
                   className="threadPickerRefreshButton"
-                  onClick={() => void loadThreadPickerCandidates(threadPicker.sessionId)}
-                  disabled={threadPicker.loading || threadPicker.acting !== null}
+                  onClick={() => {
+                    if (threadPicker.sessionId) void loadThreadPickerCandidates(threadPicker.sessionId);
+                  }}
+                  disabled={!threadPickerReady || threadPicker.loading || threadPicker.acting !== null}
                 >
-                  {threadPicker.loading ? "Refreshing" : "Refresh"}
+                  {threadPicker.preparingRuntime ? "Starting" : threadPicker.loading ? "Refreshing" : "Refresh"}
                 </button>
                 <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
               </div>
@@ -388,10 +391,16 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 type="button"
                 className="threadPickerRow newThread"
                 onClick={() => void createSessionThread()}
-                disabled={threadPicker.acting !== null}
+                disabled={!threadPickerReady || threadPicker.acting !== null}
               >
                 <span className="threadPickerRowTitle">New thread</span>
-                <span className="threadPickerRowMeta">{threadPicker.acting === "new" ? "creating" : "Start a new Codex thread"}</span>
+                <span className="threadPickerRowMeta">
+                  {threadPicker.preparingRuntime
+                    ? "Available when the Codex runtime is ready"
+                    : threadPicker.acting === "new"
+                      ? "creating"
+                      : "Start a new Codex thread"}
+                </span>
               </button>
               <form
                 className="threadPickerWorktree"
@@ -404,7 +413,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   <span>New worktree thread</span>
                   <button
                     type="submit"
-                    disabled={threadPicker.acting !== null || !threadPicker.worktreeBranch.trim()}
+                    disabled={!threadPickerReady || threadPicker.acting !== null || !threadPicker.worktreeBranch.trim()}
                   >
                     {threadPicker.acting === "worktree" ? "creating" : "Create"}
                   </button>
@@ -418,7 +427,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                       worktreeBranch: event.target.value,
                       error: ""
                     } : current)}
-                    disabled={threadPicker.acting !== null}
+                    disabled={!threadPickerReady || threadPicker.acting !== null}
                     placeholder="feature/name"
                   />
                 </label>
@@ -432,7 +441,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                         worktreeBaseRef: event.target.value,
                         error: ""
                       } : current)}
-                      disabled={threadPicker.acting !== null}
+                      disabled={!threadPickerReady || threadPicker.acting !== null}
                       placeholder="HEAD"
                     />
                   </label>
@@ -445,7 +454,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                         worktreePath: event.target.value,
                         error: ""
                       } : current)}
-                      disabled={threadPicker.acting !== null}
+                      disabled={!threadPickerReady || threadPicker.acting !== null}
                       placeholder="auto"
                     />
                   </label>
@@ -463,12 +472,16 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                     ...current,
                     searchQuery: event.target.value
                   } : current)}
-                  disabled={threadPicker.acting !== null || threadPicker.loading || threadPicker.candidates.length === 0}
+                  disabled={!threadPickerReady || threadPicker.acting !== null || threadPicker.loading || threadPicker.candidates.length === 0}
                   placeholder="Title, message, or thread ID"
                   spellCheck={false}
                 />
               </label>
-              {threadPicker.loading ? (
+              {threadPicker.preparingRuntime ? (
+                <div className="threadPickerEmpty" role="status">Starting Codex runtime…</div>
+              ) : !threadPicker.sessionId ? (
+                <div className="threadPickerEmpty">Codex runtime is not ready</div>
+              ) : threadPicker.loading ? (
                 <div className="threadPickerEmpty">Loading threads</div>
               ) : threadPicker.candidates.length === 0 ? (
                 <div className="threadPickerEmpty">No local threads</div>
@@ -485,7 +498,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                     className={`threadPickerRow ${isOpen ? "open" : ""}`}
                     key={candidate.threadId}
                     onClick={() => void chooseThreadCandidate(candidate)}
-                    disabled={threadPicker.acting !== null}
+                    disabled={!threadPickerReady || threadPicker.acting !== null}
                     title={threadCandidateHoverTitle(candidate)}
                   >
                     <span className="threadPickerRowTitle">{threadCandidateTitle(candidate)}</span>
