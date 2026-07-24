@@ -32,7 +32,7 @@ import type {
   ThreadRenameDialogState,
 } from "../types.js";
 import type { OpenThreadAction } from "../openThreadReducer.js";
-import { apiErrorMessage, apiResponseErrorDetails, forkErrorMessage } from "../helpers/apiErrors.js";
+import { apiErrorDetails } from "../helpers/apiErrors.js";
 
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
@@ -107,17 +107,13 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   const runActionRequest = async (
     key: string,
     title: string,
-    request: () => Promise<Response>
+    request: () => Promise<unknown>
   ) => {
     try {
-      const response = await request();
-      if (response.ok) return response;
-      const details = apiResponseErrorDetails(await response.text());
-      deps.showActionError(key, title, details.message);
+      await request();
     } catch (error) {
-      deps.showActionError(key, title, apiErrorMessage(error));
+      deps.showActionError(key, title, apiErrorDetails(error, { plainHttpMessage: true }).message);
     }
-    return null;
   };
 
   const openThread = async (threadId: string) => {
@@ -259,7 +255,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       ctx.setThreadRenameDialog(null);
     } catch (error) {
       ctx.setThreadRenameDialog((current) => current && current.threadId === dialog.threadId
-        ? { ...current, saving: false, error: apiErrorMessage(error) }
+        ? { ...current, saving: false, error: apiErrorDetails(error).message }
         : current);
     }
   };
@@ -306,7 +302,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       }
       await openThread(thread.threadId);
     } catch (error) {
-      deps.showForkError(forkErrorMessage(error));
+      deps.showForkError(apiErrorDetails(error).message);
     } finally {
       forkRequestPending = false;
       ctx.setForkingMessageKey((current) => current === actionKey ? "" : current);
@@ -353,12 +349,14 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     } catch (error) {
       ctx.composerDraftStore.set(threadId, typedText);
       ctx.dispatchOpenThreads({
-        type: "restore-attachments",
+        type: "set-fields",
         threadId,
-        images: imageAttachments,
-        texts: textAttachments
+        fields: {
+          imageAttachments,
+          textAttachments
+        }
       });
-      deps.showActionError(`${threadId}:image-encode`, "Image attachment failed", apiErrorMessage(error));
+      deps.showActionError(`${threadId}:image-encode`, "Image attachment failed", apiErrorDetails(error).message);
       return;
     }
     const input: ProxyInput = encodedImages.length
@@ -368,40 +366,25 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       ]
       : text;
     const updatesActiveGoal = openThread.running && composerMode === "goal";
-    let response: Response;
     try {
-      response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          input,
-          source: "web",
-          options: selectedThreadOptions(
-            openThread.modelDraft,
-            openThread.reasoningDraft,
-            openThread.serviceTierDraft,
-            composerMode,
-            openThread.approvalPolicyDraft,
-            openThread.approvalsReviewerDraft,
-            openThread.permissionProfileDraft
-          )
-        })
+      await apiRouteJson(apiRoutes.sendThreadTurn, threadId, {
+        input,
+        source: "web",
+        options: selectedThreadOptions(
+          openThread.modelDraft,
+          openThread.reasoningDraft,
+          openThread.serviceTierDraft,
+          composerMode,
+          openThread.approvalPolicyDraft,
+          openThread.approvalsReviewerDraft,
+          openThread.permissionProfileDraft
+        )
       });
-    } catch (error) {
-      const message = apiErrorMessage(error);
-      if (updatesActiveGoal) {
-        deps.showActionError(`${threadId}:goal-update`, "Goal update failed", message);
-      } else {
-        ctx.dispatchOpenThreads({
-          type: "append-record",
-          threadId,
-          record: submissionFailedRecord(message)
-        });
+      if (composerMode !== "chat") {
+        ctx.dispatchOpenThreads({ type: "reset-composer-mode", threadId, expected: composerMode });
       }
-      return;
-    }
-    if (!response.ok) {
-      const details = apiResponseErrorDetails(await response.text());
+    } catch (error) {
+      const details = apiErrorDetails(error, { plainHttpMessage: true });
       if (details.delivery === "goal" || (!details.delivery && updatesActiveGoal)) {
         deps.showActionError(`${threadId}:goal-update`, "Goal update failed", details.message);
       } else if (details.delivery !== "turn" && details.delivery !== "steer") {
@@ -411,8 +394,6 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
           record: submissionFailedRecord(details.message)
         });
       }
-    } else if (composerMode !== "chat") {
-      ctx.dispatchOpenThreads({ type: "reset-composer-mode", threadId, expected: composerMode });
     }
   };
 
@@ -420,7 +401,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     await runActionRequest(
       `${threadId}:stop`,
       "Stop failed",
-      () => authFetch(`/api/threads/${encodeURIComponent(threadId)}/stop`, { method: "POST" })
+      () => apiRouteJson(apiRoutes.stopThreadTurn, threadId)
     );
   };
 
@@ -428,7 +409,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     await runActionRequest(
       `${threadId}:compact`,
       "Compact failed",
-      () => authFetch(`/api/threads/${encodeURIComponent(threadId)}/compact`, { method: "POST" })
+      () => apiRouteJson(apiRoutes.compactThread, threadId)
     );
   };
 
@@ -436,7 +417,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     await runActionRequest(
       `${threadId}:review`,
       "Review failed",
-      () => authFetch(`/api/threads/${encodeURIComponent(threadId)}/review`, { method: "POST" })
+      () => apiRouteJson(apiRoutes.reviewThread, threadId)
     );
   };
 
@@ -449,7 +430,11 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       const payload = await apiRouteJson(apiRoutes.respondThreadApproval, threadId, { approvalId, decision });
       if (payload.thread) applyThreadDetail(payload.thread);
     } catch (error) {
-      deps.showActionError(`${threadId}:approval:${approvalId}`, "Approval failed", apiErrorMessage(error));
+      deps.showActionError(
+        `${threadId}:approval:${approvalId}`,
+        "Approval failed",
+        apiErrorDetails(error).message
+      );
     }
   };
 
@@ -462,7 +447,11 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       const payload = await apiRouteJson(apiRoutes.respondThreadUserInput, threadId, { userInputId, answers });
       if (payload.thread) applyThreadDetail(payload.thread);
     } catch (error) {
-      deps.showActionError(`${threadId}:user-input:${userInputId}`, "Response failed", apiErrorMessage(error));
+      deps.showActionError(
+        `${threadId}:user-input:${userInputId}`,
+        "Response failed",
+        apiErrorDetails(error).message
+      );
     }
   };
 
@@ -471,41 +460,27 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     goal: ThreadGoalUpdateInput,
     options: ThreadGoalUpdateOptions = {}
   ) => {
-    let response: Response;
     try {
-      response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(goal)
-      });
+      await apiRouteJson(apiRoutes.updateThreadGoal, threadId, goal);
+      return true;
     } catch (error) {
-      const message = apiErrorMessage(error);
+      const message = apiErrorDetails(error, { plainHttpMessage: true }).message;
       if (options.dialog) {
         ctx.setGoalDialog((current) => current && current.threadId === threadId
-          ? { ...current, saving: false, error: message }
+          ? { ...current, saving: false, error: message || "保存失败" }
           : current);
       } else {
         deps.showActionError(`${threadId}:goal-update`, "Goal update failed", message);
       }
       return false;
     }
-    if (response.ok) return true;
-    const details = apiResponseErrorDetails(await response.text());
-    if (options.dialog) {
-      ctx.setGoalDialog((current) => current && current.threadId === threadId
-        ? { ...current, saving: false, error: details.message || "保存失败" }
-        : current);
-    } else {
-      deps.showActionError(`${threadId}:goal-update`, "Goal update failed", details.message);
-    }
-    return false;
   };
 
   const clearThreadGoal = async (threadId: string) => {
     await runActionRequest(
       `${threadId}:goal-clear`,
       "Goal clear failed",
-      () => authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" })
+      () => apiRouteJson(apiRoutes.clearThreadGoal, threadId)
     );
   };
 

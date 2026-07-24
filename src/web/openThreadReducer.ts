@@ -36,12 +36,6 @@ export type OpenThreadAction =
   | { type: "add-texts"; threadId: string; texts: OpenThreadState["textAttachments"] }
   | { type: "remove-image"; threadId: string; imageId: string }
   | { type: "remove-text"; threadId: string; textId: string }
-  | {
-    type: "restore-attachments";
-    threadId: string;
-    images: OpenThreadState["imageAttachments"];
-    texts: OpenThreadState["textAttachments"];
-  }
   | { type: "clear-attachments"; threadId: string };
 
 const serviceTierDraftFromThread = (serviceTier: string | null | undefined) =>
@@ -172,13 +166,6 @@ export const openThreadReducer = (state: OpenThreadState[], action: OpenThreadAc
     return updateThread(state, action.threadId, (thread) => ({
       ...thread,
       textAttachments: thread.textAttachments.filter((text) => text.id !== action.textId)
-    }));
-  }
-  if (action.type === "restore-attachments") {
-    return updateThread(state, action.threadId, (thread) => ({
-      ...thread,
-      imageAttachments: action.images,
-      textAttachments: action.texts
     }));
   }
   return updateThread(state, action.threadId, (thread) => ({

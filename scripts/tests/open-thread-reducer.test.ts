@@ -68,7 +68,7 @@ test("open thread reducer merges stream records and applies semantic ordering", 
   assert.equal(state[1].running, true);
 });
 
-test("restoring attachments does not fabricate or replace transcript records", async () => {
+test("set-fields restores attachments without fabricating or replacing transcript records", async () => {
   const openThreadReducer = await loadReducer();
   const images = [{
     id: "image-1",
@@ -80,10 +80,12 @@ test("restoring attachments does not fabricate or replace transcript records", a
   let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });
   state = openThreadReducer(state, { type: "append-record", threadId: "thread-1", record });
   state = openThreadReducer(state, {
-    type: "restore-attachments",
+    type: "set-fields",
     threadId: "thread-1",
-    images,
-    texts
+    fields: {
+      imageAttachments: images,
+      textAttachments: texts
+    }
   });
 
   assert.deepEqual(state[0].records, [record]);

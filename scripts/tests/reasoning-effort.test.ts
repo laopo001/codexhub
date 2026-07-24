@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { sessionEventSchema, threadRunOptionsSchema } from "../../src/shared/apiContract.js";
+import { turnCompleted } from "../test-support/appServerEvents.js";
 
 test("reasoning effort schemas follow app-server's open non-empty string contract", () => {
   for (const effort of ["max", "ultra", "future-effort"]) {
@@ -156,26 +157,7 @@ test("queued turns inherit sticky settings before command promise callbacks run"
   // Exercise the authoritative completion-before-command-result path that
   // previously let the queued turn snapshot stale settings before the first
   // promise callback ran.
-  hub.applySessionEvent(sessionId, {
-    type: "thread_event",
-    threadId,
-    message: {
-      method: "turn/completed",
-      params: {
-        threadId,
-        turn: {
-          id: "reasoning-first-turn",
-          status: "completed",
-          itemsView: "full",
-          error: null,
-          startedAt: 1,
-          completedAt: 2,
-          durationMs: 1000,
-          items: []
-        }
-      }
-    }
-  });
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, "reasoning-first-turn"));
   const queuedBatch = await hub.waitSessionCommands(sessionId, firstCommand!.seq, 1);
   const queuedCommand = queuedBatch.commands[0];
   assert.equal(queuedCommand?.options?.modelReasoningEffort, "ultra");

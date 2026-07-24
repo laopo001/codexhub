@@ -16,6 +16,14 @@ Object.defineProperty(globalThis, "window", {
   }
 });
 
+let currentFetch: typeof fetch = async () => {
+  throw new Error("fetch implementation not configured");
+};
+Object.defineProperty(globalThis, "fetch", {
+  configurable: true,
+  value: ((...args: Parameters<typeof fetch>) => currentFetch(...args)) as typeof fetch
+});
+
 const openThread = (
   running: boolean,
   composerMode: OpenThreadState["composerMode"]
@@ -51,7 +59,7 @@ const fixture = async (
   const draft = new Map([["thread-actions", "hello"]]);
   const actionsDispatched: Array<{ type: string; record?: CodexRecord }> = [];
   const shownErrors: Array<{ key: string; title: string; message: string }> = [];
-  Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchImpl });
+  currentFetch = fetchImpl;
   const context = {
     activeTabThreadId: "thread-actions",
     closedThreadIds: { current: new Set<string>() },
@@ -99,81 +107,83 @@ const fixture = async (
   return { actions, actionsDispatched, shownErrors };
 };
 
-test("chat transport failure is the only Web-local submission transcript record", async () => {
-  const { actions, actionsDispatched, shownErrors } = await fixture(
-    false,
-    "chat",
-    async () => {
-      throw new Error("network unreachable");
-    }
-  );
-  await actions.send("thread-actions");
-
-  const appended = actionsDispatched.filter((action) => action.type === "append-record");
-  assert.equal(appended.length, 1);
-  assert.deepEqual(appended[0]?.record?.payload, {
-    type: "submission_failed",
-    source: "codexhub",
-    message: "network unreachable"
+const serverFailure = (message: string, delivery: "turn" | "steer" | "goal") =>
+  async () => new Response(JSON.stringify({ error: message, delivery }), {
+    status: 409,
+    headers: { "content-type": "application/json" }
   });
-  assert.deepEqual(shownErrors, []);
-});
 
-test("active Goal transport failure stays a control error instead of a transcript message", async () => {
-  const { actions, actionsDispatched, shownErrors } = await fixture(
-    true,
-    "goal",
-    async () => {
-      throw new Error("goal transport unavailable");
+type SendFailureCase = {
+  name: string;
+  running: boolean;
+  mode: OpenThreadState["composerMode"];
+  fetch: typeof fetch;
+  recordMessage?: string;
+  actionError?: { key: string; title: string; message: string };
+};
+
+const sendFailureCases: SendFailureCase[] = [
+  {
+    name: "chat transport failure is the only Web-local submission transcript record",
+    running: false,
+    mode: "chat" as const,
+    fetch: async () => { throw new Error("network unreachable"); },
+    recordMessage: "network unreachable"
+  },
+  {
+    name: "non-JSON HTTP send failures preserve the original response message",
+    running: false,
+    mode: "chat" as const,
+    fetch: async () => new Response("upstream disconnected", { status: 502 }),
+    recordMessage: "upstream disconnected"
+  },
+  {
+    name: "active Goal transport failure stays a control error instead of a transcript message",
+    running: true,
+    mode: "goal" as const,
+    fetch: async () => { throw new Error("goal transport unavailable"); },
+    actionError: {
+      key: "thread-actions:goal-update",
+      title: "Goal update failed",
+      message: "goal transport unavailable"
     }
-  );
-  await actions.send("thread-actions");
+  },
+  ...(["turn", "steer"] as const).map((delivery) => ({
+    name: `server-recorded ${delivery} failures are not duplicated by the Web`,
+    running: false,
+    mode: "chat" as const,
+    fetch: serverFailure("runtime offline", delivery)
+  })),
+  {
+    name: "explicit server delivery wins over a stale active Goal projection",
+    running: true,
+    mode: "goal" as const,
+    fetch: serverFailure("turn/start rejected", "turn")
+  }
+];
 
-  assert.equal(actionsDispatched.some((action) => action.type === "append-record"), false);
-  assert.deepEqual(shownErrors, [{
-    key: "thread-actions:goal-update",
-    title: "Goal update failed",
-    message: "goal transport unavailable"
-  }]);
-});
+for (const scenario of sendFailureCases) {
+  test(scenario.name, async () => {
+    const { actions, actionsDispatched, shownErrors } = await fixture(
+      scenario.running,
+      scenario.mode,
+      scenario.fetch
+    );
+    await actions.send("thread-actions");
 
-test("server-recorded synchronous send failures are not duplicated by the Web", async () => {
-  const { actions, actionsDispatched, shownErrors } = await fixture(
-    false,
-    "chat",
-    async () => new Response(JSON.stringify({
-      error: "runtime offline",
-      delivery: "turn"
-    }), {
-      status: 409,
-      headers: { "content-type": "application/json" }
-    })
-  );
-  await actions.send("thread-actions");
+    const payloads = actionsDispatched
+      .filter((action) => action.type === "append-record")
+      .map((action) => action.record?.payload);
+    assert.deepEqual(payloads, scenario.recordMessage ? [{
+      type: "submission_failed",
+      source: "codexhub",
+      message: scenario.recordMessage
+    }] : []);
+    assert.deepEqual(shownErrors, scenario.actionError ? [scenario.actionError] : []);
+  });
+}
 
-  assert.equal(actionsDispatched.some((action) => action.type === "append-record"), false);
-  assert.deepEqual(shownErrors, []);
-});
-
-test("explicit server delivery wins over a stale active Goal projection", async () => {
-  const { actions, actionsDispatched, shownErrors } = await fixture(
-    true,
-    "goal",
-    async () => new Response(JSON.stringify({
-      error: "turn/start rejected",
-      delivery: "turn"
-    }), {
-      status: 409,
-      headers: { "content-type": "application/json" }
-    })
-  );
-  await actions.send("thread-actions");
-
-  assert.equal(actionsDispatched.some((action) => action.type === "append-record"), false);
-  assert.deepEqual(shownErrors, []);
-});
-
-test("stop, compact, review, and goal clear failures only use action feedback", async () => {
+test("stop, compact, review, and Goal control failures only use action feedback", async () => {
   const { actions, actionsDispatched, shownErrors } = await fixture(
     false,
     "chat",
@@ -185,6 +195,7 @@ test("stop, compact, review, and goal clear failures only use action feedback", 
   await actions.stopTurn("thread-actions");
   await actions.compactThread("thread-actions");
   await actions.reviewThread("thread-actions");
+  assert.equal(await actions.updateThreadGoal("thread-actions", { status: "paused" }), false);
   await actions.clearThreadGoal("thread-actions");
 
   assert.equal(actionsDispatched.some((action) => action.type === "append-record"), false);
@@ -192,6 +203,7 @@ test("stop, compact, review, and goal clear failures only use action feedback", 
     { title: "Stop failed", message: "operation rejected" },
     { title: "Compact failed", message: "operation rejected" },
     { title: "Review failed", message: "operation rejected" },
+    { title: "Goal update failed", message: "operation rejected" },
     { title: "Goal clear failed", message: "operation rejected" }
   ]);
 });

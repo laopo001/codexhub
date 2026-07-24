@@ -115,9 +115,9 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
         undefined,
         { markBridgeStarted: true }
       );
-      await host.request("turn/interrupt", { threadId: command.threadId, turnId: command.turnId }, command);
+      return await host.request("turn/interrupt", { threadId: command.threadId, turnId: command.turnId }, command);
     }
-    return { ok: true };
+    return {};
   }
   if (command.type === "rename_thread") {
     const threadId = requireThreadId(command);
@@ -167,12 +167,11 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     if (!command.turnId) throw new Error("steer command requires active turnId");
     if (!command.input) throw new Error("steer command requires input");
     const threadId = await ensureCommandThread(command, host, { passCommand: false });
-    await host.request("turn/steer", {
+    return await host.request("turn/steer", {
       threadId,
       expectedTurnId: command.turnId,
       input: toAppServerInput(command.input)
     }, command);
-    return { ok: true };
   }
   if (command.type === "set_goal") {
     const threadId = await ensureCommandThread(command, host);

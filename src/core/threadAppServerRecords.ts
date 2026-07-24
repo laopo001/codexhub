@@ -554,13 +554,32 @@ export const timestampFromMillis = (value: unknown) =>
 export const timestampFromSeconds = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? new Date(value * 1000).toISOString() : undefined;
 
+export type AppServerTurnStatus = "completed" | "failed" | "interrupted" | "inProgress";
+
+export const parseAppServerTurnOutcome = (turn: Record<string, unknown> | null | undefined) => {
+  const status = appServerTurnStatus(turn?.status);
+  if (!status) return undefined;
+  const error = asRecord(turn?.error);
+  const reason = status === "failed"
+    ? typeof error?.message === "string" && error.message ? error.message : "Turn failed"
+    : status === "interrupted"
+      ? "Turn interrupted"
+      : undefined;
+  return {
+    status,
+    terminal: status !== "inProgress",
+    ...(error ? { error } : {}),
+    ...(reason ? { reason, completionError: new Error(reason) } : {})
+  };
+};
+
 export const codexRecordsFromAppServerTurnLifecycle = (
   threadId: string,
   turnId: string,
   turn: Record<string, unknown>,
   fallbackTimestamp = new Date(0).toISOString()
 ): CodexRecord[] => {
-  const status = appServerTurnStatus(turn.status);
+  const outcome = parseAppServerTurnOutcome(turn);
   const startedAt = timestampFromSeconds(turn.startedAt);
   const completedAt = timestampFromSeconds(turn.completedAt);
   const terminalAt = completedAt ?? startedAt ?? fallbackTimestamp;
@@ -579,48 +598,29 @@ export const codexRecordsFromAppServerTurnLifecycle = (
       sourceThreadId: threadId
     });
   }
-  if (status === "completed") {
-    records.push({
-      id: `app:${threadId}:${turnId}:event:task_complete`,
-      timestamp: terminalAt,
-      type: "event_msg",
-      payload: {
-        type: "task_complete",
-        turn_id: turnId,
-        status,
-        ...(durationMs == null ? {} : { duration_ms: durationMs })
-      },
-      sourceThreadId: threadId
-    });
-  }
-  if (status === "failed" || status === "interrupted") {
-    const error = asRecord(turn.error);
-    const reason = status === "failed"
-      ? typeof error?.message === "string" && error.message ? error.message : "Turn failed"
-      : "Turn interrupted";
-    records.push({
-      id: `app:${threadId}:${turnId}:event:turn_aborted`,
-      timestamp: terminalAt,
-      type: "event_msg",
-      payload: {
-        type: "turn_aborted",
-        turn_id: turnId,
-        status,
-        reason,
-        ...(error ? { error } : {}),
-        ...(durationMs == null ? {} : { duration_ms: durationMs })
-      },
-      sourceThreadId: threadId
-    });
-  }
+  if (!outcome?.terminal) return records;
+  const aborted = Boolean(outcome.completionError);
+  records.push({
+    id: `app:${threadId}:${turnId}:event:${aborted ? "turn_aborted" : "task_complete"}`,
+    timestamp: terminalAt,
+    type: "event_msg",
+    payload: {
+      type: aborted ? "turn_aborted" : "task_complete",
+      turn_id: turnId,
+      status: outcome.status,
+      ...(aborted ? {
+        reason: outcome.reason,
+        ...(outcome.error ? { error: outcome.error } : {})
+      } : {}),
+      ...(durationMs == null ? {} : { duration_ms: durationMs })
+    },
+    sourceThreadId: threadId
+  });
   return records;
 };
 
 export const isTaskStartedRecord = (record: CodexRecord) =>
   asRecord(record.payload)?.type === "task_started";
-
-export const isTaskCompleteRecord = (record: CodexRecord) =>
-  asRecord(record.payload)?.type === "task_complete";
 
 export const isTurnTerminalRecord = (record: CodexRecord) => {
   const type = asRecord(record.payload)?.type;
@@ -635,7 +635,7 @@ const timestampDeltaMs = (startedAt: string, completedAt: string) => {
     : undefined;
 };
 
-const appServerTurnStatus = (value: unknown) =>
+const appServerTurnStatus = (value: unknown): AppServerTurnStatus | undefined =>
   value === "completed" || value === "failed" || value === "interrupted" || value === "inProgress"
     ? value
     : undefined;

@@ -6,6 +6,12 @@ import { assertNoWorkerId } from "./smoke/support/assertions.js";
 import { apiJson } from "./smoke/support/http.js";
 import { findFreePort } from "./smoke/support/network.js";
 import { delay } from "./smoke/support/time.js";
+import {
+  appServerTurn,
+  executionChanged,
+  turnCompleted,
+  turnSnapshot
+} from "./test-support/appServerEvents.js";
 
 type MachineSummary = {
   machineId: string;
@@ -607,13 +613,7 @@ const main = async () => {
       throw new Error(`consume goal policy missing from thread detail: ${JSON.stringify(consumeDetail.goalRunPolicy)}`);
     }
     const consumeTurn = await fake.nextTurn();
-    if (
-      consumeTurn.input !== consumeObjective
-      || consumeTurn.options?.goalMode !== true
-      || consumeTurn.options.goalObjective !== consumeObjective
-    ) {
-      throw new Error(`consume goal initial turn mismatch: ${JSON.stringify(consumeTurn)}`);
-    }
+    assertGoalContinuationTurn(consumeTurn, consumeObjective, "consume goal initial turn mismatch");
     fake.emitAccountRateLimits(64);
     fake.emitTokenUsage(consumeTurn);
     fake.emitGoalUpdated({
@@ -629,13 +629,7 @@ const main = async () => {
     await waitForGoalStatus(apiBase, fake.threadId, "complete", consumeObjective);
     fake.completeTurn(consumeTurn);
     const retryTurn = await fake.nextTurn();
-    if (
-      retryTurn.input !== consumeObjective
-      || retryTurn.options?.goalMode !== true
-      || retryTurn.options.goalObjective !== consumeObjective
-    ) {
-      throw new Error(`consume goal retry turn mismatch: ${JSON.stringify(retryTurn)}`);
-    }
+    assertGoalContinuationTurn(retryTurn, consumeObjective, "consume goal retry turn mismatch");
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -755,13 +749,7 @@ const main = async () => {
       throw new Error(`consume goal resume payload mismatch: ${JSON.stringify(resumedGoal.goal)}`);
     }
     const resumedTurn = await fake.nextTurn();
-    if (
-      resumedTurn.input !== rateLimitedObjective
-      || resumedTurn.options?.goalMode !== true
-      || resumedTurn.options.goalObjective !== rateLimitedObjective
-    ) {
-      throw new Error(`consume goal resumed turn mismatch: ${JSON.stringify(resumedTurn)}`);
-    }
+    assertGoalContinuationTurn(resumedTurn, rateLimitedObjective, "consume goal resumed turn mismatch");
     fake.emitAccountRateLimits(95);
     fake.emitTokenUsage(resumedTurn);
     const resumedWrapUpSetGoal = await fake.nextSessionCommand("set_goal");
@@ -856,13 +844,7 @@ const main = async () => {
       throw new Error(`stopped consume goal resume payload mismatch: ${JSON.stringify(resumedAfterStopGoal.goal)}`);
     }
     const resumedAfterStopTurn = await fake.nextTurn();
-    if (
-      resumedAfterStopTurn.input !== stoppedObjective
-      || resumedAfterStopTurn.options?.goalMode !== true
-      || resumedAfterStopTurn.options.goalObjective !== stoppedObjective
-    ) {
-      throw new Error(`stopped consume goal did not resume: ${JSON.stringify(resumedAfterStopTurn)}`);
-    }
+    assertGoalContinuationTurn(resumedAfterStopTurn, stoppedObjective, "stopped consume goal did not resume");
 
     await apiJson<{ stopped?: boolean }>(
       apiBase,
@@ -882,13 +864,7 @@ const main = async () => {
     await fake.expectNoTurn(100);
     fake.completeTurn(resumedAfterStopTurn, "interrupted");
     const rapidResumeTurn = await fake.nextTurn();
-    if (
-      rapidResumeTurn.input !== stoppedObjective
-      || rapidResumeTurn.options?.goalMode !== true
-      || rapidResumeTurn.options.goalObjective !== stoppedObjective
-    ) {
-      throw new Error(`consume goal rapid resume was lost: ${JSON.stringify(rapidResumeTurn)}`);
-    }
+    assertGoalContinuationTurn(rapidResumeTurn, stoppedObjective, "consume goal rapid resume was lost");
     fake.completeTurn(rapidResumeTurn, "interrupted");
     await fake.expectNoTurn(150);
     console.log("consume-until manual stop resume timing ok");
@@ -984,6 +960,20 @@ const assertGoalStatusControls = () => {
     if (control !== null) throw new Error(`${status} goal control should be hidden: ${JSON.stringify(control)}`);
   }
   console.log("goal status controls ok");
+};
+
+const assertGoalContinuationTurn = (
+  command: SessionCommand,
+  objective: string,
+  description: string
+) => {
+  if (
+    command.input !== objective
+    || command.options?.goalMode !== true
+    || command.options.goalObjective !== objective
+  ) {
+    throw new Error(`${description}: ${JSON.stringify(command)}`);
+  }
 };
 
 class FakeMachine {
@@ -1287,15 +1277,8 @@ class FakeMachine {
     this.send({
       type: "session_event",
       sessionId: this.options.sessionId,
-      event: {
-        type: "thread_turns_snapshot",
-        threadId: this.options.threadId,
-        heartbeat: false,
-        turns: [{
-          id: turnId,
-          status: "completed",
-          itemsView: "full",
-          error: null,
+      event: turnSnapshot(this.options.threadId, [
+        appServerTurn(turnId, {
           startedAt: 1781058300,
           completedAt: 1781058360,
           durationMs: 60_000,
@@ -1303,8 +1286,8 @@ class FakeMachine {
             { id: itemId, type: "userMessage", content: [{ type: "text", text }] },
             { id: `${turnId}-agent`, type: "agentMessage", text: "usage snapshot final answer" }
           ]
-        }]
-      }
+        })
+      ])
     });
   }
 
@@ -1312,29 +1295,18 @@ class FakeMachine {
     this.send({
       type: "session_event",
       sessionId: this.options.sessionId,
-      event: {
-        type: "thread_turns_snapshot",
-        threadId: this.options.threadId,
-        heartbeat: false,
-        turns: [
-          {
-            id: turnId,
-            status: "completed",
-            itemsView: "full",
-            error: null,
-            startedAt: 1781058300,
-            completedAt: 1781058360,
-            durationMs: 60_000,
-            items: [
-              {
-                id: `${turnId}-agent`,
-                type: "agentMessage",
-                text: "historical snapshot final answer"
-              }
-            ]
-          }
-        ]
-      }
+      event: turnSnapshot(this.options.threadId, [
+        appServerTurn(turnId, {
+          startedAt: 1781058300,
+          completedAt: 1781058360,
+          durationMs: 60_000,
+          items: [{
+            id: `${turnId}-agent`,
+            type: "agentMessage",
+            text: "historical snapshot final answer"
+          }]
+        })
+      ])
     });
   }
 
@@ -1346,36 +1318,17 @@ class FakeMachine {
     this.emitTurnCompleted(command, "failed", message);
   }
 
-  private emitTurnCompleted(
+  emitTurnCompleted(
     command: SessionCommand,
     status: "completed" | "failed" | "interrupted",
-    message?: string
+    message?: string,
+    turnId = command.turnId ?? `fake-turn-${command.commandId}`
   ) {
-    const turnId = command.turnId ?? `fake-turn-${command.commandId}`;
+    const threadId = command.threadId ?? this.options.threadId;
     this.send({
       type: "session_event",
       sessionId: this.options.sessionId,
-      event: {
-        type: "thread_event",
-        threadId: command.threadId ?? this.options.threadId,
-        heartbeat: false,
-        message: {
-          method: "turn/completed",
-          params: {
-            threadId: command.threadId ?? this.options.threadId,
-            turn: {
-              id: turnId,
-              status,
-              itemsView: "full",
-              error: status === "failed" ? { message: message ?? "Turn failed" } : null,
-              startedAt: 1,
-              completedAt: 2,
-              durationMs: 1000,
-              items: []
-            }
-          }
-        }
-      }
+      event: turnCompleted(threadId, turnId, { status, errorMessage: message })
     });
   }
 
@@ -1570,13 +1523,7 @@ class FakeMachine {
         this.send({
           type: "session_event",
           sessionId: this.options.sessionId,
-          event: {
-            type: "thread_execution_changed",
-            threadId: command.threadId ?? this.options.threadId,
-            running: true,
-            turnId,
-            heartbeat: false
-          }
+          event: executionChanged(command.threadId ?? this.options.threadId, true, turnId)
         });
         this.send({
           type: "session_command_result",
@@ -1584,31 +1531,7 @@ class FakeMachine {
           commandId: command.commandId,
           result: { ok: true, reviewThreadId: command.threadId ?? this.options.threadId }
         });
-        this.send({
-          type: "session_event",
-          sessionId: this.options.sessionId,
-          event: {
-            type: "thread_event",
-            threadId: command.threadId ?? this.options.threadId,
-            heartbeat: false,
-            message: {
-              method: "turn/completed",
-              params: {
-                threadId: command.threadId ?? this.options.threadId,
-                turn: {
-                  id: turnId,
-                  status: "completed",
-                  itemsView: "full",
-                  error: null,
-                  startedAt: 1,
-                  completedAt: 2,
-                  durationMs: 1000,
-                  items: []
-                }
-              }
-            }
-          }
-        });
+        this.emitTurnCompleted(command, "completed", undefined, turnId);
         return;
       }
       if (command.type === "steer") {
@@ -1644,13 +1567,7 @@ class FakeMachine {
     this.send({
       type: "session_event",
       sessionId: this.options.sessionId,
-      event: {
-        type: "thread_execution_changed",
-        threadId: command.threadId ?? this.options.threadId,
-        running: true,
-        turnId: turn.turnId,
-        heartbeat: false
-      }
+      event: executionChanged(command.threadId ?? this.options.threadId, true, turn.turnId)
     });
     this.pendingTurns.push(turn);
     const waiter = this.turnWaiters.shift();

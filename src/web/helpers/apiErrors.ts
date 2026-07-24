@@ -1,22 +1,26 @@
 import { CodexHubApiError } from "../../shared/apiClient.js";
+import type { ThreadTurnPayload } from "../../shared/apiContract.js";
 
 export type ApiErrorDetails = {
   message: string;
-  delivery?: "turn" | "steer" | "goal" | "queued";
+  delivery?: NonNullable<ThreadTurnPayload["delivery"]>;
 };
 
-export const apiResponseErrorDetails = (responseText: string): ApiErrorDetails => {
-  const structured = structuredApiErrorDetails(responseText);
+export const apiErrorDetails = (
+  error: unknown,
+  options: { plainHttpMessage?: boolean } = {}
+): ApiErrorDetails => {
+  if (!(error instanceof CodexHubApiError)) {
+    return { message: error instanceof Error ? error.message : String(error) };
+  }
+  const structured = error.responseText ? structuredApiErrorDetails(error.responseText) : null;
   if (structured) return structured;
-  return { message: responseText.trim() || "Request failed" };
+  return {
+    message: options.plainHttpMessage
+      ? error.responseText.trim() || "Request failed"
+      : error.message
+  };
 };
-
-export const apiErrorMessage = (error: unknown) =>
-  error instanceof CodexHubApiError && error.responseText
-    ? structuredApiErrorDetails(error.responseText)?.message ?? error.message
-    : error instanceof Error ? error.message : String(error);
-
-export const forkErrorMessage = apiErrorMessage;
 
 const isTurnDelivery = (value: unknown): value is NonNullable<ApiErrorDetails["delivery"]> =>
   value === "turn" || value === "steer" || value === "goal" || value === "queued";

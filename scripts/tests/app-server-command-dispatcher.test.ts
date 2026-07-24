@@ -121,6 +121,21 @@ test("dispatcher maps compact commands to official app-server RPC and sync", asy
   assert.deepEqual(synced, ["thread-1"]);
 });
 
+test("dispatcher returns official stop and steer RPC responses", async () => {
+  const { host, requests } = createHost();
+  host.request = async (method, params) => {
+    requests.push({ method, params });
+    return { method };
+  };
+  assert.deepEqual(await dispatchAppServerCommand(command({
+    type: "stop", threadId: "thread-1", turnId: "turn-1"
+  }), host), { method: "turn/interrupt" });
+  assert.deepEqual(await dispatchAppServerCommand(command({
+    type: "steer", threadId: "thread-1", turnId: "turn-1", input: "guide it"
+  }), host), { method: "turn/steer" });
+  assert.deepEqual(requests.map((request) => request.method), ["turn/interrupt", "turn/steer"]);
+});
+
 test("dispatcher exposes the runtime permission profile catalog without local choices", async () => {
   const { host } = createHost();
   host.listPermissionProfiles = async (cwd) => {

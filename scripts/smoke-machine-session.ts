@@ -18,6 +18,12 @@ import { assertNoWorkerId, findKey } from "./smoke/support/assertions.js";
 import { apiJson } from "./smoke/support/http.js";
 import { findFreePort } from "./smoke/support/network.js";
 import { delay } from "./smoke/support/time.js";
+import {
+  appServerTurn,
+  executionChanged,
+  turnCompleted,
+  turnSnapshot
+} from "./test-support/appServerEvents.js";
 
 type MachineSummary = {
   machineId: string;
@@ -2004,16 +2010,8 @@ const assertAppServerTurnLifecycleRecords = async () => {
     machineId: "machine-local",
     workingDirectory: "/tmp/codexhub-app-server-lifecycle"
   });
-  hub.applySessionEvent(sessionId, {
-    type: "thread_turns_snapshot",
-    threadId,
-    heartbeat: false,
-    turns: [{
-      id: turnId,
-      status: "completed",
-      itemsView: "full",
-      error: null,
-      startedAt: 1,
+  hub.applySessionEvent(sessionId, turnSnapshot(threadId, [
+    appServerTurn(turnId, {
       completedAt: 3.5,
       durationMs: 2500,
       items: [{
@@ -2025,8 +2023,8 @@ const assertAppServerTurnLifecycleRecords = async () => {
         type: "agentMessage",
         text: "done"
       }]
-    }]
-  });
+    })
+  ]));
   const thread = hub.getThread(threadId);
   const records = thread?.records ?? [];
   const started = records.find((record) => asRecord(record).id === `app:${threadId}:${turnId}:event:task_started`);
@@ -2272,27 +2270,7 @@ const assertAppServerServiceTierSettings = async () => {
   ) {
     throw new Error(`approval/sandbox turn options were not forwarded: ${JSON.stringify(turnCommand)}`);
   }
-  hub.applySessionEvent(sessionId, {
-    type: "thread_event",
-    threadId,
-    heartbeat: false,
-    message: {
-      method: "turn/completed",
-      params: {
-        threadId,
-        turn: {
-          id: "app-server-service-tier-turn",
-          status: "completed",
-          itemsView: "full",
-          error: null,
-          startedAt: 1,
-          completedAt: 2,
-          durationMs: 1000,
-          items: []
-        }
-      }
-    }
-  });
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, "app-server-service-tier-turn"));
   await turn;
   thread = hub.getThread(threadId);
   if (
@@ -2372,18 +2350,8 @@ const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
       params: { threadId }
     }
   });
-  hub.applySessionEvent(sessionId, {
-    type: "thread_turns_snapshot",
-    threadId,
-    heartbeat: false,
-    turns: [{
-      id: turnId,
-      status: "completed",
-      itemsView: "full",
-      error: null,
-      startedAt: 1,
-      completedAt: 2,
-      durationMs: 1000,
+  hub.applySessionEvent(sessionId, turnSnapshot(threadId, [
+    appServerTurn(turnId, {
       items: [{
         id: "user-1",
         type: "userMessage",
@@ -2402,8 +2370,8 @@ const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
         text: "final",
         phase: "final_answer"
       }]
-    }]
-  });
+    })
+  ]));
   const records = hub.getThread(threadId)?.records ?? [];
   const messages = records
     .map((record) => asRecord(asRecord(record).payload))
@@ -2426,15 +2394,8 @@ const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
     machineId: "machine-local",
     workingDirectory: "/tmp/codexhub-app-server-untimed-order"
   });
-  untimedHub.applySessionEvent(untimedSessionId, {
-    type: "thread_turns_snapshot",
-    threadId: untimedThreadId,
-    heartbeat: false,
-    turns: [{
-      id: "app-server-untimed-order-old-turn",
-      status: "completed",
-      itemsView: "full",
-      error: null,
+  untimedHub.applySessionEvent(untimedSessionId, turnSnapshot(untimedThreadId, [
+    appServerTurn("app-server-untimed-order-old-turn", {
       startedAt: null,
       completedAt: null,
       durationMs: null,
@@ -2443,8 +2404,8 @@ const assertAppServerTurnSnapshotPreservesAgentMessages = async () => {
         type: "agentMessage",
         text: "untimed old commentary"
       }]
-    }]
-  });
+    })
+  ]));
   untimedHub.applySessionEvent(untimedSessionId, {
     type: "thread_event",
     threadId: untimedThreadId,
@@ -2485,13 +2446,7 @@ const assertAppServerAgentMessageDeltaStreams = async () => {
     machineId: "machine-local",
     workingDirectory: "/tmp/codexhub-app-server-agent-delta"
   });
-  hub.applySessionEvent(sessionId, {
-    type: "thread_execution_changed",
-    threadId,
-    running: true,
-    turnId,
-    heartbeat: false
-  });
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true, turnId));
   const events: Array<{ kind: string; record?: unknown }> = [];
   const unsubscribe = hub.subscribe(threadId, 0, (event) => {
     events.push(event);
@@ -3252,18 +3207,8 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
     machineId: "machine-local",
     workingDirectory: "/tmp/codexhub-fork-tool"
   });
-  hub.applySessionEvent(sessionId, {
-    type: "thread_turns_snapshot",
-    threadId: sourceThreadId,
-    heartbeat: false,
-    turns: [{
-      id: keptTurnId,
-      status: "completed",
-      itemsView: "full",
-      error: null,
-      startedAt: 1,
-      completedAt: 2,
-      durationMs: 1000,
+  hub.applySessionEvent(sessionId, turnSnapshot(sourceThreadId, [
+    appServerTurn(keptTurnId, {
       items: [{
         id: "kept-user",
         type: "userMessage",
@@ -3281,14 +3226,10 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
         text: "kept",
         phase: "final_answer"
       }]
-    }, {
-      id: removedTurnId,
-      status: "completed",
-      itemsView: "full",
-      error: null,
+    }),
+    appServerTurn(removedTurnId, {
       startedAt: 3,
       completedAt: 4,
-      durationMs: 1000,
       items: [{
         id: "removed-user",
         type: "userMessage",
@@ -3299,8 +3240,8 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
         text: "removed",
         phase: "final_answer"
       }]
-    }]
-  });
+    })
+  ]));
   const fork = hub.forkThread(sourceThreadId, `app:${sourceThreadId}:${keptTurnId}:agent:kept-agent`);
   const forkBatch = await hub.waitSessionCommands(sessionId, 0, 1);
   const forkCommand = forkBatch.commands[0];
@@ -3322,14 +3263,7 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
         thread: {
           id: forkedThreadId,
           cwd: "/tmp/codexhub-fork-tool",
-          turns: [{
-            id: keptTurnId,
-            status: "completed",
-            itemsView: "full",
-            error: null,
-            startedAt: 1,
-            completedAt: 2,
-            durationMs: 1000,
+          turns: [appServerTurn(keptTurnId, {
             items: [{
               id: "kept-user",
               type: "userMessage",
@@ -3340,7 +3274,7 @@ const assertForkPreservesKeptTurnToolRecords = async () => {
               text: "kept",
               phase: "final_answer"
             }]
-          }]
+          })]
         }
       }
     }

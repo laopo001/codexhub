@@ -19,6 +19,7 @@ const thread = (): ThreadState => ({
   threadId: "thread-1",
   workingDirectory: "/tmp/project",
   threadOptions: {},
+  goalRun: { policy: null, continuation: "normal" },
   running: false,
   title: "Test",
   updatedAt: "2026-01-01T00:00:00.000Z",

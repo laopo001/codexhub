@@ -1301,7 +1301,6 @@ class CodexAppServerBridge {
     // 粗粒度 running=false 把 failed/interrupted Turn 当成成功收尾。
     if (message.method === "turn/completed") {
       await this.forwardThreadEvent(threadId, undefined, message);
-      await this.forwardDerivedStateFromMessage(threadId, message);
       return;
     }
     // 其他通知仍先更新控制面，再投影 transcript。

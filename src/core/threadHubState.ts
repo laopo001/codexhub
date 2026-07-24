@@ -23,6 +23,14 @@ export type SessionState = SessionSummary & {
   waiters: Set<SessionCommandWaiter>;
 };
 
+export type GoalRunState = {
+  policy: ThreadGoalRunPolicy | null;
+  objective?: string;
+  status?: string;
+  activeRun?: string;
+  continuation: "normal" | "stopped" | "resume";
+};
+
 export type ThreadState = {
   threadId: string;
   workingDirectory: string;
@@ -30,12 +38,7 @@ export type ThreadState = {
   sessionId?: string;
   appServerTurnId?: string;
   threadOptions: ThreadOptions;
-  goalRunPolicy?: ThreadGoalRunPolicy | null;
-  goalRunPolicyObjective?: string;
-  goalRunPolicyStatus?: string;
-  goalRunPolicyTurnActive?: boolean;
-  skipNextGoalRunPolicyRun?: boolean;
-  resumeGoalRunPolicyAfterTurn?: boolean;
+  goalRun: GoalRunState;
   running: boolean;
   activeTurnStartedAt?: string;
   title: string;
