@@ -32,7 +32,6 @@ import { accountRateLimitsPayloadFromValue } from "../core/threadUsage.js";
 import {
   activeCodexHome,
   RuntimeCatalogCache,
-  type CommandPalettePluginCatalogCacheKey,
   type ModelCatalogCacheKey,
   type PermissionProfileCatalogCacheKey,
   type RuntimeCatalogCacheKey
@@ -643,7 +642,7 @@ class CodexAppServerBridge {
       },
       captureThreadSettingsResponse: (threadId, value) => this.captureThreadSettingsResponse(threadId, value),
       planResetModes: this.planResetModes,
-      listCommandPalette: (cwd, part, refresh) => this.listAppServerCommandPalette(cwd, part, refresh),
+      listCommandPalette: (cwd, part) => this.listAppServerCommandPalette(cwd, part),
       bindThread: (threadId, cwd) => this.bindThread(threadId, cwd),
       unbindThread: (threadId) => this.unbindThread(threadId),
       syncThreadTurns: (threadId) => this.syncThreadAppServerTurns(threadId),
@@ -1075,13 +1074,9 @@ class CodexAppServerBridge {
     scope: { kind: "permission_profiles"; cwd: string }
   ): PermissionProfileCatalogCacheKey;
   private runtimeCatalogKey(
-    scope: { kind: "command_palette_plugins"; cwd: string }
-  ): CommandPalettePluginCatalogCacheKey;
-  private runtimeCatalogKey(
     scope:
       | { kind: "models"; includeHidden: boolean }
       | { kind: "permission_profiles"; cwd: string }
-      | { kind: "command_palette_plugins"; cwd: string }
   ): RuntimeCatalogCacheKey {
     if (!this.cliVersionValue) throw new UnsupportedCodexCliVersionError("unknown");
     return {
@@ -1134,11 +1129,19 @@ class CodexAppServerBridge {
 
   private async listAppServerCommandPalette(
     cwd: string,
-    part: CommandPalettePart = "all",
-    refresh = false
+    part: CommandPalettePart = "all"
   ): Promise<SessionCommandPaletteResult> {
     if (part === "plugins") {
-      return await this.listCachedCommandPalettePlugins(cwd, refresh);
+      const directSkills = await this.listCommandPaletteDirectSkills(cwd);
+      const skillPluginNames = new Set(directSkills.flatMap((entry) => pluginNameFromSkillName(entry.name)));
+      const pluginEntries = await this.listCommandPalettePluginEntries(cwd, skillPluginNames);
+      return {
+        palette: {
+          cwd,
+          generatedAt: new Date().toISOString(),
+          entries: dedupeCommandPaletteEntries(pluginEntries)
+        }
+      };
     }
 
     const { config, directSkills } = await this.listCommandPaletteCoreEntries(cwd);
@@ -1155,51 +1158,18 @@ class CodexAppServerBridge {
       };
     }
 
-    const plugins = await this.listCachedCommandPalettePlugins(cwd, refresh);
+    const skillPluginNames = new Set(directSkills.flatMap((entry) => pluginNameFromSkillName(entry.name)));
+    const pluginEntries = await this.listCommandPalettePluginEntries(cwd, skillPluginNames);
     return {
       palette: {
         cwd,
         generatedAt: new Date().toISOString(),
         entries: dedupeCommandPaletteEntries([
           ...builtinCommandPaletteEntries(config),
-          ...plugins.palette.entries,
+          ...pluginEntries,
           ...directSkills
         ])
-      },
-      source: plugins.source,
-      updatedAt: plugins.updatedAt,
-      stale: plugins.stale
-    };
-  }
-
-  private async listCachedCommandPalettePlugins(
-    cwd: string,
-    refresh = false
-  ): Promise<SessionCommandPaletteResult> {
-    const key = this.runtimeCatalogKey({ kind: "command_palette_plugins", cwd });
-    const result = await this.runtimeCatalogCache.resolve(key, {
-      refresh,
-      ttlMs: commandPalettePluginCacheTtlMs(),
-      fetch: async () => {
-        const directSkills = await this.listCommandPaletteDirectSkills(cwd);
-        const skillPluginNames = new Set(directSkills.flatMap((entry) => pluginNameFromSkillName(entry.name)));
-        return dedupeCommandPaletteEntries(
-          await this.listAppServerPluginPaletteEntries(cwd, skillPluginNames)
-        );
-      },
-      onBackgroundRefreshError: (error) => {
-        console.error(`codexhub failed to refresh stale command palette plugin cache: ${errorText(error)}`);
       }
-    });
-    return {
-      palette: {
-        cwd,
-        generatedAt: result.updatedAt,
-        entries: result.items
-      },
-      source: result.source,
-      updatedAt: result.updatedAt,
-      stale: result.stale
     };
   }
 
@@ -1217,6 +1187,13 @@ class CodexAppServerBridge {
   private async listCommandPaletteDirectSkills(cwd: string) {
     return await this.listAppServerSkillPaletteEntries(cwd).catch((error) => {
       console.error(`codexhub bridge failed to list app-server skills: ${errorText(error)}`);
+      return [] as CommandPaletteEntry[];
+    });
+  }
+
+  private async listCommandPalettePluginEntries(cwd: string, skillPluginNames: ReadonlySet<string>) {
+    return await this.listAppServerPluginPaletteEntries(cwd, skillPluginNames).catch((error) => {
+      console.error(`codexhub bridge failed to list app-server plugins: ${errorText(error)}`);
       return [] as CommandPaletteEntry[];
     });
   }
@@ -1708,11 +1685,6 @@ const runtimeCatalogCacheTtlMs = () => readPositiveIntEnv(
   process.env,
   "CODEX_HUB_CATALOG_CACHE_TTL_MS",
   readPositiveIntEnv(process.env, "CODEX_HUB_MODEL_CATALOG_CACHE_TTL_MS", 6 * 60 * 60 * 1000)
-);
-const commandPalettePluginCacheTtlMs = () => readPositiveIntEnv(
-  process.env,
-  "CODEX_HUB_COMMAND_PALETTE_PLUGIN_CACHE_TTL_MS",
-  readPositiveIntEnv(process.env, "CODEX_HUB_CATALOG_CACHE_TTL_MS", 10 * 60 * 1000)
 );
 const appServerOverloadRetryDelayMs = (attempt: number) => {
   const exponentialMs = Math.min(2_000, 100 * 2 ** attempt);

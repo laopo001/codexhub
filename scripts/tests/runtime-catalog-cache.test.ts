@@ -25,7 +25,7 @@ test("runtime catalog cache uses the CodexHub data directory", () => {
   );
 });
 
-test("runtime catalog cache persists models, permission profiles, and command palette plugins in one store", async () => {
+test("runtime catalog cache persists models and cwd-scoped permission profiles in one store", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codexhub-runtime-catalog-cache."));
   const cacheDirectory = path.join(directory, "runtime-catalog-cache");
   const baseKey = {
@@ -35,7 +35,6 @@ test("runtime catalog cache persists models, permission profiles, and command pa
   };
   let modelFetches = 0;
   let permissionFetches = 0;
-  let commandPaletteFetches = 0;
   try {
     const cache = new RuntimeCatalogCache(cacheDirectory);
     const liveModels = await cache.resolve({
@@ -70,27 +69,6 @@ test("runtime catalog cache persists models, permission profiles, and command pa
     });
     assert.equal(livePermissions.source, "live");
 
-    const liveCommandPalette = await cache.resolve({
-      ...baseKey,
-      kind: "command_palette_plugins",
-      cwd: "/tmp/project-a"
-    }, {
-      ttlMs: 60_000,
-      fetch: async () => {
-        commandPaletteFetches += 1;
-        return [{
-          id: "plugin:demo",
-          kind: "plugin",
-          name: "demo",
-          title: "Demo",
-          description: "Demo plugin",
-          enabled: true,
-          source: "plugin"
-        }];
-      }
-    });
-    assert.equal(liveCommandPalette.source, "live");
-
     const reloaded = new RuntimeCatalogCache(cacheDirectory);
     const cachedModels = await reloaded.resolve({
       ...baseKey,
@@ -114,26 +92,12 @@ test("runtime catalog cache persists models, permission profiles, and command pa
         return [];
       }
     });
-    const cachedCommandPalette = await reloaded.resolve({
-      ...baseKey,
-      kind: "command_palette_plugins",
-      cwd: "/tmp/project-a"
-    }, {
-      ttlMs: 60_000,
-      fetch: async () => {
-        commandPaletteFetches += 1;
-        return [];
-      }
-    });
     assert.equal(cachedModels.source, "cache");
     assert.equal(cachedPermissions.source, "cache");
-    assert.equal(cachedCommandPalette.source, "cache");
     assert.equal(cachedModels.items[0]?.model, "gpt-test");
     assert.equal(cachedPermissions.items[0]?.id, "team-safe");
-    assert.equal(cachedCommandPalette.items[0]?.name, "demo");
     assert.equal(modelFetches, 1);
     assert.equal(permissionFetches, 1);
-    assert.equal(commandPaletteFetches, 1);
 
     const otherCwd = await reloaded.resolve({
       ...baseKey,
@@ -150,7 +114,7 @@ test("runtime catalog cache persists models, permission profiles, and command pa
     assert.equal(permissionFetches, 2);
     assert.equal((await stat(cacheDirectory)).mode & 0o777, 0o700);
     const entryPaths = (await readdir(cacheDirectory)).map((name) => path.join(cacheDirectory, name));
-    assert.equal(entryPaths.length, 4);
+    assert.equal(entryPaths.length, 3);
     for (const entryPath of entryPaths) {
       assert.equal((await stat(entryPath)).mode & 0o777, 0o600);
     }
@@ -163,7 +127,7 @@ test("runtime catalog cache persists models, permission profiles, and command pa
         assert.equal(stored.version, 1);
         return stored.entry?.kind;
       })).then((kinds) => kinds.sort()),
-      ["command_palette_plugins", "models", "permission_profiles", "permission_profiles"]
+      ["models", "permission_profiles", "permission_profiles"]
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

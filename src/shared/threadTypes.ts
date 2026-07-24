@@ -364,9 +364,6 @@ export type SessionPermissionProfilesResult = {
 /** list_command_palette 命令返回的 composer palette。 */
 export type SessionCommandPaletteResult = {
   palette: CommandPalette;
-  source?: "live" | "cache";
-  updatedAt?: string;
-  stale?: boolean;
 };
 
 /** start_thread/resume_thread 命令返回的 thread 标识和可选 app-server metadata。 */

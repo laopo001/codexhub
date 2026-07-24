@@ -44,8 +44,7 @@ export type AppServerCommandHost = {
   planResetModes: Map<string, AppServerCollaborationMode>;
   listCommandPalette: (
     cwd: string,
-    part: SessionCommand["commandPalettePart"],
-    refresh?: boolean
+    part: SessionCommand["commandPalettePart"]
   ) => Promise<SessionCommandPaletteResult>;
   bindThread: (threadId: string, cwd: string) => void;
   unbindThread: (threadId: string) => Promise<void>;
@@ -87,11 +86,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     return await host.listPermissionProfiles(command.workingDirectory, Boolean(command.refresh));
   }
   if (command.type === "list_command_palette") {
-    return await host.listCommandPalette(
-      command.workingDirectory,
-      command.commandPalettePart,
-      Boolean(command.refresh)
-    );
+    return await host.listCommandPalette(command.workingDirectory, command.commandPalettePart);
   }
   if (command.type === "subscribe_thread_records") {
     const threadId = requireThreadId(command);

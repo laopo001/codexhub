@@ -620,8 +620,7 @@ export class ThreadHub {
   async listSessionCommandPalette(
     sessionId: string,
     workingDirectory?: string,
-    part: CommandPalettePart = "all",
-    refresh = false
+    part: CommandPalettePart = "all"
   ): Promise<SessionCommandPaletteResult> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
@@ -638,8 +637,7 @@ export class ThreadHub {
       type: "list_command_palette",
       workingDirectory: cwd,
       commandPalettePart: part,
-      createdAt: new Date().toISOString(),
-      refresh
+      createdAt: new Date().toISOString()
     });
     return await promise;
   }
@@ -647,14 +645,12 @@ export class ThreadHub {
   async listMachineCommandPalette(
     machineId: string,
     workingDirectory?: string,
-    part: CommandPalettePart = "all",
-    refresh = false
+    part: CommandPalettePart = "all"
   ): Promise<SessionCommandPaletteResult> {
     return await this.listSessionCommandPalette(
       this.requireOnlineRuntimeSession(machineId).sessionId,
       workingDirectory,
-      part,
-      refresh
+      part
     );
   }
 

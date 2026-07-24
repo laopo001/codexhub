@@ -278,16 +278,10 @@ export const registerThreadRoutes = <
     const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const query = z.object({
       cwd: z.string().min(1).optional(),
-      part: z.enum(["core", "plugins", "all"]).optional(),
-      refresh: z.string().optional()
+      part: z.enum(["core", "plugins", "all"]).optional()
     }).parse(request.query);
     try {
-      const result = await ctx.threads.listMachineCommandPalette(
-        params.machineId,
-        query.cwd,
-        query.part,
-        query.refresh === "true"
-      );
+      const result = await ctx.threads.listMachineCommandPalette(params.machineId, query.cwd, query.part);
       return result satisfies CommandPalettePayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

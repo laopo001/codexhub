@@ -254,23 +254,11 @@ const main = async () => {
     if (commandPaletteCommand.workingDirectory !== projectDir || commandPaletteCommand.commandPalettePart !== "plugins") {
       throw new Error(`command palette plugin scope mismatch: ${JSON.stringify(commandPaletteCommand)}`);
     }
-    if (commandPaletteCommand.refresh !== false) {
-      throw new Error(`ordinary command palette plugin request should not force refresh: ${JSON.stringify(commandPaletteCommand)}`);
-    }
     const commandPalette = await commandPalettePromise;
     if (!commandPalette.palette?.entries?.some((entry) => entry.name === "fake-plugin" && entry.kind === "plugin")) {
       throw new Error(`command palette response missing runtime plugin: ${JSON.stringify(commandPalette)}`);
     }
-    const refreshedCommandPalettePromise = apiJson(
-      apiBase,
-      `/api/machines/${encodeURIComponent(fake.machineId)}/command-palette?cwd=${encodeURIComponent(projectDir)}&part=plugins&refresh=true`
-    );
-    const refreshedCommandPaletteCommand = await fake.nextSessionCommand("list_command_palette");
-    if (refreshedCommandPaletteCommand.refresh !== true) {
-      throw new Error(`forced command palette plugin refresh was not forwarded: ${JSON.stringify(refreshedCommandPaletteCommand)}`);
-    }
-    await refreshedCommandPalettePromise;
-    console.log("runtime command palette plugin catalog ok");
+    console.log("runtime command palette plugin catalog live load ok");
     await fake.expectNoSessionCommand("subscribe_thread_records", 100);
     await assertThreadRecordSubscription(apiBase, fake.threadId, fake);
     console.log("thread record subscription ok");

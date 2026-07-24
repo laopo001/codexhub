@@ -180,16 +180,9 @@ export const apiRoutes = {
       refresh: refresh ? "true" : undefined
     })}`
   ),
-  commandPalette: get<
-    CommandPalettePayload,
-    (machineId: string, cwd?: string, part?: CommandPalettePart, refresh?: boolean) => string
-  >(
-    (machineId, cwd, part, refresh) =>
-      `/api/machines/${encode(machineId)}/command-palette${queryString({
-        cwd,
-        part,
-        refresh: refresh ? "true" : undefined
-      })}`
+  commandPalette: get<CommandPalettePayload, (machineId: string, cwd?: string, part?: CommandPalettePart) => string>(
+    (machineId, cwd, part) =>
+      `/api/machines/${encode(machineId)}/command-palette${queryString({ cwd, part })}`
   ),
   thread: get<ThreadDetail, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}`

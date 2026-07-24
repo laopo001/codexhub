@@ -159,36 +159,28 @@ test("dispatcher exposes the runtime permission profile catalog without local ch
   });
 });
 
-test("dispatcher forwards command palette plugin cache refresh and source metadata", async () => {
+test("dispatcher forwards the command palette plugin partition", async () => {
   const { host } = createHost();
-  host.listCommandPalette = async (cwd, part, refresh) => {
+  host.listCommandPalette = async (cwd, part) => {
     assert.equal(cwd, "/tmp/project");
     assert.equal(part, "plugins");
-    assert.equal(refresh, true);
     return {
       palette: {
         cwd,
         generatedAt: "2026-01-01T00:00:00.000Z",
         entries: []
-      },
-      source: "cache",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      stale: false
+      }
     };
   };
   assert.deepEqual(await dispatchAppServerCommand(command({
     type: "list_command_palette",
-    commandPalettePart: "plugins",
-    refresh: true
+    commandPalettePart: "plugins"
   }), host), {
     palette: {
       cwd: "/tmp/project",
       generatedAt: "2026-01-01T00:00:00.000Z",
       entries: []
-    },
-    source: "cache",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    stale: false
+    }
   });
 });
 

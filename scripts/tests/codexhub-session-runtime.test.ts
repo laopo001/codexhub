@@ -211,7 +211,7 @@ const transportFactory: HeadlessSessionTransportFactory = (_context, callbacks) 
   sendHeartbeat: () => undefined
 });
 
-test("attached runtime shares persistent catalog caching across models, permissions, and command palette plugins", async (context) => {
+test("attached runtime shares persistent catalog caching across models and permissions", async (context) => {
   context.mock.method(console, "error", () => undefined);
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "codexhub-runtime-model-cache."));
   const previousDataDirectory = process.env.CODEX_HUB_DATA_DIR;
@@ -231,45 +231,11 @@ test("attached runtime shares persistent catalog caching across models, permissi
     description: "Workspace access",
     allowed: true
   }];
-  const skills = [{
-    name: "demo:inspect",
-    description: "Inspect the demo project",
-    enabled: true,
-    path: "/tmp/demo/SKILL.md",
-    scope: "repo"
-  }];
-  const pluginList = {
-    marketplaces: [{
-      path: "/tmp/marketplace",
-      plugins: [{ id: "demo@1.0.0", name: "demo", installed: true, enabled: true }]
-    }],
-    featuredPluginIds: []
-  };
-  const pluginReads = {
-    demo: {
-      plugin: {
-        summary: {
-          name: "demo",
-          interface: {
-            displayName: "Demo",
-            description: "Demo plugin"
-          }
-        },
-        skills
-      }
-    }
-  };
   let firstCallbacks: HeadlessSessionTransportCallbacks | undefined;
   let firstSession: Awaited<ReturnType<typeof startAttachedCodexhubSession>> | undefined;
   let secondSession: Awaited<ReturnType<typeof startAttachedCodexhubSession>> | undefined;
   try {
-    const firstSocket = new CurrentProtocolSocket({
-      models,
-      permissionProfiles,
-      skills,
-      pluginList,
-      pluginReads
-    });
+    const firstSocket = new CurrentProtocolSocket({ models, permissionProfiles });
     firstSession = await startAttachedCodexhubSession({
       apiBase: "http://127.0.0.1:1",
       appServerUrl: "ws://127.0.0.1:1",
@@ -288,21 +254,10 @@ test("attached runtime shares persistent catalog caching across models, permissi
     const livePermissions = await firstCallbacks.handleCommand(permissionListCommand("live-permissions"));
     assert.equal((livePermissions as { source?: string }).source, "live");
     assert.equal(firstSocket.requestCount("permissionProfile/list"), 1);
-    const livePlugins = await firstCallbacks.handleCommand(commandPalettePluginCommand("live-plugins"));
-    assert.equal((livePlugins as { source?: string }).source, "live");
-    assert.equal(firstSocket.requestCount("skills/list"), 1);
-    assert.equal(firstSocket.requestCount("plugin/list"), 1);
-    assert.equal(firstSocket.requestCount("plugin/read"), 1);
     await firstSession.stop();
     firstSession = undefined;
 
-    const secondSocket = new CurrentProtocolSocket({
-      models,
-      permissionProfiles,
-      skills,
-      pluginList,
-      pluginReads
-    });
+    const secondSocket = new CurrentProtocolSocket({ models, permissionProfiles });
     let secondCallbacks: HeadlessSessionTransportCallbacks | undefined;
     secondSession = await startAttachedCodexhubSession({
       apiBase: "http://127.0.0.1:1",
@@ -322,15 +277,6 @@ test("attached runtime shares persistent catalog caching across models, permissi
     const cachedPermissions = await secondCallbacks.handleCommand(permissionListCommand("cached-permissions"));
     assert.equal((cachedPermissions as { source?: string }).source, "cache");
     assert.equal(secondSocket.requestCount("permissionProfile/list"), 0);
-    const cachedPlugins = await secondCallbacks.handleCommand(commandPalettePluginCommand("cached-plugins"));
-    assert.equal((cachedPlugins as { source?: string }).source, "cache");
-    assert.equal(
-      (cachedPlugins as { palette?: { entries?: Array<{ name?: string }> } }).palette?.entries?.[0]?.name,
-      "demo"
-    );
-    assert.equal(secondSocket.requestCount("skills/list"), 0);
-    assert.equal(secondSocket.requestCount("plugin/list"), 0);
-    assert.equal(secondSocket.requestCount("plugin/read"), 0);
     const refreshed = await secondCallbacks.handleCommand({
       ...modelListCommand("refreshed-models"),
       refresh: true
@@ -343,20 +289,74 @@ test("attached runtime shares persistent catalog caching across models, permissi
     });
     assert.equal((refreshedPermissions as { source?: string }).source, "live");
     assert.equal(secondSocket.requestCount("permissionProfile/list"), 1);
-    const refreshedPlugins = await secondCallbacks.handleCommand({
-      ...commandPalettePluginCommand("refreshed-plugins"),
-      refresh: true
-    });
-    assert.equal((refreshedPlugins as { source?: string }).source, "live");
-    assert.equal(secondSocket.requestCount("skills/list"), 1);
-    assert.equal(secondSocket.requestCount("plugin/list"), 1);
-    assert.equal(secondSocket.requestCount("plugin/read"), 1);
   } finally {
     await firstSession?.stop();
     await secondSession?.stop();
     restoreEnv("CODEX_HUB_DATA_DIR", previousDataDirectory);
     restoreEnv("CODEX_HOME", previousCodexHome);
     await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+test("attached runtime loads command palette plugins live without persistent caching", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const skills = [{
+    name: "demo:inspect",
+    description: "Inspect the demo project",
+    enabled: true,
+    path: "/tmp/demo/SKILL.md",
+    scope: "repo"
+  }];
+  const socket = new CurrentProtocolSocket({
+    skills,
+    pluginList: {
+      marketplaces: [{
+        path: "/tmp/marketplace",
+        plugins: [{ id: "demo@1.0.0", name: "demo", installed: true, enabled: true }]
+      }],
+      featuredPluginIds: []
+    },
+    pluginReads: {
+      demo: {
+        plugin: {
+          summary: {
+            name: "demo",
+            interface: {
+              displayName: "Demo",
+              description: "Demo plugin"
+            }
+          },
+          skills
+        }
+      }
+    }
+  });
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    appServerTransportFactory: async () => socket,
+    machineId: "machine-command-palette",
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return transportFactory(transportContext, nextCallbacks);
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    const first = await callbacks.handleCommand(commandPalettePluginCommand("live-plugins-1"));
+    const second = await callbacks.handleCommand(commandPalettePluginCommand("live-plugins-2"));
+    assert.equal((first as { source?: string }).source, undefined);
+    assert.equal(
+      (second as { palette?: { entries?: Array<{ name?: string }> } }).palette?.entries?.[0]?.name,
+      "demo"
+    );
+    assert.equal(socket.requestCount("skills/list"), 2);
+    assert.equal(socket.requestCount("plugin/list"), 2);
+    assert.equal(socket.requestCount("plugin/read"), 2);
+  } finally {
+    await session.stop();
   }
 });
 

@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import type {
-  CommandPaletteEntry,
   ModelCatalogItem,
   PermissionProfileSummary
 } from "../shared/threadTypes.js";
@@ -34,28 +33,6 @@ const permissionProfileSchema = z.object({
   allowed: z.boolean()
 });
 
-const commandPaletteEntrySchema = z.object({
-  id: z.string().min(1),
-  kind: z.enum(["builtin", "plugin", "skill"]),
-  name: z.string().min(1),
-  title: z.string().min(1),
-  description: z.string(),
-  shortDescription: z.string().optional(),
-  detail: z.string().optional(),
-  insertText: z.string().optional(),
-  action: z.enum([
-    "insert",
-    "open_model",
-    "set_plan_mode",
-    "set_goal_mode",
-    "review_changes",
-    "compact_thread"
-  ]).optional(),
-  enabled: z.boolean(),
-  source: z.string().optional(),
-  scope: z.string().optional()
-});
-
 const runtimeCatalogCacheBaseSchema = {
   machineId: z.string().min(1),
   cliVersion: z.string().min(1),
@@ -77,17 +54,9 @@ const permissionProfileCacheEntrySchema = z.object({
   items: z.array(permissionProfileSchema)
 });
 
-const commandPalettePluginCacheEntrySchema = z.object({
-  ...runtimeCatalogCacheBaseSchema,
-  kind: z.literal("command_palette_plugins"),
-  cwd: z.string().min(1),
-  items: z.array(commandPaletteEntrySchema)
-});
-
 const runtimeCatalogCacheEntrySchema = z.discriminatedUnion("kind", [
   modelCatalogCacheEntrySchema,
-  permissionProfileCacheEntrySchema,
-  commandPalettePluginCacheEntrySchema
+  permissionProfileCacheEntrySchema
 ]);
 
 const runtimeCatalogCacheFileSchema = z.object({
@@ -111,15 +80,9 @@ export type PermissionProfileCatalogCacheKey = RuntimeCatalogCacheBaseKey & {
   cwd: string;
 };
 
-export type CommandPalettePluginCatalogCacheKey = RuntimeCatalogCacheBaseKey & {
-  kind: "command_palette_plugins";
-  cwd: string;
-};
-
 export type RuntimeCatalogCacheKey =
   | ModelCatalogCacheKey
-  | PermissionProfileCatalogCacheKey
-  | CommandPalettePluginCatalogCacheKey;
+  | PermissionProfileCatalogCacheKey;
 
 export type ModelCatalogCacheEntry = ModelCatalogCacheKey & {
   updatedAt: string;
@@ -131,15 +94,9 @@ export type PermissionProfileCatalogCacheEntry = PermissionProfileCatalogCacheKe
   items: PermissionProfileSummary[];
 };
 
-export type CommandPalettePluginCatalogCacheEntry = CommandPalettePluginCatalogCacheKey & {
-  updatedAt: string;
-  items: CommandPaletteEntry[];
-};
-
 export type RuntimeCatalogCacheEntry =
   | ModelCatalogCacheEntry
-  | PermissionProfileCatalogCacheEntry
-  | CommandPalettePluginCatalogCacheEntry;
+  | PermissionProfileCatalogCacheEntry;
 
 export type RuntimeCatalogResult<T> = {
   items: T[];
@@ -161,8 +118,7 @@ type RuntimeCatalogResolveOptions<T> = {
 
 type RuntimeCatalogItem =
   | ModelCatalogItem
-  | PermissionProfileSummary
-  | CommandPaletteEntry;
+  | PermissionProfileSummary;
 
 export class RuntimeCatalogCache {
   private readonly refreshes = new Map<string, Promise<RuntimeCatalogResult<unknown>>>();
@@ -178,15 +134,10 @@ export class RuntimeCatalogCache {
     options: RuntimeCatalogResolveOptions<PermissionProfileSummary>
   ): Promise<RuntimeCatalogResult<PermissionProfileSummary>>;
   async resolve(
-    key: CommandPalettePluginCatalogCacheKey,
-    options: RuntimeCatalogResolveOptions<CommandPaletteEntry>
-  ): Promise<RuntimeCatalogResult<CommandPaletteEntry>>;
-  async resolve(
     key: RuntimeCatalogCacheKey,
     options:
       | RuntimeCatalogResolveOptions<ModelCatalogItem>
       | RuntimeCatalogResolveOptions<PermissionProfileSummary>
-      | RuntimeCatalogResolveOptions<CommandPaletteEntry>
   ): Promise<RuntimeCatalogResult<RuntimeCatalogItem>> {
     const cached = await this.read(key);
     if (cached && !options.refresh) {
