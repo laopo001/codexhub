@@ -34,6 +34,7 @@ const detailedRecordToView = (record: CodexRecord): CodexRecordView | null => {
   if (record.type === "event_msg") {
     if (payload.type === "user_message") return userMessageToView(record, payload);
     if (payload.type === "agent_message") return agentMessageToView(record, payload);
+    if (payload.type === "plan") return planMessageToView(record, payload);
     if (payload.type === "context_compaction") return contextCompactionToView(record, payload);
     return {
       id: record.id,
@@ -99,6 +100,22 @@ const agentMessageToView = (record: CodexRecord, payload: Record<string, unknown
     status,
     statusText,
     canFork: phase === "final_answer" && !isActiveRecordStatus(status),
+    record
+  };
+};
+
+const planMessageToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
+  if (typeof payload.message !== "string") return null;
+  const status = recordViewStatusFromAppStatus(payload.status);
+  return {
+    id: record.id,
+    role: "codex",
+    label: "final_answer",
+    text: payload.message,
+    at: record.timestamp,
+    status,
+    statusText: recordViewStatusText(payload.status),
+    canFork: !isActiveRecordStatus(status),
     record
   };
 };

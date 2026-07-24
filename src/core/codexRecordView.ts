@@ -82,6 +82,21 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
+  if (payload.type === "plan" && typeof payload.message === "string") {
+    const status = recordViewStatusFromAppStatus(payload.status);
+    return {
+      id: record.id,
+      role: "codex",
+      label: "final_answer",
+      text: payload.message,
+      at: record.timestamp,
+      status,
+      statusText: recordViewStatusText(payload.status),
+      canFork: !isActiveRecordStatus(status),
+      record
+    };
+  }
+
   if (payload.type === "image_generation_end") {
     const text = [
       "Generated image",

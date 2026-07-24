@@ -42,6 +42,52 @@ test("compact views only coalesce normalized context_compaction events", () => {
   assert.equal(compactToolViews(mixedViews).length, 2);
 });
 
+test("Plan mode output renders as the final Codex answer in both message modes", async () => {
+  const plan: CodexRecord = {
+    id: "app:thread-1:turn-1:item:plan:plan-1",
+    timestamp: "2026-07-24T07:23:18.397Z",
+    type: "event_msg",
+    payload: {
+      type: "plan",
+      message: "# Implementation plan\n\n- Fix the projection.",
+      status: "completed"
+    },
+    sourceThreadId: "thread-1"
+  };
+  const expected = {
+    role: "codex",
+    label: "final_answer",
+    text: "# Implementation plan\n\n- Fix the projection.",
+    status: "completed",
+    canFork: true
+  };
+
+  assert.deepEqual(recordToView(plan), {
+    id: plan.id,
+    at: plan.timestamp,
+    statusText: "completed",
+    record: plan,
+    ...expected
+  });
+  assert.deepEqual(recordsToDetailedViews([plan])[0], {
+    id: plan.id,
+    at: plan.timestamp,
+    statusText: "completed",
+    record: plan,
+    ...expected
+  });
+
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { isSimpleRecord } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  assert.equal(isSimpleRecord(plan), true);
+});
+
 test("interrupted turns render as a neutral terminal state rather than a failure", () => {
   const records: CodexRecord[] = [{
     id: "turn-start",

@@ -98,6 +98,29 @@ test("reasoning catalog stays model-specific and preserves descriptions", async 
       .modelReasoningEffort,
     null
   );
+  assert.equal(
+    selectedThreadOptions("gpt-5.6-luna", switchedDraft, "auto", "chat", "auto", "auto", null)
+      .collaborationMode,
+    "default"
+  );
+  assert.deepEqual(
+    selectedThreadOptions("gpt-5.6-luna", switchedDraft, "auto", "goal", "auto", "auto", null),
+    {
+      model: "gpt-5.6-luna",
+      modelReasoningEffort: null,
+      serviceTier: null,
+      approvalPolicy: null,
+      approvalsReviewer: null,
+      permissions: null,
+      collaborationMode: "default",
+      goalMode: true
+    }
+  );
+  assert.equal(
+    selectedThreadOptions("gpt-5.6-luna", switchedDraft, "auto", "plan", "auto", "auto", null)
+      .collaborationMode,
+    "plan"
+  );
   assert.equal(reasoningDraftForModelSelection("ultra", catalog, "gpt-5.6-sol"), "ultra");
   assert.equal(
     effectiveReasoningSelectionForModel("auto", "ultra", catalog, "gpt-5.6-sol"),

@@ -934,7 +934,7 @@ export const selectedThreadOptions = (
   approvalPolicy: approvalPolicy === "auto" ? null : approvalPolicy,
   approvalsReviewer: approvalsReviewer === "auto" ? null : approvalsReviewer,
   permissions: permissionProfile,
-  ...(composerMode === "plan" ? { collaborationMode: "plan" as const } : {}),
+  collaborationMode: composerMode === "plan" ? "plan" as const : "default" as const,
   ...(composerMode === "goal" ? { goalMode: true } : {})
 });
 

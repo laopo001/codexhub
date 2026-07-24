@@ -378,6 +378,7 @@ export const isSimpleRecord = (record: CodexRecord) => {
       payload?.type === "token_count"
       || payload?.type === "user_message"
       || payload?.type === "agent_message"
+      || payload?.type === "plan"
       || isContextCompactionType(payload?.type)
     );
 };
@@ -558,6 +559,7 @@ const activityStatusSnapshotTargetRecordId = (records: CodexRecord[]) => {
     const payload = asRecord(record.payload);
     if (record.type === "error") return record.id;
     if (record.type === "event_msg" && payload?.type === "agent_message") return record.id;
+    if (record.type === "event_msg" && payload?.type === "plan") return record.id;
     if (record.type === "response_item" && payload?.type === "message" && payload.role === "assistant") {
       return record.id;
     }

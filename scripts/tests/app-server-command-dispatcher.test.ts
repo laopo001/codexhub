@@ -374,6 +374,54 @@ test("dispatcher forwards ultra as turn/start effort", async () => {
   assert.equal(settingsReads.config, 0);
 });
 
+test("dispatcher sends an explicit Default collaboration mode for Chat turns", async () => {
+  const { host, requests, settingsReads } = createHost({
+    cachedThreadSettings: {
+      model: "gpt-current",
+      modelReasoningEffort: "high",
+      collaborationMode: "plan"
+    },
+    configThreadSettings: {
+      model: "gpt-default",
+      modelReasoningEffort: "medium",
+      collaborationMode: "default"
+    }
+  });
+  await dispatchAppServerCommand(command({
+    type: "turn",
+    threadId: "thread-1",
+    input: "implement this",
+    options: {
+      collaborationMode: "default",
+      model: "gpt-current",
+      modelReasoningEffort: "ultra"
+    }
+  }), host);
+
+  assert.deepEqual(requests, [{
+    method: "turn/start",
+    params: {
+      threadId: "thread-1",
+      cwd: "/tmp/project",
+      input: [{ type: "text", text: "implement this", text_elements: [] }],
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-current",
+          reasoning_effort: "ultra",
+          developer_instructions: null
+        }
+      }
+    }
+  }]);
+  assert.equal(settingsReads.config, 1);
+  assert.deepEqual(host.cachedThreadSettings("thread-1"), {
+    model: "gpt-current",
+    modelReasoningEffort: "ultra",
+    collaborationMode: "default"
+  });
+});
+
 test("dispatcher repairs sticky Plan before starting an Ultra turn", async () => {
   const { host, requests, settingsReads } = createHost({
     cachedThreadSettings: {

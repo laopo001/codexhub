@@ -218,6 +218,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     { markBridgeStarted: true }
   );
   const planTurn = command.options?.collaborationMode === "plan";
+  const defaultTurn = command.options?.collaborationMode === "default";
   const cachedSettings = host.cachedThreadSettings(loadedThreadId) ?? {};
   const pendingPlanReset = host.planResetModes.get(loadedThreadId);
   if (command.options?.goalMode) {
@@ -229,6 +230,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
   host.markBridgeStartedThread(loadedThreadId);
   const params = turnRequestParams(command.options);
   let resetCollaborationMode = pendingPlanReset;
+  let explicitDefaultMode: AppServerCollaborationMode | undefined;
   if (planTurn) {
     const clearModelOverride = command.options
       && hasOwn(command.options, "model")
@@ -254,6 +256,31 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     delete params.model;
     delete params.effort;
     params.collaborationMode = modes.plan;
+  } else if (defaultTurn) {
+    const clearModelOverride = command.options
+      && hasOwn(command.options, "model")
+      && command.options.model === null;
+    const resetBaseline = pendingPlanReset
+      ? {
+          model: pendingPlanReset.settings.model,
+          modelReasoningEffort: pendingPlanReset.settings.reasoning_effort
+        }
+      : cachedSettings;
+    const currentSettings = await defaultThreadSettings(
+      host,
+      loadedThreadId,
+      command.workingDirectory,
+      resetBaseline,
+      Boolean(clearModelOverride)
+    );
+    explicitDefaultMode = (await resolveCollaborationModes(
+      host,
+      command.options,
+      currentSettings
+    )).reset;
+    delete params.model;
+    delete params.effort;
+    params.collaborationMode = explicitDefaultMode;
   } else if (!resetCollaborationMode && cachedSettings.collaborationMode === "plan") {
     const currentSettings = await defaultThreadSettings(
       host,
@@ -271,7 +298,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
       host.planResetModes.set(loadedThreadId, resetCollaborationMode);
     }
   }
-  if (!planTurn && resetCollaborationMode) {
+  if (!planTurn && !defaultTurn && resetCollaborationMode) {
     await applyPlanReset(host, loadedThreadId, resetCollaborationMode);
   }
   await host.request("turn/start", {
@@ -280,6 +307,12 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     input: toAppServerInput(command.input),
     ...params
   }, command);
+  if (explicitDefaultMode) {
+    host.cacheThreadCollaborationMode(loadedThreadId, explicitDefaultMode);
+    if (host.planResetModes.get(loadedThreadId) === pendingPlanReset) {
+      host.planResetModes.delete(loadedThreadId);
+    }
+  }
   if (planTurn && resetCollaborationMode) {
     // Plan is a one-turn composer mode, while app-server collaboration mode is
     // sticky. Reset only subsequent turns after the Plan turn has started.
