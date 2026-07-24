@@ -332,6 +332,7 @@ export type SessionCommand = {
   userInputAnswers?: AppServerUserInputAnswers;
   limit?: number;
   includeHidden?: boolean;
+  refresh?: boolean;
   commandPalettePart?: CommandPalettePart;
   title?: string;
   goal?: ThreadGoalUpdate;
@@ -347,6 +348,9 @@ export type SessionThreadCandidatesResult = {
 /** list_models 命令返回的 app-server 模型目录。 */
 export type SessionModelCatalogResult = {
   models: ModelCatalogItem[];
+  source?: "live" | "cache";
+  updatedAt?: string;
+  stale?: boolean;
 };
 
 /** list_permission_profiles 命令返回的 app-server permission profile 目录。 */

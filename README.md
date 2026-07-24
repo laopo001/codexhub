@@ -48,7 +48,7 @@ pnpm codexhub server --host 0.0.0.0 --port 8788
 
 CodexHub 启动官方 `codex app-server` 时会先解析 Codex CLI：优先使用 `CODEX_HUB_CODEX_CLI`，再查找 `PATH`、常见 npm/pnpm 全局 bin 目录；Windows 下会识别 `codex.cmd` / `codex.bat` 并通过 `cmd.exe call` 启动。app-server ready 检查默认等待 60 秒，可用 `CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 调整；启动失败时错误会带上最近的 app-server stderr 尾部，方便定位 Codex CLI 或登录环境问题。
 
-CodexHub 默认读取 `${CODEX_HOME:-~/.codex}/models_cache.json`（文件存在时），并把它作为官方 app-server 的启动级 `model_catalog_json` override，避免新 thread 在远程模型目录刷新上同步等待。首次运行尚无缓存时会保留 app-server 原生联网行为；如需使用其他 catalog，可用绝对路径 `CODEX_HUB_APP_SERVER_MODEL_CATALOG_JSON` 显式覆盖。CodexHub 只读取该文件，不会改写模型目录。
+CodexHub 不读取或注入 Codex 私有的 `models_cache.json` / `model_catalog_json`。machine 从在线 app-server 的 `model/list` 取得并归一化模型目录后，会缓存到 `${CODEX_HUB_DATA_DIR:-~/.config/codexhub}/model-catalog-cache.json`；嵌入 surface 使用对应 server data directory。缓存按 machine、Codex CLI 版本、app-server 报告的 `codexHome` 和 hidden 模式隔离，默认 6 小时后视为过期，可用 `CODEX_HUB_MODEL_CATALOG_CACHE_TTL_MS` 调整。过期缓存可以先用于响应和 Plan fallback，同时后台刷新；Web 会明确标记缓存来源并允许强制刷新，不会把缓存伪装成实时目录。
 
 远端机器或容器外的宿主机可以主动注册。远端已经安装 CodexHub 时，直接让远端 server 注册到父 server：
 

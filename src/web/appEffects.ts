@@ -213,17 +213,27 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       || currentCatalog?.status === "ready"
       || currentCatalog?.status === "error"
     ) return undefined;
+    const refresh = currentCatalog?.refresh === true;
     state.setModelCatalogByMachine((current) => ({
       ...current,
-      [machineId]: { status: "loading", models: [] }
+      [machineId]: {
+        status: "loading",
+        models: currentCatalog?.models ?? [],
+        source: currentCatalog?.source,
+        updatedAt: currentCatalog?.updatedAt,
+        stale: currentCatalog?.stale
+      }
     }));
-    void apiRouteJson(apiRoutes.runtimeModels, machineId)
+    void apiRouteJson(apiRoutes.runtimeModels, machineId, false, refresh)
       .then((payload) => {
         state.setModelCatalogByMachine((current) => ({
           ...current,
           [machineId]: {
             status: "ready",
-            models: Array.isArray(payload.models) ? payload.models : []
+            models: Array.isArray(payload.models) ? payload.models : [],
+            source: payload.source,
+            updatedAt: payload.updatedAt,
+            stale: payload.stale
           }
         }));
       })
@@ -231,11 +241,18 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
         const message = error instanceof Error ? error.message : String(error);
         state.setModelCatalogByMachine((current) => ({
           ...current,
-          [machineId]: {
-            status: "error",
-            models: [],
-            error: message || "Model catalog unavailable."
-          }
+          [machineId]: currentCatalog?.source === "cache" && currentCatalog.models.length
+            ? {
+                ...currentCatalog,
+                status: "ready",
+                refresh: undefined,
+                error: message || "Live model catalog refresh failed."
+              }
+            : {
+                status: "error",
+                models: [],
+                error: message || "Model catalog unavailable."
+              }
         }));
       });
   }, [

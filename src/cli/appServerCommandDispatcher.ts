@@ -3,6 +3,7 @@ import type {
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
   SessionCommand,
+  SessionModelCatalogResult,
   ThreadGoalUpdate,
   ThreadRunOptions
 } from "../shared/threadTypes.js";
@@ -31,7 +32,7 @@ export type AppServerCommandHost = {
   defaultModel?: string;
   permissionParams: Record<string, unknown>;
   listThreads: (cwd: string, limit?: number) => Promise<unknown>;
-  listModels: (includeHidden: boolean) => Promise<unknown>;
+  listModels: (includeHidden: boolean, refresh?: boolean) => Promise<SessionModelCatalogResult>;
   listPermissionProfiles: (cwd: string) => Promise<unknown>;
   listCollaborationModes: () => Promise<unknown>;
   cachedThreadSettings: (threadId: string) => AppServerThreadSettings | undefined;
@@ -74,7 +75,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     return { threads: await host.listThreads(command.workingDirectory, command.limit) };
   }
   if (command.type === "list_models") {
-    return { models: await host.listModels(Boolean(command.includeHidden)) };
+    return await host.listModels(Boolean(command.includeHidden), Boolean(command.refresh));
   }
   if (command.type === "list_permission_profiles") {
     return { profiles: await host.listPermissionProfiles(command.workingDirectory) };
@@ -422,7 +423,7 @@ const resolveCollaborationModes = async (
   const fallbackModel = stringValue(options?.model)
     ?? stringValue(currentSettings.model)
     ?? stringValue(host.defaultModel);
-  const models = fallbackModel || [defaultMask, planMask].every((item) => stringValue(item.model))
+  const modelCatalog = fallbackModel || [defaultMask, planMask].every((item) => stringValue(item.model))
     ? undefined
     : await host.listModels(false);
   const selectedEffort = options && hasOwn(options, "modelReasoningEffort")
@@ -432,7 +433,7 @@ const resolveCollaborationModes = async (
     mode: AppServerCollaborationMode["mode"],
     selectedMask: Record<string, unknown>
   ): AppServerCollaborationMode => {
-    const model = stringValue(selectedMask.model) ?? fallbackModel ?? catalogModel(models);
+    const model = stringValue(selectedMask.model) ?? fallbackModel ?? catalogModel(modelCatalog?.models);
     if (!model) throw new Error(`${mode} mode requires an app-server mask, selected model, or live default model.`);
     const maskEffort = stringValue(selectedMask.reasoning_effort);
     return {

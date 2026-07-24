@@ -114,6 +114,7 @@ type SessionCommand = {
   threadId?: string;
   workingDirectory?: string;
   includeHidden?: boolean;
+  refresh?: boolean;
   input?: unknown;
   turnId?: string;
   goal?: {
@@ -185,6 +186,9 @@ const main = async () => {
     if (modelListCommand.includeHidden !== false) {
       throw new Error(`model catalog command should not include hidden models by default: ${JSON.stringify(modelListCommand)}`);
     }
+    if (modelListCommand.refresh !== false) {
+      throw new Error(`ordinary model catalog command should not force refresh: ${JSON.stringify(modelListCommand)}`);
+    }
     const modelCatalog = await modelCatalogPromise;
     const catalogModel = modelCatalog.models?.find((model) => model.model === "gpt-5.6-sol");
     if (!catalogModel) {
@@ -200,6 +204,15 @@ const main = async () => {
     if (!catalogModel.serviceTiers?.some((option) => option.value === "fast")) {
       throw new Error(`model catalog response missing fast service tier: ${JSON.stringify(modelCatalog)}`);
     }
+    const refreshedModelCatalogPromise = apiJson(
+      apiBase,
+      `/api/machines/${encodeURIComponent(fake.machineId)}/models?refresh=true`
+    );
+    const refreshedModelListCommand = await fake.nextSessionCommand("list_models");
+    if (refreshedModelListCommand.refresh !== true) {
+      throw new Error(`forced model catalog refresh was not forwarded: ${JSON.stringify(refreshedModelListCommand)}`);
+    }
+    await refreshedModelCatalogPromise;
     console.log("runtime model catalog ok");
     const permissionProfilesPromise = apiJson<{
       profiles?: Array<{ id?: string; description?: string | null; allowed?: boolean }>;

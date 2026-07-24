@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 import {
   machineHeartbeatSchema,
@@ -15,9 +12,7 @@ import {
 import {
   parseCodexApprovalPolicy,
   parseCodexApprovalsReviewer,
-  parseCodexModelCatalogJsonPath,
-  resolveCodexAppServerLaunchOptions,
-  resolveCodexModelCatalogJsonPath
+  resolveCodexAppServerLaunchOptions
 } from "../../src/cli/codexAppServerProcess.js";
 
 test("machine registration and heartbeat reject unknown compatibility fields", () => {
@@ -66,35 +61,6 @@ test("approval policy rejects the removed on-failure value", () => {
   assert.equal(threadRunOptionsSchema.safeParse({ multiAgentMode: "auto" }).success, false);
   assert.throws(() => parseCodexApprovalPolicy("on-failure"), /Invalid approval policy/);
   assert.equal(parseCodexApprovalPolicy("on-request"), "on-request");
-});
-
-test("app-server model catalog override requires an absolute path", () => {
-  assert.throws(() => parseCodexModelCatalogJsonPath("models.json"), /must be an absolute path/);
-  assert.equal(parseCodexModelCatalogJsonPath(" /tmp/models.json "), "/tmp/models.json");
-});
-
-test("app-server model catalog defaults to the active Codex home cache", async () => {
-  const homeDirectory = await mkdtemp(path.join(os.tmpdir(), "codexhub-model-catalog."));
-  const defaultCatalog = path.join(homeDirectory, ".codex", "models_cache.json");
-  const customCodexHome = path.join(homeDirectory, "custom-codex-home");
-  const customCatalog = path.join(customCodexHome, "models_cache.json");
-  const explicitCatalog = path.join(homeDirectory, "explicit-models.json");
-  try {
-    assert.equal(resolveCodexModelCatalogJsonPath({}, homeDirectory), undefined);
-    await mkdir(path.dirname(defaultCatalog), { recursive: true });
-    await writeFile(defaultCatalog, "{}");
-    assert.equal(resolveCodexModelCatalogJsonPath({}, homeDirectory), defaultCatalog);
-
-    await mkdir(customCodexHome, { recursive: true });
-    await writeFile(customCatalog, "{}");
-    assert.equal(resolveCodexModelCatalogJsonPath({ CODEX_HOME: customCodexHome }, homeDirectory), customCatalog);
-    assert.equal(resolveCodexModelCatalogJsonPath({
-      CODEX_HOME: customCodexHome,
-      CODEX_HUB_APP_SERVER_MODEL_CATALOG_JSON: explicitCatalog
-    }, homeDirectory), explicitCatalog);
-  } finally {
-    await rm(homeDirectory, { recursive: true, force: true });
-  }
 });
 
 test("app-server launch reviewer follows the current protocol values", () => {

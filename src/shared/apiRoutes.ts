@@ -165,8 +165,11 @@ export const apiRoutes = {
   threadCandidates: get<ThreadCandidatesPayload, (machineId: string, cwd?: string, limit?: number) => string>(
     (machineId, cwd, limit = 20) => `/api/machines/${encode(machineId)}/thread-candidates${queryString({ limit, cwd })}`
   ),
-  runtimeModels: get<RuntimeModelsPayload, (machineId: string, includeHidden?: boolean) => string>(
-    (machineId, includeHidden) => `/api/machines/${encode(machineId)}/models${queryString({ includeHidden: includeHidden ? "true" : undefined })}`
+  runtimeModels: get<RuntimeModelsPayload, (machineId: string, includeHidden?: boolean, refresh?: boolean) => string>(
+    (machineId, includeHidden, refresh) => `/api/machines/${encode(machineId)}/models${queryString({
+      includeHidden: includeHidden ? "true" : undefined,
+      refresh: refresh ? "true" : undefined
+    })}`
   ),
   runtimePermissionProfiles: get<RuntimePermissionProfilesPayload, (machineId: string, cwd: string) => string>(
     (machineId, cwd) => `/api/machines/${encode(machineId)}/permission-profiles${queryString({ cwd })}`

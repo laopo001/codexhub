@@ -5,7 +5,7 @@ import {
   type AppServerCollaborationMode,
   type AppServerCommandHost
 } from "../../src/cli/appServerCommandDispatcher.js";
-import type { SessionCommand } from "../../src/shared/threadTypes.js";
+import type { SessionCommand, SessionModelCatalogResult } from "../../src/shared/threadTypes.js";
 
 const command = (value: Partial<SessionCommand> & Pick<SessionCommand, "type">): SessionCommand => ({
   seq: 1,
@@ -42,7 +42,9 @@ const createHost = (options: {
     defaultModel: options.defaultModel === null ? undefined : options.defaultModel ?? "fallback-model",
     permissionParams: { approvalPolicy: "never" },
     listThreads: async () => [],
-    listModels: async () => options.models ?? [{ id: "model-1", model: "gpt-model-1" }],
+    listModels: async () => ({
+      models: (options.models ?? [{ id: "model-1", model: "gpt-model-1" }]) as SessionModelCatalogResult["models"]
+    }),
     listPermissionProfiles: async () => [],
     listCollaborationModes: async () => options.collaborationModes ?? ({
       data: [

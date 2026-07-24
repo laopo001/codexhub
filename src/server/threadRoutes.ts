@@ -236,9 +236,16 @@ export const registerThreadRoutes = <
 
   app.get("/api/machines/:machineId/models", async (request, reply) => {
     const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
-    const query = z.object({ includeHidden: z.string().optional() }).parse(request.query);
+    const query = z.object({
+      includeHidden: z.string().optional(),
+      refresh: z.string().optional()
+    }).parse(request.query);
     try {
-      const result = await ctx.threads.listMachineModels(params.machineId, query.includeHidden === "true");
+      const result = await ctx.threads.listMachineModels(
+        params.machineId,
+        query.includeHidden === "true",
+        query.refresh === "true"
+      );
       return result satisfies RuntimeModelsPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

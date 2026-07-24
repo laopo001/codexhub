@@ -139,6 +139,7 @@ const App = () => {
     activePermissionProfiles,
     activePermissionProfilesError,
     activePermissionProfilesStatus,
+    activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
     activeThreadModelDraft,
@@ -411,10 +412,18 @@ const App = () => {
     const machineId = activeRuntime?.machineId;
     if (!machineId) return;
     setModelCatalogByMachine((current) => {
-      if (!Object.prototype.hasOwnProperty.call(current, machineId)) return current;
-      const next = { ...current };
-      delete next[machineId];
-      return next;
+      const existing = current[machineId];
+      return {
+        ...current,
+        [machineId]: {
+          status: "idle",
+          models: existing?.models ?? [],
+          source: existing?.source,
+          updatedAt: existing?.updatedAt,
+          stale: existing?.stale,
+          refresh: true
+        }
+      };
     });
   };
 
@@ -497,6 +506,7 @@ const App = () => {
     activePermissionProfiles,
     activePermissionProfilesError,
     activePermissionProfilesStatus,
+    activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
     activeThreadModelDraft,

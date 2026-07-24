@@ -28,7 +28,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 5. `codexhub server --register-to <parent>` 会启动当前 server，并额外把它作为一台 `registered` machine 接入父 server；这不是 server-to-server state bridge。
 6. `codexhub ssh ...` 是 server-side SSH 管理入口；SSH remote client 由本机 server bootstrap 下发，不要求远端预装 codexhub。
 7. VSCode 和 Electron 都调用 `src/server/embedded.ts` 复用同一套 server/Web。VSCode 默认每个窗口启动自己的随机端口嵌入 server，并共享 VSCode extension `globalStorageUri` 下的 `config.yaml`；parent URL 和可选 token 可以跨窗口共享，但每个 workspace 必须使用 `workspaceState` 下独立、稳定的 parent registration machineId，不能让多个窗口争用同一个 machine transport。窗口内嵌 local machine 和自动 workspace projects 只作为 transient 内存投影，不写入持久配置。Electron 默认随机端口，只有显式 `CODEX_HUB_PORT` 时才固定端口。
-8. machine/headless 启动官方 `codex app-server` 时必须走 `resolveCodexCommand()`：优先 `CODEX_HUB_CODEX_CLI`，再查 `PATH` 和常见 npm/pnpm 全局 bin；Windows `.cmd` / `.bat` 需要经 `cmd.exe /d /s /c call` 启动。`CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 控制 `/readyz` 等待时间，错误应带最近 app-server stderr tail。默认使用 `${CODEX_HOME:-~/.codex}/models_cache.json` 作为启动级 `model_catalog_json`（仅文件存在时），`CODEX_HUB_APP_SERVER_MODEL_CATALOG_JSON` 可以显式覆盖；默认文件不存在时保留 app-server 原生联网目录行为。
+8. machine/headless 启动官方 `codex app-server` 时必须走 `resolveCodexCommand()`：优先 `CODEX_HUB_CODEX_CLI`，再查 `PATH` 和常见 npm/pnpm 全局 bin；Windows `.cmd` / `.bat` 需要经 `cmd.exe /d /s /c call` 启动。`CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 控制 `/readyz` 等待时间，错误应带最近 app-server stderr tail。不要读取 Codex 私有 `models_cache.json`，也不要注入 `model_catalog_json`；machine 应缓存在线 app-server 的标准 `model/list` 归一化结果到 server data directory 下的 `model-catalog-cache.json`，按 machine、CLI 版本和 app-server 报告的 `codexHome` 隔离，缓存响应必须向 Web 标明来源。
 
 ## Machine / Session / Thread
 
@@ -123,7 +123,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 6. Workspace thread tabs 使用 Ant Design Tabs 的官方 editable-card 行为和 pane 高度契约；不要为 add/remove 重新写一套自定义 tabs 外观。
 7. VSCode surface 使用同一套 Web UI 和完整左侧控制面。`surface=vscode` 只用于 VSCode 通知桥、daemon 兼容判断、workspace project group 等嵌入环境差异，不应隐藏 sidebar 或关闭 SSH/tasks/plugins/Registered 能力。
 8. 任务完成通知：完成音效总是由 Web 播放；Settings 里的 `taskCompleteSystemNotifications` 只控制系统弹窗，普通 Web 走 browser Notification，VSCode 走 iframe `postMessage` 到 extension，再由 VSCode notification 展示。
-9. Thread Model 弹窗的 model/reasoning/service tier 选项只使用当前在线 app-server `model/list` catalog；catalog 不可用时显示加载/错误状态并禁用选择，不提供本地静态 fallback，也不能把 catalog 保存进 `config.yaml`。
+9. Thread Model 弹窗的 model/reasoning/service tier 选项只使用当前在线 app-server `model/list` catalog 或 CodexHub 对该 runtime 响应的带时间戳缓存；缓存来源必须明确显示并允许强制刷新。catalog 不可用且没有缓存时显示加载/错误状态并禁用选择，不提供静态 fallback，也不能把 catalog 保存进 `config.yaml`。
 10. Composer 权限菜单的 permission profile 只使用当前在线 app-server `permissionProfile/list` catalog；允许展示协议固定的 approval policy / reviewer 枚举，但不能为 profile 提供本地静态 fallback，也不能把 profile catalog 保存进 `config.yaml`。
 11. UI 文案和交互不要重新暴露已删除概念：worker、instance、project rename、project thread/history count、per-project runtime restart/stop。
 

@@ -197,6 +197,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   activePermissionProfiles: PermissionProfileSummary[];
   activePermissionProfilesError: string;
   activePermissionProfilesStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
+  activeModelCatalogCacheNotice: string;
   activeModelCatalogError: string;
   activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
   activeThreadModelDraft: ModelSelection;
@@ -396,6 +397,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "machines"
   | "messageContextMenu"
   | "messageDisplayMode"
+  | "activeModelCatalogCacheNotice"
   | "activeModelCatalogError"
   | "activeModelCatalogStatus"
   | "effectiveModelSelection"
@@ -496,7 +498,7 @@ const dialogKeys = [
   "createWorktreeThread", "goalDialog", "imagePreview", "inspectContextMessage", "inspectMessage",
   "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageContextMenu",
   "messageDisplayMode",
-  "activeModelCatalogError", "activeModelCatalogStatus", "effectiveModelSelection",
+  "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "effectiveModelSelection",
   "effectiveReasoningSelection", "effectiveServiceTierSelection", "modelOptions", "reasoningOptions",
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
   "saveGoalDialog", "saveThreadRenameDialog", "threadModelDialogOpen", "threadRenameDialog",

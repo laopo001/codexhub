@@ -361,6 +361,16 @@ export const useAppSelectors = (state: AppState) => {
   const activeModelCatalogError = activeModelCatalogState?.status === "error"
     ? activeModelCatalogState.error ?? "Model catalog unavailable."
     : "";
+  const activeModelCatalogCacheNotice = activeModelCatalogState?.status === "ready"
+    && activeModelCatalogState.source === "cache"
+    ? [
+        `Using ${activeModelCatalogState.stale ? "stale " : ""}CodexHub model catalog cache`,
+        activeModelCatalogState.updatedAt
+          ? `from ${new Date(activeModelCatalogState.updatedAt).toLocaleString()}`
+          : "",
+        activeModelCatalogState.error ? `Live refresh failed: ${activeModelCatalogState.error}` : ""
+      ].filter(Boolean).join(" · ")
+    : "";
   const activePermissionProfileScopeKey = activeThread?.runtime.machineId && activeThread.workingDirectory
     ? permissionProfileScopeKey(activeThread.runtime.machineId, activeThread.workingDirectory)
     : "";
@@ -419,6 +429,7 @@ export const useAppSelectors = (state: AppState) => {
     activePermissionProfiles,
     activePermissionProfilesError,
     activePermissionProfilesStatus,
+    activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
     activeThreadReasoning,

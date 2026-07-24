@@ -12,6 +12,7 @@ type TunneledSessionEntry = {
 
 export type TunneledSessionManagerOptions = {
   apiBase: string;
+  modelCatalogCacheFilePath?: string;
   threads: ThreadHub;
   captureSessionState: () => void;
   publishProjects: () => void;
@@ -64,6 +65,7 @@ export class TunneledSessionManager {
       sessionId: input.sessionId,
       machineId: input.machineId,
       cwd: input.cwd,
+      modelCatalogCacheFilePath: this.options.modelCatalogCacheFilePath,
       readyLabel: "codexhub tunneled app-server ready",
       transportFactory: (_context, callbacks) => new DirectThreadHubSessionTransport({
         threads: this.options.threads,

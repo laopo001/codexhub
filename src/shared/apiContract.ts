@@ -227,6 +227,9 @@ export type ThreadCandidatesPayload = {
 /** machine runtime model catalog 接口返回的 payload。 */
 export type RuntimeModelsPayload = {
   models?: ModelCatalogItem[];
+  source?: "live" | "cache";
+  updatedAt?: string;
+  stale?: boolean;
 };
 
 /** machine runtime permission profile catalog 接口返回的 payload。 */

@@ -174,6 +174,7 @@ export type ServerFeatureOptions = {
 export const startServer = async (options: ServerStartOptions = {}): Promise<ServerHandle> => {
   const state = await CodexhubServerState.load({ dataDir: options.dataDir });
   state.applyEnvToProcess();
+  const modelCatalogCacheFilePath = path.join(path.dirname(state.path), "model-catalog-cache.json");
   const config = loadConfig({ host: options.host, port: options.port });
   const appServerLaunch = resolveCodexAppServerLaunchOptions(options.appServerLaunch);
   const surface = options.surface ?? parseSurface(process.env.CODEX_HUB_SURFACE);
@@ -245,6 +246,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const threadRecordSubscriptionTimers = new Map<string, NodeJS.Timeout>();
   const tunneledSessions = new TunneledSessionManager({
     apiBase: localApiBaseUrl(config.host, config.port),
+    modelCatalogCacheFilePath,
     threads,
     captureSessionState,
     publishProjects,
@@ -746,6 +748,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       type: "local",
       name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "local",
       appServerLaunch,
+      modelCatalogCacheFilePath,
       capabilities: embeddedSurface ? { projectCatalog: "fixed" } : undefined
     });
   }

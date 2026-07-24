@@ -52,6 +52,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     machines,
     messageContextMenu,
     messageDisplayMode,
+    activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
     effectiveModelSelection,
@@ -166,7 +167,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
       ? "Loading model catalog..."
       : modelCatalogError
         ? activeModelCatalogError || "Model catalog unavailable."
-        : "";
+        : activeModelCatalogCacheNotice;
   const threadModelSelectDisabled = activeModelCatalogStatus !== "ready";
 
   return (
@@ -226,8 +227,10 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
             {modelCatalogNotice ? (
               <div className={`sessionDialogNotice${modelCatalogError ? " error" : ""}`}>
                 <span>{modelCatalogNotice}</span>
-                {modelCatalogError ? (
-                  <button type="button" className="textButton" onClick={retryModelCatalog}>Retry</button>
+                {modelCatalogError || activeModelCatalogCacheNotice ? (
+                  <button type="button" className="textButton" onClick={retryModelCatalog}>
+                    {modelCatalogError ? "Retry" : "Refresh"}
+                  </button>
                 ) : null}
               </div>
             ) : null}

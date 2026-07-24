@@ -1,5 +1,4 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -155,8 +154,7 @@ export const resolveCodexAppServerLaunchOptions = (
   return {
     approvalPolicy: overrides.approvalPolicy ?? envOptions.approvalPolicy,
     approvalsReviewer: overrides.approvalsReviewer ?? envOptions.approvalsReviewer ?? "auto_review",
-    sandbox: overrides.sandbox ?? envOptions.sandbox,
-    modelCatalogJson: overrides.modelCatalogJson ?? envOptions.modelCatalogJson
+    sandbox: overrides.sandbox ?? envOptions.sandbox
   };
 };
 
@@ -166,36 +164,8 @@ export const codexAppServerLaunchOptionsFromEnv = (): CodexAppServerLaunchOption
     process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER,
     "CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER"
   ),
-  sandbox: parseCodexSandboxMode(process.env.CODEX_HUB_APP_SERVER_SANDBOX, "CODEX_HUB_APP_SERVER_SANDBOX"),
-  modelCatalogJson: resolveCodexModelCatalogJsonPath()
+  sandbox: parseCodexSandboxMode(process.env.CODEX_HUB_APP_SERVER_SANDBOX, "CODEX_HUB_APP_SERVER_SANDBOX")
 });
-
-export const resolveCodexModelCatalogJsonPath = (
-  env: NodeJS.ProcessEnv = process.env,
-  homeDirectory = os.homedir()
-) => {
-  const configured = parseCodexModelCatalogJsonPath(
-    env.CODEX_HUB_APP_SERVER_MODEL_CATALOG_JSON,
-    "CODEX_HUB_APP_SERVER_MODEL_CATALOG_JSON"
-  );
-  if (configured) return configured;
-  const configuredCodexHome = env.CODEX_HOME?.trim();
-  const codexHome = configuredCodexHome
-    ? path.resolve(configuredCodexHome)
-    : path.join(homeDirectory, ".codex");
-  const defaultCatalog = path.join(codexHome, "models_cache.json");
-  return existsSync(defaultCatalog) ? defaultCatalog : undefined;
-};
-
-export const parseCodexModelCatalogJsonPath = (
-  value: string | undefined,
-  label = "model catalog JSON path"
-) => {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  if (!path.isAbsolute(trimmed)) throw new Error(`${label} must be an absolute path: ${value}`);
-  return path.normalize(trimmed);
-};
 
 export const parseCodexApprovalPolicy = (
   value: string | undefined,
@@ -267,8 +237,7 @@ const codexAppServerArgs = (appServerUrl: string, options: CodexAppServerLaunchO
 const codexConfigArgs = (options: CodexAppServerLaunchOptions) => [
   ...(options.approvalPolicy ? ["-c", `approval_policy="${options.approvalPolicy}"`] : []),
   ...(options.approvalsReviewer ? ["-c", `approvals_reviewer="${options.approvalsReviewer}"`] : []),
-  ...(options.sandbox ? ["-c", `sandbox_mode="${options.sandbox}"`] : []),
-  ...(options.modelCatalogJson ? ["-c", `model_catalog_json=${JSON.stringify(options.modelCatalogJson)}`] : [])
+  ...(options.sandbox ? ["-c", `sandbox_mode="${options.sandbox}"`] : [])
 ];
 
 const codexAppServerEnv = (codexCommand: string) => ({

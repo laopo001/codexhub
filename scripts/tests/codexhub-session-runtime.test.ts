@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   startAttachedCodexhubSession,
@@ -27,6 +30,7 @@ class CurrentProtocolSocket implements AppServerSocketLike {
     errorFor?: string;
     completeTurnImmediately?: boolean;
     userAgent?: string;
+    models?: unknown[];
   } = {}) {}
 
   send(data: string) {
@@ -88,6 +92,11 @@ class CurrentProtocolSocket implements AppServerSocketLike {
           planType: null,
           rateLimitReachedType: null
         }
+      };
+    } else if (message.method === "model/list") {
+      result = {
+        data: this.options.models ?? [],
+        nextCursor: null
       };
     } else if (message.method === "turn/start") {
       result = { turn: { id: "immediate-turn" } };
@@ -181,6 +190,90 @@ const transportFactory: HeadlessSessionTransportFactory = (_context, callbacks) 
   sendEvent: () => undefined,
   sendHeartbeat: () => undefined
 });
+
+test("attached runtime persists model/list results and can force a live refresh", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "codexhub-runtime-model-cache."));
+  const previousDataDirectory = process.env.CODEX_HUB_DATA_DIR;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HUB_DATA_DIR = dataDirectory;
+  process.env.CODEX_HOME = path.join(dataDirectory, "codex-home");
+  const models = [{
+    id: "catalog-gpt-test",
+    model: "gpt-test",
+    displayName: "GPT Test",
+    isDefault: true,
+    supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High reasoning" }],
+    serviceTiers: [{ id: "fast", name: "Fast" }]
+  }];
+  let firstCallbacks: HeadlessSessionTransportCallbacks | undefined;
+  let firstSession: Awaited<ReturnType<typeof startAttachedCodexhubSession>> | undefined;
+  let secondSession: Awaited<ReturnType<typeof startAttachedCodexhubSession>> | undefined;
+  try {
+    const firstSocket = new CurrentProtocolSocket({ models });
+    firstSession = await startAttachedCodexhubSession({
+      apiBase: "http://127.0.0.1:1",
+      appServerUrl: "ws://127.0.0.1:1",
+      appServerTransportFactory: async () => firstSocket,
+      machineId: "machine-model-cache",
+      cwd: "/tmp/current-protocol",
+      transportFactory: (transportContext, callbacks) => {
+        firstCallbacks = callbacks;
+        return transportFactory(transportContext, callbacks);
+      }
+    });
+    assert.ok(firstCallbacks);
+    const live = await firstCallbacks.handleCommand(modelListCommand("live-models"));
+    assert.equal((live as { source?: string }).source, "live");
+    assert.equal(firstSocket.requestCount("model/list"), 1);
+    await firstSession.stop();
+    firstSession = undefined;
+
+    const secondSocket = new CurrentProtocolSocket({ models });
+    let secondCallbacks: HeadlessSessionTransportCallbacks | undefined;
+    secondSession = await startAttachedCodexhubSession({
+      apiBase: "http://127.0.0.1:1",
+      appServerUrl: "ws://127.0.0.1:1",
+      appServerTransportFactory: async () => secondSocket,
+      machineId: "machine-model-cache",
+      cwd: "/tmp/current-protocol",
+      transportFactory: (transportContext, callbacks) => {
+        secondCallbacks = callbacks;
+        return transportFactory(transportContext, callbacks);
+      }
+    });
+    assert.ok(secondCallbacks);
+    const cached = await secondCallbacks.handleCommand(modelListCommand("cached-models"));
+    assert.equal((cached as { source?: string }).source, "cache");
+    assert.equal(secondSocket.requestCount("model/list"), 0);
+    const refreshed = await secondCallbacks.handleCommand({
+      ...modelListCommand("refreshed-models"),
+      refresh: true
+    });
+    assert.equal((refreshed as { source?: string }).source, "live");
+    assert.equal(secondSocket.requestCount("model/list"), 1);
+  } finally {
+    await firstSession?.stop();
+    await secondSession?.stop();
+    restoreEnv("CODEX_HUB_DATA_DIR", previousDataDirectory);
+    restoreEnv("CODEX_HOME", previousCodexHome);
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+const modelListCommand = (commandId: string) => ({
+  seq: 1,
+  commandId,
+  type: "list_models" as const,
+  workingDirectory: "/tmp/current-protocol",
+  createdAt: new Date(0).toISOString(),
+  includeHidden: false
+});
+
+const restoreEnv = (name: string, value: string | undefined) => {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+};
 
 test("attached runtime rejects and does not cache malformed thread/resume responses", async (context) => {
   context.mock.method(console, "error", () => undefined);

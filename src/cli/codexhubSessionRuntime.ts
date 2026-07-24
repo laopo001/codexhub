@@ -29,6 +29,11 @@ import {
   stringField
 } from "./commandPalette.js";
 import { accountRateLimitsPayloadFromValue } from "../core/threadUsage.js";
+import {
+  activeCodexHome,
+  ModelCatalogCache,
+  type ModelCatalogCacheKey
+} from "../core/modelCatalogCache.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import { readPositiveIntEnv } from "../shared/env.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
@@ -50,6 +55,7 @@ import type {
   PermissionProfileSummary,
   SessionCommand,
   SessionEventInput,
+  SessionModelCatalogResult,
   SessionRegistration,
   ThreadCandidateSummary,
   ThreadRunOptions
@@ -161,6 +167,7 @@ type BridgeOptions = {
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy?: "untrusted" | "on-request" | "never";
   expectedCliVersion?: string;
+  modelCatalogCacheFilePath?: string;
   transportFactory: HeadlessSessionTransportFactory;
 };
 
@@ -174,6 +181,7 @@ export type HeadlessCodexhubSessionOptions = {
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy?: "untrusted" | "on-request" | "never";
+  modelCatalogCacheFilePath?: string;
   transportFactory: HeadlessSessionTransportFactory;
 };
 
@@ -210,6 +218,7 @@ export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSess
     sandbox: options.sandbox,
     approvalPolicy: options.approvalPolicy,
     expectedCliVersion: appServer.cliVersion,
+    modelCatalogCacheFilePath: options.modelCatalogCacheFilePath,
     transportFactory: options.transportFactory
   });
   const appServerStopped = appServer.wait();
@@ -448,9 +457,12 @@ class CodexAppServerBridge {
   private readonly appServerThreadSettings = new Map<string, ThreadSettings>();
   private readonly planResetModes = new Map<string, AppServerCollaborationMode>();
   private readonly bridgeStartedThreads = new Set<string>();
+  private readonly modelCatalogCache: ModelCatalogCache;
+  private readonly modelCatalogRefreshes = new Map<boolean, Promise<SessionModelCatalogResult>>();
   private bridgeStartedUnknownCount = 0;
   private readonly closeSignal = new Deferred<void>();
   private cliVersionValue: string | undefined;
+  private codexHomeValue: string | undefined;
 
   private constructor(
     private readonly options: BridgeOptions,
@@ -458,6 +470,7 @@ class CodexAppServerBridge {
     initialState: BridgeState,
     private readonly hub: HubTransportSink
   ) {
+    this.modelCatalogCache = new ModelCatalogCache(options.modelCatalogCacheFilePath);
     this.defaultThreadId = initialState.defaultThreadId;
     for (const [threadId, cwd] of Object.entries(initialState.threadCwds ?? {})) {
       this.threadCwds.set(threadId, cwd);
@@ -504,6 +517,7 @@ class CodexAppServerBridge {
     }
     assertSupportedCodexCliVersion(cliVersion);
     this.cliVersionValue = cliVersion;
+    this.codexHomeValue = stringValue(initializeResult?.codexHome) ?? activeCodexHome();
   }
 
   snapshotState(): BridgeState {
@@ -611,7 +625,7 @@ class CodexAppServerBridge {
       defaultModel: this.options.model,
       permissionParams: permissionParams(this.options),
       listThreads: (cwd, limit) => this.listAppServerThreads(cwd, limit),
-      listModels: (includeHidden) => this.listAppServerModels(includeHidden),
+      listModels: (includeHidden, refresh) => this.listAppServerModels(includeHidden, refresh),
       listPermissionProfiles: (cwd) => this.listAppServerPermissionProfiles(cwd),
       listCollaborationModes: () => this.request("collaborationMode/list", {}),
       cachedThreadSettings: (threadId) => this.appServerThreadSettings.get(threadId),
@@ -1004,7 +1018,44 @@ class CodexAppServerBridge {
       .filter((thread): thread is ThreadCandidateSummary => Boolean(thread));
   }
 
-  private async listAppServerModels(includeHidden = false): Promise<ModelCatalogItem[]> {
+  private async listAppServerModels(
+    includeHidden = false,
+    refresh = false
+  ): Promise<SessionModelCatalogResult> {
+    const key = this.modelCatalogKey(includeHidden);
+    const cached = await this.modelCatalogCache.get(key);
+    if (cached && !refresh) {
+      const stale = Date.now() - Date.parse(cached.updatedAt) >= modelCatalogCacheTtlMs();
+      if (stale) {
+        void this.refreshAppServerModels(includeHidden).catch((error) => {
+          console.error(`codexhub failed to refresh stale model catalog cache: ${errorText(error)}`);
+        });
+      }
+      return {
+        models: cached.models,
+        source: "cache",
+        updatedAt: cached.updatedAt,
+        stale
+      };
+    }
+    return await this.refreshAppServerModels(includeHidden);
+  }
+
+  private async refreshAppServerModels(includeHidden: boolean): Promise<SessionModelCatalogResult> {
+    const pending = this.modelCatalogRefreshes.get(includeHidden);
+    if (pending) return await pending;
+    const refresh = this.fetchAppServerModels(includeHidden);
+    this.modelCatalogRefreshes.set(includeHidden, refresh);
+    try {
+      return await refresh;
+    } finally {
+      if (this.modelCatalogRefreshes.get(includeHidden) === refresh) {
+        this.modelCatalogRefreshes.delete(includeHidden);
+      }
+    }
+  }
+
+  private async fetchAppServerModels(includeHidden: boolean): Promise<SessionModelCatalogResult> {
     const models: ModelCatalogItem[] = [];
     let cursor: string | null | undefined;
     for (let page = 0; page < 20; page += 1) {
@@ -1020,7 +1071,34 @@ class CodexAppServerBridge {
       cursor = typeof result?.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
       if (!cursor) break;
     }
-    return models;
+    const updatedAt = new Date().toISOString();
+    await this.modelCatalogCache.set({
+      ...this.modelCatalogKey(includeHidden),
+      updatedAt,
+      models
+    }).catch((error) => {
+      console.error(`codexhub failed to persist model catalog cache: ${errorText(error)}`);
+    });
+    if (includeHidden) {
+      await this.modelCatalogCache.set({
+        ...this.modelCatalogKey(false),
+        updatedAt,
+        models: models.filter((model) => !model.hidden)
+      }).catch((error) => {
+        console.error(`codexhub failed to persist visible model catalog cache: ${errorText(error)}`);
+      });
+    }
+    return { models, source: "live", updatedAt, stale: false };
+  }
+
+  private modelCatalogKey(includeHidden: boolean): ModelCatalogCacheKey {
+    if (!this.cliVersionValue) throw new UnsupportedCodexCliVersionError("unknown");
+    return {
+      machineId: this.options.machineId?.trim() || os.hostname(),
+      cliVersion: this.cliVersionValue,
+      codexHome: this.codexHomeValue ?? activeCodexHome(),
+      includeHidden
+    };
   }
 
   private async listAppServerPermissionProfiles(cwd: string): Promise<PermissionProfileSummary[]> {
@@ -1587,6 +1665,11 @@ class CodexAppServerBridge {
 }
 
 const appServerRequestTimeoutMs = () => readPositiveIntEnv(process.env, "CODEX_HUB_APP_SERVER_REQUEST_TIMEOUT_MS", 60_000);
+const modelCatalogCacheTtlMs = () => readPositiveIntEnv(
+  process.env,
+  "CODEX_HUB_MODEL_CATALOG_CACHE_TTL_MS",
+  6 * 60 * 60 * 1000
+);
 const appServerOverloadRetryDelayMs = (attempt: number) => {
   const exponentialMs = Math.min(2_000, 100 * 2 ** attempt);
   return Math.floor(exponentialMs * (0.5 + Math.random() * 0.5));

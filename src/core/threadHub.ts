@@ -547,7 +547,11 @@ export class ThreadHub {
     );
   }
 
-  async listSessionModels(sessionId: string, includeHidden = false): Promise<SessionModelCatalogResult> {
+  async listSessionModels(
+    sessionId: string,
+    includeHidden = false,
+    refresh = false
+  ): Promise<SessionModelCatalogResult> {
     const session = this.requireOnlineSession(sessionId);
     const commandId = randomUUID();
     const promise = this.waitForCommand<SessionModelCatalogResult>(
@@ -562,13 +566,18 @@ export class ThreadHub {
       type: "list_models",
       workingDirectory: session.workingDirectory,
       createdAt: new Date().toISOString(),
-      includeHidden
+      includeHidden,
+      refresh
     });
     return await promise;
   }
 
-  async listMachineModels(machineId: string, includeHidden = false): Promise<SessionModelCatalogResult> {
-    return await this.listSessionModels(this.requireOnlineRuntimeSession(machineId).sessionId, includeHidden);
+  async listMachineModels(
+    machineId: string,
+    includeHidden = false,
+    refresh = false
+  ): Promise<SessionModelCatalogResult> {
+    return await this.listSessionModels(this.requireOnlineRuntimeSession(machineId).sessionId, includeHidden, refresh);
   }
 
   async listSessionPermissionProfiles(
