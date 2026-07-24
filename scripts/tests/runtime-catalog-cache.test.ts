@@ -25,7 +25,7 @@ test("runtime catalog cache uses the CodexHub data directory", () => {
   );
 });
 
-test("runtime catalog cache persists models and cwd-scoped permission profiles in one store", async () => {
+test("runtime catalog cache persists model catalogs", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codexhub-runtime-catalog-cache."));
   const cacheDirectory = path.join(directory, "runtime-catalog-cache");
   const baseKey = {
@@ -34,7 +34,6 @@ test("runtime catalog cache persists models and cwd-scoped permission profiles i
     codexHome: path.join(directory, ".codex")
   };
   let modelFetches = 0;
-  let permissionFetches = 0;
   try {
     const cache = new RuntimeCatalogCache(cacheDirectory);
     const liveModels = await cache.resolve({
@@ -56,19 +55,6 @@ test("runtime catalog cache persists models and cwd-scoped permission profiles i
     });
     assert.equal(liveModels.source, "live");
 
-    const livePermissions = await cache.resolve({
-      ...baseKey,
-      kind: "permission_profiles",
-      cwd: "/tmp/project-a"
-    }, {
-      ttlMs: 60_000,
-      fetch: async () => {
-        permissionFetches += 1;
-        return [{ id: "team-safe", description: "Team policy", allowed: true }];
-      }
-    });
-    assert.equal(livePermissions.source, "live");
-
     const reloaded = new RuntimeCatalogCache(cacheDirectory);
     const cachedModels = await reloaded.resolve({
       ...baseKey,
@@ -81,40 +67,12 @@ test("runtime catalog cache persists models and cwd-scoped permission profiles i
         return [];
       }
     });
-    const cachedPermissions = await reloaded.resolve({
-      ...baseKey,
-      kind: "permission_profiles",
-      cwd: "/tmp/project-a"
-    }, {
-      ttlMs: 60_000,
-      fetch: async () => {
-        permissionFetches += 1;
-        return [];
-      }
-    });
     assert.equal(cachedModels.source, "cache");
-    assert.equal(cachedPermissions.source, "cache");
     assert.equal(cachedModels.items[0]?.model, "gpt-test");
-    assert.equal(cachedPermissions.items[0]?.id, "team-safe");
     assert.equal(modelFetches, 1);
-    assert.equal(permissionFetches, 1);
-
-    const otherCwd = await reloaded.resolve({
-      ...baseKey,
-      kind: "permission_profiles",
-      cwd: "/tmp/project-b"
-    }, {
-      ttlMs: 60_000,
-      fetch: async () => {
-        permissionFetches += 1;
-        return [{ id: "project-b", description: null, allowed: false }];
-      }
-    });
-    assert.equal(otherCwd.source, "live");
-    assert.equal(permissionFetches, 2);
     assert.equal((await stat(cacheDirectory)).mode & 0o777, 0o700);
     const entryPaths = (await readdir(cacheDirectory)).map((name) => path.join(cacheDirectory, name));
-    assert.equal(entryPaths.length, 3);
+    assert.equal(entryPaths.length, 1);
     for (const entryPath of entryPaths) {
       assert.equal((await stat(entryPath)).mode & 0o777, 0o600);
     }
@@ -127,7 +85,7 @@ test("runtime catalog cache persists models and cwd-scoped permission profiles i
         assert.equal(stored.version, 1);
         return stored.entry?.kind;
       })).then((kinds) => kinds.sort()),
-      ["models", "permission_profiles", "permission_profiles"]
+      ["models"]
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -142,15 +100,20 @@ test("runtime catalog cache coalesces concurrent live refreshes", async () => {
     machineId: "machine-a",
     cliVersion: "0.145.0",
     codexHome: path.join(directory, ".codex"),
-    kind: "permission_profiles" as const,
-    cwd: "/tmp/project"
+    kind: "models" as const,
+    includeHidden: false
   };
   try {
     const cache = new RuntimeCatalogCache(cacheDirectory);
     const fetch = async () => {
       fetches += 1;
       await new Promise((resolve) => setTimeout(resolve, 10));
-      return [{ id: "team-safe", description: null, allowed: true }];
+      return [{
+        id: "catalog-gpt",
+        model: "gpt-test",
+        supportedReasoningEfforts: [],
+        serviceTiers: []
+      }];
     };
     const [first, second] = await Promise.all([
       cache.resolve(key, { ttlMs: 60_000, refresh: true, fetch }),

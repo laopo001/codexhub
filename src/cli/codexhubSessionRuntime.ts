@@ -32,9 +32,7 @@ import { accountRateLimitsPayloadFromValue } from "../core/threadUsage.js";
 import {
   activeCodexHome,
   RuntimeCatalogCache,
-  type ModelCatalogCacheKey,
-  type PermissionProfileCatalogCacheKey,
-  type RuntimeCatalogCacheKey
+  type ModelCatalogCacheKey
 } from "../core/runtimeCatalogCache.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import { readPositiveIntEnv } from "../shared/env.js";
@@ -628,7 +626,7 @@ class CodexAppServerBridge {
       permissionParams: permissionParams(this.options),
       listThreads: (cwd, limit) => this.listAppServerThreads(cwd, limit),
       listModels: (includeHidden, refresh) => this.listAppServerModels(includeHidden, refresh),
-      listPermissionProfiles: (cwd, refresh) => this.listAppServerPermissionProfiles(cwd, refresh),
+      listPermissionProfiles: (cwd) => this.listAppServerPermissionProfiles(cwd),
       listCollaborationModes: () => this.request("collaborationMode/list", {}),
       cachedThreadSettings: (threadId) => this.appServerThreadSettings.get(threadId),
       readThreadSettings: (cwd) => this.readThreadSettings(cwd),
@@ -1069,43 +1067,18 @@ class CodexAppServerBridge {
 
   private runtimeCatalogKey(
     scope: { kind: "models"; includeHidden: boolean }
-  ): ModelCatalogCacheKey;
-  private runtimeCatalogKey(
-    scope: { kind: "permission_profiles"; cwd: string }
-  ): PermissionProfileCatalogCacheKey;
-  private runtimeCatalogKey(
-    scope:
-      | { kind: "models"; includeHidden: boolean }
-      | { kind: "permission_profiles"; cwd: string }
-  ): RuntimeCatalogCacheKey {
+  ): ModelCatalogCacheKey {
     if (!this.cliVersionValue) throw new UnsupportedCodexCliVersionError("unknown");
     return {
       machineId: this.options.machineId?.trim() || os.hostname(),
       cliVersion: this.cliVersionValue,
       codexHome: this.codexHomeValue ?? activeCodexHome(),
       ...scope
-    } as RuntimeCatalogCacheKey;
+    };
   }
 
-  private async listAppServerPermissionProfiles(
-    cwd: string,
-    refresh = false
-  ): Promise<SessionPermissionProfilesResult> {
-    const key = this.runtimeCatalogKey({ kind: "permission_profiles", cwd });
-    const result = await this.runtimeCatalogCache.resolve(key, {
-      refresh,
-      ttlMs: runtimeCatalogCacheTtlMs(),
-      fetch: () => this.fetchAppServerPermissionProfiles(cwd),
-      onBackgroundRefreshError: (error) => {
-        console.error(`codexhub failed to refresh stale permission profile catalog cache: ${errorText(error)}`);
-      }
-    });
-    return {
-      profiles: result.items,
-      source: result.source,
-      updatedAt: result.updatedAt,
-      stale: result.stale
-    };
+  private async listAppServerPermissionProfiles(cwd: string): Promise<SessionPermissionProfilesResult> {
+    return { profiles: await this.fetchAppServerPermissionProfiles(cwd) };
   }
 
   private async fetchAppServerPermissionProfiles(cwd: string): Promise<PermissionProfileSummary[]> {

@@ -381,19 +381,11 @@ export const useAppSelectors = (state: AppState) => {
     ? activePermissionProfileCatalogState.profiles
     : [];
   const activePermissionProfilesStatus: "unavailable" | "idle" | "loading" | "ready" | "error" = activeThread?.runtime.machineId
+    && activeThread.runtime.online
     ? activePermissionProfileCatalogState?.status ?? "idle"
     : "unavailable";
   const activePermissionProfilesError = activePermissionProfileCatalogState?.status === "error"
     ? activePermissionProfileCatalogState.error ?? "Permission profiles unavailable."
-    : "";
-  const activePermissionProfilesCacheNotice = activePermissionProfileCatalogState?.status === "ready"
-    && activePermissionProfileCatalogState.source === "cache"
-    ? [
-        `Using ${activePermissionProfileCatalogState.stale ? "stale " : ""}CodexHub permission profile cache`,
-        activePermissionProfileCatalogState.updatedAt
-          ? `from ${new Date(activePermissionProfileCatalogState.updatedAt).toLocaleString()}`
-          : ""
-      ].filter(Boolean).join(" · ")
     : "";
   const effectiveReasoningSelection = effectiveReasoningSelectionForModel(
     activeThreadReasoningDraft,
@@ -436,7 +428,6 @@ export const useAppSelectors = (state: AppState) => {
     activeThreadPermissionProfileDraft,
     activeThreadPermissionProfileSelection,
     activePermissionProfiles,
-    activePermissionProfilesCacheNotice,
     activePermissionProfilesError,
     activePermissionProfilesStatus,
     activeModelCatalogCacheNotice,

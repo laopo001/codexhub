@@ -582,8 +582,7 @@ export class ThreadHub {
 
   async listSessionPermissionProfiles(
     sessionId: string,
-    workingDirectory?: string,
-    refresh = false
+    workingDirectory?: string
   ): Promise<SessionPermissionProfilesResult> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
@@ -599,21 +598,18 @@ export class ThreadHub {
       commandId,
       type: "list_permission_profiles",
       workingDirectory: cwd,
-      createdAt: new Date().toISOString(),
-      refresh
+      createdAt: new Date().toISOString()
     });
     return await promise;
   }
 
   async listMachinePermissionProfiles(
     machineId: string,
-    workingDirectory?: string,
-    refresh = false
+    workingDirectory?: string
   ): Promise<SessionPermissionProfilesResult> {
     return await this.listSessionPermissionProfiles(
       this.requireOnlineRuntimeSession(machineId).sessionId,
-      workingDirectory,
-      refresh
+      workingDirectory
     );
   }
 

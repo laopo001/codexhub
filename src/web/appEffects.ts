@@ -263,32 +263,32 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
   ]);
 
   useEffect(() => {
-    if (!state.initialized || !state.composerMenuOpen) return undefined;
+    if (!state.initialized || !selectors.activeThread?.runtime.online) return undefined;
     const machineId = selectors.activeThread?.runtime.machineId;
     const cwd = selectors.activeThread?.workingDirectory;
     if (!machineId || !cwd) return undefined;
     const scopeKey = permissionProfileScopeKey(machineId, cwd);
-    let cancelled = false;
+    const currentCatalog = state.permissionProfilesByScope[scopeKey];
+    if (
+      currentCatalog?.status === "loading"
+      || currentCatalog?.status === "ready"
+      || currentCatalog?.status === "error"
+    ) return undefined;
     state.setPermissionProfilesByScope((current) => ({
       ...current,
       [scopeKey]: { status: "loading", profiles: [] }
     }));
     void apiRouteJson(apiRoutes.runtimePermissionProfiles, machineId, cwd)
       .then((payload) => {
-        if (cancelled) return;
         state.setPermissionProfilesByScope((current) => ({
           ...current,
           [scopeKey]: {
             status: "ready",
-            profiles: Array.isArray(payload.profiles) ? payload.profiles : [],
-            source: payload.source,
-            updatedAt: payload.updatedAt,
-            stale: payload.stale
+            profiles: Array.isArray(payload.profiles) ? payload.profiles : []
           }
         }));
       })
       .catch((error) => {
-        if (cancelled) return;
         const message = error instanceof Error ? error.message : String(error);
         state.setPermissionProfilesByScope((current) => ({
           ...current,
@@ -299,14 +299,12 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
           }
         }));
       });
-    return () => {
-      cancelled = true;
-    };
   }, [
     selectors.activeThread?.runtime.machineId,
+    selectors.activeThread?.runtime.online,
     selectors.activeThread?.workingDirectory,
-    state.composerMenuOpen,
-    state.initialized
+    state.initialized,
+    state.permissionProfilesByScope
   ]);
 
   useEffect(() => {

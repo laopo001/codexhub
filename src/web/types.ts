@@ -75,7 +75,7 @@ export type ModelCatalogLoadState = RuntimeCatalogLoadMetadata & {
   error?: string;
 };
 export type PermissionProfileSummary = ApiPermissionProfileSummary;
-export type PermissionProfileCatalogLoadState = RuntimeCatalogLoadMetadata & {
+export type PermissionProfileCatalogLoadState = {
   status: "loading" | "ready" | "error";
   profiles: PermissionProfileSummary[];
   error?: string;

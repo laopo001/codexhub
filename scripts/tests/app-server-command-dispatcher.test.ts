@@ -142,20 +142,16 @@ test("dispatcher returns official stop and steer RPC responses", async () => {
 
 test("dispatcher exposes the runtime permission profile catalog without local choices", async () => {
   const { host } = createHost();
-  host.listPermissionProfiles = async (cwd, refresh) => {
+  host.listPermissionProfiles = async (cwd) => {
     assert.equal(cwd, "/tmp/project");
-    assert.equal(refresh, true);
     return {
-      profiles: [{ id: "team-safe", description: "Team policy", allowed: true }],
-      source: "live"
+      profiles: [{ id: "team-safe", description: "Team policy", allowed: true }]
     };
   };
   assert.deepEqual(await dispatchAppServerCommand(command({
-    type: "list_permission_profiles",
-    refresh: true
+    type: "list_permission_profiles"
   }), host), {
-    profiles: [{ id: "team-safe", description: "Team policy", allowed: true }],
-    source: "live"
+    profiles: [{ id: "team-safe", description: "Team policy", allowed: true }]
   });
 });
 

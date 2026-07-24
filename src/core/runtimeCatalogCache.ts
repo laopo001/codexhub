@@ -3,10 +3,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import type {
-  ModelCatalogItem,
-  PermissionProfileSummary
-} from "../shared/threadTypes.js";
+import type { ModelCatalogItem } from "../shared/threadTypes.js";
 
 const modelCatalogOptionSchema = z.object({
   value: z.string().min(1),
@@ -27,12 +24,6 @@ const modelCatalogItemSchema = z.object({
   serviceTiers: z.array(modelCatalogOptionSchema)
 });
 
-const permissionProfileSchema = z.object({
-  id: z.string().min(1),
-  description: z.string().nullable(),
-  allowed: z.boolean()
-});
-
 const runtimeCatalogCacheBaseSchema = {
   machineId: z.string().min(1),
   cliVersion: z.string().min(1),
@@ -47,21 +38,9 @@ const modelCatalogCacheEntrySchema = z.object({
   items: z.array(modelCatalogItemSchema)
 });
 
-const permissionProfileCacheEntrySchema = z.object({
-  ...runtimeCatalogCacheBaseSchema,
-  kind: z.literal("permission_profiles"),
-  cwd: z.string().min(1),
-  items: z.array(permissionProfileSchema)
-});
-
-const runtimeCatalogCacheEntrySchema = z.discriminatedUnion("kind", [
-  modelCatalogCacheEntrySchema,
-  permissionProfileCacheEntrySchema
-]);
-
 const runtimeCatalogCacheFileSchema = z.object({
   version: z.literal(1),
-  entry: runtimeCatalogCacheEntrySchema
+  entry: modelCatalogCacheEntrySchema
 });
 
 type RuntimeCatalogCacheBaseKey = {
@@ -75,28 +54,14 @@ export type ModelCatalogCacheKey = RuntimeCatalogCacheBaseKey & {
   includeHidden: boolean;
 };
 
-export type PermissionProfileCatalogCacheKey = RuntimeCatalogCacheBaseKey & {
-  kind: "permission_profiles";
-  cwd: string;
-};
-
-export type RuntimeCatalogCacheKey =
-  | ModelCatalogCacheKey
-  | PermissionProfileCatalogCacheKey;
+export type RuntimeCatalogCacheKey = ModelCatalogCacheKey;
 
 export type ModelCatalogCacheEntry = ModelCatalogCacheKey & {
   updatedAt: string;
   items: ModelCatalogItem[];
 };
 
-export type PermissionProfileCatalogCacheEntry = PermissionProfileCatalogCacheKey & {
-  updatedAt: string;
-  items: PermissionProfileSummary[];
-};
-
-export type RuntimeCatalogCacheEntry =
-  | ModelCatalogCacheEntry
-  | PermissionProfileCatalogCacheEntry;
+export type RuntimeCatalogCacheEntry = ModelCatalogCacheEntry;
 
 export type RuntimeCatalogResult<T> = {
   items: T[];
@@ -116,36 +81,22 @@ type RuntimeCatalogResolveOptions<T> = {
   onBackgroundRefreshError?: (error: unknown) => void;
 };
 
-type RuntimeCatalogItem =
-  | ModelCatalogItem
-  | PermissionProfileSummary;
-
 export class RuntimeCatalogCache {
   private readonly refreshes = new Map<string, Promise<RuntimeCatalogResult<unknown>>>();
 
   constructor(readonly directoryPath = runtimeCatalogCachePath()) {}
 
   async resolve(
-    key: ModelCatalogCacheKey,
-    options: RuntimeCatalogResolveOptions<ModelCatalogItem>
-  ): Promise<RuntimeCatalogResult<ModelCatalogItem>>;
-  async resolve(
-    key: PermissionProfileCatalogCacheKey,
-    options: RuntimeCatalogResolveOptions<PermissionProfileSummary>
-  ): Promise<RuntimeCatalogResult<PermissionProfileSummary>>;
-  async resolve(
     key: RuntimeCatalogCacheKey,
-    options:
-      | RuntimeCatalogResolveOptions<ModelCatalogItem>
-      | RuntimeCatalogResolveOptions<PermissionProfileSummary>
-  ): Promise<RuntimeCatalogResult<RuntimeCatalogItem>> {
+    options: RuntimeCatalogResolveOptions<ModelCatalogItem>
+  ): Promise<RuntimeCatalogResult<ModelCatalogItem>> {
     const cached = await this.read(key);
     if (cached && !options.refresh) {
       const stale = Date.now() - Date.parse(cached.updatedAt) >= options.ttlMs;
       if (stale) {
         void this.refresh(
           key,
-          options as RuntimeCatalogResolveOptions<RuntimeCatalogItem>
+          options
         ).catch((error) => options.onBackgroundRefreshError?.(error));
       }
       return {
@@ -157,17 +108,17 @@ export class RuntimeCatalogCache {
     }
     return await this.refresh(
       key,
-      options as RuntimeCatalogResolveOptions<RuntimeCatalogItem>
+      options
     );
   }
 
-  private async refresh<T extends RuntimeCatalogItem>(
+  private async refresh(
     key: RuntimeCatalogCacheKey,
-    options: RuntimeCatalogResolveOptions<T>
-  ): Promise<RuntimeCatalogResult<T>> {
+    options: RuntimeCatalogResolveOptions<ModelCatalogItem>
+  ): Promise<RuntimeCatalogResult<ModelCatalogItem>> {
     const cacheKey = runtimeCatalogCacheKey(key);
     const pending = this.refreshes.get(cacheKey);
-    if (pending) return await pending as RuntimeCatalogResult<T>;
+    if (pending) return await pending as RuntimeCatalogResult<ModelCatalogItem>;
 
     const refresh = this.fetchAndPersist(key, options);
     this.refreshes.set(cacheKey, refresh as Promise<RuntimeCatalogResult<unknown>>);
@@ -178,10 +129,10 @@ export class RuntimeCatalogCache {
     }
   }
 
-  private async fetchAndPersist<T extends RuntimeCatalogItem>(
+  private async fetchAndPersist(
     key: RuntimeCatalogCacheKey,
-    options: RuntimeCatalogResolveOptions<T>
-  ): Promise<RuntimeCatalogResult<T>> {
+    options: RuntimeCatalogResolveOptions<ModelCatalogItem>
+  ): Promise<RuntimeCatalogResult<ModelCatalogItem>> {
     const items = await options.fetch();
     const updatedAt = new Date().toISOString();
     await this.write([
@@ -256,9 +207,7 @@ export const activeCodexHome = (
 ) => path.resolve(env.CODEX_HOME?.trim() || path.join(homeDirectory, ".codex"));
 
 const runtimeCatalogCacheKey = (key: RuntimeCatalogCacheKey) => JSON.stringify(
-  key.kind === "models"
-    ? [key.kind, key.machineId, key.cliVersion, key.codexHome, key.includeHidden]
-    : [key.kind, key.machineId, key.cliVersion, key.codexHome, key.cwd]
+  [key.kind, key.machineId, key.cliVersion, key.codexHome, key.includeHidden]
 );
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);

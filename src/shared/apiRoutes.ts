@@ -173,12 +173,9 @@ export const apiRoutes = {
   ),
   runtimePermissionProfiles: get<
     RuntimePermissionProfilesPayload,
-    (machineId: string, cwd: string, refresh?: boolean) => string
+    (machineId: string, cwd: string) => string
   >(
-    (machineId, cwd, refresh) => `/api/machines/${encode(machineId)}/permission-profiles${queryString({
-      cwd,
-      refresh: refresh ? "true" : undefined
-    })}`
+    (machineId, cwd) => `/api/machines/${encode(machineId)}/permission-profiles${queryString({ cwd })}`
   ),
   commandPalette: get<CommandPalettePayload, (machineId: string, cwd?: string, part?: CommandPalettePart) => string>(
     (machineId, cwd, part) =>

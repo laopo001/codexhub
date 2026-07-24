@@ -211,7 +211,7 @@ const transportFactory: HeadlessSessionTransportFactory = (_context, callbacks) 
   sendHeartbeat: () => undefined
 });
 
-test("attached runtime shares persistent catalog caching across models and permissions", async (context) => {
+test("attached runtime persists the model catalog cache", async (context) => {
   context.mock.method(console, "error", () => undefined);
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "codexhub-runtime-model-cache."));
   const previousDataDirectory = process.env.CODEX_HUB_DATA_DIR;
@@ -226,16 +226,11 @@ test("attached runtime shares persistent catalog caching across models and permi
     supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High reasoning" }],
     serviceTiers: [{ id: "fast", name: "Fast" }]
   }];
-  const permissionProfiles = [{
-    id: ":workspace",
-    description: "Workspace access",
-    allowed: true
-  }];
   let firstCallbacks: HeadlessSessionTransportCallbacks | undefined;
   let firstSession: Awaited<ReturnType<typeof startAttachedCodexhubSession>> | undefined;
   let secondSession: Awaited<ReturnType<typeof startAttachedCodexhubSession>> | undefined;
   try {
-    const firstSocket = new CurrentProtocolSocket({ models, permissionProfiles });
+    const firstSocket = new CurrentProtocolSocket({ models });
     firstSession = await startAttachedCodexhubSession({
       apiBase: "http://127.0.0.1:1",
       appServerUrl: "ws://127.0.0.1:1",
@@ -251,13 +246,10 @@ test("attached runtime shares persistent catalog caching across models and permi
     const live = await firstCallbacks.handleCommand(modelListCommand("live-models"));
     assert.equal((live as { source?: string }).source, "live");
     assert.equal(firstSocket.requestCount("model/list"), 1);
-    const livePermissions = await firstCallbacks.handleCommand(permissionListCommand("live-permissions"));
-    assert.equal((livePermissions as { source?: string }).source, "live");
-    assert.equal(firstSocket.requestCount("permissionProfile/list"), 1);
     await firstSession.stop();
     firstSession = undefined;
 
-    const secondSocket = new CurrentProtocolSocket({ models, permissionProfiles });
+    const secondSocket = new CurrentProtocolSocket({ models });
     let secondCallbacks: HeadlessSessionTransportCallbacks | undefined;
     secondSession = await startAttachedCodexhubSession({
       apiBase: "http://127.0.0.1:1",
@@ -274,27 +266,54 @@ test("attached runtime shares persistent catalog caching across models and permi
     const cached = await secondCallbacks.handleCommand(modelListCommand("cached-models"));
     assert.equal((cached as { source?: string }).source, "cache");
     assert.equal(secondSocket.requestCount("model/list"), 0);
-    const cachedPermissions = await secondCallbacks.handleCommand(permissionListCommand("cached-permissions"));
-    assert.equal((cachedPermissions as { source?: string }).source, "cache");
-    assert.equal(secondSocket.requestCount("permissionProfile/list"), 0);
     const refreshed = await secondCallbacks.handleCommand({
       ...modelListCommand("refreshed-models"),
       refresh: true
     });
     assert.equal((refreshed as { source?: string }).source, "live");
     assert.equal(secondSocket.requestCount("model/list"), 1);
-    const refreshedPermissions = await secondCallbacks.handleCommand({
-      ...permissionListCommand("refreshed-permissions"),
-      refresh: true
-    });
-    assert.equal((refreshedPermissions as { source?: string }).source, "live");
-    assert.equal(secondSocket.requestCount("permissionProfile/list"), 1);
   } finally {
     await firstSession?.stop();
     await secondSession?.stop();
     restoreEnv("CODEX_HUB_DATA_DIR", previousDataDirectory);
     restoreEnv("CODEX_HOME", previousCodexHome);
     await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+test("attached runtime loads permission profiles live without persistent caching", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket({
+    permissionProfiles: [{
+      id: ":workspace",
+      description: "Workspace access",
+      allowed: true
+    }]
+  });
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    appServerTransportFactory: async () => socket,
+    machineId: "machine-permission-profiles",
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return transportFactory(transportContext, nextCallbacks);
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    const first = await callbacks.handleCommand(permissionListCommand("live-permissions-1"));
+    const second = await callbacks.handleCommand(permissionListCommand("live-permissions-2"));
+    assert.equal((first as { source?: string }).source, undefined);
+    assert.equal(
+      (second as { profiles?: Array<{ id?: string }> }).profiles?.[0]?.id,
+      ":workspace"
+    );
+    assert.equal(socket.requestCount("permissionProfile/list"), 2);
+  } finally {
+    await session.stop();
   }
 });
 

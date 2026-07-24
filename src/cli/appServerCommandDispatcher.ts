@@ -35,7 +35,7 @@ export type AppServerCommandHost = {
   permissionParams: Record<string, unknown>;
   listThreads: (cwd: string, limit?: number) => Promise<unknown>;
   listModels: (includeHidden: boolean, refresh?: boolean) => Promise<SessionModelCatalogResult>;
-  listPermissionProfiles: (cwd: string, refresh?: boolean) => Promise<SessionPermissionProfilesResult>;
+  listPermissionProfiles: (cwd: string) => Promise<SessionPermissionProfilesResult>;
   listCollaborationModes: () => Promise<unknown>;
   cachedThreadSettings: (threadId: string) => AppServerThreadSettings | undefined;
   readThreadSettings: (cwd: string) => Promise<AppServerThreadSettings>;
@@ -83,7 +83,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     return await host.listModels(Boolean(command.includeHidden), Boolean(command.refresh));
   }
   if (command.type === "list_permission_profiles") {
-    return await host.listPermissionProfiles(command.workingDirectory, Boolean(command.refresh));
+    return await host.listPermissionProfiles(command.workingDirectory);
   }
   if (command.type === "list_command_palette") {
     return await host.listCommandPalette(command.workingDirectory, command.commandPalettePart);

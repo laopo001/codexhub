@@ -225,25 +225,19 @@ const main = async () => {
     if (permissionProfilesCommand.workingDirectory !== projectDir) {
       throw new Error(`permission profile cwd mismatch: ${JSON.stringify(permissionProfilesCommand)}`);
     }
-    if (permissionProfilesCommand.refresh !== false) {
-      throw new Error(`ordinary permission profile catalog command should not force refresh: ${JSON.stringify(permissionProfilesCommand)}`);
-    }
     const permissionProfiles = await permissionProfilesPromise;
     if (JSON.stringify(permissionProfiles.profiles) !== JSON.stringify([
       { id: "team-safe", description: "Fake runtime profile", allowed: true }
     ])) {
       throw new Error(`permission profile response was not runtime-authoritative: ${JSON.stringify(permissionProfiles)}`);
     }
-    const refreshedPermissionProfilesPromise = apiJson(
+    const secondPermissionProfilesPromise = apiJson(
       apiBase,
-      `/api/machines/${encodeURIComponent(fake.machineId)}/permission-profiles?cwd=${encodeURIComponent(projectDir)}&refresh=true`
+      `/api/machines/${encodeURIComponent(fake.machineId)}/permission-profiles?cwd=${encodeURIComponent(projectDir)}`
     );
-    const refreshedPermissionProfilesCommand = await fake.nextSessionCommand("list_permission_profiles");
-    if (refreshedPermissionProfilesCommand.refresh !== true) {
-      throw new Error(`forced permission profile refresh was not forwarded: ${JSON.stringify(refreshedPermissionProfilesCommand)}`);
-    }
-    await refreshedPermissionProfilesPromise;
-    console.log("runtime permission profile catalog ok");
+    await fake.nextSessionCommand("list_permission_profiles");
+    await secondPermissionProfilesPromise;
+    console.log("runtime permission profile catalog live load ok");
     const commandPalettePromise = apiJson<{
       palette?: { entries?: Array<{ name?: string; kind?: string }> };
     }>(

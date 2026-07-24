@@ -235,9 +235,6 @@ export type RuntimeModelsPayload = {
 /** machine runtime permission profile catalog 接口返回的 payload。 */
 export type RuntimePermissionProfilesPayload = {
   profiles?: PermissionProfileSummary[];
-  source?: "live" | "cache";
-  updatedAt?: string;
-  stale?: boolean;
 };
 
 /** app-server backed composer command palette 接口返回的 payload。 */

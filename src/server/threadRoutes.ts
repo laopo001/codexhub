@@ -257,14 +257,12 @@ export const registerThreadRoutes = <
   app.get("/api/machines/:machineId/permission-profiles", async (request, reply) => {
     const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const query = z.object({
-      cwd: z.string().min(1),
-      refresh: z.string().optional()
+      cwd: z.string().min(1)
     }).parse(request.query);
     try {
       const result = await ctx.threads.listMachinePermissionProfiles(
         params.machineId,
-        query.cwd,
-        query.refresh === "true"
+        query.cwd
       );
       return result satisfies RuntimePermissionProfilesPayload;
     } catch (error) {
