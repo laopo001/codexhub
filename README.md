@@ -48,7 +48,7 @@ pnpm codexhub server --host 0.0.0.0 --port 8788
 
 CodexHub 启动官方 `codex app-server` 时会先解析 Codex CLI：优先使用 `CODEX_HUB_CODEX_CLI`，再查找 `PATH`、常见 npm/pnpm 全局 bin 目录；Windows 下会识别 `codex.cmd` / `codex.bat` 并通过 `cmd.exe call` 启动。app-server ready 检查默认等待 60 秒，可用 `CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 调整；启动失败时错误会带上最近的 app-server stderr 尾部，方便定位 Codex CLI 或登录环境问题。
 
-CodexHub 不读取或注入 Codex 私有的 `models_cache.json` / `model_catalog_json`。machine 从在线 app-server 的 `model/list` 取得并归一化模型目录后，会缓存到 `${CODEX_HUB_DATA_DIR:-~/.config/codexhub}/model-catalog-cache.json`；嵌入 surface 使用对应 server data directory。缓存按 machine、Codex CLI 版本、app-server 报告的 `codexHome` 和 hidden 模式隔离，默认 6 小时后视为过期，可用 `CODEX_HUB_MODEL_CATALOG_CACHE_TTL_MS` 调整。过期缓存可以先用于响应和 Plan fallback，同时后台刷新；Web 会明确标记缓存来源并允许强制刷新，不会把缓存伪装成实时目录。
+CodexHub 不读取或注入 Codex 私有的 `models_cache.json` / `model_catalog_json`。machine 从在线 app-server 取得并归一化 `model/list`、`permissionProfile/list`，以及 Command Palette 的 plugin/skill 候选后，会统一缓存到 `${CODEX_HUB_DATA_DIR:-~/.config/codexhub}/runtime-catalog-cache/`；嵌入 surface 使用对应 server data directory。缓存按 machine、Codex CLI 版本和 app-server 报告的 `codexHome` 隔离，模型再按 hidden 模式、permission profiles 和 Command Palette plugins 再按 cwd 隔离；每个作用域独立原子写入，避免共享 data directory 的多个进程互相覆盖。模型和 permission profiles 默认 6 小时后视为过期；Command Palette plugins 默认 10 分钟，可用 `CODEX_HUB_COMMAND_PALETTE_PLUGIN_CACHE_TTL_MS` 单独调整。`CODEX_HUB_CATALOG_CACHE_TTL_MS` 可统一覆盖这些 TTL，旧 `CODEX_HUB_MODEL_CATALOG_CACHE_TTL_MS` 仍作为模型/permission profiles 的兼容别名。过期缓存可以先用于响应，同时后台刷新；接口会返回缓存来源，`refresh=true` 可强制刷新。
 
 远端机器或容器外的宿主机可以主动注册。远端已经安装 CodexHub 时，直接让远端 server 注册到父 server：
 
@@ -521,9 +521,9 @@ curl -sS -X POST "http://127.0.0.1:8788/api/machines/$MACHINE_ID/threads" \
 curl -sS "http://127.0.0.1:8788/api/machines/$MACHINE_ID/models"
 ```
 
-`/api/machines/:machineId/models` 由该 machine 当前在线 runtime 调用官方 app-server `model/list`，返回当前账号/配置可见的 model、supported reasoning efforts 和 service tiers；Web Thread Model 弹窗只使用这份在线 catalog。catalog 尚未就绪或读取失败时会禁用选择并显示加载/错误状态，不使用本地静态 model fallback。
+`/api/machines/:machineId/models` 由该 machine 当前在线 runtime 调用官方 app-server `model/list`，返回当前账号/配置可见的 model、supported reasoning efforts 和 service tiers；Web Thread Model 弹窗只使用这份 runtime catalog 或它的带时间戳缓存。`?refresh=true` 可强制实时刷新。catalog 尚未就绪且没有缓存或读取失败时会禁用选择并显示加载/错误状态，不使用本地静态 model fallback。
 
-`/api/machines/:machineId/permission-profiles?cwd=<project-path>` 由该 machine 当前在线 runtime 调用官方 app-server `permissionProfile/list`，返回该 cwd 当前可见的 profile `id`、`description` 和 `allowed`。Web Composer 权限菜单按打开时的实时结果渲染；被 requirements 禁止的 profile 会禁用，读取失败时显示错误，不补入 `:read-only`、`:workspace` 或 `:danger-full-access` 等静态选项。
+`/api/machines/:machineId/permission-profiles?cwd=<project-path>` 由该 machine 当前在线 runtime 调用官方 app-server `permissionProfile/list`，返回该 cwd 当前可见的 profile `id`、`description` 和 `allowed`；也可追加 `&refresh=true` 强制实时刷新。Web Composer 权限菜单按 runtime catalog 或它的带时间戳缓存渲染；被 requirements 禁止的 profile 会禁用，读取失败且没有缓存时显示错误，不补入 `:read-only`、`:workspace` 或 `:danger-full-access` 等静态选项。
 
 `POST /api/threads/:threadId/compact` 由在线 machine/session bridge 调用官方 app-server `thread/compact/start`。它只触发 app-server 对该 thread 的上下文压缩，不改写 CodexHub server 本地 records；Web 通过 app-server `contextCompaction` item 归一化出的 `context_compaction` record 显示进度和结果。
 

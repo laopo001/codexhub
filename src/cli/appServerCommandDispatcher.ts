@@ -3,7 +3,9 @@ import type {
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
   SessionCommand,
+  SessionCommandPaletteResult,
   SessionModelCatalogResult,
+  SessionPermissionProfilesResult,
   ThreadGoalUpdate,
   ThreadRunOptions
 } from "../shared/threadTypes.js";
@@ -33,14 +35,18 @@ export type AppServerCommandHost = {
   permissionParams: Record<string, unknown>;
   listThreads: (cwd: string, limit?: number) => Promise<unknown>;
   listModels: (includeHidden: boolean, refresh?: boolean) => Promise<SessionModelCatalogResult>;
-  listPermissionProfiles: (cwd: string) => Promise<unknown>;
+  listPermissionProfiles: (cwd: string, refresh?: boolean) => Promise<SessionPermissionProfilesResult>;
   listCollaborationModes: () => Promise<unknown>;
   cachedThreadSettings: (threadId: string) => AppServerThreadSettings | undefined;
   readThreadSettings: (cwd: string) => Promise<AppServerThreadSettings>;
   cacheThreadCollaborationMode: (threadId: string, value: AppServerCollaborationMode) => void;
   captureThreadSettingsResponse: (threadId: string, value: unknown) => Promise<void>;
   planResetModes: Map<string, AppServerCollaborationMode>;
-  listCommandPalette: (cwd: string, part: SessionCommand["commandPalettePart"]) => Promise<unknown>;
+  listCommandPalette: (
+    cwd: string,
+    part: SessionCommand["commandPalettePart"],
+    refresh?: boolean
+  ) => Promise<SessionCommandPaletteResult>;
   bindThread: (threadId: string, cwd: string) => void;
   unbindThread: (threadId: string) => Promise<void>;
   syncThreadTurns: (threadId: string) => Promise<void>;
@@ -78,10 +84,14 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     return await host.listModels(Boolean(command.includeHidden), Boolean(command.refresh));
   }
   if (command.type === "list_permission_profiles") {
-    return { profiles: await host.listPermissionProfiles(command.workingDirectory) };
+    return await host.listPermissionProfiles(command.workingDirectory, Boolean(command.refresh));
   }
   if (command.type === "list_command_palette") {
-    return { palette: await host.listCommandPalette(command.workingDirectory, command.commandPalettePart) };
+    return await host.listCommandPalette(
+      command.workingDirectory,
+      command.commandPalettePart,
+      Boolean(command.refresh)
+    );
   }
   if (command.type === "subscribe_thread_records") {
     const threadId = requireThreadId(command);

@@ -130,6 +130,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     activeThreadApprovalsReviewerSelection,
     activeThreadPermissionProfileSelection,
     activePermissionProfiles,
+    activePermissionProfilesCacheNotice,
     activePermissionProfilesError,
     activePermissionProfilesStatus,
     activeUserMessageHistory,
@@ -839,6 +840,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                           {permissionProfileLabel(profile.id)}
                                         </button>
                                       ))}
+                                      {activePermissionProfilesCacheNotice ? (
+                                        <div className="composerMenuNotice">{activePermissionProfilesCacheNotice}</div>
+                                      ) : null}
                                     </div>
                                   </div>
                                 </div>

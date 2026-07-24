@@ -256,9 +256,16 @@ export const registerThreadRoutes = <
 
   app.get("/api/machines/:machineId/permission-profiles", async (request, reply) => {
     const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
-    const query = z.object({ cwd: z.string().min(1) }).parse(request.query);
+    const query = z.object({
+      cwd: z.string().min(1),
+      refresh: z.string().optional()
+    }).parse(request.query);
     try {
-      const result = await ctx.threads.listMachinePermissionProfiles(params.machineId, query.cwd);
+      const result = await ctx.threads.listMachinePermissionProfiles(
+        params.machineId,
+        query.cwd,
+        query.refresh === "true"
+      );
       return result satisfies RuntimePermissionProfilesPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -271,10 +278,16 @@ export const registerThreadRoutes = <
     const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const query = z.object({
       cwd: z.string().min(1).optional(),
-      part: z.enum(["core", "plugins", "all"]).optional()
+      part: z.enum(["core", "plugins", "all"]).optional(),
+      refresh: z.string().optional()
     }).parse(request.query);
     try {
-      const result = await ctx.threads.listMachineCommandPalette(params.machineId, query.cwd, query.part);
+      const result = await ctx.threads.listMachineCommandPalette(
+        params.machineId,
+        query.cwd,
+        query.part,
+        query.refresh === "true"
+      );
       return result satisfies CommandPalettePayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

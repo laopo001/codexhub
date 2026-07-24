@@ -115,6 +115,7 @@ type SessionCommand = {
   workingDirectory?: string;
   includeHidden?: boolean;
   refresh?: boolean;
+  commandPalettePart?: "core" | "plugins" | "all";
   input?: unknown;
   turnId?: string;
   goal?: {
@@ -224,13 +225,52 @@ const main = async () => {
     if (permissionProfilesCommand.workingDirectory !== projectDir) {
       throw new Error(`permission profile cwd mismatch: ${JSON.stringify(permissionProfilesCommand)}`);
     }
+    if (permissionProfilesCommand.refresh !== false) {
+      throw new Error(`ordinary permission profile catalog command should not force refresh: ${JSON.stringify(permissionProfilesCommand)}`);
+    }
     const permissionProfiles = await permissionProfilesPromise;
     if (JSON.stringify(permissionProfiles.profiles) !== JSON.stringify([
       { id: "team-safe", description: "Fake runtime profile", allowed: true }
     ])) {
       throw new Error(`permission profile response was not runtime-authoritative: ${JSON.stringify(permissionProfiles)}`);
     }
+    const refreshedPermissionProfilesPromise = apiJson(
+      apiBase,
+      `/api/machines/${encodeURIComponent(fake.machineId)}/permission-profiles?cwd=${encodeURIComponent(projectDir)}&refresh=true`
+    );
+    const refreshedPermissionProfilesCommand = await fake.nextSessionCommand("list_permission_profiles");
+    if (refreshedPermissionProfilesCommand.refresh !== true) {
+      throw new Error(`forced permission profile refresh was not forwarded: ${JSON.stringify(refreshedPermissionProfilesCommand)}`);
+    }
+    await refreshedPermissionProfilesPromise;
     console.log("runtime permission profile catalog ok");
+    const commandPalettePromise = apiJson<{
+      palette?: { entries?: Array<{ name?: string; kind?: string }> };
+    }>(
+      apiBase,
+      `/api/machines/${encodeURIComponent(fake.machineId)}/command-palette?cwd=${encodeURIComponent(projectDir)}&part=plugins`
+    );
+    const commandPaletteCommand = await fake.nextSessionCommand("list_command_palette");
+    if (commandPaletteCommand.workingDirectory !== projectDir || commandPaletteCommand.commandPalettePart !== "plugins") {
+      throw new Error(`command palette plugin scope mismatch: ${JSON.stringify(commandPaletteCommand)}`);
+    }
+    if (commandPaletteCommand.refresh !== false) {
+      throw new Error(`ordinary command palette plugin request should not force refresh: ${JSON.stringify(commandPaletteCommand)}`);
+    }
+    const commandPalette = await commandPalettePromise;
+    if (!commandPalette.palette?.entries?.some((entry) => entry.name === "fake-plugin" && entry.kind === "plugin")) {
+      throw new Error(`command palette response missing runtime plugin: ${JSON.stringify(commandPalette)}`);
+    }
+    const refreshedCommandPalettePromise = apiJson(
+      apiBase,
+      `/api/machines/${encodeURIComponent(fake.machineId)}/command-palette?cwd=${encodeURIComponent(projectDir)}&part=plugins&refresh=true`
+    );
+    const refreshedCommandPaletteCommand = await fake.nextSessionCommand("list_command_palette");
+    if (refreshedCommandPaletteCommand.refresh !== true) {
+      throw new Error(`forced command palette plugin refresh was not forwarded: ${JSON.stringify(refreshedCommandPaletteCommand)}`);
+    }
+    await refreshedCommandPalettePromise;
+    console.log("runtime command palette plugin catalog ok");
     await fake.expectNoSessionCommand("subscribe_thread_records", 100);
     await assertThreadRecordSubscription(apiBase, fake.threadId, fake);
     console.log("thread record subscription ok");
@@ -1472,6 +1512,30 @@ class FakeMachine {
         commandId: command.commandId,
         result: {
           profiles: [{ id: "team-safe", description: "Fake runtime profile", allowed: true }]
+        }
+      });
+      return;
+    }
+    if (command.type === "list_command_palette") {
+      this.send({
+        type: "session_command_result",
+        sessionId: this.options.sessionId,
+        commandId: command.commandId,
+        result: {
+          palette: {
+            cwd: command.workingDirectory,
+            generatedAt: new Date().toISOString(),
+            entries: [{
+              id: "plugin:fake-plugin",
+              kind: "plugin",
+              name: "fake-plugin",
+              title: "Fake Plugin",
+              description: "Fake runtime plugin",
+              insertText: "@fake-plugin",
+              action: "insert",
+              enabled: true
+            }]
+          }
         }
       });
       return;

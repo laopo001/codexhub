@@ -45,7 +45,7 @@ const createHost = (options: {
     listModels: async () => ({
       models: (options.models ?? [{ id: "model-1", model: "gpt-model-1" }]) as SessionModelCatalogResult["models"]
     }),
-    listPermissionProfiles: async () => [],
+    listPermissionProfiles: async () => ({ profiles: [] }),
     listCollaborationModes: async () => options.collaborationModes ?? ({
       data: [
         { name: "Plan", mode: "plan", model: null, reasoning_effort: "medium" },
@@ -68,7 +68,9 @@ const createHost = (options: {
       };
     },
     planResetModes,
-    listCommandPalette: async () => ({ entries: [] }),
+    listCommandPalette: async (cwd) => ({
+      palette: { cwd, generatedAt: new Date(0).toISOString(), entries: [] }
+    }),
     bindThread: () => undefined,
     unbindThread: async () => undefined,
     syncThreadTurns: async () => undefined,
@@ -140,14 +142,53 @@ test("dispatcher returns official stop and steer RPC responses", async () => {
 
 test("dispatcher exposes the runtime permission profile catalog without local choices", async () => {
   const { host } = createHost();
-  host.listPermissionProfiles = async (cwd) => {
+  host.listPermissionProfiles = async (cwd, refresh) => {
     assert.equal(cwd, "/tmp/project");
-    return [{ id: "team-safe", description: "Team policy", allowed: true }];
+    assert.equal(refresh, true);
+    return {
+      profiles: [{ id: "team-safe", description: "Team policy", allowed: true }],
+      source: "live"
+    };
   };
   assert.deepEqual(await dispatchAppServerCommand(command({
-    type: "list_permission_profiles"
+    type: "list_permission_profiles",
+    refresh: true
   }), host), {
-    profiles: [{ id: "team-safe", description: "Team policy", allowed: true }]
+    profiles: [{ id: "team-safe", description: "Team policy", allowed: true }],
+    source: "live"
+  });
+});
+
+test("dispatcher forwards command palette plugin cache refresh and source metadata", async () => {
+  const { host } = createHost();
+  host.listCommandPalette = async (cwd, part, refresh) => {
+    assert.equal(cwd, "/tmp/project");
+    assert.equal(part, "plugins");
+    assert.equal(refresh, true);
+    return {
+      palette: {
+        cwd,
+        generatedAt: "2026-01-01T00:00:00.000Z",
+        entries: []
+      },
+      source: "cache",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      stale: false
+    };
+  };
+  assert.deepEqual(await dispatchAppServerCommand(command({
+    type: "list_command_palette",
+    commandPalettePart: "plugins",
+    refresh: true
+  }), host), {
+    palette: {
+      cwd: "/tmp/project",
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      entries: []
+    },
+    source: "cache",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    stale: false
   });
 });
 

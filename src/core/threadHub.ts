@@ -582,7 +582,8 @@ export class ThreadHub {
 
   async listSessionPermissionProfiles(
     sessionId: string,
-    workingDirectory?: string
+    workingDirectory?: string,
+    refresh = false
   ): Promise<SessionPermissionProfilesResult> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
@@ -598,25 +599,29 @@ export class ThreadHub {
       commandId,
       type: "list_permission_profiles",
       workingDirectory: cwd,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      refresh
     });
     return await promise;
   }
 
   async listMachinePermissionProfiles(
     machineId: string,
-    workingDirectory?: string
+    workingDirectory?: string,
+    refresh = false
   ): Promise<SessionPermissionProfilesResult> {
     return await this.listSessionPermissionProfiles(
       this.requireOnlineRuntimeSession(machineId).sessionId,
-      workingDirectory
+      workingDirectory,
+      refresh
     );
   }
 
   async listSessionCommandPalette(
     sessionId: string,
     workingDirectory?: string,
-    part: CommandPalettePart = "all"
+    part: CommandPalettePart = "all",
+    refresh = false
   ): Promise<SessionCommandPaletteResult> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
@@ -633,7 +638,8 @@ export class ThreadHub {
       type: "list_command_palette",
       workingDirectory: cwd,
       commandPalettePart: part,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      refresh
     });
     return await promise;
   }
@@ -641,12 +647,14 @@ export class ThreadHub {
   async listMachineCommandPalette(
     machineId: string,
     workingDirectory?: string,
-    part: CommandPalettePart = "all"
+    part: CommandPalettePart = "all",
+    refresh = false
   ): Promise<SessionCommandPaletteResult> {
     return await this.listSessionCommandPalette(
       this.requireOnlineRuntimeSession(machineId).sessionId,
       workingDirectory,
-      part
+      part,
+      refresh
     );
   }
 

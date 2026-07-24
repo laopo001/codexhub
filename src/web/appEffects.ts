@@ -280,7 +280,10 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
           ...current,
           [scopeKey]: {
             status: "ready",
-            profiles: Array.isArray(payload.profiles) ? payload.profiles : []
+            profiles: Array.isArray(payload.profiles) ? payload.profiles : [],
+            source: payload.source,
+            updatedAt: payload.updatedAt,
+            stale: payload.stale
           }
         }));
       })

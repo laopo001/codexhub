@@ -356,11 +356,17 @@ export type SessionModelCatalogResult = {
 /** list_permission_profiles 命令返回的 app-server permission profile 目录。 */
 export type SessionPermissionProfilesResult = {
   profiles: PermissionProfileSummary[];
+  source?: "live" | "cache";
+  updatedAt?: string;
+  stale?: boolean;
 };
 
 /** list_command_palette 命令返回的 composer palette。 */
 export type SessionCommandPaletteResult = {
   palette: CommandPalette;
+  source?: "live" | "cache";
+  updatedAt?: string;
+  stale?: boolean;
 };
 
 /** start_thread/resume_thread 命令返回的 thread 标识和可选 app-server metadata。 */

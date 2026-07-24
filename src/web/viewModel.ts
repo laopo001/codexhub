@@ -195,6 +195,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   activeThreadPermissionProfileDraft: PermissionProfileDraft;
   activeThreadPermissionProfileSelection?: string;
   activePermissionProfiles: PermissionProfileSummary[];
+  activePermissionProfilesCacheNotice: string;
   activePermissionProfilesError: string;
   activePermissionProfilesStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
   activeModelCatalogCacheNotice: string;
@@ -305,6 +306,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "activeThreadPermissionProfileDraft"
   | "activeThreadPermissionProfileSelection"
   | "activePermissionProfiles"
+  | "activePermissionProfilesCacheNotice"
   | "activePermissionProfilesError"
   | "activePermissionProfilesStatus"
   | "activeUserMessageHistory"
@@ -470,7 +472,8 @@ const workspaceKeys = [
   "activeThreadApprovalPolicyKind", "activeThreadApprovalPolicySelection",
   "activeThreadApprovalsReviewerDraft", "activeThreadApprovalsReviewerSelection",
   "activeThreadPermissionProfileDraft", "activeThreadPermissionProfileSelection",
-  "activePermissionProfiles", "activePermissionProfilesError", "activePermissionProfilesStatus",
+  "activePermissionProfiles", "activePermissionProfilesCacheNotice",
+  "activePermissionProfilesError", "activePermissionProfilesStatus",
   "activeUserMessageHistory", "activeViews", "authError",
   "authRequired", "authTokenDraft", "addThreadFiles", "clearThreadAttachments", "clearThreadGoal",
   "closeThread", "compactThread", "commandPaletteByScope", "commandPaletteLoadingScopes",

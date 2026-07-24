@@ -40,7 +40,7 @@ export type MachineRunnerOptions = {
   name?: string;
   capabilities?: Partial<MachineCapabilities>;
   appServerLaunch?: CodexAppServerLaunchOptions;
-  modelCatalogCacheFilePath?: string;
+  runtimeCatalogCachePath?: string;
   projects?: MachineRegistrationProject[] | (() => MachineRegistrationProject[]);
   onStatus?: (status: CodexhubMachineStatus) => void;
 };
@@ -422,7 +422,7 @@ class CodexhubMachineRunner {
         machineId: this.machineId,
         cwd,
         appServerLaunch: this.options.appServerLaunch,
-        modelCatalogCacheFilePath: this.options.modelCatalogCacheFilePath,
+        runtimeCatalogCachePath: this.options.runtimeCatalogCachePath,
         readyLabel: "codexhub machine app-server ready",
         transportFactory: (context, callbacks) => {
           const transport = new SessionTransportPeer({

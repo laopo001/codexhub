@@ -171,11 +171,25 @@ export const apiRoutes = {
       refresh: refresh ? "true" : undefined
     })}`
   ),
-  runtimePermissionProfiles: get<RuntimePermissionProfilesPayload, (machineId: string, cwd: string) => string>(
-    (machineId, cwd) => `/api/machines/${encode(machineId)}/permission-profiles${queryString({ cwd })}`
+  runtimePermissionProfiles: get<
+    RuntimePermissionProfilesPayload,
+    (machineId: string, cwd: string, refresh?: boolean) => string
+  >(
+    (machineId, cwd, refresh) => `/api/machines/${encode(machineId)}/permission-profiles${queryString({
+      cwd,
+      refresh: refresh ? "true" : undefined
+    })}`
   ),
-  commandPalette: get<CommandPalettePayload, (machineId: string, cwd?: string, part?: CommandPalettePart) => string>(
-    (machineId, cwd, part) => `/api/machines/${encode(machineId)}/command-palette${queryString({ cwd, part })}`
+  commandPalette: get<
+    CommandPalettePayload,
+    (machineId: string, cwd?: string, part?: CommandPalettePart, refresh?: boolean) => string
+  >(
+    (machineId, cwd, part, refresh) =>
+      `/api/machines/${encode(machineId)}/command-palette${queryString({
+        cwd,
+        part,
+        refresh: refresh ? "true" : undefined
+      })}`
   ),
   thread: get<ThreadDetail, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}`

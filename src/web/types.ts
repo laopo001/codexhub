@@ -63,17 +63,19 @@ export type ThreadRenameDialogState = {
 
 export type RuntimeSummary = ApiRuntimeSummary;
 export type ModelCatalogItem = ApiModelCatalogItem;
-export type ModelCatalogLoadState = {
-  status: "idle" | "loading" | "ready" | "error";
-  models: ModelCatalogItem[];
+type RuntimeCatalogLoadMetadata = {
   source?: "live" | "cache";
   updatedAt?: string;
   stale?: boolean;
+};
+export type ModelCatalogLoadState = RuntimeCatalogLoadMetadata & {
+  status: "idle" | "loading" | "ready" | "error";
+  models: ModelCatalogItem[];
   refresh?: boolean;
   error?: string;
 };
 export type PermissionProfileSummary = ApiPermissionProfileSummary;
-export type PermissionProfileCatalogLoadState = {
+export type PermissionProfileCatalogLoadState = RuntimeCatalogLoadMetadata & {
   status: "loading" | "ready" | "error";
   profiles: PermissionProfileSummary[];
   error?: string;

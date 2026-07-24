@@ -31,6 +31,10 @@ class CurrentProtocolSocket implements AppServerSocketLike {
     completeTurnImmediately?: boolean;
     userAgent?: string;
     models?: unknown[];
+    permissionProfiles?: unknown[];
+    skills?: unknown[];
+    pluginList?: unknown;
+    pluginReads?: Record<string, unknown>;
   } = {}) {}
 
   send(data: string) {
@@ -98,6 +102,22 @@ class CurrentProtocolSocket implements AppServerSocketLike {
         data: this.options.models ?? [],
         nextCursor: null
       };
+    } else if (message.method === "permissionProfile/list") {
+      result = {
+        data: this.options.permissionProfiles ?? [],
+        nextCursor: null
+      };
+    } else if (message.method === "skills/list") {
+      result = {
+        data: [{
+          cwd: stringParam(params, "cwd") ?? "/tmp/current-protocol",
+          skills: this.options.skills ?? []
+        }]
+      };
+    } else if (message.method === "plugin/list") {
+      result = this.options.pluginList ?? { marketplaces: [], featuredPluginIds: [] };
+    } else if (message.method === "plugin/read") {
+      result = this.options.pluginReads?.[stringParam(params, "pluginName") ?? ""] ?? {};
     } else if (message.method === "turn/start") {
       result = { turn: { id: "immediate-turn" } };
     }
@@ -191,7 +211,7 @@ const transportFactory: HeadlessSessionTransportFactory = (_context, callbacks) 
   sendHeartbeat: () => undefined
 });
 
-test("attached runtime persists model/list results and can force a live refresh", async (context) => {
+test("attached runtime shares persistent catalog caching across models, permissions, and command palette plugins", async (context) => {
   context.mock.method(console, "error", () => undefined);
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "codexhub-runtime-model-cache."));
   const previousDataDirectory = process.env.CODEX_HUB_DATA_DIR;
@@ -206,11 +226,50 @@ test("attached runtime persists model/list results and can force a live refresh"
     supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High reasoning" }],
     serviceTiers: [{ id: "fast", name: "Fast" }]
   }];
+  const permissionProfiles = [{
+    id: ":workspace",
+    description: "Workspace access",
+    allowed: true
+  }];
+  const skills = [{
+    name: "demo:inspect",
+    description: "Inspect the demo project",
+    enabled: true,
+    path: "/tmp/demo/SKILL.md",
+    scope: "repo"
+  }];
+  const pluginList = {
+    marketplaces: [{
+      path: "/tmp/marketplace",
+      plugins: [{ id: "demo@1.0.0", name: "demo", installed: true, enabled: true }]
+    }],
+    featuredPluginIds: []
+  };
+  const pluginReads = {
+    demo: {
+      plugin: {
+        summary: {
+          name: "demo",
+          interface: {
+            displayName: "Demo",
+            description: "Demo plugin"
+          }
+        },
+        skills
+      }
+    }
+  };
   let firstCallbacks: HeadlessSessionTransportCallbacks | undefined;
   let firstSession: Awaited<ReturnType<typeof startAttachedCodexhubSession>> | undefined;
   let secondSession: Awaited<ReturnType<typeof startAttachedCodexhubSession>> | undefined;
   try {
-    const firstSocket = new CurrentProtocolSocket({ models });
+    const firstSocket = new CurrentProtocolSocket({
+      models,
+      permissionProfiles,
+      skills,
+      pluginList,
+      pluginReads
+    });
     firstSession = await startAttachedCodexhubSession({
       apiBase: "http://127.0.0.1:1",
       appServerUrl: "ws://127.0.0.1:1",
@@ -226,10 +285,24 @@ test("attached runtime persists model/list results and can force a live refresh"
     const live = await firstCallbacks.handleCommand(modelListCommand("live-models"));
     assert.equal((live as { source?: string }).source, "live");
     assert.equal(firstSocket.requestCount("model/list"), 1);
+    const livePermissions = await firstCallbacks.handleCommand(permissionListCommand("live-permissions"));
+    assert.equal((livePermissions as { source?: string }).source, "live");
+    assert.equal(firstSocket.requestCount("permissionProfile/list"), 1);
+    const livePlugins = await firstCallbacks.handleCommand(commandPalettePluginCommand("live-plugins"));
+    assert.equal((livePlugins as { source?: string }).source, "live");
+    assert.equal(firstSocket.requestCount("skills/list"), 1);
+    assert.equal(firstSocket.requestCount("plugin/list"), 1);
+    assert.equal(firstSocket.requestCount("plugin/read"), 1);
     await firstSession.stop();
     firstSession = undefined;
 
-    const secondSocket = new CurrentProtocolSocket({ models });
+    const secondSocket = new CurrentProtocolSocket({
+      models,
+      permissionProfiles,
+      skills,
+      pluginList,
+      pluginReads
+    });
     let secondCallbacks: HeadlessSessionTransportCallbacks | undefined;
     secondSession = await startAttachedCodexhubSession({
       apiBase: "http://127.0.0.1:1",
@@ -246,12 +319,38 @@ test("attached runtime persists model/list results and can force a live refresh"
     const cached = await secondCallbacks.handleCommand(modelListCommand("cached-models"));
     assert.equal((cached as { source?: string }).source, "cache");
     assert.equal(secondSocket.requestCount("model/list"), 0);
+    const cachedPermissions = await secondCallbacks.handleCommand(permissionListCommand("cached-permissions"));
+    assert.equal((cachedPermissions as { source?: string }).source, "cache");
+    assert.equal(secondSocket.requestCount("permissionProfile/list"), 0);
+    const cachedPlugins = await secondCallbacks.handleCommand(commandPalettePluginCommand("cached-plugins"));
+    assert.equal((cachedPlugins as { source?: string }).source, "cache");
+    assert.equal(
+      (cachedPlugins as { palette?: { entries?: Array<{ name?: string }> } }).palette?.entries?.[0]?.name,
+      "demo"
+    );
+    assert.equal(secondSocket.requestCount("skills/list"), 0);
+    assert.equal(secondSocket.requestCount("plugin/list"), 0);
+    assert.equal(secondSocket.requestCount("plugin/read"), 0);
     const refreshed = await secondCallbacks.handleCommand({
       ...modelListCommand("refreshed-models"),
       refresh: true
     });
     assert.equal((refreshed as { source?: string }).source, "live");
     assert.equal(secondSocket.requestCount("model/list"), 1);
+    const refreshedPermissions = await secondCallbacks.handleCommand({
+      ...permissionListCommand("refreshed-permissions"),
+      refresh: true
+    });
+    assert.equal((refreshedPermissions as { source?: string }).source, "live");
+    assert.equal(secondSocket.requestCount("permissionProfile/list"), 1);
+    const refreshedPlugins = await secondCallbacks.handleCommand({
+      ...commandPalettePluginCommand("refreshed-plugins"),
+      refresh: true
+    });
+    assert.equal((refreshedPlugins as { source?: string }).source, "live");
+    assert.equal(secondSocket.requestCount("skills/list"), 1);
+    assert.equal(secondSocket.requestCount("plugin/list"), 1);
+    assert.equal(secondSocket.requestCount("plugin/read"), 1);
   } finally {
     await firstSession?.stop();
     await secondSession?.stop();
@@ -268,6 +367,23 @@ const modelListCommand = (commandId: string) => ({
   workingDirectory: "/tmp/current-protocol",
   createdAt: new Date(0).toISOString(),
   includeHidden: false
+});
+
+const permissionListCommand = (commandId: string) => ({
+  seq: 1,
+  commandId,
+  type: "list_permission_profiles" as const,
+  workingDirectory: "/tmp/current-protocol",
+  createdAt: new Date(0).toISOString()
+});
+
+const commandPalettePluginCommand = (commandId: string) => ({
+  seq: 1,
+  commandId,
+  type: "list_command_palette" as const,
+  workingDirectory: "/tmp/current-protocol",
+  createdAt: new Date(0).toISOString(),
+  commandPalettePart: "plugins" as const
 });
 
 const restoreEnv = (name: string, value: string | undefined) => {
