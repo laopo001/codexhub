@@ -8,4 +8,5 @@ export type CodexAppServerLaunchOptions = {
   approvalPolicy?: CodexApprovalPolicy;
   approvalsReviewer?: CodexApprovalsReviewer;
   sandbox?: CodexSandboxMode;
+  modelCatalogJson?: string;
 };

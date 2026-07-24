@@ -28,7 +28,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 5. `codexhub server --register-to <parent>` 会启动当前 server，并额外把它作为一台 `registered` machine 接入父 server；这不是 server-to-server state bridge。
 6. `codexhub ssh ...` 是 server-side SSH 管理入口；SSH remote client 由本机 server bootstrap 下发，不要求远端预装 codexhub。
 7. VSCode 和 Electron 都调用 `src/server/embedded.ts` 复用同一套 server/Web。VSCode 默认每个窗口启动自己的随机端口嵌入 server，并共享 VSCode extension `globalStorageUri` 下的 `config.yaml`；parent URL 和可选 token 可以跨窗口共享，但每个 workspace 必须使用 `workspaceState` 下独立、稳定的 parent registration machineId，不能让多个窗口争用同一个 machine transport。窗口内嵌 local machine 和自动 workspace projects 只作为 transient 内存投影，不写入持久配置。Electron 默认随机端口，只有显式 `CODEX_HUB_PORT` 时才固定端口。
-8. machine/headless 启动官方 `codex app-server` 时必须走 `resolveCodexCommand()`：优先 `CODEX_HUB_CODEX_CLI`，再查 `PATH` 和常见 npm/pnpm 全局 bin；Windows `.cmd` / `.bat` 需要经 `cmd.exe /d /s /c call` 启动。`CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 控制 `/readyz` 等待时间，错误应带最近 app-server stderr tail。
+8. machine/headless 启动官方 `codex app-server` 时必须走 `resolveCodexCommand()`：优先 `CODEX_HUB_CODEX_CLI`，再查 `PATH` 和常见 npm/pnpm 全局 bin；Windows `.cmd` / `.bat` 需要经 `cmd.exe /d /s /c call` 启动。`CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 控制 `/readyz` 等待时间，错误应带最近 app-server stderr tail。默认使用 `${CODEX_HOME:-~/.codex}/models_cache.json` 作为启动级 `model_catalog_json`（仅文件存在时），`CODEX_HUB_APP_SERVER_MODEL_CATALOG_JSON` 可以显式覆盖；默认文件不存在时保留 app-server 原生联网目录行为。
 
 ## Machine / Session / Thread
 

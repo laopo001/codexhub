@@ -48,6 +48,8 @@ pnpm codexhub server --host 0.0.0.0 --port 8788
 
 CodexHub 启动官方 `codex app-server` 时会先解析 Codex CLI：优先使用 `CODEX_HUB_CODEX_CLI`，再查找 `PATH`、常见 npm/pnpm 全局 bin 目录；Windows 下会识别 `codex.cmd` / `codex.bat` 并通过 `cmd.exe call` 启动。app-server ready 检查默认等待 60 秒，可用 `CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 调整；启动失败时错误会带上最近的 app-server stderr 尾部，方便定位 Codex CLI 或登录环境问题。
 
+CodexHub 默认读取 `${CODEX_HOME:-~/.codex}/models_cache.json`（文件存在时），并把它作为官方 app-server 的启动级 `model_catalog_json` override，避免新 thread 在远程模型目录刷新上同步等待。首次运行尚无缓存时会保留 app-server 原生联网行为；如需使用其他 catalog，可用绝对路径 `CODEX_HUB_APP_SERVER_MODEL_CATALOG_JSON` 显式覆盖。CodexHub 只读取该文件，不会改写模型目录。
+
 远端机器或容器外的宿主机可以主动注册。远端已经安装 CodexHub 时，直接让远端 server 注册到父 server：
 
 ```bash
