@@ -70,7 +70,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 9. SSH：`GET /api/ssh/config-hosts`、`GET /api/ssh/hosts`、`POST /api/ssh/hosts`、`DELETE /api/ssh/hosts/:alias`、`GET /api/ssh/connections`、`POST /api/ssh/connect`、`DELETE /api/ssh/connections/:connectionId`、`GET /api/ssh/remote-client/:hash`。
 10. Plugins：`GET /api/plugins`、`GET /api/plugins/:pluginId/assets/*`。
 11. Web/TG/task 和外部 API 发送对话统一使用 `/api/threads/:threadId/turn`，不提供 session 级 turn 兼容入口。
-12. project 不拥有 runtime lifecycle。`POST /api/projects/open` 是显式 project path bootstrap/persistence 入口，返回 `machineId` 和创建/恢复的 `threadId`；Add Thread 冷启动必须调用 `POST /api/machines/:machineId/runtime/ensure`，不能借用 project open 造成 project 状态写入。不要新增 per-project runtime stop/restart API。runtime 不由 project delete 或 idle watcher 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
+12. project 不拥有 runtime lifecycle。`POST /api/projects/open` 是显式 project path bootstrap/persistence 入口，通常返回 `machineId` 和创建/恢复的 `threadId`；匹配当前 embedded surface 且 `persist:false` 的 workspace provider seed 只验证目录并登记 transient project，不能启动 runtime/thread。Add Thread 冷启动必须调用 `POST /api/machines/:machineId/runtime/ensure`，不能借用普通 project open 造成 project 状态写入。不要新增 per-project runtime stop/restart API。runtime 不由 project delete 或 idle watcher 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
 
 ## Server Config
 
@@ -149,7 +149,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 1. Electron main process 只包装同一个 server 和 Web UI。窗口使用隔离/sandbox WebPreferences，外链用系统浏览器打开。
 2. Electron 默认随机端口；显式设置 `CODEX_HUB_PORT` 后端口被占用应直接失败，不再 fallback。
 3. VSCode extension 注册 sidebar webview，每个 VSCode 窗口默认启动自己的随机端口嵌入 server，并把 `CODEX_HUB_DATA_DIR` 语义收敛到 VSCode extension `globalStorageUri` 对应的共享数据目录；只有显式 `CODEX_HUB_PORT` 时才固定端口，端口占用应直接失败。每个 workspace 必须在 `workspaceState` 保存独立 parent registration machineId，并通过 embedded `parentRegistrationIdentity` 覆盖共享 profile，显示名应包含 workspace 名称。Webview iframe 和 Open in Browser 必须通过 `vscode.env.asExternalUri` 暴露 server URL，不能直接写 raw loopback URL。
-4. VSCode extension 自动 `POST /api/projects/open` 当前窗口的 file workspace folders，body 使用 `persist:false` 和 `source.kind="vscode"`；打开前先从 `/api/machines` 选在线 `local` + `projectLauncher !== false` 的 machineId，避免依赖默认 machine 推断。VSCode 窗口内嵌 local machine 和这些 workspace projects 都只显示在内存中，不写入 `config.yaml`，用户显式保存 project 后才变成普通 project。
+4. VSCode extension 自动 `POST /api/projects/open` 当前窗口的 file workspace folders，body 使用 `persist:false` 和 `source.kind="vscode"`；这个 embedded provider seed 只能验证目录并登记 transient project，不能启动 app-server/runtime/thread，真正的 runtime 冷启动留给 Add Thread。打开前先从 `/api/machines` 选在线 `local` + `projectLauncher !== false` 的 machineId，避免依赖默认 machine 推断。VSCode 窗口内嵌 local machine 和这些 workspace projects 都只显示在内存中，不写入 `config.yaml`，用户显式保存 project 后才变成普通 project。
 5. VSCode workspace project 打开要容忍 embedded server listen 后 local launcher 尚未完成注册的 race：对 `HTTP 409` + launcher offline 类错误按 `500ms * 30` 重试；没有 file workspace folder 时只显示状态页。
 6. VSCode extension 启用和普通 Web 相同的 SSH/tasks/integrations/Registered 能力；这些配置仍属于对应窗口 server/state，窗口自动 workspace project 不应污染全局持久 project list。
 7. VSCode 打包由 `scripts/build-vscode.ts` 负责：先完整 build，再将 extension 打成 Node CJS bundle、把 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；staging 必须包含 `dist`、`dist-node/ssh`、media、README、LICENSE。

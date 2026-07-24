@@ -44,6 +44,31 @@ export type ProjectTaskRoutesContext = {
 };
 
 export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTaskRoutesContext) => {
+  const registerTransientProjectOnMachine = async (input: {
+    machine: ReturnType<MachineHub["listMachines"]>[number];
+    path: string;
+    source: ProjectSource;
+  }): Promise<ProjectThreadStartPayload> => {
+    const directory = await ctx.machines.listDirectory(input.machine.machineId, { cwd: input.path }).promise;
+    const project = ctx.state.upsertTransientProject({
+      machineId: input.machine.machineId,
+      path: directory.cwd,
+      source: input.source
+    });
+    ctx.publishProjects();
+    ctx.refreshParentRegistration();
+    return {
+      ok: true,
+      machine: input.machine,
+      project,
+      result: {
+        machineId: input.machine.machineId,
+        cwd: directory.cwd
+      },
+      ...ctx.projectSnapshot()
+    } satisfies ProjectThreadStartPayload;
+  };
+
   const startProjectThreadOnMachine = async (input: {
     machine: ReturnType<MachineHub["listMachines"]>[number];
     path: string;
@@ -167,6 +192,13 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
       if (fixedCatalog && !providerSeed && !ctx.fixedProjectPathExists(machine.machineId, payload.path)) {
         reply.code(409);
         return { error: "This machine exposes a fixed workspace project list." };
+      }
+      if (providerSeed && payload.persist === false && payload.source) {
+        return await registerTransientProjectOnMachine({
+          machine,
+          path: payload.path,
+          source: payload.source
+        });
       }
       return await startProjectThreadOnMachine({
         machine,
