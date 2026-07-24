@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import net from "node:net";
 import { loadDotEnv } from "../core/dotenv.js";
 import type { CodexHubSurface } from "../shared/surfaceTypes.js";
@@ -10,7 +11,7 @@ import {
 
 export type EmbeddedServerOptions = {
   host?: string;
-  portMode: "preferred" | "random";
+  portMode: "preferred" | "random" | "increment";
   preferredPort?: number;
   dataDir?: string;
   staticDirectory?: string;
@@ -27,11 +28,13 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
   const preferredPort = options.portMode === "random"
     ? await findFreePort(host)
     : options.preferredPort;
-  if (preferredPort === undefined) throw new Error("preferred embedded server mode requires preferredPort");
-  try {
-    return await startServer({
+  if (preferredPort === undefined) {
+    throw new Error(`${options.portMode} embedded server mode requires preferredPort`);
+  }
+  const startAtPort = async (port: number) =>
+    await startServer({
       host,
-      port: preferredPort,
+      port,
       dataDir: options.dataDir,
       staticDirectory: options.staticDirectory,
       surface: options.surface,
@@ -39,21 +42,20 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       parentRegistrationIdentity: options.parentRegistrationIdentity,
       features: options.features
     });
-  } catch (error) {
-    if (options.portMode !== "random" || !isAddressInUse(error)) throw error;
-    const fallbackPort = await findFreePort(host);
-    const prefix = options.logPrefix ?? "codexhub embedded";
-    console.error(`${prefix} port ${preferredPort} is busy; using ${fallbackPort}`);
-    return await startServer({
-      host,
-      port: fallbackPort,
-      dataDir: options.dataDir,
-      staticDirectory: options.staticDirectory,
-      surface: options.surface,
-      buildId: options.buildId,
-      parentRegistrationIdentity: options.parentRegistrationIdentity,
-      features: options.features
-    });
+
+  let port = preferredPort;
+  for (;;) {
+    try {
+      return await startAtPort(port);
+    } catch (error) {
+      if (!isAddressInUse(error) || options.portMode === "preferred") throw error;
+      const fallbackPort = options.portMode === "random"
+        ? await findFreePort(host)
+        : nextEmbeddedPort(port);
+      const prefix = options.logPrefix ?? "codexhub embedded";
+      console.error(`${prefix} port ${port} is busy; trying ${fallbackPort}`);
+      port = fallbackPort;
+    }
   }
 };
 
@@ -68,6 +70,25 @@ export const parseEmbeddedPort = (value: string, label = "embedded server port")
     throw new Error(`Invalid ${label}: ${value}`);
   }
   return port;
+};
+
+export const stableEmbeddedPortForName = (
+  name: string,
+  rangeStart = 20_000,
+  rangeSize = 10_000
+) => {
+  if (
+    !Number.isInteger(rangeStart)
+    || !Number.isInteger(rangeSize)
+    || rangeStart <= 0
+    || rangeSize <= 0
+    || rangeStart + rangeSize - 1 > 65_535
+  ) {
+    throw new Error(`Invalid embedded server port range: ${rangeStart}..${rangeStart + rangeSize - 1}`);
+  }
+  const normalizedName = name.normalize("NFKC").trim() || "codexhub";
+  const hash = createHash("sha256").update(normalizedName).digest().readUInt32BE(0);
+  return rangeStart + (hash % rangeSize);
 };
 
 export const findFreePort = async (host: string) => await new Promise<number>((resolve, reject) => {
@@ -86,3 +107,10 @@ export const findFreePort = async (host: string) => await new Promise<number>((r
 
 const isAddressInUse = (error: unknown) =>
   error instanceof Error && (error as NodeJS.ErrnoException).code === "EADDRINUSE";
+
+const nextEmbeddedPort = (port: number) => {
+  if (port >= 65_535) {
+    throw new Error("Could not allocate embedded server port after reaching 65535.");
+  }
+  return port + 1;
+};

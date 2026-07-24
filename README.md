@@ -345,7 +345,7 @@ codexhub server --register-to http://127.0.0.1:8788 --port 8789
 
 Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex app-server/headless 进程仍然由本机/SSH/registered machine session 提供。
 
-VSCode extension 每个窗口默认启动自己的随机端口嵌入 server；显式设置 `CODEX_HUB_PORT` 时才固定端口，端口被占用会直接失败。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/Registered 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。extension 会先从 `/api/machines` 找到在线的 `local` project launcher，再把当前窗口的 file workspace folders 通过 `/api/projects/open` 以 `persist:false` bootstrap 成 VSCode workspace project group；这个窗口内嵌的 local machine 和这些项目都只存在于该窗口 server 的内存中，不写入 `config.yaml`。用户在 UI 中显式保存 transient project 后，它才会进入普通 CodexHub project list。
+VSCode extension 每个窗口根据 VSCode 项目/工作区名称稳定生成 `20000-29999` 范围内的嵌入 server 起始端口；如果该端口已被占用，就依次尝试后续端口。扩展不使用外部传入的 `CODEX_HUB_PORT` 选端口，而是把生成的当前候选端口作为显式 server `port` 参数传入；该参数与 CLI `--port` 走同一优先级，覆盖 `CODEX_HUB_PORT`。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/Registered 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。extension 会先从 `/api/machines` 找到在线的 `local` project launcher，再把当前窗口的 file workspace folders 通过 `/api/projects/open` 以 `persist:false` bootstrap 成 VSCode workspace project group；这个窗口内嵌的 local machine 和这些项目都只存在于该窗口 server 的内存中，不写入 `config.yaml`。用户在 UI 中显式保存 transient project 后，它才会进入普通 CodexHub project list。
 
 命令面板里的 `Codex Hub: Open Config File` 会打开当前 VSCode 窗口 embedded server 使用的 `config.yaml`；文件不存在时会先创建一个最小配置。
 

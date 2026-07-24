@@ -3,7 +3,10 @@ import path from "node:path";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import * as vscode from "vscode";
 import type { ServerHandle } from "../../../src/server/index.js";
-import { startEmbeddedServer } from "../../../src/server/embedded.js";
+import {
+  stableEmbeddedPortForName,
+  startEmbeddedServer
+} from "../../../src/server/embedded.js";
 import { openEmbeddedWorkspaceProjects } from "../../../src/core/embeddedWorkspaceProjects.js";
 import { buildWebviewBridgeScript } from "./webviewBridge.js";
 
@@ -246,12 +249,12 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   private async startWindowServer(): Promise<VscodeCodexHubServer> {
     const staticDirectory = this.context.asAbsolutePath("dist");
     const buildId = await vscodeWindowBuildId(this.context, staticDirectory);
-    const explicitPort = parsePort(process.env.CODEX_HUB_PORT);
+    const preferredPort = stableEmbeddedPortForName(vscodeWorkspacePortName());
     const parentRegistrationIdentity = await this.parentRegistrationIdentity();
     const owned = await startEmbeddedServer({
       host: process.env.CODEX_HUB_HOST ?? "0.0.0.0",
-      portMode: explicitPort ? "preferred" : "random",
-      preferredPort: explicitPort,
+      portMode: "increment",
+      preferredPort,
       dataDir: this.context.globalStorageUri.fsPath,
       staticDirectory,
       surface: "vscode",
@@ -418,6 +421,15 @@ const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[]) => {
   return folderName ? `VSCode: ${folderName}` : "VSCode Workspace";
 };
 
+const vscodeWorkspacePortName = () => {
+  const workspaceName = vscode.workspace.name?.trim();
+  if (workspaceName) return workspaceName;
+  const folderNames = fileWorkspaceFolders()
+    .map((folder) => folder.name.trim())
+    .filter(Boolean);
+  return folderNames.join(" + ") || "CodexHub VSCode";
+};
+
 const iframeHtml = (src: string, workspacePath: string, theiaHost: boolean) => {
   const nonce = randomNonce();
   const sourceOrigin = new URL(src).origin;
@@ -573,12 +585,6 @@ const externalServerUri = async (url: string) => {
   externalUrl.search = parsed.search;
   externalUrl.hash = parsed.hash;
   return vscode.Uri.parse(externalUrl.toString());
-};
-
-const parsePort = (value: string | undefined) => {
-  if (!value) return undefined;
-  const port = Number(value);
-  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
 };
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
