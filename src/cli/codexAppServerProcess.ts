@@ -154,7 +154,7 @@ export const resolveCodexAppServerLaunchOptions = (
   const envOptions = codexAppServerLaunchOptionsFromEnv();
   return {
     approvalPolicy: overrides.approvalPolicy ?? envOptions.approvalPolicy,
-    approvalsReviewer: overrides.approvalsReviewer ?? envOptions.approvalsReviewer,
+    approvalsReviewer: overrides.approvalsReviewer ?? envOptions.approvalsReviewer ?? "auto_review",
     sandbox: overrides.sandbox ?? envOptions.sandbox,
     modelCatalogJson: overrides.modelCatalogJson ?? envOptions.modelCatalogJson
   };

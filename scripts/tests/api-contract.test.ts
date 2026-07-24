@@ -16,6 +16,7 @@ import {
   parseCodexApprovalPolicy,
   parseCodexApprovalsReviewer,
   parseCodexModelCatalogJsonPath,
+  resolveCodexAppServerLaunchOptions,
   resolveCodexModelCatalogJsonPath
 } from "../../src/cli/codexAppServerProcess.js";
 
@@ -100,6 +101,23 @@ test("app-server launch reviewer follows the current protocol values", () => {
   assert.equal(parseCodexApprovalsReviewer("auto_review"), "auto_review");
   assert.equal(parseCodexApprovalsReviewer("guardian_subagent"), "guardian_subagent");
   assert.throws(() => parseCodexApprovalsReviewer("future-reviewer"), /Invalid approvals reviewer/);
+});
+
+test("app-server launch reviewer defaults to auto review and preserves overrides", () => {
+  const previous = process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER;
+  try {
+    delete process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER;
+    assert.equal(resolveCodexAppServerLaunchOptions().approvalsReviewer, "auto_review");
+
+    process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER = "user";
+    assert.equal(resolveCodexAppServerLaunchOptions().approvalsReviewer, "user");
+    assert.equal(resolveCodexAppServerLaunchOptions({
+      approvalsReviewer: "guardian_subagent"
+    }).approvalsReviewer, "guardian_subagent");
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER;
+    else process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER = previous;
+  }
 });
 
 test("thread permissions follow the current granular, reviewer, and named-profile protocol", () => {

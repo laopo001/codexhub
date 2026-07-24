@@ -328,7 +328,7 @@ const main = async () => {
   process.env.CODEX_HUB_LOCAL_MACHINE = "1";
   process.env.CODEX_HUB_PLUGIN_TELEGRAM = "1";
   process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY = "on-request";
-  process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER = "auto_review";
+  delete process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER;
   process.env.TELEGRAM_BOT_TOKEN = "";
 
   assertAppServerLaunchOverrides();
@@ -3363,15 +3363,20 @@ const assertAppServerLaunchOverrides = () => {
     delete process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
     delete process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER;
     const defaults = resolveCodexAppServerLaunchOptions();
-    if (defaults.approvalPolicy !== undefined || defaults.approvalsReviewer !== undefined) {
-      throw new Error(`app-server launch invented an approval override: ${JSON.stringify(defaults)}`);
+    if (defaults.approvalPolicy !== undefined || defaults.approvalsReviewer !== "auto_review") {
+      throw new Error(`app-server launch did not default approval reviewer to auto_review: ${JSON.stringify(defaults)}`);
     }
     const explicit = resolveCodexAppServerLaunchOptions({
       approvalPolicy: "on-request",
-      approvalsReviewer: "auto_review"
+      approvalsReviewer: "user"
     });
-    if (explicit.approvalPolicy !== "on-request" || explicit.approvalsReviewer !== "auto_review") {
+    if (explicit.approvalPolicy !== "on-request" || explicit.approvalsReviewer !== "user") {
       throw new Error(`explicit app-server launch approval settings were not preserved: ${JSON.stringify(explicit)}`);
+    }
+    process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER = "guardian_subagent";
+    const configured = resolveCodexAppServerLaunchOptions();
+    if (configured.approvalsReviewer !== "guardian_subagent") {
+      throw new Error(`configured app-server approval reviewer was not preserved: ${JSON.stringify(configured)}`);
     }
   } finally {
     if (previousApprovalPolicy === undefined) delete process.env.CODEX_HUB_APP_SERVER_APPROVAL_POLICY;
