@@ -77,6 +77,10 @@ test("thread state is merged before a browser completion notification is attempt
     historical: true,
   }));
   assert.deepEqual(calls, ["thread", "order", "runtimes", "projects"]);
+
+  calls.length = 0;
+  assert.doesNotThrow(() => actions.applyThreadStreamEvent(turnAbortedEvent()));
+  assert.deepEqual(calls, ["thread", "order", "runtimes", "projects"]);
 });
 
 const taskCompleteEvent = (): ThreadStreamEvent => ({
@@ -92,6 +96,25 @@ const taskCompleteEvent = (): ThreadStreamEvent => ({
       type: "task_complete",
       turn_id: "turn-test",
       duration_ms: 2000
+    }
+  }
+});
+
+const turnAbortedEvent = (): ThreadStreamEvent => ({
+  seq: 4,
+  threadId: "thread-test",
+  kind: "record",
+  thread: threadSummary(),
+  record: {
+    id: "app:thread-test:turn-failed:event:turn_aborted",
+    timestamp: "2026-07-19T00:00:03.000Z",
+    type: "event_msg",
+    payload: {
+      type: "turn_aborted",
+      turn_id: "turn-failed",
+      status: "failed",
+      reason: "quota exhausted",
+      duration_ms: 1000
     }
   }
 });

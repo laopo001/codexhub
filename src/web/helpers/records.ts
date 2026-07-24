@@ -426,15 +426,19 @@ export const latestTurnActivityScope = (records: CodexRecord[]): TurnActivitySco
     if (!isUserInputRecord(records[index])) continue;
     const record = records[index];
     const turnId = recordTurnId(record);
+    const scopeStartIndex = turnId
+      ? records.findIndex((candidate) => isUserInputRecord(candidate) && recordTurnId(candidate) === turnId)
+      : index;
+    const scopeStartRecord = records[scopeStartIndex] ?? record;
     const turnStartedAt = turnId ? turnStartedAtFromRecords(records, turnId) : undefined;
-    const startedAt = turnStartedAt ?? record.timestamp;
-    const scopeRecords = records.slice(index + 1);
+    const startedAt = turnStartedAt ?? scopeStartRecord.timestamp;
+    const scopeRecords = records.slice(scopeStartIndex + 1);
     return {
       key: turnId ? `turn:${turnId}` : record.id,
-      label: turnStartedAt ? `after ${formatTurnActivityScopeTime(turnStartedAt, "turn")}` : `after ${formatTurnActivityScopeTime(record.timestamp, "user")}`,
+      label: turnStartedAt ? `after ${formatTurnActivityScopeTime(turnStartedAt, "turn")}` : `after ${formatTurnActivityScopeTime(scopeStartRecord.timestamp, "user")}`,
       records: scopeRecords,
       ...(turnId ? { turnId } : {}),
-      userRecordId: record.id,
+      userRecordId: scopeStartRecord.id,
       startedAt,
       ...(turnId ? { endedAt: turnEndedAtFromRecords(records, turnId) } : {}),
       ...(turnId ? optionalDuration(turnDurationMsForTurn(records, turnId)) : {}),
@@ -660,15 +664,16 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
   }
 
   if (type === "turn_aborted") {
+    const interrupted = payload.status === "interrupted";
     return {
       key: "turn",
-      label: "Aborted",
-      status: "failed",
+      label: interrupted ? "Interrupted" : "Failed",
+      status: interrupted ? undefined : "failed",
       at: record.timestamp,
       text: [
         typeof payload.reason === "string" ? payload.reason : null,
         typeof payload.duration_ms === "number" ? `duration ${formatStatusDuration(payload.duration_ms)}` : null
-      ].filter(Boolean).join(" · ") || "Turn aborted"
+      ].filter(Boolean).join(" · ") || (interrupted ? "Turn interrupted" : "Turn failed")
     };
   }
 

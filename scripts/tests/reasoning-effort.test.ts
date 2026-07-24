@@ -153,12 +153,28 @@ test("queued turns inherit sticky settings before command promise callbacks run"
   assert.equal(firstCommand?.options?.modelReasoningEffort, "ultra");
   const queuedTurn = hub.runTurn(threadId, "queued", "task");
 
-  // Exercise the completion-before-command-result path that previously let the
-  // queued turn snapshot stale settings before the first promise callback ran.
+  // Exercise the authoritative completion-before-command-result path that
+  // previously let the queued turn snapshot stale settings before the first
+  // promise callback ran.
   hub.applySessionEvent(sessionId, {
-    type: "thread_execution_changed",
+    type: "thread_event",
     threadId,
-    running: false
+    message: {
+      method: "turn/completed",
+      params: {
+        threadId,
+        turn: {
+          id: "reasoning-first-turn",
+          status: "completed",
+          itemsView: "full",
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1000,
+          items: []
+        }
+      }
+    }
   });
   const queuedBatch = await hub.waitSessionCommands(sessionId, firstCommand!.seq, 1);
   const queuedCommand = queuedBatch.commands[0];

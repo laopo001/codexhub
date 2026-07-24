@@ -24,6 +24,8 @@ class CurrentProtocolSocket implements AppServerSocketLike {
   constructor(private readonly options: {
     validResume?: boolean;
     overloadOnceFor?: string;
+    errorFor?: string;
+    completeTurnImmediately?: boolean;
     userAgent?: string;
   } = {}) {}
 
@@ -41,6 +43,12 @@ class CurrentProtocolSocket implements AppServerSocketLike {
     if (this.options.overloadOnceFor === method && requestCount === 1) {
       queueMicrotask(() => this.emit("message", {
         data: JSON.stringify({ id: message.id, error: { code: -32001, message: "overloaded" } })
+      }));
+      return;
+    }
+    if (this.options.errorFor === method) {
+      queueMicrotask(() => this.emit("message", {
+        data: JSON.stringify({ id: message.id, error: { code: -32000, message: `${method} failed` } })
       }));
       return;
     }
@@ -81,10 +89,34 @@ class CurrentProtocolSocket implements AppServerSocketLike {
           rateLimitReachedType: null
         }
       };
+    } else if (message.method === "turn/start") {
+      result = { turn: { id: "immediate-turn" } };
     }
-    queueMicrotask(() => this.emit("message", {
-      data: JSON.stringify({ id: message.id, result })
-    }));
+    queueMicrotask(() => {
+      this.emit("message", {
+        data: JSON.stringify({ id: message.id, result })
+      });
+      if (message.method === "turn/start" && this.options.completeTurnImmediately) {
+        this.emit("message", {
+          data: JSON.stringify({
+            method: "turn/completed",
+            params: {
+              threadId: stringParam(params, "threadId"),
+              turn: {
+                id: "immediate-turn",
+                status: "completed",
+                itemsView: "full",
+                error: null,
+                startedAt: 1,
+                completedAt: 2,
+                durationMs: 1000,
+                items: []
+              }
+            }
+          })
+        });
+      }
+    });
   }
 
   requestCount(method: string) {
@@ -381,6 +413,88 @@ test("runtime retries explicit app-server overload responses", async (context) =
   });
   try {
     assert.equal(socket.requestCount("initialize"), 2);
+  } finally {
+    await session.stop();
+  }
+});
+
+test("runtime keeps JSON-RPC response errors out of the thread event stream", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket({ errorFor: "thread/resume" });
+  const forwardedEvents: unknown[] = [];
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    appServerTransportFactory: async () => socket,
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, callbacks) => ({
+      ...transportFactory(transportContext, callbacks),
+      sendEvent: (event) => forwardedEvents.push(event)
+    })
+  });
+  try {
+    await assert.rejects(session.ensureThread("rpc-error-thread"), /thread\/resume failed/);
+    assert.equal(forwardedEvents.some((event) => {
+      const value = event as { type?: string; threadId?: string };
+      return value.type === "thread_event" && value.threadId === "rpc-error-thread";
+    }), false);
+  } finally {
+    await session.stop();
+  }
+});
+
+test("runtime projects a fast turn/start response before its completion notification", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket({
+    validResume: true,
+    completeTurnImmediately: true
+  });
+  const forwardedEvents: unknown[] = [];
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    appServerTransportFactory: async () => socket,
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return {
+        ...transportFactory(transportContext, nextCallbacks),
+        sendEvent: (event) => forwardedEvents.push(event)
+      };
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    await callbacks.handleCommand({
+      seq: 1,
+      commandId: "immediate-command",
+      type: "turn",
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: new Date(0).toISOString(),
+      threadId: "immediate-thread",
+      input: "finish immediately"
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const runningIndex = forwardedEvents.findIndex((event) => {
+      const value = event as { type?: string; running?: boolean; turnId?: string };
+      return value.type === "thread_execution_changed"
+        && value.running === true
+        && value.turnId === "immediate-turn";
+    });
+    const completedIndex = forwardedEvents.findIndex((event) => {
+      const value = event as { type?: string; message?: { method?: string } };
+      return value.type === "thread_event" && value.message?.method === "turn/completed";
+    });
+    assert.ok(runningIndex >= 0);
+    assert.ok(completedIndex > runningIndex);
+    assert.equal(forwardedEvents.slice(completedIndex + 1).some((event) => {
+      const value = event as { type?: string; running?: boolean; turnId?: string };
+      return value.type === "thread_execution_changed"
+        && value.running === true
+        && value.turnId === "immediate-turn";
+    }), false);
   } finally {
     await session.stop();
   }

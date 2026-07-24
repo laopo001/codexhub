@@ -6,6 +6,7 @@ import { ThreadHub } from "../../src/core/threadHub.js";
 import {
   codexRecordFromAppServerItem,
   codexRecordFromAppServerUsage,
+  codexRecordsFromAppServerTurnLifecycle,
   withAppServerItemRecordTiming
 } from "../../src/core/threadAppServerRecords.js";
 
@@ -154,6 +155,70 @@ test("token usage reads current camelCase protocol fields into stable snake_case
       },
       model_context_window: 200_000
     }
+  });
+});
+
+test("terminal Turn status produces the authoritative lifecycle record even without timing", () => {
+  const completed = codexRecordsFromAppServerTurnLifecycle("thread-1", "turn-completed", {
+    status: "completed",
+    startedAt: null,
+    completedAt: null,
+    durationMs: null,
+    error: null
+  });
+  assert.deepEqual(completed.map((record) => (record.payload as Record<string, unknown>).type), ["task_complete"]);
+
+  const failed = codexRecordsFromAppServerTurnLifecycle("thread-1", "turn-failed", {
+    status: "failed",
+    startedAt: null,
+    completedAt: null,
+    durationMs: 250,
+    error: { message: "quota exhausted" }
+  });
+  assert.deepEqual(failed[0]?.payload, {
+    type: "turn_aborted",
+    turn_id: "turn-failed",
+    status: "failed",
+    reason: "quota exhausted",
+    error: { message: "quota exhausted" },
+    duration_ms: 250
+  });
+
+  const interrupted = codexRecordsFromAppServerTurnLifecycle("thread-1", "turn-interrupted", {
+    status: "interrupted",
+    startedAt: null,
+    completedAt: null,
+    durationMs: null,
+    error: null
+  });
+  assert.deepEqual(interrupted[0]?.payload, {
+    type: "turn_aborted",
+    turn_id: "turn-interrupted",
+    status: "interrupted",
+    reason: "Turn interrupted"
+  });
+});
+
+test("context compaction preserves failed and interrupted protocol states", () => {
+  const failed = codexRecordFromAppServerItem("thread-1", "turn-1", {
+    type: "contextCompaction",
+    id: "compact-failed",
+    status: "failed"
+  });
+  const interrupted = codexRecordFromAppServerItem("thread-1", "turn-1", {
+    type: "contextCompaction",
+    id: "compact-interrupted",
+    status: "interrupted"
+  });
+  assert.deepEqual(failed?.payload, {
+    type: "context_compaction",
+    status: "failed",
+    message: "Compaction failed"
+  });
+  assert.deepEqual(interrupted?.payload, {
+    type: "context_compaction",
+    status: "interrupted",
+    message: "Compaction interrupted"
   });
 });
 

@@ -42,6 +42,84 @@ test("compact views only coalesce normalized context_compaction events", () => {
   assert.equal(compactToolViews(mixedViews).length, 2);
 });
 
+test("interrupted turns render as a neutral terminal state rather than a failure", () => {
+  const records: CodexRecord[] = [{
+    id: "turn-start",
+    type: "event_msg",
+    payload: { type: "task_started", turn_id: "turn-1" }
+  }, {
+    id: "turn-interrupted",
+    type: "event_msg",
+    payload: { type: "turn_aborted", turn_id: "turn-1", status: "interrupted" }
+  }];
+  const views = records.map(recordToView).filter((view) => view !== null);
+  const [turn] = compactToolViews(views);
+
+  assert.equal(turn?.text, "Turn interrupted");
+  assert.equal(turn?.status, undefined);
+});
+
+test("interrupted turns use a neutral Web activity status", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { activityStatusFromRecord } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  assert.deepEqual(activityStatusFromRecord({
+    id: "turn-interrupted",
+    type: "event_msg",
+    payload: { type: "turn_aborted", turn_id: "turn-1", status: "interrupted" }
+  }), {
+    key: "turn",
+    label: "Interrupted",
+    status: undefined,
+    at: undefined,
+    text: "Turn interrupted"
+  });
+});
+
+test("guidance messages stay inside the existing Turn activity scope", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { latestTurnActivityScope } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  const records: CodexRecord[] = [{
+    id: "turn-started",
+    timestamp: "2026-07-19T02:00:00.000Z",
+    type: "event_msg",
+    payload: { type: "task_started", turn_id: "turn-1" }
+  }, {
+    id: "initial-input",
+    timestamp: "2026-07-19T02:00:01.000Z",
+    type: "response_item",
+    payload: { type: "message", role: "user", turn_id: "turn-1", content: [] }
+  }, {
+    id: "activity-before-guidance",
+    timestamp: "2026-07-19T02:00:02.000Z",
+    type: "event_msg",
+    payload: { type: "agent_message", turn_id: "turn-1", message: "working" }
+  }, {
+    id: "guidance-input",
+    timestamp: "2026-07-19T02:00:03.000Z",
+    type: "response_item",
+    payload: { type: "message", role: "user", turn_id: "turn-1", content: [] }
+  }];
+
+  const scope = latestTurnActivityScope(records);
+  assert.equal(scope.key, "turn:turn-1");
+  assert.equal(scope.startedAt, "2026-07-19T02:00:00.000Z");
+  assert.equal(scope.userRecordId, "initial-input");
+  assert.equal(scope.records.some((record) => record.id === "activity-before-guidance"), true);
+});
+
 test("web goal extraction only consumes current camelCase ThreadGoal fields", async () => {
   const previousWindow = "window" in globalThis
     ? (globalThis as { window?: unknown }).window

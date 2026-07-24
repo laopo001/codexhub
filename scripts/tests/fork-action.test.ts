@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CodexHubApiError } from "../../src/shared/apiClient.js";
-import { forkErrorMessage } from "../../src/web/helpers/apiErrors.js";
+import { apiResponseErrorDetails, forkErrorMessage } from "../../src/web/helpers/apiErrors.js";
 
 test("fork errors display the server message without the HTTP transport wrapper", () => {
   assert.equal(
@@ -10,6 +10,17 @@ test("fork errors display the server message without the HTTP transport wrapper"
     }))),
     "codex app-server request timed out after 60000ms: thread/fork"
   );
+});
+
+test("API response errors retain turn delivery metadata for error routing", () => {
+  assert.deepEqual(apiResponseErrorDetails(JSON.stringify({
+    error: "goal unavailable",
+    delivery: "goal"
+  })), {
+    message: "goal unavailable",
+    delivery: "goal"
+  });
+  assert.deepEqual(apiResponseErrorDetails(""), { message: "Request failed" });
 });
 
 test("fork errors retain ordinary and non-JSON transport diagnostics", () => {

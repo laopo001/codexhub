@@ -731,9 +731,13 @@ class CodexAppServerBridge {
         return;
       }
       const threadId = threadIdForPendingMessage(pending, message);
-      if (threadId) {
+      if (threadId && !error) {
+        // A very fast Turn may emit turn/completed immediately after the
+        // turn/start response. Publish its id before yielding so that terminal
+        // handling cannot run first and then be overwritten by this older
+        // response's running=true projection.
+        await this.forwardExecutionStateFromMessage(threadId, message);
         await this.forwardThreadEvent(threadId, pending.commandId, message);
-        if (!error) await this.forwardExecutionStateFromMessage(threadId, message);
       }
       if (rpcError) pending.reject(rpcError);
       else {
@@ -1293,7 +1297,14 @@ class CodexAppServerBridge {
   }
 
   private async forwardAppServerThreadNotification(threadId: string, message: JsonRecord) {
-    // 同一条 app-server 通知同时驱动控制面状态和 transcript，统一在这里排序。
+    // Terminal Turn 状态必须先带着完整 status/error 进入 ThreadHub，不能先用
+    // 粗粒度 running=false 把 failed/interrupted Turn 当成成功收尾。
+    if (message.method === "turn/completed") {
+      await this.forwardThreadEvent(threadId, undefined, message);
+      await this.forwardDerivedStateFromMessage(threadId, message);
+      return;
+    }
+    // 其他通知仍先更新控制面，再投影 transcript。
     await this.forwardDerivedStateFromMessage(threadId, message);
     await this.forwardThreadEvent(threadId, undefined, message);
   }
@@ -1340,15 +1351,21 @@ class CodexAppServerBridge {
   private async forwardExecutionStateFromMessage(threadId: string, message: JsonRecord) {
     const method = typeof message.method === "string" ? message.method : "";
     const params = asRecord(message.params);
+    const result = asRecord(message.result);
+    const resultTurn = asRecord(result?.turn);
+    if (typeof resultTurn?.id === "string") {
+      await this.forwardThreadExecutionChanged(threadId, true, resultTurn.id);
+      return;
+    }
     if (method === "turn/started") {
       const turn = asRecord(params?.turn);
       await this.forwardThreadExecutionChanged(threadId, true, typeof turn?.id === "string" ? turn.id : undefined);
       return;
     }
-    if (method === "turn/completed") {
-      await this.forwardThreadExecutionChanged(threadId, false);
-      return;
-    }
+    // `turn/completed` 本身携带权威 status/error，并由 ThreadHub 原子完成
+    // transcript 与控制面收尾。这里不能提前发送 running=false，否则 queued
+    // turn 可能先启动，再被旧 Turn 的完成通知误结束。
+    if (method === "turn/completed") return;
     if (method === "thread/status/changed") {
       const status = asRecord(params?.status);
       const type = typeof status?.type === "string" ? status.type : "";

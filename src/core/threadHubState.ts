@@ -35,6 +35,7 @@ export type ThreadState = {
   goalRunPolicyStatus?: string;
   goalRunPolicyTurnActive?: boolean;
   skipNextGoalRunPolicyRun?: boolean;
+  resumeGoalRunPolicyAfterTurn?: boolean;
   running: boolean;
   activeTurnStartedAt?: string;
   title: string;
@@ -53,6 +54,7 @@ export type PendingCommand = {
   threadId?: string;
   workingDirectory?: string;
   keepTurns?: number;
+  input?: ProxyInput;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;
   timer?: NodeJS.Timeout;

@@ -199,11 +199,14 @@ const compactTurnFinished = (
   if (index == null) return null;
 
   const started = state.views[index];
+  const interrupted = eventType === "turn_aborted" && payload.status === "interrupted";
   const compactView: CompactRecordView = {
     ...started,
     text: eventType === "turn_aborted" ? formatTurnAborted(payload) : formatTurnCompleted(payload),
     at: view.at ?? started.at,
-    status: eventType === "turn_aborted" ? "failed" : "completed",
+    status: eventType === "turn_aborted"
+      ? interrupted ? undefined : "failed"
+      : "completed",
     statusDurationMs: view.statusDurationMs,
     inspectRecord: view.record,
     inspectText: view.text
@@ -390,7 +393,7 @@ const formatTurnCompleted = (payload: Record<string, unknown>) => [
 ].filter(Boolean).join("\n");
 
 const formatTurnAborted = (payload: Record<string, unknown>) => [
-  "Turn aborted",
+  payload.status === "interrupted" ? "Turn interrupted" : "Turn failed",
   typeof payload.reason === "string" ? `reason: ${payload.reason}` : null,
   typeof payload.duration_ms === "number" ? `duration: ${formatMilliseconds(payload.duration_ms)}` : null
 ].filter(Boolean).join("\n");

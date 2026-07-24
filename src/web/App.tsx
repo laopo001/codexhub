@@ -248,6 +248,13 @@ const App = () => {
     refreshRuntimes: taskActions.refreshRuntimes,
     resetComposerHistory: composerActions.resetComposerHistory,
     sendRealtime: realtimeActions.sendRealtime,
+    showActionError: (key, title, errorMessage) => {
+      void messageApi.error({
+        key: `thread-action:${key}`,
+        content: `${title}: ${errorMessage}`,
+        duration: 5
+      });
+    },
     showForkError: (errorMessage) => {
       modalApi.error({
         title: "Fork failed",

@@ -166,6 +166,11 @@ test("pet status prioritizes input, failure, and running", () => {
     type: "event_msg",
     payload: { type: "turn_aborted", status: "failed" },
   };
+  const interrupted: CodexRecord = {
+    id: "interrupted",
+    type: "event_msg",
+    payload: { type: "turn_aborted", status: "interrupted" },
+  };
   const failedTool: CodexRecord = {
     id: "failed-tool",
     type: "response_item",
@@ -183,6 +188,7 @@ test("pet status prioritizes input, failure, and running", () => {
   assert.equal(petStatusForThread(thread("thread-5")), "idle");
   assert.equal(petStatusForThread(thread("thread-6", [failedTool, completedTurn])), "idle");
   assert.equal(petStatusForThread(thread("thread-7", [failedTool])), "idle");
+  assert.equal(petStatusForThread(thread("thread-8", [interrupted])), "idle");
   assert.equal(petAnimationForStatus("needs_input"), "waiting");
   assert.equal(petAnimationForStatus("blocked"), "failed");
   assert.equal(petAnimationForStatus("running"), "running");

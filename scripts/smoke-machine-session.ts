@@ -2272,14 +2272,28 @@ const assertAppServerServiceTierSettings = async () => {
   ) {
     throw new Error(`approval/sandbox turn options were not forwarded: ${JSON.stringify(turnCommand)}`);
   }
-  hub.resolveSessionCommand(sessionId, turnCommand.commandId, { ok: true });
-  await turn;
   hub.applySessionEvent(sessionId, {
-    type: "thread_execution_changed",
+    type: "thread_event",
     threadId,
-    running: false,
-    heartbeat: false
+    heartbeat: false,
+    message: {
+      method: "turn/completed",
+      params: {
+        threadId,
+        turn: {
+          id: "app-server-service-tier-turn",
+          status: "completed",
+          itemsView: "full",
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1000,
+          items: []
+        }
+      }
+    }
   });
+  await turn;
   thread = hub.getThread(threadId);
   if (
     thread?.modelReasoningEffort !== "max"
@@ -2304,6 +2318,15 @@ const assertAppServerServiceTierSettings = async () => {
   thread = hub.getThread(threadId);
   if (thread?.modelReasoningEffort !== "max") {
     throw new Error(`rejected effort override was not rolled back: ${JSON.stringify(thread)}`);
+  }
+  const submissionFailure = thread.records.filter((record) =>
+    asRecord(record.payload).type === "submission_failed"
+  );
+  if (
+    submissionFailure.length !== 1
+    || asRecord(submissionFailure[0]?.payload).input_text !== "unsupported effort smoke"
+  ) {
+    throw new Error(`rejected turn did not produce one submission_failed record: ${JSON.stringify(submissionFailure)}`);
   }
   hub.applySessionEvent(sessionId, {
     type: "thread_settings_changed",

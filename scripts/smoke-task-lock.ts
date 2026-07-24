@@ -322,6 +322,13 @@ const main = async () => {
     const activeWebTurn = await fake.nextTurn();
     const activeWebTurnId = activeWebTurn.turnId;
     if (!activeWebTurnId) throw new Error(`active web turn missing turnId: ${JSON.stringify(activeWebTurn)}`);
+    const beforeSteerDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (!beforeSteerDetail.running || !beforeSteerDetail.activeTurnStartedAt) {
+      throw new Error(`active web turn timing missing before steer: ${JSON.stringify(beforeSteerDetail)}`);
+    }
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -336,6 +343,16 @@ const main = async () => {
     }
     if (steer.turnId !== activeWebTurn.turnId) {
       throw new Error(`web steer used wrong turnId: ${JSON.stringify({ expected: activeWebTurn.turnId, actual: steer.turnId })}`);
+    }
+    const afterSteerDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (
+      !afterSteerDetail.running
+      || afterSteerDetail.activeTurnStartedAt !== beforeSteerDetail.activeTurnStartedAt
+    ) {
+      throw new Error(`web steer restarted running timing: ${JSON.stringify({ beforeSteerDetail, afterSteerDetail })}`);
     }
     const usageScopeItemId = `${activeWebTurnId}-usage-user`;
     fake.emitUserMessage(activeWebTurnId, usageScopeItemId, "steered web follow-up");
@@ -825,9 +842,56 @@ const main = async () => {
     }
     fake.emitAccountRateLimits(64);
     fake.emitTokenUsage(stoppedTurn);
-    fake.completeTurn(stoppedTurn);
+    fake.completeTurn(stoppedTurn, "interrupted");
     await fake.expectNoTurn(150);
     console.log("consume-until manual stop halts continuation ok");
+
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "active" })
+    });
+    const resumedAfterStopGoal = await fake.nextSessionCommand("set_goal");
+    if (resumedAfterStopGoal.goal?.status !== "active") {
+      throw new Error(`stopped consume goal resume payload mismatch: ${JSON.stringify(resumedAfterStopGoal.goal)}`);
+    }
+    const resumedAfterStopTurn = await fake.nextTurn();
+    if (
+      resumedAfterStopTurn.input !== stoppedObjective
+      || resumedAfterStopTurn.options?.goalMode !== true
+      || resumedAfterStopTurn.options.goalObjective !== stoppedObjective
+    ) {
+      throw new Error(`stopped consume goal did not resume: ${JSON.stringify(resumedAfterStopTurn)}`);
+    }
+
+    await apiJson<{ stopped?: boolean }>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}/stop`,
+      { method: "POST" }
+    );
+    const rapidResumeStopCommand = await fake.nextSessionCommand("stop");
+    if (rapidResumeStopCommand.turnId !== resumedAfterStopTurn.turnId) {
+      throw new Error(`rapid resume stop used wrong turn: ${JSON.stringify(rapidResumeStopCommand)}`);
+    }
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "active" })
+    });
+    await fake.nextSessionCommand("set_goal");
+    await fake.expectNoTurn(100);
+    fake.completeTurn(resumedAfterStopTurn, "interrupted");
+    const rapidResumeTurn = await fake.nextTurn();
+    if (
+      rapidResumeTurn.input !== stoppedObjective
+      || rapidResumeTurn.options?.goalMode !== true
+      || rapidResumeTurn.options.goalObjective !== stoppedObjective
+    ) {
+      throw new Error(`consume goal rapid resume was lost: ${JSON.stringify(rapidResumeTurn)}`);
+    }
+    fake.completeTurn(rapidResumeTurn, "interrupted");
+    await fake.expectNoTurn(150);
+    console.log("consume-until manual stop resume timing ok");
 
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, { method: "DELETE" });
     await fake.nextSessionCommand("clear_goal");
@@ -1274,31 +1338,44 @@ class FakeMachine {
     });
   }
 
-  completeTurn(command: SessionCommand) {
+  completeTurn(command: SessionCommand, status: "completed" | "interrupted" = "completed") {
+    this.emitTurnCompleted(command, status);
+  }
+
+  failTurn(command: SessionCommand, message: string) {
+    this.emitTurnCompleted(command, "failed", message);
+  }
+
+  private emitTurnCompleted(
+    command: SessionCommand,
+    status: "completed" | "failed" | "interrupted",
+    message?: string
+  ) {
+    const turnId = command.turnId ?? `fake-turn-${command.commandId}`;
     this.send({
       type: "session_event",
       sessionId: this.options.sessionId,
       event: {
-        type: "thread_execution_changed",
+        type: "thread_event",
         threadId: command.threadId ?? this.options.threadId,
-        running: false,
-        heartbeat: false
+        heartbeat: false,
+        message: {
+          method: "turn/completed",
+          params: {
+            threadId: command.threadId ?? this.options.threadId,
+            turn: {
+              id: turnId,
+              status,
+              itemsView: "full",
+              error: status === "failed" ? { message: message ?? "Turn failed" } : null,
+              startedAt: 1,
+              completedAt: 2,
+              durationMs: 1000,
+              items: []
+            }
+          }
+        }
       }
-    });
-    this.send({
-      type: "session_command_result",
-      sessionId: this.options.sessionId,
-      commandId: command.commandId,
-      result: { ok: true }
-    });
-  }
-
-  failTurn(command: SessionCommand, message: string) {
-    this.send({
-      type: "session_command_error",
-      sessionId: this.options.sessionId,
-      commandId: command.commandId,
-      message
     });
   }
 
@@ -1511,10 +1588,25 @@ class FakeMachine {
           type: "session_event",
           sessionId: this.options.sessionId,
           event: {
-            type: "thread_execution_changed",
+            type: "thread_event",
             threadId: command.threadId ?? this.options.threadId,
-            running: false,
-            heartbeat: false
+            heartbeat: false,
+            message: {
+              method: "turn/completed",
+              params: {
+                threadId: command.threadId ?? this.options.threadId,
+                turn: {
+                  id: turnId,
+                  status: "completed",
+                  itemsView: "full",
+                  error: null,
+                  startedAt: 1,
+                  completedAt: 2,
+                  durationMs: 1000,
+                  items: []
+                }
+              }
+            }
           }
         });
         return;

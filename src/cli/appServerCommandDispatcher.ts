@@ -117,7 +117,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
       );
       await host.request("turn/interrupt", { threadId: command.threadId, turnId: command.turnId }, command);
     }
-    return;
+    return { ok: true };
   }
   if (command.type === "rename_thread") {
     const threadId = requireThreadId(command);
@@ -172,7 +172,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
       expectedTurnId: command.turnId,
       input: toAppServerInput(command.input)
     }, command);
-    return;
+    return { ok: true };
   }
   if (command.type === "set_goal") {
     const threadId = await ensureCommandThread(command, host);

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { recordViewStatusDurationMs } from "../../src/core/codexRecordView.js";
 import type { CodexRecord, CodexRecordView } from "../../src/shared/recordTypes.js";
-import { liveDurationMsFromAnchor } from "../../src/web/helpers/liveTime.js";
+import {
+  liveDurationMsFromAnchor,
+  stableLiveDurationAnchor
+} from "../../src/web/helpers/liveTime.js";
 import {
   finalAnswerViewsWithTurnDurations,
   turnDurationMapFromRecords,
@@ -60,6 +63,27 @@ test("running duration uses a backend clock anchor and catches up after a backgr
   });
 
   assert.equal(durationMs, 130_000);
+});
+
+test("running duration keeps its first observation anchor for the same Turn", () => {
+  const first = stableLiveDurationAnchor(undefined, {
+    startedAt: "2026-07-19T02:00:00.000Z",
+    observedAt: "2026-07-19T02:00:10.000Z",
+    observedClientAtMs: 5_000_000
+  });
+  const afterGuidance = stableLiveDurationAnchor(first, {
+    startedAt: "2026-07-19T02:00:00.000Z",
+    observedAt: "2026-07-19T02:00:30.000Z",
+    observedClientAtMs: 5_020_000
+  });
+  const nextTurn = stableLiveDurationAnchor(afterGuidance, {
+    startedAt: "2026-07-19T02:01:00.000Z",
+    observedAt: "2026-07-19T02:01:01.000Z",
+    observedClientAtMs: 5_060_000
+  });
+
+  assert.strictEqual(afterGuidance, first);
+  assert.notStrictEqual(nextTurn, first);
 });
 
 const lifecycleRecord = (

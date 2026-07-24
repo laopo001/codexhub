@@ -67,22 +67,49 @@ export const liveDurationMsFromAnchor = ({
   return Math.max(0, currentClientNowMs - startedMs);
 };
 
+export type LiveDurationAnchor = {
+  startedAt: string | undefined;
+  observedAt?: string;
+  observedClientAtMs: number;
+};
+
+export const stableLiveDurationAnchor = (
+  current: LiveDurationAnchor | undefined,
+  next: LiveDurationAnchor
+) => {
+  if (
+    current
+    && current.startedAt === next.startedAt
+    && (current.observedAt !== undefined || next.observedAt === undefined)
+  ) return current;
+  return next;
+};
+
 const useLiveDurationMs = (
   active: boolean,
   startedAt: string | undefined,
   observedAt?: string
 ) => {
-  const observedClientAtMs = React.useMemo(() => Date.now(), [startedAt, observedAt]);
+  const anchorRef = React.useRef<LiveDurationAnchor | undefined>(undefined);
+  const anchor = stableLiveDurationAnchor(anchorRef.current, {
+    startedAt,
+    observedAt,
+    observedClientAtMs: Date.now()
+  });
+  anchorRef.current = anchor;
   const currentNowMs = React.useSyncExternalStore(
     active ? subscribe : subscribeNever,
     getSnapshot,
     getSnapshot
   );
-  if (!active) return undefined;
+  if (!active) {
+    anchorRef.current = undefined;
+    return undefined;
+  }
   return liveDurationMsFromAnchor({
-    startedAt,
-    observedAt,
-    observedClientAtMs,
+    startedAt: anchor.startedAt,
+    observedAt: anchor.observedAt,
+    observedClientAtMs: anchor.observedClientAtMs,
     currentClientNowMs: currentNowMs
   });
 };

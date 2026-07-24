@@ -208,7 +208,13 @@ export const codexRecordFromAppServerItem = (
       payload: {
         type: "context_compaction",
         status: compactionStatus,
-        message: compactionStatus === "completed" ? "Compaction complete" : "Compacting"
+        message: compactionStatus === "completed"
+          ? "Compaction complete"
+          : compactionStatus === "failed"
+            ? "Compaction failed"
+            : compactionStatus === "interrupted"
+              ? "Compaction interrupted"
+              : "Compacting"
       }
     };
   }
@@ -551,10 +557,13 @@ export const timestampFromSeconds = (value: unknown) =>
 export const codexRecordsFromAppServerTurnLifecycle = (
   threadId: string,
   turnId: string,
-  turn: Record<string, unknown>
+  turn: Record<string, unknown>,
+  fallbackTimestamp = new Date(0).toISOString()
 ): CodexRecord[] => {
+  const status = appServerTurnStatus(turn.status);
   const startedAt = timestampFromSeconds(turn.startedAt);
   const completedAt = timestampFromSeconds(turn.completedAt);
+  const terminalAt = completedAt ?? startedAt ?? fallbackTimestamp;
   const durationMs = numberValue(turn.durationMs)
     ?? (startedAt && completedAt ? timestampDeltaMs(startedAt, completedAt) : undefined);
   const records: CodexRecord[] = [];
@@ -570,14 +579,35 @@ export const codexRecordsFromAppServerTurnLifecycle = (
       sourceThreadId: threadId
     });
   }
-  if (completedAt) {
+  if (status === "completed") {
     records.push({
       id: `app:${threadId}:${turnId}:event:task_complete`,
-      timestamp: completedAt,
+      timestamp: terminalAt,
       type: "event_msg",
       payload: {
         type: "task_complete",
         turn_id: turnId,
+        status,
+        ...(durationMs == null ? {} : { duration_ms: durationMs })
+      },
+      sourceThreadId: threadId
+    });
+  }
+  if (status === "failed" || status === "interrupted") {
+    const error = asRecord(turn.error);
+    const reason = status === "failed"
+      ? typeof error?.message === "string" && error.message ? error.message : "Turn failed"
+      : "Turn interrupted";
+    records.push({
+      id: `app:${threadId}:${turnId}:event:turn_aborted`,
+      timestamp: terminalAt,
+      type: "event_msg",
+      payload: {
+        type: "turn_aborted",
+        turn_id: turnId,
+        status,
+        reason,
+        ...(error ? { error } : {}),
         ...(durationMs == null ? {} : { duration_ms: durationMs })
       },
       sourceThreadId: threadId
@@ -592,6 +622,11 @@ export const isTaskStartedRecord = (record: CodexRecord) =>
 export const isTaskCompleteRecord = (record: CodexRecord) =>
   asRecord(record.payload)?.type === "task_complete";
 
+export const isTurnTerminalRecord = (record: CodexRecord) => {
+  const type = asRecord(record.payload)?.type;
+  return type === "task_complete" || type === "turn_aborted";
+};
+
 const timestampDeltaMs = (startedAt: string, completedAt: string) => {
   const startedMs = Date.parse(startedAt);
   const completedMs = Date.parse(completedAt);
@@ -599,6 +634,11 @@ const timestampDeltaMs = (startedAt: string, completedAt: string) => {
     ? Math.max(0, completedMs - startedMs)
     : undefined;
 };
+
+const appServerTurnStatus = (value: unknown) =>
+  value === "completed" || value === "failed" || value === "interrupted" || value === "inProgress"
+    ? value
+    : undefined;
 
 const tokenUsageNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;

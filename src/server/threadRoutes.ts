@@ -357,15 +357,31 @@ export const registerThreadRoutes = <
       options: threadRunOptionsSchema.optional()
     }).parse(request.body);
 
+    let delivery: ThreadTurnPayload["delivery"];
     try {
       const command = ctx.threads.runLocalCommand(params.threadId, payload.input, payload.source ?? "web");
       if (command.handled) return { ok: true, command: command.command } satisfies ThreadTurnPayload;
-      ctx.threads.runTurn(params.threadId, payload.input, payload.source ?? "web", payload.options).catch(() => undefined);
-      return { ok: true } satisfies ThreadTurnPayload;
+      const dispatch = ctx.threads.runTurnWithDelivery(
+        params.threadId,
+        payload.input,
+        payload.source ?? "web",
+        payload.options
+      );
+      delivery = dispatch.delivery;
+      if (!dispatch.accepted || dispatch.delivery === "goal") {
+        await dispatch.completion;
+      } else {
+        void dispatch.completion.catch(() => undefined);
+      }
+      return {
+        ok: true,
+        delivery: dispatch.delivery,
+        ...(dispatch.delivery === "queued" ? { queued: true } : {})
+      } satisfies ThreadTurnPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") ? 404 : 409);
-      return { error: message };
+      return { error: message, ...(delivery ? { delivery } : {}) } satisfies ThreadTurnPayload;
     }
   });
 
@@ -397,11 +413,12 @@ export const registerThreadRoutes = <
   app.post("/api/threads/:threadId/stop", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     try {
-      const result = ctx.threads.stopTurn(params.threadId);
+      const result = await ctx.threads.stopTurn(params.threadId);
       return result satisfies ThreadStopPayload;
     } catch (error) {
-      reply.code(404);
-      return { error: error instanceof Error ? error.message : String(error) };
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
     }
   });
 

@@ -37,11 +37,10 @@ export type OpenThreadAction =
   | { type: "remove-image"; threadId: string; imageId: string }
   | { type: "remove-text"; threadId: string; textId: string }
   | {
-    type: "restore-attachments-with-error";
+    type: "restore-attachments";
     threadId: string;
     images: OpenThreadState["imageAttachments"];
     texts: OpenThreadState["textAttachments"];
-    record: CodexRecord;
   }
   | { type: "clear-attachments"; threadId: string };
 
@@ -175,12 +174,11 @@ export const openThreadReducer = (state: OpenThreadState[], action: OpenThreadAc
       textAttachments: thread.textAttachments.filter((text) => text.id !== action.textId)
     }));
   }
-  if (action.type === "restore-attachments-with-error") {
+  if (action.type === "restore-attachments") {
     return updateThread(state, action.threadId, (thread) => ({
       ...thread,
       imageAttachments: action.images,
-      textAttachments: action.texts,
-      records: [...thread.records, action.record]
+      textAttachments: action.texts
     }));
   }
   return updateThread(state, action.threadId, (thread) => ({

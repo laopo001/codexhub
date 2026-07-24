@@ -94,7 +94,11 @@ const threadLatestTurnFailed = (records: CodexRecord[]) => {
     if (userMessage(record)) return false;
     const type = payloadType(record);
     if (type === "task_complete") return false;
-    if (type === "turn_aborted" || record.type === "error") return true;
+    if (type === "turn_aborted") {
+      const payload = asRecord(record.payload);
+      return payload?.status !== "interrupted";
+    }
+    if (record.type === "error") return true;
   }
   return false;
 };

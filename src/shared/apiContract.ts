@@ -249,8 +249,10 @@ export type RuntimeEnsurePayload = {
 export type ThreadTurnPayload = {
   ok?: boolean;
   queued?: boolean;
+  delivery?: "turn" | "steer" | "goal" | "queued";
   thread?: ThreadSummary | ThreadDetail;
   command?: string;
+  error?: string;
 };
 
 /** thread delete mutation 返回值。 */

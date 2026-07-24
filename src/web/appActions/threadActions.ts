@@ -9,7 +9,6 @@ import {
   authFetch,
   appendThreadOrder,
   composeUserInputText,
-  errorRecord,
   fastCommandAction,
   fileToDataUrl,
   isModelCommand,
@@ -19,6 +18,7 @@ import {
   removeRuntimesThread,
   removeThreadOrder,
   selectedThreadOptions,
+  submissionFailedRecord,
   type ComposerDraftStore,
   threadRecordsForNotifications
 } from "../appHelpers.js";
@@ -32,7 +32,7 @@ import type {
   ThreadRenameDialogState,
 } from "../types.js";
 import type { OpenThreadAction } from "../openThreadReducer.js";
-import { forkErrorMessage } from "../helpers/apiErrors.js";
+import { apiErrorMessage, apiResponseErrorDetails, forkErrorMessage } from "../helpers/apiErrors.js";
 
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
@@ -72,6 +72,7 @@ export type ThreadActionsDependencies = {
   refreshRuntimes: () => Promise<RuntimeSummary[]>;
   resetComposerHistory: (threadId: string) => void;
   sendRealtime: (message: RealtimeThreadMessage) => boolean;
+  showActionError: (key: string, title: string, message: string) => void;
   showForkError: (message: string) => void;
 };
 
@@ -103,6 +104,22 @@ export type ThreadActions = {
 
 export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActionsDependencies): ThreadActions => {
   let forkRequestPending = false;
+  const runActionRequest = async (
+    key: string,
+    title: string,
+    request: () => Promise<Response>
+  ) => {
+    try {
+      const response = await request();
+      if (response.ok) return response;
+      const details = apiResponseErrorDetails(await response.text());
+      deps.showActionError(key, title, details.message);
+    } catch (error) {
+      deps.showActionError(key, title, apiErrorMessage(error));
+    }
+    return null;
+  };
+
   const openThread = async (threadId: string) => {
     ctx.closedThreadIds.current.delete(threadId);
     ctx.latestRequestedThreadId.current = threadId;
@@ -242,7 +259,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       ctx.setThreadRenameDialog(null);
     } catch (error) {
       ctx.setThreadRenameDialog((current) => current && current.threadId === dialog.threadId
-        ? { ...current, saving: false, error: error instanceof Error ? error.message : String(error) }
+        ? { ...current, saving: false, error: apiErrorMessage(error) }
         : current);
     }
   };
@@ -336,12 +353,12 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     } catch (error) {
       ctx.composerDraftStore.set(threadId, typedText);
       ctx.dispatchOpenThreads({
-        type: "restore-attachments-with-error",
+        type: "restore-attachments",
         threadId,
         images: imageAttachments,
-        texts: textAttachments,
-        record: errorRecord("image encode failed", error)
+        texts: textAttachments
       });
+      deps.showActionError(`${threadId}:image-encode`, "Image attachment failed", apiErrorMessage(error));
       return;
     }
     const input: ProxyInput = encodedImages.length
@@ -350,53 +367,77 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
         ...encodedImages.map((image) => ({ type: "image" as const, url: image.url }))
       ]
       : text;
-    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        input,
-        source: "web",
-        options: selectedThreadOptions(
-          openThread.modelDraft,
-          openThread.reasoningDraft,
-          openThread.serviceTierDraft,
-          composerMode,
-          openThread.approvalPolicyDraft,
-          openThread.approvalsReviewerDraft,
-          openThread.permissionProfileDraft
-        )
-      })
-    });
+    const updatesActiveGoal = openThread.running && composerMode === "goal";
+    let response: Response;
+    try {
+      response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          input,
+          source: "web",
+          options: selectedThreadOptions(
+            openThread.modelDraft,
+            openThread.reasoningDraft,
+            openThread.serviceTierDraft,
+            composerMode,
+            openThread.approvalPolicyDraft,
+            openThread.approvalsReviewerDraft,
+            openThread.permissionProfileDraft
+          )
+        })
+      });
+    } catch (error) {
+      const message = apiErrorMessage(error);
+      if (updatesActiveGoal) {
+        deps.showActionError(`${threadId}:goal-update`, "Goal update failed", message);
+      } else {
+        ctx.dispatchOpenThreads({
+          type: "append-record",
+          threadId,
+          record: submissionFailedRecord(message)
+        });
+      }
+      return;
+    }
     if (!response.ok) {
-      const text = await response.text();
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("error", text) });
+      const details = apiResponseErrorDetails(await response.text());
+      if (details.delivery === "goal" || (!details.delivery && updatesActiveGoal)) {
+        deps.showActionError(`${threadId}:goal-update`, "Goal update failed", details.message);
+      } else if (details.delivery !== "turn" && details.delivery !== "steer") {
+        ctx.dispatchOpenThreads({
+          type: "append-record",
+          threadId,
+          record: submissionFailedRecord(details.message)
+        });
+      }
     } else if (composerMode !== "chat") {
       ctx.dispatchOpenThreads({ type: "reset-composer-mode", threadId, expected: composerMode });
     }
   };
 
   const stopTurn = async (threadId: string) => {
-    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/stop`, { method: "POST" });
-    if (!response.ok) {
-      const text = await response.text();
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("stop failed", text) });
-    }
+    await runActionRequest(
+      `${threadId}:stop`,
+      "Stop failed",
+      () => authFetch(`/api/threads/${encodeURIComponent(threadId)}/stop`, { method: "POST" })
+    );
   };
 
   const compactThread = async (threadId: string) => {
-    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/compact`, { method: "POST" });
-    if (!response.ok) {
-      const text = await response.text();
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("compact failed", text) });
-    }
+    await runActionRequest(
+      `${threadId}:compact`,
+      "Compact failed",
+      () => authFetch(`/api/threads/${encodeURIComponent(threadId)}/compact`, { method: "POST" })
+    );
   };
 
   const reviewThread = async (threadId: string) => {
-    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/review`, { method: "POST" });
-    if (!response.ok) {
-      const text = await response.text();
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("review failed", text) });
-    }
+    await runActionRequest(
+      `${threadId}:review`,
+      "Review failed",
+      () => authFetch(`/api/threads/${encodeURIComponent(threadId)}/review`, { method: "POST" })
+    );
   };
 
   const respondToApproval = async (
@@ -408,7 +449,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       const payload = await apiRouteJson(apiRoutes.respondThreadApproval, threadId, { approvalId, decision });
       if (payload.thread) applyThreadDetail(payload.thread);
     } catch (error) {
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("approval failed", error) });
+      deps.showActionError(`${threadId}:approval:${approvalId}`, "Approval failed", apiErrorMessage(error));
     }
   };
 
@@ -421,7 +462,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       const payload = await apiRouteJson(apiRoutes.respondThreadUserInput, threadId, { userInputId, answers });
       if (payload.thread) applyThreadDetail(payload.thread);
     } catch (error) {
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("user input failed", error) });
+      deps.showActionError(`${threadId}:user-input:${userInputId}`, "Response failed", apiErrorMessage(error));
     }
   };
 
@@ -430,28 +471,42 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     goal: ThreadGoalUpdateInput,
     options: ThreadGoalUpdateOptions = {}
   ) => {
-    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(goal)
-    });
+    let response: Response;
+    try {
+      response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(goal)
+      });
+    } catch (error) {
+      const message = apiErrorMessage(error);
+      if (options.dialog) {
+        ctx.setGoalDialog((current) => current && current.threadId === threadId
+          ? { ...current, saving: false, error: message }
+          : current);
+      } else {
+        deps.showActionError(`${threadId}:goal-update`, "Goal update failed", message);
+      }
+      return false;
+    }
     if (response.ok) return true;
-    const text = await response.text();
+    const details = apiResponseErrorDetails(await response.text());
     if (options.dialog) {
       ctx.setGoalDialog((current) => current && current.threadId === threadId
-        ? { ...current, saving: false, error: text || "保存失败" }
+        ? { ...current, saving: false, error: details.message || "保存失败" }
         : current);
     } else {
-      ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("goal update failed", text) });
+      deps.showActionError(`${threadId}:goal-update`, "Goal update failed", details.message);
     }
     return false;
   };
 
   const clearThreadGoal = async (threadId: string) => {
-    const response = await authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" });
-    if (response.ok) return;
-    const text = await response.text();
-    ctx.dispatchOpenThreads({ type: "append-record", threadId, record: errorRecord("goal clear failed", text) });
+    await runActionRequest(
+      `${threadId}:goal-clear`,
+      "Goal clear failed",
+      () => authFetch(`/api/threads/${encodeURIComponent(threadId)}/goal`, { method: "DELETE" })
+    );
   };
 
   const saveGoalDialog = async () => {

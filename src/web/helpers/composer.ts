@@ -406,12 +406,13 @@ export const contextMenuPosition = (clientX: number, clientY: number) => {
   };
 };
 
-export const errorRecord = (label: string, error: unknown): CodexRecord => ({
+export const submissionFailedRecord = (error: unknown): CodexRecord => ({
   id: `web:${browserId()}`,
   timestamp: new Date().toISOString(),
   type: "error",
   payload: {
-    type: label,
+    type: "submission_failed",
+    source: "codexhub",
     message: error instanceof Error ? error.message : String(error)
   }
 });
