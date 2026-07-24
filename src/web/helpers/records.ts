@@ -398,6 +398,21 @@ const isPendingApprovalPayload = (payload: Record<string, unknown> | null) => {
   return approval?.status === "pending";
 };
 
+const normalizedInteractionStatus = (value: unknown) =>
+  typeof value === "string" ? value.trim().replace(/[-\s]+/g, "_").toLowerCase() : "";
+
+export const recordHasPendingInteraction = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  if (!payload) return false;
+  if (isPendingApprovalPayload(payload)) return true;
+  const userInput = asRecord(payload.userInput);
+  return payload.type === "user_input_request"
+    && (userInput?.status === "pending" || normalizedInteractionStatus(payload.status) === "pending_user_input");
+};
+
+export const recordsHavePendingInteraction = (records: CodexRecord[]) =>
+  records.some(recordHasPendingInteraction);
+
 export const hideSupersededSimpleThinkingViews = (views: CodexRecordView[]) => {
   let hasLaterView = false;
   const nextViews: CodexRecordView[] = [];

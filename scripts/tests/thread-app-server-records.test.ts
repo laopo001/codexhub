@@ -659,3 +659,94 @@ test("ThreadHub rejects stable approval decisions omitted by app-server", async 
     /decision is not available/
   );
 });
+
+test("ThreadHub preserves pending command approval across active turn snapshots", () => {
+  const hub = new ThreadHub();
+  const sessionId = "approval-snapshot-session";
+  const threadId = "approval-snapshot-thread";
+  const turnId = "approval-snapshot-turn";
+  const itemId = "approval-snapshot-item";
+  const recordId = `app:${threadId}:${turnId}:item:commandExecution:${itemId}`;
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/approval-snapshot" });
+  hub.applySessionEvent(sessionId, {
+    type: "approval_request",
+    threadId,
+    approval: {
+      approvalId: "approval-snapshot-current",
+      method: "item/commandExecution/requestApproval",
+      requestId: 2,
+      kind: "command_execution",
+      threadId,
+      turnId,
+      itemId,
+      createdAt: "2026-07-24T02:42:39.654Z",
+      params: {
+        threadId,
+        turnId,
+        itemId,
+        command: "rm -rf /tmp/approval-snapshot"
+      }
+    }
+  });
+
+  const assertPendingApproval = () => {
+    const matchingRecords = hub.getThread(threadId)?.records.filter((record) => record.id === recordId) ?? [];
+    assert.equal(matchingRecords.length, 1);
+    const payload = matchingRecords[0].payload as Record<string, unknown>;
+    const approval = payload.approval as Record<string, unknown>;
+    assert.equal(payload.status, "pending_approval");
+    assert.equal(approval.approvalId, "approval-snapshot-current");
+    assert.equal(approval.status, "pending");
+    assert.equal(recordToView(matchingRecords[0])?.status, "pending");
+  };
+
+  assertPendingApproval();
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: [{
+      id: turnId,
+      status: "inProgress",
+      items: [{
+        id: itemId,
+        type: "commandExecution",
+        status: "inProgress",
+        command: "/usr/bin/zsh -lc 'rm -rf /tmp/approval-snapshot'",
+        aggregatedOutput: "",
+        exitCode: null
+      }]
+    }]
+  });
+  assertPendingApproval();
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: [{
+      id: turnId,
+      status: "inProgress",
+      items: []
+    }]
+  });
+  assertPendingApproval();
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: [{
+      id: turnId,
+      status: "completed",
+      items: [{
+        id: itemId,
+        type: "commandExecution",
+        status: "completed",
+        command: "/usr/bin/zsh -lc 'rm -rf /tmp/approval-snapshot'",
+        aggregatedOutput: "",
+        exitCode: 0
+      }]
+    }]
+  });
+  const completedRecord = hub.getThread(threadId)?.records.find((record) => record.id === recordId);
+  assert.equal((completedRecord?.payload as Record<string, unknown>)?.status, "completed");
+  assert.equal((completedRecord?.payload as Record<string, unknown>)?.approval, undefined);
+});

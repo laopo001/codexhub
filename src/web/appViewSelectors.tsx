@@ -15,6 +15,7 @@ import {
   formatRateLimitRemaining,
   formatResetTitle,
   latestTurnActivityScope,
+  recordsHavePendingInteraction,
   shortId,
   threadDisplayRecords,
   threadExecutionIsRunning,
@@ -271,12 +272,13 @@ export const threadExecutionMeta = (
   activityScope: TurnActivityScope
 ): ThreadExecutionMeta => {
   const running = threadExecutionIsRunning(thread.running, activityScope.turnStatus);
+  const needsInput = running && recordsHavePendingInteraction(activityScope.records);
   const startedAt = running
     ? thread.activeTurnStartedAt ?? activityScope.startedAt
     : activityScope.startedAt ?? activityScope.turnStatus?.at;
   const durationMs = running ? undefined : activityScope.durationMs;
   const status = running ? "running" : "idle";
-  const label = running ? "Running" : "Idle";
+  const label = needsInput ? "Needs input" : running ? "Running" : "Idle";
   const duration = durationMs == null ? "" : formatThreadDuration(durationMs);
   return {
     status,

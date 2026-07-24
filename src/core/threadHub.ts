@@ -1661,7 +1661,11 @@ export class ThreadHub {
       )
       : undefined;
     const turnIds = new Set(turnRecords.map((turn) => typeof turn.id === "string" ? turn.id : "").filter(Boolean));
-    const previousTurnRecords = takeReplaceableAppServerTurnRecords(thread, turnIds);
+    const activeTurnIds = new Set(turnRecords
+      .filter((turn) => parseAppServerTurnOutcome(turn)?.status === "inProgress")
+      .map((turn) => typeof turn.id === "string" ? turn.id : "")
+      .filter(Boolean));
+    const previousTurnRecords = takeReplaceableAppServerTurnRecords(thread, turnIds, undefined, activeTurnIds);
     for (const turnRecord of turnRecords) {
       this.applyAppServerTurn(thread, turnRecord, { historicalRecords: true, previousTurnRecords });
     }
@@ -1713,7 +1717,12 @@ export class ThreadHub {
     const outcome = parseAppServerTurnOutcome(turn);
     if (!turnId || !outcome) return;
     const previousTurnRecords = options.replaceTurnRecords
-      ? takeReplaceableAppServerTurnRecords(thread, new Set([turnId]), options.previousTurnRecords)
+      ? takeReplaceableAppServerTurnRecords(
+        thread,
+        new Set([turnId]),
+        options.previousTurnRecords,
+        outcome.status === "inProgress" ? new Set([turnId]) : new Set()
+      )
       : options.previousTurnRecords;
     const previousTerminalRecord = previousTurnRecords?.get(`app:${thread.threadId}:${turnId}:event:task_complete`)
       ?? previousTurnRecords?.get(`app:${thread.threadId}:${turnId}:event:turn_aborted`);
@@ -2468,6 +2477,7 @@ export class ThreadHub {
         thread.records.push(record);
       }
     } else {
+      record = preservePendingInteractionRecord(thread.records[existingIndex], record);
       if (typeof record.order !== "number") record = { ...record, order: thread.records[existingIndex].order };
       if (recordsEqual(thread.records[existingIndex], record)) return;
       thread.records[existingIndex] = record;
@@ -2961,15 +2971,55 @@ const appServerTurnIsTerminal = (thread: ThreadState, turnId: string) =>
 const isAppServerTurnErrorRecord = (record: CodexRecord) =>
   record.type === "error" && asRecord(record.payload)?.type === "app_server_error";
 
+const pendingInteractionKind = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  const approval = asRecord(payload?.approval);
+  if (approval?.status === "pending") return "approval";
+  const userInput = asRecord(payload?.userInput);
+  return userInput?.status === "pending" ? "userInput" : null;
+};
+
+const preservePendingInteractionRecord = (existing: CodexRecord, incoming: CodexRecord): CodexRecord => {
+  const kind = pendingInteractionKind(existing);
+  if (!kind || isTerminalAppServerItemRecord(incoming)) return incoming;
+  const existingPayload = asRecord(existing.payload);
+  const incomingPayload = asRecord(incoming.payload);
+  if (!existingPayload || !incomingPayload) return existing;
+  if (kind === "approval" && asRecord(incomingPayload.approval)) return incoming;
+  if (kind === "userInput" && asRecord(incomingPayload.userInput)) return incoming;
+  return {
+    ...incoming,
+    timestamp: existing.timestamp ?? incoming.timestamp,
+    payload: {
+      ...existingPayload,
+      ...incomingPayload,
+      status: existingPayload.status,
+      ...(kind === "approval"
+        ? { approval: existingPayload.approval }
+        : {
+            userInput: existingPayload.userInput,
+            questions: existingPayload.questions
+          })
+    }
+  };
+};
+
 const takeReplaceableAppServerTurnRecords = (
   thread: ThreadState,
   turnIds: ReadonlySet<string>,
-  seed?: ReadonlyMap<string, CodexRecord>
+  seed?: ReadonlyMap<string, CodexRecord>,
+  preservePendingTurnIds: ReadonlySet<string> = turnIds
 ) => {
   const previous = new Map(seed);
   thread.records = thread.records.filter((record) => {
     const turnId = turnIdFromAppRecordId(thread.threadId, record.id);
-    if (!turnId || !turnIds.has(turnId) || isStatusUsageRecord(record) || isAppServerTurnErrorRecord(record)) return true;
+    if (
+      !turnId
+      || !turnIds.has(turnId)
+      || isStatusUsageRecord(record)
+      || isAppServerTurnErrorRecord(record)
+      || (pendingInteractionKind(record) && preservePendingTurnIds.has(turnId))
+    ) return true;
     previous.set(record.id, record);
     return false;
   });

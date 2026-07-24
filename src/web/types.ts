@@ -244,7 +244,7 @@ export type ActivityStatusSnapshot = {
 };
 export type ThreadExecutionMeta = {
   status: "running" | "idle";
-  label: "Running" | "Idle";
+  label: "Running" | "Needs input" | "Idle";
   duration: string;
   text: string;
   startedAt?: string;
