@@ -90,8 +90,23 @@ export const formatTextAttachmentReferences = (textAttachments: TextAttachment[]
     .map((text, index) => formatTextAttachmentReference(index + 1, text));
 
 export const formatTextAttachmentReference = (index: number, text: string) => {
-  const fence = codeFenceFor(text);
-  return [`## Reference ${index}`, fence, text, fence].join("\n");
+  const structured = structuredTextAttachment(text);
+  const body = structured?.body ?? text;
+  const fence = codeFenceFor(body);
+  return structured
+    ? [`## Reference ${index}`, "", structured.metadata, "", fence, body, fence].join("\n")
+    : [`## Reference ${index}`, "", fence, body, fence].join("\n");
+};
+
+const structuredTextAttachment = (text: string) => {
+  const separatorIndex = text.indexOf("\n\n");
+  if (separatorIndex < 0) return null;
+  const metadata = text.slice(0, separatorIndex);
+  const body = text.slice(separatorIndex + 2);
+  if (!body) return null;
+  const metadataLines = metadata.split("\n");
+  if (!metadataLines.every((line) => /^(?:File|Path|Document|Language):\s*\S/i.test(line))) return null;
+  return { metadata, body };
 };
 
 const codeFenceFor = (text: string) => {
