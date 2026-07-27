@@ -3,6 +3,9 @@ import test from "node:test";
 import { recordViewStatusDurationMs } from "../../src/core/codexRecordView.js";
 import type { CodexRecord, CodexRecordView } from "../../src/shared/recordTypes.js";
 import {
+  formatThreadDuration,
+  goalDurationMsFromProgress,
+  latestGoalDurationAnchor,
   liveDurationMsFromAnchor,
   stableLiveDurationAnchor
 } from "../../src/web/helpers/liveTime.js";
@@ -84,6 +87,50 @@ test("running duration keeps its first observation anchor for the same Turn", ()
 
   assert.strictEqual(afterGuidance, first);
   assert.notStrictEqual(nextTurn, first);
+});
+
+test("active Goal duration advances from the app-server accumulated time", () => {
+  const durationMs = goalDurationMsFromProgress({
+    status: "active",
+    running: true,
+    timeUsedSeconds: 30_957,
+    liveElapsedMs: 3_000
+  });
+
+  assert.equal(durationMs, 30_960_000);
+  assert.equal(formatThreadDuration(durationMs), "8h36m0s");
+});
+
+test("paused Goal duration freezes at the app-server accumulated time", () => {
+  const durationMs = goalDurationMsFromProgress({
+    status: "paused",
+    running: true,
+    timeUsedSeconds: 30_957,
+    liveElapsedMs: 30_000
+  });
+
+  assert.equal(durationMs, 30_957_000);
+  assert.equal(formatThreadDuration(durationMs), "8h35m57s");
+});
+
+test("idle active Goal duration freezes at the app-server accumulated time", () => {
+  assert.equal(goalDurationMsFromProgress({
+    status: "active",
+    running: false,
+    timeUsedSeconds: 30_957,
+    liveElapsedMs: 30_000
+  }), 30_957_000);
+});
+
+test("Goal live duration starts after an idle gap instead of the older Goal update", () => {
+  assert.equal(latestGoalDurationAnchor(
+    "2026-07-19T02:00:00.000Z",
+    "2026-07-19T03:00:00.000Z"
+  ), "2026-07-19T03:00:00.000Z");
+  assert.equal(latestGoalDurationAnchor(
+    "2026-07-19T04:00:00.000Z",
+    "2026-07-19T03:00:00.000Z"
+  ), "2026-07-19T04:00:00.000Z");
 });
 
 const lifecycleRecord = (

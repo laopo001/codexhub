@@ -187,6 +187,7 @@ test("web goal extraction only consumes current camelCase ThreadGoal fields", as
         objective: "finish",
         status: "active",
         tokenBudget: 1000,
+        timeUsedSeconds: 30,
         updatedAt: 3
       }
     }
@@ -194,6 +195,7 @@ test("web goal extraction only consumes current camelCase ThreadGoal fields", as
     objective: "finish",
     status: "active",
     tokenBudget: 1000,
+    timeUsedSeconds: 30,
     updatedAt: "1970-01-01T00:00:03.000Z"
   });
 
@@ -213,6 +215,7 @@ test("web goal extraction only consumes current camelCase ThreadGoal fields", as
     objective: "finish",
     status: "active",
     tokenBudget: undefined,
+    timeUsedSeconds: undefined,
     updatedAt: undefined
   });
 });

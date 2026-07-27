@@ -680,18 +680,6 @@ export const relativeTime = (iso: string | undefined) => {
   return `${Math.round(hours / 24)}d ago`;
 };
 
-export const formatGoalAge = (iso: string) => {
-  const timestamp = Date.parse(iso);
-  if (!Number.isFinite(timestamp)) return "";
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return `${Math.max(1, seconds)}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.round(hours / 24)}d`;
-};
-
 export const goalStatusLabel = (status: string) => {
   if (status === "paused") return "暂停的目标";
   if (status === "complete") return "完成的目标";

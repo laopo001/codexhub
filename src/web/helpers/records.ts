@@ -74,9 +74,12 @@ export const latestThreadGoalFromRecords = (records: CodexRecord[], threadId?: s
     const status = threadGoalStatusFromValue(goal?.status);
     if (status === "complete") return null;
     const tokenBudget = typeof goal?.tokenBudget === "number" ? goal.tokenBudget : undefined;
+    const timeUsedSeconds = typeof goal?.timeUsedSeconds === "number" && Number.isFinite(goal.timeUsedSeconds)
+      ? goal.timeUsedSeconds
+      : undefined;
     const updatedAt = records[index].timestamp
       ?? (typeof goal?.updatedAt === "number" ? new Date(goal.updatedAt * 1000).toISOString() : undefined);
-    return { objective, status, tokenBudget, updatedAt };
+    return { objective, status, tokenBudget, timeUsedSeconds, updatedAt };
   }
   return null;
 };

@@ -43,6 +43,7 @@ export type ThreadGoalView = {
   objective: string;
   status: ThreadGoalStatus;
   tokenBudget?: number;
+  timeUsedSeconds?: number;
   updatedAt?: string;
 };
 

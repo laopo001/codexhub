@@ -1,6 +1,6 @@
 import React from "react";
 import type { CodexRecordView } from "../../shared/recordTypes.js";
-import type { ThreadExecutionMeta } from "../types.js";
+import type { ThreadExecutionMeta, ThreadGoalView } from "../types.js";
 import { statusLabel } from "./common.js";
 
 const listeners = new Set<() => void>();
@@ -145,6 +145,56 @@ export const LiveThreadExecutionText = ({
   );
   const duration = liveDurationMs === undefined ? executionMeta.duration : formatThreadDuration(liveDurationMs);
   return <>{[includeLabel ? executionMeta.label : "", duration].filter(Boolean).join(" · ")}</>;
+};
+
+export const goalDurationMsFromProgress = ({
+  status,
+  running,
+  timeUsedSeconds,
+  liveElapsedMs
+}: Pick<ThreadGoalView, "status" | "timeUsedSeconds"> & {
+  running: boolean;
+  liveElapsedMs?: number;
+}) => {
+  if (typeof timeUsedSeconds !== "number" || !Number.isFinite(timeUsedSeconds)) return undefined;
+  const baseDurationMs = Math.max(0, timeUsedSeconds * 1000);
+  if (status !== "active" || !running || liveElapsedMs === undefined) return baseDurationMs;
+  return baseDurationMs + Math.max(0, liveElapsedMs);
+};
+
+export const latestGoalDurationAnchor = (
+  goalUpdatedAt: string | undefined,
+  activeTurnStartedAt: string | undefined
+) => {
+  const goalUpdatedMs = goalUpdatedAt ? Date.parse(goalUpdatedAt) : Number.NaN;
+  const turnStartedMs = activeTurnStartedAt ? Date.parse(activeTurnStartedAt) : Number.NaN;
+  if (!Number.isFinite(goalUpdatedMs)) return Number.isFinite(turnStartedMs) ? activeTurnStartedAt : undefined;
+  if (!Number.isFinite(turnStartedMs)) return goalUpdatedAt;
+  return turnStartedMs > goalUpdatedMs ? activeTurnStartedAt : goalUpdatedAt;
+};
+
+export const LiveGoalDuration = ({
+  status,
+  running,
+  activeTurnStartedAt,
+  timeUsedSeconds,
+  updatedAt
+}: Pick<ThreadGoalView, "status" | "timeUsedSeconds" | "updatedAt"> & {
+  running: boolean;
+  activeTurnStartedAt?: string;
+}) => {
+  const liveStartedAt = latestGoalDurationAnchor(updatedAt, activeTurnStartedAt);
+  const liveElapsedMs = useLiveDurationMs(
+    status === "active" && running && Boolean(liveStartedAt),
+    liveStartedAt
+  );
+  const durationMs = goalDurationMsFromProgress({
+    status,
+    running,
+    timeUsedSeconds,
+    liveElapsedMs
+  });
+  return <>{durationMs === undefined ? null : formatThreadDuration(durationMs)}</>;
 };
 
 export const formatThreadDuration = (durationMs: number) => {

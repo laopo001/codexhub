@@ -20,14 +20,13 @@ import { approvalPolicyOptions, approvalsReviewerOptions, composerModeOptions } 
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
-import { LiveThreadExecutionText } from "./helpers/liveTime.js";
+import { LiveGoalDuration, LiveThreadExecutionText } from "./helpers/liveTime.js";
 import type { AppViewModel, AppWorkspaceViewModel } from "./viewModel.js";
 import {
   ActivityStatusBar,
   canForkAtMessage,
   canRenderMarkdown,
   EmptyMessages,
-  formatGoalAge,
   goalStatusClass,
   goalStatusControl,
   goalStatusLabel,
@@ -563,7 +562,17 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                   {weeklyGoalPolicyLabel(activeThread.goalRunPolicy.targetRemainingPercent)}
                                 </span>
                               ) : null}
-                              {activeGoal.updatedAt ? <span className="goalStripAge">{formatGoalAge(activeGoal.updatedAt)}</span> : null}
+                              {activeGoal.timeUsedSeconds !== undefined ? (
+                                <span className="goalStripAge">
+                                  <LiveGoalDuration
+                                    status={activeGoal.status}
+                                    running={activeThread.running}
+                                    activeTurnStartedAt={activeThread.activeTurnStartedAt}
+                                    timeUsedSeconds={activeGoal.timeUsedSeconds}
+                                    updatedAt={activeGoal.updatedAt}
+                                  />
+                                </span>
+                              ) : null}
                             </div>
                             <div className="goalStripActions">
                               <button
