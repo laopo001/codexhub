@@ -58,6 +58,7 @@ export type PendingCommand = {
   workingDirectory?: string;
   keepTurns?: number;
   input?: ProxyInput;
+  knownAppServerTurnIds?: Set<string>;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;
   timer?: NodeJS.Timeout;

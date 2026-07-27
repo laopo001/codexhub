@@ -324,6 +324,55 @@ test("terminal snapshots finish the matching active Turn after reconnect", async
   assert.equal(command.type, "turn");
 });
 
+test("live completion finishes an unbound local Turn after a terminal snapshot without ending its queued successor", async () => {
+  const { hub, sessionId, threadId } = createHub("snapshot-unbound-local");
+  hub.applySessionEvent(sessionId, turnSnapshot(threadId, [
+    appServerTurn("previous-turn")
+  ]));
+
+  const running = hub.runTurn(threadId, "finish from snapshot", "task");
+  const firstCommand = await nextCommand(hub, sessionId);
+  const queued = hub.runTurn(threadId, "keep running after duplicate completion", "task");
+  hub.applySessionEvent(sessionId, turnSnapshot(threadId, [
+    appServerTurn("previous-turn"),
+    appServerTurn("snapshot-only-turn")
+  ]));
+  assert.equal(hub.getThread(threadId)?.running, true);
+
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, "snapshot-only-turn"));
+  await running;
+  const secondCommand = await nextCommand(hub, sessionId, firstCommand.seq);
+  assert.equal(hub.getThread(threadId)?.running, true);
+  assert.equal(secondCommand.type, "turn");
+  assert.equal(secondCommand.input, "keep running after duplicate completion");
+
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, "snapshot-only-turn"));
+  assert.equal(hub.getThread(threadId)?.running, true);
+
+  hub.failSessionCommand(sessionId, secondCommand.commandId, "cleanup");
+  await assert.rejects(queued, /cleanup/);
+});
+
+test("an unbound local Turn ignores older terminal records while a newer snapshot Turn is active", async () => {
+  const { hub, sessionId, threadId } = createHub("snapshot-unbound-active");
+  hub.applySessionEvent(sessionId, turnSnapshot(threadId, [
+    appServerTurn("previous-turn")
+  ]));
+
+  const running = hub.runTurn(threadId, "wait for the active snapshot Turn", "task");
+  await nextCommand(hub, sessionId);
+  hub.applySessionEvent(sessionId, turnSnapshot(threadId, [
+    appServerTurn("previous-turn"),
+    appServerTurn("unseen-terminal-turn"),
+    appServerTurn("current-turn", { status: "inProgress" })
+  ]));
+  assert.equal(hub.getThread(threadId)?.running, true);
+
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, "current-turn"));
+  await running;
+  assert.equal(hub.getThread(threadId)?.running, false);
+});
+
 test("terminal snapshots also finish externally active Turns whose id was not observed", () => {
   const { hub, sessionId, threadId } = createHub("snapshot-external-terminal");
   hub.applySessionEvent(sessionId, executionChanged(threadId, true));

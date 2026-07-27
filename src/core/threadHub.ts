@@ -820,6 +820,8 @@ export class ThreadHub {
       null,
       thread.workingDirectory
     );
+    const pending = this.pendingCommands.get(commandId);
+    if (pending) pending.knownAppServerTurnIds = new Set(appServerTurnIds(thread));
     this.activeTurnCommands.set(thread.threadId, commandId);
     const shouldSetDefaultTitle = thread.title === thread.threadId;
     const startedAt = new Date().toISOString();
@@ -1003,7 +1005,10 @@ export class ThreadHub {
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "turn", thread.threadId, turnCommandTimeoutMs(), thread.workingDirectory);
     const pending = this.pendingCommands.get(commandId);
-    if (pending) pending.input = input;
+    if (pending) {
+      pending.input = input;
+      pending.knownAppServerTurnIds = new Set(appServerTurnIds(thread));
+    }
     this.activeTurnCommands.set(thread.threadId, commandId);
     if (options && hasStickyThreadRunOptions(options)) {
       this.pendingTurnSettingsCommits.set(commandId, {
@@ -1551,13 +1556,14 @@ export class ThreadHub {
       const outcome = parseAppServerTurnOutcome(turn);
       const completedTurnId = typeof turn?.id === "string" ? turn.id : "";
       const wasAlreadyTerminal = completedTurnId ? appServerTurnIsTerminal(thread, completedTurnId) : false;
+      const completesUnboundActiveCommand = this.turnMatchesUnboundActiveCommand(thread, completedTurnId);
       if (turn) this.applyAppServerTurn(thread, turn, { replaceTurnRecords: true });
       const staleForActiveTurn = Boolean(
         completedTurnId
         && thread.appServerTurnId
         && thread.appServerTurnId !== completedTurnId
       );
-      if (!wasAlreadyTerminal && !staleForActiveTurn) {
+      if ((!wasAlreadyTerminal || completesUnboundActiveCommand) && !staleForActiveTurn) {
         this.finishSessionTurn(thread, outcome?.completionError);
       }
       return;
@@ -2203,6 +2209,18 @@ export class ThreadHub {
     if (!changed) return;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
+  }
+
+  private turnMatchesUnboundActiveCommand(thread: ThreadState, turnId: string) {
+    if (!thread.running || thread.appServerTurnId || !turnId) return false;
+    const commandId = this.activeTurnCommands.get(thread.threadId);
+    const pending = commandId ? this.pendingCommands.get(commandId) : undefined;
+    return Boolean(
+      pending
+      && (pending.type === "turn" || pending.type === "review_thread")
+      && pending.knownAppServerTurnIds
+      && !pending.knownAppServerTurnIds.has(turnId)
+    );
   }
 
   private appendHubRecord(
