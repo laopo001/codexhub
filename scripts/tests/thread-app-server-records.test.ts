@@ -9,6 +9,7 @@ import {
   codexRecordsFromAppServerTurnLifecycle,
   withAppServerItemRecordTiming
 } from "../../src/core/threadAppServerRecords.js";
+import type { CodexRecord } from "../../src/shared/recordTypes.js";
 
 test("file changes only consume current structured kind values", () => {
   assert.deepEqual(fileChanges([
@@ -749,4 +750,295 @@ test("ThreadHub preserves pending command approval across active turn snapshots"
   const completedRecord = hub.getThread(threadId)?.records.find((record) => record.id === recordId);
   assert.equal((completedRecord?.payload as Record<string, unknown>)?.status, "completed");
   assert.equal((completedRecord?.payload as Record<string, unknown>)?.approval, undefined);
+});
+
+test("ThreadHub ingests real paginated turn history in bounded historical batches", () => {
+  const hub = new ThreadHub();
+  const sessionId = "large-snapshot-session";
+  const threadId = "large-snapshot-thread";
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/large-snapshot" });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: []
+  });
+  const events: Array<{
+    kind: string;
+    historical?: boolean;
+    record?: unknown;
+    records?: unknown[];
+  }> = [];
+  const unsubscribe = hub.subscribe(
+    threadId,
+    hub.getThread(threadId)?.lastSeq ?? 0,
+    (event) => events.push(event)
+  );
+  const turns = Array.from({ length: 5_000 }, (_, index) => ({
+    id: `turn-${index}`,
+    status: "completed",
+    startedAt: index * 2 + 1,
+    completedAt: index * 2 + 2,
+    items: [
+      {
+        type: "userMessage",
+        id: `user-${index}`,
+        content: [{ type: "text", text: `question ${index}` }]
+      },
+      {
+        type: "agentMessage",
+        id: `agent-${index}`,
+        text: `answer ${index}`,
+        phase: "final_answer"
+      }
+    ]
+  }));
+
+  const startedAt = performance.now();
+  for (let page = 0; page < 100; page += 1) {
+    const end = turns.length - page * 50;
+    hub.applySessionEvent(sessionId, {
+      type: "thread_turns_snapshot",
+      threadId,
+      turns: turns.slice(end - 50, end),
+      snapshotId: "large-snapshot-1",
+      page,
+      head: page === 0,
+      complete: page === 99
+    });
+  }
+  const elapsedMs = performance.now() - startedAt;
+  const detail = hub.getThread(threadId);
+
+  assert.equal(detail?.records.length, 20_000);
+  assert.equal(detail?.messageCount, 20_000);
+  assert.ok(elapsedMs < 15_000, `large snapshot took ${Math.round(elapsedMs)}ms`);
+  assert.equal(events.length, 100);
+  assert.ok(events.every((event) =>
+    event.kind === "thread"
+    && event.historical === true
+    && event.record === undefined
+    && (event.records?.length ?? 0) <= 500
+  ));
+
+  for (let page = 0; page < 100; page += 1) {
+    const end = turns.length - page * 50;
+    hub.applySessionEvent(sessionId, {
+      type: "thread_turns_snapshot",
+      threadId,
+      turns: turns.slice(end - 50, end),
+      snapshotId: "large-snapshot-2",
+      page,
+      head: page === 0,
+      complete: page === 99
+    });
+  }
+  assert.equal(hub.getThread(threadId)?.records.length, 20_000);
+  const maxHistoricalOrder = Math.max(...(hub.getThread(threadId)?.records.map((record) => record.order ?? 0) ?? []));
+  const deltaStartedAt = performance.now();
+  for (let index = 0; index < 1_000; index += 1) {
+    hub.applySessionEvent(sessionId, {
+      type: "thread_event",
+      threadId,
+      message: {
+        method: "item/agentMessage/delta",
+        params: {
+          threadId,
+          turnId: "live-turn",
+          itemId: "live-agent",
+          delta: "x"
+        }
+      }
+    });
+  }
+  const deltaElapsedMs = performance.now() - deltaStartedAt;
+  const liveRecord = hub.getThread(threadId)?.records.find((candidate) =>
+    candidate.id === `app:${threadId}:live-turn:agent:live-agent`
+  );
+  assert.equal((liveRecord?.payload as { message?: string })?.message?.length, 1_000);
+  assert.ok((liveRecord?.order ?? 0) > maxHistoricalOrder);
+  assert.ok(deltaElapsedMs < 5_000, `large-thread deltas took ${Math.round(deltaElapsedMs)}ms`);
+  unsubscribe();
+});
+
+test("ThreadHub streams command output as deltas without retaining cumulative record versions", () => {
+  const hub = new ThreadHub();
+  const sessionId = "command-delta-session";
+  const threadId = "command-delta-thread";
+  const turnId = "command-delta-turn";
+  const itemId = "command-delta-item";
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/command-delta" });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: []
+  });
+
+  let recordEvents = 0;
+  let deltaEvents = 0;
+  let streamedBytes = 0;
+  const unsubscribe = hub.subscribe(
+    threadId,
+    hub.getThread(threadId)?.lastSeq ?? 0,
+    (event) => {
+      if (event.kind === "record") recordEvents += 1;
+      if (event.kind === "record_delta") {
+        deltaEvents += 1;
+        streamedBytes += Buffer.byteLength(JSON.stringify(event));
+        assert.equal(event.record, undefined);
+        assert.equal(event.delta?.recordId, `app:${threadId}:${turnId}:item:commandExecution:${itemId}`);
+      }
+    }
+  );
+  const notify = (method: string, params: Record<string, unknown>) => {
+    hub.applySessionEvent(sessionId, {
+      type: "thread_event",
+      threadId,
+      heartbeat: false,
+      message: {
+        method,
+        params: { threadId, turnId, ...params }
+      }
+    });
+  };
+  notify("item/started", {
+    item: {
+      id: itemId,
+      type: "commandExecution",
+      status: "inProgress",
+      command: "build",
+      aggregatedOutput: "",
+      exitCode: null
+    }
+  });
+
+  const chunk = "x".repeat(8 * 1024);
+  for (let index = 0; index < 1_000; index += 1) {
+    notify("item/commandExecution/outputDelta", { itemId, delta: chunk });
+  }
+
+  const detail = hub.getThread(threadId);
+  const commandRecord = detail?.records.find((record) =>
+    record.id === `app:${threadId}:${turnId}:item:commandExecution:${itemId}`
+  );
+  assert.equal((commandRecord?.payload as { aggregated_output?: string })?.aggregated_output?.length, 8 * 1024 * 1_000);
+  assert.equal(recordEvents, 1);
+  assert.equal(deltaEvents, 1_000);
+  assert.ok(streamedBytes < 12 * 1024 * 1024, `delta stream serialized ${streamedBytes} bytes`);
+  assert.equal("events" in ((hub as unknown as { threads: Map<string, object> }).threads.get(threadId) ?? {}), false);
+
+  notify("item/completed", {
+    completedAtMs: Date.now(),
+    item: {
+      id: itemId,
+      type: "commandExecution",
+      status: "completed",
+      command: "build",
+      aggregatedOutput: chunk.repeat(1_000),
+      exitCode: 0
+    }
+  });
+  const completedRecord = hub.getThread(threadId)?.records.find((candidate) =>
+    candidate.id === `app:${threadId}:${turnId}:item:commandExecution:${itemId}`
+  );
+  assert.equal(recordEvents, 2);
+  assert.equal((completedRecord?.payload as { status?: string })?.status, "completed");
+  assert.equal((completedRecord?.payload as { aggregated_output?: string })?.aggregated_output?.length, 8 * 1024 * 1_000);
+  unsubscribe();
+});
+
+test("ThreadHub replaces a stale cursor with a canonical records snapshot", () => {
+  const hub = new ThreadHub();
+  const sessionId = "snapshot-resume-session";
+  const threadId = "snapshot-resume-thread";
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/snapshot-resume" });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: [{
+      id: "turn-1",
+      status: "completed",
+      items: [{
+        id: "agent-1",
+        type: "agentMessage",
+        text: "current",
+        phase: "final_answer"
+      }]
+    }]
+  });
+  const current = hub.getThread(threadId);
+  assert.ok(current);
+
+  const exactEvents: unknown[] = [];
+  const unsubscribeExact = hub.subscribe(threadId, current.lastSeq, (event) => exactEvents.push(event));
+  assert.equal(exactEvents.length, 0);
+  unsubscribeExact();
+
+  const staleEvents: Array<{
+    seq: number;
+    records?: CodexRecord[];
+    snapshot?: { snapshotId: string; page: number; reset: boolean; complete: boolean };
+  }> = [];
+  const unsubscribeStale = hub.subscribe(threadId, current.lastSeq + 100, (event) => staleEvents.push(event));
+  assert.equal(staleEvents.length, 1);
+  assert.equal(staleEvents[0].seq, current.lastSeq);
+  assert.deepEqual(staleEvents[0].snapshot, {
+    snapshotId: staleEvents[0].snapshot?.snapshotId,
+    page: 0,
+    reset: true,
+    complete: true
+  });
+  assert.deepEqual(staleEvents[0].records, current.records);
+  unsubscribeStale();
+});
+
+test("ThreadHub orders untimed history across pages and ignores stale retry pages", () => {
+  const hub = new ThreadHub();
+  const sessionId = "untimed-history-session";
+  const threadId = "untimed-history-thread";
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/untimed-history" });
+  const turn = (index: number) => ({
+    id: `turn-${index}`,
+    status: "completed",
+    startedAt: null,
+    completedAt: null,
+    items: [{
+      type: "userMessage",
+      id: `user-${index}`,
+      content: [{ type: "text", text: `question ${index}` }]
+    }]
+  });
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: [turn(3), turn(4)],
+    snapshotId: "untimed-snapshot-1",
+    page: 0,
+    head: true,
+    complete: false
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: [turn(99)],
+    snapshotId: "stale-snapshot",
+    page: 1,
+    head: false,
+    complete: true
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: [turn(1), turn(2)],
+    snapshotId: "untimed-snapshot-1",
+    page: 1,
+    head: false,
+    complete: true
+  });
+
+  const userTurnIds = hub.getThread(threadId)?.records
+    .filter((record) => record.id.includes(":user:"))
+    .map((record) => record.id.split(":")[2]);
+  assert.deepEqual(userTurnIds, ["turn-1", "turn-2", "turn-3", "turn-4"]);
+  assert.equal(userTurnIds?.includes("turn-99"), false);
 });

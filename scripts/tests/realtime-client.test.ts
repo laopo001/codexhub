@@ -62,7 +62,12 @@ test("realtime client replays advanced cursors and thread subscriptions after re
   ]);
 
   sockets[0].message({ type: "runtimes", seq: 7 });
-  sockets[0].message({ type: "record", seq: 5, thread: { threadId: "thread-1" } });
+  sockets[0].message({
+    type: "record_delta",
+    seq: 5,
+    thread: { threadId: "thread-1" },
+    delta: { recordId: "record-1", field: "aggregated_output", append: "next" }
+  });
   sockets[0].close();
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(sockets.length, 2);
@@ -72,6 +77,120 @@ test("realtime client replays advanced cursors and thread subscriptions after re
     { type: "hello", runtimesAfter: 7, projectsAfter: 0, tasksAfter: 0, connectionsAfter: 0 },
     { type: "subscribe_thread", threadId: "thread-1", after: 5 }
   ]);
+  client.disconnect();
+});
+
+test("realtime canonical snapshots reset a stale thread cursor", async () => {
+  const sockets: FakeSocket[] = [];
+  const client = new CodexHubRealtimeClient({
+    url: "ws://localhost/api/events/ws",
+    reconnectDelayMs: 0,
+    webSocketFactory: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket as unknown as WebSocket;
+    },
+    onMessage: () => undefined
+  });
+
+  client.connect();
+  client.subscribeThread("thread-1", 100);
+  sockets[0].open();
+  sockets[0].message({
+    type: "thread",
+    seq: 2,
+    thread: { threadId: "thread-1" },
+    snapshot: {
+      snapshotId: "snapshot-1",
+      page: 0,
+      reset: true,
+      complete: true
+    },
+    records: []
+  });
+  sockets[0].close();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  sockets[1].open();
+
+  assert.deepEqual(sockets[1].sent.at(-1), {
+    type: "subscribe_thread",
+    threadId: "thread-1",
+    after: 2
+  });
+  client.disconnect();
+});
+
+test("realtime client does not commit a paged snapshot cursor before the final page", async () => {
+  const sockets: FakeSocket[] = [];
+  const client = new CodexHubRealtimeClient({
+    url: "ws://localhost/api/events/ws",
+    reconnectDelayMs: 0,
+    webSocketFactory: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket as unknown as WebSocket;
+    },
+    onMessage: () => undefined
+  });
+
+  client.connect();
+  client.subscribeThread("thread-1", 100);
+  sockets[0].open();
+  sockets[0].message({
+    type: "thread",
+    seq: 2,
+    thread: { threadId: "thread-1" },
+    snapshot: {
+      snapshotId: "snapshot-1",
+      page: 0,
+      reset: true,
+      complete: false
+    },
+    records: [{ id: "page-0" }]
+  });
+  sockets[0].close();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  sockets[1].open();
+
+  assert.deepEqual(sockets[1].sent.at(-1), {
+    type: "subscribe_thread",
+    threadId: "thread-1",
+    after: 100
+  });
+
+  sockets[1].message({
+    type: "thread",
+    seq: 2,
+    thread: { threadId: "thread-1" },
+    snapshot: {
+      snapshotId: "snapshot-2",
+      page: 0,
+      reset: true,
+      complete: false
+    },
+    records: [{ id: "page-0" }]
+  });
+  sockets[1].message({
+    type: "thread",
+    seq: 2,
+    thread: { threadId: "thread-1" },
+    snapshot: {
+      snapshotId: "snapshot-2",
+      page: 1,
+      reset: false,
+      complete: true
+    },
+    records: [{ id: "page-1" }]
+  });
+  sockets[1].close();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  sockets[2].open();
+
+  assert.deepEqual(sockets[2].sent.at(-1), {
+    type: "subscribe_thread",
+    threadId: "thread-1",
+    after: 2
+  });
   client.disconnect();
 });
 

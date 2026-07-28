@@ -63,6 +63,11 @@ type RealtimeMessage = {
     type?: string;
     payload?: unknown;
   };
+  records?: Array<{
+    id?: string;
+    type?: string;
+    payload?: unknown;
+  }>;
 };
 
 type PartialRateLimitWindow = {
@@ -1917,19 +1922,29 @@ const assertHistoricalSnapshotPublishesMarkedRecordEvents = async (apiBase: stri
     fake.emitTurnsSnapshot(turnId);
     await waitForRealtimeMessage(
       subscription.messages,
-      (message) =>
-        message.type === "record"
-        && message.historical === true
-        && typeof message.record?.id === "string"
-        && message.record.id.includes(`:${turnId}:`),
+      (message) => {
+        const records = [
+          ...(message.record ? [message.record] : []),
+          ...(Array.isArray(message.records) ? message.records : [])
+        ];
+        return message.historical === true
+          && records.some((record) =>
+            typeof record?.id === "string"
+            && record.id.includes(`:${turnId}:`)
+          );
+      },
       "historical snapshot record event"
     );
     await delay(100);
     const unmarkedHistoricalRecordEvent = subscription.messages.find((message) =>
-      message.type === "record"
-      && message.historical !== true
-      && typeof message.record?.id === "string"
-      && message.record.id.includes(`:${turnId}:`)
+      message.historical !== true
+      && [
+        ...(message.record ? [message.record] : []),
+        ...(Array.isArray(message.records) ? message.records : [])
+      ].some((record) =>
+        typeof record?.id === "string"
+        && record.id.includes(`:${turnId}:`)
+      )
     );
     if (unmarkedHistoricalRecordEvent) {
       throw new Error(`historical snapshot published an unmarked record event: ${JSON.stringify(unmarkedHistoricalRecordEvent)}`);

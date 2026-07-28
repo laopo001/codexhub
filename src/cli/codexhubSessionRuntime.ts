@@ -103,6 +103,7 @@ type SyncedThread = {
   // 快照同步按订阅的 thread 维护；实时 app-server 事件仍走同一条 WebSocket。
   appServerTurnsSyncing: boolean;
   appServerTurnsPending: boolean;
+  appServerTurnsRetryCount: number;
   appServerTurnsDebounceTimer?: NodeJS.Timeout;
 };
 
@@ -834,7 +835,8 @@ class CodexAppServerBridge {
     if (this.syncedThreads.has(threadId)) return;
     const state: SyncedThread = {
       appServerTurnsSyncing: false,
-      appServerTurnsPending: false
+      appServerTurnsPending: false,
+      appServerTurnsRetryCount: 0
     };
     this.syncedThreads.set(threadId, state);
     const pendingUnsubscribe = this.threadUnsubscribeTasks.get(threadId);
@@ -957,8 +959,11 @@ class CodexAppServerBridge {
       return;
     }
 
+    if (state.appServerTurnsDebounceTimer) clearTimeout(state.appServerTurnsDebounceTimer);
+    state.appServerTurnsDebounceTimer = undefined;
     state.appServerTurnsSyncing = true;
     state.appServerTurnsPending = false;
+    let completed = false;
     try {
       const pendingUnsubscribe = this.threadUnsubscribeTasks.get(threadId);
       if (pendingUnsubscribe) {
@@ -984,18 +989,23 @@ class CodexAppServerBridge {
         { heartbeat: false, historical: true }
       );
       if (!stillObserved()) return;
-      // 快照补历史 records；实时 app-server 消息会单独转发。
-      const turns = await this.listAppServerThreadTurnsOrEmpty(loadedThreadId);
-      if (!stillObserved()) return;
-      this.hub.sendEvent({
-        type: "thread_turns_snapshot",
-        threadId: loadedThreadId,
-        turns,
-        heartbeat: false
-      });
+      // 最新页优先逐页补历史，避免超大 thread 在 Extension Host 中同时保留完整
+      // app-server turns 和 CodexHub records 两份大对象。
+      await this.forwardAppServerThreadTurnsPages(loadedThreadId, randomUUID(), stillObserved);
+      completed = true;
     } finally {
       state.appServerTurnsSyncing = false;
-      if (state.appServerTurnsPending && !this.closed) this.scheduleAppServerTurnsSync(threadId);
+      if (stillObserved()) {
+        if (completed) {
+          state.appServerTurnsRetryCount = 0;
+          if (state.appServerTurnsPending) this.scheduleAppServerTurnsSync(threadId);
+        } else {
+          state.appServerTurnsRetryCount += 1;
+          this.scheduleAppServerTurnsSync(threadId, {
+            delayMs: appServerTurnsRetryDelayMs(state.appServerTurnsRetryCount)
+          });
+        }
+      }
     }
   }
 
@@ -1003,6 +1013,7 @@ class CodexAppServerBridge {
     if (state.appServerTurnsDebounceTimer) clearTimeout(state.appServerTurnsDebounceTimer);
     state.appServerTurnsDebounceTimer = undefined;
     state.appServerTurnsPending = false;
+    state.appServerTurnsRetryCount = 0;
   }
 
   private async listAppServerThreads(workingDirectory: string, limit?: number): Promise<ThreadCandidateSummary[]> {
@@ -1256,30 +1267,62 @@ class CodexAppServerBridge {
     });
   }
 
-  private async listAppServerThreadTurns(threadId: string) {
-    const turns: unknown[] = [];
+  private async forwardAppServerThreadTurnsPages(
+    threadId: string,
+    snapshotId: string,
+    stillObserved: () => boolean
+  ) {
     let cursor: string | null | undefined;
-    for (let page = 0; page < 100; page += 1) {
-      const result = asRecord(await this.request("thread/turns/list", {
-        threadId,
-        cursor,
-        limit: 50,
-        sortDirection: "asc",
-        itemsView: "full"
-      }));
-      const data = Array.isArray(result?.data) ? result.data : [];
-      turns.push(...data);
-      cursor = typeof result?.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
-      if (!cursor) break;
-    }
-    return turns;
-  }
-
-  private async listAppServerThreadTurnsOrEmpty(threadId: string) {
+    let sentPage = false;
+    const seenCursors = new Set<string>();
     try {
-      return await this.listAppServerThreadTurns(threadId);
+      for (let page = 0; ; page += 1) {
+        if (!stillObserved()) return;
+        const result = asRecord(await this.request("thread/turns/list", {
+          threadId,
+          cursor,
+          limit: 50,
+          sortDirection: "desc",
+          itemsView: "full"
+        }));
+        if (!stillObserved()) return;
+        const data = Array.isArray(result?.data) ? [...result.data].reverse() : [];
+        const nextCursor = typeof result?.nextCursor === "string" && result.nextCursor
+          ? result.nextCursor
+          : null;
+        this.hub.sendEvent({
+          type: "thread_turns_snapshot",
+          threadId,
+          turns: data,
+          head: page === 0,
+          complete: !nextCursor,
+          snapshotId,
+          page,
+          heartbeat: false
+        });
+        sentPage = true;
+        if (!nextCursor) return;
+        if (seenCursors.has(nextCursor)) {
+          throw new Error(`Codex app-server thread/turns/list repeated cursor for ${threadId}`);
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      }
     } catch (error) {
-      if (appServerTurnsListUnavailableBeforeFirstMessage(error)) return [];
+      if (!sentPage && appServerTurnsListUnavailableBeforeFirstMessage(error)) {
+        if (!stillObserved()) return;
+        this.hub.sendEvent({
+          type: "thread_turns_snapshot",
+          threadId,
+          turns: [],
+          head: true,
+          complete: true,
+          snapshotId,
+          page: 0,
+          heartbeat: false
+        });
+        return;
+      }
       throw error;
     }
   }
@@ -1663,6 +1706,8 @@ const appServerOverloadRetryDelayMs = (attempt: number) => {
   const exponentialMs = Math.min(2_000, 100 * 2 ** attempt);
   return Math.floor(exponentialMs * (0.5 + Math.random() * 0.5));
 };
+const appServerTurnsRetryDelayMs = (retryCount: number) =>
+  Math.min(30_000, 250 * 2 ** Math.max(0, retryCount - 1));
 
 const appServerRpcError = (error: JsonRecord) => new AppServerRpcError(
   typeof error.code === "number" ? error.code : undefined,

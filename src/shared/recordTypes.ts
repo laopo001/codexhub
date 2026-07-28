@@ -5,6 +5,8 @@ export type CodexRecord = {
   type: string;
   payload: unknown;
   order?: number;
+  /** app-server 历史分页中的稳定逻辑顺序；Turn 时间戳为空时仍能跨页保序。 */
+  historyOrder?: number;
   sourceThreadId?: string;
 };
 

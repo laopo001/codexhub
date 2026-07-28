@@ -1,6 +1,6 @@
 import type { SetStateAction } from "react";
 import type { CodexRecord } from "../shared/recordTypes.js";
-import type { ThreadSummary } from "../shared/threadTypes.js";
+import type { ThreadRecordDelta, ThreadRecordsSnapshot, ThreadSummary } from "../shared/threadTypes.js";
 import type {
   ApprovalPolicyDraft,
   ApprovalsReviewerDraft,
@@ -12,7 +12,7 @@ import type {
   ServiceTierSelection,
   ThreadDetail
 } from "./types.js";
-import { mergeRecord } from "./helpers/records.js";
+import { applyThreadRecordDelta, combineRecordSources, mergeRecord } from "./helpers/records.js";
 
 type DraftAction =
   | { field: "modelDraft"; value: SetStateAction<ModelSelection> }
@@ -24,7 +24,14 @@ type DraftAction =
 
 export type OpenThreadAction =
   | { type: "upsert-detail"; thread: ThreadDetail }
-  | { type: "merge-stream"; thread: ThreadSummary; record?: CodexRecord }
+  | {
+      type: "merge-stream";
+      thread: ThreadSummary;
+      record?: CodexRecord;
+      records?: CodexRecord[];
+      delta?: ThreadRecordDelta;
+      snapshot?: ThreadRecordsSnapshot;
+    }
   | { type: "remove"; threadId: string }
   | { type: "reorder"; threadIds: string[] }
   | { type: "append-record"; threadId: string; record: CodexRecord }
@@ -75,11 +82,23 @@ export const openThreadReducer = (state: OpenThreadState[], action: OpenThreadAc
       : [...state, next];
   }
   if (action.type === "merge-stream") {
-    return updateThread(state, action.thread.threadId, (thread) => ({
-      ...thread,
-      ...action.thread,
-      records: action.record ? mergeRecord(thread.records, action.record) : thread.records
-    }));
+    return updateThread(state, action.thread.threadId, (thread) => {
+      const snapshotRecords = action.snapshot?.reset
+        ? combineRecordSources([], action.records ?? [])
+        : action.records !== undefined
+          ? combineRecordSources(thread.records, action.records)
+          : thread.records;
+      const mergedRecords = action.record
+        ? mergeRecord(snapshotRecords, action.record)
+        : snapshotRecords;
+      return {
+        ...thread,
+        ...action.thread,
+        records: action.delta
+          ? applyThreadRecordDelta(mergedRecords, action.delta)
+          : mergedRecords
+      };
+    });
   }
   if (action.type === "remove") return state.filter((thread) => thread.threadId !== action.threadId);
   if (action.type === "reorder") {

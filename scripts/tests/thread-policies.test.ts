@@ -26,7 +26,6 @@ const thread = (): ThreadState => ({
   records: [],
   recordSeq: 0,
   threadUsage: emptyThreadUsage(),
-  events: [],
   subscribers: new Set(),
   seq: 0
 });

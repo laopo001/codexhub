@@ -46,7 +46,6 @@ export type ThreadState = {
   records: CodexRecord[];
   recordSeq: number;
   threadUsage: ThreadUsage;
-  events: ThreadStreamEvent[];
   subscribers: Set<(event: ThreadStreamEvent) => void>;
   lastUsage?: Usage;
   seq: number;

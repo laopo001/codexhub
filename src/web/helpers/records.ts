@@ -290,12 +290,46 @@ const insertOrderedRecord = (records: CodexRecord[], incoming: CodexRecord) => {
 };
 
 export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) => {
-  if (!left.length) return right;
-  if (!right.length) return left;
   const byId = new Map<string, CodexRecord>();
-  for (const record of left) byId.set(record.id, record);
-  for (const record of right) byId.set(record.id, record);
+  const idByTranscriptKey = new Map<string, string>();
+  const put = (record: CodexRecord) => {
+    const sameId = byId.get(record.id);
+    const sameIdKey = sameId ? appServerTranscriptRecordKey(sameId) : null;
+    if (sameIdKey && idByTranscriptKey.get(sameIdKey) === record.id) {
+      idByTranscriptKey.delete(sameIdKey);
+    }
+    const transcriptKey = appServerTranscriptRecordKey(record);
+    const semanticDuplicateId = transcriptKey ? idByTranscriptKey.get(transcriptKey) : undefined;
+    if (semanticDuplicateId && semanticDuplicateId !== record.id) {
+      byId.delete(semanticDuplicateId);
+    }
+    byId.set(record.id, record);
+    if (transcriptKey) idByTranscriptKey.set(transcriptKey, record.id);
+  };
+  for (const record of left) put(record);
+  for (const record of right) put(record);
   return orderCodexRecords([...byId.values()]);
+};
+
+export const applyThreadRecordDelta = (
+  records: CodexRecord[],
+  delta: NonNullable<StreamEvent["delta"]>
+) => {
+  const index = records.findIndex((record) => record.id === delta.recordId);
+  if (index === -1) return records;
+  const record = records[index];
+  const payload = asRecord(record.payload);
+  if (!payload) return records;
+  const current = typeof payload[delta.field] === "string" ? payload[delta.field] : "";
+  const next = records.slice();
+  next[index] = {
+    ...record,
+    payload: {
+      ...payload,
+      [delta.field]: current + delta.append
+    }
+  };
+  return next;
 };
 
 export const threadDisplayRecords = (
@@ -307,6 +341,7 @@ export const threadRecordsForNotifications = (_threadId: string, thread: ThreadD
   thread.records;
 
 export const streamEventRecords = (event: StreamEvent): CodexRecord[] => {
+  if (event.records?.length) return event.records;
   if (event.record) return [event.record];
   return [];
 };
@@ -316,6 +351,7 @@ export const mergeNotificationRecords = (
   _event: StreamEvent,
   incomingRecords: CodexRecord[]
 ) => {
+  if (incomingRecords.length > 1) return combineRecordSources(current, incomingRecords);
   return incomingRecords.reduce((records, record) => mergeRecord(records, record), current);
 };
 
@@ -956,23 +992,24 @@ const userInputQuestionSummary = (value: unknown) => {
 };
 
 export const isMatchingAppServerTranscriptRecord = (record: CodexRecord, incoming: CodexRecord) => {
-  if (
-    incoming.type !== "event_msg"
-    || record.type !== "event_msg"
-    || !incoming.id.startsWith("app:")
-    || !record.id.startsWith("app:")
-  ) return false;
-  const recordPayload = asRecord(record.payload);
-  const incomingPayload = asRecord(incoming.payload);
-  if (!incomingPayload) return false;
-  const incomingType = incomingPayload?.type;
-  if (incomingType !== "user_message" && incomingType !== "agent_message") return false;
-  if (!recordPayload || recordPayload.type !== incomingType) return false;
   const threadId = String(incoming.sourceThreadId ?? record.sourceThreadId ?? "");
-  const incomingTurnId = turnIdFromAppRecordId(threadId, incoming.id);
-  const recordTurnId = turnIdFromAppRecordId(threadId, record.id);
-  if ((incomingTurnId || recordTurnId) && (incomingTurnId !== recordTurnId || recordTurnId === null)) return false;
-  if (recordPayload.message !== incomingPayload.message) return false;
-  if (incomingType === "agent_message") return recordPayload.phase === incomingPayload.phase;
-  return JSON.stringify(recordPayload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
+  const recordKey = appServerTranscriptRecordKey(record, threadId);
+  return recordKey !== null && recordKey === appServerTranscriptRecordKey(incoming, threadId);
+};
+
+const appServerTranscriptRecordKey = (record: CodexRecord, fallbackThreadId = "") => {
+  if (record.type !== "event_msg" || !record.id.startsWith("app:")) return null;
+  const payload = asRecord(record.payload);
+  const type = payload?.type;
+  if (!payload || (type !== "user_message" && type !== "agent_message")) return null;
+  const threadId = String(record.sourceThreadId ?? fallbackThreadId);
+  const turnId = turnIdFromAppRecordId(threadId, record.id);
+  if (!threadId || !turnId) return null;
+  return JSON.stringify([
+    type,
+    threadId,
+    turnId,
+    payload.message,
+    type === "agent_message" ? payload.phase : payload.images ?? []
+  ]);
 };

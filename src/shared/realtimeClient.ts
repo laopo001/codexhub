@@ -1,5 +1,6 @@
 import type { RealtimeMessage, RealtimeOutgoingMessage } from "./apiContract.js";
 import { asRecord } from "./recordTypes.js";
+import type { ThreadStreamEvent } from "./threadTypes.js";
 
 export type RealtimeControlCursors = {
   runtimesAfter?: number;
@@ -26,6 +27,7 @@ const realtimeMessageTypes = new Set([
   "connections",
   "thread",
   "record",
+  "record_delta",
   "done",
   "ready",
   "thread_subscribed",
@@ -58,6 +60,15 @@ export const codexHubRealtimeUrl = (baseUrl: string, authToken?: string | null) 
 
 const maxCursor = (current: number | undefined, incoming: number | undefined) =>
   Math.max(current ?? 0, incoming ?? 0);
+export const threadCursorAfterEvent = (
+  current: number | undefined,
+  event: Pick<ThreadStreamEvent, "seq" | "snapshot">
+) => {
+  if (!event.snapshot) return maxCursor(current, event.seq);
+  // 所有 snapshot 页共享一个 barrier seq；最后一页到达前保持旧 cursor，
+  // 让中途断线的重连必然重新请求完整 canonical snapshot。
+  return event.snapshot.complete ? event.seq : current ?? 0;
+};
 const webSocketOpenState = 1;
 
 export class CodexHubRealtimeClient {
@@ -162,10 +173,15 @@ export class CodexHubRealtimeClient {
     if (message.type === "projects") this.cursors.projectsAfter = maxCursor(this.cursors.projectsAfter, message.seq);
     if (message.type === "tasks") this.cursors.tasksAfter = maxCursor(this.cursors.tasksAfter, message.seq);
     if (message.type === "connections") this.cursors.connectionsAfter = maxCursor(this.cursors.connectionsAfter, message.seq);
-    if (message.type === "thread" || message.type === "record" || message.type === "done") {
+    if (
+      message.type === "thread"
+      || message.type === "record"
+      || message.type === "record_delta"
+      || message.type === "done"
+    ) {
       const threadId = message.thread.threadId;
       if (this.subscriptions.has(threadId)) {
-        this.subscriptions.set(threadId, maxCursor(this.subscriptions.get(threadId), message.seq));
+        this.subscriptions.set(threadId, threadCursorAfterEvent(this.subscriptions.get(threadId), message));
       }
     }
   }

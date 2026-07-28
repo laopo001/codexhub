@@ -265,14 +265,34 @@ export type CommandPalette = {
   entries: CommandPaletteEntry[];
 };
 
-/** `/api/events/ws` 下发的 thread 增量事件。 */
+/** 高频可变 record 的增量更新；当前只覆盖命令输出追加。 */
+export type ThreadRecordDelta = {
+  recordId: string;
+  field: "aggregated_output";
+  append: string;
+};
+
+/** cursor 无法直接续接时下发的 canonical records 快照分片。 */
+export type ThreadRecordsSnapshot = {
+  snapshotId: string;
+  page: number;
+  reset: boolean;
+  complete: boolean;
+};
+
+/** `/api/events/ws` 下发的 thread 当前状态或实时增量事件。 */
 export type ThreadStreamEvent = {
   seq: number;
   threadId: string;
-  kind: "thread" | "record" | "done";
+  kind: "thread" | "record" | "record_delta" | "done";
   historical?: boolean;
   thread: ThreadSummary;
   record?: CodexRecord;
+  delta?: ThreadRecordDelta;
+  /** 历史快照按批次发送，避免超大 thread 为每条 record 重复构造 summary。 */
+  records?: CodexRecord[];
+  /** 订阅 cursor 与当前状态不一致时发送的 canonical records 快照。 */
+  snapshot?: ThreadRecordsSnapshot;
 };
 
 /** machine/session bridge 注册官方 Codex runtime 时提交的 session 信息。 */
@@ -394,6 +414,14 @@ export type SessionEventInput =
       threadId: string;
       heartbeat?: boolean;
       turns: unknown[];
+      /** desc 分页的第一页包含 thread 当前 head，可用于校准 running 状态。 */
+      head?: boolean;
+      /** 标记历史分页已经读取到最后一页。 */
+      complete?: boolean;
+      /** 一轮分页同步的唯一 ID，用于忽略失败重试前遗留的旧页。 */
+      snapshotId?: string;
+      /** 当前页从 0 开始的序号；页越大，历史越旧。 */
+      page?: number;
     }
   | {
       type: "approval_request";

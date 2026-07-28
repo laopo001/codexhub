@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   machineHeartbeatSchema,
   machineRegistrationSchema,
+  sessionEventSchema,
   sessionHeartbeatSchema,
   sessionRegistrationSchema,
   sshConnectSchema,
@@ -10,6 +11,8 @@ import {
   threadRunOptionsSchema
 } from "../../src/shared/apiContract.js";
 import {
+  linuxAppServerSupervisorLaunch,
+  linuxAppServerSupervisorScript,
   parseCodexApprovalPolicy,
   parseCodexApprovalsReviewer,
   resolveCodexAppServerLaunchOptions
@@ -37,6 +40,26 @@ test("session registration and heartbeat reject currentThreadId", () => {
 
   assert.equal(sessionRegistrationSchema.safeParse(registration).success, false);
   assert.equal(sessionHeartbeatSchema.safeParse({ currentThreadId: "legacy-thread" }).success, false);
+});
+
+test("thread turns snapshots accept stable pagination identity", () => {
+  assert.deepEqual(sessionEventSchema.parse({
+    type: "thread_turns_snapshot",
+    threadId: "thread-1",
+    turns: [],
+    head: true,
+    complete: false,
+    snapshotId: "snapshot-1",
+    page: 0
+  }), {
+    type: "thread_turns_snapshot",
+    threadId: "thread-1",
+    turns: [],
+    head: true,
+    complete: false,
+    snapshotId: "snapshot-1",
+    page: 0
+  });
 });
 
 test("SSH connect rejects the removed custom remote command", () => {
@@ -84,6 +107,31 @@ test("app-server launch reviewer defaults to auto review and preserves overrides
     if (previous === undefined) delete process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER;
     else process.env.CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER = previous;
   }
+});
+
+test("Linux app-server supervisor forwards parent death to the complete Codex process group", () => {
+  const launch = linuxAppServerSupervisorLaunch("/opt/codex/bin/codex", [
+    "app-server",
+    "--listen",
+    "ws://127.0.0.1:12345"
+  ]);
+  assert.equal(launch.command, "/usr/bin/setpriv");
+  assert.deepEqual(launch.args.slice(0, 5), [
+    "--pdeathsig",
+    "TERM",
+    "/bin/bash",
+    "-c",
+    linuxAppServerSupervisorScript
+  ]);
+  assert.deepEqual(launch.args.slice(5), [
+    "codexhub-app-server-supervisor",
+    "/opt/codex/bin/codex",
+    "app-server",
+    "--listen",
+    "ws://127.0.0.1:12345"
+  ]);
+  assert.match(linuxAppServerSupervisorScript, /setsid "\$@"/);
+  assert.match(linuxAppServerSupervisorScript, /kill -TERM -- "-\$child_pid"/);
 });
 
 test("thread permissions follow the current granular, reviewer, and named-profile protocol", () => {

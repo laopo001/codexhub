@@ -46,6 +46,40 @@ export class UnsupportedCodexCliVersionError extends Error {
 const codexAppServerReadyTimeoutMs = () => readPositiveIntEnv(process.env, "CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", 60_000);
 const codexAppServerStderrTailLimit = 4000;
 const execFileAsync = promisify(execFile);
+export const linuxAppServerSupervisorScript = `
+child_pid=
+forward_signal() {
+  trap - TERM INT HUP
+  if [ -n "$child_pid" ]; then
+    kill -TERM -- "-$child_pid" 2>/dev/null || true
+    (sleep 2; kill -KILL -- "-$child_pid" 2>/dev/null || true) >/dev/null 2>&1 &
+  fi
+}
+trap forward_signal TERM INT HUP
+setsid "$@" &
+child_pid=$!
+wait "$child_pid"
+status=$?
+if kill -0 "$child_pid" 2>/dev/null; then
+  wait "$child_pid"
+  status=$?
+fi
+exit "$status"
+`.trim();
+
+export const linuxAppServerSupervisorLaunch = (codexCommand: string, appServerArgs: string[]) => ({
+  command: "/usr/bin/setpriv",
+  args: [
+    "--pdeathsig",
+    "TERM",
+    "/bin/bash",
+    "-c",
+    linuxAppServerSupervisorScript,
+    "codexhub-app-server-supervisor",
+    codexCommand,
+    ...appServerArgs
+  ]
+});
 
 // 启动官方 Codex app-server，并保留足够 stderr 方便解释 ready 失败。
 export const startCodexAppServer = async (
@@ -203,10 +237,12 @@ const codexAppServerLaunch = async (appServerUrl: string, options: CodexAppServe
   assertSupportedCodexCliVersion(cliVersion);
   const appServerArgs = codexAppServerArgs(appServerUrl, options);
   if (process.platform === "linux" && await fileExists("/usr/bin/setpriv")) {
-    // 在 Linux 下把子进程绑定到当前进程，避免崩溃后留下孤儿 app-server。
+    // pdeathsig 只会发给直接子进程。Codex 的 npm launcher 还会再拉起原生
+    // binary，因此用常驻 supervisor 把父进程死亡信号转发到整个 app-server
+    // 进程组，避免 Extension Host OOM 后只杀掉 JS launcher 的半截清理。
+    const supervisor = linuxAppServerSupervisorLaunch(codexCommand, appServerArgs);
     return {
-      command: "/usr/bin/setpriv",
-      args: ["--pdeathsig", "TERM", codexCommand, ...appServerArgs],
+      ...supervisor,
       codexCommand,
       cliVersion
     };

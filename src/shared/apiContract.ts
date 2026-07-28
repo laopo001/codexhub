@@ -587,7 +587,11 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     type: z.literal("thread_turns_snapshot"),
     threadId: z.string().min(1),
     heartbeat: z.boolean().optional(),
-    turns: z.array(z.unknown())
+    turns: z.array(z.unknown()),
+    head: z.boolean().optional(),
+    complete: z.boolean().optional(),
+    snapshotId: z.string().min(1).optional(),
+    page: z.number().int().nonnegative().optional()
   }),
   z.object({
     type: z.literal("thread_execution_changed"),

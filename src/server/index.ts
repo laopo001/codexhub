@@ -419,7 +419,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       try {
         threads.subscribeThreadRecords(threadId);
       } catch {
-        // 订阅刷新是尽力而为；Web 订阅仍能收到已存储的 thread events。
+        // 订阅刷新是尽力而为；Web 重连仍会先收到当前 canonical records 快照。
       }
     }
   };

@@ -2,7 +2,11 @@ import type React from "react";
 import type { RealtimeOutgoingMessage } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import type { CodexRecord } from "../../shared/recordTypes.js";
-import { CodexHubRealtimeClient, codexHubRealtimeUrl } from "../../shared/realtimeClient.js";
+import {
+  CodexHubRealtimeClient,
+  codexHubRealtimeUrl,
+  threadCursorAfterEvent
+} from "../../shared/realtimeClient.js";
 import { defaultAppSettings, initialWorkspacePath, isEmbeddedHostSurface } from "../appConfig.js";
 import {
   apiRouteJson,
@@ -324,6 +328,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     if (
       message.type === "thread"
       || message.type === "record"
+      || message.type === "record_delta"
       || message.type === "done"
     ) {
       applyThreadStreamEvent(message);
@@ -334,9 +339,16 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     if (ctx.closedThreadIds.current.has(payload.thread.threadId)) return;
     ctx.threadLastSeqs.current.set(
       payload.thread.threadId,
-      Math.max(ctx.threadLastSeqs.current.get(payload.thread.threadId) ?? 0, payload.seq)
+      threadCursorAfterEvent(ctx.threadLastSeqs.current.get(payload.thread.threadId), payload)
     );
-    ctx.dispatchOpenThreads({ type: "merge-stream", thread: payload.thread, record: payload.record });
+    ctx.dispatchOpenThreads({
+      type: "merge-stream",
+      thread: payload.thread,
+      record: payload.record,
+      records: payload.records,
+      delta: payload.delta,
+      snapshot: payload.snapshot
+    });
     const machineId = payload.thread.runtime.machineId;
     if (machineId) {
       ctx.setThreadOrderByMachine((current) => appendThreadOrder(current, machineId, payload.thread.threadId));

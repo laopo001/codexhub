@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { recordsToViews } from "./codexRecordView.js";
+import { recordToView, recordsToViews } from "./codexRecordView.js";
 import {
   emptyThreadUsage,
   mergeAppServerThreadRateLimits,
@@ -31,7 +31,7 @@ import {
   waitForSessionCommands
 } from "./sessionCommandQueue.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
-import { turnIdFromAppRecordId } from "../shared/recordIdentity.js";
+import { compareCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import {
   asActivePermissionProfile,
@@ -110,6 +110,19 @@ export type ThreadTurnDispatch = {
   completion: Promise<void>;
 };
 
+type ThreadRecordIndex = {
+  records: CodexRecord[];
+  byId: Map<string, number>;
+  transcriptByKey: Map<string, number>;
+  messageCount: number;
+};
+
+type ThreadHistorySnapshotState = {
+  snapshotId: string;
+  nextPage: number;
+  complete: boolean;
+};
+
 export class ThreadHub {
   private readonly threads = new Map<string, ThreadState>();
   private readonly sessions = new Map<string, SessionState>();
@@ -126,6 +139,8 @@ export class ThreadHub {
     threadOptionsAtStart: ThreadOptions;
     settingsRevisionAtStart: number;
   }>();
+  private readonly recordIndexes = new WeakMap<ThreadState, ThreadRecordIndex>();
+  private readonly historySnapshots = new WeakMap<ThreadState, ThreadHistorySnapshotState>();
   private readonly runtimeEvents: RuntimeStreamEvent[] = [];
   private readonly runtimeSubscribers = new Set<(event: RuntimeStreamEvent) => void>();
   private lastRuntimeSnapshotKey = "";
@@ -433,8 +448,14 @@ export class ThreadHub {
       const thread = this.ensureThread(input.threadId, session, {
         params: { threadId: input.threadId, cwd: session.workingDirectory }
       });
+      if (!this.acceptHistorySnapshotPage(thread, input)) {
+        return { ok: true, thread: this.summary(thread) };
+      }
       // 这里用 snapshot 替换历史 app-server turn records；实时事件继续走 upsert。
-      this.applyAppServerTurnsSnapshot(thread, input.turns);
+      this.applyAppServerTurnsSnapshot(thread, input.turns, {
+        authoritativeHead: input.head ?? true,
+        historyPage: input.page
+      });
       return { ok: true, thread: this.summary(thread) };
     }
 
@@ -1178,7 +1199,30 @@ export class ThreadHub {
 
   subscribe(threadId: string, after: number, callback: (event: ThreadStreamEvent) => void) {
     const thread = this.requireThread(threadId);
-    for (const event of thread.events.filter((item) => item.seq > after)) callback(event);
+    const barrierSeq = thread.seq;
+    if (after !== barrierSeq) {
+      const snapshotId = randomUUID();
+      const summary = this.summary(thread);
+      const pageSize = 500;
+      const pageCount = Math.max(1, Math.ceil(thread.records.length / pageSize));
+      for (let page = 0; page < pageCount; page += 1) {
+        const records = thread.records.slice(page * pageSize, (page + 1) * pageSize);
+        callback({
+          seq: barrierSeq,
+          threadId: thread.threadId,
+          kind: "thread",
+          historical: true,
+          thread: summary,
+          records,
+          snapshot: {
+            snapshotId,
+            page,
+            reset: page === 0,
+            complete: page === pageCount - 1
+          }
+        });
+      }
+    }
     thread.subscribers.add(callback);
     return () => thread.subscribers.delete(callback);
   }
@@ -1466,7 +1510,6 @@ export class ThreadHub {
       records: [],
       recordSeq: 0,
       threadUsage: emptyThreadUsage(),
-      events: [],
       subscribers: new Set(),
       seq: 0
     };
@@ -1661,7 +1704,39 @@ export class ThreadHub {
     }
   }
 
-  private applyAppServerTurnsSnapshot(thread: ThreadState, turns: unknown[]) {
+  private acceptHistorySnapshotPage(
+    thread: ThreadState,
+    input: Extract<SessionEventInput, { type: "thread_turns_snapshot" }>
+  ) {
+    const snapshotId = input.snapshotId;
+    const page = input.page;
+    if (!snapshotId || page === undefined) return true;
+    if (input.head) {
+      if (page !== 0) return false;
+      this.historySnapshots.set(thread, {
+        snapshotId,
+        nextPage: 1,
+        complete: input.complete === true
+      });
+      return true;
+    }
+    const current = this.historySnapshots.get(thread);
+    if (
+      !current
+      || current.snapshotId !== snapshotId
+      || current.complete
+      || page !== current.nextPage
+    ) return false;
+    current.nextPage = page + 1;
+    current.complete = input.complete === true;
+    return true;
+  }
+
+  private applyAppServerTurnsSnapshot(
+    thread: ThreadState,
+    turns: unknown[],
+    options: { authoritativeHead?: boolean; historyPage?: number } = {}
+  ) {
     const turnRecords = turns.map(asRecord).filter((turn): turn is Record<string, unknown> => Boolean(turn));
     const hasSnapshotInProgressTurn = turnRecords.some((turn) =>
       parseAppServerTurnOutcome(turn)?.status === "inProgress"
@@ -1681,15 +1756,17 @@ export class ThreadHub {
       .map((turn) => typeof turn.id === "string" ? turn.id : "")
       .filter(Boolean));
     const previousTurnRecords = takeReplaceableAppServerTurnRecords(thread, turnIds, undefined, activeTurnIds);
+    const snapshotRecords: CodexRecord[] = [];
     for (const turnRecord of turnRecords) {
-      this.applyAppServerTurn(thread, turnRecord, { historicalRecords: true, previousTurnRecords });
+      this.applyAppServerTurn(thread, turnRecord, {
+        historicalRecords: true,
+        previousTurnRecords,
+        batch: snapshotRecords
+      });
     }
-    repositionStatusUsageRecords(thread);
-    thread.records = orderThreadRecords(thread.records);
-    thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
-    thread.lastUsage = latestUsage(thread.records);
-    thread.threadUsage = threadUsageFromRecords(thread.records);
-    this.publish(thread, "thread", undefined, { historical: true });
+    this.assignHistoryPageOrder(thread, snapshotRecords, options.historyPage);
+    this.finishRecordBatch(thread, snapshotRecords, { historical: true });
+    if (options.authoritativeHead === false) return;
     const inferredExternalTerminalTurn = (
       thread.running
       && !thread.appServerTurnId
@@ -1700,22 +1777,38 @@ export class ThreadHub {
     if (terminalTurn) this.finishSessionTurn(thread, parseAppServerTurnOutcome(terminalTurn)?.completionError);
   }
 
+  private assignHistoryPageOrder(
+    thread: ThreadState,
+    records: CodexRecord[],
+    page: number | undefined
+  ) {
+    if (page === undefined || !Number.isInteger(page) || page < 0) return;
+    const canonicalRecords = this.canonicalBatchRecords(thread, records);
+    const denominator = canonicalRecords.length + 1;
+    for (let index = 0; index < canonicalRecords.length; index += 1) {
+      // desc 分页会先到最新页。每页占一个逻辑区间，页内仍保持 asc 顺序。
+      canonicalRecords[index].historyOrder = -page + (index + 1) / denominator;
+    }
+  }
+
   private applyAppServerThreadTurns(
     thread: ThreadState,
     appThread: Record<string, unknown>,
     options: { historicalRecords?: boolean } = {}
   ) {
     if (!Array.isArray(appThread.turns)) return;
+    const batch = options.historicalRecords ? [] as CodexRecord[] : undefined;
     for (const turn of appThread.turns) {
       const turnRecord = asRecord(turn);
-      if (turnRecord) this.applyAppServerTurn(thread, turnRecord, { historicalRecords: options.historicalRecords });
+      if (turnRecord) {
+        this.applyAppServerTurn(thread, turnRecord, {
+          historicalRecords: options.historicalRecords,
+          batch
+        });
+      }
     }
     if (!options.historicalRecords) return;
-    thread.records = orderThreadRecords(thread.records);
-    thread.updatedAt = latestRecordTimestamp(thread.records) ?? new Date().toISOString();
-    thread.lastUsage = latestUsage(thread.records);
-    thread.threadUsage = threadUsageFromRecords(thread.records);
-    this.publish(thread, "thread", undefined, { historical: options.historicalRecords });
+    this.finishRecordBatch(thread, batch ?? [], { historical: true });
   }
 
   private applyAppServerTurn(
@@ -1725,6 +1818,7 @@ export class ThreadHub {
       replaceTurnRecords?: boolean;
       historicalRecords?: boolean;
       previousTurnRecords?: ReadonlyMap<string, CodexRecord>;
+      batch?: CodexRecord[];
     } = {}
   ) {
     // 这里把 app-server turn 统一展开成 records；来源可以是历史快照或实时完成事件。
@@ -1739,6 +1833,8 @@ export class ThreadHub {
         outcome.status === "inProgress" ? new Set([turnId]) : new Set()
       )
       : options.previousTurnRecords;
+    const ownedBatch = options.replaceTurnRecords && !options.batch ? [] as CodexRecord[] : undefined;
+    const batch = options.batch ?? ownedBatch;
     const previousTerminalRecord = previousTurnRecords?.get(`app:${thread.threadId}:${turnId}:event:task_complete`)
       ?? previousTurnRecords?.get(`app:${thread.threadId}:${turnId}:event:turn_aborted`);
     const lifecycleRecords = codexRecordsFromAppServerTurnLifecycle(
@@ -1749,7 +1845,11 @@ export class ThreadHub {
         ?? (options.historicalRecords ? new Date(0).toISOString() : new Date().toISOString())
     );
     for (const record of lifecycleRecords.filter(isTaskStartedRecord)) {
-      this.upsertRecord(thread, record, { historical: options.historicalRecords });
+      this.upsertRecord(thread, record, {
+        historical: options.historicalRecords,
+        batch,
+        previous: previousTurnRecords?.get(record.id)
+      });
     }
     const timestamp = timestampFromSeconds(turn.completedAt) ?? timestampFromSeconds(turn.startedAt);
     if (Array.isArray(turn.items)) {
@@ -1761,13 +1861,23 @@ export class ThreadHub {
         const record = itemRecord
           ? withAppServerItemRecordTiming(rawRecord, { item: itemRecord, existing: rawRecord ? previousTurnRecords?.get(rawRecord.id) : undefined })
           : null;
-        if (record) this.upsertRecord(thread, record, { historical: options.historicalRecords });
+        if (record) {
+          this.upsertRecord(thread, record, {
+            historical: options.historicalRecords,
+            batch,
+            previous: previousTurnRecords?.get(record.id)
+          });
+        }
       }
     }
     for (const record of lifecycleRecords.filter(isTurnTerminalRecord)) {
-      this.upsertRecord(thread, record, { historical: options.historicalRecords });
+      this.upsertRecord(thread, record, {
+        historical: options.historicalRecords,
+        batch,
+        previous: previousTurnRecords?.get(record.id)
+      });
     }
-    if (options.replaceTurnRecords) repositionStatusUsageRecords(thread);
+    if (ownedBatch) this.finishRecordBatch(thread, ownedBatch, { historical: false });
   }
 
   private applyAppServerItemEvent(
@@ -1782,7 +1892,7 @@ export class ThreadHub {
     const fallbackStatus = method === "item/completed" ? "completed" : "inProgress";
     const record = codexRecordFromAppServerItem(thread.threadId, turnId, item, timestamp, fallbackStatus);
     if (!record) return;
-    const existing = thread.records.find((item) => item.id === record.id);
+    const existing = this.threadRecordById(thread, record.id);
     const timedRecord = withAppServerItemRecordTiming(record, { item, existing }) ?? record;
     this.upsertRecord(thread, {
       ...timedRecord,
@@ -1797,7 +1907,7 @@ export class ThreadHub {
     if (!turnId || !itemId || !delta) return;
 
     const id = `app:${thread.threadId}:${turnId}:agent:${itemId}`;
-    const existing = thread.records.find((record) => record.id === id);
+    const existing = this.threadRecordById(thread, id);
     const existingPayload = asRecord(existing?.payload);
     const existingMessage = typeof existingPayload?.message === "string" ? existingPayload.message : "";
     const phase = typeof existingPayload?.phase === "string" ? existingPayload.phase : "assistant";
@@ -1831,7 +1941,7 @@ export class ThreadHub {
       ...plan.map((step) => `${step.status === "completed" ? "[x]" : step.status === "in_progress" ? "[~]" : "[ ]"} ${step.step}`)
     ].filter((line): line is string => Boolean(line)).join("\n");
     const id = `app:${thread.threadId}:${turnId}:event:turn_plan_updated`;
-    const existing = thread.records.find((record) => record.id === id);
+    const existing = this.threadRecordById(thread, id);
     this.upsertRecord(thread, {
       id,
       timestamp: existing?.timestamp ?? new Date().toISOString(),
@@ -1851,7 +1961,7 @@ export class ThreadHub {
     const diff = typeof params.diff === "string" ? params.diff : "";
     if (!turnId || appServerTurnIsTerminal(thread, turnId)) return;
     const id = `app:${thread.threadId}:${turnId}:event:turn_diff_updated`;
-    const existing = thread.records.find((record) => record.id === id);
+    const existing = this.threadRecordById(thread, id);
     this.upsertRecord(thread, {
       id,
       timestamp: existing?.timestamp ?? new Date().toISOString(),
@@ -1878,7 +1988,7 @@ export class ThreadHub {
     if (appendDelta && !delta) return;
 
     const id = `app:${thread.threadId}:${turnId}:item:reasoning:${itemId}`;
-    const existing = thread.records.find((record) => record.id === id);
+    const existing = this.threadRecordById(thread, id);
     if (isTerminalAppServerItemRecord(existing)) return;
     const existingPayload = asRecord(existing?.payload);
     const summary = Array.isArray(existingPayload?.summary)
@@ -1910,7 +2020,7 @@ export class ThreadHub {
     if (!turnId || !itemId || !delta || !Number.isInteger(contentIndex) || (contentIndex as number) < 0) return;
 
     const id = `app:${thread.threadId}:${turnId}:item:reasoning:${itemId}`;
-    const existing = thread.records.find((record) => record.id === id);
+    const existing = this.threadRecordById(thread, id);
     if (isTerminalAppServerItemRecord(existing)) return;
     const existingPayload = asRecord(existing?.payload);
     const contentParts = Array.isArray(existingPayload?.content_parts)
@@ -1946,7 +2056,7 @@ export class ThreadHub {
     if (!turnId || !itemId || !delta) return;
 
     const id = `app:${thread.threadId}:${turnId}:item:plan:${itemId}`;
-    const existing = thread.records.find((record) => record.id === id);
+    const existing = this.threadRecordById(thread, id);
     if (isTerminalAppServerItemRecord(existing)) return;
     const existingPayload = asRecord(existing?.payload);
     const message = typeof existingPayload?.message === "string" ? existingPayload.message : "";
@@ -1971,9 +2081,23 @@ export class ThreadHub {
     if (!turnId || !itemId || !delta) return;
 
     const id = `app:${thread.threadId}:${turnId}:item:commandExecution:${itemId}`;
-    const existing = thread.records.find((item) => item.id === id);
+    const existing = this.threadRecordById(thread, id);
     const existingPayload = asRecord(existing?.payload);
     const existingOutput = typeof existingPayload?.aggregated_output === "string" ? existingPayload.aggregated_output : "";
+    if (existing && existing.type === "response_item" && existingPayload) {
+      existingPayload.type = "local_shell_call";
+      existingPayload.call_id = typeof existingPayload.call_id === "string" ? existingPayload.call_id : itemId;
+      existingPayload.status = existingPayload.status ?? "in_progress";
+      existingPayload.aggregated_output = existingOutput + delta;
+      this.publish(thread, "record_delta", undefined, {
+        delta: {
+          recordId: id,
+          field: "aggregated_output",
+          append: delta
+        }
+      });
+      return;
+    }
     const payload = existingPayload && existing?.type === "response_item"
       ? {
           ...existingPayload,
@@ -1996,7 +2120,9 @@ export class ThreadHub {
       type: "response_item",
       payload,
       sourceThreadId: thread.threadId
-    });
+    }, { publish: false });
+    const updated = this.threadRecordById(thread, id);
+    if (updated) this.publish(thread, "record", updated);
   }
 
   private applyAppServerFileChangePatchUpdated(thread: ThreadState, params: Record<string, unknown>) {
@@ -2005,7 +2131,7 @@ export class ThreadHub {
     if (!turnId || !itemId || !Array.isArray(params.changes)) return;
 
     const id = `app:${thread.threadId}:${turnId}:item:fileChange:${itemId}`;
-    const existing = thread.records.find((record) => record.id === id);
+    const existing = this.threadRecordById(thread, id);
     if (isTerminalAppServerItemRecord(existing)) return;
     const existingPayload = asRecord(existing?.payload);
     this.upsertRecord(thread, {
@@ -2029,7 +2155,7 @@ export class ThreadHub {
     if (!turnId || !itemId || !message) return;
 
     const id = `app:${thread.threadId}:${turnId}:item:mcpToolCall:${itemId}`;
-    const existing = thread.records.find((record) => record.id === id);
+    const existing = this.threadRecordById(thread, id);
     if (isTerminalAppServerItemRecord(existing)) return;
     const existingPayload = asRecord(existing?.payload);
     const progressMessages = Array.isArray(existingPayload?.progress_messages)
@@ -2468,53 +2594,180 @@ export class ThreadHub {
     forked.threadUsage = threadUsageFromRecords(forked.records);
   }
 
-  private matchingAppServerTranscriptRecordIndex(thread: ThreadState, incoming: CodexRecord) {
-    if (!incoming.type || incoming.type !== "event_msg") return -1;
-    const incomingPayload = asRecord(incoming.payload);
-    if (!incomingPayload) return -1;
-    const incomingType = incomingPayload?.type;
-    if (incomingType !== "user_message" && incomingType !== "agent_message") return -1;
-    const incomingTurnId = turnIdFromAppRecordId(thread.threadId, incoming.id);
-    return thread.records.findIndex((record) => {
-      if (!record.id.startsWith("app:")) return false;
-      const recordTurnId = turnIdFromAppRecordId(thread.threadId, record.id);
-      const payload = asRecord(record.payload);
-      if (!payload || payload.type !== incomingType) return false;
-      if ((incomingTurnId || recordTurnId) && (incomingTurnId !== recordTurnId || recordTurnId === null)) return false;
-      if (payload.message !== incomingPayload.message) return false;
-      if (incomingType === "agent_message" && payload.phase !== incomingPayload.phase) return false;
-      if (incomingType === "user_message") {
-        return JSON.stringify(payload.images ?? []) === JSON.stringify(incomingPayload.images ?? []);
-      }
-      return true;
-    });
+  private threadRecordIndex(thread: ThreadState) {
+    const cached = this.recordIndexes.get(thread);
+    if (cached?.records === thread.records) return cached;
+    const byId = new Map<string, number>();
+    const transcriptByKey = new Map<string, number>();
+    for (let index = 0; index < thread.records.length; index += 1) {
+      const record = thread.records[index];
+      byId.set(record.id, index);
+      const key = this.appServerTranscriptRecordKey(thread, record);
+      if (key && !transcriptByKey.has(key)) transcriptByKey.set(key, index);
+    }
+    const next: ThreadRecordIndex = {
+      records: thread.records,
+      byId,
+      transcriptByKey,
+      messageCount: recordsToViews(thread.records).length
+    };
+    this.recordIndexes.set(thread, next);
+    return next;
   }
 
-  private upsertRecord(thread: ThreadState, record: CodexRecord, options: { historical?: boolean } = {}) {
+  private invalidateThreadRecordIndex(thread: ThreadState) {
+    this.recordIndexes.delete(thread);
+  }
+
+  private threadRecordById(thread: ThreadState, recordId: string) {
+    const index = this.threadRecordIndex(thread).byId.get(recordId);
+    return index === undefined ? undefined : thread.records[index];
+  }
+
+  private appServerTranscriptRecordKey(thread: ThreadState, incoming: CodexRecord) {
+    if (!incoming.type || incoming.type !== "event_msg") return null;
+    const incomingPayload = asRecord(incoming.payload);
+    if (!incomingPayload) return null;
+    const incomingType = incomingPayload?.type;
+    if (incomingType !== "user_message" && incomingType !== "agent_message") return null;
+    const incomingTurnId = turnIdFromAppRecordId(thread.threadId, incoming.id);
+    if (!incoming.id.startsWith("app:") || !incomingTurnId) return null;
+    return JSON.stringify([
+      incomingType,
+      incomingTurnId,
+      incomingPayload.message,
+      incomingType === "agent_message" ? incomingPayload.phase : incomingPayload.images ?? []
+    ]);
+  }
+
+  private matchingAppServerTranscriptRecordIndex(
+    thread: ThreadState,
+    incoming: CodexRecord,
+    index = this.threadRecordIndex(thread)
+  ) {
+    const key = this.appServerTranscriptRecordKey(thread, incoming);
+    return key ? index.transcriptByKey.get(key) ?? -1 : -1;
+  }
+
+  private upsertRecord(
+    thread: ThreadState,
+    record: CodexRecord,
+    options: {
+      historical?: boolean;
+      batch?: CodexRecord[];
+      previous?: CodexRecord;
+      publish?: boolean;
+    } = {}
+  ) {
     // 快照、增量和补全事件可能指向同一条记录，这里负责去重、保序和更新 usage。
-    const existingIndex = thread.records.findIndex((item) => item.id === record.id);
-    if (existingIndex === -1) {
-      const replacementIndex = this.matchingAppServerTranscriptRecordIndex(thread, record);
-      if (replacementIndex !== -1) {
-        if (typeof record.order !== "number") record = { ...record, order: thread.records[replacementIndex].order };
-        if (recordsEqual(thread.records[replacementIndex], record)) return;
-        thread.records[replacementIndex] = record;
-      } else {
-        if (typeof record.order !== "number") record = { ...record, order: ++thread.recordSeq };
-        thread.records.push(record);
+    const recordIndex = this.threadRecordIndex(thread);
+    const exactIndex = recordIndex.byId.get(record.id) ?? -1;
+    const replacementIndex = exactIndex === -1
+      ? this.matchingAppServerTranscriptRecordIndex(thread, record, recordIndex)
+      : -1;
+    const targetIndex = exactIndex !== -1 ? exactIndex : replacementIndex;
+    const existing = targetIndex === -1 ? undefined : thread.records[targetIndex];
+    const previous = existing ?? options.previous;
+    if (previous) {
+      record = preservePendingInteractionRecord(previous, record);
+      if (typeof record.order !== "number") record = { ...record, order: previous.order };
+      if (typeof record.historyOrder !== "number" && typeof previous.historyOrder === "number") {
+        record = { ...record, historyOrder: previous.historyOrder };
       }
-    } else {
-      record = preservePendingInteractionRecord(thread.records[existingIndex], record);
-      if (typeof record.order !== "number") record = { ...record, order: thread.records[existingIndex].order };
-      if (recordsEqual(thread.records[existingIndex], record)) return;
-      thread.records[existingIndex] = record;
+      if (recordsEqual(previous, record)) {
+        if (!existing) {
+          thread.records.push(previous);
+          const appendedIndex = thread.records.length - 1;
+          recordIndex.byId.set(previous.id, appendedIndex);
+          const key = this.appServerTranscriptRecordKey(thread, previous);
+          if (key && !recordIndex.transcriptByKey.has(key)) recordIndex.transcriptByKey.set(key, appendedIndex);
+        }
+        thread.recordSeq = maxRecordSequence(thread.recordSeq, previous.order);
+        options.batch?.push(previous);
+        return;
+      }
     }
-    thread.records = orderThreadRecords(thread.records);
-    thread.updatedAt = latestRecordTimestamp(thread.records) ?? record.timestamp ?? new Date().toISOString();
+    if (typeof record.order !== "number") record = { ...record, order: ++thread.recordSeq };
+    else thread.recordSeq = maxRecordSequence(thread.recordSeq, record.order);
+
+    if (targetIndex !== -1) {
+      const oldKey = existing ? this.appServerTranscriptRecordKey(thread, existing) : null;
+      if (oldKey && recordIndex.transcriptByKey.get(oldKey) === targetIndex) {
+        recordIndex.transcriptByKey.delete(oldKey);
+      }
+      if (existing && existing.id !== record.id) recordIndex.byId.delete(existing.id);
+      thread.records[targetIndex] = record;
+      recordIndex.byId.set(record.id, targetIndex);
+      const nextKey = this.appServerTranscriptRecordKey(thread, record);
+      if (nextKey) recordIndex.transcriptByKey.set(nextKey, targetIndex);
+    } else {
+      thread.records.push(record);
+      const appendedIndex = thread.records.length - 1;
+      recordIndex.byId.set(record.id, appendedIndex);
+      const key = this.appServerTranscriptRecordKey(thread, record);
+      if (key && !recordIndex.transcriptByKey.has(key)) recordIndex.transcriptByKey.set(key, appendedIndex);
+    }
+
+    if (options.batch) {
+      options.batch.push(record);
+      return;
+    }
+
+    if (!recordIsOrderedAt(thread.records, targetIndex === -1 ? thread.records.length - 1 : targetIndex)) {
+      thread.records = orderThreadRecords(thread.records);
+      this.invalidateThreadRecordIndex(thread);
+    } else {
+      const existingViewCount = existing && recordToView(existing) ? 1 : 0;
+      const recordViewCount = recordToView(record) ? 1 : 0;
+      recordIndex.messageCount += recordViewCount - existingViewCount;
+      if (isTokenUsageRecord(existing) || isTokenUsageRecord(record)) {
+        recordIndex.messageCount = recordsToViews(thread.records).length;
+      }
+    }
+    thread.updatedAt = newerTimestamp(thread.updatedAt, record.timestamp) ?? new Date().toISOString();
+    if (isTokenUsageRecord(existing) || isTokenUsageRecord(record)) {
+      thread.lastUsage = latestUsage(thread.records);
+      thread.threadUsage = threadUsageFromRecords(thread.records);
+    }
+    if (options.publish !== false) {
+      this.publish(thread, "record", record, { historical: options.historical });
+    }
+    if (!options.historical) this.maybeRetargetGoalRunPolicyForWeeklyLimit(thread);
+  }
+
+  private finishRecordBatch(
+    thread: ThreadState,
+    records: CodexRecord[],
+    options: { historical: boolean }
+  ) {
+    repositionStatusUsageRecords(thread);
+    this.invalidateThreadRecordIndex(thread);
+    thread.updatedAt = latestRecordTimestamp(thread.records) ?? thread.updatedAt ?? new Date().toISOString();
     thread.lastUsage = latestUsage(thread.records);
     thread.threadUsage = threadUsageFromRecords(thread.records);
-    this.publish(thread, "record", record, { historical: options.historical });
-    if (!options.historical) this.maybeRetargetGoalRunPolicyForWeeklyLimit(thread);
+    const orderedRecords = orderThreadRecords(this.canonicalBatchRecords(thread, records));
+    if (options.historical) {
+      if (!orderedRecords.length) {
+        this.publish(thread, "thread", undefined, { historical: true });
+        return;
+      }
+      for (let offset = 0; offset < orderedRecords.length; offset += 500) {
+        this.publish(thread, "thread", undefined, {
+          historical: true,
+          records: orderedRecords.slice(offset, offset + 500)
+        });
+      }
+      return;
+    }
+    for (const record of orderedRecords) this.publish(thread, "record", record);
+    this.maybeRetargetGoalRunPolicyForWeeklyLimit(thread);
+  }
+
+  private canonicalBatchRecords(thread: ThreadState, records: CodexRecord[]) {
+    const currentById = new Map(thread.records.map((record) => [record.id, record]));
+    const uniqueRecords = new Map<string, CodexRecord>();
+    for (const record of records) uniqueRecords.set(record.id, record);
+    return [...uniqueRecords.values()].filter((record) => currentById.get(record.id) === record);
   }
 
   private finishSessionTurnByThread(threadId: string, error?: Error) {
@@ -2665,18 +2918,22 @@ export class ThreadHub {
     thread: ThreadState,
     kind: ThreadStreamEvent["kind"],
     record?: CodexRecord,
-    options: { historical?: boolean } = {}
+    options: {
+      historical?: boolean;
+      records?: CodexRecord[];
+      delta?: ThreadStreamEvent["delta"];
+    } = {}
   ) {
     const streamEvent: ThreadStreamEvent = {
       seq: ++thread.seq,
       threadId: thread.threadId,
       kind,
       ...(options.historical ? { historical: true } : {}),
+      ...(options.records !== undefined ? { records: options.records } : {}),
+      ...(options.delta ? { delta: options.delta } : {}),
       thread: this.summary(thread),
       record
     };
-    thread.events.push(streamEvent);
-    if (thread.events.length > 1000) thread.events.splice(0, thread.events.length - 1000);
     for (const subscriber of thread.subscribers) subscriber(streamEvent);
     this.options.onThreadEvent?.(streamEvent, thread.records);
     this.options.onThreadChange?.();
@@ -2704,7 +2961,7 @@ export class ThreadHub {
       ...(activeTurnObservedAt ? { activeTurnObservedAt } : {}),
       title: thread.title,
       updatedAt: thread.updatedAt,
-      messageCount: recordsToViews(thread.records).length,
+      messageCount: this.threadRecordIndex(thread).messageCount,
       lastUsage: thread.lastUsage,
       threadUsage: thread.threadUsage,
       goalRunPolicy: thread.goalRun.policy
@@ -2714,7 +2971,7 @@ export class ThreadHub {
   private detail(thread: ThreadState): ThreadDetail {
     return {
       ...this.summary(thread),
-      records: orderThreadRecords(thread.records),
+      records: thread.records,
       lastSeq: thread.seq
     };
   }
@@ -2833,6 +3090,33 @@ export class ThreadHub {
   }
 
 }
+
+const recordIsOrderedAt = (records: CodexRecord[], index: number) => {
+  const record = records[index];
+  if (!record) return true;
+  const previous = records[index - 1];
+  const following = records[index + 1];
+  return (!previous || compareCodexRecords(previous, record) <= 0)
+    && (!following || compareCodexRecords(record, following) <= 0);
+};
+
+const isTokenUsageRecord = (record: CodexRecord | undefined) => {
+  const payload = asRecord(record?.payload);
+  return record?.type === "event_msg" && payload?.type === "token_count";
+};
+
+const maxRecordSequence = (current: number, order: number | undefined) =>
+  typeof order === "number" && Number.isFinite(order) && order > current ? order : current;
+
+const newerTimestamp = (current: string | undefined, incoming: string | undefined) => {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  const currentMs = Date.parse(current);
+  const incomingMs = Date.parse(incoming);
+  if (!Number.isFinite(currentMs)) return incoming;
+  if (!Number.isFinite(incomingMs)) return current;
+  return incomingMs >= currentMs ? incoming : current;
+};
 
 const threadRuntimeSummary = (session: SessionState): ThreadRuntimeSummary => ({
   machineId: session.machineId,

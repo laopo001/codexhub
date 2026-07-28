@@ -68,6 +68,95 @@ test("open thread reducer merges stream records and applies semantic ordering", 
   assert.equal(state[1].running, true);
 });
 
+test("open thread reducer merges historical record batches in one pass", async () => {
+  const openThreadReducer = await loadReducer();
+  const earlier: CodexRecord = {
+    ...record,
+    id: "record-earlier",
+    timestamp: "2026-01-01T00:00:00.000Z"
+  };
+  let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    thread: { ...detail("thread-1"), messageCount: 2 },
+    records: [record, earlier]
+  });
+
+  assert.deepEqual(state[0].records.map((item) => item.id), ["record-earlier", "record-1"]);
+  assert.equal(state[0].messageCount, 2);
+});
+
+test("open thread reducer preserves semantic transcript dedupe for historical batches", async () => {
+  const openThreadReducer = await loadReducer();
+  const liveRecord: CodexRecord = {
+    id: "app:thread-1:turn-1:agent:live-id",
+    type: "event_msg",
+    timestamp: "2026-01-01T00:00:01.000Z",
+    sourceThreadId: "thread-1",
+    payload: { type: "agent_message", message: "same answer", phase: "final_answer" }
+  };
+  const snapshotRecord: CodexRecord = {
+    ...liveRecord,
+    id: "app:thread-1:turn-1:agent:snapshot-id"
+  };
+  let state = openThreadReducer([], {
+    type: "upsert-detail",
+    thread: { ...detail("thread-1"), records: [liveRecord], messageCount: 1 }
+  });
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    thread: { ...detail("thread-1"), messageCount: 1 },
+    records: [snapshotRecord]
+  });
+
+  assert.deepEqual(state[0].records.map((item) => item.id), [snapshotRecord.id]);
+});
+
+test("open thread reducer replaces stale snapshots and applies command output deltas", async () => {
+  const openThreadReducer = await loadReducer();
+  const commandRecord: CodexRecord = {
+    id: "command-record",
+    type: "response_item",
+    timestamp: "2026-01-01T00:00:01.000Z",
+    payload: {
+      type: "local_shell_call",
+      call_id: "command-1",
+      status: "in_progress",
+      aggregated_output: "first"
+    }
+  };
+  let state = openThreadReducer([], {
+    type: "upsert-detail",
+    thread: { ...detail("thread-1"), records: [record], messageCount: 1 }
+  });
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    thread: { ...detail("thread-1"), messageCount: 1 },
+    records: [commandRecord],
+    snapshot: {
+      snapshotId: "snapshot-1",
+      page: 0,
+      reset: true,
+      complete: true
+    }
+  });
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    thread: { ...detail("thread-1"), messageCount: 1 },
+    delta: {
+      recordId: commandRecord.id,
+      field: "aggregated_output",
+      append: " second"
+    }
+  });
+
+  assert.deepEqual(state[0].records.map((item) => item.id), [commandRecord.id]);
+  assert.equal(
+    (state[0].records[0].payload as { aggregated_output?: string }).aggregated_output,
+    "first second"
+  );
+});
+
 test("set-fields restores attachments without fabricating or replacing transcript records", async () => {
   const openThreadReducer = await loadReducer();
   const images = [{

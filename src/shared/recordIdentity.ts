@@ -15,6 +15,13 @@ export const recordTimestampMs = (record: CodexRecord) => {
 };
 
 export const compareCodexRecords = (left: CodexRecord, right: CodexRecord) => {
+  const leftHistoryOrder = recordHistoryOrder(left);
+  const rightHistoryOrder = recordHistoryOrder(right);
+  if (
+    leftHistoryOrder !== null
+    && rightHistoryOrder !== null
+    && leftHistoryOrder !== rightHistoryOrder
+  ) return leftHistoryOrder - rightHistoryOrder;
   const leftTime = recordTimestampMs(left);
   const rightTime = recordTimestampMs(right);
   const leftOrder = recordOrder(left);
@@ -34,3 +41,8 @@ export const orderCodexRecords = (records: CodexRecord[]) =>
 
 const recordOrder = (record: CodexRecord) =>
   typeof record.order === "number" && Number.isFinite(record.order) ? record.order : null;
+
+const recordHistoryOrder = (record: CodexRecord) =>
+  typeof record.historyOrder === "number" && Number.isFinite(record.historyOrder)
+    ? record.historyOrder
+    : null;
