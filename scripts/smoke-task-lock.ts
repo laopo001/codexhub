@@ -95,6 +95,7 @@ type PartialRuntimeSummary = {
 
 type ThreadDetail = {
   running?: boolean;
+  activeRunStartedAt?: string;
   activeTurnStartedAt?: string;
   activeTurnObservedAt?: string;
   threadUsage?: PartialThreadUsage;
@@ -317,12 +318,15 @@ const main = async () => {
       apiBase,
       `/api/threads/${encodeURIComponent(fake.threadId)}`
     );
+    const runningRunStartedAtMs = Date.parse(runningTimingDetail.activeRunStartedAt ?? "");
     const runningStartedAtMs = Date.parse(runningTimingDetail.activeTurnStartedAt ?? "");
     const runningObservedAtMs = Date.parse(runningTimingDetail.activeTurnObservedAt ?? "");
     if (
       !runningTimingDetail.running
+      || !Number.isFinite(runningRunStartedAtMs)
       || !Number.isFinite(runningStartedAtMs)
       || !Number.isFinite(runningObservedAtMs)
+      || runningRunStartedAtMs !== runningStartedAtMs
       || runningObservedAtMs < runningStartedAtMs
     ) {
       throw new Error(`running timing anchor missing from thread detail: ${JSON.stringify(runningTimingDetail)}`);
@@ -396,6 +400,7 @@ const main = async () => {
     );
     if (
       !afterSteerDetail.running
+      || afterSteerDetail.activeRunStartedAt !== beforeSteerDetail.activeRunStartedAt
       || afterSteerDetail.activeTurnStartedAt !== beforeSteerDetail.activeTurnStartedAt
     ) {
       throw new Error(`web steer restarted running timing: ${JSON.stringify({ beforeSteerDetail, afterSteerDetail })}`);
@@ -654,6 +659,17 @@ const main = async () => {
     }
     const consumeTurn = await fake.nextTurn();
     assertGoalContinuationTurn(consumeTurn, consumeObjective, "consume goal initial turn mismatch");
+    const consumeRunningDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (
+      !consumeRunningDetail.running
+      || !consumeRunningDetail.activeRunStartedAt
+      || consumeRunningDetail.activeRunStartedAt !== consumeRunningDetail.activeTurnStartedAt
+    ) {
+      throw new Error(`consume goal initial run timing mismatch: ${JSON.stringify(consumeRunningDetail)}`);
+    }
     fake.emitAccountRateLimits(64);
     fake.emitTokenUsage(consumeTurn);
     fake.emitGoalUpdated({
@@ -670,6 +686,19 @@ const main = async () => {
     fake.completeTurn(consumeTurn);
     const retryTurn = await fake.nextTurn();
     assertGoalContinuationTurn(retryTurn, consumeObjective, "consume goal retry turn mismatch");
+    const retryRunningDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (
+      !retryRunningDetail.running
+      || retryRunningDetail.activeRunStartedAt !== consumeRunningDetail.activeRunStartedAt
+    ) {
+      throw new Error(`consume goal continuation reset run timing: ${JSON.stringify({
+        before: consumeRunningDetail,
+        after: retryRunningDetail
+      })}`);
+    }
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
       method: "POST",
       headers: { "content-type": "application/json" },

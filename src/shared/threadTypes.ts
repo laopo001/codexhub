@@ -23,6 +23,8 @@ export type ThreadSummary = {
   runtime: ThreadRuntimeSummary;
   status: "running" | "idle";
   running: boolean;
+  /** 当前连续执行链的开始时间；Goal 自动续跑新的 Turn 时保持不变。 */
+  activeRunStartedAt?: string;
   activeTurnStartedAt?: string;
   /** 后端生成当前 running 投影的时间，用于校准浏览器与 server 的时钟差。 */
   activeTurnObservedAt?: string;

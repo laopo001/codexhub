@@ -20,7 +20,11 @@ import { approvalPolicyOptions, approvalsReviewerOptions, composerModeOptions } 
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
-import { LiveGoalDuration, LiveThreadExecutionText } from "./helpers/liveTime.js";
+import {
+  LiveGoalDuration,
+  LiveThreadExecutionText,
+  LiveThreadTurnText
+} from "./helpers/liveTime.js";
 import type { AppViewModel, AppWorkspaceViewModel } from "./viewModel.js";
 import {
   ActivityStatusBar,
@@ -109,6 +113,9 @@ const MessagesTurnLoadingFooter = ({ context }: { context?: MessagesVirtuosoCont
       <span className="turnLoadingText">Running</span>
       {executionMeta?.startedAt || executionMeta?.duration ? (
         <span className="turnLoadingDuration">· <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} /></span>
+      ) : null}
+      {executionMeta?.turnStartedAt ? (
+        <span className="turnLoadingTurn">Turn · <LiveThreadTurnText executionMeta={executionMeta} /></span>
       ) : null}
     </div>
   );

@@ -255,6 +255,7 @@ export type ThreadExecutionMeta = {
   duration: string;
   text: string;
   startedAt?: string;
+  turnStartedAt?: string;
   observedAt?: string;
 };
 export type ActivityStatusFile = {

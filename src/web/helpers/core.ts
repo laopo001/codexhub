@@ -888,6 +888,7 @@ const threadSummariesEqual = (left: ThreadSummary, right: ThreadSummary) => {
     || left.permissions !== right.permissions
     || left.status !== right.status
     || left.running !== right.running
+    || left.activeRunStartedAt !== right.activeRunStartedAt
     || left.activeTurnStartedAt !== right.activeTurnStartedAt
     || left.activeTurnObservedAt !== right.activeTurnObservedAt
     || left.title !== right.title

@@ -40,6 +40,8 @@ export type ThreadState = {
   threadOptions: ThreadOptions;
   goalRun: GoalRunState;
   running: boolean;
+  activeRunStartedAt?: string;
+  activeRunRecoveryPending?: boolean;
   activeTurnStartedAt?: string;
   title: string;
   updatedAt: string;

@@ -7,6 +7,8 @@ import {
   goalDurationMsFromProgress,
   latestGoalDurationAnchor,
   liveDurationMsFromAnchor,
+  runningExecutionStartedAt,
+  runningTurnStartedAt,
   stableLiveDurationAnchor
 } from "../../src/web/helpers/liveTime.js";
 import {
@@ -87,6 +89,27 @@ test("running duration keeps its first observation anchor for the same Turn", ()
 
   assert.strictEqual(afterGuidance, first);
   assert.notStrictEqual(nextTurn, first);
+});
+
+test("running execution displays the active run clock instead of the current Turn clock", () => {
+  assert.equal(runningExecutionStartedAt(
+    "2026-07-19T02:00:00.000Z",
+    "2026-07-19T03:00:00.000Z",
+    "2026-07-19T03:00:01.000Z"
+  ), "2026-07-19T02:00:00.000Z");
+  assert.equal(runningExecutionStartedAt(
+    undefined,
+    "2026-07-19T03:00:00.000Z",
+    "2026-07-19T03:00:01.000Z"
+  ), "2026-07-19T03:00:00.000Z");
+  assert.equal(runningTurnStartedAt(
+    "2026-07-19T03:00:00.000Z",
+    "2026-07-19T03:00:01.000Z"
+  ), "2026-07-19T03:00:00.000Z");
+  assert.equal(runningTurnStartedAt(
+    undefined,
+    "2026-07-19T03:00:01.000Z"
+  ), "2026-07-19T03:00:01.000Z");
 });
 
 test("active Goal duration advances from the app-server accumulated time", () => {

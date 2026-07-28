@@ -913,6 +913,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+.turnLoadingTurn {
+  position: relative;
+  flex: 0 0 auto;
+  z-index: 1;
+  margin-left: 12px;
+  color: #617064;
+  font-variant-numeric: tabular-nums;
+}
+
 @keyframes codexhubStatusSpin {
   to {
     transform: rotate(360deg);

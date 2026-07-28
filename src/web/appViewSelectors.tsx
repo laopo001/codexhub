@@ -22,7 +22,12 @@ import {
   threadDisplayTitle
 } from "./appHelpers.js";
 import type { TurnActivityScope } from "./appHelpers.js";
-import { formatThreadDuration, LiveThreadExecutionText } from "./helpers/liveTime.js";
+import {
+  formatThreadDuration,
+  LiveThreadExecutionText,
+  runningExecutionStartedAt,
+  runningTurnStartedAt
+} from "./helpers/liveTime.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { contextMenuPosition } from "./helpers/composer.js";
@@ -274,8 +279,15 @@ export const threadExecutionMeta = (
   const running = threadExecutionIsRunning(thread.running, activityScope.turnStatus);
   const needsInput = running && recordsHavePendingInteraction(activityScope.records);
   const startedAt = running
-    ? thread.activeTurnStartedAt ?? activityScope.startedAt
+    ? runningExecutionStartedAt(
+      thread.activeRunStartedAt,
+      thread.activeTurnStartedAt,
+      activityScope.startedAt
+    )
     : activityScope.startedAt ?? activityScope.turnStatus?.at;
+  const turnStartedAt = running
+    ? runningTurnStartedAt(thread.activeTurnStartedAt, activityScope.startedAt)
+    : undefined;
   const durationMs = running ? undefined : activityScope.durationMs;
   const status = running ? "running" : "idle";
   const label = needsInput ? "Needs input" : running ? "Running" : "Idle";
@@ -286,6 +298,7 @@ export const threadExecutionMeta = (
     duration,
     text: [label, duration].filter(Boolean).join(" · "),
     ...(running && startedAt ? { startedAt } : {}),
+    ...(turnStartedAt ? { turnStartedAt } : {}),
     ...(running && thread.activeTurnObservedAt ? { observedAt: thread.activeTurnObservedAt } : {})
   };
 };

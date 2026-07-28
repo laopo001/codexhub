@@ -67,6 +67,17 @@ export const liveDurationMsFromAnchor = ({
   return Math.max(0, currentClientNowMs - startedMs);
 };
 
+export const runningExecutionStartedAt = (
+  activeRunStartedAt: string | undefined,
+  activeTurnStartedAt: string | undefined,
+  activityStartedAt: string | undefined
+) => activeRunStartedAt ?? activeTurnStartedAt ?? activityStartedAt;
+
+export const runningTurnStartedAt = (
+  activeTurnStartedAt: string | undefined,
+  activityStartedAt: string | undefined
+) => activeTurnStartedAt ?? activityStartedAt;
+
 export type LiveDurationAnchor = {
   startedAt: string | undefined;
   observedAt?: string;
@@ -145,6 +156,19 @@ export const LiveThreadExecutionText = ({
   );
   const duration = liveDurationMs === undefined ? executionMeta.duration : formatThreadDuration(liveDurationMs);
   return <>{[includeLabel ? executionMeta.label : "", duration].filter(Boolean).join(" · ")}</>;
+};
+
+export const LiveThreadTurnText = ({
+  executionMeta
+}: {
+  executionMeta: ThreadExecutionMeta;
+}) => {
+  const liveDurationMs = useLiveDurationMs(
+    executionMeta.status === "running",
+    executionMeta.turnStartedAt,
+    executionMeta.observedAt
+  );
+  return <>{liveDurationMs === undefined ? "" : formatThreadDuration(liveDurationMs)}</>;
 };
 
 export const goalDurationMsFromProgress = ({
