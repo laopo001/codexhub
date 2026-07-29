@@ -759,9 +759,8 @@ export class ThreadHub {
   async deleteThread(threadId: string) {
     const thread = this.requireThread(threadId);
     thread.running = false;
-    thread.activeRunStartedAt = undefined;
-    thread.activeRunRecoveryPending = undefined;
-    thread.activeTurnStartedAt = undefined;
+    thread.executionStatus = "idle";
+    thread.appServerTurnId = undefined;
     this.rejectQueuedTurns(thread.threadId, new Error(`Thread deleted: ${thread.threadId}`), {
       recordFailure: false
     });
@@ -849,9 +848,8 @@ export class ThreadHub {
     const shouldSetDefaultTitle = thread.title === thread.threadId;
     const startedAt = new Date().toISOString();
     thread.running = true;
-    thread.activeRunStartedAt = startedAt;
-    thread.activeRunRecoveryPending = false;
-    thread.activeTurnStartedAt = startedAt;
+    thread.executionStatus = "waiting";
+    thread.appServerTurnId = undefined;
     thread.updatedAt = startedAt;
     this.publish(thread, "thread");
     this.enqueueSessionCommand(session.sessionId, {
@@ -1025,8 +1023,7 @@ export class ThreadHub {
     thread: ThreadState,
     input: ProxyInput,
     _source: "web" | "telegram" | "task" = "web",
-    options?: ThreadRunOptions,
-    continueActiveRun = false
+    options?: ThreadRunOptions
   ) {
     if (thread.running) throw new Error(`Thread is already running: ${thread.threadId}`);
     const session = this.requireThreadSession(thread);
@@ -1055,11 +1052,8 @@ export class ThreadHub {
     if (userTitle && thread.title === thread.threadId) thread.title = userTitle;
     const startedAt = new Date().toISOString();
     thread.running = true;
-    if (!continueActiveRun || !thread.activeRunStartedAt) {
-      thread.activeRunStartedAt = startedAt;
-      thread.activeRunRecoveryPending = false;
-    }
-    thread.activeTurnStartedAt = startedAt;
+    thread.executionStatus = "waiting";
+    thread.appServerTurnId = undefined;
     thread.updatedAt = startedAt;
     this.publish(thread, "thread");
 
@@ -1322,9 +1316,8 @@ export class ThreadHub {
             const thread = this.threads.get(threadId);
             if (thread) {
               thread.running = false;
-              thread.activeRunStartedAt = undefined;
-              thread.activeRunRecoveryPending = undefined;
-              thread.activeTurnStartedAt = undefined;
+              thread.executionStatus = "idle";
+              thread.appServerTurnId = undefined;
               this.publish(thread, "done");
             }
           }
@@ -1521,6 +1514,7 @@ export class ThreadHub {
       threadOptions: { ...this.defaultThreadOptions },
       goalRun: emptyGoalRunState(),
       running: false,
+      executionStatus: "idle",
       title,
       updatedAt: now,
       records: [],
@@ -1782,7 +1776,6 @@ export class ThreadHub {
     }
     this.assignHistoryPageOrder(thread, snapshotRecords, options.historyPage);
     this.finishRecordBatch(thread, snapshotRecords, { historical: true });
-    this.recoverActiveRunStartedAt(thread);
     if (options.authoritativeHead === false) return;
     const inferredExternalTerminalTurn = (
       thread.running
@@ -2326,15 +2319,9 @@ export class ThreadHub {
         this.finishSessionTurn(thread);
         return;
       }
-      if (
-        thread.appServerTurnId !== undefined
-        || thread.activeRunStartedAt !== undefined
-        || thread.activeTurnStartedAt !== undefined
-      ) {
+      if (thread.appServerTurnId !== undefined || thread.executionStatus !== "idle") {
         thread.appServerTurnId = undefined;
-        thread.activeRunStartedAt = undefined;
-        thread.activeRunRecoveryPending = undefined;
-        thread.activeTurnStartedAt = undefined;
+        thread.executionStatus = "idle";
         thread.updatedAt = new Date().toISOString();
         this.publish(thread, "thread");
       }
@@ -2345,14 +2332,8 @@ export class ThreadHub {
       thread.running = running;
       changed = true;
     }
-    if (!thread.activeRunStartedAt) {
-      const recoveredStartedAt = this.activeRunRecoveryStartedAt(thread, turnId);
-      thread.activeRunStartedAt = recoveredStartedAt ?? new Date().toISOString();
-      thread.activeRunRecoveryPending = recoveredStartedAt === undefined;
-      changed = true;
-    }
-    if (!thread.activeTurnStartedAt) {
-      thread.activeTurnStartedAt = thread.activeRunStartedAt;
+    if (thread.executionStatus !== "running") {
+      thread.executionStatus = "running";
       changed = true;
     }
     // thread/status/changed active does not carry a turn id. Preserve the
@@ -2440,10 +2421,7 @@ export class ThreadHub {
           : {})
       };
     }
-    if (this.latestThreadGoalMatches(thread, threadId, goal)) {
-      this.recoverActiveRunStartedAt(thread);
-      return;
-    }
+    if (this.latestThreadGoalMatches(thread, threadId, goal)) return;
     this.appendHubRecord(thread, "event_msg", {
       type: "thread_goal_updated",
       threadId,
@@ -2451,7 +2429,6 @@ export class ThreadHub {
       goal,
       message: typeof payload.message === "string" ? payload.message : formatThreadGoalMessage(goal)
     }, threadGoalTimestamp(goal), { historical: options.historical });
-    this.recoverActiveRunStartedAt(thread);
   }
 
   private appendThreadGoalClearedRecord(
@@ -2499,28 +2476,6 @@ export class ThreadHub {
     const status = typeof goal?.status === "string" ? goal.status : "active";
     if (!objective) return null;
     return { objective, status };
-  }
-
-  private activeRunRecoveryStartedAt(thread: ThreadState, turnId = thread.appServerTurnId) {
-    const activeGoal = this.latestRunnableThreadGoal(thread)?.status === "active";
-    for (let index = thread.records.length - 1; index >= 0; index -= 1) {
-      const record = thread.records[index];
-      if (!isThreadUserInputRecord(record)) continue;
-      if (!activeGoal && (!turnId || turnIdFromAppRecordId(thread.threadId, record.id) !== turnId)) continue;
-      const startedAt = record.timestamp;
-      if (startedAt && Number.isFinite(Date.parse(startedAt))) return startedAt;
-    }
-    return undefined;
-  }
-
-  private recoverActiveRunStartedAt(thread: ThreadState) {
-    if (!thread.running || !thread.activeRunRecoveryPending) return false;
-    const recoveredStartedAt = this.activeRunRecoveryStartedAt(thread);
-    if (!recoveredStartedAt) return false;
-    thread.activeRunStartedAt = recoveredStartedAt;
-    thread.activeRunRecoveryPending = false;
-    this.publish(thread, "thread");
-    return true;
   }
 
   private weeklyRemainingPercent(thread: ThreadState) {
@@ -2844,7 +2799,6 @@ export class ThreadHub {
     const commandId = this.activeTurnCommands.get(thread.threadId);
     const wasGoalRunPolicyTurn = Boolean(thread.goalRun.activeRun);
     const resumesGoalRun = thread.goalRun.continuation === "resume";
-    const stoppedGoalRun = thread.goalRun.continuation === "stopped";
     thread.goalRun = {
       ...thread.goalRun,
       activeRun: undefined,
@@ -2858,22 +2812,15 @@ export class ThreadHub {
     }
     const wasRunning = thread.running;
     thread.running = false;
+    thread.executionStatus = "idle";
     thread.appServerTurnId = undefined;
-    thread.activeTurnStartedAt = undefined;
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, wasRunning ? "done" : "thread");
     const startedQueuedTurn = this.startNextQueuedTurn(thread);
-    const startedGoalTurn = !startedQueuedTurn && (!error || resumesGoalRun)
-      ? this.maybeStartGoalRunPolicyTurn(thread, resumesGoalRun
-        ? { allowUnknownUsage: true, statusOverride: "active", continueActiveRun: true }
-        : { allowCompletedPolicyTurn: wasGoalRunPolicyTurn, continueActiveRun: true })
-      : false;
-    const activeGoalContinues = !error
-      && !stoppedGoalRun
-      && this.latestRunnableThreadGoal(thread)?.status === "active";
-    if (!startedQueuedTurn && !startedGoalTurn && !activeGoalContinues) {
-      thread.activeRunStartedAt = undefined;
-      thread.activeRunRecoveryPending = undefined;
+    if (!startedQueuedTurn && (!error || resumesGoalRun)) {
+      this.maybeStartGoalRunPolicyTurn(thread, resumesGoalRun
+        ? { allowUnknownUsage: true, statusOverride: "active" }
+        : { allowCompletedPolicyTurn: wasGoalRunPolicyTurn });
     }
   }
 
@@ -2904,7 +2851,6 @@ export class ThreadHub {
       fallbackObjective?: string;
       statusOverride?: ThreadGoalStatus;
       allowCompletedPolicyTurn?: boolean;
-      continueActiveRun?: boolean;
     } = {}
   ) {
     if (thread.running) return false;
@@ -2928,7 +2874,7 @@ export class ThreadHub {
       this.startTurn(thread, objective, "web", {
         goalMode: true,
         goalObjective: objective
-      }, options.continueActiveRun).catch(() => {
+      }).catch(() => {
         if (thread.goalRun.activeRun !== activeRun) return;
         thread.goalRun = { ...thread.goalRun, activeRun: undefined };
         this.pauseGoalRunPolicy(thread);
@@ -3004,9 +2950,6 @@ export class ThreadHub {
   }
 
   private summary(thread: ThreadState): ThreadSummary {
-    const activeTurnObservedAt = thread.running && thread.activeTurnStartedAt
-      ? new Date().toISOString()
-      : undefined;
     return {
       threadId: thread.threadId,
       workingDirectory: thread.workingDirectory,
@@ -3019,11 +2962,9 @@ export class ThreadHub {
       activePermissionProfile: thread.threadOptions.activePermissionProfile ?? null,
       sandboxPolicy: thread.threadOptions.sandboxPolicy,
       runtime: this.threadRuntimeSummary(thread),
-      status: thread.running ? "running" : "idle",
+      status: thread.executionStatus,
       running: thread.running,
-      ...(thread.running && thread.activeRunStartedAt ? { activeRunStartedAt: thread.activeRunStartedAt } : {}),
-      ...(thread.running && thread.activeTurnStartedAt ? { activeTurnStartedAt: thread.activeTurnStartedAt } : {}),
-      ...(activeTurnObservedAt ? { activeTurnObservedAt } : {}),
+      ...(thread.running && thread.appServerTurnId ? { activeTurnId: thread.appServerTurnId } : {}),
       title: thread.title,
       updatedAt: thread.updatedAt,
       messageCount: this.threadRecordIndex(thread).messageCount,
@@ -3378,13 +3319,6 @@ const preservePendingInteractionRecord = (existing: CodexRecord, incoming: Codex
           })
     }
   };
-};
-
-const isThreadUserInputRecord = (record: CodexRecord) => {
-  const payload = asRecord(record.payload);
-  if (!payload) return false;
-  if (record.type === "event_msg") return payload.type === "user_message";
-  return record.type === "response_item" && payload.type === "message" && payload.role === "user";
 };
 
 const takeReplaceableAppServerTurnRecords = (

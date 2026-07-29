@@ -44,6 +44,11 @@
   border-left-color: #2f6f9f;
 }
 
+.activityStatusBar.waiting {
+  border-color: rgba(184, 126, 34, 0.34);
+  border-left-color: #b87e22;
+}
+
 .activityStatusHeader {
   display: flex;
   align-items: center;
@@ -74,6 +79,10 @@
 
 .activityStatusSummary.running {
   color: #245d88;
+}
+
+.activityStatusSummary.waiting {
+  color: #8a641f;
 }
 
 .activityStatusHeaderMetrics {
@@ -124,18 +133,9 @@
   background: currentColor;
 }
 
-.activityStatusSummary.running .activityStatusIndicator {
+.activityStatusSummary.running .activityStatusIndicator,
+.activityStatusSummary.waiting .activityStatusIndicator {
   animation: codexhubStatusPulse 1s ease-in-out infinite;
-}
-
-.activityStatusDuration {
-  color: #64726a;
-  font-variant-numeric: tabular-nums;
-}
-
-.activityStatusDuration::before {
-  content: "·";
-  margin-right: 5px;
 }
 
 .activityStatusItem {
@@ -896,6 +896,12 @@
   pointer-events: none;
 }
 
+.turnLoadingMessage.waiting {
+  border-color: rgba(184, 126, 34, 0.22);
+  background: linear-gradient(90deg, #fffaf1 0%, #f8f1df 100%);
+  color: #76561e;
+}
+
 .turnLoadingText {
   position: relative;
   z-index: 1;
@@ -951,6 +957,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .activityStatusSummary.running .activityStatusIndicator,
+  .activityStatusSummary.waiting .activityStatusIndicator,
   .activityStatusItem.pending .activityStatusLabel::before,
   .activityStatusItem.in_progress .activityStatusLabel::before,
   .messageStatus.in_progress::before,

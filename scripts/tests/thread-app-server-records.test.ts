@@ -159,6 +159,83 @@ test("token usage reads current camelCase protocol fields into stable snake_case
   });
 });
 
+test("status usage is accumulated independently for each returned app-server Turn", () => {
+  const hub = new ThreadHub();
+  const sessionId = "turn-usage-session";
+  const threadId = "turn-usage-thread";
+  hub.registerSession({
+    sessionId,
+    machineId: "turn-usage-machine",
+    workingDirectory: "/tmp/turn-usage"
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_settings_changed",
+    threadId
+  });
+  const emitUsage = (
+    turnId: string,
+    last: { inputTokens: number; outputTokens: number; totalTokens: number },
+    total: { inputTokens: number; outputTokens: number; totalTokens: number }
+  ) => hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: {
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId,
+        turnId,
+        tokenUsage: { last, total, modelContextWindow: 200_000 }
+      }
+    }
+  });
+
+  emitUsage(
+    "turn-1",
+    { inputTokens: 80, outputTokens: 20, totalTokens: 100 },
+    { inputTokens: 80, outputTokens: 20, totalTokens: 100 }
+  );
+  emitUsage(
+    "turn-1",
+    { inputTokens: 40, outputTokens: 10, totalTokens: 50 },
+    { inputTokens: 120, outputTokens: 30, totalTokens: 150 }
+  );
+  emitUsage(
+    "turn-2",
+    { inputTokens: 60, outputTokens: 20, totalTokens: 80 },
+    { inputTokens: 180, outputTokens: 50, totalTokens: 230 }
+  );
+
+  const statusRecords = (hub.getThread(threadId)?.records ?? []).filter((record) =>
+    (record.payload as Record<string, unknown>).type === "status_usage"
+  );
+  assert.equal(statusRecords.length, 2);
+  assert.deepEqual(statusRecords.map((record) => {
+    const payload = record.payload as Record<string, unknown>;
+    return {
+      turnId: payload.turn_id,
+      usage: payload.usage
+    };
+  }), [{
+    turnId: "turn-1",
+    usage: {
+      input_tokens: 120,
+      cached_input_tokens: 0,
+      output_tokens: 30,
+      reasoning_output_tokens: 0,
+      total_tokens: 150
+    }
+  }, {
+    turnId: "turn-2",
+    usage: {
+      input_tokens: 60,
+      cached_input_tokens: 0,
+      output_tokens: 20,
+      reasoning_output_tokens: 0,
+      total_tokens: 80
+    }
+  }]);
+});
+
 test("terminal Turn status produces the authoritative lifecycle record even without timing", () => {
   const completed = codexRecordsFromAppServerTurnLifecycle("thread-1", "turn-completed", {
     status: "completed",

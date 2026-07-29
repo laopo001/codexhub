@@ -227,54 +227,69 @@ const assertStatusUsageFormatting = async () => {
 
     const scopedRecords: CodexRecord[] = [
       {
-        id: "app:thread:goal:user-1",
+        id: "app:thread:turn-1:user:user-1",
         order: 1,
         type: "event_msg",
-        payload: { type: "user_message", message: "first run" }
+        payload: { type: "user_message", turn_id: "turn-1", message: "first run" },
+        sourceThreadId: "thread"
       },
       {
-        id: "app:thread:goal:file-1",
+        id: "app:thread:turn-1:item:fileChange:file-1",
         order: 2,
         type: "response_item",
         payload: {
           type: "file_change",
           status: "completed",
           changes: [{ path: "src/example.ts", diff: "--- a/src/example.ts\n+++ b/src/example.ts\n-old\n+new\n+extra" }]
-        }
+        },
+        sourceThreadId: "thread"
       },
       {
-        id: "app:thread:goal:usage-1",
+        id: "app:thread:turn-1:statusUsage:turn-1",
         order: 3,
         type: "event_msg",
-        payload: { type: "status_usage", usage: { input_tokens: 3000, output_tokens: 120, total_tokens: 3120 } }
+        payload: {
+          type: "status_usage",
+          turn_id: "turn-1",
+          usage: { input_tokens: 3000, output_tokens: 120, total_tokens: 3120 }
+        },
+        sourceThreadId: "thread"
       },
       {
-        id: "app:thread:goal:final-1",
+        id: "app:thread:turn-1:agent:final-1",
         order: 4,
         type: "event_msg",
-        payload: { type: "agent_message", phase: "final_answer", message: "first complete" }
+        payload: { type: "agent_message", turn_id: "turn-1", phase: "final_answer", message: "first complete" },
+        sourceThreadId: "thread"
       },
       {
-        id: "app:thread:goal:user-2",
+        id: "app:thread:turn-2:user:user-2",
         order: 5,
         type: "event_msg",
-        payload: { type: "user_message", message: "second run" }
+        payload: { type: "user_message", turn_id: "turn-2", message: "second run" },
+        sourceThreadId: "thread"
       },
       {
-        id: "app:thread:goal:usage-2",
+        id: "app:thread:turn-2:statusUsage:turn-2",
         order: 6,
         type: "event_msg",
-        payload: { type: "status_usage", usage: { input_tokens: 800, output_tokens: 40, total_tokens: 840 } }
+        payload: {
+          type: "status_usage",
+          turn_id: "turn-2",
+          usage: { input_tokens: 800, output_tokens: 40, total_tokens: 840 }
+        },
+        sourceThreadId: "thread"
       },
       {
-        id: "app:thread:goal:final-2",
+        id: "app:thread:turn-2:agent:final-2",
         order: 7,
         type: "event_msg",
-        payload: { type: "agent_message", phase: "final_answer", message: "second complete" }
+        payload: { type: "agent_message", turn_id: "turn-2", phase: "final_answer", message: "second complete" },
+        sourceThreadId: "thread"
       }
     ];
-    const runningSnapshots = activityStatusSnapshotsFromRecords(scopedRecords, true);
-    if (runningSnapshots.length !== 1 || runningSnapshots[0].targetRecordId !== "app:thread:goal:final-1") {
+    const runningSnapshots = activityStatusSnapshotsFromRecords(scopedRecords, "turn-2");
+    if (runningSnapshots.length !== 1 || runningSnapshots[0].targetRecordId !== "app:thread:turn-1:agent:final-1") {
       throw new Error(`running scope should only clone completed status snapshots: ${JSON.stringify(runningSnapshots)}`);
     }
     const firstFiles = runningSnapshots[0].statuses.find((status) => status.key === "files");
@@ -287,14 +302,14 @@ const assertStatusUsageFormatting = async () => {
     }
     for (const views of [recordsToViews(scopedRecords), recordsToDetailedViews(scopedRecords)]) {
       const viewsWithSnapshots = withActivityStatusSnapshots(views, runningSnapshots);
-      const firstFinal = viewsWithSnapshots.find((view) => view.record.id === "app:thread:goal:final-1");
-      const secondFinal = viewsWithSnapshots.find((view) => view.record.id === "app:thread:goal:final-2");
+      const firstFinal = viewsWithSnapshots.find((view) => view.record.id === "app:thread:turn-1:agent:final-1");
+      const secondFinal = viewsWithSnapshots.find((view) => view.record.id === "app:thread:turn-2:agent:final-2");
       if (firstFinal?.activityStatuses?.length !== 2 || secondFinal?.activityStatuses) {
         throw new Error(`status snapshots were not bound to the correct message view: ${JSON.stringify(viewsWithSnapshots)}`);
       }
     }
-    const completedSnapshots = activityStatusSnapshotsFromRecords(scopedRecords, false);
-    if (completedSnapshots.length !== 2 || completedSnapshots[1].targetRecordId !== "app:thread:goal:final-2") {
+    const completedSnapshots = activityStatusSnapshotsFromRecords(scopedRecords);
+    if (completedSnapshots.length !== 2 || completedSnapshots[1].targetRecordId !== "app:thread:turn-2:agent:final-2") {
       throw new Error(`completed current scope should clone its status snapshot: ${JSON.stringify(completedSnapshots)}`);
     }
   } finally {

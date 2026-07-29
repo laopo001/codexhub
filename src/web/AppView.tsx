@@ -22,8 +22,7 @@ import { AppSidebar } from "./AppSidebar.js";
 import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
 import {
   LiveGoalDuration,
-  LiveThreadExecutionText,
-  LiveThreadTurnText
+  LiveThreadExecutionText
 } from "./helpers/liveTime.js";
 import type { AppViewModel, AppWorkspaceViewModel } from "./viewModel.js";
 import {
@@ -99,23 +98,45 @@ const messagesDownScrollKeys = new Set(["ArrowDown", "PageDown", "End"]);
 
 type MessagesVirtuosoContext = {
   executionMeta: NonNullable<AppWorkspaceViewModel["activeThreadExecutionMeta"]> | null;
+  activeGoal: AppWorkspaceViewModel["activeGoal"];
 };
 
 const MessagesTurnLoadingFooter = ({ context }: { context?: MessagesVirtuosoContext }) => {
   const executionMeta = context?.executionMeta;
+  const activeGoal = context?.activeGoal;
+  const waiting = executionMeta?.status === "waiting";
+  const showGoalRunningTime = (
+    executionMeta?.status === "running"
+    && activeGoal?.status === "active"
+    && activeGoal.timeUsedSeconds !== undefined
+  );
   return (
     <div
-      className="turnLoadingMessage"
+      className={`turnLoadingMessage${waiting ? " waiting" : ""}`}
       role="status"
       aria-live="polite"
-      aria-label="Running"
+      aria-label={waiting ? "Waiting for app-server" : "Running"}
     >
-      <span className="turnLoadingText">Running</span>
-      {executionMeta?.startedAt || executionMeta?.duration ? (
-        <span className="turnLoadingDuration">· <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} /></span>
+      <span className="turnLoadingText">{waiting ? "Waiting for app-server" : "Running"}</span>
+      {!waiting && (executionMeta?.startedAt || executionMeta?.duration) ? (
+        <span className="turnLoadingDuration">
+          · {showGoalRunningTime ? (
+            <LiveGoalDuration
+              status={activeGoal.status}
+              running
+              activeTurnStartedAt={executionMeta.startedAt}
+              timeUsedSeconds={activeGoal.timeUsedSeconds}
+              updatedAt={activeGoal.updatedAt}
+            />
+          ) : (
+            <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} />
+          )}
+        </span>
       ) : null}
-      {executionMeta?.turnStartedAt ? (
-        <span className="turnLoadingTurn">Turn · <LiveThreadTurnText executionMeta={executionMeta} /></span>
+      {showGoalRunningTime && executionMeta.startedAt ? (
+        <span className="turnLoadingTurn">
+          Turn · <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} />
+        </span>
       ) : null}
     </div>
   );
@@ -234,10 +255,10 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   const executionLabel = activeThreadExecutionMeta?.label ?? "Idle";
   const executionText = activeThreadExecutionMeta?.text ?? executionLabel;
   const composerRuntimeReady = Boolean(activeThread?.runtime.online && activeThread.runtime.runnable !== false);
-  const showTurnLoadingMessage = executionStatus === "running";
+  const showTurnLoadingMessage = executionStatus === "waiting" || executionStatus === "running";
   const messagesVirtuosoContext = React.useMemo(
-    () => ({ executionMeta: activeThreadExecutionMeta }),
-    [activeThreadExecutionMeta]
+    () => ({ executionMeta: activeThreadExecutionMeta, activeGoal }),
+    [activeGoal, activeThreadExecutionMeta]
   );
   const messagesVirtuosoComponents = React.useMemo<Components<(typeof activeViews)[number], MessagesVirtuosoContext>>(() => ({
     EmptyPlaceholder: EmptyMessages,
@@ -529,16 +550,16 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           expanded={statusPanelExpanded}
                           expandedKeys={activeExpandedStatusKeys}
                           onToggleExpanded={() => {
-                            if (!activeThread?.threadId || !latestTurnActivityScope.key) return;
+                            if (!activeThread?.threadId || !statusScopeKey) return;
                             setExpandedStatusTurns((current) => {
-                              if (current[activeThread.threadId] === latestTurnActivityScope.key) {
+                              if (current[activeThread.threadId] === statusScopeKey) {
                                 const next = { ...current };
                                 delete next[activeThread.threadId];
                                 return next;
                               }
                               return {
                                 ...current,
-                                [activeThread.threadId]: latestTurnActivityScope.key
+                                [activeThread.threadId]: statusScopeKey
                               };
                             });
                           }}
@@ -573,8 +594,8 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                 <span className="goalStripAge">
                                   <LiveGoalDuration
                                     status={activeGoal.status}
-                                    running={activeThread.running}
-                                    activeTurnStartedAt={activeThread.activeTurnStartedAt}
+                                    running={activeThread.status === "running"}
+                                    activeTurnStartedAt={latestTurnActivityScope.startedAt}
                                     timeUsedSeconds={activeGoal.timeUsedSeconds}
                                     updatedAt={activeGoal.updatedAt}
                                   />

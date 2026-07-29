@@ -68,12 +68,46 @@ const startGoalRun = async (suffix: string) => {
   return { ...fixture, objective, turnCommand };
 };
 
-test("Goal policy continuation preserves the active run clock across Turns", async () => {
-  const { hub, sessionId, threadId, turnCommand } = await startGoalRun("goal-run-clock");
-  const initial = hub.getThread(threadId);
-  assert.ok(initial?.activeRunStartedAt);
-  assert.equal(initial.activeRunStartedAt, initial.activeTurnStartedAt);
+test("new Turn is Waiting until app-server confirms its turnId", async () => {
+  const { hub, sessionId, threadId } = createHub("waiting-turn");
+  const running = hub.runTurn(threadId, "wait for app-server");
+  const command = await nextCommand(hub, sessionId);
 
+  assert.equal(hub.getThread(threadId)?.running, true);
+  assert.equal(hub.getThread(threadId)?.status, "waiting");
+  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
+
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true, "confirmed-turn"));
+  assert.equal(hub.getThread(threadId)?.status, "running");
+  assert.equal(hub.getThread(threadId)?.activeTurnId, "confirmed-turn");
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: {
+      method: "turn/started",
+      params: {
+        threadId,
+        turn: appServerTurn("confirmed-turn", {
+          status: "inProgress",
+          startedAt: 1_700_000_000
+        })
+      }
+    }
+  });
+  const startedRecord = hub.getThread(threadId)?.records.find((record) =>
+    (record.payload as Record<string, unknown>).type === "task_started"
+  );
+  assert.equal(startedRecord?.timestamp, "2023-11-14T22:13:20.000Z");
+
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, "confirmed-turn"));
+  await running;
+  assert.equal(command.type, "turn");
+  assert.equal(hub.getThread(threadId)?.status, "idle");
+});
+
+test("Goal policy continuation returns to Waiting before the next app-server Turn", async () => {
+  const { hub, sessionId, threadId, turnCommand } = await startGoalRun("goal-waiting");
   hub.applySessionEvent(sessionId, {
     type: "account_rate_limits_updated",
     heartbeat: false,
@@ -95,133 +129,34 @@ test("Goal policy continuation preserves the active run clock across Turns", asy
 
   const continuation = await nextCommand(hub, sessionId, turnCommand.seq);
   assert.equal(continuation.type, "turn");
-  const continued = hub.getThread(threadId);
-  assert.equal(continued?.activeRunStartedAt, initial.activeRunStartedAt);
-  assert.ok(continued?.activeTurnStartedAt);
+  assert.equal(hub.getThread(threadId)?.status, "waiting");
+  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
+
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true, "continued-goal-turn"));
+  assert.equal(hub.getThread(threadId)?.status, "running");
+  assert.equal(hub.getThread(threadId)?.activeTurnId, "continued-goal-turn");
 
   hub.failSessionCommand(sessionId, continuation.commandId, "test cleanup");
   await Promise.resolve();
 });
 
-test("app-server active Goal continuation preserves the active run clock without a local policy", async () => {
-  const { hub, sessionId, threadId } = createHub("app-goal-run-clock");
-  const running = hub.runTurn(threadId, "start active app-server goal");
-  const command = await nextCommand(hub, sessionId);
-  hub.applySessionEvent(sessionId, executionChanged(threadId, true, "app-goal-turn-1"));
-  hub.applySessionEvent(sessionId, {
-    type: "thread_event",
-    threadId,
-    message: {
-      method: "thread/goal/updated",
-      params: {
-        threadId,
-        goal: {
-          threadId,
-          objective: "finish across app-server Turns",
-          status: "active",
-          tokenBudget: null,
-          tokensUsed: 10,
-          timeUsedSeconds: 1,
-          createdAt: 1,
-          updatedAt: 2
-        }
-      }
-    }
-  });
-  const initial = hub.getThread(threadId);
-  assert.ok(initial?.activeRunStartedAt);
-
-  hub.applySessionEvent(sessionId, turnCompleted(threadId, "app-goal-turn-1"));
-  await running;
-  hub.applySessionEvent(sessionId, executionChanged(threadId, true, "app-goal-turn-2"));
-  const continued = hub.getThread(threadId);
-  assert.equal(continued?.activeRunStartedAt, initial.activeRunStartedAt);
-  assert.ok(continued?.activeTurnStartedAt);
-
-  hub.applySessionEvent(sessionId, {
-    type: "thread_event",
-    threadId,
-    message: {
-      method: "thread/goal/updated",
-      params: {
-        threadId,
-        goal: {
-          threadId,
-          objective: "finish across app-server Turns",
-          status: "complete",
-          tokenBudget: null,
-          tokensUsed: 20,
-          timeUsedSeconds: 2,
-          createdAt: 1,
-          updatedAt: 3
-        }
-      }
-    }
-  });
-  hub.applySessionEvent(sessionId, turnCompleted(threadId, "app-goal-turn-2"));
-  assert.equal(hub.getThread(threadId)?.activeRunStartedAt, undefined);
-  await new Promise((resolve) => setTimeout(resolve, 2));
-  hub.applySessionEvent(sessionId, executionChanged(threadId, true, "ordinary-turn-after-goal"));
-  assert.notEqual(hub.getThread(threadId)?.activeRunStartedAt, initial.activeRunStartedAt);
-  hub.applySessionEvent(sessionId, turnCompleted(threadId, "ordinary-turn-after-goal"));
-  assert.equal(command.type, "turn");
-});
-
-test("reconnected active Goal recovers its run clock from the latest user request", () => {
-  const { hub, sessionId, threadId } = createHub("recovered-goal-run-clock");
-  hub.applySessionEvent(sessionId, {
-    type: "thread_event",
-    threadId,
-    message: {
-      method: "thread/goal/updated",
-      params: {
-        threadId,
-        goal: {
-          threadId,
-          objective: "continue after reconnect",
-          status: "active",
-          tokenBudget: null,
-          tokensUsed: 10,
-          timeUsedSeconds: 1,
-          createdAt: 1_700_000_000,
-          updatedAt: 1_700_000_100
-        }
-      }
-    }
-  });
+test("reconnected active Turn keeps the app-server lifecycle timestamp as its clock source", () => {
+  const { hub, sessionId, threadId } = createHub("recovered-turn-clock");
   hub.applySessionEvent(sessionId, executionChanged(threadId, true, "recovered-current-turn"));
-
-  const userStartedAt = 1_700_000_200;
-  hub.applySessionEvent(sessionId, {
-    type: "thread_turns_snapshot",
-    threadId,
-    turns: [
-      appServerTurn("recovered-root-turn", {
-        startedAt: userStartedAt,
-        completedAt: userStartedAt + 10,
-        items: [{
-          id: "recovered-root-user",
-          type: "userMessage",
-          content: [{ type: "text", text: "continue the long goal" }]
-        }]
-      }),
-      appServerTurn("recovered-current-turn", {
-        status: "inProgress",
-        startedAt: userStartedAt + 20
-      })
-    ],
-    head: true,
-    complete: true,
-    snapshotId: "recovered-goal-snapshot",
-    page: 0
-  });
+  hub.applySessionEvent(sessionId, turnSnapshot(threadId, [
+    appServerTurn("recovered-current-turn", {
+      status: "inProgress",
+      startedAt: 1_700_000_020
+    })
+  ]));
 
   const recovered = hub.getThread(threadId);
-  const recoveredUserStartedAt = recovered?.records.find((record) =>
-    (record.payload as Record<string, unknown>).type === "user_message"
-  )?.timestamp;
-  assert.ok(recoveredUserStartedAt);
-  assert.equal(recovered.activeRunStartedAt, recoveredUserStartedAt);
+  const startedRecord = recovered?.records.find((record) =>
+    (record.payload as Record<string, unknown>).type === "task_started"
+  );
+  assert.equal(recovered?.status, "running");
+  assert.equal(recovered?.activeTurnId, "recovered-current-turn");
+  assert.equal(startedRecord?.timestamp, "2023-11-14T22:13:40.000Z");
 });
 
 type GoalRunFixture = Awaited<ReturnType<typeof startGoalRun>>;
@@ -358,18 +293,19 @@ test("turn and steer delivery failures are conversation-local submission records
   assert.equal(errorPayloads(hub, threadId).at(-1)?.input_text, "steer me");
 });
 
-test("running Web input remains guidance for the same Turn and clock", async () => {
+test("running Web input remains guidance for the same app-server Turn", async () => {
   const { hub, sessionId, threadId } = createHub("steer-running-state");
   hub.applySessionEvent(sessionId, executionChanged(threadId, true, "active-turn"));
   const before = hub.getThread(threadId);
-  assert.ok(before?.activeTurnStartedAt);
+  assert.equal(before?.status, "running");
+  assert.equal(before?.activeTurnId, "active-turn");
 
   const first = hub.runTurnWithDelivery(threadId, "first guidance", "web");
   assert.equal(first.delivery, "steer");
   const firstCommand = await nextCommand(hub, sessionId);
   assert.equal(firstCommand.type, "steer");
   assert.equal(firstCommand.turnId, "active-turn");
-  assert.equal(hub.getThread(threadId)?.activeTurnStartedAt, before.activeTurnStartedAt);
+  assert.equal(hub.getThread(threadId)?.activeTurnId, before.activeTurnId);
   assert.equal(hub.getThread(threadId)?.updatedAt, before.updatedAt);
   hub.applySessionEvent(sessionId, {
     type: "thread_event",
@@ -380,7 +316,7 @@ test("running Web input remains guidance for the same Turn and clock", async () 
   await first.completion;
 
   hub.applySessionEvent(sessionId, executionChanged(threadId, true));
-  assert.equal(hub.getThread(threadId)?.activeTurnStartedAt, before.activeTurnStartedAt);
+  assert.equal(hub.getThread(threadId)?.activeTurnId, before.activeTurnId);
 
   const second = hub.runTurnWithDelivery(threadId, "second guidance", "web");
   assert.equal(second.delivery, "steer");
@@ -405,7 +341,8 @@ test("an interrupted accepted Turn rejects its caller without fabricating a tran
 
   await assert.rejects(turn, /Turn interrupted/);
   assert.equal(hub.getThread(threadId)?.running, false);
-  assert.equal(hub.getThread(threadId)?.activeRunStartedAt, undefined);
+  assert.equal(hub.getThread(threadId)?.status, "idle");
+  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
   assert.deepEqual(errorPayloads(hub, threadId), []);
 });
 

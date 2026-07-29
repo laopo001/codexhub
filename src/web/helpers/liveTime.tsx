@@ -67,17 +67,6 @@ export const liveDurationMsFromAnchor = ({
   return Math.max(0, currentClientNowMs - startedMs);
 };
 
-export const runningExecutionStartedAt = (
-  activeRunStartedAt: string | undefined,
-  activeTurnStartedAt: string | undefined,
-  activityStartedAt: string | undefined
-) => activeRunStartedAt ?? activeTurnStartedAt ?? activityStartedAt;
-
-export const runningTurnStartedAt = (
-  activeTurnStartedAt: string | undefined,
-  activityStartedAt: string | undefined
-) => activeTurnStartedAt ?? activityStartedAt;
-
 export type LiveDurationAnchor = {
   startedAt: string | undefined;
   observedAt?: string;
@@ -151,24 +140,24 @@ export const LiveThreadExecutionText = ({
 }) => {
   const liveDurationMs = useLiveDurationMs(
     executionMeta.status === "running",
-    executionMeta.startedAt,
-    executionMeta.observedAt
+    executionMeta.startedAt
   );
   const duration = liveDurationMs === undefined ? executionMeta.duration : formatThreadDuration(liveDurationMs);
   return <>{[includeLabel ? executionMeta.label : "", duration].filter(Boolean).join(" · ")}</>;
 };
 
-export const LiveThreadTurnText = ({
-  executionMeta
-}: {
-  executionMeta: ThreadExecutionMeta;
-}) => {
-  const liveDurationMs = useLiveDurationMs(
-    executionMeta.status === "running",
-    executionMeta.turnStartedAt,
-    executionMeta.observedAt
-  );
-  return <>{liveDurationMs === undefined ? "" : formatThreadDuration(liveDurationMs)}</>;
+export const threadExecutionTimeMode = (
+  executionMeta: ThreadExecutionMeta,
+  activeGoal: ThreadGoalView | null | undefined
+) => {
+  if (executionMeta.status === "waiting") return "waiting";
+  if (
+    executionMeta.status === "running"
+    && activeGoal?.status === "active"
+    && typeof activeGoal.timeUsedSeconds === "number"
+    && Number.isFinite(activeGoal.timeUsedSeconds)
+  ) return "goal";
+  return "turn";
 };
 
 export const goalDurationMsFromProgress = ({
@@ -219,6 +208,37 @@ export const LiveGoalDuration = ({
     liveElapsedMs
   });
   return <>{durationMs === undefined ? null : formatThreadDuration(durationMs)}</>;
+};
+
+export const LiveThreadRunningText = ({
+  executionMeta,
+  activeGoal,
+  includeLabel = true,
+  includeTurn = true
+}: {
+  executionMeta: ThreadExecutionMeta;
+  activeGoal?: ThreadGoalView | null;
+  includeLabel?: boolean;
+  includeTurn?: boolean;
+}) => {
+  if (threadExecutionTimeMode(executionMeta, activeGoal) !== "goal" || !activeGoal) {
+    return <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={includeLabel} />;
+  }
+  return (
+    <>
+      {includeLabel ? `${executionMeta.label} · ` : null}
+      <LiveGoalDuration
+        status={activeGoal.status}
+        running
+        activeTurnStartedAt={executionMeta.startedAt}
+        timeUsedSeconds={activeGoal.timeUsedSeconds}
+        updatedAt={activeGoal.updatedAt}
+      />
+      {includeTurn && executionMeta.startedAt ? (
+        <> · Turn <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} /></>
+      ) : null}
+    </>
+  );
 };
 
 export const formatThreadDuration = (durationMs: number) => {

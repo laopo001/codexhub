@@ -21,6 +21,7 @@ const thread = (): ThreadState => ({
   threadOptions: {},
   goalRun: { policy: null, continuation: "normal" },
   running: false,
+  executionStatus: "idle",
   title: "Test",
   updatedAt: "2026-01-01T00:00:00.000Z",
   records: [],

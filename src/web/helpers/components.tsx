@@ -9,7 +9,7 @@ import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../..
 import { asRecord } from "../../shared/recordTypes.js";
 import { authToken } from "./core.js";
 import { contextMenuPosition, writeTextToClipboard } from "./composer.js";
-import { LiveStatusLabel, LiveThreadExecutionText, StatusStartedAtContext } from "./liveTime.js";
+import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
 import { emptyMemoryCitation, formatMemoryCitationCount, formatMemoryCitationLines, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
 import { formatInspectDetail, renderToolMessageBody } from "./toolPreview.js";
 import { activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
@@ -842,9 +842,6 @@ export const ActivityStatusBar = ({
         <span className={`activityStatusSummary ${executionMeta.status}`}>
           <span className="activityStatusIndicator" aria-hidden="true" />
           <strong>{executionMeta.label}</strong>
-          {executionMeta.duration || executionMeta.startedAt ? (
-            <span className="activityStatusDuration"><LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} /></span>
-          ) : null}
         </span>
         {summaryStatuses.length ? (
           <span className="activityStatusHeaderMetrics">

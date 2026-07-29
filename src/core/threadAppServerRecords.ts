@@ -1,7 +1,7 @@
 import { recordsToViews } from "./codexRecordView.js";
 import type { ThreadState } from "./threadHubState.js";
 import { fileChanges } from "./threadApprovalRecords.js";
-import { orderCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
+import { orderCodexRecords } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 
 export const codexRecordFromAppServerItem = (
@@ -363,26 +363,17 @@ export const statusUsageRecordFromAppServerUsage = (
   const normalizedLast = appServerTokenUsageBreakdown(last);
   const total = asRecord(usage.total);
   const normalizedTotal = total ? appServerTokenUsageBreakdown(total) : null;
-  const scopeRecord = latestUserMessageRecord(thread.records);
   const previousStatusRecord = latestStatusUsageRecord(thread.records);
   const previousStatusPayload = asRecord(previousStatusRecord?.payload);
-  const previousScopeKey = typeof previousStatusPayload?.scope_key === "string"
-    ? previousStatusPayload.scope_key
-    : null;
-  const scopeKey = scopeRecord?.id ?? previousScopeKey ?? `turn:${turnId}`;
-  const scopeTurnId = scopeRecord
-    ? turnIdFromAppRecordId(thread.threadId, scopeRecord.id) ?? turnId
-    : previousStatusRecord
-      ? turnIdFromAppRecordId(thread.threadId, previousStatusRecord.id) ?? turnId
-      : turnId;
-  const id = `app:${thread.threadId}:${scopeTurnId}:statusUsage:${stablePayloadKey(scopeKey)}`;
+  const scopeKey = `turn:${turnId}`;
+  const id = `app:${thread.threadId}:${turnId}:statusUsage:${stablePayloadKey(scopeKey)}`;
   const existing = thread.records.find((record) => record.id === id);
   const existingPayload = asRecord(existing?.payload);
   const existingUsage = internalTokenUsageBreakdown(asRecord(existingPayload?.usage) ?? {});
   const previousTotal = asRecord(existingPayload?.cumulative_usage)
     ?? asRecord(previousStatusPayload?.cumulative_usage);
   // App-server total usage is monotonic across model calls and compaction.
-  // A fresh user scope has no existing record yet, so use the previous scope's
+  // A fresh Turn has no existing record yet, so use the previous Turn's
   // cumulative total as its baseline instead of counting the full prompt in `last`.
   const increment = normalizedTotal && previousTotal
     ? tokenUsageDelta(normalizedTotal, internalTokenUsageBreakdown(previousTotal), normalizedLast)
@@ -395,6 +386,7 @@ export const statusUsageRecordFromAppServerUsage = (
     payload: {
       type: "status_usage",
       scope_key: scopeKey,
+      turn_id: turnId,
       usage: scopedUsage,
       ...(normalizedTotal ? { cumulative_usage: normalizedTotal } : {})
     },
@@ -456,14 +448,6 @@ const tokenUsageAdd = (left: NormalizedTokenUsage, right: NormalizedTokenUsage):
   };
 };
 
-const latestUserMessageRecord = (records: CodexRecord[]) => {
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    const payload = asRecord(records[index].payload);
-    if (records[index].type === "event_msg" && payload?.type === "user_message") return records[index];
-  }
-  return null;
-};
-
 const latestStatusUsageRecord = (records: CodexRecord[]) => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     if (isStatusUsageRecord(records[index])) return records[index];
@@ -481,7 +465,14 @@ export const repositionStatusUsageRecords = (thread: ThreadState) => {
     if (!isStatusUsageRecord(record)) continue;
     const payload = asRecord(record.payload);
     const scopeKey = typeof payload?.scope_key === "string" ? payload.scope_key : "";
-    const scopeRecord = scopeKey ? thread.records.find((candidate) => candidate.id === scopeKey) : null;
+    const turnId = typeof payload?.turn_id === "string" ? payload.turn_id : "";
+    const scopeRecord = scopeKey
+      ? thread.records.find((candidate) => candidate.id === scopeKey)
+        ?? thread.records.find((candidate) => {
+          const candidatePayload = asRecord(candidate.payload);
+          return candidatePayload?.type === "task_started" && candidatePayload.turn_id === turnId;
+        })
+      : null;
     if (typeof scopeRecord?.order === "number") record.order = scopeRecord.order + 0.5;
   }
   thread.records = orderThreadRecords(thread.records);

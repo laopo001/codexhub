@@ -250,13 +250,11 @@ export type ActivityStatusSnapshot = {
   statuses: ActivityStatusView[];
 };
 export type ThreadExecutionMeta = {
-  status: "running" | "idle";
-  label: "Running" | "Needs input" | "Idle";
+  status: "waiting" | "running" | "idle";
+  label: "Waiting" | "Running" | "Needs input" | "Idle";
   duration: string;
   text: string;
   startedAt?: string;
-  turnStartedAt?: string;
-  observedAt?: string;
 };
 export type ActivityStatusFile = {
   path: string;

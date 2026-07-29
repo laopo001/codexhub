@@ -138,6 +138,11 @@
   color: #1f6b43;
 }
 
+.openThreadTabBadge.waiting {
+  background: #fff0cf;
+  color: #825d16;
+}
+
 .openThreadTabDetails {
   display: grid;
   gap: 6px;
@@ -770,7 +775,8 @@
   gap: 5px;
 }
 
-.composerActionButtons.status-running {
+.composerActionButtons.status-running,
+.composerActionButtons.status-waiting {
   --composer-status-ring: #f28c28;
 }
 

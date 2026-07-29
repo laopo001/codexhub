@@ -40,9 +40,7 @@ export type ThreadState = {
   threadOptions: ThreadOptions;
   goalRun: GoalRunState;
   running: boolean;
-  activeRunStartedAt?: string;
-  activeRunRecoveryPending?: boolean;
-  activeTurnStartedAt?: string;
+  executionStatus: "waiting" | "running" | "idle";
   title: string;
   updatedAt: string;
   records: CodexRecord[];

@@ -6,6 +6,7 @@ import { recordsToDetailedViews } from "./detailedRecordViews.js";
 import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from "./helpers/turnDurations.js";
 import { embeddedWorkspacePaths, isEmbeddedHostSurface, webSurface } from "./appConfig.js";
 import {
+  activeGoalActivityScopeFromRecords,
   activityStatusesFromRecords,
   approvalPolicyKind,
   activityStatusSnapshotsFromRecords,
@@ -239,35 +240,54 @@ export const useAppSelectors = (state: AppState) => {
     [displayRecords]
   );
   const latestTurnActivity = useMemo(
-    () => latestTurnActivityScope(displayRecords),
-    [displayRecords]
-  );
-  const latestTurnStatuses = useMemo(
-    () => activityStatusesFromRecords(latestTurnActivity.records),
-    [latestTurnActivity.records]
-  );
-  const turnStatusItems = latestTurnStatuses;
-  const latestTurnRunning = Boolean(
-    activeThread
-    && threadExecutionIsRunning(activeThread.running, latestTurnActivity.turnStatus)
-  );
-  const activityStatusSnapshots = useMemo(
-    () => activityStatusSnapshotsFromRecords(displayRecords, latestTurnRunning),
-    [displayRecords, latestTurnRunning]
+    () => activeThread?.status === "waiting"
+      ? {
+          key: "waiting",
+          label: "waiting for app-server",
+          records: [],
+          turnStatus: null
+        }
+      : latestTurnActivityScope(displayRecords, activeThread?.activeTurnId),
+    [activeThread?.activeTurnId, activeThread?.status, displayRecords]
   );
   const activeGoal = useMemo(
     () => latestThreadGoalFromRecords(goalRecords, activeThread?.threadId),
     [activeThread?.threadId, goalRecords]
   );
+  const activeGoalActivity = useMemo(
+    () => activeGoal
+      ? activeGoalActivityScopeFromRecords(displayRecords, activeThread?.threadId)
+      : null,
+    [activeGoal, activeThread?.threadId, displayRecords]
+  );
+  const latestTurnStatuses = useMemo(
+    () => activityStatusesFromRecords(activeGoalActivity?.records ?? latestTurnActivity.records),
+    [activeGoalActivity?.records, latestTurnActivity.records]
+  );
+  const turnStatusItems = latestTurnStatuses;
+  const latestTurnRunning = Boolean(
+    activeThread
+    && activeThread.status !== "waiting"
+    && threadExecutionIsRunning(activeThread.running, latestTurnActivity.turnStatus)
+  );
+  const activityStatusSnapshots = useMemo(
+    () => activityStatusSnapshotsFromRecords(
+      displayRecords,
+      latestTurnRunning ? latestTurnActivity.turnId : undefined,
+      activeThread?.threadId
+    ),
+    [activeThread?.threadId, displayRecords, latestTurnActivity.turnId, latestTurnRunning]
+  );
+  const statusActivityKey = activeGoalActivity?.key ?? latestTurnActivity.key;
+  const statusScopeKey = activeThread?.threadId && statusActivityKey
+    ? `${activeThread.threadId}:${statusActivityKey}`
+    : "";
   const statusPanelExpanded = Boolean(
     activeThread?.threadId
-    && latestTurnActivity.key
-    && state.expandedStatusTurns[activeThread.threadId] === latestTurnActivity.key
+    && statusScopeKey
+    && state.expandedStatusTurns[activeThread.threadId] === statusScopeKey
   );
-  const statusPanelAvailable = latestTurnRunning;
-  const statusScopeKey = activeThread?.threadId && latestTurnActivity.key
-    ? `${activeThread.threadId}:${latestTurnActivity.key}`
-    : "";
+  const statusPanelAvailable = activeThread?.status === "waiting" || latestTurnRunning;
   const activeExpandedStatusKeys = useMemo(
     () => new Set(statusScopeKey ? state.expandedStatusKeys[statusScopeKey] ?? [] : []),
     [state.expandedStatusKeys, statusScopeKey]
@@ -299,7 +319,12 @@ export const useAppSelectors = (state: AppState) => {
   const activeDisplayThreadId = activeThread?.threadId ?? state.activeTabThreadId;
   const activeThreadIsOpen = Boolean(activeThread && openThreadIds.includes(activeThread.threadId));
   const activeRuntimeOnline = Boolean(activeThread?.runtime.online && activeThread.runtime.runnable !== false);
-  const activeCanStop = Boolean(activeThreadIsOpen && activeRuntimeOnline && activeThread?.running);
+  const activeCanStop = Boolean(
+    activeThreadIsOpen
+    && activeRuntimeOnline
+    && activeThread?.status === "running"
+    && activeThread.activeTurnId
+  );
   const showComposerSendButton = Boolean(activeThread && !activeThread.running);
   const openThreadEmptyMessage = openThreadIds.length
     ? selectedProject

@@ -476,7 +476,83 @@ export type TurnActivityScope = {
   turnStatus: ActivityStatusView | null;
 };
 
-export const latestTurnActivityScope = (records: CodexRecord[]): TurnActivityScope => {
+export type GoalActivityScope = {
+  key: string;
+  records: CodexRecord[];
+  turnIds: string[];
+};
+
+type GoalActivitySpan = GoalActivityScope & {
+  ranges: GoalActivityRange[];
+  active: boolean;
+  closed: boolean;
+};
+
+type GoalActivityRange = {
+  startAtMs: number | null;
+  endAtMs: number | null;
+  startIndex: number;
+  endIndex: number | null;
+};
+
+type TurnActivityGroup = {
+  turnId: string;
+  records: CodexRecord[];
+  firstIndex: number;
+  lastIndex: number;
+  startedAtMs: number | null;
+  endedAtMs: number | null;
+  firstAtMs: number | null;
+  lastAtMs: number | null;
+};
+
+const activityScopeForTurn = (records: CodexRecord[], turnId: string): TurnActivityScope => {
+  const scopeRecords = records.filter((record) => recordTurnId(record) === turnId);
+  const userRecord = scopeRecords.find(isUserInputRecord);
+  const startedAt = turnStartedAtFromRecords(records, turnId);
+  const endedAt = turnEndedAtFromRecords(records, turnId);
+  return {
+    key: `turn:${turnId}`,
+    label: startedAt ? `after ${formatTurnActivityScopeTime(startedAt, "turn")}` : `turn ${turnId}`,
+    records: scopeRecords,
+    turnId,
+    ...(userRecord ? { userRecordId: userRecord.id } : {}),
+    ...(startedAt ? { startedAt } : {}),
+    ...(endedAt ? { endedAt } : {}),
+    ...optionalDuration(turnDurationMsForTurn(records, turnId)),
+    turnStatus: latestTurnStatusForTurn(records, turnId)
+  };
+};
+
+export const activeGoalActivityScopeFromRecords = (
+  records: CodexRecord[],
+  threadId?: string
+): GoalActivityScope | null => {
+  const spans = goalActivitySpansFromRecords(records, threadId);
+  let span: GoalActivitySpan | undefined;
+  for (let index = spans.length - 1; index >= 0; index -= 1) {
+    if (!spans[index].closed && spans[index].active) {
+      span = spans[index];
+      break;
+    }
+  }
+  if (!span) return null;
+  return {
+    key: span.key,
+    records: span.records,
+    turnIds: span.turnIds
+  };
+};
+
+export const latestTurnActivityScope = (
+  records: CodexRecord[],
+  preferredTurnId?: string
+): TurnActivityScope => {
+  const lifecycleTurnId = preferredTurnId ?? latestLifecycleTurnId(records);
+  if (lifecycleTurnId) return activityScopeForTurn(records, lifecycleTurnId);
+
+  // Legacy/unscoped records have no app-server Turn identity. Keep a narrow
+  // fallback so old transcripts remain readable without influencing current protocol records.
   for (let index = records.length - 1; index >= 0; index -= 1) {
     if (!isUserInputRecord(records[index])) continue;
     const record = records[index];
@@ -529,11 +605,13 @@ const formatTurnActivityScopeTime = (timestamp: string | undefined, source: "tur
 export const activityStatusesFromRecords = (records: CodexRecord[]): ActivityStatusView[] => {
   const statuses = new Map<string, ActivityStatusView>();
   let fileStatus: ActivityStatusView | null = null;
-  let scopedUsageStatus: ActivityStatusView | null = null;
+  let scopedUsage: Record<string, number> | null = null;
+  let scopedUsageAt: string | undefined;
   for (const record of records) {
     const payload = asRecord(record.payload);
     if (record.type === "event_msg" && payload?.type === "status_usage") {
-      scopedUsageStatus = activityStatusFromRecord(record);
+      scopedUsage = addStatusUsage(scopedUsage, asRecord(payload.usage));
+      scopedUsageAt = record.timestamp ?? scopedUsageAt;
       continue;
     }
     if (record.type === "response_item" && asRecord(payload?.approval)) {
@@ -548,7 +626,16 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
     if (status && isActivityStatusDetail(status)) statuses.set(status.key, status);
   }
   if (fileStatus) statuses.set(fileStatus.key, fileStatus);
-  if (scopedUsageStatus) statuses.set(scopedUsageStatus.key, scopedUsageStatus);
+  if (scopedUsage) {
+    statuses.set("usage", {
+      key: "usage",
+      label: "Usage",
+      status: "completed",
+      at: scopedUsageAt,
+      text: formatUsageBreakdown(scopedUsage),
+      summaryText: formatUsageSummary(scopedUsage)
+    });
+  }
   return [...statuses.values()]
     .filter(isActivityStatusDetail)
     .sort((left, right) => activityStatusPriority(left.key) - activityStatusPriority(right.key));
@@ -556,12 +643,49 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
 
 export const activityStatusSnapshotsFromRecords = (
   records: CodexRecord[],
-  currentScopeRunning: boolean
+  currentTurnId?: string,
+  threadId?: string
 ): ActivityStatusSnapshot[] => {
+  const turnGroups = turnActivityGroupsFromRecords(records);
+  if (turnGroups.length) {
+    const goalSpans = goalActivitySpansFromRecords(records, threadId, turnGroups);
+    const goalByTurnId = new Map(goalSpans.flatMap((span) =>
+      span.turnIds.map((turnId) => [turnId, span] as const)
+    ));
+    const snapshots: ActivityStatusSnapshot[] = [];
+    for (const group of turnGroups) {
+      if (goalByTurnId.has(group.turnId) || group.turnId === currentTurnId) continue;
+      const targetRecordId = activityStatusSnapshotTargetRecordId(group.records);
+      if (!targetRecordId) continue;
+      const statuses = activityStatusesFromRecords(group.records);
+      if (!statuses.length) continue;
+      snapshots.push({
+        targetRecordId,
+        statuses: cloneActivityStatuses(statuses)
+      });
+    }
+    for (const span of goalSpans) {
+      if (!span.closed || !span.turnIds.length) continue;
+      const lastTurnId = span.turnIds.at(-1);
+      if (!lastTurnId || lastTurnId === currentTurnId) continue;
+      const lastTurn = turnGroups.find((group) => group.turnId === lastTurnId);
+      const targetRecordId = lastTurn ? activityStatusSnapshotTargetRecordId(lastTurn.records) : null;
+      if (!targetRecordId) continue;
+      const statuses = activityStatusesFromRecords(span.records);
+      if (!statuses.length) continue;
+      snapshots.push({
+        targetRecordId,
+        statuses: cloneActivityStatuses(statuses)
+      });
+    }
+    return snapshots;
+  }
+
+  // Legacy records without Turn ids remain grouped by their user-input boundary.
   const userRecordIndexes = records.flatMap((record, index) => isUserInputRecord(record) ? [index] : []);
   return userRecordIndexes.flatMap((userRecordIndex, scopeIndex) => {
     const isCurrentScope = scopeIndex === userRecordIndexes.length - 1;
-    if (isCurrentScope && currentScopeRunning) return [];
+    if (isCurrentScope && currentTurnId === "legacy-current") return [];
     const nextUserRecordIndex = userRecordIndexes[scopeIndex + 1] ?? records.length;
     const scopeRecords = records.slice(userRecordIndex + 1, nextUserRecordIndex);
     const targetRecordId = activityStatusSnapshotTargetRecordId(scopeRecords);
@@ -570,13 +694,243 @@ export const activityStatusSnapshotsFromRecords = (
     if (!statuses.length) return [];
     return [{
       targetRecordId,
-      statuses: statuses.map((status) => ({
-        ...status,
-        files: status.files?.map((file) => ({ ...file }))
-      }))
+      statuses: cloneActivityStatuses(statuses)
     }];
   });
 };
+
+const cloneActivityStatuses = (statuses: ActivityStatusView[]) =>
+  statuses.map((status) => ({
+    ...status,
+    files: status.files?.map((file) => ({ ...file }))
+  }));
+
+const statusUsageFields = [
+  "input_tokens",
+  "cached_input_tokens",
+  "output_tokens",
+  "reasoning_output_tokens",
+  "total_tokens"
+] as const;
+
+const addStatusUsage = (
+  current: Record<string, number> | null,
+  incoming: Record<string, unknown> | null
+) => {
+  if (!incoming) return current;
+  const next = { ...(current ?? {}) };
+  let found = false;
+  for (const field of statusUsageFields) {
+    const value = incoming[field];
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    next[field] = (next[field] ?? 0) + value;
+    found = true;
+  }
+  return found ? next : current;
+};
+
+const turnActivityGroupsFromRecords = (records: CodexRecord[]): TurnActivityGroup[] => {
+  const groups = new Map<string, TurnActivityGroup>();
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    const turnId = recordTurnId(record);
+    if (!turnId) continue;
+    const payload = asRecord(record.payload);
+    const atMs = recordTimestampMs(record);
+    const existing = groups.get(turnId);
+    const group = existing ?? {
+      turnId,
+      records: [],
+      firstIndex: index,
+      lastIndex: index,
+      startedAtMs: null,
+      endedAtMs: null,
+      firstAtMs: atMs,
+      lastAtMs: atMs
+    };
+    group.records.push(record);
+    group.lastIndex = index;
+    if (atMs !== null) {
+      group.firstAtMs = group.firstAtMs === null ? atMs : Math.min(group.firstAtMs, atMs);
+      group.lastAtMs = group.lastAtMs === null ? atMs : Math.max(group.lastAtMs, atMs);
+      if (payload?.type === "task_started") group.startedAtMs = atMs;
+      if (isTurnTerminalType(payload?.type)) group.endedAtMs = atMs;
+    }
+    if (!existing) groups.set(turnId, group);
+  }
+  return [...groups.values()];
+};
+
+const goalActivitySpansFromRecords = (
+  records: CodexRecord[],
+  threadId?: string,
+  turnGroups = turnActivityGroupsFromRecords(records)
+): GoalActivitySpan[] => {
+  type MutableGoalSpan = GoalActivitySpan & {
+    createdAtMs: number | null;
+    startRecordId: string;
+  };
+  const spans: MutableGoalSpan[] = [];
+  let current: MutableGoalSpan | null = null;
+
+  const closeActiveRange = (span: MutableGoalSpan, endAtMs: number | null, endIndex: number) => {
+    const range = span.ranges.at(-1);
+    if (!range || range.endIndex !== null) return;
+    range.endAtMs = endAtMs;
+    range.endIndex = endIndex;
+    span.active = false;
+  };
+
+  const openActiveRange = (span: MutableGoalSpan, startAtMs: number | null, startIndex: number) => {
+    const range = span.ranges.at(-1);
+    if (range && range.endIndex === null) {
+      span.active = true;
+      return;
+    }
+    span.ranges.push({
+      startAtMs,
+      endAtMs: null,
+      startIndex,
+      endIndex: null
+    });
+    span.active = true;
+  };
+
+  const closeCurrent = (endAtMs: number | null, endIndex: number) => {
+    if (!current || current.closed) return;
+    closeActiveRange(current, endAtMs, endIndex);
+    current.closed = true;
+    current.active = false;
+  };
+
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    const payload = asRecord(record.payload);
+    const type = typeof payload?.type === "string" ? payload.type : "";
+    if (type === "thread_goal_cleared") {
+      if (goalRecordMatchesThread(payload, null, threadId)) {
+        closeCurrent(recordTimestampMs(record), index);
+      }
+      continue;
+    }
+    if (type !== "thread_goal_updated") continue;
+    const goal = asRecord(payload?.goal);
+    if (!goal || !goalRecordMatchesThread(payload, goal, threadId)) continue;
+    const createdAtMs = goalTimeMs(goal.createdAt);
+    const sameGoal = Boolean(
+      current
+      && !current.closed
+      && (
+        (createdAtMs !== null && current.createdAtMs === createdAtMs)
+        || (
+          createdAtMs === null
+          || current.createdAtMs === null
+        )
+      )
+    );
+    if (!sameGoal) {
+      closeCurrent(createdAtMs ?? recordTimestampMs(record), index);
+      const goalThreadId = stringField(payload, "threadId")
+        ?? stringField(goal, "threadId")
+        ?? threadId
+        ?? "thread";
+      current = {
+        key: goalActivityKey(goalThreadId, createdAtMs, record.id),
+        records: [],
+        turnIds: [],
+        ranges: [],
+        active: false,
+        closed: false,
+        createdAtMs,
+        startRecordId: record.id
+      };
+      spans.push(current);
+    } else if (current) {
+      if (current.createdAtMs === null && createdAtMs !== null) {
+        current.createdAtMs = createdAtMs;
+        current.key = goalActivityKey(
+          stringField(payload, "threadId") ?? stringField(goal, "threadId") ?? threadId ?? "thread",
+          createdAtMs,
+          current.startRecordId
+        );
+      }
+    }
+    if (!current) continue;
+    const recordAtMs = recordTimestampMs(record);
+    if (goal.status === "active") {
+      const firstRangeStartAtMs = current.ranges.length ? recordAtMs : createdAtMs ?? recordAtMs;
+      openActiveRange(current, firstRangeStartAtMs, index);
+      continue;
+    }
+    closeActiveRange(current, recordAtMs, index);
+    if (goal.status === "complete") closeCurrent(recordAtMs, index);
+  }
+
+  for (const group of turnGroups) {
+    const span = matchingGoalSpan(group, spans);
+    if (!span) continue;
+    span.turnIds.push(group.turnId);
+    span.records.push(...group.records);
+  }
+  return spans;
+};
+
+const matchingGoalSpan = <T extends GoalActivitySpan>(
+  group: TurnActivityGroup,
+  spans: T[]
+) => {
+  const turnStartAtMs = group.startedAtMs ?? group.firstAtMs;
+  const turnEndAtMs = group.endedAtMs ?? group.lastAtMs ?? turnStartAtMs;
+  let match: T | null = null;
+  let matchRangeStartAtMs = Number.NEGATIVE_INFINITY;
+  let matchRangeStartIndex = Number.NEGATIVE_INFINITY;
+  for (const span of spans) {
+    for (const range of span.ranges) {
+      const overlapsByTime = (
+        turnStartAtMs !== null
+        && turnEndAtMs !== null
+        && range.startAtMs !== null
+      ) ? !(
+          turnEndAtMs < range.startAtMs
+          || (
+            turnEndAtMs === range.startAtMs
+            && group.lastIndex < range.startIndex
+          )
+          || (
+            range.endAtMs !== null
+            && (
+              turnStartAtMs > range.endAtMs
+              || (
+                turnStartAtMs === range.endAtMs
+                && range.endIndex !== null
+                && group.firstIndex > range.endIndex
+              )
+            )
+          )
+        )
+        : group.firstIndex <= (range.endIndex ?? Number.POSITIVE_INFINITY)
+          && group.lastIndex >= range.startIndex;
+      if (!overlapsByTime) continue;
+      const rangeStartAtMs = range.startAtMs ?? Number.NEGATIVE_INFINITY;
+      if (
+        !match
+        || rangeStartAtMs > matchRangeStartAtMs
+        || (
+          rangeStartAtMs === matchRangeStartAtMs
+          && range.startIndex > matchRangeStartIndex
+        )
+      ) {
+        match = span;
+        matchRangeStartAtMs = rangeStartAtMs;
+        matchRangeStartIndex = range.startIndex;
+      }
+    }
+  }
+  return match;
+};
+
+const goalActivityKey = (threadId: string, createdAtMs: number | null, fallbackId: string) =>
+  `goal:${threadId}:${createdAtMs ?? fallbackId}`;
 
 export const withActivityStatusSnapshots = (
   views: WebRecordView[],

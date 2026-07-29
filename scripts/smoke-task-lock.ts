@@ -95,9 +95,8 @@ type PartialRuntimeSummary = {
 
 type ThreadDetail = {
   running?: boolean;
-  activeRunStartedAt?: string;
-  activeTurnStartedAt?: string;
-  activeTurnObservedAt?: string;
+  status?: "waiting" | "running" | "idle";
+  activeTurnId?: string;
   threadUsage?: PartialThreadUsage;
   records?: Array<{
     id: string;
@@ -312,24 +311,34 @@ const main = async () => {
         }
       })
     });
+    const waitingDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (
+      !waitingDetail.running
+      || waitingDetail.status !== "waiting"
+      || waitingDetail.activeTurnId !== undefined
+    ) {
+      throw new Error(`Turn was not Waiting before app-server acceptance: ${JSON.stringify(waitingDetail)}`);
+    }
     const modeTurn = await fake.nextTurn();
     await fake.expectNoSessionCommand("subscribe_thread_records", 100);
     const runningTimingDetail = await apiJson<ThreadDetail>(
       apiBase,
       `/api/threads/${encodeURIComponent(fake.threadId)}`
     );
-    const runningRunStartedAtMs = Date.parse(runningTimingDetail.activeRunStartedAt ?? "");
-    const runningStartedAtMs = Date.parse(runningTimingDetail.activeTurnStartedAt ?? "");
-    const runningObservedAtMs = Date.parse(runningTimingDetail.activeTurnObservedAt ?? "");
+    const runningStartedRecord = runningTimingDetail.records?.find((record) => {
+      const payload = objectValue(record.payload);
+      return payload?.type === "task_started" && payload.turn_id === modeTurn.turnId;
+    });
     if (
       !runningTimingDetail.running
-      || !Number.isFinite(runningRunStartedAtMs)
-      || !Number.isFinite(runningStartedAtMs)
-      || !Number.isFinite(runningObservedAtMs)
-      || runningRunStartedAtMs !== runningStartedAtMs
-      || runningObservedAtMs < runningStartedAtMs
+      || runningTimingDetail.status !== "running"
+      || runningTimingDetail.activeTurnId !== modeTurn.turnId
+      || !runningStartedRecord
     ) {
-      throw new Error(`running timing anchor missing from thread detail: ${JSON.stringify(runningTimingDetail)}`);
+      throw new Error(`app-server Turn identity or lifecycle record missing: ${JSON.stringify(runningTimingDetail)}`);
     }
     if (modeTurn.options?.collaborationMode !== "plan" || modeTurn.options?.goalMode !== true) {
       throw new Error(`web turn mode options were not forwarded: ${JSON.stringify(modeTurn.options)}`);
@@ -376,8 +385,12 @@ const main = async () => {
       apiBase,
       `/api/threads/${encodeURIComponent(fake.threadId)}`
     );
-    if (!beforeSteerDetail.running || !beforeSteerDetail.activeTurnStartedAt) {
-      throw new Error(`active web turn timing missing before steer: ${JSON.stringify(beforeSteerDetail)}`);
+    if (
+      !beforeSteerDetail.running
+      || beforeSteerDetail.status !== "running"
+      || beforeSteerDetail.activeTurnId !== activeWebTurnId
+    ) {
+      throw new Error(`active app-server Turn missing before steer: ${JSON.stringify(beforeSteerDetail)}`);
     }
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
       method: "POST",
@@ -400,10 +413,10 @@ const main = async () => {
     );
     if (
       !afterSteerDetail.running
-      || afterSteerDetail.activeRunStartedAt !== beforeSteerDetail.activeRunStartedAt
-      || afterSteerDetail.activeTurnStartedAt !== beforeSteerDetail.activeTurnStartedAt
+      || afterSteerDetail.status !== "running"
+      || afterSteerDetail.activeTurnId !== beforeSteerDetail.activeTurnId
     ) {
-      throw new Error(`web steer restarted running timing: ${JSON.stringify({ beforeSteerDetail, afterSteerDetail })}`);
+      throw new Error(`web steer replaced the active app-server Turn: ${JSON.stringify({ beforeSteerDetail, afterSteerDetail })}`);
     }
     const usageScopeItemId = `${activeWebTurnId}-usage-user`;
     fake.emitUserMessage(activeWebTurnId, usageScopeItemId, "steered web follow-up");
@@ -469,7 +482,7 @@ const main = async () => {
         modelContextWindow: 200000
       }
     });
-    await assertStatusUsage(apiBase, fake.threadId, { input: 1700, output: 180, total: 1880 });
+    await assertStatusUsage(apiBase, fake.threadId, { input: 200, output: 50, total: 250 });
     const nextUsageTurnId = `${activeWebTurnId}-next-user`;
     const nextUsageScopeItemId = `${nextUsageTurnId}-usage-user`;
     fake.emitUserMessage(nextUsageTurnId, nextUsageScopeItemId, "start a fresh usage scope");
@@ -506,7 +519,7 @@ const main = async () => {
     console.log("app-server token usage and account rate limits ok");
     fake.completeTurn(activeWebTurn);
     fake.emitTurnsSnapshotWithUser(nextUsageTurnId, nextUsageScopeItemId, "start a fresh usage scope");
-    await assertStatusUsage(apiBase, fake.threadId, { input: 2421, output: 343, total: 2764 });
+    await assertStatusUsage(apiBase, fake.threadId, { input: 900, output: 31, total: 931 });
     console.log("status usage accumulation and snapshot retention ok");
     console.log("web running turn steer ok");
 
@@ -665,10 +678,10 @@ const main = async () => {
     );
     if (
       !consumeRunningDetail.running
-      || !consumeRunningDetail.activeRunStartedAt
-      || consumeRunningDetail.activeRunStartedAt !== consumeRunningDetail.activeTurnStartedAt
+      || consumeRunningDetail.status !== "running"
+      || consumeRunningDetail.activeTurnId !== consumeTurn.turnId
     ) {
-      throw new Error(`consume goal initial run timing mismatch: ${JSON.stringify(consumeRunningDetail)}`);
+      throw new Error(`consume goal initial Turn identity mismatch: ${JSON.stringify(consumeRunningDetail)}`);
     }
     fake.emitAccountRateLimits(64);
     fake.emitTokenUsage(consumeTurn);
@@ -692,9 +705,11 @@ const main = async () => {
     );
     if (
       !retryRunningDetail.running
-      || retryRunningDetail.activeRunStartedAt !== consumeRunningDetail.activeRunStartedAt
+      || retryRunningDetail.status !== "running"
+      || retryRunningDetail.activeTurnId !== retryTurn.turnId
+      || retryRunningDetail.activeTurnId === consumeRunningDetail.activeTurnId
     ) {
-      throw new Error(`consume goal continuation reset run timing: ${JSON.stringify({
+      throw new Error(`consume goal continuation did not adopt the returned Turn identity: ${JSON.stringify({
         before: consumeRunningDetail,
         after: retryRunningDetail
       })}`);
@@ -1107,12 +1122,14 @@ class FakeMachine {
   }
 
   async completeNextTurn() {
-    const command = await this.waitForTurn();
+    const command = await this.nextTurn();
     this.completeTurn(command);
   }
 
   async nextTurn() {
-    return await this.waitForTurn();
+    const command = await this.waitForTurn();
+    this.acceptTurn(command);
+    return command;
   }
 
   async expectNoTurn(timeoutMs = 100) {
@@ -1656,15 +1673,37 @@ class FakeMachine {
       });
       return;
     }
-    const turn = { ...command, turnId: `fake-turn-${command.commandId}` };
+    this.pendingTurns.push({ ...command, turnId: `fake-turn-${command.commandId}` });
+    const waiter = this.turnWaiters.shift();
+    if (waiter) waiter(this.pendingTurns.shift()!);
+  }
+
+  private acceptTurn(turn: SessionCommand) {
+    if (!turn.turnId) throw new Error(`fake turn missing turnId: ${JSON.stringify(turn)}`);
     this.send({
       type: "session_event",
       sessionId: this.options.sessionId,
-      event: executionChanged(command.threadId ?? this.options.threadId, true, turn.turnId)
+      event: executionChanged(turn.threadId ?? this.options.threadId, true, turn.turnId)
     });
-    this.pendingTurns.push(turn);
-    const waiter = this.turnWaiters.shift();
-    if (waiter) waiter(this.pendingTurns.shift()!);
+    this.send({
+      type: "session_event",
+      sessionId: this.options.sessionId,
+      event: {
+        type: "thread_event",
+        threadId: turn.threadId ?? this.options.threadId,
+        heartbeat: false,
+        message: {
+          method: "turn/started",
+          params: {
+            threadId: turn.threadId ?? this.options.threadId,
+            turn: appServerTurn(turn.turnId, {
+              status: "inProgress",
+              startedAt: Date.now() / 1000
+            })
+          }
+        }
+      }
+    });
   }
 
   private recordSessionCommand(command: SessionCommand) {

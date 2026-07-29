@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { recordViewStatusDurationMs } from "../../src/core/codexRecordView.js";
 import type { CodexRecord, CodexRecordView } from "../../src/shared/recordTypes.js";
 import {
   formatThreadDuration,
   goalDurationMsFromProgress,
   latestGoalDurationAnchor,
+  LiveThreadRunningText,
   liveDurationMsFromAnchor,
-  runningExecutionStartedAt,
-  runningTurnStartedAt,
-  stableLiveDurationAnchor
+  stableLiveDurationAnchor,
+  threadExecutionTimeMode
 } from "../../src/web/helpers/liveTime.js";
 import {
   finalAnswerViewsWithTurnDurations,
@@ -91,25 +93,53 @@ test("running duration keeps its first observation anchor for the same Turn", ()
   assert.notStrictEqual(nextTurn, first);
 });
 
-test("running execution displays the active run clock instead of the current Turn clock", () => {
-  assert.equal(runningExecutionStartedAt(
-    "2026-07-19T02:00:00.000Z",
-    "2026-07-19T03:00:00.000Z",
-    "2026-07-19T03:00:01.000Z"
-  ), "2026-07-19T02:00:00.000Z");
-  assert.equal(runningExecutionStartedAt(
-    undefined,
-    "2026-07-19T03:00:00.000Z",
-    "2026-07-19T03:00:01.000Z"
-  ), "2026-07-19T03:00:00.000Z");
-  assert.equal(runningTurnStartedAt(
-    "2026-07-19T03:00:00.000Z",
-    "2026-07-19T03:00:01.000Z"
-  ), "2026-07-19T03:00:00.000Z");
-  assert.equal(runningTurnStartedAt(
-    undefined,
-    "2026-07-19T03:00:01.000Z"
-  ), "2026-07-19T03:00:01.000Z");
+test("execution time display prioritizes Waiting, then Goal total, then Turn", () => {
+  const running = {
+    status: "running",
+    label: "Running",
+    duration: "",
+    text: "Running",
+    startedAt: "2026-07-19T03:00:00.000Z"
+  } as const;
+  const goal = {
+    objective: "Finish the project",
+    status: "active",
+    timeUsedSeconds: 30_957,
+    updatedAt: "2026-07-19T03:00:00.000Z"
+  } as const;
+
+  assert.equal(threadExecutionTimeMode({ ...running, status: "waiting", label: "Waiting" }, goal), "waiting");
+  assert.equal(threadExecutionTimeMode(running, goal), "goal");
+  assert.equal(threadExecutionTimeMode(running, null), "turn");
+  assert.equal(threadExecutionTimeMode(running, { ...goal, timeUsedSeconds: undefined }), "turn");
+});
+
+test("compact Running text omits Turn while the middle display keeps both clocks", () => {
+  const executionMeta = {
+    status: "running",
+    label: "Running",
+    duration: "",
+    text: "Running",
+    startedAt: new Date(Date.now() - 5_000).toISOString()
+  } as const;
+  const activeGoal = {
+    objective: "Finish the project",
+    status: "active",
+    timeUsedSeconds: 120,
+    updatedAt: new Date().toISOString()
+  } as const;
+  const compact = renderToStaticMarkup(createElement(LiveThreadRunningText, {
+    executionMeta,
+    activeGoal,
+    includeTurn: false
+  }));
+  const middle = renderToStaticMarkup(createElement(LiveThreadRunningText, {
+    executionMeta,
+    activeGoal
+  }));
+
+  assert.doesNotMatch(compact, /Turn/);
+  assert.match(middle, /Turn/);
 });
 
 test("active Goal duration advances from the app-server accumulated time", () => {

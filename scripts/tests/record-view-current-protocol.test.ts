@@ -166,6 +166,315 @@ test("guidance messages stay inside the existing Turn activity scope", async () 
   assert.equal(scope.records.some((record) => record.id === "activity-before-guidance"), true);
 });
 
+test("Goal auto continuation status scope follows the current turnId without requiring a new user message", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { activityStatusesFromRecords, latestTurnActivityScope } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  const records: CodexRecord[] = [{
+    id: "app:goal-thread:turn-1:event:task_started",
+    timestamp: "2026-07-19T02:00:00.000Z",
+    type: "event_msg",
+    payload: { type: "task_started", turn_id: "turn-1" },
+    sourceThreadId: "goal-thread"
+  }, {
+    id: "app:goal-thread:turn-1:user:user-1",
+    type: "event_msg",
+    payload: { type: "user_message", message: "start the Goal" },
+    sourceThreadId: "goal-thread"
+  }, {
+    id: "app:goal-thread:turn-1:item:fileChange:file-1",
+    type: "response_item",
+    payload: {
+      type: "file_change",
+      status: "completed",
+      changes: [{ path: "first.ts", diff: "+first" }]
+    },
+    sourceThreadId: "goal-thread"
+  }, {
+    id: "app:goal-thread:turn-2:event:task_started",
+    timestamp: "2026-07-19T02:10:00.000Z",
+    type: "event_msg",
+    payload: { type: "task_started", turn_id: "turn-2" },
+    sourceThreadId: "goal-thread"
+  }, {
+    id: "app:goal-thread:turn-2:item:fileChange:file-2",
+    type: "response_item",
+    payload: {
+      type: "file_change",
+      status: "completed",
+      changes: [{ path: "second.ts", diff: "+second" }]
+    },
+    sourceThreadId: "goal-thread"
+  }];
+
+  const scope = latestTurnActivityScope(records, "turn-2");
+  assert.equal(scope.key, "turn:turn-2");
+  assert.equal(scope.startedAt, "2026-07-19T02:10:00.000Z");
+  assert.deepEqual(scope.records.map((record) => record.id), [
+    "app:goal-thread:turn-2:event:task_started",
+    "app:goal-thread:turn-2:item:fileChange:file-2"
+  ]);
+  assert.deepEqual(
+    activityStatusesFromRecords(scope.records)
+      .find((status) => status.key === "files")
+      ?.files
+      ?.map((file) => file.path),
+    ["second.ts"]
+  );
+});
+
+test("active Goal status accumulates multiple app-server Turns", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const {
+    activeGoalActivityScopeFromRecords,
+    activityStatusesFromRecords,
+    activityStatusSnapshotsFromRecords
+  } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  const goalCreatedAt = Date.parse("2026-07-19T02:00:00.000Z") / 1000;
+  const records: CodexRecord[] = [{
+    id: "goal-active",
+    timestamp: "2026-07-19T02:00:00.000Z",
+    type: "event_msg",
+    payload: {
+      type: "thread_goal_updated",
+      threadId: "goal-thread",
+      goal: {
+        threadId: "goal-thread",
+        objective: "finish across Turns",
+        status: "active",
+        createdAt: goalCreatedAt,
+        updatedAt: goalCreatedAt
+      }
+    }
+  }, ...goalTurnRecords("turn-1", "2026-07-19T02:00:01.000Z", {
+    file: "first.ts",
+    input: 100,
+    output: 20,
+    finalId: "goal-final-1",
+    completedAt: "2026-07-19T02:05:00.000Z"
+  }), ...goalTurnRecords("turn-2", "2026-07-19T02:10:00.000Z", {
+    file: "second.ts",
+    input: 60,
+    output: 10
+  })];
+
+  const scope = activeGoalActivityScopeFromRecords(records, "goal-thread");
+  assert.deepEqual(scope?.turnIds, ["turn-1", "turn-2"]);
+  const statuses = activityStatusesFromRecords(scope?.records ?? []);
+  assert.deepEqual(
+    statuses.find((status) => status.key === "files")?.files?.map((file) => file.path),
+    ["first.ts", "second.ts"]
+  );
+  assert.equal(statuses.find((status) => status.key === "usage")?.summaryText, "190 · in 160 · out 30");
+  assert.deepEqual(
+    activityStatusSnapshotsFromRecords(records, "turn-2", "goal-thread"),
+    []
+  );
+});
+
+test("Goal status excludes Turns while paused and resumes the same cumulative scope", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const {
+    activeGoalActivityScopeFromRecords,
+    activityStatusesFromRecords,
+    activityStatusSnapshotsFromRecords
+  } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  const goalCreatedAt = Date.parse("2026-07-19T02:00:00.000Z") / 1000;
+  const goalUpdate = (
+    id: string,
+    timestamp: string,
+    status: "active" | "paused" | "complete"
+  ): CodexRecord => ({
+    id,
+    timestamp,
+    type: "event_msg",
+    payload: {
+      type: "thread_goal_updated",
+      threadId: "goal-thread",
+      goal: {
+        threadId: "goal-thread",
+        objective: "finish across active intervals",
+        status,
+        createdAt: goalCreatedAt,
+        updatedAt: Date.parse(timestamp) / 1000
+      }
+    }
+  });
+  const firstTurn = goalTurnRecords("turn-1", "2026-07-19T02:00:01.000Z", {
+    file: "first.ts",
+    input: 100,
+    output: 20,
+    finalId: "goal-final-1",
+    completedAt: "2026-07-19T02:05:00.000Z"
+  });
+  const pausedTurn = goalTurnRecords("paused-turn", "2026-07-19T02:07:00.000Z", {
+    file: "paused.ts",
+    input: 900,
+    output: 90,
+    finalId: "paused-final",
+    completedAt: "2026-07-19T02:08:00.000Z"
+  });
+  const pausedRecords = [
+    goalUpdate("goal-active", "2026-07-19T02:00:00.000Z", "active"),
+    ...firstTurn,
+    goalUpdate("goal-paused", "2026-07-19T02:06:00.000Z", "paused"),
+    ...pausedTurn
+  ];
+  assert.equal(activeGoalActivityScopeFromRecords(pausedRecords, "goal-thread"), null);
+
+  const resumedRecords = [
+    ...pausedRecords,
+    goalUpdate("goal-resumed", "2026-07-19T02:09:00.000Z", "active"),
+    ...goalTurnRecords("turn-2", "2026-07-19T02:10:00.000Z", {
+      file: "second.ts",
+      input: 60,
+      output: 10,
+      finalId: "goal-final-2",
+      completedAt: "2026-07-19T02:15:00.000Z"
+    })
+  ];
+  const resumedScope = activeGoalActivityScopeFromRecords(resumedRecords, "goal-thread");
+  assert.deepEqual(resumedScope?.turnIds, ["turn-1", "turn-2"]);
+  assert.equal(
+    activityStatusesFromRecords(resumedScope?.records ?? [])
+      .find((status) => status.key === "usage")
+      ?.summaryText,
+    "190 · in 160 · out 30"
+  );
+
+  const completedRecords = [
+    ...resumedRecords,
+    goalUpdate("goal-complete", "2026-07-19T02:16:00.000Z", "complete")
+  ];
+  const snapshots = activityStatusSnapshotsFromRecords(completedRecords, undefined, "goal-thread");
+  const goalStatuses = snapshots.find((snapshot) => snapshot.targetRecordId === "goal-final-2")?.statuses ?? [];
+  assert.equal(goalStatuses.find((status) => status.key === "usage")?.summaryText, "190 · in 160 · out 30");
+  assert.deepEqual(
+    goalStatuses.find((status) => status.key === "files")?.files?.map((file) => file.path),
+    ["first.ts", "second.ts"]
+  );
+  assert.equal(
+    snapshots.find((snapshot) => snapshot.targetRecordId === "paused-final")
+      ?.statuses
+      .find((status) => status.key === "usage")
+      ?.summaryText,
+    "990 · in 900 · out 90"
+  );
+});
+
+test("completed Goal moves one cumulative status snapshot to its last FINAL_ANSWER", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const {
+    activeGoalActivityScopeFromRecords,
+    activityStatusSnapshotsFromRecords
+  } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  const goalCreatedAt = Date.parse("2026-07-19T02:00:00.000Z") / 1000;
+  const goalCompletedAt = Date.parse("2026-07-19T02:20:00.000Z") / 1000;
+  const records: CodexRecord[] = [
+    ...goalTurnRecords("ordinary-turn", "2026-07-19T01:50:00.000Z", {
+      file: "ordinary.ts",
+      input: 10,
+      output: 2,
+      finalId: "ordinary-final",
+      completedAt: "2026-07-19T01:55:00.000Z"
+    }),
+    {
+      id: "goal-active",
+      timestamp: "2026-07-19T02:00:00.000Z",
+      type: "event_msg",
+      payload: {
+        type: "thread_goal_updated",
+        threadId: "goal-thread",
+        goal: {
+          threadId: "goal-thread",
+          objective: "finish across Turns",
+          status: "active",
+          createdAt: goalCreatedAt,
+          updatedAt: goalCreatedAt
+        }
+      }
+    },
+    ...goalTurnRecords("turn-1", "2026-07-19T02:00:01.000Z", {
+      file: "first.ts",
+      input: 100,
+      output: 20,
+      finalId: "goal-final-1",
+      completedAt: "2026-07-19T02:05:00.000Z"
+    }),
+    ...goalTurnRecords("turn-2", "2026-07-19T02:10:00.000Z", {
+      file: "second.ts",
+      input: 60,
+      output: 10
+    }),
+    {
+      id: "goal-complete",
+      timestamp: "2026-07-19T02:20:00.000Z",
+      type: "event_msg",
+      payload: {
+        type: "thread_goal_updated",
+        threadId: "goal-thread",
+        goal: {
+          threadId: "goal-thread",
+          objective: "finish across Turns",
+          status: "complete",
+          createdAt: goalCreatedAt,
+          updatedAt: goalCompletedAt
+        }
+      }
+    },
+    {
+      id: "goal-final-2",
+      timestamp: "2026-07-19T02:20:01.000Z",
+      type: "event_msg",
+      payload: { type: "agent_message", turn_id: "turn-2", message: "Goal complete", phase: "final_answer" },
+      sourceThreadId: "goal-thread"
+    },
+    {
+      id: "app:goal-thread:turn-2:event:task_complete",
+      timestamp: "2026-07-19T02:20:02.000Z",
+      type: "event_msg",
+      payload: { type: "task_complete", turn_id: "turn-2" },
+      sourceThreadId: "goal-thread"
+    }
+  ];
+
+  assert.equal(activeGoalActivityScopeFromRecords(records, "goal-thread"), null);
+  const snapshots = activityStatusSnapshotsFromRecords(records, undefined, "goal-thread");
+  assert.deepEqual(snapshots.map((snapshot) => snapshot.targetRecordId), [
+    "ordinary-final",
+    "goal-final-2"
+  ]);
+  const goalStatuses = snapshots.find((snapshot) => snapshot.targetRecordId === "goal-final-2")?.statuses ?? [];
+  assert.deepEqual(
+    goalStatuses.find((status) => status.key === "files")?.files?.map((file) => file.path),
+    ["first.ts", "second.ts"]
+  );
+  assert.equal(goalStatuses.find((status) => status.key === "usage")?.summaryText, "190 · in 160 · out 30");
+});
+
 test("web goal extraction only consumes current camelCase ThreadGoal fields", async () => {
   const previousWindow = "window" in globalThis
     ? (globalThis as { window?: unknown }).window
@@ -219,3 +528,57 @@ test("web goal extraction only consumes current camelCase ThreadGoal fields", as
     updatedAt: undefined
   });
 });
+
+const goalTurnRecords = (
+  turnId: string,
+  startedAt: string,
+  options: {
+    file: string;
+    input: number;
+    output: number;
+    finalId?: string;
+    completedAt?: string;
+  }
+): CodexRecord[] => [{
+  id: `app:goal-thread:${turnId}:event:task_started`,
+  timestamp: startedAt,
+  type: "event_msg",
+  payload: { type: "task_started", turn_id: turnId },
+  sourceThreadId: "goal-thread"
+}, {
+  id: `app:goal-thread:${turnId}:item:fileChange:${options.file}`,
+  timestamp: startedAt,
+  type: "response_item",
+  payload: {
+    type: "file_change",
+    status: "completed",
+    changes: [{ path: options.file, diff: `+${options.file}` }]
+  },
+  sourceThreadId: "goal-thread"
+}, {
+  id: `app:goal-thread:${turnId}:statusUsage`,
+  timestamp: startedAt,
+  type: "event_msg",
+  payload: {
+    type: "status_usage",
+    turn_id: turnId,
+    usage: {
+      input_tokens: options.input,
+      output_tokens: options.output,
+      total_tokens: options.input + options.output
+    }
+  },
+  sourceThreadId: "goal-thread"
+}, ...(options.finalId ? [{
+  id: options.finalId,
+  timestamp: options.completedAt,
+  type: "event_msg" as const,
+  payload: { type: "agent_message", turn_id: turnId, message: "done", phase: "final_answer" },
+  sourceThreadId: "goal-thread"
+}] : []), ...(options.completedAt ? [{
+  id: `app:goal-thread:${turnId}:event:task_complete`,
+  timestamp: options.completedAt,
+  type: "event_msg" as const,
+  payload: { type: "task_complete", turn_id: turnId },
+  sourceThreadId: "goal-thread"
+}] : [])];

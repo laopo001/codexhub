@@ -15,6 +15,7 @@ import {
   formatRateLimitRemaining,
   formatResetTitle,
   latestTurnActivityScope,
+  latestThreadGoalFromRecords,
   recordsHavePendingInteraction,
   shortId,
   threadDisplayRecords,
@@ -24,9 +25,7 @@ import {
 import type { TurnActivityScope } from "./appHelpers.js";
 import {
   formatThreadDuration,
-  LiveThreadExecutionText,
-  runningExecutionStartedAt,
-  runningTurnStartedAt
+  LiveThreadRunningText
 } from "./helpers/liveTime.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
@@ -113,8 +112,9 @@ const OpenThreadTabLabel = ({
   const title = threadDisplayTitle(thread);
   const workspaceName = compactWorkspaceName(thread.workingDirectory);
   const records = threadDisplayRecords(thread.threadId, thread);
-  const activityScope = latestTurnActivityScope(records);
+  const activityScope = latestTurnActivityScope(records, thread.activeTurnId);
   const executionMeta = threadExecutionMeta(thread, activityScope);
+  const activeGoal = latestThreadGoalFromRecords(records, thread.threadId);
   const details = (
     <div className="openThreadTabDetails">
       <div>
@@ -131,7 +131,9 @@ const OpenThreadTabLabel = ({
       </div>
       <div>
         <span>Status</span>
-        <code><LiveThreadExecutionText executionMeta={executionMeta} /></code>
+        <code>
+          <LiveThreadRunningText executionMeta={executionMeta} activeGoal={activeGoal} includeTurn={false} />
+        </code>
       </div>
       {thread.runtime.machineId ? (
         <div>
@@ -157,7 +159,9 @@ const OpenThreadTabLabel = ({
         <span className="openThreadTabTitle">{title}</span>
         <span className="openThreadTabMeta">
           <code title={`${thread.workingDirectory}\n${thread.threadId}`}>{workspaceName} · {shortId(thread.threadId)}</code>
-          <em className={`openThreadTabBadge ${executionMeta.status}`}><LiveThreadExecutionText executionMeta={executionMeta} /></em>
+          <em className={`openThreadTabBadge ${executionMeta.status}`}>
+            <LiveThreadRunningText executionMeta={executionMeta} activeGoal={activeGoal} includeTurn={false} />
+          </em>
         </span>
       </span>
     </Popover>
@@ -276,29 +280,21 @@ export const threadExecutionMeta = (
   thread: OpenThreadState,
   activityScope: TurnActivityScope
 ): ThreadExecutionMeta => {
-  const running = threadExecutionIsRunning(thread.running, activityScope.turnStatus);
+  const waiting = thread.status === "waiting";
+  const running = !waiting && threadExecutionIsRunning(thread.running, activityScope.turnStatus);
   const needsInput = running && recordsHavePendingInteraction(activityScope.records);
   const startedAt = running
-    ? runningExecutionStartedAt(
-      thread.activeRunStartedAt,
-      thread.activeTurnStartedAt,
-      activityScope.startedAt
-    )
+    ? activityScope.startedAt
     : activityScope.startedAt ?? activityScope.turnStatus?.at;
-  const turnStartedAt = running
-    ? runningTurnStartedAt(thread.activeTurnStartedAt, activityScope.startedAt)
-    : undefined;
-  const durationMs = running ? undefined : activityScope.durationMs;
-  const status = running ? "running" : "idle";
-  const label = needsInput ? "Needs input" : running ? "Running" : "Idle";
+  const durationMs = running || waiting ? undefined : activityScope.durationMs;
+  const status = waiting ? "waiting" : running ? "running" : "idle";
+  const label = waiting ? "Waiting" : needsInput ? "Needs input" : running ? "Running" : "Idle";
   const duration = durationMs == null ? "" : formatThreadDuration(durationMs);
   return {
     status,
     label,
     duration,
     text: [label, duration].filter(Boolean).join(" · "),
-    ...(running && startedAt ? { startedAt } : {}),
-    ...(turnStartedAt ? { turnStartedAt } : {}),
-    ...(running && thread.activeTurnObservedAt ? { observedAt: thread.activeTurnObservedAt } : {})
+    ...(running && startedAt ? { startedAt } : {})
   };
 };

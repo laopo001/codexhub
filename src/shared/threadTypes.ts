@@ -9,6 +9,8 @@ export type ThreadGoalRunPolicy = {
 };
 
 /** Web/API 可见的 thread 摘要，records 之外的轻量投影。 */
+export type ThreadExecutionStatus = "waiting" | "running" | "idle";
+
 export type ThreadSummary = {
   threadId: string;
   workingDirectory: string;
@@ -21,13 +23,10 @@ export type ThreadSummary = {
   activePermissionProfile?: ThreadOptions["activePermissionProfile"] | null;
   sandboxPolicy?: ThreadOptions["sandboxPolicy"];
   runtime: ThreadRuntimeSummary;
-  status: "running" | "idle";
+  status: ThreadExecutionStatus;
   running: boolean;
-  /** 当前连续执行链的开始时间；Goal 自动续跑新的 Turn 时保持不变。 */
-  activeRunStartedAt?: string;
-  activeTurnStartedAt?: string;
-  /** 后端生成当前 running 投影的时间，用于校准浏览器与 server 的时钟差。 */
-  activeTurnObservedAt?: string;
+  /** app-server 已确认的当前 Turn；Waiting 阶段尚未产生。 */
+  activeTurnId?: string;
   title: string;
   updatedAt: string;
   messageCount: number;
