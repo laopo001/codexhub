@@ -25,9 +25,14 @@ export type SessionState = SessionSummary & {
 
 export type GoalRunState = {
   policy: ThreadGoalRunPolicy | null;
+  phase: "running" | "wrappingUp";
   objective?: string;
   status?: string;
   activeRun?: string;
+  wrapUpSteerTurnId?: string;
+  wrapUpSteerAttempts?: number;
+  usageLimitUpdatePending?: boolean;
+  usageLimitUpdateAttempts?: number;
   continuation: "normal" | "stopped" | "resume";
 };
 
@@ -57,6 +62,7 @@ export type PendingCommand = {
   workingDirectory?: string;
   keepTurns?: number;
   input?: ProxyInput;
+  recordSubmissionFailure?: boolean;
   knownAppServerTurnIds?: Set<string>;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;

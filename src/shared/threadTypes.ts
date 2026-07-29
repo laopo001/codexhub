@@ -8,6 +8,9 @@ export type ThreadGoalRunPolicy = {
   targetRemainingPercent: number;
 };
 
+/** CodexHub 本地 goal 策略当前所处的运行阶段。 */
+export type ThreadGoalRunPhase = "running" | "wrappingUp";
+
 /** Web/API 可见的 thread 摘要，records 之外的轻量投影。 */
 export type ThreadExecutionStatus = "waiting" | "running" | "idle";
 
@@ -33,6 +36,7 @@ export type ThreadSummary = {
   lastUsage?: Usage;
   threadUsage: ThreadUsage;
   goalRunPolicy?: ThreadGoalRunPolicy | null;
+  goalRunPhase?: ThreadGoalRunPhase | null;
 };
 
 /** thread 所属 machine runtime 的轻量信息；runtime incarnation id 不进入公开模型。 */

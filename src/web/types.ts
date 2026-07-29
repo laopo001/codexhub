@@ -48,9 +48,11 @@ export type ThreadGoalView = {
 };
 
 export type GoalDialogState = {
+  kind: "goal" | "burn";
   threadId: string;
   objective: string;
   targetRemainingPercent: string;
+  currentRemainingPercent?: number;
   saving: boolean;
   error: string;
 };

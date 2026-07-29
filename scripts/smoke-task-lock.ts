@@ -97,6 +97,8 @@ type ThreadDetail = {
   running?: boolean;
   status?: "waiting" | "running" | "idle";
   activeTurnId?: string;
+  goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
+  goalRunPhase?: "running" | "wrappingUp" | null;
   threadUsage?: PartialThreadUsage;
   records?: Array<{
     id: string;
@@ -104,8 +106,6 @@ type ThreadDetail = {
     payload?: unknown;
   }>;
 };
-
-const weeklyWrapUpObjective = "收尾工作";
 
 type MachineCommand = {
   commandId: string;
@@ -618,6 +618,94 @@ const main = async () => {
     );
     console.log("consume-until invalid target rejected ok");
 
+    const singleTurnBurnObjective = "single Turn crosses the 7d wrap-up trigger";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: singleTurnBurnObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 25
+        }
+      })
+    });
+    await fake.nextSessionCommand("set_goal");
+    const singleTurnBurn = await fake.nextTurn();
+    fake.failNextSteer("first safe wrap steer rejected");
+    fake.emitWeeklyAccountRateLimits(80);
+    const singleTurnLimitGoal = await fake.nextSessionCommand("set_goal");
+    if (singleTurnLimitGoal.goal?.status !== "usageLimited") {
+      throw new Error(`single Turn limit status mismatch: ${JSON.stringify(singleTurnLimitGoal.goal)}`);
+    }
+    const failedSingleTurnWrapUpSteer = await fake.nextSteer();
+    const singleTurnWrapUpSteer = await fake.nextSteer();
+    if (
+      failedSingleTurnWrapUpSteer.turnId !== singleTurnBurn.turnId
+      || singleTurnWrapUpSteer.turnId !== singleTurnBurn.turnId
+      || typeof singleTurnWrapUpSteer.input !== "string"
+      || !singleTurnWrapUpSteer.input.includes("安全收尾")
+    ) {
+      throw new Error(`single Turn wrap-up steer mismatch: ${JSON.stringify(singleTurnWrapUpSteer)}`);
+    }
+    fake.emitTokenUsage(singleTurnBurn);
+    await fake.expectNoSteer(150);
+    fake.completeTurn(singleTurnBurn);
+    await fake.expectNoTurn(150);
+    const singleTurnWrappedUp = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (singleTurnWrappedUp.goalRunPolicy !== null || singleTurnWrappedUp.goalRunPhase !== null) {
+      throw new Error(`single Turn burn policy remained after wrap-up: ${JSON.stringify(singleTurnWrappedUp)}`);
+    }
+    if (singleTurnWrappedUp.records?.some((record) => {
+      const payload = objectValue(record.payload);
+      return payload?.type === "submission_failed"
+        && typeof payload.input_text === "string"
+        && payload.input_text.includes("安全收尾");
+    })) {
+      throw new Error("internal safe wrap steer failure leaked into the transcript");
+    }
+
+    fake.emitAccountRateLimits(90);
+    await assertRuntimeAccountRateLimits(apiBase, fake.machineId, { secondaryUsedPercent: 90 });
+    fake.failNextUsageLimitedSetGoal("first idle usage-limited update rejected");
+    const alreadyLimitedObjective = "finish an already limited burn goal safely";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objective: alreadyLimitedObjective,
+        status: "active",
+        runPolicy: {
+          type: "consumeUntilWeeklyRemainingAtOrBelow",
+          targetRemainingPercent: 20
+        }
+      })
+    });
+    const alreadyLimitedGoal = await fake.nextSessionCommand("set_goal");
+    const failedAlreadyLimitedFinish = await fake.nextSessionCommand("set_goal");
+    const retriedAlreadyLimitedFinish = await fake.nextSessionCommand("set_goal");
+    if (
+      alreadyLimitedGoal.goal?.objective !== alreadyLimitedObjective
+      || failedAlreadyLimitedFinish.goal?.status !== "usageLimited"
+      || retriedAlreadyLimitedFinish.goal?.status !== "usageLimited"
+    ) {
+      throw new Error(`already-limited finish retry mismatch: ${JSON.stringify({
+        alreadyLimitedGoal: alreadyLimitedGoal.goal,
+        failedAlreadyLimitedFinish: failedAlreadyLimitedFinish.goal,
+        retriedAlreadyLimitedFinish: retriedAlreadyLimitedFinish.goal
+      })}`);
+    }
+    await waitForGoalRunPolicyCleared(apiBase, fake.threadId);
+    await fake.expectNoTurn(150);
+
+    fake.emitAccountRateLimits(64);
+    await assertRuntimeAccountRateLimits(apiBase, fake.machineId);
+    console.log("consume-until single Turn crossing safely wraps once ok");
+
     const nonWeeklyObjective = "do not continue on non-weekly secondary window";
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
       method: "POST",
@@ -735,26 +823,46 @@ const main = async () => {
       throw new Error(`consume policy-only retarget missing from thread detail: ${JSON.stringify(retargetDetail.goalRunPolicy)}`);
     }
     fake.emitWeeklyAccountRateLimits(84);
-    fake.emitTokenUsage(retryTurn);
     const wrapUpSetGoal = await fake.nextSessionCommand("set_goal");
     const wrapUpGoal = objectValue(wrapUpSetGoal.goal);
     if (
       wrapUpSetGoal.threadId !== fake.threadId
-      || wrapUpGoal?.objective !== weeklyWrapUpObjective
-      || wrapUpGoal.status !== "active"
-      || objectValue(wrapUpGoal.runPolicy) !== null
+      || wrapUpGoal?.status !== "usageLimited"
+      || "objective" in wrapUpGoal
     ) {
       throw new Error(`weekly wrap-up goal payload mismatch: ${JSON.stringify(wrapUpSetGoal.goal)}`);
     }
-    const wrapUpDetail = await waitForGoalStatus(apiBase, fake.threadId, "active", weeklyWrapUpObjective) as ThreadDetail & {
-      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
-    };
-    if (wrapUpDetail.goalRunPolicy !== null) {
-      throw new Error(`weekly wrap-up did not clear run policy: ${JSON.stringify(wrapUpDetail.goalRunPolicy)}`);
+    const wrapUpSteer = await fake.nextSteer();
+    if (
+      wrapUpSteer.threadId !== fake.threadId
+      || wrapUpSteer.turnId !== retryTurn.turnId
+      || typeof wrapUpSteer.input !== "string"
+      || !wrapUpSteer.input.includes("安全收尾")
+    ) {
+      throw new Error(`weekly wrap-up steer mismatch: ${JSON.stringify(wrapUpSteer)}`);
     }
+    const wrappingUpDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (
+      wrappingUpDetail.goalRunPolicy?.targetRemainingPercent !== 17
+      || wrappingUpDetail.goalRunPhase !== "wrappingUp"
+    ) {
+      throw new Error(`weekly wrap-up phase mismatch: ${JSON.stringify(wrappingUpDetail)}`);
+    }
+    fake.emitTokenUsage(retryTurn);
+    await fake.expectNoSteer(150);
     fake.completeTurn(retryTurn);
     await fake.expectNoTurn(150);
-    console.log("consume-until weekly goal wrap-up retarget ok");
+    const wrappedUpDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (wrappedUpDetail.goalRunPolicy !== null || wrappedUpDetail.goalRunPhase !== null) {
+      throw new Error(`weekly wrap-up did not clear run policy after Turn completion: ${JSON.stringify(wrappedUpDetail)}`);
+    }
+    console.log("consume-until weekly goal safely wraps the active Turn once ok");
 
     const rollbackBaselineObjective = "rollback policy baseline";
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
@@ -762,7 +870,7 @@ const main = async () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         objective: rollbackBaselineObjective,
-        status: "active",
+        status: "paused",
         runPolicy: {
           type: "consumeUntilWeeklyRemainingAtOrBelow",
           targetRemainingPercent: 30
@@ -792,9 +900,7 @@ const main = async () => {
     );
     await fake.nextSessionCommand("set_goal");
     await failedGoalRequest;
-    const rollbackDetail = await apiJson<ThreadDetail & {
-      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
-    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    const rollbackDetail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
     if (
       rollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
       || rollbackDetail.goalRunPolicy.targetRemainingPercent !== 30
@@ -803,6 +909,31 @@ const main = async () => {
     }
     console.log("consume-until failed goal update rollback ok");
 
+    const editedPausedObjective = "edit paused burn without resuming";
+    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ objective: editedPausedObjective })
+    });
+    const editedPausedGoal = await fake.nextSessionCommand("set_goal");
+    if (
+      editedPausedGoal.goal?.objective !== editedPausedObjective
+      || "status" in (editedPausedGoal.goal ?? {})
+    ) {
+      throw new Error(`ordinary paused goal edit changed status: ${JSON.stringify(editedPausedGoal.goal)}`);
+    }
+    await fake.expectNoTurn(150);
+    const editedPausedDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (editedPausedDetail.goalRunPolicy?.targetRemainingPercent !== 30) {
+      throw new Error(`ordinary paused goal edit changed burn policy: ${JSON.stringify(editedPausedDetail)}`);
+    }
+    console.log("ordinary goal edit preserves paused burn state ok");
+
+    fake.emitAccountRateLimits(64);
+    await assertRuntimeAccountRateLimits(apiBase, fake.machineId);
     const rateLimitedObjective = "pause consume policy on quota error";
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
       method: "POST",
@@ -817,6 +948,13 @@ const main = async () => {
       })
     });
     await fake.nextSessionCommand("set_goal");
+    const rateLimitedStartDetail = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (!rateLimitedStartDetail.running) {
+      throw new Error(`consume goal did not start after quota-error setup: ${JSON.stringify(rateLimitedStartDetail)}`);
+    }
     const rateLimitedTurn = await fake.nextTurn();
     fake.failTurn(rateLimitedTurn, "5h quota exhausted");
     await waitForGoalStatus(apiBase, fake.threadId, "paused", rateLimitedObjective);
@@ -835,19 +973,28 @@ const main = async () => {
     const resumedTurn = await fake.nextTurn();
     assertGoalContinuationTurn(resumedTurn, rateLimitedObjective, "consume goal resumed turn mismatch");
     fake.emitAccountRateLimits(95);
-    fake.emitTokenUsage(resumedTurn);
     const resumedWrapUpSetGoal = await fake.nextSessionCommand("set_goal");
     const resumedWrapUpGoal = objectValue(resumedWrapUpSetGoal.goal);
     if (
       resumedWrapUpSetGoal.threadId !== fake.threadId
-      || resumedWrapUpGoal?.objective !== weeklyWrapUpObjective
-      || resumedWrapUpGoal.status !== "active"
+      || resumedWrapUpGoal?.status !== "usageLimited"
+      || "objective" in resumedWrapUpGoal
     ) {
       throw new Error(`manual resume wrap-up goal payload mismatch: ${JSON.stringify(resumedWrapUpSetGoal.goal)}`);
     }
+    const resumedWrapUpSteer = await fake.nextSteer();
+    if (
+      resumedWrapUpSteer.turnId !== resumedTurn.turnId
+      || typeof resumedWrapUpSteer.input !== "string"
+      || !resumedWrapUpSteer.input.includes("安全收尾")
+    ) {
+      throw new Error(`manual resume wrap-up steer mismatch: ${JSON.stringify(resumedWrapUpSteer)}`);
+    }
+    fake.emitTokenUsage(resumedTurn);
+    await fake.expectNoSteer(150);
     fake.completeTurn(resumedTurn);
     await fake.expectNoTurn(150);
-    console.log("consume-until manual resume ok");
+    console.log("consume-until manual resume safely wraps the active Turn ok");
 
     const clearRollbackObjective = "clear rollback policy baseline";
     await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
@@ -855,7 +1002,7 @@ const main = async () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         objective: clearRollbackObjective,
-        status: "active",
+        status: "paused",
         runPolicy: {
           type: "consumeUntilWeeklyRemainingAtOrBelow",
           targetRemainingPercent: 30
@@ -874,9 +1021,7 @@ const main = async () => {
     );
     await fake.nextSessionCommand("clear_goal");
     await failedClearGoalRequest;
-    const clearRollbackDetail = await apiJson<ThreadDetail & {
-      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
-    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    const clearRollbackDetail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
     if (
       clearRollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
       || clearRollbackDetail.goalRunPolicy.targetRemainingPercent !== 30
@@ -1064,7 +1209,9 @@ class FakeMachine {
   private ws: WebSocket | null = null;
   private sessionRegistered = false;
   private nextSetGoalError: string | null = null;
+  private nextUsageLimitedSetGoalError: string | null = null;
   private nextClearGoalError: string | null = null;
+  private nextSteerError: string | null = null;
   private pendingTurns: SessionCommand[] = [];
   private pendingSteers: SessionCommand[] = [];
   private pendingSessionCommandsByType = new Map<string, SessionCommand[]>();
@@ -1154,6 +1301,24 @@ class FakeMachine {
     return await this.waitForSteer();
   }
 
+  async expectNoSteer(timeoutMs = 100) {
+    const existing = this.pendingSteers.shift();
+    if (existing) throw new Error(`unexpected steer command: ${JSON.stringify(existing)}`);
+    let resolved = false;
+    await new Promise<void>((resolve, reject) => {
+      const waiter = (command: SessionCommand) => {
+        resolved = true;
+        reject(new Error(`unexpected steer command: ${JSON.stringify(command)}`));
+      };
+      this.steerWaiters.push(waiter);
+      setTimeout(() => {
+        if (resolved) return;
+        this.steerWaiters = this.steerWaiters.filter((item) => item !== waiter);
+        resolve();
+      }, timeoutMs);
+    });
+  }
+
   async nextSessionCommand(type: string, timeoutMs = 5000) {
     return await this.waitForSessionCommand(type, timeoutMs);
   }
@@ -1162,8 +1327,16 @@ class FakeMachine {
     this.nextSetGoalError = message;
   }
 
+  failNextUsageLimitedSetGoal(message: string) {
+    this.nextUsageLimitedSetGoalError = message;
+  }
+
   failNextClearGoal(message: string) {
     this.nextClearGoalError = message;
+  }
+
+  failNextSteer(message: string) {
+    this.nextSteerError = message;
   }
 
   async expectNoSessionCommand(type: string, timeoutMs = 100) {
@@ -1575,9 +1748,13 @@ class FakeMachine {
     }
     if (command.type !== "turn") {
       if (command.type === "set_goal") {
-        if (this.nextSetGoalError) {
-          const message = this.nextSetGoalError;
-          this.nextSetGoalError = null;
+        const usageLimitedError = command.goal?.status === "usageLimited"
+          ? this.nextUsageLimitedSetGoalError
+          : null;
+        const message = usageLimitedError ?? this.nextSetGoalError;
+        if (message) {
+          if (usageLimitedError) this.nextUsageLimitedSetGoalError = null;
+          else this.nextSetGoalError = null;
           this.send({
             type: "session_command_error",
             sessionId: this.options.sessionId,
@@ -1648,6 +1825,17 @@ class FakeMachine {
         this.pendingSteers.push(command);
         const waiter = this.steerWaiters.shift();
         if (waiter) waiter(this.pendingSteers.shift()!);
+        if (this.nextSteerError) {
+          const message = this.nextSteerError;
+          this.nextSteerError = null;
+          this.send({
+            type: "session_command_error",
+            sessionId: this.options.sessionId,
+            commandId: command.commandId,
+            message
+          });
+          return;
+        }
         this.send({
           type: "session_command_result",
           sessionId: this.options.sessionId,
@@ -1812,6 +2000,7 @@ const assertRuntimeAccountRateLimits = async (
   expected: {
     primaryUsedPercent?: number;
     primaryResetsAt?: number;
+    secondaryUsedPercent?: number;
   } = {}
 ) => {
   const startedAt = Date.now();
@@ -1824,13 +2013,23 @@ const assertRuntimeAccountRateLimits = async (
       primary?.usedPercent === (expected.primaryUsedPercent ?? 12.5)
       && primary.windowMinutes === 300
       && primary.resetsAt === (expected.primaryResetsAt ?? 1781058359)
-      && secondary?.usedPercent === 64
+      && secondary?.usedPercent === (expected.secondaryUsedPercent ?? 64)
       && secondary.windowMinutes === 10080
       && secondary.resetsAt === 1781140554
     ) return;
     await delay(100);
   }
   throw new Error(`runtime ${machineId} did not receive account rate limits`);
+};
+
+const waitForGoalRunPolicyCleared = async (apiBase: string, threadId: string) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
+    if (detail.goalRunPolicy === null && detail.goalRunPhase === null) return detail;
+    await delay(100);
+  }
+  throw new Error(`thread ${threadId} did not clear its goal run policy`);
 };
 
 const assertThreadUsageContext = async (

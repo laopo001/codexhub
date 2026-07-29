@@ -60,8 +60,8 @@ export const hasThreadGoalPatch = (goal: ThreadGoalUpdate) =>
   hasOwn(goal, "objective") || hasOwn(goal, "status") || hasOwn(goal, "tokenBudget");
 
 export const goalUpdateCanStartRunPolicy = (goal: ThreadGoalUpdate) =>
-  (!hasOwn(goal, "status") || goal.status === "active")
-  && (hasOwn(goal, "runPolicy") || hasOwn(goal, "objective") || goal.status === "active");
+  goal.status === "active"
+  || (hasOwn(goal, "runPolicy") && !hasOwn(goal, "status"));
 
 export const goalRunPolicyStatusCanRun = (status: string | null | undefined, allowComplete = false) =>
   status === "active" || (allowComplete && status === "complete");
@@ -82,10 +82,17 @@ export const normalizeThreadGoalRunPolicy = (
   };
 };
 
-export const weeklyGoalWrapUpObjective = "收尾工作";
-
 export const formatPercent = (value: number) =>
   Number.isInteger(value) ? `${value}%` : `${value.toFixed(1)}%`;
+
+export const weeklyGoalWrapUpInput = (
+  remainingPercent: number,
+  targetRemainingPercent: number
+) => [
+  `CodexHub 燃烧目标已达到 7d 收尾触发线（当前剩余 ${formatPercent(remainingPercent)}，设置为 ${formatPercent(targetRemainingPercent)}）。`,
+  "请在当前 Turn 内安全收尾：不要扩展新工作；完成或安全停止手头操作；保留可继续的工作区状态；只做最低必要验证；随后给出结果和未完成事项。",
+  "额度是开始收尾的触发线，不要再启动新的工作。"
+].join("\n");
 
 export const formatThreadGoalMessage = (goal: Record<string, unknown> | null) => {
   const status = typeof goal?.status === "string" ? goal.status : "active";

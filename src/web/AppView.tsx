@@ -2,7 +2,7 @@ import React from "react";
 import { Tabs } from "antd";
 import {
   FileText,
-  Gauge,
+  Flame,
   Image as ImageIcon,
   ListChecks,
   MessageCircle,
@@ -12,6 +12,10 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { Virtuoso, type Components } from "react-virtuoso";
+import {
+  rateLimitUsageForWindowMinutes,
+  sevenDayRateLimitWindowMinutes
+} from "../core/threadUsage.js";
 import {
   threadGranularApprovalKeys,
   type ThreadSandboxPolicy,
@@ -50,8 +54,10 @@ const composerModeIconByValue: Record<(typeof composerModeOptions)[number]["valu
   goal: Target
 };
 
-const weeklyGoalPolicyLabel = (targetRemainingPercent: number) =>
-  `7d ≤ ${formatGoalPolicyPercent(targetRemainingPercent)}`;
+const weeklyGoalPolicyLabel = (targetRemainingPercent: number, wrappingUp: boolean) =>
+  wrappingUp
+    ? `安全收尾 · 7d ≤ ${formatGoalPolicyPercent(targetRemainingPercent)}`
+    : `燃烧 · 7d → ${formatGoalPolicyPercent(targetRemainingPercent)}`;
 
 const formatGoalPolicyPercent = (value: number) =>
   `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
@@ -188,6 +194,13 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     openThreadTabs
   } = workspace;
   const canAddThreadForProject = Boolean(activeRuntime?.online || selectedProject?.machineOnline);
+  const sevenDayRateLimit = rateLimitUsageForWindowMinutes(
+    activeRuntime?.accountRateLimits,
+    sevenDayRateLimitWindowMinutes
+  );
+  const currentSevenDayRemainingPercent = sevenDayRateLimit
+    ? Math.max(0, Math.min(100, 100 - sevenDayRateLimit.usedPercent))
+    : undefined;
   const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
   const activeGoalStatusControl = activeGoal ? goalStatusControl(activeGoal.status) : null;
   const activeGranularApprovalPolicy = activeThreadApprovalPolicySelection
@@ -242,11 +255,13 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       ? activeThread.goalRunPolicy
       : null;
     setGoalDialog({
+      kind: "burn",
       threadId: activeThread.threadId,
       objective: activeGoal?.objective ?? composerDraftStore.get(activeThread.threadId),
       targetRemainingPercent: goalRunPolicy
         ? String(goalRunPolicy.targetRemainingPercent)
         : "",
+      currentRemainingPercent: currentSevenDayRemainingPercent,
       saving: false,
       error: ""
     });
@@ -544,7 +559,10 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                               <span className="goalStripObjective" title={activeGoal.objective}>{activeGoal.objective}</span>
                               {activeThread.goalRunPolicy?.type === "consumeUntilWeeklyRemainingAtOrBelow" ? (
                                 <span className="goalStripPolicy">
-                                  {weeklyGoalPolicyLabel(activeThread.goalRunPolicy.targetRemainingPercent)}
+                                  {weeklyGoalPolicyLabel(
+                                    activeThread.goalRunPolicy.targetRemainingPercent,
+                                    activeThread.goalRunPhase === "wrappingUp"
+                                  )}
                                 </span>
                               ) : null}
                               {activeGoal.timeUsedSeconds !== undefined ? (
@@ -566,15 +584,12 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                                 title="编辑目标"
                                 aria-label="编辑目标"
                                 onClick={() => {
-                                  const goalRunPolicy = activeThread.goalRunPolicy?.type === "consumeUntilWeeklyRemainingAtOrBelow"
-                                    ? activeThread.goalRunPolicy
-                                    : null;
                                   setGoalDialog({
+                                    kind: "goal",
                                     threadId: activeThread.threadId,
                                     objective: activeGoal.objective,
-                                    targetRemainingPercent: goalRunPolicy
-                                      ? String(goalRunPolicy.targetRemainingPercent)
-                                      : "",
+                                    targetRemainingPercent: "",
+                                    currentRemainingPercent: currentSevenDayRemainingPercent,
                                     saving: false,
                                     error: ""
                                   });
@@ -860,12 +875,12 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                             <button
                               type="button"
                               className="composerIconButton composerGoalRunPolicyButton"
-                              aria-label="消耗到 7d 剩余"
-                              title="消耗到 7d 剩余"
+                              aria-label="燃烧目标"
+                              title="燃烧目标"
                               disabled={!activeThread}
                               onClick={openGoalRunPolicyDialog}
                             >
-                              <Gauge aria-hidden="true" />
+                              <Flame aria-hidden="true" />
                             </button>
                           </div>
                           <div className="composerRightActions">

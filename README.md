@@ -531,6 +531,8 @@ curl -sS "http://127.0.0.1:8788/api/machines/$MACHINE_ID/models"
 
 `options` 可随 turn 传递 Web 运行选择：`model`、`modelReasoningEffort`、`serviceTier`、`approvalPolicy`、`approvalsReviewer`、`permissions`、`collaborationMode:"plan"`、`goalMode:true`、`goalObjective` 和 `goalTokenBudget`。`serviceTier` 应使用 `/api/machines/:machineId/models` 返回的 catalog value；当前 app-server 的 Fast tier 通常是 `priority`。`permissions` 应使用 `/api/machines/:machineId/permission-profiles` 返回的 profile id，且不能和兼容旧客户端的 `sandboxPolicy` 同时传递。Plan mode 只会把本轮输入标记为只规划不实施，不覆盖 app-server permissions。Goal mode 会先通过 app-server `thread/goal/set` 为该 thread 建立 active goal，再启动 turn；如果 Web 在 running thread 上用 Goal mode 发送，则只更新 active goal，不对当前 turn 做 `turn/steer`。
 
+Web 的普通 Goal 编辑只更新目标内容，不要求也不会隐式修改 7d 额度。旁边的燃烧入口会为同一个 Goal 额外设置 CodexHub 本地 `consumeUntilWeeklyRemainingAtOrBelow` 策略；百分比表示“7d 剩余降到该值时开始收尾”，不是硬停止上限。达到触发线后，CodexHub 会取消后续自动续跑，并向当前 Turn 发送一次安全收尾 steer；当前 Turn 可以正常完成且可能略微超过该值。收尾过程中保留原 Goal 内容，不会改写成另一个“收尾工作”目标。
+
 Slash command 会在转发给 Codex 前先处理。`/status` 和 `/help` 返回本地代理状态/帮助记录；`/fast on`、`/fast off`、`/fast status` 会设置或查看当前 thread 的 app-server service tier；Web 里的 `/model` 是客户端命令，会打开 Session 选择器，下一次普通 turn 再把选中的 model/reasoning/service tier 发给 app-server。`codexhub` 会从 `thread/settings/updated` 或有效的 `config/read` 结果镜像 model/reasoning/service tier。不支持的 slash command 不会作为普通 user turn 发给 Codex app-server。
 
 Server 不读取运行机器上的 `~/.codex` session、远端 `.codexp/tasks` 或上传临时图片目录。历史 session 通过 Web/API 或 app-server 恢复后镜像到 server；图片输入使用 app-server 原生 `{ type: "image", url }`；thread context usage 由 server 从 app-server tokenUsage 事件镜像计算，session account rate limits 作为独立账号窗口与它合并展示；新定时任务由本机 `config.yaml` 里的 task 配置调度。

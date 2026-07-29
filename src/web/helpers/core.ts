@@ -69,11 +69,17 @@ const isThreadSummaryLike = (value: unknown): value is ThreadSummary => {
 
 const normalizeThreads = (threads: unknown): ThreadSummary[] =>
   Array.isArray(threads)
-    ? threads.filter(isThreadSummaryLike).map((thread) => ({
-      ...thread,
-      title: hasNonBlankString(thread.title) ? thread.title : thread.threadId,
-      goalRunPolicy: normalizeThreadGoalRunPolicy(thread.goalRunPolicy)
-    }))
+    ? threads.filter(isThreadSummaryLike).map((thread) => {
+      const goalRunPolicy = normalizeThreadGoalRunPolicy(thread.goalRunPolicy);
+      return {
+        ...thread,
+        title: hasNonBlankString(thread.title) ? thread.title : thread.threadId,
+        goalRunPolicy,
+        goalRunPhase: goalRunPolicy
+          ? thread.goalRunPhase === "wrappingUp" ? "wrappingUp" : "running"
+          : null
+      };
+    })
     : [];
 
 const normalizeThreadGoalRunPolicy = (value: unknown): ThreadSummary["goalRunPolicy"] => {
@@ -903,7 +909,8 @@ const threadSummariesEqual = (left: ThreadSummary, right: ThreadSummary) => {
     && JSON.stringify(left.sandboxPolicy) === JSON.stringify(right.sandboxPolicy)
     && JSON.stringify(left.lastUsage) === JSON.stringify(right.lastUsage)
     && JSON.stringify(left.threadUsage) === JSON.stringify(right.threadUsage)
-    && JSON.stringify(left.goalRunPolicy) === JSON.stringify(right.goalRunPolicy);
+    && JSON.stringify(left.goalRunPolicy) === JSON.stringify(right.goalRunPolicy)
+    && left.goalRunPhase === right.goalRunPhase;
 };
 
 export const selectedThreadOptions = (

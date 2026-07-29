@@ -11,7 +11,6 @@ import { localCommandMessage, parseLocalSlashCommand } from "./threadLocalComman
 import {
   appServerGoalUpdate,
   appServerThreadGoalFromValue,
-  formatPercent,
   formatThreadGoalMessage,
   goalRunPolicyStatusCanRun,
   goalUpdateCanStartRunPolicy,
@@ -23,7 +22,7 @@ import {
   threadGoalsEqual,
   threadGoalThreadId,
   threadGoalTimestamp,
-  weeklyGoalWrapUpObjective
+  weeklyGoalWrapUpInput
 } from "./threadGoalPolicy.js";
 import {
   clampSessionCommandCursor as clampCommandCursor,
@@ -271,7 +270,9 @@ export class ThreadHub {
     const thread = this.threads.get(pending.threadId);
     if (pending.type === "steer") {
       this.rejectCommand(commandId, error);
-      if (thread) this.appendSubmissionFailedRecord(thread, pending.input, error);
+      if (thread && pending.recordSubmissionFailure !== false) {
+        this.appendSubmissionFailedRecord(thread, pending.input, error);
+      }
       return { ok: true, sessionId, commandId };
     }
     if (this.activeTurnCommands.get(pending.threadId) === commandId) {
@@ -383,6 +384,9 @@ export class ThreadHub {
       if (rateLimits && rateLimits !== session.accountRateLimits) {
         session.accountRateLimits = rateLimits;
         this.publishRuntimes();
+        for (const thread of this.threads.values()) {
+          if (thread.sessionId === sessionId) this.maybeBeginGoalRunPolicyWrapUp(thread);
+        }
       }
       return { ok: true, session: this.sessionSummary(session) };
     }
@@ -1069,12 +1073,20 @@ export class ThreadHub {
     return promise;
   }
 
-  private steerTurn(thread: ThreadState, input: ProxyInput, turnId: string) {
+  private steerTurn(
+    thread: ThreadState,
+    input: ProxyInput,
+    turnId: string,
+    options: { recordSubmissionFailure?: boolean } = {}
+  ) {
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "steer", thread.threadId, null, thread.workingDirectory);
     const pending = this.pendingCommands.get(commandId);
-    if (pending) pending.input = input;
+    if (pending) {
+      pending.input = input;
+      pending.recordSubmissionFailure = options.recordSubmissionFailure;
+    }
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "steer",
@@ -1131,6 +1143,11 @@ export class ThreadHub {
     const nextGoalRun = { ...thread.goalRun };
     if (hasOwn(goal, "runPolicy")) {
       nextGoalRun.policy = normalizeThreadGoalRunPolicy(goal.runPolicy);
+      nextGoalRun.phase = "running";
+      nextGoalRun.wrapUpSteerTurnId = undefined;
+      nextGoalRun.wrapUpSteerAttempts = undefined;
+      nextGoalRun.usageLimitUpdatePending = undefined;
+      nextGoalRun.usageLimitUpdateAttempts = undefined;
       if (nextGoalRun.continuation === "stopped") nextGoalRun.continuation = "normal";
       if (!nextGoalRun.policy) {
         nextGoalRun.objective = undefined;
@@ -2304,9 +2321,10 @@ export class ThreadHub {
         changed = true;
       }
     }
-    if (!changed) return;
-    thread.updatedAt = new Date().toISOString();
-    this.publish(thread, "thread");
+    if (changed) {
+      thread.updatedAt = new Date().toISOString();
+      this.publish(thread, "thread");
+    }
   }
 
   private applyThreadExecutionState(thread: ThreadState, running: boolean, turnId?: string) {
@@ -2342,9 +2360,11 @@ export class ThreadHub {
       thread.appServerTurnId = turnId;
       changed = true;
     }
-    if (!changed) return;
-    thread.updatedAt = new Date().toISOString();
-    this.publish(thread, "thread");
+    if (changed) {
+      thread.updatedAt = new Date().toISOString();
+      this.publish(thread, "thread");
+    }
+    this.maybeSteerGoalRunPolicyWrapUp(thread);
   }
 
   private turnMatchesUnboundActiveCommand(thread: ThreadState, turnId: string) {
@@ -2489,10 +2509,11 @@ export class ThreadHub {
     return Math.max(0, Math.min(100, 100 - limit.usedPercent));
   }
 
-  private maybeRetargetGoalRunPolicyForWeeklyLimit(thread: ThreadState) {
+  private maybeBeginGoalRunPolicyWrapUp(thread: ThreadState) {
     if (!thread.running) return false;
     const { policy } = thread.goalRun;
     if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return false;
+    if (thread.goalRun.phase === "wrappingUp") return this.maybeSteerGoalRunPolicyWrapUp(thread);
     if (thread.goalRun.continuation === "stopped") return false;
     const goal = this.latestRunnableThreadGoal(thread);
     const status = thread.goalRun.status ?? goal?.status ?? "active";
@@ -2500,59 +2521,169 @@ export class ThreadHub {
     if (!objective || !goalRunPolicyStatusCanRun(status, Boolean(thread.goalRun.activeRun))) return false;
     const weeklyRemainingPercent = this.weeklyRemainingPercent(thread);
     if (weeklyRemainingPercent === null || weeklyRemainingPercent > policy.targetRemainingPercent) return false;
-    return this.retargetGoalRunPolicyToWrapUp(thread, weeklyRemainingPercent, policy.targetRemainingPercent);
+    return this.beginGoalRunPolicyWrapUp(thread, weeklyRemainingPercent, policy.targetRemainingPercent);
   }
 
-  private retargetGoalRunPolicyToWrapUp(
+  private beginGoalRunPolicyWrapUp(
     thread: ThreadState,
     weeklyRemainingPercent: number,
     targetRemainingPercent: number
   ) {
-    const session = this.requireThreadSession(thread);
-    const commandId = randomUUID();
-    const goal: ThreadGoalUpdate = {
-      objective: weeklyGoalWrapUpObjective,
-      status: "active",
-      runPolicy: null
-    };
-    const appServerGoal = appServerGoalUpdate(goal);
-    const previousPolicy = thread.goalRun.policy;
-    const previousPolicyObjective = thread.goalRun.objective;
-    const promise = this.waitForCommand<void>(commandId, "set_goal", thread.threadId, null, thread.workingDirectory);
+    if (thread.goalRun.phase === "wrappingUp") return this.maybeSteerGoalRunPolicyWrapUp(thread);
     thread.goalRun = {
       ...thread.goalRun,
-      policy: null,
-      objective: undefined,
-      status: undefined,
-      continuation: "normal"
+      phase: "wrappingUp",
+      wrapUpSteerTurnId: undefined,
+      wrapUpSteerAttempts: 0,
+      usageLimitUpdatePending: false,
+      usageLimitUpdateAttempts: 0
     };
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, "thread");
-    this.enqueueSessionCommand(session.sessionId, {
-      commandId,
-      type: "set_goal",
-      workingDirectory: thread.workingDirectory,
-      createdAt: new Date().toISOString(),
-      threadId: thread.threadId,
-      goal: appServerGoal
-    });
-    void promise.then(() => {
-      this.appendThreadGoalUpdatedRecord(thread, {
-        threadId: thread.threadId,
-        goal: appServerGoal,
-        message: `7d remaining ${formatPercent(weeklyRemainingPercent)} reached target ${formatPercent(targetRemainingPercent)}; switching goal to wrap-up.`
-      }, { allowPartial: true });
-    }, (error) => {
+    const goal = this.latestRunnableThreadGoal(thread);
+    const status = thread.goalRun.status ?? goal?.status;
+    if (status !== "complete" && status !== "usageLimited") {
+      this.ensureGoalRunPolicyUsageLimited(thread);
+    }
+    this.maybeSteerGoalRunPolicyWrapUp(thread, weeklyRemainingPercent, targetRemainingPercent);
+    return true;
+  }
+
+  private ensureGoalRunPolicyUsageLimited(thread: ThreadState) {
+    const policy = thread.goalRun.policy;
+    if (
+      !policy
+      || thread.goalRun.phase !== "wrappingUp"
+      || thread.goalRun.usageLimitUpdatePending
+      || thread.goalRun.status === "usageLimited"
+      || (thread.goalRun.usageLimitUpdateAttempts ?? 0) >= goalRunWrapUpCommandMaxAttempts
+    ) return false;
+
+    const previousStatus = thread.goalRun.status;
+    const attempts = (thread.goalRun.usageLimitUpdateAttempts ?? 0) + 1;
+    thread.goalRun = {
+      ...thread.goalRun,
+      status: "usageLimited",
+      usageLimitUpdatePending: true,
+      usageLimitUpdateAttempts: attempts
+    };
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+
+    const fail = (error: unknown) => {
+      console.error(`codexhub failed to mark 7d goal usage-limited: ${errorText(error)}`);
+      if (
+        this.threads.get(thread.threadId) !== thread
+        || thread.goalRun.phase !== "wrappingUp"
+        || thread.goalRun.policy !== policy
+      ) return;
       thread.goalRun = {
         ...thread.goalRun,
-        policy: previousPolicy,
-        objective: previousPolicyObjective,
-        status: "paused"
+        status: previousStatus,
+        usageLimitUpdatePending: false
       };
       thread.updatedAt = new Date().toISOString();
       this.publish(thread, "thread");
-      console.error(`codexhub failed to switch 7d goal to wrap-up: ${errorText(error)}`);
-    });
+      if ((thread.goalRun.usageLimitUpdateAttempts ?? 0) < goalRunWrapUpCommandMaxAttempts) {
+        setTimeout(() => {
+          if (
+            this.threads.get(thread.threadId) === thread
+            && thread.goalRun.phase === "wrappingUp"
+            && thread.goalRun.policy === policy
+          ) {
+            this.ensureGoalRunPolicyUsageLimited(thread);
+          }
+        }, goalRunWrapUpRetryDelayMs);
+      }
+    };
+
+    try {
+      const session = this.requireThreadSession(thread);
+      const commandId = randomUUID();
+      const promise = this.waitForCommand<void>(commandId, "set_goal", thread.threadId, null, thread.workingDirectory);
+      this.enqueueSessionCommand(session.sessionId, {
+        commandId,
+        type: "set_goal",
+        workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(),
+        threadId: thread.threadId,
+        goal: { status: "usageLimited" }
+      });
+      void promise.then(() => {
+        if (
+          this.threads.get(thread.threadId) !== thread
+          || thread.goalRun.phase !== "wrappingUp"
+          || thread.goalRun.policy !== policy
+        ) return;
+        if (thread.running) {
+          thread.goalRun = { ...thread.goalRun, usageLimitUpdatePending: false };
+        } else {
+          thread.goalRun = emptyGoalRunState();
+        }
+        thread.updatedAt = new Date().toISOString();
+        this.publish(thread, "thread");
+      }, fail);
+    } catch (error) {
+      fail(error);
+    }
+    return true;
+  }
+
+  private maybeSteerGoalRunPolicyWrapUp(
+    thread: ThreadState,
+    weeklyRemainingPercent = this.weeklyRemainingPercent(thread),
+    targetRemainingPercent = thread.goalRun.policy?.targetRemainingPercent
+  ) {
+    if (
+      !thread.running
+      || thread.goalRun.phase !== "wrappingUp"
+      || !thread.appServerTurnId
+      || thread.goalRun.wrapUpSteerTurnId === thread.appServerTurnId
+      || (thread.goalRun.wrapUpSteerAttempts ?? 0) >= goalRunWrapUpCommandMaxAttempts
+      || weeklyRemainingPercent === null
+      || targetRemainingPercent === undefined
+    ) return false;
+    const turnId = thread.appServerTurnId;
+    const policy = thread.goalRun.policy;
+    const attempts = (thread.goalRun.wrapUpSteerAttempts ?? 0) + 1;
+    thread.goalRun = {
+      ...thread.goalRun,
+      wrapUpSteerTurnId: turnId,
+      wrapUpSteerAttempts: attempts
+    };
+    const fail = (error: unknown) => {
+      console.error(`codexhub failed to steer 7d goal wrap-up: ${errorText(error)}`);
+      if (
+        this.threads.get(thread.threadId) !== thread
+        || thread.goalRun.phase !== "wrappingUp"
+        || thread.goalRun.policy !== policy
+        || thread.appServerTurnId !== turnId
+        || thread.goalRun.wrapUpSteerTurnId !== turnId
+      ) return;
+      thread.goalRun = { ...thread.goalRun, wrapUpSteerTurnId: undefined };
+      if ((thread.goalRun.wrapUpSteerAttempts ?? 0) < goalRunWrapUpCommandMaxAttempts) {
+        setTimeout(() => {
+          if (
+            this.threads.get(thread.threadId) === thread
+            && thread.goalRun.phase === "wrappingUp"
+            && thread.goalRun.policy === policy
+            && thread.appServerTurnId === turnId
+          ) {
+            this.maybeSteerGoalRunPolicyWrapUp(thread);
+          }
+        }, goalRunWrapUpRetryDelayMs);
+      }
+    };
+    try {
+      void this.steerTurn(
+        thread,
+        weeklyGoalWrapUpInput(weeklyRemainingPercent, targetRemainingPercent),
+        turnId,
+        { recordSubmissionFailure: false }
+      ).catch(fail);
+    } catch (error) {
+      fail(error);
+    }
     return true;
   }
 
@@ -2742,7 +2873,7 @@ export class ThreadHub {
     if (options.publish !== false) {
       this.publish(thread, "record", record, { historical: options.historical });
     }
-    if (!options.historical) this.maybeRetargetGoalRunPolicyForWeeklyLimit(thread);
+    if (!options.historical) this.maybeBeginGoalRunPolicyWrapUp(thread);
   }
 
   private finishRecordBatch(
@@ -2770,7 +2901,7 @@ export class ThreadHub {
       return;
     }
     for (const record of orderedRecords) this.publish(thread, "record", record);
-    this.maybeRetargetGoalRunPolicyForWeeklyLimit(thread);
+    this.maybeBeginGoalRunPolicyWrapUp(thread);
   }
 
   private canonicalBatchRecords(thread: ThreadState, records: CodexRecord[]) {
@@ -2798,12 +2929,15 @@ export class ThreadHub {
     // 每个 turn 收尾时先兑现等待中的 command，再释放同 thread 的下一条 queued turn。
     const commandId = this.activeTurnCommands.get(thread.threadId);
     const wasGoalRunPolicyTurn = Boolean(thread.goalRun.activeRun);
+    const wasGoalRunPolicyWrapUp = thread.goalRun.phase === "wrappingUp";
     const resumesGoalRun = thread.goalRun.continuation === "resume";
-    thread.goalRun = {
-      ...thread.goalRun,
-      activeRun: undefined,
-      continuation: resumesGoalRun ? "normal" : thread.goalRun.continuation
-    };
+    thread.goalRun = wasGoalRunPolicyWrapUp
+      ? emptyGoalRunState()
+      : {
+        ...thread.goalRun,
+        activeRun: undefined,
+        continuation: resumesGoalRun ? "normal" : thread.goalRun.continuation
+      };
     if (error && wasGoalRunPolicyTurn && !resumesGoalRun) this.pauseGoalRunPolicy(thread);
     if (commandId) {
       this.activeTurnCommands.delete(thread.threadId);
@@ -2817,7 +2951,7 @@ export class ThreadHub {
     thread.updatedAt = new Date().toISOString();
     this.publish(thread, wasRunning ? "done" : "thread");
     const startedQueuedTurn = this.startNextQueuedTurn(thread);
-    if (!startedQueuedTurn && (!error || resumesGoalRun)) {
+    if (!startedQueuedTurn && !wasGoalRunPolicyWrapUp && (!error || resumesGoalRun)) {
       this.maybeStartGoalRunPolicyTurn(thread, resumesGoalRun
         ? { allowUnknownUsage: true, statusOverride: "active" }
         : { allowCompletedPolicyTurn: wasGoalRunPolicyTurn });
@@ -2860,6 +2994,7 @@ export class ThreadHub {
     }
     const { policy } = thread.goalRun;
     if (!policy || policy.type !== "consumeUntilWeeklyRemainingAtOrBelow") return false;
+    if (thread.goalRun.phase === "wrappingUp") return false;
     const goal = this.latestRunnableThreadGoal(thread);
     const status = options.statusOverride ?? thread.goalRun.status ?? goal?.status ?? "active";
     const objective = thread.goalRun.objective ?? goal?.objective ?? options.fallbackObjective?.trim();
@@ -2867,10 +3002,13 @@ export class ThreadHub {
     if (policy.targetRemainingPercent >= 100) return false;
     const weeklyRemainingPercent = this.weeklyRemainingPercent(thread);
     if (weeklyRemainingPercent === null && !options.allowUnknownUsage) return false;
-    if (weeklyRemainingPercent !== null && weeklyRemainingPercent <= policy.targetRemainingPercent) return false;
+    if (weeklyRemainingPercent !== null && weeklyRemainingPercent <= policy.targetRemainingPercent) {
+      this.finishIdleGoalRunPolicyAtWeeklyLimit(thread);
+      return false;
+    }
     const activeRun = randomUUID();
     try {
-      thread.goalRun = { ...thread.goalRun, activeRun };
+      thread.goalRun = { ...thread.goalRun, activeRun, status: "active" };
       this.startTurn(thread, objective, "web", {
         goalMode: true,
         goalObjective: objective
@@ -2905,6 +3043,30 @@ export class ThreadHub {
       },
       message: "Goal paused"
     }, { allowPartial: true });
+  }
+
+  private finishIdleGoalRunPolicyAtWeeklyLimit(thread: ThreadState) {
+    if (thread.running || !thread.goalRun.policy) return false;
+    const goal = this.latestRunnableThreadGoal(thread);
+    const status = thread.goalRun.status ?? goal?.status;
+    if (status === "complete" || status === "usageLimited") {
+      thread.goalRun = emptyGoalRunState();
+      thread.updatedAt = new Date().toISOString();
+      this.publish(thread, "thread");
+      return true;
+    }
+    thread.goalRun = {
+      ...thread.goalRun,
+      phase: "wrappingUp",
+      wrapUpSteerTurnId: undefined,
+      wrapUpSteerAttempts: 0,
+      usageLimitUpdatePending: false,
+      usageLimitUpdateAttempts: 0
+    };
+    thread.updatedAt = new Date().toISOString();
+    this.publish(thread, "thread");
+    this.ensureGoalRunPolicyUsageLimited(thread);
+    return true;
   }
 
   private rejectQueuedTurns(
@@ -2970,7 +3132,8 @@ export class ThreadHub {
       messageCount: this.threadRecordIndex(thread).messageCount,
       lastUsage: thread.lastUsage,
       threadUsage: thread.threadUsage,
-      goalRunPolicy: thread.goalRun.policy
+      goalRunPolicy: thread.goalRun.policy,
+      goalRunPhase: thread.goalRun.policy ? thread.goalRun.phase : null
     };
   }
 
@@ -3244,8 +3407,12 @@ const imageUrls = (input: ProxyInput) => {
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
+const goalRunWrapUpCommandMaxAttempts = 3;
+const goalRunWrapUpRetryDelayMs = 100;
+
 const emptyGoalRunState = (): GoalRunState => ({
   policy: null,
+  phase: "running",
   continuation: "normal"
 });
 

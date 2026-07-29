@@ -281,6 +281,13 @@
   color: #17211a;
 }
 
+.goalPolicyHint {
+  color: #7b8575;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
 .goalDialogError {
   color: #8b3f31;
   font-size: 12px;
