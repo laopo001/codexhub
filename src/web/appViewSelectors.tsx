@@ -132,7 +132,7 @@ const OpenThreadTabLabel = ({
       <div>
         <span>Status</span>
         <code>
-          <LiveThreadRunningText executionMeta={executionMeta} activeGoal={activeGoal} includeTurn={false} />
+          <LiveThreadRunningText executionMeta={executionMeta} activeGoal={activeGoal} />
         </code>
       </div>
       {thread.runtime.machineId ? (
@@ -160,7 +160,7 @@ const OpenThreadTabLabel = ({
         <span className="openThreadTabMeta">
           <code title={`${thread.workingDirectory}\n${thread.threadId}`}>{workspaceName} · {shortId(thread.threadId)}</code>
           <em className={`openThreadTabBadge ${executionMeta.status}`}>
-            <LiveThreadRunningText executionMeta={executionMeta} activeGoal={activeGoal} includeTurn={false} />
+            <LiveThreadRunningText executionMeta={executionMeta} activeGoal={activeGoal} />
           </em>
         </span>
       </span>

@@ -919,7 +919,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.turnLoadingTurn {
+.turnLoadingGoal {
   position: relative;
   flex: 0 0 auto;
   z-index: 1;

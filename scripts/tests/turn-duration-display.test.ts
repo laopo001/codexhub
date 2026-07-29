@@ -8,6 +8,7 @@ import {
   formatThreadDuration,
   goalDurationMsFromProgress,
   latestGoalDurationAnchor,
+  MessagesTurnLoadingFooter,
   LiveThreadRunningText,
   liveDurationMsFromAnchor,
   stableLiveDurationAnchor,
@@ -93,7 +94,7 @@ test("running duration keeps its first observation anchor for the same Turn", ()
   assert.notStrictEqual(nextTurn, first);
 });
 
-test("execution time display prioritizes Waiting, then Goal total, then Turn", () => {
+test("tab execution time prioritizes Waiting, then Goal total, then Turn", () => {
   const running = {
     status: "running",
     label: "Running",
@@ -114,7 +115,7 @@ test("execution time display prioritizes Waiting, then Goal total, then Turn", (
   assert.equal(threadExecutionTimeMode(running, { ...goal, timeUsedSeconds: undefined }), "turn");
 });
 
-test("compact Running text omits Turn while the middle display keeps both clocks", () => {
+test("compact Running text keeps only the prioritized clock", () => {
   const executionMeta = {
     status: "running",
     label: "Running",
@@ -130,16 +131,43 @@ test("compact Running text omits Turn while the middle display keeps both clocks
   } as const;
   const compact = renderToStaticMarkup(createElement(LiveThreadRunningText, {
     executionMeta,
-    activeGoal,
-    includeTurn: false
-  }));
-  const middle = renderToStaticMarkup(createElement(LiveThreadRunningText, {
-    executionMeta,
     activeGoal
   }));
 
   assert.doesNotMatch(compact, /Turn/);
-  assert.match(middle, /Turn/);
+  assert.match(compact, /Running/);
+  assert.match(compact, /2m0s/);
+});
+
+test("middle execution display separates Waiting, Turn, and Goal clocks", () => {
+  const running = {
+    status: "running",
+    label: "Running",
+    duration: "",
+    text: "Running",
+    startedAt: new Date(Date.now() - 5_000).toISOString()
+  } as const;
+  const goal = {
+    objective: "Finish the project",
+    status: "active",
+    timeUsedSeconds: 120,
+    updatedAt: new Date().toISOString()
+  } as const;
+  const visibleText = (context: Parameters<typeof MessagesTurnLoadingFooter>[0]["context"]) =>
+    renderToStaticMarkup(createElement(MessagesTurnLoadingFooter, { context }))
+      .replace(/<[^>]+>/g, "");
+
+  const waitingText = visibleText({
+    executionMeta: { ...running, status: "waiting", label: "Waiting" },
+    activeGoal: goal
+  });
+  const turnText = visibleText({ executionMeta: running, activeGoal: null });
+  const goalText = visibleText({ executionMeta: running, activeGoal: goal });
+
+  assert.equal(waitingText, "Waiting");
+  assert.match(turnText, /^Turn· \d+s$/);
+  assert.doesNotMatch(turnText, /Goal/);
+  assert.match(goalText, /^Turn· \d+sGoal · 2m0s$/);
 });
 
 test("active Goal duration advances from the app-server accumulated time", () => {

@@ -213,13 +213,11 @@ export const LiveGoalDuration = ({
 export const LiveThreadRunningText = ({
   executionMeta,
   activeGoal,
-  includeLabel = true,
-  includeTurn = true
+  includeLabel = true
 }: {
   executionMeta: ThreadExecutionMeta;
   activeGoal?: ThreadGoalView | null;
   includeLabel?: boolean;
-  includeTurn?: boolean;
 }) => {
   if (threadExecutionTimeMode(executionMeta, activeGoal) !== "goal" || !activeGoal) {
     return <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={includeLabel} />;
@@ -234,10 +232,53 @@ export const LiveThreadRunningText = ({
         timeUsedSeconds={activeGoal.timeUsedSeconds}
         updatedAt={activeGoal.updatedAt}
       />
-      {includeTurn && executionMeta.startedAt ? (
-        <> · Turn <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} /></>
-      ) : null}
     </>
+  );
+};
+
+export type MessagesTurnLoadingContext = {
+  executionMeta: ThreadExecutionMeta | null;
+  activeGoal: ThreadGoalView | null;
+};
+
+export const MessagesTurnLoadingFooter = ({
+  context
+}: {
+  context?: MessagesTurnLoadingContext;
+}) => {
+  const executionMeta = context?.executionMeta;
+  const activeGoal = context?.activeGoal;
+  const waiting = executionMeta?.status === "waiting";
+  const showGoalTime = (
+    executionMeta?.status === "running"
+    && activeGoal?.status === "active"
+    && activeGoal.timeUsedSeconds !== undefined
+  );
+  return (
+    <div
+      className={`turnLoadingMessage${waiting ? " waiting" : ""}`}
+      role="status"
+      aria-live="polite"
+      aria-label={waiting ? "Waiting for app-server" : "Turn running"}
+    >
+      <span className="turnLoadingText">{waiting ? "Waiting" : "Turn"}</span>
+      {!waiting && (executionMeta?.startedAt || executionMeta?.duration) ? (
+        <span className="turnLoadingDuration">
+          · <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} />
+        </span>
+      ) : null}
+      {showGoalTime ? (
+        <span className="turnLoadingGoal">
+          Goal · <LiveGoalDuration
+            status={activeGoal.status}
+            running
+            activeTurnStartedAt={executionMeta?.startedAt}
+            timeUsedSeconds={activeGoal.timeUsedSeconds}
+            updatedAt={activeGoal.updatedAt}
+          />
+        </span>
+      ) : null}
+    </div>
   );
 };
 

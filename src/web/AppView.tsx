@@ -22,9 +22,10 @@ import { AppSidebar } from "./AppSidebar.js";
 import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
 import {
   LiveGoalDuration,
-  LiveThreadExecutionText
+  MessagesTurnLoadingFooter,
+  type MessagesTurnLoadingContext
 } from "./helpers/liveTime.js";
-import type { AppViewModel, AppWorkspaceViewModel } from "./viewModel.js";
+import type { AppViewModel } from "./viewModel.js";
 import {
   ActivityStatusBar,
   canForkAtMessage,
@@ -96,51 +97,7 @@ const messagesScrollbarIntentMs = 900;
 const messagesUpScrollKeys = new Set(["ArrowUp", "PageUp", "Home"]);
 const messagesDownScrollKeys = new Set(["ArrowDown", "PageDown", "End"]);
 
-type MessagesVirtuosoContext = {
-  executionMeta: NonNullable<AppWorkspaceViewModel["activeThreadExecutionMeta"]> | null;
-  activeGoal: AppWorkspaceViewModel["activeGoal"];
-};
-
-const MessagesTurnLoadingFooter = ({ context }: { context?: MessagesVirtuosoContext }) => {
-  const executionMeta = context?.executionMeta;
-  const activeGoal = context?.activeGoal;
-  const waiting = executionMeta?.status === "waiting";
-  const showGoalRunningTime = (
-    executionMeta?.status === "running"
-    && activeGoal?.status === "active"
-    && activeGoal.timeUsedSeconds !== undefined
-  );
-  return (
-    <div
-      className={`turnLoadingMessage${waiting ? " waiting" : ""}`}
-      role="status"
-      aria-live="polite"
-      aria-label={waiting ? "Waiting for app-server" : "Running"}
-    >
-      <span className="turnLoadingText">{waiting ? "Waiting for app-server" : "Running"}</span>
-      {!waiting && (executionMeta?.startedAt || executionMeta?.duration) ? (
-        <span className="turnLoadingDuration">
-          · {showGoalRunningTime ? (
-            <LiveGoalDuration
-              status={activeGoal.status}
-              running
-              activeTurnStartedAt={executionMeta.startedAt}
-              timeUsedSeconds={activeGoal.timeUsedSeconds}
-              updatedAt={activeGoal.updatedAt}
-            />
-          ) : (
-            <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} />
-          )}
-        </span>
-      ) : null}
-      {showGoalRunningTime && executionMeta.startedAt ? (
-        <span className="turnLoadingTurn">
-          Turn · <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={false} />
-        </span>
-      ) : null}
-    </div>
-  );
-};
+type MessagesVirtuosoContext = MessagesTurnLoadingContext;
 
 export const AppView = ({ viewModel }: AppViewProps) => {
   const { workspace, sidebar, dialogs } = viewModel;
