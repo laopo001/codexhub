@@ -106,6 +106,42 @@ test("new Turn is Waiting until app-server confirms its turnId", async () => {
   assert.equal(hub.getThread(threadId)?.status, "idle");
 });
 
+test("Submission ids stay provisional and cannot overwrite the authoritative Turn id", async () => {
+  const { hub, sessionId, threadId } = createHub("provisional-submission");
+  const running = hub.runTurn(threadId, "keep the real turn id");
+  await nextCommand(hub, sessionId);
+
+  hub.applySessionEvent(
+    sessionId,
+    executionChanged(threadId, true, "submission-before-start", { provisional: true })
+  );
+  assert.equal(hub.getThread(threadId)?.status, "waiting");
+  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
+
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true, "real-turn"));
+  assert.equal(hub.getThread(threadId)?.status, "running");
+  assert.equal(hub.getThread(threadId)?.activeTurnId, "real-turn");
+
+  hub.applySessionEvent(
+    sessionId,
+    executionChanged(threadId, true, "late-submission-response", { provisional: true })
+  );
+  assert.equal(hub.getThread(threadId)?.activeTurnId, "real-turn");
+
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, "real-turn"));
+  await running;
+  assert.equal(hub.getThread(threadId)?.status, "idle");
+  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
+
+  hub.applySessionEvent(
+    sessionId,
+    executionChanged(threadId, true, "submission-after-completion", { provisional: true })
+  );
+  assert.equal(hub.getThread(threadId)?.status, "idle");
+  assert.equal(hub.getThread(threadId)?.running, false);
+  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
+});
+
 test("Goal policy continuation returns to Waiting before the next app-server Turn", async () => {
   const { hub, sessionId, threadId, turnCommand } = await startGoalRun("goal-waiting");
   hub.applySessionEvent(sessionId, {

@@ -423,7 +423,7 @@ export class ThreadHub {
       const thread = this.ensureThread(input.threadId, session, {
         params: { threadId: input.threadId, cwd: session.workingDirectory }
       });
-      this.applyThreadExecutionState(thread, input.running, input.turnId);
+      this.applyThreadExecutionState(thread, input.running, input.turnId, input.provisional);
       return { ok: true, thread: this.summary(thread) };
     }
 
@@ -2327,7 +2327,12 @@ export class ThreadHub {
     }
   }
 
-  private applyThreadExecutionState(thread: ThreadState, running: boolean, turnId?: string) {
+  private applyThreadExecutionState(
+    thread: ThreadState,
+    running: boolean,
+    turnId?: string,
+    provisional = false
+  ) {
     // 这里的 running 状态是控制面摘要；transcript records 仍由 app-server events 单独写入。
     if (!running) {
       // 已知/正在启动的 Turn 只能由权威 turn/completed 原子收尾；粗粒度 idle
@@ -2343,6 +2348,13 @@ export class ThreadHub {
         thread.updatedAt = new Date().toISOString();
         this.publish(thread, "thread");
       }
+      return;
+    }
+    // turn/start 和 review/start 的响应 id 是 Codex core Submission.id，
+    // 并不是随后 turn/started、turn/completed 使用的 Turn.id。保持 Waiting，
+    // 直到权威通知给出真实 Turn ID，避免临时 id 覆盖、冒充 activeTurnId，
+    // 或在 Turn 已结束后因迟到响应重新激活线程。
+    if (provisional) {
       return;
     }
     let changed = false;

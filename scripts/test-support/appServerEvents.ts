@@ -37,12 +37,14 @@ export const appServerTurn = (
 export const executionChanged = (
   threadId: string,
   running: boolean,
-  turnId?: string
+  turnId?: string,
+  options: { provisional?: boolean } = {}
 ): SessionEventInput => ({
   type: "thread_execution_changed",
   threadId,
   running,
   ...(turnId ? { turnId } : {}),
+  ...(options.provisional ? { provisional: true } : {}),
   heartbeat: false
 });
 

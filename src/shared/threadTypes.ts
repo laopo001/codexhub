@@ -445,6 +445,8 @@ export type SessionEventInput =
       threadId: string;
       running: boolean;
       turnId?: string;
+      /** turn/start 等响应里的 Submission ID；不能当作 app-server Turn ID。 */
+      provisional?: boolean;
       heartbeat?: boolean;
     }
   | {

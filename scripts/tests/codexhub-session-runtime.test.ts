@@ -866,7 +866,7 @@ test("runtime keeps JSON-RPC response errors out of the thread event stream", as
   }
 });
 
-test("runtime projects a fast turn/start response before its completion notification", async (context) => {
+test("runtime marks a fast turn/start response provisional before completion", async (context) => {
   context.mock.method(console, "error", () => undefined);
   const socket = new CurrentProtocolSocket({
     validResume: true,
@@ -901,10 +901,16 @@ test("runtime projects a fast turn/start response before its completion notifica
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     const runningIndex = forwardedEvents.findIndex((event) => {
-      const value = event as { type?: string; running?: boolean; turnId?: string };
+      const value = event as {
+        type?: string;
+        running?: boolean;
+        turnId?: string;
+        provisional?: boolean;
+      };
       return value.type === "thread_execution_changed"
         && value.running === true
-        && value.turnId === "immediate-turn";
+        && value.turnId === "immediate-turn"
+        && value.provisional === true;
     });
     const completedIndex = forwardedEvents.findIndex((event) => {
       const value = event as { type?: string; message?: { method?: string } };

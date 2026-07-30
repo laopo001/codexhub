@@ -34,6 +34,12 @@ const createHost = (options: {
 } = {}) => {
   const requests: Array<{ method: string; params: unknown }> = [];
   const synced: string[] = [];
+  const executionChanges: Array<{
+    threadId: string;
+    running: boolean;
+    turnId?: string;
+    provisional?: boolean;
+  }> = [];
   const settingsReads = { cached: 0, config: 0 };
   const planResetModes: AppServerCommandHost["planResetModes"] = new Map();
   let cachedThreadSettings = options.cachedThreadSettings;
@@ -94,7 +100,9 @@ const createHost = (options: {
     },
     scheduleThreadSync: (threadId) => synced.push(threadId),
     captureThreadSettingsResponse: async () => undefined,
-    forwardThreadExecutionChanged: async () => undefined,
+    forwardThreadExecutionChanged: async (threadId, running, turnId, provisional) => {
+      executionChanges.push({ threadId, running, turnId, provisional });
+    },
     resolveApprovalRequest: () => undefined,
     resolveUserInputRequest: () => undefined,
     markBridgeStartedUnknownThread: () => undefined,
@@ -105,6 +113,7 @@ const createHost = (options: {
     host,
     requests,
     synced,
+    executionChanges,
     settingsReads,
     planResetModes,
     setCachedThreadSettings: (value: typeof cachedThreadSettings) => {
@@ -232,6 +241,12 @@ test("dispatcher requires the current review/start response", async () => {
     threadId: "thread-1"
   }), current.host), { ok: true, reviewThreadId: "review-thread-1" });
   assert.deepEqual(current.synced, ["thread-1"]);
+  assert.deepEqual(current.executionChanges, [{
+    threadId: "thread-1",
+    running: true,
+    turnId: "review-turn-1",
+    provisional: true
+  }]);
 
   const missingThread = createHost({ reviewResult: { turn: { id: "review-turn-1" } } });
   await assert.rejects(dispatchAppServerCommand(command({
@@ -246,58 +261,40 @@ test("dispatcher requires the current review/start response", async () => {
   }), missingTurn.host), /did not return reviewThreadId and turn\.id/);
 });
 
-test("dispatcher applies one-turn plan and goal options before turn/start", async () => {
+test("dispatcher applies Goal settings before activation without starting a duplicate Turn", async () => {
   const { host, requests } = createHost();
   await dispatchAppServerCommand(command({
     type: "turn",
     threadId: "thread-1",
     input: "ship it",
     options: {
-      collaborationMode: "plan",
+      collaborationMode: "default",
       goalMode: true,
       model: "gpt-test",
       modelReasoningEffort: "ultra"
     }
   }), host);
 
-  assert.equal(requests[0].method, "thread/goal/set");
+  assert.equal(requests[0].method, "thread/settings/update");
   assert.deepEqual(requests[0].params, {
     threadId: "thread-1",
-    objective: "ship it",
-    status: "active"
-  });
-  assert.equal(requests[1].method, "turn/start");
-  assert.deepEqual(requests[1].params, {
-    threadId: "thread-1",
     cwd: "/tmp/project",
-    input: [{
-      type: "text",
-      text: "ship it",
-      text_elements: []
-    }],
     collaborationMode: {
-      mode: "plan",
+      mode: "default",
       settings: {
         model: "gpt-test",
-        reasoning_effort: "medium",
+        reasoning_effort: "ultra",
         developer_instructions: null
       }
     }
   });
-  assert.deepEqual(requests[2], {
-    method: "thread/settings/update",
-    params: {
-      threadId: "thread-1",
-      collaborationMode: {
-        mode: "default",
-        settings: {
-          model: "gpt-test",
-          reasoning_effort: "ultra",
-          developer_instructions: null
-        }
-      }
-    }
+  assert.equal(requests[1].method, "thread/goal/set");
+  assert.deepEqual(requests[1].params, {
+    threadId: "thread-1",
+    objective: "ship it",
+    status: "active"
   });
+  assert.equal(requests.some((request) => request.method === "turn/start"), false);
 });
 
 test("dispatcher resolves structured Plan from the live default model catalog", async () => {

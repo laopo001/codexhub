@@ -653,8 +653,8 @@ class CodexAppServerBridge {
       rememberDefaultThread: (threadId) => this.rememberDefaultThread(threadId),
       request: (method, params, context) => this.request(method, params, context),
       scheduleThreadSync: (threadId) => this.scheduleAppServerTurnsSync(threadId),
-      forwardThreadExecutionChanged: (threadId, running, turnId) =>
-        this.forwardThreadExecutionChanged(threadId, running, turnId),
+      forwardThreadExecutionChanged: (threadId, running, turnId, provisional) =>
+        this.forwardThreadExecutionChanged(threadId, running, turnId, provisional),
       resolveApprovalRequest: (approvalId, decision) => this.resolveApprovalRequest(approvalId, decision),
       resolveUserInputRequest: (userInputId, answers) => this.resolveUserInputRequest(userInputId, answers),
       markBridgeStartedUnknownThread: () => this.markBridgeStartedUnknownThread(),
@@ -747,10 +747,10 @@ class CodexAppServerBridge {
       }
       const threadId = threadIdForPendingMessage(pending, message);
       if (threadId && !error) {
-        // A very fast Turn may emit turn/completed immediately after the
-        // turn/start response. Publish its id before yielding so that terminal
-        // handling cannot run first and then be overwritten by this older
-        // response's running=true projection.
+        // A very fast Turn may complete immediately after the response. Forward
+        // the response first, but mark its Submission ID provisional so it can
+        // neither replace the authoritative turn/started ID nor revive a
+        // completed Turn.
         await this.forwardExecutionStateFromMessage(threadId, message);
         await this.forwardThreadEvent(threadId, pending.commandId, message);
       }
@@ -1463,7 +1463,7 @@ class CodexAppServerBridge {
     const result = asRecord(message.result);
     const resultTurn = asRecord(result?.turn);
     if (typeof resultTurn?.id === "string") {
-      await this.forwardThreadExecutionChanged(threadId, true, resultTurn.id);
+      await this.forwardThreadExecutionChanged(threadId, true, resultTurn.id, true);
       return;
     }
     if (method === "turn/started") {
@@ -1507,8 +1507,20 @@ class CodexAppServerBridge {
     timer.unref?.();
   }
 
-  private async forwardThreadExecutionChanged(threadId: string, running: boolean, turnId?: string) {
-    this.hub.sendEvent({ type: "thread_execution_changed", threadId, running, turnId, heartbeat: false });
+  private async forwardThreadExecutionChanged(
+    threadId: string,
+    running: boolean,
+    turnId?: string,
+    provisional = false
+  ) {
+    this.hub.sendEvent({
+      type: "thread_execution_changed",
+      threadId,
+      running,
+      turnId,
+      ...(provisional ? { provisional: true } : {}),
+      heartbeat: false
+    });
   }
 
   private async captureThreadSettingsResponse(threadId: string, value: unknown) {

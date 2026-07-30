@@ -598,6 +598,7 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     threadId: z.string().min(1),
     running: z.boolean(),
     turnId: z.string().min(1).optional(),
+    provisional: z.boolean().optional(),
     heartbeat: z.boolean().optional()
   }),
   z.object({

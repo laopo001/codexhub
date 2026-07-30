@@ -67,7 +67,12 @@ export type AppServerCommandHost = {
   rememberDefaultThread: (threadId: string) => Promise<void>;
   request: (method: string, params: unknown, command?: CommandContext) => Promise<unknown>;
   scheduleThreadSync: (threadId: string) => void;
-  forwardThreadExecutionChanged: (threadId: string, running: boolean, turnId?: string) => Promise<void>;
+  forwardThreadExecutionChanged: (
+    threadId: string,
+    running: boolean,
+    turnId?: string,
+    provisional?: boolean
+  ) => Promise<void>;
   resolveApprovalRequest: (approvalId: string, decision: AppServerApprovalDecision) => void;
   resolveUserInputRequest: (userInputId: string, answers: AppServerUserInputAnswers) => void;
   markBridgeStartedUnknownThread: () => void;
@@ -151,7 +156,7 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     if (!reviewThreadId || !turnId) {
       throw new Error("Codex app-server review/start did not return reviewThreadId and turn.id");
     }
-    await host.forwardThreadExecutionChanged(threadId, true, turnId);
+    await host.forwardThreadExecutionChanged(threadId, true, turnId, true);
     host.scheduleThreadSync(threadId);
     return {
       ok: true,
@@ -227,13 +232,9 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
   const defaultTurn = command.options?.collaborationMode === "default";
   const cachedSettings = host.cachedThreadSettings(loadedThreadId) ?? {};
   const pendingPlanReset = host.planResetModes.get(loadedThreadId);
-  if (command.options?.goalMode) {
-    await host.request("thread/goal/set", {
-      threadId: loadedThreadId,
-      ...goalUpdateParams(undefined, command.input, command.options)
-    }, { threadId: loadedThreadId });
+  if (command.options?.goalMode && planTurn) {
+    throw new Error("Goal mode cannot be combined with Plan collaboration mode");
   }
-  host.markBridgeStartedThread(loadedThreadId);
   const params = turnRequestParams(command.options);
   let resetCollaborationMode = pendingPlanReset;
   let explicitDefaultMode: AppServerCollaborationMode | undefined;
@@ -307,6 +308,29 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
   if (!planTurn && !defaultTurn && resetCollaborationMode) {
     await applyPlanReset(host, loadedThreadId, resetCollaborationMode);
   }
+  if (command.options?.goalMode) {
+    // Goal activation applies its runtime effects after replying and starts the
+    // continuation itself. Persist the visible next-turn settings first, then
+    // let app-server create exactly one authoritative Turn.
+    await host.request("thread/settings/update", {
+      threadId: loadedThreadId,
+      cwd: command.workingDirectory,
+      ...params
+    });
+    if (explicitDefaultMode) {
+      host.cacheThreadCollaborationMode(loadedThreadId, explicitDefaultMode);
+      if (host.planResetModes.get(loadedThreadId) === pendingPlanReset) {
+        host.planResetModes.delete(loadedThreadId);
+      }
+    }
+    host.markBridgeStartedThread(loadedThreadId);
+    await host.request("thread/goal/set", {
+      threadId: loadedThreadId,
+      ...goalUpdateParams(undefined, command.input, command.options)
+    }, { threadId: loadedThreadId });
+    return;
+  }
+  host.markBridgeStartedThread(loadedThreadId);
   await host.request("turn/start", {
     threadId: loadedThreadId,
     cwd: command.workingDirectory,

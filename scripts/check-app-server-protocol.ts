@@ -119,10 +119,22 @@ try {
     [/approvalsReviewer: ApprovalsReviewer/, "thread settings must expose approvalsReviewer"],
     [/activePermissionProfile: ActivePermissionProfile \| null/, "thread settings must expose activePermissionProfile"]
   ]);
+  await assertSchema("v2/ThreadSettingsUpdateParams.ts", [
+    [/cwd\?: string \| null/, "thread/settings/update must expose cwd"],
+    [/approvalPolicy\?: AskForApproval \| null/, "thread/settings/update must expose approvalPolicy"],
+    [/approvalsReviewer\?: ApprovalsReviewer \| null/, "thread/settings/update must expose approvalsReviewer"],
+    [/sandboxPolicy\?: SandboxPolicy \| null/, "thread/settings/update must expose sandboxPolicy"],
+    [/permissions\?: string \| null/, "thread/settings/update must expose named permissions"],
+    [/model\?: string \| null/, "thread/settings/update must expose model"],
+    [/serviceTier\?: string \| null/, "thread/settings/update must expose serviceTier"],
+    [/effort\?: ReasoningEffort \| null/, "thread/settings/update must expose effort"],
+    [/collaborationMode\?: CollaborationMode \| null/, "thread/settings/update must expose collaborationMode"]
+  ]);
   await assertSchema("ClientRequest.ts", [
     [/"method": "thread\/fork"/, "thread/fork must be available"],
     [/"method": "thread\/compact\/start"/, "thread/compact/start must be available"],
     [/"method": "thread\/goal\/set"/, "thread/goal/set must be available"],
+    [/"method": "thread\/settings\/update"/, "thread/settings/update must be available"],
     [/"method": "thread\/unsubscribe"/, "thread/unsubscribe must be available"],
     [/"method": "permissionProfile\/list"/, "permissionProfile/list must be available"],
     [/"method": "review\/start"/, "review/start must be available"]
