@@ -18,7 +18,7 @@ export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
   return views;
 };
 
-type SubagentAssignmentView = NonNullable<SubagentActivityView["assignment"]>;
+export type SubagentAssignmentView = NonNullable<SubagentActivityView["assignment"]>;
 
 export const withSubagentActivityAssignment = (
   view: CodexRecordView | null,
@@ -79,6 +79,29 @@ export const subagentActivityAssignments = (records: CodexRecord[]) => {
     if (assignment) assignmentsByActivityId.set(activity.recordId, assignment);
   }
   return assignmentsByActivityId;
+};
+
+/**
+ * Resolve the parent-side spawn assignment for a child thread without copying it
+ * into the child transcript. Re-evaluating this against live parent records also
+ * handles activity arriving before the completed spawnAgent item.
+ */
+export const subagentAssignmentForChild = (
+  records: CodexRecord[],
+  childThreadId: string
+): SubagentAssignmentView | undefined => {
+  const assignments = subagentActivityAssignments(records);
+  for (const record of records) {
+    const payload = asRecord(record.payload);
+    if (
+      payload?.type === "subAgentActivity"
+      && nonEmptyString(payload.agentThreadId) === childThreadId
+    ) {
+      const assignment = assignments.get(record.id);
+      if (assignment) return assignment;
+    }
+  }
+  return undefined;
 };
 
 const subagentAssignmentFromPayload = (payload: Record<string, unknown>): SubagentAssignmentView | null => {

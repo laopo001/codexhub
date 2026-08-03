@@ -697,7 +697,7 @@ const assertComposerAttachmentClear = async () => {
       composerDraftStore,
       composerHistoryRef: { current: null },
       messageContextMenu: null,
-      openThreads,
+      conversationThreadsRef: { current: new Map(openThreads.map((thread) => [thread.threadId, thread])) },
       resizeComposerTextarea: () => undefined,
       setCommandPaletteByScope: () => undefined,
       setCommandPaletteLoadingScopes: () => undefined,
@@ -706,7 +706,7 @@ const assertComposerAttachmentClear = async () => {
       setMessageContextMenu: () => undefined,
       setMessageRenderModes: () => undefined,
       setThreadControlsMenuOpen: () => undefined,
-      dispatchOpenThreads: (action) => {
+      dispatchConversationThread: (action) => {
         openThreads = openThreadReducer(openThreads, action);
       }
     }, {

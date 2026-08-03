@@ -1,383 +1,69 @@
-import React from "react";
 import { Tabs } from "antd";
-import {
-  FileText,
-  Flame,
-  Image as ImageIcon,
-  ListChecks,
-  MessageCircle,
-  Paperclip,
-  Target,
-  X,
-  type LucideIcon
-} from "lucide-react";
-import { Virtuoso, type Components } from "react-virtuoso";
-import {
-  rateLimitUsageForWindowMinutes,
-  sevenDayRateLimitWindowMinutes
-} from "../core/threadUsage.js";
-import {
-  threadGranularApprovalKeys,
-  type ThreadSandboxPolicy,
-} from "../shared/usageTypes.js";
-import { approvalPolicyOptions, approvalsReviewerOptions, composerModeOptions } from "./appConfig.js";
+import { subagentAssignmentForChild } from "../core/codexRecordView.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
-import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
-import {
-  LiveGoalDuration,
-  MessagesTurnLoadingFooter,
-  type MessagesTurnLoadingContext
-} from "./helpers/liveTime.js";
+import { threadDisplayRecords } from "./appHelpers.js";
+import { releaseDialogOnlyThreadAttachments } from "./helpers/subagentThreadDialog.js";
+import { SubagentThreadConversation } from "./SubagentThreadConversation.js";
+import { SubagentThreadDialog } from "./SubagentThreadDialog.js";
+import type { OpenThreadState, SubagentThreadDialogState } from "./types.js";
 import type { AppViewModel } from "./viewModel.js";
-import {
-  ActivityStatusBar,
-  canForkAtMessage,
-  canRenderMarkdown,
-  EmptyMessages,
-  goalStatusClass,
-  goalStatusControl,
-  goalStatusLabel,
-  MessageCard,
-  defaultGranularApprovalPolicy,
-  permissionProfileLabel,
-  updateGranularApprovalPolicy,
-} from "./appHelpers.js";
+import { WorkspaceThreadConversation } from "./WorkspaceThreadConversation.js";
 
 type AppViewProps = {
   viewModel: AppViewModel;
 };
 
-const composerModeIconByValue: Record<(typeof composerModeOptions)[number]["value"], LucideIcon> = {
-  chat: MessageCircle,
-  plan: ListChecks,
-  goal: Target
+type ReadySubagentThreadDialog = SubagentThreadDialogState & {
+  status: "ready";
+  thread: OpenThreadState;
 };
-
-const weeklyGoalPolicyLabel = (targetRemainingPercent: number, wrappingUp: boolean) =>
-  wrappingUp
-    ? `安全收尾 · 7d ≤ ${formatGoalPolicyPercent(targetRemainingPercent)}`
-    : `燃烧 · 7d → ${formatGoalPolicyPercent(targetRemainingPercent)}`;
-
-const formatGoalPolicyPercent = (value: number) =>
-  `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
-
-const firstContentLine = (text: string) =>
-  text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
-
-const clippedText = (text: string, maxLength: number) =>
-  text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
-
-const textAttachmentTitle = (text: string) => {
-  const firstLine = firstContentLine(text);
-  const fileMatch = /^File:\s*(.+)$/i.exec(firstLine);
-  const pathMatch = /^Path:\s*(.+)$/i.exec(firstLine);
-  return clippedText(fileMatch?.[1] || pathMatch?.[1] || "Text selection", 80);
-};
-
-const textAttachmentPreview = (text: string) => {
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const previewLines = /^(File|Path):/i.test(lines[0] ?? "") ? lines.slice(1) : lines;
-  return clippedText((previewLines.join(" ") || lines[0] || "Text").replace(/\s+/g, " "), 160);
-};
-
-const textAttachmentTooltip = (text: string) => {
-  const title = textAttachmentTitle(text);
-  const preview = textAttachmentPreview(text);
-  return title === preview ? title : `${title}\n${preview}`;
-};
-
-const attachmentCountLabel = (count: number) =>
-  `${count} attachment${count === 1 ? "" : "s"}`;
-
-const sandboxPolicyLabel = (policy: ThreadSandboxPolicy) => {
-  if (policy.type === "dangerFullAccess") return "Danger Full Access";
-  if (policy.type === "readOnly") return "Read Only";
-  if (policy.type === "workspaceWrite") return "Workspace";
-  return "External Sandbox";
-};
-
-const messagesBottomThreshold = 48;
-const messagesScrollbarHitArea = 20;
-const messagesScrollbarIntentMs = 900;
-const messagesUpScrollKeys = new Set(["ArrowUp", "PageUp", "Home"]);
-const messagesDownScrollKeys = new Set(["ArrowDown", "PageDown", "End"]);
-
-type MessagesVirtuosoContext = MessagesTurnLoadingContext;
 
 export const AppView = ({ viewModel }: AppViewProps) => {
   const { workspace, sidebar, dialogs } = viewModel;
   const {
-    activeCanStop,
-    activeExpandedStatusKeys,
-    activeGoal,
     activeRuntime,
     activeThread,
     activeThreadIsOpen,
-    activeThreadExecutionMeta,
-    activeThreadApprovalPolicyKind,
-    activeThreadApprovalPolicySelection,
-    activeThreadApprovalsReviewerSelection,
-    activeThreadPermissionProfileSelection,
-    activePermissionProfiles,
-    activePermissionProfilesError,
-    activePermissionProfilesStatus,
-    activeUserMessageHistory,
-    activeViews,
     authError,
     authRequired,
     authTokenDraft,
-    addThreadFiles,
-    clearThreadAttachments,
-    clearThreadGoal,
     closeThread,
-    compactThread,
-    commandPaletteByScope,
-    commandPaletteLoadingScopes,
-    composerDraftStore,
-    composerMenuOpen,
-    composerMode,
-    composerTextareaRef,
-    forkingMessageKey,
-    forkMessage,
-    handleComposerKeyDown,
-    imageFileInputRef,
-    insertThreadPathText,
-    latestTurnActivityScope,
-    loadCommandPalette,
-    messageDisplayMode,
-    messageRenderModes,
-    messagesRef,
-    messagesShouldFollowRef,
-    openMessageContextMenu,
-    openSubagentThread,
     openSelectedProjectThreadPicker,
-    pasteThreadImages,
-    removeThreadImage,
-    removeThreadTextAttachment,
-    renderComposerThreadControls,
-    resetComposerHistory,
-    respondToApproval,
-    respondToUserInput,
-    reviewThread,
-    resizeComposerTextarea,
+    openSubagentThread,
+    openThreads,
     selectedProject,
-    send,
-    threadControlsMenuOpen,
-    setComposerMenuOpen,
-    setComposerMode,
-    setExpandedStatusKeys,
-    setExpandedToolBatchKeys,
-    setGoalDialog,
-    setExpandedStatusTurns,
-    setImagePreview,
-    setInspectMessage,
-    setActiveThreadApprovalPolicyDraft,
-    setActiveThreadApprovalsReviewerDraft,
-    setActiveThreadPermissionProfileDraft,
     setAuthTokenDraft,
-    setThreadControlsMenuOpen,
-    setThreadModelDialogOpen,
     setSidebarCollapsed,
-    showComposerSendButton,
-    statusPanelAvailable,
-    statusPanelExpanded,
+    setSubagentThreadDialog,
     sidebarCollapsed,
-    statusScopeKey,
-    turnStatusItems,
-    stopTurn,
+    subagentThreadDialog,
     submitAuthToken,
     switchMachineThread,
-    updateMessageRenderMode,
-    updateThreadInput,
-    updateThreadGoal,
     openThreadEmptyMessage,
     openThreadTabs
   } = workspace;
   const canAddThreadForProject = Boolean(activeRuntime?.online || selectedProject?.machineOnline);
-  const sevenDayRateLimit = rateLimitUsageForWindowMinutes(
-    activeRuntime?.accountRateLimits,
-    sevenDayRateLimitWindowMinutes
-  );
-  const currentSevenDayRemainingPercent = sevenDayRateLimit
-    ? Math.max(0, Math.min(100, 100 - sevenDayRateLimit.usedPercent))
-    : undefined;
   const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
-  const activeGoalStatusControl = activeGoal ? goalStatusControl(activeGoal.status) : null;
-  const activeGranularApprovalPolicy = activeThreadApprovalPolicySelection
-    && typeof activeThreadApprovalPolicySelection === "object"
-    ? activeThreadApprovalPolicySelection
-    : defaultGranularApprovalPolicy();
-  const activeThreadSandboxProfileLabel = activeThread?.sandboxPolicy
-    ? sandboxPolicyLabel(activeThread.sandboxPolicy)
-    : undefined;
-  const activeThreadPermissionProfileUiSelection = activeThreadPermissionProfileSelection
-    ?? (activeThreadSandboxProfileLabel
-      ? activePermissionProfiles.find((profile) =>
-        permissionProfileLabel(profile.id).toLowerCase()
-          === activeThreadSandboxProfileLabel.toLowerCase()
-      )?.id
-      : undefined);
-  const activeAttachmentCount = activeThread
-    ? activeThread.textAttachments.length + activeThread.imageAttachments.length
-    : 0;
   const showThreadTabs = Boolean(activeThreadKey || canAddThreadForProject);
-  const executionStatus = activeThreadExecutionMeta?.status ?? "idle";
-  const executionLabel = activeThreadExecutionMeta?.label ?? "Idle";
-  const executionText = activeThreadExecutionMeta?.text ?? executionLabel;
-  const composerRuntimeReady = Boolean(activeThread?.runtime.online && activeThread.runtime.runnable !== false);
-  const showTurnLoadingMessage = executionStatus === "waiting" || executionStatus === "running";
-  const messagesVirtuosoContext = React.useMemo(
-    () => ({ executionMeta: activeThreadExecutionMeta, activeGoal }),
-    [activeGoal, activeThreadExecutionMeta]
-  );
-  const messagesVirtuosoComponents = React.useMemo<Components<(typeof activeViews)[number], MessagesVirtuosoContext>>(() => ({
-    EmptyPlaceholder: EmptyMessages,
-    Footer: showTurnLoadingMessage ? MessagesTurnLoadingFooter : undefined
-  }), [showTurnLoadingMessage]);
-  const toggleComposerMenu = () => {
-    if (composerMenuOpen) {
-      setComposerMenuOpen(false);
-      return;
-    }
-    setActiveThreadApprovalPolicyDraft("auto");
-    setActiveThreadApprovalsReviewerDraft("auto");
-    setActiveThreadPermissionProfileDraft(null);
-    setComposerMenuOpen(true);
-  };
-  const messagesScrollbarIntentRef = React.useRef(false);
-  const messagesScrollbarIntentTimerRef = React.useRef<number | null>(null);
-  const messagesLastScrollTopRef = React.useRef<number | null>(null);
-  const messagesLastTouchYRef = React.useRef<number | null>(null);
-  const messagesStickScrollFrameRef = React.useRef<number | null>(null);
-  const openGoalRunPolicyDialog = () => {
-    if (!activeThread) return;
-    const goalRunPolicy = activeThread.goalRunPolicy?.type === "consumeUntilWeeklyRemainingAtOrBelow"
-      ? activeThread.goalRunPolicy
-      : null;
-    setGoalDialog({
-      kind: "burn",
-      threadId: activeThread.threadId,
-      objective: activeGoal?.objective ?? composerDraftStore.get(activeThread.threadId),
-      targetRemainingPercent: goalRunPolicy
-        ? String(goalRunPolicy.targetRemainingPercent)
-        : "",
-      currentRemainingPercent: currentSevenDayRemainingPercent,
-      saving: false,
-      error: ""
-    });
-  };
-  React.useEffect(() => () => {
-    if (messagesScrollbarIntentTimerRef.current !== null) {
-      window.clearTimeout(messagesScrollbarIntentTimerRef.current);
-      messagesScrollbarIntentTimerRef.current = null;
-    }
-    if (messagesStickScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(messagesStickScrollFrameRef.current);
-      messagesStickScrollFrameRef.current = null;
-    }
-  }, []);
-  React.useEffect(() => {
-    messagesScrollbarIntentRef.current = false;
-    messagesLastScrollTopRef.current = null;
-    messagesLastTouchYRef.current = null;
-    if (messagesScrollbarIntentTimerRef.current !== null) {
-      window.clearTimeout(messagesScrollbarIntentTimerRef.current);
-      messagesScrollbarIntentTimerRef.current = null;
-    }
-    if (messagesStickScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(messagesStickScrollFrameRef.current);
-      messagesStickScrollFrameRef.current = null;
-    }
-  }, [activeThread?.threadId]);
-  const scrollMessagesToBottom = React.useCallback(() => {
-    if (!messagesShouldFollowRef.current) return;
-    if (messagesStickScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(messagesStickScrollFrameRef.current);
-    }
-    messagesStickScrollFrameRef.current = window.requestAnimationFrame(() => {
-      messagesStickScrollFrameRef.current = null;
-      if (!messagesShouldFollowRef.current) return;
-      messagesRef.current?.autoscrollToBottom();
-      messagesStickScrollFrameRef.current = window.requestAnimationFrame(() => {
-        messagesStickScrollFrameRef.current = null;
-        if (!messagesShouldFollowRef.current) return;
-        messagesRef.current?.scrollTo({
-          top: Number.MAX_SAFE_INTEGER,
-          behavior: "auto"
-        });
-      });
-    });
-  }, [messagesRef, messagesShouldFollowRef]);
-  React.useEffect(() => {
-    if (showTurnLoadingMessage && messagesShouldFollowRef.current) scrollMessagesToBottom();
-  }, [messagesShouldFollowRef, scrollMessagesToBottom, showTurnLoadingMessage]);
-  const markMessagesScrollbarIntent = React.useCallback((scroller: HTMLElement) => {
-    messagesScrollbarIntentRef.current = true;
-    messagesLastScrollTopRef.current = scroller.scrollTop;
-    if (messagesScrollbarIntentTimerRef.current !== null) {
-      window.clearTimeout(messagesScrollbarIntentTimerRef.current);
-    }
-    messagesScrollbarIntentTimerRef.current = window.setTimeout(() => {
-      messagesScrollbarIntentRef.current = false;
-      messagesScrollbarIntentTimerRef.current = null;
-      messagesLastScrollTopRef.current = null;
-    }, messagesScrollbarIntentMs);
-  }, []);
-  const clearMessagesScrollbarIntent = React.useCallback(() => {
-    messagesScrollbarIntentRef.current = false;
-    messagesLastScrollTopRef.current = null;
-    if (messagesScrollbarIntentTimerRef.current !== null) {
-      window.clearTimeout(messagesScrollbarIntentTimerRef.current);
-      messagesScrollbarIntentTimerRef.current = null;
-    }
-  }, []);
-  const handleMessagesScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    if (!messagesScrollbarIntentRef.current) return;
-    const previousScrollTop = messagesLastScrollTopRef.current;
-    const nextScrollTop = event.currentTarget.scrollTop;
-    messagesLastScrollTopRef.current = nextScrollTop;
-    if (previousScrollTop !== null && nextScrollTop < previousScrollTop) {
-      messagesShouldFollowRef.current = false;
-    }
-  }, [messagesShouldFollowRef]);
-  const handleMessagesWheel = React.useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented) return;
-    if (event.deltaY < 0) messagesShouldFollowRef.current = false;
-  }, [messagesShouldFollowRef]);
-  const handleMessagesTouchStart = React.useCallback((event: React.TouchEvent<HTMLDivElement>) => {
-    messagesLastTouchYRef.current = event.touches[0]?.clientY ?? null;
-  }, []);
-  const handleMessagesTouchMove = React.useCallback((event: React.TouchEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented) return;
-    const nextTouchY = event.touches[0]?.clientY ?? null;
-    const previousTouchY = messagesLastTouchYRef.current;
-    messagesLastTouchYRef.current = nextTouchY;
-    if (nextTouchY !== null && previousTouchY !== null && nextTouchY > previousTouchY) {
-      messagesShouldFollowRef.current = false;
-    }
-  }, [messagesShouldFollowRef]);
-  const handleMessagesTouchEnd = React.useCallback(() => {
-    messagesLastTouchYRef.current = null;
-  }, []);
-  const handleMessagesPointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented || event.target !== event.currentTarget) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    if (event.clientX < rect.right - messagesScrollbarHitArea) return;
-    markMessagesScrollbarIntent(event.currentTarget);
-  }, [markMessagesScrollbarIntent]);
-  const handleMessagesKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented) return;
-    const scrollsUp = messagesUpScrollKeys.has(event.key) || (event.key === " " && event.shiftKey);
-    const scrollsDown = messagesDownScrollKeys.has(event.key) || (event.key === " " && !event.shiftKey);
-    if (!scrollsUp && !scrollsDown) return;
-    if (scrollsUp) {
-      messagesShouldFollowRef.current = false;
-    } else if (event.key === "End") {
-      messagesShouldFollowRef.current = true;
-      scrollMessagesToBottom();
-    }
-  }, [messagesShouldFollowRef, scrollMessagesToBottom]);
+  const subagentParentThread = subagentThreadDialog
+    ? openThreads.find((thread) => thread.threadId === subagentThreadDialog.parentThreadId)
+    : undefined;
+  const subagentAssignment = subagentThreadDialog && subagentParentThread
+    ? subagentAssignmentForChild(
+        threadDisplayRecords(subagentParentThread.threadId, subagentParentThread),
+        subagentThreadDialog.threadId
+      ) ?? subagentThreadDialog.assignment
+    : subagentThreadDialog?.assignment;
+  const readySubagentThreadDialog: ReadySubagentThreadDialog | null = subagentThreadDialog?.status === "ready"
+    && subagentThreadDialog.thread
+    ? {
+        ...subagentThreadDialog,
+        status: "ready",
+        thread: subagentThreadDialog.thread
+      }
+    : null;
+
   if (authRequired) {
     return (
       <main className="authShell">
@@ -402,6 +88,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       </main>
     );
   }
+
   const sidebarToggle = (
     <button
       type="button"
@@ -413,6 +100,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       {sidebarCollapsed ? "Menu" : "Hide"}
     </button>
   );
+
   return (
     <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
       {!sidebarCollapsed ? (
@@ -436,518 +124,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
             items={openThreadTabs.map((item) => ({
               ...item,
               closable: true,
-              children: activeThread && item.key === activeThreadKey ? (
-                <div className="threadWorkspacePane">
-                  <Virtuoso
-                    key={activeThread.threadId}
-                    ref={messagesRef}
-                    className="messages"
-                    data={activeViews}
-                    onKeyDown={handleMessagesKeyDown}
-                    onPointerCancel={clearMessagesScrollbarIntent}
-                    onPointerDown={handleMessagesPointerDown}
-                    onPointerUp={clearMessagesScrollbarIntent}
-                    onScroll={handleMessagesScroll}
-                    onTouchCancel={handleMessagesTouchEnd}
-                    onTouchEnd={handleMessagesTouchEnd}
-                    onTouchMove={handleMessagesTouchMove}
-                    onTouchStart={handleMessagesTouchStart}
-                    onWheel={handleMessagesWheel}
-                    atBottomStateChange={(atBottom) => {
-                      if (atBottom) {
-                        messagesShouldFollowRef.current = true;
-                      } else if (messagesShouldFollowRef.current) {
-                        scrollMessagesToBottom();
-                      }
-                    }}
-                    atBottomThreshold={messagesBottomThreshold}
-                    followOutput={() => messagesShouldFollowRef.current ? "auto" : false}
-                    totalListHeightChanged={() => {
-                      if (messagesShouldFollowRef.current) scrollMessagesToBottom();
-                    }}
-                    initialTopMostItemIndex={Math.max(activeViews.length - 1, 0)}
-                    increaseViewportBy={{ top: 360, bottom: 720 }}
-                    computeItemKey={(_, message) => message.id}
-                    components={messagesVirtuosoComponents}
-                    context={messagesVirtuosoContext}
-                    itemContent={(_, message) => {
-                      const markdownEnabled = canRenderMarkdown(message);
-                      const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
-                      const toolBatchKey = message.toolBatch?.key;
-                      const inspectable = messageDisplayMode === "compact" && message.role === "tool" && !toolBatchKey;
-                      return (
-                        <MessageCard
-                          message={message}
-                          showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
-                          showTimestamp={!(messageDisplayMode === "compact" && message.role === "tool")}
-                          renderToolPreview={messageDisplayMode === "compact"}
-                          renderMode={renderMode}
-                          markdownEnabled={markdownEnabled}
-                          threadWorkingDirectory={activeThread.workingDirectory}
-                          onRenderModeChange={markdownEnabled ? (mode) => updateMessageRenderMode(message.id, mode) : undefined}
-                          onContextMenu={(event) => openMessageContextMenu(event, activeThread.threadId, message, inspectable)}
-                          onInspect={inspectable && message.role === "tool" ? () => setInspectMessage(message) : undefined}
-                          onOpenImage={setImagePreview}
-                          onOpenSubagentThread={(threadId) => openSubagentThread(threadId)}
-                          onToggleToolBatch={toolBatchKey ? () => {
-                            setExpandedToolBatchKeys((current) => {
-                              const keys = new Set(current[activeThread.threadId] ?? []);
-                              if (message.toolBatch?.expanded) keys.delete(toolBatchKey);
-                              else keys.add(toolBatchKey);
-                              return {
-                                ...current,
-                                [activeThread.threadId]: [...keys]
-                              };
-                            });
-                          } : undefined}
-                          onApprovalDecision={(approvalId, decision) => void respondToApproval(activeThread.threadId, approvalId, decision)}
-                          onUserInputResponse={(userInputId, answers) => void respondToUserInput(activeThread.threadId, userInputId, answers)}
-                          onFork={canForkAtMessage(activeThread.threadId, message) ? () => void forkMessage(activeThread.threadId, message.record.id) : undefined}
-                          forkDisabled={Boolean(forkingMessageKey)}
-                          forking={forkingMessageKey === `${activeThread.threadId}:${message.record.id}`}
-                        />
-                      );
-                    }}
-                  />
-                  <form
-                    className="composer"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      if (composerRuntimeReady) void send(activeThread.threadId);
-                    }}
-                  >
-                    <div className="composerLayout">
-                      {statusPanelAvailable && activeThreadExecutionMeta ? (
-                        <ActivityStatusBar
-                          statuses={turnStatusItems}
-                          executionMeta={activeThreadExecutionMeta}
-                          expanded={statusPanelExpanded}
-                          expandedKeys={activeExpandedStatusKeys}
-                          onToggleExpanded={() => {
-                            if (!activeThread?.threadId || !statusScopeKey) return;
-                            setExpandedStatusTurns((current) => {
-                              if (current[activeThread.threadId] === statusScopeKey) {
-                                const next = { ...current };
-                                delete next[activeThread.threadId];
-                                return next;
-                              }
-                              return {
-                                ...current,
-                                [activeThread.threadId]: statusScopeKey
-                              };
-                            });
-                          }}
-                          onToggle={(key) => {
-                            if (!statusScopeKey) return;
-                            setExpandedStatusKeys((current) => {
-                              const keys = new Set(current[statusScopeKey] ?? []);
-                              if (keys.has(key)) keys.delete(key);
-                              else keys.add(key);
-                              return { ...current, [statusScopeKey]: [...keys] };
-                            });
-                          }}
-                        />
-                      ) : null}
-                      <div className="composerSurface">
-                        {activeGoal && activeThread ? (
-                          <div
-                            className={`goalStrip ${goalStatusClass(activeGoal.status)}`}
-                            title={`${goalStatusLabel(activeGoal.status)} · ${activeGoal.objective}`}
-                            aria-label={`${goalStatusLabel(activeGoal.status)}: ${activeGoal.objective}`}
-                          >
-                            <div className="goalStripMain">
-                              <Target className="goalStripIcon" aria-hidden="true" />
-                              <span className="goalStripLabel">{goalStatusLabel(activeGoal.status)}</span>
-                              <span className="goalStripObjective" title={activeGoal.objective}>{activeGoal.objective}</span>
-                              {activeThread.goalRunPolicy?.type === "consumeUntilWeeklyRemainingAtOrBelow" ? (
-                                <span className="goalStripPolicy">
-                                  {weeklyGoalPolicyLabel(
-                                    activeThread.goalRunPolicy.targetRemainingPercent,
-                                    activeThread.goalRunPhase === "wrappingUp"
-                                  )}
-                                </span>
-                              ) : null}
-                              {activeGoal.timeUsedSeconds !== undefined ? (
-                                <span className="goalStripAge">
-                                  <LiveGoalDuration
-                                    status={activeGoal.status}
-                                    running={activeThread.status === "running"}
-                                    activeTurnStartedAt={latestTurnActivityScope.startedAt}
-                                    timeUsedSeconds={activeGoal.timeUsedSeconds}
-                                    updatedAt={activeGoal.updatedAt}
-                                  />
-                                </span>
-                              ) : null}
-                            </div>
-                            <div className="goalStripActions">
-                              <button
-                                type="button"
-                                className="goalIconButton"
-                                title="编辑目标"
-                                aria-label="编辑目标"
-                                onClick={() => {
-                                  setGoalDialog({
-                                    kind: "goal",
-                                    threadId: activeThread.threadId,
-                                    objective: activeGoal.objective,
-                                    targetRemainingPercent: "",
-                                    currentRemainingPercent: currentSevenDayRemainingPercent,
-                                    saving: false,
-                                    error: ""
-                                  });
-                                }}
-                              >
-                                ✎
-                              </button>
-                              {activeGoalStatusControl ? (
-                                <button
-                                  type="button"
-                                  className="goalIconButton"
-                                  title={activeGoalStatusControl.label}
-                                  aria-label={activeGoalStatusControl.label}
-                                  onClick={() => void updateThreadGoal(activeThread.threadId, {
-                                    status: activeGoalStatusControl.nextStatus
-                                  })}
-                                >
-                                  {activeGoalStatusControl.icon}
-                                </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                className="goalIconButton danger"
-                                title="清除目标"
-                                aria-label="清除目标"
-                                onClick={() => void clearThreadGoal(activeThread.threadId)}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          </div>
-                        ) : null}
-                        <div className="composerInput">
-                          {activeAttachmentCount ? (
-                            <div
-                              className="composerAttachmentStrip"
-                              aria-label={`${attachmentCountLabel(activeAttachmentCount)} selected`}
-                            >
-                              <div className="composerAttachmentCount" title={`${attachmentCountLabel(activeAttachmentCount)} selected`}>
-                                <Paperclip aria-hidden="true" />
-                                <span>{activeAttachmentCount}</span>
-                              </div>
-                              <div className="composerAttachmentScroller">
-                                {activeThread.textAttachments.map((item) => (
-                                  <div className="composerAttachmentChip text" key={item.id} title={textAttachmentTooltip(item.text)}>
-                                    <span className="composerAttachmentIcon" aria-hidden="true">
-                                      <FileText />
-                                    </span>
-                                    <span className="composerAttachmentText">
-                                      <span className="composerAttachmentName">{textAttachmentTitle(item.text)}</span>
-                                      <span className="composerAttachmentPreview">{textAttachmentPreview(item.text)}</span>
-                                    </span>
-                                    <button
-                                      type="button"
-                                      className="composerAttachmentRemoveButton"
-                                      onClick={() => removeThreadTextAttachment(activeThread.threadId, item.id)}
-                                      aria-label={`Remove ${textAttachmentTitle(item.text)}`}
-                                      title="Remove attachment"
-                                    >
-                                      <X aria-hidden="true" />
-                                    </button>
-                                  </div>
-                                ))}
-                                {activeThread.imageAttachments.map((image) => (
-                                  <div className="composerAttachmentChip image" key={image.id} title={image.name || "Image attachment"}>
-                                    {/* Local composer thumbnails use the same preview dialog as rendered transcript images. */}
-                                    <button
-                                      type="button"
-                                      className="composerAttachmentThumb composerAttachmentThumbButton"
-                                      onClick={() => setImagePreview({ url: image.previewUrl, title: image.name || "Image attachment" })}
-                                      aria-label={`Preview ${image.name || "image attachment"}`}
-                                      title="Preview image"
-                                    >
-                                      <img src={image.previewUrl} alt="" />
-                                    </button>
-                                    <span className="composerAttachmentText">
-                                      <span className="composerAttachmentName">{image.name || "Image"}</span>
-                                      <span className="composerAttachmentPreview">
-                                        <ImageIcon aria-hidden="true" />
-                                        Image
-                                      </span>
-                                    </span>
-                                    <button
-                                      type="button"
-                                      className="composerAttachmentRemoveButton"
-                                      onClick={() => removeThreadImage(activeThread.threadId, image.id)}
-                                      aria-label={`Remove ${image.name || "image attachment"}`}
-                                      title="Remove attachment"
-                                    >
-                                      <X aria-hidden="true" />
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                              {activeAttachmentCount > 1 ? (
-                                <button
-                                  type="button"
-                                  className="composerAttachmentClearButton"
-                                  onClick={() => clearThreadAttachments(activeThread.threadId)}
-                                >
-                                  Clear all
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : null}
-                          <ComposerTextInput
-                            activeUserMessageHistory={activeUserMessageHistory}
-                            commandPaletteByScope={commandPaletteByScope}
-                            commandPaletteLoadingScopes={commandPaletteLoadingScopes}
-                            compactThread={compactThread}
-                            composerDraftStore={composerDraftStore}
-                            composerTextareaRef={composerTextareaRef}
-                            handleComposerKeyDown={handleComposerKeyDown}
-                            insertThreadPathText={insertThreadPathText}
-                            loadCommandPalette={loadCommandPalette}
-                            pasteThreadImages={pasteThreadImages}
-                            resetComposerHistory={resetComposerHistory}
-                            resizeComposerTextarea={resizeComposerTextarea}
-                            reviewThread={reviewThread}
-                            setComposerMode={setComposerMode}
-                            setThreadModelDialogOpen={setThreadModelDialogOpen}
-                            thread={activeThread}
-                            updateThreadInput={updateThreadInput}
-                          />
-                        </div>
-                        <div className="composerActions">
-                          <div className="composerLeftActions">
-                            <div className="composerMenuHost" onClick={(event) => event.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="composerIconButton"
-                                aria-label="Open composer menu"
-                                aria-expanded={composerMenuOpen}
-                                onClick={toggleComposerMenu}
-                              >
-                                +
-                              </button>
-                              {composerMenuOpen ? (
-                                <div className="composerMenu" role="menu">
-                                  <button
-                                    type="button"
-                                    className="composerMenuItem"
-                                    role="menuitem"
-                                    onClick={() => {
-                                      setComposerMenuOpen(false);
-                                      imageFileInputRef.current?.click();
-                                    }}
-                                  >
-                                    <span className="composerMenuIcon" aria-hidden="true">[]</span>
-                                    <span>添加照片和文件</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="composerMenuItem"
-                                    role="menuitem"
-                                    disabled={activeThread.running}
-                                    title={activeThread.running ? "Stop the running turn before starting a review" : "Review uncommitted changes in this thread"}
-                                    onClick={() => {
-                                      setComposerMenuOpen(false);
-                                      void reviewThread(activeThread.threadId);
-                                    }}
-                                  >
-                                    <span className="composerMenuIcon" aria-hidden="true">R</span>
-                                    <span>Review changes</span>
-                                  </button>
-                                  <div className="composerMenuGroup" role="group" aria-label="Approval policy">
-                                    <div className="composerMenuGroupLabel">Approval policy</div>
-                                    <div className="composerMenuChoiceGrid">
-                                      {approvalPolicyOptions.map((option) => (
-                                        <button
-                                          key={option.value}
-                                          type="button"
-                                          className={`composerMenuChoice${activeThreadApprovalPolicyKind === option.value ? " active" : ""}`}
-                                          role="menuitemradio"
-                                          aria-checked={activeThreadApprovalPolicyKind === option.value}
-                                          onClick={() => setActiveThreadApprovalPolicyDraft(
-                                            option.value === "granular"
-                                              ? activeGranularApprovalPolicy
-                                              : option.value
-                                          )}
-                                        >
-                                          {option.label}
-                                        </button>
-                                      ))}
-                                    </div>
-                                    {activeThreadApprovalPolicyKind === "granular" ? (
-                                      <div className="composerGranularGrid">
-                                        {threadGranularApprovalKeys.map((key) => {
-                                          const enabled = activeGranularApprovalPolicy.granular[key];
-                                          return (
-                                            <button
-                                              key={key}
-                                              type="button"
-                                              className={`composerMenuToggle${enabled ? " active" : ""}`}
-                                              role="checkbox"
-                                              aria-checked={enabled}
-                                              onClick={() => setActiveThreadApprovalPolicyDraft((current) =>
-                                                updateGranularApprovalPolicy(
-                                                  current === "auto" ? activeGranularApprovalPolicy : current,
-                                                  key,
-                                                  !enabled
-                                                )
-                                              )}
-                                            >
-                                              <span>{permissionProfileLabel(key)}</span>
-                                              <span aria-hidden="true">{enabled ? "On" : "Off"}</span>
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                  <div className="composerMenuGroup" role="group" aria-label="Approval reviewer">
-                                    <div className="composerMenuGroupLabel">Approval reviewer</div>
-                                    <div className="composerMenuChoiceGrid">
-                                      {approvalsReviewerOptions.map((option) => (
-                                        <button
-                                          key={option.value}
-                                          type="button"
-                                          className={`composerMenuChoice${activeThreadApprovalsReviewerSelection === option.value ? " active" : ""}`}
-                                          role="menuitemradio"
-                                          aria-checked={activeThreadApprovalsReviewerSelection === option.value}
-                                          onClick={() => setActiveThreadApprovalsReviewerDraft(option.value)}
-                                        >
-                                          {option.label}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                  <div className="composerMenuGroup" role="group" aria-label="Permission profile">
-                                    <div className="composerMenuGroupLabel">Permissions</div>
-                                    <div className="composerPermissionProfileList">
-                                      {activePermissionProfilesStatus === "idle" || activePermissionProfilesStatus === "loading" ? (
-                                        <div className="composerMenuNotice">Loading permission profiles…</div>
-                                      ) : null}
-                                      {activePermissionProfilesStatus === "error" ? (
-                                        <div className="composerMenuNotice error">{activePermissionProfilesError}</div>
-                                      ) : null}
-                                      {activePermissionProfilesStatus === "unavailable" ? (
-                                        <div className="composerMenuNotice">Permission profiles require an online runtime.</div>
-                                      ) : null}
-                                      {activePermissionProfilesStatus === "ready" && activePermissionProfiles.length === 0 ? (
-                                        <div className="composerMenuNotice">No permission profiles are available.</div>
-                                      ) : null}
-                                      {activePermissionProfiles.map((profile) => (
-                                        <button
-                                          key={profile.id}
-                                          type="button"
-                                          className={`composerMenuChoice${activeThreadPermissionProfileUiSelection === profile.id ? " active" : ""}`}
-                                          role="menuitemradio"
-                                          aria-checked={activeThreadPermissionProfileUiSelection === profile.id}
-                                          disabled={!profile.allowed}
-                                          title={profile.description || profile.id}
-                                          onClick={() => setActiveThreadPermissionProfileDraft(profile.id)}
-                                        >
-                                          {permissionProfileLabel(profile.id)}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                            <div className="composerModeSegmented" role="radiogroup" aria-label="Composer mode">
-                              {composerModeOptions.map((option) => {
-                                const ModeIcon = composerModeIconByValue[option.value];
-                                return (
-                                  <button
-                                    key={option.value}
-                                    type="button"
-                                    className={`composerModeOption${composerMode === option.value ? " active" : ""}`}
-                                    role="radio"
-                                    aria-checked={composerMode === option.value}
-                                    aria-label={option.label}
-                                    title={option.label}
-                                    onClick={() => setComposerMode(option.value)}
-                                  >
-                                    <ModeIcon className="composerModeIcon" aria-hidden="true" />
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            <button
-                              type="button"
-                              className="composerIconButton composerGoalRunPolicyButton"
-                              aria-label="燃烧目标"
-                              title="燃烧目标"
-                              disabled={!activeThread}
-                              onClick={openGoalRunPolicyDialog}
-                            >
-                              <Flame aria-hidden="true" />
-                            </button>
-                          </div>
-                          <div className="composerRightActions">
-                            {renderComposerThreadControls("inline")}
-                            <div className="composerSessionMenuHost" onClick={(event) => event.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="composerMoreButton"
-                                aria-label="Show thread usage and model"
-                                aria-expanded={threadControlsMenuOpen}
-                                onClick={() => setThreadControlsMenuOpen((open) => !open)}
-                              >
-                                ...
-                              </button>
-                              {threadControlsMenuOpen ? (
-                                <div className="composerSessionPopover">
-                                  {renderComposerThreadControls("popover")}
-                                </div>
-                              ) : null}
-                            </div>
-                            <div
-                              className={`composerActionButtons status-${executionStatus}`}
-                              title={executionText}
-                              aria-label={`Thread status: ${executionLabel}`}
-                            >
-                              {showComposerSendButton ? (
-                                <ComposerSubmitButton
-                                  attachmentCount={activeAttachmentCount}
-                                  composerDraftStore={composerDraftStore}
-                                  runtimeReady={composerRuntimeReady}
-                                  threadId={activeThread.threadId}
-                                  title={`Send message · ${executionText}`}
-                                />
-                              ) : null}
-                              {activeThread.running ? (
-                                <button
-                                  type="button"
-                                  className="composerStopButton composerActionButton"
-                                  disabled={!activeCanStop}
-                                  aria-label="Stop current turn"
-                                  title={`Stop current turn · ${executionText}`}
-                                  onClick={() => void stopTurn(activeThread.threadId)}
-                                >
-                                  ■
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                        <input
-                          ref={imageFileInputRef}
-                          className="imageUploadInput"
-                          type="file"
-                          accept="image/*,.css,.csv,.html,.js,.json,.jsx,.log,.md,.py,.sh,.sql,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml"
-                          multiple
-                          onChange={(event) => {
-                            void addThreadFiles(activeThread.threadId, event.currentTarget.files);
-                            event.currentTarget.value = "";
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </form>
-                </div>
-              ) : null
+              children: activeThread && item.key === activeThreadKey
+                ? <WorkspaceThreadConversation workspace={workspace} />
+                : null
             }))}
             onChange={(threadId) => void switchMachineThread(threadId)}
             onEdit={(targetKey, action) => {
@@ -970,6 +149,29 @@ export const AppView = ({ viewModel }: AppViewProps) => {
 
       <AppDialogs viewModel={dialogs} />
 
+      {subagentThreadDialog ? (
+        <SubagentThreadDialog
+          key={`${subagentThreadDialog.parentThreadId}:${subagentThreadDialog.threadId}`}
+          dialog={subagentThreadDialog}
+          assignment={subagentAssignment}
+          onClose={() => {
+            releaseDialogOnlyThreadAttachments(
+              subagentThreadDialog,
+              openThreads.map((thread) => thread.threadId)
+            );
+            setSubagentThreadDialog(null);
+          }}
+          onRetry={openSubagentThread}
+        >
+          {readySubagentThreadDialog ? (
+            <SubagentThreadConversation
+              workspace={workspace}
+              dialog={readySubagentThreadDialog}
+              assignment={subagentAssignment}
+            />
+          ) : null}
+        </SubagentThreadDialog>
+      ) : null}
     </main>
   );
 };

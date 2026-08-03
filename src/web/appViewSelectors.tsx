@@ -14,13 +14,18 @@ import {
   formatContextUsage,
   formatRateLimitRemaining,
   formatResetTitle,
+  latestThreadConfigFromRecords,
+  latestThreadUsageFromRecords,
   latestTurnActivityScope,
   latestThreadGoalFromRecords,
+  mergeThreadUsage,
+  normalizeReasoningEffort,
   recordsHavePendingInteraction,
   shortId,
   threadDisplayRecords,
   threadExecutionIsRunning,
-  threadDisplayTitle
+  threadDisplayTitle,
+  threadUsageFromSessionRateLimits
 } from "./appHelpers.js";
 import type { TurnActivityScope } from "./appHelpers.js";
 import {
@@ -35,18 +40,15 @@ import type { OpenThreadState, ThreadExecutionMeta } from "./types.js";
 type ComposerThreadControlsMode = "inline" | "popover";
 
 type ComposerThreadControlsProps = {
-  activeThread: AppSelectors["activeThread"];
-  activeThreadModel: AppSelectors["activeThreadModel"];
-  activeThreadModelDraft: AppSelectors["activeThreadModelDraft"];
-  activeThreadReasoning: AppSelectors["activeThreadReasoning"];
-  activeThreadReasoningDraft: AppSelectors["activeThreadReasoningDraft"];
-  activeThreadServiceTier: AppSelectors["activeThreadServiceTier"];
-  activeThreadServiceTierDraft: AppSelectors["activeThreadServiceTierDraft"];
-  activeThreadUsage: AppSelectors["activeThreadUsage"];
+  thread: OpenThreadState;
+  threadModel: AppSelectors["activeThreadModel"];
+  threadReasoning: AppSelectors["activeThreadReasoning"];
+  threadServiceTier: AppSelectors["activeThreadServiceTier"];
+  threadUsage: AppSelectors["activeThreadUsage"];
   compactThread: AppViewActions["compactThread"];
   mode: ComposerThreadControlsMode;
-  setThreadControlsMenuOpen: AppState["setThreadControlsMenuOpen"];
-  setThreadModelDialogOpen: AppState["setThreadModelDialogOpen"];
+  onRequestClose?: () => void;
+  openThreadModelDialog: AppState["openThreadModelDialog"];
 };
 
 type AppViewActions = {
@@ -76,22 +78,53 @@ export const useAppViewSelectors = (state: AppState, selectors: AppSelectors, ac
     )
   })), [state.openThreads, state.setThreadTabContextMenu]);
 
-  const renderComposerThreadControls = (mode: ComposerThreadControlsMode) => (
-    <ComposerThreadControls
-      activeThread={selectors.activeThread}
-      activeThreadModel={selectors.activeThreadModel}
-      activeThreadModelDraft={selectors.activeThreadModelDraft}
-      activeThreadReasoning={selectors.activeThreadReasoning}
-      activeThreadReasoningDraft={selectors.activeThreadReasoningDraft}
-      activeThreadServiceTier={selectors.activeThreadServiceTier}
-      activeThreadServiceTierDraft={selectors.activeThreadServiceTierDraft}
-      activeThreadUsage={selectors.activeThreadUsage}
-      compactThread={actions.compactThread}
-      mode={mode}
-      setThreadControlsMenuOpen={state.setThreadControlsMenuOpen}
-      setThreadModelDialogOpen={state.setThreadModelDialogOpen}
-    />
-  );
+  const renderComposerThreadControls = (
+    thread: OpenThreadState,
+    mode: ComposerThreadControlsMode,
+    onRequestClose?: () => void
+  ) => {
+    const runtime = state.runtimeList.find((item) => item.machineId === thread.runtime.machineId);
+    const threadSummary = runtime?.threads?.find((item) => item.threadId === thread.threadId);
+    const records = threadDisplayRecords(thread.threadId, thread);
+    const activity = latestTurnActivityScope(records, thread.activeTurnId);
+    const latestUsage = latestThreadUsageFromRecords(activity.records)
+      ?? latestThreadUsageFromRecords(records);
+    const threadUsage = mergeThreadUsage(
+      mergeThreadUsage(latestUsage, thread.threadUsage ?? threadSummary?.threadUsage ?? null),
+      threadUsageFromSessionRateLimits(runtime?.accountRateLimits)
+    );
+    const latestConfig = latestThreadConfigFromRecords(activity.records)
+      ?? latestThreadConfigFromRecords(records);
+    const threadModel = latestConfig?.model
+      ?? thread.model
+      ?? threadSummary?.model
+      ?? state.systemStatus.model
+      ?? null;
+    const threadReasoning = latestConfig?.reasoning
+      ?? thread.modelReasoningEffort
+      ?? threadSummary?.modelReasoningEffort
+      ?? normalizeReasoningEffort(state.systemStatus.modelReasoningEffort)
+      ?? null;
+    const threadServiceTier = latestConfig?.serviceTier
+      ?? thread.serviceTier
+      ?? threadSummary?.serviceTier
+      ?? state.systemStatus.serviceTier
+      ?? null;
+
+    return (
+      <ComposerThreadControls
+        thread={thread}
+        threadModel={threadModel}
+        threadReasoning={threadReasoning}
+        threadServiceTier={threadServiceTier}
+        threadUsage={threadUsage}
+        compactThread={actions.compactThread}
+        mode={mode}
+        onRequestClose={onRequestClose}
+        openThreadModelDialog={state.openThreadModelDialog}
+      />
+    );
+  };
 
   return {
     activeThreadExecutionMeta,
@@ -169,57 +202,54 @@ const OpenThreadTabLabel = ({
 };
 
 const ComposerThreadControls = ({
-  activeThread,
-  activeThreadModel,
-  activeThreadModelDraft,
-  activeThreadReasoning,
-  activeThreadReasoningDraft,
-  activeThreadServiceTier,
-  activeThreadServiceTierDraft,
-  activeThreadUsage,
+  thread,
+  threadModel,
+  threadReasoning,
+  threadServiceTier,
+  threadUsage,
   compactThread,
   mode,
-  setThreadControlsMenuOpen,
-  setThreadModelDialogOpen
+  onRequestClose,
+  openThreadModelDialog
 }: ComposerThreadControlsProps) => {
   const composerModelButtonLabel = formatComposerModelButtonLabel(
-    activeThreadModelDraft,
-    activeThreadReasoningDraft,
-    activeThreadServiceTierDraft,
-    activeThreadModel,
-    activeThreadReasoning,
-    activeThreadServiceTier
+    thread.modelDraft,
+    thread.reasoningDraft,
+    thread.serviceTierDraft,
+    threadModel,
+    threadReasoning,
+    threadServiceTier
   );
   const composerModelButtonTitle = formatComposerModelTitle(
-    activeThreadModelDraft,
-    activeThreadReasoningDraft,
-    activeThreadServiceTierDraft,
-    activeThreadModel,
-    activeThreadReasoning,
-    activeThreadServiceTier
+    thread.modelDraft,
+    thread.reasoningDraft,
+    thread.serviceTierDraft,
+    threadModel,
+    threadReasoning,
+    threadServiceTier
   );
-  const composerModelServiceTier = activeThreadServiceTierDraft === "auto"
-    ? activeThreadServiceTier
-    : activeThreadServiceTierDraft;
+  const composerModelServiceTier = thread.serviceTierDraft === "auto"
+    ? threadServiceTier
+    : thread.serviceTierDraft;
   const showPriorityTierIcon = composerModelServiceTier === "priority";
-  const canCompactThread = Boolean(activeThread?.threadId && !activeThread.running);
-  const contextUsageLabel = formatContextUsage(activeThreadUsage);
-  const contextPercent = contextUsagePercent(activeThreadUsage);
+  const canCompactThread = !thread.running;
+  const contextUsageLabel = formatContextUsage(threadUsage);
+  const contextPercent = contextUsagePercent(threadUsage);
   const contextProgressStyle = contextPercent == null
     ? undefined
     : ({ "--context-progress": `${contextPercent}%` } as React.CSSProperties);
   const fiveHourRateLimit = rateLimitUsageForWindowMinutes(
-    activeThreadUsage,
+    threadUsage,
     fiveHourRateLimitWindowMinutes
   );
   const sevenDayRateLimit = rateLimitUsageForWindowMinutes(
-    activeThreadUsage,
+    threadUsage,
     sevenDayRateLimitWindowMinutes
   );
-  const compactTitle = activeThread?.running
+  const compactTitle = thread.running
     ? "Stop the running turn before compacting context"
     : [
-        formatContextTitle(activeThreadUsage),
+        formatContextTitle(threadUsage),
         "Click to compact this thread's app-server context"
       ].filter(Boolean).join("\n");
 
@@ -234,9 +264,9 @@ const ComposerThreadControls = ({
           aria-label={`Context ${contextUsageLabel}. Compact context`}
           style={contextProgressStyle}
           onClick={() => {
-            if (!activeThread?.threadId || activeThread.running) return;
-            setThreadControlsMenuOpen(false);
-            void compactThread(activeThread.threadId);
+            if (thread.running) return;
+            onRequestClose?.();
+            void compactThread(thread.threadId);
           }}
         >
           <span className="contextUsageIcon" aria-hidden="true" />
@@ -254,8 +284,8 @@ const ComposerThreadControls = ({
         className="composerModelButton"
         title={composerModelButtonTitle}
         onClick={() => {
-          setThreadControlsMenuOpen(false);
-          setThreadModelDialogOpen(true);
+          onRequestClose?.();
+          openThreadModelDialog(thread.threadId);
         }}
       >
         {composerModelButtonLabel}

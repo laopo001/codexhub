@@ -33,11 +33,14 @@ import type {
   ProjectSummary,
   ReasoningSelection,
   PermissionProfileDraft,
+  PermissionProfileCatalogLoadState,
   PermissionProfileSummary,
   ServiceTierSelection,
   RuntimeSummary,
   SshConnection,
   SshHost,
+  SubagentThreadDialogState,
+  SubagentThreadOpenOptions,
   ThreadGoalView,
   ThreadPickerState,
   ThreadRenameDialogState,
@@ -168,6 +171,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   effectiveModelSelection: ModelSelection;
   effectiveReasoningSelection: ReasoningSelection;
   effectiveServiceTierSelection: ServiceTierSelection;
+  expandedToolBatchKeys: Record<string, string[]>;
   forkingMessageKey: string;
   forkMessage: (threadId: string, messageId: string) => MaybePromise;
   goalDialog: GoalDialogState | null;
@@ -197,6 +201,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   activePermissionProfiles: PermissionProfileSummary[];
   activePermissionProfilesError: string;
   activePermissionProfilesStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
+  permissionProfilesByScope: Record<string, PermissionProfileCatalogLoadState>;
   activeModelCatalogCacheNotice: string;
   activeModelCatalogError: string;
   activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
@@ -222,14 +227,32 @@ export type AppViewModelSource = AppSidebarViewModel & {
   ) => void;
   loadThreadPickerCandidates: (machineId: string) => MaybePromise;
   openThreadPicker: (session: RuntimeSummary, workingDirectory?: string) => MaybePromise;
-  openSubagentThread: (threadId: string) => MaybePromise;
+  openSubagentThread: (threadId: string, options?: SubagentThreadOpenOptions) => MaybePromise;
+  openThreadModelDialog: (threadId: string) => void;
+  setThreadComposerMode: (threadId: string, mode: ComposerMode) => void;
+  setThreadApprovalPolicyDraft: (
+    threadId: string,
+    value: React.SetStateAction<ApprovalPolicyDraft>
+  ) => void;
+  setThreadApprovalsReviewerDraft: (
+    threadId: string,
+    value: React.SetStateAction<ApprovalsReviewerDraft>
+  ) => void;
+  setThreadPermissionProfileDraft: (
+    threadId: string,
+    value: React.SetStateAction<PermissionProfileDraft>
+  ) => void;
   openSelectedProjectThreadPicker: () => MaybePromise;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   projectPicker: ProjectPickerState | null;
   clearThreadAttachments: (threadId: string) => void;
   removeThreadImage: (threadId: string, attachmentId: string) => void;
   removeThreadTextAttachment: (threadId: string, attachmentId: string) => void;
-  renderComposerThreadControls: (mode: "inline" | "popover") => React.ReactNode;
+  renderComposerThreadControls: (
+    thread: OpenThreadState,
+    mode: "inline" | "popover",
+    onRequestClose?: () => void
+  ) => React.ReactNode;
   resetComposerHistory: (threadId: string) => void;
   respondToApproval: (threadId: string, approvalId: string, decision: AppServerApprovalDecision) => MaybePromise;
   respondToUserInput: (threadId: string, userInputId: string, answers: AppServerUserInputAnswers) => MaybePromise;
@@ -239,6 +262,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   saveGoalDialog: () => MaybePromise;
   saveThreadRenameDialog: () => MaybePromise;
   send: (threadId: string) => MaybePromise;
+  subagentThreadDialog: SubagentThreadDialogState | null;
   threadModelDialogOpen: boolean;
   runtimeList: RuntimeSummary[];
   threadControlsMenuOpen: boolean;
@@ -269,6 +293,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;
   setThreadTabContextMenu: React.Dispatch<React.SetStateAction<ThreadTabContextMenuState | null>>;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  setSubagentThreadDialog: React.Dispatch<React.SetStateAction<SubagentThreadDialogState | null>>;
   setThreadPicker: React.Dispatch<React.SetStateAction<ThreadPickerState | null>>;
   settingsDialogOpen: boolean;
   showComposerSendButton: boolean;
@@ -308,6 +333,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "activePermissionProfiles"
   | "activePermissionProfilesError"
   | "activePermissionProfilesStatus"
+  | "permissionProfilesByScope"
   | "activeUserMessageHistory"
   | "activeViews"
   | "authError"
@@ -324,6 +350,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "composerMenuOpen"
   | "composerMode"
   | "composerTextareaRef"
+  | "expandedToolBatchKeys"
   | "forkingMessageKey"
   | "forkMessage"
   | "handleComposerKeyDown"
@@ -337,7 +364,9 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "messagesShouldFollowRef"
   | "openMessageContextMenu"
   | "openSubagentThread"
+  | "openThreadModelDialog"
   | "openSelectedProjectThreadPicker"
+  | "openThreads"
   | "pasteThreadImages"
   | "removeThreadImage"
   | "removeThreadTextAttachment"
@@ -347,11 +376,16 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "respondToUserInput"
   | "reviewThread"
   | "resizeComposerTextarea"
+  | "runtimeList"
   | "selectedProject"
   | "send"
   | "threadControlsMenuOpen"
   | "setComposerMenuOpen"
   | "setComposerMode"
+  | "setThreadComposerMode"
+  | "setThreadApprovalPolicyDraft"
+  | "setThreadApprovalsReviewerDraft"
+  | "setThreadPermissionProfileDraft"
   | "setExpandedStatusKeys"
   | "setExpandedToolBatchKeys"
   | "setGoalDialog"
@@ -365,6 +399,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "setThreadControlsMenuOpen"
   | "setThreadModelDialogOpen"
   | "setSidebarCollapsed"
+  | "setSubagentThreadDialog"
   | "showComposerSendButton"
   | "statusPanelAvailable"
   | "statusPanelExpanded"
@@ -372,6 +407,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "statusScopeKey"
   | "turnStatusItems"
   | "stopTurn"
+  | "subagentThreadDialog"
   | "submitAuthToken"
   | "switchMachineThread"
   | "updateMessageRenderMode"
@@ -472,24 +508,26 @@ const workspaceKeys = [
   "activeThreadApprovalPolicyKind", "activeThreadApprovalPolicySelection",
   "activeThreadApprovalsReviewerDraft", "activeThreadApprovalsReviewerSelection",
   "activeThreadPermissionProfileDraft", "activeThreadPermissionProfileSelection",
-  "activePermissionProfiles", "activePermissionProfilesError", "activePermissionProfilesStatus",
+  "activePermissionProfiles", "activePermissionProfilesError", "activePermissionProfilesStatus", "permissionProfilesByScope",
   "activeUserMessageHistory", "activeViews", "authError",
   "authRequired", "authTokenDraft", "addThreadFiles", "clearThreadAttachments", "clearThreadGoal",
   "closeThread", "compactThread", "commandPaletteByScope", "commandPaletteLoadingScopes",
-  "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "forkingMessageKey", "forkMessage",
+  "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage",
   "handleComposerKeyDown", "imageFileInputRef", "insertThreadPathText", "latestTurnActivityScope",
   "loadCommandPalette", "messageDisplayMode", "messageRenderModes", "messagesRef",
-  "messagesShouldFollowRef", "openMessageContextMenu", "openSubagentThread", "openSelectedProjectThreadPicker",
+  "messagesShouldFollowRef", "openMessageContextMenu", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",
+  "openThreads",
   "pasteThreadImages", "removeThreadImage", "removeThreadTextAttachment", "renderComposerThreadControls",
   "resetComposerHistory", "respondToApproval", "respondToUserInput", "reviewThread",
-  "resizeComposerTextarea", "selectedProject", "send", "threadControlsMenuOpen",
-  "setComposerMenuOpen", "setComposerMode", "setExpandedStatusKeys", "setExpandedToolBatchKeys",
+  "resizeComposerTextarea", "runtimeList", "selectedProject", "send", "threadControlsMenuOpen",
+  "setComposerMenuOpen", "setComposerMode", "setThreadComposerMode", "setThreadApprovalPolicyDraft",
+  "setThreadApprovalsReviewerDraft", "setThreadPermissionProfileDraft", "setExpandedStatusKeys", "setExpandedToolBatchKeys",
   "setGoalDialog", "setExpandedStatusTurns", "setImagePreview", "setInspectMessage",
   "setActiveThreadApprovalPolicyDraft", "setActiveThreadApprovalsReviewerDraft",
   "setActiveThreadPermissionProfileDraft",
-  "setAuthTokenDraft", "setThreadControlsMenuOpen", "setThreadModelDialogOpen", "setSidebarCollapsed",
+  "setAuthTokenDraft", "setThreadControlsMenuOpen", "setThreadModelDialogOpen", "setSidebarCollapsed", "setSubagentThreadDialog",
   "showComposerSendButton", "statusPanelAvailable", "statusPanelExpanded", "sidebarCollapsed",
-  "statusScopeKey", "turnStatusItems", "stopTurn", "submitAuthToken", "switchMachineThread",
+  "statusScopeKey", "turnStatusItems", "stopTurn", "subagentThreadDialog", "submitAuthToken", "switchMachineThread",
   "updateMessageRenderMode", "updateThreadInput", "updateThreadGoal", "openThreadEmptyMessage",
   "openThreadTabs"
 ] as const satisfies readonly (keyof AppWorkspaceViewModel)[];

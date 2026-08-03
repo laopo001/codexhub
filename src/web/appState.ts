@@ -4,7 +4,12 @@ import type { CodexRecord } from "../shared/recordTypes.js";
 import type { CodexHubRealtimeClient } from "../shared/realtimeClient.js";
 import { createComposerDraftStore, initAuthTokenFromUrl } from "./appHelpers.js";
 import { useIntegrationState, useUiState } from "./appStateSlices.js";
-import { openThreadReducer } from "./openThreadReducer.js";
+import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
+import {
+  openThreadReducer,
+  reduceConversationThreadState,
+  type ConversationThreadAction
+} from "./openThreadReducer.js";
 import type {
   CommandPalette,
   ComposerHistoryState,
@@ -76,10 +81,12 @@ export const useAppState = () => {
     messageDisplayMode,
     messageRenderModes,
     offlineProjectsCollapsed,
+    openThreadModelDialog,
     serverAuthRequired,
     settingsDialogOpen,
     sidebarCollapsed,
     sidebarDraftStore,
+    subagentThreadDialog,
     setAppSettings,
     setAuthError,
     setAuthRequired,
@@ -99,17 +106,39 @@ export const useAppState = () => {
     setServerAuthRequired,
     setSettingsDialogOpen,
     setSidebarCollapsed,
+    setSubagentThreadDialog,
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
+    setThreadModelDialogThreadId,
     setThreadRenameDialog,
     setThreadTabContextMenu,
     threadControlsMenuOpen,
     threadModelDialogOpen,
+    threadModelDialogThreadId,
     threadRenameDialog,
     threadTabContextMenu
   } = uiState;
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
   const [openThreads, dispatchOpenThreads] = useReducer(openThreadReducer, []);
+  const openThreadIdsRef = useRef(new Set<string>());
+  openThreadIdsRef.current = new Set(openThreads.map((thread) => thread.threadId));
+  const conversationThreadsRef = useRef(new Map(openThreads.map((thread) => [thread.threadId, thread])));
+  conversationThreadsRef.current = new Map(openThreads.map((thread) => [thread.threadId, thread]));
+  for (const thread of subagentDialogConversationThreads(subagentThreadDialog)) {
+    conversationThreadsRef.current.set(thread.threadId, thread);
+  }
+  const dispatchConversationThread = (action: ConversationThreadAction) => {
+    dispatchOpenThreads(action);
+    setSubagentThreadDialog((current) => {
+      if (current?.status !== "ready" || !current.thread || current.threadId !== action.threadId) {
+        return current;
+      }
+      return {
+        ...current,
+        thread: reduceConversationThreadState(current.thread, action)
+      };
+    });
+  };
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
   const [runtimeList, setRuntimeList] = useState<RuntimeSummary[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
@@ -169,6 +198,7 @@ export const useAppState = () => {
     collapsedProjectMachineKeys,
     composerHistoryRef,
     composerDraftStore,
+    conversationThreadsRef,
     composerMenuOpen,
     composerTextareaRef,
     commandPaletteByScope,
@@ -202,6 +232,7 @@ export const useAppState = () => {
     openingSubagentThreads,
     openingThreads,
     openThreads,
+    openThreadIdsRef,
     parentRegistration,
     parentRegistrationBusy,
     parentRegistrationError,
@@ -216,6 +247,7 @@ export const useAppState = () => {
     selectedProjectKey,
     serverAuthRequired,
     serverShareCopied,
+    subagentThreadDialog,
     runtimeList,
     runtimesLastSeq,
     setActiveMachineId,
@@ -249,6 +281,7 @@ export const useAppState = () => {
     setOfflineProjectsCollapsed,
     setOpeningProjectKey,
     dispatchOpenThreads,
+    dispatchConversationThread,
     setParentRegistration,
     setParentRegistrationBusy,
     setParentRegistrationError,
@@ -263,6 +296,7 @@ export const useAppState = () => {
     setRuntimeList,
     setSettingsDialogOpen,
     setSidebarCollapsed,
+    setSubagentThreadDialog,
     setSshConfigHosts,
     setSshConnectingHost,
     setSshConnections,
@@ -276,6 +310,7 @@ export const useAppState = () => {
     setTasks,
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
+    setThreadModelDialogThreadId,
     setThreadOrderByMachine,
     setThreadRenameDialog,
     setThreadTabContextMenu,
@@ -298,6 +333,8 @@ export const useAppState = () => {
     threadControlsMenuOpen,
     threadLastSeqs,
     threadModelDialogOpen,
+    threadModelDialogThreadId,
+    openThreadModelDialog,
     threadOrderByMachine,
     threadRenameDialog,
     threadTabContextMenu,

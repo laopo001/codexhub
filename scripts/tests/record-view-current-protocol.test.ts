@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { recordsToViews, recordToView } from "../../src/core/codexRecordView.js";
+import {
+  recordsToViews,
+  recordToView,
+  subagentAssignmentForChild
+} from "../../src/core/codexRecordView.js";
 import { compactToolViews } from "../../src/shared/compactRecordViews.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
 import { SubagentActivityMessage } from "../../src/web/SubagentActivityMessage.js";
@@ -102,10 +106,10 @@ test("subagent activity UI hides protocol fields and exposes the child thread ac
   }));
   const visibleText = html.replace(/<[^>]+>/g, "");
 
-  assert.match(visibleText, /Subagentreadme_accuracyStartedOpen21:09Requestedgpt-5\.6-terraMaxTaskReview the README/);
+  assert.match(visibleText, /Subagentreadme_accuracyStartedView21:09Requestedgpt-5\.6-terraMaxTaskReview the README/);
   assert.doesNotMatch(visibleText, /019fc297|activity:|agent:|thread:/);
-  assert.match(html, /aria-label="Open readme_accuracy subagent thread"/);
-  assert.match(html, new RegExp(`title="Open subagent thread ${threadId}"`));
+  assert.match(html, /aria-label="View readme_accuracy subagent thread"/);
+  assert.match(html, new RegExp(`title="View subagent thread ${threadId}"`));
   assert.match(html, /title="Requested model: gpt-5\.6-terra"/);
   assert.match(html, /title="Review the README against the current product behavior"/);
 });
@@ -175,6 +179,7 @@ test("subagent activities join their spawn assignment across every message mode"
   assert.deepEqual(simple?.subagentActivity?.assignment, expectedAssignment);
   assert.deepEqual(detailed?.subagentActivity?.assignment, expectedAssignment);
   assert.deepEqual(compact?.subagentActivity?.assignment, expectedAssignment);
+  assert.deepEqual(subagentAssignmentForChild(records, childThreadId), expectedAssignment);
   assert.equal(recordsToViews(records).find((view) => view.id === unrelated.id)?.subagentActivity?.assignment, undefined);
   assert.equal(recordsToViews(records).find((view) => view.id === otherTurn.id)?.subagentActivity?.assignment, undefined);
   assert.equal(recordsToViews(records).find((view) => view.id === otherParent.id)?.subagentActivity?.assignment, undefined);

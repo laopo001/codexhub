@@ -15,6 +15,7 @@ import type {
   PluginSummary,
   SshConnection,
   SshHost,
+  SubagentThreadDialogState,
   ThreadRenameDialogState,
   ThreadTabContextMenuState,
   WebRecordView
@@ -93,9 +94,11 @@ export const useUiState = () => {
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [threadControlsMenuOpen, setThreadControlsMenuOpen] = useState(false);
   const [threadModelDialogOpen, setThreadModelDialogOpen] = useState(false);
+  const [threadModelDialogThreadId, setThreadModelDialogThreadId] = useState("");
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [appSettings, setAppSettingsState] = useState<AppSettings>(() => defaultAppSettings());
   const [goalDialog, setGoalDialog] = useState<GoalDialogState | null>(null);
+  const [subagentThreadDialog, setSubagentThreadDialog] = useState<SubagentThreadDialogState | null>(null);
   const [threadRenameDialog, setThreadRenameDialog] = useState<ThreadRenameDialogState | null>(null);
   const [threadTabContextMenu, setThreadTabContextMenu] = useState<ThreadTabContextMenuState | null>(null);
   const [expandedStatusTurns, setExpandedStatusTurns] = useState<Record<string, string>>({});
@@ -113,6 +116,13 @@ export const useUiState = () => {
       appSettingsRef.current = next;
       return next;
     });
+  };
+
+  const openThreadModelDialog = (threadId: string) => {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) return;
+    setThreadModelDialogThreadId(normalizedThreadId);
+    setThreadModelDialogOpen(true);
   };
 
   return {
@@ -137,6 +147,7 @@ export const useUiState = () => {
     settingsDialogOpen,
     sidebarCollapsed,
     sidebarDraftStore,
+    subagentThreadDialog,
     setAppSettings,
     setAuthError,
     setAuthRequired,
@@ -156,12 +167,16 @@ export const useUiState = () => {
     setServerAuthRequired,
     setSettingsDialogOpen,
     setSidebarCollapsed,
+    setSubagentThreadDialog,
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
+    setThreadModelDialogThreadId,
     setThreadRenameDialog,
     setThreadTabContextMenu,
     threadControlsMenuOpen,
     threadModelDialogOpen,
+    threadModelDialogThreadId,
+    openThreadModelDialog,
     threadRenameDialog,
     threadTabContextMenu
   };

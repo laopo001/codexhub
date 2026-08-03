@@ -32,7 +32,7 @@ import type {
   Usage as ApiUsage
 } from "../shared/apiContract.js";
 import type { CompactRecordView } from "../shared/compactRecordViews.js";
-import type { CodexRecordView } from "../shared/recordTypes.js";
+import type { CodexRecordView, SubagentActivityView } from "../shared/recordTypes.js";
 import type { TaskCompleteNotification as ApiTaskCompleteNotification } from "../shared/taskNotifications.js";
 import type { ThreadApprovalPolicy, ThreadApprovalsReviewer } from "../shared/usageTypes.js";
 
@@ -165,6 +165,30 @@ export type OpenThreadState = ThreadDetail & {
   permissionProfileDraft: PermissionProfileDraft;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];
+};
+
+export type SubagentThreadDialogState = {
+  threadId: string;
+  parentThreadId: string;
+  /**
+   * Retains a dialog-only parent while nested navigation is loading or failed.
+   * This keeps retry routing and unsent attachments alive without opening a
+   * workspace tab for either conversation.
+   */
+  parentDialog?: SubagentThreadDialogState;
+  agentPath?: string;
+  assignment?: SubagentActivityView["assignment"];
+  machineId?: string;
+  workingDirectory?: string;
+  status: "loading" | "ready" | "error";
+  thread?: OpenThreadState;
+  error: string;
+};
+
+export type SubagentThreadOpenOptions = {
+  parentThreadId?: string;
+  agentPath?: string;
+  assignment?: SubagentActivityView["assignment"];
 };
 
 export type ComposerHistoryState = {

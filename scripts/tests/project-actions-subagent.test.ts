@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { emptyThreadUsage } from "../../src/core/threadUsage.js";
-import type { OpenThreadState, RuntimeSummary } from "../../src/web/types.js";
+import type { OpenThreadState, RuntimeSummary, StreamEvent, SubagentThreadDialogState } from "../../src/web/types.js";
 
 Object.defineProperty(globalThis, "window", {
   configurable: true,
@@ -23,21 +23,11 @@ Object.defineProperty(globalThis, "fetch", {
   value: ((...args: Parameters<typeof fetch>) => currentFetch(...args)) as typeof fetch
 });
 
-type OpenThreadOptions = {
-  expectedMachineId?: string;
-  preferredWorkingDirectory?: string;
-};
-
-type Feedback = {
-  key: string;
-  title: string;
-  message: string;
-};
-
 const thread = (
   threadId: string,
   machineId: string,
-  workingDirectory: string
+  workingDirectory: string,
+  lastSeq = 0
 ): OpenThreadState => ({
   threadId,
   workingDirectory,
@@ -49,7 +39,7 @@ const thread = (
   messageCount: 0,
   threadUsage: emptyThreadUsage(),
   records: [],
-  lastSeq: 0,
+  lastSeq,
   composerMode: "chat",
   modelDraft: "auto",
   reasoningDraft: "auto",
@@ -75,27 +65,84 @@ const runtime = (
   threads
 });
 
+const threadResponse = (
+  machineId: string,
+  workingDirectory: string,
+  lastSeq = 31
+) => new Response(JSON.stringify({
+  threadId: "child-thread",
+  workingDirectory,
+  runtime: { machineId, online: true, runnable: true },
+  status: "idle",
+  running: false,
+  title: "Child conversation",
+  updatedAt: "2026-08-03T00:00:01.000Z",
+  messageCount: 0,
+  threadUsage: emptyThreadUsage(),
+  records: [],
+  lastSeq
+}), {
+  status: 200,
+  headers: { "content-type": "application/json" }
+});
+
 const fixture = async ({
   machineAOnline = true,
   machineAThreads = [],
+  dialogParentOnly = false,
+  dialogParentAttachmentUrl,
   fetchImpl
 }: {
   machineAOnline?: boolean;
   machineAThreads?: RuntimeSummary["threads"];
+  dialogParentOnly?: boolean;
+  dialogParentAttachmentUrl?: string;
   fetchImpl: typeof fetch;
 }) => {
   const { createProjectActions } = await import("../../src/web/appActions/projectActions.js");
   const childThreadId = "child-thread";
   const parentThread = thread("parent-thread", "machine-a", "/projects/a");
-  const oldChildThread = thread(childThreadId, "machine-b", "/projects/b");
+  if (dialogParentAttachmentUrl) {
+    parentThread.imageAttachments = [{
+      id: "dialog-parent-image",
+      file: new File([], "dialog-parent.png", { type: "image/png" }),
+      name: "dialog-parent.png",
+      previewUrl: dialogParentAttachmentUrl
+    }];
+  }
+  const staleChildThread = thread(childThreadId, "machine-b", "/projects/b");
+  const openThreads = dialogParentOnly ? [staleChildThread] : [parentThread, staleChildThread];
+  const conversationThreads = new Map(openThreads.map((item) => [item.threadId, item]));
   const runtimeList = [
     runtime("machine-a", "/projects/a", machineAOnline, machineAThreads),
-    runtime("machine-b", "/projects/b", true, [oldChildThread])
+    runtime("machine-b", "/projects/b", true, [staleChildThread])
   ];
-  const feedback: Feedback[] = [];
-  const projectErrors: string[] = [];
-  const openThreadCalls: Array<{ threadId: string; options?: OpenThreadOptions }> = [];
+  const openThreadCalls: string[] = [];
   const subscriptions: Array<{ threadId: string; after: number }> = [];
+  const closedThreadIds = new Set([childThreadId]);
+  const threadLastSeqs = new Map([[childThreadId, 27]]);
+  let subagentThreadDialog: SubagentThreadDialogState | null = dialogParentOnly ? {
+    threadId: parentThread.threadId,
+    parentThreadId: "workspace-parent",
+    agentPath: "/root/dialog-parent",
+    machineId: "machine-a",
+    workingDirectory: parentThread.workingDirectory,
+    status: "ready",
+    thread: parentThread,
+    error: ""
+  } : null;
+  const syncConversationThreads = () => {
+    conversationThreads.clear();
+    for (const item of openThreads) conversationThreads.set(item.threadId, item);
+    const visited = new Set<SubagentThreadDialogState>();
+    let dialog = subagentThreadDialog;
+    while (dialog && !visited.has(dialog)) {
+      visited.add(dialog);
+      if (dialog.thread) conversationThreads.set(dialog.threadId, dialog.thread);
+      dialog = dialog.parentDialog ?? null;
+    }
+  };
+  syncConversationThreads();
   let activeMachineId = "machine-a";
   let activeWorkspacePath = "/projects/a";
   let activeTabThreadId = "parent-thread";
@@ -116,7 +163,8 @@ const fixture = async ({
     activeRuntime: runtimeList[0],
     activeTabThreadByMachine,
     activeTabThreadId,
-    closedThreadIds: { current: new Set<string>() },
+    closedThreadIds: { current: closedThreadIds },
+    conversationThreadsRef: { current: conversationThreads },
     latestRequestedThreadId: { current: "parent-thread" },
     openingSubagentThreads: { current: new Set<string>() },
     machines: [],
@@ -124,9 +172,12 @@ const fixture = async ({
     projectPicker: null,
     selectedProjectKey: "",
     runtimeList,
-    openThreads: [parentThread, oldChildThread],
+    openThreads,
+    get subagentThreadDialog() {
+      return subagentThreadDialog;
+    },
     threadOrderByMachine,
-    threadLastSeqs: { current: new Map([[childThreadId, 27]]) },
+    threadLastSeqs: { current: threadLastSeqs },
     threadPicker: null,
     setActiveMachineId: (action: string | ((value: string) => string)) => {
       activeMachineId = resolveStateAction(activeMachineId, action);
@@ -146,12 +197,18 @@ const fixture = async ({
     setDeletingProjectId: () => undefined,
     setMachines: () => undefined,
     setOpeningProjectKey: () => undefined,
-    setProjectActionError: (action: string | ((value: string) => string)) => {
-      projectErrors.push(resolveStateAction(projectErrors.at(-1) ?? "", action));
-    },
+    setProjectActionError: () => undefined,
     setProjectPicker: () => undefined,
     setProjects: () => undefined,
     setSelectedProjectKey: () => undefined,
+    setSubagentThreadDialog: (
+      action: SubagentThreadDialogState
+        | null
+        | ((value: SubagentThreadDialogState | null) => SubagentThreadDialogState | null)
+    ) => {
+      subagentThreadDialog = resolveStateAction(subagentThreadDialog, action);
+      syncConversationThreads();
+    },
     setRuntimeList: () => undefined,
     setTaskError: () => undefined,
     setThreadOrderByMachine: (
@@ -165,11 +222,8 @@ const fixture = async ({
   const actions = createProjectActions(context, {
     clearActiveThreadIfLatest: () => undefined,
     focusTaskDraftProject: () => undefined,
-    openThread: async (threadId: string, options?: OpenThreadOptions) => {
-      openThreadCalls.push({ threadId, options });
-    },
-    showActionError: (key: string, title: string, message: string) => {
-      feedback.push({ key, title, message });
+    openThread: async (threadId: string) => {
+      openThreadCalls.push(threadId);
     },
     subscribeThread: (threadId: string, after: number) => {
       subscriptions.push({ threadId, after });
@@ -179,23 +233,27 @@ const fixture = async ({
   return {
     actions,
     childThreadId,
-    feedback,
-    projectErrors,
+    closedThreadIds,
     openThreadCalls,
     subscriptions,
+    threadLastSeqs,
     state: () => ({
       activeMachineId,
       activeWorkspacePath,
       activeTabThreadId,
       activeTabThreadByMachine,
-      threadOrderByMachine
+      threadOrderByMachine,
+      subagentThreadDialog
     })
   };
 };
 
-test("opening a subagent thread refreshes the visible parent machine instead of reusing another machine tab", async () => {
+test("opening a subagent shows a dialog immediately and never activates a workspace tab", async () => {
   const requests: Array<{ url: string; method: string; body: unknown }> = [];
-  const resumedWorkingDirectory = "/projects/a/resumed-child";
+  let resolveResponse!: (response: Response) => void;
+  const response = new Promise<Response>((resolve) => {
+    resolveResponse = resolve;
+  });
   const testFixture = await fixture({
     fetchImpl: async (input, init) => {
       requests.push({
@@ -203,26 +261,52 @@ test("opening a subagent thread refreshes the visible parent machine instead of 
         method: init?.method ?? "GET",
         body: init?.body ? JSON.parse(String(init.body)) : undefined
       });
-      return new Response(JSON.stringify({
-        threadId: "child-thread",
-        workingDirectory: resumedWorkingDirectory,
-        runtime: { machineId: "machine-a", online: true, runnable: true },
-        status: "idle",
-        running: false,
-        title: "Child thread on machine A",
-        updatedAt: "2026-08-03T00:00:01.000Z",
-        messageCount: 0,
-        threadUsage: emptyThreadUsage(),
-        records: [],
-        lastSeq: 0
-      }), {
-        status: 200,
-        headers: { "content-type": "application/json" }
-      });
+      return response;
     }
   });
 
-  await testFixture.actions.openSubagentThread(testFixture.childThreadId);
+  const opening = testFixture.actions.openSubagentThread(
+    testFixture.childThreadId,
+    {
+      agentPath: "/root/readme_accuracy",
+      assignment: {
+        initialMessage: "Review the README",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "max"
+      }
+    }
+  );
+
+  assert.deepEqual(testFixture.state().subagentThreadDialog, {
+    threadId: "child-thread",
+    parentThreadId: "parent-thread",
+    agentPath: "/root/readme_accuracy",
+    assignment: {
+      initialMessage: "Review the README",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "max"
+    },
+    machineId: "machine-a",
+    workingDirectory: "/projects/a",
+    status: "loading",
+    error: ""
+  });
+  assert.deepEqual(workspaceSelection(testFixture.state()), {
+    activeMachineId: "machine-a",
+    activeWorkspacePath: "/projects/a",
+    activeTabThreadId: "parent-thread",
+    activeTabThreadByMachine: {
+      "machine-a": "parent-thread",
+      "machine-b": "child-thread"
+    },
+    threadOrderByMachine: {
+      "machine-a": ["parent-thread"],
+      "machine-b": ["child-thread"]
+    }
+  });
+
+  resolveResponse(threadResponse("machine-a", "/projects/a/resumed-child"));
+  await opening;
 
   assert.deepEqual(requests, [{
     url: "/api/machines/machine-a/threads",
@@ -233,41 +317,119 @@ test("opening a subagent thread refreshes the visible parent machine instead of 
       cwd: "/projects/a"
     }
   }]);
-  assert.deepEqual(testFixture.subscriptions, [], "must not subscribe through machine-b's stale open-tab fast path");
-  assert.deepEqual(testFixture.openThreadCalls, [{
-    threadId: "child-thread",
-    options: {
-      expectedMachineId: "machine-a",
-      preferredWorkingDirectory: resumedWorkingDirectory
-    }
-  }]);
-  assert.equal(testFixture.state().activeMachineId, "machine-a");
-  assert.equal(testFixture.state().activeWorkspacePath, resumedWorkingDirectory);
-  assert.equal(testFixture.state().activeTabThreadByMachine["machine-a"], "child-thread");
-  assert.deepEqual(testFixture.feedback, []);
+  assert.equal(testFixture.state().subagentThreadDialog?.status, "ready");
+  assert.equal(testFixture.state().subagentThreadDialog?.thread?.workingDirectory, "/projects/a/resumed-child");
+  assert.deepEqual(testFixture.openThreadCalls, []);
+  assert.deepEqual(testFixture.subscriptions, []);
+  assert.equal(testFixture.threadLastSeqs.get("child-thread"), 31);
+  assert.equal(testFixture.closedThreadIds.has("child-thread"), false);
+  assert.equal(testFixture.state().activeTabThreadId, "parent-thread");
 });
 
-test("opening an attached subagent preserves its runtime-reported working directory", async () => {
+test("nested subagent navigation resolves its parent from the dialog conversation registry", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const revokedUrls: string[] = [];
+  const originalRevokeObjectUrl = URL.revokeObjectURL;
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: (url: string) => revokedUrls.push(url)
+  });
+  try {
+    const testFixture = await fixture({
+      dialogParentOnly: true,
+      dialogParentAttachmentUrl: "blob:dialog-parent-image",
+      fetchImpl: async (input, init) => {
+        requests.push({ url: String(input), method: init?.method ?? "GET" });
+        return threadResponse("machine-a", "/projects/a/nested-child");
+      }
+    });
+
+    await testFixture.actions.openSubagentThread(testFixture.childThreadId, {
+      parentThreadId: "parent-thread",
+      agentPath: "/root/nested-review"
+    });
+
+    assert.deepEqual(requests, [{
+      url: "/api/machines/machine-a/threads",
+      method: "POST"
+    }]);
+    assert.deepEqual(revokedUrls, []);
+    assert.equal(testFixture.state().subagentThreadDialog?.status, "ready");
+    assert.equal(testFixture.state().subagentThreadDialog?.parentThreadId, "parent-thread");
+    assert.equal(testFixture.state().subagentThreadDialog?.parentDialog?.threadId, "parent-thread");
+    assert.equal(testFixture.state().subagentThreadDialog?.thread?.workingDirectory, "/projects/a/nested-child");
+    assert.equal(testFixture.state().activeTabThreadId, "parent-thread");
+    const { releaseDialogOnlyThreadAttachments } = await import("../../src/web/helpers/subagentThreadDialog.js");
+    releaseDialogOnlyThreadAttachments(testFixture.state().subagentThreadDialog, ["child-thread"]);
+    assert.deepEqual(revokedUrls, ["blob:dialog-parent-image"]);
+  } finally {
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: originalRevokeObjectUrl
+    });
+  }
+});
+
+test("nested subagent retry retains its dialog-only parent routing after a transient failure", async () => {
+  const requests: string[] = [];
+  let attempt = 0;
+  const testFixture = await fixture({
+    dialogParentOnly: true,
+    fetchImpl: async (input) => {
+      requests.push(String(input));
+      attempt += 1;
+      if (attempt === 1) {
+        return new Response(JSON.stringify({ error: "temporary runtime failure" }), {
+          status: 409,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return threadResponse("machine-a", "/projects/a/nested-child");
+    }
+  });
+
+  const options = {
+    parentThreadId: "parent-thread",
+    agentPath: "/root/nested-review"
+  };
+  await testFixture.actions.openSubagentThread(testFixture.childThreadId, options);
+
+  assert.equal(testFixture.state().subagentThreadDialog?.status, "error");
+  assert.equal(testFixture.state().subagentThreadDialog?.error, "temporary runtime failure");
+  assert.equal(testFixture.state().subagentThreadDialog?.parentDialog?.threadId, "parent-thread");
+
+  await testFixture.actions.openSubagentThread(testFixture.childThreadId, options);
+
+  assert.deepEqual(requests, [
+    "/api/machines/machine-a/threads",
+    "/api/machines/machine-a/threads"
+  ]);
+  assert.equal(testFixture.state().subagentThreadDialog?.status, "ready");
+  assert.equal(testFixture.state().subagentThreadDialog?.thread?.workingDirectory, "/projects/a/nested-child");
+  assert.equal(testFixture.state().activeTabThreadId, "parent-thread");
+});
+
+test("opening an attached subagent loads its snapshot without resuming or changing cwd", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
   const attachedChild = thread("child-thread", "machine-a", "/projects/a/worktree");
   const testFixture = await fixture({
     machineAThreads: [attachedChild],
-    fetchImpl: async () => {
-      throw new Error("an attached subagent must not be resumed");
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), method: init?.method ?? "GET" });
+      return threadResponse("machine-a", "/projects/a/worktree");
     }
   });
 
   await testFixture.actions.openSubagentThread(testFixture.childThreadId);
 
-  assert.deepEqual(testFixture.openThreadCalls, [{
-    threadId: "child-thread",
-    options: { expectedMachineId: "machine-a" }
-  }]);
-  assert.equal(testFixture.state().activeWorkspacePath, "/projects/a/worktree");
-  assert.deepEqual(testFixture.subscriptions, []);
-  assert.deepEqual(testFixture.feedback, []);
+  assert.deepEqual(requests, [{ url: "/api/threads/child-thread", method: "GET" }]);
+  assert.equal(testFixture.state().subagentThreadDialog?.thread?.workingDirectory, "/projects/a/worktree");
+  assert.equal(testFixture.state().activeWorkspacePath, "/projects/a");
+  assert.equal(testFixture.state().activeTabThreadId, "parent-thread");
+  assert.deepEqual(testFixture.openThreadCalls, []);
 });
 
-test("an offline parent machine reports subagent Open failure through workspace action feedback", async () => {
+test("an offline parent machine reports the failure inside the dialog", async () => {
   const testFixture = await fixture({
     machineAOnline: false,
     fetchImpl: async () => {
@@ -277,16 +439,15 @@ test("an offline parent machine reports subagent Open failure through workspace 
 
   await testFixture.actions.openSubagentThread(testFixture.childThreadId);
 
-  assert.deepEqual(testFixture.feedback, [{
-    key: "child-thread:subagent-open",
-    title: "Open subagent thread failed",
-    message: "Cannot open the subagent thread while its machine runtime is offline."
-  }]);
-  assert.deepEqual(testFixture.openThreadCalls, []);
-  assert.deepEqual(testFixture.subscriptions, []);
+  assert.equal(testFixture.state().subagentThreadDialog?.status, "error");
+  assert.equal(
+    testFixture.state().subagentThreadDialog?.error,
+    "Cannot open the subagent thread while its machine runtime is offline."
+  );
+  assert.equal(testFixture.state().activeTabThreadId, "parent-thread");
 });
 
-test("a subagent resume rejection reports the server reason through workspace action feedback", async () => {
+test("a resume rejection keeps the parent tab and exposes the server reason in the dialog", async () => {
   const testFixture = await fixture({
     fetchImpl: async () => new Response(JSON.stringify({ error: "runtime unavailable" }), {
       status: 409,
@@ -296,11 +457,90 @@ test("a subagent resume rejection reports the server reason through workspace ac
 
   await testFixture.actions.openSubagentThread(testFixture.childThreadId);
 
-  assert.deepEqual(testFixture.feedback, [{
-    key: "child-thread:subagent-open",
-    title: "Open subagent thread failed",
-    message: "runtime unavailable"
-  }]);
+  assert.equal(testFixture.state().subagentThreadDialog?.status, "error");
+  assert.equal(testFixture.state().subagentThreadDialog?.error, "runtime unavailable");
+  assert.equal(testFixture.state().activeTabThreadId, "parent-thread");
   assert.deepEqual(testFixture.openThreadCalls, []);
-  assert.deepEqual(testFixture.subscriptions, []);
+});
+
+test("a mismatched resume response is rejected instead of displaying another machine thread", async () => {
+  const testFixture = await fixture({
+    fetchImpl: async () => threadResponse("machine-b", "/projects/b")
+  });
+
+  await testFixture.actions.openSubagentThread(testFixture.childThreadId);
+
+  assert.equal(testFixture.state().subagentThreadDialog?.status, "error");
+  assert.match(testFixture.state().subagentThreadDialog?.error ?? "", /machine-b, not machine-a/);
+  assert.equal(testFixture.state().activeTabThreadId, "parent-thread");
+});
+
+test("the dialog owns a realtime subscription only while its snapshot is ready", async () => {
+  const { subagentThreadSubscriptionIds } = await import("../../src/web/helpers/subagentThreadDialog.js");
+  const loading: SubagentThreadDialogState = {
+    threadId: "child-thread",
+    parentThreadId: "parent-thread",
+    status: "loading",
+    error: ""
+  };
+  const ready: SubagentThreadDialogState = {
+    ...loading,
+    status: "ready",
+    thread: thread("child-thread", "machine-a", "/projects/a")
+  };
+
+  assert.deepEqual(subagentThreadSubscriptionIds(["parent-thread"], loading), ["parent-thread"]);
+  assert.deepEqual(subagentThreadSubscriptionIds(["parent-thread"], ready), ["parent-thread", "child-thread"]);
+  assert.deepEqual(subagentThreadSubscriptionIds(["parent-thread", "child-thread"], ready), [
+    "parent-thread",
+    "child-thread"
+  ]);
+  assert.deepEqual(subagentThreadSubscriptionIds(["parent-thread"], null), ["parent-thread"]);
+});
+
+test("realtime records update the dialog snapshot without creating an open thread tab", async () => {
+  const { mergeSubagentThreadDialogStream } = await import("../../src/web/helpers/subagentThreadDialog.js");
+  const dialog: SubagentThreadDialogState = {
+    threadId: "child-thread",
+    parentThreadId: "parent-thread",
+    machineId: "machine-a",
+    workingDirectory: "/projects/a",
+    status: "ready",
+    thread: thread("child-thread", "machine-a", "/projects/a", 31),
+    error: ""
+  };
+  const event: StreamEvent = {
+    seq: 32,
+    threadId: "child-thread",
+    kind: "record",
+    thread: {
+      ...thread("child-thread", "machine-a", "/projects/a", 32),
+      running: true,
+      status: "running"
+    },
+    record: {
+      id: "child-record",
+      type: "response_item",
+      timestamp: "2026-08-03T00:00:02.000Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Working on it" }]
+      }
+    }
+  };
+
+  const next = mergeSubagentThreadDialogStream(dialog, event);
+
+  assert.notEqual(next, dialog);
+  assert.equal(next?.thread?.running, true);
+  assert.deepEqual(next?.thread?.records.map((record) => record.id), ["child-record"]);
+});
+
+const workspaceSelection = (state: ReturnType<Awaited<ReturnType<typeof fixture>>["state"]>) => ({
+  activeMachineId: state.activeMachineId,
+  activeWorkspacePath: state.activeWorkspacePath,
+  activeTabThreadId: state.activeTabThreadId,
+  activeTabThreadByMachine: state.activeTabThreadByMachine,
+  threadOrderByMachine: state.threadOrderByMachine
 });

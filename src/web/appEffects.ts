@@ -11,6 +11,10 @@ import {
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { apiRoutes } from "../shared/apiRoutes.js";
+import {
+  subagentDialogConversationThreads,
+  subagentThreadSubscriptionIds
+} from "./helpers/subagentThreadDialog.js";
 
 type AppEffectsActions = {
   clearActiveThreadIfLatest: (threadId: string) => void;
@@ -200,12 +204,19 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
 
   useEffect(() => {
     if (!state.initialized) return;
-    actions.syncThreadSubscriptions(selectors.openThreadIds);
-  }, [selectors.openThreadIdsKey, state.initialized]);
+    actions.syncThreadSubscriptions(
+      subagentThreadSubscriptionIds(selectors.openThreadIds, state.subagentThreadDialog)
+    );
+  }, [
+    selectors.openThreadIdsKey,
+    state.initialized,
+    state.subagentThreadDialog?.status,
+    state.subagentThreadDialog?.threadId
+  ]);
 
   useEffect(() => {
     if (!state.initialized || !state.threadModelDialogOpen) return undefined;
-    const machineId = selectors.activeRuntime?.machineId;
+    const machineId = selectors.threadModelDialogMachineId;
     if (!machineId) return undefined;
     const currentCatalog = state.modelCatalogByMachine[machineId];
     if (
@@ -256,55 +267,64 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
         }));
       });
   }, [
-    selectors.activeRuntime?.machineId,
+    selectors.threadModelDialogMachineId,
     state.initialized,
     state.modelCatalogByMachine,
     state.threadModelDialogOpen
   ]);
 
   useEffect(() => {
-    if (!state.initialized || !selectors.activeThread?.runtime.online) return undefined;
-    const machineId = selectors.activeThread?.runtime.machineId;
-    const cwd = selectors.activeThread?.workingDirectory;
-    if (!machineId || !cwd) return undefined;
-    const scopeKey = permissionProfileScopeKey(machineId, cwd);
-    const currentCatalog = state.permissionProfilesByScope[scopeKey];
-    if (
-      currentCatalog?.status === "loading"
-      || currentCatalog?.status === "ready"
-      || currentCatalog?.status === "error"
-    ) return undefined;
-    state.setPermissionProfilesByScope((current) => ({
-      ...current,
-      [scopeKey]: { status: "loading", profiles: [] }
-    }));
-    void apiRouteJson(apiRoutes.runtimePermissionProfiles, machineId, cwd)
-      .then((payload) => {
-        state.setPermissionProfilesByScope((current) => ({
-          ...current,
-          [scopeKey]: {
-            status: "ready",
-            profiles: Array.isArray(payload.profiles) ? payload.profiles : []
-          }
-        }));
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        state.setPermissionProfilesByScope((current) => ({
-          ...current,
-          [scopeKey]: {
-            status: "error",
-            profiles: [],
-            error: message || "Permission profiles unavailable."
-          }
-        }));
-      });
+    if (!state.initialized) return undefined;
+    const targets = new Map<string, { machineId: string; cwd: string }>();
+    for (const thread of [
+      selectors.activeThread,
+      ...subagentDialogConversationThreads(state.subagentThreadDialog)
+    ]) {
+      const machineId = thread?.runtime.machineId;
+      const cwd = thread?.workingDirectory;
+      if (!thread?.runtime.online || !machineId || !cwd) continue;
+      targets.set(permissionProfileScopeKey(machineId, cwd), { machineId, cwd });
+    }
+    const pendingTargets = [...targets].filter(([scopeKey]) => {
+      const catalog = state.permissionProfilesByScope[scopeKey];
+      return !catalog;
+    });
+    if (!pendingTargets.length) return undefined;
+    state.setPermissionProfilesByScope((current) => {
+      const next = { ...current };
+      for (const [scopeKey] of pendingTargets) {
+        if (!next[scopeKey]) next[scopeKey] = { status: "loading", profiles: [] };
+      }
+      return next;
+    });
+    for (const [scopeKey, { machineId, cwd }] of pendingTargets) {
+      void apiRouteJson(apiRoutes.runtimePermissionProfiles, machineId, cwd)
+        .then((payload) => {
+          state.setPermissionProfilesByScope((current) => ({
+            ...current,
+            [scopeKey]: {
+              status: "ready",
+              profiles: Array.isArray(payload.profiles) ? payload.profiles : []
+            }
+          }));
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          state.setPermissionProfilesByScope((current) => ({
+            ...current,
+            [scopeKey]: {
+              status: "error",
+              profiles: [],
+              error: message || "Permission profiles unavailable."
+            }
+          }));
+        });
+    }
   }, [
-    selectors.activeThread?.runtime.machineId,
-    selectors.activeThread?.runtime.online,
-    selectors.activeThread?.workingDirectory,
+    selectors.activeThread,
     state.initialized,
-    state.permissionProfilesByScope
+    state.permissionProfilesByScope,
+    state.subagentThreadDialog
   ]);
 
   useEffect(() => {
@@ -316,13 +336,16 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     if (!state.composerMenuOpen) return undefined;
     const close = () => state.setComposerMenuOpen(false);
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      close();
     };
     window.addEventListener("click", close);
-    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", closeOnEscape, true);
     return () => {
       window.removeEventListener("click", close);
-      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("keydown", closeOnEscape, true);
     };
   }, [state.composerMenuOpen]);
 
@@ -330,13 +353,16 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     if (!state.threadControlsMenuOpen) return undefined;
     const close = () => state.setThreadControlsMenuOpen(false);
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      close();
     };
     window.addEventListener("click", close);
-    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", closeOnEscape, true);
     return () => {
       window.removeEventListener("click", close);
-      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("keydown", closeOnEscape, true);
     };
   }, [state.threadControlsMenuOpen]);
 
@@ -344,15 +370,18 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     if (!state.messageContextMenu) return undefined;
     const close = () => state.setMessageContextMenu(null);
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      close();
     };
     window.addEventListener("click", close);
     window.addEventListener("scroll", close, true);
-    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", closeOnEscape, true);
     return () => {
       window.removeEventListener("click", close);
       window.removeEventListener("scroll", close, true);
-      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("keydown", closeOnEscape, true);
     };
   }, [state.messageContextMenu]);
 
@@ -362,13 +391,13 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
 
   useEffect(() => {
     const stopOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !selectors.activeThread?.running) return;
+      if (event.key !== "Escape" || state.subagentThreadDialog || !selectors.activeThread?.running) return;
       event.preventDefault();
       void actions.stopTurn(selectors.activeThread.threadId);
     };
     window.addEventListener("keydown", stopOnEscape);
     return () => window.removeEventListener("keydown", stopOnEscape);
-  }, [selectors.activeThread?.threadId, selectors.activeThread?.running]);
+  }, [selectors.activeThread?.threadId, selectors.activeThread?.running, state.subagentThreadDialog]);
 
   useEffect(() => {
     const links: HTMLLinkElement[] = [];

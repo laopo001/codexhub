@@ -31,7 +31,7 @@ import type {
   ThreadDetail,
   ThreadRenameDialogState,
 } from "../types.js";
-import type { OpenThreadAction } from "../openThreadReducer.js";
+import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
 import { apiErrorDetails } from "../helpers/apiErrors.js";
 import { goalUpdateFromDialog } from "../helpers/goalDialog.js";
 
@@ -42,11 +42,13 @@ type ThreadActionsContext = {
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   composerDraftStore: ComposerDraftStore;
+  conversationThreadsRef: React.MutableRefObject<Map<string, OpenThreadState>>;
   forkingMessageKey: string;
   goalDialog: GoalDialogState | null;
   threadRenameDialog: ThreadRenameDialogState | null;
   latestRequestedThreadId: React.MutableRefObject<string>;
   notificationRecordsByThread: React.MutableRefObject<Map<string, CodexRecord[]>>;
+  openThreadIdsRef: React.MutableRefObject<Set<string>>;
   openingThreads: React.MutableRefObject<Map<string, Promise<void>>>;
   realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
   selectedProjectKey: string;
@@ -59,10 +61,11 @@ type ThreadActionsContext = {
   setForkingMessageKey: React.Dispatch<React.SetStateAction<string>>;
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
-  setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  openThreadModelDialog: (threadId: string) => void;
   setThreadRenameDialog: React.Dispatch<React.SetStateAction<ThreadRenameDialogState | null>>;
   setRuntimeList: React.Dispatch<React.SetStateAction<RuntimeSummary[]>>;
   dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
+  dispatchConversationThread: (action: ConversationThreadAction) => void;
   setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
 };
 
@@ -260,9 +263,11 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   };
 
   const applyThreadDetail = (thread: ThreadDetail) => {
-    ctx.dispatchOpenThreads({ type: "upsert-detail", thread });
+    ctx.dispatchConversationThread({ type: "sync-detail", threadId: thread.threadId, thread });
     ctx.setRuntimeList((current) => patchRuntimesThread(current, thread));
-    ctx.setProjects((current) => patchProjectsThread(current, thread));
+    if (ctx.openThreadIdsRef.current.has(thread.threadId)) {
+      ctx.setProjects((current) => patchProjectsThread(current, thread));
+    }
   };
 
   const saveThreadRenameDialog = async () => {
@@ -334,8 +339,45 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
   };
 
+  const deliverThreadInput = async (
+    thread: OpenThreadState,
+    input: ProxyInput
+  ) => {
+    const composerMode = thread.composerMode;
+    const updatesActiveGoal = thread.running && composerMode === "goal";
+    try {
+      await apiRouteJson(apiRoutes.sendThreadTurn, thread.threadId, {
+        input,
+        source: "web",
+        options: selectedThreadOptions(
+          thread.modelDraft,
+          thread.reasoningDraft,
+          thread.serviceTierDraft,
+          composerMode,
+          thread.approvalPolicyDraft,
+          thread.approvalsReviewerDraft,
+          thread.permissionProfileDraft
+        )
+      });
+      if (composerMode !== "chat") {
+        ctx.dispatchConversationThread({ type: "reset-composer-mode", threadId: thread.threadId, expected: composerMode });
+      }
+    } catch (error) {
+      const details = apiErrorDetails(error, { plainHttpMessage: true });
+      if (details.delivery === "goal" || (!details.delivery && updatesActiveGoal)) {
+        deps.showActionError(`${thread.threadId}:goal-update`, "Goal update failed", details.message);
+      } else if (details.delivery !== "turn" && details.delivery !== "steer") {
+        ctx.dispatchConversationThread({
+          type: "append-record",
+          threadId: thread.threadId,
+          record: submissionFailedRecord(details.message)
+        });
+      }
+    }
+  };
+
   const send = async (threadId: string) => {
-    const openThread = ctx.openThreads.find((item) => item.threadId === threadId);
+    const openThread = ctx.conversationThreadsRef.current.get(threadId);
     if (!openThread) return;
     const typedText = ctx.composerDraftStore.get(threadId).trim();
     const textAttachments = openThread.textAttachments;
@@ -347,17 +389,16 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
     deps.primeTaskCompletionFeedback();
     const text = composeUserInputText(typedText, textAttachments);
-    const composerMode = openThread.composerMode;
     if (!text && !imageAttachments.length) return;
     if (!textAttachments.length && !imageAttachments.length && isModelCommand(typedText)) {
       deps.resetComposerHistory(threadId);
       ctx.composerDraftStore.set(threadId, "");
-      ctx.setThreadModelDialogOpen(true);
+      ctx.openThreadModelDialog(threadId);
       return;
     }
     const fastAction = !textAttachments.length && !imageAttachments.length ? fastCommandAction(typedText) : null;
     if (fastAction === "on" || fastAction === "off") {
-      ctx.dispatchOpenThreads({
+      ctx.dispatchConversationThread({
         type: "set-draft",
         threadId,
         field: "serviceTierDraft",
@@ -366,14 +407,14 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
     deps.resetComposerHistory(threadId);
     ctx.composerDraftStore.set(threadId, "");
-    ctx.dispatchOpenThreads({ type: "clear-attachments", threadId });
+    ctx.dispatchConversationThread({ type: "clear-attachments", threadId });
     let encodedImages: Array<{ url: string }>;
     try {
       encodedImages = await Promise.all(imageAttachments.map(async (image) => ({ url: await fileToDataUrl(image.file) })));
       for (const image of imageAttachments) URL.revokeObjectURL(image.previewUrl);
     } catch (error) {
       ctx.composerDraftStore.set(threadId, typedText);
-      ctx.dispatchOpenThreads({
+      ctx.dispatchConversationThread({
         type: "set-fields",
         threadId,
         fields: {
@@ -390,36 +431,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
         ...encodedImages.map((image) => ({ type: "image" as const, url: image.url }))
       ]
       : text;
-    const updatesActiveGoal = openThread.running && composerMode === "goal";
-    try {
-      await apiRouteJson(apiRoutes.sendThreadTurn, threadId, {
-        input,
-        source: "web",
-        options: selectedThreadOptions(
-          openThread.modelDraft,
-          openThread.reasoningDraft,
-          openThread.serviceTierDraft,
-          composerMode,
-          openThread.approvalPolicyDraft,
-          openThread.approvalsReviewerDraft,
-          openThread.permissionProfileDraft
-        )
-      });
-      if (composerMode !== "chat") {
-        ctx.dispatchOpenThreads({ type: "reset-composer-mode", threadId, expected: composerMode });
-      }
-    } catch (error) {
-      const details = apiErrorDetails(error, { plainHttpMessage: true });
-      if (details.delivery === "goal" || (!details.delivery && updatesActiveGoal)) {
-        deps.showActionError(`${threadId}:goal-update`, "Goal update failed", details.message);
-      } else if (details.delivery !== "turn" && details.delivery !== "steer") {
-        ctx.dispatchOpenThreads({
-          type: "append-record",
-          threadId,
-          record: submissionFailedRecord(details.message)
-        });
-      }
-    }
+    await deliverThreadInput(openThread, input);
   };
 
   const stopTurn = async (threadId: string) => {

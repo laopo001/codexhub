@@ -14,7 +14,7 @@ export const SubagentActivityMessage = ({
   statusLabel: string;
   timestampText?: string;
   timestampTitle?: string;
-  onOpenThread?: (threadId: string) => void | Promise<void>;
+  onOpenThread?: (activity: SubagentActivityView) => void | Promise<void>;
   onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
 }) => {
   const agentName = subagentActivityAgentName(activity);
@@ -33,7 +33,7 @@ export const SubagentActivityMessage = ({
     openingRef.current = true;
     setOpening(true);
     try {
-      await onOpenThread(threadId);
+      await onOpenThread(activity);
     } finally {
       openingRef.current = false;
       setOpening(false);
@@ -67,10 +67,10 @@ export const SubagentActivityMessage = ({
           disabled={opening}
           aria-busy={opening}
           onClick={openThread}
-          title={opening ? "Opening subagent thread" : `Open subagent thread ${activity.agentThreadId}`}
-          aria-label={`Open ${agentName} subagent thread`}
+          title={opening ? "Loading subagent thread" : `View subagent thread ${activity.agentThreadId}`}
+          aria-label={`View ${agentName} subagent thread`}
         >
-          <span>{opening ? "Opening…" : "Open"}</span>
+          <span>{opening ? "Loading…" : "View"}</span>
           <ExternalLink size={13} strokeWidth={1.9} aria-hidden="true" />
         </button>
       ) : null}

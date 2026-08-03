@@ -14,22 +14,25 @@ import {
   writeTextToClipboard
 } from "../appHelpers.js";
 import type {
+  ApprovalPolicyDraft,
+  ApprovalsReviewerDraft,
   CommandPalette,
   CommandPaletteEntry,
   OpenThreadState,
   ComposerHistoryState,
   MessageContextMenuState,
   MessageRenderMode,
+  PermissionProfileDraft,
   WebRecordView
 } from "../types.js";
-import type { OpenThreadAction } from "../openThreadReducer.js";
+import type { ConversationThreadAction } from "../openThreadReducer.js";
 
 type ComposerActionsContext = {
   commandPaletteByScope: Record<string, CommandPalette>;
   commandPaletteLoadingScopes: Record<string, boolean>;
   composerDraftStore: ComposerDraftStore;
   composerHistoryRef: React.MutableRefObject<ComposerHistoryState | null>;
-  openThreads: OpenThreadState[];
+  conversationThreadsRef: React.MutableRefObject<Map<string, OpenThreadState>>;
   messageContextMenu: MessageContextMenuState | null;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
   setCommandPaletteByScope: React.Dispatch<React.SetStateAction<Record<string, CommandPalette>>>;
@@ -39,7 +42,7 @@ type ComposerActionsContext = {
   setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
   setMessageRenderModes: React.Dispatch<React.SetStateAction<Record<string, MessageRenderMode>>>;
   setThreadControlsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
+  dispatchConversationThread: (action: ConversationThreadAction) => void;
 };
 
 export type ComposerActionsDependencies = {
@@ -101,6 +104,19 @@ const insertTextBlock = (value: string, text: string, start = value.length, end 
 
 export type ComposerActions = {
   loadCommandPalette: (machineId: string, cwd: string) => Promise<void>;
+  setThreadComposerMode: (threadId: string, mode: OpenThreadState["composerMode"]) => void;
+  setThreadApprovalPolicyDraft: (
+    threadId: string,
+    value: React.SetStateAction<ApprovalPolicyDraft>
+  ) => void;
+  setThreadApprovalsReviewerDraft: (
+    threadId: string,
+    value: React.SetStateAction<ApprovalsReviewerDraft>
+  ) => void;
+  setThreadPermissionProfileDraft: (
+    threadId: string,
+    value: React.SetStateAction<PermissionProfileDraft>
+  ) => void;
   updateThreadInput: (threadId: string, input: string) => void;
   resetComposerHistory: (threadId: string) => void;
   setComposerHistoryInput: (threadId: string, textarea: HTMLTextAreaElement, input: string) => void;
@@ -182,6 +198,31 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     ctx.composerDraftStore.set(threadId, input);
   };
 
+  const setThreadComposerMode = (threadId: string, mode: OpenThreadState["composerMode"]) => {
+    ctx.dispatchConversationThread({ type: "set-composer-mode", threadId, mode });
+  };
+
+  const setThreadApprovalPolicyDraft = (
+    threadId: string,
+    value: React.SetStateAction<ApprovalPolicyDraft>
+  ) => {
+    ctx.dispatchConversationThread({ type: "set-draft", threadId, field: "approvalPolicyDraft", value });
+  };
+
+  const setThreadApprovalsReviewerDraft = (
+    threadId: string,
+    value: React.SetStateAction<ApprovalsReviewerDraft>
+  ) => {
+    ctx.dispatchConversationThread({ type: "set-draft", threadId, field: "approvalsReviewerDraft", value });
+  };
+
+  const setThreadPermissionProfileDraft = (
+    threadId: string,
+    value: React.SetStateAction<PermissionProfileDraft>
+  ) => {
+    ctx.dispatchConversationThread({ type: "set-draft", threadId, field: "permissionProfileDraft", value });
+  };
+
   const resetComposerHistory = (threadId: string) => {
     if (ctx.composerHistoryRef.current?.threadId === threadId) ctx.composerHistoryRef.current = null;
   };
@@ -258,7 +299,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
   const addThreadTextAttachment = (threadId: string, text: string) => {
     const normalizedText = normalizeSelectedText(text);
     if (!normalizedText) return;
-    ctx.dispatchOpenThreads({
+    ctx.dispatchConversationThread({
       type: "add-texts",
       threadId,
       texts: [{ id: browserId(), text: normalizedText }]
@@ -307,7 +348,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
         previewUrl: URL.createObjectURL(file)
       }));
     if (!images.length) return;
-    ctx.dispatchOpenThreads({ type: "add-images", threadId, images });
+    ctx.dispatchConversationThread({ type: "add-images", threadId, images });
   };
 
   const addThreadImages = (threadId: string, files: FileList | null) => {
@@ -334,7 +375,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     })));
     const normalized = textAttachments.filter((item) => item.text);
     if (normalized.length) {
-      ctx.dispatchOpenThreads({ type: "add-texts", threadId, texts: normalized });
+      ctx.dispatchConversationThread({ type: "add-texts", threadId, texts: normalized });
     }
     const rejected = [
       ...tooLarge.map((file) => `${file.name} is larger than 512KB`),
@@ -355,22 +396,22 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
   };
 
   const clearThreadAttachments = (threadId: string) => {
-    for (const image of ctx.openThreads.find((thread) => thread.threadId === threadId)?.imageAttachments ?? []) {
+    for (const image of ctx.conversationThreadsRef.current.get(threadId)?.imageAttachments ?? []) {
       URL.revokeObjectURL(image.previewUrl);
     }
-    ctx.dispatchOpenThreads({ type: "clear-attachments", threadId });
+    ctx.dispatchConversationThread({ type: "clear-attachments", threadId });
   };
 
   const removeThreadImage = (threadId: string, imageId: string) => {
-    const image = ctx.openThreads
-      .find((thread) => thread.threadId === threadId)
+    const image = ctx.conversationThreadsRef.current
+      .get(threadId)
       ?.imageAttachments.find((item) => item.id === imageId);
     if (image) URL.revokeObjectURL(image.previewUrl);
-    ctx.dispatchOpenThreads({ type: "remove-image", threadId, imageId });
+    ctx.dispatchConversationThread({ type: "remove-image", threadId, imageId });
   };
 
   const removeThreadTextAttachment = (threadId: string, textId: string) => {
-    ctx.dispatchOpenThreads({ type: "remove-text", threadId, textId });
+    ctx.dispatchConversationThread({ type: "remove-text", threadId, textId });
   };
 
   const openMessageContextMenu = (
@@ -417,6 +458,10 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
 
   return {
     loadCommandPalette,
+    setThreadComposerMode,
+    setThreadApprovalPolicyDraft,
+    setThreadApprovalsReviewerDraft,
+    setThreadPermissionProfileDraft,
     updateThreadInput,
     resetComposerHistory,
     setComposerHistoryInput,

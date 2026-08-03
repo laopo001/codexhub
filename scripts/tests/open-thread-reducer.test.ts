@@ -58,6 +58,7 @@ test("open thread reducer merges stream records and applies semantic ordering", 
   state = openThreadReducer(state, { type: "upsert-detail", thread: detail("thread-2") });
   state = openThreadReducer(state, {
     type: "merge-stream",
+    threadId: "thread-1",
     thread: { ...detail("thread-1"), status: "running", running: true },
     record
   });
@@ -78,6 +79,7 @@ test("open thread reducer merges historical record batches in one pass", async (
   let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });
   state = openThreadReducer(state, {
     type: "merge-stream",
+    threadId: "thread-1",
     thread: { ...detail("thread-1"), messageCount: 2 },
     records: [record, earlier]
   });
@@ -105,6 +107,7 @@ test("open thread reducer preserves semantic transcript dedupe for historical ba
   });
   state = openThreadReducer(state, {
     type: "merge-stream",
+    threadId: "thread-1",
     thread: { ...detail("thread-1"), messageCount: 1 },
     records: [snapshotRecord]
   });
@@ -131,6 +134,7 @@ test("open thread reducer replaces stale snapshots and applies command output de
   });
   state = openThreadReducer(state, {
     type: "merge-stream",
+    threadId: "thread-1",
     thread: { ...detail("thread-1"), messageCount: 1 },
     records: [commandRecord],
     snapshot: {
@@ -142,6 +146,7 @@ test("open thread reducer replaces stale snapshots and applies command output de
   });
   state = openThreadReducer(state, {
     type: "merge-stream",
+    threadId: "thread-1",
     thread: { ...detail("thread-1"), messageCount: 1 },
     delta: {
       recordId: commandRecord.id,
@@ -180,4 +185,15 @@ test("set-fields restores attachments without fabricating or replacing transcrip
   assert.deepEqual(state[0].records, [record]);
   assert.deepEqual(state[0].imageAttachments, images);
   assert.deepEqual(state[0].textAttachments, texts);
+});
+
+test("conversation-only actions never create a workspace tab", async () => {
+  const { openThreadReducer } = await import("../../src/web/openThreadReducer.js");
+  const state = openThreadReducer([], {
+    type: "append-record",
+    threadId: "dialog-only-child",
+    record
+  });
+
+  assert.deepEqual(state, []);
 });

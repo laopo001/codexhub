@@ -52,7 +52,7 @@ import type {
   TaskCompleteNotification,
   LocalTaskRun
 } from "../types.js";
-import type { OpenThreadAction } from "../openThreadReducer.js";
+import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
 import { restorePersistedThreadTabs } from "../helpers/threadRestore.js";
 
 type RealtimeActionsContext = {
@@ -62,6 +62,7 @@ type RealtimeActionsContext = {
   notificationAudioContext: React.MutableRefObject<AudioContext | null>;
   notificationRecordsByThread: React.MutableRefObject<Map<string, CodexRecord[]>>;
   notifiedTaskCompletions: React.MutableRefObject<Set<string>>;
+  openThreadIdsRef: React.MutableRefObject<Set<string>>;
   projectsLastSeq: React.MutableRefObject<number>;
   realtimeClient: React.MutableRefObject<CodexHubRealtimeClient | null>;
   realtimeThreadSubscriptions: React.MutableRefObject<Set<string>>;
@@ -88,6 +89,7 @@ type RealtimeActionsContext = {
   setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
   setRuntimeList: React.Dispatch<React.SetStateAction<RuntimeSummary[]>>;
   dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
+  dispatchConversationThread: (action: ConversationThreadAction) => void;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSshConfigHosts: React.Dispatch<React.SetStateAction<SshHost[]>>;
   setSshConnections: React.Dispatch<React.SetStateAction<SshConnection[]>>;
@@ -341,20 +343,26 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       payload.thread.threadId,
       threadCursorAfterEvent(ctx.threadLastSeqs.current.get(payload.thread.threadId), payload)
     );
-    ctx.dispatchOpenThreads({
+    ctx.dispatchConversationThread({
       type: "merge-stream",
+      threadId: payload.thread.threadId,
       thread: payload.thread,
       record: payload.record,
       records: payload.records,
       delta: payload.delta,
       snapshot: payload.snapshot
     });
-    const machineId = payload.thread.runtime.machineId;
-    if (machineId) {
-      ctx.setThreadOrderByMachine((current) => appendThreadOrder(current, machineId, payload.thread.threadId));
+    const isWorkspaceThread = ctx.openThreadIdsRef.current.has(payload.thread.threadId);
+    if (isWorkspaceThread) {
+      const machineId = payload.thread.runtime.machineId;
+      if (machineId) {
+        ctx.setThreadOrderByMachine((current) => appendThreadOrder(current, machineId, payload.thread.threadId));
+      }
     }
     ctx.setRuntimeList((current) => patchRuntimesThread(current, payload.thread));
-    ctx.setProjects((current) => patchProjectsThread(current, payload.thread));
+    if (isWorkspaceThread) {
+      ctx.setProjects((current) => patchProjectsThread(current, payload.thread));
+    }
     if (!payload.historical && payload.kind === "record" && payload.record && isTaskCompleteRecord(payload.record)) {
       deps.onThreadCompleted(taskCompletionNotificationKey(payload.thread.threadId, payload.record));
     }

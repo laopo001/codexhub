@@ -45,9 +45,11 @@ test("thread state is merged before a browser completion notification is attempt
     notificationAudioContext: { current: null },
     notificationRecordsByThread: { current: new Map<string, CodexRecord[]>() },
     notifiedTaskCompletions: { current: new Set<string>() },
+    openThreadIdsRef: { current: new Set(["thread-test"]) },
     realtimeThreadSubscriptions: { current: new Set<string>() },
     threadLastSeqs: { current: new Map<string, number>() },
-    dispatchOpenThreads: () => calls.push("thread"),
+    dispatchOpenThreads: () => undefined,
+    dispatchConversationThread: () => calls.push("thread"),
     setThreadOrderByMachine: () => calls.push("order"),
     setRuntimeList: () => calls.push("runtimes"),
     setProjects: () => calls.push("projects")
@@ -81,6 +83,15 @@ test("thread state is merged before a browser completion notification is attempt
   calls.length = 0;
   assert.doesNotThrow(() => actions.applyThreadStreamEvent(turnAbortedEvent()));
   assert.deepEqual(calls, ["thread", "order", "runtimes", "projects"]);
+
+  context.openThreadIdsRef.current.clear();
+  calls.length = 0;
+  assert.doesNotThrow(() => actions.applyThreadStreamEvent({
+    ...turnAbortedEvent(),
+    seq: 5,
+    historical: true
+  }));
+  assert.deepEqual(calls, ["thread", "runtimes"], "dialog-only child events must not change workspace ordering or project selection");
 });
 
 const taskCompleteEvent = (): ThreadStreamEvent => ({

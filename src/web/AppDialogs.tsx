@@ -111,6 +111,34 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     || threadTabContextMenu
     || messageContextMenu
   );
+  React.useEffect(() => {
+    if (!imagePreview && !inspectMessage && !goalDialog && !threadModelDialogOpen) return undefined;
+    const closeTopOverlayOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (imagePreview) {
+        setImagePreview(null);
+      } else if (inspectMessage) {
+        setInspectMessage(null);
+      } else if (goalDialog) {
+        if (!goalDialog.saving) setGoalDialog(null);
+      } else {
+        setThreadModelDialogOpen(false);
+      }
+    };
+    window.addEventListener("keydown", closeTopOverlayOnEscape, true);
+    return () => window.removeEventListener("keydown", closeTopOverlayOnEscape, true);
+  }, [
+    goalDialog,
+    imagePreview,
+    inspectMessage,
+    setGoalDialog,
+    setImagePreview,
+    setInspectMessage,
+    setThreadModelDialogOpen,
+    threadModelDialogOpen
+  ]);
   if (!hasOpenDialog) return null;
 
   const projectPickerMachine = projectPicker
@@ -767,7 +795,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
       ) : null}
 
       {inspectMessage ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setInspectMessage(null)}>
+        <div className="modalOverlay detailModalOverlay" role="dialog" aria-modal="true" onClick={() => setInspectMessage(null)}>
           <section className="modal detailModal" onClick={(event) => event.stopPropagation()}>
             <header className="modalHeader">
               <div>

@@ -7,7 +7,7 @@ import { highlightedLanguages, isEmbeddedHostSurface, languageAliases } from "..
 import { SubagentActivityMessage } from "../SubagentActivityMessage.js";
 import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
-import { asRecord } from "../../shared/recordTypes.js";
+import { asRecord, type SubagentActivityView } from "../../shared/recordTypes.js";
 import { authToken } from "./core.js";
 import { contextMenuPosition, writeTextToClipboard } from "./composer.js";
 import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
@@ -80,7 +80,7 @@ export const MessageCard = ({
   forkDisabled?: boolean;
   forking?: boolean;
   onOpenImage?: (image: ImagePreviewState) => void;
-  onOpenSubagentThread?: (threadId: string) => void | Promise<void>;
+  onOpenSubagentThread?: (activity: SubagentActivityView) => void | Promise<void>;
 }) => {
   const isThinkingMessage = message.role === "thinking";
   const isToolBatch = Boolean(message.toolBatch);
@@ -570,13 +570,16 @@ export const MessageText = ({
       setFileLinkMenu(null);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFileLinkMenu(null);
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setFileLinkMenu(null);
     };
     window.addEventListener("pointerdown", closeOnPointerDown);
-    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", closeOnEscape, true);
     return () => {
       window.removeEventListener("pointerdown", closeOnPointerDown);
-      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("keydown", closeOnEscape, true);
     };
   }, [fileLinkMenu]);
   if (!markdownEnabled || mode === "raw") return <pre>{text}</pre>;

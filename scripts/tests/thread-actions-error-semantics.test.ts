@@ -26,9 +26,10 @@ Object.defineProperty(globalThis, "fetch", {
 
 const openThread = (
   running: boolean,
-  composerMode: OpenThreadState["composerMode"]
+  composerMode: OpenThreadState["composerMode"],
+  threadId = "thread-actions"
 ): OpenThreadState => ({
-  threadId: "thread-actions",
+  threadId,
   workingDirectory: "/tmp/thread-actions",
   runtime: { online: true, runnable: true, machineId: "machine-actions" },
   status: running ? "running" : "idle",
@@ -53,15 +54,22 @@ const openThread = (
 const fixture = async (
   running: boolean,
   composerMode: OpenThreadState["composerMode"],
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  options: { threadId?: string; workspaceOpen?: boolean } = {}
 ) => {
   const { createThreadActions } = await import("../../src/web/appActions/threadActions.js");
-  const draft = new Map([["thread-actions", "hello"]]);
+  const { reduceConversationThreadState } = await import("../../src/web/openThreadReducer.js");
+  const threadId = options.threadId ?? "thread-actions";
+  const thread = openThread(running, composerMode, threadId);
+  const draft = new Map([[threadId, "hello"]]);
+  const conversationThreads = new Map([[threadId, thread]]);
   const actionsDispatched: Array<{ type: string; record?: CodexRecord }> = [];
   const shownErrors: Array<{ key: string; title: string; message: string }> = [];
+  const openedModelThreadIds: string[] = [];
+  let projectUpdates = 0;
   currentFetch = fetchImpl;
   const context = {
-    activeTabThreadId: "thread-actions",
+    activeTabThreadId: options.workspaceOpen === false ? "parent-thread" : threadId,
     closedThreadIds: { current: new Set<string>() },
     composerDraftStore: {
       delete: (threadId: string) => draft.delete(threadId),
@@ -76,10 +84,12 @@ const fixture = async (
     threadRenameDialog: null,
     latestRequestedThreadId: { current: "" },
     notificationRecordsByThread: { current: new Map() },
+    openThreadIdsRef: { current: new Set(options.workspaceOpen === false ? [] : [threadId]) },
     openingThreads: { current: new Map() },
     realtimeThreadSubscriptions: { current: new Set() },
     selectedProjectKey: "",
-    openThreads: [openThread(running, composerMode)],
+    openThreads: options.workspaceOpen === false ? [] : [thread],
+    conversationThreadsRef: { current: conversationThreads },
     threadLastSeqs: { current: new Map() },
     setActiveMachineId: () => undefined,
     setActiveTabThreadByMachine: () => undefined,
@@ -87,11 +97,18 @@ const fixture = async (
     setActiveWorkspacePath: () => undefined,
     setForkingMessageKey: () => undefined,
     setGoalDialog: () => undefined,
-    setProjects: () => undefined,
-    setThreadModelDialogOpen: () => undefined,
+    setProjects: () => {
+      projectUpdates += 1;
+    },
+    openThreadModelDialog: (targetThreadId: string) => openedModelThreadIds.push(targetThreadId),
     setThreadRenameDialog: () => undefined,
     setRuntimeList: () => undefined,
-    dispatchOpenThreads: (action: { type: string; record?: CodexRecord }) => actionsDispatched.push(action),
+    dispatchOpenThreads: () => undefined,
+    dispatchConversationThread: (action: Parameters<typeof reduceConversationThreadState>[1]) => {
+      actionsDispatched.push(action);
+      const current = conversationThreads.get(action.threadId);
+      if (current) conversationThreads.set(action.threadId, reduceConversationThreadState(current, action));
+    },
     setThreadOrderByMachine: () => undefined
   } as unknown as Parameters<typeof createThreadActions>[0];
   const actions = createThreadActions(context, {
@@ -104,7 +121,16 @@ const fixture = async (
     showActionError: (key, title, message) => shownErrors.push({ key, title, message }),
     showForkError: () => undefined
   });
-  return { actions, actionsDispatched, shownErrors };
+  return {
+    actions,
+    actionsDispatched,
+    shownErrors,
+    openedModelThreadIds,
+    conversationThreads,
+    draft,
+    threadId,
+    projectUpdates: () => projectUpdates
+  };
 };
 
 const serverFailure = (message: string, delivery: "turn" | "steer" | "goal") =>
@@ -206,4 +232,86 @@ test("stop, compact, review, and Goal control failures only use action feedback"
     { title: "Goal update failed", message: "operation rejected" },
     { title: "Goal clear failed", message: "operation rejected" }
   ]);
+});
+
+test("dialog-only subagent send uses the shared thread delivery path without opening a tab", async () => {
+  const requests: Array<{ url: string; body: unknown }> = [];
+  const { actions, actionsDispatched, threadId } = await fixture(
+    false,
+    "plan",
+    async (input, init) => {
+      requests.push({
+        url: String(input),
+        body: init?.body ? JSON.parse(String(init.body)) : undefined
+      });
+      return new Response(JSON.stringify({ ok: true, delivery: "turn" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    },
+    { threadId: "child-thread", workspaceOpen: false }
+  );
+
+  await actions.send(threadId);
+
+  assert.deepEqual(requests, [{
+    url: "/api/threads/child-thread/turn",
+    body: {
+      input: "hello",
+      source: "web",
+      options: {
+        model: null,
+        modelReasoningEffort: null,
+        serviceTier: null,
+        approvalPolicy: null,
+        approvalsReviewer: null,
+        permissions: null,
+        collaborationMode: "plan"
+      }
+    }
+  }]);
+  assert.equal(actionsDispatched.some((action) => action.type === "upsert-detail"), false);
+  assert.equal(actionsDispatched.some((action) => action.type === "reset-composer-mode"), true);
+});
+
+test("dialog-only subagent model command targets the child conversation", async () => {
+  const { actions, draft, openedModelThreadIds, shownErrors, threadId } = await fixture(
+    false,
+    "chat",
+    async () => {
+      throw new Error("model command must not send a turn");
+    },
+    { threadId: "child-thread", workspaceOpen: false }
+  );
+  draft.set(threadId, "/model");
+
+  await actions.send(threadId);
+
+  assert.deepEqual(openedModelThreadIds, ["child-thread"]);
+  assert.equal(draft.get(threadId), "");
+  assert.deepEqual(shownErrors, []);
+});
+
+test("dialog-only approval refreshes its conversation without creating or selecting a project thread", async () => {
+  const { actions, actionsDispatched, conversationThreads, projectUpdates, threadId } = await fixture(
+    false,
+    "chat",
+    async () => new Response(JSON.stringify({
+      thread: {
+        ...openThread(false, "chat", "child-thread"),
+        title: "Approval handled"
+      }
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }),
+    { threadId: "child-thread", workspaceOpen: false }
+  );
+
+  await actions.respondToApproval(threadId, "approval-1", "approve");
+
+  assert.equal(conversationThreads.get(threadId)?.title, "Approval handled");
+  assert.equal(actionsDispatched.some((action) => action.type === "sync-detail"), true);
+  assert.equal(actionsDispatched.some((action) => action.type === "upsert-detail"), false);
+  assert.equal(projectUpdates(), 0);
 });

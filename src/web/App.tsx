@@ -45,6 +45,7 @@ const App = () => {
     composerDraftStore,
     composerMenuOpen,
     composerTextareaRef,
+    expandedToolBatchKeys,
     commandPaletteByScope,
     commandPaletteLoadingScopes,
     connectionMode,
@@ -62,14 +63,17 @@ const App = () => {
     messagesShouldFollowRef,
     offlineProjectsCollapsed,
     openingProjectKey,
+    openThreadModelDialog,
     openThreads,
     parentRegistration,
     parentRegistrationBusy,
     parentRegistrationError,
+    permissionProfilesByScope,
     projectActionError,
     projectPicker,
     registeredCommandCopied,
     serverShareCopied,
+    subagentThreadDialog,
     runtimeList,
     setAppSettings,
     setAuthError,
@@ -92,6 +96,7 @@ const App = () => {
     setServerShareCopied,
     setSettingsDialogOpen,
     setSidebarCollapsed,
+    setSubagentThreadDialog,
     setTaskFormOpen,
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
@@ -177,6 +182,7 @@ const App = () => {
     statusPanelAvailable,
     sshConfigHostOptions,
     statusScopeKey,
+    threadModelDialogMachineId,
     turnStatusItems
   } = selectors;
   const petFeature = usePetFeature(
@@ -269,7 +275,6 @@ const App = () => {
     clearActiveThreadIfLatest: threadActions.clearActiveThreadIfLatest,
     focusTaskDraftProject: taskActions.focusTaskDraftProject,
     openThread: threadActions.openThread,
-    showActionError,
     subscribeThread: threadActions.subscribeThread
   });
   const actions = {
@@ -336,6 +341,10 @@ const App = () => {
     loadThreadPickerCandidates,
     openMessageContextMenu,
     openSubagentThread,
+    setThreadApprovalPolicyDraft,
+    setThreadApprovalsReviewerDraft,
+    setThreadComposerMode,
+    setThreadPermissionProfileDraft,
     showProjectPicker,
     openTaskRunThread,
     openThread,
@@ -412,7 +421,7 @@ const App = () => {
   };
 
   const retryModelCatalog = () => {
-    const machineId = activeRuntime?.machineId;
+    const machineId = threadModelDialogMachineId;
     if (!machineId) return;
     setModelCatalogByMachine((current) => {
       const existing = current[machineId];
@@ -481,6 +490,7 @@ const App = () => {
     effectiveModelSelection,
     effectiveReasoningSelection,
     effectiveServiceTierSelection,
+    expandedToolBatchKeys,
     focusTaskDraftProject,
     forkingMessageKey,
     forkMessage,
@@ -509,6 +519,7 @@ const App = () => {
     activePermissionProfiles,
     activePermissionProfilesError,
     activePermissionProfilesStatus,
+    permissionProfilesByScope,
     activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
@@ -525,6 +536,11 @@ const App = () => {
     openingProjectKey,
     openMessageContextMenu,
     openSubagentThread,
+    openThreadModelDialog,
+    setThreadApprovalPolicyDraft,
+    setThreadApprovalsReviewerDraft,
+    setThreadComposerMode,
+    setThreadPermissionProfileDraft,
     showProjectPicker,
     openTaskRunThread,
     openThreadPicker,
@@ -566,6 +582,7 @@ const App = () => {
     runtimeList,
     threadControlsMenuOpen,
     settingsDialogOpen,
+    subagentThreadDialog,
     threadRenameDialog,
     threadTabContextMenu,
     openThreads,
@@ -597,6 +614,7 @@ const App = () => {
     setThreadTabContextMenu,
     setSettingsDialogOpen,
     setSidebarCollapsed,
+    setSubagentThreadDialog,
     setTaskFormOpen,
     setThreadPicker,
     showComposerSendButton,

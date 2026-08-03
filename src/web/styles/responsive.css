@@ -124,6 +124,7 @@
   .projectPickerModal,
   .settingsDialog,
   .goalDialog,
+  .subagentThreadDialog,
   .modal {
     max-height: calc(100svh - 16px);
     padding: 12px;
@@ -131,6 +132,38 @@
 
   .threadPickerModal {
     max-height: min(600px, calc(100svh - 16px));
+  }
+
+  .subagentThreadDialogHeader {
+    padding: 10px 11px;
+  }
+
+  .subagentThreadDialog {
+    padding: 0;
+  }
+
+  .subagentThreadDialogWorkingDirectory {
+    display: none;
+  }
+
+  .subagentThreadMessageItem {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .subagentThreadAssignment {
+    max-height: min(180px, 28vh);
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+
+  .subagentThreadAssignmentTags span {
+    max-width: 104px;
+  }
+
+  .subagentThreadComposer {
+    padding-right: 8px;
+    padding-left: 8px;
   }
 
   .threadPickerList {

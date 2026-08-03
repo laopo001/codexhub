@@ -18,6 +18,8 @@ import {
 } from "../appHelpers.js";
 import { apiErrorDetails } from "../helpers/apiErrors.js";
 import { resolveSubagentThreadTarget } from "../helpers/subagentThreads.js";
+import { releaseDialogOnlyThreadAttachments } from "../helpers/subagentThreadDialog.js";
+import { openThreadStateFromDetail } from "../openThreadReducer.js";
 import type { OpenThreadOptions } from "./threadActions.js";
 import type {
   OpenThreadState,
@@ -28,6 +30,8 @@ import type {
   ProjectsPayload,
   ProjectSummary,
   RuntimeSummary,
+  SubagentThreadDialogState,
+  SubagentThreadOpenOptions,
   ThreadPickerState
 } from "../types.js";
 
@@ -36,6 +40,7 @@ type ProjectActionsContext = {
   activeTabThreadByMachine: Record<string, string>;
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
+  conversationThreadsRef: React.MutableRefObject<Map<string, OpenThreadState>>;
   latestRequestedThreadId: React.MutableRefObject<string>;
   openingSubagentThreads: React.MutableRefObject<Set<string>>;
   machines: MachineSummary[];
@@ -44,6 +49,7 @@ type ProjectActionsContext = {
   selectedProjectKey: string;
   runtimeList: RuntimeSummary[];
   openThreads: OpenThreadState[];
+  subagentThreadDialog: SubagentThreadDialogState | null;
   threadOrderByMachine: Record<string, string[]>;
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
   threadPicker: ThreadPickerState | null;
@@ -59,6 +65,7 @@ type ProjectActionsContext = {
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
+  setSubagentThreadDialog: React.Dispatch<React.SetStateAction<SubagentThreadDialogState | null>>;
   setRuntimeList: React.Dispatch<React.SetStateAction<RuntimeSummary[]>>;
   setTaskError: React.Dispatch<React.SetStateAction<string>>;
   setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
@@ -69,7 +76,6 @@ export type ProjectActionsDependencies = {
   clearActiveThreadIfLatest: (threadId: string) => void;
   focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
   openThread: (threadId: string, options?: OpenThreadOptions) => Promise<void>;
-  showActionError: (key: string, title: string, message: string) => void;
   subscribeThread: (threadId: string, after: number) => void;
 };
 
@@ -105,7 +111,7 @@ export type ProjectActions = {
   patchProject: (project: ProjectSummary, patch: ProjectUpdateInput) => Promise<void>;
   toggleProjectPinned: (project: ProjectSummary) => Promise<void>;
   toggleProjectMachineGroup: (machineKey: string) => void;
-  openSubagentThread: (threadId: string) => Promise<void>;
+  openSubagentThread: (threadId: string, options?: SubagentThreadOpenOptions) => Promise<void>;
   switchMachineThread: (threadId: string) => Promise<void>;
 };
 
@@ -652,39 +658,98 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     );
   };
 
-  const openSubagentThread = async (threadId: string) => {
-    const reportFailure = (message: string) => {
-      ctx.setProjectActionError(message);
-      deps.showActionError(`${threadId}:subagent-open`, "Open subagent thread failed", message);
-    };
+  const openSubagentThread = async (
+    threadId: string,
+    options: SubagentThreadOpenOptions = {}
+  ) => {
+    const parentThreadId = options.parentThreadId ?? ctx.activeTabThreadId;
+    const agentPath = options.agentPath;
+    const requestKey = `${parentThreadId}\u0000${threadId}`;
+    const conversationThreads = [...ctx.conversationThreadsRef.current.values()];
+    const currentDialog = ctx.subagentThreadDialog;
+    const retainedParentDialog = currentDialog?.threadId === threadId
+      && currentDialog.parentThreadId === parentThreadId
+      ? currentDialog.parentDialog
+      : currentDialog?.threadId === parentThreadId
+        ? currentDialog
+        : undefined;
     const target = resolveSubagentThreadTarget(
-      ctx.activeTabThreadId,
+      parentThreadId,
       threadId,
-      ctx.openThreads,
+      conversationThreads,
       ctx.runtimeList
     );
+    const existingConversationThread = conversationThreads.find((item) =>
+      item.threadId === threadId
+      && item.runtime.machineId === target?.machineId
+    );
+    if (currentDialog?.threadId !== threadId && !retainedParentDialog) {
+      releaseDialogOnlyThreadAttachments(
+        currentDialog,
+        ctx.openThreads.map((item) => item.threadId)
+      );
+    }
+    ctx.setSubagentThreadDialog({
+      threadId,
+      parentThreadId,
+      ...(retainedParentDialog ? { parentDialog: retainedParentDialog } : {}),
+      ...(agentPath?.trim() ? { agentPath: agentPath.trim() } : {}),
+      ...(options.assignment ? { assignment: options.assignment } : {}),
+      ...(target?.machineId ? { machineId: target.machineId } : {}),
+      ...(target?.workingDirectory ? { workingDirectory: target.workingDirectory } : {}),
+      ...(existingConversationThread ? { thread: existingConversationThread } : {}),
+      status: target?.online ? "loading" : "error",
+      error: target?.online
+        ? ""
+        : target
+          ? "Cannot open the subagent thread while its machine runtime is offline."
+          : "Cannot resolve the parent thread runtime for this subagent."
+    });
     if (!target?.online) {
-      reportFailure("Cannot open the subagent thread while its machine runtime is offline.");
       return;
     }
-    if (ctx.openingSubagentThreads.current.has(threadId)) return;
-    ctx.openingSubagentThreads.current.add(threadId);
-    ctx.setProjectActionError("");
+    if (ctx.openingSubagentThreads.current.has(requestKey)) return;
+    ctx.openingSubagentThreads.current.add(requestKey);
+    ctx.closedThreadIds.current.delete(threadId);
     try {
-      let preferredWorkingDirectory: string | undefined;
-      if (!target.attached) {
-        const resumed = await apiRouteJson(apiRoutes.createMachineThread, target.machineId, {
+      const thread = target.attached
+        ? await apiRouteJson(apiRoutes.thread, threadId)
+        : await apiRouteJson(apiRoutes.createMachineThread, target.machineId, {
           action: "resume",
           threadId,
           cwd: target.workingDirectory
         });
-        preferredWorkingDirectory = resumed.workingDirectory;
+      const returnedMachineId = thread.runtime.machineId;
+      if (returnedMachineId !== target.machineId) {
+        throw new Error(
+          `Thread ${threadId} is attached to ${returnedMachineId ?? "an unknown machine"}, not ${target.machineId}.`
+        );
       }
-      await activateMachineThread(target.machineId, threadId, { preferredWorkingDirectory });
+      ctx.threadLastSeqs.current.set(
+        threadId,
+        Math.max(ctx.threadLastSeqs.current.get(threadId) ?? 0, thread.lastSeq)
+      );
+      ctx.setSubagentThreadDialog((current) => current
+        && current.threadId === threadId
+        && current.parentThreadId === parentThreadId
+        ? {
+            ...current,
+            machineId: target.machineId,
+            workingDirectory: thread.workingDirectory,
+            status: "ready",
+            thread: openThreadStateFromDetail(thread, existingConversationThread),
+            error: ""
+          }
+        : current);
     } catch (error) {
-      reportFailure(apiErrorDetails(error, { plainHttpMessage: true }).message);
+      const message = apiErrorDetails(error, { plainHttpMessage: true }).message;
+      ctx.setSubagentThreadDialog((current) => current
+        && current.threadId === threadId
+        && current.parentThreadId === parentThreadId
+        ? { ...current, status: "error", error: message }
+        : current);
     } finally {
-      ctx.openingSubagentThreads.current.delete(threadId);
+      ctx.openingSubagentThreads.current.delete(requestKey);
     }
   };
 

@@ -22,18 +22,17 @@ type DraftAction =
   | { field: "approvalsReviewerDraft"; value: SetStateAction<ApprovalsReviewerDraft> }
   | { field: "permissionProfileDraft"; value: SetStateAction<PermissionProfileDraft> };
 
-export type OpenThreadAction =
-  | { type: "upsert-detail"; thread: ThreadDetail }
+export type ConversationThreadAction =
+  | { type: "sync-detail"; threadId: string; thread: ThreadDetail }
   | {
       type: "merge-stream";
+      threadId: string;
       thread: ThreadSummary;
       record?: CodexRecord;
       records?: CodexRecord[];
       delta?: ThreadRecordDelta;
       snapshot?: ThreadRecordsSnapshot;
     }
-  | { type: "remove"; threadId: string }
-  | { type: "reorder"; threadIds: string[] }
   | { type: "append-record"; threadId: string; record: CodexRecord }
   | { type: "set-fields"; threadId: string; fields: Partial<OpenThreadState> }
   | ({ type: "set-draft"; threadId: string } & DraftAction)
@@ -44,6 +43,12 @@ export type OpenThreadAction =
   | { type: "remove-image"; threadId: string; imageId: string }
   | { type: "remove-text"; threadId: string; textId: string }
   | { type: "clear-attachments"; threadId: string };
+
+export type OpenThreadAction =
+  | { type: "upsert-detail"; thread: ThreadDetail }
+  | { type: "remove"; threadId: string }
+  | { type: "reorder"; threadIds: string[] }
+  | ConversationThreadAction;
 
 const serviceTierDraftFromThread = (serviceTier: string | null | undefined) =>
   serviceTier && serviceTier !== "default" ? serviceTier : "auto";
@@ -81,25 +86,6 @@ export const openThreadReducer = (state: OpenThreadState[], action: OpenThreadAc
       ? state.map((thread) => thread.threadId === next.threadId ? next : thread)
       : [...state, next];
   }
-  if (action.type === "merge-stream") {
-    return updateThread(state, action.thread.threadId, (thread) => {
-      const snapshotRecords = action.snapshot?.reset
-        ? combineRecordSources([], action.records ?? [])
-        : action.records !== undefined
-          ? combineRecordSources(thread.records, action.records)
-          : thread.records;
-      const mergedRecords = action.record
-        ? mergeRecord(snapshotRecords, action.record)
-        : snapshotRecords;
-      return {
-        ...thread,
-        ...action.thread,
-        records: action.delta
-          ? applyThreadRecordDelta(mergedRecords, action.delta)
-          : mergedRecords
-      };
-    });
-  }
   if (action.type === "remove") return state.filter((thread) => thread.threadId !== action.threadId);
   if (action.type === "reorder") {
     const order = new Map(action.threadIds.map((threadId, index) => [threadId, index]));
@@ -112,84 +98,116 @@ export const openThreadReducer = (state: OpenThreadState[], action: OpenThreadAc
       return leftIndex - rightIndex;
     });
   }
+  return updateThread(
+    state,
+    action.threadId,
+    (thread) => reduceConversationThreadState(thread, action)
+  );
+};
+
+export const reduceConversationThreadState = (
+  thread: OpenThreadState,
+  action: ConversationThreadAction
+): OpenThreadState => {
+  if (action.threadId !== thread.threadId) return thread;
+  if (action.type === "sync-detail") {
+    return openThreadStateFromDetail(action.thread, thread);
+  }
+  if (action.type === "merge-stream") {
+    const snapshotRecords = action.snapshot?.reset
+      ? combineRecordSources([], action.records ?? [])
+      : action.records !== undefined
+        ? combineRecordSources(thread.records, action.records)
+        : thread.records;
+    const mergedRecords = action.record
+      ? mergeRecord(snapshotRecords, action.record)
+      : snapshotRecords;
+    return {
+      ...thread,
+      ...action.thread,
+      records: action.delta
+        ? applyThreadRecordDelta(mergedRecords, action.delta)
+        : mergedRecords
+    };
+  }
   if (action.type === "append-record") {
-    return updateThread(state, action.threadId, (thread) => ({ ...thread, records: [...thread.records, action.record] }));
+    return { ...thread, records: [...thread.records, action.record] };
   }
   if (action.type === "set-fields") {
-    return updateThread(state, action.threadId, (thread) => ({ ...thread, ...action.fields }));
+    return { ...thread, ...action.fields };
   }
   if (action.type === "set-composer-mode") {
-    return updateThread(state, action.threadId, (thread) => ({ ...thread, composerMode: action.mode }));
+    return { ...thread, composerMode: action.mode };
   }
   if (action.type === "reset-composer-mode") {
-    return updateThread(state, action.threadId, (thread) => ({
+    return {
       ...thread,
       composerMode: thread.composerMode === action.expected ? "chat" : thread.composerMode
-    }));
+    };
   }
   if (action.type === "set-draft") {
     if (action.field === "modelDraft") {
-      return updateThread(state, action.threadId, (thread) => ({
+      return {
         ...thread,
         modelDraft: resolveStateAction(action.value, thread.modelDraft)
-      }));
+      };
     }
     if (action.field === "reasoningDraft") {
-      return updateThread(state, action.threadId, (thread) => ({
+      return {
         ...thread,
         reasoningDraft: resolveStateAction(action.value, thread.reasoningDraft)
-      }));
+      };
     }
     if (action.field === "serviceTierDraft") {
-      return updateThread(state, action.threadId, (thread) => ({
+      return {
         ...thread,
         serviceTierDraft: resolveStateAction(action.value, thread.serviceTierDraft)
-      }));
+      };
     }
     if (action.field === "approvalPolicyDraft") {
-      return updateThread(state, action.threadId, (thread) => ({
+      return {
         ...thread,
         approvalPolicyDraft: resolveStateAction(action.value, thread.approvalPolicyDraft)
-      }));
+      };
     }
     if (action.field === "approvalsReviewerDraft") {
-      return updateThread(state, action.threadId, (thread) => ({
+      return {
         ...thread,
         approvalsReviewerDraft: resolveStateAction(action.value, thread.approvalsReviewerDraft)
-      }));
+      };
     }
-    return updateThread(state, action.threadId, (thread) => ({
+    return {
       ...thread,
       permissionProfileDraft: resolveStateAction(action.value, thread.permissionProfileDraft)
-    }));
+    };
   }
   if (action.type === "add-images") {
-    return updateThread(state, action.threadId, (thread) => ({
+    return {
       ...thread,
       imageAttachments: [...thread.imageAttachments, ...action.images]
-    }));
+    };
   }
   if (action.type === "add-texts") {
-    return updateThread(state, action.threadId, (thread) => ({
+    return {
       ...thread,
       textAttachments: [...thread.textAttachments, ...action.texts]
-    }));
+    };
   }
   if (action.type === "remove-image") {
-    return updateThread(state, action.threadId, (thread) => ({
+    return {
       ...thread,
       imageAttachments: thread.imageAttachments.filter((image) => image.id !== action.imageId)
-    }));
+    };
   }
   if (action.type === "remove-text") {
-    return updateThread(state, action.threadId, (thread) => ({
+    return {
       ...thread,
       textAttachments: thread.textAttachments.filter((text) => text.id !== action.textId)
-    }));
+    };
   }
-  return updateThread(state, action.threadId, (thread) => ({
+  return {
     ...thread,
     imageAttachments: [],
     textAttachments: []
-  }));
+  };
 };
