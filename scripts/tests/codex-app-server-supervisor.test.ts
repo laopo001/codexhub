@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -39,27 +40,61 @@ const waitFor = async <T>(
   throw new Error(`condition was not met after ${timeoutMs}ms`);
 };
 
-const readFirstStdoutLine = async (child: ReturnType<typeof spawn>) => await new Promise<string>((resolve, reject) => {
-  let buffered = "";
-  child.once("error", reject);
-  child.stdout?.on("data", (chunk: Buffer | string) => {
-    buffered += chunk.toString();
-    const newline = buffered.indexOf("\n");
-    if (newline !== -1) resolve(buffered.slice(0, newline).trim());
-  });
+type SupervisorLaunchMessage =
+  | { type: "spawned"; pid: number }
+  | { type: "error"; code?: string; message: string };
+
+const readSupervisorPid = async (child: ReturnType<typeof spawn>) => await new Promise<number>((resolve, reject) => {
+  let stderr = "";
+  const onStderr = (chunk: Buffer | string) => {
+    stderr += chunk.toString();
+  };
+  const cleanup = () => {
+    child.off("error", onError);
+    child.off("exit", onExit);
+    child.off("message", onMessage);
+    child.stderr?.off("data", onStderr);
+  };
+  const fail = (message: string) => {
+    cleanup();
+    const detail = stderr.trim();
+    reject(new Error(detail ? `${message}\n${detail}` : message));
+  };
+  const onError = (error: Error) => fail(`supervisor fixture parent failed to spawn: ${error.message}`);
+  const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+    fail(`supervisor fixture parent exited before reporting its child: code=${code ?? ""} signal=${signal ?? ""}`);
+  };
+  const onMessage = (message: unknown) => {
+    if (!message || typeof message !== "object") return;
+    const payload = message as SupervisorLaunchMessage;
+    if (payload.type === "error") {
+      fail(`supervisor fixture child failed to spawn${payload.code ? ` (${payload.code})` : ""}: ${payload.message}`);
+      return;
+    }
+    if (payload.type !== "spawned" || !Number.isInteger(payload.pid) || payload.pid <= 0) return;
+    cleanup();
+    resolve(payload.pid);
+  };
+  child.stderr?.on("data", onStderr);
+  child.once("error", onError);
+  child.once("exit", onExit);
+  child.on("message", onMessage);
 });
 
 test("Linux parent-death supervisor removes the nested app-server process tree", {
   skip: process.platform !== "linux"
 }, async () => {
-  await access("/usr/bin/setpriv");
-  await access("/bin/bash");
+  await access("/usr/bin/setpriv", constants.X_OK);
+  await access("/bin/bash", constants.X_OK);
   const launch = linuxAppServerSupervisorLaunch("/bin/bash", ["-c", "sleep 1000 & wait"]);
   const parentScript = [
     "const { spawn } = require('node:child_process');",
     "const child = spawn(process.argv[1], JSON.parse(process.argv[2]),",
     "  { detached: true, stdio: ['ignore', 'ignore', 'ignore'] });",
-    "console.log(child.pid);",
+    "child.once('spawn', () => process.send({ type: 'spawned', pid: child.pid }));",
+    "child.once('error', (error) => {",
+    "  process.send({ type: 'error', code: error.code, message: error.message }, () => process.exit(1));",
+    "});",
     "setInterval(() => {}, 1000);"
   ].join("\n");
   const parent = spawn(process.execPath, [
@@ -68,13 +103,12 @@ test("Linux parent-death supervisor removes the nested app-server process tree",
     launch.command,
     JSON.stringify(launch.args)
   ], {
-    stdio: ["ignore", "pipe", "inherit"]
+    stdio: ["ignore", "ignore", "pipe", "ipc"]
   });
   let supervisorPid = 0;
   let descendants: number[] = [];
   try {
-    supervisorPid = Number(await readFirstStdoutLine(parent));
-    assert.ok(Number.isInteger(supervisorPid) && supervisorPid > 0);
+    supervisorPid = await readSupervisorPid(parent);
     descendants = await waitFor(
       async () => {
         const children = await processChildren(supervisorPid);
