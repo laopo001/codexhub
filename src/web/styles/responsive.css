@@ -24,6 +24,31 @@
     max-width: 100%;
   }
 
+  .message.subagentActivityMessage {
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .subagentActivityType,
+  .subagentActivityOpen > span {
+    display: none;
+  }
+
+  .subagentActivityOpen {
+    width: 26px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .subagentActivityAssignment {
+    gap: 6px;
+  }
+
+  .subagentActivityAssignmentTag {
+    max-width: 120px;
+  }
+
   .messageMeta {
     max-width: 100%;
     overflow: hidden;

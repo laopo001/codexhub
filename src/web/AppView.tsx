@@ -150,6 +150,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     messagesRef,
     messagesShouldFollowRef,
     openMessageContextMenu,
+    openSubagentThread,
     openSelectedProjectThreadPicker,
     pasteThreadImages,
     removeThreadImage,
@@ -487,6 +488,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                           onContextMenu={(event) => openMessageContextMenu(event, activeThread.threadId, message, inspectable)}
                           onInspect={inspectable && message.role === "tool" ? () => setInspectMessage(message) : undefined}
                           onOpenImage={setImagePreview}
+                          onOpenSubagentThread={(threadId) => openSubagentThread(threadId)}
                           onToggleToolBatch={toolBatchKey ? () => {
                             setExpandedToolBatchKeys((current) => {
                               const keys = new Set(current[activeThread.threadId] ?? []);

@@ -77,12 +77,19 @@ export type ThreadActionsDependencies = {
   showForkError: (message: string) => void;
 };
 
+export type OpenThreadOptions = {
+  /** Reject stale Web state if this thread was resumed through another machine. */
+  expectedMachineId?: string;
+  /** Keep workspace context stable while a freshly resumed thread is loading. */
+  preferredWorkingDirectory?: string;
+};
+
 type ThreadGoalUpdateOptions = {
   dialog?: boolean;
 };
 
 export type ThreadActions = {
-  openThread: (threadId: string) => Promise<void>;
+  openThread: (threadId: string, options?: OpenThreadOptions) => Promise<void>;
   clearActiveThreadIfLatest: (threadId: string) => void;
   closeThread: (threadId: string) => Promise<void>;
   removeThreadFromUi: (threadId: string, machineId: string, nextThreadId: string) => void;
@@ -117,14 +124,21 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
   };
 
-  const openThread = async (threadId: string) => {
+  const openThread = async (threadId: string, options: OpenThreadOptions = {}) => {
     ctx.closedThreadIds.current.delete(threadId);
     ctx.latestRequestedThreadId.current = threadId;
     ctx.setActiveTabThreadId(threadId);
     const updateWorkspaceContext = !ctx.selectedProjectKey;
+    if (updateWorkspaceContext && options.preferredWorkingDirectory) {
+      ctx.setActiveWorkspacePath(options.preferredWorkingDirectory);
+    }
 
     const existingThread = ctx.openThreads.find((thread) => thread.threadId === threadId);
-    if (existingThread) {
+    const existingThreadMatchesMachine = existingThread && (
+      !options.expectedMachineId
+      || existingThread.runtime.machineId === options.expectedMachineId
+    );
+    if (existingThreadMatchesMachine) {
       subscribeThread(threadId, existingThread.lastSeq);
       const machineId = existingThread.runtime.machineId;
       if (machineId) {
@@ -136,11 +150,19 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
 
     const existingOpen = ctx.openingThreads.current.get(threadId);
-    if (existingOpen) return existingOpen;
+    if (existingOpen) {
+      if (!options.expectedMachineId) return existingOpen;
+      // A machine-scoped resume must not inherit an older in-flight open from
+      // another machine. Let that request settle, then refresh canonical state.
+      await existingOpen.catch(() => undefined);
+    }
 
     const open = (async () => {
       const thread = await apiRouteJson(apiRoutes.thread, threadId);
       const machineId = thread.runtime.machineId;
+      if (options.expectedMachineId && machineId !== options.expectedMachineId) {
+        throw new Error(`Thread ${threadId} is attached to ${machineId ?? "an unknown machine"}, not ${options.expectedMachineId}.`);
+      }
       if (machineId) {
         ctx.setThreadOrderByMachine((current) => appendThreadOrder(current, machineId, thread.threadId));
       }
@@ -169,7 +191,9 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       clearActiveThreadIfLatest(threadId);
       throw error;
     } finally {
-      ctx.openingThreads.current.delete(threadId);
+      if (ctx.openingThreads.current.get(threadId) === open) {
+        ctx.openingThreads.current.delete(threadId);
+      }
     }
   };
 

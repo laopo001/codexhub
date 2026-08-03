@@ -16,6 +16,9 @@ import {
   projectKeyForProject,
   runtimeForProject
 } from "../appHelpers.js";
+import { apiErrorDetails } from "../helpers/apiErrors.js";
+import { resolveSubagentThreadTarget } from "../helpers/subagentThreads.js";
+import type { OpenThreadOptions } from "./threadActions.js";
 import type {
   OpenThreadState,
   CodexThreadCandidate,
@@ -34,6 +37,7 @@ type ProjectActionsContext = {
   activeTabThreadId: string;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   latestRequestedThreadId: React.MutableRefObject<string>;
+  openingSubagentThreads: React.MutableRefObject<Set<string>>;
   machines: MachineSummary[];
   projectList: ProjectSummary[];
   projectPicker: ProjectPickerState | null;
@@ -64,8 +68,13 @@ type ProjectActionsContext = {
 export type ProjectActionsDependencies = {
   clearActiveThreadIfLatest: (threadId: string) => void;
   focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
-  openThread: (threadId: string) => Promise<void>;
+  openThread: (threadId: string, options?: OpenThreadOptions) => Promise<void>;
+  showActionError: (key: string, title: string, message: string) => void;
   subscribeThread: (threadId: string, after: number) => void;
+};
+
+type ActivateMachineThreadOptions = {
+  preferredWorkingDirectory?: string;
 };
 
 type StartProjectThreadOptions = {
@@ -96,6 +105,7 @@ export type ProjectActions = {
   patchProject: (project: ProjectSummary, patch: ProjectUpdateInput) => Promise<void>;
   toggleProjectPinned: (project: ProjectSummary) => Promise<void>;
   toggleProjectMachineGroup: (machineKey: string) => void;
+  openSubagentThread: (threadId: string) => Promise<void>;
   switchMachineThread: (threadId: string) => Promise<void>;
 };
 
@@ -359,24 +369,43 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     }
   };
 
-  const activateMachineThread = async (machineId: string, threadId: string) => {
+  const activateMachineThread = async (
+    machineId: string,
+    threadId: string,
+    options: ActivateMachineThreadOptions = {}
+  ) => {
     ctx.closedThreadIds.current.delete(threadId);
     const runtime = ctx.runtimeList.find((item) => item.machineId === machineId);
     const thread = runtime?.threads?.find((item) => item.threadId === threadId)
-      ?? ctx.openThreads.find((item) => item.threadId === threadId);
+      ?? ctx.openThreads.find((item) =>
+        item.threadId === threadId
+        && item.runtime.machineId === machineId
+      );
     if (runtime) {
       ctx.setActiveMachineId(runtime.machineId);
-      ctx.setActiveWorkspacePath(thread?.workingDirectory ?? runtime.workingDirectory);
+      ctx.setActiveWorkspacePath(
+        options.preferredWorkingDirectory
+        ?? thread?.workingDirectory
+        ?? runtime.workingDirectory
+      );
     }
     ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: threadId }));
     ctx.setThreadOrderByMachine((current) => appendThreadOrder(current, machineId, threadId));
-    if (ctx.openThreads.some((thread) => thread.threadId === threadId)) {
+    if (ctx.openThreads.some((thread) =>
+      thread.threadId === threadId
+      && thread.runtime.machineId === machineId
+    )) {
       ctx.latestRequestedThreadId.current = threadId;
       deps.subscribeThread(threadId, ctx.threadLastSeqs.current.get(threadId) ?? 0);
       ctx.setActiveTabThreadId(threadId);
       return;
     }
-    await deps.openThread(threadId);
+    await deps.openThread(threadId, {
+      expectedMachineId: machineId,
+      ...(options.preferredWorkingDirectory
+        ? { preferredWorkingDirectory: options.preferredWorkingDirectory }
+        : {})
+    });
   };
 
   const threadIsOpenForMachine = (machineId: string, threadId: string) => {
@@ -623,6 +652,42 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     );
   };
 
+  const openSubagentThread = async (threadId: string) => {
+    const reportFailure = (message: string) => {
+      ctx.setProjectActionError(message);
+      deps.showActionError(`${threadId}:subagent-open`, "Open subagent thread failed", message);
+    };
+    const target = resolveSubagentThreadTarget(
+      ctx.activeTabThreadId,
+      threadId,
+      ctx.openThreads,
+      ctx.runtimeList
+    );
+    if (!target?.online) {
+      reportFailure("Cannot open the subagent thread while its machine runtime is offline.");
+      return;
+    }
+    if (ctx.openingSubagentThreads.current.has(threadId)) return;
+    ctx.openingSubagentThreads.current.add(threadId);
+    ctx.setProjectActionError("");
+    try {
+      let preferredWorkingDirectory: string | undefined;
+      if (!target.attached) {
+        const resumed = await apiRouteJson(apiRoutes.createMachineThread, target.machineId, {
+          action: "resume",
+          threadId,
+          cwd: target.workingDirectory
+        });
+        preferredWorkingDirectory = resumed.workingDirectory;
+      }
+      await activateMachineThread(target.machineId, threadId, { preferredWorkingDirectory });
+    } catch (error) {
+      reportFailure(apiErrorDetails(error, { plainHttpMessage: true }).message);
+    } finally {
+      ctx.openingSubagentThreads.current.delete(threadId);
+    }
+  };
+
   const switchMachineThread = async (threadId: string) => {
     if (threadId === ctx.activeTabThreadId) return;
     const thread = ctx.openThreads.find((item) => item.threadId === threadId);
@@ -659,6 +724,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     patchProject,
     toggleProjectPinned,
     toggleProjectMachineGroup,
+    openSubagentThread,
     switchMachineThread
   };
 };

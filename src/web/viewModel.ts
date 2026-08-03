@@ -222,6 +222,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   ) => void;
   loadThreadPickerCandidates: (machineId: string) => MaybePromise;
   openThreadPicker: (session: RuntimeSummary, workingDirectory?: string) => MaybePromise;
+  openSubagentThread: (threadId: string) => MaybePromise;
   openSelectedProjectThreadPicker: () => MaybePromise;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   projectPicker: ProjectPickerState | null;
@@ -335,6 +336,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "messagesRef"
   | "messagesShouldFollowRef"
   | "openMessageContextMenu"
+  | "openSubagentThread"
   | "openSelectedProjectThreadPicker"
   | "pasteThreadImages"
   | "removeThreadImage"
@@ -477,7 +479,7 @@ const workspaceKeys = [
   "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "forkingMessageKey", "forkMessage",
   "handleComposerKeyDown", "imageFileInputRef", "insertThreadPathText", "latestTurnActivityScope",
   "loadCommandPalette", "messageDisplayMode", "messageRenderModes", "messagesRef",
-  "messagesShouldFollowRef", "openMessageContextMenu", "openSelectedProjectThreadPicker",
+  "messagesShouldFollowRef", "openMessageContextMenu", "openSubagentThread", "openSelectedProjectThreadPicker",
   "pasteThreadImages", "removeThreadImage", "removeThreadTextAttachment", "renderComposerThreadControls",
   "resetComposerHistory", "respondToApproval", "respondToUserInput", "reviewThread",
   "resizeComposerTextarea", "selectedProject", "send", "threadControlsMenuOpen",

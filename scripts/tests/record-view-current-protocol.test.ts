@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { recordToView } from "../../src/core/codexRecordView.js";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { recordsToViews, recordToView } from "../../src/core/codexRecordView.js";
 import { compactToolViews } from "../../src/shared/compactRecordViews.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
+import { SubagentActivityMessage } from "../../src/web/SubagentActivityMessage.js";
 import { recordsToDetailedViews } from "../../src/web/detailedRecordViews.js";
+import { resolveSubagentThreadTarget } from "../../src/web/helpers/subagentThreads.js";
 
 const compactionRecord = (id: string, type: string): CodexRecord => ({
   id,
@@ -40,6 +44,168 @@ test("compact views only coalesce normalized context_compaction events", () => {
     recordToView(compactionRecord("old", "compacted"))
   ].filter((view) => view !== null);
   assert.equal(compactToolViews(mixedViews).length, 2);
+});
+
+test("subagent activities keep one semantic view across compact and detailed modes", () => {
+  const kinds = [
+    ["started", "Started"],
+    ["interacted", "Responded"],
+    ["interrupted", "Interrupted"]
+  ] as const;
+
+  for (const [kind, statusText] of kinds) {
+    const record: CodexRecord = {
+      id: `subagent-${kind}`,
+      timestamp: "2026-08-02T13:09:16.123Z",
+      type: "response_item",
+      payload: {
+        type: "subAgentActivity",
+        kind,
+        agentPath: "/root/readme_accuracy",
+        agentThreadId: "019fc297-cc2c-7cc3-bccc-4dea01abcd42"
+      }
+    };
+    const compact = recordToView(record);
+    const detailed = recordsToDetailedViews([record])[0];
+
+    assert.ok(compact);
+    assert.deepEqual(detailed, compact);
+    assert.equal(compact.label, "subagent");
+    assert.equal(compact.text, `${statusText} · readme_accuracy`);
+    assert.equal(compact.statusText, statusText);
+    assert.deepEqual(compact.subagentActivity, {
+      kind,
+      agentPath: "/root/readme_accuracy",
+      agentThreadId: "019fc297-cc2c-7cc3-bccc-4dea01abcd42"
+    });
+    assert.deepEqual(compactToolViews([compact]), [compact]);
+  }
+});
+
+test("subagent activity UI hides protocol fields and exposes the child thread action", () => {
+  const threadId = "019fc297-cc2c-7cc3-bccc-4dea01abcd42";
+  const html = renderToStaticMarkup(createElement(SubagentActivityMessage, {
+    activity: {
+      kind: "started",
+      agentPath: "/root/readme_accuracy",
+      agentThreadId: threadId,
+      assignment: {
+        initialMessage: "Review the README against the current product behavior",
+        model: "gpt-5.6-terra",
+        reasoningEffort: "max"
+      }
+    },
+    statusLabel: "Started",
+    timestampText: "21:09",
+    timestampTitle: "2026-08-02 21:09",
+    onOpenThread: () => undefined
+  }));
+  const visibleText = html.replace(/<[^>]+>/g, "");
+
+  assert.match(visibleText, /Subagentreadme_accuracyStartedOpen21:09Requestedgpt-5\.6-terraMaxTaskReview the README/);
+  assert.doesNotMatch(visibleText, /019fc297|activity:|agent:|thread:/);
+  assert.match(html, /aria-label="Open readme_accuracy subagent thread"/);
+  assert.match(html, new RegExp(`title="Open subagent thread ${threadId}"`));
+  assert.match(html, /title="Requested model: gpt-5\.6-terra"/);
+  assert.match(html, /title="Review the README against the current product behavior"/);
+});
+
+test("subagent activities join their spawn assignment across every message mode", () => {
+  const parentThreadId = "parent-thread";
+  const turnId = "turn-1";
+  const childThreadId = "child-thread";
+  const activity: CodexRecord = {
+    id: `app:${parentThreadId}:${turnId}:item:subAgentActivity:activity-1`,
+    timestamp: "2026-08-02T13:09:16.123Z",
+    type: "response_item",
+    sourceThreadId: parentThreadId,
+    payload: {
+      type: "subAgentActivity",
+      kind: "started",
+      agentPath: "/root/readme_accuracy",
+      agentThreadId: childThreadId
+    }
+  };
+  const spawn: CodexRecord = {
+    id: `app:${parentThreadId}:${turnId}:item:collabAgentToolCall:spawn-1`,
+    timestamp: "2026-08-02T13:09:17.123Z",
+    type: "response_item",
+    sourceThreadId: parentThreadId,
+    payload: {
+      type: "collab_agent_tool_call",
+      call_id: "spawn-1",
+      tool: "spawnAgent",
+      status: "completed",
+      receiver_thread_ids: [childThreadId, "second-child"],
+      prompt: "Review the README against the current product behavior",
+      model: "gpt-5.6-terra",
+      reasoning_effort: "max"
+    }
+  };
+  const unrelated: CodexRecord = {
+    ...activity,
+    id: `app:${parentThreadId}:${turnId}:item:subAgentActivity:activity-2`,
+    payload: {
+      type: "subAgentActivity",
+      kind: "started",
+      agentPath: "/root/unrelated",
+      agentThreadId: "unrelated-child"
+    }
+  };
+  const otherTurn: CodexRecord = {
+    ...activity,
+    id: `app:${parentThreadId}:turn-2:item:subAgentActivity:activity-3`
+  };
+  const otherParent: CodexRecord = {
+    ...activity,
+    id: `app:other-parent:${turnId}:item:subAgentActivity:activity-4`,
+    sourceThreadId: "other-parent"
+  };
+  // The activity intentionally arrives before the spawn item to cover live/history ordering.
+  const records = [activity, unrelated, otherTurn, otherParent, spawn];
+  const simple = recordsToViews(records).find((view) => view.id === activity.id);
+  const detailed = recordsToDetailedViews(records).find((view) => view.id === activity.id);
+  const compact = compactToolViews(recordsToViews(records)).find((view) => view.id === activity.id);
+  const expectedAssignment = {
+    initialMessage: "Review the README against the current product behavior",
+    model: "gpt-5.6-terra",
+    reasoningEffort: "max"
+  };
+
+  assert.deepEqual(simple?.subagentActivity?.assignment, expectedAssignment);
+  assert.deepEqual(detailed?.subagentActivity?.assignment, expectedAssignment);
+  assert.deepEqual(compact?.subagentActivity?.assignment, expectedAssignment);
+  assert.equal(recordsToViews(records).find((view) => view.id === unrelated.id)?.subagentActivity?.assignment, undefined);
+  assert.equal(recordsToViews(records).find((view) => view.id === otherTurn.id)?.subagentActivity?.assignment, undefined);
+  assert.equal(recordsToViews(records).find((view) => view.id === otherParent.id)?.subagentActivity?.assignment, undefined);
+});
+
+test("subagent thread actions follow the visible parent thread machine", () => {
+  const childThreadId = "child-thread";
+  const target = resolveSubagentThreadTarget("parent-a", childThreadId, [{
+    threadId: "parent-a",
+    workingDirectory: "/projects/a",
+    runtime: { machineId: "machine-a" }
+  }, {
+    threadId: childThreadId,
+    workingDirectory: "/projects/b",
+    runtime: { machineId: "machine-b" }
+  }], [{
+    machineId: "machine-b",
+    online: true,
+    threads: [{ threadId: childThreadId }]
+  }, {
+    machineId: "machine-a",
+    online: true,
+    threads: []
+  }]);
+
+  assert.deepEqual(target, {
+    machineId: "machine-a",
+    workingDirectory: "/projects/a",
+    online: true,
+    attached: false
+  });
 });
 
 test("Plan mode output renders as the final Codex answer in both message modes", async () => {

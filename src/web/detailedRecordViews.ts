@@ -1,13 +1,17 @@
-import { imageGenerationAttachments, imageGenerationStatus, imageViewAttachments, isActiveRecordStatus, recordViewStatusFromAppStatus, recordViewStatusText, withRecordViewStatusDuration } from "../core/codexRecordView.js";
+import { imageGenerationAttachments, imageGenerationStatus, imageViewAttachments, isActiveRecordStatus, recordViewStatusFromAppStatus, recordViewStatusText, subagentActivityAssignments, subagentActivityView, withRecordViewStatusDuration, withSubagentActivityAssignment } from "../core/codexRecordView.js";
 import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage } from "../shared/recordTypes.js";
 
 export const recordsToDetailedViews = (records: CodexRecord[]): CodexRecordView[] => {
   const views: CodexRecordView[] = [];
+  const subagentAssignments = subagentActivityAssignments(records);
   for (const record of records) {
     const usage = tokenUsageFromRecord(record);
     if (usage) attachUsageToLatestCodexView(views, usage);
 
-    const view = detailedRecordToView(record);
+    const view = withSubagentActivityAssignment(
+      detailedRecordToView(record),
+      subagentAssignments.get(record.id)
+    );
     const payload = asRecord(record.payload);
     if (view) views.push(payload ? withRecordViewStatusDuration(view, payload) : view);
   }
@@ -121,6 +125,7 @@ const planMessageToView = (record: CodexRecord, payload: Record<string, unknown>
 };
 
 const responseItemToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
+  if (payload.type === "subAgentActivity") return subagentActivityView(record, payload);
   const status = responseStatus(payload);
   const attachments = payload.type === "image_generation_call"
     ? imageGenerationAttachments(payload)

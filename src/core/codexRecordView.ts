@@ -1,19 +1,103 @@
-import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage } from "../shared/recordTypes.js";
+import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage, type SubagentActivityView } from "../shared/recordTypes.js";
+import { turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { parseJsonObject } from "../shared/toolFormatting.js";
 export type { CodexRecordView, RecordUsage } from "../shared/recordTypes.js";
 
 export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
   const views: CodexRecordView[] = [];
+  const subagentAssignments = subagentActivityAssignments(records);
   for (const record of records) {
     const usage = tokenUsageFromRecord(record);
     if (usage) {
       if (attachUsageToLatestCodexView(views, usage)) continue;
     }
 
-    const view = recordToView(record);
+    const view = withSubagentActivityAssignment(recordToView(record), subagentAssignments.get(record.id));
     if (view) views.push(view);
   }
   return views;
+};
+
+type SubagentAssignmentView = NonNullable<SubagentActivityView["assignment"]>;
+
+export const withSubagentActivityAssignment = (
+  view: CodexRecordView | null,
+  assignment: SubagentAssignmentView | undefined
+): CodexRecordView | null => {
+  if (!view?.subagentActivity || !assignment) return view;
+  return {
+    ...view,
+    subagentActivity: {
+      ...view.subagentActivity,
+      assignment
+    }
+  };
+};
+
+/**
+ * Join the parent turn's spawnAgent item to its subAgentActivity items.
+ * Both item kinds are app-server transcript records; no child transcript or private JSONL is read.
+ */
+export const subagentActivityAssignments = (records: CodexRecord[]) => {
+  const assignmentsByTurnAndChild = new Map<string, SubagentAssignmentView>();
+  const activities: Array<{ recordId: string; key: string }> = [];
+  for (const record of records) {
+    const payload = asRecord(record.payload);
+    if (payload?.type === "subAgentActivity") {
+      const childThreadId = nonEmptyString(payload.agentThreadId);
+      const scope = subagentActivityTurnScope(record);
+      if (childThreadId && scope) activities.push({
+        recordId: record.id,
+        key: `${scope}\u0000${childThreadId}`
+      });
+      continue;
+    }
+    if (payload?.type !== "collab_agent_tool_call" || payload.tool !== "spawnAgent") continue;
+    const scope = subagentActivityTurnScope(record);
+    if (!scope || !Array.isArray(payload.receiver_thread_ids)) continue;
+    const assignment = subagentAssignmentFromPayload(payload);
+    if (!assignment) continue;
+    for (const value of payload.receiver_thread_ids) {
+      const childThreadId = nonEmptyString(value);
+      if (!childThreadId) continue;
+      const key = `${scope}\u0000${childThreadId}`;
+      const current = assignmentsByTurnAndChild.get(key);
+      assignmentsByTurnAndChild.set(key, {
+        ...(current ?? {}),
+        ...(!current?.initialMessage && assignment.initialMessage ? { initialMessage: assignment.initialMessage } : {}),
+        ...(!current?.model && assignment.model ? { model: assignment.model } : {}),
+        ...(!current?.reasoningEffort && assignment.reasoningEffort
+          ? { reasoningEffort: assignment.reasoningEffort }
+          : {})
+      });
+    }
+  }
+
+  const assignmentsByActivityId = new Map<string, SubagentAssignmentView>();
+  for (const activity of activities) {
+    const assignment = assignmentsByTurnAndChild.get(activity.key);
+    if (assignment) assignmentsByActivityId.set(activity.recordId, assignment);
+  }
+  return assignmentsByActivityId;
+};
+
+const subagentAssignmentFromPayload = (payload: Record<string, unknown>): SubagentAssignmentView | null => {
+  const initialMessage = nonEmptyString(payload.prompt);
+  const model = nonEmptyString(payload.model);
+  const reasoningEffort = nonEmptyString(payload.reasoning_effort);
+  if (!initialMessage && !model && !reasoningEffort) return null;
+  return {
+    ...(initialMessage ? { initialMessage } : {}),
+    ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {})
+  };
+};
+
+const subagentActivityTurnScope = (record: CodexRecord) => {
+  const threadId = record.sourceThreadId;
+  if (!threadId) return null;
+  const turnId = turnIdFromAppRecordId(threadId, record.id);
+  return turnId ? `${threadId}\u0000${turnId}` : null;
 };
 
 export const recordToView = (record: CodexRecord): CodexRecordView | null => {
@@ -44,6 +128,44 @@ export const withRecordViewStatusDuration = <T extends CodexRecordView | null>(
   if (!view) return view;
   const statusDurationMs = recordViewStatusDurationMs(payload);
   return statusDurationMs == null ? view : { ...view, statusDurationMs } as T;
+};
+
+export const subagentActivityView = (
+  record: CodexRecord,
+  payload: Record<string, unknown>
+): CodexRecordView => {
+  const kind = nonEmptyString(payload.kind) ?? "activity";
+  const agentPath = nonEmptyString(payload.agentPath);
+  const agentThreadId = nonEmptyString(payload.agentThreadId);
+  const statusText = subagentActivityKindLabel(kind);
+  const agentName = agentPath
+    ? agentPath.split("/").filter(Boolean).at(-1) ?? agentPath
+    : agentThreadId ?? "Subagent";
+  return {
+    id: record.id,
+    role: "event",
+    label: "subagent",
+    text: `${statusText} · ${agentName}`,
+    at: record.timestamp,
+    statusText,
+    subagentActivity: {
+      kind,
+      ...(agentPath ? { agentPath } : {}),
+      ...(agentThreadId ? { agentThreadId } : {})
+    },
+    record
+  };
+};
+
+export const subagentActivityKindLabel = (kind: string) => {
+  const normalized = kind.trim().replace(/[-\s]+/g, "_").toLowerCase();
+  if (normalized === "started") return "Started";
+  if (normalized === "interacted") return "Responded";
+  if (normalized === "interrupted") return "Interrupted";
+  const words = normalized.split("_").filter(Boolean);
+  return words.length
+    ? words.map((word) => `${word[0]?.toUpperCase() ?? ""}${word.slice(1)}`).join(" ")
+    : "Activity";
 };
 
 export const recordViewStatusDurationMs = (payload: Record<string, unknown>) => {
@@ -193,19 +315,7 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
   }
 
   if (payload.type === "subAgentActivity") {
-    const text = [
-      typeof payload.kind === "string" ? `activity: ${payload.kind}` : null,
-      typeof payload.agentPath === "string" ? `agent: ${payload.agentPath}` : null,
-      typeof payload.agentThreadId === "string" ? `thread: ${payload.agentThreadId}` : null
-    ].filter(Boolean).join("\n");
-    return {
-      id: record.id,
-      role: "event",
-      label: "subagent activity",
-      text: text || stringify(payload),
-      at: record.timestamp,
-      record
-    };
+    return subagentActivityView(record, payload);
   }
 
   if (payload.type === "reasoning") {
@@ -486,6 +596,12 @@ export const recordViewStatusText = (status: unknown): string | undefined => {
 
 const durationMsValue = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : undefined;
+
+const nonEmptyString = (value: unknown) => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
 
 export const isActiveRecordStatus = (status: CodexRecordView["status"] | undefined) =>
   status === "pending" || status === "in_progress";

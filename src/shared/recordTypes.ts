@@ -25,6 +25,19 @@ export type RecordUsage = {
   total_tokens?: number;
 };
 
+/** 子代理活动记录的结构化展示数据；原始协议字段仍完整保留在 record.payload。 */
+export type SubagentActivityView = {
+  kind: string;
+  agentPath?: string;
+  agentThreadId?: string;
+  /** 创建子代理时由父线程请求的初始任务和配置，不代表子线程后续动态设置。 */
+  assignment?: {
+    initialMessage?: string;
+    model?: string;
+    reasoningEffort?: string;
+  };
+};
+
 /** Web 渲染层使用的 record view 结构，由 CodexRecord 转换得到。 */
 export type CodexRecordView = {
   id: string;
@@ -38,5 +51,6 @@ export type CodexRecordView = {
   statusText?: string;
   statusDurationMs?: number;
   canFork?: boolean;
+  subagentActivity?: SubagentActivityView;
   record: CodexRecord;
 };

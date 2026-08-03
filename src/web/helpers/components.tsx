@@ -4,6 +4,7 @@ import { Switch } from "antd";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isEmbeddedHostSurface, languageAliases } from "../appConfig.js";
+import { SubagentActivityMessage } from "../SubagentActivityMessage.js";
 import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
 import { asRecord } from "../../shared/recordTypes.js";
@@ -59,7 +60,8 @@ export const MessageCard = ({
   onFork,
   forkDisabled = false,
   forking = false,
-  onOpenImage
+  onOpenImage,
+  onOpenSubagentThread
 }: {
   message: WebRecordView;
   showStatus?: boolean;
@@ -78,6 +80,7 @@ export const MessageCard = ({
   forkDisabled?: boolean;
   forking?: boolean;
   onOpenImage?: (image: ImagePreviewState) => void;
+  onOpenSubagentThread?: (threadId: string) => void | Promise<void>;
 }) => {
   const isThinkingMessage = message.role === "thinking";
   const isToolBatch = Boolean(message.toolBatch);
@@ -110,6 +113,18 @@ export const MessageCard = ({
     if (!canClickInspect || window.getSelection()?.toString()) return;
     onInspect?.();
   };
+  if (message.subagentActivity) {
+    return (
+      <SubagentActivityMessage
+        activity={message.subagentActivity}
+        statusLabel={message.statusText ?? "Activity"}
+        timestampText={showTimestamp ? formatMessageMeta(message) : undefined}
+        timestampTitle={showTimestamp ? formatMessageMetaTitle(message) : undefined}
+        onOpenThread={onOpenSubagentThread}
+        onContextMenu={onContextMenu}
+      />
+    );
+  }
   if (message.toolBatch) {
     const isExpanded = Boolean(message.toolBatch.expanded);
     return (

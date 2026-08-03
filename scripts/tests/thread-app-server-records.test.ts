@@ -45,9 +45,15 @@ test("subAgentActivity remains lossless and gets a readable record view", () => 
   assert.deepEqual(recordToView(record), {
     id: record.id,
     role: "event",
-    label: "subagent activity",
-    text: "activity: started\nagent: research_protocol\nthread: child-thread-1",
+    label: "subagent",
+    text: "Started · research_protocol",
     at: "2026-07-17T10:00:00.000Z",
+    statusText: "Started",
+    subagentActivity: {
+      kind: "started",
+      agentPath: "research_protocol",
+      agentThreadId: "child-thread-1"
+    },
     record
   });
 });

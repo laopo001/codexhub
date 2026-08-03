@@ -110,6 +110,27 @@ try {
     [/approvalsReviewer\?: ApprovalsReviewer \| null/, "turn/start must expose approvalsReviewer"],
     [/permissions\?: string \| null/, "turn/start must expose named permissions"]
   ]);
+  await assertSchemaVariant("v2/ThreadItem.ts", "subAgentActivity", [
+    [/\bid\s*:\s*string\b/, "ThreadItem.subAgentActivity.id must be required"],
+    [/\bkind\s*:\s*SubAgentActivityKind\b/, "ThreadItem.subAgentActivity.kind must use SubAgentActivityKind"],
+    [/\bagentThreadId\s*:\s*string\b/, "ThreadItem.subAgentActivity.agentThreadId must be required"],
+    [/\bagentPath\s*:\s*string\b/, "ThreadItem.subAgentActivity.agentPath must be required"]
+  ]);
+  await assertSchemaVariant("v2/ThreadItem.ts", "collabAgentToolCall", [
+    [/\btool\s*:\s*CollabAgentTool\b/, "ThreadItem.collabAgentToolCall.tool must use CollabAgentTool"],
+    [/\breceiverThreadIds\s*:\s*Array\s*<\s*string\s*>/, "ThreadItem.collabAgentToolCall.receiverThreadIds must be required"],
+    [/\bprompt\s*:\s*string\s*\|\s*null\b/, "ThreadItem.collabAgentToolCall.prompt must be nullable"],
+    [/\bmodel\s*:\s*string\s*\|\s*null\b/, "ThreadItem.collabAgentToolCall.model must be nullable"],
+    [/\breasoningEffort\s*:\s*ReasoningEffort\s*\|\s*null\b/, "ThreadItem.collabAgentToolCall.reasoningEffort must be nullable"]
+  ]);
+  await assertSchema("v2/SubAgentActivityKind.ts", [
+    [/"started"/, "SubAgentActivityKind must include started"],
+    [/"interacted"/, "SubAgentActivityKind must include interacted"],
+    [/"interrupted"/, "SubAgentActivityKind must include interrupted"]
+  ]);
+  await assertSchema("v2/CollabAgentTool.ts", [
+    [/"spawnAgent"/, "CollabAgentTool must include spawnAgent"]
+  ]);
   await assertSchema("v2/PermissionProfileSummary.ts", [
     [/id: string/, "permission profiles must expose id"],
     [/description: string \| null/, "permission profiles must expose description"],
@@ -187,5 +208,19 @@ async function assertSchema(relativePath: string, assertions: Array<[RegExp, str
   const source = await readFile(path.join(schemaDir, relativePath), "utf8");
   for (const [pattern, message] of assertions) {
     if (!pattern.test(source)) throw new Error(`${relativePath}: ${message}`);
+  }
+}
+
+async function assertSchemaVariant(relativePath: string, variant: string, assertions: Array<[RegExp, string]>) {
+  const source = await readFile(path.join(schemaDir, relativePath), "utf8");
+  const escapedVariant = variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const variantStart = new RegExp(`\\{\\s*["']type["']\\s*:\\s*["']${escapedVariant}["']\\s*,`).exec(source);
+  if (!variantStart) throw new Error(`${relativePath}: ThreadItem.${variant} variant must be available`);
+
+  const variantAndFollowingSource = source.slice(variantStart.index);
+  const nextVariant = /\}\s*\|\s*\{\s*["']type["']\s*:/.exec(variantAndFollowingSource);
+  const variantSource = variantAndFollowingSource.slice(0, nextVariant ? nextVariant.index + 1 : undefined);
+  for (const [pattern, message] of assertions) {
+    if (!pattern.test(variantSource)) throw new Error(`${relativePath}: ${message}`);
   }
 }

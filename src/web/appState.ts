@@ -143,6 +143,7 @@ export const useAppState = () => {
   const realtimeThreadSubscriptions = useRef(new Set<string>());
   const threadLastSeqs = useRef(new Map<string, number>());
   const openingThreads = useRef(new Map<string, Promise<void>>());
+  const openingSubagentThreads = useRef(new Set<string>());
   const latestRequestedThreadId = useRef("");
   const closedThreadIds = useRef(new Set<string>());
   const messagesRef = useRef<VirtuosoHandle>(null);
@@ -198,6 +199,7 @@ export const useAppState = () => {
     notifiedTaskCompletions,
     offlineProjectsCollapsed,
     openingProjectKey,
+    openingSubagentThreads,
     openingThreads,
     openThreads,
     parentRegistration,

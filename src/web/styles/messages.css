@@ -362,6 +362,239 @@
   background: #fbfcf8;
 }
 
+.message.subagentActivityMessage {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border-color: #66839b;
+  background: #f6f9fb;
+  padding: 6px 10px;
+}
+
+.message.subagentActivityMessage.hasAssignment {
+  grid-template-rows: auto auto;
+  row-gap: 4px;
+  min-height: 60px;
+}
+
+.subagentActivityMessage.hasAssignment .subagentActivityIcon {
+  grid-row: 1 / span 2;
+}
+
+.message.subagentActivityMessage.started {
+  border-color: #3f78a3;
+  background: #f3f8fc;
+}
+
+.message.subagentActivityMessage.interacted {
+  border-color: #478266;
+  background: #f4faf6;
+}
+
+.message.subagentActivityMessage.interrupted {
+  border-color: #9a7750;
+  background: #fcf8f2;
+}
+
+.subagentActivityIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: #e4edf3;
+  color: #345f7d;
+}
+
+.subagentActivityMessage.interacted .subagentActivityIcon {
+  background: #e3f0e7;
+  color: #32684e;
+}
+
+.subagentActivityMessage.interrupted .subagentActivityIcon {
+  background: #f3e9dc;
+  color: #7a5a36;
+}
+
+.subagentActivityIdentity {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 7px;
+}
+
+.subagentActivityIdentity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #22313d;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagentActivityType {
+  color: #687681;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.subagentActivityStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  background: #e7edf1;
+  color: #4c5d69;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.subagentActivityStatus > span {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.subagentActivityStatus.started {
+  background: #dfedf8;
+  color: #28648e;
+}
+
+.subagentActivityStatus.interacted {
+  background: #e0f0e5;
+  color: #2c714f;
+}
+
+.subagentActivityStatus.interrupted {
+  background: #f3e7d7;
+  color: #825b30;
+}
+
+.subagentActivityOpen {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  border: 1px solid rgba(74, 101, 120, 0.2);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #3d5d73;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.subagentActivityOpen:hover {
+  border-color: rgba(47, 111, 159, 0.35);
+  background: #ffffff;
+  color: #245f89;
+}
+
+.subagentActivityOpen:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.subagentActivityOpen:disabled:hover {
+  border-color: rgba(74, 101, 120, 0.2);
+  background: rgba(255, 255, 255, 0.7);
+  color: #3d5d73;
+}
+
+.subagentActivityOpen:focus-visible {
+  outline: 2px solid rgba(47, 111, 159, 0.35);
+  outline-offset: 2px;
+}
+
+.subagentActivityTime {
+  color: #8a9584;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.subagentActivityAssignment {
+  display: flex;
+  grid-column: 2 / -1;
+  grid-row: 2;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+}
+
+.subagentActivityAssignmentMeta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.subagentActivityAssignmentLabel,
+.subagentActivityTaskLabel {
+  flex: 0 0 auto;
+  color: #78858e;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.subagentActivityAssignmentTag {
+  display: inline-block;
+  overflow: hidden;
+  max-width: 150px;
+  border: 1px solid rgba(73, 99, 117, 0.16);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #506775;
+  padding: 2px 5px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagentActivityAssignmentTag.reasoning {
+  color: #66527b;
+}
+
+.subagentActivityTask {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 5px;
+  color: #4d5b65;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.subagentActivityTaskLabel {
+  white-space: nowrap;
+}
+
+.subagentActivityTaskText {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message.tool {
   border-color: #2f6f9f;
   background: #f8fbfd;
