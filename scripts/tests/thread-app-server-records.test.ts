@@ -421,6 +421,136 @@ test("ThreadHub terminal snapshots finish live status-less items", () => {
   assert.equal((record?.payload as Record<string, unknown>)?.status, "completed");
 });
 
+test("status-less tool items measure from item start through item completion", () => {
+  const hub = new ThreadHub();
+  const sessionId = "status-less-tool-timing-session";
+  const threadId = "status-less-tool-timing-thread";
+  const turnId = "status-less-tool-timing-turn";
+  const items = [{
+    type: "webSearch",
+    id: "web-search",
+    query: "app-server lifecycle"
+  }, {
+    type: "imageView",
+    id: "image-view",
+    path: "/tmp/screenshot.png"
+  }];
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/status-less-tool-timing" });
+
+  for (const item of items) {
+    hub.applySessionEvent(sessionId, {
+      type: "thread_event",
+      threadId,
+      message: {
+        method: "item/started",
+        params: { threadId, turnId, item, startedAtMs: 1_000 }
+      }
+    });
+    const id = `app:${threadId}:${turnId}:item:${item.type}:${item.id}`;
+    const started = hub.getThread(threadId)?.records.find((record) => record.id === id);
+    assert.equal((started?.payload as Record<string, unknown>)?.status, "in_progress");
+    assert.equal(recordToView(started!)?.status, "in_progress");
+
+    hub.applySessionEvent(sessionId, {
+      type: "thread_event",
+      threadId,
+      message: {
+        method: "item/completed",
+        params: { threadId, turnId, item, completedAtMs: 3_500 }
+      }
+    });
+    const completed = hub.getThread(threadId)?.records.find((record) => record.id === id);
+    const payload = completed?.payload as Record<string, unknown>;
+    assert.equal(payload.status, "completed");
+    assert.equal(payload.duration_ms, 2_500);
+    assert.equal(recordToView(completed!)?.status, "completed");
+    assert.equal(recordToView(completed!)?.statusDurationMs, 2_500);
+  }
+});
+
+test("terminal interrupted snapshots keep item outcomes independent from the Turn", () => {
+  const hub = new ThreadHub();
+  const sessionId = "interrupted-snapshot-item-session";
+  const threadId = "interrupted-snapshot-item-thread";
+  const turnId = "interrupted-snapshot-item-turn";
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/interrupted-snapshot-item" });
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: [{
+      id: turnId,
+      status: "interrupted",
+      itemsView: "full",
+      error: null,
+      startedAt: 1,
+      completedAt: 5,
+      durationMs: 4_000,
+      items: [{
+        type: "agentMessage",
+        id: "commentary-complete",
+        text: "Checked the status chain",
+        phase: "commentary"
+      }, {
+        type: "contextCompaction",
+        id: "compaction-complete"
+      }, {
+        type: "plan",
+        id: "plan-complete",
+        text: "Completed plan"
+      }, {
+        type: "reasoning",
+        id: "reasoning-complete",
+        summary: ["Completed reasoning"],
+        content: []
+      }, {
+        type: "enteredReviewMode",
+        id: "review-entered",
+        review: { target: "uncommittedChanges" }
+      }, {
+        type: "commandExecution",
+        id: "command-failed",
+        command: ["false"],
+        cwd: "/tmp/interrupted-snapshot-item",
+        status: "failed",
+        commandActions: [],
+        aggregatedOutput: "",
+        exitCode: 1
+      }, {
+        type: "userMessage",
+        id: "user-message",
+        content: [{ type: "text", text: "Run the checks" }]
+      }]
+    }]
+  });
+
+  const records = hub.getThread(threadId)?.records ?? [];
+  const recordPayload = (id: string) => records.find((record) => record.id === id)?.payload as Record<string, unknown> | undefined;
+  const commentaryId = `app:${threadId}:${turnId}:agent:commentary-complete`;
+  const compactionId = `app:${threadId}:${turnId}:item:contextCompaction:compaction-complete`;
+  const planId = `app:${threadId}:${turnId}:item:plan:plan-complete`;
+  const reasoningId = `app:${threadId}:${turnId}:item:reasoning:reasoning-complete`;
+  const reviewId = `app:${threadId}:${turnId}:item:enteredReviewMode:review-entered`;
+  const commandId = `app:${threadId}:${turnId}:item:commandExecution:command-failed`;
+  const userMessageId = `app:${threadId}:${turnId}:user:user-message`;
+
+  assert.equal(recordPayload(commentaryId)?.status, "completed");
+  assert.equal(recordPayload(compactionId)?.status, "completed");
+  assert.equal(recordPayload(compactionId)?.message, "Compaction complete");
+  assert.equal(recordPayload(planId)?.status, "completed");
+  assert.equal(recordPayload(reasoningId)?.status, "completed");
+  assert.equal(recordPayload(reviewId)?.status, "completed");
+  assert.equal(recordPayload(commandId)?.status, "failed");
+  assert.equal(recordPayload(userMessageId)?.status, undefined);
+  assert.equal(recordToView(records.find((record) => record.id === commentaryId)!)?.statusText, "completed");
+  assert.equal(recordToView(records.find((record) => record.id === commentaryId)!)?.statusDurationMs, undefined);
+
+  const terminal = records.find((record) =>
+    (record.payload as Record<string, unknown>).type === "turn_aborted"
+  );
+  assert.equal((terminal?.payload as Record<string, unknown>)?.status, "interrupted");
+});
+
 test("ThreadHub stale active snapshots do not regress completed status-less items", () => {
   const hub = new ThreadHub();
   const sessionId = "snapshot-race-session";

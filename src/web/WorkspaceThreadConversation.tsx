@@ -4,7 +4,6 @@ import {
   sevenDayRateLimitWindowMinutes
 } from "../core/threadUsage.js";
 import {
-  ActivityStatusBar,
   goalStatusClass,
   goalStatusControl,
   goalStatusLabel
@@ -32,7 +31,6 @@ const weeklyGoalPolicyLabel = (targetRemainingPercent: number, wrappingUp: boole
 export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConversationProps) => {
   const {
     activeCanStop,
-    activeExpandedStatusKeys,
     activeGoal,
     activeRuntime,
     activeThread,
@@ -47,6 +45,8 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     commandPaletteLoadingScopes,
     composerDraftStore,
     composerTextareaRef,
+    expandedStatusKeys,
+    expandedStatusTurns,
     forkingMessageKey,
     forkMessage,
     handleComposerKeyDown,
@@ -79,11 +79,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     setThreadComposerMode,
     setThreadModelDialogOpen,
     showComposerSendButton,
-    statusPanelAvailable,
-    statusPanelExpanded,
-    statusScopeKey,
     stopTurn,
-    turnStatusItems,
     updateMessageRenderMode,
     updateThreadGoal,
     updateThreadInput
@@ -100,38 +96,6 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     ? Math.max(0, Math.min(100, 100 - sevenDayRateLimit.usedPercent))
     : undefined;
   const activeGoalStatusControl = activeGoal ? goalStatusControl(activeGoal.status) : null;
-
-  const status = statusPanelAvailable && activeThreadExecutionMeta ? (
-    <ActivityStatusBar
-      statuses={turnStatusItems}
-      executionMeta={activeThreadExecutionMeta}
-      expanded={statusPanelExpanded}
-      expandedKeys={activeExpandedStatusKeys}
-      onToggleExpanded={() => {
-        if (!statusScopeKey) return;
-        setExpandedStatusTurns((current) => {
-          if (current[threadId] === statusScopeKey) {
-            const next = { ...current };
-            delete next[threadId];
-            return next;
-          }
-          return {
-            ...current,
-            [threadId]: statusScopeKey
-          };
-        });
-      }}
-      onToggle={(key) => {
-        if (!statusScopeKey) return;
-        setExpandedStatusKeys((current) => {
-          const keys = new Set(current[statusScopeKey] ?? []);
-          if (keys.has(key)) keys.delete(key);
-          else keys.add(key);
-          return { ...current, [statusScopeKey]: [...keys] };
-        });
-      }}
-    />
-  ) : null;
 
   const goal = activeGoal ? (
     <div
@@ -235,6 +199,8 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
       activeGoal={activeGoal}
       messageDisplayMode={messageDisplayMode}
       messageRenderModes={messageRenderModes}
+      expandedStatusKeys={expandedStatusKeys}
+      expandedStatusTurns={expandedStatusTurns}
       messagesRef={messagesRef}
       messagesShouldFollowRef={messagesShouldFollowRef}
       composerTextareaRef={composerTextareaRef}
@@ -242,7 +208,6 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
       showSendButton={showComposerSendButton}
       canStop={activeCanStop}
       forkingMessageKey={forkingMessageKey}
-      status={status}
       goal={goal}
       leftActions={leftActions}
       threadControls={threadControls}
@@ -269,6 +234,8 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
         }
         setThreadModelDialogOpen(false);
       }}
+      setExpandedStatusKeys={setExpandedStatusKeys}
+      setExpandedStatusTurns={setExpandedStatusTurns}
       onMessageRenderModeChange={(_targetThreadId, messageId, mode) => updateMessageRenderMode(messageId, mode)}
       onMessageContextMenu={(event, targetThreadId, message, canInspect) =>
         openMessageContextMenu(event, targetThreadId, message, canInspect)}

@@ -155,7 +155,7 @@ export const codexRecordFromAppServerItem = (
         type: "web_search_call",
         query,
         action: item.action,
-        status: "completed"
+        status: status ?? "completed"
       }
     };
   }
@@ -167,7 +167,7 @@ export const codexRecordFromAppServerItem = (
       payload: {
         type: "image_view",
         path: typeof item.path === "string" ? item.path : "",
-        status: "completed"
+        status: status ?? "completed"
       }
     };
   }
@@ -546,6 +546,17 @@ export const timestampFromSeconds = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? new Date(value * 1000).toISOString() : undefined;
 
 export type AppServerTurnStatus = "completed" | "failed" | "interrupted" | "inProgress";
+
+export const appServerSnapshotItemFallbackStatus = (
+  _item: Record<string, unknown>,
+  turnStatus: AppServerTurnStatus
+) => {
+  // A terminal Turn status describes the Turn, not each item already present
+  // in its snapshot. Status-bearing items still override this fallback with
+  // their own value; status-less items default to completed. Live snapshots
+  // remain active, while item/started and item/completed own item timing.
+  return turnStatus === "inProgress" ? "inProgress" : "completed";
+};
 
 export const parseAppServerTurnOutcome = (turn: Record<string, unknown> | null | undefined) => {
   const status = appServerTurnStatus(turn?.status);

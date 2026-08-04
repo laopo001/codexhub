@@ -9,10 +9,15 @@ import type {
 import type { SubagentActivityView } from "../shared/recordTypes.js";
 import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
 import {
+  activeGoalActivityScopeFromRecords,
+  activityStatusesFromRecords,
+  ActivityStatusBar,
   canForkAtMessage,
   canRenderMarkdown,
   EmptyMessages,
-  MessageCard
+  latestTurnActivityScope,
+  MessageCard,
+  threadDisplayRecords
 } from "./appHelpers.js";
 import type { ComposerDraftStore } from "./helpers/composer.js";
 import {
@@ -43,13 +48,11 @@ export type ThreadConversationProps = {
   activeGoal?: ThreadGoalView | null;
   messageDisplayMode: MessageDisplayMode;
   messageRenderModes: Readonly<Record<string, MessageRenderMode>>;
+  expandedStatusKeys: Readonly<Record<string, string[]>>;
+  expandedStatusTurns: Readonly<Record<string, string>>;
 
   className?: string;
-  messagesClassName?: string;
-  composerClassName?: string;
-  messageItemClassName?: string;
   leading?: React.ReactNode;
-  status?: React.ReactNode;
   goal?: React.ReactNode;
   leftActions?: React.ReactNode;
   threadControls?: React.ReactNode;
@@ -91,6 +94,8 @@ export type ThreadConversationProps = {
   onResetComposerHistory: (threadId: string) => void;
   onResizeComposerTextarea: (threadId: string, textarea: HTMLTextAreaElement | null) => void;
   onThreadModelDialogChange?: (threadId: string, open: boolean) => void;
+  setExpandedStatusKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+  setExpandedStatusTurns: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 
   onMessageRenderModeChange?: (
     threadId: string,
@@ -168,12 +173,10 @@ export const ThreadConversation = ({
   activeGoal = null,
   messageDisplayMode,
   messageRenderModes,
+  expandedStatusKeys,
+  expandedStatusTurns,
   className,
-  messagesClassName,
-  composerClassName,
-  messageItemClassName,
   leading,
-  status,
   goal,
   leftActions,
   threadControls,
@@ -202,6 +205,8 @@ export const ThreadConversation = ({
   onResetComposerHistory,
   onResizeComposerTextarea,
   onThreadModelDialogChange,
+  setExpandedStatusKeys,
+  setExpandedStatusTurns,
   onMessageRenderModeChange,
   onMessageContextMenu,
   onInspectMessage,
@@ -231,6 +236,32 @@ export const ThreadConversation = ({
   const executionLabel = executionMeta?.label ?? "Idle";
   const executionText = executionMeta?.text ?? executionLabel;
   const showTurnLoadingMessage = executionStatus === "waiting" || executionStatus === "running";
+  const statusPanelAvailable = showTurnLoadingMessage;
+  const statusRecords = React.useMemo(
+    () => threadDisplayRecords(thread.threadId, thread),
+    [thread]
+  );
+  const statusActivity = React.useMemo(() => {
+    const latestActivity = thread.status === "waiting"
+      ? { key: "waiting", records: [] }
+      : latestTurnActivityScope(statusRecords, thread.activeTurnId);
+    const goalActivity = activeGoal
+      ? activeGoalActivityScopeFromRecords(statusRecords, thread.threadId)
+      : null;
+    const key = goalActivity?.key ?? latestActivity.key;
+    return {
+      items: activityStatusesFromRecords(goalActivity?.records ?? latestActivity.records),
+      scopeKey: key ? `${thread.threadId}:${key}` : ""
+    };
+  }, [activeGoal, statusRecords, thread.activeTurnId, thread.status, thread.threadId]);
+  const statusPanelExpanded = Boolean(
+    statusActivity.scopeKey
+    && expandedStatusTurns[thread.threadId] === statusActivity.scopeKey
+  );
+  const activeExpandedStatusKeys = React.useMemo(
+    () => new Set(statusActivity.scopeKey ? expandedStatusKeys[statusActivity.scopeKey] ?? [] : []),
+    [expandedStatusKeys, statusActivity.scopeKey]
+  );
   const stopEnabled = canStop ?? Boolean(
     runtimeReady
     && thread.status === "running"
@@ -424,11 +455,10 @@ export const ThreadConversation = ({
         forking={forkingMessageKey === `${thread.threadId}:${message.record.id}`}
       />
     );
-    return messageItemClassName ? <div className={messageItemClassName}>{card}</div> : card;
+    return card;
   }, [
     forkingMessageKey,
     messageDisplayMode,
-    messageItemClassName,
     messageRenderModes,
     onApprovalDecision,
     onForkMessage,
@@ -443,13 +473,45 @@ export const ThreadConversation = ({
     thread.workingDirectory
   ]);
 
+  const status = statusPanelAvailable && executionMeta ? (
+    <ActivityStatusBar
+      statuses={statusActivity.items}
+      executionMeta={executionMeta}
+      expanded={statusPanelExpanded}
+      expandedKeys={activeExpandedStatusKeys}
+      onToggleExpanded={() => {
+        if (!statusActivity.scopeKey) return;
+        setExpandedStatusTurns((current) => {
+          if (current[thread.threadId] === statusActivity.scopeKey) {
+            const next = { ...current };
+            delete next[thread.threadId];
+            return next;
+          }
+          return {
+            ...current,
+            [thread.threadId]: statusActivity.scopeKey
+          };
+        });
+      }}
+      onToggle={(key) => {
+        if (!statusActivity.scopeKey) return;
+        setExpandedStatusKeys((current) => {
+          const keys = new Set(current[statusActivity.scopeKey] ?? []);
+          if (keys.has(key)) keys.delete(key);
+          else keys.add(key);
+          return { ...current, [statusActivity.scopeKey]: [...keys] };
+        });
+      }}
+    />
+  ) : null;
+
   return (
     <div className={classNames("threadConversation", className)}>
       {leading ? <div className="threadConversationLeading">{leading}</div> : null}
       <Virtuoso
         key={thread.threadId}
         ref={messagesRef}
-        className={classNames("messages", messagesClassName)}
+        className="messages"
         data={views}
         onKeyDown={handleMessagesKeyDown}
         onPointerCancel={clearMessagesScrollbarIntent}
@@ -481,7 +543,7 @@ export const ThreadConversation = ({
         itemContent={(_, message) => renderMessage(message)}
       />
       <form
-        className={classNames("composer", composerClassName)}
+        className="composer"
         onSubmit={(event) => {
           event.preventDefault();
           if (runtimeReady) void onSend(thread.threadId);

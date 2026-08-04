@@ -171,6 +171,8 @@ export type AppViewModelSource = AppSidebarViewModel & {
   effectiveModelSelection: ModelSelection;
   effectiveReasoningSelection: ReasoningSelection;
   effectiveServiceTierSelection: ServiceTierSelection;
+  expandedStatusKeys: Record<string, string[]>;
+  expandedStatusTurns: Record<string, string>;
   expandedToolBatchKeys: Record<string, string[]>;
   forkingMessageKey: string;
   forkMessage: (threadId: string, messageId: string) => MaybePromise;
@@ -350,6 +352,8 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "composerMenuOpen"
   | "composerMode"
   | "composerTextareaRef"
+  | "expandedStatusKeys"
+  | "expandedStatusTurns"
   | "expandedToolBatchKeys"
   | "forkingMessageKey"
   | "forkMessage"
@@ -512,7 +516,7 @@ const workspaceKeys = [
   "activeUserMessageHistory", "activeViews", "authError",
   "authRequired", "authTokenDraft", "addThreadFiles", "clearThreadAttachments", "clearThreadGoal",
   "closeThread", "compactThread", "commandPaletteByScope", "commandPaletteLoadingScopes",
-  "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage",
+  "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "expandedStatusKeys", "expandedStatusTurns", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage",
   "handleComposerKeyDown", "imageFileInputRef", "insertThreadPathText", "latestTurnActivityScope",
   "loadCommandPalette", "messageDisplayMode", "messageRenderModes", "messagesRef",
   "messagesShouldFollowRef", "openMessageContextMenu", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",

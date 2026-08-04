@@ -58,6 +58,7 @@ import {
   type PendingUserInput
 } from "./threadApprovalRecords.js";
 import {
+  appServerSnapshotItemFallbackStatus,
   codexRecordFromAppServerItem,
   codexRecordFromAppServerUsage,
   codexRecordFromRawResponseItem,
@@ -1883,7 +1884,13 @@ export class ThreadHub {
       for (const item of turn.items) {
         const itemRecord = asRecord(item);
         const rawRecord = itemRecord
-          ? codexRecordFromAppServerItem(thread.threadId, turnId, itemRecord, timestamp, outcome.status)
+          ? codexRecordFromAppServerItem(
+            thread.threadId,
+            turnId,
+            itemRecord,
+            timestamp,
+            appServerSnapshotItemFallbackStatus(itemRecord, outcome.status)
+          )
           : null;
         const record = itemRecord
           ? withAppServerItemRecordTiming(rawRecord, { item: itemRecord, existing: rawRecord ? previousTurnRecords?.get(rawRecord.id) : undefined })

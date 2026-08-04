@@ -1133,25 +1133,6 @@
   font-size: 12px;
 }
 
-.subagentThreadMessages {
-  height: 100%;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  padding: 0;
-}
-
-.subagentThreadMessages > div {
-  max-width: 100%;
-}
-
-.subagentThreadMessageItem {
-  padding: 10px 14px 0;
-}
-
-.subagentThreadMessageItem .message {
-  max-width: 100%;
-}
-
 .subagentThreadDialogState {
   display: grid;
   place-content: center;
@@ -1165,39 +1146,6 @@
 
 .subagentThreadDialogBody > .subagentThreadDialogState {
   grid-row: 1 / -1;
-}
-
-.subagentThreadComposer {
-  display: grid;
-  gap: 7px;
-  border-top: 1px solid #d5ddd2;
-  background: #f7f9f5;
-  padding: 10px 14px calc(11px + env(safe-area-inset-bottom));
-}
-
-.subagentThreadComposer textarea {
-  width: 100%;
-  min-height: 58px;
-  max-height: 150px;
-  resize: vertical;
-  border: 1px solid #c7d1c4;
-  border-radius: 11px;
-  outline: none;
-  background: #ffffff;
-  padding: 9px 11px;
-  color: #1f2b22;
-  font: inherit;
-  line-height: 1.45;
-}
-
-.subagentThreadComposer textarea:focus {
-  border-color: #5f8f70;
-  box-shadow: 0 0 0 3px rgb(83 132 99 / 0.12);
-}
-
-.subagentThreadComposer textarea:disabled {
-  background: #eef2eb;
-  color: #7d887b;
 }
 
 .subagentThreadDialogState strong {

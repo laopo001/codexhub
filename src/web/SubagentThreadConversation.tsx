@@ -54,10 +54,9 @@ export const SubagentThreadConversation = ({
       activeGoal={activeGoal}
       messageDisplayMode={workspace.messageDisplayMode}
       messageRenderModes={workspace.messageRenderModes}
+      expandedStatusKeys={workspace.expandedStatusKeys}
+      expandedStatusTurns={workspace.expandedStatusTurns}
       className="subagentThreadConversation"
-      messagesClassName="subagentThreadMessages"
-      composerClassName="subagentThreadComposer"
-      messageItemClassName="subagentThreadMessageItem"
       fileInputRef={fileInputRef}
       leading={(
         <SubagentThreadAssignment
@@ -101,6 +100,8 @@ export const SubagentThreadConversation = ({
         }
         workspace.setThreadModelDialogOpen(false);
       }}
+      setExpandedStatusKeys={workspace.setExpandedStatusKeys}
+      setExpandedStatusTurns={workspace.setExpandedStatusTurns}
       onMessageRenderModeChange={(_threadId, messageId, mode) => workspace.updateMessageRenderMode(messageId, mode)}
       onMessageContextMenu={workspace.openMessageContextMenu}
       onInspectMessage={(_threadId, message) => workspace.setInspectMessage(message)}

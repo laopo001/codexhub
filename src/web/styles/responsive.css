@@ -146,11 +146,6 @@
     display: none;
   }
 
-  .subagentThreadMessageItem {
-    padding-right: 8px;
-    padding-left: 8px;
-  }
-
   .subagentThreadAssignment {
     max-height: min(180px, 28vh);
     padding-right: 9px;
@@ -159,11 +154,6 @@
 
   .subagentThreadAssignmentTags span {
     max-width: 104px;
-  }
-
-  .subagentThreadComposer {
-    padding-right: 8px;
-    padding-left: 8px;
   }
 
   .threadPickerList {

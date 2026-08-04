@@ -30,6 +30,24 @@ test("final answer displays the whole turn duration instead of its shorter item 
   assert.equal(view.statusDurationMs, 132_000);
 });
 
+test("item messages keep item durations while final answer uses the Turn duration", () => {
+  const tool = messageView("tool", "shell", "tool-call", 2_500);
+  const commentary = messageView("codex", "commentary", "commentary", 3_000);
+  const reasoning = messageView("thinking", "thinking", "reasoning", 4_000);
+  const compaction = messageView("event", "context_compaction", "compaction", 5_000);
+  const finalAnswer = finalAnswerView(1_000);
+  const views = finalAnswerViewsWithTurnDurations(
+    [tool, commentary, reasoning, compaction, finalAnswer],
+    new Map([["turn-test", 132_000]])
+  );
+
+  assert.equal(views[0]?.statusDurationMs, 2_500);
+  assert.equal(views[1]?.statusDurationMs, 3_000);
+  assert.equal(views[2]?.statusDurationMs, 4_000);
+  assert.equal(views[3]?.statusDurationMs, 5_000);
+  assert.equal(views[4]?.statusDurationMs, 132_000);
+});
+
 test("final answer keeps its item duration when turn timing is unavailable", () => {
   const [view] = finalAnswerViewsWithTurnDurations([finalAnswerView(1_000)], new Map());
 
@@ -243,6 +261,31 @@ const finalAnswerView = (statusDurationMs: number): CodexRecordView => ({
     payload: {
       type: "agent_message",
       phase: "final_answer",
+      status: "completed",
+      duration_ms: statusDurationMs
+    }
+  }
+});
+
+const messageView = (
+  role: CodexRecordView["role"],
+  label: string,
+  itemId: string,
+  statusDurationMs: number
+): CodexRecordView => ({
+  id: `app:thread-test:turn-test:item:${itemId}`,
+  role,
+  label,
+  text: label,
+  status: "completed",
+  statusDurationMs,
+  record: {
+    id: `app:thread-test:turn-test:item:${itemId}`,
+    timestamp: "2026-07-19T02:01:00.000Z",
+    type: role === "tool" ? "response_item" : "event_msg",
+    payload: {
+      type: role === "tool" ? "local_shell_call" : "agent_message",
+      phase: role === "tool" ? undefined : label,
       status: "completed",
       duration_ms: statusDurationMs
     }

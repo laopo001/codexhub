@@ -161,18 +161,36 @@ test("workspace and subagent model entries always bind the visible thread id", a
   );
 });
 
-test("workspace and subagent conversations share one thread-scoped composer chrome", async () => {
-  const [workspaceSource, subagentSource, chromeSource, viewSelectorSource] = await Promise.all([
+test("workspace and subagent conversations share one thread body, status bar, and composer chrome", async () => {
+  const [
+    workspaceSource,
+    subagentSource,
+    conversationSource,
+    chromeSource,
+    viewSelectorSource,
+    modalsCss
+  ] = await Promise.all([
     readFile(new URL("../../src/web/WorkspaceThreadConversation.tsx", import.meta.url), "utf8"),
     readFile(new URL("../../src/web/SubagentThreadConversation.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/ThreadConversation.tsx", import.meta.url), "utf8"),
     readFile(new URL("../../src/web/ThreadComposerChrome.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../../src/web/appViewSelectors.tsx", import.meta.url), "utf8")
+    readFile(new URL("../../src/web/appViewSelectors.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/styles/modals.css", import.meta.url), "utf8")
   ]);
 
   for (const source of [workspaceSource, subagentSource]) {
+    assert.match(source, /<ThreadConversation/);
     assert.match(source, /<ThreadComposerLeftActions/);
     assert.match(source, /<ThreadComposerRightActions/);
+    assert.match(source, /expandedStatusKeys=/);
+    assert.match(source, /expandedStatusTurns=/);
+    assert.doesNotMatch(source, /<ActivityStatusBar/);
   }
+  assert.match(conversationSource, /<ActivityStatusBar/);
+  assert.match(conversationSource, /className="messages"/);
+  assert.match(conversationSource, /className="composer"/);
+  assert.doesNotMatch(subagentSource, /messagesClassName|composerClassName|messageItemClassName/);
+  assert.doesNotMatch(modalsCss, /\.subagentThread(?:Messages|Composer|MessageItem)/);
   assert.doesNotMatch(subagentSource, /composerModeOptions|Paperclip/);
   assert.match(chromeSource, /workspace\.reviewThread\(thread\.threadId\)/);
   assert.match(chromeSource, /workspace\.setThreadApprovalPolicyDraft\(thread\.threadId/);

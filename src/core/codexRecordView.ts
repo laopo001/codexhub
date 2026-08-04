@@ -461,7 +461,7 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
       label: "web search",
       text: typeof payload.query === "string" ? payload.query : stringify(payload),
       at: record.timestamp,
-      status: "completed",
+      status: recordViewStatusFromAppStatus(payload.status) ?? "completed",
       statusText: recordViewStatusText(payload.status),
       record
     };
@@ -489,7 +489,7 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
       label: "image view",
       text: typeof payload.path === "string" ? payload.path : stringify(payload),
       at: record.timestamp,
-      status: "completed",
+      status: recordViewStatusFromAppStatus(payload.status) ?? "completed",
       statusText: recordViewStatusText(payload.status),
       attachments,
       record
