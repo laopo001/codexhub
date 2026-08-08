@@ -183,7 +183,8 @@ export const subagentActivityView = (
 export const subagentActivityKindLabel = (kind: string) => {
   const normalized = kind.trim().replace(/[-\s]+/g, "_").toLowerCase();
   if (normalized === "started") return "Started";
-  if (normalized === "interacted") return "Responded";
+  // The app-server activity does not expose the interaction direction or operation.
+  if (normalized === "interacted") return "Interacted";
   if (normalized === "interrupted") return "Interrupted";
   const words = normalized.split("_").filter(Boolean);
   return words.length

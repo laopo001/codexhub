@@ -53,7 +53,7 @@ test("compact views only coalesce normalized context_compaction events", () => {
 test("subagent activities keep one semantic view across compact and detailed modes", () => {
   const kinds = [
     ["started", "Started"],
-    ["interacted", "Responded"],
+    ["interacted", "Interacted"],
     ["interrupted", "Interrupted"]
   ] as const;
 
