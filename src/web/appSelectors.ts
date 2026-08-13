@@ -2,7 +2,6 @@ import { useMemo, type Dispatch, type SetStateAction } from "react";
 import { recordsToViews } from "../core/codexRecordView.js";
 import { collapseHistoricalToolBatches, compactToolViews } from "../shared/compactRecordViews.js";
 import type { CodexRecordView } from "../shared/recordTypes.js";
-import { recordsToDetailedViews } from "./detailedRecordViews.js";
 import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from "./helpers/turnDurations.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
 import { embeddedWorkspacePaths, isEmbeddedHostSurface, webSurface } from "./appConfig.js";
@@ -253,10 +252,6 @@ export const useAppSelectors = (state: AppState) => {
     () => hideSupersededSimpleThinkingViews(recordsToViews(simpleRecords).filter(isSimpleMainView)),
     [simpleRecords]
   );
-  const detailedViews = useMemo<CodexRecordView[]>(
-    () => recordsToDetailedViews(displayRecords),
-    [displayRecords]
-  );
   const latestTurnActivity = useMemo(
     () => activeThread?.status === "waiting"
       ? {
@@ -321,14 +316,12 @@ export const useAppSelectors = (state: AppState) => {
   const activeViews = useMemo<WebRecordView[]>(
     () => withActivityStatusSnapshots(
       finalAnswerViewsWithTurnDurations(
-        state.messageDisplayMode === "compact"
-          ? collapseHistoricalToolBatches(compactToolViews(baseViews), activeExpandedToolBatchKeys)
-          : detailedViews,
+        collapseHistoricalToolBatches(compactToolViews(baseViews), activeExpandedToolBatchKeys),
         turnDurations
       ),
       activityStatusSnapshots
     ),
-    [activeExpandedToolBatchKeys, activityStatusSnapshots, baseViews, detailedViews, state.messageDisplayMode, turnDurations]
+    [activeExpandedToolBatchKeys, activityStatusSnapshots, baseViews, turnDurations]
   );
   const activeUserMessageHistory = useMemo(
     () => userMessageHistoryFromRecords(displayRecords),

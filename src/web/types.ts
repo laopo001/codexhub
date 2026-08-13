@@ -252,7 +252,6 @@ export type ApprovalsReviewerSelection = ThreadApprovalsReviewer;
 export type ApprovalsReviewerDraft = "auto" | ApprovalsReviewerSelection;
 export type PermissionProfileDraft = string | null;
 export type ComposerMode = "chat" | "plan" | "goal";
-export type MessageDisplayMode = "compact" | "detailed";
 export type MessageRenderMode = "markdown" | "raw";
 export type ConnectionMode = "local" | "ssh" | "registered";
 export type ImagePreviewState = {

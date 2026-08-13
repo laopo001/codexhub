@@ -150,7 +150,6 @@ const assertStatusUsageFormatting = async () => {
       withActivityStatusSnapshots
     } = await import("../src/web/helpers/records.js");
     const { recordsToViews } = await import("../src/core/codexRecordView.js");
-    const { recordsToDetailedViews } = await import("../src/web/detailedRecordViews.js");
     const records: CodexRecord[] = [
       {
         id: "app:thread:turn:statusUsage:scope",
@@ -217,7 +216,7 @@ const assertStatusUsageFormatting = async () => {
         }
       }
     ];
-    for (const views of [recordsToViews(perMessageUsageRecords), recordsToDetailedViews(perMessageUsageRecords)]) {
+    for (const views of [recordsToViews(perMessageUsageRecords)]) {
       const commentary = views.find((view) => view.role === "codex" && view.label === "commentary");
       const finalAnswer = views.find((view) => view.role === "codex" && view.label === "final_answer");
       if (commentary?.usage?.total_tokens !== 29389 || finalAnswer?.usage?.total_tokens !== 29564) {
@@ -300,7 +299,7 @@ const assertStatusUsageFormatting = async () => {
     if (firstUsage?.text !== "total 3.1k · input 3.0k · output 120") {
       throw new Error(`completed usage status snapshot mismatch: ${JSON.stringify(firstUsage)}`);
     }
-    for (const views of [recordsToViews(scopedRecords), recordsToDetailedViews(scopedRecords)]) {
+    for (const views of [recordsToViews(scopedRecords)]) {
       const viewsWithSnapshots = withActivityStatusSnapshots(views, runningSnapshots);
       const firstFinal = viewsWithSnapshots.find((view) => view.record.id === "app:thread:turn-1:agent:final-1");
       const secondFinal = viewsWithSnapshots.find((view) => view.record.id === "app:thread:turn-2:agent:final-2");

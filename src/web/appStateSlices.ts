@@ -9,7 +9,6 @@ import type {
   ImagePreviewState,
   LocalTask,
   MessageContextMenuState,
-  MessageDisplayMode,
   MessageRenderMode,
   ParentRegistrationStatus,
   PluginSummary,
@@ -86,7 +85,6 @@ export const useUiState = () => {
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
   const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const [messageContextMenu, setMessageContextMenu] = useState<MessageContextMenuState | null>(null);
-  const [messageDisplayMode, setMessageDisplayMode] = useState<MessageDisplayMode>("compact");
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [collapsedProjectMachineKeys, setCollapsedProjectMachineKeys] = useState<string[]>([]);
@@ -140,7 +138,6 @@ export const useUiState = () => {
     imagePreview,
     inspectMessage,
     messageContextMenu,
-    messageDisplayMode,
     messageRenderModes,
     offlineProjectsCollapsed,
     serverAuthRequired,
@@ -161,7 +158,6 @@ export const useUiState = () => {
     setImagePreview,
     setInspectMessage,
     setMessageContextMenu,
-    setMessageDisplayMode,
     setMessageRenderModes,
     setOfflineProjectsCollapsed,
     setServerAuthRequired,

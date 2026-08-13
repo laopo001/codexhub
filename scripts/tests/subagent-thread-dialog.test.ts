@@ -89,7 +89,7 @@ test("subagent compact views collapse and re-expand historical tool batches", as
     toolC
   ]);
 
-  const collapsed = subagentThreadDialogViews(thread, "compact");
+  const collapsed = subagentThreadDialogViews(thread);
   const summary = collapsed.find((view) => view.toolBatch);
   assert.equal(summary?.toolBatch?.count, 2);
   assert.equal(collapsed.some((view) => view.id === toolA.id), false);
@@ -97,7 +97,7 @@ test("subagent compact views collapse and re-expand historical tool batches", as
   assert.equal(collapsed.some((view) => view.id === toolC.id), true);
 
   assert.ok(summary?.toolBatch);
-  const expanded = subagentThreadDialogViews(thread, "compact", new Set([summary.toolBatch.key]));
+  const expanded = subagentThreadDialogViews(thread, new Set([summary.toolBatch.key]));
   assert.equal(expanded.find((view) => view.toolBatch)?.toolBatch?.expanded, true);
   assert.equal(expanded.some((view) => view.id === toolA.id), true);
   assert.equal(expanded.some((view) => view.id === toolB.id), true);

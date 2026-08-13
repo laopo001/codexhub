@@ -39,7 +39,6 @@ import type {
   AppSettings,
   LocalTask,
   MachineSummary,
-  MessageDisplayMode,
   ParentRegistrationStatus,
   PluginSummary,
   ProjectSummary,
@@ -81,7 +80,6 @@ type RealtimeActionsContext = {
   setCollapsedProjectMachineKeys: React.Dispatch<React.SetStateAction<string[]>>;
   setInitialized: React.Dispatch<React.SetStateAction<boolean>>;
   setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
-  setMessageDisplayMode: React.Dispatch<React.SetStateAction<MessageDisplayMode>>;
   setParentRegistration: React.Dispatch<React.SetStateAction<ParentRegistrationStatus>>;
   setPlugins: React.Dispatch<React.SetStateAction<PluginSummary[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
@@ -217,7 +215,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setAuthRequired(false);
     ctx.setAuthError("");
     ctx.setActiveWorkspacePath(initialWorkspace);
-    ctx.setMessageDisplayMode(saved?.messageDisplayMode ?? "compact");
     ctx.setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
     ctx.setSelectedProjectKey(initialProjectFromUrl ? projectKeyForProject(initialProjectFromUrl) : saved?.selectedProjectKey ?? "");
     ctx.sidebarDraftStore.set("projectSearch", saved?.projectSearch ?? "");

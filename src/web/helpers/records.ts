@@ -418,6 +418,7 @@ export const isSimpleRecord = (record: CodexRecord) => {
       || payload?.type === "user_message"
       || payload?.type === "agent_message"
       || payload?.type === "plan"
+      || payload?.type === "thread_goal_updated"
       || isContextCompactionType(payload?.type)
     );
 };

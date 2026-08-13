@@ -2,7 +2,7 @@ import { recordsToViews } from "../../core/codexRecordView.js";
 import { petIdPattern } from "../../shared/petTypes.js";
 import type { CodexRecord, CodexRecordView } from "../../shared/recordTypes.js";
 import { defaultAppSettings, storageKey } from "../appConfig.js";
-import type { AppSettings, MessageDisplayMode, TextAttachment } from "../types.js";
+import type { AppSettings, TextAttachment } from "../types.js";
 import { browserId } from "./common.js";
 
 export type ComposerDraftStore = {
@@ -432,9 +432,6 @@ export const submissionFailedRecord = (error: unknown): CodexRecord => ({
   }
 });
 
-export const isMessageDisplayMode = (value: unknown): value is MessageDisplayMode =>
-  value === "compact" || value === "detailed";
-
 const storedAppSettings = (value: unknown): AppSettings | undefined => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -484,7 +481,6 @@ export const readStoredUiState = (): {
   threadOrderByMachine?: Record<string, string[]>;
   selectedProjectKey?: string;
   projectSearch?: string;
-  messageDisplayMode?: MessageDisplayMode;
   settings?: AppSettings;
   sidebarCollapsed?: boolean;
   collapsedProjectMachineKeys?: string[];
@@ -501,7 +497,6 @@ export const readStoredUiState = (): {
       threadOrderByMachine: storedStringArrayRecord(parsed.threadOrderByMachine),
       selectedProjectKey: typeof parsed.selectedProjectKey === "string" ? parsed.selectedProjectKey : undefined,
       projectSearch: typeof parsed.projectSearch === "string" ? parsed.projectSearch : undefined,
-      messageDisplayMode: isMessageDisplayMode(parsed.messageDisplayMode) ? parsed.messageDisplayMode : undefined,
       settings: storedAppSettings(parsed.settings),
       sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined,
       collapsedProjectMachineKeys: Array.isArray(parsed.collapsedProjectMachineKeys)

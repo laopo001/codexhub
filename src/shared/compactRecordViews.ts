@@ -163,7 +163,7 @@ const compactEventView = (
   const eventType = typeof payload.type === "string" ? payload.type : "";
   if (eventType === "task_started") return compactTurnStarted(state, view, payload);
   if (eventType === "task_complete" || eventType === "turn_aborted") return compactTurnFinished(state, view, payload, eventType);
-  if (eventType === "thread_goal_updated" || eventType === "thread_goal_cleared") return compactRepeatedEvent(state, view, "goal");
+  if (eventType === "thread_goal_cleared") return compactRepeatedEvent(state, view, "goal");
   if (eventType === "context_compaction") return compactRepeatedEvent(state, view, "context");
   return null;
 };

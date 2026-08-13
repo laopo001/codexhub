@@ -3,7 +3,6 @@ import { Bot, RotateCcw, X } from "lucide-react";
 import { recordsToViews } from "../core/codexRecordView.js";
 import { collapseHistoricalToolBatches, compactToolViews } from "../shared/compactRecordViews.js";
 import type { CodexRecordView, SubagentActivityView } from "../shared/recordTypes.js";
-import { recordsToDetailedViews } from "./detailedRecordViews.js";
 import {
   hideSupersededSimpleThinkingViews,
   isSimpleMainView,
@@ -13,7 +12,6 @@ import {
 } from "./appHelpers.js";
 import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from "./helpers/turnDurations.js";
 import type {
-  MessageDisplayMode,
   SubagentThreadDialogState,
   SubagentThreadOpenOptions,
   WebRecordView
@@ -154,20 +152,17 @@ export const SubagentThreadAssignment = ({
 
 export const subagentThreadDialogViews = (
   thread: NonNullable<SubagentThreadDialogState["thread"]>,
-  messageDisplayMode: MessageDisplayMode,
   expandedToolBatchKeys: Set<string> = new Set()
 ): WebRecordView[] => {
   const records = threadDisplayRecords(thread.threadId, thread);
-  const views: CodexRecordView[] = messageDisplayMode === "compact"
-    ? collapseHistoricalToolBatches(
-        compactToolViews(
-          hideSupersededSimpleThinkingViews(
-            recordsToViews(records.filter(isSimpleRecord)).filter(isSimpleMainView)
-          )
-        ),
-        expandedToolBatchKeys
+  const views: CodexRecordView[] = collapseHistoricalToolBatches(
+    compactToolViews(
+      hideSupersededSimpleThinkingViews(
+        recordsToViews(records.filter(isSimpleRecord)).filter(isSimpleMainView)
       )
-    : recordsToDetailedViews(records);
+    ),
+    expandedToolBatchKeys
+  );
   return finalAnswerViewsWithTurnDurations(views, turnDurationMapFromRecords(records));
 };
 

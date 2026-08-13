@@ -27,7 +27,6 @@ import {
 import type {
   ComposerMode,
   ImagePreviewState,
-  MessageDisplayMode,
   MessageRenderMode,
   OpenThreadState,
   ThreadExecutionMeta,
@@ -46,7 +45,6 @@ export type ThreadConversationProps = {
   commandPaletteLoadingScopes: Record<string, boolean>;
   executionMeta: ThreadExecutionMeta | null;
   activeGoal?: ThreadGoalView | null;
-  messageDisplayMode: MessageDisplayMode;
   messageRenderModes: Readonly<Record<string, MessageRenderMode>>;
   expandedStatusKeys: Readonly<Record<string, string[]>>;
   expandedStatusTurns: Readonly<Record<string, string>>;
@@ -171,7 +169,6 @@ export const ThreadConversation = ({
   commandPaletteLoadingScopes,
   executionMeta,
   activeGoal = null,
-  messageDisplayMode,
   messageRenderModes,
   expandedStatusKeys,
   expandedStatusTurns,
@@ -416,13 +413,13 @@ export const ThreadConversation = ({
     const markdownEnabled = canRenderMarkdown(message);
     const renderMode = markdownEnabled ? messageRenderModes[message.id] ?? "markdown" : "raw";
     const toolBatchKey = message.toolBatch?.key;
-    const inspectable = messageDisplayMode === "compact" && message.role === "tool" && !toolBatchKey;
+    const inspectable = message.role === "tool" && !toolBatchKey;
     const card = (
       <MessageCard
         message={message}
-        showStatus={messageDisplayMode === "compact" || message.role !== "tool"}
-        showTimestamp={!(messageDisplayMode === "compact" && message.role === "tool")}
-        renderToolPreview={messageDisplayMode === "compact"}
+        showStatus
+        showTimestamp={message.role !== "tool"}
+        renderToolPreview
         renderMode={renderMode}
         markdownEnabled={markdownEnabled}
         threadWorkingDirectory={thread.workingDirectory}
@@ -458,7 +455,6 @@ export const ThreadConversation = ({
     return card;
   }, [
     forkingMessageKey,
-    messageDisplayMode,
     messageRenderModes,
     onApprovalDecision,
     onForkMessage,

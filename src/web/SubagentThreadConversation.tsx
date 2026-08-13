@@ -45,14 +45,13 @@ export const SubagentThreadConversation = ({
   return (
     <ThreadConversation
       thread={thread}
-      views={subagentThreadDialogViews(thread, workspace.messageDisplayMode, expandedToolBatchKeys)}
+      views={subagentThreadDialogViews(thread, expandedToolBatchKeys)}
       userMessageHistory={userMessageHistoryFromRecords(records)}
       composerDraftStore={workspace.composerDraftStore}
       commandPaletteByScope={workspace.commandPaletteByScope}
       commandPaletteLoadingScopes={workspace.commandPaletteLoadingScopes}
       executionMeta={executionMeta}
       activeGoal={activeGoal}
-      messageDisplayMode={workspace.messageDisplayMode}
       messageRenderModes={workspace.messageRenderModes}
       expandedStatusKeys={workspace.expandedStatusKeys}
       expandedStatusTurns={workspace.expandedStatusTurns}

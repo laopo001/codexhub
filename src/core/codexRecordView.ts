@@ -6,6 +6,7 @@ export type { CodexRecordView, RecordUsage } from "../shared/recordTypes.js";
 export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
   const views: CodexRecordView[] = [];
   const subagentAssignments = subagentActivityAssignments(records);
+  const goalMessageKeys = new Set<string>();
   for (const record of records) {
     const usage = tokenUsageFromRecord(record);
     if (usage) {
@@ -13,7 +14,11 @@ export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
     }
 
     const view = withSubagentActivityAssignment(recordToView(record), subagentAssignments.get(record.id));
-    if (view) views.push(view);
+    if (!view) continue;
+    const goalKey = goalMessageKey(record);
+    if (goalKey && goalMessageKeys.has(goalKey)) continue;
+    if (goalKey) goalMessageKeys.add(goalKey);
+    views.push(view);
   }
   return views;
 };
@@ -211,6 +216,8 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
+  if (payload.type === "thread_goal_updated") return threadGoalUpdatedView(record, payload);
+
   if (payload.type === "agent_message" && typeof payload.message === "string") {
     const phase = typeof payload.phase === "string" ? payload.phase : "assistant";
     const status = recordViewStatusFromAppStatus(payload.status);
@@ -292,6 +299,51 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
     at: record.timestamp,
     record
   };
+};
+
+/** Project the public Goal state into the conversation as a user-side message. */
+export const threadGoalUpdatedView = (
+  record: CodexRecord,
+  payload: Record<string, unknown>
+): CodexRecordView | null => {
+  const goal = asRecord(payload.goal);
+  const objective = typeof goal?.objective === "string" ? goal.objective.trim() : "";
+  if (!objective) return null;
+  return {
+    id: record.id,
+    role: "user",
+    label: "goal",
+    text: objective,
+    at: record.timestamp,
+    record
+  };
+};
+
+/**
+ * Goal progress updates change usage/timing fields without changing the
+ * message the user set. Keep one conversation bubble for that semantic Goal
+ * state while still allowing objective/status/budget edits to appear.
+ */
+export const goalMessageKey = (record: CodexRecord) => {
+  if (record.type !== "event_msg") return null;
+  const payload = asRecord(record.payload);
+  if (payload?.type !== "thread_goal_updated") return null;
+  const goal = asRecord(payload.goal);
+  const objective = typeof goal?.objective === "string" ? goal.objective.trim() : "";
+  if (!objective) return null;
+  const threadId = typeof payload.threadId === "string"
+    ? payload.threadId
+    : typeof goal?.threadId === "string"
+      ? goal.threadId
+      : record.sourceThreadId ?? "";
+  const createdAt = typeof goal?.createdAt === "number" && Number.isFinite(goal.createdAt)
+    ? goal.createdAt
+    : null;
+  const status = typeof goal?.status === "string" && goal.status ? goal.status : "active";
+  const tokenBudget = typeof goal?.tokenBudget === "number" && Number.isFinite(goal.tokenBudget)
+    ? goal.tokenBudget
+    : null;
+  return JSON.stringify([threadId, createdAt, objective, status, tokenBudget]);
 };
 
 const responseItemToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {

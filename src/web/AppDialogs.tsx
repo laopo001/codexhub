@@ -26,7 +26,7 @@ import {
 } from "./appHelpers.js";
 import { apiRoutes } from "../shared/apiRoutes.js";
 import { writeTextToClipboard } from "./helpers/composer.js";
-import type { MessageDisplayMode, ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
+import type { ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
 import type { AppDialogsViewModel } from "./viewModel.js";
 
 type AppDialogsProps = {
@@ -51,7 +51,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     loadThreadPickerCandidates,
     machines,
     messageContextMenu,
-    messageDisplayMode,
     activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
@@ -81,7 +80,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setInspectMessage,
     setAppSettings,
     setMessageContextMenu,
-    setMessageDisplayMode,
     setProjectPicker,
     setActiveThreadModelDraft,
     setActiveThreadReasoningDraft,
@@ -276,22 +274,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <button type="button" className="iconButton" onClick={() => setSettingsDialogOpen(false)} aria-label="Close">x</button>
             </header>
             <div className="settingsList">
-              <div className="settingsRow">
-                <span className="settingsRowText">
-                  <strong id="settingMessageView">Message view</strong>
-                  <em>Choose how much thread detail to show</em>
-                </span>
-                <Select<MessageDisplayMode>
-                  className="settingsSelect"
-                  value={messageDisplayMode}
-                  onChange={(value) => setMessageDisplayMode(value)}
-                  options={[
-                    { value: "compact", label: "Simple" },
-                    { value: "detailed", label: "Detailed" }
-                  ]}
-                  aria-labelledby="settingMessageView"
-                />
-              </div>
               <div className="settingsRow">
                 <span className="settingsRowText">
                   <strong>Pet</strong>

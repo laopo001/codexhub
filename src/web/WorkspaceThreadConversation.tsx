@@ -54,7 +54,6 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     insertThreadPathText,
     latestTurnActivityScope,
     loadCommandPalette,
-    messageDisplayMode,
     messageRenderModes,
     messagesRef,
     messagesShouldFollowRef,
@@ -197,7 +196,6 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
       commandPaletteLoadingScopes={commandPaletteLoadingScopes}
       executionMeta={activeThreadExecutionMeta}
       activeGoal={activeGoal}
-      messageDisplayMode={messageDisplayMode}
       messageRenderModes={messageRenderModes}
       expandedStatusKeys={expandedStatusKeys}
       expandedStatusTurns={expandedStatusTurns}

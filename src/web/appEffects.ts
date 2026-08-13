@@ -66,7 +66,6 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       threadOrderByMachine: state.threadOrderByMachine,
       selectedProjectKey: state.selectedProjectKey,
       projectSearch: state.sidebarDraftStore.getSnapshot().projectSearch,
-      messageDisplayMode: state.messageDisplayMode,
       sidebarCollapsed: state.sidebarCollapsed,
       collapsedProjectMachineKeys: state.collapsedProjectMachineKeys
     }));
@@ -77,7 +76,6 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.activeTabThreadId,
     selectors.openThreadIds,
     state.selectedProjectKey,
-    state.messageDisplayMode,
     state.sidebarCollapsed,
     state.collapsedProjectMachineKeys,
     state.threadOrderByMachine,

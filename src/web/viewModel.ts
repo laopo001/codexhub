@@ -24,7 +24,6 @@ import type {
   LocalTask,
   MachineSummary,
   MessageContextMenuState,
-  MessageDisplayMode,
   MessageRenderMode,
   ModelSelection,
   ParentRegistrationStatus,
@@ -191,7 +190,6 @@ export type AppViewModelSource = AppSidebarViewModel & {
   loadCommandPalette: (machineId: string, cwd: string) => MaybePromise;
   loadProjectPickerDirectory: (machineId: string, path: string) => MaybePromise;
   messageContextMenu: MessageContextMenuState | null;
-  messageDisplayMode: MessageDisplayMode;
   messageRenderModes: Record<string, MessageRenderMode>;
   activeThreadApprovalPolicySelection?: ApprovalPolicySelection;
   activeThreadApprovalPolicyDraft: ApprovalPolicyDraft;
@@ -282,7 +280,6 @@ export type AppViewModelSource = AppSidebarViewModel & {
   setImagePreview: React.Dispatch<React.SetStateAction<ImagePreviewState | null>>;
   setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
   setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
-  setMessageDisplayMode: React.Dispatch<React.SetStateAction<MessageDisplayMode>>;
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
   setActiveThreadApprovalPolicyDraft: React.Dispatch<React.SetStateAction<ApprovalPolicyDraft>>;
   setActiveThreadApprovalsReviewerDraft: React.Dispatch<React.SetStateAction<ApprovalsReviewerDraft>>;
@@ -362,7 +359,6 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "insertThreadPathText"
   | "latestTurnActivityScope"
   | "loadCommandPalette"
-  | "messageDisplayMode"
   | "messageRenderModes"
   | "messagesRef"
   | "messagesShouldFollowRef"
@@ -438,7 +434,6 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "loadThreadPickerCandidates"
   | "machines"
   | "messageContextMenu"
-  | "messageDisplayMode"
   | "activeModelCatalogCacheNotice"
   | "activeModelCatalogError"
   | "activeModelCatalogStatus"
@@ -468,7 +463,6 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "setInspectMessage"
   | "setAppSettings"
   | "setMessageContextMenu"
-  | "setMessageDisplayMode"
   | "setProjectPicker"
   | "setActiveThreadModelDraft"
   | "setActiveThreadReasoningDraft"
@@ -518,7 +512,7 @@ const workspaceKeys = [
   "closeThread", "compactThread", "commandPaletteByScope", "commandPaletteLoadingScopes",
   "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "expandedStatusKeys", "expandedStatusTurns", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage",
   "handleComposerKeyDown", "imageFileInputRef", "insertThreadPathText", "latestTurnActivityScope",
-  "loadCommandPalette", "messageDisplayMode", "messageRenderModes", "messagesRef",
+  "loadCommandPalette", "messageRenderModes", "messagesRef",
   "messagesShouldFollowRef", "openMessageContextMenu", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",
   "openThreads",
   "pasteThreadImages", "removeThreadImage", "removeThreadTextAttachment", "renderComposerThreadControls",
@@ -541,14 +535,12 @@ const dialogKeys = [
   "chooseThreadCandidate", "confirmProjectPicker", "copyContextSelection", "createMachineThread",
   "createWorktreeThread", "goalDialog", "imagePreview", "inspectContextMessage", "inspectMessage",
   "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageContextMenu",
-  "messageDisplayMode",
   "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "effectiveModelSelection",
   "effectiveReasoningSelection", "effectiveServiceTierSelection", "modelOptions", "reasoningOptions",
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
   "saveGoalDialog", "saveThreadRenameDialog", "threadModelDialogOpen", "threadRenameDialog",
   "threadTabContextMenu", "settingsDialogOpen", "runtimeList", "openThreads", "setGoalDialog",
   "setImagePreview", "setInspectMessage", "setAppSettings", "setMessageContextMenu",
-  "setMessageDisplayMode",
   "setProjectPicker", "setActiveThreadModelDraft", "setActiveThreadReasoningDraft",
   "setActiveThreadServiceTierDraft", "setThreadModelDialogOpen", "setThreadRenameDialog",
   "setThreadTabContextMenu", "setSettingsDialogOpen", "setThreadPicker", "submitProjectPickerPath",

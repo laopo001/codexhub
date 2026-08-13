@@ -10,7 +10,6 @@ import {
 import { compactToolViews } from "../../src/shared/compactRecordViews.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
 import { SubagentActivityMessage } from "../../src/web/SubagentActivityMessage.js";
-import { recordsToDetailedViews } from "../../src/web/detailedRecordViews.js";
 import { resolveSubagentThreadTarget } from "../../src/web/helpers/subagentThreads.js";
 
 const compactionRecord = (id: string, type: string): CodexRecord => ({
@@ -27,12 +26,10 @@ test("record views only special-case the normalized context_compaction event", (
   ];
 
   assert.equal(recordToView(current)?.label, "context_compaction");
-  assert.equal(recordsToDetailedViews([current])[0]?.label, "context_compaction");
 
   for (const record of oldAliases) {
     const type = (record.payload as { type: string }).type;
     assert.equal(recordToView(record)?.label, type);
-    assert.equal(recordsToDetailedViews([record])[0]?.label, type);
   }
 });
 
@@ -50,7 +47,56 @@ test("compact views only coalesce normalized context_compaction events", () => {
   assert.equal(compactToolViews(mixedViews).length, 2);
 });
 
-test("subagent activities keep one semantic view across compact and detailed modes", () => {
+test("Goal updates appear as user messages in Simple mode without repeating progress-only updates", async () => {
+  const makeGoalRecord = (
+    id: string,
+    objective: string,
+    options: { status?: string; timeUsedSeconds?: number; updatedAt?: number } = {}
+  ): CodexRecord => ({
+    id,
+    timestamp: `2026-08-02T13:0${id === "goal-paused" ? "2" : id === "goal-progress" ? "1" : "0"}:00.000Z`,
+    type: "event_msg",
+    sourceThreadId: "goal-thread",
+    payload: {
+      type: "thread_goal_updated",
+      threadId: "goal-thread",
+      goal: {
+        threadId: "goal-thread",
+        objective,
+        status: options.status ?? "active",
+        tokenBudget: null,
+        tokensUsed: options.timeUsedSeconds ?? 10,
+        timeUsedSeconds: options.timeUsedSeconds ?? 10,
+        createdAt: 1_754_131_200,
+        updatedAt: options.updatedAt ?? 1_754_131_200
+      }
+    }
+  });
+  const records = [
+    makeGoalRecord("goal-start", "finish the implementation"),
+    makeGoalRecord("goal-progress", "finish the implementation", { timeUsedSeconds: 30, updatedAt: 1_754_131_260 }),
+    makeGoalRecord("goal-paused", "finish the implementation", { status: "paused", updatedAt: 1_754_131_320 })
+  ];
+
+  assert.deepEqual(recordsToViews(records).map((view) => ({ role: view.role, label: view.label, text: view.text })), [
+    { role: "user", label: "goal", text: "finish the implementation" },
+    { role: "user", label: "goal", text: "finish the implementation" }
+  ]);
+  assert.equal(compactToolViews(recordsToViews(records)).every((view) => view.role === "user"), true);
+
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  try {
+    const { isSimpleMainView, isSimpleRecord } = await import("../../src/web/helpers/records.js");
+    assert.equal(isSimpleRecord(records[0]), true);
+    assert.equal(isSimpleMainView(recordsToViews([records[0]])[0]), true);
+  } finally {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  }
+});
+
+test("subagent activities keep one semantic view in Simple mode", () => {
   const kinds = [
     ["started", "Started"],
     ["interacted", "Interacted"],
@@ -70,10 +116,8 @@ test("subagent activities keep one semantic view across compact and detailed mod
       }
     };
     const compact = recordToView(record);
-    const detailed = recordsToDetailedViews([record])[0];
 
     assert.ok(compact);
-    assert.deepEqual(detailed, compact);
     assert.equal(compact.label, "subagent");
     assert.equal(compact.text, `${statusText} · readme_accuracy`);
     assert.equal(compact.statusText, statusText);
@@ -114,7 +158,7 @@ test("subagent activity UI hides protocol fields and exposes the child thread ac
   assert.match(html, /title="Review the README against the current product behavior"/);
 });
 
-test("subagent activities join their spawn assignment across every message mode", () => {
+test("subagent activities join their spawn assignment in Simple mode", () => {
   const parentThreadId = "parent-thread";
   const turnId = "turn-1";
   const childThreadId = "child-thread";
@@ -168,7 +212,6 @@ test("subagent activities join their spawn assignment across every message mode"
   // The activity intentionally arrives before the spawn item to cover live/history ordering.
   const records = [activity, unrelated, otherTurn, otherParent, spawn];
   const simple = recordsToViews(records).find((view) => view.id === activity.id);
-  const detailed = recordsToDetailedViews(records).find((view) => view.id === activity.id);
   const compact = compactToolViews(recordsToViews(records)).find((view) => view.id === activity.id);
   const expectedAssignment = {
     initialMessage: "Review the README against the current product behavior",
@@ -177,7 +220,6 @@ test("subagent activities join their spawn assignment across every message mode"
   };
 
   assert.deepEqual(simple?.subagentActivity?.assignment, expectedAssignment);
-  assert.deepEqual(detailed?.subagentActivity?.assignment, expectedAssignment);
   assert.deepEqual(compact?.subagentActivity?.assignment, expectedAssignment);
   assert.deepEqual(subagentAssignmentForChild(records, childThreadId), expectedAssignment);
   assert.equal(recordsToViews(records).find((view) => view.id === unrelated.id)?.subagentActivity?.assignment, undefined);
@@ -213,7 +255,7 @@ test("subagent thread actions follow the visible parent thread machine", () => {
   });
 });
 
-test("Plan mode output renders as the final Codex answer in both message modes", async () => {
+test("Plan mode output renders as the final Codex answer in Simple mode", async () => {
   const plan: CodexRecord = {
     id: "app:thread-1:turn-1:item:plan:plan-1",
     timestamp: "2026-07-24T07:23:18.397Z",
@@ -234,13 +276,6 @@ test("Plan mode output renders as the final Codex answer in both message modes",
   };
 
   assert.deepEqual(recordToView(plan), {
-    id: plan.id,
-    at: plan.timestamp,
-    statusText: "completed",
-    record: plan,
-    ...expected
-  });
-  assert.deepEqual(recordsToDetailedViews([plan])[0], {
     id: plan.id,
     at: plan.timestamp,
     statusText: "completed",
