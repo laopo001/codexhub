@@ -95,7 +95,7 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir:
     "--headless",
     "--disable-gpu",
     "--ozone-platform=headless",
-    "dist-node/electron/main.js"
+    "dist-node/electron/main.cjs"
   ], {
     cwd: process.cwd(),
     env,

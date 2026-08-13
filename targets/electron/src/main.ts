@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { app as electronApp, BrowserWindow, shell } from "electron";
 import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
@@ -18,7 +17,9 @@ import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/a
 import { apiRoutes } from "../../../src/shared/apiRoutes.js";
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
 
-const mainDirectory = path.dirname(fileURLToPath(import.meta.url));
+const mainDirectory = electronApp.isPackaged
+  ? path.join(electronApp.getAppPath(), "dist-node", "electron")
+  : electronApp.getAppPath();
 const surfaceHeartbeatMs = 10_000;
 
 let mainWindow: BrowserWindow | null = null;

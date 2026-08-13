@@ -48,7 +48,7 @@
     "codexhub": "tsx src/cli/codexhub.ts",
     "cxh": "tsx src/cli/codexhub.ts",
     "start": "node bin/codexhub server --host 0.0.0.0",
-    "electron:start": "pnpm build && electron --no-sandbox dist-node/electron/main.js",
+    "electron:start": "pnpm build && electron --no-sandbox dist-node/electron/main.cjs",
     "smoke:machine-session": "tsx scripts/smoke-machine-session.ts",
     "smoke:auth": "tsx scripts/smoke-auth.ts",
     "smoke:registered-machine": "tsx scripts/smoke-registered-machine.ts",

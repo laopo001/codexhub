@@ -32,8 +32,8 @@ await mkdir(path.join(stagingDirectory, "build"), { recursive: true });
 try {
   await cp(path.join(rootDirectory, "dist", "."), path.join(stagingDirectory, "dist"), { recursive: true });
   await cp(
-    path.join(rootDirectory, "dist-node", "electron", "main.js"),
-    path.join(stagingDirectory, "dist-node", "electron", "main.js")
+    path.join(rootDirectory, "dist-node", "electron", "main.cjs"),
+    path.join(stagingDirectory, "dist-node", "electron", "main.cjs")
   );
   await cp(
     path.join(rootDirectory, "dist-node", "electron", "authority-service.cjs"),
@@ -57,7 +57,7 @@ try {
       license: sourcePackage.license,
       author: "CodexHub",
       type: "module",
-      main: "dist-node/electron/main.js"
+      main: "dist-node/electron/main.cjs"
     }, null, 2)}\n`
   );
 
@@ -80,7 +80,7 @@ try {
       },
       files: [
         "package.json",
-        "dist-node/electron/main.js"
+        "dist-node/electron/main.cjs"
       ],
       extraResources: [
         { from: "dist", to: "codexhub/dist" },

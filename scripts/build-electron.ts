@@ -2,7 +2,7 @@ import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
 
-const outfile = "dist-node/electron/main.js";
+const outfile = "dist-node/electron/main.cjs";
 const authorityServiceOutfile = "dist-node/electron/authority-service.cjs";
 
 await mkdir(path.dirname(outfile), { recursive: true });
@@ -11,7 +11,7 @@ await build({
   outfile,
   bundle: true,
   platform: "node",
-  format: "esm",
+  format: "cjs",
   target: "node20",
   external: ["electron"],
   sourcemap: false,
