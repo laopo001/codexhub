@@ -32,6 +32,20 @@ test("machine registration and heartbeat reject unknown compatibility fields", (
   assert.equal(machineHeartbeatSchema.safeParse({ workerId: "legacy-worker" }).success, false);
 });
 
+test("machine activity summaries accept the compact Goal or user-input hint", () => {
+  assert.equal(machineRegistrationSchema.safeParse({
+    hostname: "test-host",
+    activities: [{
+      threadId: "thread-1",
+      title: "Old thread title",
+      activityTitle: "Goal: finish the smoke tests",
+      workingDirectory: "/tmp/project",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      status: "running"
+    }]
+  }).success, true);
+});
+
 test("session registration and heartbeat reject currentThreadId", () => {
   const registration = {
     workingDirectory: "/tmp/project",

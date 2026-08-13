@@ -32,6 +32,7 @@ import {
 import type { ProxyInput } from "../shared/inputTypes.js";
 import { compareCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
+import { threadActivityTitleFromRecords } from "../shared/threadActivity.js";
 import {
   asActivePermissionProfile,
   isModelReasoningEffort,
@@ -3135,6 +3136,7 @@ export class ThreadHub {
   }
 
   private summary(thread: ThreadState): ThreadSummary {
+    const activityTitle = threadActivityTitleFromRecords(thread.records, thread.threadId);
     return {
       threadId: thread.threadId,
       workingDirectory: thread.workingDirectory,
@@ -3151,6 +3153,7 @@ export class ThreadHub {
       running: thread.running,
       ...(thread.running && thread.appServerTurnId ? { activeTurnId: thread.appServerTurnId } : {}),
       title: thread.title,
+      ...(activityTitle ? { activityTitle } : {}),
       updatedAt: thread.updatedAt,
       messageCount: this.threadRecordIndex(thread).messageCount,
       lastUsage: thread.lastUsage,

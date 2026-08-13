@@ -135,6 +135,9 @@ type PetActivityCandidate = {
 const threadTitle = (title: string | undefined, workingDirectory: string, threadId: string) =>
   title || workingDirectory.split(/[\\/]/).filter(Boolean).pop() || threadId;
 
+const firstNonBlank = (...values: Array<string | undefined>) =>
+  values.find((value) => typeof value === "string" && value.trim())?.trim();
+
 const machineTypeLabel = (type: MachineSummary["type"]) => {
   if (type === "registered") return "Registered";
   if (type === "ssh") return "SSH";
@@ -202,9 +205,14 @@ export const derivePetActivities = (
           ? "running"
           : activity?.status ?? "idle";
       const machineLabel = petMachineLabel(machine, runtime);
+      const activityTitle = firstNonBlank(
+        detail?.activityTitle,
+        summary?.activityTitle,
+        activity?.activityTitle
+      );
       return {
         threadId: detail?.threadId ?? summary?.threadId ?? activity?.threadId ?? "",
-        title: threadTitle(
+        title: activityTitle ?? threadTitle(
           detail?.title ?? summary?.title ?? activity?.title,
           workingDirectory,
           detail?.threadId ?? summary?.threadId ?? activity?.threadId ?? ""

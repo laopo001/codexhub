@@ -686,6 +686,7 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
 const machineActivitySummarySchema = z.object({
   threadId: z.string().min(1),
   title: z.string(),
+  activityTitle: z.string().trim().min(1).max(160).optional(),
   workingDirectory: z.string().min(1),
   updatedAt: z.string().min(1),
   status: z.enum(["needs_input", "blocked", "running", "idle"])

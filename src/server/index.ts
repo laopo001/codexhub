@@ -432,6 +432,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     return threads.listRuntimes().flatMap((runtime) => runtime.threads.map((thread) => ({
       threadId: thread.threadId,
       title: thread.title,
+      ...(thread.activityTitle ? { activityTitle: thread.activityTitle } : {}),
       workingDirectory: thread.workingDirectory,
       updatedAt: thread.updatedAt,
       status: thread.running || thread.status === "running" ? "running" : "idle"

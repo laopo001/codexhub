@@ -274,6 +274,47 @@ test("pet activities include running threads from registered runtimes", () => {
   }]);
 });
 
+test("pet activity titles prefer Goal, then the latest user-input hint", () => {
+  const runtime: RuntimeSummary = {
+    machineId: "machine-title",
+    workingDirectory: "/home/laop/projects/codexhub",
+    online: true,
+    status: "online",
+    lastSeenAt: "2026-01-01T00:00:00.000Z",
+    threads: [{
+      threadId: "goal-thread",
+      workingDirectory: "/home/laop/projects/codexhub",
+      runtime: { machineId: "machine-title", online: true, runnable: true },
+      status: "running",
+      running: true,
+      title: "Old thread title",
+      activityTitle: "Goal: finish the smoke tests",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      messageCount: 2,
+      threadUsage: emptyThreadUsage()
+    }, {
+      threadId: "input-thread",
+      workingDirectory: "/home/laop/projects/codexhub",
+      runtime: { machineId: "machine-title", online: true, runnable: true },
+      status: "idle",
+      running: false,
+      title: "Old input thread title",
+      activityTitle: "帮我检查最后一条输入",
+      updatedAt: "2026-01-01T00:00:02.000Z",
+      messageCount: 2,
+      threadUsage: emptyThreadUsage()
+    }]
+  };
+
+  assert.deepEqual(
+    derivePetActivities([], [runtime]).map((activity) => [activity.threadId, activity.title]),
+    [
+      ["goal-thread", "Goal: finish the smoke tests"],
+      ["input-thread", "帮我检查最后一条输入"]
+    ]
+  );
+});
+
 test("single-thread completion runs jumping for three seconds before idle", () => {
   const completedTurn: CodexRecord = {
     id: "completed-a",

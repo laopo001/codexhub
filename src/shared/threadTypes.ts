@@ -31,6 +31,8 @@ export type ThreadSummary = {
   /** app-server 已确认的当前 Turn；Waiting 阶段尚未产生。 */
   activeTurnId?: string;
   title: string;
+  /** Desktop activity feed hint; does not replace the user-visible thread title. */
+  activityTitle?: string;
   updatedAt: string;
   messageCount: number;
   lastUsage?: Usage;

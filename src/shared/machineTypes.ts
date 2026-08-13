@@ -34,6 +34,8 @@ export type MachineActivityStatus = "needs_input" | "blocked" | "running" | "idl
 export type MachineActivitySummary = {
   threadId: string;
   title: string;
+  /** Compact Goal/user-input hint for activity-only consumers without records. */
+  activityTitle?: string;
   workingDirectory: string;
   updatedAt: string;
   status: MachineActivityStatus;
