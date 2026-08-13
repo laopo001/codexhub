@@ -215,6 +215,7 @@ const startElectronAuthority = async () => {
     remoteClientPath,
     buildId,
     authToken,
+    projectCatalog: "editable",
     runAsElectronNode: true,
     logFileName: "authority.log"
   });

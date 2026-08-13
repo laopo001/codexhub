@@ -5,7 +5,7 @@ import type { CodexRecordView } from "../shared/recordTypes.js";
 import { isEmbeddedSurfaceKind } from "../shared/surfaceTypes.js";
 import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from "./helpers/turnDurations.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
-import { embeddedWorkspacePaths, isEmbeddedHostSurface } from "./appConfig.js";
+import { embeddedWorkspacePaths, isFixedWorkspaceSurface } from "./appConfig.js";
 import {
   activeGoalActivityScopeFromRecords,
   activityStatusesFromRecords,
@@ -135,7 +135,7 @@ export const useAppSelectors = (state: AppState) => {
     state.dispatchOpenThreads({ type: "set-draft", threadId: state.activeTabThreadId, field: "permissionProfileDraft", value });
   };
   const projectList = useMemo(
-    () => isEmbeddedHostSurface
+    () => isFixedWorkspaceSurface
       ? state.projects.filter(isCurrentEmbeddedWorkspaceProject)
       : state.projects,
     [state.projects]
@@ -173,7 +173,7 @@ export const useAppSelectors = (state: AppState) => {
   const projectGroups = useMemo(
     () => {
       const groups = groupProjectsByMachine(projectList, state.machines);
-      return isEmbeddedHostSurface ? groups.filter((group) => group.projects.length > 0) : groups;
+      return isFixedWorkspaceSurface ? groups.filter((group) => group.projects.length > 0) : groups;
     },
     [projectList, state.machines]
   );

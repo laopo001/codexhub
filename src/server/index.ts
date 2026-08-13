@@ -190,6 +190,7 @@ export type ServerStartOptions = {
   appServerLaunch?: CodexAppServerLaunchOptions;
   parentRegistration?: Partial<ParentRegistrationConnectInput>;
   parentRegistrationIdentity?: ParentRegistrationIdentity;
+  localProjectCatalog?: "editable" | "fixed";
   authority?: CodexHubAuthorityDescriptor;
   embeddedSurfaceLeaseTimeoutMs?: number;
   embeddedSurfaceIdleShutdownMs?: number;
@@ -236,6 +237,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const notificationHooks = notificationHookRunnerFromEnv(process.env);
   const authorityService = Boolean(options.authority);
   const embeddedSurface = authorityService || isEmbeddedCodexHubSurface(surface);
+  const localProjectCatalog = options.localProjectCatalog ?? (embeddedSurface ? "fixed" : undefined);
   const shouldPersistMachine = (machine: { type?: string }) =>
     machine.type !== "registered" && !(embeddedSurface && machine.type === "local");
   let threads: ThreadHub;
@@ -871,7 +873,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "local",
       appServerLaunch,
       runtimeCatalogCachePath,
-      capabilities: embeddedSurface ? { projectCatalog: "fixed" } : undefined
+      capabilities: localProjectCatalog ? { projectCatalog: localProjectCatalog } : undefined
     });
   }
 

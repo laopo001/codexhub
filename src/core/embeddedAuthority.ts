@@ -24,6 +24,7 @@ export type EnsureEmbeddedAuthorityInput = {
   remoteClientPath?: string;
   buildId: string;
   authToken: string;
+  projectCatalog?: "editable" | "fixed";
   port?: number;
   runAsElectronNode?: boolean;
   logFileName?: string;
@@ -186,6 +187,7 @@ const startDetachedAuthority = async (
       "--static-directory", input.staticDirectory,
       "--build-id", input.buildId,
       ...(input.remoteClientPath ? ["--remote-client", input.remoteClientPath] : []),
+      ...(input.projectCatalog ? ["--project-catalog", input.projectCatalog] : []),
       ...(input.authToken ? ["--auth-token-env", "CODEX_HUB_AUTH_TOKEN"] : [])
     ];
     const childEnv: NodeJS.ProcessEnv = {

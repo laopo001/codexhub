@@ -14,7 +14,7 @@ import { createTaskActions } from "./appActions/taskActions.js";
 import { createThreadActions, type ThreadActions } from "./appActions/threadActions.js";
 import "./style.css";
 
-import { isElectronDesktopPetWindow, isEmbeddedHostSurface, isNativeElectronSurface } from "./appConfig.js";
+import { isElectronDesktopPetWindow, isEmbeddedHostSurface, isFixedWorkspaceSurface, isNativeElectronSurface } from "./appConfig.js";
 import { setAuthToken } from "./appHelpers.js";
 import { parseCodexHubHostIncomingMessage } from "./hostBridge.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
@@ -576,7 +576,7 @@ const App = () => {
     patchTask,
     projectGroups,
     projectList,
-    projectScopeLocked: isEmbeddedHostSurface,
+    projectScopeLocked: isFixedWorkspaceSurface,
     projectActionError,
     projectPicker,
     registeredCommand,

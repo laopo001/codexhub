@@ -22,6 +22,8 @@ export const isElectronDesktopPetWindow = isNativeElectronSurface && searchParam
 export const isTheiaSurface = webSurface === "theia";
 export const isTheiaVscodeHost = isVscodeSurface && searchParams.get("host") === "theia";
 export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
+/** VSCode/Theia projects come from the host workspace; Electron can browse local folders. */
+export const isFixedWorkspaceSurface = isEmbeddedHostSurface && !isElectronSurface;
 export const embeddedSurfaceId = searchParams.get("surfaceId")?.trim() ?? "";
 export const embeddedStateScope = searchParams.get("stateScope")?.trim() ?? embeddedSurfaceId;
 export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ?? "";

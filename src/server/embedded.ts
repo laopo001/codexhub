@@ -18,6 +18,7 @@ export type EmbeddedServerOptions = {
   surface?: CodexHubSurface;
   buildId?: string | null;
   authToken?: string;
+  localProjectCatalog?: "editable" | "fixed";
   parentRegistrationIdentity?: ParentRegistrationIdentity;
   authority?: CodexHubAuthorityDescriptor;
   embeddedSurfaceLeaseTimeoutMs?: number;
@@ -44,6 +45,7 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       surface: options.surface,
       buildId: options.buildId,
       authToken: options.authToken,
+      localProjectCatalog: options.localProjectCatalog,
       parentRegistrationIdentity: options.parentRegistrationIdentity,
       authority: options.authority,
       embeddedSurfaceLeaseTimeoutMs: options.embeddedSurfaceLeaseTimeoutMs,

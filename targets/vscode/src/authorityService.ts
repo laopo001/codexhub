@@ -21,6 +21,7 @@ async function main() {
   const staticDirectory = required(args, "static-directory");
   const buildId = args.get("build-id") || null;
   const authToken = authorityServiceAuthToken(args.get("auth-token-env"), process.env);
+  const localProjectCatalog = parseProjectCatalog(args.get("project-catalog") || "fixed");
   delete process.env.CODEX_HUB_AUTH_TOKEN;
   await removeLegacyAuthorityTokenFiles(dataDir).catch((error: unknown) => {
     console.warn(`codexhub embedded authority could not remove obsolete token file: ${errorText(error)}`);
@@ -35,6 +36,7 @@ async function main() {
     dataDir,
     staticDirectory,
     surface: "default",
+    localProjectCatalog,
     buildId,
     authToken,
     authority: {
@@ -92,6 +94,11 @@ function positiveInteger(value: string, label: string) {
 function parseAuthorityKind(value: string): CodexHubAuthorityKind {
   if (value === "windows" || value === "macos" || value === "linux" || value === "wsl") return value;
   throw new Error(`Invalid authority kind: ${value}`);
+}
+
+function parseProjectCatalog(value: string): "editable" | "fixed" {
+  if (value === "editable" || value === "fixed") return value;
+  throw new Error(`Invalid project catalog: ${value}`);
 }
 
 function authorityLabel(kind: CodexHubAuthorityKind) {
