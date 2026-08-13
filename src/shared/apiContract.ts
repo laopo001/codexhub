@@ -21,7 +21,7 @@ import type {
 } from "./projectTypes.js";
 import type { SshHostConfig, SshMachineConnectInput, SshMachineConnection } from "./sshTypes.js";
 import type { ModelReasoningEffort, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "./usageTypes.js";
-import type { CodexHubSurface } from "./surfaceTypes.js";
+import type { CodexHubAuthorityDescriptor, CodexHubSurface } from "./surfaceTypes.js";
 import type { InvalidPetPackage, PetManifest, PetMutationPayload, PetsPayload } from "./petTypes.js";
 import type {
   AppServerApprovalDecision,
@@ -131,6 +131,7 @@ export type HealthPayload = AuthStatusPayload & {
   host?: string;
   port?: number;
   surface?: CodexHubSurface;
+  authority?: CodexHubAuthorityDescriptor;
   features?: Record<string, boolean>;
   staticDirectory?: string;
   configPath?: string;
@@ -144,6 +145,36 @@ export type HealthPayload = AuthStatusPayload & {
   };
   telegram?: {
     started?: boolean;
+  };
+};
+
+export type VscodeSurfaceRegistrationInput = {
+  surfaceId: string;
+  leaseId: string;
+  protocolVersion: number;
+  workspacePaths: string[];
+  activeWorkspacePath?: string;
+  label: string;
+  buildId?: string;
+};
+
+export type VscodeSurfaceHeartbeatInput = {
+  leaseId: string;
+  protocolVersion: number;
+};
+
+export type VscodeSurfacePayload = {
+  ok: boolean;
+  surface?: {
+    surfaceId: string;
+    leaseId: string;
+    machineId: string;
+    workspacePaths: string[];
+    activeWorkspacePath?: string;
+    label: string;
+    buildId?: string;
+    updatedAt: string;
+    expiresAt: string;
   };
 };
 
@@ -555,6 +586,23 @@ export const projectSourceSchema = z.object({
   kind: z.enum(["vscode", "theia"]),
   groupId: z.string().min(1),
   label: z.string().min(1).optional()
+}).strict();
+
+const vscodeSurfaceIdSchema = z.string().trim().min(1).max(200);
+
+export const vscodeSurfaceRegistrationSchema = z.object({
+  surfaceId: vscodeSurfaceIdSchema,
+  leaseId: vscodeSurfaceIdSchema,
+  protocolVersion: z.number().int().positive(),
+  workspacePaths: z.array(z.string().trim().min(1)).min(1).max(64),
+  activeWorkspacePath: z.string().trim().min(1).optional(),
+  label: z.string().trim().min(1).max(200),
+  buildId: z.string().trim().min(1).max(500).optional()
+}).strict();
+
+export const vscodeSurfaceHeartbeatSchema = z.object({
+  leaseId: vscodeSurfaceIdSchema,
+  protocolVersion: z.number().int().positive()
 }).strict();
 
 export const machineRegistrationProjectSchema = z.object({

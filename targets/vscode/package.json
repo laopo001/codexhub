@@ -11,6 +11,7 @@
   },
   "files": [
     "extension.cjs",
+    "authority-service.cjs",
     "dist",
     "dist-node",
     "media",

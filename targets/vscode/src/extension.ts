@@ -1,28 +1,45 @@
-import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { closeSync, openSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import * as vscode from "vscode";
-import type { ServerHandle } from "../../../src/server/index.js";
+import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import {
-  stableEmbeddedPortForName,
-  startEmbeddedServer
-} from "../../../src/server/embedded.js";
-import { openEmbeddedWorkspaceProjects } from "../../../src/core/embeddedWorkspaceProjects.js";
+  vscodeAuthorityKind,
+  vscodeAuthorityServicePort,
+  vscodeSurfaceProtocolVersion
+} from "../../../src/shared/surfaceTypes.js";
+import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/apiClient.js";
+import { apiRoutes } from "../../../src/shared/apiRoutes.js";
+import type { HealthPayload } from "../../../src/shared/apiContract.js";
+import {
+  configuredVscodeAuthorityAuthToken,
+  removeLegacyVscodeAuthorityTokenFile,
+  vscodeAuthorityAuthTokenEnvName
+} from "./authorityAuth.js";
 import { buildWebviewBridgeScript } from "./webviewBridge.js";
 
 const viewId = "codexhub.workspaceView";
-const vscodeWorkspaceGroupId = "workspace";
-const parentRegistrationMachineIdKey = "codexhub.parentRegistrationMachineId.v1";
+const authorityIdFileName = "vscode-authority-id";
+const surfaceHeartbeatMs = 10_000;
 const maxSelectionAttachmentBytes = 512 * 1024;
 const isTheiaHost = /\btheia\b/i.test(`${vscode.env.appName} ${vscode.env.uriScheme}`);
 
 type VscodeCodexHubServer = {
   url: string;
-  owned?: ServerHandle;
+  authorityId: string;
+  buildId: string;
+  authToken: string;
+  replacementExpected?: boolean;
 };
+
+let activeProvider: CodexHubWorkspaceViewProvider | null = null;
 
 export function activate(context: vscode.ExtensionContext) {
   const provider = new CodexHubWorkspaceViewProvider(context);
+  activeProvider = provider;
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(viewId, provider, {
       webviewOptions: { retainContextWhenHidden: true }
@@ -32,12 +49,15 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("codexhub.openConfig", () => provider.openConfig()),
     vscode.commands.registerCommand("codexhub.sendSelectionToChat", () => provider.sendSelectionToChat()),
     vscode.commands.registerCommand("codexhub.sendPathToChat", (uri?: vscode.Uri, selectedUris?: vscode.Uri[]) => provider.sendPathToChat(uri, selectedUris)),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()),
     provider
   );
 }
 
 export async function deactivate() {
-  await CodexHubWorkspaceViewProvider.stopCurrentServer({ force: true });
+  const provider = activeProvider;
+  activeProvider = null;
+  await provider?.shutdown();
 }
 
 class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -46,18 +66,19 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   private view: vscode.WebviewView | null = null;
   private webviewMessageSubscription: vscode.Disposable | null = null;
   private renderPromise: Promise<void> | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private heartbeatInFlight = false;
+  private registeredServerUrl = "";
+  private registeredAuthToken = "";
+  private readonly surfaceId = `vscode-${randomUUID()}`;
+  private readonly leaseId = randomUUID();
   private disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
-  static async stopCurrentServer(options: { force?: boolean } = {}) {
-    const server = CodexHubWorkspaceViewProvider.currentServer;
+  static resetCurrentServer() {
     CodexHubWorkspaceViewProvider.currentServer = null;
     CodexHubWorkspaceViewProvider.currentServerStart = null;
-    if (!options.force) return;
-    await server?.owned?.stop().catch((error: unknown) => {
-      console.error(`codexhub vscode server stop failed: ${errorText(error)}`);
-    });
   }
 
   resolveWebviewView(view: vscode.WebviewView) {
@@ -75,9 +96,16 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   }
 
   dispose() {
+    void this.shutdown();
+  }
+
+  async shutdown() {
+    if (this.disposed) return;
     this.disposed = true;
+    this.stopHeartbeat();
     this.webviewMessageSubscription?.dispose();
     this.webviewMessageSubscription = null;
+    await this.unregisterSurface();
   }
 
   async refresh() {
@@ -89,7 +117,16 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   async openInBrowser() {
     const server = await this.ensureServer();
-    await vscode.env.openExternal(await externalServerUri(server.url));
+    const folders = fileWorkspaceFolders();
+    if (folders.length) {
+      const activeFolder = activeWorkspaceFolder(folders) ?? folders[0];
+      await this.registerSurface(server, folders, activeFolder.path);
+      await vscode.env.openExternal(await externalServerUri(
+        vscodeSurfaceServerUrl(server, folders, activeFolder.path, this.surfaceId)
+      ));
+      return;
+    }
+    await vscode.env.openExternal(await externalServerUri(authenticatedServerUrl(server)));
   }
 
   async openConfig() {
@@ -207,6 +244,8 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     if (!this.view || this.disposed) return;
     const workspaceFolders = fileWorkspaceFolders();
     if (!workspaceFolders.length) {
+      this.stopHeartbeat();
+      await this.unregisterSurface();
       this.view.webview.html = statusHtml("Open a folder or workspace to use Codex Hub.");
       return;
     }
@@ -214,27 +253,33 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
     try {
       const server = await this.ensureServer();
-      const url = server.url;
-      await openWorkspaceProjects(url, workspaceFolders, activeFolder.path);
-      const iframeUrl = new URL("/", url);
-      iframeUrl.searchParams.set("surface", "vscode");
-      if (isTheiaHost) iframeUrl.searchParams.set("host", "theia");
-      iframeUrl.searchParams.set("workspacePath", activeFolder.path);
-      for (const folder of workspaceFolders) iframeUrl.searchParams.append("workspaceFolder", folder.path);
-      const externalIframeUri = await externalServerUri(iframeUrl.toString());
-      this.view.webview.html = iframeHtml(externalIframeUri.toString(), activeFolder.path, isTheiaHost);
+      await this.registerSurface(server, workspaceFolders, activeFolder.path);
+      const externalIframeUri = await externalServerUri(
+        vscodeSurfaceServerUrl(server, workspaceFolders, activeFolder.path, this.surfaceId)
+      );
+      this.view.webview.html = iframeHtml(externalIframeUri.toString(true), activeFolder.path, isTheiaHost);
     } catch (error) {
       this.view.webview.html = statusHtml(`Codex Hub failed to start: ${errorText(error)}`);
     }
   }
 
   private async ensureServer() {
-    if (CodexHubWorkspaceViewProvider.currentServer) return CodexHubWorkspaceViewProvider.currentServer;
-    if (!CodexHubWorkspaceViewProvider.currentServerStart) {
-      CodexHubWorkspaceViewProvider.currentServerStart = this.startWindowServer();
+    const current = CodexHubWorkspaceViewProvider.currentServer;
+    if (current) {
+      const health = await probeAuthorityService(current.url, current.authorityId, Boolean(current.authToken));
+      if (health) return current;
+      CodexHubWorkspaceViewProvider.resetCurrentServer();
     }
-    CodexHubWorkspaceViewProvider.currentServer = await CodexHubWorkspaceViewProvider.currentServerStart;
-    return CodexHubWorkspaceViewProvider.currentServer;
+    if (!CodexHubWorkspaceViewProvider.currentServerStart) {
+      CodexHubWorkspaceViewProvider.currentServerStart = this.startAuthorityService();
+    }
+    try {
+      CodexHubWorkspaceViewProvider.currentServer = await CodexHubWorkspaceViewProvider.currentServerStart;
+      return CodexHubWorkspaceViewProvider.currentServer;
+    } catch (error) {
+      CodexHubWorkspaceViewProvider.resetCurrentServer();
+      throw error;
+    }
   }
 
   private async waitForView(timeoutMs = 5000) {
@@ -245,40 +290,133 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     return this.view;
   }
 
-  private async startWindowServer(): Promise<VscodeCodexHubServer> {
+  private async startAuthorityService(): Promise<VscodeCodexHubServer> {
+    const dataDir = this.context.globalStorageUri.fsPath;
+    await removeLegacyVscodeAuthorityTokenFile(dataDir).catch((error: unknown) => {
+      console.warn(`codexhub vscode could not remove obsolete authority token file: ${errorText(error)}`);
+    });
     const staticDirectory = this.context.asAbsolutePath("dist");
     const buildId = await vscodeWindowBuildId(this.context, staticDirectory);
-    const preferredPort = stableEmbeddedPortForName(vscodeWorkspacePortName());
-    const parentRegistrationIdentity = await this.parentRegistrationIdentity();
-    const owned = await startEmbeddedServer({
-      host: process.env.CODEX_HUB_HOST ?? "0.0.0.0",
-      portMode: "increment",
-      preferredPort,
-      dataDir: this.context.globalStorageUri.fsPath,
-      staticDirectory,
-      surface: "vscode",
+    const [authorityId, configEnv] = await Promise.all([
+      resolveAuthorityId(dataDir),
+      readServerConfigEnv(path.join(dataDir, "config.yaml"))
+    ]);
+    const authToken = configuredVscodeAuthorityAuthToken(process.env, configEnv);
+    const port = vscodeAuthorityServicePort();
+    const url = `http://127.0.0.1:${port}`;
+    const existing = await probeAuthorityService(url, authorityId, Boolean(authToken));
+    if (existing) return {
+      url,
+      authorityId,
       buildId,
-      parentRegistrationIdentity,
-      features: {
-        localMachine: true
-      },
-      logPrefix: "codexhub vscode window"
+      authToken,
+      replacementExpected: Boolean(existing.build && existing.build !== buildId)
+    };
+    if (await isTcpPortListening("127.0.0.1", port)) {
+      throw new Error(`VSCode authority port is occupied by a non-responsive service: ${url}`);
+    }
+
+    await startDetachedAuthorityService({
+      context: this.context,
+      authorityId,
+      authToken,
+      port,
+      dataDir,
+      staticDirectory,
+      buildId
     });
-    return { url: serverUrl(owned.host, owned.port), owned };
+    await waitForAuthorityService(url, authorityId, Boolean(authToken));
+    return { url, authorityId, buildId, authToken };
   }
 
-  private async parentRegistrationIdentity() {
-    const storedMachineId = this.context.workspaceState.get<string>(parentRegistrationMachineIdKey)?.trim();
-    const machineId = storedMachineId || `machine-vscode-${randomUUID()}`;
-    if (!storedMachineId) await this.context.workspaceState.update(parentRegistrationMachineIdKey, machineId);
-    const workspaceNames = fileWorkspaceFolders().map((folder) => folder.name);
-    const workspaceLabel = workspaceNames.length
-      ? workspaceNames.slice(0, 2).join(" + ") + (workspaceNames.length > 2 ? ` +${workspaceNames.length - 2}` : "")
-      : "window";
-    return {
-      machineId,
-      name: `CodexHub VSCode · ${workspaceLabel}`
-    };
+  private async registerSurface(
+    server: VscodeCodexHubServer,
+    folders: VscodeWorkspaceFolder[],
+    activePath: string,
+    attempts = 30
+  ) {
+    const client = createCodexHubApiClient({ baseUrl: server.url, authToken: server.authToken });
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        await client.route(apiRoutes.registerVscodeSurface, {
+          surfaceId: this.surfaceId,
+          leaseId: this.leaseId,
+          protocolVersion: vscodeSurfaceProtocolVersion,
+          workspacePaths: folders.map((folder) => folder.path),
+          activeWorkspacePath: activePath,
+          label: vscodeWorkspaceGroupLabel(folders),
+          buildId: server.buildId
+        });
+        this.registeredServerUrl = server.url;
+        this.registeredAuthToken = server.authToken;
+        this.startHeartbeat();
+        if (server.replacementExpected) void delay(500).then(() => this.heartbeat());
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!isTransientSurfaceRegistrationError(error) || attempt + 1 >= attempts) break;
+        await delay(500);
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  private startHeartbeat() {
+    if (this.heartbeatTimer || this.disposed) return;
+    this.heartbeatTimer = setInterval(() => void this.heartbeat(), surfaceHeartbeatMs);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeat() {
+    if (!this.heartbeatTimer) return;
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+  }
+
+  private async heartbeat() {
+    if (this.heartbeatInFlight || this.disposed || !this.registeredServerUrl) return;
+    this.heartbeatInFlight = true;
+    try {
+      const client = createCodexHubApiClient({
+        baseUrl: this.registeredServerUrl,
+        authToken: this.registeredAuthToken
+      });
+      await client.route(apiRoutes.heartbeatVscodeSurface, this.surfaceId, {
+        leaseId: this.leaseId,
+        protocolVersion: vscodeSurfaceProtocolVersion
+      });
+    } catch (error) {
+      try {
+        CodexHubWorkspaceViewProvider.resetCurrentServer();
+        const server = await this.ensureServer();
+        const folders = fileWorkspaceFolders();
+        if (!folders.length) return;
+        const activeFolder = activeWorkspaceFolder(folders) ?? folders[0];
+        await this.registerSurface(server, folders, activeFolder.path, 3);
+        if (this.view) {
+          this.renderPromise = this.render();
+          await this.renderPromise;
+        }
+      } catch (reconnectError) {
+        console.error(`codexhub vscode surface reconnect failed: ${errorText(reconnectError || error)}`);
+      }
+    } finally {
+      this.heartbeatInFlight = false;
+    }
+  }
+
+  private async unregisterSurface() {
+    const serverUrl = this.registeredServerUrl;
+    const authToken = this.registeredAuthToken;
+    this.registeredServerUrl = "";
+    this.registeredAuthToken = "";
+    if (!serverUrl) return;
+    const client = createCodexHubApiClient({
+      baseUrl: serverUrl,
+      authToken
+    });
+    await client.route(apiRoutes.unregisterVscodeSurface, this.surfaceId, this.leaseId).catch(() => undefined);
   }
 
   private async resolveConfigPath() {
@@ -400,19 +538,6 @@ const activeWorkspaceFolder = (folders: VscodeWorkspaceFolder[]) => {
     : undefined;
 };
 
-const openWorkspaceProjects = async (serverUrl: string, folders: VscodeWorkspaceFolder[], activePath: string) => {
-  await openEmbeddedWorkspaceProjects({
-    serverUrl,
-    workspacePaths: folders.map((folder) => folder.path),
-    activeWorkspacePath: activePath,
-    source: {
-      kind: "vscode",
-      groupId: vscodeWorkspaceGroupId,
-      label: vscodeWorkspaceGroupLabel(folders)
-    }
-  });
-};
-
 const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[]) => {
   const workspaceName = vscode.workspace.name?.trim();
   if (workspaceName && (folders.length > 1 || workspaceName !== folders[0]?.name)) return `VSCode: ${workspaceName}`;
@@ -420,14 +545,10 @@ const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[]) => {
   return folderName ? `VSCode: ${folderName}` : "VSCode Workspace";
 };
 
-const vscodeWorkspacePortName = () => {
-  const workspaceName = vscode.workspace.name?.trim();
-  if (workspaceName) return workspaceName;
-  const folderNames = fileWorkspaceFolders()
-    .map((folder) => folder.name.trim())
-    .filter(Boolean);
-  return folderNames.join(" + ") || "CodexHub VSCode";
-};
+const vscodeWorkspaceStateScope = (folders: VscodeWorkspaceFolder[]) => createHash("sha256")
+  .update(folders.map((folder) => folder.path).sort().join("\0"))
+  .digest("hex")
+  .slice(0, 24);
 
 const iframeHtml = (src: string, workspacePath: string, theiaHost: boolean) => {
   const nonce = randomNonce();
@@ -549,6 +670,7 @@ const vscodeWindowBuildId = async (context: vscode.ExtensionContext, staticDirec
   const id = context.extension.id || "codexhub";
   const fingerprints = await Promise.all([
     fileFingerprint(context.asAbsolutePath("extension.cjs")),
+    fileFingerprint(context.asAbsolutePath("authority-service.cjs")),
     fileFingerprint(path.join(staticDirectory, "index.html"))
   ]);
   return `vscode:${id}:${version}:${fingerprints.join(":")}`;
@@ -556,17 +678,196 @@ const vscodeWindowBuildId = async (context: vscode.ExtensionContext, staticDirec
 
 const fileFingerprint = async (filePath: string) => {
   try {
-    const info = await stat(filePath);
-    return `${path.basename(filePath)}-${info.size}-${Math.trunc(info.mtimeMs)}`;
+    const contents = await readFile(filePath);
+    const digest = createHash("sha256").update(contents).digest("hex").slice(0, 20);
+    return `${path.basename(filePath)}-${contents.byteLength}-${digest}`;
   } catch {
     return `${path.basename(filePath)}-missing`;
   }
 };
 
-const serverUrl = (host: string, port: number) => {
-  const displayHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
-  return `http://${displayHost}:${port}`;
+const resolveAuthorityId = async (dataDir: string) => {
+  await mkdir(dataDir, { recursive: true });
+  const filePath = path.join(dataDir, authorityIdFileName);
+  const read = async () => {
+    const value = (await readFile(filePath, "utf8")).trim();
+    if (!/^authority-[a-z0-9-]{8,}$/i.test(value)) {
+      throw new Error(`Invalid CodexHub VSCode authority id: ${filePath}`);
+    }
+    return value;
+  };
+  try {
+    return await read();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const candidate = `authority-${randomUUID()}`;
+  try {
+    await writeFile(filePath, `${candidate}\n`, { flag: "wx", mode: 0o600 });
+    return candidate;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    return await read();
+  }
 };
+
+type DetachedAuthorityServiceInput = {
+  context: vscode.ExtensionContext;
+  authorityId: string;
+  authToken: string;
+  port: number;
+  dataDir: string;
+  staticDirectory: string;
+  buildId: string;
+};
+
+const startDetachedAuthorityService = async (input: DetachedAuthorityServiceInput) => {
+  const servicePath = input.context.asAbsolutePath("authority-service.cjs");
+  const remoteClientPath = input.context.asAbsolutePath("dist-node/ssh/remote-client.cjs");
+  await Promise.all([stat(servicePath), stat(input.staticDirectory)]);
+  await mkdir(input.dataDir, { recursive: true });
+  const logPath = path.join(input.dataDir, "vscode-authority.log");
+  const logFd = openSync(logPath, "a", 0o600);
+  try {
+    const args = [
+      servicePath,
+      "--port", String(input.port),
+      "--authority-id", input.authorityId,
+      "--authority-kind", vscodeAuthorityKind(),
+      "--data-dir", input.dataDir,
+      "--static-directory", input.staticDirectory,
+      "--remote-client", remoteClientPath,
+      "--build-id", input.buildId,
+      ...(input.authToken ? ["--auth-token-env", vscodeAuthorityAuthTokenEnvName] : [])
+    ];
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1"
+    };
+    delete childEnv.CODEX_HUB_AUTH_TOKEN;
+    if (input.authToken) childEnv.CODEX_HUB_AUTH_TOKEN = input.authToken;
+    const child = spawn(process.execPath, args, {
+      cwd: input.dataDir,
+      detached: true,
+      windowsHide: true,
+      stdio: ["ignore", logFd, logFd],
+      env: childEnv
+    });
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        child.off("spawn", onSpawn);
+        reject(error);
+      };
+      const onSpawn = () => {
+        child.off("error", onError);
+        resolve();
+      };
+      child.once("error", onError);
+      child.once("spawn", onSpawn);
+    });
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
+};
+
+const probeAuthorityService = async (
+  url: string,
+  authorityId: string,
+  expectedAuthRequired: boolean
+): Promise<HealthPayload | null> => {
+  let response: Response;
+  try {
+    response = await fetch(new URL("/api/health", url), { signal: AbortSignal.timeout(1_000) });
+  } catch {
+    return null;
+  }
+  if (!response.ok) throw new Error(`VSCode authority port returned HTTP ${response.status}: ${url}`);
+  let health: HealthPayload;
+  try {
+    health = await response.json() as HealthPayload;
+  } catch {
+    throw new Error(`VSCode authority port is occupied by a non-CodexHub service: ${url}`);
+  }
+  if (health.surface !== "vscode" || !health.authority) {
+    throw new Error(`VSCode authority port is occupied by another CodexHub service: ${url}`);
+  }
+  if (health.authRequired !== expectedAuthRequired) {
+    const expected = expectedAuthRequired ? "enabled" : "disabled";
+    const received = health.authRequired ? "enabled" : "disabled";
+    throw new Error(
+      `VSCode authority authentication mode mismatch on ${url}: expected ${expected}, received ${received}. `
+      + "Close all VSCode windows for this authority, wait for the old service to exit, then reopen one window."
+    );
+  }
+  if (health.authority.authorityId !== authorityId) {
+    throw new Error(`VSCode authority mismatch on ${url}: expected ${authorityId}, received ${health.authority.authorityId}.`);
+  }
+  if (health.authority.surfaceProtocolVersion !== vscodeSurfaceProtocolVersion) {
+    throw new Error(
+      `VSCode authority protocol mismatch on ${url}: expected ${vscodeSurfaceProtocolVersion}, received ${health.authority.surfaceProtocolVersion}.`
+    );
+  }
+  return health;
+};
+
+const waitForAuthorityService = async (
+  url: string,
+  authorityId: string,
+  expectedAuthRequired: boolean,
+  timeoutMs = 20_000
+) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const health = await probeAuthorityService(url, authorityId, expectedAuthRequired);
+    if (health) return health;
+    await delay(200);
+  }
+  throw new Error(`Timed out waiting for CodexHub VSCode authority service at ${url}. Check vscode-authority.log.`);
+};
+
+const authenticatedServerUrl = (server: VscodeCodexHubServer) => {
+  const url = new URL("/", server.url);
+  if (server.authToken) url.searchParams.set("codexhub_token", server.authToken);
+  return url.toString();
+};
+
+const vscodeSurfaceServerUrl = (
+  server: VscodeCodexHubServer,
+  folders: VscodeWorkspaceFolder[],
+  activePath: string,
+  surfaceId: string
+) => {
+  const url = new URL(authenticatedServerUrl(server));
+  url.searchParams.set("surface", "vscode");
+  url.searchParams.set("surfaceId", surfaceId);
+  url.searchParams.set("stateScope", vscodeWorkspaceStateScope(folders));
+  if (isTheiaHost) url.searchParams.set("host", "theia");
+  url.searchParams.set("workspacePath", activePath);
+  for (const folder of folders) url.searchParams.append("workspaceFolder", folder.path);
+  return url.toString();
+};
+
+const isTcpPortListening = async (host: string, port: number) => await new Promise<boolean>((resolve) => {
+  const socket = net.createConnection({ host, port });
+  const finish = (listening: boolean) => {
+    socket.removeAllListeners();
+    socket.destroy();
+    resolve(listening);
+  };
+  socket.setTimeout(500);
+  socket.once("connect", () => finish(true));
+  socket.once("error", () => finish(false));
+  socket.once("timeout", () => finish(false));
+});
+
+const isTransientSurfaceRegistrationError = (error: unknown) =>
+  error instanceof CodexHubApiError
+  && error.status === 409
+  && (
+    error.responseText.includes("Local project launcher is still starting")
+    || error.responseText.includes("No online codexhub project launcher")
+  );
 
 const externalServerUri = async (url: string) => {
   const parsed = new URL(url);
@@ -575,10 +876,10 @@ const externalServerUri = async (url: string) => {
     authority: parsed.host,
     path: parsed.pathname
   }));
-  const externalUrl = new URL(external.toString());
-  externalUrl.search = parsed.search;
-  externalUrl.hash = parsed.hash;
-  return vscode.Uri.parse(externalUrl.toString());
+  return external.with({
+    query: parsed.searchParams.toString(),
+    fragment: parsed.hash.replace(/^#/, "")
+  });
 };
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);

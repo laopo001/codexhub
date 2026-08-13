@@ -7,6 +7,7 @@ export { parseRealtimeMessage } from "../../shared/realtimeClient.js";
 import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../shared/taskCron.js";
 import { threadGranularApprovalKeys, type ThreadGranularApprovalKey } from "../../shared/usageTypes.js";
 import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, RuntimeSummary, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, ApprovalsReviewerDraft, PermissionProfileDraft } from "../types.js";
+import { codexHubSearchParams } from "../urlSearch.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -14,10 +15,12 @@ const authStorageKey = "codexhub.authToken";
 export const initAuthTokenFromUrl = () => {
   if (typeof window === "undefined") return "";
   const url = new URL(window.location.href);
-  const token = url.searchParams.get("codexhub_token")?.trim() || "";
+  const params = codexHubSearchParams(url.search);
+  const token = params.get("codexhub_token")?.trim() || "";
   if (!token) return authToken();
   window.localStorage.setItem(authStorageKey, token);
-  url.searchParams.delete("codexhub_token");
+  params.delete("codexhub_token");
+  url.search = params.toString();
   window.history.replaceState(window.history.state, "", url);
   return token;
 };

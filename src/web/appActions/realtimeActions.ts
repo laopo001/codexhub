@@ -7,7 +7,12 @@ import {
   codexHubRealtimeUrl,
   threadCursorAfterEvent
 } from "../../shared/realtimeClient.js";
-import { defaultAppSettings, initialWorkspacePath, isEmbeddedHostSurface } from "../appConfig.js";
+import {
+  defaultAppSettings,
+  embeddedWorkspacePaths,
+  initialWorkspacePath,
+  isEmbeddedHostSurface
+} from "../appConfig.js";
 import {
   apiRouteJson,
   authToken,
@@ -28,6 +33,7 @@ import {
   projectKeyForProject,
   readStoredUiState,
   runtimeForProject,
+  setAuthToken,
   showBrowserTaskCompleteNotification,
   createRegisteredMachineConnectionTracker,
   type SidebarDraftStore,
@@ -116,6 +122,7 @@ export type RealtimeActions = {
 };
 
 const taskRunNotificationKey = (task: LocalTask, runId: string) => `task:${task.taskId}:${runId}`;
+const embeddedWorkspacePathSet = new Set(embeddedWorkspacePaths);
 
 const taskRunCompleteNotification = (task: LocalTask, run: LocalTaskRun): TaskCompleteNotification => {
   const duration = formatDuration(run.durationMs) || undefined;
@@ -144,6 +151,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
   const initialize = async () => {
     const health = await apiRouteJson(apiRoutes.health);
     ctx.setServerAuthRequired(Boolean(health.authRequired));
+    if (!health.authRequired && authToken()) setAuthToken("");
     if (health.authRequired && !health.authenticated && !authToken()) {
       ctx.setAuthRequired(true);
       ctx.setInitialized(true);
@@ -367,6 +375,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
   }
 
   function notifyTaskCompletionsFromStreamEvent(event: StreamEvent) {
+    if (
+      isEmbeddedHostSurface
+      && embeddedWorkspacePathSet.size
+      && !embeddedWorkspacePathSet.has(event.thread.workingDirectory)
+    ) return;
     const threadId = event.thread.threadId;
     const incomingRecords = streamEventRecords(event);
     if (!incomingRecords.length) return;
@@ -397,6 +410,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
 
   function notifyTaskCompletionsFromTasksEvent(tasks: LocalTask[]) {
     for (const task of tasks) {
+      if (
+        isEmbeddedHostSurface
+        && embeddedWorkspacePathSet.size
+        && !embeddedWorkspacePathSet.has(task.projectPath)
+      ) continue;
       for (const run of task.runs ?? []) {
         if (run.status !== "completed") continue;
         const key = taskRunNotificationKey(task, run.runId);

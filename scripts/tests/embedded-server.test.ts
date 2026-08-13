@@ -9,6 +9,24 @@ import {
   stableEmbeddedPortForName,
   startEmbeddedServer
 } from "../../src/server/embedded.js";
+import {
+  vscodeAuthorityKind,
+  vscodeAuthorityServicePort,
+  vscodeHostServicePort
+} from "../../src/shared/surfaceTypes.js";
+
+test("VSCode authority ports match across desktop hosts and reserve WSL plus one", () => {
+  assert.equal(vscodeHostServicePort, 28_788);
+  assert.equal(vscodeAuthorityServicePort({}, "win32"), 28_788);
+  assert.equal(vscodeAuthorityServicePort({}, "darwin"), 28_788);
+  assert.equal(vscodeAuthorityServicePort({}, "linux"), 28_788);
+  assert.equal(vscodeAuthorityServicePort({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), 28_789);
+  assert.equal(vscodeAuthorityServicePort({ WSL_INTEROP: "/run/WSL/1_interop" }, "linux"), 28_789);
+  assert.equal(vscodeAuthorityKind({}, "win32"), "windows");
+  assert.equal(vscodeAuthorityKind({}, "darwin"), "macos");
+  assert.equal(vscodeAuthorityKind({}, "linux"), "linux");
+  assert.equal(vscodeAuthorityKind({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), "wsl");
+});
 
 test("stable embedded ports are deterministic and stay inside the named range", () => {
   const first = stableEmbeddedPortForName("codexhub");

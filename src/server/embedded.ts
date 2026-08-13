@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import net from "node:net";
 import { loadDotEnv } from "../core/dotenv.js";
-import type { CodexHubSurface } from "../shared/surfaceTypes.js";
+import type { CodexHubAuthorityDescriptor, CodexHubSurface } from "../shared/surfaceTypes.js";
 import {
   startServer,
   type ParentRegistrationIdentity,
@@ -17,7 +17,11 @@ export type EmbeddedServerOptions = {
   staticDirectory?: string;
   surface?: CodexHubSurface;
   buildId?: string | null;
+  authToken?: string;
   parentRegistrationIdentity?: ParentRegistrationIdentity;
+  authority?: CodexHubAuthorityDescriptor;
+  vscodeSurfaceLeaseTimeoutMs?: number;
+  vscodeSurfaceIdleShutdownMs?: number;
   features?: Partial<ServerFeatureOptions>;
   logPrefix?: string;
 };
@@ -39,7 +43,11 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       staticDirectory: options.staticDirectory,
       surface: options.surface,
       buildId: options.buildId,
+      authToken: options.authToken,
       parentRegistrationIdentity: options.parentRegistrationIdentity,
+      authority: options.authority,
+      vscodeSurfaceLeaseTimeoutMs: options.vscodeSurfaceLeaseTimeoutMs,
+      vscodeSurfaceIdleShutdownMs: options.vscodeSurfaceIdleShutdownMs,
       features: options.features
     });
 

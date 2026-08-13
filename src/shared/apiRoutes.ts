@@ -41,7 +41,10 @@ import type {
   ThreadUserInputPayload,
   ThreadUserInputResponseInput,
   WorktreeThreadStartInput,
-  WorktreeThreadStartPayload
+  WorktreeThreadStartPayload,
+  VscodeSurfaceHeartbeatInput,
+  VscodeSurfacePayload,
+  VscodeSurfaceRegistrationInput
 } from "./apiContract.js";
 import type { ProxyInput } from "./inputTypes.js";
 import type { CommandPalettePart, ThreadRunOptions } from "./threadTypes.js";
@@ -156,6 +159,15 @@ export const apiRoutes = {
   sshConfigHosts: get<SshHostsPayload>("/api/ssh/config-hosts"),
   sshConnections: get<SshConnectionsPayload>("/api/ssh/connections"),
   parentRegistration: get<ParentRegistrationPayload>("/api/registered/parent"),
+  registerVscodeSurface: post<VscodeSurfaceRegistrationInput, VscodeSurfacePayload>("/api/vscode/surfaces"),
+  heartbeatVscodeSurface: post<
+    VscodeSurfaceHeartbeatInput,
+    VscodeSurfacePayload,
+    (surfaceId: string) => string
+  >((surfaceId) => `/api/vscode/surfaces/${encode(surfaceId)}/heartbeat`),
+  unregisterVscodeSurface: del<VscodeSurfacePayload, (surfaceId: string, leaseId: string) => string>(
+    (surfaceId, leaseId) => `/api/vscode/surfaces/${encode(surfaceId)}/${encode(leaseId)}`
+  ),
   machineDirectories: get<MachineDirectoryListing, (machineId: string, path?: string) => string>(
     (machineId, path) => `/api/machines/${encode(machineId)}/directories${queryString({ path })}`
   ),

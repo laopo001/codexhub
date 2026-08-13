@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
+import { normalizeServerConfigEnv, readServerConfigEnv } from "./serverConfigEnv.js";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
 import type { MachineCapabilities, MachineSummary, MachineType } from "../shared/machineTypes.js";
 import { defaultPetId, petIdPattern } from "../shared/petTypes.js";
@@ -136,6 +137,28 @@ export class CodexhubServerState {
       deleted = true;
     }
     return deleted;
+  }
+
+  replaceTransientProjectsForMachineSource(
+    machineId: string,
+    sourceKind: ProjectSource["kind"],
+    projects: Array<{ path: string; source: ProjectSource }>
+  ) {
+    let changed = false;
+    for (const [projectId, project] of this.transientProjects) {
+      if (project.machineId !== machineId || project.source?.kind !== sourceKind) continue;
+      this.transientProjects.delete(projectId);
+      changed = true;
+    }
+    for (const project of projects) {
+      this.upsertTransientProject({
+        machineId,
+        path: project.path,
+        source: project.source
+      });
+      changed = true;
+    }
+    return changed;
   }
 
   isTransientProject(projectId: string) {
@@ -587,7 +610,7 @@ export class CodexhubServerState {
   }
 
   private async dataForSave(): Promise<ServerStateData> {
-    const externalEnv = await readConfigEnv(this.filePath);
+    const externalEnv = await readServerConfigEnv(this.filePath);
     if (externalEnv !== undefined) this.data.env = externalEnv;
     return this.data;
   }
@@ -665,7 +688,7 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
         version: 1,
         updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
         config: normalizeServerConfig(parsed.config),
-        env: normalizeStateEnv(parsed.env),
+        env: normalizeServerConfigEnv(parsed.env),
         parentRegistration: normalizeStoredParentRegistration(parsed.parentRegistration),
         machines: normalizedMachines.filter((machine) => machine.type !== "registered"),
         projects: projects.map(normalizeStoredProject).filter(isStoredProject),
@@ -680,23 +703,6 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
     };
   } catch {
     return { found: true, path: filePath, data: emptyState(), needsRewrite: false, rawText };
-  }
-};
-
-const readConfigEnv = async (filePath: string): Promise<Record<string, string> | undefined> => {
-  let rawText: string;
-  try {
-    rawText = await readFile(filePath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    return undefined;
-  }
-  try {
-    const parsed = YAML.parse(rawText) as Partial<ServerStateData> | null;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-    return normalizeStateEnv(parsed.env);
-  } catch {
-    return undefined;
   }
 };
 
@@ -765,23 +771,6 @@ const objectRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 const maxIso = (left: string, right: string) => left.localeCompare(right) >= 0 ? left : right;
-
-const stateEnvNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-const normalizeStateEnv = (value: unknown): Record<string, string> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const env: Record<string, string> = {};
-  for (const [rawKey, rawValue] of Object.entries(value)) {
-    const key = rawKey.trim();
-    if (!stateEnvNamePattern.test(key)) continue;
-    if (typeof rawValue === "string") {
-      env[key] = rawValue;
-    } else if (typeof rawValue === "number" || typeof rawValue === "boolean") {
-      env[key] = String(rawValue);
-    }
-  }
-  return env;
-};
 
 const normalizeStoredMachine = (value: unknown): unknown => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;

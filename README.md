@@ -2,7 +2,7 @@
 
 一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
-CodexHub 0.6.0 要求运行 machine 上的官方 Codex CLI 不低于 `0.144.4`。升级前请先阅读 [0.6.0 迁移说明](./MIGRATION.md)。
+CodexHub 0.7.0 要求运行 machine 上的官方 Codex CLI 不低于 `0.144.4`。VSCode 0.7.0 改为 authority 级共享服务，升级前请先阅读 [0.7.0 迁移说明](./MIGRATION.md)。
 
 - 共享核心：API server 统一管理 machines、machine runtime sessions 和 threads，并把轻量 project 元数据投影到 `/api/projects`；Web 左侧按项目优先展示，点击 project 只切换 active path，Add Tab/thread picker 基于该 path 创建或恢复 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
@@ -58,7 +58,7 @@ codexhub server --register-to http://127.0.0.1:8788
 
 也可以在 Web 的 Connections / Registered 里复制当前 server 的 register 命令。远端只需要能从 `PATH` 找到 `codexhub`、`node` 和官方 `codex` 命令；远端 server 会在提供自身 Web/API 的同时，额外用 machine WebSocket 连回父 server。父 server 只把它看成一台动态 `registered` machine，不同步子 server 的 projects、tasks、config 或 thread transcript 权威数据，也不把这台 machine 写入父 server 的 `config.yaml`；新 machine 在线时 Web 会显示 success message，连接断开后显示 warning message 并从父 server machine 列表消失。页面首次加载已有在线 machine 时不会补弹提示，之后重新连接则会再次提示。打开项目时，父 server 会把请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用 machine 级 runtime session。Registered machine 只启动远端官方 `codex app-server` 并通过同一条 machine WebSocket 反向多路复用 app-server WebSocket 帧；父 server 在本地消费官方 app-server 协议并为该目录创建或复用 thread。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
 
-父 server Web 左下角会显示可一键复制的 Register URL；如果当前浏览器已经保存父 server auth token，它会生成 `http://host:port?codexhub_token=...`，否则就是不带 token 的 base URL。token 完全可选，父 server 没有启用 `CODEX_HUB_AUTH_TOKEN` 时可以直接用空 token 注册测试。已经打开远端 server 的 Web UI 时，可以在 Connections / Registered 里把这个 Register URL 粘贴到唯一的 Parent register URL 输入框并 Connect。连接成功发起后，子 server 会把规范化后的父 URL、普通 server 的 machine identity 和可选 CodexHub auth token 保存在自身 `config.yaml` 的 `parentRegistration` 中；普通 Web、VSCode、Electron 下次启动都由共享 `startServer()` 自动恢复并继续断线重连。VSCode 多窗口只共享父 URL 和可选 token，每个 workspace 使用 `workspaceState` 中独立、稳定的 machineId 和 workspace 名称，避免多个窗口争用同一条 machine transport。Disconnect 会中止正在握手或已在线的 WebSocket、等待 runner 完全退出，并删除自动注册配置。CLI 和动态 API 从 `?codexhub_token=` 提取父 server auth token，也可以使用 `--register-auth-token` 或 `CODEX_HUB_REGISTER_AUTH_TOKEN`；显式空 token 表示不使用认证，CLI / 环境变量的启动时 override 仍只作用于当前进程，不覆盖已保存的 GUI 配置。连接错误和状态只显示去除 query/userinfo 的目标 URL，不记录或投影 token。
+父 server Web 左下角会显示可一键复制的 Register URL；如果当前浏览器已经保存父 server auth token，它会生成 `http://host:port?codexhub_token=...`，否则就是不带 token 的 base URL。token 完全可选，父 server 没有启用 `CODEX_HUB_AUTH_TOKEN` 时可以直接用空 token 注册测试。已经打开远端 server 的 Web UI 时，可以在 Connections / Registered 里把这个 Register URL 粘贴到唯一的 Parent register URL 输入框并 Connect。连接成功发起后，子 server 会把规范化后的父 URL、普通 server 的 machine identity 和可选 CodexHub auth token 保存在自身 `config.yaml` 的 `parentRegistration` 中；普通 Web、VSCode、Electron 下次启动都由共享 `startServer()` 自动恢复并继续断线重连。VSCode 同一执行 authority 的所有窗口共享父 URL、可选 token 和一条由 authority ID 派生的稳定 machine transport；Windows、WSL、Remote SSH 等不同 authority 各自注册为独立 machine。Disconnect 会中止正在握手或已在线的 WebSocket、等待 runner 完全退出，并删除自动注册配置。CLI 和动态 API 从 `?codexhub_token=` 提取父 server auth token，也可以使用 `--register-auth-token` 或 `CODEX_HUB_REGISTER_AUTH_TOKEN`；显式空 token 表示不使用认证，CLI / 环境变量的启动时 override 仍只作用于当前进程，不覆盖已保存的 GUI 配置。连接错误和状态只显示去除 query/userinfo 的目标 URL，不记录或投影 token。
 
 CodexHub 会拒绝把一个 server 注册到它自己：同一本机地址且同端口会直接返回错误，目标 `/api/health` 的 `serverInstanceId` 与当前实例相同也会被拒绝。为了本机测试，同一台电脑上不同端口的多个 server 可以互相注册，例如 `127.0.0.1:8789` 注册到 `127.0.0.1:8788` 是允许的。
 
@@ -91,7 +91,7 @@ CODEX_HUB_SSH_AUTOCONNECT=0
 
 可以通过 `CODEX_HUB_DATA_DIR` 覆盖配置目录。这个 YAML 保存共享 UI 偏好、parent registration、projects、tasks、SSH hosts、local/SSH machine 元数据等本机控制面配置，也会包含 `updatedAt`、task 最近 run 摘要这类轻量状态字段。父 server 收到的 `registered` machine 只存在于运行时，不写入这里；旧配置中的 registered machine 历史元数据会在加载时自动清理，但它关联的 project/task 配置仍保留。包含 parent auth token 时配置文件会以 `0600` 写入；token 只由后端用于 machine WebSocket，不通过配置或 registration API 返回给 Web。它也可以保存一个 `env` 映射；server 启动时会先读取它，只把尚未存在的键填入 `process.env`，不会覆盖 shell 或 `.env`。它不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。旧版 `~/.local/share/codexhub/server-state.yaml` 或同一 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml` 会在首次启动时迁移写入新的 `config.yaml`。
 
-`config.yaml` 里的 `env` 适合 VSCode embedded server 这类不方便配置 shell 环境变量的场景。例如：
+`config.yaml` 里的 `env` 适合 VSCode authority service 这类不方便配置 shell 环境变量的场景。例如：
 
 ```yaml
 version: 1
@@ -103,9 +103,11 @@ config:
 env:
   CODEX_HUB_NOTIFICATION_COMMAND: "C:\\Users\\0laop\\.codexhub\\notify.cmd"
   CODEX_HUB_NOTIFICATION_TIMEOUT_MS: "5000"
+  # 只有明确需要保护 loopback API 时才设置；VSCode authority 默认无 token
+  # CODEX_HUB_AUTH_TOKEN: "replace-with-a-long-random-token"
 ```
 
-修改 `config.yaml` 后需要重启 server；VSCode 里执行 `Developer: Reload Window` 让 extension host 重启。`CODEX_HUB_DATA_DIR` 本身仍决定去哪读这个配置文件，因此不能靠同一个文件里的 `env.CODEX_HUB_DATA_DIR` 改变当前配置路径。
+修改 `config.yaml` 后需要重启 server。VSCode authority 是独立于窗口的 detached 进程：关闭该 authority 的全部 VSCode 窗口并等待 30 秒，再重新打开窗口，才能让新的进程重新读取 `env`；只 reload 单个窗口不会强制结束仍被其他窗口使用的 authority。`CODEX_HUB_DATA_DIR` 本身仍决定去哪读这个配置文件，因此不能靠同一个文件里的 `env.CODEX_HUB_DATA_DIR` 改变当前配置路径。
 
 `cxh` 是 `codexhub` 的短别名。
 
@@ -180,7 +182,7 @@ pnpm codexhub task run daily-summary
 
 server 每 30 秒扫描一次本地 task 状态，间隔可用 `CODEX_HUB_TASK_SCAN_INTERVAL_MS` 调整。task 的 `schedule` 会在保存时校验为五字段 cron 表达式；无效表达式会被 API 拒绝，而不是静默保存后永远不触发。task 不再写入 `.codexp/tasks`，也不由远端 workspace 持有。
 
-任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VSCode notification；Theia Electron surface 则在 Electron main process 创建原生系统通知，点击后恢复并聚焦通知来源窗口，再打开对应 `threadId`。这个开关默认开启并保存在本地 UI state。
+任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VSCode notification，并只把对应 project path 的完成事件发到包含该 workspace 的窗口；Theia Electron surface 则在 Electron main process 创建原生系统通知，点击后恢复并聚焦通知来源窗口，再打开对应 `threadId`。这个开关默认关闭并保存在本地 UI state。
 
 需要自定义通知集成时，可以在 server 进程上设置 hook 环境变量。hook 在 app-server turn 完成并归一成非历史 `task_complete` record 时触发，不依赖浏览器 tab 是否打开：
 
@@ -189,9 +191,9 @@ CODEX_HUB_NOTIFICATION_COMMAND="/home/laop/bin/codexhub-notify --channel codexhu
 CODEX_HUB_NOTIFICATION_TIMEOUT_MS=5000
 ```
 
-`CODEX_HUB_NOTIFICATION_COMMAND` 会启动本机命令，并把 JSON payload 写入 stdin；失败只记录日志，不影响 Codex turn/task 完成。VSCode 插件的 embedded server 也读这些环境变量；需要从带有这些 env 的 shell 启动 VSCode，已用这些 env 启动的窗口改配置后执行 `Developer: Reload Window` 让 extension host 重启。
+`CODEX_HUB_NOTIFICATION_COMMAND` 会启动本机命令，并把 JSON payload 写入 stdin；失败只记录日志，不影响 Codex turn/task 完成。VSCode authority service 也读这些环境变量，并继承首次启动它的 extension host 环境；变更后要关闭同一 authority 的全部窗口、等待 service 退出，再重新打开。
 
-如果不想在 Windows/VSCode 里配置系统环境变量，也可以把同样的键写进对应窗口数据目录下的 `config.yaml` 的 `env` 字段。
+如果不想在 Windows/VSCode 里配置系统环境变量，也可以把同样的键写进该 authority 共享数据目录下的 `config.yaml` 的 `env` 字段。
 
 Codex turn 默认不设等待超时，适合长任务和定时任务持续运行。需要在特定部署里限制单次 turn 时，可以设置 `CODEX_HUB_TURN_TIMEOUT_MS` 为正整数毫秒；不设置或设为 `0` 表示不启用 turn 超时。
 
@@ -267,7 +269,7 @@ pnpm build
 
 `smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，验证 machine runtime ensure 不写 project、project path thread bootstrap、跨 project 共享唯一 machine runtime、`/api/projects` 不暴露 runtime/thread 列表、`/api/runtimes` 不暴露内部 session ID、runtime account rate limits、thread detail 不暴露 `workerId` 或 current thread，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认 machine/session registration 会拒绝未知旧字段。`smoke:task-lock` 额外覆盖 machine-scoped model、permission profile 和 command palette 通道，以及 runtime-authoritative catalog 响应。
 
-`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?codexhub_token=` 提取、空 token、子 server parent registration 的 `config.yaml` 持久化与 `0600` 权限、父 server 不持久化 registered machine、server 重启自动恢复、Disconnect 清除自动连接、共享父配置下的 VSCode workspace 独立 machine identity、自注册拒绝、同机不同端口注册、project path thread bootstrap、machine runtime 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。单元测试还覆盖 token 错误脱敏和连接握手期间的强制中止。
+`smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?codexhub_token=` 提取、空 token、子 server parent registration 的 `config.yaml` 持久化与 `0600` 权限、父 server 不持久化 registered machine、server 重启自动恢复、Disconnect 清除自动连接、共享父配置下的 authority 级稳定 machine identity、自注册拒绝、同机不同端口注册、project path thread bootstrap、machine runtime 启动、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。单元测试还覆盖 VSCode authority 端口映射、多窗口 surface lease/project 聚合、注册不提前启动 runtime、token 错误脱敏和连接握手期间的强制中止。
 
 `smoke:ssh-loopback` 会启动一个临时本机 `sshd`，通过真实 `ssh -R` reverse tunnel 连接回临时 server，验证 SSH machine 注册、project path thread bootstrap、machine runtime 启动、`/status` 对话流，以及 SSH connection 删除后 machine/session 进入 offline。
 
@@ -345,11 +347,24 @@ codexhub server --register-to http://127.0.0.1:8788 --port 8789
 
 Electron 壳用于把同一个本机 Node.js server 和 Web UI 包成桌面窗口。它启动一个内嵌 server，默认使用随机空闲端口，然后打开该地址；Codex app-server/headless 进程仍然由本机/SSH/registered machine session 提供。
 
-VSCode extension 每个窗口根据 VSCode 项目/工作区名称稳定生成 `20000-29999` 范围内的嵌入 server 起始端口；如果该端口已被占用，就依次尝试后续端口。扩展不使用外部传入的 `CODEX_HUB_PORT` 选端口，而是把生成的当前候选端口作为显式 server `port` 参数传入；该参数与 CLI `--port` 走同一优先级，覆盖 `CODEX_HUB_PORT`。VSCode iframe 使用和普通 Web 相同的左侧控制面与 SSH/tasks/plugins/Registered 能力，`surface=vscode` 只保留通知桥和嵌入兼容用途。extension 会先从 `/api/machines` 找到在线的 `local` project launcher，再把当前窗口的 file workspace folders 通过 `/api/projects/open` 以 `persist:false` bootstrap 成 VSCode workspace project group；这个窗口内嵌的 local machine 和这些项目都只存在于该窗口 server 的内存中，不写入 `config.yaml`。用户在 UI 中显式保存 transient project 后，它才会进入普通 CodexHub project list。
+## VSCode
 
-命令面板里的 `Codex Hub: Open Config File` 会打开当前 VSCode 窗口 embedded server 使用的 `config.yaml`；文件不存在时会先创建一个最小配置。
+VSCode extension 现在按“执行 authority”共享服务，不再按窗口启动 server。Windows host、每个 WSL distro、每个 Remote SSH host/user、Dev Container 分别是独立 authority，各自解析自己的目录并拥有自己的 local machine/runtime；特别是 Windows 与 WSL 始终是两台 parent machine，不能因为 localhost 可互通就合并。
 
-VSCode Webview 和 Open in Browser 都通过 `vscode.env.asExternalUri` 使用 VSCode 提供的外部 URI，而不是直接把 loopback URL 写进 iframe；这让远程 VSCode、端口转发或 tunnel 环境也能访问内嵌 server。工作区项目打开会对 transient local launcher race 做最多 30 次、每次 500ms 的重试；如果当前窗口没有 file workspace folder，会显示状态页而不是启动项目。
+| extension host 环境 | authority service 端口 |
+| --- | ---: |
+| Windows | `28788` |
+| macOS | `28788` |
+| 普通 Linux | `28788` |
+| WSL | `28789` |
+
+WSL 使用桌面端口的 `+1`，是为了在 WSL mirrored networking 与 Windows 共享 localhost 端口空间时避开 Windows 的 `28788`。Remote SSH/Container 在自己的执行环境和网络命名空间中按上表选端口。VSCode authority 端口不读取 `CODEX_HUB_PORT`，也不在占用时顺延；如果固定端口上不是同一个 `authorityId` 和 surface protocol 的 CodexHub 服务，扩展会明确报错。
+
+第一个窗口会从 VSIX 内的 `authority-service.cjs` detached 启动服务，后续窗口只 probe 并 attach。authority ID、共享 `config.yaml` 和 `vscode-authority.log` 位于 extension 的 `globalStorageUri` 数据目录；ID 文件尽可能以 `0600` 创建。authority 只监听 `127.0.0.1`，默认不生成或要求 access token，因此可直接打开 `http://127.0.0.1:28788`（WSL 为 `28789`）。只有 extension host 环境或该 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式设置为非空值时，Web/API/WebSocket 才启用认证；显式 token 只通过子进程环境和窗口请求传递，不放进 service 命令行或日志。旧版生成的 `vscode-authority-token` 文件会在 authority 下次启动时删除，浏览器发现服务未启用认证时也会清掉同 origin 下的旧 token。每个窗口用唯一 `surfaceId + leaseId` 调用 `/api/vscode/surfaces` 注册自己的 file workspace folders，之后每 10 秒 heartbeat；正常 deactivate 会 unregister，异常退出的 lease 约 30 秒后过期，最后一个 surface 离开后服务再等待 30 秒自动退出。多个窗口注册的 workspace 会聚合成同一 local machine 的 transient projects；相同路径被多个窗口引用时保留到最后一个 lease 消失。注册只验证目录，不启动 Codex app-server/thread；第一次 Add Thread 才确保 authority 唯一 runtime 在线。
+
+同一 authority 的窗口共享 local runtime、SSH/tasks/plugins/Registered 配置和一条 parent machine transport，但 Webview 仍按当前窗口 URL 携带的 workspace paths 过滤项目，UI localStorage 按 workspace scope 隔离，task completion popup 也只路由到包含对应 project path 的窗口。VSCode iframe 使用和普通 Web 相同的完整左侧控制面；Webview 和 Open in Browser 都通过 `vscode.env.asExternalUri`，因此 Remote SSH、端口转发或 tunnel 环境仍可访问。没有 file workspace folder 时只显示状态页且不注册 surface。
+
+命令面板里的 `Codex Hub: Open Config File` 会打开当前 authority service 使用的共享 `config.yaml`；文件不存在时会先创建一个最小配置。用户在 UI 中显式保存 transient project 后，它才会进入共享的普通 CodexHub project list。
 
 ```bash
 pnpm electron:start
@@ -380,7 +395,7 @@ pnpm run package:vscode
 pnpm run install:vscode
 ```
 
-`build:vscode` 会先跑完整 `pnpm build`，再把 extension 打成 Node CJS bundle，显式把 extension host 里的 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；共享 VSIX staging 位于 `dist-vsix/`，会包含 Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE，供 VS Code 与官方 Theia IDE 共用。
+`build:vscode` 会先跑完整 `pnpm build`，再把 extension 与 detached authority service 分别打成 Node CJS bundle，显式把 Node host 里的 `navigator` 定义为 `undefined` 并断言两个 bundle 都不引用浏览器全局；共享 VSIX staging 位于 `dist-vsix/`，会包含 `extension.cjs`、`authority-service.cjs`、Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE，供 VS Code 与官方 Theia IDE 共用。
 
 ## Eclipse Theia
 

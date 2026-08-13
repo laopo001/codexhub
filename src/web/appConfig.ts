@@ -5,21 +5,9 @@ import type {
 } from "./types.js";
 import { defaultPetId } from "../shared/petTypes.js";
 import { isCodexHubSurface, isEmbeddedCodexHubSurface } from "../shared/surfaceTypes.js";
+import { codexHubSearchParams } from "./urlSearch.js";
 
-const normalizedSearch = () => {
-  const raw = window.location.search;
-  if (!raw || new URLSearchParams(raw).has("surface")) return raw;
-  const encoded = raw.replace(/^\?/, "");
-  if (!/%(?:3d|26)/i.test(encoded)) return raw;
-  try {
-    const decoded = decodeURIComponent(encoded);
-    return new URLSearchParams(decoded).has("surface") ? `?${decoded}` : raw;
-  } catch {
-    return raw;
-  }
-};
-
-const searchParams = new URLSearchParams(normalizedSearch());
+const searchParams = codexHubSearchParams(window.location.search);
 const uniqueTrimmedParams = (names: string[]) => {
   const values = names.flatMap((name) => searchParams.getAll(name));
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -31,10 +19,12 @@ export const isVscodeSurface = webSurface === "vscode";
 export const isTheiaSurface = webSurface === "theia";
 export const isTheiaVscodeHost = isVscodeSurface && searchParams.get("host") === "theia";
 export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
+export const embeddedSurfaceId = searchParams.get("surfaceId")?.trim() ?? "";
+export const embeddedStateScope = searchParams.get("stateScope")?.trim() ?? embeddedSurfaceId;
 export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ?? "";
 export const embeddedWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "workspacePath"]);
 export const storageKey = isVscodeSurface
-  ? "codexhub-ui-state-vscode-v2"
+  ? `codexhub-ui-state-vscode-v3${embeddedStateScope ? `:${encodeURIComponent(embeddedStateScope)}` : ""}`
   : isTheiaSurface
     ? "codexhub-ui-state-theia-v2"
     : "codexhub-ui-state-v6";

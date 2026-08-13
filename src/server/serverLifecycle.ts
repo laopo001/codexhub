@@ -7,6 +7,7 @@ export type ServerLifecycleOptions = {
   stopSshMachines: () => Promise<void>;
   stopParentRegistration: () => Promise<void>;
   stopLocalMachine: () => Promise<void>;
+  stopVscodeSurfaces: () => void;
   stopIntegrations: () => void;
   flushState: () => Promise<void>;
 };
@@ -22,6 +23,7 @@ export const registerServerLifecycle = (app: FastifyInstance, options: ServerLif
     await options.stopSshMachines();
     await options.stopParentRegistration();
     await options.stopLocalMachine();
+    options.stopVscodeSurfaces();
     options.stopIntegrations();
     await options.flushState();
   });

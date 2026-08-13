@@ -19,6 +19,7 @@ import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { ThreadHub } from "../core/threadHub.js";
+import { VscodeSurfaceHub } from "../core/vscodeSurfaceHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
 import { resolveCodexAppServerLaunchOptions, type CodexAppServerLaunchOptions } from "../cli/codexAppServerProcess.js";
 import {
@@ -35,6 +36,7 @@ import { readBooleanEnv, readNonNegativeNumberEnv } from "../shared/env.js";
 import {
   isCodexHubSurface,
   isEmbeddedCodexHubSurface,
+  type CodexHubAuthorityDescriptor,
   type CodexHubSurface
 } from "../shared/surfaceTypes.js";
 import { registerStaticRoutes } from "./serverFiles.js";
@@ -42,6 +44,7 @@ import { registerProjectTaskRoutes } from "./projectTaskRoutes.js";
 import { registerThreadRoutes } from "./threadRoutes.js";
 import { registerMachineTransportRoutes } from "./machineTransportRoutes.js";
 import { registerServerLifecycle } from "./serverLifecycle.js";
+import { registerVscodeSurfaceRoutes } from "./vscodeSurfaceRoutes.js";
 import { TunneledSessionManager } from "./tunneledSessionManager.js";
 import { registerSystemRoutes } from "./systemRoutes.js";
 import { registerPetRoutes } from "./petRoutes.js";
@@ -74,6 +77,43 @@ const localApiBaseUrl = (host: string, port: number) => {
 const normalizedAuthToken = (value: string | null | undefined) => {
   const token = value?.trim();
   return token ? token : null;
+};
+export const redactRequestUrlForLog = (value: string | undefined) => {
+  if (!value || !value.includes("?")) return value;
+  try {
+    const url = new URL(value, "http://codexhub.local");
+    const redactedSearch = redactCodexHubTokenSearch(url.search);
+    if (!redactedSearch) return value;
+    url.search = redactedSearch;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return value
+      .replace(/([?&]codexhub(?:_|%5f)token=)[^&#]*/gi, "$1[REDACTED]")
+      .replace(/([?&]codexhub(?:_|%5f)token%3d).*?(?=%26|[&#]|$)/gi, "$1%5BREDACTED%5D");
+  }
+};
+
+const redactCodexHubTokenSearch = (rawSearch: string) => {
+  let candidate = rawSearch.replace(/^\?/, "");
+  for (let depth = 0; depth < 4; depth += 1) {
+    const params = new URLSearchParams(candidate);
+    const tokenKeys = [...new Set(
+      [...params.keys()].filter((key) => key.toLowerCase() === "codexhub_token")
+    )];
+    if (tokenKeys.length) {
+      for (const key of tokenKeys) params.set(key, "[REDACTED]");
+      return params.toString();
+    }
+    if (!candidate.includes("%")) break;
+    try {
+      const decoded = decodeURIComponent(candidate);
+      if (decoded === candidate) break;
+      candidate = decoded;
+    } catch {
+      break;
+    }
+  }
+  return "";
 };
 const requestPath = (request: FastifyRequest) => new URL(request.url, "http://codexhub.local").pathname;
 const isPublicRequest = (request: FastifyRequest) => {
@@ -148,6 +188,9 @@ export type ServerStartOptions = {
   appServerLaunch?: CodexAppServerLaunchOptions;
   parentRegistration?: Partial<ParentRegistrationConnectInput>;
   parentRegistrationIdentity?: ParentRegistrationIdentity;
+  authority?: CodexHubAuthorityDescriptor;
+  vscodeSurfaceLeaseTimeoutMs?: number;
+  vscodeSurfaceIdleShutdownMs?: number;
   features?: Partial<ServerFeatureOptions>;
 };
 
@@ -208,7 +251,22 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       captureSessionState();
     }
   });
-  const app = Fastify({ logger: true, bodyLimit: 30 * 1024 * 1024 });
+  const app = Fastify({
+    logger: {
+      serializers: {
+        req(request) {
+          return {
+            method: request.method,
+            url: redactRequestUrlForLog(request.url),
+            host: request.headers.host,
+            remoteAddress: request.socket.remoteAddress,
+            remotePort: request.socket.remotePort
+          };
+        }
+      }
+    },
+    bodyLimit: 30 * 1024 * 1024
+  });
   const projectSubscribers = new Set<(event: ReturnType<typeof projectSnapshotEvent>) => void>();
   const connectionSubscribers = new Set<(event: ReturnType<typeof connectionSnapshotEvent>) => void>();
   let projectSeq = 0;
@@ -242,6 +300,41 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let localMachine: CodexhubMachineHandle | null = null;
   let parentRegistration: CodexhubMachineHandle | null = null;
   let parentRegistrationStatus: ParentRegistrationStatus = { status: "idle" };
+  const vscodeAuthorityService = surface === "vscode" && Boolean(options.authority);
+  const vscodeSurfaces = new VscodeSurfaceHub({
+    leaseTimeoutMs: options.vscodeSurfaceLeaseTimeoutMs,
+    idleShutdownMs: options.vscodeSurfaceIdleShutdownMs,
+    currentBuildId: buildId,
+    onProjectsChange: (projects) => {
+      const machineId = localMachine?.machineId ?? projects[0]?.machineId;
+      if (!machineId) return;
+      state.replaceTransientProjectsForMachineSource(
+        machineId,
+        "vscode",
+        projects
+          .filter((project) => project.machineId === machineId)
+          .map((project) => ({ path: project.path, source: project.source }))
+      );
+      publishProjects();
+      parentRegistration?.refreshRegistration();
+    },
+    ...(vscodeAuthorityService ? {
+      onIdle: () => {
+        void app.close().catch((error: unknown) => {
+          console.error(`codexhub vscode authority idle shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      },
+      onReplacementBuild: (replacementBuildId: string) => {
+        console.error(`codexhub vscode authority yielding to build ${replacementBuildId}`);
+        const timer = setTimeout(() => {
+          void app.close().catch((error: unknown) => {
+            console.error(`codexhub vscode authority build handoff failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }, 100);
+        timer.unref?.();
+      }
+    } : {})
+  });
   const threadRecordSubscriptionCounts = new Map<string, number>();
   const threadRecordSubscriptionTimers = new Map<string, NodeJS.Timeout>();
   const tunneledSessions = new TunneledSessionManager({
@@ -280,6 +373,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       await localMachine?.stop();
       localMachine = null;
     },
+    stopVscodeSurfaces: () => vscodeSurfaces.stop(),
     stopIntegrations: () => {
       telegramBot?.stop("server closing");
       telegramBot = null;
@@ -642,6 +736,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       host: config.host,
       port: config.port,
       surface,
+      authority: options.authority,
       features,
       staticDirectory,
       configPath: state.path,
@@ -657,6 +752,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   });
 
   registerPetRoutes(app, pets);
+
+  registerVscodeSurfaceRoutes(app, {
+    enabled: vscodeAuthorityService,
+    protocolVersion: options.authority?.surfaceProtocolVersion ?? 0,
+    machines,
+    surfaces: vscodeSurfaces
+  });
 
   registerThreadRoutes(app, {
     connectionSnapshotEvent,

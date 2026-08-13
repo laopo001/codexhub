@@ -5,6 +5,7 @@ import { build } from "esbuild";
 const outDir = "dist-vsix";
 const legacyOutDir = "dist-vscode";
 const extensionOutfile = path.join(outDir, "extension.cjs");
+const authorityServiceOutfile = path.join(outDir, "authority-service.cjs");
 
 await rm(outDir, { recursive: true, force: true });
 await rm(legacyOutDir, { recursive: true, force: true });
@@ -27,7 +28,24 @@ await build({
   logLevel: "silent"
 });
 
+await build({
+  entryPoints: ["targets/vscode/src/authorityService.ts"],
+  outfile: authorityServiceOutfile,
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node20",
+  define: {
+    navigator: "undefined"
+  },
+  sourcemap: false,
+  minify: false,
+  treeShaking: true,
+  logLevel: "silent"
+});
+
 await assertNoNodeHostBrowserGlobals(extensionOutfile);
+await assertNoNodeHostBrowserGlobals(authorityServiceOutfile);
 
 await assertDirectory("dist", "Run `pnpm build` before `pnpm build:vscode`.");
 await assertDirectory("dist-node/ssh", "Run `pnpm build` before `pnpm build:vscode`.");
@@ -39,8 +57,8 @@ await writeFile(path.join(outDir, "package.json"), `${JSON.stringify(await exten
 await cp("README.md", path.join(outDir, "README.md"));
 await cp("LICENSE", path.join(outDir, "LICENSE"));
 
-const info = await stat(extensionOutfile);
-console.error(`built VSCode extension staging: ${outDir} (${info.size} byte bundle)`);
+const [extensionInfo, authorityInfo] = await Promise.all([stat(extensionOutfile), stat(authorityServiceOutfile)]);
+console.error(`built VSCode extension staging: ${outDir} (${extensionInfo.size} byte extension, ${authorityInfo.size} byte authority service)`);
 
 async function extensionManifest() {
   const [rootPackage, targetManifest] = await Promise.all([
