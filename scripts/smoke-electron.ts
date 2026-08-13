@@ -3,36 +3,73 @@ import { mkdtemp } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import {
+  authorityServicePort,
+  embeddedSurfaceProtocolVersion
+} from "../src/shared/surfaceTypes.js";
 
 const main = async () => {
-  const blocker = await listenOnDefaultElectronPort();
+  await prepareAuthorityPortForSmoke();
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-state."));
   const pluginDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-plugins."));
   const userDataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-user-data."));
-  try {
-    const output = await runElectronSmoke(dataDir, pluginDir, userDataDir);
-    if (output.includes("codexhub electron port 18788 is busy; using ")) {
-      throw new Error(`Electron smoke used preferred-port fallback instead of random port:\n${output}`);
-    }
-    const payload = parseSmokePayload(output);
-    if (payload.health.port === 18788) throw new Error("Electron smoke reused occupied legacy default port.");
-    const expectedConfigPath = path.join(dataDir, "config.yaml");
-    if (payload.health.configPath !== expectedConfigPath) {
-      throw new Error(`Electron smoke used unexpected config path: ${JSON.stringify(payload.health)}`);
-    }
-    if ("statePath" in payload.health) {
-      throw new Error(`Electron health exposed removed statePath alias: ${JSON.stringify(payload.health)}`);
-    }
-    console.log(`electron ok: ${payload.url}`);
-  } finally {
-    await closeServer(blocker);
+  const output = await runElectronSmoke(dataDir, pluginDir, userDataDir);
+  const payload = parseSmokePayload(output);
+  if (payload.health.port !== authorityServicePort()) {
+    throw new Error(
+      `Electron smoke did not use the shared authority port ${authorityServicePort()}: ${JSON.stringify(payload.health)}`
+    );
   }
+  if (!payload.health.authority || payload.health.authority.surfaceProtocolVersion !== embeddedSurfaceProtocolVersion) {
+    throw new Error(`Electron smoke did not expose the shared authority descriptor: ${JSON.stringify(payload.health)}`);
+  }
+  if (!payload.url.includes("surface=electron") || !payload.url.includes("surfaceId=electron-")) {
+    throw new Error(`Electron smoke did not register an Electron surface: ${payload.url}`);
+  }
+  const expectedConfigPath = path.join(dataDir, "config.yaml");
+  if (payload.health.configPath !== expectedConfigPath) {
+    throw new Error(`Electron smoke used unexpected config path: ${JSON.stringify(payload.health)}`);
+  }
+  if ("statePath" in payload.health) {
+    throw new Error(`Electron health exposed removed statePath alias: ${JSON.stringify(payload.health)}`);
+  }
+  console.log(`electron ok: ${payload.url}`);
 };
 
-const listenOnDefaultElectronPort = async () => await new Promise<net.Server>((resolve, reject) => {
+const prepareAuthorityPortForSmoke = async () => {
+  if (process.env.CODEX_HUB_AUTHORITY_PORT?.trim()) return;
+  const defaultPort = authorityServicePort({ ...process.env, CODEX_HUB_AUTHORITY_PORT: undefined });
+  if (!await isPortListening(defaultPort)) return;
+  const port = await findFreePort();
+  process.env.CODEX_HUB_AUTHORITY_PORT = String(port);
+  console.log(`electron smoke: shared authority default port ${defaultPort} is busy; using isolated test port ${port}`);
+};
+
+const findFreePort = async () => await new Promise<number>((resolve, reject) => {
   const server = net.createServer();
   server.once("error", reject);
-  server.listen(18788, "127.0.0.1", () => resolve(server));
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close(() => reject(new Error("Could not allocate Electron smoke port.")));
+      return;
+    }
+    const port = address.port;
+    server.close(() => resolve(port));
+  });
+});
+
+const isPortListening = async (port: number) => await new Promise<boolean>((resolve) => {
+  const socket = net.createConnection({ host: "127.0.0.1", port });
+  const finish = (listening: boolean) => {
+    socket.removeAllListeners();
+    socket.destroy();
+    resolve(listening);
+  };
+  socket.setTimeout(500);
+  socket.once("connect", () => finish(true));
+  socket.once("error", () => finish(false));
+  socket.once("timeout", () => finish(false));
 });
 
 const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir: string) => await new Promise<string>((resolve, reject) => {
@@ -46,7 +83,7 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir:
     ...process.env,
     CODEX_HUB_DATA_DIR: dataDir,
     CODEX_HUB_PLUGIN_DIR: pluginDir,
-    CODEX_HUB_LOCAL_MACHINE: "0",
+    CODEX_HUB_LOCAL_MACHINE: "1",
     CODEX_HUB_ELECTRON_SMOKE: "1"
   };
   delete env.CODEX_HUB_PORT;
@@ -89,7 +126,11 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir:
 const parseSmokePayload = (output: string): {
   ok: true;
   url: string;
-  health: { port: number; configPath: string };
+  health: {
+    port: number;
+    configPath: string;
+    authority?: { surfaceProtocolVersion?: number };
+  };
 } => {
   for (const line of output.split(/\r?\n/)) {
     if (!line.trim().startsWith("{")) continue;
@@ -97,13 +138,25 @@ const parseSmokePayload = (output: string): {
       const parsed = JSON.parse(line) as {
         ok?: unknown;
         url?: unknown;
-        health?: { port?: unknown; configPath?: unknown };
+        health?: {
+          port?: unknown;
+          configPath?: unknown;
+          authority?: { surfaceProtocolVersion?: unknown };
+        };
       };
       if (parsed.ok === true
         && typeof parsed.url === "string"
         && typeof parsed.health?.port === "number"
         && typeof parsed.health?.configPath === "string") {
-        return parsed as { ok: true; url: string; health: { port: number; configPath: string } };
+        return parsed as {
+          ok: true;
+          url: string;
+          health: {
+            port: number;
+            configPath: string;
+            authority?: { surfaceProtocolVersion?: number };
+          };
+        };
       }
     } catch {
       // Keep looking for the smoke JSON line; Fastify logs are also JSON.
@@ -111,10 +164,6 @@ const parseSmokePayload = (output: string): {
   }
   throw new Error(`Electron smoke payload missing:\n${output}`);
 };
-
-const closeServer = async (server: net.Server) => await new Promise<void>((resolve, reject) => {
-  server.close((error) => error ? reject(error) : resolve());
-});
 
 main().catch((error) => {
   console.error(error);

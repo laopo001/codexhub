@@ -6,11 +6,11 @@ import test from "node:test";
 import { CodexHubApiError, createCodexHubApiClient } from "../../src/shared/apiClient.js";
 import type { HealthPayload, ProjectsPayload, RuntimesPayload } from "../../src/shared/apiContract.js";
 import { apiRoutes } from "../../src/shared/apiRoutes.js";
-import { vscodeSurfaceProtocolVersion } from "../../src/shared/surfaceTypes.js";
+import { embeddedSurfaceProtocolVersion } from "../../src/shared/surfaceTypes.js";
 import { findFreePort, localServerUrl } from "../../src/server/embedded.js";
 import { startServer } from "../../src/server/index.js";
 
-test("one VSCode authority accepts multiple window surfaces without starting a runtime", async () => {
+test("one embedded authority accepts VSCode and Electron surfaces without starting a runtime", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-vscode-authority."));
   const dataDir = path.join(root, "data");
   const workspaceA = path.join(root, "workspace-a");
@@ -21,14 +21,14 @@ test("one VSCode authority accepts multiple window surfaces without starting a r
     port: await findFreePort("127.0.0.1"),
     dataDir,
     authToken: "",
-    surface: "vscode",
+    surface: "default",
     authority: {
       authorityId: "authority-test",
       kind: "linux",
-      surfaceProtocolVersion: vscodeSurfaceProtocolVersion
+      surfaceProtocolVersion: embeddedSurfaceProtocolVersion
     },
-    vscodeSurfaceLeaseTimeoutMs: 60_000,
-    vscodeSurfaceIdleShutdownMs: 60_000,
+    embeddedSurfaceLeaseTimeoutMs: 60_000,
+    embeddedSurfaceIdleShutdownMs: 60_000,
     features: {
       localMachine: true,
       ssh: false,
@@ -43,29 +43,41 @@ test("one VSCode authority accepts multiple window surfaces without starting a r
     assert.deepEqual(health.authority, {
       authorityId: "authority-test",
       kind: "linux",
-      surfaceProtocolVersion: vscodeSurfaceProtocolVersion
+      surfaceProtocolVersion: embeddedSurfaceProtocolVersion
     });
     assert.equal(health.authRequired, false);
     assert.equal(health.authenticated, true);
     assert.equal((await fetch(`${serverUrl}/api/projects`)).status, 200);
 
     const first = await registerSurfaceWithRetry(client, {
+      surface: "vscode",
       surfaceId: "window-a",
       leaseId: "lease-a",
-      protocolVersion: vscodeSurfaceProtocolVersion,
+      protocolVersion: embeddedSurfaceProtocolVersion,
       workspacePaths: [workspaceA],
       activeWorkspacePath: workspaceA,
       label: "VSCode: A"
     });
     const second = await registerSurfaceWithRetry(client, {
+      surface: "vscode",
       surfaceId: "window-b",
       leaseId: "lease-b",
-      protocolVersion: vscodeSurfaceProtocolVersion,
+      protocolVersion: embeddedSurfaceProtocolVersion,
       workspacePaths: [workspaceB],
       activeWorkspacePath: workspaceB,
       label: "VSCode: B"
     });
     assert.equal(first.surface?.machineId, second.surface?.machineId);
+
+    const electron = await registerSurfaceWithRetry(client, {
+      surface: "electron",
+      surfaceId: "electron-window",
+      leaseId: "electron-lease",
+      protocolVersion: embeddedSurfaceProtocolVersion,
+      workspacePaths: [],
+      label: "Codex Hub Electron"
+    });
+    assert.equal(electron.surface?.machineId, first.surface?.machineId);
 
     let projects = await client.route(apiRoutes.projects) as ProjectsPayload;
     assert.deepEqual(
@@ -73,11 +85,12 @@ test("one VSCode authority accepts multiple window surfaces without starting a r
       [workspaceA, workspaceB].sort()
     );
 
-    await client.route(apiRoutes.heartbeatVscodeSurface, "window-b", {
+    await client.route(apiRoutes.heartbeatEmbeddedSurface, "window-b", {
       leaseId: "lease-b",
-      protocolVersion: vscodeSurfaceProtocolVersion
+      protocolVersion: embeddedSurfaceProtocolVersion
     });
-    await client.route(apiRoutes.unregisterVscodeSurface, "window-a", "lease-a");
+    await client.route(apiRoutes.unregisterEmbeddedSurface, "window-a", "lease-a");
+    await client.route(apiRoutes.unregisterEmbeddedSurface, "electron-window", "electron-lease");
     projects = await client.route(apiRoutes.projects) as ProjectsPayload;
     assert.deepEqual(
       projects.projects.filter((project) => project.transient).map((project) => project.path),
@@ -97,18 +110,19 @@ type Client = ReturnType<typeof createCodexHubApiClient>;
 const registerSurfaceWithRetry = async (
   client: Client,
   registration: {
+    surface: "vscode" | "electron";
     surfaceId: string;
     leaseId: string;
     protocolVersion: number;
     workspacePaths: string[];
-    activeWorkspacePath: string;
+    activeWorkspacePath?: string;
     label: string;
   }
 ) => {
   let lastError: unknown;
   for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
-      return await client.route(apiRoutes.registerVscodeSurface, registration);
+      return await client.route(apiRoutes.registerEmbeddedSurface, registration);
     } catch (error) {
       lastError = error;
       if (!(error instanceof CodexHubApiError) || error.status !== 409) throw error;

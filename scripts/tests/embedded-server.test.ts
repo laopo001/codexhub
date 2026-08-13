@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import net from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,22 +10,51 @@ import {
   startEmbeddedServer
 } from "../../src/server/embedded.js";
 import {
-  vscodeAuthorityKind,
-  vscodeAuthorityServicePort,
-  vscodeHostServicePort
+  authorityKind,
+  authorityServicePort,
+  authorityHostServicePort
 } from "../../src/shared/surfaceTypes.js";
+import { migrateLegacyEmbeddedAuthorityData } from "../../src/core/authorityPaths.js";
 
 test("VSCode authority ports match across desktop hosts and reserve WSL plus one", () => {
-  assert.equal(vscodeHostServicePort, 28_788);
-  assert.equal(vscodeAuthorityServicePort({}, "win32"), 28_788);
-  assert.equal(vscodeAuthorityServicePort({}, "darwin"), 28_788);
-  assert.equal(vscodeAuthorityServicePort({}, "linux"), 28_788);
-  assert.equal(vscodeAuthorityServicePort({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), 28_789);
-  assert.equal(vscodeAuthorityServicePort({ WSL_INTEROP: "/run/WSL/1_interop" }, "linux"), 28_789);
-  assert.equal(vscodeAuthorityKind({}, "win32"), "windows");
-  assert.equal(vscodeAuthorityKind({}, "darwin"), "macos");
-  assert.equal(vscodeAuthorityKind({}, "linux"), "linux");
-  assert.equal(vscodeAuthorityKind({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), "wsl");
+  assert.equal(authorityHostServicePort, 28_788);
+  assert.equal(authorityServicePort({}, "win32"), 28_788);
+  assert.equal(authorityServicePort({}, "darwin"), 28_788);
+  assert.equal(authorityServicePort({}, "linux"), 28_788);
+  assert.equal(authorityServicePort({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), 28_789);
+  assert.equal(authorityServicePort({ WSL_INTEROP: "/run/WSL/1_interop" }, "linux"), 28_789);
+  assert.equal(authorityKind({}, "win32"), "windows");
+  assert.equal(authorityKind({}, "darwin"), "macos");
+  assert.equal(authorityKind({}, "linux"), "linux");
+  assert.equal(authorityKind({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), "wsl");
+});
+
+test("embedded clients can use an explicit authority port for isolated development", () => {
+  assert.equal(authorityServicePort({ CODEX_HUB_AUTHORITY_PORT: "30123" }, "linux"), 30_123);
+  assert.throws(
+    () => authorityServicePort({ CODEX_HUB_AUTHORITY_PORT: "not-a-port" }, "linux"),
+    /Invalid CODEX_HUB_AUTHORITY_PORT/
+  );
+});
+
+test("legacy VSCode authority data migrates without overwriting shared state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-authority-migration."));
+  const legacyDir = path.join(root, "legacy");
+  const sharedDir = path.join(root, "shared");
+  try {
+    await mkdir(legacyDir, { recursive: true });
+    await writeFile(path.join(legacyDir, "config.yaml"), "version: 1\n");
+    await writeFile(path.join(legacyDir, "vscode-authority-id"), "authority-legacy\n");
+    assert.equal(await migrateLegacyEmbeddedAuthorityData(legacyDir, sharedDir), true);
+    assert.equal(await readFile(path.join(sharedDir, "config.yaml"), "utf8"), "version: 1\n");
+    assert.equal(await readFile(path.join(sharedDir, "vscode-authority-id"), "utf8"), "authority-legacy\n");
+
+    await writeFile(path.join(sharedDir, "config.yaml"), "version: 2\n");
+    assert.equal(await migrateLegacyEmbeddedAuthorityData(legacyDir, sharedDir), false);
+    assert.equal(await readFile(path.join(sharedDir, "config.yaml"), "utf8"), "version: 2\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("stable embedded ports are deterministic and stay inside the named range", () => {

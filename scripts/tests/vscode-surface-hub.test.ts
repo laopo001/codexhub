@@ -1,19 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  VscodeSurfaceHub,
-  type VscodeSurfaceProject
+  EmbeddedSurfaceHub,
+  type EmbeddedSurfaceProject
 } from "../../src/core/vscodeSurfaceHub.js";
 
 test("VSCode surface leases merge workspace projects and retain shared paths", () => {
-  const snapshots: VscodeSurfaceProject[][] = [];
-  const hub = new VscodeSurfaceHub({
+  const snapshots: EmbeddedSurfaceProject[][] = [];
+  const hub = new EmbeddedSurfaceHub({
     leaseTimeoutMs: 60_000,
     idleShutdownMs: 60_000,
     onProjectsChange: (projects) => snapshots.push(projects)
   });
   try {
     hub.upsert({
+      surface: "vscode",
       surfaceId: "surface-a",
       leaseId: "lease-a",
       machineId: "machine-local",
@@ -22,6 +23,7 @@ test("VSCode surface leases merge workspace projects and retain shared paths", (
       label: "VSCode: A"
     });
     hub.upsert({
+      surface: "vscode",
       surfaceId: "surface-b",
       leaseId: "lease-b",
       machineId: "machine-local",
@@ -48,13 +50,14 @@ test("VSCode surface leases merge workspace projects and retain shared paths", (
 });
 
 test("a new VSCode lease supersedes stale unregister and heartbeat calls", () => {
-  const hub = new VscodeSurfaceHub({
+  const hub = new EmbeddedSurfaceHub({
     leaseTimeoutMs: 60_000,
     idleShutdownMs: 60_000,
     onProjectsChange: () => undefined
   });
   try {
     hub.upsert({
+      surface: "vscode",
       surfaceId: "surface-a",
       leaseId: "old-lease",
       machineId: "machine-local",
@@ -62,6 +65,7 @@ test("a new VSCode lease supersedes stale unregister and heartbeat calls", () =>
       label: "VSCode: A"
     });
     hub.upsert({
+      surface: "vscode",
       surfaceId: "surface-a",
       leaseId: "new-lease",
       machineId: "machine-local",
@@ -83,7 +87,7 @@ test("an empty VSCode authority reaches its idle callback", async () => {
   const idle = new Promise<void>((resolve) => {
     resolveIdle = resolve;
   });
-  const hub = new VscodeSurfaceHub({
+  const hub = new EmbeddedSurfaceHub({
     leaseTimeoutMs: 100,
     idleShutdownMs: 10,
     onProjectsChange: () => undefined,
@@ -101,7 +105,7 @@ test("an empty VSCode authority reaches its idle callback", async () => {
 
 test("an old VSCode authority yields after every remaining surface uses the replacement build", () => {
   const replacements: string[] = [];
-  const hub = new VscodeSurfaceHub({
+  const hub = new EmbeddedSurfaceHub({
     leaseTimeoutMs: 60_000,
     idleShutdownMs: 60_000,
     currentBuildId: "build-old",
@@ -110,6 +114,7 @@ test("an old VSCode authority yields after every remaining surface uses the repl
   });
   try {
     hub.upsert({
+      surface: "vscode",
       surfaceId: "old-window",
       leaseId: "old-lease",
       machineId: "machine-local",
@@ -118,6 +123,7 @@ test("an old VSCode authority yields after every remaining surface uses the repl
       buildId: "build-old"
     });
     hub.upsert({
+      surface: "vscode",
       surfaceId: "new-window",
       leaseId: "new-lease",
       machineId: "machine-local",

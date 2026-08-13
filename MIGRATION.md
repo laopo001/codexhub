@@ -1,14 +1,14 @@
 # CodexHub 0.7.0 迁移说明
 
-CodexHub 0.7.0 把 VSCode 从“每个窗口一个 embedded server/runtime”迁移为“每个执行 authority 一个 detached service，窗口通过 lease 注册”。这会改变 VSCode 的本地端口、parent machine identity 和窗口 UI storage key；普通 `codexhub server`、Electron、SSH 与 registered machine 的公共 runtime 模型不变。
+CodexHub 0.7.0 把 VSCode 从“每个窗口一个 embedded server/runtime”迁移为“每个执行 authority 一个 detached service，窗口通过 lease 注册”。当前 embedded authority 协议继续把 Electron 纳入同一套 surface 注册模型：VSCode 和 Electron 可以 attach 到同一个 authority、共享 local runtime 与 parent machine transport。普通 `codexhub server`、SSH 与 registered machine 的公共 runtime 模型不变。
 
 ## 从 0.6.0 升级
 
 1. 安装 0.7.0 VSIX 后，对所有已打开的 VSCode 窗口执行 `Developer: Reload Window`。旧版每窗口 embedded server 会随旧 extension host 退出；新版窗口会连接或启动 authority service。
 2. Windows、macOS 和普通 Linux authority 固定监听 `127.0.0.1:28788`；WSL 固定监听 `127.0.0.1:28789`，从而在 mirrored networking 下避开 Windows 的 `28788`。端口不再按 workspace 生成，也不会在占用时顺延；非匹配进程占用固定端口会直接报错。
 3. Windows host、每个 WSL distro、每个 Remote SSH host/user 和容器仍是独立 authority。它们各自运行 service、解析自己的路径并启动自己的 Codex runtime；不要把 Windows 与 WSL 合并成同一个 machine。
-4. 同一 authority 的所有窗口现在共享 `globalStorageUri` 下的 `config.yaml`、local machine/runtime、SSH/tasks/integrations 和唯一 parent registration machine transport。authority 只监听 loopback，默认不生成或要求 access token；只有 extension host 环境或该 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式非空时才启用认证。早期 0.7.0 构建生成的 `vscode-authority-token` 文件不再读取，并会在 authority 下次启动时删除。父 server 会看到每个 authority 一台 machine，不再看到每个 VSCode workspace 一台 machine。
-5. 窗口自动 workspace 仍是 transient project。关闭或失联窗口后，lease 会被清理；同一路径仍被其他窗口注册时不会被移除。最后一个窗口离开后 authority 等待 30 秒退出。
+4. 同一 authority 的所有 VSCode/Electron surface 现在共享 `CODEX_HUB_DATA_DIR` 下的 `config.yaml`（默认 `~/.config/codexhub`）、local machine/runtime、SSH/tasks/integrations 和唯一 parent registration machine transport。authority 只监听 loopback，默认不生成或要求 access token；只有 extension host 环境或该 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式非空时才启用认证。早期构建生成的 `vscode-authority-token` / `authority-token` 文件不再读取，并会在 authority 下次启动时删除。父 server 会看到每个 authority 一台 machine，不再看到每个 workspace 一台 machine。
+5. 窗口自动 workspace 仍是 transient project。关闭或失联窗口后，surface lease 会被清理；同一路径仍被其他 surface 注册时不会被移除。最后一个 VSCode/Electron surface 离开后 authority 等待 30 秒退出。surface 注册协议从 VSCode 专用 endpoint 统一为 `/api/embedded/surfaces`，协议版本递增后旧 authority 必须退出或等待 lease idle，再由新客户端启动。
 
 ## VSCode UI 状态
 
@@ -22,7 +22,7 @@ pnpm check
 pnpm run package:vscode
 ```
 
-安装 VSIX 并 reload 两个属于同一 authority 的 VSCode 窗口后，`/api/health` 应在桌面 host 的 `28788` 或 WSL 的 `28789` 返回相同 `authority.authorityId`；未显式设置 `CODEX_HUB_AUTH_TOKEN` 时还应返回 `authRequired: false`，且 `/api/projects` 无 token 可直接访问。`/api/projects` 应同时包含两个窗口的 transient workspace，而 `/api/runtimes` 在 Add Thread 前仍为空。
+安装 VSIX 并 reload 两个属于同一 authority 的 VSCode 窗口，再启动 Electron 后，`/api/health` 应在桌面 host 的 `28788` 或 WSL 的 `28789` 返回相同 `authority.authorityId`；未显式设置 `CODEX_HUB_AUTH_TOKEN` 时还应返回 `authRequired: false`，且 `/api/projects` 无 token 可直接访问。`/api/projects` 应同时包含 VSCode/Electron surface 的 transient workspace，而 `/api/runtimes` 在 Add Thread 前仍为空。
 
 ## 0.6.0 历史迁移说明
 

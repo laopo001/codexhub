@@ -118,7 +118,7 @@ export type TaskDraft = {
 
 export type ProjectMachineGroup = {
   key: string;
-  kind?: "machine" | "vscodeWorkspace";
+  kind?: "machine" | "embeddedWorkspace";
   machineId: string;
   machineType: NonNullable<MachineSummary["type"]>;
   label: string;

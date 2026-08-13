@@ -38,7 +38,7 @@ test("VSCode authority auth opt-in rejects a missing token or unexpected env nam
   );
   assert.throws(
     () => authorityServiceAuthToken("OTHER_TOKEN", { OTHER_TOKEN: "secret" }),
-    /Unsupported VSCode authority auth-token environment variable/
+    /Unsupported authority auth-token environment variable/
   );
 });
 

@@ -19,7 +19,7 @@ import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { ThreadHub } from "../core/threadHub.js";
-import { VscodeSurfaceHub } from "../core/vscodeSurfaceHub.js";
+import { EmbeddedSurfaceHub } from "../core/vscodeSurfaceHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
 import { resolveCodexAppServerLaunchOptions, type CodexAppServerLaunchOptions } from "../cli/codexAppServerProcess.js";
 import {
@@ -35,7 +35,9 @@ import type { ProjectSource } from "../shared/projectTypes.js";
 import { readBooleanEnv, readNonNegativeNumberEnv } from "../shared/env.js";
 import {
   isCodexHubSurface,
+  embeddedSurfaceKinds,
   isEmbeddedCodexHubSurface,
+  isEmbeddedSurfaceKind,
   type CodexHubAuthorityDescriptor,
   type CodexHubSurface
 } from "../shared/surfaceTypes.js";
@@ -44,7 +46,7 @@ import { registerProjectTaskRoutes } from "./projectTaskRoutes.js";
 import { registerThreadRoutes } from "./threadRoutes.js";
 import { registerMachineTransportRoutes } from "./machineTransportRoutes.js";
 import { registerServerLifecycle } from "./serverLifecycle.js";
-import { registerVscodeSurfaceRoutes } from "./vscodeSurfaceRoutes.js";
+import { registerEmbeddedSurfaceRoutes } from "./vscodeSurfaceRoutes.js";
 import { TunneledSessionManager } from "./tunneledSessionManager.js";
 import { registerSystemRoutes } from "./systemRoutes.js";
 import { registerPetRoutes } from "./petRoutes.js";
@@ -189,8 +191,8 @@ export type ServerStartOptions = {
   parentRegistration?: Partial<ParentRegistrationConnectInput>;
   parentRegistrationIdentity?: ParentRegistrationIdentity;
   authority?: CodexHubAuthorityDescriptor;
-  vscodeSurfaceLeaseTimeoutMs?: number;
-  vscodeSurfaceIdleShutdownMs?: number;
+  embeddedSurfaceLeaseTimeoutMs?: number;
+  embeddedSurfaceIdleShutdownMs?: number;
   features?: Partial<ServerFeatureOptions>;
 };
 
@@ -232,7 +234,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     parentRegistrationIdentity
   );
   const notificationHooks = notificationHookRunnerFromEnv(process.env);
-  const embeddedSurface = isEmbeddedCodexHubSurface(surface);
+  const authorityService = Boolean(options.authority);
+  const embeddedSurface = authorityService || isEmbeddedCodexHubSurface(surface);
   const shouldPersistMachine = (machine: { type?: string }) =>
     machine.type !== "registered" && !(embeddedSurface && machine.type === "local");
   let threads: ThreadHub;
@@ -300,35 +303,36 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let localMachine: CodexhubMachineHandle | null = null;
   let parentRegistration: CodexhubMachineHandle | null = null;
   let parentRegistrationStatus: ParentRegistrationStatus = { status: "idle" };
-  const vscodeAuthorityService = surface === "vscode" && Boolean(options.authority);
-  const vscodeSurfaces = new VscodeSurfaceHub({
-    leaseTimeoutMs: options.vscodeSurfaceLeaseTimeoutMs,
-    idleShutdownMs: options.vscodeSurfaceIdleShutdownMs,
+  const embeddedSurfaces = new EmbeddedSurfaceHub({
+    leaseTimeoutMs: options.embeddedSurfaceLeaseTimeoutMs,
+    idleShutdownMs: options.embeddedSurfaceIdleShutdownMs,
     currentBuildId: buildId,
     onProjectsChange: (projects) => {
       const machineId = localMachine?.machineId ?? projects[0]?.machineId;
       if (!machineId) return;
-      state.replaceTransientProjectsForMachineSource(
-        machineId,
-        "vscode",
-        projects
-          .filter((project) => project.machineId === machineId)
-          .map((project) => ({ path: project.path, source: project.source }))
-      );
+      for (const sourceKind of embeddedSurfaceKinds) {
+        state.replaceTransientProjectsForMachineSource(
+          machineId,
+          sourceKind,
+          projects
+            .filter((project) => project.machineId === machineId && project.source.kind === sourceKind)
+            .map((project) => ({ path: project.path, source: project.source }))
+        );
+      }
       publishProjects();
       parentRegistration?.refreshRegistration();
     },
-    ...(vscodeAuthorityService ? {
+    ...(authorityService ? {
       onIdle: () => {
         void app.close().catch((error: unknown) => {
-          console.error(`codexhub vscode authority idle shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+          console.error(`codexhub embedded authority idle shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
         });
       },
       onReplacementBuild: (replacementBuildId: string) => {
-        console.error(`codexhub vscode authority yielding to build ${replacementBuildId}`);
+        console.error(`codexhub embedded authority yielding to build ${replacementBuildId}`);
         const timer = setTimeout(() => {
           void app.close().catch((error: unknown) => {
-            console.error(`codexhub vscode authority build handoff failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`codexhub embedded authority build handoff failed: ${error instanceof Error ? error.message : String(error)}`);
           });
         }, 100);
         timer.unref?.();
@@ -373,7 +377,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       await localMachine?.stop();
       localMachine = null;
     },
-    stopVscodeSurfaces: () => vscodeSurfaces.stop(),
+    stopEmbeddedSurfaces: () => embeddedSurfaces.stop(),
     stopIntegrations: () => {
       telegramBot?.stop("server closing");
       telegramBot = null;
@@ -414,7 +418,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   function embeddedParentRegistrationProjects(): MachineRegistrationProject[] {
     if (!embeddedSurface || !localMachine) return [];
     return projectSnapshot().projects
-      .filter((project) => project.machineId === localMachine?.machineId && project.source?.kind === surface)
+      .filter((project) => project.machineId === localMachine?.machineId && isEmbeddedWorkspaceSource(project.source))
       .map((project) => ({
         path: project.path,
         source: project.source
@@ -453,7 +457,11 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   function isEmbeddedWorkspaceSource(source: ProjectSource | undefined) {
-    return embeddedSurface && source?.kind === surface;
+    return embeddedSurface && source !== undefined && (
+      authorityService
+        ? isEmbeddedSurfaceKind(source.kind)
+        : source.kind === surface
+    );
   }
 
   function publishProjects() {
@@ -753,11 +761,11 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   registerPetRoutes(app, pets);
 
-  registerVscodeSurfaceRoutes(app, {
-    enabled: vscodeAuthorityService,
+  registerEmbeddedSurfaceRoutes(app, {
+    enabled: authorityService,
     protocolVersion: options.authority?.surfaceProtocolVersion ?? 0,
     machines,
-    surfaces: vscodeSurfaces
+    surfaces: embeddedSurfaces
   });
 
   registerThreadRoutes(app, {

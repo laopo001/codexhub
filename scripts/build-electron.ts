@@ -3,6 +3,7 @@ import path from "node:path";
 import { build } from "esbuild";
 
 const outfile = "dist-node/electron/main.js";
+const authorityServiceOutfile = "dist-node/electron/authority-service.cjs";
 
 await mkdir(path.dirname(outfile), { recursive: true });
 await build({
@@ -20,4 +21,19 @@ await build({
 });
 
 const info = await stat(outfile);
+await build({
+  entryPoints: ["targets/vscode/src/authorityService.ts"],
+  outfile: authorityServiceOutfile,
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node20",
+  define: { navigator: "undefined" },
+  sourcemap: false,
+  minify: false,
+  treeShaking: true,
+  logLevel: "silent"
+});
+const authorityInfo = await stat(authorityServiceOutfile);
 console.error(`built Electron main: ${outfile} (${info.size} bytes)`);
+console.error(`built Electron authority service: ${authorityServiceOutfile} (${authorityInfo.size} bytes)`);

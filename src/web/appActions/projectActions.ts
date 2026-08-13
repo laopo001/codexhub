@@ -1,6 +1,7 @@
 import type React from "react";
 import type { ProjectUpdateInput } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
+import { isEmbeddedSurfaceKind } from "../../shared/surfaceTypes.js";
 import {
   apiRouteJson,
   appendThreadOrder,
@@ -555,13 +556,15 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       const existingProject = machineId
         ? ctx.projectList.find((project) => project.machineId === machineId && project.path === trimmedPath)
         : undefined;
-      const vscodeSource = existingProject?.source?.kind === "vscode" ? existingProject.source : undefined;
+      const embeddedSource = existingProject?.source && isEmbeddedSurfaceKind(existingProject.source.kind)
+        ? existingProject.source
+        : undefined;
       const payload = await apiRouteJson(apiRoutes.startProjectThread, {
         path: trimmedPath,
         machineId: machineId || undefined,
         reuse: true,
-        persist: vscodeSource ? false : undefined,
-        source: vscodeSource
+        persist: embeddedSource ? false : undefined,
+        source: embeddedSource
       });
       ctx.setMachines(normalizeMachines(payload.machines));
       const freshProjects = normalizeProjects(payload.projects);

@@ -1,5 +1,6 @@
 import { turnIdFromAppRecordId } from "../../shared/recordIdentity.js";
 import { asRecord } from "../../shared/recordTypes.js";
+import { isEmbeddedSurfaceKind } from "../../shared/surfaceTypes.js";
 import { createCodexHubApiClient } from "../../shared/apiClient.js";
 import type { ModelCatalogItem, StoredMachine, ThreadGoalStatus } from "../../shared/apiContract.js";
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
@@ -403,7 +404,9 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
   for (const project of projects) {
     const machine = machinesById.get(project.machineId) ?? project.machine;
     const machineType = machine?.type ?? "registered";
-    const sourceGroupKey = project.source?.kind === "vscode" ? `vscode:${project.source.groupId}` : "";
+    const sourceGroupKey = project.source && isEmbeddedSurfaceKind(project.source.kind)
+      ? `${project.source.kind}:${project.source.groupId}`
+      : "";
     const groupKey = sourceGroupKey || project.machineId;
     const label = machine
       ? machine.name ?? machine.hostname
@@ -413,7 +416,7 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
     if (!group) {
       group = {
         key: groupKey,
-        kind: sourceGroupKey ? "vscodeWorkspace" : "machine",
+        kind: sourceGroupKey ? "embeddedWorkspace" : "machine",
         machineId: project.machineId,
         machineType,
         label: project.source?.label ?? label,
@@ -455,7 +458,7 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
       projects: orderProjectsByRelation(group.projects)
     }))
     .sort((left, right) =>
-      Number(right.kind === "vscodeWorkspace") - Number(left.kind === "vscodeWorkspace")
+      Number(right.kind === "embeddedWorkspace") - Number(left.kind === "embeddedWorkspace")
       || Number(right.online) - Number(left.online)
       || left.label.localeCompare(right.label)
     );

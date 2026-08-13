@@ -42,9 +42,9 @@ import type {
   ThreadUserInputResponseInput,
   WorktreeThreadStartInput,
   WorktreeThreadStartPayload,
-  VscodeSurfaceHeartbeatInput,
-  VscodeSurfacePayload,
-  VscodeSurfaceRegistrationInput
+  EmbeddedSurfaceHeartbeatInput,
+  EmbeddedSurfacePayload,
+  EmbeddedSurfaceRegistrationInput
 } from "./apiContract.js";
 import type { ProxyInput } from "./inputTypes.js";
 import type { CommandPalettePart, ThreadRunOptions } from "./threadTypes.js";
@@ -124,7 +124,7 @@ export type ProjectThreadStartInput = {
   machineId?: string;
   reuse?: boolean;
   persist?: boolean;
-  source?: { kind: "vscode" | "theia"; groupId: string; label?: string };
+  source?: { kind: "vscode" | "electron" | "theia"; groupId: string; label?: string };
 };
 
 export type MachineThreadInput =
@@ -159,14 +159,14 @@ export const apiRoutes = {
   sshConfigHosts: get<SshHostsPayload>("/api/ssh/config-hosts"),
   sshConnections: get<SshConnectionsPayload>("/api/ssh/connections"),
   parentRegistration: get<ParentRegistrationPayload>("/api/registered/parent"),
-  registerVscodeSurface: post<VscodeSurfaceRegistrationInput, VscodeSurfacePayload>("/api/vscode/surfaces"),
-  heartbeatVscodeSurface: post<
-    VscodeSurfaceHeartbeatInput,
-    VscodeSurfacePayload,
+  registerEmbeddedSurface: post<EmbeddedSurfaceRegistrationInput, EmbeddedSurfacePayload>("/api/embedded/surfaces"),
+  heartbeatEmbeddedSurface: post<
+    EmbeddedSurfaceHeartbeatInput,
+    EmbeddedSurfacePayload,
     (surfaceId: string) => string
-  >((surfaceId) => `/api/vscode/surfaces/${encode(surfaceId)}/heartbeat`),
-  unregisterVscodeSurface: del<VscodeSurfacePayload, (surfaceId: string, leaseId: string) => string>(
-    (surfaceId, leaseId) => `/api/vscode/surfaces/${encode(surfaceId)}/${encode(leaseId)}`
+  >((surfaceId) => `/api/embedded/surfaces/${encode(surfaceId)}/heartbeat`),
+  unregisterEmbeddedSurface: del<EmbeddedSurfacePayload, (surfaceId: string, leaseId: string) => string>(
+    (surfaceId, leaseId) => `/api/embedded/surfaces/${encode(surfaceId)}/${encode(leaseId)}`
   ),
   machineDirectories: get<MachineDirectoryListing, (machineId: string, path?: string) => string>(
     (machineId, path) => `/api/machines/${encode(machineId)}/directories${queryString({ path })}`

@@ -16,6 +16,7 @@ const uniqueTrimmedParams = (names: string[]) => {
 const requestedSurface = searchParams.get("surface");
 export const webSurface = isCodexHubSurface(requestedSurface) ? requestedSurface : "default";
 export const isVscodeSurface = webSurface === "vscode";
+export const isElectronSurface = webSurface === "electron";
 export const isTheiaSurface = webSurface === "theia";
 export const isTheiaVscodeHost = isVscodeSurface && searchParams.get("host") === "theia";
 export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
@@ -25,6 +26,8 @@ export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ??
 export const embeddedWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "workspacePath"]);
 export const storageKey = isVscodeSurface
   ? `codexhub-ui-state-vscode-v3${embeddedStateScope ? `:${encodeURIComponent(embeddedStateScope)}` : ""}`
+  : isElectronSurface
+    ? `codexhub-ui-state-electron-v1${embeddedStateScope ? `:${encodeURIComponent(embeddedStateScope)}` : ""}`
   : isTheiaSurface
     ? "codexhub-ui-state-theia-v2"
     : "codexhub-ui-state-v6";

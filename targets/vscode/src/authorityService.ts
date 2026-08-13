@@ -1,14 +1,14 @@
 import os from "node:os";
 import type { CodexHubAuthorityKind } from "../../../src/shared/surfaceTypes.js";
-import { vscodeSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
+import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
 import { startEmbeddedServer } from "../../../src/server/embedded.js";
 import {
   authorityServiceAuthToken,
-  removeLegacyVscodeAuthorityTokenFile
+  removeLegacyAuthorityTokenFiles
 } from "./authorityAuth.js";
 
 void main().catch((error: unknown) => {
-  console.error(`codexhub vscode authority failed: ${errorText(error)}`);
+  console.error(`codexhub embedded authority failed: ${errorText(error)}`);
   process.exitCode = 1;
 });
 
@@ -22,8 +22,8 @@ async function main() {
   const buildId = args.get("build-id") || null;
   const authToken = authorityServiceAuthToken(args.get("auth-token-env"), process.env);
   delete process.env.CODEX_HUB_AUTH_TOKEN;
-  await removeLegacyVscodeAuthorityTokenFile(dataDir).catch((error: unknown) => {
-    console.warn(`codexhub vscode authority could not remove obsolete token file: ${errorText(error)}`);
+  await removeLegacyAuthorityTokenFiles(dataDir).catch((error: unknown) => {
+    console.warn(`codexhub embedded authority could not remove obsolete token file: ${errorText(error)}`);
   });
   const remoteClientPath = args.get("remote-client");
   if (remoteClientPath) process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH = remoteClientPath;
@@ -34,29 +34,29 @@ async function main() {
     preferredPort: port,
     dataDir,
     staticDirectory,
-    surface: "vscode",
+    surface: "default",
     buildId,
     authToken,
     authority: {
       authorityId,
       kind: authorityKind,
-      surfaceProtocolVersion: vscodeSurfaceProtocolVersion
+      surfaceProtocolVersion: embeddedSurfaceProtocolVersion
     },
     parentRegistrationIdentity: {
-      machineId: `machine-vscode-${authorityId.replace(/^authority-/, "")}`,
-      name: `CodexHub VSCode · ${authorityLabel(authorityKind)} · ${os.hostname()}`
+      machineId: `machine-authority-${authorityId.replace(/^authority-/, "")}`,
+      name: `CodexHub Authority · ${authorityLabel(authorityKind)} · ${os.hostname()}`
     },
     features: { localMachine: true },
-    logPrefix: "codexhub vscode authority"
+    logPrefix: "codexhub embedded authority"
   });
 
   console.error(
-    `codexhub vscode authority ready: ${authorityKind} ${authorityId} http://127.0.0.1:${server.port} auth=${authToken ? "required" : "off"}`
+    `codexhub embedded authority ready: ${authorityKind} ${authorityId} http://127.0.0.1:${server.port} auth=${authToken ? "required" : "off"}`
   );
 
   const stop = () => {
     void server.stop().catch((error: unknown) => {
-      console.error(`codexhub vscode authority stop failed: ${errorText(error)}`);
+      console.error(`codexhub embedded authority stop failed: ${errorText(error)}`);
     });
   };
   process.once("SIGINT", stop);

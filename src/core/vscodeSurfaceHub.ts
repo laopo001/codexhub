@@ -1,12 +1,14 @@
 import type { ProjectSource } from "../shared/projectTypes.js";
+import type { EmbeddedSurfaceKind } from "../shared/surfaceTypes.js";
 
-export type VscodeSurfaceProject = {
+export type EmbeddedSurfaceProject = {
   machineId: string;
   path: string;
   source: ProjectSource;
 };
 
-export type VscodeSurfaceRegistration = {
+export type EmbeddedSurfaceRegistration = {
+  surface: EmbeddedSurfaceKind;
   surfaceId: string;
   leaseId: string;
   machineId: string;
@@ -16,21 +18,21 @@ export type VscodeSurfaceRegistration = {
   buildId?: string;
 };
 
-export type VscodeSurfaceView = VscodeSurfaceRegistration & {
+export type EmbeddedSurfaceView = EmbeddedSurfaceRegistration & {
   updatedAt: string;
   expiresAt: string;
 };
 
-type SurfaceState = VscodeSurfaceRegistration & {
+type SurfaceState = EmbeddedSurfaceRegistration & {
   updatedAtMs: number;
 };
 
-export type VscodeSurfaceHubOptions = {
+export type EmbeddedSurfaceHubOptions = {
   leaseTimeoutMs?: number;
   idleShutdownMs?: number;
   now?: () => number;
   currentBuildId?: string | null;
-  onProjectsChange: (projects: VscodeSurfaceProject[]) => void;
+  onProjectsChange: (projects: EmbeddedSurfaceProject[]) => void;
   onIdle?: () => void;
   onReplacementBuild?: (buildId: string) => void;
 };
@@ -39,10 +41,10 @@ const defaultLeaseTimeoutMs = 30_000;
 const defaultIdleShutdownMs = 30_000;
 
 /**
- * VSCode 窗口只是 authority service 的临时 surface，不是 machine。这里维护
- * 窗口 lease，并把所有活动窗口的 workspace 合并成唯一 project catalog。
+ * Embedded client window 只是 authority service 的临时 surface，不是 machine。
+ * 这里维护窗口 lease，并把所有活动窗口的 workspace 合并成唯一 project catalog。
  */
-export class VscodeSurfaceHub {
+export class EmbeddedSurfaceHub {
   private readonly surfaces = new Map<string, SurfaceState>();
   private readonly leaseTimeoutMs: number;
   private readonly idleShutdownMs: number;
@@ -52,7 +54,7 @@ export class VscodeSurfaceHub {
   private projectSignature = "";
   private replacementBuildId = "";
 
-  constructor(private readonly options: VscodeSurfaceHubOptions) {
+  constructor(private readonly options: EmbeddedSurfaceHubOptions) {
     this.leaseTimeoutMs = positiveMilliseconds(options.leaseTimeoutMs, defaultLeaseTimeoutMs);
     this.idleShutdownMs = positiveMilliseconds(options.idleShutdownMs, defaultIdleShutdownMs);
     this.now = options.now ?? Date.now;
@@ -64,7 +66,7 @@ export class VscodeSurfaceHub {
     this.scheduleIdleShutdown();
   }
 
-  upsert(input: VscodeSurfaceRegistration): VscodeSurfaceView {
+  upsert(input: EmbeddedSurfaceRegistration): EmbeddedSurfaceView {
     const workspacePaths = uniquePaths(input.workspacePaths);
     const activeWorkspacePath = input.activeWorkspacePath && workspacePaths.includes(input.activeWorkspacePath)
       ? input.activeWorkspacePath
@@ -82,14 +84,14 @@ export class VscodeSurfaceHub {
     return this.view(state);
   }
 
-  touch(surfaceId: string, leaseId: string): VscodeSurfaceView | null {
+  touch(surfaceId: string, leaseId: string): EmbeddedSurfaceView | null {
     const state = this.surfaces.get(surfaceId);
     if (!state || state.leaseId !== leaseId) return null;
     state.updatedAtMs = this.now();
     return this.view(state);
   }
 
-  get(surfaceId: string, leaseId?: string): VscodeSurfaceView | null {
+  get(surfaceId: string, leaseId?: string): EmbeddedSurfaceView | null {
     const state = this.surfaces.get(surfaceId);
     if (!state || (leaseId && state.leaseId !== leaseId)) return null;
     return this.view(state);
@@ -132,7 +134,7 @@ export class VscodeSurfaceHub {
   }
 
   private publishProjects() {
-    const projectsByTarget = new Map<string, VscodeSurfaceProject>();
+    const projectsByTarget = new Map<string, EmbeddedSurfaceProject>();
     const surfaces = [...this.surfaces.values()].sort((left, right) => left.surfaceId.localeCompare(right.surfaceId));
     for (const surface of surfaces) {
       for (const workspacePath of surface.workspacePaths) {
@@ -142,7 +144,7 @@ export class VscodeSurfaceHub {
           machineId: surface.machineId,
           path: workspacePath,
           source: {
-            kind: "vscode",
+            kind: surface.surface,
             groupId: surface.surfaceId,
             label: surface.label
           }
@@ -158,8 +160,9 @@ export class VscodeSurfaceHub {
     this.options.onProjectsChange(projects);
   }
 
-  private view(surface: SurfaceState): VscodeSurfaceView {
+  private view(surface: SurfaceState): EmbeddedSurfaceView {
     return {
+      surface: surface.surface,
       surfaceId: surface.surfaceId,
       leaseId: surface.leaseId,
       machineId: surface.machineId,
@@ -203,3 +206,11 @@ const uniquePaths = (paths: string[]) => [...new Set(paths.map((value) => value.
 
 const positiveMilliseconds = (value: number | undefined, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+
+export type {
+  EmbeddedSurfaceProject as VscodeSurfaceProject,
+  EmbeddedSurfaceRegistration as VscodeSurfaceRegistration,
+  EmbeddedSurfaceView as VscodeSurfaceView,
+  EmbeddedSurfaceHubOptions as VscodeSurfaceHubOptions
+};
+export { EmbeddedSurfaceHub as VscodeSurfaceHub };

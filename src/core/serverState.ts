@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
+import { codexHubDataDirectory } from "./authorityPaths.js";
 import { normalizeServerConfigEnv, readServerConfigEnv } from "./serverConfigEnv.js";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
 import type { MachineCapabilities, MachineSummary, MachineType } from "../shared/machineTypes.js";
@@ -619,8 +620,7 @@ export class CodexhubServerState {
 export const machineIdForSession = (session: Pick<SessionSummary, "machineId" | "hostname">) =>
   session.machineId ?? createMachineId(session.hostname ?? "local");
 
-const defaultDataDir = () =>
-  path.resolve(process.env.CODEX_HUB_DATA_DIR ?? path.join(os.homedir(), ".config", "codexhub"));
+const defaultDataDir = () => codexHubDataDirectory();
 
 const legacyDefaultDataDir = () =>
   path.resolve(path.join(os.homedir(), ".local", "share", "codexhub"));

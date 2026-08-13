@@ -20,8 +20,8 @@ export type EmbeddedServerOptions = {
   authToken?: string;
   parentRegistrationIdentity?: ParentRegistrationIdentity;
   authority?: CodexHubAuthorityDescriptor;
-  vscodeSurfaceLeaseTimeoutMs?: number;
-  vscodeSurfaceIdleShutdownMs?: number;
+  embeddedSurfaceLeaseTimeoutMs?: number;
+  embeddedSurfaceIdleShutdownMs?: number;
   features?: Partial<ServerFeatureOptions>;
   logPrefix?: string;
 };
@@ -46,8 +46,8 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       authToken: options.authToken,
       parentRegistrationIdentity: options.parentRegistrationIdentity,
       authority: options.authority,
-      vscodeSurfaceLeaseTimeoutMs: options.vscodeSurfaceLeaseTimeoutMs,
-      vscodeSurfaceIdleShutdownMs: options.vscodeSurfaceIdleShutdownMs,
+      embeddedSurfaceLeaseTimeoutMs: options.embeddedSurfaceLeaseTimeoutMs,
+      embeddedSurfaceIdleShutdownMs: options.embeddedSurfaceIdleShutdownMs,
       features: options.features
     });
 

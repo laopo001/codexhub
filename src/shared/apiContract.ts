@@ -148,7 +148,8 @@ export type HealthPayload = AuthStatusPayload & {
   };
 };
 
-export type VscodeSurfaceRegistrationInput = {
+export type EmbeddedSurfaceRegistrationInput = {
+  surface: "vscode" | "electron";
   surfaceId: string;
   leaseId: string;
   protocolVersion: number;
@@ -158,14 +159,15 @@ export type VscodeSurfaceRegistrationInput = {
   buildId?: string;
 };
 
-export type VscodeSurfaceHeartbeatInput = {
+export type EmbeddedSurfaceHeartbeatInput = {
   leaseId: string;
   protocolVersion: number;
 };
 
-export type VscodeSurfacePayload = {
+export type EmbeddedSurfacePayload = {
   ok: boolean;
   surface?: {
+    surface: "vscode" | "electron";
     surfaceId: string;
     leaseId: string;
     machineId: string;
@@ -583,25 +585,26 @@ export const threadRenameSchema = z.object({
 }).strict();
 
 export const projectSourceSchema = z.object({
-  kind: z.enum(["vscode", "theia"]),
+  kind: z.enum(["vscode", "electron", "theia"]),
   groupId: z.string().min(1),
   label: z.string().min(1).optional()
 }).strict();
 
-const vscodeSurfaceIdSchema = z.string().trim().min(1).max(200);
+const embeddedSurfaceIdSchema = z.string().trim().min(1).max(200);
 
-export const vscodeSurfaceRegistrationSchema = z.object({
-  surfaceId: vscodeSurfaceIdSchema,
-  leaseId: vscodeSurfaceIdSchema,
+export const embeddedSurfaceRegistrationSchema = z.object({
+  surface: z.enum(["vscode", "electron"]),
+  surfaceId: embeddedSurfaceIdSchema,
+  leaseId: embeddedSurfaceIdSchema,
   protocolVersion: z.number().int().positive(),
-  workspacePaths: z.array(z.string().trim().min(1)).min(1).max(64),
+  workspacePaths: z.array(z.string().trim().min(1)).max(64),
   activeWorkspacePath: z.string().trim().min(1).optional(),
   label: z.string().trim().min(1).max(200),
   buildId: z.string().trim().min(1).max(500).optional()
 }).strict();
 
-export const vscodeSurfaceHeartbeatSchema = z.object({
-  leaseId: vscodeSurfaceIdSchema,
+export const embeddedSurfaceHeartbeatSchema = z.object({
+  leaseId: embeddedSurfaceIdSchema,
   protocolVersion: z.number().int().positive()
 }).strict();
 

@@ -1,16 +1,38 @@
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { app as electronApp, BrowserWindow, shell } from "electron";
+import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
+import { embeddedAuthorityDataDirectory } from "../../../src/core/authorityPaths.js";
+import {
+  authorityBuildId,
+  ensureEmbeddedAuthority,
+  type EmbeddedAuthorityHandle
+} from "../../../src/core/embeddedAuthority.js";
+import {
+  configuredAuthorityAuthToken,
+  removeLegacyAuthorityTokenFiles
+} from "../../../src/core/authorityAuth.js";
 import { loadDotEnv } from "../../../src/core/dotenv.js";
-import type { ServerHandle } from "../../../src/server/index.js";
-import { localServerUrl, parseEmbeddedPort, startEmbeddedServer as startSharedEmbeddedServer } from "../../../src/server/embedded.js";
+import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/apiClient.js";
+import { apiRoutes } from "../../../src/shared/apiRoutes.js";
+import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
+
+const mainDirectory = path.dirname(fileURLToPath(import.meta.url));
+const surfaceHeartbeatMs = 10_000;
 
 let mainWindow: BrowserWindow | null = null;
-let server: ServerHandle | null = null;
+let authority: EmbeddedAuthorityHandle | null = null;
 let allowQuit = false;
-let stoppingServer: Promise<void> | null = null;
+let stoppingSurface: Promise<void> | null = null;
+let heartbeatTimer: NodeJS.Timeout | null = null;
+let heartbeatInFlight = false;
+let surfaceRegistered = false;
+const surfaceId = `electron-${randomUUID()}`;
+const leaseId = randomUUID();
 
 const createWindow = async () => {
-  if (!server) server = await startElectronServer();
-
+  await ensureElectronSurface();
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -31,54 +53,186 @@ const createWindow = async () => {
   });
 
   window.on("closed", () => {
-    if (mainWindow === window) mainWindow = null;
+    if (mainWindow !== window) return;
+    mainWindow = null;
+    void unregisterSurface();
   });
 
   mainWindow = window;
-  await window.loadURL(localServerUrl(server));
+  await window.loadURL(electronSurfaceUrl(requiredAuthority()));
 
   if (process.env.CODEX_HUB_ELECTRON_DEVTOOLS === "1") {
     window.webContents.openDevTools({ mode: "detach" });
   }
 };
 
-const startElectronServer = async () => {
-  // Keep Electron's random-port default unless the launch environment explicitly sets a port.
-  const explicitPort = process.env.CODEX_HUB_PORT;
+const ensureElectronSurface = async () => {
+  if (!authority) authority = await startElectronAuthority();
+  await registerSurface(authority);
+  startHeartbeat();
+};
+
+const startElectronAuthority = async () => {
   await loadDotEnv();
-  const host = process.env.CODEX_HUB_HOST ?? "127.0.0.1";
-  return await startSharedEmbeddedServer({
-    host,
-    portMode: explicitPort ? "preferred" : "random",
-    preferredPort: explicitPort ? parseEmbeddedPort(explicitPort, "Electron server port") : undefined,
-    logPrefix: "codexhub electron"
+  const dataDir = embeddedAuthorityDataDirectory();
+  const authorityServicePath = process.env.CODEX_HUB_AUTHORITY_SERVICE_PATH?.trim()
+    || path.join(mainDirectory, "authority-service.cjs");
+  const staticDirectory = process.env.CODEX_HUB_STATIC_DIR?.trim()
+    || path.resolve(mainDirectory, "..", "..", "dist");
+  const remoteClientPath = process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH?.trim()
+    || path.resolve(mainDirectory, "..", "ssh", "remote-client.cjs");
+  await removeLegacyAuthorityTokenFiles(dataDir).catch((error: unknown) => {
+    console.warn(`codexhub electron could not remove obsolete authority token file: ${errorText(error)}`);
+  });
+  const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
+  const authToken = configuredAuthorityAuthToken(process.env, configEnv);
+  const buildId = await authorityBuildId([
+    authorityServicePath,
+    path.join(staticDirectory, "index.html")
+  ], "electron");
+  return await ensureEmbeddedAuthority({
+    dataDir,
+    authorityServicePath,
+    staticDirectory,
+    remoteClientPath,
+    buildId,
+    authToken,
+    runAsElectronNode: true,
+    logFileName: "authority.log"
   });
 };
 
-const stopServer = async () => {
-  if (stoppingServer) return stoppingServer;
-  const current = server;
-  server = null;
-  stoppingServer = current
-    ? current.stop().catch((error: unknown) => {
-      console.error(`codexhub electron server stop failed: ${error instanceof Error ? error.message : String(error)}`);
-    }).finally(() => {
-      stoppingServer = null;
-    })
-    : Promise.resolve();
-  return stoppingServer;
+const registerSurface = async (target: EmbeddedAuthorityHandle, attempts = 30) => {
+  const client = createCodexHubApiClient({ baseUrl: target.url, authToken: target.authToken });
+  const workspacePaths = electronWorkspacePaths();
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await client.route(apiRoutes.registerEmbeddedSurface, {
+        surface: "electron",
+        surfaceId,
+        leaseId,
+        protocolVersion: embeddedSurfaceProtocolVersion,
+        workspacePaths,
+        activeWorkspacePath: workspacePaths[0],
+        label: "Codex Hub Electron",
+        buildId: target.buildId
+      });
+      surfaceRegistered = true;
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isTransientSurfaceRegistrationError(error) || attempt + 1 >= attempts) break;
+      await delay(500);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+};
+
+const startHeartbeat = () => {
+  if (heartbeatTimer) return;
+  heartbeatTimer = setInterval(() => void heartbeat(), surfaceHeartbeatMs);
+  heartbeatTimer.unref?.();
+};
+
+const stopHeartbeat = () => {
+  if (!heartbeatTimer) return;
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+};
+
+const heartbeat = async () => {
+  if (heartbeatInFlight || !surfaceRegistered || !authority) return;
+  heartbeatInFlight = true;
+  try {
+    const client = createCodexHubApiClient({ baseUrl: authority.url, authToken: authority.authToken });
+    await client.route(apiRoutes.heartbeatEmbeddedSurface, surfaceId, {
+      leaseId,
+      protocolVersion: embeddedSurfaceProtocolVersion
+    });
+  } catch (error) {
+    try {
+      surfaceRegistered = false;
+      authority = await startElectronAuthority();
+      await registerSurface(authority, 3);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        await mainWindow.loadURL(electronSurfaceUrl(authority));
+      }
+    } catch (reconnectError) {
+      console.error(`codexhub electron surface reconnect failed: ${errorText(reconnectError || error)}`);
+    }
+  } finally {
+    heartbeatInFlight = false;
+  }
+};
+
+const unregisterSurface = async (stopOwnedAuthority = false) => {
+  if (stoppingSurface) return stoppingSurface;
+  stopHeartbeat();
+  const current = authority;
+  authority = null;
+  surfaceRegistered = false;
+  stoppingSurface = (async () => {
+    if (current && current.url) {
+      const client = createCodexHubApiClient({ baseUrl: current.url, authToken: current.authToken });
+      await client.route(apiRoutes.unregisterEmbeddedSurface, surfaceId, leaseId).catch(() => undefined);
+    }
+    if (stopOwnedAuthority && current?.startedByCaller && current.pid) {
+      try {
+        process.kill(current.pid, "SIGTERM");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+          console.warn(`codexhub electron authority stop failed: ${errorText(error)}`);
+        }
+      }
+    }
+  })().finally(() => {
+    stoppingSurface = null;
+  });
+  return stoppingSurface;
 };
 
 const runSmoke = async () => {
-  server = await startElectronServer();
-  const url = localServerUrl(server);
-  const response = await fetch(new URL("/api/health", url));
+  await ensureElectronSurface();
+  const current = requiredAuthority();
+  const response = await fetch(new URL("/api/health", current.url));
   if (!response.ok) throw new Error(`Electron smoke health failed: HTTP ${response.status}`);
-  console.log(JSON.stringify({ ok: true, url, health: await response.json() }));
-  await stopServer();
+  console.log(JSON.stringify({ ok: true, url: electronSurfaceUrl(current), health: await response.json() }));
+  await unregisterSurface(true);
   allowQuit = true;
   electronApp.quit();
 };
+
+const requiredAuthority = () => {
+  if (!authority) throw new Error("Electron authority is not available.");
+  return authority;
+};
+
+const electronSurfaceUrl = (target: EmbeddedAuthorityHandle) => {
+  const url = new URL("/", target.url);
+  if (target.authToken) url.searchParams.set("codexhub_token", target.authToken);
+  url.searchParams.set("surface", "electron");
+  url.searchParams.set("surfaceId", surfaceId);
+  url.searchParams.set("stateScope", `authority:${target.authorityId}`);
+  for (const workspacePath of electronWorkspacePaths()) url.searchParams.append("workspaceFolder", workspacePath);
+  return url.toString();
+};
+
+const electronWorkspacePaths = () => [
+  ...(process.env.CODEX_HUB_WORKSPACE_PATH?.trim() ? [process.env.CODEX_HUB_WORKSPACE_PATH.trim()] : []),
+  ...(process.env.CODEX_HUB_WORKSPACE_PATHS?.split(path.delimiter).map((value) => value.trim()).filter(Boolean) ?? [])
+].filter((value, index, values) => values.indexOf(value) === index);
+
+const isTransientSurfaceRegistrationError = (error: unknown) =>
+  error instanceof CodexHubApiError
+  && error.status === 409
+  && (
+    error.responseText.includes("Local project launcher is still starting")
+    || error.responseText.includes("No online codexhub project launcher")
+  );
+
+const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 if (!electronApp.requestSingleInstanceLock()) {
   electronApp.quit();
@@ -107,7 +261,7 @@ if (!electronApp.requestSingleInstanceLock()) {
   electronApp.on("before-quit", (event) => {
     if (allowQuit) return;
     event.preventDefault();
-    void stopServer().finally(() => {
+    void unregisterSurface(process.env.CODEX_HUB_ELECTRON_SMOKE === "1").finally(() => {
       allowQuit = true;
       electronApp.quit();
     });
@@ -115,7 +269,7 @@ if (!electronApp.requestSingleInstanceLock()) {
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
-      void stopServer().finally(() => {
+      void unregisterSurface(process.env.CODEX_HUB_ELECTRON_SMOKE === "1").finally(() => {
         allowQuit = true;
         electronApp.quit();
       });

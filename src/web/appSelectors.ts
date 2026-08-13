@@ -2,9 +2,10 @@ import { useMemo, type Dispatch, type SetStateAction } from "react";
 import { recordsToViews } from "../core/codexRecordView.js";
 import { collapseHistoricalToolBatches, compactToolViews } from "../shared/compactRecordViews.js";
 import type { CodexRecordView } from "../shared/recordTypes.js";
+import { isEmbeddedSurfaceKind } from "../shared/surfaceTypes.js";
 import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from "./helpers/turnDurations.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
-import { embeddedWorkspacePaths, isEmbeddedHostSurface, webSurface } from "./appConfig.js";
+import { embeddedWorkspacePaths, isEmbeddedHostSurface } from "./appConfig.js";
 import {
   activeGoalActivityScopeFromRecords,
   activityStatusesFromRecords,
@@ -559,7 +560,7 @@ export type AppSelectors = ReturnType<typeof useAppSelectors>;
 
 
 const isCurrentEmbeddedWorkspaceProject = (project: ProjectSummary) =>
-  project.source?.kind === webSurface
+  isEmbeddedSurfaceKind(project.source?.kind)
   && (!currentEmbeddedWorkspacePaths.size || currentEmbeddedWorkspacePaths.has(project.path));
 
 const registeredMachineCommand = (origin: string, token: string) => {
