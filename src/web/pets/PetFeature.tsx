@@ -374,6 +374,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
                 <span className={`petActivityDot ${activityStatusClass(activity.status)}`} />
                 <span className="petActivityText">
                   <strong>{activity.title}</strong>
+                  {activity.machineLabel ? <small className="petActivityMachine">{activity.machineLabel}</small> : null}
                   <em>{petStatusLabel(activity.status)}</em>
                 </span>
               </button>

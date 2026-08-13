@@ -61,6 +61,7 @@ export class MachineHub {
       platform: registration.platform,
       cwd: registration.cwd,
       capabilities: normalizeMachineCapabilities(registration.capabilities, existing?.capabilities),
+      activities: registration.activities ?? existing?.activities ?? [],
       transportId: registration.transportId,
       commands: existing?.commands ?? [],
       waiters: existing?.waiters ?? new Set()
@@ -81,6 +82,7 @@ export class MachineHub {
     machine.platform = registration.platform ?? machine.platform;
     machine.cwd = registration.cwd ?? machine.cwd;
     machine.capabilities = normalizeMachineCapabilities(registration.capabilities, machine.capabilities);
+    if (registration.activities) machine.activities = registration.activities;
     machine.lastSeenAt = new Date().toISOString();
     if (!machine.online) {
       machine.online = true;
@@ -326,7 +328,8 @@ const machineSummary = (machine: MachineState): MachineSummary => ({
   pid: machine.pid,
   platform: machine.platform,
   cwd: machine.cwd,
-  capabilities: machine.capabilities
+  capabilities: machine.capabilities,
+  activities: machine.activities
 });
 
 const machineCommandsAfter = (machine: MachineState, after: number) =>
@@ -344,7 +347,8 @@ const machineVisibleState = (machine: MachineState) => JSON.stringify({
   pid: machine.pid,
   platform: machine.platform,
   cwd: machine.cwd,
-  capabilities: machine.capabilities
+  capabilities: machine.capabilities,
+  activities: machine.activities
 });
 
 export const normalizeMachineType = (

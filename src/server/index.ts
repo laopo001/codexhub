@@ -30,7 +30,7 @@ import {
   type ProjectsPayload,
   type ProjectsStreamEvent
 } from "../shared/apiContract.js";
-import type { MachineRegistrationProject } from "../shared/machineTypes.js";
+import type { MachineActivitySummary, MachineRegistrationProject } from "../shared/machineTypes.js";
 import type { ProjectSource } from "../shared/projectTypes.js";
 import { readBooleanEnv, readNonNegativeNumberEnv } from "../shared/env.js";
 import {
@@ -252,6 +252,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     onThreadEvent: (event, records) => notificationHooks?.handleThreadEvent(event, records),
     onThreadChange: () => {
       captureSessionState();
+      parentRegistration?.refreshRegistration();
     }
   });
   const app = Fastify({
@@ -423,6 +424,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         path: project.path,
         source: project.source
       }));
+  }
+
+  function parentRegistrationActivities(): MachineActivitySummary[] {
+    return threads.listRuntimes().flatMap((runtime) => runtime.threads.map((thread) => ({
+      threadId: thread.threadId,
+      title: thread.title,
+      workingDirectory: thread.workingDirectory,
+      updatedAt: thread.updatedAt,
+      status: thread.running || thread.status === "running" ? "running" : "idle"
+    })));
   }
 
   function replaceMachineRegistrationProjects(machineId: string, projects: MachineRegistrationProject[] | undefined) {
@@ -622,6 +633,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       appServerLaunch,
       capabilities: embeddedSurface ? { projectCatalog: "fixed" } : undefined,
       projects: embeddedParentRegistrationProjects,
+      activitySnapshot: parentRegistrationActivities,
       onStatus: (status) => {
         parentRegistrationStatus = {
           status: status.status,

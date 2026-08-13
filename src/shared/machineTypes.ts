@@ -23,6 +23,22 @@ export type MachineRegistrationProject = {
   source?: MachineRegistrationProjectSource;
 };
 
+/**
+ * Ephemeral activity hint sent by a server when it registers to a parent.
+ * It is intentionally smaller than a thread/runtime projection and never
+ * carries transcript records; the parent may use it for cross-authority UI
+ * such as the Electron desktop pet.
+ */
+export type MachineActivityStatus = "needs_input" | "blocked" | "running" | "idle";
+
+export type MachineActivitySummary = {
+  threadId: string;
+  title: string;
+  workingDirectory: string;
+  updatedAt: string;
+  status: MachineActivityStatus;
+};
+
 /** machine WebSocket 注册 payload；server 用它创建或刷新 machine 投影。 */
 export type MachineRegistration = {
   machineId?: string;
@@ -34,6 +50,7 @@ export type MachineRegistration = {
   cwd?: string;
   capabilities?: Partial<MachineCapabilities>;
   projects?: MachineRegistrationProject[];
+  activities?: MachineActivitySummary[];
   transportId?: string;
 };
 
@@ -52,6 +69,7 @@ export type MachineSummary = {
   platform?: string;
   cwd?: string;
   capabilities: MachineCapabilities;
+  activities?: MachineActivitySummary[];
 };
 
 /** machine 确保唯一 Codex runtime 已启动后的内部结果。 */

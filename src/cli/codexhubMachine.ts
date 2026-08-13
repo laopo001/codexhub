@@ -12,6 +12,7 @@ import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
 import { createMachineId } from "../core/machineHub.js";
 import {
   type MachineCapabilities,
+  type MachineActivitySummary,
   type MachineCommand,
   type MachineDirectoryListing,
   type MachineEnsureRuntimeResult,
@@ -42,6 +43,7 @@ export type MachineRunnerOptions = {
   appServerLaunch?: CodexAppServerLaunchOptions;
   runtimeCatalogCachePath?: string;
   projects?: MachineRegistrationProject[] | (() => MachineRegistrationProject[]);
+  activitySnapshot?: () => MachineActivitySummary[];
   onStatus?: (status: CodexhubMachineStatus) => void;
 };
 
@@ -230,6 +232,7 @@ class CodexhubMachineRunner {
     const projects = typeof this.options.projects === "function"
       ? this.options.projects()
       : this.options.projects;
+    const activities = this.options.activitySnapshot?.();
     return {
       machineId: this.machineId,
       type: this.options.type ?? "registered",
@@ -239,7 +242,8 @@ class CodexhubMachineRunner {
       platform: `${process.platform}-${process.arch}`,
       cwd: process.cwd(),
       capabilities: { projectLauncher: true, ...this.options.capabilities },
-      projects
+      projects,
+      ...(activities ? { activities } : {})
     };
   }
 

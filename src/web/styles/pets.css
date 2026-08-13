@@ -161,6 +161,13 @@
 
 .petActivityItem:hover { background: #f3f6f0; }
 .petActivityText strong { overflow: hidden; color: #263226; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.petActivityText .petActivityMachine {
+  overflow: hidden;
+  color: #879183;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .petActivityText em { color: #6c776a; font-size: 11px; font-style: normal; }
 
 .petActivityDot {

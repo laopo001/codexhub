@@ -1,7 +1,7 @@
 import React from "react";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import { defaultPetId, type InvalidPetPackage, type PetManifest } from "../../shared/petTypes.js";
-import type { AppSettings, OpenThreadState } from "../types.js";
+import type { AppSettings, MachineSummary, OpenThreadState, RuntimeSummary } from "../types.js";
 import { isElectronDesktopPetWindow, isNativeElectronSurface } from "../appConfig.js";
 import { apiRouteJson } from "../helpers/core.js";
 import { parsePetCommand } from "./petCommands.js";
@@ -50,14 +50,24 @@ const loadPreferences = (preferencesKey: string): PetPreferences => {
 type PetImportConflictAction = "reject" | "rename" | "replace";
 export type PetVisibilityMode = "window" | "desktop";
 
+export type PetFeatureSources = {
+  runtimeList?: RuntimeSummary[];
+  machines?: MachineSummary[];
+  dialogThreads?: OpenThreadState[];
+};
+
 export const usePetFeature = (
   openThreads: OpenThreadState[],
   enabled: boolean,
   desktopEnabled: boolean,
   selectedPetId: string,
   setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>,
-  visibilityMode: PetVisibilityMode = "window"
+  visibilityMode: PetVisibilityMode = "window",
+  sources: PetFeatureSources = {}
 ) => {
+  const runtimeList = sources.runtimeList ?? [];
+  const machines = sources.machines ?? [];
+  const dialogThreads = sources.dialogThreads ?? [];
   const preferencesKey = isElectronDesktopPetWindow ? desktopPreferencesKey : webPreferencesKey;
   const activeVisibilityKey = visibilityMode === "desktop" ? "showDesktopPet" : "showFloatingPet";
   const [preferences, setPreferences] = React.useState<PetPreferences>(() => loadPreferences(preferencesKey));
@@ -71,6 +81,8 @@ export const usePetFeature = (
   const [error, setError] = React.useState("");
   const openThreadsRef = React.useRef(openThreads);
   openThreadsRef.current = openThreads;
+  const petSourcesRef = React.useRef({ runtimeList, dialogThreads, machines });
+  petSourcesRef.current = { runtimeList, dialogThreads, machines };
   const completedTurnKeysRef = React.useRef(new Set<string>());
   const enabledRef = React.useRef(enabled);
   enabledRef.current = enabled;
@@ -109,9 +121,9 @@ export const usePetFeature = (
     setCompletionState((current) => transitionPetCompletionState(current, {
       type: "sync",
       nowMs: Date.now(),
-      hasRunningThreads: hasRunningPetThreads(openThreads),
+      hasRunningThreads: hasRunningPetThreads(openThreads, runtimeList, dialogThreads, machines),
     }));
-  }, [openThreads]);
+  }, [dialogThreads, machines, openThreads, runtimeList]);
 
   React.useEffect(() => {
     if (completionState.phase !== "jumping" || completionState.jumpingUntilMs === null) return undefined;
@@ -120,7 +132,12 @@ export const usePetFeature = (
       setCompletionState((current) => transitionPetCompletionState(current, {
         type: "sync",
         nowMs: Math.max(Date.now(), deadline),
-        hasRunningThreads: hasRunningPetThreads(openThreadsRef.current),
+        hasRunningThreads: hasRunningPetThreads(
+          openThreadsRef.current,
+          petSourcesRef.current.runtimeList,
+          petSourcesRef.current.dialogThreads,
+          petSourcesRef.current.machines
+        ),
       }));
     }, Math.max(0, deadline - Date.now()) + 1);
     return () => window.clearTimeout(timer);
@@ -142,8 +159,8 @@ export const usePetFeature = (
   const pets = React.useMemo(() => [...builtinPets, ...importedPets], [importedPets]);
   const selectedPet = pets.find((pet) => pet.id === selectedPetId) ?? builtinPet;
   const activities = React.useMemo(
-    () => derivePetActivities(openThreads),
-    [openThreads]
+    () => derivePetActivities(openThreads, runtimeList, machines, dialogThreads),
+    [dialogThreads, machines, openThreads, runtimeList]
   );
   const status = headlinePetStatus(activities);
 

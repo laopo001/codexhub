@@ -683,6 +683,14 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+const machineActivitySummarySchema = z.object({
+  threadId: z.string().min(1),
+  title: z.string(),
+  workingDirectory: z.string().min(1),
+  updatedAt: z.string().min(1),
+  status: z.enum(["needs_input", "blocked", "running", "idle"])
+}).strict();
+
 export const machineRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
   type: z.enum(["local", "ssh", "registered"]).optional(),
@@ -695,7 +703,8 @@ export const machineRegistrationSchema = z.object({
     projectLauncher: z.boolean().optional(),
     projectCatalog: z.enum(["editable", "fixed"]).optional()
   }).strict().optional(),
-  projects: z.array(machineRegistrationProjectSchema).optional()
+  projects: z.array(machineRegistrationProjectSchema).optional(),
+  activities: z.array(machineActivitySummarySchema).optional()
 }).strict();
 
 export const machineHeartbeatSchema = machineRegistrationSchema.partial().strict();

@@ -17,6 +17,7 @@ import "./style.css";
 import { isElectronDesktopPetWindow, isEmbeddedHostSurface, isNativeElectronSurface } from "./appConfig.js";
 import { setAuthToken } from "./appHelpers.js";
 import { parseCodexHubHostIncomingMessage } from "./hostBridge.js";
+import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
 import { partitionAppViewModel } from "./viewModel.js";
 import { PetOverlay, PetPicker, usePetFeature } from "./pets/index.js";
 const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
@@ -185,13 +186,18 @@ const App = () => {
     threadModelDialogMachineId,
     turnStatusItems
   } = selectors;
+  const petDialogThreads = React.useMemo(
+    () => subagentDialogConversationThreads(subagentThreadDialog),
+    [subagentThreadDialog]
+  );
   const petFeature = usePetFeature(
     openThreads,
     isElectronDesktopPetWindow ? appSettings.showDesktopPet : appSettings.showFloatingPet,
     appSettings.showDesktopPet,
     appSettings.selectedPetId,
     setAppSettings,
-    isElectronDesktopPetWindow ? "desktop" : "window"
+    isElectronDesktopPetWindow ? "desktop" : "window",
+    { runtimeList, machines, dialogThreads: petDialogThreads }
   );
   React.useEffect(() => {
     if (!isElectronDesktopPetWindow) return undefined;

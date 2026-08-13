@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { emptyThreadUsage } from "../../src/core/threadUsage.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
-import type { OpenThreadState } from "../../src/web/types.js";
+import type { MachineSummary, OpenThreadState, RuntimeSummary } from "../../src/web/types.js";
 import {
   petAnimationRows,
   petAtlas,
@@ -217,6 +217,61 @@ test("pet activities sort using the official attention priority", () => {
     thread("thread-1", [pendingInput], true),
   ]);
   assert.deepEqual(activities.map((activity) => activity.status), ["needs_input", "blocked", "running", "idle"]);
+});
+
+test("pet activities include running threads from registered runtimes", () => {
+  const runtime: RuntimeSummary = {
+    machineId: "machine-wsl",
+    name: "WSL VSCode",
+    workingDirectory: "/home/laop/projects/codexhub",
+    online: true,
+    status: "online",
+    lastSeenAt: "2026-01-01T00:00:00.000Z",
+    threads: [{
+      threadId: "wsl-thread",
+      workingDirectory: "/home/laop/projects/codexhub",
+      runtime: { machineId: "machine-wsl", online: true, runnable: true },
+      status: "running",
+      running: true,
+      title: "WSL work",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      messageCount: 1,
+      threadUsage: emptyThreadUsage()
+    }]
+  };
+  const machine: MachineSummary = {
+    machineId: "machine-wsl",
+    type: "registered",
+    name: "WSL VSCode",
+    hostname: "wsl-host",
+    online: true,
+    status: "online",
+    lastSeenAt: runtime.lastSeenAt,
+    capabilities: { projectLauncher: true },
+    activities: [{
+      threadId: "wsl-thread",
+      title: "WSL work",
+      workingDirectory: "/home/laop/projects/codexhub",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      status: "running"
+    }]
+  };
+  const activities = derivePetActivities([], [runtime], [machine]);
+  const machineActivities = derivePetActivities([], [], [machine]);
+
+  assert.equal(hasRunningPetThreads([], [runtime]), true);
+  assert.equal(machineActivities[0]?.status, "running");
+  assert.deepEqual(activities.map((activity) => ({
+    threadId: activity.threadId,
+    status: activity.status,
+    machineId: activity.machineId,
+    machineLabel: activity.machineLabel
+  })), [{
+    threadId: "wsl-thread",
+    status: "running",
+    machineId: "machine-wsl",
+    machineLabel: "Registered · WSL VSCode"
+  }]);
 });
 
 test("single-thread completion runs jumping for three seconds before idle", () => {
