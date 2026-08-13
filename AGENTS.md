@@ -95,7 +95,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 ## CLI 模型
 
-1. 顶层 CLI 只保留 `server`、`machine`、`ssh`、`task`、`install-vscode`、`install-theia`；两个 install 命令只负责把 npm 包内共享的 `dist-vsix/codexhub.vsix` 安装到对应 IDE，不扩展 project/runtime 语义。未知命令直接报错，不保留旧命令或根级 prompt 兼容入口。
+1. 顶层 CLI 只保留 `server`、`machine`、`ssh`、`task`、`install-vscode`；安装命令只负责把 npm 包内共享的 `dist-vsix/codexhub.vsix` 安装到 VS Code，不扩展 project/runtime 语义。未知命令直接报错，不保留旧命令或根级 prompt 兼容入口。
 2. thread history browsing、thread resume 和 new thread 选择放在 Web/API：`/api/machines/:machineId/thread-candidates` 和 `/api/machines/:machineId/threads`。模型目录来自该 machine 当前在线 runtime 的 app-server `model/list`，通过 `/api/machines/:machineId/models` 暴露给 Web，不在 `config.yaml` 持久化。
 3. `--sandbox`、`--approval-policy` 只有用户显式传参时才作为 app-server override 转发；不要偷偷发明默认权限策略。
 4. CLI 默认通过 `loadDotEnv()` 读取当前 cwd 的 `.env`，并且只填补未设置的环境变量。跨目录运行 `cxh` 时要先核对 cwd 和环境来源。
@@ -179,8 +179,8 @@ pnpm build
 8. `smoke:task-lock` 覆盖 session model catalog、thread compact command、thread review command、task 并发跳过、thread records subscription、Plan/Goal options、running turn steer、goal set/clear、stop turn、idle-close、token usage 和 session account rate limits。
 9. `smoke:electron` 覆盖 Electron main process、共享 authority service、Electron surface lease、authority 固定端口语义和 `/api/health`；固定端口被其他开发 authority 占用时，smoke 使用显式隔离测试端口。
 10. VSCode 改动低成本验证链路是 `pnpm check`、`pnpm package:vscode`、`code --install-extension dist-vsix/codexhub.vsix --force`。
-11. 公开版本由 `.github/workflows/release.yml` 统一发布，只允许与根 `package.json` 版本一致的 `v<version>` 标签触发；`main` push 不应直接发布。workflow 需要 `NPM_TOKEN` 和 `VSCE_PAT`，并按可重试方式发布两个 npm 包、VS Code Marketplace 和 GitHub Release。
-12. `pnpm run package:release` 只做一次完整 build，再产出 `release-artifacts/dadigua-codexhub-<version>.tgz`、`release-artifacts/codexhub-<version>.vsix`、`release-artifacts/dadigua-codexhub-theia-<version>.tgz`。根 CLI npm 包必须内含 `dist-vsix/codexhub.vsix`；原生 Theia npm 包是另一种编译期实现，不能与共享 VSIX 混为同一产物。
+11. 公开版本由 `.github/workflows/release.yml` 统一发布，只允许与根 `package.json` 版本一致的 `v<version>` 标签触发；`main` push 不应直接发布。workflow 需要 `NPM_TOKEN` 和 `VSCE_PAT`，并按可重试方式发布根 npm 包、VS Code Marketplace 和 GitHub Release。
+12. `pnpm run package:release` 只做一次完整 build，再产出 `release-artifacts/dadigua-codexhub-<version>.tgz` 和 `release-artifacts/codexhub-<version>.vsix`。根 CLI npm 包必须内含 `dist-vsix/codexhub.vsix`。
 13. 当前最低支持 Codex CLI `0.144.4`。`@openai/codex` devDependency 固定为该版本，`pnpm run check:app-server-protocol` 必须用它生成包含 experimental API 的 TypeScript schema 并校验 CodexHub 依赖的当前 contract；CI 和 release 都要运行这条检查及 `smoke:core`。
 14. 删除公开 API、CLI、环境变量、存储 key 或旧协议兼容层属于 breaking change；发版前必须 bump 新版本并更新 `MIGRATION.md`，不能移动或复用已经发布的 tag。
 15. `publish:prod` 必须注入非空 `CODEX_HUB_BUILD_ID`，验证 health 返回相同 build，并让 PM2 直接执行仓库 `bin/codexhub`；不要把 VSCode Server 自带的版本化 Node 路径保存成 PM2 script。

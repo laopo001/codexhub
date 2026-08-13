@@ -118,7 +118,7 @@ server 在线时，每台 machine 最多维护一个官方 app-server runtime；
 
 ## Codex 宠物
 
-Web、VSCode 和 Theia 的 Pet 入口只在当前 web window 内显示悬浮宠物。Electron 除了当前 web window 宠物，还可以在 Settings → Pet 中打开独立的桌面宠物；它是透明、置顶、可拖动的 Electron 窗口，不会被主窗口边界限制。宠物汇总当前打开 threads 的状态，按 `Needs input`、`Blocked`、`Ready`、`Running`、`Idle` 显示动画和活动面板；点宠物可以查看需要处理的 thread。只有 Electron 可以打开或关闭桌面宠物。
+Web 和 VS Code 的 Pet 入口只在当前 web window 内显示悬浮宠物。Electron 除了当前 web window 宠物，还可以在 Settings → Pet 中打开独立的桌面宠物；它是透明、置顶、可拖动的 Electron 窗口，不会被主窗口边界限制。宠物汇总当前打开 threads 的状态，按 `Needs input`、`Blocked`、`Ready`、`Running`、`Idle` 显示动画和活动面板；点宠物可以查看需要处理的 thread。只有 Electron 可以打开或关闭桌面宠物。
 
 导入格式与 Codex 桌面端一致：V1 使用 `1536 x 1872`、`8 x 9` 网格，V2 使用 `1536 x 2288`、`8 x 11` 网格；两者都是透明 PNG/WebP、每格 `192 x 208`，文件不超过 20 MiB。选择 V2 图片时必须同时选择带 `spriteVersionNumber: 2` 的 `pet.json`。当前读取 `id`、`displayName`、`description`、`spriteVersionNumber` 和 `spritesheetPath`。V2 宠物空闲时会按指针方向使用新增的 16 个 look 帧。两种宠物都可以拖动，左右拖动分别播放对应移动动画；web window 宠物和 Electron 桌面宠物分别保存位置。咕嘎 V2 与 Red Spark V2 都作为内置宠物打包，咕嘎为默认；导入的宠物保存在 `${CODEX_HOME:-~/.codex}/pets/<id>`，浏览器只在 localStorage 保存显示、选择和位置偏好，不保存图片。
 
@@ -183,7 +183,7 @@ pnpm codexhub task run daily-summary
 
 server 每 30 秒扫描一次本地 task 状态，间隔可用 `CODEX_HUB_TASK_SCAN_INTERVAL_MS` 调整。task 的 `schedule` 会在保存时校验为五字段 cron 表达式；无效表达式会被 API 拒绝，而不是静默保存后永远不触发。task 不再写入 `.codexp/tasks`，也不由远端 workspace 持有。
 
-任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VSCode notification，并只把对应 project path 的完成事件发到包含该 workspace 的窗口；Theia Electron surface 则在 Electron main process 创建原生系统通知，点击后恢复并聚焦通知来源窗口，再打开对应 `threadId`。这个开关默认关闭并保存在本地 UI state。
+任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VS Code notification，并只把对应 project path 的完成事件发到包含该 workspace 的窗口；Electron surface 则在 Electron main process 创建原生系统通知，点击后恢复并聚焦通知来源窗口，再打开对应 `threadId`。这个开关默认关闭并保存在本地 UI state。
 
 需要自定义通知集成时，可以在 server 进程上设置 hook 环境变量。hook 在 app-server turn 完成并归一成非历史 `task_complete` record 时触发，不依赖浏览器 tab 是否打开：
 
@@ -414,66 +414,14 @@ pnpm run package:vscode
 pnpm run install:vscode
 ```
 
-`build:vscode` 会先跑完整 `pnpm build`，再把 extension 与 detached authority service 分别打成 Node CJS bundle，显式把 Node host 里的 `navigator` 定义为 `undefined` 并断言两个 bundle 都不引用浏览器全局；共享 VSIX staging 位于 `dist-vsix/`，会包含 `extension.cjs`、`authority-service.cjs`、Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE，供 VS Code 与官方 Theia IDE 共用。
-
-## Eclipse Theia
-
-官方 Theia IDE 可以直接安装 CodexHub 的 VSIX，不需要 Theia 源码、不需要修改 `app.asar`，也不需要重编 Theia。Windows Theia Electron 通过 Remote WSL 打开工作区时，CodexHub extension/server 仍运行在 WSL extension host；系统通知由 Windows Theia webview 创建。
-
-通知点击后会先激活发出通知的 Theia 窗口和 Codex Hub view，再把 `threadId` 发送给内嵌 Web UI，跳转到对应 thread。如果当前 Theia 不提供 Web Notification API 或权限没有授予，会自动退回 IDE 自带的 `showInformationMessage`。
-
-发布后的 CodexHub CLI 会自带同版本的 Theia-compatible VSIX。在目标 extension host 的终端执行：
-
-```bash
-codexhub install-theia
-```
-
-命令会把插件原子部署到 `~/.theia-ide/deployedPlugins/dadigua.codexhub@<version>`；同版本重装也会安全替换，部署校验失败时保留旧版本。Theia 连接的是 SSH/WSL 远程工作区时，应在该远程工作区的终端执行，命令会自然安装到远端 extension host。完成后断开并重新连接 Theia 工作区。
-
-非默认配置目录或源码 checkout 中的自定义 VSIX 可以显式指定：
-
-```bash
-codexhub install-theia --config-dir ~/.theia-ide
-codexhub install-theia --vsix /path/to/codexhub.vsix
-```
-
-在源码仓库里直接运行 CLI 前，先用 `pnpm run package:vscode` 生成 `dist-vsix/codexhub.vsix`。
-
-仓库开发环境仍保留 Windows frontend + 当前 WSL backend 的双端安装器：
-
-```bash
-pnpm run install:theia
-```
-
-Theia IDE 与 VSCode 可以使用同一份 `dist-vsix/codexhub.vsix`。Theia 1.73.x 后端支持 `--install-plugin`，并把 `--install-extension` 作为别名，但没有 VSCode `--force` 那样的同版本替换参数。`install:theia` 会构建这份共享 VSIX，把完整结构原子部署到 Windows frontend 和当前 WSL remote backend；复制或校验失败时旧 deployment 不会被删除。安装器最后会分别让 Windows 与 WSL 的 Theia 后端执行插件列表检查，只有两边都实际列出对应的 `dadigua.codexhub@<version>` 才算成功。命令结束后重新连接 WSL 窗口即可激活新版本。
-
-也可以覆盖 user config 位置：
-
-```bash
-CODEX_HUB_THEIA_WSL_CONFIG_DIR=/path/to/.theia-ide pnpm run install:theia
-CODEX_HUB_THEIA_WINDOWS_CONFIG_DIR='C:\path\to\.theia-ide' pnpm run install:theia
-CODEX_HUB_THEIA_IDE_DIR='C:\path\to\TheiaIDE' pnpm run install:theia
-CODEX_HUB_THEIA_WSL_RUNTIME_DIR=/path/to/theia-remote-runtime pnpm run install:theia
-```
-
-Theia 官方的交互式安装入口仍然可用：在命令面板运行 `Extensions: Install from VSIX...`，选择命令生成的 `D:\Downloads\codexhub-theia.vsix`。自动安装器不会把“VSIX 已复制”误当成安装完成，也不会在新部署就绪前删除现有 CodexHub。
-
-仓库仍保留 `@dadigua/codexhub-theia` 编译期 target，供需要深度定制 Theia 产品本身的场景使用：
-
-```bash
-pnpm run package:theia
-pnpm run smoke:theia
-```
-
-该高级产物位于 `dist-theia/`，接入方式见 `targets/theia/README.md`；普通 Theia IDE 用户不需要它。它与 `dist-vsix/codexhub.vsix` 是两种不同实现：VSIX 运行在兼容 VS Code Extension API 的 IDE extension host，`@dadigua/codexhub-theia` 则是编译进自定义 Theia 产品的原生 frontend/backend contribution。
+`build:vscode` 会先跑完整 `pnpm build`，再把 extension 与 detached authority service 分别打成 Node CJS bundle，显式把 Node host 里的 `navigator` 定义为 `undefined` 并断言两个 bundle 都不引用浏览器全局；共享 VSIX staging 位于 `dist-vsix/`，会包含 `extension.cjs`、`authority-service.cjs`、Web `dist`、`dist-node/ssh` remote client、media、README 和 LICENSE，供 VS Code 使用。
 
 ## 发布新版本
 
-仓库使用 `.github/workflows/release.yml` 统一发布，不再在每次 `main` push 时分别发布 npm 和 Marketplace。发布 workflow 只接受与根 `package.json` 版本严格一致的 `v<version>` 标签，一次构建并验证以下三个产物：
+仓库使用 `.github/workflows/release.yml` 统一发布，不再在每次 `main` push 时分别发布 npm 和 Marketplace。发布 workflow 只接受与根 `package.json` 版本严格一致的 `v<version>` 标签，一次构建并验证以下两个产物：
 
 - `release-artifacts/dadigua-codexhub-<version>.tgz`：CLI npm 包，内含同版本共享 VSIX
-- `release-artifacts/codexhub-<version>.vsix`：发布到 VS Code Marketplace，也可安装到官方 Theia IDE
-- `release-artifacts/dadigua-codexhub-theia-<version>.tgz`：供自定义 Theia 产品编译期接入的原生 npm 包
+- `release-artifacts/codexhub-<version>.vsix`：发布到 VS Code Marketplace
 
 本地预检可以运行：
 
@@ -482,9 +430,6 @@ pnpm run check:app-server-protocol
 pnpm run smoke:core
 pnpm run package:release
 pnpm run smoke:vscode-install
-pnpm run smoke:theia
-pnpm run smoke:theia-host
-pnpm run smoke:theia-install
 pnpm run smoke:notification-hooks
 ```
 
@@ -497,7 +442,7 @@ git tag -a "v${VERSION}" -m "CodexHub ${VERSION}"
 git push origin "v${VERSION}"
 ```
 
-标签会依次发布 `@dadigua/codexhub`、`@dadigua/codexhub-theia`、VS Code Marketplace，并创建包含三个文件的 GitHub Release。npm 发布前会检查精确版本是否已存在，Marketplace 使用 `--skip-duplicate`，GitHub Release 采用 create-or-upload，因此失败后可以在 Actions 中选择同一标签手动重跑；不得移动或复用已经指向其他提交的版本标签。仓库需要配置 `NPM_TOKEN` 和 `VSCE_PAT`。
+标签会依次发布 `@dadigua/codexhub`、VS Code Marketplace，并创建包含两个文件的 GitHub Release。npm 发布前会检查精确版本是否已存在，Marketplace 使用 `--skip-duplicate`，GitHub Release 采用 create-or-upload，因此失败后可以在 Actions 中选择同一标签手动重跑；不得移动或复用已经指向其他提交的版本标签。仓库需要配置 `NPM_TOKEN` 和 `VSCE_PAT`。
 
 ## API
 

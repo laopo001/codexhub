@@ -124,7 +124,7 @@ export type ProjectThreadStartInput = {
   machineId?: string;
   reuse?: boolean;
   persist?: boolean;
-  source?: { kind: "vscode" | "electron" | "theia"; groupId: string; label?: string };
+  source?: { kind: "vscode" | "electron"; groupId: string; label?: string };
 };
 
 export type MachineThreadInput =

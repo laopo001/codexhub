@@ -26,7 +26,6 @@ import { buildWebviewBridgeScript } from "./webviewBridge.js";
 const viewId = "codexhub.workspaceView";
 const surfaceHeartbeatMs = 10_000;
 const maxSelectionAttachmentBytes = 512 * 1024;
-const isTheiaHost = /\btheia\b/i.test(`${vscode.env.appName} ${vscode.env.uriScheme}`);
 
 type VscodeCodexHubServer = EmbeddedAuthorityHandle;
 
@@ -183,11 +182,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       await this.openFileFromWebview(record);
       return;
     }
-    if (record?.type === "codexhub.notificationClicked") {
-      const threadId = stringValue(record.threadId);
-      if (threadId) await this.openThreadFromHost(threadId);
-      return;
-    }
     if (record?.type !== "codexhub.taskCompleteNotification") return;
     const notification = asRecord(record.notification);
     const title = stringValue(notification?.title) ?? "Codex task complete";
@@ -252,7 +246,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       const externalIframeUri = await externalServerUri(
         vscodeSurfaceServerUrl(server, workspaceFolders, activeFolder.path, this.surfaceId)
       );
-      this.view.webview.html = iframeHtml(externalIframeUri.toString(true), activeFolder.path, isTheiaHost);
+      this.view.webview.html = iframeHtml(externalIframeUri.toString(true), activeFolder.path);
     } catch (error) {
       this.view.webview.html = statusHtml(`Codex Hub failed to start: ${errorText(error)}`);
     }
@@ -530,7 +524,7 @@ const vscodeWorkspaceStateScope = (folders: VscodeWorkspaceFolder[]) => createHa
   .digest("hex")
   .slice(0, 24);
 
-const iframeHtml = (src: string, workspacePath: string, theiaHost: boolean) => {
+const iframeHtml = (src: string, workspacePath: string) => {
   const nonce = randomNonce();
   const sourceOrigin = new URL(src).origin;
   const escapedSource = escapeHtml(src);
@@ -553,7 +547,7 @@ const iframeHtml = (src: string, workspacePath: string, theiaHost: boolean) => {
     "<body>",
     `<iframe id="codexhubFrame" src="${escapedSource}" title="${escapedTitle}" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></iframe>`,
     `<script nonce="${nonce}">`,
-    buildWebviewBridgeScript(sourceOrigin, theiaHost),
+    buildWebviewBridgeScript(sourceOrigin),
     "</script>",
     "</body>",
     "</html>"
@@ -682,7 +676,6 @@ const vscodeSurfaceServerUrl = (
   url.searchParams.set("surface", "vscode");
   url.searchParams.set("surfaceId", surfaceId);
   url.searchParams.set("stateScope", vscodeWorkspaceStateScope(folders));
-  if (isTheiaHost) url.searchParams.set("host", "theia");
   url.searchParams.set("workspacePath", activePath);
   for (const folder of folders) url.searchParams.append("workspaceFolder", folder.path);
   return url.toString();

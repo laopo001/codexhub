@@ -11,7 +11,6 @@ export async function resolveCodexHubVsixPath(input?: string) {
     ? [path.resolve(expandHome(input.trim()))]
     : [
         process.env.CODEX_HUB_VSIX?.trim(),
-        process.env.CODEX_HUB_THEIA_VSIX?.trim(),
         path.resolve(moduleDir, "../../dist-vsix/codexhub.vsix"),
         path.resolve(moduleDir, "../../../dist-vsix/codexhub.vsix"),
         path.resolve(process.cwd(), "dist-vsix/codexhub.vsix"),

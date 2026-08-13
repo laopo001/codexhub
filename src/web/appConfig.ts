@@ -19,10 +19,8 @@ export const isVscodeSurface = webSurface === "vscode";
 export const isElectronSurface = webSurface === "electron";
 export const isNativeElectronSurface = isElectronSurface && Boolean(window.codexhubElectronPet);
 export const isElectronDesktopPetWindow = isNativeElectronSurface && searchParams.get("desktopPet") === "1";
-export const isTheiaSurface = webSurface === "theia";
-export const isTheiaVscodeHost = isVscodeSurface && searchParams.get("host") === "theia";
 export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
-/** VSCode/Theia projects come from the host workspace; Electron can browse local folders. */
+/** VS Code projects come from the host workspace; Electron can browse local folders. */
 export const isFixedWorkspaceSurface = isEmbeddedHostSurface && !isElectronSurface;
 export const embeddedSurfaceId = searchParams.get("surfaceId")?.trim() ?? "";
 export const embeddedStateScope = searchParams.get("stateScope")?.trim() ?? embeddedSurfaceId;
@@ -32,8 +30,6 @@ export const storageKey = isVscodeSurface
   ? `codexhub-ui-state-vscode-v3${embeddedStateScope ? `:${encodeURIComponent(embeddedStateScope)}` : ""}`
   : isElectronSurface
     ? `codexhub-ui-state-electron-v1${embeddedStateScope ? `:${encodeURIComponent(embeddedStateScope)}` : ""}`
-  : isTheiaSurface
-    ? "codexhub-ui-state-theia-v2"
     : "codexhub-ui-state-v6";
 export const defaultAppSettings = (): AppSettings => ({
   selectedPetId: defaultPetId,

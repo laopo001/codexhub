@@ -64,9 +64,6 @@ jobs:
       - name: Run installer and integration smokes
         run: |
           pnpm run smoke:vscode-install
-          pnpm run smoke:theia
-          pnpm run smoke:theia-host
-          pnpm run smoke:theia-install
           pnpm run smoke:notification-hooks
 
       - name: Validate publish credentials
@@ -93,18 +90,6 @@ jobs:
             echo "${package} already exists on npm; skipping publish."
           else
             npm publish "./release-artifacts/dadigua-codexhub-${VERSION}.tgz" --access public --provenance
-          fi
-
-      - name: Publish native Theia package to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          VERSION: ${{ steps.package.outputs.version }}
-        run: |
-          package="@dadigua/codexhub-theia@${VERSION}"
-          if npm view "${package}" version >/dev/null 2>&1; then
-            echo "${package} already exists on npm; skipping publish."
-          else
-            npm publish "./release-artifacts/dadigua-codexhub-theia-${VERSION}.tgz" --access public --provenance
           fi
 
       - name: Publish shared VSIX to VS Code Marketplace

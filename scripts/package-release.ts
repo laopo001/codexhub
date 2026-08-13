@@ -23,23 +23,10 @@ await run("pnpm", ["exec", "vsce", "package", "--no-dependencies", "--out", "cod
 });
 await assertPackageMetadata(path.join(rootDir, "dist-vsix", "package.json"), "codexhub", version);
 
-await import("./build-theia.js");
-await run("pnpm", ["pack", "--pack-destination", "."], {
-  cwd: path.join(rootDir, "dist-theia"),
-});
-await assertPackageMetadata(
-  path.join(rootDir, "dist-theia", "package.json"),
-  "@dadigua/codexhub-theia",
-  version,
-);
-
 const vsixArtifact = path.join(artifactsDir, `codexhub-${version}.vsix`);
 const rootTarball = path.join(artifactsDir, `dadigua-codexhub-${version}.tgz`);
-const theiaTarballName = `dadigua-codexhub-theia-${version}.tgz`;
-const theiaTarball = path.join(artifactsDir, theiaTarballName);
 
 await cp(path.join(rootDir, "dist-vsix", "codexhub.vsix"), vsixArtifact);
-await cp(path.join(rootDir, "dist-theia", theiaTarballName), theiaTarball);
 const packOutput = await runCapture(
   "npm",
   ["pack", "--ignore-scripts", "--json", "--pack-destination", artifactsDir],
@@ -64,13 +51,11 @@ if (nestedDependency) {
 await Promise.all([
   assertFile(vsixArtifact),
   assertFile(rootTarball),
-  assertFile(theiaTarball),
 ]);
 
 console.error(`release artifacts ready for v${version}:`);
 console.error(`- ${path.relative(rootDir, rootTarball)}`);
 console.error(`- ${path.relative(rootDir, vsixArtifact)}`);
-console.error(`- ${path.relative(rootDir, theiaTarball)}`);
 
 async function assertFile(filePath: string) {
   const info = await stat(filePath);

@@ -9,7 +9,7 @@ import { compareCodexRecords, orderCodexRecords, recordTimestampMs } from "../..
 import { formatCompactNumber } from "../../shared/toolFormatting.js";
 import { isModelReasoningEffort } from "../../shared/usageTypes.js";
 export { formatCompactNumber } from "../../shared/toolFormatting.js";
-import { isTheiaSurface, isTheiaVscodeHost, isVscodeSurface } from "../appConfig.js";
+import { isVscodeSurface } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
@@ -398,10 +398,6 @@ export const ensureNotificationAudioContext = (audioContextRef: React.MutableRef
 };
 
 export const primeTaskNotificationPermission = () => {
-  if (isTheiaSurface || isTheiaVscodeHost) {
-    window.parent?.postMessage({ type: "codexhub.requestNotificationPermission" }, "*");
-    return;
-  }
   if (isVscodeSurface) return;
   const NotificationApi = window.Notification;
   if (!NotificationApi || NotificationApi.permission !== "default") return;

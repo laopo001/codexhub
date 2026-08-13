@@ -1,5 +1,4 @@
-packages:
-  - "targets/theia"
+packages: []
 
 allowBuilds:
   '@parcel/watcher': false

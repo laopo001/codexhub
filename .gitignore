@@ -2,7 +2,6 @@ node_modules/
 dist/
 dist-node/
 dist-vsix/
-dist-theia/
 release-artifacts/
 .codexp/
 .env

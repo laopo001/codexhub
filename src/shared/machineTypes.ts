@@ -12,7 +12,7 @@ export type MachineCapabilities = {
 
 /** 机器注册时附带的项目来源标记，用于嵌入 IDE workspace 临时项目。 */
 export type MachineRegistrationProjectSource = {
-  kind: "vscode" | "electron" | "theia";
+  kind: "vscode" | "electron";
   groupId: string;
   label?: string;
 };

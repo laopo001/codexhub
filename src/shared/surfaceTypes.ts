@@ -1,4 +1,4 @@
-export type CodexHubSurface = "default" | "vscode" | "electron" | "theia";
+export type CodexHubSurface = "default" | "vscode" | "electron";
 export type EmbeddedCodexHubSurface = Exclude<CodexHubSurface, "default">;
 export type EmbeddedSurfaceKind = "vscode" | "electron";
 export const embeddedSurfaceKinds: EmbeddedSurfaceKind[] = ["vscode", "electron"];
@@ -16,7 +16,7 @@ export const authorityHostServicePort = 28_788;
 export const embeddedSurfaceProtocolVersion = 2;
 
 export const isCodexHubSurface = (value: unknown): value is CodexHubSurface =>
-  value === "default" || value === "vscode" || value === "electron" || value === "theia";
+  value === "default" || value === "vscode" || value === "electron";
 
 export const isEmbeddedSurfaceKind = (value: unknown): value is EmbeddedSurfaceKind =>
   value === "vscode" || value === "electron";

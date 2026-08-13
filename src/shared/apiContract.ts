@@ -585,7 +585,7 @@ export const threadRenameSchema = z.object({
 }).strict();
 
 export const projectSourceSchema = z.object({
-  kind: z.enum(["vscode", "electron", "theia"]),
+  kind: z.enum(["vscode", "electron"]),
   groupId: z.string().min(1),
   label: z.string().min(1).optional()
 }).strict();
