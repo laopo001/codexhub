@@ -366,7 +366,29 @@ WSL 使用桌面端口的 `+1`，是为了在 WSL mirrored networking 与 Window
 pnpm electron:start
 ```
 
-这个脚本使用 npm 安装的 Electron binary，并在 Linux 开发环境下传 `--no-sandbox` 规避本地 `chrome-sandbox` setuid 权限问题。正式分发时可以在后续引入 electron-builder / forge，把同一个 `dist-node/electron/main.js` 作为 main process 入口。
+这个脚本使用 npm 安装的 Electron binary，并在 Linux 开发环境下传 `--no-sandbox` 规避本地 `chrome-sandbox` setuid 权限问题。
+
+Windows x64 安装包可以直接在 WSL 中交叉构建，产物由 electron-builder 生成 NSIS 安装器：
+
+```bash
+pnpm package:electron:win
+```
+
+安装器输出到 `release-artifacts/electron/CodexHub-Setup-<version>-x64.exe`。如果只需要检查解包后的 Windows 应用目录，可以运行：
+
+```bash
+pnpm package:electron:win:dir
+```
+
+WSL 首次构建需要安装 Wine（包含 32 位组件，用于 NSIS 工具链）：
+
+```bash
+sudo dpkg --add-architecture i386
+sudo apt update
+sudo apt install wine64 wine32:i386
+```
+
+构建脚本会先执行完整的 `pnpm build`，然后把 Electron main process、detached authority service、Web `dist` 和 SSH remote client 放入 Windows 包。Windows 安装包未配置代码签名证书，因此发布到用户机器时可能触发 SmartScreen 提示；正式发布前需要接入 Windows 代码签名证书。安装器是在 WSL 中生成的，但最终运行验证仍应在 Windows 上进行，因为 Windows 与 WSL 是两台独立的执行 authority，各自使用所在系统的 Codex CLI、配置和 runtime。
 
 可选环境变量：
 

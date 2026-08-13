@@ -6,6 +6,7 @@ allowBuilds:
   '@vscode/vsce-sign': true
   drivelist: false
   electron: true
+  electron-winstaller: true
   esbuild: true
   keytar: true
   msgpackr-extract: false

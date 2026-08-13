@@ -13,7 +13,7 @@ await build({
   platform: "node",
   format: "esm",
   target: "node20",
-  packages: "external",
+  external: ["electron"],
   sourcemap: false,
   minify: false,
   treeShaking: true,

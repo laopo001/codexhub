@@ -75,12 +75,17 @@ const ensureElectronSurface = async () => {
 const startElectronAuthority = async () => {
   await loadDotEnv();
   const dataDir = embeddedAuthorityDataDirectory();
+  const packagedResourceDirectory = electronApp.isPackaged
+    ? path.join(process.resourcesPath, "codexhub")
+    : path.resolve(mainDirectory, "..", "..");
   const authorityServicePath = process.env.CODEX_HUB_AUTHORITY_SERVICE_PATH?.trim()
-    || path.join(mainDirectory, "authority-service.cjs");
+    || (electronApp.isPackaged
+      ? path.join(packagedResourceDirectory, "authority-service.cjs")
+      : path.join(mainDirectory, "authority-service.cjs"));
   const staticDirectory = process.env.CODEX_HUB_STATIC_DIR?.trim()
-    || path.resolve(mainDirectory, "..", "..", "dist");
+    || path.join(packagedResourceDirectory, "dist");
   const remoteClientPath = process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH?.trim()
-    || path.resolve(mainDirectory, "..", "ssh", "remote-client.cjs");
+    || path.join(packagedResourceDirectory, "dist-node", "ssh", "remote-client.cjs");
   await removeLegacyAuthorityTokenFiles(dataDir).catch((error: unknown) => {
     console.warn(`codexhub electron could not remove obsolete authority token file: ${errorText(error)}`);
   });

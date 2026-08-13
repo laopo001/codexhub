@@ -60,6 +60,8 @@
     "smoke:theia-host": "tsx scripts/smoke-theia-vscode-host.ts",
     "smoke:theia-install": "tsx scripts/smoke-theia-installer.ts",
     "smoke:electron": "pnpm build && tsx scripts/smoke-electron.ts",
+    "package:electron:win": "pnpm build && tsx scripts/package-electron.ts --win",
+    "package:electron:win:dir": "pnpm build && tsx scripts/package-electron.ts --win --dir",
     "smoke:core": "pnpm run smoke:auth && pnpm run smoke:machine-session && pnpm run smoke:task-lock && pnpm run smoke:registered-machine",
     "test:unit": "tsx --test scripts/tests/*.test.ts",
     "check:app-server-protocol": "tsx scripts/check-app-server-protocol.ts",
@@ -111,6 +113,7 @@
     "@vitejs/plugin-react": "^5.1.1",
     "@vscode/vsce": "^3.9.2",
     "electron": "^42.3.3",
+    "electron-builder": "^26.15.3",
     "esbuild": "0.28.0",
     "typescript": "^7.0.2",
     "vite": "^7.2.4"
