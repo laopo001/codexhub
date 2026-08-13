@@ -193,9 +193,8 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     const filePath = stringValue(record.path);
     if (!filePath || filePath.includes("\0") || !path.isAbsolute(filePath)) return;
     try {
-      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-      const selection = documentSelectionFromWebviewMessage(document, record);
-      await vscode.window.showTextDocument(document, {
+      const selection = editorSelectionFromWebviewMessage(record);
+      await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(filePath), {
         preview: false,
         ...(selection ? { selection } : {})
       });
@@ -500,16 +499,11 @@ const positiveInteger = (value: unknown) => {
   return Number.isInteger(number) && number > 0 ? number : undefined;
 };
 
-const documentSelectionFromWebviewMessage = (
-  document: vscode.TextDocument,
-  record: Record<string, unknown>
-) => {
+const editorSelectionFromWebviewMessage = (record: Record<string, unknown>) => {
   const line = positiveInteger(record.line);
   if (!line) return undefined;
-  const lineIndex = Math.min(document.lineCount - 1, line - 1);
   const column = positiveInteger(record.column) ?? 1;
-  const character = Math.min(document.lineAt(lineIndex).text.length, column - 1);
-  const position = new vscode.Position(lineIndex, character);
+  const position = new vscode.Position(line - 1, column - 1);
   return new vscode.Range(position, position);
 };
 
