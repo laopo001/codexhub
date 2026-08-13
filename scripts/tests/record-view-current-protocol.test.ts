@@ -47,14 +47,20 @@ test("compact views only coalesce normalized context_compaction events", () => {
   assert.equal(compactToolViews(mixedViews).length, 2);
 });
 
-test("Goal updates appear as user messages in Simple mode without repeating progress-only updates", async () => {
+test("Goal snapshots mark lifecycle transitions without treating every update as start or end", async () => {
   const makeGoalRecord = (
     id: string,
     objective: string,
-    options: { status?: string; timeUsedSeconds?: number; updatedAt?: number } = {}
+    options: {
+      status?: string;
+      timeUsedSeconds?: number;
+      updatedAt?: number;
+      tokenBudget?: number | null;
+      createdAt?: number;
+    } = {}
   ): CodexRecord => ({
     id,
-    timestamp: `2026-08-02T13:0${id === "goal-paused" ? "2" : id === "goal-progress" ? "1" : "0"}:00.000Z`,
+    timestamp: new Date((options.updatedAt ?? 1_754_131_200) * 1000).toISOString(),
     type: "event_msg",
     sourceThreadId: "goal-thread",
     payload: {
@@ -64,10 +70,10 @@ test("Goal updates appear as user messages in Simple mode without repeating prog
         threadId: "goal-thread",
         objective,
         status: options.status ?? "active",
-        tokenBudget: null,
+        tokenBudget: options.tokenBudget ?? null,
         tokensUsed: options.timeUsedSeconds ?? 10,
         timeUsedSeconds: options.timeUsedSeconds ?? 10,
-        createdAt: 1_754_131_200,
+        createdAt: options.createdAt ?? 1_754_131_200,
         updatedAt: options.updatedAt ?? 1_754_131_200
       }
     }
@@ -75,12 +81,22 @@ test("Goal updates appear as user messages in Simple mode without repeating prog
   const records = [
     makeGoalRecord("goal-start", "finish the implementation"),
     makeGoalRecord("goal-progress", "finish the implementation", { timeUsedSeconds: 30, updatedAt: 1_754_131_260 }),
-    makeGoalRecord("goal-paused", "finish the implementation", { status: "paused", updatedAt: 1_754_131_320 })
+    makeGoalRecord("goal-paused", "finish the implementation", { status: "paused", updatedAt: 1_754_131_320 }),
+    makeGoalRecord("goal-paused-progress", "finish the implementation", { status: "paused", timeUsedSeconds: 40, updatedAt: 1_754_131_380 }),
+    makeGoalRecord("goal-resumed", "finish the implementation", { updatedAt: 1_754_131_440 }),
+    makeGoalRecord("goal-edited", "finish the implementation and tests", { tokenBudget: 2_000, updatedAt: 1_754_131_500 }),
+    makeGoalRecord("goal-complete", "finish the implementation and tests", { status: "complete", tokenBudget: 2_000, updatedAt: 1_754_131_560 }),
+    makeGoalRecord("goal-complete-progress", "finish the implementation and tests", { status: "complete", tokenBudget: 2_000, timeUsedSeconds: 90, updatedAt: 1_754_131_620 }),
+    makeGoalRecord("next-goal-start", "ship the next change", { createdAt: 1_754_131_680, updatedAt: 1_754_131_680 })
   ];
 
   assert.deepEqual(recordsToViews(records).map((view) => ({ role: view.role, label: view.label, text: view.text })), [
-    { role: "user", label: "goal", text: "finish the implementation" },
-    { role: "user", label: "goal", text: "finish the implementation" }
+    { role: "user", label: "goal start", text: "finish the implementation" },
+    { role: "user", label: "goal paused", text: "finish the implementation" },
+    { role: "user", label: "goal resumed", text: "finish the implementation" },
+    { role: "user", label: "goal update", text: "finish the implementation and tests" },
+    { role: "user", label: "goal end", text: "finish the implementation and tests" },
+    { role: "user", label: "goal start", text: "ship the next change" }
   ]);
   assert.equal(compactToolViews(recordsToViews(records)).every((view) => view.role === "user"), true);
 

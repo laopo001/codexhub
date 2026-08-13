@@ -6,18 +6,18 @@ export type { CodexRecordView, RecordUsage } from "../shared/recordTypes.js";
 export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
   const views: CodexRecordView[] = [];
   const subagentAssignments = subagentActivityAssignments(records);
-  const goalMessageKeys = new Set<string>();
+  const goalMessageStates = new Map<string, GoalMessageState>();
   for (const record of records) {
     const usage = tokenUsageFromRecord(record);
     if (usage) {
       if (attachUsageToLatestCodexView(views, usage)) continue;
     }
 
-    const view = withSubagentActivityAssignment(recordToView(record), subagentAssignments.get(record.id));
+    const goalProjection = goalMessageProjection(record, goalMessageStates);
+    if (goalProjection?.hidden) continue;
+    let view = withSubagentActivityAssignment(recordToView(record), subagentAssignments.get(record.id));
     if (!view) continue;
-    const goalKey = goalMessageKey(record);
-    if (goalKey && goalMessageKeys.has(goalKey)) continue;
-    if (goalKey) goalMessageKeys.add(goalKey);
+    if (goalProjection) view = { ...view, label: goalProjection.label };
     views.push(view);
   }
   return views;
@@ -319,12 +319,26 @@ export const threadGoalUpdatedView = (
   };
 };
 
+type GoalMessageState = {
+  objective: string;
+  status: string;
+  tokenBudget: number | null;
+};
+
+type GoalMessageProjection = {
+  label: string;
+  hidden?: boolean;
+};
+
 /**
- * Goal progress updates change usage/timing fields without changing the
- * message the user set. Keep one conversation bubble for that semantic Goal
- * state while still allowing objective/status/budget edits to appear.
+ * `thread_goal_updated` is a full Goal snapshot, not a lifecycle event name.
+ * Classify its conversation label from the Goal identity and state transition,
+ * while dropping snapshots that only advance usage or elapsed time.
  */
-export const goalMessageKey = (record: CodexRecord) => {
+const goalMessageProjection = (
+  record: CodexRecord,
+  states: Map<string, GoalMessageState>
+): GoalMessageProjection | null => {
   if (record.type !== "event_msg") return null;
   const payload = asRecord(record.payload);
   if (payload?.type !== "thread_goal_updated") return null;
@@ -343,7 +357,32 @@ export const goalMessageKey = (record: CodexRecord) => {
   const tokenBudget = typeof goal?.tokenBudget === "number" && Number.isFinite(goal.tokenBudget)
     ? goal.tokenBudget
     : null;
-  return JSON.stringify([threadId, createdAt, objective, status, tokenBudget]);
+  const lifecycleKey = JSON.stringify([threadId, createdAt]);
+  const previous = states.get(lifecycleKey);
+  const current = { objective, status, tokenBudget };
+  states.set(lifecycleKey, current);
+
+  if (!previous) return { label: initialGoalMessageLabel(status) };
+  if (
+    previous.objective === current.objective
+    && previous.status === current.status
+    && previous.tokenBudget === current.tokenBudget
+  ) return { label: "goal update", hidden: true };
+  if (previous.status !== current.status) return { label: goalStatusTransitionLabel(status) };
+  return { label: "goal update" };
+};
+
+const initialGoalMessageLabel = (status: string) =>
+  status === "active" ? "goal start" : goalStatusTransitionLabel(status);
+
+const goalStatusTransitionLabel = (status: string) => {
+  if (status === "complete") return "goal end";
+  if (status === "active") return "goal resumed";
+  if (status === "paused") return "goal paused";
+  if (status === "blocked") return "goal blocked";
+  if (status === "usageLimited") return "goal usage limited";
+  if (status === "budgetLimited") return "goal budget limited";
+  return "goal update";
 };
 
 const responseItemToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
