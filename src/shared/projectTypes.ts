@@ -84,10 +84,11 @@ export type StoredSshHost = {
   updatedAt: string;
 };
 
-/** config.yaml 中持久化的 Web/VSCode 共享 UI 偏好。 */
+/** config.yaml 中持久化的 Web/IDE/Electron UI 偏好。 */
 export type ServerUiConfig = {
   selectedPetId: string;
   showFloatingPet: boolean;
+  showDesktopPet: boolean;
   taskCompleteSystemNotifications: boolean;
 };
 

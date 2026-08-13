@@ -14,7 +14,7 @@ import { createTaskActions } from "./appActions/taskActions.js";
 import { createThreadActions, type ThreadActions } from "./appActions/threadActions.js";
 import "./style.css";
 
-import { isEmbeddedHostSurface } from "./appConfig.js";
+import { isElectronDesktopPetWindow, isEmbeddedHostSurface, isNativeElectronSurface } from "./appConfig.js";
 import { setAuthToken } from "./appHelpers.js";
 import { parseCodexHubHostIncomingMessage } from "./hostBridge.js";
 import { partitionAppViewModel } from "./viewModel.js";
@@ -187,10 +187,19 @@ const App = () => {
   } = selectors;
   const petFeature = usePetFeature(
     openThreads,
-    appSettings.showFloatingPet,
+    isElectronDesktopPetWindow ? appSettings.showDesktopPet : appSettings.showFloatingPet,
+    appSettings.showDesktopPet,
     appSettings.selectedPetId,
-    setAppSettings
+    setAppSettings,
+    isElectronDesktopPetWindow ? "desktop" : "window"
   );
+  React.useEffect(() => {
+    if (!isElectronDesktopPetWindow) return undefined;
+    document.documentElement.dataset.codexhubWindow = "desktop-pet";
+    return () => {
+      delete document.documentElement.dataset.codexhubWindow;
+    };
+  }, []);
   React.useEffect(() => {
     setComposerRecentlyChanged(false);
     if (composerChangeTimerRef.current !== null) {
@@ -271,6 +280,13 @@ const App = () => {
       });
     }
   });
+  const openThreadFromSurface = threadActions.openThread;
+  React.useEffect(() => {
+    if (!isNativeElectronSurface || isElectronDesktopPetWindow) return undefined;
+    return window.codexhubElectronPet?.onOpenThread((threadId) => {
+      void openThreadFromSurface(threadId);
+    });
+  }, [openThreadFromSurface]);
   const projectActions = createProjectActions(actionContext, {
     clearActiveThreadIfLatest: threadActions.clearActiveThreadIfLatest,
     focusTaskDraftProject: taskActions.focusTaskDraftProject,
@@ -658,15 +674,16 @@ const App = () => {
     <>
       {modalContextHolder}
       {messageContextHolder}
-      <AppView viewModel={partitionAppViewModel(viewModel)} />
+      {!isElectronDesktopPetWindow ? <AppView viewModel={partitionAppViewModel(viewModel)} /> : null}
       {!authRequired ? (
         <PetOverlay
           composerRecentlyChanged={composerRecentlyChanged}
           controller={petFeature}
+          desktopPetWindow={isElectronDesktopPetWindow}
           onOpenThread={threadActions.openThread}
         />
       ) : null}
-      <PetPicker controller={petFeature} />
+      {!isElectronDesktopPetWindow ? <PetPicker controller={petFeature} /> : null}
     </>
   );
 };

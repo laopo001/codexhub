@@ -98,6 +98,7 @@ export class CodexhubServerState {
     if (
       this.data.config.ui.selectedPetId !== nextUi.selectedPetId
       || this.data.config.ui.showFloatingPet !== nextUi.showFloatingPet
+      || this.data.config.ui.showDesktopPet !== nextUi.showDesktopPet
       || this.data.config.ui.taskCompleteSystemNotifications !== nextUi.taskCompleteSystemNotifications
     ) {
       this.data.config.ui = nextUi;
@@ -726,6 +727,7 @@ const projectName = (projectPath: string) => path.basename(projectPath) || proje
 const defaultServerUiConfig = (): ServerUiConfig => ({
   selectedPetId: defaultPetId,
   showFloatingPet: false,
+  showDesktopPet: false,
   taskCompleteSystemNotifications: false
 });
 
@@ -752,6 +754,9 @@ const normalizeServerUiConfig = (value: unknown): ServerUiConfig => {
     showFloatingPet: typeof record?.showFloatingPet === "boolean"
       ? record.showFloatingPet
       : defaultServerUiConfig().showFloatingPet,
+    showDesktopPet: typeof record?.showDesktopPet === "boolean"
+      ? record.showDesktopPet
+      : defaultServerUiConfig().showDesktopPet,
     taskCompleteSystemNotifications: typeof record?.taskCompleteSystemNotifications === "boolean"
       ? record.taskCompleteSystemNotifications
       : defaultServerUiConfig().taskCompleteSystemNotifications
@@ -764,6 +769,7 @@ const isCompleteServerConfig = (value: unknown) => {
   return typeof ui?.selectedPetId === "string"
     && petIdPattern.test(ui.selectedPetId)
     && typeof ui.showFloatingPet === "boolean"
+    && typeof ui.showDesktopPet === "boolean"
     && typeof ui.taskCompleteSystemNotifications === "boolean";
 };
 

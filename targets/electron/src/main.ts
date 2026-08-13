@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { app as electronApp, BrowserWindow, shell } from "electron";
+import { app as electronApp, BrowserWindow, ipcMain, screen, shell } from "electron";
 import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import { embeddedAuthorityDataDirectory } from "../../../src/core/authorityPaths.js";
 import {
@@ -20,15 +20,20 @@ import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes
 const mainDirectory = electronApp.isPackaged
   ? path.join(electronApp.getAppPath(), "dist-node", "electron")
   : electronApp.getAppPath();
+const preloadPath = path.join(mainDirectory, "preload.cjs");
 const surfaceHeartbeatMs = 10_000;
+const desktopPetSyncMs = 1_000;
 
 let mainWindow: BrowserWindow | null = null;
+let desktopPetWindow: BrowserWindow | null = null;
 let authority: EmbeddedAuthorityHandle | null = null;
 let allowQuit = false;
 let stoppingSurface: Promise<void> | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 let heartbeatInFlight = false;
 let surfaceRegistered = false;
+let desktopPetSyncTimer: NodeJS.Timeout | null = null;
+let desktopPetSyncInFlight = false;
 const surfaceId = `electron-${randomUUID()}`;
 const leaseId = randomUUID();
 
@@ -42,6 +47,7 @@ const createWindow = async () => {
     title: "Codex Hub",
     backgroundColor: "#0f1b14",
     webPreferences: {
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
@@ -61,11 +67,117 @@ const createWindow = async () => {
 
   mainWindow = window;
   await window.loadURL(electronSurfaceUrl(requiredAuthority()));
+  startDesktopPetSync();
 
   if (process.env.CODEX_HUB_ELECTRON_DEVTOOLS === "1") {
     window.webContents.openDevTools({ mode: "detach" });
   }
 };
+
+const desktopPetBounds = () => {
+  const displays = screen.getAllDisplays();
+  const fallback = screen.getPrimaryDisplay().bounds;
+  const bounds = displays.length ? displays.map((display) => display.bounds) : [fallback];
+  const left = Math.min(...bounds.map((item) => item.x));
+  const top = Math.min(...bounds.map((item) => item.y));
+  const right = Math.max(...bounds.map((item) => item.x + item.width));
+  const bottom = Math.max(...bounds.map((item) => item.y + item.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+};
+
+const repositionDesktopPetWindow = () => {
+  if (!desktopPetWindow || desktopPetWindow.isDestroyed()) return;
+  desktopPetWindow.setBounds(desktopPetBounds());
+};
+
+const createDesktopPetWindow = async () => {
+  if (desktopPetWindow && !desktopPetWindow.isDestroyed()) return;
+  const target = requiredAuthority();
+  const petWindow = new BrowserWindow({
+    ...desktopPetBounds(),
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  desktopPetWindow = petWindow;
+  petWindow.setMenuBarVisibility(false);
+  petWindow.setAlwaysOnTop(true, "floating");
+  petWindow.setIgnoreMouseEvents(true, { forward: true });
+  petWindow.on("closed", () => {
+    if (desktopPetWindow === petWindow) desktopPetWindow = null;
+  });
+  try {
+    await petWindow.loadURL(electronSurfaceUrl(target, true));
+    if (!petWindow.isDestroyed()) petWindow.showInactive();
+  } catch (error) {
+    if (!petWindow.isDestroyed()) petWindow.destroy();
+    throw error;
+  }
+};
+
+const closeDesktopPetWindow = () => {
+  const petWindow = desktopPetWindow;
+  desktopPetWindow = null;
+  if (petWindow && !petWindow.isDestroyed()) petWindow.close();
+};
+
+const syncDesktopPet = async () => {
+  if (desktopPetSyncInFlight || !authority || !surfaceRegistered) return;
+  desktopPetSyncInFlight = true;
+  try {
+    const client = createCodexHubApiClient({ baseUrl: authority.url, authToken: authority.authToken });
+    const payload = await client.route(apiRoutes.config);
+    if (payload.config.ui.showDesktopPet) await createDesktopPetWindow();
+    else closeDesktopPetWindow();
+  } catch (error) {
+    console.warn(`codexhub electron desktop pet sync failed: ${errorText(error)}`);
+  } finally {
+    desktopPetSyncInFlight = false;
+  }
+};
+
+const startDesktopPetSync = () => {
+  if (desktopPetSyncTimer) return;
+  void syncDesktopPet();
+  desktopPetSyncTimer = setInterval(() => void syncDesktopPet(), desktopPetSyncMs);
+  desktopPetSyncTimer.unref?.();
+};
+
+const stopDesktopPetSync = () => {
+  if (!desktopPetSyncTimer) return;
+  clearInterval(desktopPetSyncTimer);
+  desktopPetSyncTimer = null;
+};
+
+ipcMain.on("codexhub:pet-ignore-mouse", (event, ignore: unknown) => {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
+  sender.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
+});
+
+ipcMain.on("codexhub:pet-focus-main", (event, threadId: unknown) => {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (sender !== desktopPetWindow || !mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  if (typeof threadId === "string" && threadId.trim()) {
+    mainWindow.webContents.send("codexhub:open-thread", threadId);
+  }
+});
 
 const ensureElectronSurface = async () => {
   if (!authority) authority = await startElectronAuthority();
@@ -164,6 +276,9 @@ const heartbeat = async () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         await mainWindow.loadURL(electronSurfaceUrl(authority));
       }
+      if (desktopPetWindow && !desktopPetWindow.isDestroyed()) {
+        await desktopPetWindow.loadURL(electronSurfaceUrl(authority, true));
+      }
     } catch (reconnectError) {
       console.error(`codexhub electron surface reconnect failed: ${errorText(reconnectError || error)}`);
     }
@@ -174,6 +289,10 @@ const heartbeat = async () => {
 
 const unregisterSurface = async (stopOwnedAuthority = false) => {
   if (stoppingSurface) return stoppingSurface;
+  if (stopOwnedAuthority) {
+    stopDesktopPetSync();
+    closeDesktopPetWindow();
+  }
   stopHeartbeat();
   const current = authority;
   authority = null;
@@ -214,12 +333,16 @@ const requiredAuthority = () => {
   return authority;
 };
 
-const electronSurfaceUrl = (target: EmbeddedAuthorityHandle) => {
+const electronSurfaceUrl = (target: EmbeddedAuthorityHandle, desktopPet = false) => {
   const url = new URL("/", target.url);
   if (target.authToken) url.searchParams.set("codexhub_token", target.authToken);
   url.searchParams.set("surface", "electron");
   url.searchParams.set("surfaceId", surfaceId);
-  url.searchParams.set("stateScope", `authority:${target.authorityId}`);
+  url.searchParams.set(
+    "stateScope",
+    desktopPet ? `authority:${target.authorityId}:desktop-pet` : `authority:${target.authorityId}`
+  );
+  if (desktopPet) url.searchParams.set("desktopPet", "1");
   for (const workspacePath of electronWorkspacePaths()) url.searchParams.append("workspaceFolder", workspacePath);
   return url.toString();
 };
@@ -250,7 +373,13 @@ if (!electronApp.requestSingleInstanceLock()) {
   });
 
   electronApp.whenReady()
-    .then(process.env.CODEX_HUB_ELECTRON_SMOKE === "1" ? runSmoke : createWindow)
+    .then(async () => {
+      screen.on("display-added", repositionDesktopPetWindow);
+      screen.on("display-removed", repositionDesktopPetWindow);
+      screen.on("display-metrics-changed", repositionDesktopPetWindow);
+      if (process.env.CODEX_HUB_ELECTRON_SMOKE === "1") await runSmoke();
+      else await createWindow();
+    })
     .catch((error: unknown) => {
       console.error(error);
       electronApp.quit();
@@ -267,6 +396,8 @@ if (!electronApp.requestSingleInstanceLock()) {
   electronApp.on("before-quit", (event) => {
     if (allowQuit) return;
     event.preventDefault();
+    stopDesktopPetSync();
+    closeDesktopPetWindow();
     void unregisterSurface(process.env.CODEX_HUB_ELECTRON_SMOKE === "1").finally(() => {
       allowQuit = true;
       electronApp.quit();
@@ -275,6 +406,8 @@ if (!electronApp.requestSingleInstanceLock()) {
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
+      stopDesktopPetSync();
+      closeDesktopPetWindow();
       void unregisterSurface(process.env.CODEX_HUB_ELECTRON_SMOKE === "1").finally(() => {
         allowQuit = true;
         electronApp.quit();

@@ -36,6 +36,10 @@ try {
     path.join(stagingDirectory, "dist-node", "electron", "main.cjs")
   );
   await cp(
+    path.join(rootDirectory, "dist-node", "electron", "preload.cjs"),
+    path.join(stagingDirectory, "dist-node", "electron", "preload.cjs")
+  );
+  await cp(
     path.join(rootDirectory, "dist-node", "electron", "authority-service.cjs"),
     path.join(stagingDirectory, "dist-node", "electron", "authority-service.cjs")
   );
@@ -80,7 +84,8 @@ try {
       },
       files: [
         "package.json",
-        "dist-node/electron/main.cjs"
+        "dist-node/electron/main.cjs",
+        "dist-node/electron/preload.cjs"
       ],
       extraResources: [
         { from: "dist", to: "codexhub/dist" },

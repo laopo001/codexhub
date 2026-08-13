@@ -1,4 +1,4 @@
-const codexHubQueryKeys = new Set(["codexhub_token", "surface"]);
+const codexHubQueryKeys = new Set(["codexhub_token", "surface", "desktopPet"]);
 
 const hasCodexHubQueryKey = (params: URLSearchParams) =>
   [...params.keys()].some((key) => codexHubQueryKeys.has(key.toLowerCase()));

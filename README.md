@@ -99,6 +99,7 @@ config:
   ui:
     selectedPetId: guga
     showFloatingPet: false
+    showDesktopPet: false
     taskCompleteSystemNotifications: false
 env:
   CODEX_HUB_NOTIFICATION_COMMAND: "C:\\Users\\0laop\\.codexhub\\notify.cmd"
@@ -117,11 +118,11 @@ server 在线时，每台 machine 最多维护一个官方 app-server runtime；
 
 ## Codex 宠物
 
-Web Settings 的 Pet 入口可以启用悬浮宠物。它汇总当前打开 threads 的状态，按 `Needs input`、`Blocked`、`Ready`、`Running`、`Idle` 显示动画和活动面板；点宠物可以查看需要处理的 thread，并直接切回对应 tab。咕嘎 V2 是默认宠物，与 Red Spark V2 一起打包内置；也可以导入其他 Codex 宠物 spritesheet。
+Web、VSCode 和 Theia 的 Pet 入口只在当前 web window 内显示悬浮宠物。Electron 除了当前 web window 宠物，还可以在 Settings → Pet 中打开独立的桌面宠物；它是透明、置顶、可拖动的 Electron 窗口，不会被主窗口边界限制。宠物汇总当前打开 threads 的状态，按 `Needs input`、`Blocked`、`Ready`、`Running`、`Idle` 显示动画和活动面板；点宠物可以查看需要处理的 thread。只有 Electron 可以打开或关闭桌面宠物。
 
-导入格式与 Codex 桌面端一致：V1 使用 `1536 x 1872`、`8 x 9` 网格，V2 使用 `1536 x 2288`、`8 x 11` 网格；两者都是透明 PNG/WebP、每格 `192 x 208`，文件不超过 20 MiB。选择 V2 图片时必须同时选择带 `spriteVersionNumber: 2` 的 `pet.json`。当前读取 `id`、`displayName`、`description`、`spriteVersionNumber` 和 `spritesheetPath`。V2 宠物空闲时会按指针方向使用新增的 16 个 look 帧。悬浮宠物可以拖动，左右拖动分别播放对应移动动画，位置会保存在当前浏览器。咕嘎 V2 与 Red Spark V2 都作为内置宠物打包，咕嘎为默认；导入的宠物保存在 `${CODEX_HOME:-~/.codex}/pets/<id>`，浏览器只在 localStorage 保存显示、选择和位置偏好，不保存图片。
+导入格式与 Codex 桌面端一致：V1 使用 `1536 x 1872`、`8 x 9` 网格，V2 使用 `1536 x 2288`、`8 x 11` 网格；两者都是透明 PNG/WebP、每格 `192 x 208`，文件不超过 20 MiB。选择 V2 图片时必须同时选择带 `spriteVersionNumber: 2` 的 `pet.json`。当前读取 `id`、`displayName`、`description`、`spriteVersionNumber` 和 `spritesheetPath`。V2 宠物空闲时会按指针方向使用新增的 16 个 look 帧。两种宠物都可以拖动，左右拖动分别播放对应移动动画；web window 宠物和 Electron 桌面宠物分别保存位置。咕嘎 V2 与 Red Spark V2 都作为内置宠物打包，咕嘎为默认；导入的宠物保存在 `${CODEX_HOME:-~/.codex}/pets/<id>`，浏览器只在 localStorage 保存显示、选择和位置偏好，不保存图片。
 
-Composer 支持这些本地命令：`/pet` 切换显示，`/pets` 打开选择器，`/pets off` 收起宠物，`/pets <name>` 选择已安装宠物。这些命令在 Web 端处理，不会写进 Codex thread transcript。
+Composer 支持这些本地命令：`/pet` 切换当前 web window 宠物，`/pet off` 收起当前 web window 宠物，`/pet <name>` 选择已安装宠物。这些命令在各 web window 内处理，不会写进 Codex thread transcript；Electron 桌面宠物的开关只在 Electron Pet picker 中提供。
 
 ## 连接方式
 

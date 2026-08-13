@@ -17,6 +17,8 @@ const requestedSurface = searchParams.get("surface");
 export const webSurface = isCodexHubSurface(requestedSurface) ? requestedSurface : "default";
 export const isVscodeSurface = webSurface === "vscode";
 export const isElectronSurface = webSurface === "electron";
+export const isNativeElectronSurface = isElectronSurface && Boolean(window.codexhubElectronPet);
+export const isElectronDesktopPetWindow = isNativeElectronSurface && searchParams.get("desktopPet") === "1";
 export const isTheiaSurface = webSurface === "theia";
 export const isTheiaVscodeHost = isVscodeSurface && searchParams.get("host") === "theia";
 export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
@@ -34,6 +36,7 @@ export const storageKey = isVscodeSurface
 export const defaultAppSettings = (): AppSettings => ({
   selectedPetId: defaultPetId,
   showFloatingPet: false,
+  showDesktopPet: false,
   taskCompleteSystemNotifications: false
 });
 export type ApprovalPolicyOptionValue = "untrusted" | "on-request" | "never" | "granular";

@@ -22,10 +22,15 @@ body {
   touch-action: manipulation;
 }
 
+html[data-codexhub-window="desktop-pet"],
+html[data-codexhub-window="desktop-pet"] body,
+html[data-codexhub-window="desktop-pet"] #root {
+  background: transparent;
+}
+
 button,
 input,
 select,
 textarea {
   font: inherit;
 }
-

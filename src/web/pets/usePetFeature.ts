@@ -2,6 +2,7 @@ import React from "react";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import { defaultPetId, type InvalidPetPackage, type PetManifest } from "../../shared/petTypes.js";
 import type { AppSettings, OpenThreadState } from "../types.js";
+import { isElectronDesktopPetWindow, isNativeElectronSurface } from "../appConfig.js";
 import { apiRouteJson } from "../helpers/core.js";
 import { parsePetCommand } from "./petCommands.js";
 import {
@@ -28,10 +29,11 @@ type PetPreferences = {
   position?: PetPosition;
 };
 
-const preferencesKey = "codexhub-pet-preferences-v1";
+const webPreferencesKey = "codexhub-pet-preferences-v1";
+const desktopPreferencesKey = "codexhub-desktop-pet-preferences-v1";
 const defaultPreferences = (): PetPreferences => ({});
 
-const loadPreferences = (): PetPreferences => {
+const loadPreferences = (preferencesKey: string): PetPreferences => {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(preferencesKey) ?? "null") as Partial<PetPreferences> | null;
     const position = parsed?.position;
@@ -46,14 +48,19 @@ const loadPreferences = (): PetPreferences => {
 };
 
 type PetImportConflictAction = "reject" | "rename" | "replace";
+export type PetVisibilityMode = "window" | "desktop";
 
 export const usePetFeature = (
   openThreads: OpenThreadState[],
   enabled: boolean,
+  desktopEnabled: boolean,
   selectedPetId: string,
-  setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>
+  setAppSettings: React.Dispatch<React.SetStateAction<AppSettings>>,
+  visibilityMode: PetVisibilityMode = "window"
 ) => {
-  const [preferences, setPreferences] = React.useState<PetPreferences>(loadPreferences);
+  const preferencesKey = isElectronDesktopPetWindow ? desktopPreferencesKey : webPreferencesKey;
+  const activeVisibilityKey = visibilityMode === "desktop" ? "showDesktopPet" : "showFloatingPet";
+  const [preferences, setPreferences] = React.useState<PetPreferences>(() => loadPreferences(preferencesKey));
   const [importedPets, setImportedPets] = React.useState<PetDefinition[]>([]);
   const [invalidPets, setInvalidPets] = React.useState<InvalidPetPackage[]>([]);
   const [petCatalogReady, setPetCatalogReady] = React.useState(false);
@@ -67,6 +74,8 @@ export const usePetFeature = (
   const completedTurnKeysRef = React.useRef(new Set<string>());
   const enabledRef = React.useRef(enabled);
   enabledRef.current = enabled;
+  const desktopEnabledRef = React.useRef(desktopEnabled);
+  desktopEnabledRef.current = desktopEnabled;
   const selectedPetIdRef = React.useRef(selectedPetId);
   selectedPetIdRef.current = selectedPetId;
 
@@ -94,7 +103,7 @@ export const usePetFeature = (
 
   React.useEffect(() => {
     window.localStorage.setItem(preferencesKey, JSON.stringify(preferences));
-  }, [preferences]);
+  }, [preferences, preferencesKey]);
 
   React.useEffect(() => {
     setCompletionState((current) => transitionPetCompletionState(current, {
@@ -138,25 +147,38 @@ export const usePetFeature = (
   );
   const status = headlinePetStatus(activities);
 
-  const setEnabled = React.useCallback((nextEnabled: boolean) => {
-    const previousEnabled = enabledRef.current;
-    enabledRef.current = nextEnabled;
-    setAppSettings((current) => ({ ...current, showFloatingPet: nextEnabled }));
-    if (!nextEnabled) setTrayOpen(false);
+  const setVisibilityEnabled = React.useCallback((
+    key: "showFloatingPet" | "showDesktopPet",
+    ref: React.MutableRefObject<boolean>,
+    nextEnabled: boolean
+  ) => {
+    if (key === "showDesktopPet" && !isNativeElectronSurface) return;
+    const previousEnabled = ref.current;
+    ref.current = nextEnabled;
+    setAppSettings((current) => ({ ...current, [key]: nextEnabled }));
+    if (!nextEnabled && key === activeVisibilityKey) setTrayOpen(false);
     void apiRouteJson(apiRoutes.updateConfig, {
-      ui: { showFloatingPet: nextEnabled }
+      ui: { [key]: nextEnabled }
     }).then((payload) => {
-      if (enabledRef.current !== nextEnabled) return;
-      const savedEnabled = payload.config.ui.showFloatingPet;
-      enabledRef.current = savedEnabled;
-      setAppSettings((current) => ({ ...current, showFloatingPet: savedEnabled }));
+      if (ref.current !== nextEnabled) return;
+      const savedEnabled = payload.config.ui[key];
+      ref.current = savedEnabled;
+      setAppSettings((current) => ({ ...current, [key]: savedEnabled }));
     }).catch((reason) => {
-      if (enabledRef.current !== nextEnabled) return;
-      enabledRef.current = previousEnabled;
-      setAppSettings((current) => ({ ...current, showFloatingPet: previousEnabled }));
+      if (ref.current !== nextEnabled) return;
+      ref.current = previousEnabled;
+      setAppSettings((current) => ({ ...current, [key]: previousEnabled }));
       setError(reason instanceof Error ? reason.message : String(reason));
     });
-  }, [setAppSettings]);
+  }, [activeVisibilityKey, setAppSettings]);
+
+  const setEnabled = React.useCallback((nextEnabled: boolean) => {
+    setVisibilityEnabled(activeVisibilityKey, enabledRef, nextEnabled);
+  }, [activeVisibilityKey, setVisibilityEnabled]);
+
+  const setDesktopEnabled = React.useCallback((nextEnabled: boolean) => {
+    setVisibilityEnabled("showDesktopPet", desktopEnabledRef, nextEnabled);
+  }, [setVisibilityEnabled]);
 
   const setSelectedPetId = React.useCallback((nextPetId: string) => {
     const previousPetId = selectedPetIdRef.current;
@@ -294,6 +316,7 @@ export const usePetFeature = (
     closePicker: () => setPickerOpen(false),
     completionPhase: completionState.phase,
     enabled,
+    desktopEnabled: isNativeElectronSurface && desktopEnabled,
     error,
     handleLocalComposerCommand,
     handleThreadCompleted,
@@ -308,6 +331,7 @@ export const usePetFeature = (
     selectPet,
     selectedPet,
     setEnabled,
+    setDesktopEnabled,
     setPosition,
     setTrayOpen,
     status,

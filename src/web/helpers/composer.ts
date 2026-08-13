@@ -444,6 +444,9 @@ const storedAppSettings = (value: unknown): AppSettings | undefined => {
     showFloatingPet: typeof record.showFloatingPet === "boolean"
       ? record.showFloatingPet
       : defaultAppSettings().showFloatingPet,
+    showDesktopPet: typeof record.showDesktopPet === "boolean"
+      ? record.showDesktopPet
+      : defaultAppSettings().showDesktopPet,
     taskCompleteSystemNotifications: typeof record.taskCompleteSystemNotifications === "boolean"
       ? record.taskCompleteSystemNotifications
       : defaultAppSettings().taskCompleteSystemNotifications

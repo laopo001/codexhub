@@ -1,6 +1,7 @@
 import React from "react";
 import { Button, Modal } from "antd";
 import { Check, PawPrint, Trash2, Upload, X } from "lucide-react";
+import { isNativeElectronSurface } from "../appConfig.js";
 import {
   petAnimationRows,
   petAtlasBackgroundPosition,
@@ -156,10 +157,11 @@ const activityStatusClass = (status: PetActivityStatus) => status.replace("_", "
 type PetOverlayProps = {
   composerRecentlyChanged: boolean;
   controller: PetFeatureController;
+  desktopPetWindow?: boolean;
   onOpenThread: (threadId: string) => void | Promise<void>;
 };
 
-export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }: PetOverlayProps) => {
+export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWindow = false, onOpenThread }: PetOverlayProps) => {
   const buttonRef = React.useRef<HTMLButtonElement>(null);
   const dragSessionRef = React.useRef<PetDragSession | null>(null);
   const lastPointerRef = React.useRef<{ x: number; y: number } | null>(null);
@@ -171,7 +173,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
     return controller.position
       ? clampPetPosition(controller.position, viewport, size)
       : defaultPetPosition(viewport, viewport.width <= 700);
-  }, []);
+  }, [controller.position]);
   const [position, setPosition] = React.useState(initialPosition);
   const positionRef = React.useRef(position);
   const [dragDirection, setDragDirection] = React.useState<PetDragDirection>(null);
@@ -245,6 +247,39 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
     scheduleLookForPointer,
   ]);
 
+  React.useEffect(() => {
+    if (!desktopPetWindow) return undefined;
+    const setInputMode = (clientX?: number, clientY?: number) => {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      const elementAtPointer = clientX !== undefined && clientY !== undefined
+        ? document.elementFromPoint(clientX, clientY)
+        : null;
+      const interactive = Boolean(
+        controller.enabled
+        && (
+          Boolean(elementAtPointer?.closest(".petButton, .petActivityTray"))
+          || (
+            rect
+            && clientX !== undefined
+            && clientY !== undefined
+            && clientX >= rect.left
+            && clientX <= rect.right
+            && clientY >= rect.top
+            && clientY <= rect.bottom
+          )
+        )
+      );
+      window.codexhubElectronPet?.setIgnoreMouseEvents(!interactive);
+    };
+    const handlePointerMove = (event: PointerEvent) => setInputMode(event.clientX, event.clientY);
+    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    setInputMode();
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.codexhubElectronPet?.setIgnoreMouseEvents(true);
+    };
+  }, [controller.enabled, desktopPetWindow]);
+
   const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!event.isPrimary || event.button !== 0) return;
     dragSessionRef.current = {
@@ -306,6 +341,10 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
   const trayHorizontal = position.x + petSize.width / 2 > viewport.width / 2 ? "right" : "left";
   const openActivity = (activity: PetActivity) => {
     controller.setTrayOpen(false);
+    if (desktopPetWindow && window.codexhubElectronPet) {
+      window.codexhubElectronPet.focusMainWindow(activity.threadId);
+      return;
+    }
     void onOpenThread(activity.threadId);
   };
   return (
@@ -340,7 +379,9 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, onOpenThread }
               </button>
             )) : <div className="petActivityEmpty">No Codex work needs attention.</div>}
           </div>
-          <button type="button" className="petTraySettings" onClick={controller.openPicker}><PawPrint size={15} /> Choose pet</button>
+          {!desktopPetWindow ? (
+            <button type="button" className="petTraySettings" onClick={controller.openPicker}><PawPrint size={15} /> Choose pet</button>
+          ) : null}
         </section>
       ) : null}
       <span className={`petStatusBubble ${activityStatusClass(controller.status)}`}>{petStatusLabel(controller.status)}</span>
@@ -437,8 +478,14 @@ export const PetPicker = ({ controller }: { controller: PetFeatureController }) 
         <div className="petPickerToolbar">
           <label className="petEnabledControl">
             <input type="checkbox" checked={controller.enabled} onChange={(event) => controller.setEnabled(event.currentTarget.checked)} />
-            <span>Show floating pet</span>
+            <span>Show in this web window</span>
           </label>
+          {isNativeElectronSurface ? (
+            <label className="petEnabledControl">
+              <input type="checkbox" checked={controller.desktopEnabled} onChange={(event) => controller.setDesktopEnabled(event.currentTarget.checked)} />
+              <span>Show on desktop</span>
+            </label>
+          ) : null}
           <button type="button" className="petImportButton" disabled={controller.importBusy} onClick={() => fileInputRef.current?.click()}>
             <Upload size={16} /> {controller.importBusy ? "Importing…" : "Import pet"}
           </button>
