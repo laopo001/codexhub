@@ -3128,6 +3128,10 @@ export class ThreadHub {
     for (const subscriber of thread.subscribers) subscriber(streamEvent);
     this.options.onThreadEvent?.(streamEvent, thread.records);
     this.options.onThreadChange?.();
+    // Detached consumers such as the Electron desktop pet do not subscribe to
+    // every thread stream. Keep the runtime projection in sync whenever a
+    // thread summary changes so they can observe waiting/running/idle turns.
+    if (kind === "thread" || kind === "done") this.publishRuntimes();
   }
 
   private summary(thread: ThreadState): ThreadSummary {
