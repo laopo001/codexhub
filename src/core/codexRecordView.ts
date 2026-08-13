@@ -14,8 +14,16 @@ export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
     }
 
     const goalProjection = goalMessageProjection(record, goalMessageStates);
-    if (goalProjection?.hidden) continue;
     let view = withSubagentActivityAssignment(recordToView(record), subagentAssignments.get(record.id));
+    if (view && goalProjection?.reconstructedStart) {
+      insertViewChronologically(views, {
+        ...view,
+        id: goalProjection.reconstructedStart.id,
+        label: "goal start",
+        at: goalProjection.reconstructedStart.at
+      });
+    }
+    if (goalProjection?.hidden) continue;
     if (!view) continue;
     if (goalProjection) view = { ...view, label: goalProjection.label };
     views.push(view);
@@ -328,6 +336,10 @@ type GoalMessageState = {
 type GoalMessageProjection = {
   label: string;
   hidden?: boolean;
+  reconstructedStart?: {
+    id: string;
+    at: string;
+  };
 };
 
 /**
@@ -362,7 +374,20 @@ const goalMessageProjection = (
   const current = { objective, status, tokenBudget };
   states.set(lifecycleKey, current);
 
-  if (!previous) return { label: initialGoalMessageLabel(status) };
+  if (!previous) {
+    const createdAtTimestamp = goalTimestampFromEpochSeconds(createdAt);
+    return {
+      label: initialGoalMessageLabel(status),
+      ...(status !== "active" && createdAtTimestamp
+        ? {
+            reconstructedStart: {
+              id: `view:goal-start:${threadId}:${createdAt}`,
+              at: createdAtTimestamp
+            }
+          }
+        : {})
+    };
+  }
   if (
     previous.objective === current.objective
     && previous.status === current.status
@@ -383,6 +408,27 @@ const goalStatusTransitionLabel = (status: string) => {
   if (status === "usageLimited") return "goal usage limited";
   if (status === "budgetLimited") return "goal budget limited";
   return "goal update";
+};
+
+const goalTimestampFromEpochSeconds = (value: number | null) => {
+  if (value === null) return null;
+  const timestamp = new Date(value * 1000);
+  return Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : null;
+};
+
+/** Insert a reconstructed creation boundary without reordering existing records. */
+const insertViewChronologically = (views: CodexRecordView[], view: CodexRecordView) => {
+  const timestamp = view.at ? Date.parse(view.at) : Number.NaN;
+  if (!Number.isFinite(timestamp)) {
+    views.push(view);
+    return;
+  }
+  const index = views.findIndex((candidate) => {
+    const candidateTimestamp = candidate.at ? Date.parse(candidate.at) : Number.NaN;
+    return Number.isFinite(candidateTimestamp) && candidateTimestamp > timestamp;
+  });
+  if (index < 0) views.push(view);
+  else views.splice(index, 0, view);
 };
 
 const responseItemToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {

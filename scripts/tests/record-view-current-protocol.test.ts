@@ -98,6 +98,30 @@ test("Goal snapshots mark lifecycle transitions without treating every update as
     { role: "user", label: "goal end", text: "finish the implementation and tests" },
     { role: "user", label: "goal start", text: "ship the next change" }
   ]);
+
+  const reopenedRecords = [
+    makeGoalRecord("goal-complete-snapshot", "finish the implementation and tests", {
+      status: "complete",
+      tokenBudget: 2_000,
+      timeUsedSeconds: 90,
+      updatedAt: 1_754_131_560
+    })
+  ];
+  assert.deepEqual(
+    recordsToViews(reopenedRecords).map((view) => ({ label: view.label, text: view.text, at: view.at })),
+    [
+      {
+        label: "goal start",
+        text: "finish the implementation and tests",
+        at: "2025-08-02T10:40:00.000Z"
+      },
+      {
+        label: "goal end",
+        text: "finish the implementation and tests",
+        at: "2025-08-02T10:46:00.000Z"
+      }
+    ]
+  );
   assert.equal(compactToolViews(recordsToViews(records)).every((view) => view.role === "user"), true);
 
   const previousWindow = (globalThis as { window?: unknown }).window;
