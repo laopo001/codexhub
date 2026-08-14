@@ -102,6 +102,28 @@
   min-width: 0;
 }
 
+.openThreadTabs > .ant-tabs-nav .openThreadTabCloseTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: #66715f;
+  line-height: 1;
+}
+
+.openThreadTabs > .ant-tabs-nav .openThreadTabCloseTrigger:hover {
+  color: #17211a;
+}
+
+.openThreadCloseConfirm .ant-popover-inner {
+  padding: 8px;
+}
+
+.openThreadCloseConfirm .ant-popconfirm-title {
+  font-size: 12px;
+}
+
 .openThreadTabs > .ant-tabs-nav .ant-tabs-tab {
   max-width: calc(100vw - 120px);
 }

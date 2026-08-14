@@ -1,4 +1,5 @@
-import { Tabs } from "antd";
+import { Popconfirm, Tabs } from "antd";
+import { X } from "lucide-react";
 import { subagentAssignmentForChild } from "../core/codexRecordView.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
@@ -121,9 +122,29 @@ export const AppView = ({ viewModel }: AppViewProps) => {
             size="small"
             type="editable-card"
             activeKey={activeThreadKey || undefined}
+            locale={{ removeAriaLabel: "Close thread" }}
             items={openThreadTabs.map((item) => ({
               ...item,
               closable: true,
+              closeIcon: (
+                <Popconfirm
+                  title="Close this thread?"
+                  okText="Close"
+                  cancelText="Cancel"
+                  placement="bottomRight"
+                  arrow={false}
+                  classNames={{ root: "openThreadCloseConfirm" }}
+                  onConfirm={() => void closeThread(item.key)}
+                >
+                  <span
+                    className="openThreadTabCloseTrigger"
+                    aria-hidden="true"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <X size={12} strokeWidth={2.2} />
+                  </span>
+                </Popconfirm>
+              ),
               children: activeThread && item.key === activeThreadKey
                 ? <WorkspaceThreadConversation workspace={workspace} />
                 : null
