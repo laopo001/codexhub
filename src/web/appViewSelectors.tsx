@@ -20,22 +20,17 @@ import {
   latestThreadGoalFromRecords,
   mergeThreadUsage,
   normalizeReasoningEffort,
-  recordsHavePendingInteraction,
   shortId,
   threadDisplayRecords,
-  threadExecutionIsRunning,
   threadDisplayTitle,
   threadUsageFromSessionRateLimits
 } from "./appHelpers.js";
-import type { TurnActivityScope } from "./appHelpers.js";
-import {
-  formatThreadDuration,
-  LiveThreadRunningText
-} from "./helpers/liveTime.js";
+import { LiveThreadRunningText } from "./helpers/liveTime.js";
+import { threadExecutionMeta } from "./helpers/threadExecution.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { contextMenuPosition } from "./helpers/composer.js";
-import type { OpenThreadState, ThreadExecutionMeta } from "./types.js";
+import type { OpenThreadState } from "./types.js";
 
 type ComposerThreadControlsMode = "inline" | "popover";
 
@@ -304,27 +299,4 @@ const contextUsagePercent = (threadUsage: AppSelectors["activeThreadUsage"]) => 
   const context = threadUsage?.context;
   if (!context || context.windowTokens <= 0) return null;
   return Math.min(100, Math.max(0, Math.round((context.usedTokens / context.windowTokens) * 100)));
-};
-
-export const threadExecutionMeta = (
-  thread: OpenThreadState,
-  activityScope: TurnActivityScope
-): ThreadExecutionMeta => {
-  const waiting = thread.status === "waiting";
-  const running = !waiting && threadExecutionIsRunning(thread.running, activityScope.turnStatus);
-  const needsInput = running && recordsHavePendingInteraction(activityScope.records);
-  const startedAt = running
-    ? activityScope.startedAt
-    : activityScope.startedAt ?? activityScope.turnStatus?.at;
-  const durationMs = running || waiting ? undefined : activityScope.durationMs;
-  const status = waiting ? "waiting" : running ? "running" : "idle";
-  const label = waiting ? "Waiting" : needsInput ? "Needs input" : running ? "Running" : "Idle";
-  const duration = durationMs == null ? "" : formatThreadDuration(durationMs);
-  return {
-    status,
-    label,
-    duration,
-    text: [label, duration].filter(Boolean).join(" · "),
-    ...(running && startedAt ? { startedAt } : {})
-  };
 };

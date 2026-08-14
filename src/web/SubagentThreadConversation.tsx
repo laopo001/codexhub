@@ -6,7 +6,7 @@ import {
   threadDisplayRecords,
   userMessageHistoryFromRecords
 } from "./appHelpers.js";
-import { threadExecutionMeta } from "./appViewSelectors.js";
+import { threadExecutionMeta } from "./helpers/threadExecution.js";
 import {
   SubagentThreadAssignment,
   subagentThreadDialogViews

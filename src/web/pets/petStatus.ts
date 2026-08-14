@@ -1,5 +1,17 @@
 import { asRecord, type CodexRecord } from "../../shared/recordTypes.js";
-import type { MachineSummary, OpenThreadState, RuntimeSummary } from "../types.js";
+import {
+  latestThreadGoalFromRecords,
+  latestTurnActivityScope,
+  threadDisplayRecords
+} from "../helpers/records.js";
+import { threadExecutionMeta } from "../helpers/threadExecution.js";
+import type {
+  MachineSummary,
+  OpenThreadState,
+  RuntimeSummary,
+  ThreadExecutionMeta,
+  ThreadGoalView
+} from "../types.js";
 import type { PetAnimationState } from "./petAtlas.js";
 
 export type PetActivityStatus = "needs_input" | "blocked" | "running" | "idle";
@@ -12,6 +24,8 @@ export type PetActivity = {
   status: PetActivityStatus;
   machineId?: string;
   machineLabel?: string;
+  executionMeta?: ThreadExecutionMeta;
+  activeGoal?: ThreadGoalView | null;
 };
 
 export const petCompletionJumpDurationMs = 3_000;
@@ -132,8 +146,11 @@ type PetActivityCandidate = {
   summary?: RuntimeThreadSummary;
 };
 
+const workingDirectoryName = (workingDirectory: string) =>
+  workingDirectory.split(/[\\/]/).filter(Boolean).pop();
+
 const threadTitle = (title: string | undefined, workingDirectory: string, threadId: string) =>
-  title || workingDirectory.split(/[\\/]/).filter(Boolean).pop() || threadId;
+  title || workingDirectoryName(workingDirectory) || threadId;
 
 const firstNonBlank = (...values: Array<string | undefined>) =>
   values.find((value) => typeof value === "string" && value.trim())?.trim();
@@ -144,8 +161,17 @@ const machineTypeLabel = (type: MachineSummary["type"]) => {
   return "Local";
 };
 
-const petMachineLabel = (machine: MachineSummary | undefined, runtime: RuntimeSummary | undefined) => {
-  const name = machine?.name || machine?.hostname || runtime?.name || runtime?.hostname;
+const petMachineLabel = (
+  machine: MachineSummary | undefined,
+  runtime: RuntimeSummary | undefined,
+  workingDirectory: string
+) => {
+  const directoryName = workingDirectoryName(workingDirectory);
+  const machineName = machine?.name || machine?.hostname || runtime?.name || runtime?.hostname;
+  const machineContext = machineName?.split(" · ").slice(1).filter(Boolean).join(" · ");
+  const name = directoryName
+    ? [directoryName, machineContext].filter(Boolean).join(" · ")
+    : machineName;
   if (!name) return undefined;
   return machine ? `${machineTypeLabel(machine.type)} · ${name}` : name;
 };
@@ -204,7 +230,17 @@ export const derivePetActivities = (
         : runtime?.online && summary && (summary.running || summary.status === "running")
           ? "running"
           : activity?.status ?? "idle";
-      const machineLabel = petMachineLabel(machine, runtime);
+      const machineLabel = petMachineLabel(machine, runtime, workingDirectory);
+      const detailExecution = detail
+        ? (() => {
+            const records = threadDisplayRecords(detail.threadId, detail);
+            const activityScope = latestTurnActivityScope(records, detail.activeTurnId);
+            return {
+              executionMeta: threadExecutionMeta(detail, activityScope),
+              activeGoal: latestThreadGoalFromRecords(records, detail.threadId)
+            };
+          })()
+        : undefined;
       const activityTitle = firstNonBlank(
         detail?.activityTitle,
         summary?.activityTitle,
@@ -221,7 +257,8 @@ export const derivePetActivities = (
         updatedAt: detail?.updatedAt ?? summary?.updatedAt ?? activity?.updatedAt ?? runtime?.lastSeenAt ?? "",
         status,
         ...(machineId ? { machineId } : {}),
-        ...(machineLabel ? { machineLabel } : {})
+        ...(machineLabel ? { machineLabel } : {}),
+        ...(detailExecution ?? {})
       };
     })
     .filter((activity) => activity.threadId.length > 0)

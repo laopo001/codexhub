@@ -2,6 +2,7 @@ import React from "react";
 import { Button, Modal } from "antd";
 import { Check, PawPrint, Trash2, Upload, X } from "lucide-react";
 import { isNativeElectronSurface } from "../appConfig.js";
+import { LiveThreadRunningText } from "../helpers/liveTime.js";
 import {
   petAnimationRows,
   petAtlasBackgroundPosition,
@@ -375,7 +376,11 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
                 <span className="petActivityText">
                   <strong>{activity.title}</strong>
                   {activity.machineLabel ? <small className="petActivityMachine">{activity.machineLabel}</small> : null}
-                  <em>{petStatusLabel(activity.status)}</em>
+                  <em>
+                    {activity.executionMeta && (activity.executionMeta.status === "running" || activity.executionMeta.status === "waiting")
+                      ? <LiveThreadRunningText executionMeta={activity.executionMeta} activeGoal={activity.activeGoal} />
+                      : petStatusLabel(activity.status)}
+                  </em>
                 </span>
               </button>
             )) : <div className="petActivityEmpty">No Codex work needs attention.</div>}

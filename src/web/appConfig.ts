@@ -7,7 +7,9 @@ import { defaultPetId } from "../shared/petTypes.js";
 import { isCodexHubSurface, isEmbeddedCodexHubSurface } from "../shared/surfaceTypes.js";
 import { codexHubSearchParams } from "./urlSearch.js";
 
-const searchParams = codexHubSearchParams(window.location.search);
+const searchParams = codexHubSearchParams(
+  typeof window === "undefined" ? "" : window.location.search
+);
 const uniqueTrimmedParams = (names: string[]) => {
   const values = names.flatMap((name) => searchParams.getAll(name));
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -17,7 +19,8 @@ const requestedSurface = searchParams.get("surface");
 export const webSurface = isCodexHubSurface(requestedSurface) ? requestedSurface : "default";
 export const isVscodeSurface = webSurface === "vscode";
 export const isElectronSurface = webSurface === "electron";
-export const isNativeElectronSurface = isElectronSurface && Boolean(window.codexhubElectronPet);
+export const isNativeElectronSurface =
+  isElectronSurface && typeof window !== "undefined" && Boolean(window.codexhubElectronPet);
 export const isElectronDesktopPetWindow = isNativeElectronSurface && searchParams.get("desktopPet") === "1";
 export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
 /** VS Code projects come from the host workspace; Electron can browse local folders. */

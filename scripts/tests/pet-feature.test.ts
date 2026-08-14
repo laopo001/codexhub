@@ -222,7 +222,7 @@ test("pet activities sort using the official attention priority", () => {
 test("pet activities include running threads from registered runtimes", () => {
   const runtime: RuntimeSummary = {
     machineId: "machine-wsl",
-    name: "WSL VSCode",
+    name: "CodexHub Authority · WSL Ubuntu · jx",
     workingDirectory: "/home/laop/projects/codexhub",
     online: true,
     status: "online",
@@ -242,7 +242,7 @@ test("pet activities include running threads from registered runtimes", () => {
   const machine: MachineSummary = {
     machineId: "machine-wsl",
     type: "registered",
-    name: "WSL VSCode",
+    name: "CodexHub Authority · WSL Ubuntu · jx",
     hostname: "wsl-host",
     online: true,
     status: "online",
@@ -270,8 +270,29 @@ test("pet activities include running threads from registered runtimes", () => {
     threadId: "wsl-thread",
     status: "running",
     machineId: "machine-wsl",
-    machineLabel: "Registered · WSL VSCode"
+    machineLabel: "Registered · codexhub · WSL Ubuntu · jx"
   }]);
+});
+
+test("open pet activities expose the same turn start used by the tab timer", () => {
+  const startedAt = "2026-01-01T00:00:05.000Z";
+  const runningThread = {
+    ...thread("thread-timer", [{
+      id: "turn-started",
+      timestamp: startedAt,
+      type: "event_msg",
+      payload: { type: "task_started", turn_id: "turn-timer" }
+    }], true),
+    activeTurnId: "turn-timer"
+  };
+
+  assert.deepEqual(derivePetActivities([runningThread])[0]?.executionMeta, {
+    status: "running",
+    label: "Running",
+    duration: "",
+    text: "Running",
+    startedAt
+  });
 });
 
 test("pet activity titles prefer Goal, then the latest user-input hint", () => {

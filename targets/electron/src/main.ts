@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { app as electronApp, BrowserWindow, ipcMain, screen, shell } from "electron";
+import {
+  app as electronApp,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  shell,
+  Tray
+} from "electron";
 import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import { embeddedAuthorityDataDirectory } from "../../../src/core/authorityPaths.js";
 import {
@@ -23,10 +32,17 @@ const mainDirectory = electronApp.isPackaged
 const preloadPath = path.join(mainDirectory, "preload.cjs");
 const surfaceHeartbeatMs = 10_000;
 const desktopPetSyncMs = 1_000;
+const windowsTrayEnabled = process.platform === "win32";
+const electronSmokeEnabled = process.env.CODEX_HUB_ELECTRON_SMOKE === "1";
+
+// The icon is kept in the main bundle so installed builds do not depend on
+// a source or build-resource path for their tray icon.
+const trayIconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQEAYAAABPYyMiAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRP///////wlY99wAAAAHdElNRQfqCA4BMBPxnrOsAAABAklEQVRIx2NgGGDAiC6gqHj8eFWVLBeE13ERQkepUGbNsjsQukL//n1Ly7a2x98wHIBq8aOvtPW3HDfMIUyoEjAf0xog7EFzAOGg/rv9lfZnPgaGL9ETd+xjYmB49y4kZNYsBB8mjx8g7GEipBTdwo/mWZrLexDy/CenXY8sQfBh8sQ6iKADcFnIszTfw+kfAwOzp9hV3k8IPi4H/b//1fTXLDIcAAPcLSm1NjMQFuICMHmYekKAaAfQCow6gGgHfK2Z03wkg3CqhsnD1JPoAFiRiQDEZjNC2ZRRkfs0WxqmPWgOqNBHdwCx2QzdQvRsisseiisjWP5G9SE6wF0ZDTgAAPZqtBbO4tnIAAAAAElFTkSuQmCC";
 
 let mainWindow: BrowserWindow | null = null;
 let desktopPetWindow: BrowserWindow | null = null;
 let authority: EmbeddedAuthorityHandle | null = null;
+let tray: Tray | null = null;
 let allowQuit = false;
 let stoppingSurface: Promise<void> | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
@@ -59,6 +75,12 @@ const createWindow = async () => {
     return { action: "deny" };
   });
 
+  window.on("close", (event) => {
+    if (!windowsTrayEnabled || !tray || allowQuit) return;
+    event.preventDefault();
+    window.hide();
+  });
+
   window.on("closed", () => {
     if (mainWindow !== window) return;
     mainWindow = null;
@@ -72,6 +94,46 @@ const createWindow = async () => {
   if (process.env.CODEX_HUB_ELECTRON_DEVTOOLS === "1") {
     window.webContents.openDevTools({ mode: "detach" });
   }
+};
+
+const showMainWindow = async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    await createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+};
+
+const createTray = () => {
+  if (!windowsTrayEnabled || electronSmokeEnabled || tray) return;
+  try {
+    const icon = nativeImage.createFromDataURL(trayIconDataUrl);
+    if (icon.isEmpty()) {
+      console.warn("codexhub electron could not create its Windows tray icon");
+      return;
+    }
+    tray = new Tray(icon);
+    tray.setToolTip("Codex Hub");
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Show Codex Hub", click: () => void showMainWindow() },
+      { type: "separator" },
+      { label: "Quit Codex Hub", click: () => electronApp.quit() }
+    ]));
+    tray.on("click", () => void showMainWindow());
+    tray.on("double-click", () => void showMainWindow());
+  } catch (error) {
+    tray?.destroy();
+    tray = null;
+    console.warn(`codexhub electron tray unavailable: ${errorText(error)}`);
+  }
+};
+
+const destroyTray = () => {
+  if (!tray) return;
+  tray.destroy();
+  tray = null;
 };
 
 const desktopPetBounds = () => {
@@ -368,9 +430,7 @@ if (!electronApp.requestSingleInstanceLock()) {
   electronApp.quit();
 } else {
   electronApp.on("second-instance", () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+    void showMainWindow();
   });
 
   electronApp.whenReady()
@@ -378,7 +438,8 @@ if (!electronApp.requestSingleInstanceLock()) {
       screen.on("display-added", repositionDesktopPetWindow);
       screen.on("display-removed", repositionDesktopPetWindow);
       screen.on("display-metrics-changed", repositionDesktopPetWindow);
-      if (process.env.CODEX_HUB_ELECTRON_SMOKE === "1") await runSmoke();
+      createTray();
+      if (electronSmokeEnabled) await runSmoke();
       else await createWindow();
     })
     .catch((error: unknown) => {
@@ -391,15 +452,17 @@ if (!electronApp.requestSingleInstanceLock()) {
   });
 
   electronApp.on("window-all-closed", () => {
+    if (windowsTrayEnabled && tray) return;
     electronApp.quit();
   });
 
   electronApp.on("before-quit", (event) => {
     if (allowQuit) return;
     event.preventDefault();
+    destroyTray();
     stopDesktopPetSync();
     closeDesktopPetWindow();
-    void unregisterSurface(process.env.CODEX_HUB_ELECTRON_SMOKE === "1").finally(() => {
+    void unregisterSurface(electronSmokeEnabled).finally(() => {
       allowQuit = true;
       electronApp.quit();
     });
@@ -407,9 +470,10 @@ if (!electronApp.requestSingleInstanceLock()) {
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
+      destroyTray();
       stopDesktopPetSync();
       closeDesktopPetWindow();
-      void unregisterSurface(process.env.CODEX_HUB_ELECTRON_SMOKE === "1").finally(() => {
+      void unregisterSurface(electronSmokeEnabled).finally(() => {
         allowQuit = true;
         electronApp.quit();
       });
