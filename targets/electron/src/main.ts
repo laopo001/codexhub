@@ -35,9 +35,9 @@ const desktopPetSyncMs = 1_000;
 const windowsTrayEnabled = process.platform === "win32";
 const electronSmokeEnabled = process.env.CODEX_HUB_ELECTRON_SMOKE === "1";
 
-// The icon is kept in the main bundle so installed builds do not depend on
-// a source or build-resource path for their tray icon.
-const trayIconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQEAYAAABPYyMiAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRP///////wlY99wAAAAHdElNRQfqCA4BMBPxnrOsAAABAklEQVRIx2NgGGDAiC6gqHj8eFWVLBeE13ERQkepUGbNsjsQukL//n1Ly7a2x98wHIBq8aOvtPW3HDfMIUyoEjAf0xog7EFzAOGg/rv9lfZnPgaGL9ETd+xjYmB49y4kZNYsBB8mjx8g7GEipBTdwo/mWZrLexDy/CenXY8sQfBh8sQ6iKADcFnIszTfw+kfAwOzp9hV3k8IPi4H/b//1fTXLDIcAAPcLSm1NjMQFuICMHmYekKAaAfQCow6gGgHfK2Z03wkg3CqhsnD1JPoAFiRiQDEZjNC2ZRRkfs0WxqmPWgOqNBHdwCx2QzdQvRsisseiisjWP5G9SE6wF0ZDTgAAPZqtBbO4tnIAAAAAElFTkSuQmCC";
+// Keep the 16px transparent raster aligned with the blue cube used by the
+// packaged application icon so the tray and taskbar show the same identity.
+const trayIconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAJcEhZcwAACxIAAAsSAdLdfvwAAAJbSURBVDjLjZM/SNRhHMY/3/d3dl1RUBZBLSdZDtFSaY3qIIJ3N6UtKgZRY9BY5OWQUxo1mTrknUVcm38iKJwyyMHFaghBwUEphIg079/7NJwXJ2T0TN/3+77Pw/fP+0AlJGvPKEAygLZnOtX2TKf+dlfGn0N7RsHLT4g+862v/MHQuvWauIkDicECuv+6y/0gKdd+BnvZYcUdAgDXn6hqbT/X5enH2DS45r1+uip7Ic8+eW4f/8Xw8A3LlzmuXFI8pebVCO+8uCujb3KRE+EwbzDOyXMAWDTj1uo+3sdTai635TBT6yMfdmFGIkdpMNE31WWDiZN0bGW1ao5e81yd7LTziAeRI1xwYUZaH/kwZnIAoRoLlMc2vzIj071YWt8JkfayB5Od7pCTPsZT+iBT/+Y33iqPhWosKLUAVK/jJSIW8DArO2vwVkUCB8fiKY1or30G1go5Ow08lohUr+MBQjvWiPa86XZfgcttT9WwZ78yAvIbdnG6x+YA4uO+iopNOoBlQJL3MgFcGlBkusfmCls2W9yy2ekem7s0oAiAl0mSX64UiEYhqLIg2E6GD6PSkAlJpSrLuYDS22i0QmCsiWwxz5LQaGxcVxqXyQGYIbMSsXGZXGxcV4RGi3mWxprIbgvIwORytEg2ZJ7n87XMJ9KqEyoIFRIZ1c3XMm+e55INuRwtYAKZKwUwscLGVLfdcQWiEl88LASBJYLAEj7LgsQXVyA61W13JlbY2HaCdjVSLK36WEozsZRmYmnV/8tQO5BMyrVnFJQNVhknk6WP919ISiWfSJbU7sTfZ8k/gPO0GAIAAAAASUVORK5CYII=";
 
 let mainWindow: BrowserWindow | null = null;
 let desktopPetWindow: BrowserWindow | null = null;
