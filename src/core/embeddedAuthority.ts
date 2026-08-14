@@ -4,6 +4,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { readServerConfigEnv } from "./serverConfigEnv.js";
 import type { HealthPayload } from "../shared/apiContract.js";
 import { authorityKind, authorityServicePort, embeddedSurfaceProtocolVersion } from "../shared/surfaceTypes.js";
 
@@ -85,11 +86,27 @@ export const authorityBuildId = async (files: string[], prefix = "authority") =>
   return `${prefix}:${size}:${hash.digest("hex").slice(0, 20)}`;
 };
 
+/**
+ * Resolve the shared authority port. Explicit process/CLI environment values
+ * win, while config.yaml supplies the default for VS Code and Electron when
+ * they are the first client to start the detached authority.
+ */
+export const resolveEmbeddedAuthorityPort = async (
+  dataDir: string,
+  env: NodeJS.ProcessEnv = process.env
+) => {
+  const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
+  return authorityServicePort({
+    ...(configEnv ?? {}),
+    ...env
+  });
+};
+
 export const ensureEmbeddedAuthority = async (
   input: EnsureEmbeddedAuthorityInput
 ): Promise<EmbeddedAuthorityHandle> => {
   const authorityId = await resolveAuthorityId(input.dataDir);
-  const port = input.port ?? authorityServicePort();
+  const port = input.port ?? await resolveEmbeddedAuthorityPort(input.dataDir);
   const url = `http://127.0.0.1:${port}`;
   const existing = await probeEmbeddedAuthority(url, authorityId, Boolean(input.authToken));
   if (existing) {

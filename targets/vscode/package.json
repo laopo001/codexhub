@@ -71,6 +71,17 @@
         "shortTitle": "%command.sendPath.shortTitle%"
       }
     ],
+    "configuration": {
+      "title": "%configuration.title%",
+      "properties": {
+        "codexhub.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "%configuration.enabled.description%"
+        }
+      }
+    },
     "menus": {
       "editor/context": [
         {

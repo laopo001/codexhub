@@ -1,6 +1,9 @@
 #!/usr/bin/env tsx
+import path from "node:path";
 import { Command } from "commander";
+import { codexHubDataDirectory } from "../core/authorityPaths.js";
 import { loadDotEnv } from "../core/dotenv.js";
+import { readAndApplyServerConfigEnv } from "../core/serverConfigEnv.js";
 import {
   parseCodexApprovalPolicy,
   parseCodexApprovalsReviewer,
@@ -71,6 +74,7 @@ type LocalTask = {
 };
 
 await loadDotEnv();
+await readAndApplyServerConfigEnv(path.join(codexHubDataDirectory(), "config.yaml"));
 
 const program = new Command()
   .name("codexhub")

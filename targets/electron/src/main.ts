@@ -10,7 +10,7 @@ import {
   shell,
   Tray
 } from "electron";
-import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
+import { applyServerConfigEnv, readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import { embeddedAuthorityDataDirectory } from "../../../src/core/authorityPaths.js";
 import {
   authorityBuildId,
@@ -265,6 +265,9 @@ const startElectronAuthority = async () => {
     console.warn(`codexhub electron could not remove obsolete authority token file: ${errorText(error)}`);
   });
   const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
+  // Electron main-process behavior is not a VS Code setting. Apply the same
+  // shared config.yaml env map before DevTools/workspace handling runs.
+  applyServerConfigEnv(configEnv);
   const authToken = configuredAuthorityAuthToken(process.env, configEnv);
   const buildId = await authorityBuildId([
     authorityServicePath,

@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import { codexHubDataDirectory } from "./authorityPaths.js";
-import { normalizeServerConfigEnv, readServerConfigEnv } from "./serverConfigEnv.js";
+import {
+  applyServerConfigEnv,
+  normalizeServerConfigEnv,
+  readServerConfigEnv
+} from "./serverConfigEnv.js";
 import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
 import type { MachineCapabilities, MachineSummary, MachineType } from "../shared/machineTypes.js";
 import { defaultPetId, petIdPattern } from "../shared/petTypes.js";
@@ -60,9 +64,7 @@ export class CodexhubServerState {
   }
 
   applyEnvToProcess(target: NodeJS.ProcessEnv = process.env) {
-    for (const [key, value] of Object.entries(this.data.env)) {
-      if (!(key in target)) target[key] = value;
-    }
+    applyServerConfigEnv(this.data.env, target);
   }
 
   config() {

@@ -18,6 +18,24 @@ export const normalizeServerConfigEnv = (value: unknown): Record<string, string>
   return env;
 };
 
+/**
+ * Apply the non-VS Code portion of config.yaml to a process environment.
+ *
+ * The environment remains an override boundary: shell/.env/CLI values are
+ * already present and must win over values persisted in config.yaml. Keeping
+ * this operation in one helper makes ordinary Node, Electron, and the
+ * detached VS Code authority use the same precedence rules.
+ */
+export const applyServerConfigEnv = (
+  configEnv: Record<string, string> | undefined,
+  target: NodeJS.ProcessEnv = process.env
+) => {
+  for (const [key, value] of Object.entries(configEnv ?? {})) {
+    if (!(key in target)) target[key] = value;
+  }
+  return target;
+};
+
 /** Read only config.yaml's env map without loading or mutating server state. */
 export const readServerConfigEnv = async (filePath: string): Promise<Record<string, string> | undefined> => {
   let rawText: string;
@@ -34,4 +52,14 @@ export const readServerConfigEnv = async (filePath: string): Promise<Record<stri
   } catch {
     return undefined;
   }
+};
+
+/** Read config.yaml's non-VS Code settings and apply them without overwriting explicit process values. */
+export const readAndApplyServerConfigEnv = async (
+  filePath: string,
+  target: NodeJS.ProcessEnv = process.env
+) => {
+  const configEnv = await readServerConfigEnv(filePath);
+  applyServerConfigEnv(configEnv, target);
+  return configEnv;
 };

@@ -89,7 +89,7 @@ CODEX_HUB_SSH_AUTOCONNECT=0
 ~/.config/codexhub/config.yaml
 ```
 
-可以通过 `CODEX_HUB_DATA_DIR` 覆盖配置目录。这个 YAML 保存共享 UI 偏好、parent registration、projects、tasks、SSH hosts、local/SSH machine 元数据等本机控制面配置，也会包含 `updatedAt`、task 最近 run 摘要这类轻量状态字段。父 server 收到的 `registered` machine 只存在于运行时，不写入这里；旧配置中的 registered machine 历史元数据会在加载时自动清理，但它关联的 project/task 配置仍保留。包含 parent auth token 时配置文件会以 `0600` 写入；token 只由后端用于 machine WebSocket，不通过配置或 registration API 返回给 Web。它也可以保存一个 `env` 映射；server 启动时会先读取它，只把尚未存在的键填入 `process.env`，不会覆盖 shell 或 `.env`。它不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。旧版 `~/.local/share/codexhub/server-state.yaml` 或同一 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml` 会在首次启动时迁移写入新的 `config.yaml`。
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖配置目录。这个 YAML 保存共享 UI 偏好、parent registration、projects、tasks、SSH hosts、local/SSH machine 元数据等本机控制面配置，也会包含 `updatedAt`、task 最近 run 摘要这类轻量状态字段。普通 Node server、Electron 和 VS Code detached authority 的非编辑器配置也统一从这里读取；它们通过 `env` 映射承载监听地址、authority 端口、app-server、SSH、插件、通知、catalog/runtime 以及 Electron 行为等 CodexHub 参数。父 server 收到的 `registered` machine 只存在于运行时，不写入这里；旧配置中的 registered machine 历史元数据会在加载时自动清理，但它关联的 project/task 配置仍保留。包含 parent auth token 时配置文件会以 `0600` 写入；token 只由后端用于 machine WebSocket，不通过配置或 registration API 返回给 Web。server 启动时会先读取 `env`，只把尚未存在的键填入 `process.env`，不会覆盖 shell 或 `.env`。它不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。旧版 `~/.local/share/codexhub/server-state.yaml` 或同一 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml` 会在首次启动时迁移写入新的 `config.yaml`。
 
 `config.yaml` 里的 `env` 适合 embedded authority service 这类不方便配置 shell 环境变量的场景。例如：
 
@@ -102,13 +102,22 @@ config:
     showDesktopPet: false
     taskCompleteSystemNotifications: false
 env:
+  CODEX_HUB_HOST: "0.0.0.0"
+  CODEX_HUB_PORT: "8788"
+  CODEX_HUB_AUTHORITY_PORT: "28788"
+  CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS: "60000"
+  CODEX_HUB_SSH_AUTOCONNECT: "1"
+  CODEX_HUB_PLUGIN_DIRS: "/home/laop/.local/share/codexhub/plugins"
   CODEX_HUB_NOTIFICATION_COMMAND: "C:\\Users\\0laop\\.codexhub\\notify.cmd"
   CODEX_HUB_NOTIFICATION_TIMEOUT_MS: "5000"
+  CODEX_HUB_ELECTRON_DEVTOOLS: "0"
   # 只有明确需要保护 loopback API 时才设置；VSCode authority 默认无 token
   # CODEX_HUB_AUTH_TOKEN: "replace-with-a-long-random-token"
 ```
 
 修改 `config.yaml` 后需要重启 server。Embedded authority 是独立于窗口的 detached 进程：关闭该 authority 的全部 VSCode/Electron surface 并等待 30 秒，再重新打开客户端，才能让新的进程重新读取 `env`；只 reload 单个窗口不会强制结束仍被其他 surface 使用的 authority。`CODEX_HUB_DATA_DIR` 本身仍决定去哪读这个配置文件，因此不能靠同一个文件里的 `env.CODEX_HUB_DATA_DIR` 改变当前配置路径。
+
+VS Code 的 `settings.json` 只保存插件自身的窗口级行为，目前只保留 `codexhub.enabled`。`dataDir`、`serverUrl`、`authorityPort`、app-server、SSH、插件、通知、Electron 和共享 UI 配置都不属于 VS Code Settings；它们必须写在共享 authority 使用的 `config.yaml` 中。这样多个 VS Code 窗口、Electron 和普通 Node server 才能看到同一份配置。VS Code 的 `Open Config` 命令打开的也是这份共享 `config.yaml`，不是另一个插件配置副本。
 
 `cxh` 是 `codexhub` 的短别名。
 
@@ -395,7 +404,7 @@ sudo apt install wine64 wine32:i386
 
 - `CODEX_HUB_AUTHORITY_PORT`: 可选的 embedded authority 端口覆盖，主要用于隔离开发/测试；默认按执行环境使用 `28788` 或 WSL 的 `28789`
 - `CODEX_HUB_DATA_DIR`: VSCode/Electron 共享 authority 数据目录，默认 `~/.config/codexhub`
-- `CODEX_HUB_ELECTRON_DEVTOOLS=1`: 启动后打开 DevTools
+- `CODEX_HUB_ELECTRON_DEVTOOLS=1`: 启动后打开 DevTools；也可以写入共享 `config.yaml` 的 `env`
 
 Electron 关闭时只注销自己的 surface lease；如果 VSCode 仍在线，共享 authority 和 runtime 会继续运行。最后一个 surface 离开后，authority 等待约 30 秒自动退出。在 Electron 里连接宿主机 project launcher 的方式和 Web 相同。
 

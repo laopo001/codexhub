@@ -12,5 +12,7 @@
   "command.sendPath.title": "Send Path to Codex Hub",
   "command.sendPath.shortTitle": "Send Path",
   "viewsContainer.codexhub.title": "Codex Hub",
-  "view.workspace.name": "Workspace"
+  "view.workspace.name": "Workspace",
+  "configuration.title": "Codex Hub",
+  "configuration.enabled.description": "Enable the Codex Hub VS Code extension integration for this window."
 }
