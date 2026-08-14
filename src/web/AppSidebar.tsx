@@ -1,6 +1,6 @@
 import React from "react";
 import { Switch } from "antd";
-import { Copy, History, MessageSquare, Pencil, Pin, PinOff, Play, Settings, Trash2, Unplug } from "lucide-react";
+import { ChevronRight, Copy, History, MessageSquare, Pencil, Pin, PinOff, Play, Settings, Trash2, Unplug } from "lucide-react";
 import type { ParentRegistrationDraft, ProjectMachineGroup, TaskDraft } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
@@ -321,7 +321,9 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           onClick={() => toggleProjectMachineGroup(machine.key)}
           aria-expanded={!collapsed}
         >
-          <span className={`projectOfflineArrow ${collapsed ? "collapsed" : ""}`}>{">"}</span>
+          <span className={`projectOfflineArrow ${collapsed ? "collapsed" : ""}`} aria-hidden="true">
+            <ChevronRight size={14} strokeWidth={2.25} />
+          </span>
           <span title={machine.label}>{machine.label}</span>
           <strong>{machine.badgeLabel}</strong>
         </button>
@@ -664,7 +666,9 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   onClick={() => setOfflineProjectsCollapsed((collapsed) => !collapsed)}
                   aria-expanded={!offlineProjectsCollapsed}
                 >
-                  <span className={`projectOfflineArrow ${offlineProjectsCollapsed ? "collapsed" : ""}`}>{">"}</span>
+                  <span className={`projectOfflineArrow ${offlineProjectsCollapsed ? "collapsed" : ""}`} aria-hidden="true">
+                    <ChevronRight size={14} strokeWidth={2.25} />
+                  </span>
                   <span>Offline</span>
                   <strong>{offlineProjectGroups.length}</strong>
                 </button>

@@ -2,7 +2,7 @@
   display: grid;
   align-content: start;
   flex: 0 0 auto;
-  gap: 8px;
+  gap: 6px;
   min-height: 0;
 }
 
@@ -33,9 +33,9 @@
 
 .projectAddButton {
   width: 100%;
-  min-height: 32px;
+  min-height: 30px;
   border: 1px solid #d95f36;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #d95f36;
   color: #fff8f2;
   padding: 0 10px;
@@ -51,11 +51,11 @@
 }
 
 .projectSearchInput {
-  min-height: 32px;
+  min-height: 30px;
   border-color: #334238;
   background: #101410;
   color: #f8fbf4;
-  padding: 7px 9px;
+  padding: 6px 9px;
   font-size: 12px;
 }
 
@@ -71,7 +71,7 @@
 
 .projectList {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -79,15 +79,15 @@
 
 .projectMachineGroup {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
 }
 
 .projectOfflineSection {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
-  padding-top: 4px;
+  padding-top: 3px;
 }
 
 .projectOfflineHeader {
@@ -113,14 +113,22 @@
 }
 
 .projectOfflineArrow {
-  display: inline-block;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
   color: #71806f;
-  font-size: 10px;
   transform: rotate(90deg);
+  transition: transform 140ms ease, color 140ms ease;
 }
 
 .projectOfflineArrow.collapsed {
   transform: rotate(0deg);
+}
+
+.projectOfflineArrow svg {
+  display: block;
 }
 
 .projectOfflineHeader span:not(.projectOfflineArrow) {
@@ -141,7 +149,7 @@
 
 .projectOfflineMachines {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -161,6 +169,11 @@
 
 .projectMachineHeader:hover {
   color: #d8e2d5;
+}
+
+.projectMachineHeader:hover .projectOfflineArrow,
+.projectOfflineHeader:hover .projectOfflineArrow {
+  color: #a8b8a5;
 }
 
 .projectMachineHeader span:not(.projectOfflineArrow) {
@@ -192,20 +205,21 @@
 
 .projectMachineRows {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
-  border-left: 1px solid #2d4033;
-  padding-left: 7px;
+  margin-left: 6px;
+  border-left: 2px solid #46624d;
+  padding-left: 4px;
 }
 
 .projectEmptyRow {
   min-width: 0;
   overflow: hidden;
   border: 1px solid #334238;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #111811;
   color: #91a090;
-  padding: 7px 9px;
+  padding: 6px 8px;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -214,14 +228,14 @@
 .projectRow {
   position: relative;
   display: grid;
-  gap: 4px;
+  gap: 2px;
   width: 100%;
   min-width: 0;
   border: 1px solid #405244;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #0f1b14;
   color: #d8e2d5;
-  padding: 7px 6px 7px 9px;
+  padding: 5px 5px 5px 8px;
 }
 
 .projectRow:hover,
@@ -299,7 +313,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -317,6 +331,7 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -335,7 +350,7 @@
   border: 1px solid #405244;
   border-radius: 999px;
   color: #a8b8a5;
-  font-size: 10px;
+  font-size: 9px;
   font-style: normal;
   font-weight: 760;
   line-height: 1.4;
@@ -350,7 +365,7 @@
   min-width: 0;
   color: #91a090;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 11px;
   font-style: normal;
 }
 
@@ -359,7 +374,7 @@
   grid-template-columns: repeat(3, auto);
   flex: 0 0 auto;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
   pointer-events: none;
 }
@@ -370,7 +385,7 @@
   width: 24px;
   height: 24px;
   border: 1px solid #334238;
-  border-radius: 6px;
+  border-radius: 5px;
   background: #172019;
   color: #b8c5b4;
   padding: 0;
@@ -408,7 +423,7 @@
   width: 24px;
   height: 24px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: #91a090;
   line-height: 1;
