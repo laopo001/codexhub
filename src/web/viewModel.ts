@@ -40,6 +40,7 @@ import type {
   SshHost,
   SubagentThreadDialogState,
   SubagentThreadOpenOptions,
+  SystemStatus,
   ThreadGoalView,
   ThreadPickerState,
   ThreadRenameDialogState,
@@ -132,6 +133,7 @@ export type AppSidebarViewModel = {
 
 export type AppViewModelSource = AppSidebarViewModel & {
   appSettings: AppSettings;
+  systemStatus: SystemStatus;
   openPetPicker: () => void;
   petEnabled: boolean;
   petName: string;
@@ -420,6 +422,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
 export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "addContextSelectionToConversation"
   | "appSettings"
+  | "systemStatus"
   | "changeProjectPickerMachine"
   | "chooseThreadCandidate"
   | "confirmProjectPicker"
@@ -531,7 +534,7 @@ const workspaceKeys = [
 ] as const satisfies readonly (keyof AppWorkspaceViewModel)[];
 
 const dialogKeys = [
-  "addContextSelectionToConversation", "appSettings", "changeProjectPickerMachine",
+  "addContextSelectionToConversation", "appSettings", "systemStatus", "changeProjectPickerMachine",
   "chooseThreadCandidate", "confirmProjectPicker", "copyContextSelection", "createMachineThread",
   "createWorktreeThread", "goalDialog", "imagePreview", "inspectContextMessage", "inspectMessage",
   "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageContextMenu",

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type {
   AuthStatusPayload,
   HealthPayload,
+  RestartPayload,
   ServerConfigPayload,
   ServerConfigUpdateInput
 } from "../shared/apiContract.js";
@@ -14,6 +15,7 @@ export type SystemRoutesContext = {
   authRequired: boolean;
   isAuthorized: (request: FastifyRequest) => boolean;
   healthPayload: () => Omit<HealthPayload, "authRequired" | "authenticated">;
+  restartAuthority?: () => void;
   configPayload: () => ServerConfigPayload;
   updateUiConfig: (ui: NonNullable<ServerConfigUpdateInput["ui"]>) => void;
 };
@@ -38,6 +40,15 @@ export const registerSystemRoutes = (app: FastifyInstance, ctx: SystemRoutesCont
     authRequired: ctx.authRequired,
     authenticated: !ctx.authRequired || ctx.isAuthorized(request)
   } satisfies HealthPayload));
+
+  app.post("/api/restart", async (_request, reply) => {
+    if (!ctx.restartAuthority) {
+      reply.code(409);
+      return { ok: false, restarting: false, error: "Restart is only available for an embedded authority." };
+    }
+    ctx.restartAuthority();
+    return { ok: true, restarting: true } satisfies RestartPayload;
+  });
 
   app.get("/api/config", async () => ctx.configPayload());
 

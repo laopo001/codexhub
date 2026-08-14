@@ -30,6 +30,7 @@ import {
   type ProjectsPayload,
   type ProjectsStreamEvent
 } from "../shared/apiContract.js";
+import { codexhubVersion } from "../shared/version.js";
 import type { MachineActivitySummary, MachineRegistrationProject } from "../shared/machineTypes.js";
 import type { ProjectSource } from "../shared/projectTypes.js";
 import { readBooleanEnv, readNonNegativeNumberEnv } from "../shared/env.js";
@@ -306,6 +307,16 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let localMachine: CodexhubMachineHandle | null = null;
   let parentRegistration: CodexhubMachineHandle | null = null;
   let parentRegistrationStatus: ParentRegistrationStatus = { status: "idle" };
+  const restartAuthority = authorityService
+    ? () => {
+        const restartTimer = setTimeout(() => {
+          void app.close().catch((error: unknown) => {
+            console.error(`codexhub authority restart failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }, 50);
+        restartTimer.unref?.();
+      }
+    : undefined;
   const embeddedSurfaces = new EmbeddedSurfaceHub({
     leaseTimeoutMs: options.embeddedSurfaceLeaseTimeoutMs,
     idleShutdownMs: options.embeddedSurfaceIdleShutdownMs,
@@ -753,6 +764,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     isAuthorized: (request) => Boolean(serverAuthToken && isAuthorizedRequest(request, serverAuthToken)),
     healthPayload: () => ({
       ok: true,
+      version: codexhubVersion,
       serverInstanceId,
       env: process.env.CODEX_HUB_ENV ?? process.env.NODE_ENV ?? "development",
       build: buildId,
@@ -770,6 +782,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       ssh: { connections: sshMachines.listConnections() },
       telegram: { started: Boolean(telegramBot) }
     }),
+    restartAuthority,
     configPayload: () => ({ config: state.config() }),
     updateUiConfig: (ui) => state.updateUiConfig(ui)
   });

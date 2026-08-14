@@ -33,6 +33,7 @@ import type {
 } from "../shared/apiContract.js";
 import type { CompactRecordView } from "../shared/compactRecordViews.js";
 import type { CodexRecordView, SubagentActivityView } from "../shared/recordTypes.js";
+import type { CodexHubAuthorityDescriptor } from "../shared/surfaceTypes.js";
 import type { TaskCompleteNotification as ApiTaskCompleteNotification } from "../shared/taskNotifications.js";
 import type { ThreadApprovalPolicy, ThreadApprovalsReviewer } from "../shared/usageTypes.js";
 
@@ -326,6 +327,8 @@ export type ParsedToolCall = {
 };
 
 export type SystemStatus = {
+  version: string | null;
+  authority?: CodexHubAuthorityDescriptor;
   model: string | null;
   modelReasoningEffort: string | null;
   serviceTier: string | null;

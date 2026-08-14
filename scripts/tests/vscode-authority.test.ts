@@ -7,6 +7,7 @@ import { CodexHubApiError, createCodexHubApiClient } from "../../src/shared/apiC
 import type { HealthPayload, ProjectsPayload, RuntimesPayload } from "../../src/shared/apiContract.js";
 import { apiRoutes } from "../../src/shared/apiRoutes.js";
 import { embeddedSurfaceProtocolVersion } from "../../src/shared/surfaceTypes.js";
+import { codexhubVersion } from "../../src/shared/version.js";
 import { findFreePort, localServerUrl } from "../../src/server/embedded.js";
 import { startServer } from "../../src/server/index.js";
 
@@ -40,6 +41,7 @@ test("one embedded authority accepts VSCode and Electron surfaces without starti
   const client = createCodexHubApiClient({ baseUrl: serverUrl });
   try {
     const health = await client.route(apiRoutes.health) as HealthPayload;
+    assert.equal(health.version, codexhubVersion);
     assert.deepEqual(health.authority, {
       authorityId: "authority-test",
       kind: "linux",
@@ -101,6 +103,45 @@ test("one embedded authority accepts VSCode and Electron surfaces without starti
     assert.deepEqual(runtimes.runtimes, []);
   } finally {
     await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("embedded authority restart endpoint closes the authority server", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-vscode-authority-restart."));
+  let server: Awaited<ReturnType<typeof startServer>> | null = null;
+  try {
+    server = await startServer({
+      host: "127.0.0.1",
+      port: await findFreePort("127.0.0.1"),
+      dataDir: path.join(root, "data"),
+      authToken: "",
+      surface: "default",
+      authority: {
+        authorityId: "authority-restart-test",
+        kind: "linux",
+        surfaceProtocolVersion: embeddedSurfaceProtocolVersion
+      },
+      features: {
+        localMachine: false,
+        ssh: false,
+        tasks: false,
+        integrations: false
+      }
+    });
+    const client = createCodexHubApiClient({ baseUrl: localServerUrl(server) });
+    const closed = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("embedded authority did not close after restart request")), 2_000);
+      server?.app.server.once("close", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+
+    assert.deepEqual(await client.route(apiRoutes.restartAuthority), { ok: true, restarting: true });
+    await closed;
+  } finally {
+    await server?.stop().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });

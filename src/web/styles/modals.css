@@ -182,6 +182,10 @@
   line-height: 1.25;
 }
 
+.settingsRowText em.settingsError {
+  color: #b42318;
+}
+
 .settingsSelect {
   flex: 0 0 112px;
 }

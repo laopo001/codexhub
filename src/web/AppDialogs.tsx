@@ -90,13 +90,31 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setSettingsDialogOpen,
     setThreadPicker,
     submitProjectPickerPath,
+    systemStatus,
     threadOrderByMachine,
     threadPicker
   } = viewModel;
   const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
+  const [restartState, setRestartState] = React.useState<"idle" | "restarting" | "error">("idle");
+  const restartAvailable = Boolean(systemStatus.authority);
   React.useEffect(() => {
     setProjectPickerSearch("");
   }, [projectPicker?.machineId, projectPicker?.entries]);
+  React.useEffect(() => {
+    if (settingsDialogOpen) {
+      setRestartState("idle");
+    }
+  }, [settingsDialogOpen]);
+  const restartAuthority = async () => {
+    if (!restartAvailable || restartState === "restarting") return;
+    if (!window.confirm("Restart the CodexHub authority and Codex runtime? VSCode will reconnect automatically.")) return;
+    setRestartState("restarting");
+    try {
+      await apiRouteJson(apiRoutes.restartAuthority);
+    } catch {
+      setRestartState("error");
+    }
+  };
   const hasOpenDialog = Boolean(
     threadModelDialogOpen
     || settingsDialogOpen
@@ -309,6 +327,34 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   aria-labelledby="settingTaskCompletePopups"
                 />
               </div>
+              <div className="settingsRow">
+                <span className="settingsRowText">
+                  <strong>Version</strong>
+                  <em>{systemStatus.version ? `CodexHub v${systemStatus.version}` : "Version unavailable"}</em>
+                </span>
+              </div>
+              {restartAvailable ? (
+                <div className="settingsRow">
+                  <span className="settingsRowText">
+                    <strong>Restart CodexHub</strong>
+                    <em className={restartState === "error" ? "settingsError" : undefined}>
+                      {restartState === "restarting"
+                        ? "Restart requested; VSCode will reconnect automatically."
+                        : restartState === "error"
+                          ? "Restart failed. Check the authority log and try again."
+                          : "Restart the VSCode/Electron authority and Codex runtime."}
+                    </em>
+                  </span>
+                  <button
+                    type="button"
+                    className="petSettingsButton"
+                    disabled={restartState === "restarting"}
+                    onClick={() => void restartAuthority()}
+                  >
+                    {restartState === "restarting" ? "Restarting..." : "Restart"}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </section>
         </div>

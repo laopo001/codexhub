@@ -153,6 +153,7 @@ export const useAppState = () => {
   const [threadOrderByMachine, setThreadOrderByMachine] = useState<Record<string, string[]>>({});
   const [initialized, setInitialized] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
+    version: null,
     model: null,
     modelReasoningEffort: null,
     serviceTier: null,

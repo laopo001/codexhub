@@ -18,6 +18,7 @@ import type {
   RuntimeModelsPayload,
   RuntimePermissionProfilesPayload,
   RuntimesPayload,
+  RestartPayload,
   SshConnectionPayload,
   SshConnectionsPayload,
   SshHostsPayload,
@@ -144,6 +145,7 @@ export type ThreadTurnInput = {
 /** 前后端共享的 HTTP API route map。 */
 export const apiRoutes = {
   health: get<HealthPayload>("/api/health"),
+  restartAuthority: postNoBody<RestartPayload>("/api/restart"),
   config: get<ServerConfigPayload>("/api/config"),
   updateConfig: patch<ServerConfigUpdateInput, ServerConfigPayload>("/api/config"),
   machines: get<MachinesPayload>("/api/machines"),

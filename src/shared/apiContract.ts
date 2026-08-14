@@ -125,6 +125,7 @@ export type ServerConfigUpdateInput = {
 /** `/api/health` 返回的 server 运行状态和默认配置。 */
 export type HealthPayload = AuthStatusPayload & {
   ok?: boolean;
+  version?: string;
   serverInstanceId?: string;
   env?: string;
   build?: string | null;
@@ -146,6 +147,11 @@ export type HealthPayload = AuthStatusPayload & {
   telegram?: {
     started?: boolean;
   };
+};
+
+export type RestartPayload = {
+  ok: boolean;
+  restarting: boolean;
 };
 
 export type EmbeddedSurfaceRegistrationInput = {

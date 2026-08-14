@@ -213,6 +213,8 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     rememberCompletedTaskRuns(loadedTasks);
 
     ctx.setSystemStatus({
+      version: health.version ?? null,
+      authority: health.authority,
       model: health.model ?? null,
       modelReasoningEffort: health.modelReasoningEffort ?? null,
       serviceTier: health.serviceTier ?? null,
