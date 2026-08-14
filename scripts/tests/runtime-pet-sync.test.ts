@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ThreadHub } from "../../src/core/threadHub.js";
 import type { RuntimeStreamEvent } from "../../src/shared/threadTypes.js";
-import { executionChanged, turnCompleted } from "../test-support/appServerEvents.js";
+import { appServerTurn, executionChanged, turnCompleted } from "../test-support/appServerEvents.js";
 
 test("runtime stream mirrors thread execution state for detached consumers", async () => {
   const hub = new ThreadHub();
@@ -31,6 +31,23 @@ test("runtime stream mirrors thread execution state for detached consumers", asy
   const running = runtimeEvents.at(-1)?.runtimes[0]?.threads.find((thread) => thread.threadId === threadId);
   assert.equal(running?.running, true);
   assert.equal(running?.status, "running");
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: {
+      method: "turn/started",
+      params: {
+        threadId,
+        turn: appServerTurn("desktop-pet-turn", {
+          status: "inProgress",
+          startedAt: 1_700_000_000
+        })
+      }
+    }
+  });
+  const runningWithClock = runtimeEvents.at(-1)?.runtimes[0]?.threads.find((thread) => thread.threadId === threadId);
+  assert.equal(runningWithClock?.activeTurnStartedAt, "2023-11-14T22:13:20.000Z");
 
   hub.applySessionEvent(sessionId, turnCompleted(threadId, "desktop-pet-turn"));
   await completion;

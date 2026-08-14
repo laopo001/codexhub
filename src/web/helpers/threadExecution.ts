@@ -6,6 +6,14 @@ import {
 } from "./records.js";
 import type { OpenThreadState, ThreadExecutionMeta } from "../types.js";
 
+export const runningThreadExecutionMeta = (startedAt?: string): ThreadExecutionMeta => ({
+  status: "running",
+  label: "Running",
+  duration: "",
+  text: "Running",
+  ...(startedAt ? { startedAt } : {})
+});
+
 export const threadExecutionMeta = (
   thread: OpenThreadState,
   activityScope: TurnActivityScope

@@ -99,11 +99,13 @@ test("new Turn is Waiting until app-server confirms its turnId", async () => {
     (record.payload as Record<string, unknown>).type === "task_started"
   );
   assert.equal(startedRecord?.timestamp, "2023-11-14T22:13:20.000Z");
+  assert.equal(hub.getThread(threadId)?.activeTurnStartedAt, "2023-11-14T22:13:20.000Z");
 
   hub.applySessionEvent(sessionId, turnCompleted(threadId, "confirmed-turn"));
   await running;
   assert.equal(command.type, "turn");
   assert.equal(hub.getThread(threadId)?.status, "idle");
+  assert.equal(hub.getThread(threadId)?.activeTurnStartedAt, undefined);
 });
 
 test("Submission ids stay provisional and cannot overwrite the authoritative Turn id", async () => {

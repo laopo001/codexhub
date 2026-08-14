@@ -3132,11 +3132,18 @@ export class ThreadHub {
     // Detached consumers such as the Electron desktop pet do not subscribe to
     // every thread stream. Keep the runtime projection in sync whenever a
     // thread summary changes so they can observe waiting/running/idle turns.
-    if (kind === "thread" || kind === "done") this.publishRuntimes();
+    if (
+      kind === "thread"
+      || kind === "done"
+      || (kind === "record" && record !== undefined && isTaskStartedRecord(record))
+    ) this.publishRuntimes();
   }
 
   private summary(thread: ThreadState): ThreadSummary {
     const activityTitle = threadActivityTitleFromRecords(thread.records, thread.threadId);
+    const activeTurnStartedAt = thread.running && thread.appServerTurnId
+      ? activeTurnStartedAtFromRecords(thread.records, thread.appServerTurnId)
+      : undefined;
     return {
       threadId: thread.threadId,
       workingDirectory: thread.workingDirectory,
@@ -3152,6 +3159,7 @@ export class ThreadHub {
       status: thread.executionStatus,
       running: thread.running,
       ...(thread.running && thread.appServerTurnId ? { activeTurnId: thread.appServerTurnId } : {}),
+      ...(activeTurnStartedAt ? { activeTurnStartedAt } : {}),
       title: thread.title,
       ...(activityTitle ? { activityTitle } : {}),
       updatedAt: thread.updatedAt,
@@ -3320,6 +3328,16 @@ const threadRuntimeSummary = (session: SessionState): ThreadRuntimeSummary => ({
   runnable: session.online,
   lastSeenAt: session.lastSeenAt
 });
+
+const activeTurnStartedAtFromRecords = (records: CodexRecord[], turnId: string) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (!isTaskStartedRecord(record)) continue;
+    const payload = asRecord(record.payload);
+    if (payload?.turn_id === turnId) return record.timestamp;
+  }
+  return undefined;
+};
 
 const runtimeSnapshotKey = (runtimes: RuntimeSummary[]) => JSON.stringify(runtimes.map((runtime) => ({
   ...runtime,

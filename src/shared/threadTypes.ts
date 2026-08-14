@@ -30,6 +30,8 @@ export type ThreadSummary = {
   running: boolean;
   /** app-server 已确认的当前 Turn；Waiting 阶段尚未产生。 */
   activeTurnId?: string;
+  /** 当前 app-server Turn 的权威 task_started 时间，用于无 records 的活动摘要实时计时。 */
+  activeTurnStartedAt?: string;
   title: string;
   /** Desktop activity feed hint; does not replace the user-visible thread title. */
   activityTitle?: string;

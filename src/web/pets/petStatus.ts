@@ -4,7 +4,7 @@ import {
   latestTurnActivityScope,
   threadDisplayRecords
 } from "../helpers/records.js";
-import { threadExecutionMeta } from "../helpers/threadExecution.js";
+import { runningThreadExecutionMeta, threadExecutionMeta } from "../helpers/threadExecution.js";
 import type {
   MachineSummary,
   OpenThreadState,
@@ -241,6 +241,12 @@ export const derivePetActivities = (
             };
           })()
         : undefined;
+      const summaryExecution = !detail && summary?.status === "running"
+        ? {
+            executionMeta: runningThreadExecutionMeta(summary.activeTurnStartedAt),
+            activeGoal: null
+          }
+        : undefined;
       const activityTitle = firstNonBlank(
         detail?.activityTitle,
         summary?.activityTitle,
@@ -258,7 +264,7 @@ export const derivePetActivities = (
         status,
         ...(machineId ? { machineId } : {}),
         ...(machineLabel ? { machineLabel } : {}),
-        ...(detailExecution ?? {})
+        ...(detailExecution ?? summaryExecution ?? {})
       };
     })
     .filter((activity) => activity.threadId.length > 0)

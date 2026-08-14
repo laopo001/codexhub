@@ -295,6 +295,38 @@ test("open pet activities expose the same turn start used by the tab timer", () 
   });
 });
 
+test("summary-only pet activities expose the runtime turn start for a live timer", () => {
+  const startedAt = "2026-01-01T00:00:05.000Z";
+  const runtime: RuntimeSummary = {
+    machineId: "machine-summary-timer",
+    workingDirectory: "/home/laop/projects/codexhub",
+    online: true,
+    status: "online",
+    lastSeenAt: "2026-01-01T00:00:10.000Z",
+    threads: [{
+      threadId: "summary-timer-thread",
+      workingDirectory: "/home/laop/projects/codexhub",
+      runtime: { machineId: "machine-summary-timer", online: true, runnable: true },
+      status: "running",
+      running: true,
+      activeTurnId: "summary-timer-turn",
+      activeTurnStartedAt: startedAt,
+      title: "Summary timer",
+      updatedAt: "2026-01-01T00:00:10.000Z",
+      messageCount: 1,
+      threadUsage: emptyThreadUsage()
+    }]
+  };
+
+  assert.deepEqual(derivePetActivities([], [runtime])[0]?.executionMeta, {
+    status: "running",
+    label: "Running",
+    duration: "",
+    text: "Running",
+    startedAt
+  });
+});
+
 test("pet activity titles prefer Goal, then the latest user-input hint", () => {
   const runtime: RuntimeSummary = {
     machineId: "machine-title",
