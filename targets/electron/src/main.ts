@@ -147,9 +147,23 @@ const desktopPetBounds = () => {
   return { x: left, y: top, width: right - left, height: bottom - top };
 };
 
+const syncDesktopPetPointerPosition = (petWindow: BrowserWindow, bounds = petWindow.getBounds()) => {
+  if (petWindow.isDestroyed() || petWindow.webContents.isDestroyed()) return;
+  const pointer = screen.getCursorScreenPoint();
+  petWindow.webContents.send("codexhub:pet-pointer-position", {
+    clientX: pointer.x - bounds.x,
+    clientY: pointer.y - bounds.y,
+  });
+};
+
 const repositionDesktopPetWindow = () => {
   if (!desktopPetWindow || desktopPetWindow.isDestroyed()) return;
-  desktopPetWindow.setBounds(desktopPetBounds());
+  const bounds = desktopPetBounds();
+  desktopPetWindow.setBounds(bounds);
+  // Display changes resize the transparent click-through window without
+  // necessarily producing a mouse event. Re-evaluate the current pointer
+  // against the new renderer coordinate space immediately.
+  syncDesktopPetPointerPosition(desktopPetWindow, bounds);
 };
 
 const createDesktopPetWindow = async () => {
@@ -183,7 +197,10 @@ const createDesktopPetWindow = async () => {
   });
   try {
     await petWindow.loadURL(electronSurfaceUrl(target, true));
-    if (!petWindow.isDestroyed()) petWindow.showInactive();
+    if (!petWindow.isDestroyed()) {
+      petWindow.showInactive();
+      syncDesktopPetPointerPosition(petWindow);
+    }
   } catch (error) {
     if (!petWindow.isDestroyed()) petWindow.destroy();
     throw error;
@@ -228,6 +245,12 @@ ipcMain.on("codexhub:pet-ignore-mouse", (event, ignore: unknown) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
   sender.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
+});
+
+ipcMain.on("codexhub:pet-request-pointer-position", (event) => {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
+  syncDesktopPetPointerPosition(sender);
 });
 
 ipcMain.on("codexhub:pet-focus-main", (event, threadId: unknown) => {

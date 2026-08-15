@@ -233,10 +233,10 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
       setLookCell(null);
       return undefined;
     }
-    const handlePointerMove = (event: PointerEvent) => scheduleLookForPointer(event.clientX, event.clientY);
-    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    const handleMouseMove = (event: MouseEvent) => scheduleLookForPointer(event.clientX, event.clientY);
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
     return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("mousemove", handleMouseMove);
       if (lookFrameRef.current !== null) window.cancelAnimationFrame(lookFrameRef.current);
       lookFrameRef.current = null;
     };
@@ -259,6 +259,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
         controller.enabled
         && (
           Boolean(elementAtPointer?.closest(".petButton, .petActivityTray"))
+          || Boolean(dragSessionRef.current)
           || (
             rect
             && clientX !== undefined
@@ -272,11 +273,16 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
       );
       window.codexhubElectronPet?.setIgnoreMouseEvents(!interactive);
     };
-    const handlePointerMove = (event: PointerEvent) => setInputMode(event.clientX, event.clientY);
-    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    const handleMouseMove = (event: MouseEvent) => setInputMode(event.clientX, event.clientY);
+    const unsubscribePointerPosition = window.codexhubElectronPet?.onPointerPosition((position) => {
+      setInputMode(position.clientX, position.clientY);
+    });
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
     setInputMode();
+    window.codexhubElectronPet?.requestPointerPosition();
     return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("mousemove", handleMouseMove);
+      unsubscribePointerPosition?.();
       window.codexhubElectronPet?.setIgnoreMouseEvents(true);
     };
   }, [controller.enabled, desktopPetWindow]);
@@ -292,6 +298,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
       startClientY: event.clientY,
     };
     suppressClickRef.current = false;
+    if (desktopPetWindow) window.codexhubElectronPet?.setIgnoreMouseEvents(false);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
