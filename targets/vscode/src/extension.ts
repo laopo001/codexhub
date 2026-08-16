@@ -7,10 +7,13 @@ import {
   migrateLegacyEmbeddedAuthorityData
 } from "../../../src/core/authorityPaths.js";
 import {
+  authorityBuildId,
   ensureEmbeddedAuthority,
   probeEmbeddedAuthority,
   type EmbeddedAuthorityHandle
 } from "../../../src/core/embeddedAuthority.js";
+import { resolveAuthorityPackage } from "../../../src/core/authorityPackage.js";
+import { withUserPath } from "../../../src/core/userPath.js";
 import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import {
   embeddedSurfaceProtocolVersion
@@ -349,18 +352,33 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     await removeLegacyVscodeAuthorityTokenFile(dataDir).catch((error: unknown) => {
       console.warn(`codexhub vscode could not remove obsolete authority token file: ${errorText(error)}`);
     });
-    const staticDirectory = this.context.asAbsolutePath("dist");
-    const buildId = await vscodeWindowBuildId(this.context, staticDirectory);
     const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
+    const environment = await withUserPath({ ...(configEnv ?? {}), ...process.env });
+    const packageResolution = await resolveAuthorityPackage({
+      authorityServicePath: this.context.asAbsolutePath("authority-service.cjs"),
+      staticDirectory: this.context.asAbsolutePath("dist"),
+      remoteClientPath: this.context.asAbsolutePath("dist-node/ssh/remote-client.cjs")
+    }, environment);
+    const staticDirectory = packageResolution.staticDirectory;
+    const buildId = packageResolution.source === "bundled"
+      ? await vscodeWindowBuildId(this.context, staticDirectory)
+      : await authorityBuildId([
+        packageResolution.authorityServicePath,
+        path.join(staticDirectory, "index.html")
+      ], "npm");
     const authToken = configuredVscodeAuthorityAuthToken(process.env, configEnv);
     return await ensureEmbeddedAuthority({
       dataDir,
-      authorityServicePath: this.context.asAbsolutePath("authority-service.cjs"),
+      authorityServicePath: packageResolution.authorityServicePath,
       staticDirectory,
-      remoteClientPath: this.context.asAbsolutePath("dist-node/ssh/remote-client.cjs"),
+      remoteClientPath: packageResolution.remoteClientPath,
       buildId,
       authToken,
-      logFileName: "authority.log"
+      logFileName: "authority.log",
+      // Keep shell/.env/CLI values authoritative while allowing the shared
+      // config.yaml to select the Node executable for the first client.
+      environment,
+      authorityServiceSource: packageResolution.source
     });
   }
 

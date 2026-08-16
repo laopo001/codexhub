@@ -33,7 +33,19 @@ const main = async () => {
   if ("statePath" in payload.health) {
     throw new Error(`Electron health exposed removed statePath alias: ${JSON.stringify(payload.health)}`);
   }
-  console.log(`electron ok: ${payload.url}`);
+  if (!payload.health.authorityRuntime?.nodePath || !payload.health.authorityRuntime.nodeVersion) {
+    throw new Error(`Electron smoke did not expose authority Node runtime metadata: ${JSON.stringify(payload.health)}`);
+  }
+  if (process.env.CODEX_HUB_AUTHORITY_PACKAGE?.trim()
+    && payload.health.authorityServiceSource !== "configured-package") {
+    throw new Error(
+      `Electron smoke did not use CODEX_HUB_AUTHORITY_PACKAGE: ${JSON.stringify(payload.health)}`
+    );
+  }
+  console.log(
+    `electron ok: ${payload.url} node=${payload.health.authorityRuntime.nodeVersion}`
+    + ` service=${payload.health.authorityServiceSource ?? "unknown"}`
+  );
 };
 
 const prepareAuthorityPortForSmoke = async () => {
@@ -130,6 +142,8 @@ const parseSmokePayload = (output: string): {
     port: number;
     configPath: string;
     authority?: { surfaceProtocolVersion?: number };
+    authorityRuntime?: { nodePath?: string; nodeVersion?: string };
+    authorityServiceSource?: string;
   };
 } => {
   for (const line of output.split(/\r?\n/)) {
@@ -142,6 +156,8 @@ const parseSmokePayload = (output: string): {
           port?: unknown;
           configPath?: unknown;
           authority?: { surfaceProtocolVersion?: unknown };
+          authorityRuntime?: { nodePath?: unknown; nodeVersion?: unknown };
+          authorityServiceSource?: unknown;
         };
       };
       if (parsed.ok === true
@@ -155,6 +171,8 @@ const parseSmokePayload = (output: string): {
             port: number;
             configPath: string;
             authority?: { surfaceProtocolVersion?: number };
+            authorityRuntime?: { nodePath?: string; nodeVersion?: string };
+            authorityServiceSource?: string;
           };
         };
       }

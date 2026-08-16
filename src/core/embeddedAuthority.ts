@@ -4,9 +4,15 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { resolveAuthorityNode, type AuthorityNodeRuntime } from "./authorityNode.js";
 import { readServerConfigEnv } from "./serverConfigEnv.js";
 import type { HealthPayload } from "../shared/apiContract.js";
-import { authorityKind, authorityServicePort, embeddedSurfaceProtocolVersion } from "../shared/surfaceTypes.js";
+import {
+  authorityKind,
+  authorityServicePort,
+  embeddedSurfaceProtocolVersion,
+  type AuthorityServiceSource
+} from "../shared/surfaceTypes.js";
 
 export type EmbeddedAuthorityHandle = {
   url: string;
@@ -29,6 +35,9 @@ export type EnsureEmbeddedAuthorityInput = {
   port?: number;
   runAsElectronNode?: boolean;
   logFileName?: string;
+  /** Environment visible to the launcher for config.yaml-backed resolution. */
+  environment?: NodeJS.ProcessEnv;
+  authorityServiceSource?: AuthorityServiceSource;
 };
 
 const authorityIdFileName = "authority-id";
@@ -122,7 +131,8 @@ export const ensureEmbeddedAuthority = async (
   if (await isTcpPortListening("127.0.0.1", port)) {
     throw new Error(`Authority port is occupied by a non-responsive service: ${url}`);
   }
-  const child = await startDetachedAuthority(input, authorityId, port);
+  const nodeRuntime = await resolveAuthorityNode(input.environment ?? process.env);
+  const child = await startDetachedAuthority(input, authorityId, port, nodeRuntime);
   await waitForEmbeddedAuthority(url, authorityId, Boolean(input.authToken));
   return {
     url,
@@ -188,7 +198,8 @@ export const waitForEmbeddedAuthority = async (
 const startDetachedAuthority = async (
   input: EnsureEmbeddedAuthorityInput,
   authorityId: string,
-  port: number
+  port: number,
+  nodeRuntime: AuthorityNodeRuntime
 ) => {
   await Promise.all([stat(input.authorityServicePath), stat(input.staticDirectory)]);
   await mkdir(input.dataDir, { recursive: true });
@@ -207,13 +218,16 @@ const startDetachedAuthority = async (
       ...(input.projectCatalog ? ["--project-catalog", input.projectCatalog] : []),
       ...(input.authToken ? ["--auth-token-env", "CODEX_HUB_AUTH_TOKEN"] : [])
     ];
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...(input.runAsElectronNode ? { ELECTRON_RUN_AS_NODE: "1" } : {})
-    };
+    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete childEnv.ELECTRON_RUN_AS_NODE;
+    if (input.runAsElectronNode && nodeRuntime.source === "host-fallback") {
+      childEnv.ELECTRON_RUN_AS_NODE = "1";
+    }
+    childEnv.CODEX_HUB_AUTHORITY_NODE_SOURCE = nodeRuntime.source;
+    childEnv.CODEX_HUB_AUTHORITY_SERVICE_SOURCE = input.authorityServiceSource ?? "unknown";
     delete childEnv.CODEX_HUB_AUTH_TOKEN;
     if (input.authToken) childEnv.CODEX_HUB_AUTH_TOKEN = input.authToken;
-    const child = spawn(process.execPath, args, {
+    const child = spawn(nodeRuntime.command, args, {
       cwd: input.dataDir,
       detached: true,
       windowsHide: true,

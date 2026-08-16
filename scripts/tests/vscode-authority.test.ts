@@ -49,6 +49,8 @@ test("one embedded authority accepts VSCode and Electron surfaces without starti
     });
     assert.equal(health.authRequired, false);
     assert.equal(health.authenticated, true);
+    assert.equal(health.authorityRuntime?.nodePath, process.execPath);
+    assert.equal(health.authorityRuntime?.nodeVersion, process.version);
     assert.equal((await fetch(`${serverUrl}/api/projects`)).status, 200);
 
     const first = await registerSurfaceWithRetry(client, {

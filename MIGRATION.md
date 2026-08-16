@@ -1,4 +1,46 @@
-# CodexHub 0.7.0 迁移说明
+# CodexHub 0.8.0 迁移说明
+
+CodexHub 0.8.0 在 0.7.0 的共享 authority 基础上，增加了 VSCode/Electron 对本机 Node.js 和本机 npm/link CodexHub 包的优先解析。这样更新 Node.js 或通过源码构建、`pnpm link --global` 更新 CodexHub 后，embedded authority 可以直接使用本地版本，不必等待 VSIX 或 Electron 内置 bundle 更新。
+
+## 从 0.7.0 升级
+
+1. 在 CodexHub 仓库中构建最新本地包：
+
+   ```bash
+   pnpm install
+   pnpm build
+   pnpm link --global
+   ```
+
+2. VSCode 和 Electron 启动 authority 时会自动读取当前用户登录 shell 的 `PATH`，并优先查找其中的 `codexhub`/`cxh` 本地包，最后才回退到内置 bundle。一般不需要把 checkout 的绝对路径写进配置；确认用户 PATH 已生效即可：
+
+   ```bash
+   command -v codexhub || command -v cxh
+   ```
+
+3. authority 的 Node.js 运行时会优先解析用户 PATH 中满足最低版本要求的 Node.js，再回退到 VSCode/Electron 宿主运行时。只有需要覆盖用户 PATH 时，才显式指定：
+
+   ```bash
+   export CODEX_HUB_AUTHORITY_NODE=/path/to/node
+   ```
+
+4. 在 `/api/health` 中检查 `authorityRuntime.nodeSource` 和 `authorityServiceSource`：`path` 表示使用用户 PATH 中的 Node，`configured-package` 表示使用显式本地包，`linked-package` 表示从用户 PATH 中的 npm/link 命令发现本地包，`bundled` 表示回退到 VSCode/Electron 内置 bundle。
+
+5. 安装新 VSIX 或更新 Electron 后，已打开的 VSCode 窗口执行 `Developer: Reload Window`；Electron 退出后重新启动。authority 会在现有 surface 全部来自新 build 后完成接管。
+
+## 0.8.0 验证
+
+```bash
+pnpm check
+pnpm build
+pnpm run package:vscode
+```
+
+确认 VSIX 的 manifest 版本为 `0.8.0`，并用 `/api/health` 确认实际运行的 Node.js 和 authority service 来源。
+
+---
+
+## CodexHub 0.7.0 历史迁移说明
 
 CodexHub 0.7.0 把 VSCode 从“每个窗口一个 embedded server/runtime”迁移为“每个执行 authority 一个 detached service，窗口通过 lease 注册”。当前 embedded authority 协议继续把 Electron 纳入同一套 surface 注册模型：VSCode 和 Electron 可以 attach 到同一个 authority、共享 local runtime 与 parent machine transport。普通 `codexhub server`、SSH 与 registered machine 的公共 runtime 模型不变。
 

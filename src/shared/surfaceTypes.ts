@@ -5,6 +5,13 @@ export const embeddedSurfaceKinds: EmbeddedSurfaceKind[] = ["vscode", "electron"
 
 export type CodexHubAuthorityKind = "windows" | "macos" | "linux" | "wsl";
 
+/**
+ * How an embedded authority selected the Node runtime that launched it.
+ * `unknown` is used by older/externally started authority services.
+ */
+export type AuthorityNodeSource = "configured" | "path" | "host-fallback" | "unknown";
+export type AuthorityServiceSource = "configured-package" | "linked-package" | "bundled" | "unknown";
+
 export type CodexHubAuthorityDescriptor = {
   authorityId: string;
   kind: CodexHubAuthorityKind;
@@ -20,6 +27,12 @@ export const isCodexHubSurface = (value: unknown): value is CodexHubSurface =>
 
 export const isEmbeddedSurfaceKind = (value: unknown): value is EmbeddedSurfaceKind =>
   value === "vscode" || value === "electron";
+
+export const isAuthorityNodeSource = (value: unknown): value is AuthorityNodeSource =>
+  value === "configured" || value === "path" || value === "host-fallback" || value === "unknown";
+
+export const isAuthorityServiceSource = (value: unknown): value is AuthorityServiceSource =>
+  value === "configured-package" || value === "linked-package" || value === "bundled" || value === "unknown";
 
 export const isEmbeddedCodexHubSurface = (
   surface: CodexHubSurface

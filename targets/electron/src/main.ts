@@ -12,6 +12,8 @@ import {
 } from "electron";
 import { applyServerConfigEnv, readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import { embeddedAuthorityDataDirectory } from "../../../src/core/authorityPaths.js";
+import { resolveAuthorityPackage } from "../../../src/core/authorityPackage.js";
+import { withUserPath } from "../../../src/core/userPath.js";
 import {
   authorityBuildId,
   ensureEmbeddedAuthority,
@@ -276,13 +278,16 @@ const startElectronAuthority = async () => {
   const packagedResourceDirectory = electronApp.isPackaged
     ? path.join(process.resourcesPath, "codexhub")
     : path.resolve(mainDirectory, "..", "..");
-  const authorityServicePath = process.env.CODEX_HUB_AUTHORITY_SERVICE_PATH?.trim()
+  const configuredAuthorityServicePath = process.env.CODEX_HUB_AUTHORITY_SERVICE_PATH?.trim();
+  const bundledAuthorityServicePath = configuredAuthorityServicePath
     || (electronApp.isPackaged
       ? path.join(packagedResourceDirectory, "authority-service.cjs")
       : path.join(mainDirectory, "authority-service.cjs"));
-  const staticDirectory = process.env.CODEX_HUB_STATIC_DIR?.trim()
+  const configuredStaticDirectory = process.env.CODEX_HUB_STATIC_DIR?.trim();
+  const bundledStaticDirectory = configuredStaticDirectory
     || path.join(packagedResourceDirectory, "dist");
-  const remoteClientPath = process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH?.trim()
+  const configuredRemoteClientPath = process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH?.trim();
+  const bundledRemoteClientPath = configuredRemoteClientPath
     || path.join(packagedResourceDirectory, "dist-node", "ssh", "remote-client.cjs");
   await removeLegacyAuthorityTokenFiles(dataDir).catch((error: unknown) => {
     console.warn(`codexhub electron could not remove obsolete authority token file: ${errorText(error)}`);
@@ -291,11 +296,26 @@ const startElectronAuthority = async () => {
   // Electron main-process behavior is not a VS Code setting. Apply the same
   // shared config.yaml env map before DevTools/workspace handling runs.
   applyServerConfigEnv(configEnv);
+  const environment = await withUserPath({ ...(configEnv ?? {}), ...process.env });
+  // A remote-client override can coexist with a local authority package. Only
+  // an explicit authority service or Web directory should disable PATH-based
+  // package discovery.
+  const hasDirectBundleOverride = Boolean(configuredAuthorityServicePath || configuredStaticDirectory);
+  const packageResolution = await resolveAuthorityPackage({
+    authorityServicePath: bundledAuthorityServicePath,
+    staticDirectory: bundledStaticDirectory,
+    remoteClientPath: bundledRemoteClientPath
+  }, hasDirectBundleOverride && !environment.CODEX_HUB_AUTHORITY_PACKAGE
+    ? { ...environment, PATH: "" }
+    : environment);
+  const authorityServicePath = packageResolution.authorityServicePath;
+  const staticDirectory = packageResolution.staticDirectory;
+  const remoteClientPath = configuredRemoteClientPath || packageResolution.remoteClientPath;
   const authToken = configuredAuthorityAuthToken(process.env, configEnv);
   const buildId = await authorityBuildId([
     authorityServicePath,
     path.join(staticDirectory, "index.html")
-  ], "electron");
+  ], packageResolution.source === "bundled" ? "electron" : "npm");
   return await ensureEmbeddedAuthority({
     dataDir,
     authorityServicePath,
@@ -305,7 +325,9 @@ const startElectronAuthority = async () => {
     authToken,
     projectCatalog: "editable",
     runAsElectronNode: true,
-    logFileName: "authority.log"
+    logFileName: "authority.log",
+    environment,
+    authorityServiceSource: packageResolution.source
   });
 };
 

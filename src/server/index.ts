@@ -37,8 +37,10 @@ import { readBooleanEnv, readNonNegativeNumberEnv } from "../shared/env.js";
 import {
   isCodexHubSurface,
   embeddedSurfaceKinds,
+  isAuthorityServiceSource,
   isEmbeddedCodexHubSurface,
   isEmbeddedSurfaceKind,
+  isAuthorityNodeSource,
   type CodexHubAuthorityDescriptor,
   type CodexHubSurface
 } from "../shared/surfaceTypes.js";
@@ -772,6 +774,18 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       port: config.port,
       surface,
       authority: options.authority,
+      ...(options.authority ? {
+        authorityRuntime: {
+          nodePath: process.execPath,
+          nodeVersion: process.version,
+          nodeSource: isAuthorityNodeSource(process.env.CODEX_HUB_AUTHORITY_NODE_SOURCE)
+            ? process.env.CODEX_HUB_AUTHORITY_NODE_SOURCE
+            : "unknown"
+        },
+        authorityServiceSource: isAuthorityServiceSource(process.env.CODEX_HUB_AUTHORITY_SERVICE_SOURCE)
+          ? process.env.CODEX_HUB_AUTHORITY_SERVICE_SOURCE
+          : "unknown"
+      } : {}),
       features,
       staticDirectory,
       configPath: state.path,

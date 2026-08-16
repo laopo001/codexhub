@@ -21,7 +21,12 @@ import type {
 } from "./projectTypes.js";
 import type { SshHostConfig, SshMachineConnectInput, SshMachineConnection } from "./sshTypes.js";
 import type { ModelReasoningEffort, ThreadRateLimits, ThreadRateLimitUsage, ThreadUsage, Usage } from "./usageTypes.js";
-import type { CodexHubAuthorityDescriptor, CodexHubSurface } from "./surfaceTypes.js";
+import type {
+  AuthorityNodeSource,
+  AuthorityServiceSource,
+  CodexHubAuthorityDescriptor,
+  CodexHubSurface
+} from "./surfaceTypes.js";
 import type { InvalidPetPackage, PetManifest, PetMutationPayload, PetsPayload } from "./petTypes.js";
 import type {
   AppServerApprovalDecision,
@@ -114,6 +119,12 @@ export type AuthStatusPayload = {
   authenticated: boolean;
 };
 
+export type AuthorityRuntimePayload = {
+  nodePath: string;
+  nodeVersion: string;
+  nodeSource: AuthorityNodeSource;
+};
+
 export type ServerConfigPayload = {
   config: ServerConfig;
 };
@@ -133,6 +144,8 @@ export type HealthPayload = AuthStatusPayload & {
   port?: number;
   surface?: CodexHubSurface;
   authority?: CodexHubAuthorityDescriptor;
+  authorityRuntime?: AuthorityRuntimePayload;
+  authorityServiceSource?: AuthorityServiceSource;
   features?: Record<string, boolean>;
   staticDirectory?: string;
   configPath?: string;
