@@ -35,6 +35,7 @@ import {
   playTaskCompletionSound,
   preferredThreadIdForRuntime,
   projectKeyForProject,
+  registeredMachineNotificationLabel,
   readStoredUiState,
   runtimeForProject,
   setAuthToken,
@@ -469,10 +470,13 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         && embeddedWorkspacePathSet.size
         && !embeddedWorkspacePathSet.has(activity.workingDirectory)
       ) continue;
-      const machineLabel = machine.name ?? machine.hostname ?? "registered machine";
+      const machineLabel = registeredMachineNotificationLabel(machine, activity.workingDirectory)
+        || machine.name
+        || machine.hostname
+        || "registered machine";
       dispatchTaskCompleteNotification({
-        title: "Codex 远程任务完成",
-        body: `${activity.activityTitle ?? activity.title ?? "远程任务"} · ${machineLabel}`,
+        title: `Codex 远程任务完成 · ${machineLabel}`,
+        body: activity.activityTitle ?? activity.title ?? "远程任务",
         threadId: activity.threadId
       });
     }

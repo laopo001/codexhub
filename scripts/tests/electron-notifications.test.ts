@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   collectRegisteredMachineActivityCompletions,
+  registeredMachineNotificationLabel,
   sendElectronTaskCompleteNotification,
   type ElectronTaskNotificationBridge
 } from "../../src/web/helpers/notifications.js";
@@ -77,4 +78,20 @@ test("registered machine activity transitions produce one completion candidate",
     activities: [{ ...machine.activities[0], status: "idle", updatedAt: "2026-08-16T00:00:02.000Z" }]
   }]);
   assert.deepEqual(unchanged.completed, []);
+});
+
+test("registered machine notification labels match the activity tray context", () => {
+  assert.equal(
+    registeredMachineNotificationLabel({
+      machineId: "machine-remote",
+      type: "registered",
+      name: "CodexHub Authority · WSL Ubuntu · jx",
+      hostname: "jx",
+      online: true,
+      status: "online",
+      lastSeenAt: "2026-08-16T00:00:00.000Z",
+      capabilities: { projectLauncher: true }
+    }, "/home/laop/projects/codexhub"),
+    "codexhub · WSL Ubuntu · jx"
+  );
 });

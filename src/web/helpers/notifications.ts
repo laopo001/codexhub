@@ -6,6 +6,13 @@ export type RegisteredMachineActivityCompletion = {
   activity: MachineActivitySummary;
 };
 
+export const registeredMachineNotificationLabel = (machine: MachineSummary, workingDirectory: string) => {
+  const directoryName = workingDirectory.split(/[\\/]/).filter(Boolean).pop();
+  const machineName = (machine.name ?? machine.hostname).trim();
+  const machineContext = machineName.split(" · ").slice(1).filter(Boolean).join(" · ") || machineName;
+  return [directoryName, machineContext].filter(Boolean).join(" · ");
+};
+
 /**
  * Registered machines expose activity-only snapshots to the parent server.
  * Keep the transition detector separate from the notification transport so
