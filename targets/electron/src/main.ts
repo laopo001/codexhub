@@ -344,17 +344,21 @@ const startElectronAuthority = async () => {
   // shared config.yaml env map before DevTools/workspace handling runs.
   applyServerConfigEnv(configEnv);
   const environment = await withUserPath({ ...(configEnv ?? {}), ...process.env });
-  // A remote-client override can coexist with a local authority package. Only
-  // an explicit authority service or Web directory should disable PATH-based
-  // package discovery.
+  // Prefer the current local npm/link package discovered through PATH. This
+  // is shared with VS Code and lets `pnpm run link:all` update the Windows
+  // authority for both embedded clients. Fall back to the bundled authority
+  // only when PATH has no usable CodexHub package, while still honoring an
+  // explicit CODEX_HUB_AUTHORITY_PACKAGE override.
   const hasDirectBundleOverride = Boolean(configuredAuthorityServicePath || configuredStaticDirectory);
+  const hasExplicitAuthorityPackage = Boolean(environment.CODEX_HUB_AUTHORITY_PACKAGE?.trim());
+  const packageResolutionEnvironment = hasDirectBundleOverride && !hasExplicitAuthorityPackage
+    ? Object.fromEntries(Object.entries(environment).filter(([key]) => key.toLowerCase() !== "path"))
+    : environment;
   const packageResolution = await resolveAuthorityPackage({
     authorityServicePath: bundledAuthorityServicePath,
     staticDirectory: bundledStaticDirectory,
     remoteClientPath: bundledRemoteClientPath
-  }, hasDirectBundleOverride && !environment.CODEX_HUB_AUTHORITY_PACKAGE
-    ? { ...environment, PATH: "" }
-    : environment);
+  }, packageResolutionEnvironment);
   const authorityServicePath = packageResolution.authorityServicePath;
   const staticDirectory = packageResolution.staticDirectory;
   const remoteClientPath = configuredRemoteClientPath || packageResolution.remoteClientPath;

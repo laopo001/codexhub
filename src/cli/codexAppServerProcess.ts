@@ -93,7 +93,11 @@ export const startCodexAppServer = async (
     cwd,
     env: codexAppServerEnv(launch.codexCommand),
     stdio: ["ignore", "ignore", "pipe"],
-    detached: process.platform !== "win32"
+    detached: process.platform !== "win32",
+    // Windows PATH normally resolves the npm Codex launcher to codex.cmd.
+    // The command shell used to run that launcher must stay invisible when
+    // the authority is started from the Electron desktop app.
+    windowsHide: process.platform === "win32"
   };
   let child: ChildProcess;
   try {
