@@ -2,16 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   collectRegisteredMachineActivityCompletions,
-  registeredMachineNotificationLabel,
+  machineNotificationLabel,
   sendElectronTaskCompleteNotification,
   type ElectronTaskNotificationBridge
 } from "../../src/web/helpers/notifications.js";
-import { isTaskCompleteNotification } from "../../src/shared/taskNotifications.js";
+import {
+  isTaskCompleteNotification,
+  taskCompleteNotificationTitle
+} from "../../src/shared/taskNotifications.js";
 
 const notification = {
   title: "Codex 任务完成",
   body: "项目检查 · 已完成",
   threadId: "thread-electron",
+  machineLabel: "codexhub · WSL Ubuntu · jx",
   duration: "2.0s"
 };
 
@@ -43,7 +47,15 @@ test("task completion notification payload validation accepts only usable IPC da
   assert.equal(isTaskCompleteNotification({ ...notification, body: 42 }), false);
   assert.equal(isTaskCompleteNotification({ ...notification, threadId: "" }), false);
   assert.equal(isTaskCompleteNotification({ ...notification, duration: 2000 }), false);
+  assert.equal(isTaskCompleteNotification({ ...notification, machineLabel: 42 }), false);
   assert.equal(isTaskCompleteNotification(null), false);
+});
+
+test("task completion notification title is shared across hosts", () => {
+  assert.equal(
+    taskCompleteNotificationTitle(notification),
+    "Codex 任务完成 · codexhub · WSL Ubuntu · jx"
+  );
 });
 
 test("registered machine activity transitions produce one completion candidate", () => {
@@ -82,7 +94,7 @@ test("registered machine activity transitions produce one completion candidate",
 
 test("registered machine notification labels match the activity tray context", () => {
   assert.equal(
-    registeredMachineNotificationLabel({
+    machineNotificationLabel({
       machineId: "machine-remote",
       type: "registered",
       name: "CodexHub Authority · WSL Ubuntu · jx",

@@ -18,6 +18,10 @@ import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import {
   embeddedSurfaceProtocolVersion
 } from "../../../src/shared/surfaceTypes.js";
+import {
+  isTaskCompleteNotification,
+  taskCompleteNotificationTitle
+} from "../../../src/shared/taskNotifications.js";
 import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/apiClient.js";
 import { apiRoutes } from "../../../src/shared/apiRoutes.js";
 import {
@@ -241,14 +245,17 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       return;
     }
     if (record?.type !== "codexhub.taskCompleteNotification") return;
-    const notification = asRecord(record.notification);
-    const title = stringValue(notification?.title) ?? "Codex task complete";
-    const body = stringValue(notification?.body) ?? "";
+    const notification = isTaskCompleteNotification(record.notification) ? record.notification : null;
+    const rawNotification = asRecord(record.notification);
+    const title = notification
+      ? taskCompleteNotificationTitle(notification)
+      : stringValue(rawNotification?.title) ?? "Codex task complete";
+    const body = notification?.body ?? stringValue(rawNotification?.body) ?? "";
     const text = truncateNotificationText(body ? `${title}: ${body}` : title);
     const open = "Open";
     const selected = await vscode.window.showInformationMessage(text, open);
     if (selected !== open) return;
-    const threadId = stringValue(notification?.threadId);
+    const threadId = notification?.threadId ?? stringValue(rawNotification?.threadId);
     if (threadId) await this.openThreadFromHost(threadId);
     else if (this.view) this.view.show(false);
     else await vscode.commands.executeCommand(`${viewId}.focus`);

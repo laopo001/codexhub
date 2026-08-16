@@ -9,7 +9,8 @@ import type { TaskCompleteNotification } from "../../src/web/types.js";
 const notification: TaskCompleteNotification = {
   title: "Codex task complete",
   body: "Done",
-  threadId: "thread-test"
+  threadId: "thread-test",
+  machineLabel: "remote · linux"
 };
 
 test("browser notification uses the Notification constructor when supported", async () => {
@@ -40,7 +41,7 @@ test("browser notification uses the Notification constructor when supported", as
 
   assert.equal(await showBrowserTaskCompleteNotification(notification, environment), "notification");
   assert.deepEqual(created, {
-    title: notification.title,
+    title: "Codex task complete · remote · linux",
     options: {
       body: notification.body,
       tag: "codexhub-task-complete:thread-test"
@@ -107,7 +108,7 @@ test("browser notification falls back to a service worker when Android rejects t
     options: { scope: "/" }
   });
   assert.deepEqual(shown, [{
-    title: notification.title,
+    title: "Codex task complete · remote · linux",
     options: {
       body: notification.body,
       tag: "codexhub-task-complete:thread-test",

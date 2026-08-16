@@ -30,6 +30,7 @@ import { apiRoutes } from "../../../src/shared/apiRoutes.js";
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
 import {
   isTaskCompleteNotification,
+  taskCompleteNotificationTitle,
   type TaskCompleteNotification
 } from "../../../src/shared/taskNotifications.js";
 
@@ -136,7 +137,7 @@ const showTaskCompleteNativeNotification = (notification: TaskCompleteNotificati
   try {
     const nativeNotification = new Notification({
       id: `codexhub-task-complete:${notification.threadId}`,
-      title: notification.title,
+      title: taskCompleteNotificationTitle(notification),
       body: notification.body
     });
     activeTaskNotifications.add(nativeNotification);

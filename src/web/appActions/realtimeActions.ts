@@ -35,7 +35,7 @@ import {
   playTaskCompletionSound,
   preferredThreadIdForRuntime,
   projectKeyForProject,
-  registeredMachineNotificationLabel,
+  machineNotificationLabel,
   readStoredUiState,
   runtimeForProject,
   setAuthToken,
@@ -82,6 +82,7 @@ type RealtimeActionsContext = {
   tasksLastSeq: React.MutableRefObject<number>;
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
   latestRequestedThreadId: React.MutableRefObject<string>;
+  machinesRef?: React.MutableRefObject<MachineSummary[]>;
   setActiveMachineId: React.Dispatch<React.SetStateAction<string>>;
   setActiveTabThreadByMachine: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setActiveTabThreadId: React.Dispatch<React.SetStateAction<string>>;
@@ -132,12 +133,17 @@ export type RealtimeActions = {
 const taskRunNotificationKey = (task: LocalTask, runId: string) => `task:${task.taskId}:${runId}`;
 const embeddedWorkspacePathSet = new Set(embeddedWorkspacePaths);
 
-const taskRunCompleteNotification = (task: LocalTask, run: LocalTaskRun): TaskCompleteNotification => {
+const taskRunCompleteNotification = (
+  task: LocalTask,
+  run: LocalTaskRun,
+  machineLabel?: string
+): TaskCompleteNotification => {
   const duration = formatDuration(run.durationMs) || undefined;
   return {
     title: duration ? `Codex 任务完成 · 用时 ${duration}` : "Codex 任务完成",
     body: `${task.name || "计划任务"} · 已完成`,
     threadId: run.threadId ?? task.threadId ?? task.taskId,
+    ...(machineLabel ? { machineLabel } : {}),
     duration
   };
 };
@@ -194,6 +200,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const loadedRuntimes = normalizeRuntimes(runtimeData.runtimes);
     const loadedMachines = normalizeMachines(projectData.machines);
     const loadedProjects = normalizeProjects(projectData.projects);
+    if (ctx.machinesRef) ctx.machinesRef.current = loadedMachines;
     registeredMachineConnections.seed(loadedMachines);
     rememberRegisteredMachineActivities(loadedMachines);
     const saved = readStoredUiState();
@@ -325,6 +332,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       const payload = message;
       if (typeof payload.seq === "number") ctx.projectsLastSeq.current = Math.max(ctx.projectsLastSeq.current, payload.seq);
       const nextMachines = normalizeMachines(payload.machines);
+      if (ctx.machinesRef) ctx.machinesRef.current = nextMachines;
       const registeredMachineChanges = registeredMachineConnections.update(nextMachines);
       for (const machine of registeredMachineChanges.connected) {
         deps.notifyRegisteredMachineConnected(machine);
@@ -415,7 +423,15 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       const key = taskCompletionNotificationKey(threadId, record);
       if (ctx.notifiedTaskCompletions.current.has(key)) continue;
       ctx.notifiedTaskCompletions.current.add(key);
-      dispatchTaskCompleteNotification(taskCompleteNotification(event.thread, record, nextRecords));
+      const machine = event.thread.runtime.machineId
+        ? ctx.machinesRef?.current.find((candidate) => candidate.machineId === event.thread.runtime.machineId)
+        : undefined;
+      dispatchTaskCompleteNotification(taskCompleteNotification(
+        event.thread,
+        record,
+        nextRecords,
+        machine ? machineNotificationLabel(machine, event.thread.workingDirectory) : undefined
+      ));
     }
   }
 
@@ -441,7 +457,12 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         if (ctx.notifiedTaskCompletions.current.has(key)) continue;
         ctx.notifiedTaskCompletions.current.add(key);
         if (run.threadId && ctx.realtimeThreadSubscriptions.current.has(run.threadId)) continue;
-        dispatchTaskCompleteNotification(taskRunCompleteNotification(task, run));
+        const machine = ctx.machinesRef?.current.find((candidate) => candidate.machineId === task.machineId);
+        dispatchTaskCompleteNotification(taskRunCompleteNotification(
+          task,
+          run,
+          machine ? machineNotificationLabel(machine, task.projectPath) : undefined
+        ));
       }
     }
   }
@@ -470,14 +491,15 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         && embeddedWorkspacePathSet.size
         && !embeddedWorkspacePathSet.has(activity.workingDirectory)
       ) continue;
-      const machineLabel = registeredMachineNotificationLabel(machine, activity.workingDirectory)
+      const machineLabel = machineNotificationLabel(machine, activity.workingDirectory)
         || machine.name
         || machine.hostname
         || "registered machine";
       dispatchTaskCompleteNotification({
-        title: `Codex 远程任务完成 · ${machineLabel}`,
+        title: "Codex 任务完成",
         body: activity.activityTitle ?? activity.title ?? "远程任务",
-        threadId: activity.threadId
+        threadId: activity.threadId,
+        machineLabel
       });
     }
   }

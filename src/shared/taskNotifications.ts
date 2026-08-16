@@ -5,6 +5,7 @@ export type TaskCompleteNotification = {
   title: string;
   body: string;
   threadId: string;
+  machineLabel?: string;
   duration?: string;
 };
 
@@ -14,9 +15,15 @@ export const isTaskCompleteNotification = (value: unknown): value is TaskComplet
     nonEmptyString(record?.title)
     && typeof record?.body === "string"
     && nonEmptyString(record.threadId)
+    && (record.machineLabel === undefined || nonEmptyString(record.machineLabel))
     && (record.duration === undefined || nonEmptyString(record.duration))
   );
 };
+
+export const taskCompleteNotificationTitle = (notification: TaskCompleteNotification) => [
+  notification.title,
+  notification.machineLabel
+].filter((value): value is string => Boolean(value?.trim())).join(" · ");
 
 export const isTaskCompleteRecord = (record: CodexRecord) => {
   const payload = asRecord(record.payload);
@@ -32,7 +39,8 @@ export const taskCompletionNotificationKey = (threadId: string, record: CodexRec
 export const taskCompleteNotification = (
   thread: ThreadSummary,
   record: CodexRecord,
-  records: CodexRecord[]
+  records: CodexRecord[],
+  machineLabel?: string
 ): TaskCompleteNotification => {
   const payload = asRecord(record.payload);
   const durationMs = typeof payload?.duration_ms === "number" ? payload.duration_ms : undefined;
@@ -47,6 +55,7 @@ export const taskCompleteNotification = (
     title: duration ? `Codex 任务完成 · 用时 ${duration}` : "Codex 任务完成",
     body: notificationText(`${threadContext} · ${message}`),
     threadId: thread.threadId,
+    ...(machineLabel?.trim() ? { machineLabel: machineLabel.trim() } : {}),
     duration
   };
 };

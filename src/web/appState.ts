@@ -140,6 +140,8 @@ export const useAppState = () => {
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
   const [runtimeList, setRuntimeList] = useState<RuntimeSummary[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
+  const machinesRef = useRef<MachineSummary[]>(machines);
+  machinesRef.current = machines;
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeMachineId, setActiveMachineId] = useState("");
   const [selectedProjectKey, setSelectedProjectKey] = useState("");
@@ -218,6 +220,7 @@ export const useAppState = () => {
     inspectMessage,
     latestRequestedThreadId,
     machines,
+    machinesRef,
     messageContextMenu,
     messageRenderModes,
     modelCatalogByMachine,

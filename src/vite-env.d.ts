@@ -11,6 +11,7 @@ interface Window {
       title: string;
       body: string;
       threadId: string;
+      machineLabel?: string;
       duration?: string;
     }) => void;
   };

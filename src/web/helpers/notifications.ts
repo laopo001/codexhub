@@ -1,12 +1,13 @@
 import type { TaskCompleteNotification } from "../types.js";
 import type { MachineActivitySummary, MachineSummary } from "../../shared/machineTypes.js";
+import { taskCompleteNotificationTitle } from "../../shared/taskNotifications.js";
 
 export type RegisteredMachineActivityCompletion = {
   machine: MachineSummary;
   activity: MachineActivitySummary;
 };
 
-export const registeredMachineNotificationLabel = (machine: MachineSummary, workingDirectory: string) => {
+export const machineNotificationLabel = (machine: MachineSummary, workingDirectory: string) => {
   const directoryName = workingDirectory.split(/[\\/]/).filter(Boolean).pop();
   const machineName = (machine.name ?? machine.hostname).trim();
   const machineContext = machineName.split(" · ").slice(1).filter(Boolean).join(" · ") || machineName;
@@ -164,7 +165,10 @@ export const showBrowserTaskCompleteNotification = async (
     if (!NotificationApi || NotificationApi.permission !== "granted") return "unavailable";
 
     try {
-      const browserNotification = new NotificationApi(notification.title, notificationOptions(notification));
+      const browserNotification = new NotificationApi(
+        taskCompleteNotificationTitle(notification),
+        notificationOptions(notification)
+      );
       browserNotification.onclick = () => {
         current.focusWindow();
         browserNotification.close();
@@ -176,7 +180,7 @@ export const showBrowserTaskCompleteNotification = async (
       const registration = await serviceWorker.register("/codexhub-notification-sw.js", { scope: "/" });
       const readyRegistration = serviceWorker.ready ? await serviceWorker.ready : registration;
       const activeRegistration = await activatedServiceWorkerRegistration(readyRegistration);
-      await activeRegistration.showNotification(notification.title, {
+      await activeRegistration.showNotification(taskCompleteNotificationTitle(notification), {
         ...notificationOptions(notification),
         data: { url: notificationPageUrl(current.pageUrl) }
       });
