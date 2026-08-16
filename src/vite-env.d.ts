@@ -7,5 +7,11 @@ interface Window {
     requestPointerPosition: () => void;
     focusMainWindow: (threadId?: string) => void;
     onOpenThread: (listener: (threadId: string) => void) => () => void;
+    showTaskCompleteNotification: (notification: {
+      title: string;
+      body: string;
+      threadId: string;
+      duration?: string;
+    }) => void;
   };
 }

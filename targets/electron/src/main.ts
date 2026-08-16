@@ -6,6 +6,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   screen,
   shell,
   Tray
@@ -27,6 +28,10 @@ import { loadDotEnv } from "../../../src/core/dotenv.js";
 import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/apiClient.js";
 import { apiRoutes } from "../../../src/shared/apiRoutes.js";
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
+import {
+  isTaskCompleteNotification,
+  type TaskCompleteNotification
+} from "../../../src/shared/taskNotifications.js";
 
 const mainDirectory = electronApp.isPackaged
   ? path.join(electronApp.getAppPath(), "dist-node", "electron")
@@ -52,6 +57,7 @@ let heartbeatInFlight = false;
 let surfaceRegistered = false;
 let desktopPetSyncTimer: NodeJS.Timeout | null = null;
 let desktopPetSyncInFlight = false;
+const activeTaskNotifications = new Set<Notification>();
 const surfaceId = `electron-${randomUUID()}`;
 const leaseId = randomUUID();
 
@@ -106,6 +112,40 @@ const showMainWindow = async () => {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+};
+
+const focusMainWindowForThread = async (threadId: string) => {
+  await showMainWindow();
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send("codexhub:open-thread", threadId);
+};
+
+const showTaskCompleteNativeNotification = (notification: TaskCompleteNotification) => {
+  if (!Notification.isSupported()) {
+    console.warn("codexhub electron native notifications are not supported on this platform");
+    return;
+  }
+  try {
+    const nativeNotification = new Notification({
+      id: `codexhub-task-complete:${notification.threadId}`,
+      title: notification.title,
+      body: notification.body
+    });
+    activeTaskNotifications.add(nativeNotification);
+    const release = () => activeTaskNotifications.delete(nativeNotification);
+    nativeNotification.once("close", release);
+    nativeNotification.once("failed", (_event, error) => {
+      release();
+      console.warn(`codexhub electron native notification failed: ${error}`);
+    });
+    nativeNotification.once("click", () => {
+      release();
+      void focusMainWindowForThread(notification.threadId);
+    });
+    nativeNotification.show();
+  } catch (error) {
+    console.warn(`codexhub electron native notification could not be shown: ${errorText(error)}`);
+  }
 };
 
 const createTray = () => {
@@ -264,6 +304,13 @@ ipcMain.on("codexhub:pet-focus-main", (event, threadId: unknown) => {
   if (typeof threadId === "string" && threadId.trim()) {
     mainWindow.webContents.send("codexhub:open-thread", threadId);
   }
+});
+
+ipcMain.on("codexhub:task-complete-notification", (event, value: unknown) => {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (!sender || sender !== mainWindow || sender.isDestroyed()) return;
+  if (!isTaskCompleteNotification(value)) return;
+  showTaskCompleteNativeNotification(value);
 });
 
 const ensureElectronSurface = async () => {

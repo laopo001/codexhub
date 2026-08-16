@@ -11,6 +11,7 @@ import {
   defaultAppSettings,
   embeddedWorkspacePaths,
   initialWorkspacePath,
+  isElectronSurface,
   isEmbeddedHostSurface,
   isVscodeSurface
 } from "../appConfig.js";
@@ -35,6 +36,7 @@ import {
   readStoredUiState,
   runtimeForProject,
   setAuthToken,
+  sendElectronTaskCompleteNotification,
   showBrowserTaskCompleteNotification,
   createRegisteredMachineConnectionTracker,
   type SidebarDraftStore,
@@ -445,6 +447,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       // Completion feedback must never interrupt realtime state processing.
     }
     if (!ctx.appSettingsRef.current.taskCompleteSystemNotifications) return;
+    if (isElectronSurface) {
+      if (sendElectronTaskCompleteNotification(notification, window.codexhubElectronPet) === "notification") return;
+      void showBrowserTaskCompleteNotification(notification);
+      return;
+    }
     if (isEmbeddedHostSurface) {
       try {
         window.parent?.postMessage({

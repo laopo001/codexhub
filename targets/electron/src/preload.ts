@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { TaskCompleteNotification } from "../../../src/shared/taskNotifications.js";
 
 contextBridge.exposeInMainWorld("codexhubElectronPet", {
   setIgnoreMouseEvents: (ignore: boolean) => {
@@ -19,6 +20,9 @@ contextBridge.exposeInMainWorld("codexhubElectronPet", {
   },
   focusMainWindow: (threadId?: string) => {
     ipcRenderer.send("codexhub:pet-focus-main", typeof threadId === "string" ? threadId : "");
+  },
+  showTaskCompleteNotification: (notification: TaskCompleteNotification) => {
+    ipcRenderer.send("codexhub:task-complete-notification", notification);
   },
   onOpenThread: (listener: (threadId: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, threadId: unknown) => {

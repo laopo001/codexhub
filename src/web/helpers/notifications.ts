@@ -37,6 +37,25 @@ export type BrowserTaskNotificationEnvironment = {
 
 export type BrowserTaskNotificationResult = "notification" | "service-worker" | "unavailable";
 
+export type ElectronTaskNotificationBridge = {
+  showTaskCompleteNotification: (notification: TaskCompleteNotification) => void;
+};
+
+export type ElectronTaskNotificationResult = "notification" | "unavailable";
+
+export const sendElectronTaskCompleteNotification = (
+  notification: TaskCompleteNotification,
+  bridge?: ElectronTaskNotificationBridge
+): ElectronTaskNotificationResult => {
+  if (!bridge) return "unavailable";
+  try {
+    bridge.showTaskCompleteNotification(notification);
+    return "notification";
+  } catch {
+    return "unavailable";
+  }
+};
+
 const currentBrowserNotificationEnvironment = (): BrowserTaskNotificationEnvironment => ({
   notificationApi: window.Notification as BrowserNotificationApi | undefined,
   serviceWorker: "serviceWorker" in navigator

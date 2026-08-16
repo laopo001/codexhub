@@ -8,6 +8,16 @@ export type TaskCompleteNotification = {
   duration?: string;
 };
 
+export const isTaskCompleteNotification = (value: unknown): value is TaskCompleteNotification => {
+  const record = asRecord(value);
+  return Boolean(
+    nonEmptyString(record?.title)
+    && typeof record?.body === "string"
+    && nonEmptyString(record.threadId)
+    && (record.duration === undefined || nonEmptyString(record.duration))
+  );
+};
+
 export const isTaskCompleteRecord = (record: CodexRecord) => {
   const payload = asRecord(record.payload);
   return record.type === "event_msg" && payload?.type === "task_complete";
@@ -123,3 +133,5 @@ const stringField = (record: Record<string, unknown> | null | undefined, key: st
   const value = record?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 };
+
+const nonEmptyString = (value: unknown): value is string => typeof value === "string" && Boolean(value.trim());
