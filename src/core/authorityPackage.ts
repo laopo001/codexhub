@@ -70,7 +70,9 @@ const discoverLinkedPackageRoot = async (env: NodeJS.ProcessEnv) => {
   const executableNames = process.platform === "win32"
     ? ["codexhub.cmd", "codexhub.exe", "codexhub", "cxh.cmd", "cxh.exe", "cxh"]
     : ["codexhub", "cxh"];
-  const entries = (env.PATH ?? "")
+  const pathValue = Object.entries(env)
+    .find(([key]) => key.toLowerCase() === "path")?.[1] ?? "";
+  const entries = pathValue
     .split(path.delimiter)
     .map((entry) => entry.trim())
     .filter(Boolean);
@@ -85,12 +87,21 @@ const discoverLinkedPackageRoot = async (env: NodeJS.ProcessEnv) => {
   return null;
 };
 
-const packageRootFromExecutable = async (executablePath: string) => {
+export const packageRootFromExecutable = async (
+  executablePath: string,
+  platform: NodeJS.Platform = process.platform
+) => {
   try {
     const resolvedPath = await realpath(executablePath);
     const binDirectory = path.dirname(resolvedPath);
-    if (path.basename(binDirectory).toLowerCase() !== "bin") return null;
-    return path.dirname(binDirectory);
+    if (path.basename(binDirectory).toLowerCase() === "bin") {
+      return path.dirname(binDirectory);
+    }
+    if (platform !== "win32") return null;
+    return await firstDirectory([
+      path.join(binDirectory, "node_modules", "@dadigua", "codexhub"),
+      path.join(binDirectory, "node_modules", "codexhub")
+    ]);
   } catch {
     return null;
   }
@@ -118,4 +129,11 @@ const isDirectory = async (directoryPath: string) => {
   } catch {
     return false;
   }
+};
+
+const firstDirectory = async (candidates: string[]) => {
+  for (const candidate of candidates) {
+    if (await isDirectory(candidate)) return candidate;
+  }
+  return null;
 };

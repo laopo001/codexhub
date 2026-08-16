@@ -377,7 +377,7 @@ pnpm build
 command -v codexhub || command -v cxh
 ```
 
-在 WSL 仓库中可以用一个脚本同时更新 WSL 和 Windows 的全局 link。脚本会先完整构建当前版本，再通过 Windows 可访问的 `\\wsl.localhost\\<distro>\\...` 路径让 Windows `npm link` 同一个 checkout：
+在 WSL 仓库中可以用一个脚本同时更新 WSL 和 Windows 的全局 link。脚本会先完整构建当前版本；WSL 直接对当前 checkout 执行 `npm link`，Windows 则把 `package.json`、`bin`、`dist` 和 `dist-node` 同步到 `%LOCALAPPDATA%\CodexHub\windows-link-package`，在那里执行 Windows `npm install` 和 `npm link`。这样 Windows 端也是标准 npm link，同时避免 npm/cmd 对 WSL UNC 路径生成临时盘符而导致链接重启后失效：
 
 ```bash
 pnpm run link:all
@@ -390,7 +390,7 @@ command -v codexhub
 /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command 'Get-Command codexhub'
 ```
 
-如果命令能在用户 shell 中解析到本地包，VSCode/Electron 启动 authority 时会自动发现它对应的包根目录。`authorityServiceSource` 为 `linked-package` 时表示实际使用了 PATH 中的本地 `npm link` 包；`configured-package` 表示使用了显式 `CODEX_HUB_AUTHORITY_PACKAGE`；`bundled` 表示回退到了 VSIX/Electron 自带代码。只有 Windows、Remote SSH、多个全局 Node 并存等特殊场景，才建议显式配置 `CODEX_HUB_AUTHORITY_PACKAGE` 或 `CODEX_HUB_AUTHORITY_NODE`。
+如果命令能在用户 shell 中解析到本地包，VSCode/Electron 启动 authority 时会自动发现它对应的包根目录。`authorityServiceSource` 为 `linked-package` 时表示实际使用了 PATH 中的本地 `npm link` 包；`configured-package` 表示使用了显式 `CODEX_HUB_AUTHORITY_PACKAGE`；`bundled` 表示回退到了 VSIX/Electron 自带代码。Windows 的 link 镜像每次运行脚本都会按当前 WSL 构建覆盖更新；只有 Remote SSH、多个全局 Node 并存等特殊场景，才建议显式配置 `CODEX_HUB_AUTHORITY_PACKAGE` 或 `CODEX_HUB_AUTHORITY_NODE`。
 
 同一 authority 的 VSCode/Electron client 共享 local runtime、SSH/tasks/plugins/Registered 配置和一条 parent machine transport，但 Web UI 仍按当前 URL 携带的 workspace paths 过滤项目，localStorage 按稳定 client scope 隔离，task completion popup 也只路由到包含对应 project path 的窗口。VSCode iframe 使用和普通 Web 相同的完整左侧控制面；Webview 和 Open in Browser 都通过 `vscode.env.asExternalUri`，因此 Remote SSH、端口转发或 tunnel 环境仍可访问。没有 file workspace folder 的 VSCode 只显示状态页；Electron 仍可注册空 workspace surface。
 
