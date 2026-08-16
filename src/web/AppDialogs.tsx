@@ -334,12 +334,18 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 </span>
               </div>
               {restartAvailable ? (
-                <div className="settingsRow">
+                <div
+                  className={`settingsRow settingsRestartRow${restartState === "restarting" ? " is-restarting" : ""}${restartState === "error" ? " has-error" : ""}`}
+                  aria-busy={restartState === "restarting"}
+                >
                   <span className="settingsRowText">
                     <strong>Restart CodexHub</strong>
-                    <em className={restartState === "error" ? "settingsError" : undefined}>
+                    <em
+                      className={restartState === "error" ? "settingsError" : undefined}
+                      aria-live="polite"
+                    >
                       {restartState === "restarting"
-                        ? "Restart requested; VSCode will reconnect automatically."
+                        ? "Restarting authority and runtime; VSCode will reconnect automatically."
                         : restartState === "error"
                           ? "Restart failed. Check the authority log and try again."
                           : "Restart the VSCode/Electron authority and Codex runtime."}
@@ -347,11 +353,17 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   </span>
                   <button
                     type="button"
-                    className="petSettingsButton"
+                    className={`petSettingsButton settingsRestartButton${restartState === "restarting" ? " is-loading" : ""}`}
                     disabled={restartState === "restarting"}
                     onClick={() => void restartAuthority()}
+                    aria-busy={restartState === "restarting"}
                   >
-                    {restartState === "restarting" ? "Restarting..." : "Restart"}
+                    {restartState === "restarting" ? (
+                      <>
+                        <span className="settingsRestartSpinner" aria-hidden="true" />
+                        <span>Restarting...</span>
+                      </>
+                    ) : "Restart"}
                   </button>
                 </div>
               ) : null}

@@ -85,6 +85,8 @@ export type OpenThreadOptions = {
   expectedMachineId?: string;
   /** Keep workspace context stable while a freshly resumed thread is loading. */
   preferredWorkingDirectory?: string;
+  /** Open the thread in the background without changing the active tab. */
+  activate?: boolean;
 };
 
 type ThreadGoalUpdateOptions = {
@@ -128,10 +130,13 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   };
 
   const openThread = async (threadId: string, options: OpenThreadOptions = {}) => {
+    const activate = options.activate !== false;
     ctx.closedThreadIds.current.delete(threadId);
-    ctx.latestRequestedThreadId.current = threadId;
-    ctx.setActiveTabThreadId(threadId);
-    const updateWorkspaceContext = !ctx.selectedProjectKey;
+    if (activate) {
+      ctx.latestRequestedThreadId.current = threadId;
+      ctx.setActiveTabThreadId(threadId);
+    }
+    const updateWorkspaceContext = activate && !ctx.selectedProjectKey;
     if (updateWorkspaceContext && options.preferredWorkingDirectory) {
       ctx.setActiveWorkspacePath(options.preferredWorkingDirectory);
     }
@@ -144,7 +149,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     if (existingThreadMatchesMachine) {
       subscribeThread(threadId, existingThread.lastSeq);
       const machineId = existingThread.runtime.machineId;
-      if (machineId) {
+      if (machineId && activate) {
         if (updateWorkspaceContext) ctx.setActiveMachineId(machineId);
         ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: threadId }));
       }
@@ -173,13 +178,14 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       ctx.setProjects((current) => patchProjectsThread(current, thread));
       ctx.notificationRecordsByThread.current.set(thread.threadId, threadRecordsForNotifications(thread.threadId, thread));
       ctx.dispatchOpenThreads({ type: "upsert-detail", thread });
-      if (ctx.latestRequestedThreadId.current !== thread.threadId) return;
-      if (machineId) {
+      const shouldActivateThread = activate && ctx.latestRequestedThreadId.current === thread.threadId;
+      if (activate && !shouldActivateThread) return;
+      if (shouldActivateThread && machineId) {
         if (updateWorkspaceContext) ctx.setActiveMachineId(machineId);
         ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: thread.threadId }));
       }
-      if (updateWorkspaceContext) ctx.setActiveWorkspacePath(thread.workingDirectory);
-      ctx.setActiveTabThreadId(thread.threadId);
+      if (shouldActivateThread && updateWorkspaceContext) ctx.setActiveWorkspacePath(thread.workingDirectory);
+      if (shouldActivateThread) ctx.setActiveTabThreadId(thread.threadId);
       ctx.threadLastSeqs.current.set(
         thread.threadId,
         Math.max(ctx.threadLastSeqs.current.get(thread.threadId) ?? 0, thread.lastSeq)
@@ -191,7 +197,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     try {
       await open;
     } catch (error) {
-      clearActiveThreadIfLatest(threadId);
+      if (activate) clearActiveThreadIfLatest(threadId);
       throw error;
     } finally {
       if (ctx.openingThreads.current.get(threadId) === open) {

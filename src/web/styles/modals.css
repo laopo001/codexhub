@@ -186,6 +186,61 @@
   color: #b42318;
 }
 
+.settingsRestartRow {
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.settingsDialog .settingsRestartRow.is-restarting {
+  border-color: #9bb89a;
+  background-color: #f3faf1;
+  box-shadow: inset 3px 0 0 #6f9f6c;
+}
+
+.settingsDialog .settingsRestartRow.has-error {
+  border-color: #e3b5b0;
+  background-color: #fff8f7;
+}
+
+.settingsRestartButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 78px;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease;
+}
+
+.settingsDialog .settingsRestartButton.is-loading {
+  border-color: #9bb89a;
+  background-color: #eef7ec;
+  color: #4f7650;
+  cursor: wait;
+  opacity: 0.82;
+}
+
+.settingsRestartSpinner {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: settingsRestartSpin 700ms linear infinite;
+}
+
+@keyframes settingsRestartSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .settingsSelect {
   flex: 0 0 112px;
 }
@@ -471,6 +526,17 @@
   background: #fcfdf9;
   padding: 16px;
   box-shadow: 0 24px 80px rgb(18 32 24 / 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settingsRestartRow,
+  .settingsRestartButton {
+    transition: none;
+  }
+
+  .settingsRestartSpinner {
+    animation: none;
+  }
 }
 
 .projectPickerOverlay {

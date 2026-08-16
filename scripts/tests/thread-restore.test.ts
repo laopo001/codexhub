@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { CodexHubApiError } from "../../src/shared/apiClient.js";
 import { restorePersistedThreadTabs } from "../../src/web/helpers/threadRestore.js";
 
 test("persisted thread restore keeps only successfully opened tabs", async () => {
@@ -19,7 +20,8 @@ test("persisted thread restore keeps only successfully opened tabs", async () =>
   assert.deepEqual(cleared, ["thread-b"]);
   assert.deepEqual(result, {
     threadIds: ["thread-a", "thread-c"],
-    activeThreadId: "thread-a"
+    activeThreadId: "thread-a",
+    pendingThreadIds: []
   });
 });
 
@@ -33,7 +35,8 @@ test("persisted thread restore preserves a successfully opened active tab", asyn
 
   assert.deepEqual(result, {
     threadIds: ["thread-a", "thread-b"],
-    activeThreadId: "thread-b"
+    activeThreadId: "thread-b",
+    pendingThreadIds: []
   });
 });
 
@@ -49,9 +52,50 @@ test("persisted thread restore leaves no stale selection when every tab fails", 
   });
 
   assert.deepEqual(cleared, ["stale-a", "stale-b"]);
-  assert.deepEqual(result, { threadIds: [], activeThreadId: "" });
+  assert.deepEqual(result, { threadIds: [], activeThreadId: "", pendingThreadIds: [] });
 
   const recovered: string[] = [];
   if (!result.activeThreadId && result.threadIds.length === 0) recovered.push("initial-thread");
   assert.deepEqual(recovered, ["initial-thread"]);
+});
+
+test("persisted thread restore retries a transient authority failure", async () => {
+  let attempts = 0;
+  const result = await restorePersistedThreadTabs({
+    threadIds: ["thread-a"],
+    activeThreadId: "thread-a",
+    retryDelaysMs: [0, 0],
+    openThread: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new CodexHubApiError(503, "runtime waking");
+    },
+    clearActiveThreadIfLatest: () => undefined
+  });
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(result, {
+    threadIds: ["thread-a"],
+    activeThreadId: "thread-a",
+    pendingThreadIds: []
+  });
+});
+
+test("persisted thread restore preserves a transiently unavailable tab for background retry", async () => {
+  const cleared: string[] = [];
+  const result = await restorePersistedThreadTabs({
+    threadIds: ["thread-a"],
+    activeThreadId: "thread-a",
+    retryDelaysMs: [0],
+    openThread: async () => {
+      throw new CodexHubApiError(404, "thread_not_found");
+    },
+    clearActiveThreadIfLatest: (threadId) => cleared.push(threadId)
+  });
+
+  assert.deepEqual(cleared, ["thread-a"]);
+  assert.deepEqual(result, {
+    threadIds: [],
+    activeThreadId: "",
+    pendingThreadIds: ["thread-a"]
+  });
 });

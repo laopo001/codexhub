@@ -11,7 +11,8 @@ import {
   defaultAppSettings,
   embeddedWorkspacePaths,
   initialWorkspacePath,
-  isEmbeddedHostSurface
+  isEmbeddedHostSurface,
+  isVscodeSurface
 } from "../appConfig.js";
 import {
   apiRouteJson,
@@ -87,6 +88,8 @@ type RealtimeActionsContext = {
   setInitialized: React.Dispatch<React.SetStateAction<boolean>>;
   setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
   setParentRegistration: React.Dispatch<React.SetStateAction<ParentRegistrationStatus>>;
+  setPendingRestoreActiveThreadId: React.Dispatch<React.SetStateAction<string>>;
+  setPendingRestoreThreadIds: React.Dispatch<React.SetStateAction<string[]>>;
   setPlugins: React.Dispatch<React.SetStateAction<PluginSummary[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
@@ -187,7 +190,8 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const loadedProjects = normalizeProjects(projectData.projects);
     registeredMachineConnections.seed(loadedMachines);
     const saved = readStoredUiState();
-    const shouldRestoreSavedTabs = !initialWorkspacePath && Array.isArray(saved?.openThreadIds);
+    const shouldRestoreSavedTabs = (isVscodeSurface || !initialWorkspacePath)
+      && Array.isArray(saved?.openThreadIds);
     const restoredThreadIds = shouldRestoreSavedTabs
       ? uniqueThreadIds([
         ...(saved?.openThreadIds ?? []),
@@ -240,6 +244,8 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setRuntimeList(loadedRuntimes);
     ctx.setActiveTabThreadByMachine(saved?.activeTabThreadByMachine ?? {});
     ctx.setThreadOrderByMachine(() => mergeThreadOrderByMachine(saved?.threadOrderByMachine ?? {}, loadedRuntimes));
+    ctx.setPendingRestoreThreadIds([]);
+    ctx.setPendingRestoreActiveThreadId("");
     connectRealtimeEvents();
     const initialProject = initialRuntime
       ? initialProjectFromUrl
@@ -259,6 +265,10 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         clearActiveThreadIfLatest: deps.clearActiveThreadIfLatest
       });
       const restoredSet = new Set(restored.threadIds);
+      ctx.setPendingRestoreThreadIds(restored.pendingThreadIds);
+      ctx.setPendingRestoreActiveThreadId(
+        restored.pendingThreadIds.includes(restoredActiveThreadId) ? restoredActiveThreadId : ""
+      );
       ctx.dispatchOpenThreads({ type: "reorder", threadIds: restored.threadIds });
       ctx.setActiveTabThreadByMachine((current) => Object.fromEntries(
         Object.entries(current).filter(([, threadId]) => restoredSet.has(threadId))

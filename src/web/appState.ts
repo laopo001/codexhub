@@ -151,6 +151,8 @@ export const useAppState = () => {
   const [threadPicker, setThreadPicker] = useState<ThreadPickerState | null>(null);
   const [activeTabThreadByMachine, setActiveTabThreadByMachine] = useState<Record<string, string>>({});
   const [threadOrderByMachine, setThreadOrderByMachine] = useState<Record<string, string[]>>({});
+  const [pendingRestoreThreadIds, setPendingRestoreThreadIds] = useState<string[]>([]);
+  const [pendingRestoreActiveThreadId, setPendingRestoreActiveThreadId] = useState("");
   const [initialized, setInitialized] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     version: null,
@@ -231,6 +233,8 @@ export const useAppState = () => {
     openingThreads,
     openThreads,
     openThreadIdsRef,
+    pendingRestoreActiveThreadId,
+    pendingRestoreThreadIds,
     parentRegistration,
     parentRegistrationBusy,
     parentRegistrationError,
@@ -277,6 +281,8 @@ export const useAppState = () => {
     setPermissionProfilesByScope,
     setOfflineProjectsCollapsed,
     setOpeningProjectKey,
+    setPendingRestoreActiveThreadId,
+    setPendingRestoreThreadIds,
     dispatchOpenThreads,
     dispatchConversationThread,
     setParentRegistration,

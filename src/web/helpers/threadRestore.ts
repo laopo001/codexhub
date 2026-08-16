@@ -1,6 +1,9 @@
+import { CodexHubApiError } from "../../shared/apiClient.js";
+
 export type PersistedThreadRestoreResult = {
   threadIds: string[];
   activeThreadId: string;
+  pendingThreadIds: string[];
 };
 
 type PersistedThreadRestoreOptions = {
@@ -8,6 +11,46 @@ type PersistedThreadRestoreOptions = {
   activeThreadId: string;
   openThread: (threadId: string) => Promise<void>;
   clearActiveThreadIfLatest: (threadId: string) => void;
+  retryDelaysMs?: readonly number[];
+};
+
+const defaultRetryDelaysMs = [0, 250, 750, 1_500, 3_000] as const;
+
+const isRetryableThreadRestoreError = (error: unknown) => {
+  if (error instanceof CodexHubApiError) {
+    return error.status === 404
+      || error.status === 408
+      || error.status === 409
+      || error.status === 425
+      || error.status === 429
+      || error.status >= 500;
+  }
+  return error instanceof TypeError || (error instanceof Error && error.name === "AbortError");
+};
+
+const delay = async (durationMs: number) => {
+  if (durationMs <= 0) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, durationMs));
+};
+
+const openThreadWithRetry = async (
+  threadId: string,
+  openThread: (threadId: string) => Promise<void>,
+  retryDelaysMs: readonly number[]
+) => {
+  const delays = retryDelaysMs.length ? retryDelaysMs : [0];
+  let lastError: unknown;
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    await delay(delays[attempt] ?? 0);
+    try {
+      await openThread(threadId);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableThreadRestoreError(error) || attempt + 1 >= delays.length) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Thread restore failed"));
 };
 
 export const restorePersistedThreadTabs = async (
@@ -23,21 +66,26 @@ export const restorePersistedThreadTabs = async (
     ]
     : options.threadIds;
   const openedThreadIds = new Set<string>();
+  const pendingThreadIds = new Set<string>();
+  const retryDelaysMs = options.retryDelaysMs ?? defaultRetryDelaysMs;
 
   for (const threadId of openOrder) {
     try {
-      await options.openThread(threadId);
+      await openThreadWithRetry(threadId, options.openThread, retryDelaysMs);
       openedThreadIds.add(threadId);
-    } catch {
+    } catch (error) {
+      if (isRetryableThreadRestoreError(error)) pendingThreadIds.add(threadId);
       options.clearActiveThreadIfLatest(threadId);
     }
   }
 
   const threadIds = options.threadIds.filter((threadId) => openedThreadIds.has(threadId));
+  const pendingIds = options.threadIds.filter((threadId) => pendingThreadIds.has(threadId));
   return {
     threadIds,
     activeThreadId: preferredActiveThreadId && openedThreadIds.has(preferredActiveThreadId)
       ? preferredActiveThreadId
-      : threadIds[0] ?? ""
+      : threadIds[0] ?? "",
+    pendingThreadIds: pendingIds
   };
 };

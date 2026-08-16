@@ -19,7 +19,7 @@ import {
 type AppEffectsActions = {
   clearActiveThreadIfLatest: (threadId: string) => void;
   initialize: () => Promise<void>;
-  openThread: (threadId: string) => Promise<void>;
+  openThread: (threadId: string, options?: { activate?: boolean }) => Promise<void>;
   stopTurn: (threadId: string) => unknown;
   syncThreadSubscriptions: (threadIds: string[]) => void;
 };
@@ -57,12 +57,16 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
 
   useEffect(() => {
     if (!state.initialized) return;
+    const persistedOpenThreadIds = [...new Set([
+      ...selectors.openThreadIds,
+      ...state.pendingRestoreThreadIds
+    ])];
     localStorage.setItem(storageKey, JSON.stringify({
       activeWorkspacePath: state.activeWorkspacePath,
       activeMachineId: state.activeMachineId,
-      activeTabThreadId: state.activeTabThreadId,
+      activeTabThreadId: state.activeTabThreadId || state.pendingRestoreActiveThreadId,
       activeTabThreadByMachine: state.activeTabThreadByMachine,
-      openThreadIds: selectors.openThreadIds,
+      openThreadIds: persistedOpenThreadIds,
       threadOrderByMachine: state.threadOrderByMachine,
       selectedProjectKey: state.selectedProjectKey,
       projectSearch: state.sidebarDraftStore.getSnapshot().projectSearch,
@@ -74,12 +78,64 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.activeMachineId,
     state.activeTabThreadByMachine,
     state.activeTabThreadId,
+    state.pendingRestoreActiveThreadId,
+    state.pendingRestoreThreadIds,
     selectors.openThreadIds,
     state.selectedProjectKey,
     state.sidebarCollapsed,
     state.collapsedProjectMachineKeys,
     state.threadOrderByMachine,
     state.initialized
+  ]);
+
+  useEffect(() => {
+    if (!state.initialized || !state.pendingRestoreThreadIds.length) return;
+    let disposed = false;
+    let inFlight = false;
+    let attempts = 0;
+    let retryTimer: number | null = null;
+    const maxAttempts = 10;
+
+    const retryPendingThreads = async () => {
+      if (disposed || inFlight || attempts >= maxAttempts) return;
+      inFlight = true;
+      attempts += 1;
+      const pendingThreadIds = [...state.pendingRestoreThreadIds];
+      const pendingActiveThreadId = state.pendingRestoreActiveThreadId;
+      const hasActiveThread = Boolean(state.activeTabThreadId);
+      try {
+        for (const threadId of pendingThreadIds) {
+          if (disposed) return;
+          const activate = threadId === pendingActiveThreadId && !hasActiveThread;
+          try {
+            await actions.openThread(threadId, activate ? undefined : { activate: false });
+            if (disposed) return;
+            state.setPendingRestoreThreadIds((current) => current.filter((id) => id !== threadId));
+            state.setPendingRestoreActiveThreadId((current) => current === threadId ? "" : current);
+          } catch {
+            // Keep the ID persisted; the authority/runtime may still be waking up.
+          }
+        }
+      } finally {
+        inFlight = false;
+        if (attempts >= maxAttempts && retryTimer !== null) {
+          window.clearInterval(retryTimer);
+          retryTimer = null;
+        }
+      }
+    };
+
+    retryTimer = window.setInterval(() => void retryPendingThreads(), 1_500);
+    void retryPendingThreads();
+    return () => {
+      disposed = true;
+      if (retryTimer !== null) window.clearInterval(retryTimer);
+    };
+  }, [
+    state.activeTabThreadId,
+    state.initialized,
+    state.pendingRestoreActiveThreadId,
+    state.pendingRestoreThreadIds
   ]);
 
   useEffect(() => {
