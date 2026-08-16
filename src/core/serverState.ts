@@ -102,6 +102,8 @@ export class CodexhubServerState {
       || this.data.config.ui.showFloatingPet !== nextUi.showFloatingPet
       || this.data.config.ui.showDesktopPet !== nextUi.showDesktopPet
       || this.data.config.ui.taskCompleteSystemNotifications !== nextUi.taskCompleteSystemNotifications
+      || this.data.config.ui.taskCompleteNotificationPersistAfterMinutes
+        !== nextUi.taskCompleteNotificationPersistAfterMinutes
     ) {
       this.data.config.ui = nextUi;
       this.touch();
@@ -730,7 +732,8 @@ const defaultServerUiConfig = (): ServerUiConfig => ({
   selectedPetId: defaultPetId,
   showFloatingPet: false,
   showDesktopPet: false,
-  taskCompleteSystemNotifications: false
+  taskCompleteSystemNotifications: false,
+  taskCompleteNotificationPersistAfterMinutes: 3
 });
 
 const defaultServerConfig = (): ServerConfig => ({
@@ -761,7 +764,12 @@ const normalizeServerUiConfig = (value: unknown): ServerUiConfig => {
       : defaultServerUiConfig().showDesktopPet,
     taskCompleteSystemNotifications: typeof record?.taskCompleteSystemNotifications === "boolean"
       ? record.taskCompleteSystemNotifications
-      : defaultServerUiConfig().taskCompleteSystemNotifications
+      : defaultServerUiConfig().taskCompleteSystemNotifications,
+    taskCompleteNotificationPersistAfterMinutes: typeof record?.taskCompleteNotificationPersistAfterMinutes === "number"
+      && Number.isInteger(record.taskCompleteNotificationPersistAfterMinutes)
+      && record.taskCompleteNotificationPersistAfterMinutes >= 0
+      ? record.taskCompleteNotificationPersistAfterMinutes
+      : defaultServerUiConfig().taskCompleteNotificationPersistAfterMinutes
   };
 };
 
@@ -772,7 +780,10 @@ const isCompleteServerConfig = (value: unknown) => {
     && petIdPattern.test(ui.selectedPetId)
     && typeof ui.showFloatingPet === "boolean"
     && typeof ui.showDesktopPet === "boolean"
-    && typeof ui.taskCompleteSystemNotifications === "boolean";
+    && typeof ui.taskCompleteSystemNotifications === "boolean"
+    && typeof ui.taskCompleteNotificationPersistAfterMinutes === "number"
+    && Number.isInteger(ui.taskCompleteNotificationPersistAfterMinutes)
+    && ui.taskCompleteNotificationPersistAfterMinutes >= 0;
 };
 
 const objectRecord = (value: unknown): Record<string, unknown> | null =>

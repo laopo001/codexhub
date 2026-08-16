@@ -96,6 +96,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   } = viewModel;
   const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
   const [restartState, setRestartState] = React.useState<"idle" | "restarting" | "error">("idle");
+  const [notificationPersistAfterMinutesDraft, setNotificationPersistAfterMinutesDraft] = React.useState(
+    String(appSettings.taskCompleteNotificationPersistAfterMinutes)
+  );
   const restartAvailable = Boolean(systemStatus.authority);
   React.useEffect(() => {
     setProjectPickerSearch("");
@@ -103,8 +106,32 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   React.useEffect(() => {
     if (settingsDialogOpen) {
       setRestartState("idle");
+      setNotificationPersistAfterMinutesDraft(String(appSettings.taskCompleteNotificationPersistAfterMinutes));
     }
-  }, [settingsDialogOpen]);
+  }, [appSettings.taskCompleteNotificationPersistAfterMinutes, settingsDialogOpen]);
+  const saveNotificationPersistence = () => {
+    const parsed = Number(notificationPersistAfterMinutesDraft.trim());
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      setNotificationPersistAfterMinutesDraft(String(appSettings.taskCompleteNotificationPersistAfterMinutes));
+      return;
+    }
+    const previous = appSettings.taskCompleteNotificationPersistAfterMinutes;
+    setAppSettings((current) => ({ ...current, taskCompleteNotificationPersistAfterMinutes: parsed }));
+    void apiRouteJson(apiRoutes.updateConfig, {
+      ui: { taskCompleteNotificationPersistAfterMinutes: parsed }
+    }).then((payload) => {
+      setAppSettings((current) => ({
+        ...current,
+        taskCompleteNotificationPersistAfterMinutes: payload.config.ui.taskCompleteNotificationPersistAfterMinutes
+      }));
+    }).catch(() => {
+      setAppSettings((current) => ({
+        ...current,
+        taskCompleteNotificationPersistAfterMinutes: previous
+      }));
+      setNotificationPersistAfterMinutesDraft(String(previous));
+    });
+  };
   const restartAuthority = async () => {
     if (!restartAvailable || restartState === "restarting") return;
     if (!window.confirm("Restart the CodexHub authority and Codex runtime? VSCode will reconnect automatically.")) return;
@@ -326,6 +353,28 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   }}
                   aria-labelledby="settingTaskCompletePopups"
                 />
+              </div>
+              <div className="settingsRow settingsNotificationPersistenceRow">
+                <span className="settingsRowText">
+                  <strong id="settingTaskCompleteNotificationPersistence">Keep long-task notifications</strong>
+                  <em>0 keeps all; otherwise keep tasks at or above this runtime (minutes)</em>
+                </span>
+                <label className="settingsNumberControl" aria-labelledby="settingTaskCompleteNotificationPersistence">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputMode="numeric"
+                    value={notificationPersistAfterMinutesDraft}
+                    onChange={(event) => setNotificationPersistAfterMinutesDraft(event.currentTarget.value)}
+                    onBlur={saveNotificationPersistence}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                    }}
+                    aria-label="Keep long-task notifications after minutes"
+                  />
+                  <span>min</span>
+                </label>
               </div>
               <div className="settingsRow">
                 <span className="settingsRowText">

@@ -230,6 +230,7 @@ export type AppSettings = {
   showFloatingPet: boolean;
   showDesktopPet: boolean;
   taskCompleteSystemNotifications: boolean;
+  taskCompleteNotificationPersistAfterMinutes: number;
 };
 
 export type StreamEvent = ApiThreadStreamEvent;

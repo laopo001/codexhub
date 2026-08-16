@@ -2,6 +2,7 @@ import { threadUsageFromRecords } from "../../core/threadUsage.js";
 export {
   isTaskCompleteRecord,
   taskCompleteNotification,
+  taskCompleteNotificationShouldPersist,
   taskCompletionNotificationKey
 } from "../../shared/taskNotifications.js";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";

@@ -117,6 +117,27 @@ test("browser notification falls back to a service worker when Android rejects t
   }]);
 });
 
+test("persistent browser notifications request user interaction", async () => {
+  let createdOptions: NotificationOptions | undefined;
+  class PersistentNotification {
+    static readonly permission = "granted" as const;
+    onclick: ((event: Event) => void) | null = null;
+
+    constructor(_title: string, options?: NotificationOptions) {
+      createdOptions = options;
+    }
+
+    close() {}
+  }
+  const environment: BrowserTaskNotificationEnvironment = {
+    notificationApi: PersistentNotification,
+    focusWindow: () => undefined,
+    pageUrl: "https://codexhub.example/"
+  };
+  await showBrowserTaskCompleteNotification({ ...notification, persistent: true }, environment);
+  assert.equal(createdOptions?.requireInteraction, true);
+});
+
 test("browser notification failures never escape into realtime processing", async () => {
   class IllegalNotification {
     static readonly permission = "granted" as const;

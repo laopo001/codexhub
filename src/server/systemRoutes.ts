@@ -25,7 +25,8 @@ const serverConfigUpdateSchema = z.object({
     selectedPetId: z.string().regex(petIdPattern).optional(),
     showFloatingPet: z.boolean().optional(),
     showDesktopPet: z.boolean().optional(),
-    taskCompleteSystemNotifications: z.boolean().optional()
+    taskCompleteSystemNotifications: z.boolean().optional(),
+    taskCompleteNotificationPersistAfterMinutes: z.number().int().min(0).optional()
   }).strict().optional()
 }).strict();
 

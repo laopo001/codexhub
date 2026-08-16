@@ -122,7 +122,8 @@ const currentBrowserNotificationEnvironment = (): BrowserTaskNotificationEnviron
 
 const notificationOptions = (notification: TaskCompleteNotification): NotificationOptions => ({
   body: notification.body,
-  tag: `codexhub-task-complete:${notification.threadId}`
+  tag: `codexhub-task-complete:${notification.threadId}`,
+  ...(notification.persistent ? { requireInteraction: true } : {})
 });
 
 const notificationPageUrl = (pageUrl: string) => {

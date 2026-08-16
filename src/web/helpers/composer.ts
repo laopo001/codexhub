@@ -449,7 +449,12 @@ const storedAppSettings = (value: unknown): AppSettings | undefined => {
       : defaultAppSettings().showDesktopPet,
     taskCompleteSystemNotifications: typeof record.taskCompleteSystemNotifications === "boolean"
       ? record.taskCompleteSystemNotifications
-      : defaultAppSettings().taskCompleteSystemNotifications
+      : defaultAppSettings().taskCompleteSystemNotifications,
+    taskCompleteNotificationPersistAfterMinutes: typeof record.taskCompleteNotificationPersistAfterMinutes === "number"
+      && Number.isInteger(record.taskCompleteNotificationPersistAfterMinutes)
+      && record.taskCompleteNotificationPersistAfterMinutes >= 0
+      ? record.taskCompleteNotificationPersistAfterMinutes
+      : defaultAppSettings().taskCompleteNotificationPersistAfterMinutes
   };
 };
 

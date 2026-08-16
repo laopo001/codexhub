@@ -186,6 +186,28 @@
   color: #b42318;
 }
 
+.settingsNumberControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  color: #66715f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settingsNumberControl input {
+  width: 64px;
+  min-height: 36px;
+  padding: 0 9px;
+  border: 1px solid #cbd5c7;
+  border-radius: 10px;
+  background: #fff;
+  color: #17211a;
+  font: inherit;
+  text-align: center;
+}
+
 .settingsRestartRow {
   transition:
     border-color 180ms ease,

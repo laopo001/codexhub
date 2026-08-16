@@ -38,7 +38,8 @@ export const defaultAppSettings = (): AppSettings => ({
   selectedPetId: defaultPetId,
   showFloatingPet: false,
   showDesktopPet: false,
-  taskCompleteSystemNotifications: false
+  taskCompleteSystemNotifications: false,
+  taskCompleteNotificationPersistAfterMinutes: 3
 });
 export type ApprovalPolicyOptionValue = "untrusted" | "on-request" | "never" | "granular";
 

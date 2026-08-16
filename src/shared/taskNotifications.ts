@@ -7,6 +7,8 @@ export type TaskCompleteNotification = {
   threadId: string;
   machineLabel?: string;
   duration?: string;
+  durationMs?: number;
+  persistent?: boolean;
 };
 
 export const isTaskCompleteNotification = (value: unknown): value is TaskCompleteNotification => {
@@ -17,8 +19,19 @@ export const isTaskCompleteNotification = (value: unknown): value is TaskComplet
     && nonEmptyString(record.threadId)
     && (record.machineLabel === undefined || nonEmptyString(record.machineLabel))
     && (record.duration === undefined || nonEmptyString(record.duration))
+    && (record.durationMs === undefined || nonNegativeFiniteNumber(record.durationMs))
+    && (record.persistent === undefined || typeof record.persistent === "boolean")
   );
 };
+
+export const taskCompleteNotificationShouldPersist = (
+  notification: Pick<TaskCompleteNotification, "durationMs">,
+  persistAfterMinutes: number
+) => persistAfterMinutes === 0
+  || (Number.isFinite(persistAfterMinutes)
+    && persistAfterMinutes > 0
+    && typeof notification.durationMs === "number"
+    && notification.durationMs >= persistAfterMinutes * 60_000);
 
 export const taskCompleteNotificationTitle = (notification: TaskCompleteNotification) => [
   notification.title,
@@ -56,7 +69,8 @@ export const taskCompleteNotification = (
     body: notificationText(`${threadContext} · ${message}`),
     threadId: thread.threadId,
     ...(machineLabel?.trim() ? { machineLabel: machineLabel.trim() } : {}),
-    duration
+    duration,
+    ...(durationMs === undefined ? {} : { durationMs })
   };
 };
 
@@ -147,3 +161,6 @@ const stringField = (record: Record<string, unknown> | null | undefined, key: st
 };
 
 const nonEmptyString = (value: unknown): value is string => typeof value === "string" && Boolean(value.trim());
+
+const nonNegativeFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0;

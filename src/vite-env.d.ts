@@ -13,6 +13,8 @@ interface Window {
       threadId: string;
       machineLabel?: string;
       duration?: string;
+      durationMs?: number;
+      persistent?: boolean;
     }) => void;
   };
 }

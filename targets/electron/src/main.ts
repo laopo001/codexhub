@@ -138,7 +138,8 @@ const showTaskCompleteNativeNotification = (notification: TaskCompleteNotificati
     const nativeNotification = new Notification({
       id: `codexhub-task-complete:${notification.threadId}`,
       title: taskCompleteNotificationTitle(notification),
-      body: notification.body
+      body: notification.body,
+      ...(notification.persistent ? { timeoutType: "never" as const } : {})
     });
     activeTaskNotifications.add(nativeNotification);
     const release = () => activeTaskNotifications.delete(nativeNotification);

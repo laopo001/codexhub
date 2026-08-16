@@ -90,6 +90,8 @@ export type ServerUiConfig = {
   showFloatingPet: boolean;
   showDesktopPet: boolean;
   taskCompleteSystemNotifications: boolean;
+  /** Minutes a task must run before its completion notification stays open; 0 keeps every notification open. */
+  taskCompleteNotificationPersistAfterMinutes: number;
 };
 
 /** config.yaml 中持久化的全局配置。 */

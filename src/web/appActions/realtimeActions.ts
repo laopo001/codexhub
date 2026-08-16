@@ -45,6 +45,7 @@ import {
   type SidebarDraftStore,
   streamEventRecords,
   taskCompleteNotification,
+  taskCompleteNotificationShouldPersist,
   taskCompletionNotificationKey
 } from "../appHelpers.js";
 import type {
@@ -144,7 +145,8 @@ const taskRunCompleteNotification = (
     body: `${task.name || "计划任务"} · 已完成`,
     threadId: run.threadId ?? task.threadId ?? task.taskId,
     ...(machineLabel ? { machineLabel } : {}),
-    duration
+    duration,
+    ...(typeof run.durationMs === "number" ? { durationMs: run.durationMs } : {})
   };
 };
 
@@ -511,23 +513,28 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       // Completion feedback must never interrupt realtime state processing.
     }
     if (!ctx.appSettingsRef.current.taskCompleteSystemNotifications) return;
+    const persistent = taskCompleteNotificationShouldPersist(
+      notification,
+      ctx.appSettingsRef.current.taskCompleteNotificationPersistAfterMinutes
+    );
+    const notificationWithPersistence = { ...notification, persistent };
     if (isElectronSurface) {
-      if (sendElectronTaskCompleteNotification(notification, window.codexhubElectronPet) === "notification") return;
-      void showBrowserTaskCompleteNotification(notification);
+      if (sendElectronTaskCompleteNotification(notificationWithPersistence, window.codexhubElectronPet) === "notification") return;
+      void showBrowserTaskCompleteNotification(notificationWithPersistence);
       return;
     }
     if (isEmbeddedHostSurface) {
       try {
         window.parent?.postMessage({
           type: "codexhub.taskCompleteNotification",
-          notification
+          notification: notificationWithPersistence
         }, "*");
       } catch {
         // Embedded host notification failures are isolated from the event stream.
       }
       return;
     }
-    void showBrowserTaskCompleteNotification(notification);
+    void showBrowserTaskCompleteNotification(notificationWithPersistence);
   }
 
   return {

@@ -8,6 +8,7 @@ import {
 } from "../../src/web/helpers/notifications.js";
 import {
   isTaskCompleteNotification,
+  taskCompleteNotificationShouldPersist,
   taskCompleteNotificationTitle
 } from "../../src/shared/taskNotifications.js";
 
@@ -48,7 +49,17 @@ test("task completion notification payload validation accepts only usable IPC da
   assert.equal(isTaskCompleteNotification({ ...notification, threadId: "" }), false);
   assert.equal(isTaskCompleteNotification({ ...notification, duration: 2000 }), false);
   assert.equal(isTaskCompleteNotification({ ...notification, machineLabel: 42 }), false);
+  assert.equal(isTaskCompleteNotification({ ...notification, durationMs: -1 }), false);
+  assert.equal(isTaskCompleteNotification({ ...notification, persistent: "yes" }), false);
   assert.equal(isTaskCompleteNotification(null), false);
+});
+
+test("notification persistence uses zero for all or a runtime threshold in minutes", () => {
+  assert.equal(taskCompleteNotificationShouldPersist({}, 0), true);
+  assert.equal(taskCompleteNotificationShouldPersist({}, 3), false);
+  assert.equal(taskCompleteNotificationShouldPersist({ durationMs: 179_999 }, 3), false);
+  assert.equal(taskCompleteNotificationShouldPersist({ durationMs: 180_000 }, 3), true);
+  assert.equal(taskCompleteNotificationShouldPersist({ durationMs: 600_000 }, 5), true);
 });
 
 test("task completion notification title is shared across hosts", () => {
