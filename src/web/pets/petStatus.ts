@@ -85,6 +85,27 @@ const statusPriority: Record<PetActivityStatus, number> = {
   idle: 3,
 };
 
+/**
+ * Sort activity rows by attention level while keeping the order within each
+ * status group stable. `updatedAt` is intentionally not used here: it moves
+ * on every streamed event and would make two running rows swap positions.
+ *
+ * The optional order map is owned by the UI hook, so this helper remains pure
+ * and can also be used by callers that only need the attention ordering.
+ */
+export const sortPetActivities = (
+  activities: PetActivity[],
+  order?: ReadonlyMap<string, number>
+) => [...activities].sort((left, right) => {
+  const statusDifference = statusPriority[left.status] - statusPriority[right.status];
+  if (statusDifference !== 0) return statusDifference;
+  if (!order) return 0;
+  const leftOrder = order.get(left.threadId);
+  const rightOrder = order.get(right.threadId);
+  if (leftOrder === undefined || rightOrder === undefined) return 0;
+  return leftOrder - rightOrder;
+});
+
 const normalizedStatus = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/[-\s]+/g, "_").toLowerCase() : "";
 
@@ -213,7 +234,7 @@ export const derivePetActivities = (
     candidates.set(detail.threadId, { ...current, detail });
   }
 
-  return [...candidates.values()]
+  return sortPetActivities([...candidates.values()]
     .map<PetActivity>(({ activity, detail, machine: candidateMachine, runtime, summary }) => {
       const machineId = detail?.runtime.machineId
         ?? summary?.runtime.machineId
@@ -267,9 +288,7 @@ export const derivePetActivities = (
         ...(detailExecution ?? summaryExecution ?? {})
       };
     })
-    .filter((activity) => activity.threadId.length > 0)
-    .sort((left, right) => statusPriority[left.status] - statusPriority[right.status]
-      || right.updatedAt.localeCompare(left.updatedAt));
+    .filter((activity) => activity.threadId.length > 0));
 };
 
 export const headlinePetStatus = (activities: PetActivity[]): PetActivityStatus =>

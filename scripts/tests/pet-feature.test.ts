@@ -21,6 +21,7 @@ import {
   petAnimationForStatus,
   petCompletionJumpDurationMs,
   petStatusForThread,
+  sortPetActivities,
   transitionPetCompletionState,
 } from "../../src/web/pets/petStatus.js";
 import { nextAvailablePetManifest, parsePetManifest } from "../../src/web/pets/petStore.js";
@@ -217,6 +218,31 @@ test("pet activities sort using the official attention priority", () => {
     thread("thread-1", [pendingInput], true),
   ]);
   assert.deepEqual(activities.map((activity) => activity.status), ["needs_input", "blocked", "running", "idle"]);
+});
+
+test("pet activities do not use updatedAt to reorder rows within a status group", () => {
+  const activities = derivePetActivities([
+    thread("thread-1", [], true),
+    thread("thread-2", [], true),
+  ]);
+
+  assert.deepEqual(activities.map((activity) => activity.threadId), ["thread-1", "thread-2"]);
+});
+
+test("pet activity order can preserve the UI-assigned order across snapshots", () => {
+  const activities = derivePetActivities([
+    thread("thread-2", [], true),
+    thread("thread-1", [], true),
+  ]);
+  const order = new Map([
+    ["thread-1", 0],
+    ["thread-2", 1],
+  ]);
+
+  assert.deepEqual(
+    sortPetActivities(activities, order).map((activity) => activity.threadId),
+    ["thread-1", "thread-2"]
+  );
 });
 
 test("pet activities include running threads from registered runtimes", () => {

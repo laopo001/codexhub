@@ -22,6 +22,7 @@ import {
   hasRunningPetThreads,
   headlinePetStatus,
   initialPetCompletionState,
+  sortPetActivities,
   transitionPetCompletionState,
 } from "./petStatus.js";
 
@@ -84,6 +85,8 @@ export const usePetFeature = (
   const petSourcesRef = React.useRef({ runtimeList, dialogThreads, machines });
   petSourcesRef.current = { runtimeList, dialogThreads, machines };
   const completedTurnKeysRef = React.useRef(new Set<string>());
+  const activityOrderRef = React.useRef(new Map<string, number>());
+  const nextActivityOrderRef = React.useRef(0);
   const enabledRef = React.useRef(enabled);
   enabledRef.current = enabled;
   const desktopEnabledRef = React.useRef(desktopEnabled);
@@ -158,10 +161,25 @@ export const usePetFeature = (
 
   const pets = React.useMemo(() => [...builtinPets, ...importedPets], [importedPets]);
   const selectedPet = pets.find((pet) => pet.id === selectedPetId) ?? builtinPet;
-  const activities = React.useMemo(
-    () => derivePetActivities(openThreads, runtimeList, machines, dialogThreads),
-    [dialogThreads, machines, openThreads, runtimeList]
-  );
+  const activities = React.useMemo(() => {
+    const derivedActivities = derivePetActivities(openThreads, runtimeList, machines, dialogThreads);
+    const activeThreadIds = new Set<string>();
+
+    for (const activity of derivedActivities) {
+      if (activity.status === "idle") continue;
+      activeThreadIds.add(activity.threadId);
+      if (!activityOrderRef.current.has(activity.threadId)) {
+        activityOrderRef.current.set(activity.threadId, nextActivityOrderRef.current++);
+      }
+    }
+
+    // Do not let a long-lived Web session retain every historical thread ID.
+    for (const threadId of activityOrderRef.current.keys()) {
+      if (!activeThreadIds.has(threadId)) activityOrderRef.current.delete(threadId);
+    }
+
+    return sortPetActivities(derivedActivities, activityOrderRef.current);
+  }, [dialogThreads, machines, openThreads, runtimeList]);
   const status = headlinePetStatus(activities);
 
   const setVisibilityEnabled = React.useCallback((
