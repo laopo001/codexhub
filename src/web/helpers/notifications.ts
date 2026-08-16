@@ -1,4 +1,51 @@
 import type { TaskCompleteNotification } from "../types.js";
+import type { MachineActivitySummary, MachineSummary } from "../../shared/machineTypes.js";
+
+export type RegisteredMachineActivityCompletion = {
+  machine: MachineSummary;
+  activity: MachineActivitySummary;
+};
+
+/**
+ * Registered machines expose activity-only snapshots to the parent server.
+ * Keep the transition detector separate from the notification transport so
+ * reconnects and the Electron/VS Code hosts can share the same semantics.
+ */
+export const collectRegisteredMachineActivityCompletions = (
+  previous: ReadonlyMap<string, MachineActivitySummary["status"]>,
+  machines: MachineSummary[]
+) => {
+  const currentRegisteredMachineIds = new Set(
+    machines.filter((machine) => machine.type === "registered").map((machine) => machine.machineId)
+  );
+  const currentActivityKeys = new Set<string>();
+  const completed: RegisteredMachineActivityCompletion[] = [];
+  const next = new Map(previous);
+
+  for (const machine of machines) {
+    if (machine.type !== "registered") continue;
+    for (const activity of machine.activities ?? []) {
+      const key = registeredMachineActivityKey(machine.machineId, activity.threadId);
+      currentActivityKeys.add(key);
+      if (previous.get(key) === "running" && activity.status === "idle") {
+        completed.push({ machine, activity });
+      }
+      next.set(key, activity.status);
+    }
+  }
+
+  for (const key of next.keys()) {
+    const separator = key.indexOf("\u0000");
+    const machineId = separator === -1 ? key : key.slice(0, separator);
+    if (!currentRegisteredMachineIds.has(machineId) || !currentActivityKeys.has(key)) {
+      next.delete(key);
+    }
+  }
+
+  return { completed, next };
+};
+
+const registeredMachineActivityKey = (machineId: string, threadId: string) => `${machineId}\u0000${threadId}`;
 
 type BrowserNotificationInstance = {
   close: () => void;

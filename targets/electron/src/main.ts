@@ -41,6 +41,14 @@ const surfaceHeartbeatMs = 10_000;
 const desktopPetSyncMs = 1_000;
 const windowsTrayEnabled = process.platform === "win32";
 const electronSmokeEnabled = process.env.CODEX_HUB_ELECTRON_SMOKE === "1";
+const electronAppUserModelId = "com.dadigua.codexhub";
+
+// electron-builder uses appId as the Windows AUMID. Set it before any
+// BrowserWindow or single-instance setup so native Toast notifications can
+// resolve the installed Start Menu shortcut correctly.
+if (process.platform === "win32") {
+  electronApp.setAppUserModelId(electronAppUserModelId);
+}
 
 // Keep the 16px transparent raster aligned with the blue cube used by the
 // packaged application icon so the tray and taskbar show the same identity.

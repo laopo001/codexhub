@@ -1,4 +1,5 @@
 import type React from "react";
+import type { MachineActivityStatus } from "../../shared/machineTypes.js";
 import type { RealtimeOutgoingMessage } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import type { CodexRecord } from "../../shared/recordTypes.js";
@@ -19,6 +20,7 @@ import {
   apiRouteJson,
   authToken,
   appendThreadOrder,
+  collectRegisteredMachineActivityCompletions,
   formatDuration,
   isTaskCompleteRecord,
   mergeNotificationRecords,
@@ -141,6 +143,7 @@ const taskRunCompleteNotification = (task: LocalTask, run: LocalTaskRun): TaskCo
 
 export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: RealtimeActionsDependencies): RealtimeActions => {
   const registeredMachineConnections = createRegisteredMachineConnectionTracker();
+  const registeredMachineActivityStatuses = new Map<string, MachineActivityStatus>();
   const loadInitialPayloads = async () => Promise.all([
     apiRouteJson(apiRoutes.runtimes),
     apiRouteJson(apiRoutes.config),
@@ -191,6 +194,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const loadedMachines = normalizeMachines(projectData.machines);
     const loadedProjects = normalizeProjects(projectData.projects);
     registeredMachineConnections.seed(loadedMachines);
+    rememberRegisteredMachineActivities(loadedMachines);
     const saved = readStoredUiState();
     const shouldRestoreSavedTabs = (isVscodeSurface || !initialWorkspacePath)
       && Array.isArray(saved?.openThreadIds);
@@ -327,6 +331,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       for (const machine of registeredMachineChanges.disconnected) {
         deps.notifyRegisteredMachineDisconnected(machine);
       }
+      notifyRegisteredMachineActivityCompletions(nextMachines);
       ctx.setMachines(nextMachines);
       ctx.setProjects(normalizeProjects(payload.projects));
       return;
@@ -437,6 +442,38 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         if (run.threadId && ctx.realtimeThreadSubscriptions.current.has(run.threadId)) continue;
         dispatchTaskCompleteNotification(taskRunCompleteNotification(task, run));
       }
+    }
+  }
+
+  function rememberRegisteredMachineActivities(machines: MachineSummary[]) {
+    const { next } = collectRegisteredMachineActivityCompletions(
+      registeredMachineActivityStatuses,
+      machines
+    );
+    registeredMachineActivityStatuses.clear();
+    for (const [key, status] of next) registeredMachineActivityStatuses.set(key, status);
+  }
+
+  function notifyRegisteredMachineActivityCompletions(machines: MachineSummary[]) {
+    const { completed, next } = collectRegisteredMachineActivityCompletions(
+      registeredMachineActivityStatuses,
+      machines
+    );
+    registeredMachineActivityStatuses.clear();
+    for (const [key, status] of next) registeredMachineActivityStatuses.set(key, status);
+
+    for (const { activity } of completed) {
+      if (ctx.realtimeThreadSubscriptions.current.has(activity.threadId)) continue;
+      if (
+        isEmbeddedHostSurface
+        && embeddedWorkspacePathSet.size
+        && !embeddedWorkspacePathSet.has(activity.workingDirectory)
+      ) continue;
+      dispatchTaskCompleteNotification({
+        title: "Codex task complete",
+        body: `${activity.activityTitle ?? activity.title ?? "Registered machine task"} completed.`,
+        threadId: activity.threadId
+      });
     }
   }
 

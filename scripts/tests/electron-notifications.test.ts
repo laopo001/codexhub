@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  collectRegisteredMachineActivityCompletions,
   sendElectronTaskCompleteNotification,
   type ElectronTaskNotificationBridge
 } from "../../src/web/helpers/notifications.js";
@@ -42,4 +43,38 @@ test("task completion notification payload validation accepts only usable IPC da
   assert.equal(isTaskCompleteNotification({ ...notification, threadId: "" }), false);
   assert.equal(isTaskCompleteNotification({ ...notification, duration: 2000 }), false);
   assert.equal(isTaskCompleteNotification(null), false);
+});
+
+test("registered machine activity transitions produce one completion candidate", () => {
+  const machine = {
+    machineId: "machine-remote",
+    type: "registered" as const,
+    hostname: "remote-host",
+    online: true,
+    status: "online" as const,
+    lastSeenAt: "2026-08-16T00:00:00.000Z",
+    capabilities: { projectLauncher: true },
+    activities: [{
+      threadId: "thread-remote",
+      title: "Remote task",
+      workingDirectory: "C:/remote/project",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+      status: "running" as const
+    }]
+  };
+  const initial = collectRegisteredMachineActivityCompletions(new Map(), [machine]);
+  assert.deepEqual(initial.completed, []);
+
+  const completed = collectRegisteredMachineActivityCompletions(initial.next, [{
+    ...machine,
+    activities: [{ ...machine.activities[0], status: "idle", updatedAt: "2026-08-16T00:00:01.000Z" }]
+  }]);
+  assert.equal(completed.completed.length, 1);
+  assert.equal(completed.completed[0]?.activity.threadId, "thread-remote");
+
+  const unchanged = collectRegisteredMachineActivityCompletions(completed.next, [{
+    ...machine,
+    activities: [{ ...machine.activities[0], status: "idle", updatedAt: "2026-08-16T00:00:02.000Z" }]
+  }]);
+  assert.deepEqual(unchanged.completed, []);
 });
