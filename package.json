@@ -64,6 +64,7 @@
     "build:electron": "tsx scripts/build-electron.ts",
     "build:remote-client": "tsx scripts/build-remote-client.ts",
     "build": "pnpm run clean && pnpm check && tsc -p tsconfig.node.json && pnpm run build:electron && pnpm run build:remote-client && vite build",
+    "link:all": "pnpm build && tsx scripts/link-local.ts",
     "build:vscode": "pnpm build && tsx scripts/build-vscode.ts",
     "package:vscode": "pnpm run build:vscode && cd dist-vsix && pnpm exec vsce package --no-dependencies --out codexhub.vsix",
     "package:release": "pnpm build && tsx scripts/package-release.ts",

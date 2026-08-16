@@ -370,14 +370,27 @@ WSL 使用桌面端口的 `+1`，是为了在 WSL mirrored networking 与 Window
 
 authority 启动时会先读取当前用户登录 shell 的 `PATH`，并把它与 VSCode/Electron 宿主继承的 `PATH` 合并；因此即使从桌面启动，也可以使用用户通过 nvm、fnm、asdf、npm 或 pnpm 配置的 Node 和 CLI。然后优先使用本地 npm/链接包中的 authority service 和 Web `dist`；如果用户 PATH 中的 `codexhub`/`cxh` 没有指向可用构建，才回退到 VSIX/Electron bundle。Node 运行时优先使用用户 PATH 中满足 Node 20+ 要求的 `node`，最后才回退到 VSCode/Electron 宿主自带的 Node。选择结果和 authority 代码来源会显示在 `/api/health` 的 `authorityRuntime`、`authorityServiceSource` 中。更新本地包或 Node 后重启 authority（Settings → Restart CodexHub），下一个首次启动 authority 的客户端就会使用新版本；VSCode 和 Electron 后续会 attach 到同一个已运行的 authority。npm 是包管理器，不负责替换 Node 本身；通常不需要把 Node 或 CodexHub 的绝对路径写入 `config.yaml`。
 
-本地开发包只需要构建，并确保 `codexhub` 或 `cxh` 通过 npm/pnpm link 或其他用户级安装方式出现在用户的 `PATH` 中：
+本地开发包只需要构建，并确保 `codexhub` 或 `cxh` 通过 `npm link` 或其他用户级安装方式出现在用户的 `PATH` 中：
 
 ```bash
 pnpm build
 command -v codexhub || command -v cxh
 ```
 
-如果命令能在用户 shell 中解析到本地包，VSCode/Electron 启动 authority 时会自动发现它对应的包根目录。`authorityServiceSource` 为 `linked-package` 时表示实际使用了 PATH 中的本地 npm/link 包；`configured-package` 表示使用了显式 `CODEX_HUB_AUTHORITY_PACKAGE`；`bundled` 表示回退到了 VSIX/Electron 自带代码。只有 Windows、Remote SSH、多个全局 Node 并存等特殊场景，才建议显式配置 `CODEX_HUB_AUTHORITY_PACKAGE` 或 `CODEX_HUB_AUTHORITY_NODE`。
+在 WSL 仓库中可以用一个脚本同时更新 WSL 和 Windows 的全局 link。脚本会先完整构建当前版本，再通过 Windows 可访问的 `\\wsl.localhost\\<distro>\\...` 路径让 Windows `npm link` 同一个 checkout：
+
+```bash
+pnpm run link:all
+```
+
+完成后可以分别检查：
+
+```bash
+command -v codexhub
+/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command 'Get-Command codexhub'
+```
+
+如果命令能在用户 shell 中解析到本地包，VSCode/Electron 启动 authority 时会自动发现它对应的包根目录。`authorityServiceSource` 为 `linked-package` 时表示实际使用了 PATH 中的本地 `npm link` 包；`configured-package` 表示使用了显式 `CODEX_HUB_AUTHORITY_PACKAGE`；`bundled` 表示回退到了 VSIX/Electron 自带代码。只有 Windows、Remote SSH、多个全局 Node 并存等特殊场景，才建议显式配置 `CODEX_HUB_AUTHORITY_PACKAGE` 或 `CODEX_HUB_AUTHORITY_NODE`。
 
 同一 authority 的 VSCode/Electron client 共享 local runtime、SSH/tasks/plugins/Registered 配置和一条 parent machine transport，但 Web UI 仍按当前 URL 携带的 workspace paths 过滤项目，localStorage 按稳定 client scope 隔离，task completion popup 也只路由到包含对应 project path 的窗口。VSCode iframe 使用和普通 Web 相同的完整左侧控制面；Webview 和 Open in Browser 都通过 `vscode.env.asExternalUri`，因此 Remote SSH、端口转发或 tunnel 环境仍可访问。没有 file workspace folder 的 VSCode 只显示状态页；Electron 仍可注册空 workspace surface。
 
