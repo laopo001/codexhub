@@ -39,10 +39,13 @@ export const taskCompleteNotification = (
   const duration = typeof durationMs === "number" ? formatStatusDuration(durationMs) : undefined;
   const message = usefulTaskCompleteMessage(payload)
     ?? latestFinalAnswerText(records, record)
-    ?? "Task completed.";
+    ?? "任务已完成";
+  const threadContext = thread.title.trim()
+    || thread.workingDirectory.split(/[\\/]/).filter(Boolean).pop()
+    || "Codex 任务";
   return {
-    title: duration ? `Codex task complete · 运行时间 ${duration}` : "Codex task complete",
-    body: notificationText(message),
+    title: duration ? `Codex 任务完成 · 用时 ${duration}` : "Codex 任务完成",
+    body: notificationText(`${threadContext} · ${message}`),
     threadId: thread.threadId,
     duration
   };

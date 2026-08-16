@@ -134,8 +134,8 @@ const embeddedWorkspacePathSet = new Set(embeddedWorkspacePaths);
 const taskRunCompleteNotification = (task: LocalTask, run: LocalTaskRun): TaskCompleteNotification => {
   const duration = formatDuration(run.durationMs) || undefined;
   return {
-    title: duration ? `Codex task complete · 运行时间 ${duration}` : "Codex task complete",
-    body: `${task.name || "Scheduled task"} completed.`,
+    title: duration ? `Codex 任务完成 · 用时 ${duration}` : "Codex 任务完成",
+    body: `${task.name || "计划任务"} · 已完成`,
     threadId: run.threadId ?? task.threadId ?? task.taskId,
     duration
   };
@@ -462,16 +462,17 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     registeredMachineActivityStatuses.clear();
     for (const [key, status] of next) registeredMachineActivityStatuses.set(key, status);
 
-    for (const { activity } of completed) {
+    for (const { machine, activity } of completed) {
       if (ctx.realtimeThreadSubscriptions.current.has(activity.threadId)) continue;
       if (
         isEmbeddedHostSurface
         && embeddedWorkspacePathSet.size
         && !embeddedWorkspacePathSet.has(activity.workingDirectory)
       ) continue;
+      const machineLabel = machine.name ?? machine.hostname ?? "registered machine";
       dispatchTaskCompleteNotification({
-        title: "Codex task complete",
-        body: `${activity.activityTitle ?? activity.title ?? "Registered machine task"} completed.`,
+        title: "Codex 远程任务完成",
+        body: `${activity.activityTitle ?? activity.title ?? "远程任务"} · ${machineLabel}`,
         threadId: activity.threadId
       });
     }

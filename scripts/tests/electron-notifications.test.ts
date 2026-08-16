@@ -8,8 +8,8 @@ import {
 import { isTaskCompleteNotification } from "../../src/shared/taskNotifications.js";
 
 const notification = {
-  title: "Codex task complete",
-  body: "The task completed.",
+  title: "Codex 任务完成",
+  body: "项目检查 · 已完成",
   threadId: "thread-electron",
   duration: "2.0s"
 };
