@@ -242,9 +242,8 @@ export const usePetFeature = (
   const selectPet = React.useCallback((id: string) => {
     if (!pets.some((pet) => pet.id === id)) return;
     setSelectedPetId(id);
-    setEnabled(true);
     setError("");
-  }, [pets, setEnabled, setSelectedPetId]);
+  }, [pets, setSelectedPetId]);
 
   const openPicker = React.useCallback(() => {
     setError("");
