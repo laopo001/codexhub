@@ -15,11 +15,15 @@ import {
   subagentDialogConversationThreads,
   subagentThreadSubscriptionIds
 } from "./helpers/subagentThreadDialog.js";
+import { resolveActiveThreadId } from "./helpers/activeThreadSelection.js";
 
 type AppEffectsActions = {
   clearActiveThreadIfLatest: (threadId: string) => void;
   initialize: () => Promise<void>;
-  openThread: (threadId: string, options?: { activate?: boolean }) => Promise<void>;
+  openThread: (threadId: string, options?: {
+    activate?: boolean;
+    deferActivationUntilLoaded?: boolean;
+  }) => Promise<void>;
   stopTurn: (threadId: string) => unknown;
   syncThreadSubscriptions: (threadIds: string[]) => void;
 };
@@ -44,6 +48,42 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       state.realtimeThreadSubscriptions.current.clear();
     };
   }, []);
+
+  useEffect(() => {
+    if (!state.initialized || !state.openThreads.length) return;
+    const activeThreadId = resolveActiveThreadId({
+      activeMachineId: state.activeMachineId,
+      activeTabThreadId: state.activeTabThreadId,
+      activeWorkspacePath: state.activeWorkspacePath,
+      openThreads: state.openThreads,
+      selectedProjectMachineId: selectors.selectedProject?.machineId,
+      selectedProjectPath: selectors.selectedProject?.path
+    });
+    if (!activeThreadId || activeThreadId === state.activeTabThreadId) return;
+    const activeThread = state.openThreads.find((thread) => thread.threadId === activeThreadId);
+    if (!activeThread || !activeThread.runtime.machineId) return;
+    const machineId = activeThread.runtime.machineId;
+
+    state.latestRequestedThreadId.current = activeThreadId;
+    state.setActiveTabThreadId(activeThreadId);
+    state.setActiveTabThreadByMachine((current) => ({
+      ...current,
+      [machineId]: activeThreadId
+    }));
+    if (!state.selectedProjectKey) {
+      state.setActiveMachineId(machineId);
+      state.setActiveWorkspacePath(activeThread.workingDirectory);
+    }
+  }, [
+    selectors.selectedProject?.machineId,
+    selectors.selectedProject?.path,
+    state.activeMachineId,
+    state.activeTabThreadId,
+    state.activeWorkspacePath,
+    state.initialized,
+    state.openThreads,
+    state.selectedProjectKey
+  ]);
 
   useEffect(() => {
     const primeSound = () => primeTaskCompletionSound(state.notificationAudioContext);
@@ -108,7 +148,10 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
           if (disposed) return;
           const activate = threadId === pendingActiveThreadId && !hasActiveThread;
           try {
-            await actions.openThread(threadId, activate ? undefined : { activate: false });
+            await actions.openThread(
+              threadId,
+              activate ? { deferActivationUntilLoaded: true } : { activate: false }
+            );
             if (disposed) return;
             state.setPendingRestoreThreadIds((current) => current.filter((id) => id !== threadId));
             state.setPendingRestoreActiveThreadId((current) => current === threadId ? "" : current);
@@ -208,7 +251,12 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     const availableRuntimes = state.runtimeList;
     if (!availableRuntimes.length) {
       if (state.activeMachineId) state.setActiveMachineId("");
-      if (state.activeTabThreadId) state.setActiveTabThreadId("");
+      // Keep an already open thread selected while the runtime is briefly
+      // absent during reconnect. Clearing it here leaves Ant Tabs with a
+      // visible label but no mounted conversation/composer.
+      if (state.activeTabThreadId && !state.openThreads.length) {
+        state.setActiveTabThreadId("");
+      }
       return;
     }
 

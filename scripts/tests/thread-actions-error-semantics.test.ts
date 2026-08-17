@@ -66,6 +66,7 @@ const fixture = async (
   const actionsDispatched: Array<{ type: string; record?: CodexRecord }> = [];
   const shownErrors: Array<{ key: string; title: string; message: string }> = [];
   const openedModelThreadIds: string[] = [];
+  const activeTabChanges: string[] = [];
   let projectUpdates = 0;
   currentFetch = fetchImpl;
   const context = {
@@ -93,7 +94,9 @@ const fixture = async (
     threadLastSeqs: { current: new Map() },
     setActiveMachineId: () => undefined,
     setActiveTabThreadByMachine: () => undefined,
-    setActiveTabThreadId: () => undefined,
+    setActiveTabThreadId: (threadId: string) => {
+      activeTabChanges.push(threadId);
+    },
     setActiveWorkspacePath: () => undefined,
     setForkingMessageKey: () => undefined,
     setGoalDialog: () => undefined,
@@ -126,12 +129,63 @@ const fixture = async (
     actionsDispatched,
     shownErrors,
     openedModelThreadIds,
+    activeTabChanges,
     conversationThreads,
     draft,
     threadId,
     projectUpdates: () => projectUpdates
   };
 };
+
+test("deferred thread activation waits for a successful load", async () => {
+  let resolveFetch!: (response: Response) => void;
+  let markFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => {
+    markFetchStarted = resolve;
+  });
+  const fetchResponse = new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  });
+  const deferredThread = openThread(false, "chat", "deferred-thread");
+  const { actions, activeTabChanges } = await fixture(
+    false,
+    "chat",
+    async () => {
+      markFetchStarted();
+      return fetchResponse;
+    },
+    { threadId: deferredThread.threadId, workspaceOpen: false }
+  );
+
+  const opening = actions.openThread(deferredThread.threadId, { deferActivationUntilLoaded: true });
+  await fetchStarted;
+  assert.deepEqual(activeTabChanges, []);
+
+  resolveFetch(new Response(JSON.stringify(deferredThread), {
+    status: 200,
+    headers: { "content-type": "application/json" }
+  }));
+  await opening;
+  assert.deepEqual(activeTabChanges, [deferredThread.threadId]);
+});
+
+test("failed deferred thread activation leaves the current tab untouched", async () => {
+  const { actions, activeTabChanges } = await fixture(
+    false,
+    "chat",
+    async () => new Response(JSON.stringify({ error: "thread unavailable" }), {
+      status: 404,
+      headers: { "content-type": "application/json" }
+    }),
+    { threadId: "missing-thread", workspaceOpen: false }
+  );
+
+  await assert.rejects(
+    actions.openThread("missing-thread", { deferActivationUntilLoaded: true }),
+    /thread unavailable/
+  );
+  assert.deepEqual(activeTabChanges, []);
+});
 
 const serverFailure = (message: string, delivery: "turn" | "steer" | "goal") =>
   async () => new Response(JSON.stringify({ error: message, delivery }), {

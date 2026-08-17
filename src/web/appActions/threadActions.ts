@@ -87,6 +87,8 @@ export type OpenThreadOptions = {
   preferredWorkingDirectory?: string;
   /** Open the thread in the background without changing the active tab. */
   activate?: boolean;
+  /** Keep the current tab stable until the requested thread has loaded successfully. */
+  deferActivationUntilLoaded?: boolean;
 };
 
 type ThreadGoalUpdateOptions = {
@@ -134,7 +136,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     ctx.closedThreadIds.current.delete(threadId);
     if (activate) {
       ctx.latestRequestedThreadId.current = threadId;
-      ctx.setActiveTabThreadId(threadId);
+      if (!options.deferActivationUntilLoaded) ctx.setActiveTabThreadId(threadId);
     }
     const updateWorkspaceContext = activate && !ctx.selectedProjectKey;
     if (updateWorkspaceContext && options.preferredWorkingDirectory) {
@@ -154,6 +156,13 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
         ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: threadId }));
       }
       if (updateWorkspaceContext) ctx.setActiveWorkspacePath(existingThread.workingDirectory);
+      if (
+        activate
+        && options.deferActivationUntilLoaded
+        && ctx.latestRequestedThreadId.current === threadId
+      ) {
+        ctx.setActiveTabThreadId(threadId);
+      }
       return;
     }
 
@@ -197,7 +206,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     try {
       await open;
     } catch (error) {
-      if (activate) clearActiveThreadIfLatest(threadId);
+      if (activate && !options.deferActivationUntilLoaded) clearActiveThreadIfLatest(threadId);
       throw error;
     } finally {
       if (ctx.openingThreads.current.get(threadId) === open) {
