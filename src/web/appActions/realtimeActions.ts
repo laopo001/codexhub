@@ -46,7 +46,8 @@ import {
   streamEventRecords,
   taskCompleteNotification,
   taskCompleteNotificationShouldPersist,
-  taskCompletionNotificationKey
+  taskCompletionNotificationKey,
+  taskCompleteRecordIsForLatestUserInput
 } from "../appHelpers.js";
 import type {
   AppSettings,
@@ -422,6 +423,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
 
     for (const record of incomingRecords) {
       if (!isTaskCompleteRecord(record)) continue;
+      if (!taskCompleteRecordIsForLatestUserInput(record, nextRecords, event.thread)) continue;
       const key = taskCompletionNotificationKey(threadId, record);
       if (ctx.notifiedTaskCompletions.current.has(key)) continue;
       ctx.notifiedTaskCompletions.current.add(key);

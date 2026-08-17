@@ -84,6 +84,25 @@ test("thread state is merged before a browser completion notification is attempt
   assert.doesNotThrow(() => actions.applyThreadStreamEvent(turnAbortedEvent()));
   assert.deepEqual(calls, ["thread", "order", "runtimes", "projects"]);
 
+  context.notificationRecordsByThread.current.set("thread-test", [
+    {
+      id: "app:thread-test:turn-new:user:user-message",
+      timestamp: "2026-07-19T00:00:03.000Z",
+      type: "event_msg",
+      payload: { type: "user_message", message: "newest input" }
+    }
+  ]);
+  calls.length = 0;
+  assert.doesNotThrow(() => actions.applyThreadStreamEvent({
+    ...taskCompleteEvent(),
+    seq: 6
+  }));
+  assert.deepEqual(
+    calls,
+    ["thread", "order", "runtimes", "projects", "pet:thread-test:turn-test"],
+    "a stale completion remains in the thread and pet lifecycle, but does not show a task notification"
+  );
+
   context.openThreadIdsRef.current.clear();
   calls.length = 0;
   assert.doesNotThrow(() => actions.applyThreadStreamEvent({

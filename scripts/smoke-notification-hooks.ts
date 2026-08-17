@@ -57,7 +57,7 @@ try {
   if (payload.type !== "task_complete") throw new Error(`unexpected payload type: ${payload.type}`);
   if (payload.threadId !== "thread-test") throw new Error(`unexpected payload threadId: ${payload.threadId}`);
   if (payload.turnId !== "turn-test") throw new Error(`unexpected payload turnId: ${payload.turnId}`);
-  if (payload.body !== "Smoke hook final answer") throw new Error(`unexpected payload body: ${payload.body}`);
+  if (payload.body !== "Smoke hook · Smoke hook final answer") throw new Error(`unexpected payload body: ${payload.body}`);
   if (payload.duration !== "2.5s") throw new Error(`unexpected payload duration: ${payload.duration}`);
 
   const parsed = parseNotificationCommand(String.raw`C:\Tools\notify.cmd --flag "two words"`);

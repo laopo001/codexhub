@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   isTaskCompleteRecord,
   taskCompleteNotification,
+  taskCompleteRecordIsForLatestUserInput,
   taskCompletionNotificationKey,
   turnIdFromRecord,
   type TaskCompleteNotification
@@ -50,6 +51,7 @@ export class NotificationHookRunner {
   handleThreadEvent(event: ThreadStreamEvent, records: CodexRecord[]) {
     if (event.historical || event.kind !== "record" || !event.record) return;
     if (!isTaskCompleteRecord(event.record)) return;
+    if (!taskCompleteRecordIsForLatestUserInput(event.record, records, event.thread)) return;
     const key = taskCompletionNotificationKey(event.threadId, event.record);
     if (!this.rememberKey(key)) return;
     const notification = taskCompleteNotification(event.thread, event.record, records);

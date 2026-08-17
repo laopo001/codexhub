@@ -8,9 +8,11 @@ import {
 } from "../../src/web/helpers/notifications.js";
 import {
   isTaskCompleteNotification,
+  taskCompleteRecordIsForLatestUserInput,
   taskCompleteNotificationShouldPersist,
   taskCompleteNotificationTitle
 } from "../../src/shared/taskNotifications.js";
+import type { CodexRecord } from "../../src/shared/recordTypes.js";
 
 const notification = {
   title: "Codex 任务完成",
@@ -66,6 +68,35 @@ test("task completion notification title is shared across hosts", () => {
   assert.equal(
     taskCompleteNotificationTitle(notification),
     "Codex 任务完成 · codexhub · WSL Ubuntu · jx"
+  );
+});
+
+test("task completion notification follows the latest user input turn", () => {
+  const staleCompletion: CodexRecord = {
+    id: "app:thread-test:turn-old:event:task_complete",
+    type: "event_msg",
+    payload: { type: "task_complete", turn_id: "turn-old" }
+  };
+  const latestUserInput: CodexRecord = {
+    id: "app:thread-test:turn-new:user:user-message",
+    type: "event_msg",
+    payload: { type: "user_message", message: "newest input" }
+  };
+  const latestCompletion: CodexRecord = {
+    id: "app:thread-test:turn-new:event:task_complete",
+    type: "event_msg",
+    payload: { type: "task_complete", turn_id: "turn-new" }
+  };
+
+  assert.equal(taskCompleteRecordIsForLatestUserInput(staleCompletion, [staleCompletion, latestUserInput]), false);
+  assert.equal(taskCompleteRecordIsForLatestUserInput(latestCompletion, [latestUserInput, latestCompletion]), true);
+  assert.equal(
+    taskCompleteRecordIsForLatestUserInput(staleCompletion, [staleCompletion], { activeTurnId: "turn-new" }),
+    false
+  );
+  assert.equal(
+    taskCompleteRecordIsForLatestUserInput(staleCompletion, [staleCompletion, latestUserInput], { activeTurnId: "turn-new" }),
+    false
   );
 });
 

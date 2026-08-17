@@ -43,6 +43,30 @@ export const isTaskCompleteRecord = (record: CodexRecord) => {
   return record.type === "event_msg" && payload?.type === "task_complete";
 };
 
+/**
+ * A completion record may arrive after a newer user turn has already started.
+ * Keep that historical record in the transcript, but only notify for the
+ * latest user input's turn.
+ */
+export const taskCompleteRecordIsForLatestUserInput = (
+  record: CodexRecord,
+  records: CodexRecord[],
+  thread?: Pick<ThreadSummary, "activeTurnId">
+) => {
+  const completedTurnId = turnIdFromRecord(record);
+  if (!completedTurnId) return true;
+  if (thread?.activeTurnId && thread.activeTurnId !== completedTurnId) return false;
+
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (!isUserMessageRecord(records[index])) continue;
+    const latestUserTurnId = turnIdFromRecord(records[index]);
+    if (latestUserTurnId) return latestUserTurnId === completedTurnId;
+    break;
+  }
+
+  return true;
+};
+
 export const taskCompletionNotificationKey = (threadId: string, record: CodexRecord) => {
   const payload = asRecord(record.payload);
   const turnId = stringField(payload, "turn_id") ?? stringField(payload, "turnId");
@@ -154,6 +178,17 @@ export const formatStatusDuration = (value: number) => {
 };
 
 const compactLine = (value: string) => value.replace(/\s+/g, " ").trim();
+
+const isUserMessageRecord = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  return Boolean(
+    payload
+    && (
+      (record.type === "event_msg" && payload.type === "user_message")
+      || (record.type === "response_item" && payload.type === "message" && payload.role === "user")
+    )
+  );
+};
 
 const stringField = (record: Record<string, unknown> | null | undefined, key: string) => {
   const value = record?.[key];
