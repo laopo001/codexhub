@@ -1,4 +1,5 @@
 import type React from "react";
+import { message } from "antd";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import {
   apiRouteJson,
@@ -381,7 +382,12 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
       ...tooLarge.map((file) => `${file.name} is larger than 512KB`),
       ...skipped.map((file) => `${file.name} is not a supported text or image file`)
     ];
-    if (rejected.length) window.alert(rejected.join("\n"));
+    if (rejected.length) {
+      void message.warning({
+        content: rejected.join("\n"),
+        duration: 6
+      });
+    }
   };
 
   const pasteThreadImages = (threadId: string, clipboardData: DataTransfer) => {

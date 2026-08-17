@@ -1,4 +1,5 @@
 import type React from "react";
+import { Modal } from "antd";
 import type { ProjectUpdateInput } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import { isEmbeddedSurfaceKind } from "../../shared/surfaceTypes.js";
@@ -616,19 +617,30 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
 
   const deleteProject = async (project: ProjectSummary) => {
     if (fixedProject(project)) return;
-    const prompt = `Remove ${project.name} from CodexHub projects?\n\nThis does not delete files or close open thread tabs.`;
-    if (!window.confirm(prompt)) return;
-    ctx.setDeletingProjectId(project.projectId);
-    try {
-      const payload = await apiRouteJson(apiRoutes.deleteProject, project.projectId);
-      ctx.setMachines(normalizeMachines(payload.machines));
-      ctx.setProjects(normalizeProjects(payload.projects));
-      if (ctx.selectedProjectKey === projectKeyForProject(project)) ctx.setSelectedProjectKey("");
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : String(error));
-    } finally {
-      ctx.setDeletingProjectId((current) => current === project.projectId ? "" : current);
-    }
+    Modal.confirm({
+      title: `Remove ${project.name}?`,
+      content: "This does not delete files or close open thread tabs.",
+      okText: "Remove project",
+      cancelText: "Cancel",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        ctx.setDeletingProjectId(project.projectId);
+        try {
+          const payload = await apiRouteJson(apiRoutes.deleteProject, project.projectId);
+          ctx.setMachines(normalizeMachines(payload.machines));
+          ctx.setProjects(normalizeProjects(payload.projects));
+          if (ctx.selectedProjectKey === projectKeyForProject(project)) ctx.setSelectedProjectKey("");
+        } catch (error) {
+          Modal.error({
+            title: "Remove project failed",
+            content: error instanceof Error ? error.message : String(error),
+            okText: "Close"
+          });
+        } finally {
+          ctx.setDeletingProjectId((current) => current === project.projectId ? "" : current);
+        }
+      }
+    });
   };
 
   const applyProjectPayload = (payload: ProjectsPayload) => {

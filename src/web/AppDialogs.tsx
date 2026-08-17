@@ -1,5 +1,5 @@
 import React from "react";
-import { Select, Switch } from "antd";
+import { Modal, Select, Switch } from "antd";
 import { Flame, Target } from "lucide-react";
 import {
   apiRouteJson,
@@ -132,15 +132,22 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
       setNotificationPersistAfterMinutesDraft(String(previous));
     });
   };
-  const restartAuthority = async () => {
+  const restartAuthority = () => {
     if (!restartAvailable || restartState === "restarting") return;
-    if (!window.confirm("Restart the CodexHub authority and Codex runtime? VSCode will reconnect automatically.")) return;
-    setRestartState("restarting");
-    try {
-      await apiRouteJson(apiRoutes.restartAuthority);
-    } catch {
-      setRestartState("error");
-    }
+    Modal.confirm({
+      title: "Restart CodexHub?",
+      content: "Restart the CodexHub authority and Codex runtime? VSCode will reconnect automatically.",
+      okText: "Restart",
+      cancelText: "Cancel",
+      onOk: async () => {
+        setRestartState("restarting");
+        try {
+          await apiRouteJson(apiRoutes.restartAuthority);
+        } catch {
+          setRestartState("error");
+        }
+      }
+    });
   };
   const hasOpenDialog = Boolean(
     threadModelDialogOpen

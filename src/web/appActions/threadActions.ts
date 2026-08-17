@@ -1,4 +1,5 @@
 import type React from "react";
+import { Modal } from "antd";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers, RealtimeOutgoingMessage, ThreadGoalUpdateInput } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import type { ProxyInput } from "../../shared/inputTypes.js";
@@ -237,7 +238,11 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       }
     } catch (error) {
       ctx.closedThreadIds.current.delete(threadId);
-      window.alert(error instanceof Error ? error.message : String(error));
+      Modal.error({
+        title: "Close thread failed",
+        content: error instanceof Error ? error.message : String(error),
+        okText: "Close"
+      });
       await Promise.all([
         deps.refreshRuntimes().catch(() => undefined),
         deps.refreshProjects().catch(() => undefined)

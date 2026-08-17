@@ -319,7 +319,10 @@ const App = () => {
         return;
       }
       if (!activeThread?.threadId) {
-        window.alert("Open a Codex Hub thread before sending selected content from the IDE.");
+        void messageApi.warning({
+          content: "Open a Codex Hub thread before sending selected content from the IDE.",
+          duration: 5
+        });
         return;
       }
       composerActions.addThreadTextAttachment(activeThread.threadId, message.text);

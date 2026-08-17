@@ -1,4 +1,5 @@
 import type React from "react";
+import { Modal } from "antd";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import { apiRouteJson, type SidebarDraftStore } from "../appHelpers.js";
 import type { ParentRegistrationStatus, SshConnection, SshHost } from "../types.js";
@@ -103,19 +104,27 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
 
   const removeSshHost = async (host: SshHost, activeConnection?: SshConnection) => {
     const suffix = activeConnection ? " and stop the current connection" : "";
-    if (!window.confirm(`Remove ${host.alias} from CodexHub SSH hosts${suffix}?`)) return;
-    ctx.setSshError("");
-    ctx.setSshHostBusy(host.alias);
-    try {
-      const payload = await apiRouteJson(apiRoutes.removeSshHost, host.alias);
-      ctx.setSshHosts(Array.isArray(payload.hosts) ? payload.hosts : []);
-      await refreshSshHosts().catch(() => undefined);
-      if (activeConnection) await stopSshConnection(activeConnection.connectionId);
-    } catch (error) {
-      ctx.setSshError(error instanceof Error ? error.message : String(error));
-    } finally {
-      ctx.setSshHostBusy((current) => current === host.alias ? "" : current);
-    }
+    Modal.confirm({
+      title: `Remove ${host.alias} from CodexHub?`,
+      content: `This will remove the SSH host${suffix}.`,
+      okText: "Remove host",
+      cancelText: "Cancel",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        ctx.setSshError("");
+        ctx.setSshHostBusy(host.alias);
+        try {
+          const payload = await apiRouteJson(apiRoutes.removeSshHost, host.alias);
+          ctx.setSshHosts(Array.isArray(payload.hosts) ? payload.hosts : []);
+          await refreshSshHosts().catch(() => undefined);
+          if (activeConnection) await stopSshConnection(activeConnection.connectionId);
+        } catch (error) {
+          ctx.setSshError(error instanceof Error ? error.message : String(error));
+        } finally {
+          ctx.setSshHostBusy((current) => current === host.alias ? "" : current);
+        }
+      }
+    });
   };
 
   const copyRegisteredCommand = async () => {
