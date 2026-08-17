@@ -866,6 +866,56 @@ test("runtime keeps JSON-RPC response errors out of the thread event stream", as
   }
 });
 
+test("runtime serializes app-server notifications before forwarding them", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket();
+  const forwardedEvents: unknown[] = [];
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    appServerTransportFactory: async () => socket,
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, callbacks) => ({
+      ...transportFactory(transportContext, callbacks),
+      sendEvent: (event) => forwardedEvents.push(event)
+    })
+  });
+  try {
+    const threadId = "ordered-notification-thread";
+    socket.emitServerRequest({
+      method: "thread/started",
+      params: { thread: currentThread(threadId, "/tmp/current-protocol") }
+    });
+    socket.emitServerRequest({
+      method: "item/completed",
+      params: {
+        threadId,
+        turnId: "ordered-notification-turn",
+        completedAtMs: 2_000,
+        item: {
+          id: "ordered-notification-item",
+          type: "agentMessage",
+          text: "second notification"
+        }
+      }
+    });
+    await waitForCondition(() => forwardedEvents.filter((event) => {
+      const value = event as { type?: string; threadId?: string };
+      return value.type === "thread_event" && value.threadId === threadId;
+    }).length === 2);
+
+    const methods = forwardedEvents.flatMap((event) => {
+      const value = event as { type?: string; threadId?: string; message?: { method?: string } };
+      return value.type === "thread_event" && value.threadId === threadId && value.message?.method
+        ? [value.message.method]
+        : [];
+    });
+    assert.deepEqual(methods, ["thread/started", "item/completed"]);
+  } finally {
+    await session.stop();
+  }
+});
+
 test("runtime marks a fast turn/start response provisional before completion", async (context) => {
   context.mock.method(console, "error", () => undefined);
   const socket = new CurrentProtocolSocket({

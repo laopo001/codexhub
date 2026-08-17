@@ -1809,7 +1809,7 @@ export class ThreadHub {
   private assignHistoryPageOrder(
     thread: ThreadState,
     records: CodexRecord[],
-    page: number | undefined
+    page: number | undefined = 0
   ) {
     if (page === undefined || !Number.isInteger(page) || page < 0) return;
     const canonicalRecords = this.canonicalBatchRecords(thread, records);
@@ -1837,6 +1837,7 @@ export class ThreadHub {
       }
     }
     if (!options.historicalRecords) return;
+    this.assignHistoryPageOrder(thread, batch ?? []);
     this.finishRecordBatch(thread, batch ?? [], { historical: true });
   }
 

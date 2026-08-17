@@ -460,6 +460,7 @@ class CodexAppServerBridge {
   private readonly planResetModes = new Map<string, AppServerCollaborationMode>();
   private readonly bridgeStartedThreads = new Set<string>();
   private readonly runtimeCatalogCache: RuntimeCatalogCache;
+  private inboundMessages = Promise.resolve();
   private bridgeStartedUnknownCount = 0;
   private readonly closeSignal = new Deferred<void>();
   private cliVersionValue: string | undefined;
@@ -484,7 +485,7 @@ class CodexAppServerBridge {
       ? await options.appServerTransportFactory()
       : await openWebSocket(options.appServerUrl);
     const bridge = new CodexAppServerBridge(options, ws, initialState, hub);
-    ws.addEventListener("message", (event) => void bridge.handleMessage(event.data));
+    ws.addEventListener("message", (event) => bridge.enqueueMessage(event.data));
     ws.addEventListener("error", () => {
       if (!bridge.closed) console.error("codex app-server websocket error");
     });
@@ -727,6 +728,17 @@ class CodexAppServerBridge {
 
   private notify(method: string, params?: unknown) {
     this.ws.send(JSON.stringify(params === undefined ? { method } : { method, params }));
+  }
+
+  private enqueueMessage(data: unknown) {
+    // WebSocket frames are ordered, but an unawaited async handler lets later
+    // frames overtake earlier ones at the first await. Keep one bridge-wide
+    // queue so ThreadHub assigns canonical record order in protocol order.
+    this.inboundMessages = this.inboundMessages
+      .then(() => this.handleMessage(data))
+      .catch((error) => {
+        if (!this.closed) console.error(`codex app-server message handling failed: ${errorText(error)}`);
+      });
   }
 
   private async handleMessage(data: unknown) {

@@ -22,10 +22,21 @@ export const compareCodexRecords = (left: CodexRecord, right: CodexRecord) => {
     && rightHistoryOrder !== null
     && leftHistoryOrder !== rightHistoryOrder
   ) return leftHistoryOrder - rightHistoryOrder;
-  const leftTime = recordTimestampMs(left);
-  const rightTime = recordTimestampMs(right);
   const leftOrder = recordOrder(left);
   const rightOrder = recordOrder(right);
+  // Live records receive a monotonic canonical order when ThreadHub first sees
+  // them. Preserve that protocol order even when app-server/local clocks are
+  // skewed or reconnect delivery is delayed. Historical pages still use their
+  // semantic historyOrder and timestamps to integrate with non-history records.
+  if (
+    leftHistoryOrder === null
+    && rightHistoryOrder === null
+    && leftOrder !== null
+    && rightOrder !== null
+    && leftOrder !== rightOrder
+  ) return leftOrder - rightOrder;
+  const leftTime = recordTimestampMs(left);
+  const rightTime = recordTimestampMs(right);
   if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
   if (leftOrder !== null && rightOrder !== null && leftOrder !== rightOrder) return leftOrder - rightOrder;
   if (leftTime !== null && rightTime === null) return -1;

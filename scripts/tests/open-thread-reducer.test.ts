@@ -88,6 +88,40 @@ test("open thread reducer merges historical record batches in one pass", async (
   assert.equal(state[0].messageCount, 2);
 });
 
+test("open thread reducer renders canonical server order despite skewed timestamps and delivery order", async () => {
+  const openThreadReducer = await loadReducer();
+  const user: CodexRecord = {
+    id: "record-user",
+    type: "event_msg",
+    order: 1,
+    timestamp: "2026-01-01T00:00:03.000Z",
+    payload: { type: "user_message", message: "start generation" }
+  };
+  const commentary: CodexRecord = {
+    id: "record-commentary",
+    type: "event_msg",
+    order: 2,
+    timestamp: "2026-01-01T00:00:01.000Z",
+    payload: { type: "agent_message", phase: "commentary", message: "confirmed" }
+  };
+  const tool: CodexRecord = {
+    id: "record-tool",
+    type: "response_item",
+    order: 3,
+    timestamp: "2026-01-01T00:00:02.000Z",
+    payload: { type: "local_shell_call", call_id: "tool-1", status: "in_progress" }
+  };
+  let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    threadId: "thread-1",
+    thread: { ...detail("thread-1"), messageCount: 3 },
+    records: [tool, commentary, user]
+  });
+
+  assert.deepEqual(state[0].records.map((item) => item.id), [user.id, commentary.id, tool.id]);
+});
+
 test("open thread reducer preserves semantic transcript dedupe for historical batches", async () => {
   const openThreadReducer = await loadReducer();
   const liveRecord: CodexRecord = {

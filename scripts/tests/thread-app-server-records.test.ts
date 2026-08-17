@@ -123,6 +123,93 @@ test("mcpToolCall preserves the current app context fields", () => {
   });
 });
 
+test("ThreadHub assigns first-seen canonical order independently from source timestamps", () => {
+  const hub = new ThreadHub();
+  const sessionId = "canonical-order-session";
+  const threadId = "canonical-order-thread";
+  const turnId = "canonical-order-turn";
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/canonical-order" });
+  const notify = (item: Record<string, unknown>, startedAtMs: number) => hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: {
+      method: "item/started",
+      params: { threadId, turnId, item, startedAtMs }
+    }
+  });
+
+  notify({
+    id: "user-order",
+    type: "userMessage",
+    content: [{ type: "text", text: "start generation" }]
+  }, 3_000);
+  notify({
+    id: "agent-order",
+    type: "agentMessage",
+    text: "confirmed",
+    phase: "commentary"
+  }, 1_000);
+
+  const transcript = (hub.getThread(threadId)?.records ?? []).filter((record) => {
+    const type = (record.payload as { type?: string }).type;
+    return type === "user_message" || type === "agent_message";
+  });
+  assert.deepEqual(transcript.map((record) => record.id), [
+    `app:${threadId}:${turnId}:user:user-order`,
+    `app:${threadId}:${turnId}:agent:agent-order`
+  ]);
+  assert.deepEqual(transcript.map((record) => record.order), [1, 2]);
+});
+
+test("ThreadHub marks unpaged snapshots as history before newer live control records", () => {
+  const hub = new ThreadHub();
+  const sessionId = "unpaged-history-session";
+  const threadId = "unpaged-history-thread";
+  const turnId = "unpaged-history-turn";
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/unpaged-history" });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: {
+      method: "thread/goal/cleared",
+      params: { threadId }
+    }
+  });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: [{
+      id: turnId,
+      status: "completed",
+      itemsView: "full",
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1_000,
+      items: [{
+        id: "history-user",
+        type: "userMessage",
+        content: [{ type: "text", text: "older request" }]
+      }, {
+        id: "history-agent",
+        type: "agentMessage",
+        text: "older response"
+      }]
+    }]
+  });
+
+  const recordTypes = (hub.getThread(threadId)?.records ?? []).map((record) =>
+    (record.payload as { type?: string }).type
+  );
+  assert.deepEqual(recordTypes, [
+    "task_started",
+    "user_message",
+    "agent_message",
+    "task_complete",
+    "thread_goal_cleared"
+  ]);
+});
+
 test("token usage reads current camelCase protocol fields into stable snake_case records", () => {
   const record = codexRecordFromAppServerUsage("thread-usage", "turn-usage", {
     last: {
