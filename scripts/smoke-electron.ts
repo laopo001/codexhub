@@ -42,9 +42,15 @@ const main = async () => {
       `Electron smoke did not use CODEX_HUB_AUTHORITY_PACKAGE: ${JSON.stringify(payload.health)}`
     );
   }
+  if (!payload.restartHealth?.authority
+    || payload.restartHealth.authority.surfaceProtocolVersion !== embeddedSurfaceProtocolVersion) {
+    throw new Error(
+      `Electron smoke authority restart did not recover the shared authority: ${JSON.stringify(payload.restartHealth)}`
+    );
+  }
   console.log(
     `electron ok: ${payload.url} node=${payload.health.authorityRuntime.nodeVersion}`
-    + ` service=${payload.health.authorityServiceSource ?? "unknown"}`
+    + ` service=${payload.health.authorityServiceSource ?? "unknown"} restart=ok`
   );
 };
 
@@ -124,7 +130,7 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir:
   const timeout = setTimeout(() => {
     child.kill("SIGKILL");
     reject(new Error(`Electron smoke timed out:\n${output}`));
-  }, 30_000);
+  }, 45_000);
   child.once("exit", (code, signal) => {
     clearTimeout(timeout);
     if (code === 0) {
@@ -145,6 +151,9 @@ const parseSmokePayload = (output: string): {
     authorityRuntime?: { nodePath?: string; nodeVersion?: string };
     authorityServiceSource?: string;
   };
+  restartHealth?: {
+    authority?: { surfaceProtocolVersion?: number };
+  };
 } => {
   for (const line of output.split(/\r?\n/)) {
     if (!line.trim().startsWith("{")) continue;
@@ -158,6 +167,9 @@ const parseSmokePayload = (output: string): {
           authority?: { surfaceProtocolVersion?: unknown };
           authorityRuntime?: { nodePath?: unknown; nodeVersion?: unknown };
           authorityServiceSource?: unknown;
+        };
+        restartHealth?: {
+          authority?: { surfaceProtocolVersion?: unknown };
         };
       };
       if (parsed.ok === true
@@ -173,6 +185,9 @@ const parseSmokePayload = (output: string): {
             authority?: { surfaceProtocolVersion?: number };
             authorityRuntime?: { nodePath?: string; nodeVersion?: string };
             authorityServiceSource?: string;
+          };
+          restartHealth?: {
+            authority?: { surfaceProtocolVersion?: number };
           };
         };
       }

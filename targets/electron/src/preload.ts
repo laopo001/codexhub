@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { RestartPayload } from "../../../src/shared/apiContract.js";
 import type { TaskCompleteNotification } from "../../../src/shared/taskNotifications.js";
 
 contextBridge.exposeInMainWorld("codexhubElectronPet", {
@@ -21,6 +22,7 @@ contextBridge.exposeInMainWorld("codexhubElectronPet", {
   focusMainWindow: (threadId?: string) => {
     ipcRenderer.send("codexhub:pet-focus-main", typeof threadId === "string" ? threadId : "");
   },
+  restartAuthority: () => ipcRenderer.invoke("codexhub:restart-authority") as Promise<RestartPayload>,
   showTaskCompleteNotification: (notification: TaskCompleteNotification) => {
     ipcRenderer.send("codexhub:task-complete-notification", notification);
   },

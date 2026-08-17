@@ -6,6 +6,7 @@ interface Window {
     onPointerPosition: (listener: (position: { clientX: number; clientY: number }) => void) => () => void;
     requestPointerPosition: () => void;
     focusMainWindow: (threadId?: string) => void;
+    restartAuthority: () => Promise<{ ok: boolean; restarting: boolean }>;
     onOpenThread: (listener: (threadId: string) => void) => () => void;
     showTaskCompleteNotification: (notification: {
       title: string;

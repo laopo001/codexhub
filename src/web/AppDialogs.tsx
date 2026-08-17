@@ -1,6 +1,7 @@
 import React from "react";
 import { Modal, Select, Switch } from "antd";
 import { Flame, Target } from "lucide-react";
+import { isNativeElectronSurface } from "./appConfig.js";
 import {
   apiRouteJson,
   filterProjectDirectoryEntries,
@@ -135,14 +136,18 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const restartAuthority = () => {
     if (!restartAvailable || restartState === "restarting") return;
     Modal.confirm({
-      title: "Restart CodexHub?",
-      content: "Restart the CodexHub authority and Codex runtime? VSCode will reconnect automatically.",
+      title: "Restart this CodexHub authority?",
+      content: "Restart the authority and Codex runtime for this host. This window will reconnect automatically; VS Code or Electron itself will stay open, and other hosts will not be restarted.",
       okText: "Restart",
       cancelText: "Cancel",
       onOk: async () => {
         setRestartState("restarting");
         try {
-          await apiRouteJson(apiRoutes.restartAuthority);
+          if (isNativeElectronSurface && window.codexhubElectronPet?.restartAuthority) {
+            await window.codexhubElectronPet.restartAuthority();
+          } else {
+            await apiRouteJson(apiRoutes.restartAuthority);
+          }
         } catch {
           setRestartState("error");
         }
@@ -395,16 +400,16 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   aria-busy={restartState === "restarting"}
                 >
                   <span className="settingsRowText">
-                    <strong>Restart CodexHub</strong>
+                    <strong>Restart current authority</strong>
                     <em
                       className={restartState === "error" ? "settingsError" : undefined}
                       aria-live="polite"
                     >
                       {restartState === "restarting"
-                        ? "Restarting authority and runtime; VSCode will reconnect automatically."
+                        ? "Restarting this host's authority and reconnecting this window..."
                         : restartState === "error"
                           ? "Restart failed. Check the authority log and try again."
-                          : "Restart the VSCode/Electron authority and Codex runtime."}
+                          : "Restart this host's authority and Codex runtime. The host application stays open."}
                     </em>
                   </span>
                   <button
