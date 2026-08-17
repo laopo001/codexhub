@@ -3,6 +3,7 @@ import { Button, Modal } from "antd";
 import { Check, PawPrint, Trash2, Upload, X } from "lucide-react";
 import { isNativeElectronSurface } from "../appConfig.js";
 import { LiveThreadRunningText } from "../helpers/liveTime.js";
+import type { PetHitRegion } from "../../shared/petInput.js";
 import {
   petAnimationRows,
   petAtlasBackgroundPosition,
@@ -248,44 +249,54 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
     scheduleLookForPointer,
   ]);
 
+  const reportPetHitRegions = React.useCallback(() => {
+    if (!desktopPetWindow) return;
+    const button = buttonRef.current;
+    const overlay = button?.closest<HTMLElement>(".petOverlay");
+    const tray = overlay?.querySelector<HTMLElement>(".petActivityTray");
+    const regions = [button, tray]
+      .filter((element): element is HTMLElement => Boolean(element))
+      .map((element): PetHitRegion => {
+        const rect = element.getBoundingClientRect();
+        return {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height,
+        };
+      })
+      .filter((region) => region.width > 0 && region.height > 0);
+    window.codexhubElectronPet?.setPetHitRegions(regions);
+  }, [desktopPetWindow]);
+
+  React.useLayoutEffect(() => {
+    if (!desktopPetWindow) return undefined;
+    reportPetHitRegions();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => reportPetHitRegions());
+    const button = buttonRef.current;
+    const overlay = button?.closest<HTMLElement>(".petOverlay");
+    const tray = overlay?.querySelector<HTMLElement>(".petActivityTray");
+    if (button) observer.observe(button);
+    if (tray) observer.observe(tray);
+    return () => observer.disconnect();
+  }, [
+    controller.activities.length,
+    controller.enabled,
+    controller.trayOpen,
+    desktopPetWindow,
+    position.x,
+    position.y,
+    reportPetHitRegions,
+  ]);
+
   React.useEffect(() => {
     if (!desktopPetWindow) return undefined;
-    const setInputMode = (clientX?: number, clientY?: number) => {
-      const rect = buttonRef.current?.getBoundingClientRect();
-      const elementAtPointer = clientX !== undefined && clientY !== undefined
-        ? document.elementFromPoint(clientX, clientY)
-        : null;
-      const interactive = Boolean(
-        controller.enabled
-        && (
-          Boolean(elementAtPointer?.closest(".petButton, .petActivityTray"))
-          || Boolean(dragSessionRef.current)
-          || (
-            rect
-            && clientX !== undefined
-            && clientY !== undefined
-            && clientX >= rect.left
-            && clientX <= rect.right
-            && clientY >= rect.top
-            && clientY <= rect.bottom
-          )
-        )
-      );
-      window.codexhubElectronPet?.setIgnoreMouseEvents(!interactive);
-    };
-    const handleMouseMove = (event: MouseEvent) => setInputMode(event.clientX, event.clientY);
-    const unsubscribePointerPosition = window.codexhubElectronPet?.onPointerPosition((position) => {
-      setInputMode(position.clientX, position.clientY);
-    });
-    window.addEventListener("mousemove", handleMouseMove, { passive: true });
-    setInputMode();
-    window.codexhubElectronPet?.requestPointerPosition();
     return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      unsubscribePointerPosition?.();
-      window.codexhubElectronPet?.setIgnoreMouseEvents(true);
+      window.codexhubElectronPet?.setPetHitRegions([]);
+      window.codexhubElectronPet?.setPetDragActive(false);
     };
-  }, [controller.enabled, desktopPetWindow]);
+  }, [desktopPetWindow]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!event.isPrimary || event.button !== 0) return;
@@ -298,7 +309,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
       startClientY: event.clientY,
     };
     suppressClickRef.current = false;
-    if (desktopPetWindow) window.codexhubElectronPet?.setIgnoreMouseEvents(false);
+    if (desktopPetWindow) window.codexhubElectronPet?.setPetDragActive(true);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
@@ -335,6 +346,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
       suppressClickRef.current = !cancelled;
     }
     dragSessionRef.current = null;
+    if (desktopPetWindow) window.codexhubElectronPet?.setPetDragActive(false);
     setDragDirection(null);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     const pointer = lastPointerRef.current;

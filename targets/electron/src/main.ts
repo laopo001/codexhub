@@ -28,6 +28,11 @@ import {
 import { loadDotEnv } from "../../../src/core/dotenv.js";
 import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/apiClient.js";
 import { apiRoutes } from "../../../src/shared/apiRoutes.js";
+import {
+  parsePetHitRegions,
+  petHitRegionsContainPoint,
+  type PetHitRegion
+} from "../../../src/shared/petInput.js";
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
 import {
   isTaskCompleteNotification,
@@ -41,6 +46,8 @@ const mainDirectory = electronApp.isPackaged
 const preloadPath = path.join(mainDirectory, "preload.cjs");
 const surfaceHeartbeatMs = 10_000;
 const desktopPetSyncMs = 1_000;
+const desktopPetInputPollMs = 16;
+const desktopPetHitPadding = 12;
 const windowsTrayEnabled = process.platform === "win32";
 const electronSmokeEnabled = process.env.CODEX_HUB_ELECTRON_SMOKE === "1";
 const electronAppUserModelId = "com.dadigua.codexhub";
@@ -68,6 +75,10 @@ let authorityRecoveryInFlight: Promise<void> | null = null;
 let surfaceRegistered = false;
 let desktopPetSyncTimer: NodeJS.Timeout | null = null;
 let desktopPetSyncInFlight = false;
+let desktopPetInputTimer: NodeJS.Timeout | null = null;
+let desktopPetHitRegions: PetHitRegion[] = [];
+let desktopPetDragActive = false;
+let desktopPetMouseIgnored: boolean | null = null;
 const activeTaskNotifications = new Set<Notification>();
 const surfaceId = `electron-${randomUUID()}`;
 const leaseId = randomUUID();
@@ -201,23 +212,57 @@ const desktopPetBounds = () => {
   return { x: left, y: top, width: right - left, height: bottom - top };
 };
 
-const syncDesktopPetPointerPosition = (petWindow: BrowserWindow, bounds = petWindow.getBounds()) => {
-  if (petWindow.isDestroyed() || petWindow.webContents.isDestroyed()) return;
+const setDesktopPetMouseIgnored = (ignore: boolean, force = false) => {
+  const petWindow = desktopPetWindow;
+  if (!petWindow || petWindow.isDestroyed()) return;
+  if (!force && desktopPetMouseIgnored === ignore) return;
+  petWindow.setIgnoreMouseEvents(ignore, { forward: true });
+  desktopPetMouseIgnored = ignore;
+};
+
+const updateDesktopPetInputMode = (force = false) => {
+  const petWindow = desktopPetWindow;
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const bounds = petWindow.getBounds();
   const pointer = screen.getCursorScreenPoint();
-  petWindow.webContents.send("codexhub:pet-pointer-position", {
-    clientX: pointer.x - bounds.x,
-    clientY: pointer.y - bounds.y,
-  });
+  const localPointer = {
+    x: pointer.x - bounds.x,
+    y: pointer.y - bounds.y,
+  };
+  const interactive = desktopPetDragActive
+    || petHitRegionsContainPoint(localPointer, desktopPetHitRegions, desktopPetHitPadding);
+  setDesktopPetMouseIgnored(!interactive, force);
+};
+
+const resetDesktopPetInputMode = () => {
+  desktopPetMouseIgnored = null;
+  setDesktopPetMouseIgnored(true, true);
+  updateDesktopPetInputMode();
+};
+
+const startDesktopPetInputPolling = () => {
+  if (desktopPetInputTimer) return;
+  updateDesktopPetInputMode(true);
+  desktopPetInputTimer = setInterval(() => updateDesktopPetInputMode(), desktopPetInputPollMs);
+  desktopPetInputTimer.unref?.();
+};
+
+const stopDesktopPetInputPolling = () => {
+  if (desktopPetInputTimer) clearInterval(desktopPetInputTimer);
+  desktopPetInputTimer = null;
+  desktopPetHitRegions = [];
+  desktopPetDragActive = false;
+  desktopPetMouseIgnored = null;
 };
 
 const repositionDesktopPetWindow = () => {
   if (!desktopPetWindow || desktopPetWindow.isDestroyed()) return;
   const bounds = desktopPetBounds();
   desktopPetWindow.setBounds(bounds);
-  // Display changes resize the transparent click-through window without
-  // necessarily producing a mouse event. Re-evaluate the current pointer
-  // against the new renderer coordinate space immediately.
-  syncDesktopPetPointerPosition(desktopPetWindow, bounds);
+  // The renderer hit regions are relative to this window. Re-evaluate the
+  // native input mode after the coordinate space changes instead of relying
+  // on a forwarded mouse event that may arrive late or out of order.
+  resetDesktopPetInputMode();
 };
 
 const createDesktopPetWindow = async () => {
@@ -245,7 +290,7 @@ const createDesktopPetWindow = async () => {
   desktopPetWindow = petWindow;
   petWindow.setMenuBarVisibility(false);
   petWindow.setAlwaysOnTop(true, "floating");
-  petWindow.setIgnoreMouseEvents(true, { forward: true });
+  resetDesktopPetInputMode();
   petWindow.on("closed", () => {
     if (desktopPetWindow === petWindow) desktopPetWindow = null;
   });
@@ -253,9 +298,10 @@ const createDesktopPetWindow = async () => {
     await petWindow.loadURL(electronSurfaceUrl(target, true));
     if (!petWindow.isDestroyed()) {
       petWindow.showInactive();
-      syncDesktopPetPointerPosition(petWindow);
+      startDesktopPetInputPolling();
     }
   } catch (error) {
+    stopDesktopPetInputPolling();
     if (!petWindow.isDestroyed()) petWindow.destroy();
     throw error;
   }
@@ -264,6 +310,7 @@ const createDesktopPetWindow = async () => {
 const closeDesktopPetWindow = () => {
   const petWindow = desktopPetWindow;
   desktopPetWindow = null;
+  stopDesktopPetInputPolling();
   if (petWindow && !petWindow.isDestroyed()) petWindow.close();
 };
 
@@ -295,16 +342,20 @@ const stopDesktopPetSync = () => {
   desktopPetSyncTimer = null;
 };
 
-ipcMain.on("codexhub:pet-ignore-mouse", (event, ignore: unknown) => {
+ipcMain.on("codexhub:pet-hit-regions", (event, value: unknown) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
-  sender.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
+  const regions = parsePetHitRegions(value);
+  if (!regions) return;
+  desktopPetHitRegions = regions;
+  updateDesktopPetInputMode();
 });
 
-ipcMain.on("codexhub:pet-request-pointer-position", (event) => {
+ipcMain.on("codexhub:pet-drag-active", (event, active: unknown) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
-  syncDesktopPetPointerPosition(sender);
+  desktopPetDragActive = Boolean(active);
+  updateDesktopPetInputMode();
 });
 
 ipcMain.on("codexhub:pet-focus-main", (event, threadId: unknown) => {

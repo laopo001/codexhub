@@ -1,23 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { RestartPayload } from "../../../src/shared/apiContract.js";
+import type { PetHitRegion } from "../../../src/shared/petInput.js";
 import type { TaskCompleteNotification } from "../../../src/shared/taskNotifications.js";
 
 contextBridge.exposeInMainWorld("codexhubElectronPet", {
-  setIgnoreMouseEvents: (ignore: boolean) => {
-    ipcRenderer.send("codexhub:pet-ignore-mouse", Boolean(ignore));
+  setPetHitRegions: (regions: ReadonlyArray<PetHitRegion>) => {
+    ipcRenderer.send("codexhub:pet-hit-regions", regions);
   },
-  onPointerPosition: (listener: (position: { clientX: number; clientY: number }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, value: unknown) => {
-      if (!value || typeof value !== "object") return;
-      const position = value as { clientX?: unknown; clientY?: unknown };
-      if (typeof position.clientX !== "number" || typeof position.clientY !== "number") return;
-      listener({ clientX: position.clientX, clientY: position.clientY });
-    };
-    ipcRenderer.on("codexhub:pet-pointer-position", handler);
-    return () => ipcRenderer.removeListener("codexhub:pet-pointer-position", handler);
-  },
-  requestPointerPosition: () => {
-    ipcRenderer.send("codexhub:pet-request-pointer-position");
+  setPetDragActive: (active: boolean) => {
+    ipcRenderer.send("codexhub:pet-drag-active", Boolean(active));
   },
   focusMainWindow: (threadId?: string) => {
     ipcRenderer.send("codexhub:pet-focus-main", typeof threadId === "string" ? threadId : "");

@@ -2,9 +2,13 @@
 
 interface Window {
   codexhubElectronPet?: {
-    setIgnoreMouseEvents: (ignore: boolean) => void;
-    onPointerPosition: (listener: (position: { clientX: number; clientY: number }) => void) => () => void;
-    requestPointerPosition: () => void;
+    setPetHitRegions: (regions: ReadonlyArray<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>) => void;
+    setPetDragActive: (active: boolean) => void;
     focusMainWindow: (threadId?: string) => void;
     restartAuthority: () => Promise<{ ok: boolean; restarting: boolean }>;
     onOpenThread: (listener: (threadId: string) => void) => () => void;
