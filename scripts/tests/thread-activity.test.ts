@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
-import { threadActivityTitleFromRecords } from "../../src/shared/threadActivity.js";
+import {
+  latestAgentMessageFromRecords,
+  threadActivityTitleFromRecords
+} from "../../src/shared/threadActivity.js";
 
 const record = (id: string, payload: unknown): CodexRecord => ({
   id,
@@ -53,4 +56,32 @@ test("latest user message supports app-server content blocks and compacts long t
   ]);
   assert.equal(longTitle?.length, 160);
   assert.equal(longTitle?.endsWith("…"), true);
+});
+
+test("latest Agent activity message follows the canonical commentary/final-answer order", () => {
+  assert.equal(latestAgentMessageFromRecords([
+    record("commentary-1", { type: "agent_message", phase: "commentary", message: "先检查运行状态" }),
+    record("tool", { type: "function_call", name: "exec_command" }),
+    record("final-1", { type: "agent_message", phase: "final_answer", message: "已经完成第一步" }),
+    record("commentary-2", {
+      type: "message",
+      role: "assistant",
+      phase: "commentary",
+      content: [{ type: "output_text", text: "继续处理第二步" }]
+    })
+  ]), "继续处理第二步");
+});
+
+test("latest Agent activity message ignores non-visible phases and compacts content", () => {
+  const message = latestAgentMessageFromRecords([
+    record("reasoning", { type: "agent_message", phase: "analysis", message: "internal" }),
+    record("commentary", {
+      type: "message",
+      role: "assistant",
+      phase: "commentary",
+      content: [{ type: "text", text: "line one" }, { type: "text", text: "line two" }]
+    })
+  ]);
+
+  assert.equal(message, "line one line two");
 });

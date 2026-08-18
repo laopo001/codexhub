@@ -23,6 +23,36 @@ export const threadActivityTitleFromRecords = (records: CodexRecord[], threadId?
   return undefined;
 };
 
+/**
+ * Return the newest visible Agent message for compact activity consumers.
+ * Commentary and final answers share one timeline; whichever record appears
+ * last in the canonical record order wins.
+ */
+export const latestAgentMessageFromRecords = (records: CodexRecord[]) => {
+  let latest: string | undefined;
+  for (const record of records) {
+    const text = agentMessageText(record);
+    if (text) latest = compactActivityText(text);
+  }
+  return latest;
+};
+
+export const isAgentActivityRecord = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  if (!payload) return false;
+  if (record.type === "event_msg") {
+    return (
+      (payload.type === "agent_message"
+        || (payload.type === "message" && payload.role === "assistant"))
+      && (payload.phase === "commentary" || payload.phase === "final_answer")
+    );
+  }
+  return record.type === "response_item"
+    && payload.type === "message"
+    && payload.role === "assistant"
+    && (payload.phase === "commentary" || payload.phase === "final_answer");
+};
+
 const latestGoalActivityTitle = (records: CodexRecord[], threadId?: string) => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const payload = asRecord(records[index].payload);
@@ -69,6 +99,27 @@ const userInputText = (record: CodexRecord) => {
     .join("\n\n");
   if (text) return text;
   return hasImages(payload.images) || content.some(isImageContent) ? "[image]" : "";
+};
+
+const agentMessageText = (record: CodexRecord) => {
+  if (!isAgentActivityRecord(record)) return "";
+  const payload = asRecord(record.payload);
+  if (!payload) return "";
+  if (typeof payload.message === "string") return payload.message;
+  if (typeof payload.text === "string") return payload.text;
+
+  const content = Array.isArray(payload.content) ? payload.content : [];
+  return content
+    .map((item) => {
+      const block = asRecord(item);
+      if (!block) return null;
+      if (typeof block.text === "string") return block.text;
+      if (typeof block.output_text === "string") return block.output_text;
+      if (typeof block.input_text === "string") return block.input_text;
+      return null;
+    })
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n\n");
 };
 
 const compactActivityText = (value: string) => {

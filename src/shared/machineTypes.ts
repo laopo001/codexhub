@@ -36,6 +36,10 @@ export type MachineActivitySummary = {
   title: string;
   /** Compact Goal/user-input hint for activity-only consumers without records. */
   activityTitle?: string;
+  /** Current app-server Turn start, used by detached activity timers. */
+  activeTurnStartedAt?: string;
+  /** Latest compact Agent commentary/final answer for activity-only consumers. */
+  latestAgentMessage?: string;
   workingDirectory: string;
   updatedAt: string;
   status: MachineActivityStatus;

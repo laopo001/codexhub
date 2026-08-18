@@ -161,7 +161,14 @@
 
 .petActivityItem:hover { background: #f3f6f0; }
 .petActivityText strong { overflow: hidden; color: #263226; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.petActivityMachineRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .petActivityText .petActivityMachine {
+  flex: 1 1 auto;
   display: block;
   overflow: hidden;
   color: #879183;
@@ -173,7 +180,22 @@
 .petActivityMachineContext { color: #2f6f9f; font-weight: 750; }
 .petActivityMachineSeparator,
 .petActivityMachineType { color: #879183; }
-.petActivityText em { color: #6c776a; font-size: 11px; font-style: normal; }
+.petActivityDuration {
+  flex: 0 0 auto;
+  color: #6c776a;
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.petActivityMessage {
+  display: block;
+  overflow: hidden;
+  color: #6c776a;
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .petActivityDot {
   width: 9px;

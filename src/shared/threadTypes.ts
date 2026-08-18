@@ -35,6 +35,8 @@ export type ThreadSummary = {
   title: string;
   /** Desktop activity feed hint; does not replace the user-visible thread title. */
   activityTitle?: string;
+  /** Latest compact Agent commentary/final answer for detached activity feeds. */
+  latestAgentMessage?: string;
   updatedAt: string;
   messageCount: number;
   lastUsage?: Usage;

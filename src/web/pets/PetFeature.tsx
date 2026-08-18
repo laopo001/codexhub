@@ -416,18 +416,21 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
           </header>
           <div className="petActivityList">
             {activeActivities.length ? activeActivities.map((activity) => (
-              <button key={activity.threadId} type="button" className="petActivityItem" onClick={() => openActivity(activity)}>
-                <span className={`petActivityDot ${activityStatusClass(activity.status)}`} />
-                <span className="petActivityText">
-                  <strong>{activity.title}</strong>
-                  <PetActivityMachine activity={activity} />
-                  <em>
-                    {activity.executionMeta && (activity.executionMeta.status === "running" || activity.executionMeta.status === "waiting")
-                      ? <LiveThreadRunningText executionMeta={activity.executionMeta} activeGoal={activity.activeGoal} />
-                      : petStatusLabel(activity.status)}
-                  </em>
-                </span>
-              </button>
+                <button key={activity.threadId} type="button" className="petActivityItem" onClick={() => openActivity(activity)}>
+                  <span className={`petActivityDot ${activityStatusClass(activity.status)}`} />
+                  <span className="petActivityText">
+                    <strong>{activity.title}</strong>
+                    <span className="petActivityMachineRow">
+                      <PetActivityMachine activity={activity} />
+                      <em className="petActivityDuration">
+                        {activity.executionMeta && (activity.executionMeta.status === "running" || activity.executionMeta.status === "waiting")
+                          ? <LiveThreadRunningText executionMeta={activity.executionMeta} activeGoal={activity.activeGoal} includeLabel={false} />
+                          : null}
+                      </em>
+                    </span>
+                    <em className="petActivityMessage">{activity.latestAgentMessage || petStatusLabel(activity.status)}</em>
+                  </span>
+                </button>
             )) : <div className="petActivityEmpty">No Codex work needs attention.</div>}
           </div>
           {!desktopPetWindow ? (

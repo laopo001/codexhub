@@ -359,6 +359,54 @@ test("summary-only pet activities expose the runtime turn start for a live timer
   });
 });
 
+test("machine-only pet activities expose the registered turn start and Agent message", () => {
+  const startedAt = "2026-01-01T00:00:05.000Z";
+  const machine: MachineSummary = {
+    machineId: "machine-activity-only",
+    type: "registered",
+    name: "Authority · Remote authority",
+    hostname: "remote",
+    online: true,
+    status: "online",
+    lastSeenAt: "2026-01-01T00:00:10.000Z",
+    capabilities: { projectLauncher: true },
+    activities: [{
+      threadId: "activity-only-thread",
+      title: "Activity only",
+      activityTitle: "检查注册机器",
+      activeTurnStartedAt: startedAt,
+      latestAgentMessage: "正在检查第二排时间",
+      workingDirectory: "/home/laop/projects/codexhub",
+      updatedAt: "2026-01-01T00:00:10.000Z",
+      status: "running"
+    }]
+  };
+
+  assert.deepEqual(derivePetActivities([], [], [machine])[0], {
+    threadId: "activity-only-thread",
+    title: "检查注册机器",
+    workingDirectory: "/home/laop/projects/codexhub",
+    updatedAt: "2026-01-01T00:00:10.000Z",
+    status: "running",
+    machineId: "machine-activity-only",
+    machineLabel: "Registered · codexhub · Remote authority",
+    machineLabelParts: {
+      type: "Registered",
+      directoryName: "codexhub",
+      machineContext: "Remote authority"
+    },
+    latestAgentMessage: "正在检查第二排时间",
+    executionMeta: {
+      status: "running",
+      label: "Running",
+      duration: "",
+      text: "Running",
+      startedAt
+    },
+    activeGoal: null
+  });
+});
+
 test("pet activity titles prefer Goal, then the latest user-input hint", () => {
   const runtime: RuntimeSummary = {
     machineId: "machine-title",

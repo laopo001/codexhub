@@ -31,6 +31,7 @@ export type PetActivity = {
   machineId?: string;
   machineLabel?: string;
   machineLabelParts?: PetActivityMachineLabel;
+  latestAgentMessage?: string;
   executionMeta?: ThreadExecutionMeta;
   activeGoal?: ThreadGoalView | null;
 };
@@ -292,10 +293,21 @@ export const derivePetActivities = (
             activeGoal: null
           }
         : undefined;
+      const machineExecution = !detail && !summary && activity?.status === "running"
+        ? {
+            executionMeta: runningThreadExecutionMeta(activity.activeTurnStartedAt),
+            activeGoal: null
+          }
+        : undefined;
       const activityTitle = firstNonBlank(
         detail?.activityTitle,
         summary?.activityTitle,
         activity?.activityTitle
+      );
+      const latestAgentMessage = firstNonBlank(
+        detail?.latestAgentMessage,
+        summary?.latestAgentMessage,
+        activity?.latestAgentMessage
       );
       return {
         threadId: detail?.threadId ?? summary?.threadId ?? activity?.threadId ?? "",
@@ -310,7 +322,8 @@ export const derivePetActivities = (
         ...(machineId ? { machineId } : {}),
         ...(machineLabel ? { machineLabel } : {}),
         ...(machineLabelParts ? { machineLabelParts } : {}),
-        ...(detailExecution ?? summaryExecution ?? {})
+        ...(latestAgentMessage ? { latestAgentMessage } : {}),
+        ...(detailExecution ?? summaryExecution ?? machineExecution ?? {})
       };
     })
     .filter((activity) => activity.threadId.length > 0));

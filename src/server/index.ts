@@ -448,6 +448,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       threadId: thread.threadId,
       title: thread.title,
       ...(thread.activityTitle ? { activityTitle: thread.activityTitle } : {}),
+      ...(thread.activeTurnStartedAt ? { activeTurnStartedAt: thread.activeTurnStartedAt } : {}),
+      ...(thread.latestAgentMessage ? { latestAgentMessage: thread.latestAgentMessage } : {}),
       workingDirectory: thread.workingDirectory,
       updatedAt: thread.updatedAt,
       status: thread.running || thread.status === "running" ? "running" : "idle"

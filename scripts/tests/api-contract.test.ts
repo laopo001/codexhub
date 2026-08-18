@@ -39,6 +39,8 @@ test("machine activity summaries accept the compact Goal or user-input hint", ()
       threadId: "thread-1",
       title: "Old thread title",
       activityTitle: "Goal: finish the smoke tests",
+      activeTurnStartedAt: "2026-01-01T00:00:01.000Z",
+      latestAgentMessage: "正在执行 smoke tests",
       workingDirectory: "/tmp/project",
       updatedAt: "2026-01-01T00:00:00.000Z",
       status: "running"

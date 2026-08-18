@@ -32,7 +32,7 @@ import {
 import type { ProxyInput } from "../shared/inputTypes.js";
 import { compareCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
-import { threadActivityTitleFromRecords } from "../shared/threadActivity.js";
+import { isAgentActivityRecord, latestAgentMessageFromRecords, threadActivityTitleFromRecords } from "../shared/threadActivity.js";
 import {
   asActivePermissionProfile,
   isModelReasoningEffort,
@@ -3153,12 +3153,13 @@ export class ThreadHub {
     if (
       kind === "thread"
       || kind === "done"
-      || (kind === "record" && record !== undefined && isTaskStartedRecord(record))
+      || (kind === "record" && record !== undefined && (isTaskStartedRecord(record) || isAgentActivityRecord(record)))
     ) this.publishRuntimes();
   }
 
   private summary(thread: ThreadState): ThreadSummary {
     const activityTitle = threadActivityTitleFromRecords(thread.records, thread.threadId);
+    const latestAgentMessage = latestAgentMessageFromRecords(thread.records);
     const activeTurnStartedAt = thread.running && thread.appServerTurnId
       ? activeTurnStartedAtFromRecords(thread.records, thread.appServerTurnId)
       : undefined;
@@ -3180,6 +3181,7 @@ export class ThreadHub {
       ...(activeTurnStartedAt ? { activeTurnStartedAt } : {}),
       title: thread.title,
       ...(activityTitle ? { activityTitle } : {}),
+      ...(latestAgentMessage ? { latestAgentMessage } : {}),
       updatedAt: thread.updatedAt,
       messageCount: this.threadRecordIndex(thread).messageCount,
       lastUsage: thread.lastUsage,
