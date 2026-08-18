@@ -147,8 +147,6 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       : preferredThreadIdForRuntime(runtime, project);
     if (targetThreadId) {
       await deps.openThread(targetThreadId).catch(() => deps.clearActiveThreadIfLatest(targetThreadId));
-    } else {
-      ctx.setActiveTabThreadId("");
     }
   };
 
@@ -168,7 +166,6 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     ctx.setProjectActionError("");
     ctx.setActiveWorkspacePath(project.path);
     ctx.setThreadPicker(null);
-    ctx.setActiveTabThreadId("");
     const runtime = runtimeForProject(project, ctx.runtimeList);
     if (runtime?.online) ctx.setActiveMachineId(runtime.machineId);
   };

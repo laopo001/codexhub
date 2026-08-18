@@ -55,8 +55,16 @@ const currentEmbeddedWorkspacePaths = new Set(embeddedWorkspacePaths);
 
 export const useAppSelectors = (state: AppState) => {
   const activeThread = useMemo(
-    () => state.openThreads.find((thread) => thread.threadId === state.activeTabThreadId),
-    [state.activeTabThreadId, state.openThreads]
+    () => state.openThreads.find((thread) => thread.threadId === state.activeTabThreadId)
+      ?? state.openThreads.find((thread) =>
+        (!state.activeMachineId || thread.runtime.machineId === state.activeMachineId)
+        && (!state.activeWorkspacePath || thread.workingDirectory === state.activeWorkspacePath)
+      )
+      ?? state.openThreads.find((thread) =>
+        !state.activeMachineId || thread.runtime.machineId === state.activeMachineId
+      )
+      ?? state.openThreads[0],
+    [state.activeMachineId, state.activeTabThreadId, state.activeWorkspacePath, state.openThreads]
   );
   const threadModelDialogThread = useMemo(() => {
     const threadId = state.threadModelDialogThreadId || state.activeTabThreadId;

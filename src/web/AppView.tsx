@@ -46,10 +46,10 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   } = workspace;
   const canAddThreadForProject = Boolean(activeRuntime?.online || selectedProject?.machineOnline);
   const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
-  // Never render a tab strip without a valid active conversation. Ant Tabs
-  // will still choose a header when activeKey is undefined, while every item
-  // below has null children; that is the Tab-only/Compose-missing failure mode.
-  const showThreadTabs = Boolean(activeThreadKey);
+  // Open tabs are global workspace state. Keep the full tab strip visible as
+  // long as there are legal open threads; the selector supplies a valid
+  // fallback active thread while selection recovery commits its state update.
+  const showThreadTabs = Boolean(activeThreadKey || openThreadTabs.length || canAddThreadForProject);
   const subagentParentThread = subagentThreadDialog
     ? openThreads.find((thread) => thread.threadId === subagentThreadDialog.parentThreadId)
     : undefined;

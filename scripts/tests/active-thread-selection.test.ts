@@ -108,7 +108,7 @@ test("does not select another machine at the selected project path", () => {
   }), "");
 });
 
-test("does not activate a thread from another project", () => {
+test("keeps a same-machine open thread when the selected project has no matching path", () => {
   assert.equal(resolveActiveThreadId({
     activeMachineId: "machine-current",
     activeTabThreadId: "",
@@ -116,7 +116,7 @@ test("does not activate a thread from another project", () => {
     openThreads,
     selectedProjectMachineId: "machine-current",
     selectedProjectPath: "/workspace/new"
-  }), "");
+  }), "thread-active");
 });
 
 test("uses the current machine when active is empty", () => {

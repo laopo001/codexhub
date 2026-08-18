@@ -32,10 +32,16 @@ export const resolveActiveThreadId = ({
   }
 
   if (selectedProjectPath) {
-    return openThreads.find((thread) =>
+    const selectedProjectThread = openThreads.find((thread) =>
       thread.runtime.machineId === selectedProjectMachineId
       && thread.workingDirectory === selectedProjectPath
-    )?.threadId ?? "";
+    );
+    if (selectedProjectThread) return selectedProjectThread.threadId;
+
+    // Open tabs are global workspace state. A selected project path should
+    // not hide every other legal thread on the same machine; only machine
+    // identity remains a hard boundary here.
+    return openThreads.find((thread) => thread.runtime.machineId === selectedProjectMachineId)?.threadId ?? "";
   }
 
   const workspaceThread = openThreads.find((thread) =>
