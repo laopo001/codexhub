@@ -925,6 +925,104 @@ test("ThreadHub coalesces current turn plan and diff projections until the compl
   assert.equal(completedRecords.some((record) => record.id === diffRecordId), false);
 });
 
+test("ThreadHub preserves live transcript items omitted from turn/completed", () => {
+  const hub = new ThreadHub();
+  const sessionId = "partial-terminal-session";
+  const threadId = "partial-terminal-thread";
+  const turnId = "partial-terminal-turn";
+  hub.registerSession({ sessionId, workingDirectory: "/tmp/partial-terminal" });
+
+  const notify = (method: string, params: Record<string, unknown>) => hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: { method, params: { threadId, turnId, ...params } }
+  });
+  const completeItem = (item: Record<string, unknown>, completedAtMs: number) => notify("item/completed", {
+    item,
+    completedAtMs
+  });
+
+  notify("turn/started", {
+    turn: {
+      id: turnId,
+      status: "inProgress",
+      startedAt: 1,
+      items: []
+    }
+  });
+  completeItem({
+    id: "user-live",
+    type: "userMessage",
+    content: [{ type: "text", text: "Keep the full transcript" }]
+  }, 1100);
+  completeItem({
+    id: "reasoning-live",
+    type: "reasoning",
+    summary: ["Inspect the live records"],
+    content: ["The terminal payload may be partial."]
+  }, 1200);
+  completeItem({
+    id: "commentary-live",
+    type: "agentMessage",
+    text: "I am checking the live records.",
+    phase: "commentary"
+  }, 1300);
+  completeItem({
+    id: "file-live",
+    type: "fileChange",
+    status: "completed",
+    changes: [{ path: "/tmp/partial-terminal/example.ts", kind: "update" }]
+  }, 1400);
+  completeItem({
+    id: "final-live",
+    type: "agentMessage",
+    text: "The transcript is complete.",
+    phase: "final_answer"
+  }, 1500);
+  notify("turn/plan/updated", {
+    explanation: "Temporary plan",
+    plan: [{ step: "Inspect", status: "completed" }]
+  });
+  notify("turn/diff/updated", { diff: "temporary diff" });
+
+  const liveRecordIds = new Set((hub.getThread(threadId)?.records ?? []).map((record) => record.id));
+  assert.ok(liveRecordIds.has(`app:${threadId}:${turnId}:user:user-live`));
+  assert.ok(liveRecordIds.has(`app:${threadId}:${turnId}:item:reasoning:reasoning-live`));
+  assert.ok(liveRecordIds.has(`app:${threadId}:${turnId}:agent:commentary-live`));
+  assert.ok(liveRecordIds.has(`app:${threadId}:${turnId}:item:fileChange:file-live`));
+  assert.ok(liveRecordIds.has(`app:${threadId}:${turnId}:agent:final-live`));
+
+  notify("turn/completed", {
+    turn: {
+      id: turnId,
+      status: "completed",
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1000,
+      // Real live terminal notifications may contain only a subset of the
+      // items already delivered through item/* events.
+      items: [{
+        id: "final-live",
+        type: "agentMessage",
+        text: "The transcript is complete.",
+        phase: "final_answer"
+      }]
+    }
+  });
+
+  const records = hub.getThread(threadId)?.records ?? [];
+  const recordIds = new Set(records.map((record) => record.id));
+  assert.ok(recordIds.has(`app:${threadId}:${turnId}:user:user-live`));
+  assert.ok(recordIds.has(`app:${threadId}:${turnId}:item:reasoning:reasoning-live`));
+  assert.ok(recordIds.has(`app:${threadId}:${turnId}:agent:commentary-live`));
+  assert.ok(recordIds.has(`app:${threadId}:${turnId}:item:fileChange:file-live`));
+  assert.equal(records.filter((record) => record.id === `app:${threadId}:${turnId}:agent:final-live`).length, 1);
+  assert.ok(recordIds.has(`app:${threadId}:${turnId}:event:task_started`));
+  assert.ok(recordIds.has(`app:${threadId}:${turnId}:event:task_complete`));
+  assert.equal(records.some((record) => (record.payload as { type?: string }).type === "turn_plan_updated"), false);
+  assert.equal(records.some((record) => (record.payload as { type?: string }).type === "turn_diff_updated"), false);
+});
+
 test("ThreadHub rejects stable approval decisions omitted by app-server", async () => {
   const hub = new ThreadHub();
   const sessionId = "approval-decisions-session";

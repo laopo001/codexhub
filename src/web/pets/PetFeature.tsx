@@ -156,6 +156,32 @@ const PetCardPreview = ({ pet, eager }: { pet: PetDefinition; eager: boolean }) 
 
 const activityStatusClass = (status: PetActivityStatus) => status.replace("_", "-");
 
+const PetActivityMachine = ({ activity }: { activity: PetActivity }) => {
+  if (!activity.machineLabel) return null;
+  const parts = activity.machineLabelParts;
+  return (
+    <small className="petActivityMachine" title={activity.machineLabel}>
+      {parts ? (
+        <>
+          {parts.type ? <span className="petActivityMachineType">{parts.type}</span> : null}
+          {parts.directoryName ? (
+            <>
+              {parts.type ? <span className="petActivityMachineSeparator"> · </span> : null}
+              <span className="petActivityMachineAccent">{parts.directoryName}</span>
+            </>
+          ) : null}
+          {parts.machineContext ? (
+            <>
+              {parts.directoryName ? <span className="petActivityMachineSeparator"> · </span> : null}
+              <span className="petActivityMachineAccent">{parts.machineContext}</span>
+            </>
+          ) : null}
+        </>
+      ) : activity.machineLabel}
+    </small>
+  );
+};
+
 type PetOverlayProps = {
   composerRecentlyChanged: boolean;
   controller: PetFeatureController;
@@ -394,7 +420,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
                 <span className={`petActivityDot ${activityStatusClass(activity.status)}`} />
                 <span className="petActivityText">
                   <strong>{activity.title}</strong>
-                  {activity.machineLabel ? <small className="petActivityMachine">{activity.machineLabel}</small> : null}
+                  <PetActivityMachine activity={activity} />
                   <em>
                     {activity.executionMeta && (activity.executionMeta.status === "running" || activity.executionMeta.status === "waiting")
                       ? <LiveThreadRunningText executionMeta={activity.executionMeta} activeGoal={activity.activeGoal} />

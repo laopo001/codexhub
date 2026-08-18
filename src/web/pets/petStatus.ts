@@ -16,6 +16,12 @@ import type { PetAnimationState } from "./petAtlas.js";
 
 export type PetActivityStatus = "needs_input" | "blocked" | "running" | "idle";
 
+export type PetActivityMachineLabel = {
+  type?: string;
+  directoryName?: string;
+  machineContext?: string;
+};
+
 export type PetActivity = {
   threadId: string;
   title: string;
@@ -24,6 +30,7 @@ export type PetActivity = {
   status: PetActivityStatus;
   machineId?: string;
   machineLabel?: string;
+  machineLabelParts?: PetActivityMachineLabel;
   executionMeta?: ThreadExecutionMeta;
   activeGoal?: ThreadGoalView | null;
 };
@@ -182,19 +189,35 @@ const machineTypeLabel = (type: MachineSummary["type"]) => {
   return "Local";
 };
 
-const petMachineLabel = (
+const petMachineLabelParts = (
   machine: MachineSummary | undefined,
   runtime: RuntimeSummary | undefined,
   workingDirectory: string
 ) => {
   const directoryName = workingDirectoryName(workingDirectory);
   const machineName = machine?.name || machine?.hostname || runtime?.name || runtime?.hostname;
-  const machineContext = machineName?.split(" · ").slice(1).filter(Boolean).join(" · ");
-  const name = directoryName
-    ? [directoryName, machineContext].filter(Boolean).join(" · ")
-    : machineName;
+  const machineContext = machineName?.split(" · ").slice(1).filter(Boolean).join(" · ")
+    || (!directoryName ? machineName : undefined);
+  if (!directoryName && !machineContext && !machineName) return undefined;
+  return {
+    ...(machine ? { type: machineTypeLabel(machine.type) } : {}),
+    ...(directoryName ? { directoryName } : {}),
+    ...(machineContext ? { machineContext } : {}),
+  } satisfies PetActivityMachineLabel;
+};
+
+const petMachineLabel = (
+  machine: MachineSummary | undefined,
+  runtime: RuntimeSummary | undefined,
+  workingDirectory: string
+) => {
+  const parts = petMachineLabelParts(machine, runtime, workingDirectory);
+  if (!parts) return undefined;
+  const name = parts.directoryName
+    ? [parts.directoryName, parts.machineContext].filter(Boolean).join(" · ")
+    : parts.machineContext ?? parts.directoryName;
   if (!name) return undefined;
-  return machine ? `${machineTypeLabel(machine.type)} · ${name}` : name;
+  return parts.type ? `${parts.type} · ${name}` : name;
 };
 
 /**
@@ -252,6 +275,7 @@ export const derivePetActivities = (
           ? "running"
           : activity?.status ?? "idle";
       const machineLabel = petMachineLabel(machine, runtime, workingDirectory);
+      const machineLabelParts = petMachineLabelParts(machine, runtime, workingDirectory);
       const detailExecution = detail
         ? (() => {
             const records = threadDisplayRecords(detail.threadId, detail);
@@ -285,6 +309,7 @@ export const derivePetActivities = (
         status,
         ...(machineId ? { machineId } : {}),
         ...(machineLabel ? { machineLabel } : {}),
+        ...(machineLabelParts ? { machineLabelParts } : {}),
         ...(detailExecution ?? summaryExecution ?? {})
       };
     })

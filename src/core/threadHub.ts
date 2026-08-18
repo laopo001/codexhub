@@ -1629,7 +1629,13 @@ export class ThreadHub {
       const completedTurnId = typeof turn?.id === "string" ? turn.id : "";
       const wasAlreadyTerminal = completedTurnId ? appServerTurnIsTerminal(thread, completedTurnId) : false;
       const completesUnboundActiveCommand = this.turnMatchesUnboundActiveCommand(thread, completedTurnId);
-      if (turn) this.applyAppServerTurn(thread, turn, { replaceTurnRecords: true });
+      if (completedTurnId) this.removeTerminalTurnTransientRecords(thread, completedTurnId);
+      // turn/completed is a live lifecycle notification, not a guaranteed full
+      // transcript snapshot. Merge the items it carries and preserve user,
+      // reasoning, commentary and tool records already received from live item
+      // events. Only thread/turns/list itemsView=full snapshots may replace a
+      // Turn's canonical app-server records.
+      if (turn) this.applyAppServerTurn(thread, turn);
       const staleForActiveTurn = Boolean(
         completedTurnId
         && thread.appServerTurnId
@@ -1914,6 +1920,17 @@ export class ThreadHub {
       });
     }
     if (ownedBatch) this.finishRecordBatch(thread, ownedBatch, { historical: false });
+  }
+
+  private removeTerminalTurnTransientRecords(thread: ThreadState, turnId: string) {
+    const nextRecords = thread.records.filter((record) => {
+      if (turnIdFromAppRecordId(thread.threadId, record.id) !== turnId) return true;
+      const type = asRecord(record.payload)?.type;
+      return type !== "turn_plan_updated" && type !== "turn_diff_updated";
+    });
+    if (nextRecords.length === thread.records.length) return;
+    thread.records = nextRecords;
+    this.invalidateThreadRecordIndex(thread);
   }
 
   private applyAppServerItemEvent(

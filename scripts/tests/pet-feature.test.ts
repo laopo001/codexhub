@@ -291,12 +291,18 @@ test("pet activities include running threads from registered runtimes", () => {
     threadId: activity.threadId,
     status: activity.status,
     machineId: activity.machineId,
-    machineLabel: activity.machineLabel
+    machineLabel: activity.machineLabel,
+    machineLabelParts: activity.machineLabelParts
   })), [{
     threadId: "wsl-thread",
     status: "running",
     machineId: "machine-wsl",
-    machineLabel: "Registered · codexhub · WSL Ubuntu · jx"
+    machineLabel: "Registered · codexhub · WSL Ubuntu · jx",
+    machineLabelParts: {
+      type: "Registered",
+      directoryName: "codexhub",
+      machineContext: "WSL Ubuntu · jx"
+    }
   }]);
 });
 
