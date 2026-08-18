@@ -5,6 +5,7 @@ type ActiveThreadSelectionInput = {
   activeTabThreadId: string;
   activeWorkspacePath: string;
   openThreads: readonly OpenThreadState[];
+  loadingThreadIds?: ReadonlySet<string>;
   selectedProjectMachineId?: string;
   selectedProjectPath?: string;
 };
@@ -12,18 +13,21 @@ type ActiveThreadSelectionInput = {
 /**
  * Keeps the visible thread selection stable while thread details are loading.
  *
- * A non-empty active tab is authoritative even before its thread reaches
- * openThreads. Only an empty active tab may be recovered from workspace state.
+ * A non-empty active tab is authoritative while it is open or while its
+ * detail request is still in flight. A failed request must be recoverable
+ * from the current project/workspace instead of pinning the UI to a dead ID.
  */
 export const resolveActiveThreadId = ({
   activeMachineId,
   activeTabThreadId,
   activeWorkspacePath,
   openThreads,
+  loadingThreadIds,
   selectedProjectMachineId,
   selectedProjectPath
 }: ActiveThreadSelectionInput): string => {
-  if (activeTabThreadId) {
+  const activeThreadIsOpen = openThreads.some((thread) => thread.threadId === activeTabThreadId);
+  if (activeTabThreadId && (activeThreadIsOpen || loadingThreadIds?.has(activeTabThreadId))) {
     return activeTabThreadId;
   }
 

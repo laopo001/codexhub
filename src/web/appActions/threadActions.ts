@@ -41,6 +41,7 @@ type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe
 type ThreadActionsContext = {
   activeRuntime?: RuntimeSummary | null;
   activeTabThreadId: string;
+  activeTabThreadIdRef?: React.MutableRefObject<string>;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   composerDraftStore: ComposerDraftStore;
   conversationThreadsRef: React.MutableRefObject<Map<string, OpenThreadState>>;
@@ -217,7 +218,12 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   };
 
   const clearActiveThreadIfLatest = (threadId: string) => {
-    if (ctx.latestRequestedThreadId.current === threadId) ctx.setActiveTabThreadId("");
+    if (
+      ctx.latestRequestedThreadId.current === threadId
+      || ctx.activeTabThreadIdRef?.current === threadId
+    ) {
+      ctx.setActiveTabThreadId("");
+    }
   };
 
   const closeThread = async (threadId: string) => {

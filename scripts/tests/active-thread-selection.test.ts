@@ -46,8 +46,18 @@ test("keeps a non-empty active thread while it is loading", () => {
     activeMachineId: "machine-current",
     activeTabThreadId: "thread-loading",
     activeWorkspacePath: "/workspace/current",
-    openThreads
+    openThreads,
+    loadingThreadIds: new Set(["thread-loading"])
   }), "thread-loading");
+});
+
+test("recovers an active id after its load has failed", () => {
+  assert.equal(resolveActiveThreadId({
+    activeMachineId: "machine-current",
+    activeTabThreadId: "thread-failed",
+    activeWorkspacePath: "/workspace/current",
+    openThreads
+  }), "thread-active");
 });
 
 test("recovers a cleared active thread from the current workspace", () => {

@@ -56,6 +56,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       activeTabThreadId: state.activeTabThreadId,
       activeWorkspacePath: state.activeWorkspacePath,
       openThreads: state.openThreads,
+      loadingThreadIds: new Set(state.openingThreads.current.keys()),
       selectedProjectMachineId: selectors.selectedProject?.machineId,
       selectedProjectPath: selectors.selectedProject?.path
     });

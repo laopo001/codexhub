@@ -67,10 +67,14 @@ const fixture = async (
   const shownErrors: Array<{ key: string; title: string; message: string }> = [];
   const openedModelThreadIds: string[] = [];
   const activeTabChanges: string[] = [];
+  const initialActiveTabThreadId = options.workspaceOpen === false ? "parent-thread" : threadId;
+  const activeTabThreadIdRef = { current: initialActiveTabThreadId };
+  const latestRequestedThreadId = { current: "" };
   let projectUpdates = 0;
   currentFetch = fetchImpl;
   const context = {
-    activeTabThreadId: options.workspaceOpen === false ? "parent-thread" : threadId,
+    activeTabThreadId: initialActiveTabThreadId,
+    activeTabThreadIdRef,
     closedThreadIds: { current: new Set<string>() },
     composerDraftStore: {
       delete: (threadId: string) => draft.delete(threadId),
@@ -83,7 +87,7 @@ const fixture = async (
     forkingMessageKey: "",
     goalDialog: null,
     threadRenameDialog: null,
-    latestRequestedThreadId: { current: "" },
+    latestRequestedThreadId,
     notificationRecordsByThread: { current: new Map() },
     openThreadIdsRef: { current: new Set(options.workspaceOpen === false ? [] : [threadId]) },
     openingThreads: { current: new Map() },
@@ -95,6 +99,7 @@ const fixture = async (
     setActiveMachineId: () => undefined,
     setActiveTabThreadByMachine: () => undefined,
     setActiveTabThreadId: (threadId: string) => {
+      activeTabThreadIdRef.current = threadId;
       activeTabChanges.push(threadId);
     },
     setActiveWorkspacePath: () => undefined,
@@ -130,6 +135,7 @@ const fixture = async (
     shownErrors,
     openedModelThreadIds,
     activeTabChanges,
+    latestRequestedThreadId,
     conversationThreads,
     draft,
     threadId,
@@ -185,6 +191,19 @@ test("failed deferred thread activation leaves the current tab untouched", async
     /thread unavailable/
   );
   assert.deepEqual(activeTabChanges, []);
+});
+
+test("failed active cleanup clears the current tab even after a newer request claims latest", async () => {
+  const { actions, activeTabChanges, latestRequestedThreadId } = await fixture(
+    false,
+    "chat",
+    async () => new Response(JSON.stringify({ error: "unused" }), { status: 200 }),
+    { threadId: "active-thread" }
+  );
+
+  latestRequestedThreadId.current = "newer-request";
+  actions.clearActiveThreadIfLatest("active-thread");
+  assert.deepEqual(activeTabChanges, [""]);
 });
 
 const serverFailure = (message: string, delivery: "turn" | "steer" | "goal") =>

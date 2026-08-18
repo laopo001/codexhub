@@ -138,6 +138,8 @@ export const useAppState = () => {
     });
   };
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
+  const activeTabThreadIdRef = useRef(activeTabThreadId);
+  activeTabThreadIdRef.current = activeTabThreadId;
   const [runtimeList, setRuntimeList] = useState<RuntimeSummary[]>([]);
   const [machines, setMachines] = useState<MachineSummary[]>([]);
   const machinesRef = useRef<MachineSummary[]>(machines);
@@ -191,6 +193,7 @@ export const useAppState = () => {
     activeMachineId,
     activeTabThreadByMachine,
     activeTabThreadId,
+    activeTabThreadIdRef,
     activeWorkspacePath,
     appSettings,
     appSettingsRef,
