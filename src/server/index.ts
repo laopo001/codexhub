@@ -13,10 +13,7 @@ import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
 import { CodexPetStore } from "../core/petStore.js";
-import {
-  notificationHookRunnerFromEnv,
-  ntfyNotificationRunnerFromEnv
-} from "../core/notificationHooks.js";
+import { ntfyNotificationRunnerFromEnv } from "../core/notificationHooks.js";
 import { CodexhubServerState } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
@@ -240,7 +237,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     state.parentRegistration(),
     parentRegistrationIdentity
   );
-  const notificationHooks = notificationHookRunnerFromEnv(process.env);
   const ntfyNotificationHooks = ntfyNotificationRunnerFromEnv(process.env);
   const authorityService = Boolean(options.authority);
   const embeddedSurface = authorityService || isEmbeddedCodexHubSurface(surface);
@@ -259,7 +255,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   threads = new ThreadHub(config.defaultThreadOptions, {
     onCatalogChange: () => publishProjects(),
     onThreadEvent: (event, records) => {
-      notificationHooks?.handleThreadEvent(event, records);
       ntfyNotificationHooks?.handleThreadEvent(event, records);
     },
     onThreadChange: () => {

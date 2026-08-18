@@ -6,11 +6,7 @@ import path from "node:path";
 import YAML from "yaml";
 import { CodexhubServerState } from "../src/core/serverState.js";
 import { emptyThreadUsage } from "../src/core/threadUsage.js";
-import {
-  NotificationHookRunner,
-  NtfyNotificationRunner,
-  parseNotificationCommand
-} from "../src/core/notificationHooks.js";
+import { NtfyNotificationRunner } from "../src/core/notificationHooks.js";
 import { startServer } from "../src/server/index.js";
 import type { CodexRecord } from "../src/shared/recordTypes.js";
 import type { ThreadStreamEvent, ThreadSummary } from "../src/shared/threadTypes.js";
@@ -25,48 +21,6 @@ const defaultConfigLines = [
 ];
 
 try {
-  const commandOutput = path.join(tmpdir, "command-output.jsonl");
-  const commandScript = path.join(tmpdir, "notify-command.mjs");
-  await writeFile(commandScript, [
-    "import { appendFileSync, readFileSync } from 'node:fs';",
-    "appendFileSync(process.argv[2], readFileSync(0, 'utf8'));"
-  ].join("\n"));
-
-  const errors: string[] = [];
-  const runner = new NotificationHookRunner({
-    command: `${process.execPath} ${commandScript} ${commandOutput}`,
-    timeoutMs: 3000
-  }, {
-    error: (message) => errors.push(message)
-  });
-
-  const records = notificationRecords();
-  const event = notificationEvent(records.at(-1)!);
-  runner.handleThreadEvent(event, records);
-  await eventually(async () => {
-    const commandBodies = await commandPayloads(commandOutput);
-    if (commandBodies.length !== 1) throw new Error(`expected 1 command body, saw ${commandBodies.length}`);
-  });
-
-  runner.handleThreadEvent(event, records);
-  runner.handleThreadEvent({ ...event, seq: 2, historical: true }, records);
-  await delay(250);
-  const commandBodies = await commandPayloads(commandOutput);
-  if (commandBodies.length !== 1) throw new Error(`duplicate/historical event sent ${commandBodies.length} command bodies`);
-  if (errors.length) throw new Error(errors.join("\n"));
-
-  const payload = commandBodies[0] as Record<string, unknown>;
-  if (payload.type !== "task_complete") throw new Error(`unexpected payload type: ${payload.type}`);
-  if (payload.threadId !== "thread-test") throw new Error(`unexpected payload threadId: ${payload.threadId}`);
-  if (payload.turnId !== "turn-test") throw new Error(`unexpected payload turnId: ${payload.turnId}`);
-  if (payload.body !== "已完成 · 用时 2.5s · Smoke hook final answer") throw new Error(`unexpected payload body: ${payload.body}`);
-  if (payload.duration !== "2.5s") throw new Error(`unexpected payload duration: ${payload.duration}`);
-
-  const parsed = parseNotificationCommand(String.raw`C:\Tools\notify.cmd --flag "two words"`);
-  if (JSON.stringify(parsed) !== JSON.stringify([String.raw`C:\Tools\notify.cmd`, "--flag", "two words"])) {
-    throw new Error(`notification command parser mangled Windows path: ${JSON.stringify(parsed)}`);
-  }
-
   await assertNtfyLifecycle();
 
   await assertServerStateEnv(tmpdir);
@@ -122,13 +76,18 @@ async function assertNtfyLifecycle() {
   const sequencePaths = requests.map((request) => request.path);
   if (new Set(sequencePaths).size !== 1) throw new Error(`ntfy sequence changed: ${JSON.stringify(sequencePaths)}`);
   const titles = requests.map((request) => decodeNtfyHeader(request.title));
-  if (!titles[0].includes("运行中") || !titles[1].includes("运行中")) {
-    throw new Error(`ntfy running title was not preserved: ${JSON.stringify(requests)}`);
+  if (titles[0] !== "Running smoke"
+    || titles[1] !== "Progress smoke"
+    || !requests[0].body.includes("运行中")
+    || !requests[1].body.includes("运行中")) {
+    throw new Error(`ntfy running activity was not preserved: ${JSON.stringify(requests)}`);
   }
   if (!requests[1].body.includes("进度 50%")) {
     throw new Error(`ntfy plan progress was not included: ${requests[1].body}`);
   }
-  if (!titles[2].includes("完成") || requests[2].tags !== "white_check_mark") {
+  if (titles[2] !== "Smoke hook"
+    || !requests[2].body.includes("已完成")
+    || requests[2].tags !== "white_check_mark") {
     throw new Error(`ntfy completion update was wrong: ${JSON.stringify(requests[2])}`);
   }
   if (!requests[2].body.includes("Smoke hook final answer")) {
@@ -152,7 +111,11 @@ async function assertNtfyLifecycle() {
     if (requests.length !== 5) throw new Error(`expected ntfy failure request, saw ${requests.length}`);
   });
   const failureTitles = requests.slice(3).map((request) => decodeNtfyHeader(request.title));
-  if (!failureTitles[1].includes("失败") || requests[4].tags !== "x" || !requests[4].body.includes("Smoke failure")) {
+  if (failureTitles[0] !== "Failure smoke"
+    || failureTitles[1] !== "Smoke hook"
+    || !requests[4].body.includes("失败")
+    || requests[4].tags !== "x"
+    || !requests[4].body.includes("Smoke failure")) {
     throw new Error(`ntfy failure update was wrong: ${JSON.stringify(requests.slice(3))}`);
   }
   if (requests[3].path !== requests[4].path || requests[3].path === requests[0].path) {
@@ -170,8 +133,8 @@ async function assertServerStateEnv(root: string) {
     ...defaultConfigLines,
     "env:",
     "  CODEX_HUB_HOST: \"127.0.0.1\"",
-    "  CODEX_HUB_NOTIFICATION_COMMAND: \"from-state\"",
-    "  CODEX_HUB_NOTIFICATION_TIMEOUT_MS: 1234",
+    "  CODEX_HUB_NTFY_URL: \"https://ntfy.sh/from-state\"",
+    "  CODEX_HUB_NTFY_TIMEOUT_MS: 1234",
     "  BAD-NAME: \"ignored\"",
     "  OBJECT_VALUE:",
     "    nested: \"ignored\"",
@@ -183,25 +146,25 @@ async function assertServerStateEnv(root: string) {
   ].join("\n"));
 
   const state = await CodexhubServerState.load({ dataDir });
-  const targetEnv: NodeJS.ProcessEnv = { CODEX_HUB_NOTIFICATION_COMMAND: "from-process" };
+  const targetEnv: NodeJS.ProcessEnv = { CODEX_HUB_NTFY_URL: "from-process" };
   state.applyEnvToProcess(targetEnv);
-  if (targetEnv.CODEX_HUB_NOTIFICATION_COMMAND !== "from-process") {
+  if (targetEnv.CODEX_HUB_NTFY_URL !== "from-process") {
     throw new Error("config env overrode an existing process env value");
   }
   if (targetEnv.CODEX_HUB_HOST !== "127.0.0.1") throw new Error("config env did not apply host");
-  if (targetEnv.CODEX_HUB_NOTIFICATION_TIMEOUT_MS !== "1234") {
-    throw new Error(`config numeric env was not stringified: ${targetEnv.CODEX_HUB_NOTIFICATION_TIMEOUT_MS}`);
+  if (targetEnv.CODEX_HUB_NTFY_TIMEOUT_MS !== "1234") {
+    throw new Error(`config numeric env was not stringified: ${targetEnv.CODEX_HUB_NTFY_TIMEOUT_MS}`);
   }
   if ("BAD-NAME" in targetEnv || "OBJECT_VALUE" in targetEnv) throw new Error("config env kept invalid entries");
 
   const previous = {
     host: process.env.CODEX_HUB_HOST,
-    notificationCommand: process.env.CODEX_HUB_NOTIFICATION_COMMAND,
-    notificationTimeoutMs: process.env.CODEX_HUB_NOTIFICATION_TIMEOUT_MS
+    ntfyUrl: process.env.CODEX_HUB_NTFY_URL,
+    ntfyTimeoutMs: process.env.CODEX_HUB_NTFY_TIMEOUT_MS
   };
   delete process.env.CODEX_HUB_HOST;
-  delete process.env.CODEX_HUB_NOTIFICATION_COMMAND;
-  delete process.env.CODEX_HUB_NOTIFICATION_TIMEOUT_MS;
+  delete process.env.CODEX_HUB_NTFY_URL;
+  delete process.env.CODEX_HUB_NTFY_TIMEOUT_MS;
 
   const port = await freePort();
   const handle = await startServer({
@@ -211,14 +174,14 @@ async function assertServerStateEnv(root: string) {
   });
   try {
     if (handle.host !== "127.0.0.1") throw new Error(`config env was not applied before loadConfig: ${handle.host}`);
-    if (process.env.CODEX_HUB_NOTIFICATION_COMMAND !== "from-state") {
-      throw new Error("config notification command was not loaded during server init");
+    if (process.env.CODEX_HUB_NTFY_URL !== "https://ntfy.sh/from-state") {
+      throw new Error("config ntfy URL was not loaded during server init");
     }
   } finally {
     await handle.stop();
     restoreEnv("CODEX_HUB_HOST", previous.host);
-    restoreEnv("CODEX_HUB_NOTIFICATION_COMMAND", previous.notificationCommand);
-    restoreEnv("CODEX_HUB_NOTIFICATION_TIMEOUT_MS", previous.notificationTimeoutMs);
+    restoreEnv("CODEX_HUB_NTFY_URL", previous.ntfyUrl);
+    restoreEnv("CODEX_HUB_NTFY_TIMEOUT_MS", previous.ntfyTimeoutMs);
   }
 }
 
@@ -338,7 +301,7 @@ async function assertExternalEnvEditsSurviveStateSave(root: string) {
     "updatedAt: \"2026-06-17T00:00:00.000Z\"",
     ...defaultConfigLines,
     "env:",
-    "  CODEX_HUB_NOTIFICATION_COMMAND: \"from-loaded-state\"",
+    "  CODEX_HUB_NTFY_URL: \"https://ntfy.sh/from-loaded-state\"",
     "machines: []",
     "projects: []",
     "tasks: []",
@@ -351,8 +314,8 @@ async function assertExternalEnvEditsSurviveStateSave(root: string) {
     "updatedAt: \"2026-06-17T00:00:01.000Z\"",
     ...defaultConfigLines,
     "env:",
-    "  CODEX_HUB_NOTIFICATION_COMMAND: \"from-user-edit\"",
-    "  CODEX_HUB_NOTIFICATION_TIMEOUT_MS: 7000",
+    "  CODEX_HUB_NTFY_URL: \"https://ntfy.sh/from-user-edit\"",
+    "  CODEX_HUB_NTFY_TIMEOUT_MS: 7000",
     "machines: []",
     "projects: []",
     "tasks: []",
@@ -362,37 +325,12 @@ async function assertExternalEnvEditsSurviveStateSave(root: string) {
   state.upsertSshHost({ alias: "external-env-edit-smoke" });
   await state.flush();
   const saved = YAML.parse(await readFile(configPath, "utf8")) as { env?: Record<string, unknown> };
-  if (saved.env?.CODEX_HUB_NOTIFICATION_COMMAND !== "from-user-edit") {
+  if (saved.env?.CODEX_HUB_NTFY_URL !== "https://ntfy.sh/from-user-edit") {
     throw new Error(`state save clobbered external env edit: ${JSON.stringify(saved.env)}`);
   }
-  if (saved.env?.CODEX_HUB_NOTIFICATION_TIMEOUT_MS !== "7000") {
+  if (saved.env?.CODEX_HUB_NTFY_TIMEOUT_MS !== "7000") {
     throw new Error(`state save did not preserve external env timeout edit: ${JSON.stringify(saved.env)}`);
   }
-}
-
-function notificationRecords(): CodexRecord[] {
-  return [
-    {
-      id: "app:thread-test:turn-test:agent:message",
-      timestamp: "2026-06-17T00:00:01.000Z",
-      type: "event_msg",
-      payload: {
-        type: "agent_message",
-        phase: "final_answer",
-        message: "Smoke hook final answer"
-      }
-    },
-    {
-      id: "app:thread-test:turn-test:event:task_complete",
-      timestamp: "2026-06-17T00:00:02.500Z",
-      type: "event_msg",
-      payload: {
-        type: "task_complete",
-        turn_id: "turn-test",
-        duration_ms: 2500
-      }
-    }
-  ];
 }
 
 function lifecycleRecord(
@@ -453,16 +391,6 @@ function idleThread(): ThreadSummary {
   };
 }
 
-function notificationEvent(record: CodexRecord): ThreadStreamEvent {
-  return {
-    seq: 1,
-    threadId: "thread-test",
-    kind: "record",
-    thread: testThread(),
-    record
-  };
-}
-
 function testThread(): ThreadSummary {
   return {
     threadId: "thread-test",
@@ -479,14 +407,6 @@ function testThread(): ThreadSummary {
     messageCount: 1,
     threadUsage: emptyThreadUsage()
   };
-}
-
-async function commandPayloads(filePath: string) {
-  const text = await readFile(filePath, "utf8").catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return "";
-    throw error;
-  });
-  return text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line));
 }
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {

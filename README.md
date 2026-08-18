@@ -108,8 +108,6 @@ env:
   CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS: "60000"
   CODEX_HUB_SSH_AUTOCONNECT: "1"
   CODEX_HUB_PLUGIN_DIRS: "/home/laop/.local/share/codexhub/plugins"
-  CODEX_HUB_NOTIFICATION_COMMAND: "C:\\Users\\0laop\\.codexhub\\notify.cmd"
-  CODEX_HUB_NOTIFICATION_TIMEOUT_MS: "5000"
   CODEX_HUB_ELECTRON_DEVTOOLS: "0"
   # 只有明确需要保护 loopback API 时才设置；VSCode authority 默认无 token
   # CODEX_HUB_AUTH_TOKEN: "replace-with-a-long-random-token"
@@ -194,17 +192,6 @@ server 每 30 秒扫描一次本地 task 状态，间隔可用 `CODEX_HUB_TASK_S
 
 任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VS Code notification，并只把对应 project path 的完成事件发到包含该 workspace 的窗口；Electron surface 则在 Electron main process 创建原生系统通知，点击后恢复并聚焦通知来源窗口，再打开对应 `threadId`。这个开关默认关闭并保存在本地 UI state。
 
-需要自定义通知集成时，可以在 server 进程上设置 hook 环境变量。hook 在 app-server turn 完成并归一成非历史 `task_complete` record 时触发，不依赖浏览器 tab 是否打开：
-
-```bash
-CODEX_HUB_NOTIFICATION_COMMAND="/home/laop/bin/codexhub-notify --channel codexhub"
-CODEX_HUB_NOTIFICATION_TIMEOUT_MS=5000
-```
-
-`CODEX_HUB_NOTIFICATION_COMMAND` 会启动本机命令，并把 JSON payload 写入 stdin；失败只记录日志，不影响 Codex turn/task 完成。VSCode authority service 也读这些环境变量，并继承首次启动它的 extension host 环境；变更后要关闭同一 authority 的全部窗口、等待 service 退出，再重新打开。
-
-如果不想在 Windows/VSCode 里配置系统环境变量，也可以把同样的键写进该 authority 共享数据目录下的 `config.yaml` 的 `env` 字段。
-
 如果希望通知像桌宠 Activity 一样反映整个 Turn 生命周期，可以直接配置 ntfy：
 
 ```yaml
@@ -217,7 +204,7 @@ env:
 
 ntfy hook 会为每个 `threadId + turnId` 建立一个稳定的 sequence ID，并依次更新同一条通知：`运行中`、`等待输入`、流式活动更新、`已完成`、`失败` 或 `已停止`。如果当前 Turn 有结构化 Plan，运行中消息还会按已完成步骤显示真实的 `进度 N%`；没有总步骤时只显示活动标题和已用时间，不会伪造百分比。`CODEX_HUB_NTFY_UPDATE_INTERVAL_MS` 用于合并高频 token/item 事件，避免每个字符都发一次 HTTP 请求。
 
-`CODEX_HUB_NTFY_URL` 必须包含 topic，且不要把 sequence ID 预先写入 URL；CodexHub 会自动把它追加到 topic 路径。`CODEX_HUB_NTFY_TOKEN` 使用 ntfy 的 Bearer token。这个配置与旧的 `CODEX_HUB_NOTIFICATION_COMMAND` 互不冲突：旧 command hook 仍只在任务完成时执行，ntfy hook 单独负责生命周期更新。
+`CODEX_HUB_NTFY_URL` 必须包含 topic，且不要把 sequence ID 预先写入 URL；CodexHub 会自动把它追加到 topic 路径。`CODEX_HUB_NTFY_TOKEN` 使用 ntfy 的 Bearer token。
 
 Codex turn 默认不设等待超时，适合长任务和定时任务持续运行。需要在特定部署里限制单次 turn 时，可以设置 `CODEX_HUB_TURN_TIMEOUT_MS` 为正整数毫秒；不设置或设为 `0` 表示不启用 turn 超时。
 
