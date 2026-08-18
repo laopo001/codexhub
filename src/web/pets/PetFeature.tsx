@@ -167,13 +167,13 @@ const PetActivityMachine = ({ activity }: { activity: PetActivity }) => {
           {parts.directoryName ? (
             <>
               {parts.type ? <span className="petActivityMachineSeparator"> · </span> : null}
-              <span className="petActivityMachineAccent">{parts.directoryName}</span>
+              <span className="petActivityMachineDirectory">{parts.directoryName}</span>
             </>
           ) : null}
           {parts.machineContext ? (
             <>
               {parts.directoryName ? <span className="petActivityMachineSeparator"> · </span> : null}
-              <span className="petActivityMachineAccent">{parts.machineContext}</span>
+              <span className="petActivityMachineContext">{parts.machineContext}</span>
             </>
           ) : null}
         </>
