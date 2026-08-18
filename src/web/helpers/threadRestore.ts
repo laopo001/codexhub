@@ -9,12 +9,17 @@ export type PersistedThreadRestoreResult = {
 type PersistedThreadRestoreOptions = {
   threadIds: string[];
   activeThreadId: string;
-  openThread: (threadId: string) => Promise<void>;
+  openThread: (threadId: string, options?: {
+    activate?: boolean;
+    deferActivationUntilLoaded?: boolean;
+  }) => Promise<void>;
   clearActiveThreadIfLatest: (threadId: string) => void;
   retryDelaysMs?: readonly number[];
 };
 
-const defaultRetryDelaysMs = [0, 250, 750, 1_500, 3_000] as const;
+// The initial restore must not block a successfully opened active tab on stale
+// persisted IDs. Transient failures are retried by the initialized app effect.
+const defaultRetryDelaysMs = [0] as const;
 
 const isRetryableThreadRestoreError = (error: unknown) => {
   if (error instanceof CodexHubApiError) {
@@ -61,17 +66,25 @@ export const restorePersistedThreadTabs = async (
     : "";
   const openOrder = preferredActiveThreadId
     ? [
-      ...options.threadIds.filter((threadId) => threadId !== preferredActiveThreadId),
-      preferredActiveThreadId
+      preferredActiveThreadId,
+      ...options.threadIds.filter((threadId) => threadId !== preferredActiveThreadId)
     ]
     : options.threadIds;
+  const activationTarget = preferredActiveThreadId || options.threadIds[0] || "";
   const openedThreadIds = new Set<string>();
   const pendingThreadIds = new Set<string>();
   const retryDelaysMs = options.retryDelaysMs ?? defaultRetryDelaysMs;
 
   for (const threadId of openOrder) {
+    const activate = threadId === activationTarget;
     try {
-      await openThreadWithRetry(threadId, options.openThread, retryDelaysMs);
+      await openThreadWithRetry(
+        threadId,
+        (id) => options.openThread(id, activate
+          ? { activate: true, deferActivationUntilLoaded: true }
+          : { activate: false }),
+        retryDelaysMs
+      );
       openedThreadIds.add(threadId);
     } catch (error) {
       if (isRetryableThreadRestoreError(error)) pendingThreadIds.add(threadId);

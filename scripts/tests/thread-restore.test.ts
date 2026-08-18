@@ -5,18 +5,25 @@ import { restorePersistedThreadTabs } from "../../src/web/helpers/threadRestore.
 
 test("persisted thread restore keeps only successfully opened tabs", async () => {
   const attempts: string[] = [];
+  const openOptions: Array<{ threadId: string; options?: { activate?: boolean; deferActivationUntilLoaded?: boolean } }> = [];
   const cleared: string[] = [];
   const result = await restorePersistedThreadTabs({
     threadIds: ["thread-a", "thread-b", "thread-c"],
     activeThreadId: "thread-b",
-    openThread: async (threadId) => {
+    openThread: async (threadId, options) => {
       attempts.push(threadId);
+      openOptions.push({ threadId, options });
       if (threadId === "thread-b") throw new Error("missing");
     },
     clearActiveThreadIfLatest: (threadId) => cleared.push(threadId)
   });
 
-  assert.deepEqual(attempts, ["thread-a", "thread-c", "thread-b"]);
+  assert.deepEqual(attempts, ["thread-b", "thread-a", "thread-c"]);
+  assert.deepEqual(openOptions, [
+    { threadId: "thread-b", options: { activate: true, deferActivationUntilLoaded: true } },
+    { threadId: "thread-a", options: { activate: false } },
+    { threadId: "thread-c", options: { activate: false } }
+  ]);
   assert.deepEqual(cleared, ["thread-b"]);
   assert.deepEqual(result, {
     threadIds: ["thread-a", "thread-c"],
@@ -51,7 +58,7 @@ test("persisted thread restore leaves no stale selection when every tab fails", 
     clearActiveThreadIfLatest: (threadId) => cleared.push(threadId)
   });
 
-  assert.deepEqual(cleared, ["stale-a", "stale-b"]);
+  assert.deepEqual(cleared, ["stale-b", "stale-a"]);
   assert.deepEqual(result, { threadIds: [], activeThreadId: "", pendingThreadIds: [] });
 
   const recovered: string[] = [];
@@ -97,5 +104,32 @@ test("persisted thread restore preserves a transiently unavailable tab for backg
     threadIds: [],
     activeThreadId: "",
     pendingThreadIds: ["thread-a"]
+  });
+});
+
+test("a failed active restore does not activate an unloaded tab over opened tabs", async () => {
+  let activeThreadId = "";
+  const openThread = async (
+    threadId: string,
+    options?: { activate?: boolean; deferActivationUntilLoaded?: boolean }
+  ) => {
+    if (options?.activate && !options.deferActivationUntilLoaded) activeThreadId = threadId;
+    if (threadId === "stale-active") throw new CodexHubApiError(404, "thread_not_found");
+    if (options?.activate) activeThreadId = threadId;
+  };
+
+  const result = await restorePersistedThreadTabs({
+    threadIds: ["opened-tab", "stale-active"],
+    activeThreadId: "stale-active",
+    retryDelaysMs: [0],
+    openThread,
+    clearActiveThreadIfLatest: () => undefined
+  });
+
+  assert.equal(activeThreadId, "");
+  assert.deepEqual(result, {
+    threadIds: ["opened-tab"],
+    activeThreadId: "opened-tab",
+    pendingThreadIds: ["stale-active"]
   });
 });
