@@ -1,6 +1,7 @@
 import { threadUsageFromRecords } from "../../core/threadUsage.js";
 export {
   isTaskCompleteRecord,
+  taskActivityTitle,
   taskCompleteNotification,
   taskCompleteRecordIsForLatestUserInput,
   taskCompleteNotificationShouldPersist,

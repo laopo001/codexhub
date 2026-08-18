@@ -142,8 +142,8 @@ const taskRunCompleteNotification = (
 ): TaskCompleteNotification => {
   const duration = formatDuration(run.durationMs) || undefined;
   return {
-    title: duration ? `Codex 任务完成 · 用时 ${duration}` : "Codex 任务完成",
-    body: `${task.name || "计划任务"} · 已完成`,
+    title: task.name || "计划任务",
+    body: duration ? `已完成 · 用时 ${duration}` : "已完成",
     threadId: run.threadId ?? task.threadId ?? task.taskId,
     ...(machineLabel ? { machineLabel } : {}),
     duration,
@@ -500,8 +500,8 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         || machine.hostname
         || "registered machine";
       dispatchTaskCompleteNotification({
-        title: "Codex 任务完成",
-        body: activity.activityTitle ?? activity.title ?? "远程任务",
+        title: activity.activityTitle ?? activity.title ?? "远程任务",
+        body: "已完成",
         threadId: activity.threadId,
         machineLabel
       });

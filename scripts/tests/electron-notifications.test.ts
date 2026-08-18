@@ -8,11 +8,14 @@ import {
 } from "../../src/web/helpers/notifications.js";
 import {
   isTaskCompleteNotification,
+  taskCompleteNotification,
   taskCompleteRecordIsForLatestUserInput,
   taskCompleteNotificationShouldPersist,
   taskCompleteNotificationTitle
 } from "../../src/shared/taskNotifications.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
+import type { ThreadSummary } from "../../src/shared/threadTypes.js";
+import { emptyThreadUsage } from "../../src/core/threadUsage.js";
 
 const notification = {
   title: "Codex 任务完成",
@@ -69,6 +72,44 @@ test("task completion notification title is shared across hosts", () => {
     taskCompleteNotificationTitle(notification),
     "Codex 任务完成 · codexhub · WSL Ubuntu · jx"
   );
+});
+
+test("task completion notification title follows the latest Activity title", () => {
+  const thread: ThreadSummary = {
+    threadId: "thread-activity-title",
+    workingDirectory: "/tmp/codexhub-title",
+    runtime: { machineId: "machine-title", online: true, runnable: true },
+    status: "idle",
+    running: false,
+    title: "thread-activity-title",
+    activityTitle: "检查 ntfy 通知",
+    updatedAt: "2026-08-18T00:00:03.000Z",
+    messageCount: 2,
+    threadUsage: emptyThreadUsage()
+  };
+  const records: CodexRecord[] = [
+    {
+      id: "app:thread-activity-title:turn-title:user:message",
+      timestamp: "2026-08-18T00:00:01.000Z",
+      type: "event_msg",
+      payload: { type: "user_message", message: "检查 ntfy 通知" }
+    },
+    {
+      id: "app:thread-activity-title:turn-title:agent:message",
+      timestamp: "2026-08-18T00:00:02.000Z",
+      type: "event_msg",
+      payload: { type: "agent_message", phase: "final_answer", message: "已修复" }
+    },
+    {
+      id: "app:thread-activity-title:turn-title:event:task_complete",
+      timestamp: "2026-08-18T00:00:03.000Z",
+      type: "event_msg",
+      payload: { type: "task_complete", turn_id: "turn-title", duration_ms: 2000 }
+    }
+  ];
+  const notification = taskCompleteNotification(thread, records[2], records);
+  assert.equal(notification.title, "检查 ntfy 通知");
+  assert.equal(notification.body, "已完成 · 用时 2.0s · 已修复");
 });
 
 test("task completion notification follows the latest user input turn", () => {

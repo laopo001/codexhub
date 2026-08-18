@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   isTaskCompleteRecord,
+  taskActivityTitle,
   taskCompleteNotification,
   taskCompleteRecordIsForLatestUserInput,
   taskCompletionNotificationKey,
@@ -11,7 +12,6 @@ import {
 } from "../shared/taskNotifications.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import { readPositiveIntEnv } from "../shared/env.js";
-import { threadActivityTitleFromRecords } from "../shared/threadActivity.js";
 import type { ThreadStreamEvent, ThreadSummary } from "../shared/threadTypes.js";
 
 export type NotificationHookConfig = {
@@ -457,17 +457,14 @@ const runningNtfyPayload = (
   const elapsedMs = startedAt ? Math.max(0, Date.now() - Date.parse(startedAt)) : undefined;
   const progress = latestPlanProgress(records, turnId);
   const needsInput = hasPendingNtfyInteraction(records);
-  const context = threadContext(thread);
-  const activity = thread.activityTitle?.trim() || threadActivityTitleFromRecords(records, thread.threadId);
+  const activityTitle = taskActivityTitle(thread, records);
   return {
     type: "task_lifecycle",
     status: needsInput ? "needs_input" : "running",
     sequenceId,
-    title: needsInput ? "Codex 任务等待输入" : "Codex 任务运行中",
+    title: activityTitle,
     body: notificationText([
-      context,
       needsInput ? "等待输入" : "运行中",
-      activity && activity !== context ? activity : null,
       progress === undefined ? null : `进度 ${progress}%`,
       elapsedMs === undefined ? null : `已用 ${formatStatusDuration(elapsedMs)}`
     ].filter((value): value is string => Boolean(value)).join(" · ")),
@@ -517,7 +514,7 @@ const terminalNtfyPayload = (
     type: "task_lifecycle",
     status: interrupted ? "cancelled" : "failed",
     sequenceId,
-    title: interrupted ? "Codex 任务已停止" : "Codex 任务失败",
+    title: taskActivityTitle(thread, records),
     body: notificationText([
       threadContext(thread),
       interrupted ? "已停止" : "失败",

@@ -1,4 +1,5 @@
 import { asRecord, type CodexRecord } from "./recordTypes.js";
+import { threadActivityTitleFromRecords } from "./threadActivity.js";
 import type { ThreadSummary } from "./threadTypes.js";
 
 export type TaskCompleteNotification = {
@@ -37,6 +38,18 @@ export const taskCompleteNotificationTitle = (notification: TaskCompleteNotifica
   notification.title,
   notification.machineLabel
 ].filter((value): value is string => Boolean(value?.trim())).join(" · ");
+
+/**
+ * The notification title shared by Pet Activity and every host notification.
+ * Goal/user-input activity is more useful than the generic "task complete"
+ * label, and the helper already compacts it for cross-surface display.
+ */
+export const taskActivityTitle = (thread: ThreadSummary, records: CodexRecord[]) =>
+  thread.activityTitle?.trim()
+  || threadActivityTitleFromRecords(records, thread.threadId)
+  || thread.title.trim()
+  || thread.workingDirectory.split(/[\\/]/).filter(Boolean).pop()
+  || "Codex 任务";
 
 export const isTaskCompleteRecord = (record: CodexRecord) => {
   const payload = asRecord(record.payload);
@@ -85,12 +98,13 @@ export const taskCompleteNotification = (
   const message = usefulTaskCompleteMessage(payload)
     ?? latestFinalAnswerText(records, record)
     ?? "任务已完成";
-  const threadContext = thread.title.trim()
-    || thread.workingDirectory.split(/[\\/]/).filter(Boolean).pop()
-    || "Codex 任务";
+  const activityTitle = taskActivityTitle(thread, records);
   return {
-    title: duration ? `Codex 任务完成 · 用时 ${duration}` : "Codex 任务完成",
-    body: notificationText(`${threadContext} · ${message}`),
+    title: activityTitle,
+    body: notificationText([
+      duration ? `已完成 · 用时 ${duration}` : "已完成",
+      message
+    ].join(" · ")),
     threadId: thread.threadId,
     ...(machineLabel?.trim() ? { machineLabel: machineLabel.trim() } : {}),
     duration,
