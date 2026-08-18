@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { CodexhubServerState } from "../src/core/serverState.js";
 import { emptyThreadUsage } from "../src/core/threadUsage.js";
 import {
   NotificationHookRunner,
+  NtfyNotificationRunner,
   parseNotificationCommand
 } from "../src/core/notificationHooks.js";
 import { startServer } from "../src/server/index.js";
@@ -65,11 +67,98 @@ try {
     throw new Error(`notification command parser mangled Windows path: ${JSON.stringify(parsed)}`);
   }
 
+  await assertNtfyLifecycle();
+
   await assertServerStateEnv(tmpdir);
   await assertServerUiConfig(tmpdir);
   await assertExternalEnvEditsSurviveStateSave(tmpdir);
 } finally {
   await rm(tmpdir, { recursive: true, force: true });
+}
+
+async function assertNtfyLifecycle() {
+  const requests: Array<{ path: string; title: string; tags: string; body: string }> = [];
+  const server = createHttpServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      requests.push({
+        path: request.url ?? "",
+        title: String(request.headers.title ?? ""),
+        tags: String(request.headers.tags ?? ""),
+        body: Buffer.concat(chunks).toString("utf8")
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  const port = await listenHttp(server);
+  const runner = new NtfyNotificationRunner({
+    url: `http://127.0.0.1:${port}/codexhub-smoke`,
+    timeoutMs: 1000,
+    updateIntervalMs: 20
+  });
+  const started = lifecycleRecord("task_started", "turn-ntfy", "2026-06-17T00:00:00.000Z");
+  const progress = lifecycleRecord("turn_plan_updated", "turn-ntfy", "2026-06-17T00:00:00.500Z", undefined, {
+    plan: [
+      { step: "first", status: "completed" },
+      { step: "second", status: "pending" }
+    ]
+  });
+  const finalAnswer = lifecycleRecord("agent_message", "turn-ntfy", "2026-06-17T00:00:00.800Z");
+  const completed = lifecycleRecord("task_complete", "turn-ntfy", "2026-06-17T00:00:01.000Z", 1000);
+  runner.handleThreadEvent(lifecycleEvent(started, runningThread("turn-ntfy", "Running smoke")), [started]);
+  await eventually(async () => {
+    if (requests.length !== 1) throw new Error(`expected ntfy start request, saw ${requests.length}`);
+  });
+  runner.handleThreadEvent(lifecycleEvent(progress, runningThread("turn-ntfy", "Progress smoke")), [started, progress]);
+  await eventually(async () => {
+    if (requests.length !== 2) throw new Error(`expected ntfy progress request, saw ${requests.length}`);
+  });
+  runner.handleThreadEvent(lifecycleEvent(completed, idleThread()), [started, progress, finalAnswer, completed]);
+  await eventually(async () => {
+    if (requests.length !== 3) throw new Error(`expected ntfy completion request, saw ${requests.length}`);
+  });
+  const sequencePaths = requests.map((request) => request.path);
+  if (new Set(sequencePaths).size !== 1) throw new Error(`ntfy sequence changed: ${JSON.stringify(sequencePaths)}`);
+  const titles = requests.map((request) => decodeNtfyHeader(request.title));
+  if (!titles[0].includes("运行中") || !titles[1].includes("运行中")) {
+    throw new Error(`ntfy running title was not preserved: ${JSON.stringify(requests)}`);
+  }
+  if (!requests[1].body.includes("进度 50%")) {
+    throw new Error(`ntfy plan progress was not included: ${requests[1].body}`);
+  }
+  if (!titles[2].includes("完成") || requests[2].tags !== "white_check_mark") {
+    throw new Error(`ntfy completion update was wrong: ${JSON.stringify(requests[2])}`);
+  }
+  if (!requests[2].body.includes("Smoke hook final answer")) {
+    throw new Error(`ntfy completion body missed final answer: ${requests[2].body}`);
+  }
+
+  const failedStart = lifecycleRecord("task_started", "turn-ntfy-failed", "2026-06-17T00:00:02.000Z");
+  const failed = lifecycleRecord("turn_aborted", "turn-ntfy-failed", "2026-06-17T00:00:03.000Z", undefined, {
+    status: "failed",
+    reason: "Smoke failure"
+  });
+  runner.handleThreadEvent(
+    lifecycleEvent(failedStart, runningThread("turn-ntfy-failed", "Failure smoke")),
+    [failedStart]
+  );
+  await eventually(async () => {
+    if (requests.length !== 4) throw new Error(`expected ntfy failure start request, saw ${requests.length}`);
+  });
+  runner.handleThreadEvent(lifecycleEvent(failed, idleThread()), [failedStart, failed]);
+  await eventually(async () => {
+    if (requests.length !== 5) throw new Error(`expected ntfy failure request, saw ${requests.length}`);
+  });
+  const failureTitles = requests.slice(3).map((request) => decodeNtfyHeader(request.title));
+  if (!failureTitles[1].includes("失败") || requests[4].tags !== "x" || !requests[4].body.includes("Smoke failure")) {
+    throw new Error(`ntfy failure update was wrong: ${JSON.stringify(requests.slice(3))}`);
+  }
+  if (requests[3].path !== requests[4].path || requests[3].path === requests[0].path) {
+    throw new Error(`ntfy failure sequence was not isolated: ${JSON.stringify(requests.slice(3))}`);
+  }
+  await closeHttp(server);
 }
 
 async function assertServerStateEnv(root: string) {
@@ -306,6 +395,64 @@ function notificationRecords(): CodexRecord[] {
   ];
 }
 
+function lifecycleRecord(
+  type: "task_started" | "agent_message" | "turn_plan_updated" | "task_complete" | "turn_aborted",
+  turnId: string,
+  timestamp: string,
+  durationMs?: number,
+  extraPayload: Record<string, unknown> = {}
+): CodexRecord {
+  const suffix = type === "task_started"
+    ? "event:task_started"
+    : type === "task_complete"
+      ? "event:task_complete"
+      : type === "turn_aborted"
+        ? "event:turn_aborted"
+        : type === "turn_plan_updated"
+          ? "event:turn_plan_updated"
+          : "agent:progress";
+  return {
+    id: `app:thread-test:${turnId}:${suffix}`,
+    timestamp,
+    type: "event_msg",
+    payload: {
+      type,
+      turn_id: turnId,
+      ...(type === "agent_message" ? { phase: "final_answer", message: "Smoke hook final answer" } : {}),
+      ...(durationMs === undefined ? {} : { duration_ms: durationMs }),
+      ...extraPayload
+    }
+  };
+}
+
+function lifecycleEvent(record: CodexRecord, thread: ThreadSummary): ThreadStreamEvent {
+  return {
+    seq: 1,
+    threadId: "thread-test",
+    kind: "record",
+    thread,
+    record
+  };
+}
+
+function runningThread(turnId: string, activityTitle: string): ThreadSummary {
+  return {
+    ...testThread(),
+    status: "running",
+    running: true,
+    activeTurnId: turnId,
+    activeTurnStartedAt: "2026-06-17T00:00:00.000Z",
+    activityTitle
+  };
+}
+
+function idleThread(): ThreadSummary {
+  return {
+    ...testThread(),
+    updatedAt: "2026-06-17T00:00:01.000Z"
+  };
+}
+
 function notificationEvent(record: CodexRecord): ThreadStreamEvent {
   return {
     seq: 1,
@@ -383,10 +530,33 @@ async function freePort() {
   });
 }
 
+async function listenHttp(server: ReturnType<typeof createHttpServer>) {
+  return await new Promise<number>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("failed to allocate an HTTP port"));
+        return;
+      }
+      resolve(address.port);
+    });
+  });
+}
+
+async function closeHttp(server: ReturnType<typeof createHttpServer>) {
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
     delete process.env[name];
   } else {
     process.env[name] = value;
   }
+}
+
+function decodeNtfyHeader(value: string) {
+  const match = value.match(/^=\?UTF-8\?B\?([^?]+)\?=$/i);
+  return match ? Buffer.from(match[1], "base64").toString("utf8") : value;
 }

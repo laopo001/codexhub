@@ -205,6 +205,20 @@ CODEX_HUB_NOTIFICATION_TIMEOUT_MS=5000
 
 如果不想在 Windows/VSCode 里配置系统环境变量，也可以把同样的键写进该 authority 共享数据目录下的 `config.yaml` 的 `env` 字段。
 
+如果希望通知像桌宠 Activity 一样反映整个 Turn 生命周期，可以直接配置 ntfy：
+
+```yaml
+env:
+  CODEX_HUB_NTFY_URL: "https://ntfy.sh/my-codexhub-topic"
+  CODEX_HUB_NTFY_TOKEN: "tk_..."
+  CODEX_HUB_NTFY_TIMEOUT_MS: "5000"
+  CODEX_HUB_NTFY_UPDATE_INTERVAL_MS: "3000"
+```
+
+ntfy hook 会为每个 `threadId + turnId` 建立一个稳定的 sequence ID，并依次更新同一条通知：`运行中`、`等待输入`、流式活动更新、`已完成`、`失败` 或 `已停止`。如果当前 Turn 有结构化 Plan，运行中消息还会按已完成步骤显示真实的 `进度 N%`；没有总步骤时只显示活动标题和已用时间，不会伪造百分比。`CODEX_HUB_NTFY_UPDATE_INTERVAL_MS` 用于合并高频 token/item 事件，避免每个字符都发一次 HTTP 请求。
+
+`CODEX_HUB_NTFY_URL` 必须包含 topic，且不要把 sequence ID 预先写入 URL；CodexHub 会自动把它追加到 topic 路径。`CODEX_HUB_NTFY_TOKEN` 使用 ntfy 的 Bearer token。这个配置与旧的 `CODEX_HUB_NOTIFICATION_COMMAND` 互不冲突：旧 command hook 仍只在任务完成时执行，ntfy hook 单独负责生命周期更新。
+
 Codex turn 默认不设等待超时，适合长任务和定时任务持续运行。需要在特定部署里限制单次 turn 时，可以设置 `CODEX_HUB_TURN_TIMEOUT_MS` 为正整数毫秒；不设置或设为 `0` 表示不启用 turn 超时。
 
 session 的断线判定和 recently disconnected 保留时间可以用 `CODEX_HUB_SESSION_OFFLINE_TIMEOUT_MS`、`CODEX_HUB_SESSION_OFFLINE_RETENTION_MS`、`CODEX_HUB_SESSION_SWEEP_INTERVAL_MS` 调整。runtime session 不做空闲回收；它跟 machine/server 主进程一起保持在线。thread records subscription 的 idle grace 可用 `CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS` 调整，设为 `0` 表示禁用 subscription idle-close。
