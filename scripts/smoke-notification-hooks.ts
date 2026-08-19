@@ -22,6 +22,8 @@ const defaultConfigLines = [
 
 try {
   await assertNtfyLifecycle();
+  await assertNtfyTerminalRecovery();
+  await assertNtfyGlobalPacing();
 
   await assertServerStateEnv(tmpdir);
   await assertServerUiConfig(tmpdir);
@@ -50,7 +52,8 @@ async function assertNtfyLifecycle() {
   const runner = new NtfyNotificationRunner({
     url: `http://127.0.0.1:${port}/codexhub-smoke`,
     timeoutMs: 1000,
-    updateIntervalMs: 20
+    updateIntervalMs: 20,
+    requestIntervalMs: 5
   });
   const started = lifecycleRecord("task_started", "turn-ntfy", "2026-06-17T00:00:00.000Z");
   const progress = lifecycleRecord("turn_plan_updated", "turn-ntfy", "2026-06-17T00:00:00.500Z", undefined, {
@@ -120,6 +123,154 @@ async function assertNtfyLifecycle() {
   }
   if (requests[3].path !== requests[4].path || requests[3].path === requests[0].path) {
     throw new Error(`ntfy failure sequence was not isolated: ${JSON.stringify(requests.slice(3))}`);
+  }
+  await closeHttp(server);
+}
+
+async function assertNtfyTerminalRecovery() {
+  const requests: Array<{ at: number; path: string; body: string }> = [];
+  let terminalAttempts = 0;
+  const server = createHttpServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      requests.push({ at: Date.now(), path: request.url ?? "", body });
+      if (!body.includes("已完成")) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("{}");
+        return;
+      }
+      terminalAttempts += 1;
+      if (terminalAttempts === 1) {
+        // The first terminal request exercises timeout recovery.
+        setTimeout(() => {
+          if (response.destroyed) return;
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end("{}");
+        }, 80).unref?.();
+        return;
+      }
+      if (terminalAttempts === 2) {
+        response.writeHead(429, {
+          "content-type": "application/json",
+          "retry-after": "0.01"
+        });
+        response.end(JSON.stringify({ error: "rate limited" }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  const port = await listenHttp(server);
+  const errors: string[] = [];
+  const runner = new NtfyNotificationRunner({
+    url: `http://127.0.0.1:${port}/codexhub-retry-smoke`,
+    timeoutMs: 20,
+    updateIntervalMs: 5,
+    requestIntervalMs: 100
+  }, {
+    error: (message) => errors.push(message)
+  });
+  const turnId = "turn-ntfy-retry";
+  const started = lifecycleRecord("task_started", turnId, "2026-06-17T00:00:04.000Z");
+  const progress = lifecycleRecord("agent_message", turnId, "2026-06-17T00:00:04.500Z");
+  const completed = lifecycleRecord("task_complete", turnId, "2026-06-17T00:00:05.000Z", 1000);
+  runner.handleThreadEvent(lifecycleEvent(started, runningThread(turnId, "Retry smoke")), [started]);
+  await eventually(async () => {
+    if (requests.length !== 1) throw new Error(`expected ntfy retry start request, saw ${requests.length}`);
+  });
+  runner.handleThreadEvent(
+    lifecycleEvent(progress, runningThread(turnId, "Retry progress")),
+    [started, progress]
+  );
+  runner.handleThreadEvent(lifecycleEvent(completed, idleThread()), [started, progress, completed]);
+  await eventually(async () => {
+    if (terminalAttempts !== 3) {
+      throw new Error(`expected timeout and 429 terminal retries, saw ${terminalAttempts}`);
+    }
+  });
+
+  const terminalRequests = requests.filter((request) => request.body.includes("已完成"));
+  if (terminalRequests.length !== 3 || new Set(requests.map((request) => request.path)).size !== 1) {
+    throw new Error(`ntfy terminal retry sequence changed: ${JSON.stringify(requests)}`);
+  }
+  if (requests.some((request) => request.body.includes("Retry progress"))) {
+    throw new Error(`queued progress was not superseded by terminal delivery: ${JSON.stringify(requests)}`);
+  }
+  if (requests.slice(1).some((request, index) => request.at - requests[index].at < 75)) {
+    throw new Error(`ntfy global request pacing was not applied: ${JSON.stringify(requests)}`);
+  }
+  if (errors.length !== 2
+    || !errors[0].includes("retrying")
+    || !errors[1].includes("HTTP 429")
+    || !errors[1].includes("retrying")) {
+    throw new Error(`ntfy terminal retry diagnostics were incomplete: ${JSON.stringify(errors)}`);
+  }
+
+  // A late live record for a completed Turn must never replace its terminal
+  // notification with "running" again.
+  runner.handleThreadEvent(
+    lifecycleEvent(progress, runningThread(turnId, "Late progress")),
+    [started, progress, completed]
+  );
+  await delay(150);
+  if (requests.length !== 4) {
+    throw new Error(`late ntfy progress revived a completed notification: ${JSON.stringify(requests)}`);
+  }
+  await closeHttp(server);
+}
+
+async function assertNtfyGlobalPacing() {
+  const requests: Array<{ at: number; path: string; body: string }> = [];
+  const server = createHttpServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      requests.push({
+        at: Date.now(),
+        path: request.url ?? "",
+        body: Buffer.concat(chunks).toString("utf8")
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  const port = await listenHttp(server);
+  const runner = new NtfyNotificationRunner({
+    url: `http://127.0.0.1:${port}/codexhub-global-smoke`,
+    timeoutMs: 1000,
+    updateIntervalMs: 5,
+    requestIntervalMs: 60
+  });
+  const turnA = "turn-global-a";
+  const turnB = "turn-global-b";
+  const startedA = lifecycleRecord("task_started", turnA, "2026-06-17T00:00:06.000Z");
+  const startedB = lifecycleRecord("task_started", turnB, "2026-06-17T00:00:06.100Z");
+  const completedA = lifecycleRecord("task_complete", turnA, "2026-06-17T00:00:07.000Z", 1000);
+  const threadA = { ...runningThread(turnA, "Global A"), threadId: "thread-global-a" };
+  const threadB = { ...runningThread(turnB, "Global B"), threadId: "thread-global-b" };
+
+  runner.handleThreadEvent(lifecycleEvent(startedA, threadA), [startedA]);
+  runner.handleThreadEvent(lifecycleEvent(startedB, threadB), [startedB]);
+  runner.handleThreadEvent(
+    lifecycleEvent(completedA, { ...idleThread(), threadId: threadA.threadId }),
+    [startedA, completedA]
+  );
+  await eventually(async () => {
+    if (requests.length !== 3) throw new Error(`expected three globally paced ntfy requests, saw ${requests.length}`);
+  });
+
+  if (!requests[0].body.includes("运行中")
+    || !requests[1].body.includes("已完成")
+    || !requests[2].body.includes("运行中")
+    || requests[0].path !== requests[1].path
+    || requests[1].path === requests[2].path) {
+    throw new Error(`ntfy terminal did not take global queue priority: ${JSON.stringify(requests)}`);
+  }
+  if (requests.slice(1).some((request, index) => request.at - requests[index].at < 45)) {
+    throw new Error(`ntfy requests from different Turns bypassed global pacing: ${JSON.stringify(requests)}`);
   }
   await closeHttp(server);
 }
@@ -366,7 +517,7 @@ function lifecycleRecord(
 function lifecycleEvent(record: CodexRecord, thread: ThreadSummary): ThreadStreamEvent {
   return {
     seq: 1,
-    threadId: "thread-test",
+    threadId: thread.threadId,
     kind: "record",
     thread,
     record

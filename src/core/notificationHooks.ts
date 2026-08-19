@@ -32,6 +32,7 @@ export type NtfyNotificationConfig = {
   token?: string;
   timeoutMs: number;
   updateIntervalMs: number;
+  requestIntervalMs: number;
 };
 
 type NtfyNotificationLogger = {
@@ -45,8 +46,18 @@ type NtfyTurnState = {
   lastSentAt: number;
   queued?: NtfyNotificationPayload;
   timer?: ReturnType<typeof setTimeout>;
-  chain: Promise<void>;
 };
+
+type NtfyQueuedPublish = {
+  payload: NtfyNotificationPayload;
+  terminal: boolean;
+  attempt: number;
+  readyAt: number;
+  order: number;
+};
+
+const ntfyTerminalMaxAttempts = 8;
+const ntfyRetryMaxDelayMs = 30_000;
 
 /**
  * Publishes the same task lifecycle as one ntfy notification sequence.
@@ -58,6 +69,11 @@ export class NtfyNotificationRunner {
   private readonly turns = new Map<string, NtfyTurnState>();
   private readonly completedKeys: string[] = [];
   private readonly completedKeySet = new Set<string>();
+  private readonly publishQueue = new Map<string, NtfyQueuedPublish>();
+  private publishInFlight = false;
+  private publishTimer?: ReturnType<typeof setTimeout>;
+  private publishOrder = 0;
+  private nextPublishAt = 0;
 
   constructor(
     private readonly config: NtfyNotificationConfig,
@@ -91,6 +107,7 @@ export class NtfyNotificationRunner {
     // Streamed item/message records are the equivalent of the desktop pet's
     // live activity refresh. Coalesce them so token deltas do not create an
     // HTTP request for every character.
+    if (this.completedKeySet.has(sequenceId)) return;
     if (!event.thread.running) return;
     if (event.thread.activeTurnId && event.thread.activeTurnId !== turnId) return;
     const state = this.turns.get(sequenceId) ?? this.createTurnState(sequenceId);
@@ -103,8 +120,7 @@ export class NtfyNotificationRunner {
   private createTurnState(sequenceId: string) {
     const state: NtfyTurnState = {
       sequenceId,
-      lastSentAt: 0,
-      chain: Promise.resolve()
+      lastSentAt: 0
     };
     this.turns.set(sequenceId, state);
     return state;
@@ -117,7 +133,7 @@ export class NtfyNotificationRunner {
     }
     state.queued = undefined;
     state.lastSentAt = Date.now();
-    this.enqueue(state, payload, isNtfyTerminalStatus(payload.status));
+    this.enqueue(payload, isNtfyTerminalStatus(payload.status));
   }
 
   private scheduleProgress(state: NtfyTurnState, payload: NtfyNotificationPayload) {
@@ -127,7 +143,7 @@ export class NtfyNotificationRunner {
       const next = state.queued;
       state.queued = undefined;
       state.lastSentAt = Date.now();
-      if (next) this.enqueue(state, next, false);
+      if (next) this.enqueue(next, false);
       return;
     }
     if (state.timer) return;
@@ -136,22 +152,96 @@ export class NtfyNotificationRunner {
       const next = state.queued;
       state.queued = undefined;
       state.lastSentAt = Date.now();
-      if (next) this.enqueue(state, next, false);
+      if (next) this.enqueue(next, false);
     }, waitMs);
     state.timer.unref?.();
   }
 
-  private enqueue(state: NtfyTurnState, payload: NtfyNotificationPayload, terminal: boolean) {
-    const next = state.chain
-      .then(() => this.publish(payload))
-      .catch((error: unknown) => {
-        this.logger.error(`codexhub ntfy notification failed: ${errorText(error)}`);
-      });
-    state.chain = terminal
-      ? next.finally(() => {
-        if (this.turns.get(state.sequenceId) === state) this.turns.delete(state.sequenceId);
-      })
-      : next;
+  private enqueue(payload: NtfyNotificationPayload, terminal: boolean) {
+    const existing = this.publishQueue.get(payload.sequenceId);
+    if (existing?.terminal && !terminal) return;
+    this.publishQueue.set(payload.sequenceId, {
+      payload,
+      terminal,
+      attempt: 1,
+      readyAt: Date.now(),
+      order: existing?.order ?? ++this.publishOrder
+    });
+    this.schedulePublish();
+  }
+
+  private schedulePublish() {
+    if (this.publishInFlight || !this.publishQueue.size) return;
+    if (this.publishTimer) {
+      clearTimeout(this.publishTimer);
+      this.publishTimer = undefined;
+    }
+    const now = Date.now();
+    const nextReadyAt = Math.max(
+      this.nextPublishAt,
+      Math.min(...[...this.publishQueue.values()].map((item) => item.readyAt))
+    );
+    const waitMs = Math.max(0, nextReadyAt - now);
+    if (waitMs === 0) {
+      void this.drainPublishQueue();
+      return;
+    }
+    this.publishTimer = setTimeout(() => {
+      this.publishTimer = undefined;
+      void this.drainPublishQueue();
+    }, waitMs);
+    this.publishTimer.unref?.();
+  }
+
+  private async drainPublishQueue() {
+    if (this.publishInFlight || !this.publishQueue.size) return;
+    const now = Date.now();
+    if (now < this.nextPublishAt) {
+      this.schedulePublish();
+      return;
+    }
+    const ready = [...this.publishQueue.values()]
+      .filter((item) => item.readyAt <= now)
+      .sort((left, right) => Number(right.terminal) - Number(left.terminal) || left.order - right.order);
+    const item = ready[0];
+    if (!item) {
+      this.schedulePublish();
+      return;
+    }
+    if (this.publishQueue.get(item.payload.sequenceId) === item) {
+      this.publishQueue.delete(item.payload.sequenceId);
+    }
+    this.publishInFlight = true;
+    this.nextPublishAt = now + this.config.requestIntervalMs;
+    let retryScheduled = false;
+    try {
+      await this.publish(item.payload);
+    } catch (error: unknown) {
+      if (item.terminal && item.attempt < ntfyTerminalMaxAttempts && ntfyPublishIsRetryable(error)) {
+        const delayMs = ntfyRetryDelayMs(error, item.attempt, this.config.requestIntervalMs);
+        retryScheduled = true;
+        this.publishQueue.set(item.payload.sequenceId, {
+          ...item,
+          attempt: item.attempt + 1,
+          readyAt: Date.now() + delayMs,
+          order: ++this.publishOrder
+        });
+        this.logger.error(
+          `codexhub ntfy notification failed (${item.payload.status}, attempt ${item.attempt}/${ntfyTerminalMaxAttempts}): ${errorText(error)}; retrying in ${delayMs}ms`
+        );
+      } else {
+        this.logger.error(
+          `codexhub ntfy notification failed (${item.payload.status}, attempt ${item.attempt}/${item.terminal ? ntfyTerminalMaxAttempts : 1}): ${errorText(error)}`
+        );
+      }
+    } finally {
+      this.publishInFlight = false;
+      if (item.terminal && !retryScheduled) {
+        const state = this.turns.get(item.payload.sequenceId);
+        if (state) this.turns.delete(item.payload.sequenceId);
+      }
+      this.schedulePublish();
+    }
   }
 
   private async publish(payload: NtfyNotificationPayload) {
@@ -171,7 +261,14 @@ export class NtfyNotificationRunner {
         body: payload.body,
         signal: controller.signal
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const responseBody = await response.text();
+      if (!response.ok) {
+        throw new NtfyPublishError(
+          response.status,
+          ntfyRetryAfterMs(response.headers.get("retry-after")),
+          responseBody
+        );
+      }
     } finally {
       clearTimeout(timeout);
     }
@@ -189,6 +286,40 @@ export class NtfyNotificationRunner {
   }
 }
 
+class NtfyPublishError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs: number | undefined,
+    responseBody: string
+  ) {
+    const detail = responseBody.replace(/\s+/g, " ").trim().slice(0, 200);
+    super(`HTTP ${status}${detail ? `: ${detail}` : ""}`);
+    this.name = "NtfyPublishError";
+  }
+}
+
+const ntfyPublishIsRetryable = (error: unknown) => !(error instanceof NtfyPublishError)
+  || error.status === 408
+  || error.status === 429
+  || error.status >= 500;
+
+const ntfyRetryDelayMs = (error: unknown, attempt: number, requestIntervalMs: number) => {
+  const exponentialDelay = Math.min(
+    ntfyRetryMaxDelayMs,
+    requestIntervalMs * (2 ** Math.max(0, attempt - 1))
+  );
+  const retryAfterMs = error instanceof NtfyPublishError ? error.retryAfterMs ?? 0 : 0;
+  return Math.max(requestIntervalMs, exponentialDelay, retryAfterMs);
+};
+
+const ntfyRetryAfterMs = (value: string | null) => {
+  if (!value?.trim()) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined;
+};
+
 export const ntfyNotificationConfigFromEnv = (
   env: NodeJS.ProcessEnv = process.env
 ): NtfyNotificationConfig | null => {
@@ -200,7 +331,8 @@ export const ntfyNotificationConfigFromEnv = (
     url,
     ...(env.CODEX_HUB_NTFY_TOKEN?.trim() ? { token: env.CODEX_HUB_NTFY_TOKEN.trim() } : {}),
     timeoutMs: readPositiveIntEnv(env, "CODEX_HUB_NTFY_TIMEOUT_MS", 5000),
-    updateIntervalMs: readPositiveIntEnv(env, "CODEX_HUB_NTFY_UPDATE_INTERVAL_MS", 3000)
+    updateIntervalMs: readPositiveIntEnv(env, "CODEX_HUB_NTFY_UPDATE_INTERVAL_MS", 3000),
+    requestIntervalMs: readPositiveIntEnv(env, "CODEX_HUB_NTFY_REQUEST_INTERVAL_MS", 5000)
   };
 };
 

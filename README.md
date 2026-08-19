@@ -200,9 +200,10 @@ env:
   CODEX_HUB_NTFY_TOKEN: "tk_..."
   CODEX_HUB_NTFY_TIMEOUT_MS: "5000"
   CODEX_HUB_NTFY_UPDATE_INTERVAL_MS: "3000"
+  CODEX_HUB_NTFY_REQUEST_INTERVAL_MS: "5000"
 ```
 
-ntfy hook 会为每个 `threadId + turnId` 建立一个稳定的 sequence ID，并依次更新同一条通知：`运行中`、`等待输入`、流式活动更新、`已完成`、`失败` 或 `已停止`。如果当前 Turn 有结构化 Plan，运行中消息还会按已完成步骤显示真实的 `进度 N%`；没有总步骤时只显示活动标题和已用时间，不会伪造百分比。`CODEX_HUB_NTFY_UPDATE_INTERVAL_MS` 用于合并高频 token/item 事件，避免每个字符都发一次 HTTP 请求。
+ntfy hook 会为每个 `threadId + turnId` 建立一个稳定的 sequence ID，并依次更新同一条通知：`运行中`、`等待输入`、流式活动更新、`已完成`、`失败` 或 `已停止`。如果当前 Turn 有结构化 Plan，运行中消息还会按已完成步骤显示真实的 `进度 N%`；没有总步骤时只显示活动标题和已用时间，不会伪造百分比。`CODEX_HUB_NTFY_UPDATE_INTERVAL_MS` 用于合并单个 Turn 的高频 token/item 事件；`CODEX_HUB_NTFY_REQUEST_INTERVAL_MS` 默认在所有 Turn 之间全局保留 5 秒请求间隔，以匹配 ntfy 默认 request bucket 的恢复速率。待发送的运行中更新会按 Turn 合并，终态会优先于它们发送；终态遇到超时、HTTP 429 或临时 5xx 时会退避重试，避免手机永久停留在旧的“运行中”。
 
 `CODEX_HUB_NTFY_URL` 必须包含 topic，且不要把 sequence ID 预先写入 URL；CodexHub 会自动把它追加到 topic 路径。`CODEX_HUB_NTFY_TOKEN` 使用 ntfy 的 Bearer token。
 
