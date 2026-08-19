@@ -5,6 +5,8 @@ import type {
   MachineCommandResult,
   MachineDirectoryListing,
   MachineEnsureRuntimeResult,
+  MachineFileChunkResult,
+  MachineFilePreviewResult,
   MachineGitWorktreeResult,
   MachineRegistration,
   MachineSummary,
@@ -17,6 +19,8 @@ type MachineCommandInput =
   | Omit<Extract<MachineCommand, { type: "ensure_runtime" }>, "seq">
   | Omit<Extract<MachineCommand, { type: "start_session" }>, "seq">
   | Omit<Extract<MachineCommand, { type: "list_directory" }>, "seq">
+  | Omit<Extract<MachineCommand, { type: "preview_file" }>, "seq">
+  | Omit<Extract<MachineCommand, { type: "read_file_chunk" }>, "seq">
   | Omit<Extract<MachineCommand, { type: "create_git_worktree" }>, "seq">
   | Omit<Extract<MachineCommand, { type: "stop_session" }>, "seq">;
 
@@ -166,6 +170,50 @@ export class MachineHub {
     return {
       command,
       promise: this.waitForCommand<MachineDirectoryListing>(commandId, machine.machineId, "list_directory", timeoutMs)
+    };
+  }
+
+  previewFile(machineId: string, input: { path: string }, timeoutMs = 30_000) {
+    const machine = this.requireMachine(machineId);
+    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
+    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot preview files: ${machineId}`);
+    const commandId = randomUUID();
+    const command = this.enqueueMachineCommand(machine.machineId, {
+      commandId,
+      type: "preview_file",
+      createdAt: new Date().toISOString(),
+      path: input.path
+    });
+    return {
+      command,
+      promise: this.waitForCommand<MachineFilePreviewResult>(commandId, machine.machineId, "preview_file", timeoutMs)
+    };
+  }
+
+  readFileChunk(
+    machineId: string,
+    input: {
+      path: string;
+      offset: number;
+      length: number;
+      expectedSize: number;
+      expectedModifiedAtMs: number;
+    },
+    timeoutMs = 30_000
+  ) {
+    const machine = this.requireMachine(machineId);
+    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
+    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot stream files: ${machineId}`);
+    const commandId = randomUUID();
+    const command = this.enqueueMachineCommand(machine.machineId, {
+      commandId,
+      type: "read_file_chunk",
+      createdAt: new Date().toISOString(),
+      ...input
+    });
+    return {
+      command,
+      promise: this.waitForCommand<MachineFileChunkResult>(commandId, machine.machineId, "read_file_chunk", timeoutMs)
     };
   }
 

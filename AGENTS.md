@@ -33,7 +33,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 ## Machine / Session / Thread
 
 1. `MachineType = "local" | "ssh" | "registered"`。
-2. machine 是路径解析、目录 listing、machine runtime 和 project path thread 启动的执行者。server 不扫描远端文件系统；`/api/machines/:machineId/directories` 和 project path thread bootstrap 都必须发给在线 machine，由 machine 在自身环境确认 path 是可进入目录。
+2. machine 是路径解析、目录 listing、本地文件预览与 Range 分块读取、machine runtime 和 project path thread 启动的执行者。server 不扫描远端文件系统；`/api/machines/:machineId/directories`、`/api/machines/:machineId/files/preview`、文件流 chunk 和 project path thread bootstrap 都必须发给在线 machine，由 machine 在自身环境解析和读取路径。
 3. machine capability 里 `projectLauncher` 很重要。Web 只应把可启动 project 的 machine 用于 Add Project。
 4. `local` 表示 server 内嵌的 project launcher，普通 server 默认启用，Docker/测试/嵌入 surface 可用 `CODEX_HUB_LOCAL_MACHINE=0` 或 feature override 关闭。
 5. `registered` 表示外部机器主动连接 `/api/machines/connect`。它注册的是 machine，不是公共 runtime；server 通过内部 `ensure_runtime` / `start_session` machine command 让它启动或复用唯一 app-server 进程并完成内部 session registration。外部机器可以是 `codexhub machine --type registered`，也可以是 `codexhub server --register-to` 或 Web Registered 面板发起的父 server 注册；后两者仍只暴露 machine/app-server 能力，不同步子 server state。父 server 上的 registered machine 是纯运行时投影，不写入 `config.yaml`，连接断开后从 machine 列表移除；子 server 自己的 `parentRegistration` 仍按配置持久化以支持重连。Web 从 `projects` realtime snapshot 检测在线 registered machine 的连接变化：新连接用 Ant Design success message 提示，断开用 warning message 提示；首次加载已有连接不补弹，断开后重连可再次提示。
@@ -59,8 +59,8 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 ## 公共 API 约定
 
-1. 基础和认证：`GET /api/health`、`GET /api/auth/status`。设置 `CODEX_HUB_AUTH_TOKEN` 后，除 health/auth/status、registered/SSH remote-client bundle、plugin assets 和静态页面外，API 都需要 token。普通 API 使用 `Authorization: Bearer`；WebSocket、文件预览和 Register URL 使用 `?codexhub_token=`。
-2. Machines / runtimes：`GET /api/machines`、`GET /api/machines/:machineId/directories`、`GET /api/machines/connect` WebSocket、`GET /api/runtimes`、`POST /api/machines/:machineId/runtime/ensure`。
+1. 基础和认证：`GET /api/health`、`GET /api/auth/status`。设置 `CODEX_HUB_AUTH_TOKEN` 后，除 health/auth/status、registered/SSH remote-client bundle、plugin assets 和静态页面外，API 都需要 token。普通 API 使用 `Authorization: Bearer`；WebSocket、`/api/file` 图片预览、短期 `/api/file-stream/:ticketId` 媒体流和 Register URL 使用 `?codexhub_token=`。
+2. Machines / runtimes：`GET /api/machines`、`GET /api/machines/:machineId/directories`、`POST /api/machines/:machineId/files/preview`、短期 `GET|HEAD|DELETE /api/file-stream/:ticketId`、`GET /api/machines/connect` WebSocket、`GET /api/runtimes`、`POST /api/machines/:machineId/runtime/ensure`。媒体 stream ticket 必须隐藏绝对路径、短期过期、支持单段 HTTP Range，并由实际 machine 校验 size/mtime 后分块读取；不能把 project/home 目录直接挂成公开 static root。
 3. Registered parent：`GET /api/registered/parent`、`POST /api/registered/parent`、`DELETE /api/registered/parent`、`GET /api/registered/bootstrap`、`GET /api/remote-client/:hash`。GUI `POST` 会把规范化 URL、普通 server 的 machine identity 和可选 auth token 保存到当前 server 的 `config.yaml`，共享 `startServer()` 在普通 Web、VSCode、Electron 重启时自动恢复；VSCode authority 只使用一份共享 parent profile 和一条由 authority ID 派生的稳定 machine transport，不能按窗口覆盖 identity。token 可以为空，显式空字符串表示不使用 parent auth。`DELETE` 必须中止连接中的 WebSocket、等待 runner 完全停止并删除自动注册配置。body `url` 可以携带 `?codexhub_token=`；bootstrap 脚本通过 `/api/remote-client/:hash` 拉当前 build 的 remote client。
 4. Embedded surfaces：`POST /api/embedded/surfaces`、`POST /api/embedded/surfaces/:surfaceId/heartbeat`、`DELETE /api/embedded/surfaces/:surfaceId/:leaseId`。只在 embedded authority service 启用，body 的 `surface` 必须是 `vscode` 或 `electron`；注册要验证当前 authority 的 local launcher 和每个 workspace path，合并所有有效 lease 的 transient projects，但不能启动 runtime/thread。旧 lease 的 heartbeat/unregister 不能删除同一 surface 的新 lease。
 5. Realtime：`GET /api/events/ws` WebSocket。

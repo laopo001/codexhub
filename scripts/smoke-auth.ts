@@ -178,9 +178,53 @@ const assertRealtimeWebSocket = async (apiBase: string, token: string) => {
 
 const assertMachineWebSocket = async (apiBase: string, token: string) => {
   const machineId = `auth-smoke-machine-${process.pid}`;
+  const mediaPath = "/auth-smoke/video.mp4";
+  const media = Buffer.concat([
+    Buffer.from([0x00, 0x00, 0x00, 0x18]),
+    Buffer.from("ftypisom", "ascii"),
+    Buffer.from([0x00, 0x00, 0x02, 0x00]),
+    Buffer.from("isommp42auth-stream-payload", "ascii")
+  ]);
+  const modifiedAtMs = 1_234;
   const ws = new WebSocket(webSocketUrl(apiBase, "/api/machines/connect", token));
   const messages: unknown[] = [];
-  ws.addEventListener("message", (event) => messages.push(JSON.parse(String(event.data))));
+  ws.addEventListener("message", (event) => {
+    const message = JSON.parse(String(event.data));
+    messages.push(message);
+    if (!isRecord(message) || message.type !== "commands" || !Array.isArray(message.commands)) return;
+    for (const value of message.commands) {
+      if (!isRecord(value) || typeof value.commandId !== "string") continue;
+      if (value.type === "preview_file") {
+        ws.send(JSON.stringify({
+          type: "command_result",
+          commandId: value.commandId,
+          result: {
+            kind: "media",
+            path: mediaPath,
+            size: media.length,
+            modifiedAtMs,
+            contentType: "video/mp4"
+          }
+        }));
+      } else if (value.type === "read_file_chunk") {
+        const offset = typeof value.offset === "number" ? value.offset : 0;
+        const length = typeof value.length === "number" ? value.length : 0;
+        const contents = media.subarray(offset, offset + length);
+        ws.send(JSON.stringify({
+          type: "command_result",
+          commandId: value.commandId,
+          result: {
+            path: mediaPath,
+            size: media.length,
+            modifiedAtMs,
+            offset,
+            base64: contents.toString("base64"),
+            eof: offset + contents.length >= media.length
+          }
+        }));
+      }
+    }
+  });
   await waitForWebSocketOpen(ws, "authorized machine websocket failed");
   ws.send(JSON.stringify({
     type: "register",
@@ -190,10 +234,51 @@ const assertMachineWebSocket = async (apiBase: string, token: string) => {
       type: "registered",
       name: "Auth Smoke",
       hostname: "auth-smoke-host",
-      capabilities: { projectLauncher: false }
+      capabilities: { projectLauncher: true }
     }
   }));
   await waitForMessage(messages, (message) => isRecord(message) && message.type === "registered" && message.machineId === machineId, "machine registered");
+
+  const previewUrl = new URL(`/api/machines/${machineId}/files/preview`, apiBase);
+  const previewBody = JSON.stringify({ path: mediaPath });
+  const unauthorizedPreview = await fetch(previewUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: previewBody
+  });
+  if (unauthorizedPreview.status !== 401) throw new Error(`unauthorized media preview returned HTTP ${unauthorizedPreview.status}`);
+  const previewResponse = await fetch(previewUrl, {
+    ...authInit(token),
+    method: "POST",
+    headers: { ...authInit(token).headers, "content-type": "application/json" },
+    body: previewBody
+  });
+  const preview = await previewResponse.json() as { streamUrl?: string; kind?: string };
+  if (!previewResponse.ok || preview.kind !== "media" || !preview.streamUrl) {
+    throw new Error(`authorized media preview failed: HTTP ${previewResponse.status} ${JSON.stringify(preview)}`);
+  }
+  await expectStatus(apiBase, preview.streamUrl, 401);
+  await expectStatus(apiBase, `${preview.streamUrl}?token=${encodeURIComponent(token)}`, 401);
+  const streamUrl = new URL(preview.streamUrl, apiBase);
+  streamUrl.searchParams.set("codexhub_token", token);
+  const streamResponse = await fetch(streamUrl, {
+    headers: { range: "bytes=4-15" },
+    signal: AbortSignal.timeout(30_000)
+  });
+  const streamed = Buffer.from(await streamResponse.arrayBuffer());
+  if (
+    streamResponse.status !== 206
+    || streamResponse.headers.get("content-range") !== `bytes 4-15/${media.length}`
+    || !streamed.equals(media.subarray(4, 16))
+  ) {
+    throw new Error(`query-auth media range failed: HTTP ${streamResponse.status} ${streamResponse.headers.get("content-range")}`);
+  }
+  const deleted = await fetch(new URL(preview.streamUrl, apiBase), {
+    ...authInit(token),
+    method: "DELETE",
+    signal: AbortSignal.timeout(30_000)
+  });
+  if (!deleted.ok) throw new Error(`authenticated media ticket cleanup failed: HTTP ${deleted.status}`);
   ws.send(JSON.stringify({ type: "unregister" }));
   ws.close();
 };

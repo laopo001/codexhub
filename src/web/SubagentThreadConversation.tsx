@@ -60,6 +60,7 @@ export const SubagentThreadConversation = ({
       leading={(
         <SubagentThreadAssignment
           assignment={assignment}
+          machineId={thread.runtime.machineId}
           workingDirectory={thread.workingDirectory}
         />
       )}

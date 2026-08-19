@@ -54,6 +54,7 @@ import { TunneledSessionManager } from "./tunneledSessionManager.js";
 import { registerSystemRoutes } from "./systemRoutes.js";
 import { registerPetRoutes } from "./petRoutes.js";
 import { registerConnectionRoutes } from "./connectionRoutes.js";
+import { registerFileStreamRoutes } from "./fileStreamRoutes.js";
 import { TaskScheduler } from "./taskScheduler.js";
 import {
   startTelegramPlugin,
@@ -146,9 +147,10 @@ const requestAuthToken = (request: FastifyRequest) => {
     || "";
 };
 const allowsQueryAuthToken = (request: FastifyRequest) => {
-  if (request.method !== "GET") return false;
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
   const pathname = requestPath(request);
   return ["/api/events/ws", "/api/machines/connect", "/api/file"].includes(pathname)
+    || /^\/api\/file-stream\/[0-9a-f-]+$/i.test(pathname)
     || /^\/api\/pets\/[^/]+\/spritesheet$/.test(pathname);
 };
 const safeTokenEqual = (actual: string, expected: string) => {
@@ -856,6 +858,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       });
     }
   });
+
+  registerFileStreamRoutes(app, { machines });
 
   registerProjectTaskRoutes(app, {
     features,

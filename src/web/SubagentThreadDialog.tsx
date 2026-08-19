@@ -118,9 +118,11 @@ export const SubagentThreadDialog = ({
 
 export const SubagentThreadAssignment = ({
   assignment,
+  machineId,
   workingDirectory
 }: {
   assignment?: SubagentActivityView["assignment"];
+  machineId?: string;
   workingDirectory?: string;
 }) => (
   <details className="subagentThreadAssignment" open>
@@ -137,6 +139,7 @@ export const SubagentThreadAssignment = ({
           text={assignment.initialMessage}
           mode="markdown"
           markdownEnabled
+          threadMachineId={machineId}
           threadWorkingDirectory={workingDirectory}
         />
       </div>

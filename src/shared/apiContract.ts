@@ -2,6 +2,8 @@ import { z } from "zod";
 import { isCronExpression } from "./taskCron.js";
 import type {
   MachineDirectoryListing,
+  MachineFileChunkResult,
+  MachineFilePreviewResult,
   MachineGitWorktreeResult,
   MachineStartSessionResult,
   MachineStopSessionResult,
@@ -50,6 +52,8 @@ import type {
 
 export type {
   MachineDirectoryListing,
+  MachineFileChunkResult,
+  MachineFilePreviewResult,
   MachineGitWorktreeResult,
   MachineStartSessionResult,
   MachineStopSessionResult,
@@ -92,6 +96,14 @@ export type {
 
 /** OpenAI reasoning effort 的 Web/API 别名。 */
 export type ReasoningEffort = ModelReasoningEffort;
+
+/** Web 文件预览响应；媒体由 server 追加不暴露绝对路径的短期流 URL。 */
+export type FilePreviewPayload = Exclude<MachineFilePreviewResult, { kind: "media" }> | (
+  Extract<MachineFilePreviewResult, { kind: "media" }> & {
+    streamUrl: string;
+    expiresAt: string;
+  }
+);
 
 /** SSH host 列表接口返回的 host 摘要，合并 SSH config 和 CodexHub 收纳状态。 */
 export type SshHostSummary = SshHostConfig & {
@@ -756,6 +768,55 @@ export const machineDirectoryListingSchema = z.object({
   }))
 });
 
+export const machineFilePreviewResultSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("text"),
+    path: z.string().min(1),
+    size: z.number().int().nonnegative(),
+    contentType: z.literal("text/plain; charset=utf-8"),
+    text: z.string(),
+    truncated: z.boolean()
+  }).strict(),
+  z.object({
+    kind: z.literal("image"),
+    path: z.string().min(1),
+    size: z.number().int().nonnegative(),
+    contentType: z.enum([
+      "image/png",
+      "image/jpeg",
+      "image/gif",
+      "image/webp",
+      "image/bmp",
+      "image/x-icon",
+      "image/avif"
+    ]),
+    base64: z.string()
+  }).strict(),
+  z.object({
+    kind: z.literal("media"),
+    path: z.string().min(1),
+    size: z.number().int().positive(),
+    modifiedAtMs: z.number().int().nonnegative(),
+    contentType: z.literal("video/mp4")
+  }).strict(),
+  z.object({
+    kind: z.literal("unsupported"),
+    path: z.string().min(1),
+    size: z.number().int().nonnegative(),
+    reason: z.enum(["unsupported_type", "file_too_large"]),
+    maxBytes: z.number().int().nonnegative().optional()
+  }).strict()
+]) satisfies z.ZodType<MachineFilePreviewResult>;
+
+export const machineFileChunkResultSchema = z.object({
+  path: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  modifiedAtMs: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  base64: z.string(),
+  eof: z.boolean()
+}).strict() satisfies z.ZodType<MachineFileChunkResult>;
+
 export const machineGitWorktreeResultSchema = z.object({
   parentCwd: z.string().min(1),
   path: z.string().min(1),
@@ -824,6 +885,8 @@ export const machineTransportMessageSchema = z.discriminatedUnion("type", [
       machineStartSessionResultSchema,
       machineEnsureRuntimeResultSchema,
       machineDirectoryListingSchema,
+      machineFilePreviewResultSchema,
+      machineFileChunkResultSchema,
       machineGitWorktreeResultSchema,
       machineStopSessionResultSchema
     ])

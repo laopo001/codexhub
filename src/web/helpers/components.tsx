@@ -1,15 +1,16 @@
-import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
-import { Switch } from "antd";
+import { Button, Modal, Switch } from "antd";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import remarkGfm from "remark-gfm";
-import { highlightedLanguages, isEmbeddedHostSurface, languageAliases } from "../appConfig.js";
+import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
 import { SubagentActivityMessage } from "../SubagentActivityMessage.js";
 import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
-import type { AppServerApprovalDecision, AppServerUserInputAnswers } from "../../shared/apiContract.js";
+import type { AppServerApprovalDecision, AppServerUserInputAnswers, FilePreviewPayload } from "../../shared/apiContract.js";
+import { apiRoutes } from "../../shared/apiRoutes.js";
 import { asRecord, type SubagentActivityView } from "../../shared/recordTypes.js";
-import { authToken } from "./core.js";
-import { contextMenuPosition, writeTextToClipboard } from "./composer.js";
+import { apiRouteJson, authFetch, authToken } from "./core.js";
+import { writeTextToClipboard } from "./composer.js";
 import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
 import { emptyMemoryCitation, formatMemoryCitationCount, formatMemoryCitationLines, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
 import { formatInspectDetail, renderToolMessageBody } from "./toolPreview.js";
@@ -17,8 +18,8 @@ import { activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "
 
 const SyntaxCodeBlock = lazy(() => import("../SyntaxCodeBlock.js"));
 
-// <img> requests cannot carry Authorization headers, so auth-protected file previews use the existing query token path.
-const authenticatedImageUrl = (url: string) => {
+// <img>/<video> requests cannot carry Authorization headers, so protected file responses use the narrow query-token path.
+const authenticatedFileUrl = (url: string) => {
   if (!isFileApiUrl(url)) return url;
   if (typeof window === "undefined") return url;
   const token = authToken();
@@ -33,11 +34,13 @@ const authenticatedImageUrl = (url: string) => {
 };
 
 const isFileApiUrl = (url: string) => {
-  if (url.startsWith("/api/file?") || url === "/api/file") return true;
+  if (url.startsWith("/api/file?") || url === "/api/file" || url.startsWith("/api/file-stream/")) return true;
   if (typeof window === "undefined") return false;
   try {
     const parsed = new URL(url, window.location.origin);
-    return parsed.origin === window.location.origin && parsed.pathname === "/api/file";
+    return parsed.origin === window.location.origin && (
+      parsed.pathname === "/api/file" || parsed.pathname.startsWith("/api/file-stream/")
+    );
   } catch {
     return false;
   }
@@ -50,6 +53,7 @@ export const MessageCard = ({
   renderToolPreview = true,
   renderMode,
   markdownEnabled,
+  threadMachineId,
   threadWorkingDirectory,
   onRenderModeChange,
   onContextMenu,
@@ -69,6 +73,7 @@ export const MessageCard = ({
   renderToolPreview?: boolean;
   renderMode: MessageRenderMode;
   markdownEnabled: boolean;
+  threadMachineId?: string;
   threadWorkingDirectory?: string;
   onRenderModeChange?: (mode: MessageRenderMode) => void;
   onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
@@ -175,6 +180,7 @@ export const MessageCard = ({
           text={messageText}
           mode={renderMode}
           markdownEnabled={markdownEnabled}
+          threadMachineId={threadMachineId}
           threadWorkingDirectory={threadWorkingDirectory}
           onOpenImage={onOpenImage}
         />
@@ -186,7 +192,7 @@ export const MessageCard = ({
         <div className="messageAttachments">
           {message.attachments.map((attachment) => {
             if (attachment.type !== "image") return null;
-            const imageUrl = authenticatedImageUrl(attachment.url);
+            const imageUrl = authenticatedFileUrl(attachment.url);
             return (
               <button
                 type="button"
@@ -532,20 +538,22 @@ export const MessageText = ({
   text,
   mode,
   markdownEnabled,
+  threadMachineId,
   threadWorkingDirectory,
   onOpenImage
 }: {
   text: string;
   mode: MessageRenderMode;
   markdownEnabled: boolean;
+  threadMachineId?: string;
   threadWorkingDirectory?: string;
   onOpenImage?: (image: ImagePreviewState) => void;
 }) => {
-  const [fileLinkMenu, setFileLinkMenu] = useState<FileLinkMenuState | null>(null);
+  const [filePreview, setFilePreview] = useState<FilePreviewDialogState | null>(null);
   const handleFileLinkClick = useCallback((target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (isEmbeddedHostSurface) {
+    if (isVscodeSurface) {
       window.parent?.postMessage({
         type: "codexhub.openFile",
         path: target.fullPath,
@@ -554,42 +562,20 @@ export const MessageText = ({
       }, "*");
       return;
     }
-    setFileLinkMenu({
-      target,
-      ...contextMenuPosition(event.clientX, event.clientY)
-    });
-  }, []);
+    setFilePreview({ target, machineId: threadMachineId });
+  }, [threadMachineId]);
   const components = useMemo(
     () => markdownComponents(threadWorkingDirectory, handleFileLinkClick, onOpenImage),
     [handleFileLinkClick, onOpenImage, threadWorkingDirectory]
   );
-  useEffect(() => {
-    if (!fileLinkMenu) return undefined;
-    const closeOnPointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Element && event.target.closest(".fileLinkCopyMenu")) return;
-      setFileLinkMenu(null);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.isComposing) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      setFileLinkMenu(null);
-    };
-    window.addEventListener("pointerdown", closeOnPointerDown);
-    window.addEventListener("keydown", closeOnEscape, true);
-    return () => {
-      window.removeEventListener("pointerdown", closeOnPointerDown);
-      window.removeEventListener("keydown", closeOnEscape, true);
-    };
-  }, [fileLinkMenu]);
   if (!markdownEnabled || mode === "raw") return <pre>{text}</pre>;
   return (
     <div className="messageMarkdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={markdownUrlTransform}>
         {text}
       </ReactMarkdown>
-      {fileLinkMenu ? (
-        <FileLinkCopyMenu menu={fileLinkMenu} onClose={() => setFileLinkMenu(null)} />
+      {filePreview ? (
+        <FilePreviewDialog preview={filePreview} onClose={() => setFilePreview(null)} />
       ) : null}
     </div>
   );
@@ -600,40 +586,159 @@ const markdownUrlTransform: UrlTransform = (url, key) => {
   return defaultUrlTransform(url);
 };
 
-type FileLinkMenuState = {
+type FilePreviewDialogState = {
   target: LocalFileLinkTarget;
-  x: number;
-  y: number;
+  machineId?: string;
 };
 
-const FileLinkCopyMenu = ({
-  menu,
+const FilePreviewDialog = ({
+  preview,
   onClose
 }: {
-  menu: FileLinkMenuState;
+  preview: FilePreviewDialogState;
   onClose: () => void;
 }) => {
-  const actions = fileLinkCopyActions(menu.target);
+  const [result, setResult] = useState<FilePreviewLoadState>({ status: "loading" });
+  const actions = fileLinkCopyActions(preview.target);
+  useEffect(() => {
+    let cancelled = false;
+    setResult({ status: "loading" });
+    if (!preview.machineId) {
+      setResult({ status: "error", message: "This file link is not associated with a machine." });
+      return () => { cancelled = true; };
+    }
+    void apiRouteJson(apiRoutes.machineFilePreview, preview.machineId, { path: preview.target.fullPath })
+      .then((value) => {
+        if (!cancelled) setResult({ status: "ready", value });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setResult({ status: "error", message: filePreviewErrorMessage(error) });
+      });
+    return () => { cancelled = true; };
+  }, [preview.machineId, preview.target.fullPath]);
+  const streamUrl = result.status === "ready" && result.value.kind === "media"
+    ? result.value.streamUrl
+    : null;
+  useEffect(() => () => {
+    if (streamUrl) void authFetch(streamUrl, { method: "DELETE" }).catch(() => undefined);
+  }, [streamUrl]);
   const copyValue = async (value: string) => {
     await writeTextToClipboard(value).catch(() => undefined);
-    onClose();
   };
   return (
-    <div
-      className="fileLinkCopyMenu"
-      role="menu"
-      style={{ left: menu.x, top: menu.y }}
-      onClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
+    <Modal
+      open
+      className="filePreviewModal"
+      title="File preview"
+      width="min(1100px, calc(100vw - 36px))"
+      onCancel={onClose}
+      footer={(
+        <div className="filePreviewFooter">
+          <div className="filePreviewCopyActions">
+            {actions.map((action) => (
+              <Button type="default" onClick={() => void copyValue(action.value)} key={action.key}>
+                {action.label}
+              </Button>
+            ))}
+          </div>
+          <Button type="primary" onClick={onClose}>Close</Button>
+        </div>
+      )}
     >
-      <div className="fileLinkCopyTitle" title={menu.target.title}>{menu.target.label}</div>
-      {actions.map((action) => (
-        <button type="button" role="menuitem" onClick={() => void copyValue(action.value)} key={action.key}>
-          {action.label}
-        </button>
-      ))}
+      <p className="filePreviewPath" title={preview.target.title}>{preview.target.title}</p>
+      <FilePreviewBody state={result} line={preview.target.line} />
+    </Modal>
+  );
+};
+
+type FilePreviewLoadState =
+  | { status: "loading" }
+  | { status: "ready"; value: FilePreviewPayload }
+  | { status: "error"; message: string };
+
+const FilePreviewBody = ({ state, line }: { state: FilePreviewLoadState; line?: number }) => {
+  if (state.status === "loading") return <div className="filePreviewStatus">Loading preview...</div>;
+  if (state.status === "error") return <div className="filePreviewStatus error">{state.message}</div>;
+  if (state.value.kind === "image") {
+    return (
+      <div className="filePreviewImageBody">
+        <img src={`data:${state.value.contentType};base64,${state.value.base64}`} alt={state.value.path} />
+      </div>
+    );
+  }
+  if (state.value.kind === "media") {
+    return (
+      <div className="filePreviewMediaBody">
+        <video
+          src={authenticatedFileUrl(state.value.streamUrl)}
+          controls
+          playsInline
+          preload="metadata"
+        >
+          Your browser does not support this video format.
+        </video>
+      </div>
+    );
+  }
+  if (state.value.kind === "text") {
+    return (
+      <div className="filePreviewTextWrap">
+        {state.value.truncated ? (
+          <div className="filePreviewNotice">This preview is truncated because the file exceeds the preview limit.</div>
+        ) : null}
+        <FilePreviewText text={state.value.text} line={line} />
+      </div>
+    );
+  }
+  return (
+    <div className="filePreviewStatus">
+      {state.value.reason === "file_too_large"
+        ? `This file is too large to preview (${formatByteSize(state.value.size)}; limit ${formatByteSize(state.value.maxBytes ?? 0)}).`
+        : "Preview is not available for this binary file type."}
     </div>
   );
+};
+
+const FilePreviewText = ({ text, line }: { text: string; line?: number }) => {
+  const highlightedLineRef = useRef<HTMLElement | null>(null);
+  const parts = useMemo(() => filePreviewTextParts(text, line), [line, text]);
+  useEffect(() => {
+    highlightedLineRef.current?.scrollIntoView({ block: "center" });
+  }, [parts]);
+  if (!parts) return <pre className="filePreviewText">{text || "Empty file."}</pre>;
+  return (
+    <pre className="filePreviewText">
+      {parts.before}
+      <mark ref={highlightedLineRef}>{parts.highlighted || " "}</mark>
+      {parts.after}
+    </pre>
+  );
+};
+
+const filePreviewTextParts = (text: string, line: number | undefined) => {
+  if (!line) return null;
+  const lines = text.split("\n");
+  const index = line - 1;
+  if (index < 0 || index >= lines.length) return null;
+  return {
+    before: index ? `${lines.slice(0, index).join("\n")}\n` : "",
+    highlighted: lines[index] ?? "",
+    after: index < lines.length - 1 ? `\n${lines.slice(index + 1).join("\n")}` : ""
+  };
+};
+
+const filePreviewErrorMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("file_not_found") || message.includes("ENOENT")) return "The file no longer exists on this machine.";
+  if (message.includes("Machine is offline")) return "The machine that owns this file is offline.";
+  if (message.includes("absolute_path_required") || message.includes("invalid_path")) return "The file path is invalid.";
+  return `Could not load this file: ${message}`;
+};
+
+const formatByteSize = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 const fileLinkCopyActions = (target: LocalFileLinkTarget) => {
@@ -675,7 +780,7 @@ export const markdownComponents = (
   },
   img: ({ src, alt, className, title, ...props }) => {
     // Markdown images and attachment thumbnails share the same preview dialog behavior.
-    const imageUrl = typeof src === "string" ? authenticatedImageUrl(src) : src;
+    const imageUrl = typeof src === "string" ? authenticatedFileUrl(src) : src;
     const imageTitle = title || alt || imageUrl || "Image";
     const imageClassName = [className, onOpenImage ? "messageMarkdownImage interactive" : "messageMarkdownImage"].filter(Boolean).join(" ");
     const openImage = (event: React.MouseEvent<HTMLImageElement> | React.KeyboardEvent<HTMLImageElement>) => {
@@ -1019,7 +1124,7 @@ export const ToolInspectBody = ({
           <h3>Images</h3>
           <div className="messageAttachments">
             {detail.imageUrls.map((url) => {
-              const imageUrl = authenticatedImageUrl(url);
+              const imageUrl = authenticatedFileUrl(url);
               return (
                 <button
                   type="button"

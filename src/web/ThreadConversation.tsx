@@ -422,6 +422,7 @@ export const ThreadConversation = ({
         renderToolPreview
         renderMode={renderMode}
         markdownEnabled={markdownEnabled}
+        threadMachineId={thread.runtime.machineId}
         threadWorkingDirectory={thread.workingDirectory}
         onRenderModeChange={markdownEnabled && onMessageRenderModeChange
           ? (mode) => onMessageRenderModeChange(thread.threadId, message.id, mode)

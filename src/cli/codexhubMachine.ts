@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import WebSocket from "ws";
 import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
+import { readMachineFileChunk, resolveMachineFilePreview } from "../core/filePreview.js";
 import { machineTransportUrl, parseMachineTransportMessage } from "../core/machineTransportProtocol.js";
 import { SessionTransportPeer } from "../core/sessionTransportPeer.js";
 import { createMachineId } from "../core/machineHub.js";
@@ -16,6 +17,8 @@ import {
   type MachineCommand,
   type MachineDirectoryListing,
   type MachineEnsureRuntimeResult,
+  type MachineFileChunkResult,
+  type MachineFilePreviewResult,
   type MachineGitWorktreeResult,
   type MachineRegistration,
   type MachineRegistrationProject,
@@ -330,6 +333,8 @@ class CodexhubMachineRunner {
     if (command.type === "ensure_runtime") return await this.ensureRuntime(command);
     if (command.type === "start_session") return await this.startSession(command);
     if (command.type === "list_directory") return await this.listDirectory(command);
+    if (command.type === "preview_file") return await this.previewFile(command);
+    if (command.type === "read_file_chunk") return await this.readFileChunk(command);
     if (command.type === "create_git_worktree") return await this.createGitWorktree(command);
     if (command.type === "stop_session") return await this.stopSession(command);
     throw new Error(`Unexpected command: ${(command as { type?: string }).type ?? "unknown"}`);
@@ -648,6 +653,16 @@ class CodexhubMachineRunner {
       home: os.homedir(),
       entries: directories
     };
+  }
+
+  private async previewFile(command: MachineCommand): Promise<MachineFilePreviewResult> {
+    if (command.type !== "preview_file") throw new Error(`Unexpected command: ${command.type}`);
+    return await resolveMachineFilePreview(command.path);
+  }
+
+  private async readFileChunk(command: MachineCommand): Promise<MachineFileChunkResult> {
+    if (command.type !== "read_file_chunk") throw new Error(`Unexpected command: ${command.type}`);
+    return await readMachineFileChunk(command);
   }
 
   private async createGitWorktree(command: MachineCommand): Promise<MachineGitWorktreeResult> {

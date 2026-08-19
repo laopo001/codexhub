@@ -109,6 +109,44 @@ export type MachineDirectoryListing = {
   entries: MachineDirectoryEntry[];
 };
 
+/** machine 读取本机文件后返回给 Web 对话框的安全预览内容。 */
+export type MachineFilePreviewResult = {
+  kind: "text";
+  path: string;
+  size: number;
+  contentType: "text/plain; charset=utf-8";
+  text: string;
+  truncated: boolean;
+} | {
+  kind: "image";
+  path: string;
+  size: number;
+  contentType: "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/x-icon" | "image/avif";
+  base64: string;
+} | {
+  kind: "media";
+  path: string;
+  size: number;
+  modifiedAtMs: number;
+  contentType: "video/mp4";
+} | {
+  kind: "unsupported";
+  path: string;
+  size: number;
+  reason: "unsupported_type" | "file_too_large";
+  maxBytes?: number;
+};
+
+/** machine 返回的一段文件内容；server 将它转成支持 HTTP Range 的受控字节流。 */
+export type MachineFileChunkResult = {
+  path: string;
+  size: number;
+  modifiedAtMs: number;
+  offset: number;
+  base64: string;
+  eof: boolean;
+};
+
 /** machine 在自身文件系统中创建或复用 git worktree 后返回的路径。 */
 export type MachineGitWorktreeResult = {
   parentCwd: string;
@@ -130,6 +168,8 @@ export type MachineCommandResult =
   | MachineEnsureRuntimeResult
   | MachineStartSessionResult
   | MachineDirectoryListing
+  | MachineFilePreviewResult
+  | MachineFileChunkResult
   | MachineGitWorktreeResult
   | MachineStopSessionResult;
 
@@ -150,6 +190,16 @@ type MachineCommandDetail = {
 } | {
   type: "list_directory";
   cwd?: string;
+} | {
+  type: "preview_file";
+  path: string;
+} | {
+  type: "read_file_chunk";
+  path: string;
+  offset: number;
+  length: number;
+  expectedSize: number;
+  expectedModifiedAtMs: number;
 } | {
   type: "create_git_worktree";
   parentCwd: string;

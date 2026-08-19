@@ -1,5 +1,6 @@
 import type {
   HealthPayload,
+  FilePreviewPayload,
   MachineDirectoryListing,
   MachinesPayload,
   ParentRegistrationConnectInput,
@@ -172,6 +173,9 @@ export const apiRoutes = {
   ),
   machineDirectories: get<MachineDirectoryListing, (machineId: string, path?: string) => string>(
     (machineId, path) => `/api/machines/${encode(machineId)}/directories${queryString({ path })}`
+  ),
+  machineFilePreview: post<{ path: string }, FilePreviewPayload, (machineId: string) => string>(
+    (machineId) => `/api/machines/${encode(machineId)}/files/preview`
   ),
   ensureRuntime: post<{ cwd: string }, RuntimeEnsurePayload, (machineId: string) => string>(
     (machineId) => `/api/machines/${encode(machineId)}/runtime/ensure`
