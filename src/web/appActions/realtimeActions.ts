@@ -14,6 +14,7 @@ import {
   embeddedSurfaceId,
   initialWorkspacePath,
   isElectronSurface,
+  isFixedWorkspaceSurface,
   isEmbeddedHostSurface,
   isVscodeSurface
 } from "../appConfig.js";
@@ -69,7 +70,7 @@ import type {
   LocalTaskRun
 } from "../types.js";
 import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
-import { restorePersistedThreadTabs } from "../helpers/threadRestore.js";
+import { preferredPersistedThreadId, restorePersistedThreadTabs } from "../helpers/threadRestore.js";
 
 type RealtimeActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
@@ -210,6 +211,14 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     registeredMachineConnections.seed(loadedMachines);
     rememberRegisteredMachineActivities(loadedMachines);
     const saved = readStoredUiState();
+    const fixedWorkspaceThreadIds = isFixedWorkspaceSurface
+      ? new Set(
+        loadedRuntimes
+          .flatMap((runtime) => runtime.threads ?? [])
+          .filter((thread) => embeddedWorkspacePaths.includes(thread.workingDirectory))
+          .map((thread) => thread.threadId)
+      )
+      : undefined;
     const shouldRestoreSavedTabs = (isVscodeSurface || !initialWorkspacePath)
       && Array.isArray(saved?.openThreadIds);
     const restoredThreadIds = shouldRestoreSavedTabs
@@ -218,9 +227,20 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         ...(saved?.activeTabThreadId ? [saved.activeTabThreadId] : [])
       ])
       : undefined;
-    const restoredActiveThreadId = restoredThreadIds?.includes(saved?.activeTabThreadId ?? "")
-      ? saved?.activeTabThreadId ?? ""
-      : restoredThreadIds?.[0] ?? "";
+    const persistedActiveThreadId = saved?.activeTabThreadId ?? "";
+    const restoredActiveThreadId = restoredThreadIds
+      ? preferredPersistedThreadId(
+        restoredThreadIds,
+        persistedActiveThreadId,
+        fixedWorkspaceThreadIds
+      )
+      : "";
+    const savedActiveTabThreadByMachine = fixedWorkspaceThreadIds
+      ? Object.fromEntries(
+        Object.entries(saved?.activeTabThreadByMachine ?? {})
+          .filter(([, threadId]) => fixedWorkspaceThreadIds.has(threadId))
+      )
+      : saved?.activeTabThreadByMachine ?? {};
     const savedRuntime = saved?.activeMachineId
       ? loadedRuntimes.find((runtime) => runtime.machineId === saved.activeMachineId)
       : undefined;
@@ -277,7 +297,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setPlugins(normalizePlugins(pluginData.plugins));
     ctx.setTasks(loadedTasks);
     ctx.setRuntimeList(loadedRuntimes);
-    ctx.setActiveTabThreadByMachine(saved?.activeTabThreadByMachine ?? {});
+    ctx.setActiveTabThreadByMachine(savedActiveTabThreadByMachine);
     ctx.setThreadOrderByMachine(() => mergeThreadOrderByMachine(saved?.threadOrderByMachine ?? {}, loadedRuntimes));
     ctx.setPendingRestoreThreadIds([]);
     ctx.setPendingRestoreActiveThreadId("");
@@ -294,6 +314,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       const restored = await restorePersistedThreadTabs({
         threadIds: restoredThreadIds,
         activeThreadId: restoredActiveThreadId,
+        activateFirstThreadWhenNoPreferred: !isFixedWorkspaceSurface,
         openThread: deps.openThread,
         clearActiveThreadIfLatest: deps.clearActiveThreadIfLatest
       });
@@ -308,6 +329,9 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       ));
       ctx.latestRequestedThreadId.current = restored.activeThreadId;
       ctx.setActiveTabThreadId(restored.activeThreadId);
+      if (!restored.activeThreadId && isFixedWorkspaceSurface && initialThreadId) {
+        await deps.openThread(initialThreadId).catch(() => deps.clearActiveThreadIfLatest(initialThreadId));
+      }
       // 全部 persisted tabs 失败时保持空状态；initialized 后的默认 thread effect 会重试 initialThreadId。
     } else if (initialThreadId) {
       await deps.openThread(initialThreadId).catch(() => deps.clearActiveThreadIfLatest(initialThreadId));

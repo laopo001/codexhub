@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CodexHubApiError } from "../../src/shared/apiClient.js";
-import { restorePersistedThreadTabs } from "../../src/web/helpers/threadRestore.js";
+import {
+  preferredPersistedThreadId,
+  restorePersistedThreadTabs
+} from "../../src/web/helpers/threadRestore.js";
+
+test("prefers a persisted active thread only when it belongs to the fixed workspace", () => {
+  const workspaceThreadIds = new Set(["current-thread"]);
+  assert.equal(
+    preferredPersistedThreadId(["foreign-thread", "current-thread"], "foreign-thread", workspaceThreadIds),
+    "current-thread"
+  );
+  assert.equal(
+    preferredPersistedThreadId(["foreign-thread"], "foreign-thread", workspaceThreadIds),
+    ""
+  );
+  assert.equal(
+    preferredPersistedThreadId(["foreign-thread"], "foreign-thread"),
+    "foreign-thread"
+  );
+});
 
 test("persisted thread restore keeps only successfully opened tabs", async () => {
   const attempts: string[] = [];
@@ -43,6 +62,29 @@ test("persisted thread restore preserves a successfully opened active tab", asyn
   assert.deepEqual(result, {
     threadIds: ["thread-a", "thread-b"],
     activeThreadId: "thread-b",
+    pendingThreadIds: []
+  });
+});
+
+test("fixed workspace restore keeps foreign tabs open without activating the first one", async () => {
+  const openOptions: Array<{ threadId: string; options?: { activate?: boolean; deferActivationUntilLoaded?: boolean } }> = [];
+  const result = await restorePersistedThreadTabs({
+    threadIds: ["foreign-thread", "current-thread"],
+    activeThreadId: "",
+    activateFirstThreadWhenNoPreferred: false,
+    openThread: async (threadId, options) => {
+      openOptions.push({ threadId, options });
+    },
+    clearActiveThreadIfLatest: () => undefined
+  });
+
+  assert.deepEqual(openOptions, [
+    { threadId: "foreign-thread", options: { activate: false } },
+    { threadId: "current-thread", options: { activate: false } }
+  ]);
+  assert.deepEqual(result, {
+    threadIds: ["foreign-thread", "current-thread"],
+    activeThreadId: "",
     pendingThreadIds: []
   });
 });

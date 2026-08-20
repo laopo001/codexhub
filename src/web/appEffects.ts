@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { storageKey } from "./appConfig.js";
+import { isFixedWorkspaceSurface, storageKey } from "./appConfig.js";
 import {
   apiRouteJson,
   findProjectByMachinePath,
@@ -59,7 +59,8 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       openThreads: state.openThreads,
       loadingThreadIds: new Set(state.openingThreads.current.keys()),
       selectedProjectMachineId: selectors.selectedProject?.machineId,
-      selectedProjectPath: selectors.selectedProject?.path
+      selectedProjectPath: selectors.selectedProject?.path,
+      restrictToWorkspacePath: isFixedWorkspaceSurface
     });
     if (!activeThreadId || activeThreadId === state.activeTabThreadId) return;
     const activeThread = state.openThreads.find((thread) => thread.threadId === activeThreadId);

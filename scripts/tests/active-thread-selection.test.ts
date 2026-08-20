@@ -119,6 +119,30 @@ test("keeps a same-machine open thread when the selected project has no matching
   }), "thread-active");
 });
 
+test("does not fall back to a foreign thread for a fixed workspace", () => {
+  assert.equal(resolveActiveThreadId({
+    activeMachineId: "machine-current",
+    activeTabThreadId: "",
+    activeWorkspacePath: "/workspace/new",
+    openThreads,
+    selectedProjectMachineId: "machine-current",
+    selectedProjectPath: "/workspace/new",
+    restrictToWorkspacePath: true
+  }), "");
+});
+
+test("an explicitly selected foreign tab remains selectable", () => {
+  assert.equal(resolveActiveThreadId({
+    activeMachineId: "machine-current",
+    activeTabThreadId: "thread-active",
+    activeWorkspacePath: "/workspace/new",
+    openThreads,
+    selectedProjectMachineId: "machine-current",
+    selectedProjectPath: "/workspace/new",
+    restrictToWorkspacePath: true
+  }), "thread-active");
+});
+
 test("uses the current machine when active is empty", () => {
   assert.equal(resolveActiveThreadId({
     activeMachineId: "machine-other",

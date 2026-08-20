@@ -61,10 +61,12 @@ export const useAppSelectors = (state: AppState) => {
         (!state.activeMachineId || thread.runtime.machineId === state.activeMachineId)
         && (!state.activeWorkspacePath || thread.workingDirectory === state.activeWorkspacePath)
       )
-      ?? state.openThreads.find((thread) =>
-        !state.activeMachineId || thread.runtime.machineId === state.activeMachineId
-      )
-      ?? state.openThreads[0],
+      ?? (isFixedWorkspaceSurface && state.activeWorkspacePath
+        ? undefined
+        : state.openThreads.find((thread) =>
+          !state.activeMachineId || thread.runtime.machineId === state.activeMachineId
+        )
+          ?? state.openThreads[0]),
     [state.activeMachineId, state.activeTabThreadId, state.activeWorkspacePath, state.openThreads]
   );
   const threadModelDialogThread = useMemo(() => {

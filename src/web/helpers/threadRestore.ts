@@ -9,6 +9,11 @@ export type PersistedThreadRestoreResult = {
 type PersistedThreadRestoreOptions = {
   threadIds: string[];
   activeThreadId: string;
+  /**
+   * A fixed workspace may keep foreign global tabs open without activating
+   * the first one when its persisted active tab belongs to another path.
+   */
+  activateFirstThreadWhenNoPreferred?: boolean;
   openThread: (threadId: string, options?: {
     activate?: boolean;
     deferActivationUntilLoaded?: boolean;
@@ -58,6 +63,22 @@ const openThreadWithRetry = async (
   throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Thread restore failed"));
 };
 
+export const preferredPersistedThreadId = (
+  threadIds: readonly string[],
+  persistedActiveThreadId: string,
+  workspaceThreadIds?: ReadonlySet<string>
+) => {
+  if (workspaceThreadIds) {
+    if (threadIds.includes(persistedActiveThreadId) && workspaceThreadIds.has(persistedActiveThreadId)) {
+      return persistedActiveThreadId;
+    }
+    return threadIds.find((threadId) => workspaceThreadIds.has(threadId)) ?? "";
+  }
+  return threadIds.includes(persistedActiveThreadId)
+    ? persistedActiveThreadId
+    : threadIds[0] ?? "";
+};
+
 export const restorePersistedThreadTabs = async (
   options: PersistedThreadRestoreOptions
 ): Promise<PersistedThreadRestoreResult> => {
@@ -70,7 +91,8 @@ export const restorePersistedThreadTabs = async (
       ...options.threadIds.filter((threadId) => threadId !== preferredActiveThreadId)
     ]
     : options.threadIds;
-  const activationTarget = preferredActiveThreadId || options.threadIds[0] || "";
+  const activationTarget = preferredActiveThreadId
+    || (options.activateFirstThreadWhenNoPreferred === false ? "" : options.threadIds[0] || "");
   const openedThreadIds = new Set<string>();
   const pendingThreadIds = new Set<string>();
   const retryDelaysMs = options.retryDelaysMs ?? defaultRetryDelaysMs;
@@ -96,9 +118,11 @@ export const restorePersistedThreadTabs = async (
   const pendingIds = options.threadIds.filter((threadId) => pendingThreadIds.has(threadId));
   return {
     threadIds,
-    activeThreadId: preferredActiveThreadId && openedThreadIds.has(preferredActiveThreadId)
-      ? preferredActiveThreadId
-      : threadIds[0] ?? "",
+    activeThreadId: activationTarget
+      ? (preferredActiveThreadId && openedThreadIds.has(preferredActiveThreadId)
+        ? preferredActiveThreadId
+        : threadIds[0] ?? "")
+      : "",
     pendingThreadIds: pendingIds
   };
 };
