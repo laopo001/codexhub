@@ -641,7 +641,7 @@ const assertComposerAttachmentClear = async () => {
     if (appendedRecords.map((record) => record.id).join(",") !== "record-b,record-a,record-c") {
       throw new Error(`incremental record merge lost ordering: ${appendedRecords.map((record) => record.id).join(",")}`);
     }
-    const project = { projectId: "project-a", path: "/tmp/a", lastThreadId: "thread-a", running: true } as ProjectSummary;
+    const project = { projectId: "project-a", machineId: "machine-a", path: "/tmp/a", lastThreadId: "thread-a", running: true } as ProjectSummary;
     const unchangedProjects = [project];
     const patchedProjects = patchProjectsThread(unchangedProjects, {
       threadId: "thread-a",
@@ -1377,9 +1377,12 @@ const assertWebRealtime = async (apiBase: string, threadId: string, trigger: () 
       "web realtime thread record",
       startIndex
     );
+    // Runtime snapshots are expected for task/Agent activity so detached
+    // consumers such as the desktop pet observe execution state. A project
+    // catalog snapshot is still out of scope for a thread record trigger.
     const controlSnapshot = messages
       .slice(startIndex)
-      .find((message) => message.type === "runtimes" || message.type === "projects");
+      .find((message) => message.type === "projects");
     if (controlSnapshot) {
       throw new Error(`thread realtime emitted ${controlSnapshot.type} snapshot after record trigger`);
     }
@@ -2858,7 +2861,7 @@ const assertAppServerApprovalRequestFlow = async () => {
   const sessionId = "approval-session";
   const threadId = "approval-thread";
   const cwd = process.cwd();
-  hub.registerSession({ sessionId, workingDirectory: cwd });
+  hub.registerSession({ sessionId, machineId: "smoke-machine", workingDirectory: cwd });
   hub.attachSessionThread(sessionId, threadId, cwd);
   let cursor = 0;
   const exerciseApproval = async (

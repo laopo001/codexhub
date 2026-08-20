@@ -11,6 +11,7 @@ import {
 import {
   defaultAppSettings,
   embeddedWorkspacePaths,
+  embeddedSurfaceId,
   initialWorkspacePath,
   isElectronSurface,
   isEmbeddedHostSurface,
@@ -21,6 +22,8 @@ import {
   authToken,
   appendThreadOrder,
   collectRegisteredMachineActivityCompletions,
+  findProjectByMachinePath,
+  findProjectByWorkspacePath,
   formatDuration,
   isTaskCompleteRecord,
   mergeNotificationRecords,
@@ -218,14 +221,23 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const restoredActiveThreadId = restoredThreadIds?.includes(saved?.activeTabThreadId ?? "")
       ? saved?.activeTabThreadId ?? ""
       : restoredThreadIds?.[0] ?? "";
-    const initialProjectFromUrl = initialWorkspacePath
-      ? loadedProjects.find((project) => project.path === initialWorkspacePath)
-      : undefined;
     const savedRuntime = saved?.activeMachineId
       ? loadedRuntimes.find((runtime) => runtime.machineId === saved.activeMachineId)
       : undefined;
-    const initialRuntime = runtimeForProject(initialProjectFromUrl, loadedRuntimes) ?? savedRuntime ?? loadedRuntimes[0];
+    const initialProjectFromUrl = initialWorkspacePath
+      ? findProjectByWorkspacePath(loadedProjects, initialWorkspacePath, {
+          sourceKind: isVscodeSurface ? "vscode" : isElectronSurface ? "electron" : undefined,
+          sourceGroupId: embeddedSurfaceId
+        })
+      : undefined;
+    const initialRuntime = runtimeForProject(initialProjectFromUrl, loadedRuntimes)
+      ?? (initialWorkspacePath ? undefined : savedRuntime ?? loadedRuntimes[0]);
     const initialWorkspace = initialWorkspacePath || saved?.activeWorkspacePath || defaultDirectory;
+    const initialProject = initialProjectFromUrl
+      ?? (initialWorkspacePath || !initialRuntime
+        ? undefined
+        : findProjectByMachinePath(loadedProjects, initialRuntime.machineId, initialWorkspace)
+          ?? findProjectByMachinePath(loadedProjects, initialRuntime.machineId, initialRuntime.workingDirectory));
     const initialSettings = {
       ...defaultAppSettings(),
       ...(configData.config.ui ?? saved?.settings ?? {})
@@ -247,7 +259,13 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setAuthError("");
     ctx.setActiveWorkspacePath(initialWorkspace);
     ctx.setSidebarCollapsed(window.matchMedia("(max-width: 860px)").matches ? true : saved?.sidebarCollapsed ?? false);
-    ctx.setSelectedProjectKey(initialProjectFromUrl ? projectKeyForProject(initialProjectFromUrl) : saved?.selectedProjectKey ?? "");
+    ctx.setSelectedProjectKey(
+      initialProject
+        ? projectKeyForProject(initialProject)
+        : initialWorkspacePath
+          ? ""
+          : saved?.selectedProjectKey ?? ""
+    );
     ctx.sidebarDraftStore.set("projectSearch", saved?.projectSearch ?? "");
     ctx.setCollapsedProjectMachineKeys(saved?.collapsedProjectMachineKeys ?? []);
     ctx.setMachines(loadedMachines);
@@ -264,15 +282,13 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setPendingRestoreThreadIds([]);
     ctx.setPendingRestoreActiveThreadId("");
     connectRealtimeEvents();
-    const initialProject = initialRuntime
-      ? initialProjectFromUrl
-        ?? loadedProjects.find((project) => project.machineId === initialRuntime.machineId && project.path === initialWorkspace)
-        ?? loadedProjects.find((project) => project.machineId === initialRuntime.machineId && project.path === initialRuntime.workingDirectory)
-      : undefined;
     const initialThreadId = initialRuntime ? preferredThreadIdForRuntime(initialRuntime, initialProject) : "";
-    if (initialRuntime) {
+    if (initialProject) {
+      ctx.setActiveMachineId(initialProject.machineId);
+      ctx.setActiveWorkspacePath(initialProject.path);
+    } else if (initialRuntime) {
       ctx.setActiveMachineId(initialRuntime.machineId);
-      ctx.setActiveWorkspacePath(initialProject?.path ?? (initialWorkspace || initialRuntime.workingDirectory));
+      ctx.setActiveWorkspacePath(initialWorkspace || initialRuntime.workingDirectory);
     }
     if (restoredThreadIds) {
       const restored = await restorePersistedThreadTabs({

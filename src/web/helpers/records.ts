@@ -13,7 +13,7 @@ import { formatCompactNumber } from "../../shared/toolFormatting.js";
 import { isModelReasoningEffort } from "../../shared/usageTypes.js";
 export { formatCompactNumber } from "../../shared/toolFormatting.js";
 import { isVscodeSurface } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
@@ -702,7 +702,8 @@ export const activityStatusSnapshotsFromRecords = (
 const cloneActivityStatuses = (statuses: ActivityStatusView[]) =>
   statuses.map((status) => ({
     ...status,
-    files: status.files?.map((file) => ({ ...file }))
+    files: status.files?.map((file) => ({ ...file })),
+    steps: status.steps?.map((step) => ({ ...step }))
   }));
 
 const statusUsageFields = [
@@ -962,7 +963,7 @@ const activityStatusSnapshotTargetRecordId = (records: CodexRecord[]) => {
 
 const isActivityStatusDetail = (status: ActivityStatusView) => {
   if (status.key === "approval" || status.key === "userInput") return status.status !== "completed";
-  return status.key === "files" || status.key === "usage" || status.key === "context";
+  return status.key === "plan" || status.key === "files" || status.key === "usage" || status.key === "context";
 };
 
 export const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivityStatusView | null => {
@@ -1142,6 +1143,27 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
     return { key: "goal", label: "Goal", status: "completed", at: record.timestamp, text: "Goal cleared" };
   }
 
+  if (type === "turn_plan_updated") {
+    const steps = activityPlanSteps(payload.plan);
+    if (!steps.length) return null;
+    const completed = steps.filter((step) => step.status === "completed").length;
+    const activeStep = steps.find((step) => step.status === "in_progress")
+      ?? steps.find((step) => step.status === "pending")
+      ?? [...steps].reverse().find((step) => step.status === "completed")
+      ?? steps.at(-1)!;
+    const allCompleted = completed === steps.length;
+    const text = allCompleted ? "All steps complete" : activeStep.step;
+    return {
+      key: "plan",
+      label: "Plan",
+      status: allCompleted ? "completed" : activeStep.status,
+      at: record.timestamp,
+      text,
+      summaryText: `${text} · ${completed}/${steps.length}`,
+      steps
+    };
+  }
+
   if (type === "item_completed") {
     const item = asRecord(payload.item);
     return {
@@ -1266,11 +1288,12 @@ export const fileChangeTotalsText = (added: number, removed: number) => [
 
 export const activityStatusPriority = (key: string) => {
   const order: Record<string, number> = {
-    approval: 0,
-    userInput: 1,
-    files: 2,
-    usage: 3,
-    context: 4
+    plan: 0,
+    approval: 1,
+    userInput: 2,
+    files: 3,
+    usage: 4,
+    context: 5
   };
   return order[key] ?? 10;
 };
@@ -1327,6 +1350,17 @@ const activityRecordStatus = (status: unknown): ActivityStatusView["status"] | u
   if (normalized === "failed" || normalized === "error" || normalized === "errored" || normalized === "aborted" || normalized === "denied" || normalized === "declined") return "failed";
   if (normalized === "completed" || normalized === "complete" || normalized === "success" || normalized === "succeeded" || normalized === "approved" || normalized === "accepted" || normalized === "answered") return "completed";
   return undefined;
+};
+
+const activityPlanSteps = (value: unknown): ActivityStatusPlanStep[] => {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const planStep = asRecord(item);
+    const step = typeof planStep?.step === "string" ? planStep.step.trim() : "";
+    const status = activityRecordStatus(planStep?.status);
+    if (!step || !status || status === "failed") return [];
+    return [{ step, status }];
+  });
 };
 
 const userInputQuestionSummary = (value: unknown) => {

@@ -19,3 +19,12 @@ export type ProxyUserInput = ProxyTextInput | ProxyImageInput;
 
 /** 发送 turn 时的用户输入，可为纯文本或多模态片段数组。 */
 export type ProxyInput = string | ProxyUserInput[];
+
+/** 提取 turn 输入中的文本，供目标摘要、记录和错误上下文复用。 */
+export const summarizeProxyInput = (input: ProxyInput) => {
+  if (typeof input === "string") return input;
+  return input
+    .filter((item) => item.type === "text")
+    .map((item) => item.text)
+    .join("\n");
+};

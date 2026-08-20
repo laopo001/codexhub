@@ -4,6 +4,7 @@ import { apiRoutes } from "../../shared/apiRoutes.js";
 import {
   apiRouteJson,
   defaultTaskDraft,
+  findProjectByMachinePath,
   mergeThreadOrderByMachine,
   normalizeMachines,
   normalizeProjects,
@@ -127,7 +128,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
       ctx.setTaskError("Missing task fields");
       return;
     }
-    const project = ctx.projectList.find((item) => item.machineId === machineId && item.path === projectPath);
+    const project = findProjectByMachinePath(ctx.projectList, machineId, projectPath);
     ctx.setTaskBusyId("create");
     ctx.setTaskError("");
     try {

@@ -374,6 +374,102 @@ test("interrupted turns use a neutral Web activity status", async () => {
   });
 });
 
+test("structured app-server plans become one expandable Status item with the current step summary", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { activityStatusesFromRecords } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  const records: CodexRecord[] = [{
+    id: "plan-update-1",
+    timestamp: "2026-07-19T02:00:01.000Z",
+    type: "event_msg",
+    payload: {
+      type: "turn_plan_updated",
+      plan: [
+        { step: "Inspect the app-server plan", status: "completed" },
+        { step: "Connect Plan to Status", status: "inProgress" },
+        { step: "Verify in the browser", status: "pending" }
+      ]
+    }
+  }, {
+    id: "plan-update-2",
+    timestamp: "2026-07-19T02:00:02.000Z",
+    type: "event_msg",
+    payload: {
+      type: "turn_plan_updated",
+      plan: [
+        { step: "Inspect the app-server plan", status: "completed" },
+        { step: "Connect Plan to Status", status: "completed" },
+        { step: "Verify in the browser", status: "inProgress" }
+      ]
+    }
+  }];
+
+  const planStatuses = activityStatusesFromRecords(records).filter((status) => status.key === "plan");
+  assert.equal(planStatuses.length, 1);
+  assert.deepEqual(planStatuses[0], {
+    key: "plan",
+    label: "Plan",
+    status: "in_progress",
+    at: "2026-07-19T02:00:02.000Z",
+    text: "Verify in the browser",
+    summaryText: "Verify in the browser · 2/3",
+    steps: [
+      { step: "Inspect the app-server plan", status: "completed" },
+      { step: "Connect Plan to Status", status: "completed" },
+      { step: "Verify in the browser", status: "in_progress" }
+    ]
+  });
+});
+
+test("Plan Status rows stay compact until expanded and then render every step", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { ActivityStatusRows } = await import("../../src/web/helpers/components.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  const status = {
+    key: "plan",
+    label: "Plan",
+    status: "in_progress" as const,
+    text: "Verify in the browser",
+    summaryText: "Verify in the browser · 2/3",
+    steps: [
+      { step: "Inspect the app-server plan", status: "completed" as const },
+      { step: "Connect Plan to Status", status: "completed" as const },
+      { step: "Verify in the browser", status: "in_progress" as const }
+    ]
+  };
+
+  const collapsed = renderToStaticMarkup(createElement(ActivityStatusRows, {
+    statuses: [status],
+    expandedKeys: new Set<string>(),
+    onToggle: () => undefined
+  }));
+  assert.match(collapsed, /Verify in the browser/);
+  assert.doesNotMatch(collapsed, /Inspect the app-server plan/);
+  assert.match(collapsed, /aria-expanded="false"/);
+
+  const expanded = renderToStaticMarkup(createElement(ActivityStatusRows, {
+    statuses: [status],
+    expandedKeys: new Set<string>(),
+    onToggle: () => undefined,
+    showPlanSteps: true
+  }));
+  assert.match(expanded, /activityStatusPlanSteps/);
+  assert.match(expanded, /Inspect the app-server plan/);
+  assert.match(expanded, /Connect Plan to Status/);
+  assert.match(expanded, /Verify in the browser/);
+});
+
 test("guidance messages stay inside the existing Turn activity scope", async () => {
   const previousWindow = "window" in globalThis
     ? (globalThis as { window?: unknown }).window

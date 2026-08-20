@@ -121,9 +121,7 @@ export class MachineHub {
   }
 
   ensureRuntime(machineId: string, input: { cwd: string }, timeoutMs = 90_000) {
-    const machine = this.requireMachine(machineId);
-    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
-    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot launch projects: ${machineId}`);
+    const machine = this.requireOnlineProjectLauncherMachine(machineId, "launch projects");
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,
@@ -138,9 +136,7 @@ export class MachineHub {
   }
 
   startSession(machineId: string, input: { cwd: string; reuse?: boolean; threadId?: string }, timeoutMs = 90_000) {
-    const machine = this.requireMachine(machineId);
-    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
-    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot launch projects: ${machineId}`);
+    const machine = this.requireOnlineProjectLauncherMachine(machineId, "launch projects");
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,
@@ -157,9 +153,7 @@ export class MachineHub {
   }
 
   listDirectory(machineId: string, input: { cwd?: string }, timeoutMs = 30_000) {
-    const machine = this.requireMachine(machineId);
-    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
-    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot browse projects: ${machineId}`);
+    const machine = this.requireOnlineProjectLauncherMachine(machineId, "browse projects");
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,
@@ -174,9 +168,7 @@ export class MachineHub {
   }
 
   previewFile(machineId: string, input: { path: string }, timeoutMs = 30_000) {
-    const machine = this.requireMachine(machineId);
-    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
-    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot preview files: ${machineId}`);
+    const machine = this.requireOnlineProjectLauncherMachine(machineId, "preview files");
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,
@@ -201,9 +193,7 @@ export class MachineHub {
     },
     timeoutMs = 30_000
   ) {
-    const machine = this.requireMachine(machineId);
-    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
-    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot stream files: ${machineId}`);
+    const machine = this.requireOnlineProjectLauncherMachine(machineId, "stream files");
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,
@@ -222,9 +212,7 @@ export class MachineHub {
     input: { parentCwd: string; branch: string; baseRef?: string; path?: string },
     timeoutMs = 90_000
   ) {
-    const machine = this.requireMachine(machineId);
-    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
-    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot launch projects: ${machineId}`);
+    const machine = this.requireOnlineProjectLauncherMachine(machineId, "launch projects");
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,
@@ -242,8 +230,7 @@ export class MachineHub {
   }
 
   stopSession(machineId: string, input: { sessionId: string }, timeoutMs = 30_000) {
-    const machine = this.requireMachine(machineId);
-    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
+    const machine = this.requireOnlineMachine(machineId);
     const commandId = randomUUID();
     const command = this.enqueueMachineCommand(machine.machineId, {
       commandId,
@@ -306,6 +293,18 @@ export class MachineHub {
   private requireMachine(machineId: string) {
     const machine = this.machines.get(machineId);
     if (!machine) throw new Error(`Machine not found: ${machineId}`);
+    return machine;
+  }
+
+  private requireOnlineMachine(machineId: string) {
+    const machine = this.requireMachine(machineId);
+    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
+    return machine;
+  }
+
+  private requireOnlineProjectLauncherMachine(machineId: string, action: string) {
+    const machine = this.requireOnlineMachine(machineId);
+    if (!machine.capabilities.projectLauncher) throw new Error(`Machine cannot ${action}: ${machineId}`);
     return machine;
   }
 

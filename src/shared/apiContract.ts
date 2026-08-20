@@ -645,7 +645,7 @@ export const machineRegistrationProjectSchema = z.object({
 }).strict();
 
 export const sessionRegistrationSchema = z.object({
-  machineId: z.string().min(1).optional(),
+  machineId: z.string().min(1),
   name: z.string().min(1).optional(),
   workingDirectory: z.string().min(1),
   appServerUrl: z.string().min(1).optional(),

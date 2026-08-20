@@ -457,6 +457,7 @@ test("attached runtime rejects and does not cache malformed thread/resume respon
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
     appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
     appServerTransportFactory: async () => socket,
     cwd: "/tmp/current-protocol",
     transportFactory: (transportContext, callbacks) => {
@@ -494,6 +495,7 @@ test("attached runtime projects and resolves every current command approval deci
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
     appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
     appServerTransportFactory: async () => socket,
     cwd: "/tmp/current-protocol",
     transportFactory: (transportContext, nextCallbacks) => {
@@ -646,6 +648,7 @@ test("runtime excludes resume turns and unsubscribes app-server thread records",
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
     appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
     appServerTransportFactory: async () => socket,
     cwd: "/tmp/current-protocol",
     transportFactory: (transportContext, nextCallbacks) => {
@@ -738,6 +741,7 @@ test("runtime retries a partial turns snapshot from the head while the thread re
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
     appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
     appServerTransportFactory: async () => socket,
     cwd: "/tmp/current-protocol",
     transportFactory: (transportContext, nextCallbacks) => {
@@ -793,6 +797,7 @@ test("runtime rejects a repeated turns cursor instead of imposing a history page
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
     appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
     appServerTransportFactory: async () => socket,
     cwd: "/tmp/current-protocol",
     transportFactory: (transportContext, nextCallbacks) => {
@@ -830,6 +835,7 @@ test("runtime retries explicit app-server overload responses", async (context) =
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
     appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
     appServerTransportFactory: async () => socket,
     cwd: "/tmp/current-protocol",
     transportFactory
@@ -848,6 +854,7 @@ test("runtime keeps JSON-RPC response errors out of the thread event stream", as
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
     appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
     appServerTransportFactory: async () => socket,
     cwd: "/tmp/current-protocol",
     transportFactory: (transportContext, callbacks) => ({
@@ -873,6 +880,7 @@ test("runtime serializes app-server notifications before forwarding them", async
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
     appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
     appServerTransportFactory: async () => socket,
     cwd: "/tmp/current-protocol",
     transportFactory: (transportContext, callbacks) => ({
@@ -927,6 +935,7 @@ test("runtime marks a fast turn/start response provisional before completion", a
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
     appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
     appServerTransportFactory: async () => socket,
     cwd: "/tmp/current-protocol",
     transportFactory: (transportContext, nextCallbacks) => {
@@ -986,7 +995,8 @@ test("attached runtime rejects app-server versions below the protocol baseline",
     startAttachedCodexhubSession({
       apiBase: "http://127.0.0.1:1",
       appServerUrl: "ws://127.0.0.1:1",
-      appServerTransportFactory: async () => socket,
+      machineId: "machine-current-protocol",
+    appServerTransportFactory: async () => socket,
       cwd: "/tmp/current-protocol",
       transportFactory
     }),

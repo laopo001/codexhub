@@ -5,10 +5,11 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
 import { SubagentActivityMessage } from "../SubagentActivityMessage.js";
-import type { ActivityStatusFile, ActivityStatusView, ImagePreviewState, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusView, ImagePreviewState, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers, FilePreviewPayload } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import { asRecord, type SubagentActivityView } from "../../shared/recordTypes.js";
+import { updatePlanStatusIcon } from "../../shared/updatePlanView.js";
 import { apiRouteJson, authFetch, authToken } from "./core.js";
 import { writeTextToClipboard } from "./composer.js";
 import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
@@ -990,7 +991,7 @@ export const ActivityStatusBar = ({
         ) : null}
       </div>
       {expanded && statuses.length ? (
-        <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} />
+        <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} showPlanSteps />
       ) : null}
     </div>
   );
@@ -999,20 +1000,23 @@ export const ActivityStatusBar = ({
 export const ActivityStatusRows = ({
   statuses,
   expandedKeys,
-  onToggle
+  onToggle,
+  showPlanSteps = false
 }: {
   statuses: ActivityStatusView[];
   expandedKeys?: Set<string>;
   onToggle?: (key: string) => void;
+  showPlanSteps?: boolean;
 }) => (
   <div className={`activityStatusRows${expandedKeys?.size ? " expanded" : ""}`}>
     {statuses.map((status) => {
-      const expandable = Boolean(status.files?.length && onToggle);
+      const planExpanded = Boolean(showPlanSteps || expandedKeys?.has(status.key));
+      const expandable = Boolean(!showPlanSteps && onToggle && (status.files?.length || status.steps?.length));
       const expanded = Boolean(expandedKeys?.has(status.key));
       const itemClass = [
         "activityStatusItem",
         status.status ?? "",
-        expandable ? "hasFiles" : "",
+        expandable ? "hasDetails" : "",
         expanded ? "expanded" : ""
       ].filter(Boolean).join(" ");
       const content = (
@@ -1021,6 +1025,7 @@ export const ActivityStatusRows = ({
           <span className="activityStatusViewport">
             <span className="activityStatusTrack">{renderActivityStatusText(status.text)}</span>
           </span>
+          {status.steps?.length && planExpanded ? <ActivityStatusPlanSteps steps={status.steps} /> : null}
           {expanded && status.files?.length ? <ActivityStatusFiles files={status.files} /> : null}
         </>
       );
@@ -1041,6 +1046,19 @@ export const ActivityStatusRows = ({
       );
     })}
   </div>
+);
+
+const ActivityStatusPlanSteps = ({ steps }: { steps: ActivityStatusPlanStep[] }) => (
+  <ol className="activityStatusPlanSteps" aria-label="Plan steps">
+    {steps.map((step, index) => (
+      <li className={`activityStatusPlanStep ${step.status}`} key={`${index}:${step.step}`}>
+        <span className="activityStatusPlanStepIcon" aria-hidden="true">
+          {updatePlanStatusIcon(step.status)}
+        </span>
+        <span className="activityStatusPlanStepText">{step.step}</span>
+      </li>
+    ))}
+  </ol>
 );
 
 const MessageActivityStatusSnapshot = ({ statuses }: { statuses: ActivityStatusView[] }) => {

@@ -6,6 +6,7 @@ import type { AppSidebarViewModel } from "./viewModel.js";
 import {
   activeSshConnectionForHost,
   defaultTaskDraft,
+  findProjectByMachinePath,
   fixedProject,
   filterProjectMachineGroupsBySearch,
   latestSshConnectionForHost,
@@ -205,7 +206,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     }));
   }, [parentRegistration.machineId, parentRegistration.name, parentRegistration.url, setParentRegistrationDraft]);
   const selectedTaskProject = taskFormOpen
-    ? taskProjectOptions.find((project) => project.path === taskDraft.projectPath)
+    ? findProjectByMachinePath(taskProjectOptions, taskDraft.machineId, taskDraft.projectPath)
     : undefined;
   const taskThreadOptions = taskFormOpen ? taskThreadOptionsFor(selectedTaskProject, runtimeList) : [];
   const editingTask = editingTaskId ? tasks.find((task) => task.taskId === editingTaskId) : undefined;
@@ -288,7 +289,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     const input = taskDraft.input.trim();
     const threadId = taskDraft.threadId.trim();
     if (!machineId || !projectPath || !schedule || taskSchedulePreview?.kind !== "valid" || !input) return;
-    const project = projectList.find((item) => item.machineId === machineId && item.path === projectPath);
+    const project = findProjectByMachinePath(projectList, machineId, projectPath);
     const saved = await patchTask(editingTaskId, {
       name,
       enabled: taskDraft.enabled,

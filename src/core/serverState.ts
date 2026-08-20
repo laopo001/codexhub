@@ -9,7 +9,7 @@ import {
   normalizeServerConfigEnv,
   readServerConfigEnv
 } from "./serverConfigEnv.js";
-import { createMachineId, normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
+import { normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
 import type { MachineCapabilities, MachineSummary, MachineType } from "../shared/machineTypes.js";
 import { defaultPetId, petIdPattern } from "../shared/petTypes.js";
 import type {
@@ -505,8 +505,7 @@ export class CodexhubServerState {
         hostname: session.hostname ?? machineId,
         name: session.hostname,
         lastSeenAt: session.lastSeenAt,
-        touchLastSeenAt: false,
-        capabilities: session.machineId ? undefined : { projectLauncher: false }
+        touchLastSeenAt: false
       });
     }
   }
@@ -517,9 +516,8 @@ export class CodexhubServerState {
     for (const machine of snapshot.machines) machinesById.set(machine.machineId, machine);
     const threadsByProject = new Map<string, ThreadSummary[]>();
     for (const thread of snapshot.threads) {
-      const project = thread.runtime.machineId
-        ? this.findRuntimeProject(thread.runtime.machineId, thread.workingDirectory)
-        : this.uniqueProjectForPath(thread.workingDirectory);
+      if (!thread.runtime.machineId) continue;
+      const project = this.findRuntimeProject(thread.runtime.machineId, thread.workingDirectory);
       if (!project) continue;
       const threads = threadsByProject.get(project.projectId) ?? [];
       threads.push(thread);
@@ -562,11 +560,6 @@ export class CodexhubServerState {
   private findRuntimeProject(machineId: string, projectPath: string) {
     const projectId = projectIdFor(machineId, projectPath);
     return this.findProject(machineId, projectPath) ?? this.transientProjects.get(projectId);
-  }
-
-  private uniqueProjectForPath(projectPath: string) {
-    const projects = this.listRuntimeProjects().filter((project) => project.path === projectPath);
-    return projects.length === 1 ? projects[0] : null;
   }
 
   private listRuntimeProjects() {
@@ -623,7 +616,7 @@ export class CodexhubServerState {
 }
 
 export const machineIdForSession = (session: Pick<SessionSummary, "machineId" | "hostname">) =>
-  session.machineId ?? createMachineId(session.hostname ?? "local");
+  session.machineId;
 
 const defaultDataDir = () => codexHubDataDirectory();
 

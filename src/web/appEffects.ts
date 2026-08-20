@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { storageKey } from "./appConfig.js";
 import {
   apiRouteJson,
+  findProjectByMachinePath,
   machineProjectLauncher,
   permissionProfileScopeKey,
   preferredThreadIdForRuntime,
@@ -283,10 +284,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     const initialThreadId = runtime
       ? preferredThreadIdForRuntime(
         runtime,
-        selectors.projectList.find((project) =>
-          project.machineId === runtime.machineId
-          && project.path === runtime.workingDirectory
-        )
+        findProjectByMachinePath(selectors.projectList, runtime.machineId, runtime.workingDirectory)
       )
       : undefined;
     if (initialThreadId) {

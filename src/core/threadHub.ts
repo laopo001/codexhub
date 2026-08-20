@@ -29,7 +29,7 @@ import {
   enqueueSessionCommand as enqueueCommand,
   waitForSessionCommands
 } from "./sessionCommandQueue.js";
-import type { ProxyInput } from "../shared/inputTypes.js";
+import { summarizeProxyInput, type ProxyInput } from "../shared/inputTypes.js";
 import { compareCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import { isAgentActivityRecord, latestAgentMessageFromRecords, threadActivityTitleFromRecords } from "../shared/threadActivity.js";
@@ -159,8 +159,9 @@ export class ThreadHub {
   registerSession(registration: InternalSessionRegistration): { sessionId: string; session: SessionSummary } {
     const now = new Date().toISOString();
     const sessionId = registration.sessionId?.trim() || randomUUID();
-    const machineId = registration.machineId?.trim() || undefined;
-    const previousSessionId = machineId ? this.sessionIdByMachine.get(machineId) : undefined;
+    const machineId = registration.machineId.trim();
+    if (!machineId) throw new Error("Session machineId is required.");
+    const previousSessionId = this.sessionIdByMachine.get(machineId);
     const previousSession = previousSessionId && previousSessionId !== sessionId
       ? this.sessions.get(previousSessionId)
       : undefined;
@@ -197,11 +198,11 @@ export class ThreadHub {
       waiters: existing?.waiters ?? new Set()
     };
     this.sessions.set(sessionId, session);
-    if (machineId) this.sessionIdByMachine.set(machineId, sessionId);
+    this.sessionIdByMachine.set(machineId, sessionId);
     for (const thread of this.threads.values()) {
       if (
         thread.sessionId === sessionId
-        || (machineId && thread.machineId === machineId)
+        || thread.machineId === machineId
         || (previousSessionId && thread.sessionId === previousSessionId)
       ) {
         thread.sessionId = sessionId;
@@ -1053,7 +1054,7 @@ export class ThreadHub {
       });
     }
 
-    const userText = summarizeInput(input);
+    const userText = summarizeProxyInput(input);
     const userTitle = compactThreadTitle(userText);
     if (userTitle && thread.title === thread.threadId) thread.title = userTitle;
     const startedAt = new Date().toISOString();
@@ -1301,7 +1302,7 @@ export class ThreadHub {
   private requireThreadSession(thread: ThreadState) {
     const current = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
     if (current?.online) return current;
-    const replacement = this.onlineRuntimeSessionForMachine(thread.machineId ?? current?.machineId);
+    const replacement = this.onlineRuntimeSessionForMachine(thread.machineId);
     if (replacement) {
       thread.sessionId = replacement.sessionId;
       thread.machineId = replacement.machineId;
@@ -2732,7 +2733,7 @@ export class ThreadHub {
       type: "event_msg",
       payload: {
         type: "user_message",
-        message: summarizeInput(input),
+        message: summarizeProxyInput(input),
         images: imageUrls(input),
         text_elements: []
       },
@@ -2751,7 +2752,7 @@ export class ThreadHub {
       source: "codexhub",
       message: error.message,
       ...(input === undefined ? {} : {
-        input_text: summarizeInput(input),
+        input_text: summarizeProxyInput(input),
         image_count: imageUrls(input).length
       })
     });
@@ -3299,7 +3300,7 @@ export class ThreadHub {
   private threadRuntimeSummary(thread: ThreadState): ThreadRuntimeSummary {
     const session = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
     if (session?.online) return threadRuntimeSummary(session);
-    const replacement = this.onlineRuntimeSessionForMachine(thread.machineId ?? session?.machineId);
+    const replacement = this.onlineRuntimeSessionForMachine(thread.machineId);
     if (replacement) return threadRuntimeSummary(replacement);
     if (session) return threadRuntimeSummary(session);
     return { machineId: thread.machineId, online: false, runnable: false };
@@ -3308,7 +3309,7 @@ export class ThreadHub {
   private threadAccountRateLimits(thread: ThreadState): ThreadRateLimits | null {
     const session = thread.sessionId ? this.sessions.get(thread.sessionId) : null;
     if (session?.accountRateLimits) return session.accountRateLimits;
-    const replacement = this.onlineRuntimeSessionForMachine(thread.machineId ?? session?.machineId);
+    const replacement = this.onlineRuntimeSessionForMachine(thread.machineId);
     return replacement?.accountRateLimits ?? session?.accountRateLimits ?? null;
   }
 
@@ -3425,14 +3426,6 @@ const appServerTurnIds = (thread: ThreadState) => {
     if (turnId && !turnIds.includes(turnId)) turnIds.push(turnId);
   }
   return turnIds;
-};
-
-const summarizeInput = (input: ProxyInput) => {
-  if (typeof input === "string") return input;
-  return input
-    .filter((item) => item.type === "text")
-    .map((item) => item.text)
-    .join("\n");
 };
 
 const turnDispatch = (

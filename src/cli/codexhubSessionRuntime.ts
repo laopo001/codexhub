@@ -135,7 +135,7 @@ export type AppServerTransportFactory = () => Promise<AppServerSocketLike>;
 export type HeadlessSessionTransportContext = {
   sessionId: string;
   apiBase: string;
-  machineId?: string;
+  machineId: string;
   cwd: string;
   appServerUrl: string;
 };
@@ -161,7 +161,7 @@ type BridgeOptions = {
   appServerUrl: string;
   appServerTransportFactory?: AppServerTransportFactory;
   sessionId: string;
-  machineId?: string;
+  machineId: string;
   cwd: string;
   ensureDefaultThread?: boolean;
   readyLabel?: string;
@@ -176,7 +176,7 @@ type BridgeOptions = {
 export type HeadlessCodexhubSessionOptions = {
   apiBase: string;
   cwd: string;
-  machineId?: string;
+  machineId: string;
   port?: number;
   appServerLaunch?: CodexAppServerLaunchOptions;
   readyLabel?: string;
@@ -1093,7 +1093,7 @@ class CodexAppServerBridge {
   ): ModelCatalogCacheKey {
     if (!this.cliVersionValue) throw new UnsupportedCodexCliVersionError("unknown");
     return {
-      machineId: this.options.machineId?.trim() || os.hostname(),
+      machineId: this.options.machineId,
       cliVersion: this.cliVersionValue,
       codexHome: this.codexHomeValue ?? activeCodexHome(),
       ...scope

@@ -12,7 +12,7 @@ export class DirectThreadHubSessionTransport implements HeadlessSessionTransport
     private readonly options: {
       threads: ThreadHub;
       sessionId: string;
-      machineId?: string;
+      machineId: string;
       transportId: string;
       onChange: () => void;
       onRegister?: () => void;

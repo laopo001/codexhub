@@ -269,6 +269,11 @@ export type ActivityStatusView = {
   at?: string;
   status?: CodexRecordView["status"];
   files?: ActivityStatusFile[];
+  steps?: ActivityStatusPlanStep[];
+};
+export type ActivityStatusPlanStep = {
+  step: string;
+  status: NonNullable<CodexRecordView["status"]>;
 };
 export type WebRecordView = CompactRecordView & {
   activityStatuses?: ActivityStatusView[];

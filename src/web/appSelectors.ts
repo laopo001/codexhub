@@ -14,6 +14,7 @@ import {
   authToken,
   combineRecordSources,
   effectiveReasoningSelectionForModel,
+  findProjectByMachinePath,
   groupProjectsByMachine,
   hideSupersededSimpleThinkingViews,
   isSimpleMainView,
@@ -188,27 +189,18 @@ export const useAppSelectors = (state: AppState) => {
   const selectedProject = useMemo(() => {
     if (selectedProjectByKey) return selectedProjectByKey;
     if (activeRuntime) {
-      return projectList.find((project) =>
-        project.machineId === activeRuntime.machineId
-        && Boolean(state.activeWorkspacePath)
-        && project.path === state.activeWorkspacePath
-        )
-        ?? projectList.find((project) =>
-          project.machineId === activeRuntime.machineId
-          && project.path === activeRuntime.workingDirectory
-        );
+      return findProjectByMachinePath(projectList, activeRuntime.machineId, state.activeWorkspacePath)
+        ?? findProjectByMachinePath(projectList, activeRuntime.machineId, activeRuntime.workingDirectory);
     }
     if (state.activeMachineId) {
       const runtime = state.runtimeList.find((runtime) => runtime.machineId === state.activeMachineId);
       const sessionProject = runtime
-        ? projectList.find((project) =>
-          project.machineId === runtime.machineId
-          && (!state.activeWorkspacePath || project.path === state.activeWorkspacePath || project.path === runtime.workingDirectory)
-        )
+        ? findProjectByMachinePath(projectList, runtime.machineId, state.activeWorkspacePath)
+          ?? findProjectByMachinePath(projectList, runtime.machineId, runtime.workingDirectory)
         : undefined;
       if (sessionProject) return sessionProject;
     }
-    return state.activeWorkspacePath ? projectList.find((project) => project.path === state.activeWorkspacePath) : undefined;
+    return undefined;
   }, [activeRuntime, state.activeMachineId, state.activeWorkspacePath, projectList, selectedProjectByKey, state.runtimeList]);
   const activeProjectKey = selectedProject ? projectKeyForProject(selectedProject) : "";
   const activeProjectThreads = useMemo(() => {

@@ -228,7 +228,7 @@ export const taskBelongsToProject = (task: LocalTask, project: ProjectSummary) =
   && (task.projectPath === project.path || Boolean(task.projectId && task.projectId === project.projectId));
 
 export const taskTargetLabel = (task: LocalTask, projects: ProjectSummary[], machines: MachineSummary[]) => {
-  const project = projects.find((item) => item.machineId === task.machineId && item.path === task.projectPath);
+  const project = findProjectByMachinePath(projects, task.machineId, task.projectPath);
   const machine = machines.find((item) => item.machineId === task.machineId);
   const projectName = project?.name ?? basename(task.projectPath);
   const machineName = machine?.name ?? machine?.hostname ?? task.machineId;
@@ -237,7 +237,7 @@ export const taskTargetLabel = (task: LocalTask, projects: ProjectSummary[], mac
 };
 
 export const taskTargetTitle = (task: LocalTask, projects: ProjectSummary[], machines: MachineSummary[]) => {
-  const project = projects.find((item) => item.machineId === task.machineId && item.path === task.projectPath);
+  const project = findProjectByMachinePath(projects, task.machineId, task.projectPath);
   const machine = machines.find((item) => item.machineId === task.machineId);
   return [
     `machine: ${machine?.name ?? machine?.hostname ?? task.machineId}`,
@@ -524,6 +524,52 @@ export const projectKeyFor = (machineId: string, projectPath: string) => `${mach
 
 export const projectKeyForProject = (project: Pick<ProjectSummary, "machineId" | "path">) =>
   projectKeyFor(project.machineId, project.path);
+
+/**
+ * Resolve a project without confusing equal paths on different machines.
+ * A missing machine identity is unresolved state, not a valid project key.
+ */
+export const findProjectByMachinePath = (
+  projects: readonly ProjectSummary[],
+  machineId: string,
+  projectPath: string | undefined
+) => {
+  const normalizedMachineId = machineId.trim();
+  const normalizedPath = projectPath?.trim() || "";
+  if (!normalizedMachineId || !normalizedPath) return undefined;
+  const matches = projects.filter((project) =>
+    project.path === normalizedPath
+    && project.machineId === normalizedMachineId
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+};
+
+/**
+ * Resolve an explicit workspace path without guessing between machines.
+ * Embedded surfaces can disambiguate same-path projects with their source identity;
+ * all other ambiguous paths remain unresolved until the user selects a project.
+ */
+export const findProjectByWorkspacePath = (
+  projects: readonly ProjectSummary[],
+  projectPath: string | undefined,
+  scope: { sourceKind?: "vscode" | "electron"; sourceGroupId?: string } = {}
+) => {
+  const normalizedPath = projectPath?.trim() || "";
+  if (!normalizedPath) return undefined;
+  const matches = projects.filter((project) => project.path === normalizedPath);
+  if (scope.sourceKind && scope.sourceGroupId) {
+    const scopedMatches = matches.filter((project) => {
+      const source = project.source;
+      return Boolean(
+        source
+        && source.kind === scope.sourceKind
+        && source.groupId === scope.sourceGroupId
+      );
+    });
+    if (scopedMatches.length === 1) return scopedMatches[0];
+  }
+  return matches.length === 1 ? matches[0] : undefined;
+};
 
 export const basename = (projectPath: string) => projectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? projectPath;
 
@@ -847,10 +893,17 @@ export const patchRuntimesThread = (runtimeList: RuntimeSummary[], thread: Threa
 };
 
 export const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) => {
+  const machineId = thread?.runtime?.machineId;
+  if (!machineId) return projects;
+  const matchingProject = findProjectByMachinePath(
+    projects,
+    machineId,
+    thread.workingDirectory
+  );
+  if (!matchingProject) return projects;
   let changed = false;
   const next = projects.map((project) => {
-    const matchesPath = project.path === thread.workingDirectory;
-    if (!matchesPath) return project;
+    if (project.projectId !== matchingProject.projectId) return project;
     const running = thread.running || thread.status === "running" || project.running;
     if (project.lastThreadId === thread.threadId && project.running === running) return project;
     changed = true;

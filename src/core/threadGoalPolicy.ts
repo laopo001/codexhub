@@ -1,4 +1,4 @@
-import type { ProxyInput } from "../shared/inputTypes.js";
+import { summarizeProxyInput, type ProxyInput } from "../shared/inputTypes.js";
 import type {
   ThreadGoalRunPolicy,
   ThreadGoalStatus,
@@ -8,7 +8,7 @@ import type {
 
 export const goalUpdateFromInput = (input: ProxyInput, options: ThreadRunOptions): ThreadGoalUpdate => {
   const configuredObjective = typeof options.goalObjective === "string" ? options.goalObjective.trim() : "";
-  const objective = configuredObjective || summarizeInput(input).trim();
+  const objective = configuredObjective || summarizeProxyInput(input).trim();
   return {
     objective: objective ? objective.slice(0, 4000) : "Pursue the attached user request.",
     status: "active",
@@ -139,14 +139,6 @@ export const threadGoalTimestamp = (goal: Record<string, unknown> | null) =>
   timestampFromEpochSeconds(goal?.updatedAt)
   ?? timestampFromEpochSeconds(goal?.createdAt)
   ?? new Date().toISOString();
-
-const summarizeInput = (input: ProxyInput) => {
-  if (typeof input === "string") return input;
-  return input
-    .filter((item) => item.type === "text")
-    .map((item) => item.text)
-    .join("\n");
-};
 
 const normalizedGoalObjective = (goal: Record<string, unknown>) =>
   typeof goal.objective === "string" ? goal.objective.trim() : "";

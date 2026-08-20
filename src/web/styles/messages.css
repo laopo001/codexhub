@@ -223,6 +223,53 @@
   padding: 0 6px;
 }
 
+.activityStatusPlanSteps {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 6px 5px 28px;
+  border-top: 1px solid rgba(104, 115, 145, 0.12);
+  background: #fbfcf8;
+  list-style: none;
+}
+
+.activityStatusPlanStep {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: #65706a;
+  font-size: 10px;
+  line-height: 18px;
+}
+
+.activityStatusPlanStep.completed {
+  color: #2f7d5a;
+}
+
+.activityStatusPlanStep.in_progress {
+  color: #2a648c;
+  font-weight: 700;
+}
+
+.activityStatusPlanStepIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.activityStatusPlanStepText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .activityStatusDelta {
   font-weight: 750;
 }

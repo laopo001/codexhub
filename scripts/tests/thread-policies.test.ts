@@ -20,6 +20,7 @@ import { goalUpdateFromDialog } from "../../src/web/helpers/goalDialog.js";
 const thread = (): ThreadState => ({
   threadId: "thread-1",
   workingDirectory: "/tmp/project",
+  machineId: "machine-test",
   threadOptions: {},
   goalRun: { policy: null, phase: "running", continuation: "normal" },
   running: false,
@@ -47,7 +48,7 @@ test("local command parser and fast mode policy stay outside ThreadHub state orc
   );
   assert.match(enabled, /Fast mode enabled/);
   assert.equal(state.threadOptions.serviceTier, "priority");
-  localCommandMessage(state, { online: true, runnable: true }, null, "fast", ["off"]);
+    localCommandMessage(state, { online: true, runnable: true, machineId: "machine-test" }, null, "fast", ["off"]);
   assert.equal(state.threadOptions.serviceTier, undefined);
 });
 
@@ -56,6 +57,14 @@ test("goal policy normalization strips local run policy from app-server payload"
     objective: "finish refactor",
     status: "active",
     tokenBudget: 1000
+  });
+  assert.deepEqual(goalUpdateFromInput([
+    { type: "text", text: "first line" },
+    { type: "image", url: "https://example.test/input.png" },
+    { type: "text", text: "second line" }
+  ], { goalMode: true }), {
+    objective: "first line\nsecond line",
+    status: "active"
   });
   assert.deepEqual(normalizeThreadGoalRunPolicy({
     type: "consumeUntilWeeklyRemainingAtOrBelow",
@@ -263,7 +272,7 @@ test("ThreadHub projects goal/get snapshots and ignores removed Thread.goal", ()
   const hub = new ThreadHub();
   const sessionId = "goal-snapshot-session";
   const threadId = "goal-snapshot-thread";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/project" });
+  hub.registerSession({ sessionId, machineId: "machine-goal-snapshot", workingDirectory: "/tmp/project" });
   hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,

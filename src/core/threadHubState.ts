@@ -39,7 +39,7 @@ export type GoalRunState = {
 export type ThreadState = {
   threadId: string;
   workingDirectory: string;
-  machineId?: string;
+  machineId: string;
   sessionId?: string;
   appServerTurnId?: string;
   threadOptions: ThreadOptions;

@@ -6,6 +6,7 @@ import { isEmbeddedSurfaceKind } from "../../shared/surfaceTypes.js";
 import {
   apiRouteJson,
   appendThreadOrder,
+  findProjectByMachinePath,
   mergeThreadOrderByMachine,
   normalizeMachines,
   normalizeProjects,
@@ -134,7 +135,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       : undefined;
     const project = selectedProject?.machineId === runtime.machineId
       ? selectedProject
-      : ctx.projectList.find((item) => item.machineId === runtime.machineId && item.path === runtime.workingDirectory);
+      : findProjectByMachinePath(ctx.projectList, runtime.machineId, runtime.workingDirectory);
     ctx.setActiveWorkspacePath(project?.path ?? runtime.workingDirectory);
     if (project) {
       ctx.setSelectedProjectKey(projectKeyForProject(project));
@@ -456,11 +457,9 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       return;
     }
     const runtime = ctx.runtimeList.find((item) => item.machineId === machineId);
-    const parentProject = ctx.projectList.find((project) =>
-      runtime?.machineId
-      && project.machineId === runtime.machineId
-      && project.path === picker.workingDirectory
-    );
+    const parentProject = runtime?.machineId
+      ? findProjectByMachinePath(ctx.projectList, runtime.machineId, picker.workingDirectory)
+      : undefined;
     if (!parentProject) {
       ctx.setThreadPicker((current) => current && current.machineId === machineId ? {
         ...current,
@@ -552,7 +551,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     ctx.setOpeningProjectKey(key);
     try {
       const existingProject = machineId
-        ? ctx.projectList.find((project) => project.machineId === machineId && project.path === trimmedPath)
+        ? findProjectByMachinePath(ctx.projectList, machineId, trimmedPath)
         : undefined;
       const embeddedSource = existingProject?.source && isEmbeddedSurfaceKind(existingProject.source.kind)
         ? existingProject.source

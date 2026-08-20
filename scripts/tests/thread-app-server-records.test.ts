@@ -128,7 +128,7 @@ test("ThreadHub assigns first-seen canonical order independently from source tim
   const sessionId = "canonical-order-session";
   const threadId = "canonical-order-thread";
   const turnId = "canonical-order-turn";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/canonical-order" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/canonical-order" });
   const notify = (item: Record<string, unknown>, startedAtMs: number) => hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
@@ -166,7 +166,7 @@ test("ThreadHub marks unpaged snapshots as history before newer live control rec
   const sessionId = "unpaged-history-session";
   const threadId = "unpaged-history-thread";
   const turnId = "unpaged-history-turn";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/unpaged-history" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/unpaged-history" });
   hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
@@ -471,7 +471,7 @@ test("ThreadHub terminal snapshots finish live status-less items", () => {
   const threadId = "snapshot-status-thread";
   const turnId = "snapshot-status-turn";
   const item = { type: "sleep", id: "sleep-live", durationMs: 1000 };
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/snapshot-status" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/snapshot-status" });
   hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
@@ -522,7 +522,7 @@ test("status-less tool items measure from item start through item completion", (
     id: "image-view",
     path: "/tmp/screenshot.png"
   }];
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/status-less-tool-timing" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/status-less-tool-timing" });
 
   for (const item of items) {
     hub.applySessionEvent(sessionId, {
@@ -560,7 +560,7 @@ test("terminal interrupted snapshots keep item outcomes independent from the Tur
   const sessionId = "interrupted-snapshot-item-session";
   const threadId = "interrupted-snapshot-item-thread";
   const turnId = "interrupted-snapshot-item-turn";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/interrupted-snapshot-item" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/interrupted-snapshot-item" });
 
   hub.applySessionEvent(sessionId, {
     type: "thread_turns_snapshot",
@@ -644,7 +644,7 @@ test("ThreadHub stale active snapshots do not regress completed status-less item
   const threadId = "snapshot-race-thread";
   const turnId = "snapshot-race-turn";
   const item = { type: "sleep", id: "sleep-race", durationMs: 1000 };
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/snapshot-race" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/snapshot-race" });
   hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
@@ -681,7 +681,7 @@ test("ThreadHub coalesces current reasoning deltas into the completed reasoning 
   const turnId = "reasoning-delta-turn";
   const itemId = "reasoning-delta-item";
   const recordId = `app:${threadId}:${turnId}:item:reasoning:${itemId}`;
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/reasoning-delta" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/reasoning-delta" });
   const notify = (method: string, params: Record<string, unknown>) => hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
@@ -734,7 +734,7 @@ test("ThreadHub replaces experimental plan deltas with the authoritative complet
   const turnId = "plan-delta-turn";
   const itemId = "plan-delta-item";
   const recordId = `app:${threadId}:${turnId}:item:plan:${itemId}`;
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/plan-delta" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/plan-delta" });
   const notify = (method: string, params: Record<string, unknown>) => hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
@@ -767,7 +767,7 @@ test("ThreadHub applies file patch snapshots in place and lets completion win", 
   const turnId = "file-delta-turn";
   const itemId = "file-delta-item";
   const recordId = `app:${threadId}:${turnId}:item:fileChange:${itemId}`;
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/file-delta" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/file-delta" });
   const notify = (method: string, params: Record<string, unknown>) => hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
@@ -818,7 +818,7 @@ test("ThreadHub keeps MCP progress on one live item and drops it at authoritativ
   const turnId = "mcp-progress-turn";
   const itemId = "mcp-progress-item";
   const recordId = `app:${threadId}:${turnId}:item:mcpToolCall:${itemId}`;
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/mcp-progress" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/mcp-progress" });
   const notify = (method: string, params: Record<string, unknown>) => hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
@@ -864,7 +864,7 @@ test("ThreadHub coalesces current turn plan and diff projections until the compl
   const turnId = "turn-projection-turn";
   const planRecordId = `app:${threadId}:${turnId}:event:turn_plan_updated`;
   const diffRecordId = `app:${threadId}:${turnId}:event:turn_diff_updated`;
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/turn-projection" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/turn-projection" });
   const notify = (method: string, params: Record<string, unknown>) => hub.applySessionEvent(sessionId, {
     type: "thread_event",
     threadId,
@@ -930,7 +930,7 @@ test("ThreadHub preserves live transcript items omitted from turn/completed", ()
   const sessionId = "partial-terminal-session";
   const threadId = "partial-terminal-thread";
   const turnId = "partial-terminal-turn";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/partial-terminal" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/partial-terminal" });
 
   const notify = (method: string, params: Record<string, unknown>) => hub.applySessionEvent(sessionId, {
     type: "thread_event",
@@ -1027,7 +1027,7 @@ test("ThreadHub rejects stable approval decisions omitted by app-server", async 
   const hub = new ThreadHub();
   const sessionId = "approval-decisions-session";
   const threadId = "approval-decisions-thread";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/approval-decisions" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/approval-decisions" });
   hub.applySessionEvent(sessionId, {
     type: "approval_request",
     threadId,
@@ -1066,7 +1066,7 @@ test("ThreadHub preserves pending command approval across active turn snapshots"
   const turnId = "approval-snapshot-turn";
   const itemId = "approval-snapshot-item";
   const recordId = `app:${threadId}:${turnId}:item:commandExecution:${itemId}`;
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/approval-snapshot" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/approval-snapshot" });
   hub.applySessionEvent(sessionId, {
     type: "approval_request",
     threadId,
@@ -1154,7 +1154,7 @@ test("ThreadHub ingests real paginated turn history in bounded historical batche
   const hub = new ThreadHub();
   const sessionId = "large-snapshot-session";
   const threadId = "large-snapshot-thread";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/large-snapshot" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/large-snapshot" });
   hub.applySessionEvent(sessionId, {
     type: "thread_turns_snapshot",
     threadId,
@@ -1264,7 +1264,7 @@ test("ThreadHub streams command output as deltas without retaining cumulative re
   const threadId = "command-delta-thread";
   const turnId = "command-delta-turn";
   const itemId = "command-delta-item";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/command-delta" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/command-delta" });
   hub.applySessionEvent(sessionId, {
     type: "thread_turns_snapshot",
     threadId,
@@ -1348,7 +1348,7 @@ test("ThreadHub replaces a stale cursor with a canonical records snapshot", () =
   const hub = new ThreadHub();
   const sessionId = "snapshot-resume-session";
   const threadId = "snapshot-resume-thread";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/snapshot-resume" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/snapshot-resume" });
   hub.applySessionEvent(sessionId, {
     type: "thread_turns_snapshot",
     threadId,
@@ -1393,7 +1393,7 @@ test("ThreadHub orders untimed history across pages and ignores stale retry page
   const hub = new ThreadHub();
   const sessionId = "untimed-history-session";
   const threadId = "untimed-history-thread";
-  hub.registerSession({ sessionId, workingDirectory: "/tmp/untimed-history" });
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/untimed-history" });
   const turn = (index: number) => ({
     id: `turn-${index}`,
     status: "completed",

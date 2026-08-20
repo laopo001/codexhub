@@ -50,10 +50,12 @@ test("machine activity summaries accept the compact Goal or user-input hint", ()
 
 test("session registration and heartbeat reject currentThreadId", () => {
   const registration = {
+    machineId: "machine-test",
     workingDirectory: "/tmp/project",
     currentThreadId: "legacy-thread"
   };
 
+  assert.equal(sessionRegistrationSchema.safeParse({ workingDirectory: "/tmp/project" }).success, false);
   assert.equal(sessionRegistrationSchema.safeParse(registration).success, false);
   assert.equal(sessionHeartbeatSchema.safeParse({ currentThreadId: "legacy-thread" }).success, false);
 });

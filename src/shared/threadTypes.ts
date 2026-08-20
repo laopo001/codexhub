@@ -47,7 +47,7 @@ export type ThreadSummary = {
 
 /** thread 所属 machine runtime 的轻量信息；runtime incarnation id 不进入公开模型。 */
 export type ThreadRuntimeSummary = {
-  machineId?: string;
+  machineId: string;
   name?: string;
   online: boolean;
   runnable: boolean;
@@ -57,7 +57,7 @@ export type ThreadRuntimeSummary = {
 /** server/machine bridge 内部的 runtime 进程代次摘要，不进入公共 HTTP/Web 模型。 */
 export type SessionSummary = {
   sessionId: string;
-  machineId?: string;
+  machineId: string;
   name?: string;
   workingDirectory: string;
   appServerUrl?: string;
@@ -308,7 +308,7 @@ export type ThreadStreamEvent = {
 
 /** machine/session bridge 注册官方 Codex runtime 时提交的 session 信息。 */
 export type SessionRegistration = {
-  machineId?: string;
+  machineId: string;
   name?: string;
   workingDirectory: string;
   appServerUrl?: string;
