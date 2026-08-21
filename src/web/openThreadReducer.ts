@@ -24,6 +24,7 @@ type DraftAction =
 
 export type ConversationThreadAction =
   | { type: "sync-detail"; threadId: string; thread: ThreadDetail }
+  | { type: "merge-history"; threadId: string; thread: ThreadDetail }
   | {
       type: "merge-stream";
       threadId: string;
@@ -113,6 +114,14 @@ export const reduceConversationThreadState = (
   if (action.type === "sync-detail") {
     return openThreadStateFromDetail(action.thread, thread);
   }
+  if (action.type === "merge-history") {
+    return {
+      ...thread,
+      ...action.thread,
+      records: combineRecordSources(action.thread.records, thread.records),
+      history: action.thread.history ?? thread.history
+    };
+  }
   if (action.type === "merge-stream") {
     const snapshotRecords = action.snapshot?.reset
       ? combineRecordSources([], action.records ?? [])
@@ -125,6 +134,7 @@ export const reduceConversationThreadState = (
     return {
       ...thread,
       ...action.thread,
+      history: action.snapshot?.history ?? thread.history,
       records: action.delta
         ? applyThreadRecordDelta(mergedRecords, action.delta)
         : mergedRecords

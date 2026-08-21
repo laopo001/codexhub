@@ -88,6 +88,43 @@ test("open thread reducer merges historical record batches in one pass", async (
   assert.equal(state[0].messageCount, 2);
 });
 
+test("open thread reducer prepends older pages while retaining the latest window and history boundary", async () => {
+  const openThreadReducer = await loadReducer();
+  const older: CodexRecord = {
+    ...record,
+    id: "record-older",
+    timestamp: "2026-01-01T00:00:00.000Z"
+  };
+  const latest: ThreadDetail = {
+    ...detail("thread-1"),
+    records: [record],
+    history: {
+      hasOlder: true,
+      oldestRecordId: record.id,
+      newestRecordId: record.id,
+      loadedRecordCount: 1
+    }
+  };
+  let state = openThreadReducer([], { type: "upsert-detail", thread: latest });
+  state = openThreadReducer(state, {
+    type: "merge-history",
+    threadId: "thread-1",
+    thread: {
+      ...latest,
+      records: [older],
+      history: {
+        hasOlder: false,
+        oldestRecordId: older.id,
+        newestRecordId: older.id,
+        loadedRecordCount: 1
+      }
+    }
+  });
+
+  assert.deepEqual(state[0].records.map((item) => item.id), [older.id, record.id]);
+  assert.equal(state[0].history?.hasOlder, false);
+});
+
 test("open thread reducer renders canonical server order despite skewed timestamps and delivery order", async () => {
   const openThreadReducer = await loadReducer();
   const user: CodexRecord = {

@@ -202,6 +202,9 @@ export const apiRoutes = {
   thread: get<ThreadDetail, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}`
   ),
+  threadHistory: get<ThreadDetail, (threadId: string, before?: string, limit?: number) => string>(
+    (threadId, before, limit) => `/api/threads/${encode(threadId)}/history${queryString({ before, limit })}`
+  ),
   createMachineThread: post<MachineThreadInput, ThreadDetail, (machineId: string) => string>(
     (machineId) => `/api/machines/${encode(machineId)}/threads`
   ),

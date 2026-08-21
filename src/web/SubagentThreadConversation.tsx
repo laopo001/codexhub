@@ -90,6 +90,7 @@ export const SubagentThreadConversation = ({
       onHandleComposerKeyDown={workspace.handleComposerKeyDown}
       onInsertPathText={workspace.insertThreadPathText}
       onLoadCommandPalette={(_threadId, machineId, cwd) => workspace.loadCommandPalette(machineId, cwd)}
+      onLoadOlderThread={workspace.loadOlderThread}
       onPasteImages={workspace.pasteThreadImages}
       onResetComposerHistory={workspace.resetComposerHistory}
       onResizeComposerTextarea={(_threadId, textarea) => workspace.resizeComposerTextarea(textarea)}

@@ -5,6 +5,13 @@
   padding: 16px 16px 12px;
 }
 
+.messagesHistoryLoading {
+  padding: 10px 0;
+  color: #879183;
+  font-size: 12px;
+  text-align: center;
+}
+
 .messages > div {
   max-width: calc(100% - 32px);
 }

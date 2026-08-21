@@ -99,6 +99,7 @@ type ThreadGoalUpdateOptions = {
 
 export type ThreadActions = {
   openThread: (threadId: string, options?: OpenThreadOptions) => Promise<void>;
+  loadOlderThread: (threadId: string) => Promise<number>;
   clearActiveThreadIfLatest: (threadId: string) => void;
   closeThread: (threadId: string) => Promise<void>;
   removeThreadFromUi: (threadId: string, machineId: string, nextThreadId: string) => void;
@@ -121,6 +122,7 @@ export type ThreadActions = {
 
 export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActionsDependencies): ThreadActions => {
   let forkRequestPending = false;
+  const loadingOlderThreads = new Set<string>();
   const runActionRequest = async (
     key: string,
     title: string,
@@ -214,6 +216,25 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       if (ctx.openingThreads.current.get(threadId) === open) {
         ctx.openingThreads.current.delete(threadId);
       }
+    }
+  };
+
+  const loadOlderThread = async (threadId: string) => {
+    if (loadingOlderThreads.has(threadId)) return 0;
+    const thread = ctx.openThreads.find((item) => item.threadId === threadId);
+    const before = thread?.history?.oldestRecordId;
+    if (!thread?.history?.hasOlder || !before) return 0;
+    loadingOlderThreads.add(threadId);
+    try {
+      const page = await apiRouteJson(apiRoutes.threadHistory, threadId, before, 24);
+      ctx.dispatchConversationThread({
+        type: "merge-history",
+        threadId,
+        thread: page
+      });
+      return page.records.length;
+    } finally {
+      loadingOlderThreads.delete(threadId);
     }
   };
 
@@ -575,6 +596,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
   return {
     openThread,
+    loadOlderThread,
     clearActiveThreadIfLatest,
     closeThread,
     removeThreadFromUi,

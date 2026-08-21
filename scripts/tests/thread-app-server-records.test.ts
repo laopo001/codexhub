@@ -21,6 +21,21 @@ test("file changes only consume current structured kind values", () => {
   ]);
 });
 
+test("image generation records preserve the official result payload", () => {
+  const result = "iVBORw0KGgo";
+  const record = codexRecordFromAppServerItem("image-thread", "turn-1", {
+    type: "imageGeneration",
+    id: "image-1",
+    status: "completed",
+    revisedPrompt: "keep the raw result",
+    savedPath: "/tmp/image-1.png",
+    result
+  });
+
+  assert.equal((record?.payload as { result?: string })?.result, result);
+  assert.equal((record?.payload as { saved_path?: string })?.saved_path, "/tmp/image-1.png");
+});
+
 test("subAgentActivity remains lossless and gets a readable record view", () => {
   const item = {
     type: "subAgentActivity",
@@ -1387,6 +1402,87 @@ test("ThreadHub replaces a stale cursor with a canonical records snapshot", () =
   });
   assert.deepEqual(staleEvents[0].records, current.records);
   unsubscribeStale();
+});
+
+test("ThreadHub exposes a bounded latest history page without shrinking its memory projection", () => {
+  const hub = new ThreadHub();
+  const sessionId = "history-page-session";
+  const threadId = "history-page-thread";
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/history-page" });
+  for (let index = 0; index < 5; index += 1) {
+    hub.applySessionEvent(sessionId, {
+      type: "thread_event",
+      threadId,
+      message: {
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId: `turn-${index}`,
+          completedAtMs: index + 1,
+          item: {
+            id: `agent-${index}`,
+            type: "agentMessage",
+            text: `message-${index}`,
+            phase: "final_answer"
+          }
+        }
+      }
+    });
+  }
+
+  const full = hub.getThread(threadId);
+  const latest = hub.getThreadPage(threadId, { limit: 2 });
+  assert.ok(full);
+  assert.equal(full?.records.length, 5);
+  assert.deepEqual(latest.records.map((record) => record.id), [
+    `app:${threadId}:turn-3:agent:agent-3`,
+    `app:${threadId}:turn-4:agent:agent-4`
+  ]);
+  assert.equal(latest.history?.hasOlder, true);
+
+  const older = hub.getThreadPage(threadId, {
+    before: latest.history?.oldestRecordId,
+    limit: 2
+  });
+  assert.deepEqual(older.records.map((record) => record.id), [
+    `app:${threadId}:turn-1:agent:agent-1`,
+    `app:${threadId}:turn-2:agent:agent-2`
+  ]);
+  assert.equal(older.history?.hasOlder, true);
+});
+
+test("Web history subscriptions send the latest window instead of the full canonical projection", () => {
+  const hub = new ThreadHub();
+  const sessionId = "web-history-page-session";
+  const threadId = "web-history-page-thread";
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/web-history-page" });
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: Array.from({ length: 6 }, (_, index) => ({
+      id: `turn-${index}`,
+      status: "completed",
+      items: [{
+        id: `agent-${index}`,
+        type: "agentMessage",
+        text: `message-${index}`,
+        phase: "final_answer"
+      }]
+    }))
+  });
+  const current = hub.getThread(threadId);
+  assert.ok(current);
+  const events: Array<{ records?: CodexRecord[]; snapshot?: { reset: boolean; history?: { hasOlder: boolean } } }> = [];
+  const unsubscribe = hub.subscribe(threadId, (current?.lastSeq ?? 0) + 1, (event) => {
+    events.push({ records: event.records, snapshot: event.snapshot });
+  }, { historyPageSize: 2 });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.records?.length, 2);
+  assert.equal(events[0]?.snapshot?.reset, true);
+  assert.equal(events[0]?.snapshot?.history?.hasOlder, true);
+  assert.ok((hub.getThread(threadId)?.records.length ?? 0) > 6);
+  unsubscribe();
 });
 
 test("ThreadHub orders untimed history across pages and ignores stale retry pages", () => {

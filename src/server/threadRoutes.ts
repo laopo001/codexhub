@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { MachineHub } from "../core/machineHub.js";
-import type { ThreadHub } from "../core/threadHub.js";
+import { defaultThreadHistoryPageSize, type ThreadHub } from "../core/threadHub.js";
 import {
   inputSchema,
   threadApprovalDecisionSchema,
@@ -144,7 +144,7 @@ export const registerThreadRoutes = <
       try {
         const unsubscribeStream = ctx.threads.subscribe(threadId, after, (event) => {
           sendEvent(event);
-        });
+        }, { historyPageSize: defaultThreadHistoryPageSize });
         ctx.retainThreadRecordSubscription(threadId);
         const unsubscribe = () => {
           unsubscribeStream();
@@ -299,7 +299,7 @@ export const registerThreadRoutes = <
         ? await ctx.threads.startMachineThread(params.machineId, payload.cwd)
         : await ctx.threads.resumeMachineThread(params.machineId, payload.threadId, payload.cwd);
       ctx.publishProjects();
-      return thread satisfies ThreadDetail;
+      return ctx.threads.getThreadPage(thread.threadId) satisfies ThreadDetail;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Runtime not found") ? 404 : 409);
@@ -309,12 +309,35 @@ export const registerThreadRoutes = <
 
   app.get("/api/threads/:threadId", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const thread = ctx.threads.getThread(params.threadId);
-    if (!thread) {
+    try {
+      return ctx.threads.getThreadPage(params.threadId) satisfies ThreadDetail;
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("Thread not found:")) throw error;
       reply.code(404);
       return { error: "thread_not_found" };
     }
-    return thread satisfies ThreadDetail;
+  });
+
+  app.get("/api/threads/:threadId/history", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const query = z.object({
+      before: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(100).optional()
+    }).parse(request.query);
+    try {
+      return ctx.threads.getThreadPage(params.threadId, query) satisfies ThreadDetail;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith("Thread not found:")) {
+        reply.code(404);
+        return { error: "thread_not_found" };
+      }
+      if (message.startsWith("Thread history cursor not found:")) {
+        reply.code(409);
+        return { error: "thread_history_cursor_not_found" };
+      }
+      throw error;
+    }
   });
 
   app.patch("/api/threads/:threadId/name", async (request, reply) => {
@@ -347,7 +370,7 @@ export const registerThreadRoutes = <
     const payload = z.object({ messageId: z.string().min(1) }).parse(request.body);
     try {
       const thread = await ctx.threads.forkThread(params.threadId, payload.messageId);
-      return thread satisfies ThreadDetail;
+      return ctx.threads.getThreadPage(thread.threadId) satisfies ThreadDetail;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(

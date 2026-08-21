@@ -54,6 +54,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     insertThreadPathText,
     latestTurnActivityScope,
     loadCommandPalette,
+    loadOlderThread,
     messageRenderModes,
     messagesRef,
     messagesShouldFollowRef,
@@ -222,6 +223,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
       onHandleComposerKeyDown={handleComposerKeyDown}
       onInsertPathText={insertThreadPathText}
       onLoadCommandPalette={(_targetThreadId, machineId, cwd) => loadCommandPalette(machineId, cwd)}
+      onLoadOlderThread={loadOlderThread}
       onPasteImages={pasteThreadImages}
       onResetComposerHistory={resetComposerHistory}
       onResizeComposerTextarea={(_targetThreadId, textarea) => resizeComposerTextarea(textarea)}

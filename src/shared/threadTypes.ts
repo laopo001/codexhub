@@ -188,6 +188,16 @@ export type AppServerUserInputRequest = {
 export type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
   lastSeq: number;
+  /** Web 当前加载的 transcript 窗口；完整 records 仍由 backend memory projection 保留。 */
+  history?: ThreadHistoryPageInfo;
+};
+
+/** 当前 Web transcript 窗口的历史边界。 */
+export type ThreadHistoryPageInfo = {
+  hasOlder: boolean;
+  oldestRecordId?: string;
+  newestRecordId?: string;
+  loadedRecordCount: number;
 };
 
 /** app-server thread picker 中展示的可恢复 thread 候选。 */
@@ -289,6 +299,7 @@ export type ThreadRecordsSnapshot = {
   page: number;
   reset: boolean;
   complete: boolean;
+  history?: ThreadHistoryPageInfo;
 };
 
 /** `/api/events/ws` 下发的 thread 当前状态或实时增量事件。 */

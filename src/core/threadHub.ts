@@ -95,6 +95,7 @@ import type {
   RuntimeStreamEvent,
   RuntimeSummary,
   ThreadDetail,
+  ThreadHistoryPageInfo,
   ThreadGoalStatus,
   ThreadGoalUpdate,
   ThreadRunOptions,
@@ -102,6 +103,8 @@ import type {
   ThreadSummary,
   ThreadRuntimeSummary
 } from "../shared/threadTypes.js";
+
+export const defaultThreadHistoryPageSize = 24;
 
 export type ThreadTurnDelivery = "turn" | "steer" | "goal" | "queued";
 
@@ -496,6 +499,19 @@ export class ThreadHub {
   getThread(threadId: string): ThreadDetail | null {
     const thread = this.threads.get(threadId);
     return thread ? this.detail(thread) : null;
+  }
+
+  getThreadPage(
+    threadId: string,
+    options: { before?: string; limit?: number } = {}
+  ): ThreadDetail {
+    const thread = this.requireThread(threadId);
+    const page = this.threadHistoryPage(thread, options);
+    return {
+      ...this.detail(thread),
+      records: page.records,
+      history: page.history
+    };
   }
 
   attachSessionThread(sessionId: string, threadId: string, workingDirectory?: string): ThreadSummary {
@@ -1225,34 +1241,87 @@ export class ThreadHub {
     });
   }
 
-  subscribe(threadId: string, after: number, callback: (event: ThreadStreamEvent) => void) {
+  subscribe(
+    threadId: string,
+    after: number,
+    callback: (event: ThreadStreamEvent) => void,
+    options: { historyPageSize?: number } = {}
+  ) {
     const thread = this.requireThread(threadId);
     const barrierSeq = thread.seq;
+    const historyPageSize = options.historyPageSize;
+    let historySent = false;
+    const historySnapshotId = randomUUID();
+    const webSubscriber = historyPageSize
+      ? (event: ThreadStreamEvent) => {
+          if (!event.historical) {
+            callback(event);
+            return;
+          }
+          const page = this.threadHistoryPage(thread, { limit: historyPageSize });
+          const firstHistoryPage = !historySent;
+          historySent = true;
+          callback({
+            ...event,
+            ...(firstHistoryPage ? { records: page.records } : { records: undefined }),
+            snapshot: {
+              ...(event.snapshot ?? {
+                snapshotId: historySnapshotId,
+                page: 0,
+                reset: firstHistoryPage,
+                complete: true
+              }),
+              snapshotId: event.snapshot?.snapshotId ?? historySnapshotId,
+              reset: firstHistoryPage,
+              history: page.history
+            }
+          });
+        }
+      : callback;
     if (after !== barrierSeq) {
-      const snapshotId = randomUUID();
-      const summary = this.summary(thread);
-      const pageSize = 500;
-      const pageCount = Math.max(1, Math.ceil(thread.records.length / pageSize));
-      for (let page = 0; page < pageCount; page += 1) {
-        const records = thread.records.slice(page * pageSize, (page + 1) * pageSize);
-        callback({
+      if (historyPageSize) {
+        const page = this.threadHistoryPage(thread, { limit: historyPageSize });
+        webSubscriber({
           seq: barrierSeq,
           threadId: thread.threadId,
           kind: "thread",
           historical: true,
-          thread: summary,
-          records,
+          thread: this.summary(thread),
+          records: page.records,
           snapshot: {
-            snapshotId,
-            page,
-            reset: page === 0,
-            complete: page === pageCount - 1
+            snapshotId: historySnapshotId,
+            page: 0,
+            reset: true,
+            complete: true,
+            history: page.history
           }
         });
+      } else {
+        const snapshotId = randomUUID();
+        const summary = this.summary(thread);
+        const pageSize = 500;
+        const pageCount = Math.max(1, Math.ceil(thread.records.length / pageSize));
+        for (let page = 0; page < pageCount; page += 1) {
+          const records = thread.records.slice(page * pageSize, (page + 1) * pageSize);
+          callback({
+            seq: barrierSeq,
+            threadId: thread.threadId,
+            kind: "thread",
+            historical: true,
+            thread: summary,
+            records,
+            snapshot: {
+              snapshotId,
+              page,
+              reset: page === 0,
+              complete: page === pageCount - 1
+            }
+          });
+        }
       }
     }
-    thread.subscribers.add(callback);
-    return () => thread.subscribers.delete(callback);
+    thread.subscribers.add(webSubscriber);
+    return () => thread.subscribers.delete(webSubscriber);
   }
 
   private requireSession(sessionId: string) {
@@ -3197,6 +3266,33 @@ export class ThreadHub {
       ...this.summary(thread),
       records: thread.records,
       lastSeq: thread.seq
+    };
+  }
+
+  private threadHistoryPage(
+    thread: ThreadState,
+    options: { before?: string; limit?: number }
+  ): { records: CodexRecord[]; history: ThreadHistoryPageInfo } {
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? defaultThreadHistoryPageSize)));
+    const before = options.before?.trim();
+    const end = before
+      ? (() => {
+          const index = thread.records.findIndex((record) => record.id === before);
+          if (index < 0) throw new Error(`Thread history cursor not found: ${before}`);
+          return index;
+        })()
+      : thread.records.length;
+    const start = Math.max(0, end - limit);
+    const records = thread.records.slice(start, end);
+    const historyState = this.historySnapshots.get(thread);
+    return {
+      records,
+      history: {
+        hasOlder: start > 0 || historyState?.complete === false,
+        ...(records[0] ? { oldestRecordId: records[0].id } : {}),
+        ...(records.at(-1) ? { newestRecordId: records.at(-1)!.id } : {}),
+        loadedRecordCount: records.length
+      }
     };
   }
 

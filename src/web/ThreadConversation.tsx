@@ -88,6 +88,7 @@ export type ThreadConversationProps = {
     caretIndex?: number | null
   ) => void;
   onLoadCommandPalette: (threadId: string, machineId: string, cwd: string) => MaybePromise;
+  onLoadOlderThread: (threadId: string) => MaybePromise<number>;
   onPasteImages: (threadId: string, clipboardData: DataTransfer) => boolean;
   onResetComposerHistory: (threadId: string) => void;
   onResizeComposerTextarea: (threadId: string, textarea: HTMLTextAreaElement | null) => void;
@@ -198,6 +199,7 @@ export const ThreadConversation = ({
   onHandleComposerKeyDown,
   onInsertPathText,
   onLoadCommandPalette,
+  onLoadOlderThread,
   onPasteImages,
   onResetComposerHistory,
   onResizeComposerTextarea,
@@ -227,6 +229,12 @@ export const ThreadConversation = ({
   const messagesLastScrollTopRef = React.useRef<number | null>(null);
   const messagesLastTouchYRef = React.useRef<number | null>(null);
   const messagesStickScrollFrameRef = React.useRef<number | null>(null);
+  const loadingOlderRef = React.useRef(false);
+  const historyPrependRef = React.useRef(false);
+  const historyPrependReleaseTimerRef = React.useRef<number | null>(null);
+  const previousViewCountRef = React.useRef(views.length);
+  const [loadingOlder, setLoadingOlder] = React.useState(false);
+  const [firstItemIndex, setFirstItemIndex] = React.useState(1_000_000);
   const attachmentCount = thread.textAttachments.length + thread.imageAttachments.length;
   const runtimeReady = Boolean(thread.runtime.online && thread.runtime.runnable !== false);
   const executionStatus = executionMeta?.status ?? "idle";
@@ -271,10 +279,50 @@ export const ThreadConversation = ({
   const messagesVirtuosoComponents = React.useMemo<Components<WebRecordView, MessagesTurnLoadingContext>>(
     () => ({
       EmptyPlaceholder: EmptyMessages,
-      Footer: showTurnLoadingMessage ? MessagesTurnLoadingFooter : undefined
+      Footer: showTurnLoadingMessage ? MessagesTurnLoadingFooter : undefined,
+      Header: loadingOlder
+        ? () => <div className="messagesHistoryLoading">Loading older messages…</div>
+        : undefined
     }),
-    [showTurnLoadingMessage]
+    [loadingOlder, showTurnLoadingMessage]
   );
+
+  React.useEffect(() => {
+    loadingOlderRef.current = false;
+    setLoadingOlder(false);
+    setFirstItemIndex(1_000_000);
+    historyPrependRef.current = false;
+    previousViewCountRef.current = views.length;
+  }, [thread.threadId]);
+
+  React.useLayoutEffect(() => {
+    const previousViewCount = previousViewCountRef.current;
+    if (historyPrependRef.current && views.length > previousViewCount) {
+      setFirstItemIndex((current) => current - (views.length - previousViewCount));
+    }
+    previousViewCountRef.current = views.length;
+  }, [thread.threadId, views.length]);
+
+  const loadOlderMessages = React.useCallback(async () => {
+    if (loadingOlderRef.current || !thread.history?.hasOlder) return;
+    loadingOlderRef.current = true;
+    historyPrependRef.current = true;
+    messagesShouldFollowRef.current = false;
+    setLoadingOlder(true);
+    try {
+      await onLoadOlderThread(thread.threadId);
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+      if (historyPrependReleaseTimerRef.current !== null) {
+        window.clearTimeout(historyPrependReleaseTimerRef.current);
+      }
+      historyPrependReleaseTimerRef.current = window.setTimeout(() => {
+        historyPrependRef.current = false;
+        historyPrependReleaseTimerRef.current = null;
+      }, 250);
+    }
+  }, [onLoadOlderThread, thread.history?.hasOlder, thread.threadId]);
 
   React.useEffect(() => () => {
     if (messagesScrollbarIntentTimerRef.current !== null) {
@@ -284,6 +332,10 @@ export const ThreadConversation = ({
     if (messagesStickScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(messagesStickScrollFrameRef.current);
       messagesStickScrollFrameRef.current = null;
+    }
+    if (historyPrependReleaseTimerRef.current !== null) {
+      window.clearTimeout(historyPrependReleaseTimerRef.current);
+      historyPrependReleaseTimerRef.current = null;
     }
   }, []);
 
@@ -510,6 +562,8 @@ export const ThreadConversation = ({
         ref={messagesRef}
         className="messages"
         data={views}
+        firstItemIndex={firstItemIndex}
+        startReached={loadOlderMessages}
         onKeyDown={handleMessagesKeyDown}
         onPointerCancel={clearMessagesScrollbarIntent}
         onPointerDown={handleMessagesPointerDown}
@@ -522,17 +576,17 @@ export const ThreadConversation = ({
         onWheel={handleMessagesWheel}
         atBottomStateChange={(atBottom) => {
           if (atBottom) {
-            messagesShouldFollowRef.current = true;
-          } else if (messagesShouldFollowRef.current) {
+            if (!historyPrependRef.current) messagesShouldFollowRef.current = true;
+          } else if (!historyPrependRef.current && messagesShouldFollowRef.current) {
             scrollMessagesToBottom();
           }
         }}
         atBottomThreshold={messagesBottomThreshold}
         followOutput={() => messagesShouldFollowRef.current ? "auto" : false}
         totalListHeightChanged={() => {
-          if (messagesShouldFollowRef.current) scrollMessagesToBottom();
+          if (!historyPrependRef.current && messagesShouldFollowRef.current) scrollMessagesToBottom();
         }}
-        initialTopMostItemIndex={Math.max(views.length - 1, 0)}
+        initialTopMostItemIndex={firstItemIndex + Math.max(views.length - 1, 0)}
         increaseViewportBy={{ top: 360, bottom: 720 }}
         computeItemKey={(_, message) => message.id}
         components={messagesVirtuosoComponents}

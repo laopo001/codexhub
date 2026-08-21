@@ -190,6 +190,7 @@ export type AppViewModelSource = AppSidebarViewModel & {
   inspectMessage: WebRecordView | null;
   latestTurnActivityScope: TurnActivityScope;
   loadCommandPalette: (machineId: string, cwd: string) => MaybePromise;
+  loadOlderThread: (threadId: string) => MaybePromise<number>;
   loadProjectPickerDirectory: (machineId: string, path: string) => MaybePromise;
   messageContextMenu: MessageContextMenuState | null;
   messageRenderModes: Record<string, MessageRenderMode>;
@@ -361,6 +362,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "insertThreadPathText"
   | "latestTurnActivityScope"
   | "loadCommandPalette"
+  | "loadOlderThread"
   | "messageRenderModes"
   | "messagesRef"
   | "messagesShouldFollowRef"
@@ -515,7 +517,7 @@ const workspaceKeys = [
   "closeThread", "compactThread", "commandPaletteByScope", "commandPaletteLoadingScopes",
   "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "expandedStatusKeys", "expandedStatusTurns", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage",
   "handleComposerKeyDown", "imageFileInputRef", "insertThreadPathText", "latestTurnActivityScope",
-  "loadCommandPalette", "messageRenderModes", "messagesRef",
+  "loadCommandPalette", "loadOlderThread", "messageRenderModes", "messagesRef",
   "messagesShouldFollowRef", "openMessageContextMenu", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",
   "openThreads",
   "pasteThreadImages", "removeThreadImage", "removeThreadTextAttachment", "renderComposerThreadControls",
