@@ -12,6 +12,23 @@
   text-align: center;
 }
 
+.messagesHistoryRetry {
+  display: block;
+  margin: 8px auto;
+  border: 0;
+  background: transparent;
+  color: #b45d34;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.messagesHistoryRetry:hover,
+.messagesHistoryRetry:focus-visible {
+  color: #8f3f1f;
+  text-decoration: underline;
+}
+
 .messages > div {
   max-width: calc(100% - 32px);
 }

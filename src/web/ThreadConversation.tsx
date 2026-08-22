@@ -20,6 +20,7 @@ import {
   threadDisplayRecords
 } from "./appHelpers.js";
 import type { ComposerDraftStore } from "./helpers/composer.js";
+import { renderedPrependCount } from "./helpers/historyViewport.js";
 import {
   MessagesTurnLoadingFooter,
   type MessagesTurnLoadingContext
@@ -232,8 +233,9 @@ export const ThreadConversation = ({
   const loadingOlderRef = React.useRef(false);
   const historyPrependRef = React.useRef(false);
   const historyPrependReleaseTimerRef = React.useRef<number | null>(null);
-  const previousViewCountRef = React.useRef(views.length);
+  const previousViewIdsRef = React.useRef(views.map((view) => view.id));
   const [loadingOlder, setLoadingOlder] = React.useState(false);
+  const [historyLoadFailed, setHistoryLoadFailed] = React.useState(false);
   const [firstItemIndex, setFirstItemIndex] = React.useState(1_000_000);
   const attachmentCount = thread.textAttachments.length + thread.imageAttachments.length;
   const runtimeReady = Boolean(thread.runtime.online && thread.runtime.runnable !== false);
@@ -276,32 +278,26 @@ export const ThreadConversation = ({
     () => ({ executionMeta, activeGoal }),
     [activeGoal, executionMeta]
   );
-  const messagesVirtuosoComponents = React.useMemo<Components<WebRecordView, MessagesTurnLoadingContext>>(
-    () => ({
-      EmptyPlaceholder: EmptyMessages,
-      Footer: showTurnLoadingMessage ? MessagesTurnLoadingFooter : undefined,
-      Header: loadingOlder
-        ? () => <div className="messagesHistoryLoading">Loading older messages…</div>
-        : undefined
-    }),
-    [loadingOlder, showTurnLoadingMessage]
-  );
 
   React.useEffect(() => {
     loadingOlderRef.current = false;
     setLoadingOlder(false);
+    setHistoryLoadFailed(false);
     setFirstItemIndex(1_000_000);
     historyPrependRef.current = false;
-    previousViewCountRef.current = views.length;
+    previousViewIdsRef.current = views.map((view) => view.id);
   }, [thread.threadId]);
 
   React.useLayoutEffect(() => {
-    const previousViewCount = previousViewCountRef.current;
-    if (historyPrependRef.current && views.length > previousViewCount) {
-      setFirstItemIndex((current) => current - (views.length - previousViewCount));
+    const currentViewIds = views.map((view) => view.id);
+    if (historyPrependRef.current) {
+      const anchoredPrependCount = renderedPrependCount(previousViewIdsRef.current, currentViewIds);
+      const prependCount = anchoredPrependCount
+        ?? Math.max(0, currentViewIds.length - previousViewIdsRef.current.length);
+      if (prependCount > 0) setFirstItemIndex((current) => current - prependCount);
     }
-    previousViewCountRef.current = views.length;
-  }, [thread.threadId, views.length]);
+    previousViewIdsRef.current = currentViewIds;
+  }, [thread.threadId, views]);
 
   const loadOlderMessages = React.useCallback(async () => {
     if (loadingOlderRef.current || !thread.history?.hasOlder) return;
@@ -309,8 +305,11 @@ export const ThreadConversation = ({
     historyPrependRef.current = true;
     messagesShouldFollowRef.current = false;
     setLoadingOlder(true);
+    setHistoryLoadFailed(false);
     try {
       await onLoadOlderThread(thread.threadId);
+    } catch {
+      setHistoryLoadFailed(true);
     } finally {
       loadingOlderRef.current = false;
       setLoadingOlder(false);
@@ -323,6 +322,37 @@ export const ThreadConversation = ({
       }, 250);
     }
   }, [onLoadOlderThread, thread.history?.hasOlder, thread.threadId]);
+
+  const messagesVirtuosoComponents = React.useMemo<Components<WebRecordView, MessagesTurnLoadingContext>>(
+    () => ({
+      EmptyPlaceholder: EmptyMessages,
+      Footer: showTurnLoadingMessage ? MessagesTurnLoadingFooter : undefined,
+      Header: loadingOlder
+        ? () => <div className="messagesHistoryLoading">Loading older messages…</div>
+        : historyLoadFailed
+          ? () => (
+              <button
+                type="button"
+                className="messagesHistoryRetry"
+                onClick={() => void loadOlderMessages()}
+              >
+                Older messages failed · Retry
+              </button>
+            )
+          : undefined
+    }),
+    [historyLoadFailed, loadOlderMessages, loadingOlder, showTurnLoadingMessage]
+  );
+
+  React.useEffect(() => {
+    if (
+      views.length
+      || !thread.history?.hasOlder
+      || loadingOlderRef.current
+      || historyLoadFailed
+    ) return;
+    void loadOlderMessages();
+  }, [historyLoadFailed, loadOlderMessages, thread.history?.hasOlder, views.length]);
 
   React.useEffect(() => () => {
     if (messagesScrollbarIntentTimerRef.current !== null) {

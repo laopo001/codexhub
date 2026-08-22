@@ -9,6 +9,7 @@ import {
   apiRouteJson,
   authFetch,
   appendThreadOrder,
+  combineRecordSources,
   composeUserInputText,
   fastCommandAction,
   fileToDataUrl,
@@ -34,6 +35,7 @@ import type {
 } from "../types.js";
 import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
 import { apiErrorDetails } from "../helpers/apiErrors.js";
+import { conversationViewsFromRecords } from "../helpers/conversationViews.js";
 import { goalUpdateFromDialog } from "../helpers/goalDialog.js";
 
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
@@ -45,6 +47,7 @@ type ThreadActionsContext = {
   closedThreadIds: React.MutableRefObject<Set<string>>;
   composerDraftStore: ComposerDraftStore;
   conversationThreadsRef: React.MutableRefObject<Map<string, OpenThreadState>>;
+  expandedToolBatchKeys: Record<string, string[]>;
   forkingMessageKey: string;
   goalDialog: GoalDialogState | null;
   threadRenameDialog: ThreadRenameDialogState | null;
@@ -221,18 +224,55 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
   const loadOlderThread = async (threadId: string) => {
     if (loadingOlderThreads.has(threadId)) return 0;
-    const thread = ctx.openThreads.find((item) => item.threadId === threadId);
-    const before = thread?.history?.oldestRecordId;
+    const thread = ctx.conversationThreadsRef.current.get(threadId);
+    let before = thread?.history?.oldestRecordId;
     if (!thread?.history?.hasOlder || !before) return 0;
     loadingOlderThreads.add(threadId);
     try {
-      const page = await apiRouteJson(apiRoutes.threadHistory, threadId, before, 24);
+      const expandedToolBatchKeys = new Set(ctx.expandedToolBatchKeys[threadId] ?? []);
+      const initialViewCount = conversationViewsFromRecords(thread.records, expandedToolBatchKeys).length;
+      let mergedRecords = thread.records;
+      let loadedRecords: CodexRecord[] = [];
+      let latestPage: ThreadDetail | null = null;
+      const seenCursors = new Set<string>();
+
+      while (before) {
+        if (seenCursors.has(before)) throw new Error("Older history cursor repeated");
+        seenCursors.add(before);
+        const page: ThreadDetail = await apiRouteJson(apiRoutes.threadHistory, threadId, before, 24);
+        latestPage = page;
+        loadedRecords = combineRecordSources(page.records, loadedRecords);
+        mergedRecords = combineRecordSources(page.records, mergedRecords);
+
+        const visibleViewCount = conversationViewsFromRecords(mergedRecords, expandedToolBatchKeys).length;
+        const nextBefore: string | undefined = page.history?.oldestRecordId;
+        if (visibleViewCount > initialViewCount || !page.history?.hasOlder) break;
+        if (!nextBefore || nextBefore === before) {
+          throw new Error("Older history cursor did not advance");
+        }
+        before = nextBefore;
+      }
+
+      if (!latestPage) return 0;
       ctx.dispatchConversationThread({
         type: "merge-history",
         threadId,
-        thread: page
+        thread: {
+          ...latestPage,
+          records: loadedRecords
+        }
       });
-      return page.records.length;
+      return Math.max(
+        0,
+        conversationViewsFromRecords(mergedRecords, expandedToolBatchKeys).length - initialViewCount
+      );
+    } catch (error) {
+      deps.showActionError(
+        `${threadId}:history`,
+        "Older messages failed",
+        apiErrorDetails(error, { plainHttpMessage: true }).message
+      );
+      throw error;
     } finally {
       loadingOlderThreads.delete(threadId);
     }

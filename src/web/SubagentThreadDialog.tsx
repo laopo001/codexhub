@@ -1,15 +1,11 @@
 import React from "react";
 import { Bot, RotateCcw, X } from "lucide-react";
-import { recordsToViews } from "../core/codexRecordView.js";
-import { collapseHistoricalToolBatches, compactToolViews } from "../shared/compactRecordViews.js";
-import type { CodexRecordView, SubagentActivityView } from "../shared/recordTypes.js";
+import type { SubagentActivityView } from "../shared/recordTypes.js";
 import {
-  hideSupersededSimpleThinkingViews,
-  isSimpleMainView,
-  isSimpleRecord,
   MessageText,
   threadDisplayRecords
 } from "./appHelpers.js";
+import { conversationViewsFromRecords } from "./helpers/conversationViews.js";
 import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from "./helpers/turnDurations.js";
 import type {
   SubagentThreadDialogState,
@@ -158,14 +154,7 @@ export const subagentThreadDialogViews = (
   expandedToolBatchKeys: Set<string> = new Set()
 ): WebRecordView[] => {
   const records = threadDisplayRecords(thread.threadId, thread);
-  const views: CodexRecordView[] = collapseHistoricalToolBatches(
-    compactToolViews(
-      hideSupersededSimpleThinkingViews(
-        recordsToViews(records.filter(isSimpleRecord)).filter(isSimpleMainView)
-      )
-    ),
-    expandedToolBatchKeys
-  );
+  const views = conversationViewsFromRecords(records, expandedToolBatchKeys);
   return finalAnswerViewsWithTurnDurations(views, turnDurationMapFromRecords(records));
 };
 

@@ -55,12 +55,19 @@ const fixture = async (
   running: boolean,
   composerMode: OpenThreadState["composerMode"],
   fetchImpl: typeof fetch,
-  options: { threadId?: string; workspaceOpen?: boolean } = {}
+  options: {
+    threadId?: string;
+    workspaceOpen?: boolean;
+    threadPatch?: Partial<OpenThreadState>;
+  } = {}
 ) => {
   const { createThreadActions } = await import("../../src/web/appActions/threadActions.js");
   const { reduceConversationThreadState } = await import("../../src/web/openThreadReducer.js");
   const threadId = options.threadId ?? "thread-actions";
-  const thread = openThread(running, composerMode, threadId);
+  const thread = {
+    ...openThread(running, composerMode, threadId),
+    ...options.threadPatch
+  };
   const draft = new Map([[threadId, "hello"]]);
   const conversationThreads = new Map([[threadId, thread]]);
   const actionsDispatched: Array<{ type: string; record?: CodexRecord }> = [];
@@ -95,6 +102,7 @@ const fixture = async (
     selectedProjectKey: "",
     openThreads: options.workspaceOpen === false ? [] : [thread],
     conversationThreadsRef: { current: conversationThreads },
+    expandedToolBatchKeys: {},
     threadLastSeqs: { current: new Map() },
     setActiveMachineId: () => undefined,
     setActiveTabThreadByMachine: () => undefined,
@@ -204,6 +212,147 @@ test("failed active cleanup clears the current tab even after a newer request cl
   latestRequestedThreadId.current = "newer-request";
   actions.clearActiveThreadIfLatest("active-thread");
   assert.deepEqual(activeTabChanges, [""]);
+});
+
+const conversationRecord = (
+  id: string,
+  type: "user_message" | "agent_message",
+  message: string
+): CodexRecord => ({
+  id,
+  type: "event_msg",
+  payload: {
+    type,
+    message,
+    ...(type === "agent_message" ? { phase: "commentary" } : {})
+  }
+});
+
+const hiddenHistoryRecord = (id: string): CodexRecord => ({
+  id,
+  type: "event_msg",
+  payload: { type: "task_started", turn_id: id }
+});
+
+test("older loading skips raw-only pages until a visible conversation view is available", async () => {
+  const latest = { ...conversationRecord("latest-visible", "agent_message", "latest"), order: 100 };
+  const hidden = Array.from({ length: 24 }, (_, index) => ({
+    ...hiddenHistoryRecord(`hidden-${index}`),
+    order: index + 1
+  }));
+  const older = { ...conversationRecord("older-visible", "user_message", "older"), order: 0 };
+  const requestedBefore: string[] = [];
+  const history = {
+    hasOlder: true,
+    oldestRecordId: latest.id,
+    newestRecordId: latest.id,
+    loadedRecordCount: 1
+  };
+  const threadPatch = { records: [latest], history };
+  const { actions, actionsDispatched, conversationThreads, threadId } = await fixture(
+    true,
+    "chat",
+    async (input) => {
+      const before = new URL(String(input), "http://codexhub.test").searchParams.get("before") ?? "";
+      requestedBefore.push(before);
+      const page = before === latest.id
+        ? {
+            ...openThread(true, "chat"),
+            records: hidden,
+            history: {
+              hasOlder: true,
+              oldestRecordId: hidden[0].id,
+              newestRecordId: hidden.at(-1)!.id,
+              loadedRecordCount: hidden.length
+            }
+          }
+        : {
+            ...openThread(true, "chat"),
+            records: [older],
+            history: {
+              hasOlder: false,
+              oldestRecordId: older.id,
+              newestRecordId: older.id,
+              loadedRecordCount: 1
+            }
+          };
+      return new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    },
+    { threadPatch }
+  );
+
+  assert.equal(await actions.loadOlderThread(threadId), 1);
+  assert.deepEqual(requestedBefore, [latest.id, hidden[0].id]);
+  assert.equal(actionsDispatched.filter((action) => action.type === "merge-history").length, 1);
+  assert.deepEqual(
+    conversationThreads.get(threadId)?.records.map((record) => record.id),
+    [older.id, ...hidden.map((record) => record.id), latest.id]
+  );
+  assert.equal(conversationThreads.get(threadId)?.history?.hasOlder, false);
+});
+
+test("rendered prepend counting ignores realtime views appended at the bottom", async () => {
+  const { renderedPrependCount } = await import("../../src/web/helpers/historyViewport.js");
+  const previous = ["current-a", "current-b"];
+
+  assert.equal(renderedPrependCount(previous, [...previous, "live-append"]), 0);
+  assert.equal(
+    renderedPrependCount(previous, ["older-a", "older-b", ...previous, "live-append"]),
+    2
+  );
+  assert.equal(
+    renderedPrependCount(["replaced-batch", "stable"], ["older", "new-batch", "stable", "live-append"]),
+    1
+  );
+});
+
+test("older history failures use action feedback and allow a later retry", async () => {
+  const latest = { ...conversationRecord("latest-visible", "agent_message", "latest"), order: 2 };
+  const older = { ...conversationRecord("older-visible", "user_message", "older"), order: 1 };
+  let attempt = 0;
+  const { actions, shownErrors, threadId } = await fixture(
+    false,
+    "chat",
+    async () => {
+      attempt += 1;
+      if (attempt === 1) return new Response("history unavailable", { status: 502 });
+      return new Response(JSON.stringify({
+        ...openThread(false, "chat"),
+        records: [older],
+        history: {
+          hasOlder: false,
+          oldestRecordId: older.id,
+          newestRecordId: older.id,
+          loadedRecordCount: 1
+        }
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    },
+    {
+      threadPatch: {
+        records: [latest],
+        history: {
+          hasOlder: true,
+          oldestRecordId: latest.id,
+          newestRecordId: latest.id,
+          loadedRecordCount: 1
+        }
+      }
+    }
+  );
+
+  await assert.rejects(actions.loadOlderThread(threadId), /history unavailable/);
+  assert.deepEqual(shownErrors, [{
+    key: `${threadId}:history`,
+    title: "Older messages failed",
+    message: "history unavailable"
+  }]);
+  assert.equal(await actions.loadOlderThread(threadId), 1);
 });
 
 const serverFailure = (message: string, delivery: "turn" | "steer" | "goal") =>
