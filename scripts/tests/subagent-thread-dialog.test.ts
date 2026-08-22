@@ -103,6 +103,32 @@ test("subagent compact views collapse and re-expand historical tool batches", as
   assert.equal(expanded.some((view) => view.id === toolB.id), true);
 });
 
+test("historical tool batch expansion survives prepending an older tool", async () => {
+  const { subagentThreadDialogViews } = await loadSubagentThreadDialog();
+  const toolA = toolRecord("tool-a", "exec_command");
+  const toolB = toolRecord("tool-b", "apply_patch");
+  const toolC = toolRecord("tool-c", "exec_command");
+  const boundary = commentaryRecord("between-tools", "Second tool round");
+
+  const beforePrepend = subagentThreadDialogViews(subagentThread([
+    toolB,
+    boundary,
+    toolC
+  ]));
+  const originalBatch = beforePrepend.find((view) => view.toolBatch);
+  assert.ok(originalBatch?.toolBatch);
+
+  const afterPrepend = subagentThreadDialogViews(
+    subagentThread([toolA, toolB, boundary, toolC]),
+    new Set([originalBatch.toolBatch.key])
+  );
+  const prependedBatch = afterPrepend.find((view) => view.toolBatch);
+  assert.equal(prependedBatch?.toolBatch?.key, originalBatch.toolBatch.key);
+  assert.equal(prependedBatch?.toolBatch?.expanded, true);
+  assert.equal(afterPrepend.some((view) => view.id === toolA.id), true);
+  assert.equal(afterPrepend.some((view) => view.id === toolB.id), true);
+});
+
 const cssBlock = (css: string, selector: string) => {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const block = new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`).exec(css)?.[1];

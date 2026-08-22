@@ -288,9 +288,11 @@ const compactToolCallId = (view: CodexRecordView) => {
 };
 
 const compactToolBatchKey = (views: CompactRecordView[]) => {
-  const first = views[0];
-  const turnId = compactTurnId(first) ?? "unscoped";
-  return `${turnId}:${first.record.id}`;
+  // Older history is prepended to the start of a batch. Anchor its identity to
+  // the stable tail so an expanded historical batch stays expanded.
+  const anchor = views.at(-1) ?? views[0];
+  const turnId = compactTurnId(anchor) ?? "unscoped";
+  return `${turnId}:${anchor.record.id}`;
 };
 
 const compactToolBatchSummary = (key: string, views: CompactRecordView[], expanded = false): CompactRecordView => {

@@ -56,6 +56,7 @@ const fixture = async (
   composerMode: OpenThreadState["composerMode"],
   fetchImpl: typeof fetch,
   options: {
+    expandedToolBatchKeys?: Record<string, string[]>;
     threadId?: string;
     workspaceOpen?: boolean;
     threadPatch?: Partial<OpenThreadState>;
@@ -102,7 +103,7 @@ const fixture = async (
     selectedProjectKey: "",
     openThreads: options.workspaceOpen === false ? [] : [thread],
     conversationThreadsRef: { current: conversationThreads },
-    expandedToolBatchKeys: {},
+    expandedToolBatchKeys: options.expandedToolBatchKeys ?? {},
     threadLastSeqs: { current: new Map() },
     setActiveMachineId: () => undefined,
     setActiveTabThreadByMachine: () => undefined,
@@ -234,6 +235,23 @@ const hiddenHistoryRecord = (id: string): CodexRecord => ({
   payload: { type: "task_started", turn_id: id }
 });
 
+const toolCallRecord = (
+  threadId: string,
+  id: string,
+  order: number
+): CodexRecord => ({
+  id: `app:${threadId}:turn-1:item:function_call:${id}`,
+  order,
+  type: "response_item",
+  payload: {
+    type: "function_call",
+    call_id: id,
+    name: "exec_command",
+    arguments: "{}",
+    status: "completed"
+  }
+});
+
 test("older loading skips raw-only pages until a visible conversation view is available", async () => {
   const latest = { ...conversationRecord("latest-visible", "agent_message", "latest"), order: 100 };
   const hidden = Array.from({ length: 24 }, (_, index) => ({
@@ -292,6 +310,79 @@ test("older loading skips raw-only pages until a visible conversation view is av
     [older.id, ...hidden.map((record) => record.id), latest.id]
   );
   assert.equal(conversationThreads.get(threadId)?.history?.hasOlder, false);
+});
+
+test("older loading preserves an expanded tool batch and stops after its first visible prepend", async () => {
+  const { conversationViewsFromRecords } = await import("../../src/web/helpers/conversationViews.js");
+  const threadId = "thread-actions";
+  const toolA = toolCallRecord(threadId, "tool-a", 1);
+  const toolB = toolCallRecord(threadId, "tool-b", 2);
+  const boundary = { ...conversationRecord("boundary", "agent_message", "next tool round"), order: 3 };
+  const toolC = toolCallRecord(threadId, "tool-c", 4);
+  const initialRecords = [toolB, boundary, toolC];
+  const initialViews = conversationViewsFromRecords(initialRecords);
+  const originalBatch = initialViews.find((view) => view.toolBatch);
+  assert.ok(originalBatch?.toolBatch);
+
+  const requestedBefore: string[] = [];
+  const { actions, conversationThreads } = await fixture(
+    true,
+    "chat",
+    async (input) => {
+      const before = new URL(String(input), "http://codexhub.test").searchParams.get("before") ?? "";
+      requestedBefore.push(before);
+      const firstPage = before === toolB.id;
+      const records = firstPage
+        ? [toolA]
+        : [{ ...conversationRecord("unexpected-older", "user_message", "unexpected"), order: 0 }];
+      return new Response(JSON.stringify({
+        ...openThread(true, "chat"),
+        records,
+        history: firstPage
+          ? {
+              hasOlder: true,
+              oldestRecordId: toolA.id,
+              newestRecordId: toolA.id,
+              loadedRecordCount: 1
+            }
+          : {
+              hasOlder: false,
+              oldestRecordId: records[0].id,
+              newestRecordId: records[0].id,
+              loadedRecordCount: 1
+            }
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    },
+    {
+      expandedToolBatchKeys: { [threadId]: [originalBatch.toolBatch.key] },
+      threadPatch: {
+        records: initialRecords,
+        history: {
+          hasOlder: true,
+          oldestRecordId: toolB.id,
+          newestRecordId: toolC.id,
+          loadedRecordCount: initialRecords.length
+        }
+      }
+    }
+  );
+
+  assert.equal(await actions.loadOlderThread(threadId), 1);
+  assert.deepEqual(requestedBefore, [toolB.id]);
+  const updatedThread = conversationThreads.get(threadId);
+  assert.ok(updatedThread);
+  const updatedViews = conversationViewsFromRecords(
+    updatedThread.records,
+    new Set([originalBatch.toolBatch.key])
+  );
+  const updatedBatch = updatedViews.find((view) => view.toolBatch);
+  assert.equal(updatedBatch?.toolBatch?.key, originalBatch.toolBatch.key);
+  assert.equal(updatedBatch?.toolBatch?.expanded, true);
+  assert.equal(updatedViews.some((view) => view.id === toolA.id), true);
+  assert.equal(updatedViews.some((view) => view.id === toolB.id), true);
 });
 
 test("rendered prepend counting ignores realtime views appended at the bottom", async () => {
