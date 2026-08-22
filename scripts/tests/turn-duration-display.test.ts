@@ -19,6 +19,7 @@ import {
   turnDurationMapFromRecords,
   turnDurationMsForTurn
 } from "../../src/web/helpers/turnDurations.js";
+import { threadExecutionMeta } from "../../src/web/helpers/threadExecution.js";
 
 test("final answer displays the whole turn duration instead of its shorter item duration", () => {
   const turnDurations = turnDurationMapFromRecords([
@@ -110,6 +111,27 @@ test("running duration keeps its first observation anchor for the same Turn", ()
 
   assert.strictEqual(afterGuidance, first);
   assert.notStrictEqual(nextTurn, first);
+});
+
+test("running metadata falls back to the thread summary clock when the start record is not loaded", () => {
+  const startedAt = "2026-07-19T02:00:00.000Z";
+  const executionMeta = threadExecutionMeta(
+    {
+      status: "running",
+      running: true,
+      activeTurnStartedAt: startedAt
+    } as Parameters<typeof threadExecutionMeta>[0],
+    {
+      key: "turn:turn-test",
+      label: "turn status",
+      records: [],
+      turnId: "turn-test",
+      turnStatus: null
+    }
+  );
+
+  assert.equal(executionMeta.status, "running");
+  assert.equal(executionMeta.startedAt, startedAt);
 });
 
 test("tab execution time prioritizes Waiting, then Goal total, then Turn", () => {

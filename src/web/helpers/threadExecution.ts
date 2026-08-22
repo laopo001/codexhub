@@ -22,7 +22,7 @@ export const threadExecutionMeta = (
   const running = !waiting && threadExecutionIsRunning(thread.running, activityScope.turnStatus);
   const needsInput = running && recordsHavePendingInteraction(activityScope.records);
   const startedAt = running
-    ? activityScope.startedAt
+    ? activityScope.startedAt ?? thread.activeTurnStartedAt
     : activityScope.startedAt ?? activityScope.turnStatus?.at;
   const durationMs = running || waiting ? undefined : activityScope.durationMs;
   const status = waiting ? "waiting" : running ? "running" : "idle";
