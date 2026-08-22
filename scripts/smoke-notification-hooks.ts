@@ -59,7 +59,9 @@ async function assertNtfyLifecycle() {
   const progress = lifecycleRecord("turn_plan_updated", "turn-ntfy", "2026-06-17T00:00:00.500Z", undefined, {
     plan: [
       { step: "first", status: "completed" },
-      { step: "second", status: "pending" }
+      { step: "second", status: "inProgress" },
+      { step: "third", status: "pending" },
+      { step: "fourth", status: "pending" }
     ]
   });
   const finalAnswer = lifecycleRecord("agent_message", "turn-ntfy", "2026-06-17T00:00:00.800Z");
@@ -85,7 +87,7 @@ async function assertNtfyLifecycle() {
     || !requests[1].body.includes("运行中")) {
     throw new Error(`ntfy running activity was not preserved: ${JSON.stringify(requests)}`);
   }
-  if (!requests[1].body.includes("进度 50%")) {
+  if (!requests[1].body.includes("进度 2/4")) {
     throw new Error(`ntfy plan progress was not included: ${requests[1].body}`);
   }
   if (titles[2] !== "Smoke hook"

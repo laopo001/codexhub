@@ -14,6 +14,7 @@ import { isModelReasoningEffort } from "../../shared/usageTypes.js";
 export { formatCompactNumber } from "../../shared/toolFormatting.js";
 import { isVscodeSurface } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
+import { formatPlanProgress, planProgressFromStatuses } from "../../shared/planProgress.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
@@ -1145,21 +1146,17 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
 
   if (type === "turn_plan_updated") {
     const steps = activityPlanSteps(payload.plan);
-    if (!steps.length) return null;
-    const completed = steps.filter((step) => step.status === "completed").length;
-    const activeStep = steps.find((step) => step.status === "in_progress")
-      ?? steps.find((step) => step.status === "pending")
-      ?? [...steps].reverse().find((step) => step.status === "completed")
-      ?? steps.at(-1)!;
-    const allCompleted = completed === steps.length;
-    const text = allCompleted ? "All steps complete" : activeStep.step;
+    const progress = planProgressFromStatuses(steps.map((step) => step.status));
+    if (!progress) return null;
+    const activeStep = steps[progress.currentIndex]!;
+    const text = progress.allCompleted ? "All steps complete" : activeStep.step;
     return {
       key: "plan",
       label: "Plan",
-      status: allCompleted ? "completed" : activeStep.status,
+      status: progress.allCompleted ? "completed" : activeStep.status,
       at: record.timestamp,
       text,
-      summaryText: `${text} · ${completed}/${steps.length}`,
+      summaryText: `${text} · ${formatPlanProgress(progress)}`,
       steps
     };
   }

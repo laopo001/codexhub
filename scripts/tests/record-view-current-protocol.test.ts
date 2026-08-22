@@ -404,8 +404,9 @@ test("structured app-server plans become one expandable Status item with the cur
       type: "turn_plan_updated",
       plan: [
         { step: "Inspect the app-server plan", status: "completed" },
-        { step: "Connect Plan to Status", status: "completed" },
-        { step: "Verify in the browser", status: "inProgress" }
+        { step: "Connect Plan to Status", status: "inProgress" },
+        { step: "Verify in the browser", status: "pending" },
+        { step: "Review the final diff", status: "pending" }
       ]
     }
   }];
@@ -417,12 +418,13 @@ test("structured app-server plans become one expandable Status item with the cur
     label: "Plan",
     status: "in_progress",
     at: "2026-07-19T02:00:02.000Z",
-    text: "Verify in the browser",
-    summaryText: "Verify in the browser · 2/3",
+    text: "Connect Plan to Status",
+    summaryText: "Connect Plan to Status · 2/4",
     steps: [
       { step: "Inspect the app-server plan", status: "completed" },
-      { step: "Connect Plan to Status", status: "completed" },
-      { step: "Verify in the browser", status: "in_progress" }
+      { step: "Connect Plan to Status", status: "in_progress" },
+      { step: "Verify in the browser", status: "pending" },
+      { step: "Review the final diff", status: "pending" }
     ]
   });
 });
@@ -440,12 +442,13 @@ test("Plan Status rows stay compact until expanded and then render every step", 
     key: "plan",
     label: "Plan",
     status: "in_progress" as const,
-    text: "Verify in the browser",
-    summaryText: "Verify in the browser · 2/3",
+    text: "Connect Plan to Status",
+    summaryText: "Connect Plan to Status · 2/4",
     steps: [
       { step: "Inspect the app-server plan", status: "completed" as const },
-      { step: "Connect Plan to Status", status: "completed" as const },
-      { step: "Verify in the browser", status: "in_progress" as const }
+      { step: "Connect Plan to Status", status: "in_progress" as const },
+      { step: "Verify in the browser", status: "pending" as const },
+      { step: "Review the final diff", status: "pending" as const }
     ]
   };
 
@@ -454,7 +457,7 @@ test("Plan Status rows stay compact until expanded and then render every step", 
     expandedKeys: new Set<string>(),
     onToggle: () => undefined
   }));
-  assert.match(collapsed, /Verify in the browser/);
+  assert.match(collapsed, /Connect Plan to Status/);
   assert.doesNotMatch(collapsed, /Inspect the app-server plan/);
   assert.match(collapsed, /aria-expanded="false"/);
 
@@ -468,6 +471,46 @@ test("Plan Status rows stay compact until expanded and then render every step", 
   assert.match(expanded, /Inspect the app-server plan/);
   assert.match(expanded, /Connect Plan to Status/);
   assert.match(expanded, /Verify in the browser/);
+  assert.match(expanded, /Review the final diff/);
+});
+
+test("completed Plan status uses an explicit completion label", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { activityStatusFromRecord } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  assert.deepEqual(activityStatusFromRecord({
+    id: "plan-completed",
+    timestamp: "2026-07-19T02:00:03.000Z",
+    type: "event_msg",
+    payload: {
+      type: "turn_plan_updated",
+      plan: [
+        { step: "Inspect the app-server plan", status: "completed" },
+        { step: "Connect Plan to Status", status: "completed" },
+        { step: "Verify in the browser", status: "completed" },
+        { step: "Review the final diff", status: "completed" }
+      ]
+    }
+  }), {
+    key: "plan",
+    label: "Plan",
+    status: "completed",
+    at: "2026-07-19T02:00:03.000Z",
+    text: "All steps complete",
+    summaryText: "All steps complete · 4/4",
+    steps: [
+      { step: "Inspect the app-server plan", status: "completed" },
+      { step: "Connect Plan to Status", status: "completed" },
+      { step: "Verify in the browser", status: "completed" },
+      { step: "Review the final diff", status: "completed" }
+    ]
+  });
 });
 
 test("guidance messages stay inside the existing Turn activity scope", async () => {

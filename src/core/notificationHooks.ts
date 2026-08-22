@@ -6,6 +6,7 @@ import {
   turnIdFromRecord
 } from "../shared/taskNotifications.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
+import { formatPlanProgress, planProgressFromStatuses, type PlanProgress } from "../shared/planProgress.js";
 import { readPositiveIntEnv } from "../shared/env.js";
 import type { ThreadStreamEvent, ThreadSummary } from "../shared/threadTypes.js";
 
@@ -24,7 +25,6 @@ export type NtfyNotificationPayload = {
   timestamp?: string;
   duration?: string;
   durationMs?: number;
-  progress?: number;
 };
 
 export type NtfyNotificationConfig = {
@@ -406,7 +406,7 @@ const runningNtfyPayload = (
     title: activityTitle,
     body: notificationText([
       needsInput ? "等待输入" : "运行中",
-      progress === undefined ? null : `进度 ${progress}%`,
+      progress === undefined ? null : `进度 ${formatPlanProgress(progress)}`,
       elapsedMs === undefined ? null : `已用 ${formatStatusDuration(elapsedMs)}`
     ].filter((value): value is string => Boolean(value)).join(" · ")),
     threadId: thread.threadId,
@@ -414,7 +414,6 @@ const runningNtfyPayload = (
     workingDirectory: thread.workingDirectory,
     turnId,
     ...(record.timestamp ? { timestamp: record.timestamp } : {}),
-    ...(progress === undefined ? {} : { progress }),
     ...(elapsedMs === undefined ? {} : { durationMs: elapsedMs, duration: formatStatusDuration(elapsedMs) })
   };
 };
@@ -480,7 +479,7 @@ const taskStartedAt = (records: CodexRecord[], turnId: string) => {
   return undefined;
 };
 
-const latestPlanProgress = (records: CodexRecord[], turnId: string) => {
+const latestPlanProgress = (records: CodexRecord[], turnId: string): PlanProgress | undefined => {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
     if (turnIdFromRecord(record) !== turnId) continue;
@@ -490,8 +489,7 @@ const latestPlanProgress = (records: CodexRecord[], turnId: string) => {
       .map((step) => asRecord(step))
       .filter((step): step is Record<string, unknown> => Boolean(step));
     if (!steps.length) return undefined;
-    const completed = steps.filter((step) => step.status === "completed").length;
-    return Math.round((completed / steps.length) * 100);
+    return planProgressFromStatuses(steps.map((step) => step.status));
   }
   return undefined;
 };
