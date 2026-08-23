@@ -24,7 +24,7 @@ test("record config extraction preserves Ultra without adopting child-agent sett
     ? (globalThis as { window?: unknown }).window
     : undefined;
   (globalThis as { window?: unknown }).window = { location: { search: "" } };
-  const { normalizeReasoningEffort, threadConfigFromRecord } = await import("../../src/web/helpers/records.js").finally(() => {
+  const { formatComposerModelButtonLabel, normalizeReasoningEffort, threadConfigFromRecord } = await import("../../src/web/helpers/records.js").finally(() => {
     if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
     else (globalThis as { window?: unknown }).window = previousWindow;
   });
@@ -50,12 +50,21 @@ test("record config extraction preserves Ultra without adopting child-agent sett
       reasoning_effort: "ultra"
     }
   }), {});
+  assert.equal(
+    formatComposerModelButtonLabel("auto", "auto", "auto", "gpt-test", "max"),
+    "gpt-test:Max"
+  );
+  assert.equal(
+    formatComposerModelButtonLabel("auto", "auto", "batch", "gpt-test", "max"),
+    "gpt-test:Max · batch"
+  );
 });
 
 test("reasoning catalog stays model-specific and preserves descriptions", async () => {
   const {
     effectiveReasoningSelectionForModel,
     modelSupportsReasoningEffort,
+    modelOptionLabel,
     reasoningDraftForModelSelection,
     reasoningOptionLabel,
     reasoningOptionsForSelection,
@@ -82,6 +91,8 @@ test("reasoning catalog stays model-specific and preserves descriptions", async 
   ];
 
   const automaticOptions = reasoningOptionsForSelection("auto", catalog, "auto");
+  assert.equal(modelOptionLabel({ value: "auto", label: "Auto" }), "Auto");
+  assert.equal(modelOptionLabel({ value: "gpt-5.6-sol", label: "Sol" }), "gpt-5.6-sol");
   const ultraOption = automaticOptions.find((option) => option.value === "ultra");
   assert.equal(reasoningOptionLabel(ultraOption!), "Ultra");
   assert.equal(ultraOption?.description, "Maximum reasoning with automatic task delegation");
@@ -90,7 +101,11 @@ test("reasoning catalog stays model-specific and preserves descriptions", async 
   const switchedDraft = reasoningDraftForModelSelection("ultra", catalog, "gpt-5.6-luna");
   assert.equal(switchedDraft, "auto");
   assert.equal(
-    effectiveReasoningSelectionForModel(switchedDraft, "ultra", catalog, "gpt-5.6-luna"),
+    effectiveReasoningSelectionForModel("auto", "ultra", catalog, "gpt-5.6-sol"),
+    "ultra"
+  );
+  assert.equal(
+    effectiveReasoningSelectionForModel("auto", "ultra", catalog, "gpt-5.6-luna"),
     "auto"
   );
   assert.equal(
@@ -122,10 +137,14 @@ test("reasoning catalog stays model-specific and preserves descriptions", async 
     "plan"
   );
   assert.equal(reasoningDraftForModelSelection("ultra", catalog, "gpt-5.6-sol"), "ultra");
-  assert.equal(
-    effectiveReasoningSelectionForModel("auto", "ultra", catalog, "gpt-5.6-sol"),
-    "ultra"
-  );
+  assert.equal(reasoningDraftForModelSelection("ultra", [{
+    id: "defaulted",
+    model: "gpt-defaulted",
+    isDefault: true,
+    defaultReasoningEffort: "max",
+    supportedReasoningEfforts: [{ value: "max", label: "Max" }],
+    serviceTiers: []
+  }], "gpt-defaulted"), "max");
 
   const catalogWithPlainDefault = [
     {
@@ -149,6 +168,54 @@ test("reasoning catalog stays model-specific and preserves descriptions", async 
   assert.deepEqual(
     reasoningOptionsForSelection("auto", catalogWithPlainDefault, "auto").map((option) => option.value),
     ["auto"]
+  );
+});
+
+test("service tier choices keep the clear-to-default path and use product-facing labels", async () => {
+  const {
+    selectedThreadOptions,
+    isFastServiceTier,
+    serviceTierDisplayLabel,
+    serviceTierOptionLabel,
+    serviceTierOptionsForSelection
+  } = await import("../../src/web/helpers/core.js");
+  const catalog = [{
+    id: "sol",
+    model: "gpt-5.6-sol",
+    isDefault: true,
+    supportedReasoningEfforts: [],
+    serviceTiers: [{ value: "priority", label: "priority", description: "Faster processing" }]
+  }, {
+    id: "luna",
+    model: "gpt-5.6-luna",
+    supportedReasoningEfforts: [],
+    serviceTiers: [{ value: "batch", label: "Batch" }]
+  }];
+
+  const options = serviceTierOptionsForSelection("priority", catalog, "gpt-5.6-sol");
+  assert.deepEqual(options.map((option) => option.value), ["auto", "priority"]);
+  assert.deepEqual(options.map(serviceTierOptionLabel), ["Default", "Fast"]);
+  assert.match(options[0]?.description ?? "", /configured Codex service tier/);
+  assert.equal(serviceTierDisplayLabel("fast"), "Fast");
+  assert.equal(serviceTierDisplayLabel("default"), "Standard");
+  assert.equal(isFastServiceTier("priority"), true);
+  assert.equal(isFastServiceTier("fast"), true);
+  assert.equal(isFastServiceTier("batch"), false);
+  assert.deepEqual(
+    serviceTierOptionsForSelection("auto", catalog, "auto").map((option) => option.value),
+    ["auto", "priority"]
+  );
+  assert.deepEqual(
+    serviceTierOptionsForSelection("auto", catalog, "gpt-5.6-luna").map((option) => option.value),
+    ["auto", "batch"]
+  );
+  assert.equal(
+    selectedThreadOptions("auto", "auto", "auto", "chat", "auto", "auto", null).serviceTier,
+    null
+  );
+  assert.equal(
+    selectedThreadOptions("auto", "auto", "priority", "chat", "auto", "auto", null).serviceTier,
+    "priority"
   );
 });
 

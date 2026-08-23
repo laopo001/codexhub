@@ -16,7 +16,7 @@ import { isVscodeSurface } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
 import { formatPlanProgress, planProgressFromStatuses } from "../../shared/planProgress.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
-import { compactLine, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
+import { compactLine, isFastServiceTier, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
 import { turnDurationMsForTurn } from "./turnDurations.js";
 
@@ -184,14 +184,15 @@ export const formatComposerModelButtonLabel = (
   reasoningDraft: ReasoningSelection,
   serviceTierDraft: ServiceTierSelection,
   threadModel: string | null,
-  threadReasoning: ReasoningEffort | null,
-  threadServiceTier: string | null
+  threadReasoning: ReasoningEffort | null
 ) => {
   const model = modelDraft === "auto" && threadModel ? threadModel : modelDraft;
   const reasoning = reasoningDraft === "auto" ? threadReasoning : reasoningDraft;
-  const serviceTier = serviceTierDraft === "auto" ? threadServiceTier : serviceTierDraft;
+  const serviceTier = serviceTierDraft === "auto" ? null : serviceTierDraft;
   const label = rawModelLabel(model);
-  const visibleServiceTier = serviceTier && serviceTier !== "default" && serviceTier !== "priority"
+  const visibleServiceTier = serviceTier
+    && serviceTier !== "default"
+    && !isFastServiceTier(serviceTier)
     ? serviceTierDisplayLabel(serviceTier)
     : null;
   return [reasoning ? `${label}:${reasoningDisplayLabel(reasoning)}` : label, visibleServiceTier].filter(Boolean).join(" · ");

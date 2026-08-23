@@ -14,6 +14,7 @@ import {
   formatContextUsage,
   formatRateLimitRemaining,
   formatResetTitle,
+  isFastServiceTier,
   latestThreadConfigFromRecords,
   latestThreadUsageFromRecords,
   latestTurnActivityScope,
@@ -212,8 +213,7 @@ const ComposerThreadControls = ({
     thread.reasoningDraft,
     thread.serviceTierDraft,
     threadModel,
-    threadReasoning,
-    threadServiceTier
+    threadReasoning
   );
   const composerModelButtonTitle = formatComposerModelTitle(
     thread.modelDraft,
@@ -223,10 +223,7 @@ const ComposerThreadControls = ({
     threadReasoning,
     threadServiceTier
   );
-  const composerModelServiceTier = thread.serviceTierDraft === "auto"
-    ? threadServiceTier
-    : thread.serviceTierDraft;
-  const showPriorityTierIcon = composerModelServiceTier === "priority";
+  const showFastTierIcon = isFastServiceTier(thread.serviceTierDraft);
   const canCompactThread = !thread.running;
   const contextUsageLabel = formatContextUsage(threadUsage);
   const contextPercent = contextUsagePercent(threadUsage);
@@ -284,7 +281,7 @@ const ComposerThreadControls = ({
         }}
       >
         {composerModelButtonLabel}
-        {showPriorityTierIcon ? <Zap className="composerModelTierIcon" aria-label="priority" /> : null}
+        {showFastTierIcon ? <Zap className="composerModelTierIcon" aria-label="Fast mode" /> : null}
       </button>
     </div>
   );

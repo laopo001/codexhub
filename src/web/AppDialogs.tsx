@@ -55,9 +55,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
-    effectiveModelSelection,
-    effectiveReasoningSelection,
-    effectiveServiceTierSelection,
+    threadModelDialogModelSelection,
+    threadModelDialogReasoningSelection,
+    threadModelDialogServiceTierSelection,
     modelOptions,
     reasoningOptions,
     serviceTierOptions,
@@ -82,9 +82,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setAppSettings,
     setMessageContextMenu,
     setProjectPicker,
-    setActiveThreadModelDraft,
-    setActiveThreadReasoningDraft,
-    setActiveThreadServiceTierDraft,
+    setThreadModelDialogModelDraft,
+    setThreadModelDialogReasoningDraft,
+    setThreadModelDialogServiceTierDraft,
     setThreadModelDialogOpen,
     setThreadRenameDialog,
     setThreadTabContextMenu,
@@ -228,9 +228,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const threadTabContextThread = threadTabContextMenu
     ? openThreads.find((thread) => thread.threadId === threadTabContextMenu.threadId)
     : undefined;
-  const dialogModelOptions = optionsWithoutAutoWhenResolved(modelOptions, effectiveModelSelection);
-  const dialogReasoningOptions = optionsWithoutAutoWhenResolved(reasoningOptions, effectiveReasoningSelection);
-  const dialogServiceTierOptions = optionsWithoutAutoWhenResolved(serviceTierOptions, effectiveServiceTierSelection);
+  const dialogModelOptions = optionsWithoutAutoWhenResolved(modelOptions, threadModelDialogModelSelection);
+  const dialogReasoningOptions = optionsWithoutAutoWhenResolved(reasoningOptions, threadModelDialogReasoningSelection);
   const worktreePreview = threadPicker
     ? worktreeTargetPreview(threadPicker.workingDirectory, threadPicker.worktreeBranch, threadPicker.worktreePath)
     : "";
@@ -269,43 +268,57 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <Select
                 className="threadModelSelect"
                 showSearch
-                value={effectiveModelSelection}
+                value={threadModelDialogModelSelection}
                 options={dialogModelSelectOptions}
                 disabled={threadModelSelectDisabled}
                 loading={modelCatalogLoading}
                 filterOption={(input, option) => modelOptionSearchMatches(selectOptionSearchPayload(option), input)}
-                onChange={(value) => setActiveThreadModelDraft(value as ModelSelection)}
+                onChange={(value) => setThreadModelDialogModelDraft(value as ModelSelection)}
               />
             </label>
             <label className="sessionDialogField">
               <span>Thinking</span>
               <Select
                 className="threadModelSelect"
-                value={effectiveReasoningSelection}
+                value={threadModelDialogReasoningSelection}
                 options={dialogReasoningSelectOptions}
                 disabled={threadModelSelectDisabled}
                 loading={modelCatalogLoading}
                 virtual={false}
-                classNames={{ popup: { root: "threadModelReasoningPopup" } }}
+                classNames={{ popup: { root: "threadModelOptionPopup" } }}
                 optionRender={(option) => (
-                  <div className="threadModelReasoningOption">
+                  <div className="threadModelOption">
                     <strong>{option.label}</strong>
                     {option.data.description ? <small>{option.data.description}</small> : null}
                   </div>
                 )}
-                onChange={(value) => setActiveThreadReasoningDraft(value as ReasoningSelection)}
+                onChange={(value) => setThreadModelDialogReasoningDraft(value as ReasoningSelection)}
               />
             </label>
             <label className="sessionDialogField">
-              <span>Service Tier</span>
+              <span>Response speed</span>
               <Select
                 className="threadModelSelect"
-                value={effectiveServiceTierSelection}
-                options={dialogServiceTierOptions.map((option) => ({ value: option.value, label: serviceTierOptionLabel(option) }))}
+                value={threadModelDialogServiceTierSelection}
+                options={serviceTierOptions.map((option) => ({
+                  ...option,
+                  label: serviceTierOptionLabel(option)
+                }))}
                 disabled={threadModelSelectDisabled}
                 loading={modelCatalogLoading}
-                onChange={(value) => setActiveThreadServiceTierDraft(value as ServiceTierSelection)}
+                virtual={false}
+                classNames={{ popup: { root: "threadModelOptionPopup" } }}
+                optionRender={(option) => (
+                  <div className="threadModelOption">
+                    <strong>{option.label}</strong>
+                    {option.data.description ? <small>{option.data.description}</small> : null}
+                  </div>
+                )}
+                onChange={(value) => setThreadModelDialogServiceTierDraft(value as ServiceTierSelection)}
               />
+              <small className="sessionDialogFieldHint">
+                Used for subsequent turns. Default follows your Codex configuration.
+              </small>
             </label>
             {modelCatalogNotice ? (
               <div className={`sessionDialogNotice${modelCatalogError ? " error" : ""}`}>

@@ -171,6 +171,30 @@ test("child thread overlays consume Escape before the subagent dialog", async ()
   assert.match(dialogsSource, /else \{\s*setThreadModelDialogOpen\(false\)/);
 });
 
+test("thread model fields edit the target thread drafts and retain the default option", async () => {
+  const [dialogsSource, selectorsSource, modalsCss, responsiveCss] = await Promise.all([
+    readFile(new URL("../../src/web/AppDialogs.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/appSelectors.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/styles/modals.css", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/styles/responsive.css", import.meta.url), "utf8")
+  ]);
+
+  assert.match(dialogsSource, /value=\{threadModelDialogModelSelection\}/);
+  assert.match(dialogsSource, /value=\{threadModelDialogReasoningSelection\}/);
+  assert.match(dialogsSource, /value=\{threadModelDialogServiceTierSelection\}/);
+  assert.match(dialogsSource, /<span>Response speed<\/span>/);
+  assert.match(dialogsSource, /options=\{serviceTierOptions\.map/);
+  assert.match(dialogsSource, /optionsWithoutAutoWhenResolved\(modelOptions, threadModelDialogModelSelection\)/);
+  assert.match(dialogsSource, /optionsWithoutAutoWhenResolved\(reasoningOptions, threadModelDialogReasoningSelection\)/);
+  assert.match(
+    selectorsSource,
+    /serviceTierOptionsForSelection\(\s*threadModelDialogServiceTierDraft,\s*activeModelCatalog,\s*threadModelDialogModelSelection/
+  );
+  assert.match(cssBlock(modalsCss, ".sessionDialog"), /max-height:\s*calc\(100svh - 48px\)/);
+  assert.match(cssBlock(modalsCss, ".sessionDialog"), /overflow-y:\s*auto/);
+  assert.match(responsiveCss, /\.projectPickerModal,\s*\.sessionDialog,\s*\.settingsDialog,/);
+});
+
 test("workspace and subagent model entries always bind the visible thread id", async () => {
   const [workspaceSource, subagentSource] = await Promise.all([
     readFile(new URL("../../src/web/WorkspaceThreadConversation.tsx", import.meta.url), "utf8"),

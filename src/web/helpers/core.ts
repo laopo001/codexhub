@@ -1038,7 +1038,7 @@ type SearchableModelOption = {
 };
 
 export const modelOptionLabel = (option: { value: string; label: string }) =>
-  option.value;
+  option.value === "auto" ? "Auto" : option.value;
 
 export const modelOptionSearchText = (option: SearchableModelOption) => [
   option.value,
@@ -1073,9 +1073,19 @@ export const reasoningDisplayLabel = (value: string, catalogLabel?: string) => {
 export const reasoningOptionLabel = (option: { value: string; label: string }) =>
   reasoningDisplayLabel(option.value, option.label);
 
-export const serviceTierDisplayLabel = (tier: string) => tier;
+export const isFastServiceTier = (tier: string | null | undefined) =>
+  tier === "priority" || tier === "fast";
 
-export const serviceTierOptionLabel = (option: { value: string; label: string }) => option.value;
+export const serviceTierDisplayLabel = (tier: string, catalogLabel?: string) => {
+  if (tier === "auto") return "Default";
+  if (isFastServiceTier(tier)) return "Fast";
+  if (tier === "default") return "Standard";
+  const label = catalogLabel?.trim();
+  return label && label !== tier ? label : tier;
+};
+
+export const serviceTierOptionLabel = (option: { value: string; label: string }) =>
+  serviceTierDisplayLabel(option.value, option.label);
 
 export const modelOptionsForSelection = (model: ModelSelection, catalog: ModelCatalogItem[] = []) => {
   const catalogOptions = catalog
@@ -1126,10 +1136,15 @@ export const reasoningDraftForModelSelection = (
   reasoningDraft: ReasoningSelection,
   catalog: ModelCatalogItem[],
   model: ModelSelection
-): ReasoningSelection => reasoningDraft !== "auto"
-  && !modelSupportsReasoningEffort(catalog, model, reasoningDraft)
-  ? "auto"
-  : reasoningDraft;
+): ReasoningSelection => {
+  if (reasoningDraft === "auto" || modelSupportsReasoningEffort(catalog, model, reasoningDraft)) {
+    return reasoningDraft;
+  }
+  const catalogDefault = modelCatalogItemForSelection(catalog, model)?.defaultReasoningEffort;
+  return catalogDefault && modelSupportsReasoningEffort(catalog, model, catalogDefault)
+    ? catalogDefault
+    : "auto";
+};
 
 export const effectiveReasoningSelectionForModel = (
   reasoningDraft: ReasoningSelection,
@@ -1146,16 +1161,32 @@ export const serviceTierOptionsForSelection = (
   serviceTier: ServiceTierSelection,
   catalog: ModelCatalogItem[] = [],
   model: ModelSelection = "auto"
-) => {
+): Array<{ value: string; label: string; description?: string }> => {
   const catalogModel = modelCatalogItemForSelection(catalog, model);
   const sourceTiers = catalogModel?.serviceTiers.length
     ? catalogModel.serviceTiers
     : catalog.flatMap((item) => item.serviceTiers);
-  const catalogOptions = sourceTiers.map((option) => ({
-    value: option.value,
-    label: option.label ?? option.value
-  }));
-  const options = [{ value: "auto", label: "Auto" }, ...dedupeOptions(catalogOptions)];
+  const catalogOptions = sourceTiers.map((option) => {
+    const description = option.description
+      ?? (isFastServiceTier(option.value)
+        ? "Request faster priority processing for subsequent turns."
+        : option.value === "default"
+          ? "Use the standard service tier for subsequent turns."
+          : undefined);
+    return {
+      value: option.value,
+      label: option.label ?? option.value,
+      ...(description ? { description } : {})
+    };
+  });
+  const options = [
+    {
+      value: "auto",
+      label: "Default",
+      description: "Follow your configured Codex service tier for subsequent turns."
+    },
+    ...dedupeOptions(catalogOptions)
+  ];
   return ensureOption(options, serviceTier, serviceTierDisplayLabel(serviceTier));
 };
 

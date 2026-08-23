@@ -12,6 +12,8 @@
   display: grid;
   gap: 10px;
   width: min(360px, 100%);
+  max-height: calc(100svh - 48px);
+  overflow-y: auto;
   border: 1px solid #cbd6c7;
   border-radius: 12px;
   background: #ffffff;
@@ -64,29 +66,36 @@
   box-shadow: 0 0 0 2px rgb(84 114 80 / 0.14) !important;
 }
 
-.threadModelReasoningPopup .ant-select-item-option-content {
+.threadModelOptionPopup .ant-select-item-option-content {
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
 }
 
-.threadModelReasoningOption {
+.threadModelOption {
   display: grid;
   gap: 3px;
   padding: 2px 0;
   white-space: normal;
 }
 
-.threadModelReasoningOption strong {
+.threadModelOption strong {
   color: #17211a;
   font-size: 13px;
   line-height: 1.35;
 }
 
-.threadModelReasoningOption small {
+.threadModelOption small {
   color: #66715f;
   font-size: 12px;
   line-height: 1.35;
+}
+
+.sessionDialogFieldHint {
+  color: #66715f;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .sessionDialogNotice {

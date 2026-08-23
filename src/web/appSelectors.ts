@@ -81,9 +81,6 @@ export const useAppSelectors = (state: AppState) => {
     if (!state.activeTabThreadId) return;
     state.dispatchOpenThreads({ type: "set-composer-mode", threadId: state.activeTabThreadId, mode });
   };
-  const activeThreadModelDraft = activeThread?.modelDraft ?? "auto";
-  const activeThreadReasoningDraft = activeThread?.reasoningDraft ?? "auto";
-  const activeThreadServiceTierDraft = activeThread?.serviceTierDraft ?? "auto";
   const activeThreadApprovalPolicyDraft = activeThread?.approvalPolicyDraft ?? "auto";
   const activeThreadApprovalsReviewerDraft = activeThread?.approvalsReviewerDraft ?? "auto";
   const activeThreadPermissionProfileDraft = activeThread?.permissionProfileDraft ?? null;
@@ -97,7 +94,7 @@ export const useAppSelectors = (state: AppState) => {
   const activeThreadPermissionProfileSelection = activeThreadPermissionProfileDraft
     ?? activeThread?.activePermissionProfile?.id
     ?? activeThread?.permissions;
-  const setActiveThreadModelDraft: Dispatch<SetStateAction<ModelSelection>> = (value) => {
+  const setThreadModelDialogModelDraft: Dispatch<SetStateAction<ModelSelection>> = (value) => {
     const threadId = threadModelDialogThread?.threadId;
     if (!threadId) return;
     const currentModelDraft = threadModelDialogThread.modelDraft;
@@ -118,12 +115,12 @@ export const useAppSelectors = (state: AppState) => {
       });
     }
   };
-  const setActiveThreadReasoningDraft: Dispatch<SetStateAction<ReasoningSelection>> = (value) => {
+  const setThreadModelDialogReasoningDraft: Dispatch<SetStateAction<ReasoningSelection>> = (value) => {
     const threadId = threadModelDialogThread?.threadId;
     if (!threadId) return;
     state.dispatchConversationThread({ type: "set-draft", threadId, field: "reasoningDraft", value });
   };
-  const setActiveThreadServiceTierDraft: Dispatch<SetStateAction<ServiceTierSelection>> = (value) => {
+  const setThreadModelDialogServiceTierDraft: Dispatch<SetStateAction<ServiceTierSelection>> = (value) => {
     const threadId = threadModelDialogThread?.threadId;
     if (!threadId) return;
     state.dispatchConversationThread({ type: "set-draft", threadId, field: "serviceTierDraft", value });
@@ -409,15 +406,10 @@ export const useAppSelectors = (state: AppState) => {
     ?? threadModelDialogSummary?.modelReasoningEffort
     ?? normalizeReasoningEffort(state.systemStatus.modelReasoningEffort)
     ?? null;
-  const threadModelDialogServiceTier = threadModelDialogConfig?.serviceTier
-    ?? threadModelDialogThread?.serviceTier
-    ?? threadModelDialogSummary?.serviceTier
-    ?? state.systemStatus.serviceTier
-    ?? null;
-  const threadModelDialogModelDraft = threadModelDialogThread?.modelDraft ?? activeThreadModelDraft;
-  const threadModelDialogReasoningDraft = threadModelDialogThread?.reasoningDraft ?? activeThreadReasoningDraft;
-  const threadModelDialogServiceTierDraft = threadModelDialogThread?.serviceTierDraft ?? activeThreadServiceTierDraft;
-  const effectiveModelSelection = threadModelDialogModelDraft === "auto" && threadModelDialogModel
+  const threadModelDialogModelDraft = threadModelDialogThread?.modelDraft ?? "auto";
+  const threadModelDialogReasoningDraft = threadModelDialogThread?.reasoningDraft ?? "auto";
+  const threadModelDialogServiceTierDraft = threadModelDialogThread?.serviceTierDraft ?? "auto";
+  const threadModelDialogModelSelection = threadModelDialogModelDraft === "auto" && threadModelDialogModel
     ? threadModelDialogModel
     : threadModelDialogModelDraft;
   const activeModelCatalogState = threadModelDialogMachineId
@@ -458,27 +450,31 @@ export const useAppSelectors = (state: AppState) => {
   const activePermissionProfilesError = activePermissionProfileCatalogState?.status === "error"
     ? activePermissionProfileCatalogState.error ?? "Permission profiles unavailable."
     : "";
-  const effectiveReasoningSelection = effectiveReasoningSelectionForModel(
+  const threadModelDialogReasoningSelection = effectiveReasoningSelectionForModel(
     threadModelDialogReasoningDraft,
     threadModelDialogReasoning,
     activeModelCatalog,
-    effectiveModelSelection
+    threadModelDialogModelSelection
   );
-  const effectiveServiceTierSelection: ServiceTierSelection = threadModelDialogServiceTierDraft === "auto"
-    && threadModelDialogServiceTier
-    ? threadModelDialogServiceTier
-    : threadModelDialogServiceTierDraft;
   const modelOptions = useMemo(
-    () => modelOptionsForSelection(effectiveModelSelection, activeModelCatalog),
-    [effectiveModelSelection, activeModelCatalog]
+    () => modelOptionsForSelection(threadModelDialogModelSelection, activeModelCatalog),
+    [threadModelDialogModelSelection, activeModelCatalog]
   );
   const reasoningOptions = useMemo(
-    () => reasoningOptionsForSelection(effectiveReasoningSelection, activeModelCatalog, effectiveModelSelection),
-    [effectiveReasoningSelection, effectiveModelSelection, activeModelCatalog]
+    () => reasoningOptionsForSelection(
+      threadModelDialogReasoningSelection,
+      activeModelCatalog,
+      threadModelDialogModelSelection
+    ),
+    [threadModelDialogReasoningSelection, threadModelDialogModelSelection, activeModelCatalog]
   );
   const serviceTierOptions = useMemo(
-    () => serviceTierOptionsForSelection(effectiveServiceTierSelection, activeModelCatalog, effectiveModelSelection),
-    [effectiveServiceTierSelection, effectiveModelSelection, activeModelCatalog]
+    () => serviceTierOptionsForSelection(
+      threadModelDialogServiceTierDraft,
+      activeModelCatalog,
+      threadModelDialogModelSelection
+    ),
+    [threadModelDialogServiceTierDraft, threadModelDialogModelSelection, activeModelCatalog]
   );
   return {
     activeCanStop,
@@ -491,7 +487,6 @@ export const useAppSelectors = (state: AppState) => {
     activeThread,
     activeThreadModel,
     activeThreadIsOpen,
-    activeThreadModelDraft,
     activeThreadApprovalPolicyDraft,
     activeThreadApprovalPolicyKind,
     activeThreadApprovalPolicySelection,
@@ -506,17 +501,12 @@ export const useAppSelectors = (state: AppState) => {
     activeModelCatalogError,
     activeModelCatalogStatus,
     activeThreadReasoning,
-    activeThreadReasoningDraft,
     activeThreadServiceTier,
-    activeThreadServiceTierDraft,
     activeThreadUsage,
     activeUserMessageHistory,
     activeViews,
     composerMode,
     currentServerShareUrl,
-    effectiveModelSelection,
-    effectiveReasoningSelection,
-    effectiveServiceTierSelection,
     latestTurnActivityScope: latestTurnActivity,
     localMachines,
     modelOptions,
@@ -534,9 +524,12 @@ export const useAppSelectors = (state: AppState) => {
     selectedProject,
     setActiveThreadApprovalPolicyDraft,
     setActiveThreadApprovalsReviewerDraft,
-    setActiveThreadModelDraft,
-    setActiveThreadReasoningDraft,
-    setActiveThreadServiceTierDraft,
+    threadModelDialogModelSelection,
+    threadModelDialogReasoningSelection,
+    threadModelDialogServiceTierSelection: threadModelDialogServiceTierDraft,
+    setThreadModelDialogModelDraft,
+    setThreadModelDialogReasoningDraft,
+    setThreadModelDialogServiceTierDraft,
     setActiveThreadPermissionProfileDraft,
     setComposerMode,
     showComposerSendButton,

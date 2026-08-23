@@ -169,9 +169,9 @@ export type AppViewModelSource = AppSidebarViewModel & {
   copyContextSelection: () => MaybePromise;
   createMachineThread: () => MaybePromise;
   createWorktreeThread: () => MaybePromise;
-  effectiveModelSelection: ModelSelection;
-  effectiveReasoningSelection: ReasoningSelection;
-  effectiveServiceTierSelection: ServiceTierSelection;
+  threadModelDialogModelSelection: ModelSelection;
+  threadModelDialogReasoningSelection: ReasoningSelection;
+  threadModelDialogServiceTierSelection: ServiceTierSelection;
   expandedStatusKeys: Record<string, string[]>;
   expandedStatusTurns: Record<string, string>;
   expandedToolBatchKeys: Record<string, string[]>;
@@ -208,9 +208,6 @@ export type AppViewModelSource = AppSidebarViewModel & {
   activeModelCatalogCacheNotice: string;
   activeModelCatalogError: string;
   activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
-  activeThreadModelDraft: ModelSelection;
-  activeThreadReasoningDraft: ReasoningSelection;
-  activeThreadServiceTierDraft: ServiceTierSelection;
   messagesRef: React.RefObject<VirtuosoHandle | null>;
   messagesShouldFollowRef: React.MutableRefObject<boolean>;
   modelOptions: ModelOption[];
@@ -286,9 +283,9 @@ export type AppViewModelSource = AppSidebarViewModel & {
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
   setActiveThreadApprovalPolicyDraft: React.Dispatch<React.SetStateAction<ApprovalPolicyDraft>>;
   setActiveThreadApprovalsReviewerDraft: React.Dispatch<React.SetStateAction<ApprovalsReviewerDraft>>;
-  setActiveThreadModelDraft: React.Dispatch<React.SetStateAction<ModelSelection>>;
-  setActiveThreadReasoningDraft: React.Dispatch<React.SetStateAction<ReasoningSelection>>;
-  setActiveThreadServiceTierDraft: React.Dispatch<React.SetStateAction<string>>;
+  setThreadModelDialogModelDraft: React.Dispatch<React.SetStateAction<ModelSelection>>;
+  setThreadModelDialogReasoningDraft: React.Dispatch<React.SetStateAction<ReasoningSelection>>;
+  setThreadModelDialogServiceTierDraft: React.Dispatch<React.SetStateAction<ServiceTierSelection>>;
   setActiveThreadPermissionProfileDraft: React.Dispatch<React.SetStateAction<PermissionProfileDraft>>;
   setThreadModelDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setThreadControlsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -442,9 +439,9 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "activeModelCatalogCacheNotice"
   | "activeModelCatalogError"
   | "activeModelCatalogStatus"
-  | "effectiveModelSelection"
-  | "effectiveReasoningSelection"
-  | "effectiveServiceTierSelection"
+  | "threadModelDialogModelSelection"
+  | "threadModelDialogReasoningSelection"
+  | "threadModelDialogServiceTierSelection"
   | "modelOptions"
   | "reasoningOptions"
   | "serviceTierOptions"
@@ -469,9 +466,9 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "setAppSettings"
   | "setMessageContextMenu"
   | "setProjectPicker"
-  | "setActiveThreadModelDraft"
-  | "setActiveThreadReasoningDraft"
-  | "setActiveThreadServiceTierDraft"
+  | "setThreadModelDialogModelDraft"
+  | "setThreadModelDialogReasoningDraft"
+  | "setThreadModelDialogServiceTierDraft"
   | "setThreadModelDialogOpen"
   | "setThreadRenameDialog"
   | "setThreadTabContextMenu"
@@ -540,14 +537,14 @@ const dialogKeys = [
   "chooseThreadCandidate", "confirmProjectPicker", "copyContextSelection", "createMachineThread",
   "createWorktreeThread", "goalDialog", "imagePreview", "inspectContextMessage", "inspectMessage",
   "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageContextMenu",
-  "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "effectiveModelSelection",
-  "effectiveReasoningSelection", "effectiveServiceTierSelection", "modelOptions", "reasoningOptions",
+  "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "threadModelDialogModelSelection",
+  "threadModelDialogReasoningSelection", "threadModelDialogServiceTierSelection", "modelOptions", "reasoningOptions",
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
   "saveGoalDialog", "saveThreadRenameDialog", "threadModelDialogOpen", "threadRenameDialog",
   "threadTabContextMenu", "settingsDialogOpen", "runtimeList", "openThreads", "setGoalDialog",
   "setImagePreview", "setInspectMessage", "setAppSettings", "setMessageContextMenu",
-  "setProjectPicker", "setActiveThreadModelDraft", "setActiveThreadReasoningDraft",
-  "setActiveThreadServiceTierDraft", "setThreadModelDialogOpen", "setThreadRenameDialog",
+  "setProjectPicker", "setThreadModelDialogModelDraft", "setThreadModelDialogReasoningDraft",
+  "setThreadModelDialogServiceTierDraft", "setThreadModelDialogOpen", "setThreadRenameDialog",
   "setThreadTabContextMenu", "setSettingsDialogOpen", "setThreadPicker", "submitProjectPickerPath",
   "threadOrderByMachine", "threadPicker", "openPetPicker", "petEnabled", "petName"
 ] as const satisfies readonly (keyof AppDialogsViewModel)[];
