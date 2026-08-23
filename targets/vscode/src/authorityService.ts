@@ -1,4 +1,5 @@
 import os from "node:os";
+import { resolveEmbeddedAuthorityHost } from "../../../src/core/embeddedAuthority.js";
 import type { CodexHubAuthorityKind } from "../../../src/shared/surfaceTypes.js";
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
 import { startEmbeddedServer } from "../../../src/server/embedded.js";
@@ -20,6 +21,7 @@ async function main() {
   const dataDir = required(args, "data-dir");
   const staticDirectory = required(args, "static-directory");
   const buildId = args.get("build-id") || null;
+  const host = await resolveEmbeddedAuthorityHost(dataDir);
   const authToken = authorityServiceAuthToken(args.get("auth-token-env"), process.env);
   const localProjectCatalog = parseProjectCatalog(args.get("project-catalog") || "fixed");
   delete process.env.CODEX_HUB_AUTH_TOKEN;
@@ -30,7 +32,7 @@ async function main() {
   if (remoteClientPath) process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH = remoteClientPath;
 
   const server = await startEmbeddedServer({
-    host: "127.0.0.1",
+    host,
     portMode: "preferred",
     preferredPort: port,
     dataDir,
@@ -53,7 +55,7 @@ async function main() {
   });
 
   console.error(
-    `codexhub embedded authority ready: ${authorityKind} ${authorityId} http://127.0.0.1:${server.port} auth=${authToken ? "required" : "off"}`
+    `codexhub embedded authority ready: ${authorityKind} ${authorityId} listen=${host}:${server.port} auth=${authToken ? "required" : "off"}`
   );
 
   const stop = () => {

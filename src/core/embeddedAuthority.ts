@@ -111,6 +111,26 @@ export const resolveEmbeddedAuthorityPort = async (
   });
 };
 
+/**
+ * Resolve the detached authority listen host. Authorities stay loopback-only
+ * by default; an explicit wildcard host is required before exposing one to a
+ * LAN. Process environment values win over config.yaml, matching the port
+ * and auth-token precedence used by the embedded clients.
+ */
+export const resolveEmbeddedAuthorityHost = async (
+  dataDir: string,
+  env: NodeJS.ProcessEnv = process.env
+) => {
+  const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
+  const configured = env.CODEX_HUB_AUTHORITY_HOST?.trim()
+    || configEnv?.CODEX_HUB_AUTHORITY_HOST?.trim()
+    || "127.0.0.1";
+  if (configured === "127.0.0.1" || configured === "0.0.0.0" || configured === "::") return configured;
+  throw new Error(
+    `Invalid CODEX_HUB_AUTHORITY_HOST: ${configured}. Expected 127.0.0.1, 0.0.0.0, or ::.`
+  );
+};
+
 export const ensureEmbeddedAuthority = async (
   input: EnsureEmbeddedAuthorityInput
 ): Promise<EmbeddedAuthorityHandle> => {
