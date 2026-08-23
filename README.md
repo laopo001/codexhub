@@ -544,7 +544,7 @@ curl -sS -X POST "http://127.0.0.1:8788/api/machines/$MACHINE_ID/files/preview" 
   -d '{"path":"/path/to/project/src/index.ts"}'
 ```
 
-`POST /api/machines/:machineId/files/preview` 把绝对路径发给实际拥有该文件系统的在线 machine，而不是让 server 扫描远端文件。UTF-8 文本和按签名确认的常见位图继续返回内联预览，默认最多读取 2 MiB（可用 machine 环境变量 `CODEX_HUB_MAX_FILE_PREVIEW_BYTES` 调整）。按 ISO BMFF `ftyp` 签名确认的 MP4 会返回隐藏绝对路径的短期 `/api/file-stream/:ticketId` URL；该 URL 支持 `HEAD`、单段 HTTP `Range`、`206 Content-Range` 和拖动播放，由 local/SSH/registered machine 校验文件 size/mtime 后按 1 MiB 以内的 chunk 提供内容。ticket 默认 30 分钟过期且每次访问续期，可用 server 环境变量 `CODEX_HUB_FILE_STREAM_TICKET_TTL_MS` 调整；关闭预览对话框会主动删除 ticket。Web 和 Electron 用 `<video controls preload="metadata">` 播放，VS Code surface 仍把链接交给扩展的 `vscode.open`。
+`POST /api/machines/:machineId/files/preview` 把绝对路径发给实际拥有该文件系统的在线 machine，而不是让 server 扫描远端文件。UTF-8 文本和按签名确认的常见位图继续返回内联预览，默认最多读取 2 MiB（可用 machine 环境变量 `CODEX_HUB_MAX_FILE_PREVIEW_BYTES` 调整）。按文件签名确认的 MP4、MP3、WAV、FLAC、Ogg/Opus、AAC 和 M4A 会返回隐藏绝对路径的短期 `/api/file-stream/:ticketId` URL；该 URL 支持 `HEAD`、单段 HTTP `Range`、`206 Content-Range` 和拖动播放，由 local/SSH/registered machine 校验文件 size/mtime 后按 1 MiB 以内的 chunk 提供内容。ticket 默认 30 分钟过期且每次访问续期，可用 server 环境变量 `CODEX_HUB_FILE_STREAM_TICKET_TTL_MS` 调整；关闭预览对话框会主动删除 ticket。Web 和 Electron 分别用原生 `<video>` 或 `<audio>` controls 播放，VS Code surface 仍把链接交给扩展的 `vscode.open`。
 
 `/api/machines/:machineId/models` 由该 machine 当前在线 runtime 调用官方 app-server `model/list`，返回当前账号/配置可见的 model、supported reasoning efforts 和 service tiers；Web Thread Model 弹窗只使用这份 runtime catalog 或它的带时间戳缓存。`?refresh=true` 可强制实时刷新。catalog 尚未就绪且没有缓存或读取失败时会禁用选择并显示加载/错误状态，不使用本地静态 model fallback。
 

@@ -107,7 +107,7 @@ const applyFileStreamHeaders = (
 };
 
 export const fileStreamFilename = (filePath: string) =>
-  filePath.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) || "media.mp4";
+  filePath.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) || "media";
 
 const sendFileStreamHead = (reply: FastifyReply) => {
   const statusCode = reply.statusCode;

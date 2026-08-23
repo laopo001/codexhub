@@ -50,5 +50,6 @@ test("file byte ranges reject malformed, multiple, reversed, and unsatisfied req
 
 test("file stream response filenames never expose a remote absolute path", () => {
   assert.equal(fileStreamFilename("/home/user/videos/demo.mp4"), "demo.mp4");
-  assert.equal(fileStreamFilename("D:\\videos\\demo.mp4"), "demo.mp4");
+  assert.equal(fileStreamFilename("D:\\music\\demo.mp3"), "demo.mp3");
+  assert.equal(fileStreamFilename("/"), "media");
 });

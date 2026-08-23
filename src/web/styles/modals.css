@@ -1363,6 +1363,17 @@
   background: #000000;
 }
 
+.filePreviewMediaBody.audio {
+  border-color: #dfe5dc;
+  background: #f5f7f1;
+}
+
+.filePreviewMediaBody audio {
+  display: block;
+  width: min(680px, calc(100% - 32px));
+  max-width: calc(100% - 32px);
+}
+
 .filePreviewStatus {
   padding: 24px;
   color: #51604f;

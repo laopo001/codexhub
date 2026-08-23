@@ -109,6 +109,19 @@ export type MachineDirectoryListing = {
   entries: MachineDirectoryEntry[];
 };
 
+/** 浏览器可直接播放、由 machine 文件签名确认的媒体 MIME。 */
+export const machineFilePreviewMediaContentTypes = [
+  "video/mp4",
+  "audio/mpeg",
+  "audio/wav",
+  "audio/flac",
+  "audio/ogg",
+  "audio/aac",
+  "audio/mp4"
+] as const;
+
+export type MachineFilePreviewMediaContentType = typeof machineFilePreviewMediaContentTypes[number];
+
 /** machine 读取本机文件后返回给 Web 对话框的安全预览内容。 */
 export type MachineFilePreviewResult = {
   kind: "text";
@@ -128,7 +141,7 @@ export type MachineFilePreviewResult = {
   path: string;
   size: number;
   modifiedAtMs: number;
-  contentType: "video/mp4";
+  contentType: MachineFilePreviewMediaContentType;
 } | {
   kind: "unsupported";
   path: string;

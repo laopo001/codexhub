@@ -668,10 +668,20 @@ const FilePreviewBody = ({ state, line }: { state: FilePreviewLoadState; line?: 
     );
   }
   if (state.value.kind === "media") {
+    const streamUrl = authenticatedFileUrl(state.value.streamUrl);
+    if (state.value.contentType.startsWith("audio/")) {
+      return (
+        <div className="filePreviewMediaBody audio">
+          <audio src={streamUrl} controls preload="metadata">
+            Your browser does not support this audio format.
+          </audio>
+        </div>
+      );
+    }
     return (
       <div className="filePreviewMediaBody">
         <video
-          src={authenticatedFileUrl(state.value.streamUrl)}
+          src={streamUrl}
           controls
           playsInline
           preload="metadata"

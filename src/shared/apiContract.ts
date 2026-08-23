@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { machineFilePreviewMediaContentTypes } from "./machineTypes.js";
 import { isCronExpression } from "./taskCron.js";
 import type {
   MachineDirectoryListing,
@@ -797,7 +798,7 @@ export const machineFilePreviewResultSchema = z.discriminatedUnion("kind", [
     path: z.string().min(1),
     size: z.number().int().positive(),
     modifiedAtMs: z.number().int().nonnegative(),
-    contentType: z.literal("video/mp4")
+    contentType: z.enum(machineFilePreviewMediaContentTypes)
   }).strict(),
   z.object({
     kind: z.literal("unsupported"),

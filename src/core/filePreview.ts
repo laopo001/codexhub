@@ -2,7 +2,11 @@ import { open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { isWslEnvironment } from "../shared/surfaceTypes.js";
-import type { MachineFileChunkResult, MachineFilePreviewResult } from "../shared/machineTypes.js";
+import type {
+  MachineFileChunkResult,
+  MachineFilePreviewMediaContentType,
+  MachineFilePreviewResult
+} from "../shared/machineTypes.js";
 
 const defaultMaxFilePreviewBytes = 2 * 1024 * 1024;
 const previewSignatureBytes = 4096;
@@ -216,15 +220,62 @@ const isAvifImage = (buffer: Buffer) => {
   return brands.includes("avif") || brands.includes("avis");
 };
 
-const sniffPreviewMediaType = (buffer: Buffer): Extract<MachineFilePreviewResult, { kind: "media" }>["contentType"] | null => {
-  if (buffer.length < 12 || buffer.subarray(4, 8).toString("ascii") !== "ftyp") return null;
-  const brands = [buffer.subarray(8, 12).toString("ascii")];
-  for (let offset = 16; offset + 4 <= buffer.length; offset += 4) {
-    brands.push(buffer.subarray(offset, offset + 4).toString("ascii"));
-  }
+const sniffPreviewMediaType = (buffer: Buffer): MachineFilePreviewMediaContentType | null => {
+  if (isWaveAudio(buffer)) return "audio/wav";
+  if (buffer.subarray(0, 4).toString("ascii") === "fLaC") return "audio/flac";
+  if (isOggAudio(buffer)) return "audio/ogg";
+  if (buffer.subarray(0, 3).toString("ascii") === "ID3") return "audio/mpeg";
+  if (isAacAdtsAudio(buffer)) return "audio/aac";
+  if (isMpegAudioFrame(buffer)) return "audio/mpeg";
+
+  const brands = isoBaseMediaBrands(buffer);
+  if (!brands) return null;
+  const mp4AudioBrands = new Set(["M4A ", "M4B ", "M4P ", "F4A ", "F4B "]);
+  if (brands.some((brand) => mp4AudioBrands.has(brand))) return "audio/mp4";
   const mp4Brands = new Set([
     "isom", "iso2", "iso3", "iso4", "iso5", "iso6", "iso7", "iso8", "iso9",
     "mp41", "mp42", "avc1", "M4V ", "MSNV", "dash", "cmfc", "cmfs"
   ]);
   return brands.some((brand) => mp4Brands.has(brand)) ? "video/mp4" : null;
+};
+
+const isWaveAudio = (buffer: Buffer) => {
+  const container = buffer.subarray(0, 4).toString("ascii");
+  return (container === "RIFF" || container === "RIFX" || container === "RF64")
+    && buffer.subarray(8, 12).toString("ascii") === "WAVE";
+};
+
+const isOggAudio = (buffer: Buffer) => {
+  if (buffer.length < 28 || buffer.subarray(0, 4).toString("ascii") !== "OggS") return false;
+  const packetOffset = 27 + buffer[26]!;
+  if (packetOffset >= buffer.length) return false;
+  const packet = buffer.subarray(packetOffset);
+  return packet.subarray(0, 8).toString("ascii") === "OpusHead"
+    || (packet[0] === 0x01 && packet.subarray(1, 7).toString("ascii") === "vorbis");
+};
+
+const isAacAdtsAudio = (buffer: Buffer) =>
+  buffer.length >= 2
+  && buffer[0] === 0xff
+  && (buffer[1]! & 0xf6) === 0xf0;
+
+const isMpegAudioFrame = (buffer: Buffer) => {
+  if (buffer.length < 4 || buffer[0] !== 0xff || (buffer[1]! & 0xe0) !== 0xe0) return false;
+  const version = (buffer[1]! >> 3) & 0x03;
+  const layer = (buffer[1]! >> 1) & 0x03;
+  const bitrate = (buffer[2]! >> 4) & 0x0f;
+  const sampleRate = (buffer[2]! >> 2) & 0x03;
+  return version !== 0x01 && layer !== 0x00 && bitrate !== 0x00 && bitrate !== 0x0f && sampleRate !== 0x03;
+};
+
+const isoBaseMediaBrands = (buffer: Buffer) => {
+  if (buffer.length < 12 || buffer.subarray(4, 8).toString("ascii") !== "ftyp") return null;
+  const boxSize = buffer.readUInt32BE(0);
+  if (boxSize !== 0 && boxSize < 12) return null;
+  const boxEnd = boxSize === 0 ? buffer.length : Math.min(buffer.length, boxSize);
+  const brands = [buffer.subarray(8, 12).toString("ascii")];
+  for (let offset = 16; offset + 4 <= boxEnd; offset += 4) {
+    brands.push(buffer.subarray(offset, offset + 4).toString("ascii"));
+  }
+  return brands;
 };

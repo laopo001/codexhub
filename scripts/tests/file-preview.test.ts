@@ -126,6 +126,67 @@ test("machine file preview exposes MP4 metadata and reads bounded verified chunk
   }
 });
 
+test("machine file preview recognizes browser-playable audio by signature", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codexhub-file-preview-"));
+  try {
+    const samples = [
+      {
+        name: "music-with-id3.bin",
+        contents: Buffer.concat([Buffer.from("ID3\x04\x00\x00", "binary"), Buffer.alloc(16)]),
+        contentType: "audio/mpeg"
+      },
+      {
+        name: "wave.bin",
+        contents: Buffer.concat([Buffer.from("RIFF", "ascii"), Buffer.alloc(4), Buffer.from("WAVEfmt ", "ascii")]),
+        contentType: "audio/wav"
+      },
+      {
+        name: "lossless.bin",
+        contents: Buffer.concat([Buffer.from("fLaC", "ascii"), Buffer.alloc(16)]),
+        contentType: "audio/flac"
+      },
+      {
+        name: "opus.bin",
+        contents: Buffer.concat([
+          Buffer.from("OggS", "ascii"),
+          Buffer.alloc(22),
+          Buffer.from([0x01, 0x08]),
+          Buffer.from("OpusHead", "ascii")
+        ]),
+        contentType: "audio/ogg"
+      },
+      {
+        name: "aac.bin",
+        contents: Buffer.from([0xff, 0xf1, 0x50, 0x80, 0x00, 0x1f, 0xfc, 0x00]),
+        contentType: "audio/aac"
+      },
+      {
+        name: "music-mp4.bin",
+        contents: Buffer.concat([
+          Buffer.from([0x00, 0x00, 0x00, 0x18]),
+          Buffer.from("ftypM4A ", "ascii"),
+          Buffer.from([0x00, 0x00, 0x02, 0x00]),
+          Buffer.from("M4A isom", "ascii")
+        ]),
+        contentType: "audio/mp4"
+      }
+    ] as const;
+
+    for (const sample of samples) {
+      const filePath = path.join(directory, sample.name);
+      await writeFile(filePath, sample.contents);
+      const preview = await resolveMachineFilePreview(filePath, { maxBytes: 1 });
+      assert.equal(preview.kind, "media", sample.name);
+      if (preview.kind !== "media") continue;
+      assert.equal(preview.contentType, sample.contentType, sample.name);
+      assert.equal(preview.size, sample.contents.length, sample.name);
+      assert.equal(machineFilePreviewResultSchema.safeParse(preview).success, true, sample.name);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("machine file preview requires a file and normalizes Windows drives only for WSL", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codexhub-file-preview-"));
   try {

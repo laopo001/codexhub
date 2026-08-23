@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
+import type { MachineFilePreviewMediaContentType } from "../shared/machineTypes.js";
 
 export type FileStreamTicketInput = {
   machineId: string;
   path: string;
   size: number;
   modifiedAtMs: number;
-  contentType: "video/mp4";
+  contentType: MachineFilePreviewMediaContentType;
 };
 
 export type FileStreamTicket = FileStreamTicketInput & {
