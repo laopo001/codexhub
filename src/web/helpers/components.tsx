@@ -968,6 +968,7 @@ export const StatusCardOverview = ({
   const orderedStatuses = turnActive ? orderedActivityStatuses(statuses) : [];
   const summaryStatuses = orderedStatuses.filter((status) => status.summaryText);
   const hasBackgroundTerminals = backgroundTerminals.length > 0;
+  const hasPanelDetails = statuses.length > 0 || hasBackgroundTerminals;
   const hasHeaderMetrics = summaryStatuses.length > 0 || hasBackgroundTerminals;
   return (
     <div
@@ -998,14 +999,14 @@ export const StatusCardOverview = ({
           ) : null}
         </span>
       ) : null}
-      {turnActive && statuses.length ? (
+      {hasPanelDetails ? (
         <button
           type="button"
           className="activityStatusToggle"
           onClick={onToggleExpanded}
           aria-expanded={expanded}
-          aria-label={expanded ? "Collapse Turn details" : "Expand Turn details"}
-          title={expanded ? "Collapse Turn details" : "Expand Turn details"}
+          aria-label={expanded ? "Collapse activity details" : "Expand activity details"}
+          title={expanded ? "Collapse activity details" : "Expand activity details"}
         >
           <StatusRegistryToggleIcon expanded={expanded} size={14} strokeWidth={2.4} />
         </button>
@@ -1016,14 +1017,16 @@ export const StatusCardOverview = ({
 
 export const ThreadStatusCard = ({
   backgroundTerminals = [],
+  visible = true,
   onTerminate,
 }: {
   backgroundTerminals?: BackgroundTerminalView[];
+  visible?: boolean;
   onTerminate: (processId: string) => void | Promise<void>;
 }) => {
   const [expanded, setExpanded] = useState(true);
   const [terminatingProcessIds, setTerminatingProcessIds] = useState<Set<string>>(() => new Set());
-  if (!backgroundTerminals.length) return null;
+  if (!visible || !backgroundTerminals.length) return null;
   const backgroundRegistry = createStatusRegistry();
   for (const terminal of backgroundTerminals) {
     const terminating = terminatingProcessIds.has(terminal.processId);
@@ -1093,6 +1096,7 @@ export const ActivityStatusBar = ({
   expandedKeys: Set<string>;
   onToggle: (key: string) => void;
 }) => {
+  if (!expanded) return null;
   const registry = createStatusRegistry();
   for (const status of orderedActivityStatuses(statuses)) {
     const detail = status.steps?.length || status.files?.length ? (
@@ -1112,16 +1116,13 @@ export const ActivityStatusBar = ({
         </>
       ),
       detail,
-      expanded: expanded || expandedKeys.has(status.key),
+      expanded: expandedKeys.has(status.key),
       onToggle: () => onToggle(status.key),
       ariaLabel: `${status.label}: ${status.text}`
     });
   }
   return (
-    <div
-      className={`activityStatusSection turnStatusCard${expanded ? " expanded" : ""}`}
-      aria-label="Turn details"
-    >
+    <div className="activityStatusSection turnStatusCard expanded" aria-label="Turn details">
       <StatusRegistryRows entries={registry.entries("turn")} />
     </div>
   );

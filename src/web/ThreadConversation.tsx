@@ -564,6 +564,7 @@ export const ThreadConversation = ({
 
   const threadStatus = executionMeta ? (
     <ThreadStatusCard
+      visible={statusPanelExpanded}
       backgroundTerminals={backgroundTerminals}
       onTerminate={(processId) => onTerminateBackgroundTerminal(thread.threadId, processId)}
     />

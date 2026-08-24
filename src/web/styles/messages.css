@@ -204,7 +204,7 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 2px;
   min-width: 0;
-  padding: 0 5px 5px;
+  padding: 0 5px 3px;
 }
 
 .statusRegistryDetail > .statusRegistryRows {
@@ -217,8 +217,8 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  min-height: 30px;
-  padding: 4px 6px;
+  min-height: 24px;
+  padding: 2px 6px;
   border: 1px solid rgba(47, 125, 90, 0.16);
   border-radius: 5px;
   background: rgba(248, 250, 247, 0.86);
@@ -237,8 +237,8 @@
 .statusRegistryAction {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -306,7 +306,7 @@
   color: #5f6a78;
   font-size: 9px;
   font-weight: 800;
-  line-height: 18px;
+  line-height: 16px;
   text-transform: uppercase;
 }
 
@@ -322,8 +322,8 @@
 .statusRegistryToggle {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   margin-right: 3px;
   border: 0;
   border-radius: 4px;

@@ -563,13 +563,75 @@ test("Turn Status card keeps Turn semantics while it is mounted", async () => {
 
   const markup = renderToStaticMarkup(createElement(ActivityStatusBar, {
     statuses: [],
-    expanded: false,
+    expanded: true,
     expandedKeys: new Set<string>(),
     onToggle: () => undefined
   }));
 
   assert.match(markup, /Turn details/);
   assert.match(markup, /turnStatusCard/);
+});
+
+test("collapsed Turn Status card hides the whole Turn detail section", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { ActivityStatusBar } = await import("../../src/web/helpers/components.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  const markup = renderToStaticMarkup(createElement(ActivityStatusBar, {
+    statuses: [{
+      key: "usage",
+      label: "Usage",
+      status: "completed" as const,
+      text: "total 154.4k",
+      summaryText: "154.4k"
+    }],
+    expanded: false,
+    expandedKeys: new Set<string>(),
+    onToggle: () => undefined
+  }));
+
+  assert.equal(markup, "");
+});
+
+test("Turn status items own their nested expansion", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { ActivityStatusBar } = await import("../../src/web/helpers/components.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  const status = {
+    key: "files",
+    label: "Files",
+    status: "completed" as const,
+    text: "2 files changed",
+    files: [{ path: "src/app.tsx", added: 3, removed: 1 }]
+  };
+  const collapsed = renderToStaticMarkup(createElement(ActivityStatusBar, {
+    statuses: [status],
+    expanded: true,
+    expandedKeys: new Set<string>(),
+    onToggle: () => undefined
+  }));
+  const nestedExpanded = renderToStaticMarkup(createElement(ActivityStatusBar, {
+    statuses: [status],
+    expanded: true,
+    expandedKeys: new Set(["files"]),
+    onToggle: () => undefined
+  }));
+
+  assert.match(collapsed, /aria-expanded="false"/);
+  assert.doesNotMatch(collapsed, /fileChangeRow/);
+  assert.match(nestedExpanded, /aria-expanded="true"/);
+  assert.match(nestedExpanded, /fileChangeRow/);
 });
 
 test("Turn Status keeps Usage at the end and colors file deltas", async () => {
