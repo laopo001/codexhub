@@ -245,12 +245,14 @@ const App = () => {
   const realtimeActions = createRealtimeActions(actionContext, {
     clearActiveThreadIfLatest: (threadId) => requireThreadActions().clearActiveThreadIfLatest(threadId),
     notifyRegisteredMachineConnected: (machine) => {
+      if (isElectronDesktopPetWindow) return;
       void messageApi.success({
         key: `registered-machine-connection:${machine.machineId}`,
         content: `Registered machine connected · ${machine.name ?? machine.hostname ?? machine.machineId}`
       });
     },
     notifyRegisteredMachineDisconnected: (machine) => {
+      if (isElectronDesktopPetWindow) return;
       void messageApi.warning({
         key: `registered-machine-connection:${machine.machineId}`,
         content: `Registered machine disconnected · ${machine.name ?? machine.hostname ?? machine.machineId}`
