@@ -29,8 +29,9 @@ import { loadDotEnv } from "../../../src/core/dotenv.js";
 import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/apiClient.js";
 import { apiRoutes } from "../../../src/shared/apiRoutes.js";
 import {
+  calculateDesktopPetUnionBounds,
   parsePetHitRegions,
-  petHitRegionsContainPoint,
+  shouldDesktopPetBeInteractive,
   type PetHitRegion
 } from "../../../src/shared/petInput.js";
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
@@ -204,18 +205,23 @@ const destroyTray = () => {
 const desktopPetBounds = () => {
   const displays = screen.getAllDisplays();
   const fallback = screen.getPrimaryDisplay().bounds;
-  const bounds = displays.length ? displays.map((display) => display.bounds) : [fallback];
-  const left = Math.min(...bounds.map((item) => item.x));
-  const top = Math.min(...bounds.map((item) => item.y));
-  const right = Math.max(...bounds.map((item) => item.x + item.width));
-  const bottom = Math.max(...bounds.map((item) => item.y + item.height));
-  return { x: left, y: top, width: right - left, height: bottom - top };
+  return calculateDesktopPetUnionBounds(
+    displays.map((display) => display.bounds),
+    fallback
+  );
+};
+
+const ensureDesktopPetAlwaysOnTop = (petWindow: BrowserWindow | null = desktopPetWindow) => {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  // Use the highest available level to stay above floating and topmost windows (e.g. QQ, notifications).
+  petWindow.setAlwaysOnTop(true, "screen-saver");
 };
 
 const setDesktopPetMouseIgnored = (ignore: boolean, force = false) => {
   const petWindow = desktopPetWindow;
   if (!petWindow || petWindow.isDestroyed()) return;
   if (!force && desktopPetMouseIgnored === ignore) return;
+  if (!ignore) ensureDesktopPetAlwaysOnTop(petWindow);
   petWindow.setIgnoreMouseEvents(ignore, { forward: true });
   desktopPetMouseIgnored = ignore;
 };
@@ -225,19 +231,20 @@ const updateDesktopPetInputMode = (force = false) => {
   if (!petWindow || petWindow.isDestroyed()) return;
   const bounds = petWindow.getBounds();
   const pointer = screen.getCursorScreenPoint();
-  const localPointer = {
-    x: pointer.x - bounds.x,
-    y: pointer.y - bounds.y,
-  };
-  const interactive = desktopPetDragActive
-    || petHitRegionsContainPoint(localPointer, desktopPetHitRegions, desktopPetHitPadding);
+  const interactive = shouldDesktopPetBeInteractive({
+    cursorScreenPoint: pointer,
+    windowBounds: bounds,
+    hitRegions: desktopPetHitRegions,
+    isDragActive: desktopPetDragActive,
+    hitPadding: desktopPetHitPadding,
+  });
   setDesktopPetMouseIgnored(!interactive, force);
 };
 
 const resetDesktopPetInputMode = () => {
   desktopPetMouseIgnored = null;
   setDesktopPetMouseIgnored(true, true);
-  updateDesktopPetInputMode();
+  updateDesktopPetInputMode(true);
 };
 
 const startDesktopPetInputPolling = () => {
@@ -259,6 +266,8 @@ const repositionDesktopPetWindow = () => {
   if (!desktopPetWindow || desktopPetWindow.isDestroyed()) return;
   const bounds = desktopPetBounds();
   desktopPetWindow.setBounds(bounds);
+  // Re-assert topmost hierarchy after cross-monitor repositioning on Windows.
+  ensureDesktopPetAlwaysOnTop(desktopPetWindow);
   // The renderer hit regions are relative to this window. Re-evaluate the
   // native input mode after the coordinate space changes instead of relying
   // on a forwarded mouse event that may arrive late or out of order.
@@ -289,7 +298,7 @@ const createDesktopPetWindow = async () => {
   });
   desktopPetWindow = petWindow;
   petWindow.setMenuBarVisibility(false);
-  petWindow.setAlwaysOnTop(true, "floating");
+  ensureDesktopPetAlwaysOnTop(petWindow);
   resetDesktopPetInputMode();
   petWindow.on("closed", () => {
     if (desktopPetWindow === petWindow) desktopPetWindow = null;
@@ -298,6 +307,7 @@ const createDesktopPetWindow = async () => {
     await petWindow.loadURL(electronSurfaceUrl(target, true));
     if (!petWindow.isDestroyed()) {
       petWindow.showInactive();
+      ensureDesktopPetAlwaysOnTop(petWindow);
       startDesktopPetInputPolling();
     }
   } catch (error) {
@@ -355,7 +365,7 @@ ipcMain.on("codexhub:pet-drag-active", (event, active: unknown) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
   desktopPetDragActive = Boolean(active);
-  updateDesktopPetInputMode();
+  updateDesktopPetInputMode(true);
 });
 
 ipcMain.on("codexhub:pet-focus-main", (event, threadId: unknown) => {
@@ -556,6 +566,8 @@ const recoverElectronSurface = () => {
         }
         if (desktopPetWindow && !desktopPetWindow.isDestroyed()) {
           await desktopPetWindow.loadURL(electronSurfaceUrl(next, true));
+          ensureDesktopPetAlwaysOnTop(desktopPetWindow);
+          resetDesktopPetInputMode();
         }
         return;
       } catch (error) {
