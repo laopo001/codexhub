@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   calculateDesktopPetUnionBounds,
   parsePetHitRegions,
   petHitRegionContainsPoint,
   petHitRegionsContainPoint,
+  petHitRegionsContainScreenPoint,
   screenPointToWindowLocalPoint,
   shouldDesktopPetBeInteractive,
 } from "../../src/shared/petInput.js";
@@ -89,6 +91,15 @@ test("screenPointToWindowLocalPoint converts global cursor coordinates to local 
   );
 });
 
+test("screen-space pet hit testing uses the window origin on a secondary display", () => {
+  assert.equal(petHitRegionsContainScreenPoint({
+    cursorScreenPoint: { x: 3_244, y: 684 },
+    windowBounds: { x: 0, y: 0, width: 5_120, height: 1_600 },
+    hitRegions: [{ x: 3_181, y: 615, width: 126, height: 137 }],
+    hitPadding: 12,
+  }), true);
+});
+
 test("shouldDesktopPetBeInteractive decides hit testing across secondary displays and drag states", () => {
   const windowBounds = { x: -1920, y: 0, width: 3840, height: 1080 };
   // Desktop pet moved to the secondary display on the left (local x: 960, y: 540)
@@ -129,4 +140,39 @@ test("shouldDesktopPetBeInteractive decides hit testing across secondary display
     isDragActive: true,
     hitPadding: 12,
   }), true);
+
+  // 5. Native mouse-down hold bridges the event-to-renderer drag-active IPC gap
+  assert.equal(shouldDesktopPetBeInteractive({
+    cursorScreenPoint: { x: 1000, y: 200 },
+    windowBounds,
+    hitRegions,
+    isDragActive: false,
+    inputHoldActive: true,
+    hitPadding: 12,
+  }), true);
+});
+
+test("Windows desktop pet establishes one physical coordinate space before creating windows", async () => {
+  const source = await readFile(
+    new URL("../../targets/electron/src/main.ts", import.meta.url),
+    "utf8"
+  );
+  const forceScaleIndex = source.indexOf(
+    'electronApp.commandLine.appendSwitch("force-device-scale-factor", "1")'
+  );
+  const singleInstanceIndex = source.indexOf("electronApp.requestSingleInstanceLock()");
+  const showIndex = source.indexOf("petWindow.showInactive()");
+  const repositionAfterShowIndex = source.indexOf("repositionDesktopPetWindow();", showIndex);
+  const inputPollingAfterShowIndex = source.indexOf("startDesktopPetInputPolling();", showIndex);
+
+  assert.ok(forceScaleIndex >= 0, "Windows Electron must disable mixed-DPI renderer coordinates");
+  assert.ok(
+    forceScaleIndex < singleInstanceIndex,
+    "the device scale switch must be applied before Electron creates or attaches windows"
+  );
+  assert.ok(showIndex >= 0 && repositionAfterShowIndex > showIndex);
+  assert.ok(
+    repositionAfterShowIndex < inputPollingAfterShowIndex,
+    "the first visible pet window must reapply virtual-desktop bounds before input polling"
+  );
 });

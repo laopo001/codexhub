@@ -79,15 +79,25 @@ export const screenPointToWindowLocalPoint = (
   y: screenPoint.y - windowBounds.y,
 });
 
+export const petHitRegionsContainScreenPoint = (params: {
+  cursorScreenPoint: PetPointerPosition;
+  windowBounds: ScreenDisplayBounds;
+  hitRegions: ReadonlyArray<PetHitRegion>;
+  hitPadding?: number;
+}): boolean => {
+  const localPointer = screenPointToWindowLocalPoint(params.cursorScreenPoint, params.windowBounds);
+  return petHitRegionsContainPoint(localPointer, params.hitRegions, params.hitPadding ?? 0);
+};
+
 /** 判定桌宠窗口在当前光标或拖拽状态下是否应进入可交互模式（取消鼠标穿透） */
 export const shouldDesktopPetBeInteractive = (params: {
   cursorScreenPoint: PetPointerPosition;
   windowBounds: ScreenDisplayBounds;
   hitRegions: ReadonlyArray<PetHitRegion>;
   isDragActive: boolean;
+  inputHoldActive?: boolean;
   hitPadding?: number;
 }): boolean => {
-  if (params.isDragActive) return true;
-  const localPointer = screenPointToWindowLocalPoint(params.cursorScreenPoint, params.windowBounds);
-  return petHitRegionsContainPoint(localPointer, params.hitRegions, params.hitPadding ?? 0);
+  if (params.isDragActive || params.inputHoldActive) return true;
+  return petHitRegionsContainScreenPoint(params);
 };

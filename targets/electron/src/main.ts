@@ -31,6 +31,7 @@ import { apiRoutes } from "../../../src/shared/apiRoutes.js";
 import {
   calculateDesktopPetUnionBounds,
   parsePetHitRegions,
+  petHitRegionsContainScreenPoint,
   shouldDesktopPetBeInteractive,
   type PetHitRegion
 } from "../../../src/shared/petInput.js";
@@ -48,6 +49,7 @@ const preloadPath = path.join(mainDirectory, "preload.cjs");
 const surfaceHeartbeatMs = 10_000;
 const desktopPetSyncMs = 1_000;
 const desktopPetInputPollMs = 16;
+const desktopPetInputExitGraceMs = 100;
 const desktopPetHitPadding = 12;
 const windowsTrayEnabled = process.platform === "win32";
 const electronSmokeEnabled = process.env.CODEX_HUB_ELECTRON_SMOKE === "1";
@@ -57,6 +59,13 @@ const electronAppUserModelId = "com.dadigua.codexhub";
 // BrowserWindow or single-instance setup so native Toast notifications can
 // resolve the installed Start Menu shortcut correctly.
 if (process.platform === "win32") {
+  // The desktop-pet window spans the complete virtual desktop. A single
+  // per-monitor-DPI BrowserWindow can render across mixed-scale displays but
+  // Chromium then receives physical mouse coordinates that do not match its
+  // DIP DOM coordinates on the secondary display. Keep the Electron host in
+  // one physical coordinate space so the transparent window, DOM hit regions,
+  // and native input all agree across displays.
+  electronApp.commandLine.appendSwitch("force-device-scale-factor", "1");
   electronApp.setAppUserModelId(electronAppUserModelId);
 }
 
@@ -79,6 +88,7 @@ let desktopPetSyncInFlight = false;
 let desktopPetInputTimer: NodeJS.Timeout | null = null;
 let desktopPetHitRegions: PetHitRegion[] = [];
 let desktopPetDragActive = false;
+let desktopPetInputHoldUntilMs = 0;
 let desktopPetMouseIgnored: boolean | null = null;
 const activeTaskNotifications = new Set<Notification>();
 const surfaceId = `electron-${randomUUID()}`;
@@ -231,11 +241,25 @@ const updateDesktopPetInputMode = (force = false) => {
   if (!petWindow || petWindow.isDestroyed()) return;
   const bounds = petWindow.getBounds();
   const pointer = screen.getCursorScreenPoint();
+  const nowMs = Date.now();
+  if (petHitRegionsContainScreenPoint({
+    cursorScreenPoint: pointer,
+    windowBounds: bounds,
+    hitRegions: desktopPetHitRegions,
+    hitPadding: desktopPetHitPadding,
+  })) {
+    // Keep the native window interactive for a few polling frames after the
+    // pointer leaves a reported hit region. That gives the renderer's
+    // pointerdown handler time to publish drag-active before a fast first move
+    // would otherwise turn mouse-through back on and break the drag.
+    desktopPetInputHoldUntilMs = nowMs + desktopPetInputExitGraceMs;
+  }
   const interactive = shouldDesktopPetBeInteractive({
     cursorScreenPoint: pointer,
     windowBounds: bounds,
     hitRegions: desktopPetHitRegions,
     isDragActive: desktopPetDragActive,
+    inputHoldActive: nowMs < desktopPetInputHoldUntilMs,
     hitPadding: desktopPetHitPadding,
   });
   setDesktopPetMouseIgnored(!interactive, force);
@@ -259,6 +283,7 @@ const stopDesktopPetInputPolling = () => {
   desktopPetInputTimer = null;
   desktopPetHitRegions = [];
   desktopPetDragActive = false;
+  desktopPetInputHoldUntilMs = 0;
   desktopPetMouseIgnored = null;
 };
 
@@ -307,7 +332,11 @@ const createDesktopPetWindow = async () => {
     await petWindow.loadURL(electronSurfaceUrl(target, true));
     if (!petWindow.isDestroyed()) {
       petWindow.showInactive();
-      ensureDesktopPetAlwaysOnTop(petWindow);
+      // Windows can clamp the constructor bounds to the primary work area
+      // while the frameless window is hidden. Reapply the virtual-desktop
+      // bounds after the first show so the renderer viewport spans every
+      // display and drag clamping does not stop at the primary screen edge.
+      repositionDesktopPetWindow();
       startDesktopPetInputPolling();
     }
   } catch (error) {
