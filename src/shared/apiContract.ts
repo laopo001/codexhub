@@ -42,7 +42,6 @@ import type {
   RuntimeStreamEvent,
   RuntimeSummary,
   SessionSummary,
-  ThreadGoalRunPolicy,
   ThreadCandidateSummary,
   ThreadDetail,
   ThreadGoalStatus,
@@ -84,7 +83,6 @@ export type {
   TaskRunStatus,
   ThreadCandidateSummary,
   ThreadDetail,
-  ThreadGoalRunPolicy,
   ThreadGoalStatus,
   ThreadRateLimitUsage,
   ThreadRateLimits,
@@ -534,16 +532,10 @@ export const threadRunOptionsSchema = z.object({
 
 export const threadGoalStatusSchema = z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]);
 
-export const threadGoalRunPolicySchema = z.object({
-  type: z.literal("consumeUntilWeeklyRemainingAtOrBelow"),
-  targetRemainingPercent: z.number().finite().min(0).lt(100)
-}).strict();
-
 export const threadGoalUpdateSchema = z.object({
   objective: z.string().min(1).nullable().optional(),
   status: threadGoalStatusSchema.nullable().optional(),
-  tokenBudget: z.number().int().positive().nullable().optional(),
-  runPolicy: threadGoalRunPolicySchema.nullable().optional()
+  tokenBudget: z.number().int().positive().nullable().optional()
 }).strict();
 
 const appServerApprovalDecisionSchema: z.ZodType<AppServerApprovalDecision> = z.union([

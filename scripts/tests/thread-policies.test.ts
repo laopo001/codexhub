@@ -5,9 +5,7 @@ import {
   appServerGoalUpdate,
   appServerThreadGoalFromValue,
   formatThreadGoalMessage,
-  goalUpdateCanStartRunPolicy,
   goalUpdateFromInput,
-  normalizeThreadGoalRunPolicy,
   threadGoalsEqual,
   threadGoalThreadId,
   threadGoalTimestamp
@@ -15,14 +13,12 @@ import {
 import { localCommandMessage, parseLocalSlashCommand } from "../../src/core/threadLocalCommands.js";
 import { ThreadHub } from "../../src/core/threadHub.js";
 import type { ThreadState } from "../../src/core/threadHubState.js";
-import { goalUpdateFromDialog } from "../../src/web/helpers/goalDialog.js";
 
 const thread = (): ThreadState => ({
   threadId: "thread-1",
   workingDirectory: "/tmp/project",
   machineId: "machine-test",
   threadOptions: {},
-  goalRun: { policy: null, phase: "running", continuation: "normal" },
   running: false,
   executionStatus: "idle",
   title: "Test",
@@ -52,7 +48,7 @@ test("local command parser and fast mode policy stay outside ThreadHub state orc
   assert.equal(state.threadOptions.serviceTier, undefined);
 });
 
-test("goal policy normalization strips local run policy from app-server payload", () => {
+test("goal input and app-server payload use current Goal fields", () => {
   assert.deepEqual(goalUpdateFromInput("finish refactor", { goalMode: true, goalTokenBudget: 1000 }), {
     objective: "finish refactor",
     status: "active",
@@ -66,66 +62,14 @@ test("goal policy normalization strips local run policy from app-server payload"
     objective: "first line\nsecond line",
     status: "active"
   });
-  assert.deepEqual(normalizeThreadGoalRunPolicy({
-    type: "consumeUntilWeeklyRemainingAtOrBelow",
-    targetRemainingPercent: 20
-  }), {
-    type: "consumeUntilWeeklyRemainingAtOrBelow",
-    targetRemainingPercent: 20
-  });
-  assert.equal(normalizeThreadGoalRunPolicy({
-    type: "consumeUntilWeeklyRemainingAtOrBelow",
-    targetRemainingPercent: 100
-  }), null);
   assert.deepEqual(appServerGoalUpdate({
     objective: "finish",
-    status: "active",
-    runPolicy: { type: "consumeUntilWeeklyRemainingAtOrBelow", targetRemainingPercent: 20 }
+    status: "active"
   }), { objective: "finish", status: "active" });
   assert.equal(
     threadGoalTimestamp({ updatedAt: 1_700_000_000 }),
     "2023-11-14T22:13:20.000Z"
   );
-});
-
-test("ordinary goal edits omit burn policy while burn edits set a 7d wrap-up trigger", () => {
-  assert.deepEqual(goalUpdateFromDialog({
-    kind: "goal",
-    objective: " finish safely ",
-    targetRemainingPercent: ""
-  }), {
-    objective: "finish safely"
-  });
-  assert.deepEqual(goalUpdateFromDialog({
-    kind: "burn",
-    objective: " finish safely ",
-    targetRemainingPercent: "12.5"
-  }), {
-    objective: "finish safely",
-    status: "active",
-    runPolicy: {
-      type: "consumeUntilWeeklyRemainingAtOrBelow",
-      targetRemainingPercent: 12.5
-    }
-  });
-});
-
-test("only explicit burn or resume updates can start a stored goal run policy", () => {
-  assert.equal(goalUpdateCanStartRunPolicy({ objective: "edit only" }), false);
-  assert.equal(goalUpdateCanStartRunPolicy({ status: "active" }), true);
-  assert.equal(goalUpdateCanStartRunPolicy({
-    runPolicy: {
-      type: "consumeUntilWeeklyRemainingAtOrBelow",
-      targetRemainingPercent: 20
-    }
-  }), true);
-  assert.equal(goalUpdateCanStartRunPolicy({
-    status: "paused",
-    runPolicy: {
-      type: "consumeUntilWeeklyRemainingAtOrBelow",
-      targetRemainingPercent: 20
-    }
-  }), false);
 });
 
 test("goal records only consume current camelCase ThreadGoal fields", () => {

@@ -343,37 +343,6 @@
   line-height: 1.5;
 }
 
-.goalPolicyField {
-  display: grid;
-  gap: 6px;
-  color: #66715f;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.goalPolicyPercentInput {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-}
-
-.goalPolicyPercentInput input {
-  min-width: 0;
-  min-height: 34px;
-  border: 1px solid #d8dfd4;
-  border-radius: 10px;
-  padding: 0 10px;
-  color: #17211a;
-}
-
-.goalPolicyHint {
-  color: #7b8575;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.45;
-}
-
 .goalDialogError {
   color: #8b3f31;
   font-size: 12px;

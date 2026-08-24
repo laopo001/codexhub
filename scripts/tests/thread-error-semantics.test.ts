@@ -37,37 +37,6 @@ const errorPayloads = (hub: ThreadHub, threadId: string) =>
     .filter((record) => record.type === "error")
     .map((record) => record.payload as Record<string, unknown>);
 
-const goalStatuses = (hub: ThreadHub, threadId: string) =>
-  (hub.getThread(threadId)?.records ?? [])
-    .map((record) => record.payload as Record<string, unknown>)
-    .filter((payload) => payload.type === "thread_goal_updated")
-    .map((payload) => (payload.goal as Record<string, unknown> | undefined)?.status);
-
-const startGoalRun = async (suffix: string) => {
-  const fixture = createHub(suffix);
-  const objective = "continue the active goal";
-  const initialGoal = fixture.hub.setGoal(fixture.threadId, {
-    objective,
-    status: "active",
-    runPolicy: {
-      type: "consumeUntilWeeklyRemainingAtOrBelow",
-      targetRemainingPercent: 1
-    }
-  });
-  const goalCommand = await nextCommand(fixture.hub, fixture.sessionId);
-  assert.equal(goalCommand.type, "set_goal");
-  fixture.hub.resolveSessionCommand(fixture.sessionId, goalCommand.commandId, {});
-  await initialGoal;
-  const turnCommand = await nextCommand(fixture.hub, fixture.sessionId, goalCommand.seq);
-  assert.equal(turnCommand.type, "turn");
-  assert.equal(turnCommand.input, objective);
-  fixture.hub.applySessionEvent(
-    fixture.sessionId,
-    executionChanged(fixture.threadId, true, "initial-goal-turn")
-  );
-  return { ...fixture, objective, turnCommand };
-};
-
 test("new Turn is Waiting until app-server confirms its turnId", async () => {
   const { hub, sessionId, threadId } = createHub("waiting-turn");
   const running = hub.runTurn(threadId, "wait for app-server");
@@ -144,40 +113,6 @@ test("Submission ids stay provisional and cannot overwrite the authoritative Tur
   assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
 });
 
-test("Goal policy continuation returns to Waiting before the next app-server Turn", async () => {
-  const { hub, sessionId, threadId, turnCommand } = await startGoalRun("goal-waiting");
-  hub.applySessionEvent(sessionId, {
-    type: "account_rate_limits_updated",
-    heartbeat: false,
-    rateLimits: {
-      limitId: "codex",
-      limitName: null,
-      primary: null,
-      secondary: {
-        usedPercent: 64,
-        windowDurationMins: 10080,
-        resetsAt: 1781140554
-      },
-      credits: null,
-      planType: "pro",
-      rateLimitReachedType: null
-    }
-  });
-  hub.applySessionEvent(sessionId, turnCompleted(threadId, "initial-goal-turn"));
-
-  const continuation = await nextCommand(hub, sessionId, turnCommand.seq);
-  assert.equal(continuation.type, "turn");
-  assert.equal(hub.getThread(threadId)?.status, "waiting");
-  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
-
-  hub.applySessionEvent(sessionId, executionChanged(threadId, true, "continued-goal-turn"));
-  assert.equal(hub.getThread(threadId)?.status, "running");
-  assert.equal(hub.getThread(threadId)?.activeTurnId, "continued-goal-turn");
-
-  hub.failSessionCommand(sessionId, continuation.commandId, "test cleanup");
-  await Promise.resolve();
-});
-
 test("reconnected active Turn keeps the app-server lifecycle timestamp as its clock source", () => {
   const { hub, sessionId, threadId } = createHub("recovered-turn-clock");
   hub.applySessionEvent(sessionId, executionChanged(threadId, true, "recovered-current-turn"));
@@ -195,83 +130,6 @@ test("reconnected active Turn keeps the app-server lifecycle timestamp as its cl
   assert.equal(recovered?.status, "running");
   assert.equal(recovered?.activeTurnId, "recovered-current-turn");
   assert.equal(startedRecord?.timestamp, "2023-11-14T22:13:40.000Z");
-});
-
-type GoalRunFixture = Awaited<ReturnType<typeof startGoalRun>>;
-
-const requestGoalResume = async (fixture: GoalRunFixture) => {
-  const { hub, sessionId, threadId, turnCommand } = fixture;
-  const stop = hub.stopTurn(threadId);
-  const stopCommand = await nextCommand(hub, sessionId, turnCommand.seq);
-  hub.resolveSessionCommand(sessionId, stopCommand.commandId, {});
-  await stop;
-  const resume = hub.setGoal(threadId, { status: "active" });
-  const resumeCommand = await nextCommand(hub, sessionId, stopCommand.seq);
-  return { resume, resumeCommand };
-};
-
-for (const terminalBeforeResponse of [false, true]) {
-  test(`stopped Goal resumes exactly once when ${terminalBeforeResponse
-    ? "the interrupted terminal arrives before the goal response"
-    : "the goal response arrives before the interrupted terminal"}`, async () => {
-    const { hub, sessionId, threadId, objective, turnCommand } = await startGoalRun(
-      terminalBeforeResponse ? "goal-resume-terminal-first" : "goal-resume-response-first"
-    );
-    const { resume, resumeCommand } = await requestGoalResume({
-      hub, sessionId, threadId, objective, turnCommand
-    });
-    assert.equal(resumeCommand.type, "set_goal");
-    if (terminalBeforeResponse) {
-      hub.applySessionEvent(
-        sessionId,
-        turnCompleted(threadId, "initial-goal-turn", { status: "interrupted" })
-      );
-      hub.resolveSessionCommand(sessionId, resumeCommand.commandId, {});
-      await resume;
-    } else {
-      hub.resolveSessionCommand(sessionId, resumeCommand.commandId, {});
-      await resume;
-      hub.applySessionEvent(
-        sessionId,
-        turnCompleted(threadId, "initial-goal-turn", { status: "interrupted" })
-      );
-    }
-
-    const resumedTurn = await nextCommand(hub, sessionId, resumeCommand.seq);
-    assert.equal(resumedTurn.type, "turn");
-    assert.equal(resumedTurn.input, objective);
-    assert.equal(resumedTurn.options?.goalMode, true);
-    assert.equal(resumedTurn.options?.goalObjective, objective);
-    assert.deepEqual((await hub.waitSessionCommands(sessionId, resumedTurn.seq, 20)).commands, []);
-    if (!terminalBeforeResponse) assert.equal(goalStatuses(hub, threadId).includes("paused"), false);
-
-    hub.failSessionCommand(sessionId, resumedTurn.commandId, "test cleanup");
-    await Promise.resolve();
-  });
-}
-
-test("Goal clear rollback after terminal does not restore an idle resume marker", async () => {
-  const fixture = await startGoalRun("goal-clear-rollback");
-  const { hub, sessionId, threadId } = fixture;
-  const { resume, resumeCommand } = await requestGoalResume(fixture);
-  hub.resolveSessionCommand(sessionId, resumeCommand.commandId, {});
-  await resume;
-
-  const clear = hub.clearGoal(threadId);
-  const clearCommand = await nextCommand(hub, sessionId, resumeCommand.seq);
-  hub.applySessionEvent(
-    sessionId,
-    turnCompleted(threadId, "initial-goal-turn", { status: "interrupted" })
-  );
-  hub.failSessionCommand(sessionId, clearCommand.commandId, "clear rejected");
-  await assert.rejects(clear, /clear rejected/);
-
-  const ordinary = hub.runTurn(threadId, "ordinary follow-up", "task");
-  const ordinaryCommand = await nextCommand(hub, sessionId, clearCommand.seq);
-  hub.applySessionEvent(sessionId, executionChanged(threadId, true, "ordinary-turn"));
-  hub.applySessionEvent(sessionId, turnCompleted(threadId, "ordinary-turn"));
-  await ordinary;
-  assert.deepEqual((await hub.waitSessionCommands(sessionId, ordinaryCommand.seq, 30)).commands, []);
 });
 
 test("control RPC failures reject locally without fabricating transcript errors", async () => {

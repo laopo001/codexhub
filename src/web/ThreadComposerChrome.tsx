@@ -1,15 +1,10 @@
 import React from "react";
 import {
-  Flame,
   ListChecks,
   MessageCircle,
   Target,
   type LucideIcon
 } from "lucide-react";
-import {
-  rateLimitUsageForWindowMinutes,
-  sevenDayRateLimitWindowMinutes
-} from "../core/threadUsage.js";
 import {
   threadGranularApprovalKeys,
   type ThreadSandboxPolicy
@@ -22,7 +17,7 @@ import {
   permissionProfileScopeKey,
   updateGranularApprovalPolicy
 } from "./appHelpers.js";
-import type { OpenThreadState, ThreadGoalView } from "./types.js";
+import type { OpenThreadState } from "./types.js";
 import type { AppWorkspaceViewModel } from "./viewModel.js";
 
 const composerModeIconByValue: Record<OpenThreadState["composerMode"], LucideIcon> = {
@@ -63,12 +58,10 @@ const useDismissableMenu = (
 export const ThreadComposerLeftActions = ({
   workspace,
   thread,
-  activeGoal,
   fileInputRef
 }: {
   workspace: AppWorkspaceViewModel;
   thread: OpenThreadState;
-  activeGoal?: ThreadGoalView | null;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
 }) => {
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -113,15 +106,6 @@ export const ThreadComposerLeftActions = ({
         permissionProfileLabel(profile.id).toLowerCase() === sandboxProfileLabel.toLowerCase()
       )?.id
       : undefined);
-  const runtime = workspace.runtimeList.find((item) => item.machineId === thread.runtime.machineId);
-  const sevenDayRateLimit = rateLimitUsageForWindowMinutes(
-    runtime?.accountRateLimits,
-    sevenDayRateLimitWindowMinutes
-  );
-  const currentSevenDayRemainingPercent = sevenDayRateLimit
-    ? Math.max(0, Math.min(100, 100 - sevenDayRateLimit.usedPercent))
-    : undefined;
-
   const toggleMenu = () => {
     if (menuOpen) {
       setMenuOpen(false);
@@ -131,23 +115,6 @@ export const ThreadComposerLeftActions = ({
     workspace.setThreadApprovalsReviewerDraft(thread.threadId, "auto");
     workspace.setThreadPermissionProfileDraft(thread.threadId, null);
     setMenuOpen(true);
-  };
-
-  const openGoalRunPolicyDialog = () => {
-    const goalRunPolicy = thread.goalRunPolicy?.type === "consumeUntilWeeklyRemainingAtOrBelow"
-      ? thread.goalRunPolicy
-      : null;
-    workspace.setGoalDialog({
-      kind: "burn",
-      threadId: thread.threadId,
-      objective: activeGoal?.objective ?? workspace.composerDraftStore.get(thread.threadId),
-      targetRemainingPercent: goalRunPolicy
-        ? String(goalRunPolicy.targetRemainingPercent)
-        : "",
-      currentRemainingPercent: currentSevenDayRemainingPercent,
-      saving: false,
-      error: ""
-    });
   };
 
   return (
@@ -309,15 +276,6 @@ export const ThreadComposerLeftActions = ({
           );
         })}
       </div>
-      <button
-        type="button"
-        className="composerIconButton composerGoalRunPolicyButton"
-        aria-label="燃烧目标"
-        title="燃烧目标"
-        onClick={openGoalRunPolicyDialog}
-      >
-        <Flame aria-hidden="true" />
-      </button>
     </>
   );
 };

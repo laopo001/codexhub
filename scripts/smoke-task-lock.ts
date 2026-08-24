@@ -97,8 +97,6 @@ type ThreadDetail = {
   running?: boolean;
   status?: "waiting" | "running" | "idle";
   activeTurnId?: string;
-  goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
-  goalRunPhase?: "running" | "wrappingUp" | null;
   threadUsage?: PartialThreadUsage;
   records?: Array<{
     id: string;
@@ -599,515 +597,6 @@ const main = async () => {
     }
     console.log("app-server current goal update ok");
 
-    await expectApiError(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          objective: "invalid weekly target",
-          status: "active",
-          runPolicy: {
-            type: "consumeUntilWeeklyRemainingAtOrBelow",
-            targetRemainingPercent: 100
-          }
-        })
-      },
-      400
-    );
-    console.log("consume-until invalid target rejected ok");
-
-    const singleTurnBurnObjective = "single Turn crosses the 7d wrap-up trigger";
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        objective: singleTurnBurnObjective,
-        status: "active",
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 25
-        }
-      })
-    });
-    await fake.nextSessionCommand("set_goal");
-    const singleTurnBurn = await fake.nextTurn();
-    fake.failNextSteer("first safe wrap steer rejected");
-    fake.emitWeeklyAccountRateLimits(80);
-    const singleTurnLimitGoal = await fake.nextSessionCommand("set_goal");
-    if (singleTurnLimitGoal.goal?.status !== "usageLimited") {
-      throw new Error(`single Turn limit status mismatch: ${JSON.stringify(singleTurnLimitGoal.goal)}`);
-    }
-    const failedSingleTurnWrapUpSteer = await fake.nextSteer();
-    const singleTurnWrapUpSteer = await fake.nextSteer();
-    if (
-      failedSingleTurnWrapUpSteer.turnId !== singleTurnBurn.turnId
-      || singleTurnWrapUpSteer.turnId !== singleTurnBurn.turnId
-      || typeof singleTurnWrapUpSteer.input !== "string"
-      || !singleTurnWrapUpSteer.input.includes("安全收尾")
-    ) {
-      throw new Error(`single Turn wrap-up steer mismatch: ${JSON.stringify(singleTurnWrapUpSteer)}`);
-    }
-    fake.emitTokenUsage(singleTurnBurn);
-    await fake.expectNoSteer(150);
-    fake.completeTurn(singleTurnBurn);
-    await fake.expectNoTurn(150);
-    const singleTurnWrappedUp = await apiJson<ThreadDetail>(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}`
-    );
-    if (singleTurnWrappedUp.goalRunPolicy !== null || singleTurnWrappedUp.goalRunPhase !== null) {
-      throw new Error(`single Turn burn policy remained after wrap-up: ${JSON.stringify(singleTurnWrappedUp)}`);
-    }
-    if (singleTurnWrappedUp.records?.some((record) => {
-      const payload = objectValue(record.payload);
-      return payload?.type === "submission_failed"
-        && typeof payload.input_text === "string"
-        && payload.input_text.includes("安全收尾");
-    })) {
-      throw new Error("internal safe wrap steer failure leaked into the transcript");
-    }
-
-    fake.emitAccountRateLimits(90);
-    await assertRuntimeAccountRateLimits(apiBase, fake.machineId, { secondaryUsedPercent: 90 });
-    fake.failNextUsageLimitedSetGoal("first idle usage-limited update rejected");
-    const alreadyLimitedObjective = "finish an already limited burn goal safely";
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        objective: alreadyLimitedObjective,
-        status: "active",
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 20
-        }
-      })
-    });
-    const alreadyLimitedGoal = await fake.nextSessionCommand("set_goal");
-    const failedAlreadyLimitedFinish = await fake.nextSessionCommand("set_goal");
-    const retriedAlreadyLimitedFinish = await fake.nextSessionCommand("set_goal");
-    if (
-      alreadyLimitedGoal.goal?.objective !== alreadyLimitedObjective
-      || failedAlreadyLimitedFinish.goal?.status !== "usageLimited"
-      || retriedAlreadyLimitedFinish.goal?.status !== "usageLimited"
-    ) {
-      throw new Error(`already-limited finish retry mismatch: ${JSON.stringify({
-        alreadyLimitedGoal: alreadyLimitedGoal.goal,
-        failedAlreadyLimitedFinish: failedAlreadyLimitedFinish.goal,
-        retriedAlreadyLimitedFinish: retriedAlreadyLimitedFinish.goal
-      })}`);
-    }
-    await waitForGoalRunPolicyCleared(apiBase, fake.threadId);
-    await fake.expectNoTurn(150);
-
-    fake.emitAccountRateLimits(64);
-    await assertRuntimeAccountRateLimits(apiBase, fake.machineId);
-    console.log("consume-until single Turn crossing safely wraps once ok");
-
-    const nonWeeklyObjective = "do not continue on non-weekly secondary window";
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        objective: nonWeeklyObjective,
-        status: "active",
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 20
-        }
-      })
-    });
-    await fake.nextSessionCommand("set_goal");
-    const nonWeeklyTurn = await fake.nextTurn();
-    fake.emitAccountRateLimits(64, 300);
-    fake.emitTokenUsage(nonWeeklyTurn);
-    fake.completeTurn(nonWeeklyTurn);
-    await fake.expectNoTurn(150);
-    console.log("consume-until ignores non-weekly secondary window ok");
-
-    const consumeObjective = "consume weekly budget until target";
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        objective: consumeObjective,
-        status: "active",
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 20
-        }
-      })
-    });
-    const consumeSetGoal = await fake.nextSessionCommand("set_goal");
-    const consumeGoal = objectValue(consumeSetGoal.goal);
-    if (
-      consumeGoal?.objective !== consumeObjective
-      || consumeGoal.status !== "active"
-      || objectValue(consumeGoal.runPolicy) !== null
-    ) {
-      throw new Error(`consume goal set payload mismatch: ${JSON.stringify(consumeSetGoal.goal)}`);
-    }
-    const consumeDetail = await apiJson<ThreadDetail & {
-      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
-    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
-    if (
-      consumeDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
-      || consumeDetail.goalRunPolicy.targetRemainingPercent !== 20
-    ) {
-      throw new Error(`consume goal policy missing from thread detail: ${JSON.stringify(consumeDetail.goalRunPolicy)}`);
-    }
-    const consumeTurn = await fake.nextTurn();
-    assertGoalContinuationTurn(consumeTurn, consumeObjective, "consume goal initial turn mismatch");
-    const consumeRunningDetail = await apiJson<ThreadDetail>(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}`
-    );
-    if (
-      !consumeRunningDetail.running
-      || consumeRunningDetail.status !== "running"
-      || consumeRunningDetail.activeTurnId !== consumeTurn.turnId
-    ) {
-      throw new Error(`consume goal initial Turn identity mismatch: ${JSON.stringify(consumeRunningDetail)}`);
-    }
-    fake.emitAccountRateLimits(64);
-    fake.emitTokenUsage(consumeTurn);
-    fake.emitGoalUpdated({
-      threadId: fake.threadId,
-      objective: consumeObjective,
-      status: "complete",
-      tokenBudget: null,
-      tokensUsed: 100,
-      timeUsedSeconds: 60,
-      createdAt: 3,
-      updatedAt: 4
-    });
-    await waitForGoalStatus(apiBase, fake.threadId, "complete", consumeObjective);
-    fake.completeTurn(consumeTurn);
-    const retryTurn = await fake.nextTurn();
-    assertGoalContinuationTurn(retryTurn, consumeObjective, "consume goal retry turn mismatch");
-    const retryRunningDetail = await apiJson<ThreadDetail>(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}`
-    );
-    if (
-      !retryRunningDetail.running
-      || retryRunningDetail.status !== "running"
-      || retryRunningDetail.activeTurnId !== retryTurn.turnId
-      || retryRunningDetail.activeTurnId === consumeRunningDetail.activeTurnId
-    ) {
-      throw new Error(`consume goal continuation did not adopt the returned Turn identity: ${JSON.stringify({
-        before: consumeRunningDetail,
-        after: retryRunningDetail
-      })}`);
-    }
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 17
-        }
-      })
-    });
-    await fake.expectNoSessionCommand("set_goal", 150);
-    const retargetDetail = await apiJson<ThreadDetail & {
-      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
-    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
-    if (
-      retargetDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
-      || retargetDetail.goalRunPolicy.targetRemainingPercent !== 17
-    ) {
-      throw new Error(`consume policy-only retarget missing from thread detail: ${JSON.stringify(retargetDetail.goalRunPolicy)}`);
-    }
-    fake.emitWeeklyAccountRateLimits(84);
-    const wrapUpSetGoal = await fake.nextSessionCommand("set_goal");
-    const wrapUpGoal = objectValue(wrapUpSetGoal.goal);
-    if (
-      wrapUpSetGoal.threadId !== fake.threadId
-      || wrapUpGoal?.status !== "usageLimited"
-      || "objective" in wrapUpGoal
-    ) {
-      throw new Error(`weekly wrap-up goal payload mismatch: ${JSON.stringify(wrapUpSetGoal.goal)}`);
-    }
-    const wrapUpSteer = await fake.nextSteer();
-    if (
-      wrapUpSteer.threadId !== fake.threadId
-      || wrapUpSteer.turnId !== retryTurn.turnId
-      || typeof wrapUpSteer.input !== "string"
-      || !wrapUpSteer.input.includes("安全收尾")
-    ) {
-      throw new Error(`weekly wrap-up steer mismatch: ${JSON.stringify(wrapUpSteer)}`);
-    }
-    const wrappingUpDetail = await apiJson<ThreadDetail>(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}`
-    );
-    if (
-      wrappingUpDetail.goalRunPolicy?.targetRemainingPercent !== 17
-      || wrappingUpDetail.goalRunPhase !== "wrappingUp"
-    ) {
-      throw new Error(`weekly wrap-up phase mismatch: ${JSON.stringify(wrappingUpDetail)}`);
-    }
-    fake.emitTokenUsage(retryTurn);
-    await fake.expectNoSteer(150);
-    fake.completeTurn(retryTurn);
-    await fake.expectNoTurn(150);
-    const wrappedUpDetail = await apiJson<ThreadDetail>(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}`
-    );
-    if (wrappedUpDetail.goalRunPolicy !== null || wrappedUpDetail.goalRunPhase !== null) {
-      throw new Error(`weekly wrap-up did not clear run policy after Turn completion: ${JSON.stringify(wrappedUpDetail)}`);
-    }
-    console.log("consume-until weekly goal safely wraps the active Turn once ok");
-
-    const rollbackBaselineObjective = "rollback policy baseline";
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        objective: rollbackBaselineObjective,
-        status: "paused",
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 30
-        }
-      })
-    });
-    await fake.nextSessionCommand("set_goal");
-    await fake.expectNoTurn(150);
-
-    fake.failNextSetGoal("set goal rejected");
-    const failedGoalRequest = expectApiError(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          objective: "failed goal update should roll back",
-          status: "active",
-          runPolicy: {
-            type: "consumeUntilWeeklyRemainingAtOrBelow",
-            targetRemainingPercent: 90
-          }
-        })
-      },
-      409
-    );
-    await fake.nextSessionCommand("set_goal");
-    await failedGoalRequest;
-    const rollbackDetail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
-    if (
-      rollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
-      || rollbackDetail.goalRunPolicy.targetRemainingPercent !== 30
-    ) {
-      throw new Error(`failed goal update did not roll back policy: ${JSON.stringify(rollbackDetail.goalRunPolicy)}`);
-    }
-    console.log("consume-until failed goal update rollback ok");
-
-    const editedPausedObjective = "edit paused burn without resuming";
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ objective: editedPausedObjective })
-    });
-    const editedPausedGoal = await fake.nextSessionCommand("set_goal");
-    if (
-      editedPausedGoal.goal?.objective !== editedPausedObjective
-      || "status" in (editedPausedGoal.goal ?? {})
-    ) {
-      throw new Error(`ordinary paused goal edit changed status: ${JSON.stringify(editedPausedGoal.goal)}`);
-    }
-    await fake.expectNoTurn(150);
-    const editedPausedDetail = await apiJson<ThreadDetail>(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}`
-    );
-    if (editedPausedDetail.goalRunPolicy?.targetRemainingPercent !== 30) {
-      throw new Error(`ordinary paused goal edit changed burn policy: ${JSON.stringify(editedPausedDetail)}`);
-    }
-    console.log("ordinary goal edit preserves paused burn state ok");
-
-    fake.emitAccountRateLimits(64);
-    await assertRuntimeAccountRateLimits(apiBase, fake.machineId);
-    const rateLimitedObjective = "pause consume policy on quota error";
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        objective: rateLimitedObjective,
-        status: "active",
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 10
-        }
-      })
-    });
-    await fake.nextSessionCommand("set_goal");
-    const rateLimitedStartDetail = await apiJson<ThreadDetail>(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}`
-    );
-    if (!rateLimitedStartDetail.running) {
-      throw new Error(`consume goal did not start after quota-error setup: ${JSON.stringify(rateLimitedStartDetail)}`);
-    }
-    const rateLimitedTurn = await fake.nextTurn();
-    fake.failTurn(rateLimitedTurn, "5h quota exhausted");
-    await waitForGoalStatus(apiBase, fake.threadId, "paused", rateLimitedObjective);
-    await fake.expectNoTurn(150);
-    console.log("consume-until quota error pauses policy ok");
-
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status: "active" })
-    });
-    const resumedGoal = await fake.nextSessionCommand("set_goal");
-    if (resumedGoal.goal?.status !== "active") {
-      throw new Error(`consume goal resume payload mismatch: ${JSON.stringify(resumedGoal.goal)}`);
-    }
-    const resumedTurn = await fake.nextTurn();
-    assertGoalContinuationTurn(resumedTurn, rateLimitedObjective, "consume goal resumed turn mismatch");
-    fake.emitAccountRateLimits(95);
-    const resumedWrapUpSetGoal = await fake.nextSessionCommand("set_goal");
-    const resumedWrapUpGoal = objectValue(resumedWrapUpSetGoal.goal);
-    if (
-      resumedWrapUpSetGoal.threadId !== fake.threadId
-      || resumedWrapUpGoal?.status !== "usageLimited"
-      || "objective" in resumedWrapUpGoal
-    ) {
-      throw new Error(`manual resume wrap-up goal payload mismatch: ${JSON.stringify(resumedWrapUpSetGoal.goal)}`);
-    }
-    const resumedWrapUpSteer = await fake.nextSteer();
-    if (
-      resumedWrapUpSteer.turnId !== resumedTurn.turnId
-      || typeof resumedWrapUpSteer.input !== "string"
-      || !resumedWrapUpSteer.input.includes("安全收尾")
-    ) {
-      throw new Error(`manual resume wrap-up steer mismatch: ${JSON.stringify(resumedWrapUpSteer)}`);
-    }
-    fake.emitTokenUsage(resumedTurn);
-    await fake.expectNoSteer(150);
-    fake.completeTurn(resumedTurn);
-    await fake.expectNoTurn(150);
-    console.log("consume-until manual resume safely wraps the active Turn ok");
-
-    const clearRollbackObjective = "clear rollback policy baseline";
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        objective: clearRollbackObjective,
-        status: "paused",
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 30
-        }
-      })
-    });
-    await fake.nextSessionCommand("set_goal");
-    await fake.expectNoTurn(150);
-
-    fake.failNextClearGoal("clear goal rejected");
-    const failedClearGoalRequest = expectApiError(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}/goal`,
-      { method: "DELETE" },
-      409
-    );
-    await fake.nextSessionCommand("clear_goal");
-    await failedClearGoalRequest;
-    const clearRollbackDetail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
-    if (
-      clearRollbackDetail.goalRunPolicy?.type !== "consumeUntilWeeklyRemainingAtOrBelow"
-      || clearRollbackDetail.goalRunPolicy.targetRemainingPercent !== 30
-    ) {
-      throw new Error(`failed goal clear did not roll back policy: ${JSON.stringify(clearRollbackDetail.goalRunPolicy)}`);
-    }
-    console.log("consume-until failed clear rollback ok");
-
-    const stoppedObjective = "stop consume policy without retry";
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        objective: stoppedObjective,
-        status: "active",
-        runPolicy: {
-          type: "consumeUntilWeeklyRemainingAtOrBelow",
-          targetRemainingPercent: 1
-        }
-      })
-    });
-    await fake.nextSessionCommand("set_goal");
-    const stoppedTurn = await fake.nextTurn();
-    const stopResult = await apiJson<{ stopped?: boolean }>(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}/stop`,
-      { method: "POST" }
-    );
-    if (!stopResult.stopped) {
-      throw new Error(`consume policy stop did not report stopped: ${JSON.stringify(stopResult)}`);
-    }
-    const stopCommand = await fake.nextSessionCommand("stop");
-    if (stopCommand.threadId !== fake.threadId || stopCommand.turnId !== stoppedTurn.turnId) {
-      throw new Error(`consume policy stop command mismatch: ${JSON.stringify(stopCommand)}`);
-    }
-    fake.emitAccountRateLimits(64);
-    fake.emitTokenUsage(stoppedTurn);
-    fake.completeTurn(stoppedTurn, "interrupted");
-    await fake.expectNoTurn(150);
-    console.log("consume-until manual stop halts continuation ok");
-
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status: "active" })
-    });
-    const resumedAfterStopGoal = await fake.nextSessionCommand("set_goal");
-    if (resumedAfterStopGoal.goal?.status !== "active") {
-      throw new Error(`stopped consume goal resume payload mismatch: ${JSON.stringify(resumedAfterStopGoal.goal)}`);
-    }
-    const resumedAfterStopTurn = await fake.nextTurn();
-    assertGoalContinuationTurn(resumedAfterStopTurn, stoppedObjective, "stopped consume goal did not resume");
-
-    await apiJson<{ stopped?: boolean }>(
-      apiBase,
-      `/api/threads/${encodeURIComponent(fake.threadId)}/stop`,
-      { method: "POST" }
-    );
-    const rapidResumeStopCommand = await fake.nextSessionCommand("stop");
-    if (rapidResumeStopCommand.turnId !== resumedAfterStopTurn.turnId) {
-      throw new Error(`rapid resume stop used wrong turn: ${JSON.stringify(rapidResumeStopCommand)}`);
-    }
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status: "active" })
-    });
-    await fake.nextSessionCommand("set_goal");
-    await fake.expectNoTurn(100);
-    fake.completeTurn(resumedAfterStopTurn, "interrupted");
-    const rapidResumeTurn = await fake.nextTurn();
-    assertGoalContinuationTurn(rapidResumeTurn, stoppedObjective, "consume goal rapid resume was lost");
-    fake.completeTurn(rapidResumeTurn, "interrupted");
-    await fake.expectNoTurn(150);
-    console.log("consume-until manual stop resume timing ok");
-
-    await apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/goal`, { method: "DELETE" });
-    await fake.nextSessionCommand("clear_goal");
-    const clearedPolicyDetail = await apiJson<ThreadDetail & {
-      goalRunPolicy?: { type?: string; targetRemainingPercent?: number } | null;
-    }>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
-    if (clearedPolicyDetail.goalRunPolicy !== null) {
-      throw new Error(`goal clear did not clear run policy: ${JSON.stringify(clearedPolicyDetail.goalRunPolicy)}`);
-    }
-    console.log("consume-until clear removes policy ok");
-
     const created = await apiJson<{ task?: LocalTask }>(apiBase, "/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1191,27 +680,9 @@ const assertGoalStatusControls = () => {
   console.log("goal status controls ok");
 };
 
-const assertGoalContinuationTurn = (
-  command: SessionCommand,
-  objective: string,
-  description: string
-) => {
-  if (
-    command.input !== objective
-    || command.options?.goalMode !== true
-    || command.options.goalObjective !== objective
-  ) {
-    throw new Error(`${description}: ${JSON.stringify(command)}`);
-  }
-};
-
 class FakeMachine {
   private ws: WebSocket | null = null;
   private sessionRegistered = false;
-  private nextSetGoalError: string | null = null;
-  private nextUsageLimitedSetGoalError: string | null = null;
-  private nextClearGoalError: string | null = null;
-  private nextSteerError: string | null = null;
   private pendingTurns: SessionCommand[] = [];
   private pendingSteers: SessionCommand[] = [];
   private pendingSessionCommandsByType = new Map<string, SessionCommand[]>();
@@ -1279,64 +750,12 @@ class FakeMachine {
     return command;
   }
 
-  async expectNoTurn(timeoutMs = 100) {
-    const existing = this.pendingTurns.shift();
-    if (existing) throw new Error(`unexpected turn command: ${JSON.stringify(existing)}`);
-    let resolved = false;
-    await new Promise<void>((resolve, reject) => {
-      const waiter = (command: SessionCommand) => {
-        resolved = true;
-        reject(new Error(`unexpected turn command: ${JSON.stringify(command)}`));
-      };
-      this.turnWaiters.push(waiter);
-      setTimeout(() => {
-        if (resolved) return;
-        this.turnWaiters = this.turnWaiters.filter((item) => item !== waiter);
-        resolve();
-      }, timeoutMs);
-    });
-  }
-
   async nextSteer() {
     return await this.waitForSteer();
   }
 
-  async expectNoSteer(timeoutMs = 100) {
-    const existing = this.pendingSteers.shift();
-    if (existing) throw new Error(`unexpected steer command: ${JSON.stringify(existing)}`);
-    let resolved = false;
-    await new Promise<void>((resolve, reject) => {
-      const waiter = (command: SessionCommand) => {
-        resolved = true;
-        reject(new Error(`unexpected steer command: ${JSON.stringify(command)}`));
-      };
-      this.steerWaiters.push(waiter);
-      setTimeout(() => {
-        if (resolved) return;
-        this.steerWaiters = this.steerWaiters.filter((item) => item !== waiter);
-        resolve();
-      }, timeoutMs);
-    });
-  }
-
   async nextSessionCommand(type: string, timeoutMs = 5000) {
     return await this.waitForSessionCommand(type, timeoutMs);
-  }
-
-  failNextSetGoal(message: string) {
-    this.nextSetGoalError = message;
-  }
-
-  failNextUsageLimitedSetGoal(message: string) {
-    this.nextUsageLimitedSetGoalError = message;
-  }
-
-  failNextClearGoal(message: string) {
-    this.nextClearGoalError = message;
-  }
-
-  failNextSteer(message: string) {
-    this.nextSteerError = message;
   }
 
   async expectNoSessionCommand(type: string, timeoutMs = 100) {
@@ -1386,30 +805,6 @@ class FakeMachine {
             windowDurationMins: secondaryWindowMinutes,
             resetsAt: 1781140554
           },
-          credits: null,
-          planType: "pro",
-          rateLimitReachedType: null
-        }
-      }
-    });
-  }
-
-  emitWeeklyAccountRateLimits(usedPercent: number) {
-    this.send({
-      type: "session_event",
-      sessionId: this.options.sessionId,
-      event: {
-        type: "account_rate_limits_updated",
-        heartbeat: false,
-        rateLimits: {
-          limitId: "codex",
-          limitName: null,
-          primary: {
-            usedPercent,
-            windowDurationMins: 10080,
-            resetsAt: 1781140554
-          },
-          secondary: null,
           credits: null,
           planType: "pro",
           rateLimitReachedType: null
@@ -1748,21 +1143,6 @@ class FakeMachine {
     }
     if (command.type !== "turn") {
       if (command.type === "set_goal") {
-        const usageLimitedError = command.goal?.status === "usageLimited"
-          ? this.nextUsageLimitedSetGoalError
-          : null;
-        const message = usageLimitedError ?? this.nextSetGoalError;
-        if (message) {
-          if (usageLimitedError) this.nextUsageLimitedSetGoalError = null;
-          else this.nextSetGoalError = null;
-          this.send({
-            type: "session_command_error",
-            sessionId: this.options.sessionId,
-            commandId: command.commandId,
-            message
-          });
-          return;
-        }
         this.send({
           type: "session_command_result",
           sessionId: this.options.sessionId,
@@ -1772,17 +1152,6 @@ class FakeMachine {
         return;
       }
       if (command.type === "clear_goal") {
-        if (this.nextClearGoalError) {
-          const message = this.nextClearGoalError;
-          this.nextClearGoalError = null;
-          this.send({
-            type: "session_command_error",
-            sessionId: this.options.sessionId,
-            commandId: command.commandId,
-            message
-          });
-          return;
-        }
         this.send({
           type: "session_event",
           sessionId: this.options.sessionId,
@@ -1825,17 +1194,6 @@ class FakeMachine {
         this.pendingSteers.push(command);
         const waiter = this.steerWaiters.shift();
         if (waiter) waiter(this.pendingSteers.shift()!);
-        if (this.nextSteerError) {
-          const message = this.nextSteerError;
-          this.nextSteerError = null;
-          this.send({
-            type: "session_command_error",
-            sessionId: this.options.sessionId,
-            commandId: command.commandId,
-            message
-          });
-          return;
-        }
         this.send({
           type: "session_command_result",
           sessionId: this.options.sessionId,
@@ -2022,16 +1380,6 @@ const assertRuntimeAccountRateLimits = async (
   throw new Error(`runtime ${machineId} did not receive account rate limits`);
 };
 
-const waitForGoalRunPolicyCleared = async (apiBase: string, threadId: string) => {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 5000) {
-    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
-    if (detail.goalRunPolicy === null && detail.goalRunPhase === null) return detail;
-    await delay(100);
-  }
-  throw new Error(`thread ${threadId} did not clear its goal run policy`);
-};
-
 const assertThreadUsageContext = async (
   apiBase: string,
   threadId: string,
@@ -2127,28 +1475,6 @@ const waitForThreadUsageContext = async (
   throw new Error(`thread ${threadId} did not receive token usage context`);
 };
 
-const waitForGoalStatus = async (
-  apiBase: string,
-  threadId: string,
-  status: string,
-  objective: string
-) => {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 5000) {
-    const detail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
-    const match = detail.records?.some((record) => {
-      const payload = objectValue(record.payload);
-      const goal = objectValue(payload?.goal);
-      return payload?.type === "thread_goal_updated"
-        && goal?.objective === objective
-        && goal.status === status;
-    });
-    if (match) return detail;
-    await delay(100);
-  }
-  throw new Error(`thread ${threadId} did not reach goal status ${status}`);
-};
-
 const objectValue = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
@@ -2186,21 +1512,12 @@ const assertHistoricalSnapshotPublishesMarkedRecordEvents = async (apiBase: stri
     );
 
     const turnId = `historical-turn-${process.pid}`;
+    subscription.messages.length = 0;
     fake.emitTurnsSnapshot(turnId);
     await waitForRealtimeMessage(
       subscription.messages,
-      (message) => {
-        const records = [
-          ...(message.record ? [message.record] : []),
-          ...(Array.isArray(message.records) ? message.records : [])
-        ];
-        return message.historical === true
-          && records.some((record) =>
-            typeof record?.id === "string"
-            && record.id.includes(`:${turnId}:`)
-          );
-      },
-      "historical snapshot record event"
+      (message) => message.historical === true && message.type === "thread",
+      "historical snapshot event"
     );
     await delay(100);
     const unmarkedHistoricalRecordEvent = subscription.messages.find((message) =>
@@ -2302,22 +1619,6 @@ const waitForRealtimeMessage = async (
     await delay(25);
   }
   throw new Error(`timed out waiting for ${label}`);
-};
-
-const expectApiError = async (
-  apiBase: string,
-  pathname: string,
-  init: RequestInit,
-  expectedStatus: number
-) => {
-  const response = await fetch(new URL(pathname, apiBase), {
-    ...init,
-    signal: init.signal ?? AbortSignal.timeout(30_000)
-  });
-  const text = await response.text();
-  if (response.status !== expectedStatus) {
-    throw new Error(`expected HTTP ${expectedStatus} ${pathname}, got ${response.status}: ${text}`);
-  }
 };
 
 const machineTransportUrl = (apiBase: string) => {

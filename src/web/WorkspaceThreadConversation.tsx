@@ -1,9 +1,5 @@
 import { Target } from "lucide-react";
 import {
-  rateLimitUsageForWindowMinutes,
-  sevenDayRateLimitWindowMinutes
-} from "../core/threadUsage.js";
-import {
   goalStatusClass,
   goalStatusControl,
   goalStatusLabel
@@ -20,19 +16,10 @@ export type WorkspaceThreadConversationProps = {
   workspace: AppWorkspaceViewModel;
 };
 
-const formatGoalPolicyPercent = (value: number) =>
-  `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
-
-const weeklyGoalPolicyLabel = (targetRemainingPercent: number, wrappingUp: boolean) =>
-  wrappingUp
-    ? `安全收尾 · 7d ≤ ${formatGoalPolicyPercent(targetRemainingPercent)}`
-    : `燃烧 · 7d → ${formatGoalPolicyPercent(targetRemainingPercent)}`;
-
 export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConversationProps) => {
   const {
     activeCanStop,
     activeGoal,
-    activeRuntime,
     activeThread,
     activeThreadExecutionMeta,
     activeUserMessageHistory,
@@ -88,13 +75,6 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
   if (!activeThread) return null;
 
   const threadId = activeThread.threadId;
-  const sevenDayRateLimit = rateLimitUsageForWindowMinutes(
-    activeRuntime?.accountRateLimits,
-    sevenDayRateLimitWindowMinutes
-  );
-  const currentSevenDayRemainingPercent = sevenDayRateLimit
-    ? Math.max(0, Math.min(100, 100 - sevenDayRateLimit.usedPercent))
-    : undefined;
   const activeGoalStatusControl = activeGoal ? goalStatusControl(activeGoal.status) : null;
 
   const goal = activeGoal ? (
@@ -107,14 +87,6 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
         <Target className="goalStripIcon" aria-hidden="true" />
         <span className="goalStripLabel">{goalStatusLabel(activeGoal.status)}</span>
         <span className="goalStripObjective" title={activeGoal.objective}>{activeGoal.objective}</span>
-        {activeThread.goalRunPolicy?.type === "consumeUntilWeeklyRemainingAtOrBelow" ? (
-          <span className="goalStripPolicy">
-            {weeklyGoalPolicyLabel(
-              activeThread.goalRunPolicy.targetRemainingPercent,
-              activeThread.goalRunPhase === "wrappingUp"
-            )}
-          </span>
-        ) : null}
         {activeGoal.timeUsedSeconds !== undefined ? (
           <span className="goalStripAge">
             <LiveGoalDuration
@@ -135,11 +107,8 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
           aria-label="编辑目标"
           onClick={() => {
             setGoalDialog({
-              kind: "goal",
               threadId,
               objective: activeGoal.objective,
-              targetRemainingPercent: "",
-              currentRemainingPercent: currentSevenDayRemainingPercent,
               saving: false,
               error: ""
             });
@@ -177,7 +146,6 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     <ThreadComposerLeftActions
       workspace={workspace}
       thread={activeThread}
-      activeGoal={activeGoal}
       fileInputRef={imageFileInputRef}
     />
   );

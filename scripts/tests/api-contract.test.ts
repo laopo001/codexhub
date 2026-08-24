@@ -91,6 +91,9 @@ test("SSH connect rejects the removed custom remote command", () => {
 test("thread goal updates reject removed snake_case fields", () => {
   assert.equal(threadGoalUpdateSchema.safeParse({ token_budget: 1000 }).success, false);
   assert.equal(threadGoalUpdateSchema.safeParse({ objective: "finish", thread_id: "thread-1" }).success, false);
+  assert.equal(threadGoalUpdateSchema.safeParse({
+    runPolicy: { type: "consumeUntilWeeklyRemainingAtOrBelow", targetRemainingPercent: 20 }
+  }).success, false);
   assert.deepEqual(threadGoalUpdateSchema.parse({ objective: "finish", tokenBudget: 1000 }), {
     objective: "finish",
     tokenBudget: 1000

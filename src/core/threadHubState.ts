@@ -5,7 +5,6 @@ import type {
   SessionCommand,
   SessionRegistration,
   SessionSummary,
-  ThreadGoalRunPolicy,
   ThreadRunOptions,
   ThreadStreamEvent
 } from "../shared/threadTypes.js";
@@ -23,19 +22,6 @@ export type SessionState = SessionSummary & {
   waiters: Set<SessionCommandWaiter>;
 };
 
-export type GoalRunState = {
-  policy: ThreadGoalRunPolicy | null;
-  phase: "running" | "wrappingUp";
-  objective?: string;
-  status?: string;
-  activeRun?: string;
-  wrapUpSteerTurnId?: string;
-  wrapUpSteerAttempts?: number;
-  usageLimitUpdatePending?: boolean;
-  usageLimitUpdateAttempts?: number;
-  continuation: "normal" | "stopped" | "resume";
-};
-
 export type ThreadState = {
   threadId: string;
   workingDirectory: string;
@@ -43,7 +29,6 @@ export type ThreadState = {
   sessionId?: string;
   appServerTurnId?: string;
   threadOptions: ThreadOptions;
-  goalRun: GoalRunState;
   running: boolean;
   executionStatus: "waiting" | "running" | "idle";
   title: string;
@@ -62,7 +47,6 @@ export type PendingCommand = {
   workingDirectory?: string;
   keepTurns?: number;
   input?: ProxyInput;
-  recordSubmissionFailure?: boolean;
   knownAppServerTurnIds?: Set<string>;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;

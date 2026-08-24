@@ -68,7 +68,6 @@ export const SubagentThreadConversation = ({
         <ThreadComposerLeftActions
           workspace={workspace}
           thread={thread}
-          activeGoal={activeGoal}
           fileInputRef={fileInputRef}
         />
       )}

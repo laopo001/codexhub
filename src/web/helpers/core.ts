@@ -73,29 +73,11 @@ const isThreadSummaryLike = (value: unknown): value is ThreadSummary => {
 
 const normalizeThreads = (threads: unknown): ThreadSummary[] =>
   Array.isArray(threads)
-    ? threads.filter(isThreadSummaryLike).map((thread) => {
-      const goalRunPolicy = normalizeThreadGoalRunPolicy(thread.goalRunPolicy);
-      return {
-        ...thread,
-        title: hasNonBlankString(thread.title) ? thread.title : thread.threadId,
-        goalRunPolicy,
-        goalRunPhase: goalRunPolicy
-          ? thread.goalRunPhase === "wrappingUp" ? "wrappingUp" : "running"
-          : null
-      };
-    })
+    ? threads.filter(isThreadSummaryLike).map((thread) => ({
+      ...thread,
+      title: hasNonBlankString(thread.title) ? thread.title : thread.threadId
+    }))
     : [];
-
-const normalizeThreadGoalRunPolicy = (value: unknown): ThreadSummary["goalRunPolicy"] => {
-  const policy = asRecord(value);
-  if (policy?.type !== "consumeUntilWeeklyRemainingAtOrBelow") return null;
-  const target = policy.targetRemainingPercent;
-  if (typeof target !== "number" || !Number.isFinite(target) || target < 0 || target >= 100) return null;
-  return {
-    type: "consumeUntilWeeklyRemainingAtOrBelow",
-    targetRemainingPercent: target
-  };
-};
 
 const isRuntimeLike = (value: unknown): value is RuntimeSummary => {
   const record = asRecord(value);
@@ -968,9 +950,7 @@ const threadSummariesEqual = (left: ThreadSummary, right: ThreadSummary) => {
     && JSON.stringify(left.activePermissionProfile) === JSON.stringify(right.activePermissionProfile)
     && JSON.stringify(left.sandboxPolicy) === JSON.stringify(right.sandboxPolicy)
     && JSON.stringify(left.lastUsage) === JSON.stringify(right.lastUsage)
-    && JSON.stringify(left.threadUsage) === JSON.stringify(right.threadUsage)
-    && JSON.stringify(left.goalRunPolicy) === JSON.stringify(right.goalRunPolicy)
-    && left.goalRunPhase === right.goalRunPhase;
+    && JSON.stringify(left.threadUsage) === JSON.stringify(right.threadUsage);
 };
 
 export const selectedThreadOptions = (

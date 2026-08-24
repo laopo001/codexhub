@@ -1,6 +1,6 @@
 import React from "react";
 import { Modal, Select, Switch } from "antd";
-import { Flame, Target } from "lucide-react";
+import { Target } from "lucide-react";
 import { isNativeElectronSurface } from "./appConfig.js";
 import {
   apiRouteJson,
@@ -453,7 +453,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
           <section className="goalDialog" role="dialog" aria-modal="true" aria-labelledby="goalDialogTitle">
             <header className="goalDialogHeader">
               <div className="goalDialogMark" aria-hidden="true">
-                {goalDialog.kind === "burn" ? <Flame /> : <Target />}
+                <Target />
               </div>
               <button
                 type="button"
@@ -465,7 +465,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 ×
               </button>
             </header>
-            <h2 id="goalDialogTitle">{goalDialog.kind === "burn" ? "燃烧目标" : "编辑目标"}</h2>
+            <h2 id="goalDialogTitle">编辑目标</h2>
             <textarea
               value={goalDialog.objective}
               onChange={(event) => setGoalDialog((current) => current
@@ -474,30 +474,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               rows={7}
               autoFocus
             />
-            {goalDialog.kind === "burn" ? (
-              <label className="goalPolicyField">
-                <span>7d 剩余降到此值时开始安全收尾</span>
-                <span className="goalPolicyPercentInput">
-                  <input
-                    type="number"
-                    min={0}
-                    max={99.9}
-                    step={0.1}
-                    required
-                    value={goalDialog.targetRemainingPercent}
-                    onChange={(event) => setGoalDialog((current) => current
-                      ? { ...current, targetRemainingPercent: event.target.value, error: "" }
-                      : current)}
-                  />
-                  <span>%</span>
-                </span>
-                <span className="goalPolicyHint">
-                  {goalDialog.currentRemainingPercent === undefined
-                    ? "当前 7d 剩余暂不可用；获取额度后开始判断。"
-                    : `当前 7d 剩余 ${formatGoalDialogPercent(goalDialog.currentRemainingPercent)}。达到触发线后，当前 Turn 会完成安全收尾，但可能略微超过该值。`}
-                </span>
-              </label>
-            ) : null}
             {goalDialog.error ? <div className="goalDialogError">{goalDialog.error}</div> : null}
             <footer className="goalDialogActions">
               <button type="button" onClick={() => setGoalDialog(null)} disabled={goalDialog.saving}>取消</button>
@@ -505,9 +481,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 type="button"
                 className="primary"
                 onClick={() => void saveGoalDialog()}
-                disabled={goalDialog.saving
-                  || !goalDialog.objective.trim()
-                  || (goalDialog.kind === "burn" && !goalDialog.targetRemainingPercent.trim())}
+                disabled={goalDialog.saving || !goalDialog.objective.trim()}
               >
                 {goalDialog.saving ? "保存中" : "保存"}
               </button>
@@ -942,9 +916,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     </>
   );
 };
-
-const formatGoalDialogPercent = (value: number) =>
-  `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
 
 const optionsWithoutAutoWhenResolved = <T extends { value: string; label: string }>(options: T[], value: string) =>
   value === "auto" ? options : options.filter((option) => option.value !== "auto");
