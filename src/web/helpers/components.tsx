@@ -1,11 +1,11 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import { Button, Modal, Switch } from "antd";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { X } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
 import { SubagentActivityMessage } from "../SubagentActivityMessage.js";
-import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusView, ImagePreviewState, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusView, BackgroundTerminalView, ImagePreviewState, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers, FilePreviewPayload } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import { asRecord, type SubagentActivityView } from "../../shared/recordTypes.js";
@@ -15,7 +15,8 @@ import { writeTextToClipboard } from "./composer.js";
 import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
 import { emptyMemoryCitation, formatMemoryCitationCount, formatMemoryCitationLines, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
 import { formatInspectDetail, renderToolMessageBody } from "./toolPreview.js";
-import { activityStatusTitle, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
+import { activityStatusPriority, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
+import { createStatusRegistry, StatusRegistryRows, StatusRegistryToggleIcon } from "./statusRegistry.js";
 
 const SyntaxCodeBlock = lazy(() => import("../SyntaxCodeBlock.js"));
 
@@ -942,68 +943,209 @@ const normalizePathSeparators = (value: string) => value.replace(/\\/g, "/");
 const comparableFilePath = (value: string, isWindowsPath: boolean) =>
   isWindowsPath ? value.toLowerCase() : value;
 
+const orderedActivityStatuses = (statuses: ActivityStatusView[]) => [...statuses]
+  .sort((left, right) => activityStatusPriority(left.key) - activityStatusPriority(right.key));
+
 export const EmptyMessages = () => (
   <div className="empty">输入一个任务，让本地 Codex 代理开始工作。</div>
 );
 
+export const StatusCardOverview = ({
+  executionMeta,
+  turnActive,
+  statuses,
+  backgroundTerminals = [],
+  expanded,
+  onToggleExpanded
+}: {
+  executionMeta: ThreadExecutionMeta;
+  turnActive: boolean;
+  statuses: ActivityStatusView[];
+  backgroundTerminals?: BackgroundTerminalView[];
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}) => {
+  const orderedStatuses = turnActive ? orderedActivityStatuses(statuses) : [];
+  const summaryStatuses = orderedStatuses.filter((status) => status.summaryText);
+  const hasBackgroundTerminals = backgroundTerminals.length > 0;
+  const hasHeaderMetrics = summaryStatuses.length > 0 || hasBackgroundTerminals;
+  return (
+    <div
+      className="activityStatusCardOverview"
+      aria-label={`Thread status: ${executionMeta.label}`}
+      title={`Thread · ${executionMeta.text}`}
+    >
+      <span className={`activityStatusSummary ${executionMeta.status}`}>
+        <span className="activityStatusIndicator" aria-hidden="true" />
+        <strong>{executionMeta.label}</strong>
+      </span>
+      {hasHeaderMetrics ? (
+        <span className="activityStatusHeaderMetrics">
+          {summaryStatuses.map((status) => (
+            <span className={`activityStatusHeaderMetric ${status.key}`} title={`${status.label}: ${status.text}`} key={status.key}>
+              <strong>{status.label}</strong>
+              <span>{renderActivityStatusText(status.summaryText ?? status.text)}</span>
+            </span>
+          ))}
+          {hasBackgroundTerminals ? (
+            <span
+              className="activityStatusHeaderMetric background"
+              title={`${backgroundTerminals.length} background process${backgroundTerminals.length === 1 ? "" : "es"}`}
+            >
+              <strong>BG</strong>
+              <span>{backgroundTerminals.length}</span>
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+      {turnActive && statuses.length ? (
+        <button
+          type="button"
+          className="activityStatusToggle"
+          onClick={onToggleExpanded}
+          aria-expanded={expanded}
+          aria-label={expanded ? "Collapse Turn details" : "Expand Turn details"}
+          title={expanded ? "Collapse Turn details" : "Expand Turn details"}
+        >
+          <StatusRegistryToggleIcon expanded={expanded} size={14} strokeWidth={2.4} />
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
+export const ThreadStatusCard = ({
+  backgroundTerminals = [],
+  onTerminate,
+}: {
+  backgroundTerminals?: BackgroundTerminalView[];
+  onTerminate: (processId: string) => void | Promise<void>;
+}) => {
+  const [expanded, setExpanded] = useState(true);
+  const [terminatingProcessIds, setTerminatingProcessIds] = useState<Set<string>>(() => new Set());
+  if (!backgroundTerminals.length) return null;
+  const backgroundRegistry = createStatusRegistry();
+  for (const terminal of backgroundTerminals) {
+    const terminating = terminatingProcessIds.has(terminal.processId);
+    backgroundRegistry.register({
+      id: `thread:background-terminal:${terminal.itemId}:${terminal.processId}`,
+      scope: "thread",
+      status: "in_progress",
+      preview: backgroundTerminalPreview(terminal),
+      actions: (
+        <button
+          type="button"
+          className="statusRegistryAction"
+          disabled={terminating}
+          aria-busy={terminating}
+          aria-label={`Terminate background process ${terminal.command}`}
+          title={terminating ? "Terminating background process" : "Terminate background process"}
+          onClick={() => {
+            setTerminatingProcessIds((current) => new Set(current).add(terminal.processId));
+            void Promise.resolve(onTerminate(terminal.processId)).catch(() => undefined).finally(() => {
+              setTerminatingProcessIds((current) => {
+                const next = new Set(current);
+                next.delete(terminal.processId);
+                return next;
+              });
+            });
+          }}
+        >
+          <X size={13} strokeWidth={2.3} aria-hidden="true" />
+        </button>
+      ),
+      ariaLabel: `Background process: ${terminal.command}`
+    });
+  }
+  const registry = createStatusRegistry();
+  registry.register({
+    id: "thread:backgrounds",
+    scope: "thread",
+    status: "in_progress",
+    preview: (
+      <>
+        <span className="statusRegistryLabel">BACKGROUNDS</span>
+        <span className="statusRegistryText">
+          {backgroundTerminals.length} process{backgroundTerminals.length === 1 ? "" : "es"}
+        </span>
+      </>
+    ),
+    detail: <StatusRegistryRows entries={backgroundRegistry.entries("thread")} />,
+    expanded,
+    onToggle: () => setExpanded((current) => !current),
+    ariaLabel: `Backgrounds: ${backgroundTerminals.length} process${backgroundTerminals.length === 1 ? "" : "es"}`
+  });
+  return (
+    <div className="activityStatusSection threadStatusCard" aria-label="Thread background processes">
+      <StatusRegistryRows entries={registry.entries("thread")} />
+    </div>
+  );
+};
+
 export const ActivityStatusBar = ({
   statuses,
-  executionMeta,
   expanded,
   expandedKeys,
-  onToggleExpanded,
   onToggle
 }: {
   statuses: ActivityStatusView[];
-  executionMeta: ThreadExecutionMeta;
   expanded: boolean;
   expandedKeys: Set<string>;
-  onToggleExpanded: () => void;
   onToggle: (key: string) => void;
 }) => {
-  const title = [executionMeta.text, statuses.length ? activityStatusTitle(statuses) : null]
-    .filter(Boolean)
-    .join("\n");
-  const summaryStatuses = statuses.filter((status) => status.summaryText);
-  const ToggleIcon = expanded ? ChevronDown : ChevronUp;
+  const registry = createStatusRegistry();
+  for (const status of orderedActivityStatuses(statuses)) {
+    const detail = status.steps?.length || status.files?.length ? (
+      <>
+        {status.steps?.length ? <ActivityStatusPlanSteps steps={status.steps} /> : null}
+        {status.files?.length ? <ActivityStatusFiles files={status.files} /> : null}
+      </>
+    ) : undefined;
+    registry.register({
+      id: `turn:${status.key}`,
+      scope: "turn",
+      status: status.status,
+      preview: (
+        <>
+          <span className="statusRegistryLabel">{status.label}</span>
+          <span className="statusRegistryText">{renderActivityStatusText(status.text)}</span>
+        </>
+      ),
+      detail,
+      expanded: expanded || expandedKeys.has(status.key),
+      onToggle: () => onToggle(status.key),
+      ariaLabel: `${status.label}: ${status.text}`
+    });
+  }
   return (
     <div
-      className={`activityStatusBar ${executionMeta.status}${expanded ? " expanded" : ""}`}
-      aria-live="polite"
-      title={title}
+      className={`activityStatusSection turnStatusCard${expanded ? " expanded" : ""}`}
+      aria-label="Turn details"
     >
-      <div className="activityStatusHeader" aria-label={`Status: ${executionMeta.text}`}>
-        <span className={`activityStatusSummary ${executionMeta.status}`}>
-          <span className="activityStatusIndicator" aria-hidden="true" />
-          <strong>{executionMeta.label}</strong>
-        </span>
-        {summaryStatuses.length ? (
-          <span className="activityStatusHeaderMetrics">
-            {summaryStatuses.map((status) => (
-              <span className={`activityStatusHeaderMetric ${status.key}`} title={`${status.label}: ${status.text}`} key={status.key}>
-                <strong>{status.label}</strong>
-                <span>{renderActivityStatusText(status.summaryText ?? status.text)}</span>
-              </span>
-            ))}
-          </span>
-        ) : null}
-        {statuses.length ? (
-          <button
-            type="button"
-            className="activityStatusToggle"
-            onClick={onToggleExpanded}
-            aria-expanded={expanded}
-            aria-label={expanded ? "Collapse status details" : "Expand status details"}
-            title={expanded ? "Collapse status details" : "Expand status details"}
-          >
-            <ToggleIcon size={14} strokeWidth={2.4} aria-hidden="true" />
-          </button>
-        ) : null}
-      </div>
-      {expanded && statuses.length ? (
-        <ActivityStatusRows statuses={statuses} expandedKeys={expandedKeys} onToggle={onToggle} showPlanSteps />
-      ) : null}
+      <StatusRegistryRows entries={registry.entries("turn")} />
     </div>
+  );
+};
+
+const backgroundTerminalPreview = (terminal: BackgroundTerminalView) => {
+  const metrics = [
+    terminal.cpuPercent == null ? null : `CPU ${terminal.cpuPercent.toFixed(1)}%`,
+    terminal.rssKb == null ? null : `RSS ${formatByteSize(terminal.rssKb * 1024)}`
+  ].filter(Boolean).join(" · ");
+  return (
+    <>
+      <span className="statusRegistryMain backgroundTerminalMain">
+        <code className="backgroundTerminalCommand" title={terminal.command}>{terminal.command}</code>
+        <span className="backgroundTerminalSeparator" aria-hidden="true">·</span>
+        <span className="backgroundTerminalMeta" title={terminal.cwd}>
+          {terminal.cwd}
+          {metrics ? ` · ${metrics}` : ""}
+        </span>
+      </span>
+      <span className="backgroundTerminalStatus">
+        <LiveStatusLabel status="in_progress" statusText="running" startedAt={terminal.startedAt} />
+      </span>
+    </>
   );
 };
 

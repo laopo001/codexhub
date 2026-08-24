@@ -30,6 +30,7 @@ import type {
   ThreadCandidatesPayload,
   ThreadDeletePayload,
   ThreadDetail,
+  ThreadBackgroundTerminalTerminatePayload,
   ThreadApprovalDecisionInput,
   ThreadApprovalPayload,
   ThreadCompactPayload,
@@ -234,6 +235,12 @@ export const apiRoutes = {
   ),
   stopThreadTurn: postNoBody<ThreadStopPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/stop`
+  ),
+  terminateBackgroundTerminal: postNoBody<
+    ThreadBackgroundTerminalTerminatePayload,
+    (threadId: string, processId: string) => string
+  >(
+    (threadId, processId) => `/api/threads/${encode(threadId)}/background-terminals/${encode(processId)}/terminate`
   ),
   compactThread: postNoBody<ThreadCompactPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/compact`

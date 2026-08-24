@@ -298,9 +298,9 @@ export type AppViewModelSource = AppSidebarViewModel & {
   showComposerSendButton: boolean;
   statusPanelExpanded: boolean;
   sidebarCollapsed: boolean;
-  statusPanelAvailable: boolean;
   statusScopeKey: string;
   stopTurn: (threadId: string) => MaybePromise;
+  terminateBackgroundTerminal: (threadId: string, processId: string) => MaybePromise;
   submitAuthToken: (event: React.FormEvent<HTMLFormElement>) => void;
   submitProjectPickerPath: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   switchMachineThread: (threadId: string) => MaybePromise;
@@ -402,12 +402,12 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "setSidebarCollapsed"
   | "setSubagentThreadDialog"
   | "showComposerSendButton"
-  | "statusPanelAvailable"
   | "statusPanelExpanded"
   | "sidebarCollapsed"
   | "statusScopeKey"
   | "turnStatusItems"
   | "stopTurn"
+  | "terminateBackgroundTerminal"
   | "subagentThreadDialog"
   | "submitAuthToken"
   | "switchMachineThread"
@@ -526,8 +526,8 @@ const workspaceKeys = [
   "setActiveThreadApprovalPolicyDraft", "setActiveThreadApprovalsReviewerDraft",
   "setActiveThreadPermissionProfileDraft",
   "setAuthTokenDraft", "setThreadControlsMenuOpen", "setThreadModelDialogOpen", "setSidebarCollapsed", "setSubagentThreadDialog",
-  "showComposerSendButton", "statusPanelAvailable", "statusPanelExpanded", "sidebarCollapsed",
-  "statusScopeKey", "turnStatusItems", "stopTurn", "subagentThreadDialog", "submitAuthToken", "switchMachineThread",
+  "showComposerSendButton", "statusPanelExpanded", "sidebarCollapsed",
+  "statusScopeKey", "turnStatusItems", "stopTurn", "terminateBackgroundTerminal", "subagentThreadDialog", "submitAuthToken", "switchMachineThread",
   "updateMessageRenderMode", "updateThreadInput", "updateThreadGoal", "openThreadEmptyMessage",
   "openThreadTabs"
 ] as const satisfies readonly (keyof AppWorkspaceViewModel)[];

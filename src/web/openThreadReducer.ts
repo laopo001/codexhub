@@ -1,6 +1,11 @@
 import type { SetStateAction } from "react";
 import type { CodexRecord } from "../shared/recordTypes.js";
-import type { ThreadRecordDelta, ThreadRecordsSnapshot, ThreadSummary } from "../shared/threadTypes.js";
+import type {
+  ThreadBackgroundTerminals,
+  ThreadRecordDelta,
+  ThreadRecordsSnapshot,
+  ThreadSummary
+} from "../shared/threadTypes.js";
 import type {
   ApprovalPolicyDraft,
   ApprovalsReviewerDraft,
@@ -33,6 +38,7 @@ export type ConversationThreadAction =
       records?: CodexRecord[];
       delta?: ThreadRecordDelta;
       snapshot?: ThreadRecordsSnapshot;
+      backgroundTerminals?: ThreadBackgroundTerminals;
     }
   | { type: "append-record"; threadId: string; record: CodexRecord }
   | { type: "set-fields"; threadId: string; fields: Partial<OpenThreadState> }
@@ -119,7 +125,8 @@ export const reduceConversationThreadState = (
       ...thread,
       ...action.thread,
       records: combineRecordSources(action.thread.records, thread.records),
-      history: action.thread.history ?? thread.history
+      history: action.thread.history ?? thread.history,
+      backgroundTerminals: action.thread.backgroundTerminals ?? thread.backgroundTerminals
     };
   }
   if (action.type === "merge-stream") {
@@ -134,6 +141,7 @@ export const reduceConversationThreadState = (
     return {
       ...thread,
       ...action.thread,
+      ...(action.backgroundTerminals === undefined ? {} : { backgroundTerminals: action.backgroundTerminals }),
       history: action.snapshot?.history ?? thread.history,
       records: action.delta
         ? applyThreadRecordDelta(mergedRecords, action.delta)

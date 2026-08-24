@@ -474,6 +474,181 @@ test("Plan Status rows stay compact until expanded and then render every step", 
   assert.match(expanded, /Review the final diff/);
 });
 
+test("approval interactions stay on their message and out of Turn Status", async () => {
+  const { activityStatusesFromRecords } = await import("../../src/web/helpers/records.js");
+  assert.deepEqual(activityStatusesFromRecords([{
+    id: "approval-request",
+    type: "response_item",
+    payload: {
+      type: "file_change",
+      approval: {
+        approvalId: "approval-1",
+        kind: "command_execution",
+        status: "pending"
+      }
+    }
+  }]), []);
+});
+
+test("Thread background processes use an expandable BACKGROUNDS section", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { ThreadStatusCard } = await import("../../src/web/helpers/components.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  const markup = renderToStaticMarkup(createElement(ThreadStatusCard, {
+    backgroundTerminals: [{
+      itemId: "background-item",
+      processId: "background-process",
+      command: "sleep 45",
+      cwd: "/tmp/codexhub",
+      osPid: 1234,
+      cpuPercent: 1.2,
+      rssKb: 4096
+    }],
+    onTerminate: () => undefined
+  }));
+
+  assert.match(markup, /BACKGROUNDS/);
+  assert.match(markup, /1 process/);
+  assert.match(markup, /aria-expanded="true"/);
+  assert.match(markup, /sleep 45/);
+  assert.match(markup, /statusRegistryAction/);
+  assert.match(markup, /Terminate background process sleep 45/);
+});
+
+test("Thread Status card stays mounted when the current Turn is idle", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { StatusCardOverview } = await import("../../src/web/helpers/components.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  const markup = renderToStaticMarkup(createElement(StatusCardOverview, {
+    executionMeta: {
+      status: "idle",
+      label: "Idle",
+      duration: "",
+      text: "Idle"
+    },
+    turnActive: false,
+    statuses: [],
+    backgroundTerminals: [],
+    expanded: false,
+    onToggleExpanded: () => undefined
+  }));
+
+  assert.match(markup, /Thread status: Idle/);
+  assert.match(markup, />Idle</);
+  assert.match(markup, /activityStatusCardOverview/);
+  assert.doesNotMatch(markup, />Thread</);
+});
+
+test("Turn Status card keeps Turn semantics while it is mounted", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { ActivityStatusBar } = await import("../../src/web/helpers/components.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  const markup = renderToStaticMarkup(createElement(ActivityStatusBar, {
+    statuses: [],
+    expanded: false,
+    expandedKeys: new Set<string>(),
+    onToggle: () => undefined
+  }));
+
+  assert.match(markup, /Turn details/);
+  assert.match(markup, /turnStatusCard/);
+});
+
+test("Turn Status keeps Usage at the end and colors file deltas", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { ActivityStatusBar, StatusCardOverview } = await import("../../src/web/helpers/components.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  const markup = renderToStaticMarkup(createElement(ActivityStatusBar, {
+    statuses: [
+      {
+        key: "usage",
+        label: "Usage",
+        status: "completed" as const,
+        text: "total 31.1k · +3 -1",
+        summaryText: "31.1k · +3 -1"
+      },
+      {
+        key: "files",
+        label: "Files",
+        status: "completed" as const,
+        text: "2 files changed · +3 -1",
+        summaryText: "+3 · -1 · 2 files changed",
+        files: [{ path: "src/app.tsx", added: 3, removed: 1 }]
+      }
+    ],
+    expanded: true,
+    expandedKeys: new Set<string>(),
+    onToggle: () => undefined
+  }));
+
+  assert.ok(markup.indexOf('statusRegistryLabel">Files') < markup.indexOf('statusRegistryLabel">Usage'));
+  assert.match(markup, /class="activityStatusDelta added">\+3<\/span>/);
+  assert.match(markup, /class="activityStatusDelta removed">-1<\/span>/);
+
+  const overview = renderToStaticMarkup(createElement(StatusCardOverview, {
+    executionMeta: {
+      status: "running",
+      label: "Running",
+      duration: "",
+      text: "Running"
+    },
+    turnActive: true,
+    statuses: [
+      {
+        key: "usage",
+        label: "Usage",
+        status: "completed" as const,
+        text: "total 31.1k",
+        summaryText: "31.1k"
+      },
+      {
+        key: "files",
+        label: "Files",
+        status: "completed" as const,
+        text: "2 files changed",
+        summaryText: "+3 · -1 · 2 files changed"
+      }
+    ],
+    backgroundTerminals: [{
+      itemId: "background-item",
+      processId: "background-process",
+      command: "sleep 45",
+      cwd: "/tmp/codexhub",
+      osPid: 1234,
+      cpuPercent: 1.2,
+      rssKb: 4096
+    }],
+    expanded: false,
+    onToggleExpanded: () => undefined
+  }));
+  assert.ok(overview.indexOf(">Files<") < overview.indexOf(">Usage<"));
+  assert.ok(overview.indexOf(">Usage<") < overview.indexOf(">BG<"));
+});
+
 test("completed Plan status uses an explicit completion label", async () => {
   const previousWindow = "window" in globalThis
     ? (globalThis as { window?: unknown }).window

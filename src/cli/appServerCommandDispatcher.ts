@@ -130,6 +130,25 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
     }
     return {};
   }
+  if (command.type === "terminate_background_terminal") {
+    const threadId = requireThreadId(command);
+    const processId = command.processId?.trim();
+    if (!processId) throw new Error("terminate_background_terminal command requires processId");
+    await host.ensureThreadLoaded(
+      threadId,
+      command.workingDirectory,
+      modelForCommand(command, host.defaultModel),
+      undefined,
+      { markBridgeStarted: true }
+    );
+    const result = asRecord(await host.request(
+      "thread/backgroundTerminals/terminate",
+      { threadId, processId },
+      command
+    ));
+    host.scheduleThreadSync(threadId);
+    return { terminated: result?.terminated === true };
+  }
   if (command.type === "rename_thread") {
     const threadId = requireThreadId(command);
     const name = typeof command.title === "string" ? command.title.trim() : "";

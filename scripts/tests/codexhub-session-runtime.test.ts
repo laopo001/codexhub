@@ -31,7 +31,9 @@ class CurrentProtocolSocket implements AppServerSocketLike {
   unsubscribeRequests = 0;
   readonly resumeParams: Record<string, unknown>[] = [];
   readonly turnsListParams: Record<string, unknown>[] = [];
+  readonly backgroundTerminalParams: Record<string, unknown>[] = [];
   readonly clientResponses: Array<{ id: string | number; result: unknown }> = [];
+  backgroundTerminals: unknown[];
   private readonly requestCounts = new Map<string, number>();
   private readonly listeners = new Map<"message" | "error" | "close", Listener[]>();
   private failedTurnPage = false;
@@ -50,7 +52,10 @@ class CurrentProtocolSocket implements AppServerSocketLike {
     turnPages?: unknown[][];
     failTurnPageOnce?: number;
     repeatTurnCursor?: boolean;
-  } = {}) {}
+    backgroundTerminals?: unknown[];
+  } = {}) {
+    this.backgroundTerminals = options.backgroundTerminals ?? [];
+  }
 
   send(data: string) {
     const message = JSON.parse(data) as { id?: string | number; method?: string; params?: unknown; result?: unknown };
@@ -125,6 +130,9 @@ class CurrentProtocolSocket implements AppServerSocketLike {
             ? `turn-page-${pageIndex + 1}`
             : null
       };
+    } else if (message.method === "thread/backgroundTerminals/list") {
+      this.backgroundTerminalParams.push(params ?? {});
+      result = { data: this.backgroundTerminals, nextCursor: null };
     } else if (message.method === "account/rateLimits/read") {
       result = {
         rateLimits: {
@@ -721,6 +729,71 @@ test("runtime excludes resume turns and unsubscribes app-server thread records",
     await callbacks.handleCommand({ ...baseCommand, seq: 3, commandId: "resubscribe-command", type: "subscribe_thread_records" });
     assert.equal(socket.resumeRequests, 2);
     assert.equal(socket.resumeParams.at(-1)?.excludeTurns, true);
+  } finally {
+    await session.stop();
+  }
+});
+
+test("runtime projects per-thread experimental background terminals and refreshes them", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket({
+    validResume: true,
+    backgroundTerminals: [{
+      itemId: "background-item",
+      processId: "background-process",
+      command: "pnpm run tts:script -- --script script.md",
+      cwd: "/tmp/current-protocol",
+      osPid: 12345,
+      cpuPercent: 2.5,
+      rssKb: 4096
+    }]
+  });
+  const forwardedEvents: unknown[] = [];
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-background-terminals",
+    appServerTransportFactory: async () => socket,
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return {
+        ...transportFactory(transportContext, nextCallbacks),
+        sendEvent: (event) => forwardedEvents.push(event)
+      };
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    await callbacks.handleCommand({
+      seq: 1,
+      commandId: "background-subscription",
+      type: "subscribe_thread_records",
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: new Date(0).toISOString(),
+      threadId: "background-thread"
+    });
+    await waitForCondition(() => forwardedEvents.some((event) => {
+      const value = event as { type?: string; threadId?: string; terminals?: unknown[] };
+      return value.type === "thread_background_terminals"
+        && value.threadId === "background-thread"
+        && value.terminals?.length === 1;
+    }));
+    const event = [...forwardedEvents].reverse().find((candidate) => {
+      const value = candidate as { type?: string; threadId?: string };
+      return value.type === "thread_background_terminals" && value.threadId === "background-thread";
+    }) as { terminals?: Array<Record<string, unknown>> } | undefined;
+    assert.deepEqual(event?.terminals?.[0], socket.backgroundTerminals[0]);
+    assert.equal(socket.backgroundTerminalParams.at(-1)?.threadId, "background-thread");
+
+    socket.backgroundTerminals = [];
+    await waitForCondition(() => forwardedEvents.some((candidate) => {
+      const value = candidate as { type?: string; threadId?: string; terminals?: unknown[] };
+      return value.type === "thread_background_terminals"
+        && value.threadId === "background-thread"
+        && value.terminals?.length === 0;
+    }), 4_000);
   } finally {
     await session.stop();
   }

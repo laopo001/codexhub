@@ -106,6 +106,28 @@ try {
     [/approvalsReviewer\?: ApprovalsReviewer \| null/, "thread/start must expose approvalsReviewer"],
     [/permissions\?: string \| null/, "thread/start must expose named permissions"]
   ]);
+  await assertSchema("v2/ThreadBackgroundTerminal.ts", [
+    [/itemId: string/, "background terminals must expose itemId"],
+    [/processId: string/, "background terminals must expose processId"],
+    [/command: string/, "background terminals must expose command"],
+    [/cwd: AbsolutePathBuf/, "background terminals must expose cwd"],
+    [/osPid: number \| null/, "background terminals must expose osPid"],
+    [/cpuPercent: number \| null/, "background terminals must expose cpuPercent"],
+    [/rssKb: bigint \| null/, "background terminals must expose rssKb"]
+  ]);
+  await assertSchema("v2/ThreadBackgroundTerminalsListParams.ts", [
+    [/threadId: string/, "background terminal listing must be thread-scoped"]
+  ]);
+  await assertSchema("v2/ThreadBackgroundTerminalsListResponse.ts", [
+    [/data: Array<ThreadBackgroundTerminal>/, "background terminal listing must return data"]
+  ]);
+  await assertSchema("v2/ThreadBackgroundTerminalsTerminateParams.ts", [
+    [/threadId: string/, "background terminal termination must be thread-scoped"],
+    [/processId: string/, "background terminal termination must identify a process"]
+  ]);
+  await assertSchema("v2/ThreadBackgroundTerminalsTerminateResponse.ts", [
+    [/terminated: boolean/, "background terminal termination must return terminated"]
+  ]);
   await assertSchema("v2/TurnStartParams.ts", [
     [/approvalsReviewer\?: ApprovalsReviewer \| null/, "turn/start must expose approvalsReviewer"],
     [/permissions\?: string \| null/, "turn/start must expose named permissions"]
@@ -158,7 +180,10 @@ try {
     [/"method": "thread\/settings\/update"/, "thread/settings/update must be available"],
     [/"method": "thread\/unsubscribe"/, "thread/unsubscribe must be available"],
     [/"method": "permissionProfile\/list"/, "permissionProfile/list must be available"],
-    [/"method": "review\/start"/, "review/start must be available"]
+    [/"method": "review\/start"/, "review/start must be available"],
+    [/"method": "thread\/backgroundTerminals\/list"/, "thread/backgroundTerminals/list must be available"],
+    [/"method": "thread\/backgroundTerminals\/terminate"/, "thread/backgroundTerminals/terminate must be available"],
+    [/"method": "thread\/backgroundTerminals\/clean"/, "thread/backgroundTerminals/clean must be available"]
   ]);
   await assertSchema("ServerNotification.ts", [
     [/"method": "item\/plan\/delta"/, "plan deltas must be available"],

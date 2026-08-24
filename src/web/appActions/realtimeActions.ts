@@ -426,7 +426,8 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       record: payload.record,
       records: payload.records,
       delta: payload.delta,
-      snapshot: payload.snapshot
+      snapshot: payload.snapshot,
+      backgroundTerminals: payload.backgroundTerminals
     });
     const isWorkspaceThread = ctx.openThreadIdsRef.current.has(payload.thread.threadId);
     if (isWorkspaceThread) {

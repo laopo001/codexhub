@@ -5,6 +5,7 @@ import type {
   SessionCommand,
   SessionRegistration,
   SessionSummary,
+  ThreadBackgroundTerminals,
   ThreadRunOptions,
   ThreadStreamEvent
 } from "../shared/threadTypes.js";
@@ -34,6 +35,7 @@ export type ThreadState = {
   title: string;
   updatedAt: string;
   records: CodexRecord[];
+  backgroundTerminals: ThreadBackgroundTerminals;
   recordSeq: number;
   threadUsage: ThreadUsage;
   subscribers: Set<(event: ThreadStreamEvent) => void>;

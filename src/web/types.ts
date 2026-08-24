@@ -39,6 +39,9 @@ import type { ThreadApprovalPolicy, ThreadApprovalsReviewer } from "../shared/us
 
 export type ThreadSummary = ApiThreadSummary;
 export type ThreadDetail = ApiThreadDetail;
+export type BackgroundTerminalView = NonNullable<ThreadDetail["backgroundTerminals"]>[number] & {
+  startedAt?: string;
+};
 
 export type ThreadGoalView = {
   objective: string;

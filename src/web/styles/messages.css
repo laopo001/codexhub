@@ -49,6 +49,37 @@
   color: #26342a;
 }
 
+.activityStatusBar.statusCard {
+  gap: 0;
+  overflow: hidden;
+}
+
+.activityStatusCardOverview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 4px 3px 7px;
+}
+
+.statusCard.hasTurn .activityStatusCardOverview {
+  border-bottom: 1px solid rgba(104, 115, 145, 0.18);
+}
+
+.activityStatusSection {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.statusCard > .turnStatusCard {
+  border-bottom: 1px solid rgba(104, 115, 145, 0.18);
+}
+
 .activityStatusRows {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -60,7 +91,7 @@
   padding: 0 5px 5px;
 }
 
-.activityStatusBar.expanded .activityStatusRows {
+.activityStatusSection.expanded .activityStatusRows {
   /* Keep a multi-step Plan and its sibling metrics inside the same scroll area. */
   max-height: min(320px, 40vh);
 }
@@ -79,6 +110,11 @@
   border-left-color: #b87e22;
 }
 
+.activityStatusBar.background {
+  border-color: rgba(47, 125, 90, 0.34);
+  border-left-color: #2f7d5a;
+}
+
 .activityStatusHeader {
   display: flex;
   align-items: center;
@@ -86,10 +122,6 @@
   min-width: 0;
   min-height: 30px;
   padding: 3px 4px 3px 7px;
-}
-
-.activityStatusBar.expanded .activityStatusHeader {
-  border-bottom: 1px solid rgba(104, 115, 145, 0.12);
 }
 
 .activityStatusSummary {
@@ -151,8 +183,12 @@
 }
 
 .activityStatusHeaderMetric.usage {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   overflow: hidden;
+}
+
+.activityStatusHeaderMetric.background strong {
+  color: #2f7d5a;
 }
 
 .activityStatusIndicator {
@@ -161,6 +197,224 @@
   flex: 0 0 auto;
   border-radius: 999px;
   background: currentColor;
+}
+
+.statusRegistryRows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  min-width: 0;
+  padding: 0 5px 5px;
+}
+
+.statusRegistryDetail > .statusRegistryRows {
+  padding: 0;
+}
+
+.statusRegistryItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 6px;
+  border: 1px solid rgba(47, 125, 90, 0.16);
+  border-radius: 5px;
+  background: rgba(248, 250, 247, 0.86);
+}
+
+.statusRegistryItem.hasActions {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.statusRegistryActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.statusRegistryAction {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #7b675f;
+  cursor: pointer;
+}
+
+.statusRegistryAction:hover,
+.statusRegistryAction:focus-visible {
+  background: rgba(198, 63, 63, 0.1);
+  color: #a52e2e;
+}
+
+.statusRegistryAction:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.statusRegistryItem:hover,
+.statusRegistryItem:focus-within {
+  background: #ffffff;
+  border-color: rgba(104, 115, 145, 0.24);
+}
+
+.statusRegistryIndicator {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #879183;
+}
+
+.statusRegistryItem.pending .statusRegistryIndicator,
+.statusRegistryItem.in_progress .statusRegistryIndicator {
+  background: #2f7d5a;
+  animation: codexhubStatusPulse 1s ease-in-out infinite;
+}
+
+.statusRegistryPreview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.statusRegistryMain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  min-width: 0;
+}
+
+.statusRegistryMain.backgroundTerminalMain {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.statusRegistryLabel {
+  min-width: 52px;
+  color: #5f6a78;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 18px;
+  text-transform: uppercase;
+}
+
+.statusRegistryText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+
+.statusRegistryToggle {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #66715f;
+  cursor: pointer;
+}
+
+.statusRegistryToggle:hover,
+.statusRegistryToggle:focus-visible {
+  background: rgba(104, 115, 145, 0.12);
+  color: #26342a;
+}
+
+.statusRegistryDetail {
+  margin: -2px 5px 3px 5px;
+  padding: 3px 5px 4px 17px;
+  border: 1px solid rgba(104, 115, 145, 0.12);
+  border-radius: 5px;
+  background: rgba(248, 250, 247, 0.62);
+  color: #65706a;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.statusRegistryDetail .activityStatusPlanStep,
+.statusRegistryDetail .fileChangeRow {
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.statusRegistryDetail .activityStatusPlanStep {
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 4px;
+}
+
+.statusRegistryDetail > .activityStatusPlanSteps,
+.statusRegistryDetail > .activityStatusFiles {
+  gap: 2px;
+  padding: 4px 6px;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.backgroundTerminalCommand,
+.backgroundTerminalMeta,
+.backgroundTerminalStatus {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backgroundTerminalCommand {
+  flex: 0 1 auto;
+}
+
+.backgroundTerminalSeparator {
+  flex: 0 0 auto;
+  color: #a1aaa0;
+}
+
+.backgroundTerminalMeta {
+  flex: 1 1 auto;
+}
+
+.backgroundTerminalCommand,
+.backgroundTerminalMeta,
+.backgroundTerminalStatus {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backgroundTerminalCommand {
+  color: #26342a;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+
+.backgroundTerminalMeta,
+.backgroundTerminalStatus {
+  color: #6b766c;
+  font-size: 10px;
+}
+
+.backgroundTerminalStatus {
+  color: #2f7d5a;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
 
 .activityStatusSummary.running .activityStatusIndicator,
@@ -301,7 +555,7 @@
 }
 
 .activityStatusDelta {
-  font-weight: 750;
+  font-weight: 800;
 }
 
 .activityStatusDelta.added {

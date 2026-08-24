@@ -20,6 +20,7 @@ import {
   type ThreadDeletePayload,
   type ThreadDetail,
   type ThreadApprovalPayload,
+  type ThreadBackgroundTerminalTerminatePayload,
   type ThreadGoalMutationPayload,
   type ThreadRenamePayload,
   type ThreadReviewPayload,
@@ -450,6 +451,21 @@ export const registerThreadRoutes = <
     try {
       const result = await ctx.threads.stopTurn(params.threadId);
       return result satisfies ThreadStopPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.post("/api/threads/:threadId/background-terminals/:processId/terminate", async (request, reply) => {
+    const params = z.object({
+      threadId: z.string().min(1),
+      processId: z.string().min(1)
+    }).parse(request.params);
+    try {
+      const result = await ctx.threads.terminateBackgroundTerminal(params.threadId, params.processId);
+      return result satisfies ThreadBackgroundTerminalTerminatePayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") ? 404 : 409);

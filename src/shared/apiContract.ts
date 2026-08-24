@@ -331,6 +331,11 @@ export type ThreadStopPayload = {
   stopped?: boolean;
 };
 
+/** thread background terminal terminate mutation 返回值。 */
+export type ThreadBackgroundTerminalTerminatePayload = {
+  terminated?: boolean;
+};
+
 /** thread context compact mutation 返回值。 */
 export type ThreadCompactPayload = {
   ok?: boolean;
@@ -667,6 +672,20 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     complete: z.boolean().optional(),
     snapshotId: z.string().min(1).optional(),
     page: z.number().int().nonnegative().optional()
+  }),
+  z.object({
+    type: z.literal("thread_background_terminals"),
+    threadId: z.string().min(1),
+    terminals: z.array(z.object({
+      itemId: z.string().min(1),
+      processId: z.string().min(1),
+      command: z.string(),
+      cwd: z.string().min(1),
+      osPid: z.number().int().nullable(),
+      cpuPercent: z.number().finite().nullable(),
+      rssKb: z.number().finite().nullable()
+    }).strict()),
+    heartbeat: z.boolean().optional()
   }),
   z.object({
     type: z.literal("thread_execution_changed"),

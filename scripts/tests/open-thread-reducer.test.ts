@@ -21,6 +21,7 @@ const detail = (threadId: string): ThreadDetail => ({
   messageCount: 0,
   threadUsage: emptyThreadUsage(),
   records: [],
+  backgroundTerminals: [],
   lastSeq: 0
 });
 
@@ -67,6 +68,28 @@ test("open thread reducer merges stream records and applies semantic ordering", 
   assert.deepEqual(state.map((thread) => thread.threadId), ["thread-2", "thread-1"]);
   assert.equal(state[1].records[0].id, "record-1");
   assert.equal(state[1].running, true);
+});
+
+test("open thread reducer keeps background terminals independent from transcript records", async () => {
+  const openThreadReducer = await loadReducer();
+  let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    threadId: "thread-1",
+    thread: { ...detail("thread-1") },
+    backgroundTerminals: [{
+      itemId: "background-item",
+      processId: "background-process",
+      command: "pnpm run tts:script",
+      cwd: "/tmp/thread-1",
+      osPid: 123,
+      cpuPercent: 1.5,
+      rssKb: 2048
+    }]
+  });
+
+  assert.equal(state[0].records.length, 0);
+  assert.equal(state[0].backgroundTerminals?.[0]?.command, "pnpm run tts:script");
 });
 
 test("open thread reducer merges historical record batches in one pass", async () => {

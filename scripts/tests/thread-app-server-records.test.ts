@@ -176,6 +176,44 @@ test("ThreadHub assigns first-seen canonical order independently from source tim
   assert.deepEqual(transcript.map((record) => record.order), [1, 2]);
 });
 
+test("ThreadHub keeps background terminals outside transcript records and streams per-thread snapshots", () => {
+  const events: Array<{ kind: string; backgroundTerminals?: unknown[] }> = [];
+  const hub = new ThreadHub({}, {
+    onThreadEvent: (event) => events.push(event)
+  });
+  const sessionId = "background-terminal-session";
+  const threadId = "background-terminal-thread";
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/background-terminal" });
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_background_terminals",
+    threadId,
+    terminals: [{
+      itemId: "background-item",
+      processId: "background-process",
+      command: "pnpm run tts:script -- --script script.md",
+      cwd: "/tmp/background-terminal",
+      osPid: 12345,
+      cpuPercent: 2.5,
+      rssKb: 4096
+    }]
+  });
+
+  const detail = hub.getThread(threadId);
+  assert.equal(detail?.records.length, 0);
+  assert.equal(detail?.backgroundTerminals?.[0]?.processId, "background-process");
+  assert.equal(events.at(-1)?.kind, "thread");
+  assert.equal(events.at(-1)?.backgroundTerminals?.length, 1);
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_background_terminals",
+    threadId,
+    terminals: []
+  });
+  assert.deepEqual(hub.getThread(threadId)?.backgroundTerminals, []);
+  assert.equal(events.at(-1)?.backgroundTerminals?.length, 0);
+});
+
 test("ThreadHub marks unpaged snapshots as history before newer live control records", () => {
   const hub = new ThreadHub();
   const sessionId = "unpaged-history-session";

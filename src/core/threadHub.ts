@@ -456,6 +456,18 @@ export class ThreadHub {
       return { ok: true, thread: this.summary(thread) };
     }
 
+    if (input.type === "thread_background_terminals") {
+      const thread = this.ensureThread(input.threadId, session, {
+        params: { threadId: input.threadId, cwd: session.workingDirectory }
+      });
+      if (JSON.stringify(thread.backgroundTerminals) !== JSON.stringify(input.terminals)) {
+        thread.backgroundTerminals = input.terminals;
+        thread.updatedAt = new Date().toISOString();
+        this.publish(thread, "thread");
+      }
+      return { ok: true, thread: this.summary(thread) };
+    }
+
     const message = asRecord(input.message);
     if (!message) return { ok: true };
 
@@ -804,6 +816,31 @@ export class ThreadHub {
     });
     await promise;
     return { stopped: true };
+  }
+
+  async terminateBackgroundTerminal(threadId: string, processId: string) {
+    const thread = this.requireThread(threadId);
+    const trimmedProcessId = processId.trim();
+    if (!trimmedProcessId) throw new Error("Background terminal process id is required");
+    const session = this.requireThreadSession(thread);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<{ terminated?: boolean }>(
+      commandId,
+      "terminate_background_terminal",
+      thread.threadId,
+      null,
+      thread.workingDirectory
+    );
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "terminate_background_terminal",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId,
+      processId: trimmedProcessId
+    });
+    const result = await promise;
+    return { terminated: result.terminated === true };
   }
 
   async compactThread(threadId: string) {
@@ -1191,6 +1228,7 @@ export class ThreadHub {
           kind: "thread",
           historical: true,
           thread: this.summary(thread),
+          backgroundTerminals: thread.backgroundTerminals,
           records: page.records,
           snapshot: {
             snapshotId: historySnapshotId,
@@ -1213,6 +1251,7 @@ export class ThreadHub {
             kind: "thread",
             historical: true,
             thread: summary,
+            backgroundTerminals: thread.backgroundTerminals,
             records,
             snapshot: {
               snapshotId,
@@ -1510,6 +1549,7 @@ export class ThreadHub {
       title,
       updatedAt: now,
       records: [],
+      backgroundTerminals: [],
       recordSeq: 0,
       threadUsage: emptyThreadUsage(),
       subscribers: new Set(),
@@ -2790,6 +2830,9 @@ export class ThreadHub {
       ...(options.historical ? { historical: true } : {}),
       ...(options.records !== undefined ? { records: options.records } : {}),
       ...(options.delta ? { delta: options.delta } : {}),
+      ...((kind === "thread" || kind === "done")
+        ? { backgroundTerminals: thread.backgroundTerminals }
+        : {}),
       thread: this.summary(thread),
       record
     };
@@ -2842,6 +2885,7 @@ export class ThreadHub {
     return {
       ...this.summary(thread),
       records: thread.records,
+      backgroundTerminals: thread.backgroundTerminals,
       lastSeq: thread.seq
     };
   }

@@ -176,6 +176,8 @@ export type AppServerUserInputRequest = {
 export type ThreadDetail = ThreadSummary & {
   records: CodexRecord[];
   lastSeq: number;
+  /** 当前 thread 仍由 app-server 管理的后台终端，不属于 transcript。 */
+  backgroundTerminals?: ThreadBackgroundTerminals;
   /** Web 当前加载的 transcript 窗口；完整 records 仍由 backend memory projection 保留。 */
   history?: ThreadHistoryPageInfo;
 };
@@ -187,6 +189,19 @@ export type ThreadHistoryPageInfo = {
   newestRecordId?: string;
   loadedRecordCount: number;
 };
+
+/** app-server experimental thread/backgroundTerminals/list 的稳定 Web 投影。 */
+export type ThreadBackgroundTerminal = {
+  itemId: string;
+  processId: string;
+  command: string;
+  cwd: string;
+  osPid: number | null;
+  cpuPercent: number | null;
+  rssKb: number | null;
+};
+
+export type ThreadBackgroundTerminals = ThreadBackgroundTerminal[];
 
 /** app-server thread picker 中展示的可恢复 thread 候选。 */
 export type ThreadCandidateSummary = {
@@ -303,6 +318,8 @@ export type ThreadStreamEvent = {
   records?: CodexRecord[];
   /** 订阅 cursor 与当前状态不一致时发送的 canonical records 快照。 */
   snapshot?: ThreadRecordsSnapshot;
+  /** 当前 thread 的 app-server experimental 后台终端快照。 */
+  backgroundTerminals?: ThreadBackgroundTerminals;
 };
 
 /** machine/session bridge 注册官方 Codex runtime 时提交的 session 信息。 */
@@ -340,6 +357,7 @@ export type SessionCommand = {
     | "review_thread"
     | "rename_thread"
     | "stop"
+    | "terminate_background_terminal"
     | "list_threads"
     | "list_models"
     | "list_permission_profiles"
@@ -355,6 +373,7 @@ export type SessionCommand = {
   threadId?: string;
   input?: ProxyInput;
   turnId?: string;
+  processId?: string;
   lastTurnId?: string;
   approvalId?: string;
   approvalDecision?: AppServerApprovalDecision;
@@ -406,6 +425,7 @@ export type SessionCommandResult =
   | SessionPermissionProfilesResult
   | SessionCommandPaletteResult
   | SessionThreadCommandResult
+  | { terminated: boolean }
   | { ok?: boolean }
   | ThreadDetail;
 
@@ -432,6 +452,12 @@ export type SessionEventInput =
       snapshotId?: string;
       /** 当前页从 0 开始的序号；页越大，历史越旧。 */
       page?: number;
+    }
+  | {
+      type: "thread_background_terminals";
+      threadId: string;
+      terminals: ThreadBackgroundTerminals;
+      heartbeat?: boolean;
     }
   | {
       type: "approval_request";

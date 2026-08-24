@@ -180,6 +180,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
       threadControls={threadControls}
       onSend={send}
       onStop={stopTurn}
+      onTerminateBackgroundTerminal={workspace.terminateBackgroundTerminal}
       onAddFiles={addThreadFiles}
       onClearAttachments={clearThreadAttachments}
       onRemoveImage={removeThreadImage}

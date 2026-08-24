@@ -149,6 +149,25 @@ test("dispatcher returns official stop and steer RPC responses", async () => {
   assert.deepEqual(requests.map((request) => request.method), ["turn/interrupt", "turn/steer"]);
 });
 
+test("dispatcher terminates one background terminal through the experimental RPC", async () => {
+  const current = createHost();
+  current.host.request = async (method, params) => {
+    current.requests.push({ method, params });
+    return method === "thread/backgroundTerminals/terminate" ? { terminated: true } : {};
+  };
+
+  assert.deepEqual(await dispatchAppServerCommand(command({
+    type: "terminate_background_terminal",
+    threadId: "thread-1",
+    processId: "process-1"
+  }), current.host), { terminated: true });
+  assert.deepEqual(current.requests, [{
+    method: "thread/backgroundTerminals/terminate",
+    params: { threadId: "thread-1", processId: "process-1" }
+  }]);
+  assert.deepEqual(current.synced, ["thread-1"]);
+});
+
 test("dispatcher exposes the runtime permission profile catalog without local choices", async () => {
   const { host } = createHost();
   host.listPermissionProfiles = async (cwd) => {

@@ -112,6 +112,7 @@ export type ThreadActions = {
   forkMessage: (threadId: string, messageId: string) => Promise<void>;
   send: (threadId: string) => Promise<void>;
   stopTurn: (threadId: string) => Promise<void>;
+  terminateBackgroundTerminal: (threadId: string, processId: string) => Promise<void>;
   compactThread: (threadId: string) => Promise<void>;
   reviewThread: (threadId: string) => Promise<void>;
   respondToApproval: (threadId: string, approvalId: string, decision: AppServerApprovalDecision) => Promise<void>;
@@ -528,6 +529,17 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     );
   };
 
+  const terminateBackgroundTerminal = async (threadId: string, processId: string) => {
+    await runActionRequest(
+      `${threadId}:background-terminal:${processId}`,
+      "Terminate background process failed",
+      async () => {
+        const payload = await apiRouteJson(apiRoutes.terminateBackgroundTerminal, threadId, processId);
+        if (payload.terminated !== true) throw new Error("The app-server did not terminate the background process.");
+      }
+    );
+  };
+
   const compactThread = async (threadId: string) => {
     await runActionRequest(
       `${threadId}:compact`,
@@ -633,6 +645,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     forkMessage,
     send,
     stopTurn,
+    terminateBackgroundTerminal,
     compactThread,
     reviewThread,
     respondToApproval,

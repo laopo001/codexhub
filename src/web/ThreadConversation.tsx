@@ -6,17 +6,20 @@ import type {
   AppServerUserInputAnswers,
   CommandPalette
 } from "../shared/apiContract.js";
+import { backgroundTerminalViewsFromThread } from "./helpers/records.js";
 import type { SubagentActivityView } from "../shared/recordTypes.js";
 import { ComposerSubmitButton, ComposerTextInput } from "./ComposerTextInput.js";
 import {
   activeGoalActivityScopeFromRecords,
   activityStatusesFromRecords,
   ActivityStatusBar,
+  StatusCardOverview,
   canForkAtMessage,
   canRenderMarkdown,
   EmptyMessages,
   latestTurnActivityScope,
   MessageCard,
+  ThreadStatusCard,
   threadDisplayRecords
 } from "./appHelpers.js";
 import type { ComposerDraftStore } from "./helpers/composer.js";
@@ -68,6 +71,7 @@ export type ThreadConversationProps = {
 
   onSend: (threadId: string) => MaybePromise;
   onStop: (threadId: string) => MaybePromise;
+  onTerminateBackgroundTerminal: (threadId: string, processId: string) => MaybePromise;
   onAddFiles: (threadId: string, files: FileList | null) => MaybePromise;
   onClearAttachments: (threadId: string) => void;
   onRemoveImage: (threadId: string, attachmentId: string) => void;
@@ -189,6 +193,7 @@ export const ThreadConversation = ({
   forkingMessageKey = "",
   onSend,
   onStop,
+  onTerminateBackgroundTerminal,
   onAddFiles,
   onClearAttachments,
   onRemoveImage,
@@ -243,7 +248,12 @@ export const ThreadConversation = ({
   const executionLabel = executionMeta?.label ?? "Idle";
   const executionText = executionMeta?.text ?? executionLabel;
   const showTurnLoadingMessage = executionStatus === "waiting" || executionStatus === "running";
-  const statusPanelAvailable = showTurnLoadingMessage;
+  const backgroundTerminals = React.useMemo(
+    () => backgroundTerminalViewsFromThread(thread),
+    [thread.backgroundTerminals, thread.records]
+  );
+  // The Thread card is always mounted; the Turn card below is mounted only
+  // while the thread has an active Waiting/Running Turn.
   const statusRecords = React.useMemo(
     () => threadDisplayRecords(thread.threadId, thread),
     [thread]
@@ -552,26 +562,17 @@ export const ThreadConversation = ({
     thread.workingDirectory
   ]);
 
-  const status = statusPanelAvailable && executionMeta ? (
+  const threadStatus = executionMeta ? (
+    <ThreadStatusCard
+      backgroundTerminals={backgroundTerminals}
+      onTerminate={(processId) => onTerminateBackgroundTerminal(thread.threadId, processId)}
+    />
+  ) : null;
+  const turnStatus = showTurnLoadingMessage && executionMeta && statusActivity.items.length ? (
     <ActivityStatusBar
       statuses={statusActivity.items}
-      executionMeta={executionMeta}
       expanded={statusPanelExpanded}
       expandedKeys={activeExpandedStatusKeys}
-      onToggleExpanded={() => {
-        if (!statusActivity.scopeKey) return;
-        setExpandedStatusTurns((current) => {
-          if (current[thread.threadId] === statusActivity.scopeKey) {
-            const next = { ...current };
-            delete next[thread.threadId];
-            return next;
-          }
-          return {
-            ...current,
-            [thread.threadId]: statusActivity.scopeKey
-          };
-        });
-      }}
       onToggle={(key) => {
         if (!statusActivity.scopeKey) return;
         setExpandedStatusKeys((current) => {
@@ -582,6 +583,36 @@ export const ThreadConversation = ({
         });
       }}
     />
+  ) : null;
+  const status = executionMeta ? (
+    <div
+      className={`activityStatusBar statusCard ${executionStatus}${backgroundTerminals.length ? " background" : ""}${turnStatus ? " hasTurn" : ""}`}
+      aria-live="polite"
+    >
+      <StatusCardOverview
+        executionMeta={executionMeta}
+        turnActive={showTurnLoadingMessage}
+        statuses={statusActivity.items}
+        backgroundTerminals={backgroundTerminals}
+        expanded={statusPanelExpanded}
+        onToggleExpanded={() => {
+          if (!statusActivity.scopeKey) return;
+          setExpandedStatusTurns((current) => {
+            if (current[thread.threadId] === statusActivity.scopeKey) {
+              const next = { ...current };
+              delete next[thread.threadId];
+              return next;
+            }
+            return {
+              ...current,
+              [thread.threadId]: statusActivity.scopeKey
+            };
+          });
+        }}
+      />
+      {turnStatus}
+      {threadStatus}
+    </div>
   ) : null;
 
   return (

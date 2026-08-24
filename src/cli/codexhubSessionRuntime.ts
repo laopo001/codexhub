@@ -58,6 +58,7 @@ import type {
   SessionModelCatalogResult,
   SessionPermissionProfilesResult,
   SessionRegistration,
+  ThreadBackgroundTerminal,
   ThreadCandidateSummary,
   ThreadRunOptions
 } from "../shared/threadTypes.js";
@@ -105,6 +106,9 @@ type SyncedThread = {
   appServerTurnsPending: boolean;
   appServerTurnsRetryCount: number;
   appServerTurnsDebounceTimer?: NodeJS.Timeout;
+  backgroundTerminals: ThreadBackgroundTerminal[];
+  backgroundTerminalsSyncing: boolean;
+  backgroundTerminalsUnsupported: boolean;
 };
 
 type BridgeState = {
@@ -593,7 +597,10 @@ class CodexAppServerBridge {
       await delay(1500);
       if (this.closed) return;
       const entries = [...this.syncedThreads];
-      await this.syncThreadSettings(entries.map(([threadId]) => threadId));
+      await Promise.all([
+        this.syncThreadSettings(entries.map(([threadId]) => threadId)),
+        ...entries.map(([threadId, state]) => this.syncBackgroundTerminals(threadId, state))
+      ]);
     }
   }
 
@@ -848,7 +855,10 @@ class CodexAppServerBridge {
     const state: SyncedThread = {
       appServerTurnsSyncing: false,
       appServerTurnsPending: false,
-      appServerTurnsRetryCount: 0
+      appServerTurnsRetryCount: 0,
+      backgroundTerminals: [],
+      backgroundTerminalsSyncing: false,
+      backgroundTerminalsUnsupported: false
     };
     this.syncedThreads.set(threadId, state);
     const pendingUnsubscribe = this.threadUnsubscribeTasks.get(threadId);
@@ -1004,6 +1014,7 @@ class CodexAppServerBridge {
       // 最新页优先逐页补历史，避免超大 thread 在 Extension Host 中同时保留完整
       // app-server turns 和 CodexHub records 两份大对象。
       await this.forwardAppServerThreadTurnsPages(loadedThreadId, randomUUID(), stillObserved);
+      await this.syncBackgroundTerminals(loadedThreadId, state);
       completed = true;
     } finally {
       state.appServerTurnsSyncing = false;
@@ -1018,6 +1029,52 @@ class CodexAppServerBridge {
           });
         }
       }
+    }
+  }
+
+  private async syncBackgroundTerminals(threadId: string, state: SyncedThread) {
+    if (
+      this.closed
+      || this.syncedThreads.get(threadId) !== state
+      || !this.loadedThreads.has(threadId)
+      || state.backgroundTerminalsSyncing
+      || state.backgroundTerminalsUnsupported
+    ) return;
+    state.backgroundTerminalsSyncing = true;
+    try {
+      const result = asRecord(await this.request(
+        "thread/backgroundTerminals/list",
+        { threadId, limit: 200 },
+        { threadId }
+      ));
+      const next = (Array.isArray(result?.data) ? result.data : [])
+        .map((value) => appServerBackgroundTerminal(asRecord(value)))
+        .filter((value): value is ThreadBackgroundTerminal => Boolean(value));
+      if (JSON.stringify(next) === JSON.stringify(state.backgroundTerminals)) return;
+      state.backgroundTerminals = next;
+      this.hub.sendEvent({
+        type: "thread_background_terminals",
+        threadId,
+        terminals: next,
+        heartbeat: false
+      });
+    } catch (error) {
+      if (appServerBackgroundTerminalsUnavailable(error)) {
+        state.backgroundTerminalsUnsupported = true;
+        if (state.backgroundTerminals.length) {
+          state.backgroundTerminals = [];
+          this.hub.sendEvent({
+            type: "thread_background_terminals",
+            threadId,
+            terminals: [],
+            heartbeat: false
+          });
+        }
+        return;
+      }
+      console.error(`codexhub bridge failed to sync background terminals for ${threadId}: ${errorText(error)}`);
+    } finally {
+      state.backgroundTerminalsSyncing = false;
     }
   }
 
@@ -1738,6 +1795,35 @@ const appServerRpcError = (error: JsonRecord) => new AppServerRpcError(
   typeof error.message === "string" ? error.message : JSON.stringify(error),
   error.data
 );
+
+const appServerBackgroundTerminal = (value: JsonRecord | null): ThreadBackgroundTerminal | null => {
+  const itemId = stringValue(value?.itemId);
+  const processId = stringValue(value?.processId);
+  const cwd = stringValue(value?.cwd);
+  if (!itemId || !processId || !cwd || typeof value?.command !== "string") return null;
+  return {
+    itemId,
+    processId,
+    command: value.command,
+    cwd,
+    osPid: nullableFiniteNumber(value?.osPid),
+    cpuPercent: nullableFiniteNumber(value?.cpuPercent),
+    rssKb: nullableFiniteNumber(value?.rssKb)
+  };
+};
+
+const nullableFiniteNumber = (value: unknown) =>
+  value === null || value === undefined
+    ? null
+    : typeof value === "number" && Number.isFinite(value)
+      ? value
+      : null;
+
+const appServerBackgroundTerminalsUnavailable = (error: unknown) => {
+  if (!(error instanceof AppServerRpcError)) return false;
+  return error.code === -32601
+    || error.message.includes("thread/backgroundTerminals/list") && error.message.includes("not supported");
+};
 
 const openWebSocket = async (url: string) => {
   const ws = new WebSocket(url);

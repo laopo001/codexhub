@@ -13,7 +13,7 @@ import { formatCompactNumber } from "../../shared/toolFormatting.js";
 import { isModelReasoningEffort } from "../../shared/usageTypes.js";
 export { formatCompactNumber } from "../../shared/toolFormatting.js";
 import { isVscodeSurface } from "../appConfig.js";
-import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusSnapshot, ActivityStatusView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
+import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusSnapshot, ActivityStatusView, BackgroundTerminalView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
 import { formatPlanProgress, planProgressFromStatuses } from "../../shared/planProgress.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, isFastServiceTier, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
@@ -23,6 +23,23 @@ import { turnDurationMsForTurn } from "./turnDurations.js";
 export const latestThreadUsageFromRecords = (records: CodexRecord[]): ThreadUsage | null => {
   const usage = threadUsageFromRecords(records);
   return usage.context || usage.primaryRateLimit || usage.secondaryRateLimit ? usage : null;
+};
+
+export const backgroundTerminalViewsFromThread = (
+  thread: Pick<ThreadDetail, "backgroundTerminals" | "records">
+): BackgroundTerminalView[] => (thread.backgroundTerminals ?? []).map((terminal) => ({
+  ...terminal,
+  startedAt: backgroundTerminalStartedAt(thread.records, terminal.itemId)
+}));
+
+const backgroundTerminalStartedAt = (records: CodexRecord[], itemId: string) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const payload = asRecord(records[index].payload);
+    if (payload?.type !== "local_shell_call" || payload.call_id !== itemId) continue;
+    if (typeof payload.started_at === "string" && payload.started_at) return payload.started_at;
+    return records[index].timestamp;
+  }
+  return undefined;
 };
 
 export const mergeThreadUsage = (latest: ThreadUsage | null, fallback: ThreadUsage | null): ThreadUsage | null => {
@@ -616,10 +633,7 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
       scopedUsageAt = record.timestamp ?? scopedUsageAt;
       continue;
     }
-    if (record.type === "response_item" && asRecord(payload?.approval)) {
-      statuses.set("approval", approvalActivityStatus(record, payload));
-      continue;
-    }
+    if (record.type === "response_item" && asRecord(payload?.approval)) continue;
     if (record.type === "response_item" && payload?.type === "file_change") {
       fileStatus = mergeFileChangeStatus(fileStatus, fileChangeActivityStatus(record, payload));
       continue;
@@ -964,7 +978,7 @@ const activityStatusSnapshotTargetRecordId = (records: CodexRecord[]) => {
 };
 
 const isActivityStatusDetail = (status: ActivityStatusView) => {
-  if (status.key === "approval" || status.key === "userInput") return status.status !== "completed";
+  if (status.key === "userInput") return status.status !== "completed";
   return status.key === "plan" || status.key === "files" || status.key === "usage" || status.key === "context";
 };
 
@@ -1181,26 +1195,6 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
   };
 };
 
-export const approvalActivityStatus = (
-  record: CodexRecord,
-  payload: Record<string, unknown> | null
-): ActivityStatusView => {
-  const approval = asRecord(payload?.approval);
-  const status = activityRecordStatus(approval?.status) ?? (
-    approval?.status === "approved" ? "completed" : approval?.status === "denied" ? "failed" : "pending"
-  );
-  return {
-    key: "approval",
-    label: status === "completed" ? "Approved" : status === "failed" ? "Approval" : "Waiting approval",
-    status,
-    at: record.timestamp,
-    text: [
-      typeof approval?.kind === "string" ? approval.kind : null,
-      typeof approval?.reason === "string" ? approval.reason : null
-    ].filter(Boolean).join(" · ") || "User approval required"
-  };
-};
-
 export const userInputActivityStatus = (
   record: CodexRecord,
   payload: Record<string, unknown>
@@ -1287,17 +1281,13 @@ export const fileChangeTotalsText = (added: number, removed: number) => [
 export const activityStatusPriority = (key: string) => {
   const order: Record<string, number> = {
     plan: 0,
-    approval: 1,
-    userInput: 2,
-    files: 3,
-    usage: 4,
-    context: 5
+    userInput: 1,
+    files: 2,
+    usage: 3,
+    context: 4
   };
   return order[key] ?? 10;
 };
-
-export const activityStatusTitle = (statuses: ActivityStatusView[]) =>
-  statuses.map((status) => `${status.label}: ${status.text}`).join("\n");
 
 export const formatTokenStatus = (payload: Record<string, unknown>) => {
   const info = asRecord(payload.info);

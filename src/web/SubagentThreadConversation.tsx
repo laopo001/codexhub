@@ -78,6 +78,7 @@ export const SubagentThreadConversation = ({
       forkingMessageKey={workspace.forkingMessageKey}
       onSend={workspace.send}
       onStop={workspace.stopTurn}
+      onTerminateBackgroundTerminal={workspace.terminateBackgroundTerminal}
       onAddFiles={workspace.addThreadFiles}
       onClearAttachments={workspace.clearThreadAttachments}
       onRemoveImage={workspace.removeThreadImage}

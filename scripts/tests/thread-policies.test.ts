@@ -24,6 +24,7 @@ const thread = (): ThreadState => ({
   title: "Test",
   updatedAt: "2026-01-01T00:00:00.000Z",
   records: [],
+  backgroundTerminals: [],
   recordSeq: 0,
   threadUsage: emptyThreadUsage(),
   subscribers: new Set(),

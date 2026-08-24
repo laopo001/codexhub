@@ -287,7 +287,6 @@ export const useAppSelectors = (state: AppState) => {
     && statusScopeKey
     && state.expandedStatusTurns[activeThread.threadId] === statusScopeKey
   );
-  const statusPanelAvailable = activeThread?.status === "waiting" || latestTurnRunning;
   const activeExpandedStatusKeys = useMemo(
     () => new Set(statusScopeKey ? state.expandedStatusKeys[statusScopeKey] ?? [] : []),
     [state.expandedStatusKeys, statusScopeKey]
@@ -534,7 +533,6 @@ export const useAppSelectors = (state: AppState) => {
     setComposerMode,
     showComposerSendButton,
     statusPanelExpanded,
-    statusPanelAvailable,
     sshConfigHostOptions,
     statusScopeKey,
     threadModelDialogMachineId,
