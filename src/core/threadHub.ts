@@ -24,6 +24,7 @@ import {
   waitForSessionCommands
 } from "./sessionCommandQueue.js";
 import { summarizeProxyInput, type ProxyInput } from "../shared/inputTypes.js";
+import { planProgressFromPlan, planProgressSummary } from "../shared/planProgress.js";
 import { compareCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
 import { isAgentActivityRecord, latestAgentMessageFromRecords, threadActivityTitleFromRecords } from "../shared/threadActivity.js";
@@ -2845,7 +2846,11 @@ export class ThreadHub {
     if (
       kind === "thread"
       || kind === "done"
-      || (kind === "record" && record !== undefined && (isTaskStartedRecord(record) || isAgentActivityRecord(record)))
+      || (kind === "record" && record !== undefined && (
+        isTaskStartedRecord(record)
+        || isAgentActivityRecord(record)
+        || isTurnPlanUpdatedRecord(record)
+      ))
     ) this.publishRuntimes();
   }
 
@@ -2854,6 +2859,9 @@ export class ThreadHub {
     const latestAgentMessage = latestAgentMessageFromRecords(thread.records);
     const activeTurnStartedAt = thread.running && thread.appServerTurnId
       ? activeTurnStartedAtFromRecords(thread.records, thread.appServerTurnId)
+      : undefined;
+    const activePlanProgress = thread.running && thread.appServerTurnId
+      ? activePlanProgressFromRecords(thread.records, thread.threadId, thread.appServerTurnId)
       : undefined;
     return {
       threadId: thread.threadId,
@@ -2871,6 +2879,7 @@ export class ThreadHub {
       running: thread.running,
       ...(thread.running && thread.appServerTurnId ? { activeTurnId: thread.appServerTurnId } : {}),
       ...(activeTurnStartedAt ? { activeTurnStartedAt } : {}),
+      ...(activePlanProgress ? { activePlanProgress: planProgressSummary(activePlanProgress) } : {}),
       title: thread.title,
       ...(activityTitle ? { activityTitle } : {}),
       ...(latestAgentMessage ? { latestAgentMessage } : {}),
@@ -3076,6 +3085,20 @@ const activeTurnStartedAtFromRecords = (records: CodexRecord[], turnId: string) 
   }
   return undefined;
 };
+
+const activePlanProgressFromRecords = (records: CodexRecord[], threadId: string, turnId: string) => {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (turnIdFromAppRecordId(threadId, record.id) !== turnId) continue;
+    const payload = asRecord(record.payload);
+    if (payload?.type !== "turn_plan_updated") continue;
+    return planProgressFromPlan(payload.plan);
+  }
+  return undefined;
+};
+
+const isTurnPlanUpdatedRecord = (record: CodexRecord) =>
+  asRecord(record.payload)?.type === "turn_plan_updated";
 
 const runtimeSnapshotKey = (runtimes: RuntimeSummary[]) => JSON.stringify(runtimes.map((runtime) => ({
   ...runtime,

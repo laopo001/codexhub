@@ -3,6 +3,7 @@ import { Button, Modal } from "antd";
 import { Check, PawPrint, Trash2, Upload, X } from "lucide-react";
 import { isNativeElectronSurface } from "../appConfig.js";
 import { LiveThreadRunningText } from "../helpers/liveTime.js";
+import { formatPlanProgress } from "../../shared/planProgress.js";
 import type { PetHitRegion } from "../../shared/petInput.js";
 import {
   petAnimationRows,
@@ -422,9 +423,16 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
                     <strong>{activity.title}</strong>
                     <span className="petActivityMachineRow">
                       <PetActivityMachine activity={activity} />
-                      <em className="petActivityDuration">
+                      <em className={`petActivityDuration ${activity.executionMeta?.status ?? activity.status}`}>
                         {activity.executionMeta && (activity.executionMeta.status === "running" || activity.executionMeta.status === "waiting")
-                          ? <LiveThreadRunningText executionMeta={activity.executionMeta} activeGoal={activity.activeGoal} includeLabel={false} />
+                          ? <LiveThreadRunningText
+                              executionMeta={activity.executionMeta}
+                              activeGoal={activity.activeGoal}
+                              includeLabel={false}
+                              leadingText={activity.activePlanProgress
+                                ? formatPlanProgress(activity.activePlanProgress)
+                                : undefined}
+                            />
                           : null}
                       </em>
                     </span>

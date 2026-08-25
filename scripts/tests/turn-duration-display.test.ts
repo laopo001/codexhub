@@ -179,6 +179,25 @@ test("compact Running text keeps only the prioritized clock", () => {
   assert.match(compact, /2m0s/);
 });
 
+test("Running text can lead with the current Plan step without repeating Running", () => {
+  const executionMeta = {
+    status: "running",
+    label: "Running",
+    duration: "",
+    text: "Running",
+    startedAt: new Date(Date.now() - 5_000).toISOString()
+  } as const;
+  const compact = renderToStaticMarkup(createElement(LiveThreadRunningText, {
+    executionMeta,
+    activeGoal: null,
+    includeLabel: false,
+    leadingText: "1/4"
+  }));
+
+  assert.match(compact, /^1\/4 · \d+s$/);
+  assert.doesNotMatch(compact, /Running/);
+});
+
 test("middle execution display separates Waiting, Turn, and Goal clocks", () => {
   const running = {
     status: "running",

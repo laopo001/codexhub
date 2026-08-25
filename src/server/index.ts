@@ -451,6 +451,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       title: thread.title,
       ...(thread.activityTitle ? { activityTitle: thread.activityTitle } : {}),
       ...(thread.activeTurnStartedAt ? { activeTurnStartedAt: thread.activeTurnStartedAt } : {}),
+      ...(thread.activePlanProgress ? { activePlanProgress: thread.activePlanProgress } : {}),
       ...(thread.latestAgentMessage ? { latestAgentMessage: thread.latestAgentMessage } : {}),
       workingDirectory: thread.workingDirectory,
       updatedAt: thread.updatedAt,

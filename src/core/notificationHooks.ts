@@ -6,7 +6,7 @@ import {
   turnIdFromRecord
 } from "../shared/taskNotifications.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
-import { formatPlanProgress, planProgressFromStatuses, type PlanProgress } from "../shared/planProgress.js";
+import { formatPlanProgress, planProgressFromPlan, type PlanProgress } from "../shared/planProgress.js";
 import { readPositiveIntEnv } from "../shared/env.js";
 import type { ThreadStreamEvent, ThreadSummary } from "../shared/threadTypes.js";
 
@@ -489,7 +489,7 @@ const latestPlanProgress = (records: CodexRecord[], turnId: string): PlanProgres
       .map((step) => asRecord(step))
       .filter((step): step is Record<string, unknown> => Boolean(step));
     if (!steps.length) return undefined;
-    return planProgressFromStatuses(steps.map((step) => step.status));
+    return planProgressFromPlan(steps);
   }
   return undefined;
 };

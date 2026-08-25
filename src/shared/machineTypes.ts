@@ -1,3 +1,5 @@
+import type { PlanProgressSummary } from "./planProgress.js";
+
 /** 机器来源类型；表示执行路径解析和 Codex runtime 启动的机器边界。 */
 export type MachineType = "local" | "ssh" | "registered";
 
@@ -38,6 +40,8 @@ export type MachineActivitySummary = {
   activityTitle?: string;
   /** Current app-server Turn start, used by detached activity timers. */
   activeTurnStartedAt?: string;
+  /** Current app-server Turn Plan progress, used by detached activity consumers. */
+  activePlanProgress?: PlanProgressSummary;
   /** Latest compact Agent commentary/final answer for activity-only consumers. */
   latestAgentMessage?: string;
   workingDirectory: string;

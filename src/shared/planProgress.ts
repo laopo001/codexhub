@@ -1,9 +1,13 @@
+import { asRecord } from "./recordTypes.js";
+
 export type PlanProgress = {
   currentStep: number;
   totalSteps: number;
   currentIndex: number;
   allCompleted: boolean;
 };
+
+export type PlanProgressSummary = Pick<PlanProgress, "currentStep" | "totalSteps">;
 
 const normalizePlanStatus = (status: unknown) => {
   if (typeof status !== "string") return undefined;
@@ -43,5 +47,19 @@ export const planProgressFromStatuses = (statuses: readonly unknown[]): PlanProg
   };
 };
 
-export const formatPlanProgress = (progress: PlanProgress) =>
+export const planProgressFromPlan = (plan: unknown): PlanProgress | undefined => {
+  if (!Array.isArray(plan)) return undefined;
+  const statuses = plan.flatMap((item) => {
+    const step = asRecord(item);
+    return typeof step?.step === "string" && step.step.trim() ? [step.status] : [];
+  });
+  return planProgressFromStatuses(statuses);
+};
+
+export const planProgressSummary = (progress: PlanProgress): PlanProgressSummary => ({
+  currentStep: progress.currentStep,
+  totalSteps: progress.totalSteps
+});
+
+export const formatPlanProgress = (progress: Pick<PlanProgress, "currentStep" | "totalSteps">) =>
   `${progress.currentStep}/${progress.totalSteps}`;

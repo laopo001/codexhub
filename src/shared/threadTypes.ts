@@ -1,4 +1,5 @@
 import type { ProxyInput } from "./inputTypes.js";
+import type { PlanProgressSummary } from "./planProgress.js";
 import type { CodexRecord } from "./recordTypes.js";
 import type { ThreadOptions, ThreadRateLimits, ThreadUsage, Usage } from "./usageTypes.js";
 
@@ -23,6 +24,8 @@ export type ThreadSummary = {
   activeTurnId?: string;
   /** 当前 app-server Turn 的权威 task_started 时间，用于无 records 的活动摘要实时计时。 */
   activeTurnStartedAt?: string;
+  /** 当前 app-server Turn 的轻量 Plan 进度，用于 detached activity consumers。 */
+  activePlanProgress?: PlanProgressSummary;
   title: string;
   /** Desktop activity feed hint; does not replace the user-visible thread title. */
   activityTitle?: string;

@@ -937,6 +937,7 @@ const threadSummariesEqual = (left: ThreadSummary, right: ThreadSummary) => {
     || left.running !== right.running
     || left.activeTurnId !== right.activeTurnId
     || left.activeTurnStartedAt !== right.activeTurnStartedAt
+    || JSON.stringify(left.activePlanProgress) !== JSON.stringify(right.activePlanProgress)
     || left.title !== right.title
     || left.updatedAt !== right.updatedAt
     || left.messageCount !== right.messageCount

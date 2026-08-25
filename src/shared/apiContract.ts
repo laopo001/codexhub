@@ -731,6 +731,10 @@ const machineActivitySummarySchema = z.object({
   title: z.string(),
   activityTitle: z.string().trim().min(1).max(160).optional(),
   activeTurnStartedAt: z.string().min(1).optional(),
+  activePlanProgress: z.object({
+    currentStep: z.number().int().positive(),
+    totalSteps: z.number().int().positive()
+  }).strict().optional(),
   latestAgentMessage: z.string().trim().min(1).max(160).optional(),
   workingDirectory: z.string().min(1),
   updatedAt: z.string().min(1),

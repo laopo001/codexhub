@@ -14,7 +14,7 @@ import { isModelReasoningEffort } from "../../shared/usageTypes.js";
 export { formatCompactNumber } from "../../shared/toolFormatting.js";
 import { isVscodeSurface } from "../appConfig.js";
 import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusSnapshot, ActivityStatusView, BackgroundTerminalView, ModelSelection, RateLimitWindow, ReasoningEffort, ReasoningSelection, ServiceTierSelection, SessionRateLimits, StreamEvent, ThreadDetail, ThreadGoalView, ThreadUsage, Usage, WebRecordView } from "../types.js";
-import { formatPlanProgress, planProgressFromStatuses } from "../../shared/planProgress.js";
+import { formatPlanProgress, planProgressFromPlan } from "../../shared/planProgress.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, isFastServiceTier, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
@@ -1161,7 +1161,7 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
 
   if (type === "turn_plan_updated") {
     const steps = activityPlanSteps(payload.plan);
-    const progress = planProgressFromStatuses(steps.map((step) => step.status));
+    const progress = planProgressFromPlan(payload.plan);
     if (!progress) return null;
     const activeStep = steps[progress.currentIndex]!;
     const text = progress.allCompleted ? "All steps complete" : activeStep.step;

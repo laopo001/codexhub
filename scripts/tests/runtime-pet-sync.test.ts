@@ -49,11 +49,31 @@ test("runtime stream mirrors thread execution state for detached consumers", asy
   const runningWithClock = runtimeEvents.at(-1)?.runtimes[0]?.threads.find((thread) => thread.threadId === threadId);
   assert.equal(runningWithClock?.activeTurnStartedAt, "2023-11-14T22:13:20.000Z");
 
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: {
+      method: "turn/plan/updated",
+      params: {
+        threadId,
+        turnId: "desktop-pet-turn",
+        plan: [
+          { step: "Inspect", status: "completed" },
+          { step: "Implement", status: "inProgress" },
+          { step: "Verify", status: "pending" }
+        ]
+      }
+    }
+  });
+  const runningWithPlan = runtimeEvents.at(-1)?.runtimes[0]?.threads.find((thread) => thread.threadId === threadId);
+  assert.deepEqual(runningWithPlan?.activePlanProgress, { currentStep: 2, totalSteps: 3 });
+
   hub.applySessionEvent(sessionId, turnCompleted(threadId, "desktop-pet-turn"));
   await completion;
   const idle = runtimeEvents.at(-1)?.runtimes[0]?.threads.find((thread) => thread.threadId === threadId);
   assert.equal(idle?.running, false);
   assert.equal(idle?.status, "idle");
+  assert.equal(idle?.activePlanProgress, undefined);
 
   unsubscribe();
 });

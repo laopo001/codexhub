@@ -327,6 +327,33 @@ test("open pet activities expose the same turn start used by the tab timer", () 
   });
 });
 
+test("open pet activities expose current Plan progress alongside the shared timer", () => {
+  const threadId = "thread-plan";
+  const turnId = "turn-plan";
+  const planRecord: CodexRecord = {
+    id: `app:${threadId}:${turnId}:event:turn_plan_updated`,
+    timestamp: "2026-01-01T00:00:06.000Z",
+    type: "event_msg",
+    sourceThreadId: threadId,
+    payload: {
+      type: "turn_plan_updated",
+      turn_id: turnId,
+      plan: [
+        { step: "Inspect", status: "completed" },
+        { step: "Implement", status: "in_progress" },
+        { step: "Verify", status: "pending" },
+        { step: "Report", status: "pending" }
+      ]
+    }
+  };
+  const activity = derivePetActivities([{
+    ...thread(threadId, [planRecord], true),
+    activeTurnId: turnId
+  }])[0];
+
+  assert.deepEqual(activity?.activePlanProgress, { currentStep: 2, totalSteps: 4 });
+});
+
 test("summary-only pet activities expose the runtime turn start for a live timer", () => {
   const startedAt = "2026-01-01T00:00:05.000Z";
   const runtime: RuntimeSummary = {
@@ -343,6 +370,7 @@ test("summary-only pet activities expose the runtime turn start for a live timer
       running: true,
       activeTurnId: "summary-timer-turn",
       activeTurnStartedAt: startedAt,
+      activePlanProgress: { currentStep: 1, totalSteps: 3 },
       title: "Summary timer",
       updatedAt: "2026-01-01T00:00:10.000Z",
       messageCount: 1,
@@ -356,6 +384,10 @@ test("summary-only pet activities expose the runtime turn start for a live timer
     duration: "",
     text: "Running",
     startedAt
+  });
+  assert.deepEqual(derivePetActivities([], [runtime])[0]?.activePlanProgress, {
+    currentStep: 1,
+    totalSteps: 3
   });
 });
 
@@ -375,6 +407,7 @@ test("machine-only pet activities expose the registered turn start and Agent mes
       title: "Activity only",
       activityTitle: "检查注册机器",
       activeTurnStartedAt: startedAt,
+      activePlanProgress: { currentStep: 3, totalSteps: 4 },
       latestAgentMessage: "正在检查第二排时间",
       workingDirectory: "/home/laop/projects/codexhub",
       updatedAt: "2026-01-01T00:00:10.000Z",
@@ -403,6 +436,7 @@ test("machine-only pet activities expose the registered turn start and Agent mes
       text: "Running",
       startedAt
     },
+    activePlanProgress: { currentStep: 3, totalSteps: 4 },
     activeGoal: null
   });
 });

@@ -133,17 +133,19 @@ export const LiveStatusLabel = ({
 
 export const LiveThreadExecutionText = ({
   executionMeta,
-  includeLabel = true
+  includeLabel = true,
+  leadingText
 }: {
   executionMeta: ThreadExecutionMeta;
   includeLabel?: boolean;
+  leadingText?: string;
 }) => {
   const liveDurationMs = useLiveDurationMs(
     executionMeta.status === "running",
     executionMeta.startedAt
   );
   const duration = liveDurationMs === undefined ? executionMeta.duration : formatThreadDuration(liveDurationMs);
-  return <>{[includeLabel ? executionMeta.label : "", duration].filter(Boolean).join(" · ")}</>;
+  return <>{[leadingText, includeLabel ? executionMeta.label : "", duration].filter(Boolean).join(" · ")}</>;
 };
 
 export const threadExecutionTimeMode = (
@@ -213,17 +215,26 @@ export const LiveGoalDuration = ({
 export const LiveThreadRunningText = ({
   executionMeta,
   activeGoal,
-  includeLabel = true
+  includeLabel = true,
+  leadingText
 }: {
   executionMeta: ThreadExecutionMeta;
   activeGoal?: ThreadGoalView | null;
   includeLabel?: boolean;
+  leadingText?: string;
 }) => {
   if (threadExecutionTimeMode(executionMeta, activeGoal) !== "goal" || !activeGoal) {
-    return <LiveThreadExecutionText executionMeta={executionMeta} includeLabel={includeLabel} />;
+    return (
+      <LiveThreadExecutionText
+        executionMeta={executionMeta}
+        includeLabel={includeLabel}
+        leadingText={leadingText}
+      />
+    );
   }
   return (
     <>
+      {leadingText ? `${leadingText} · ` : null}
       {includeLabel ? `${executionMeta.label} · ` : null}
       <LiveGoalDuration
         status={activeGoal.status}

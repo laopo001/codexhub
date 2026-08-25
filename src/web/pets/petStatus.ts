@@ -1,5 +1,11 @@
 import { asRecord, type CodexRecord } from "../../shared/recordTypes.js";
 import {
+  planProgressFromPlan,
+  planProgressSummary,
+  type PlanProgressSummary
+} from "../../shared/planProgress.js";
+import {
+  activityStatusesFromRecords,
   latestThreadGoalFromRecords,
   latestTurnActivityScope,
   threadDisplayRecords
@@ -34,6 +40,7 @@ export type PetActivity = {
   latestAgentMessage?: string;
   executionMeta?: ThreadExecutionMeta;
   activeGoal?: ThreadGoalView | null;
+  activePlanProgress?: PlanProgressSummary;
 };
 
 export const petCompletionJumpDurationMs = 3_000;
@@ -281,22 +288,28 @@ export const derivePetActivities = (
         ? (() => {
             const records = threadDisplayRecords(detail.threadId, detail);
             const activityScope = latestTurnActivityScope(records, detail.activeTurnId);
+            const planProgress = planProgressFromPlan(
+              activityStatusesFromRecords(activityScope.records).find((status) => status.key === "plan")?.steps
+            );
             return {
               executionMeta: threadExecutionMeta(detail, activityScope),
-              activeGoal: latestThreadGoalFromRecords(records, detail.threadId)
+              activeGoal: latestThreadGoalFromRecords(records, detail.threadId),
+              ...(planProgress ? { activePlanProgress: planProgressSummary(planProgress) } : {})
             };
           })()
         : undefined;
       const summaryExecution = !detail && summary?.status === "running"
         ? {
             executionMeta: runningThreadExecutionMeta(summary.activeTurnStartedAt),
-            activeGoal: null
+            activeGoal: null,
+            ...(summary.activePlanProgress ? { activePlanProgress: summary.activePlanProgress } : {})
           }
         : undefined;
       const machineExecution = !detail && !summary && activity?.status === "running"
         ? {
             executionMeta: runningThreadExecutionMeta(activity.activeTurnStartedAt),
-            activeGoal: null
+            activeGoal: null,
+            ...(activity.activePlanProgress ? { activePlanProgress: activity.activePlanProgress } : {})
           }
         : undefined;
       const activityTitle = firstNonBlank(

@@ -8,6 +8,7 @@ import {
   sevenDayRateLimitWindowMinutes
 } from "../core/threadUsage.js";
 import {
+  activityStatusesFromRecords,
   formatComposerModelButtonLabel,
   formatComposerModelTitle,
   formatContextTitle,
@@ -32,6 +33,7 @@ import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { contextMenuPosition } from "./helpers/composer.js";
 import type { OpenThreadState } from "./types.js";
+import { formatPlanProgress, planProgressFromStatuses } from "../shared/planProgress.js";
 
 type ComposerThreadControlsMode = "inline" | "popover";
 
@@ -143,6 +145,13 @@ const OpenThreadTabLabel = ({
   const records = threadDisplayRecords(thread.threadId, thread);
   const activityScope = latestTurnActivityScope(records, thread.activeTurnId);
   const executionMeta = threadExecutionMeta(thread, activityScope);
+  const planStatus = activityStatusesFromRecords(activityScope.records).find((status) => status.key === "plan");
+  const planProgress = planStatus?.steps?.length
+    ? planProgressFromStatuses(planStatus.steps.map((step) => step.status))
+    : undefined;
+  const leadingStatusText = executionMeta.status === "running" && planProgress
+    ? formatPlanProgress(planProgress)
+    : undefined;
   const activeGoal = latestThreadGoalFromRecords(records, thread.threadId);
   const details = (
     <div className="openThreadTabDetails">
@@ -161,7 +170,11 @@ const OpenThreadTabLabel = ({
       <div>
         <span>Status</span>
         <code>
-          <LiveThreadRunningText executionMeta={executionMeta} activeGoal={activeGoal} />
+          <LiveThreadRunningText
+            executionMeta={executionMeta}
+            activeGoal={activeGoal}
+            leadingText={leadingStatusText}
+          />
         </code>
       </div>
       {thread.runtime.machineId ? (
@@ -189,7 +202,11 @@ const OpenThreadTabLabel = ({
         <span className="openThreadTabMeta">
           <code title={`${thread.workingDirectory}\n${thread.threadId}`}>{workspaceName} · {shortId(thread.threadId)}</code>
           <em className={`openThreadTabBadge ${executionMeta.status}`}>
-            <LiveThreadRunningText executionMeta={executionMeta} activeGoal={activeGoal} />
+            <LiveThreadRunningText
+              executionMeta={executionMeta}
+              activeGoal={activeGoal}
+              leadingText={leadingStatusText}
+            />
           </em>
         </span>
       </span>
