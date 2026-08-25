@@ -568,6 +568,14 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       if ((threadRecordSubscriptionCounts.get(threadId) ?? 0) > 0) return;
       const thread = threads.getThread(threadId);
       if (!thread) return;
+      if (thread.running) {
+        // A running Turn still needs the app-server lifecycle stream even when
+        // no Web tab is currently subscribed. Otherwise turn/completed can be
+        // lost after the records subscription closes, leaving the control
+        // plane stuck at running until a later historical resync.
+        scheduleThreadRecordSubscriptionIdle(threadId);
+        return;
+      }
       try {
         // 只释放 records 镜像订阅，runtime session 本身保持在线。
         threads.unsubscribeThreadRecords(threadId);

@@ -167,7 +167,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   };
 
   return (
-    <aside className="sidebar">
+    <aside id="codexhub-sidebar" className="sidebar">
       <div className="brand">
         <div>
           <h1>Codex Hub</h1>

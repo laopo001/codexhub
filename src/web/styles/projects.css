@@ -1,7 +1,7 @@
 .projectPanel {
-  display: grid;
-  align-content: start;
-  flex: 0 0 auto;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   gap: 6px;
   min-height: 0;
 }
@@ -71,14 +71,18 @@
 
 .projectList {
   display: grid;
+  align-content: start;
+  flex: 1 1 auto;
   gap: 4px;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .projectMachineGroup {
   display: grid;
+  align-content: start;
   gap: 3px;
   min-width: 0;
 }
@@ -205,6 +209,7 @@
 
 .projectMachineRows {
   display: grid;
+  align-content: start;
   gap: 4px;
   min-width: 0;
   margin-left: 6px;

@@ -8,13 +8,22 @@
 }
 
 .sidebarPanelToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
+  width: 34px;
+  min-width: 34px;
   min-height: 34px;
   border: 1px solid #cbd6c7;
   border-radius: 8px;
   background: #ffffff;
   color: #17211a;
-  padding: 0 12px;
+  padding: 0;
+}
+
+.sidebarPanelToggle svg {
+  display: block;
 }
 
 .sidebarPanelToggle:hover {

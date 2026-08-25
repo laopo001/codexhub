@@ -261,6 +261,8 @@ const main = async () => {
     console.log("thread record subscription ok");
     await assertAppServerOnlyThreadSubscription(apiBase, fake.threadId, fake);
     console.log("app-server-only thread subscription ok");
+    await assertRunningThreadRecordSubscriptionSurvivesIdle(apiBase, fake);
+    console.log("running thread record subscription survives idle ok");
     await assertHistoricalSnapshotPublishesMarkedRecordEvents(apiBase, fake.threadId, fake);
     console.log("historical snapshot record events marked ok");
 
@@ -1587,6 +1589,42 @@ const assertAppServerOnlyThreadSubscription = async (apiBase: string, threadId: 
     if (unsubscribe.threadId !== threadId) throw new Error(`unsubscribe command used wrong thread: ${JSON.stringify(unsubscribe)}`);
   } finally {
     subscription.ws.close();
+  }
+};
+
+const assertRunningThreadRecordSubscriptionSurvivesIdle = async (apiBase: string, fake: FakeMachine) => {
+  const subscription = await subscribeThread(apiBase, fake.threadId);
+  try {
+    const subscribe = await fake.nextSessionCommand("subscribe_thread_records");
+    if (subscribe.threadId !== fake.threadId) {
+      throw new Error(`running subscription used wrong thread: ${JSON.stringify(subscribe)}`);
+    }
+
+    const turnRequest = apiJson(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: "keep the lifecycle stream while running", source: "web" })
+    });
+    const turn = await fake.nextTurn();
+    const running = await apiJson<ThreadDetail>(
+      apiBase,
+      `/api/threads/${encodeURIComponent(fake.threadId)}`
+    );
+    if (!running.running || running.activeTurnId !== turn.turnId) {
+      throw new Error(`running subscription test did not start a Turn: ${JSON.stringify(running)}`);
+    }
+
+    subscription.ws.close();
+    await fake.expectNoSessionCommand("unsubscribe_thread_records", 100);
+
+    fake.completeTurn(turn);
+    await turnRequest;
+    const unsubscribe = await fake.nextSessionCommand("unsubscribe_thread_records", 1000);
+    if (unsubscribe.threadId !== fake.threadId) {
+      throw new Error(`running subscription cleanup used wrong thread: ${JSON.stringify(unsubscribe)}`);
+    }
+  } finally {
+    if (subscription.ws.readyState === WebSocket.OPEN) subscription.ws.close();
   }
 };
 

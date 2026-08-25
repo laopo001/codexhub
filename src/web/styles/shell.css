@@ -99,7 +99,7 @@
   min-width: 0;
   min-height: 0;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 14px;
   background: #151815;
   color: #f8fbf4;

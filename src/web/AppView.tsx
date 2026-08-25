@@ -1,5 +1,5 @@
 import { Popconfirm, Tabs } from "antd";
-import { X } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { subagentAssignmentForChild } from "../core/codexRecordView.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
@@ -98,10 +98,16 @@ export const AppView = ({ viewModel }: AppViewProps) => {
       type="button"
       className="sidebarPanelToggle"
       onClick={() => setSidebarCollapsed((current) => !current)}
-      aria-label={sidebarCollapsed ? "Show menu" : "Hide menu"}
-      title={sidebarCollapsed ? "Show menu" : "Hide menu"}
+      aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+      aria-controls="codexhub-sidebar"
+      aria-expanded={!sidebarCollapsed}
+      title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
     >
-      {sidebarCollapsed ? "Menu" : "Hide"}
+      {sidebarCollapsed ? (
+        <PanelLeftOpen size={18} strokeWidth={2} aria-hidden="true" />
+      ) : (
+        <PanelLeftClose size={18} strokeWidth={2} aria-hidden="true" />
+      )}
     </button>
   );
 
@@ -112,7 +118,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
           type="button"
           className="sidebarScrim"
           onClick={() => setSidebarCollapsed(true)}
-          aria-label="Hide menu"
+          aria-label="Hide sidebar"
         />
       ) : null}
       <AppSidebar viewModel={sidebar} />
