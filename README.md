@@ -34,6 +34,12 @@ Vite 会把 `/api` 代理到开发 API。需要单独启动时使用 `pnpm run d
 
 - Web/API: `http://127.0.0.1:8788`
 
+### 浏览器安装（PWA）
+
+通过浏览器访问 Web 入口后，使用地址栏中的安装图标，或浏览器菜单里的“安装 CodexHub”，即可把 CodexHub 安装成独立窗口。生产 server 和 `pnpm dev` 的 Web 端口都提供同一套 PWA manifest、Service Worker 和图标资源；首次打开页面后浏览器会自动注册 Service Worker。
+
+`http://127.0.0.1:<port>` 和 `http://localhost:<port>` 属于浏览器认可的本地安全上下文，可以直接安装。通过局域网 IP（例如 `http://192.168.x.x:<port>`）访问时，浏览器通常要求 HTTPS；这属于浏览器的安全上下文规则，需要为该访问地址配置 HTTPS。
+
 普通本机启动时，server 会默认注册一台 `local` machine，Web 的 Connections / local 可以直接看到它，并通过 Projects 打开本机目录、启动 Codex session。这个内嵌 machine 的默认名称是 `local`，可用 `CODEX_HUB_LOCAL_MACHINE_ID` / `CODEX_HUB_LOCAL_MACHINE_NAME` 固定 ID 或显示名。需要关闭这个内嵌本机入口时设置：
 
 ```bash

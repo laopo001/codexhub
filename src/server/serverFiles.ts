@@ -29,6 +29,9 @@ export const registerStaticRoutes = (app: FastifyInstance, root: string) => {
     }
     if (await fileExists(requested)) {
       reply.type(contentType(requested));
+      if (path.basename(requested) === "manifest.webmanifest" || path.basename(requested) === "codexhub-notification-sw.js") {
+        reply.header("cache-control", "no-cache");
+      }
       return reply.send(createReadStream(requested));
     }
     return sendIndex(request, reply);
@@ -132,6 +135,7 @@ export const contentType = (filePath: string) => {
   if (extension === ".js") return "text/javascript; charset=utf-8";
   if (extension === ".css") return "text/css; charset=utf-8";
   if (extension === ".json") return "application/json; charset=utf-8";
+  if (extension === ".webmanifest") return "application/manifest+json; charset=utf-8";
   if (extension === ".svg") return "image/svg+xml";
   if (extension === ".png") return "image/png";
   if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";

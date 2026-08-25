@@ -20,6 +20,10 @@ import { parseCodexHubHostIncomingMessage } from "./hostBridge.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
 import { partitionAppViewModel } from "./viewModel.js";
 import { PetOverlay, PetPicker, usePetFeature } from "./pets/index.js";
+import { registerPwaServiceWorker } from "./pwa.js";
+
+void registerPwaServiceWorker();
+
 const resizeComposerTextarea = (textarea: HTMLTextAreaElement | null) => {
   if (!textarea) return;
   textarea.style.height = "auto";

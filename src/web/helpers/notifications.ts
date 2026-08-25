@@ -1,6 +1,7 @@
 import type { TaskCompleteNotification } from "../types.js";
 import type { MachineActivitySummary, MachineSummary } from "../../shared/machineTypes.js";
 import { taskCompleteNotificationTitle } from "../../shared/taskNotifications.js";
+import { appServiceWorkerUrl } from "../pwa.js";
 
 export type RegisteredMachineActivityCompletion = {
   machine: MachineSummary;
@@ -178,7 +179,7 @@ export const showBrowserTaskCompleteNotification = async (
     } catch {
       const serviceWorker = current.serviceWorker;
       if (!serviceWorker) return "unavailable";
-      const registration = await serviceWorker.register("/codexhub-notification-sw.js", { scope: "/" });
+      const registration = await serviceWorker.register(appServiceWorkerUrl, { scope: "/" });
       const readyRegistration = serviceWorker.ready ? await serviceWorker.ready : registration;
       const activeRegistration = await activatedServiceWorkerRegistration(readyRegistration);
       await activeRegistration.showNotification(taskCompleteNotificationTitle(notification), {
