@@ -40,6 +40,7 @@ export type MachineRunnerOptions = {
   apiBase: string;
   authToken?: string;
   machineId?: string;
+  sshConnectionId?: string;
   type?: MachineType;
   name?: string;
   capabilities?: Partial<MachineCapabilities>;
@@ -238,6 +239,7 @@ class CodexhubMachineRunner {
     const activities = this.options.activitySnapshot?.();
     return {
       machineId: this.machineId,
+      sshConnectionId: this.options.sshConnectionId,
       type: this.options.type ?? "registered",
       name: this.options.name,
       hostname: os.hostname(),

@@ -11,6 +11,7 @@ export type StatusRegistration = {
   preview: React.ReactNode;
   actions?: React.ReactNode;
   detail?: React.ReactNode;
+  defaultExpanded?: boolean;
   expanded?: boolean;
   onToggle?: () => void;
   ariaLabel?: string;
@@ -23,21 +24,17 @@ export type StatusRegistry = {
 
 const StatusToggleIcon = ({
   expanded,
-  expandedIcon,
   size = 13,
   strokeWidth = 2.2
 }: {
   expanded: boolean;
-  expandedIcon: "up" | "down";
   size?: number;
   strokeWidth?: number;
 }) => {
-  const showUpIcon = expandedIcon === "up" ? expanded : !expanded;
-  const ToggleIcon = showUpIcon ? ChevronUp : ChevronDown;
+  const ToggleIcon = expanded ? ChevronDown : ChevronUp;
   return <ToggleIcon size={size} strokeWidth={strokeWidth} aria-hidden="true" />;
 };
 
-// The outer activity panel uses an up chevron for its expanded state.
 export const StatusPanelToggleIcon = ({
   expanded,
   size = 13,
@@ -46,9 +43,8 @@ export const StatusPanelToggleIcon = ({
   expanded: boolean;
   size?: number;
   strokeWidth?: number;
-}) => <StatusToggleIcon expanded={expanded} expandedIcon="up" size={size} strokeWidth={strokeWidth} />;
+}) => <StatusToggleIcon expanded={expanded} size={size} strokeWidth={strokeWidth} />;
 
-// Individual registry entries use the opposite visual direction.
 export const StatusRegistryToggleIcon = ({
   expanded,
   size = 13,
@@ -57,7 +53,7 @@ export const StatusRegistryToggleIcon = ({
   expanded: boolean;
   size?: number;
   strokeWidth?: number;
-}) => <StatusToggleIcon expanded={expanded} expandedIcon="down" size={size} strokeWidth={strokeWidth} />;
+}) => <StatusToggleIcon expanded={expanded} size={size} strokeWidth={strokeWidth} />;
 
 export const createStatusRegistry = (): StatusRegistry => {
   const entriesById = new Map<string, StatusRegistration>();
@@ -78,7 +74,7 @@ export const StatusRegistryRows = ({ entries }: { entries: StatusRegistration[] 
       {entries.map((entry) => {
         const expandable = Boolean(entry.detail);
         const hasActions = Boolean(entry.actions);
-        const expanded = Boolean(expandable && entry.expanded);
+        const expanded = Boolean(expandable && (entry.expanded ?? entry.defaultExpanded));
         return (
           <React.Fragment key={entry.id}>
             <div

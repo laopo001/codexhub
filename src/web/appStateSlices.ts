@@ -36,6 +36,7 @@ export const useIntegrationState = () => {
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [tasks, setTasks] = useState<LocalTask[]>([]);
   const [taskFormOpen, setTaskFormOpen] = useState(false);
+  const [tasksDialogOpen, setTasksDialogOpen] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState("");
   const [taskError, setTaskError] = useState("");
 
@@ -63,6 +64,7 @@ export const useIntegrationState = () => {
     setTaskBusyId,
     setTaskError,
     setTaskFormOpen,
+    setTasksDialogOpen,
     setTasks,
     sshConfigHosts,
     sshConnectingHost,
@@ -73,6 +75,7 @@ export const useIntegrationState = () => {
     taskBusyId,
     taskError,
     taskFormOpen,
+    tasksDialogOpen,
     tasks
   };
 };

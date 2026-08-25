@@ -51,6 +51,7 @@ export const useAppState = () => {
     setTaskBusyId,
     setTaskError,
     setTaskFormOpen,
+    setTasksDialogOpen,
     setTasks,
     sshConfigHosts,
     sshConnectingHost,
@@ -61,6 +62,7 @@ export const useAppState = () => {
     taskBusyId,
     taskError,
     taskFormOpen,
+    tasksDialogOpen,
     tasks
   } = integrationState;
   const {
@@ -316,6 +318,7 @@ export const useAppState = () => {
     setTaskBusyId,
     setTaskError,
     setTaskFormOpen,
+    setTasksDialogOpen,
     setTasks,
     setThreadControlsMenuOpen,
     setThreadModelDialogOpen,
@@ -337,6 +340,7 @@ export const useAppState = () => {
     taskBusyId,
     taskError,
     taskFormOpen,
+    tasksDialogOpen,
     tasks,
     tasksLastSeq,
     threadControlsMenuOpen,

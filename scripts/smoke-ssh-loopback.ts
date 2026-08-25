@@ -19,6 +19,7 @@ type MachineSummary = {
 
 type SshConnection = {
   connectionId: string;
+  machineId?: string;
   host: string;
   status: "starting" | "running" | "exited";
   remotePort: number;
@@ -101,6 +102,7 @@ const main = async () => {
     console.log(`ssh tunnel ok: ${connectionId}`);
 
     const machine = await waitForSshMachine(apiBase);
+    await waitForSshMachineAssociation(apiBase, connectionId, machine.machineId);
     console.log(`ssh machine ok: ${machine.machineId}`);
 
     const open = await apiJson<ProjectThreadStartResponse>(apiBase, "/api/projects/open", {
@@ -255,6 +257,17 @@ const waitForSshMachine = async (apiBase: string) => {
     await delay(250);
   }
   throw new Error("SSH machine did not register through the reverse tunnel");
+};
+
+const waitForSshMachineAssociation = async (apiBase: string, connectionId: string, machineId: string) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5_000) {
+    const data = await apiJson<{ connections?: SshConnection[] }>(apiBase, "/api/ssh/connections").catch(() => ({ connections: [] }));
+    const connection = data.connections?.find((item) => item.connectionId === connectionId);
+    if (connection?.machineId === machineId) return connection;
+    await delay(50);
+  }
+  throw new Error(`SSH connection did not expose its registered machine: ${connectionId} -> ${machineId}`);
 };
 
 const waitForMachineOffline = async (apiBase: string, machineId: string) => {

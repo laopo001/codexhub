@@ -1089,12 +1089,14 @@ export const ActivityStatusBar = ({
   statuses,
   expanded,
   expandedKeys,
+  expandedKeysInitialized = true,
   onToggle
 }: {
   statuses: ActivityStatusView[];
   expanded: boolean;
   expandedKeys: Set<string>;
-  onToggle: (key: string) => void;
+  expandedKeysInitialized?: boolean;
+  onToggle: (key: string, expanded: boolean) => void;
 }) => {
   if (!expanded) return null;
   const registry = createStatusRegistry();
@@ -1116,8 +1118,9 @@ export const ActivityStatusBar = ({
         </>
       ),
       detail,
-      expanded: expandedKeys.has(status.key),
-      onToggle: () => onToggle(status.key),
+      defaultExpanded: status.key === "plan",
+      expanded: expandedKeysInitialized ? expandedKeys.has(status.key) : undefined,
+      onToggle: () => onToggle(status.key, expandedKeysInitialized ? expandedKeys.has(status.key) : status.key === "plan"),
       ariaLabel: `${status.label}: ${status.text}`
     });
   }

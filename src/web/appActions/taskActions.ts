@@ -46,7 +46,7 @@ export type TaskActions = {
   updateTaskDraftProject: (projectPath: string) => void;
   focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
   primeTaskCompletionFeedback: () => void;
-  createTask: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
+  createTask: () => Promise<void>;
   patchTask: (taskId: string, patch: TaskUpdateInput) => Promise<boolean>;
   deleteTask: (taskId: string) => Promise<void>;
   runTaskNow: (task: LocalTask) => Promise<void>;
@@ -114,8 +114,7 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
     primeTaskCompletionSound(ctx.notificationAudioContext);
   };
 
-  const createTask = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const createTask = async () => {
     primeTaskCompletionFeedback();
     const taskDraft = ctx.sidebarDraftStore.getSnapshot().taskDraft;
     const name = taskDraft.name.trim() || "Scheduled task";

@@ -62,6 +62,7 @@ export class SshMachineManager {
     const remoteCommand = sshBootstrapRemoteCommand(
       remoteApiBase,
       remoteClient,
+      connectionId,
       input,
       this.options.authToken,
       this.options.appServerLaunch
@@ -134,6 +135,16 @@ export class SshMachineManager {
     return publicConnection(connection);
   }
 
+  associateMachine(connectionId: string, machineId: string) {
+    const connection = this.connections.get(connectionId);
+    if (!connection) return false;
+    if (connection.machineId === machineId) return true;
+    connection.machineId = machineId;
+    connection.updatedAt = new Date().toISOString();
+    this.options.onChange?.();
+    return true;
+  }
+
   async stopAll() {
     await Promise.allSettled([...this.connections.values()].map((connection) => this.terminate(connection)));
   }
@@ -177,6 +188,7 @@ const trimOutput = (value: string) =>
 const sshBootstrapRemoteCommand = (
   remoteApiBase: string,
   remoteClient: Pick<SshRemoteClientBundle, "hash" | "endpointPath">,
+  connectionId: string,
   input: Pick<SshMachineConnectInput, "name">,
   authToken?: string | null,
   appServerLaunch?: CodexAppServerLaunchOptions
@@ -218,6 +230,8 @@ const sshBootstrapRemoteCommand = (
       shellQuote(remoteApiBase),
       "--type",
       "ssh",
+      "--ssh-connection-id",
+      shellQuote(connectionId),
       ...(input.name ? ["--name", shellQuote(input.name)] : [])
     ].join(" ")
   ].join("\n");

@@ -48,6 +48,7 @@ export type MachineActivitySummary = {
 /** machine WebSocket 注册 payload；server 用它创建或刷新 machine 投影。 */
 export type MachineRegistration = {
   machineId?: string;
+  sshConnectionId?: string;
   type?: MachineType;
   name?: string;
   hostname: string;

@@ -279,6 +279,10 @@ export const ThreadConversation = ({
     () => new Set(statusActivity.scopeKey ? expandedStatusKeys[statusActivity.scopeKey] ?? [] : []),
     [expandedStatusKeys, statusActivity.scopeKey]
   );
+  const expandedStatusKeysInitialized = Boolean(
+    statusActivity.scopeKey
+    && Object.prototype.hasOwnProperty.call(expandedStatusKeys, statusActivity.scopeKey)
+  );
   const stopEnabled = canStop ?? Boolean(
     runtimeReady
     && thread.status === "running"
@@ -574,11 +578,12 @@ export const ThreadConversation = ({
       statuses={statusActivity.items}
       expanded={statusPanelExpanded}
       expandedKeys={activeExpandedStatusKeys}
-      onToggle={(key) => {
+      expandedKeysInitialized={expandedStatusKeysInitialized}
+      onToggle={(key, expanded) => {
         if (!statusActivity.scopeKey) return;
         setExpandedStatusKeys((current) => {
           const keys = new Set(current[statusActivity.scopeKey] ?? []);
-          if (keys.has(key)) keys.delete(key);
+          if (expanded) keys.delete(key);
           else keys.add(key);
           return { ...current, [statusActivity.scopeKey]: [...keys] };
         });

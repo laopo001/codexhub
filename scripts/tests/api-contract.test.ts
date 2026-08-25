@@ -29,6 +29,16 @@ test("machine registration and heartbeat reject unknown compatibility fields", (
     ...registration,
     capabilities: { projectLauncher: true, workerMode: "legacy" }
   }).success, false);
+  assert.equal(machineRegistrationSchema.safeParse({
+    ...registration,
+    type: "ssh",
+    sshConnectionId: "1a111111-2222-4333-8444-555555555555"
+  }).success, true);
+  assert.equal(machineRegistrationSchema.safeParse({
+    ...registration,
+    type: "ssh",
+    sshConnectionId: "not-a-uuid"
+  }).success, false);
   assert.equal(machineHeartbeatSchema.safeParse({ workerId: "legacy-worker" }).success, false);
 });
 

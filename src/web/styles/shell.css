@@ -134,6 +134,8 @@
 }
 
 .sidebarFooter {
+  display: grid;
+  gap: 8px;
   position: sticky;
   bottom: -14px;
   z-index: 1;

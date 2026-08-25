@@ -134,7 +134,10 @@
 .settingsDialog {
   display: grid;
   gap: 12px;
-  width: min(380px, 100%);
+  width: min(820px, 100%);
+  max-height: calc(100svh - 48px);
+  min-height: 0;
+  overflow: hidden;
   border: 1px solid #cbd6c7;
   border-radius: 12px;
   background: #ffffff;
@@ -153,6 +156,113 @@
   margin: 0;
   font-size: 16px;
   letter-spacing: 0;
+}
+
+.taskModal .ant-modal-container {
+  overflow: hidden;
+  border: 1px solid #405244;
+  border-radius: 12px;
+  background: #151815;
+  color: #f8fbf4;
+  padding: 14px;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 0.42);
+}
+
+.taskModal .ant-modal-header {
+  margin-bottom: 12px;
+  background: transparent;
+  padding: 0;
+}
+
+.taskModal .ant-modal-title {
+  color: #f8fbf4;
+}
+
+.taskModal .ant-modal-close {
+  color: #b8c5b4;
+}
+
+.taskModal .ant-modal-close:hover {
+  color: #f8fbf4;
+  background: #203526;
+}
+
+.taskModalTitle {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.taskModalTitle strong {
+  color: #f8fbf4;
+  font-size: 16px;
+}
+
+.taskModalTitle span {
+  overflow: hidden;
+  color: #91a090;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskModal .ant-modal-body {
+  max-height: calc(100svh - 150px);
+  overflow: auto;
+  padding: 0;
+}
+
+.taskModal .taskPanel {
+  gap: 10px;
+}
+
+.taskModal .taskList {
+  max-height: none;
+}
+
+.settingsDialogLayout {
+  display: grid;
+  grid-template-columns: 142px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settingsNavigation {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settingsNavigation button {
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #66715f;
+  padding: 0 10px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settingsNavigation button:hover {
+  background: #f1f5ee;
+  color: #17211a;
+}
+
+.settingsNavigation button.active {
+  border-color: #cbd6c7;
+  background: #eef5ea;
+  color: #315b36;
+}
+
+.settingsDialogContent {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .settingsList {

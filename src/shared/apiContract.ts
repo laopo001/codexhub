@@ -739,6 +739,7 @@ const machineActivitySummarySchema = z.object({
 
 export const machineRegistrationSchema = z.object({
   machineId: z.string().min(1).optional(),
+  sshConnectionId: z.string().uuid().optional(),
   type: z.enum(["local", "ssh", "registered"]).optional(),
   name: z.string().min(1).optional(),
   hostname: z.string().min(1),

@@ -474,6 +474,43 @@ test("Plan Status rows stay compact until expanded and then render every step", 
   assert.match(expanded, /Review the final diff/);
 });
 
+test("live Plan status uses its registration default until the scope is initialized", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { ActivityStatusBar } = await import("../../src/web/helpers/components.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  const status = {
+    key: "plan",
+    label: "Plan",
+    status: "in_progress" as const,
+    text: "Connect Plan to Status",
+    steps: [{ step: "Connect Plan to Status", status: "in_progress" as const }]
+  };
+  const defaultExpanded = renderToStaticMarkup(createElement(ActivityStatusBar, {
+    statuses: [status],
+    expanded: true,
+    expandedKeys: new Set<string>(),
+    expandedKeysInitialized: false,
+    onToggle: () => undefined
+  }));
+  assert.match(defaultExpanded, /aria-expanded="true"/);
+  assert.match(defaultExpanded, /activityStatusPlanSteps/);
+
+  const initializedCollapsed = renderToStaticMarkup(createElement(ActivityStatusBar, {
+    statuses: [status],
+    expanded: true,
+    expandedKeys: new Set<string>(),
+    expandedKeysInitialized: true,
+    onToggle: () => undefined
+  }));
+  assert.match(initializedCollapsed, /aria-expanded="false"/);
+  assert.doesNotMatch(initializedCollapsed, /activityStatusPlanSteps/);
+});
+
 test("approval interactions stay on their message and out of Turn Status", async () => {
   const { activityStatusesFromRecords } = await import("../../src/web/helpers/records.js");
   assert.deepEqual(activityStatusesFromRecords([{
@@ -711,7 +748,7 @@ test("Turn Status keeps Usage at the end and colors file deltas", async () => {
   assert.ok(overview.indexOf(">Usage<") < overview.indexOf(">BG<"));
 });
 
-test("outer and inner status toggles use opposite chevron directions", async () => {
+test("status toggles point toward the next expand or collapse action", async () => {
   const previousWindow = "window" in globalThis
     ? (globalThis as { window?: unknown }).window
     : undefined;
@@ -726,8 +763,8 @@ test("outer and inner status toggles use opposite chevron directions", async () 
   const innerExpanded = renderToStaticMarkup(createElement(StatusRegistryToggleIcon, { expanded: true }));
   const innerCollapsed = renderToStaticMarkup(createElement(StatusRegistryToggleIcon, { expanded: false }));
 
-  assert.match(outerExpanded, /lucide-chevron-up/);
-  assert.match(outerCollapsed, /lucide-chevron-down/);
+  assert.match(outerExpanded, /lucide-chevron-down/);
+  assert.match(outerCollapsed, /lucide-chevron-up/);
   assert.match(innerExpanded, /lucide-chevron-down/);
   assert.match(innerCollapsed, /lucide-chevron-up/);
 });

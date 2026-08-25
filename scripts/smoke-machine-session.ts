@@ -1259,6 +1259,8 @@ const assertSshConnect = async (
     || !remoteCommand.includes("node \"$client\"")
     || !remoteCommand.includes("http://127.0.0.1:19001")
     || !remoteCommand.includes("--type ssh")
+    || !remoteCommand.includes("--ssh-connection-id")
+    || !remoteCommand.includes(connection.connectionId)
     || !remoteCommand.includes("Included Host")) {
     throw new Error(`unexpected ssh remote command: ${remoteCommand}`);
   }
@@ -1306,7 +1308,9 @@ const assertSshStartupConnect = async (
   if (!remoteCommand.includes(`/api/ssh/remote-client/${remoteClientHash}`)
     || !remoteCommand.includes("CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER=")
     || !remoteCommand.includes("auto_review")
-    || !remoteCommand.includes("--type ssh")) {
+    || !remoteCommand.includes("--type ssh")
+    || !remoteCommand.includes("--ssh-connection-id")
+    || !remoteCommand.includes(connection.connectionId)) {
     throw new Error(`startup ssh remote command did not use remote client: ${remoteCommand}`);
   }
   await apiJson(apiBase, `/api/ssh/connections/${encodeURIComponent(connection.connectionId)}`, { method: "DELETE" });

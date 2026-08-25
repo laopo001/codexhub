@@ -885,6 +885,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     attachTunneledAppServer: (input) => tunneledSessions.attach(input),
     clearMachineRegistrationProjects,
     machines,
+    onMachineRegistered: (machine, registration) => {
+      if (machine.type !== "ssh" || !registration.sshConnectionId) return;
+      sshMachines.associateMachine(registration.sshConnectionId, machine.machineId);
+    },
     publishProjects,
     refreshRetainedThreadRecordSubscriptions,
     replaceMachineRegistrationProjects,

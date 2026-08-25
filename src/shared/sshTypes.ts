@@ -14,6 +14,7 @@ export type SshMachineConnectionStatus = "starting" | "running" | "exited";
 /** SSH machine 连接摘要，包含 reverse tunnel 参数和最近输出。 */
 export type SshMachineConnection = {
   connectionId: string;
+  machineId?: string;
   host: string;
   name?: string;
   remoteClientHash: string;

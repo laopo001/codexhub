@@ -38,27 +38,12 @@
   white-space: nowrap;
 }
 
-.taskPanelHeader button {
+.taskPanelHeader .ant-btn {
   flex: 0 0 auto;
-  min-height: 26px;
-  border: 1px solid #405244;
-  border-radius: 8px;
-  background: #203526;
-  color: #f8fbf4;
-  padding: 0 10px;
-  font-size: 12px;
-  font-weight: 750;
 }
 
 .taskSearchInput {
-  min-height: 30px;
   min-width: 0;
-  border: 1px solid #334238;
-  border-radius: 8px;
-  background: #101410;
-  color: #f8fbf4;
-  padding: 6px 9px;
-  font-size: 12px;
 }
 
 .taskList {
@@ -70,7 +55,6 @@
   overflow-y: auto;
 }
 
-.taskEmpty,
 .taskRow {
   border: 1px solid #334238;
   border-radius: 8px;
@@ -78,6 +62,18 @@
   color: #91a090;
   padding: 7px 9px;
   font-size: 12px;
+}
+
+.taskPanel > .ant-empty {
+  margin: 0;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #111811;
+  padding: 18px 9px;
+}
+
+.taskPanel > .ant-empty .ant-empty-description {
+  color: #91a090;
 }
 
 .taskRow {
@@ -265,24 +261,15 @@
   font-style: normal;
 }
 
-.taskRunThreadButton {
+.taskRunThreadButton.ant-btn {
   display: grid;
   place-items: center;
   width: 22px;
+  min-width: 22px;
   height: 22px;
   min-height: 22px;
-  border: 1px solid #334238;
-  border-radius: 6px;
-  background: #151d17;
-  color: #9daa98;
   padding: 0;
   line-height: 0;
-}
-
-.taskRunThreadButton:hover {
-  border-color: #405244;
-  background: #203526;
-  color: #d8e2d5;
 }
 
 .taskRunThreadButton svg {
@@ -297,46 +284,23 @@
   padding-top: 2px;
 }
 
-.taskEditButton,
-.taskRunButton,
-.taskDeleteButton {
+.taskIconButton.ant-btn {
   display: grid;
   place-items: center;
   width: 28px;
+  min-width: 28px;
   height: 28px;
   min-height: 26px;
-  border: 1px solid #405244;
-  border-radius: 8px;
-  background: #203526;
-  color: #f8fbf4;
   padding: 0;
-  font-size: 12px;
-  font-weight: 750;
   line-height: 0;
-}
-
-.taskRunButton {
-  border-color: #d95f36;
-  background: #d95f36;
-  color: #fff8f2;
 }
 
 .taskDeleteButton {
   margin-left: auto;
 }
 
-.taskEditButton svg,
-.taskRunButton svg,
-.taskDeleteButton svg {
+.taskIconButton svg {
   pointer-events: none;
-}
-
-.taskEditButton:disabled,
-.taskRunButton:disabled,
-.taskDeleteButton:disabled {
-  border-color: #405244;
-  background: #203526;
-  color: #7e8c7b;
 }
 
 .taskForm {
@@ -346,35 +310,102 @@
   border: 1px solid #334238;
   border-radius: 8px;
   background: #0f1b14;
-  padding: 8px;
+  padding: 12px;
 }
 
-.taskField {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
+.taskModal .taskForm .ant-form-item {
+  margin-bottom: 10px;
 }
 
-.taskField span {
+.taskModal .taskForm .ant-form-item-label {
+  padding: 0 0 4px;
+}
+
+.taskModal .taskForm .ant-form-item-label > label {
   color: #b8c5b4;
   font-size: 11px;
   font-weight: 750;
 }
 
-.taskField input,
-.taskField select,
-.taskField textarea {
-  min-height: 32px;
-  border-color: #334238;
-  background: #111811;
-  color: #f8fbf4;
-  padding: 7px 8px;
-  font-size: 12px;
+.taskModal .taskForm .ant-input,
+.taskModal .taskForm .ant-input-affix-wrapper,
+.taskModal .taskForm .ant-select-selector {
+  border-color: #334238 !important;
+  border-radius: 8px !important;
+  background: #111811 !important;
+  color: #f8fbf4 !important;
 }
 
-.taskField textarea {
-  min-height: 74px;
+.taskModal .taskForm .ant-input,
+.taskModal .taskForm .ant-input-affix-wrapper,
+.taskModal .taskForm .ant-select-single {
+  min-height: 36px;
+}
+
+.taskModal .taskForm .ant-input::placeholder,
+.taskModal .taskForm .ant-select-selection-placeholder {
+  color: #718070;
+}
+
+.taskModal .taskForm .ant-select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #334238;
+  border-radius: 8px;
+  background: #111811;
+  color: #f8fbf4;
+}
+
+.taskModal .taskForm .ant-select-arrow {
+  color: #91a090;
+}
+
+.taskModal .taskForm .ant-select-content {
+  color: #f8fbf4;
+}
+
+.taskModal .taskForm .ant-select-placeholder {
+  color: #718070;
+}
+
+.taskModal .taskForm .ant-select:hover:not(.ant-select-disabled),
+.taskModal .taskForm .ant-select-focused:not(.ant-select-disabled) {
+  border-color: #7b9b75;
+  box-shadow: 0 0 0 2px rgb(84 114 80 / 0.18);
+}
+
+.taskModal .taskForm .ant-select-disabled {
+  background: #111811;
+  color: #91a090;
+  opacity: 1;
+}
+
+.taskModal .taskForm .ant-select-disabled .ant-select-content {
+  color: #91a090 !important;
+}
+
+.taskModal .taskForm .ant-input:focus,
+.taskModal .taskForm .ant-input-focused,
+.taskModal .taskForm .ant-input-affix-wrapper-focused,
+.taskModal .taskForm .ant-select-focused .ant-select-selector {
+  border-color: #7b9b75 !important;
+  box-shadow: 0 0 0 2px rgb(84 114 80 / 0.18) !important;
+}
+
+.taskModal .taskForm textarea.ant-input {
+  min-height: 82px;
   resize: vertical;
+}
+
+.taskModal .taskForm .ant-alert {
+  margin-top: 8px;
+  border-color: #6d3523;
+  background: #211813;
+}
+
+.taskModal .taskForm .ant-alert-message,
+.taskModal .taskForm .ant-alert-description {
+  color: #f0b58d;
 }
 
 .taskThreadSearchEmpty,
@@ -397,31 +428,18 @@
 }
 
 .taskSchedulePresets {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
+  display: flex;
+  flex-wrap: wrap;
   min-width: 0;
+  margin-top: 6px;
 }
 
-.taskSchedulePresets button {
+.taskSchedulePresets .ant-btn {
+  flex: 1 1 0;
   min-width: 0;
-  min-height: 26px;
   overflow: hidden;
-  border: 1px solid #334238;
-  border-radius: 7px;
-  background: #151d17;
-  color: #9daa98;
-  padding: 0 6px;
-  font-size: 11px;
-  font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.taskSchedulePresets button.active {
-  border-color: #d95f36;
-  background: #3a2319;
-  color: #ffd0bd;
 }
 
 .taskSchedulePreview {
@@ -451,35 +469,13 @@
 }
 
 .taskEnabledControl {
-  display: inline-flex;
+  display: inline-flex !important;
   align-items: center;
-  gap: 7px;
   min-width: 0;
   color: #b8c5b4;
   font-size: 12px;
 }
 
-.taskPanel .ant-switch {
-  background: #405244;
-}
-
-.taskPanel .ant-switch.ant-switch-checked {
-  background: #2f7d5a;
-}
-
-.taskFormActions button {
-  min-height: 32px;
-  border: 1px solid #d95f36;
-  border-radius: 8px;
-  background: #d95f36;
-  color: #fff8f2;
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.taskFormActions button:disabled {
-  border-color: #405244;
-  background: #203526;
-  color: #7e8c7b;
+.taskSaveButton {
+  flex: 0 0 auto;
 }

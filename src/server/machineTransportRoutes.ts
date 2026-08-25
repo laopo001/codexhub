@@ -8,7 +8,7 @@ import {
   machineTransportMessageSchema,
   type MachineTransportIncomingMessage
 } from "../shared/apiContract.js";
-import type { MachineRegistrationProject, MachineSummary } from "../shared/machineTypes.js";
+import type { MachineRegistration, MachineRegistrationProject, MachineSummary } from "../shared/machineTypes.js";
 
 type AttachTunneledAppServerInput = {
   machineId: string;
@@ -25,6 +25,7 @@ export type MachineTransportRoutesContext = {
   attachTunneledAppServer: (input: AttachTunneledAppServerInput) => Promise<string>;
   clearMachineRegistrationProjects: (machineId: string) => void;
   machines: MachineHub;
+  onMachineRegistered?: (machine: MachineSummary, registration: MachineRegistration) => void;
   publishProjects: () => void;
   refreshRetainedThreadRecordSubscriptions: () => void;
   replaceMachineRegistrationProjects: (machineId: string, projects: MachineRegistrationProject[] | undefined) => void;
@@ -134,6 +135,7 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
 
     const registerMachine = (parsed: Extract<MachineTransportIncomingMessage, { type: "register" }>) => {
       const result = ctx.machines.registerMachine({ ...parsed.registration, transportId });
+      ctx.onMachineRegistered?.(result.machine, parsed.registration);
       if (ctx.shouldPersistMachine(result.machine)) {
         ctx.state.upsertMachine({
           machineId: result.machineId,

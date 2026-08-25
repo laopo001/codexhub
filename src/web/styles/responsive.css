@@ -131,6 +131,27 @@
     padding: 12px;
   }
 
+  .settingsDialogLayout {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .settingsNavigation {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsNavigation button {
+    text-align: center;
+  }
+
+  .taskModal .ant-modal-container {
+    padding: 12px;
+  }
+
+  .taskModal .ant-modal-body {
+    max-height: calc(100svh - 118px);
+  }
+
   .threadPickerModal {
     max-height: min(600px, calc(100svh - 16px));
   }

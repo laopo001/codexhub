@@ -27,6 +27,8 @@ import {
 } from "./appHelpers.js";
 import { apiRoutes } from "../shared/apiRoutes.js";
 import { writeTextToClipboard } from "./helpers/composer.js";
+import { ConnectionsPanel } from "./ConnectionsPanel.js";
+import { TaskDialog } from "./TaskDialog.js";
 import type { ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
 import type { AppDialogsViewModel } from "./viewModel.js";
 
@@ -74,6 +76,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     threadRenameDialog,
     threadTabContextMenu,
     settingsDialogOpen,
+    tasksDialogOpen,
     runtimeList,
     openThreads,
     setGoalDialog,
@@ -97,6 +100,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   } = viewModel;
   const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
   const [restartState, setRestartState] = React.useState<"idle" | "restarting" | "error">("idle");
+  const [settingsSection, setSettingsSection] = React.useState<"general" | "connections">("general");
   const [notificationPersistAfterMinutesDraft, setNotificationPersistAfterMinutesDraft] = React.useState(
     String(appSettings.taskCompleteNotificationPersistAfterMinutes)
   );
@@ -157,6 +161,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const hasOpenDialog = Boolean(
     threadModelDialogOpen
     || settingsDialogOpen
+    || tasksDialogOpen
     || projectPicker
     || threadPicker
     || inspectMessage
@@ -254,6 +259,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
 
   return (
     <>
+      <TaskDialog viewModel={viewModel} />
       {threadModelDialogOpen ? (
         <div className="sessionDialogOverlay" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setThreadModelDialogOpen(false);
@@ -343,104 +349,130 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <h2 id="settingsDialogTitle">Settings</h2>
               <button type="button" className="iconButton" onClick={() => setSettingsDialogOpen(false)} aria-label="Close">x</button>
             </header>
-            <div className="settingsList">
-              <div className="settingsRow">
-                <span className="settingsRowText">
-                  <strong>Pet</strong>
-                  <em>{petEnabled ? `${petName} is awake` : `${petName} is tucked away`}</em>
-                </span>
-                <button type="button" className="petSettingsButton" onClick={() => {
-                  setSettingsDialogOpen(false);
-                  openPetPicker();
-                }}>Choose</button>
-              </div>
-              <div className="settingsRow">
-                <span className="settingsRowText">
-                  <strong id="settingTaskCompletePopups">Task complete popups</strong>
-                  <em>Browser or IDE notification</em>
-                </span>
-                <Switch
-                  checked={appSettings.taskCompleteSystemNotifications}
-                  onChange={(checked) => {
-                    const previous = appSettings.taskCompleteSystemNotifications;
-                    setAppSettings((current) => ({ ...current, taskCompleteSystemNotifications: checked }));
-                    if (checked) primeTaskNotificationPermission();
-                    void apiRouteJson(apiRoutes.updateConfig, {
-                      ui: { taskCompleteSystemNotifications: checked }
-                    }).then((payload) => {
-                      setAppSettings((current) => ({
-                        ...current,
-                        taskCompleteSystemNotifications: payload.config.ui.taskCompleteSystemNotifications
-                      }));
-                    }).catch(() => {
-                      setAppSettings((current) => ({ ...current, taskCompleteSystemNotifications: previous }));
-                    });
-                  }}
-                  aria-labelledby="settingTaskCompletePopups"
-                />
-              </div>
-              <div className="settingsRow settingsNotificationPersistenceRow">
-                <span className="settingsRowText">
-                  <strong id="settingTaskCompleteNotificationPersistence">Keep long-task notifications</strong>
-                  <em>0 keeps all; otherwise keep tasks at or above this runtime (minutes)</em>
-                </span>
-                <label className="settingsNumberControl" aria-labelledby="settingTaskCompleteNotificationPersistence">
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    inputMode="numeric"
-                    value={notificationPersistAfterMinutesDraft}
-                    onChange={(event) => setNotificationPersistAfterMinutesDraft(event.currentTarget.value)}
-                    onBlur={saveNotificationPersistence}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") event.currentTarget.blur();
-                    }}
-                    aria-label="Keep long-task notifications after minutes"
-                  />
-                  <span>min</span>
-                </label>
-              </div>
-              <div className="settingsRow">
-                <span className="settingsRowText">
-                  <strong>Version</strong>
-                  <em>{systemStatus.version ? `CodexHub v${systemStatus.version}` : "Version unavailable"}</em>
-                </span>
-              </div>
-              {restartAvailable ? (
-                <div
-                  className={`settingsRow settingsRestartRow${restartState === "restarting" ? " is-restarting" : ""}${restartState === "error" ? " has-error" : ""}`}
-                  aria-busy={restartState === "restarting"}
+            <div className="settingsDialogLayout">
+              <nav className="settingsNavigation" aria-label="Settings sections">
+                <button
+                  type="button"
+                  className={settingsSection === "general" ? "active" : ""}
+                  onClick={() => setSettingsSection("general")}
+                  aria-current={settingsSection === "general" ? "page" : undefined}
                 >
-                  <span className="settingsRowText">
-                    <strong>Restart current authority</strong>
-                    <em
-                      className={restartState === "error" ? "settingsError" : undefined}
-                      aria-live="polite"
-                    >
-                      {restartState === "restarting"
-                        ? "Restarting this host's authority and reconnecting this window..."
-                        : restartState === "error"
-                          ? "Restart failed. Check the authority log and try again."
-                          : "Restart this host's authority and Codex runtime. The host application stays open."}
-                    </em>
-                  </span>
-                  <button
-                    type="button"
-                    className={`petSettingsButton settingsRestartButton${restartState === "restarting" ? " is-loading" : ""}`}
-                    disabled={restartState === "restarting"}
-                    onClick={() => void restartAuthority()}
-                    aria-busy={restartState === "restarting"}
-                  >
-                    {restartState === "restarting" ? (
-                      <>
-                        <span className="settingsRestartSpinner" aria-hidden="true" />
-                        <span>Restarting...</span>
-                      </>
-                    ) : "Restart"}
-                  </button>
-                </div>
-              ) : null}
+                  General
+                </button>
+                <button
+                  type="button"
+                  className={settingsSection === "connections" ? "active" : ""}
+                  onClick={() => setSettingsSection("connections")}
+                  aria-current={settingsSection === "connections" ? "page" : undefined}
+                >
+                  Connections
+                </button>
+              </nav>
+              <div className="settingsDialogContent">
+                {settingsSection === "general" ? (
+                  <div className="settingsList">
+                    <div className="settingsRow">
+                      <span className="settingsRowText">
+                        <strong>Pet</strong>
+                        <em>{petEnabled ? `${petName} is awake` : `${petName} is tucked away`}</em>
+                      </span>
+                      <button type="button" className="petSettingsButton" onClick={() => {
+                        setSettingsDialogOpen(false);
+                        openPetPicker();
+                      }}>Choose</button>
+                    </div>
+                    <div className="settingsRow">
+                      <span className="settingsRowText">
+                        <strong id="settingTaskCompletePopups">Task complete popups</strong>
+                        <em>Browser or IDE notification</em>
+                      </span>
+                      <Switch
+                        checked={appSettings.taskCompleteSystemNotifications}
+                        onChange={(checked) => {
+                          const previous = appSettings.taskCompleteSystemNotifications;
+                          setAppSettings((current) => ({ ...current, taskCompleteSystemNotifications: checked }));
+                          if (checked) primeTaskNotificationPermission();
+                          void apiRouteJson(apiRoutes.updateConfig, {
+                            ui: { taskCompleteSystemNotifications: checked }
+                          }).then((payload) => {
+                            setAppSettings((current) => ({
+                              ...current,
+                              taskCompleteSystemNotifications: payload.config.ui.taskCompleteSystemNotifications
+                            }));
+                          }).catch(() => {
+                            setAppSettings((current) => ({ ...current, taskCompleteSystemNotifications: previous }));
+                          });
+                        }}
+                        aria-labelledby="settingTaskCompletePopups"
+                      />
+                    </div>
+                    <div className="settingsRow settingsNotificationPersistenceRow">
+                      <span className="settingsRowText">
+                        <strong id="settingTaskCompleteNotificationPersistence">Keep long-task notifications</strong>
+                        <em>0 keeps all; otherwise keep tasks at or above this runtime (minutes)</em>
+                      </span>
+                      <label className="settingsNumberControl" aria-labelledby="settingTaskCompleteNotificationPersistence">
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          inputMode="numeric"
+                          value={notificationPersistAfterMinutesDraft}
+                          onChange={(event) => setNotificationPersistAfterMinutesDraft(event.currentTarget.value)}
+                          onBlur={saveNotificationPersistence}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
+                          aria-label="Keep long-task notifications after minutes"
+                        />
+                        <span>min</span>
+                      </label>
+                    </div>
+                    <div className="settingsRow">
+                      <span className="settingsRowText">
+                        <strong>Version</strong>
+                        <em>{systemStatus.version ? `CodexHub v${systemStatus.version}` : "Version unavailable"}</em>
+                      </span>
+                    </div>
+                    {restartAvailable ? (
+                      <div
+                        className={`settingsRow settingsRestartRow${restartState === "restarting" ? " is-restarting" : ""}${restartState === "error" ? " has-error" : ""}`}
+                        aria-busy={restartState === "restarting"}
+                      >
+                        <span className="settingsRowText">
+                          <strong>Restart current authority</strong>
+                          <em
+                            className={restartState === "error" ? "settingsError" : undefined}
+                            aria-live="polite"
+                          >
+                            {restartState === "restarting"
+                              ? "Restarting this host's authority and reconnecting this window..."
+                              : restartState === "error"
+                                ? "Restart failed. Check the authority log and try again."
+                                : "Restart this host's authority and Codex runtime. The host application stays open."}
+                          </em>
+                        </span>
+                        <button
+                          type="button"
+                          className={`petSettingsButton settingsRestartButton${restartState === "restarting" ? " is-loading" : ""}`}
+                          disabled={restartState === "restarting"}
+                          onClick={() => void restartAuthority()}
+                          aria-busy={restartState === "restarting"}
+                        >
+                          {restartState === "restarting" ? (
+                            <>
+                              <span className="settingsRestartSpinner" aria-hidden="true" />
+                              <span>Restarting...</span>
+                            </>
+                          ) : "Restart"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <ConnectionsPanel viewModel={viewModel} />
+                )}
+              </div>
             </div>
           </section>
         </div>

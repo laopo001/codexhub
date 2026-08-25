@@ -67,52 +67,29 @@ export type ThreadTabItem = {
 
 export type ThreadGoalUpdateInput = ApiThreadGoalUpdateInput;
 
-export type AppSidebarViewModel = {
-  activeProjectKey: string;
+export type AppConnectionsViewModel = {
   addSshHost: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
-  collapsedProjectMachineKeys: string[];
   connectionMode: ConnectionMode;
   connectParentRegistration: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   connectSshHost: (host: string, name?: string) => MaybePromise;
   copyCurrentServerShareUrl: () => MaybePromise;
   copyRegisteredCommand: () => MaybePromise;
-  createTask: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
   currentServerShareUrl: string;
-  deleteProject: (project: ProjectSummary) => MaybePromise;
-  deleteTask: (taskId: string) => MaybePromise;
-  deletingProjectId: string;
   disconnectParentRegistration: () => MaybePromise;
-  focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
   localMachines: MachineSummary[];
   machines: MachineSummary[];
-  offlineProjectsCollapsed: boolean;
-  onlineMachines: MachineSummary[];
-  openingProjectKey: string;
-  showProjectPicker: (machine: ProjectMachineGroup) => MaybePromise;
   parentRegistration: ParentRegistrationStatus;
   parentRegistrationBusy: boolean;
   parentRegistrationError: string;
-  patchTask: (taskId: string, input: TaskPatchInput) => MaybePromise<boolean>;
-  projectGroups: ProjectMachineGroup[];
-  projectList: ProjectSummary[];
-  projectScopeLocked: boolean;
-  projectActionError: string;
   registeredCommand: string;
   registeredCommandIncludesToken: boolean;
   registeredCommandCopied: boolean;
   registeredMachines: MachineSummary[];
   removeSshHost: (host: SshHost, activeConnection?: SshConnection) => MaybePromise;
-  runTaskNow: (task: LocalTask) => MaybePromise;
-  openTaskRunThread: (threadId: string) => MaybePromise;
-  selectedProject?: ProjectSummary | null;
-  selectProject: (project: ProjectSummary) => MaybePromise;
   runtimeList: RuntimeSummary[];
   serverShareCopied: boolean;
   sidebarDraftStore: SidebarDraftStore;
   setConnectionMode: React.Dispatch<React.SetStateAction<ConnectionMode>>;
-  setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
-  setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setSettingsDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   stopSshConnection: (connectionId: string) => MaybePromise;
   sshConfigHostOptions: SshHost[];
   sshConfigHosts: SshHost[];
@@ -121,18 +98,56 @@ export type AppSidebarViewModel = {
   sshError: string;
   sshHostBusy: string;
   sshHosts: SshHost[];
+};
+
+export type AppTaskDialogViewModel = {
+  createTask: () => MaybePromise;
+  deleteTask: (taskId: string) => MaybePromise;
+  focusTaskDraftProject: (project: Pick<ProjectSummary, "machineId" | "path">) => void;
+  machines: MachineSummary[];
+  patchTask: (taskId: string, input: TaskPatchInput) => MaybePromise<boolean>;
+  projectList: ProjectSummary[];
+  projectScopeLocked: boolean;
+  runTaskNow: (task: LocalTask) => MaybePromise;
+  openTaskRunThread: (threadId: string) => MaybePromise;
+  runtimeList: RuntimeSummary[];
+  selectedProject?: ProjectSummary | null;
+  sidebarDraftStore: SidebarDraftStore;
+  setTaskFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setTasksDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   taskBusyId: string;
   taskError: string;
   taskFormOpen: boolean;
   tasks: LocalTask[];
-  toggleProjectMachineGroup: (key: string) => void;
-  toggleProjectPinned: (project: ProjectSummary) => MaybePromise;
+  tasksDialogOpen: boolean;
   updateTaskDraftMachine: (machineId: string) => void;
   updateTaskDraftProject: (projectPath: string) => void;
 };
 
-export type AppViewModelSource = AppSidebarViewModel & {
+export type AppSidebarViewModel = {
+  activeProjectKey: string;
+  collapsedProjectMachineKeys: string[];
+  deleteProject: (project: ProjectSummary) => MaybePromise;
+  deletingProjectId: string;
+  machines: MachineSummary[];
+  offlineProjectsCollapsed: boolean;
+  openingProjectKey: string;
+  showProjectPicker: (machine: ProjectMachineGroup) => MaybePromise;
+  projectGroups: ProjectMachineGroup[];
+  projectScopeLocked: boolean;
+  projectActionError: string;
+  selectProject: (project: ProjectSummary) => MaybePromise;
+  sidebarDraftStore: SidebarDraftStore;
+  setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  setSettingsDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setTasksDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  toggleProjectMachineGroup: (key: string) => void;
+  toggleProjectPinned: (project: ProjectSummary) => MaybePromise;
+};
+
+export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & AppConnectionsViewModel & {
   appSettings: AppSettings;
+  onlineMachines: MachineSummary[];
   systemStatus: SystemStatus;
   openPetPicker: () => void;
   petEnabled: boolean;
@@ -435,6 +450,15 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "loadProjectPickerDirectory"
   | "loadThreadPickerCandidates"
   | "machines"
+  | "addSshHost"
+  | "connectionMode"
+  | "connectParentRegistration"
+  | "connectSshHost"
+  | "copyCurrentServerShareUrl"
+  | "copyRegisteredCommand"
+  | "currentServerShareUrl"
+  | "disconnectParentRegistration"
+  | "localMachines"
   | "messageContextMenu"
   | "activeModelCatalogCacheNotice"
   | "activeModelCatalogError"
@@ -455,6 +479,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "threadRenameDialog"
   | "threadTabContextMenu"
   | "settingsDialogOpen"
+  | "tasksDialogOpen"
   | "runtimeList"
   | "openThreads"
   | "openPetPicker"
@@ -473,10 +498,46 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "setThreadRenameDialog"
   | "setThreadTabContextMenu"
   | "setSettingsDialogOpen"
+  | "setTaskFormOpen"
+  | "setTasksDialogOpen"
   | "setThreadPicker"
   | "submitProjectPickerPath"
   | "threadOrderByMachine"
   | "threadPicker"
+  | "parentRegistration"
+  | "parentRegistrationBusy"
+  | "parentRegistrationError"
+  | "registeredCommand"
+  | "registeredCommandIncludesToken"
+  | "registeredCommandCopied"
+  | "registeredMachines"
+  | "removeSshHost"
+  | "serverShareCopied"
+  | "setConnectionMode"
+  | "stopSshConnection"
+  | "sshConfigHostOptions"
+  | "sshConfigHosts"
+  | "sshConnectingHost"
+  | "sshConnections"
+  | "sshError"
+  | "sshHostBusy"
+  | "sshHosts"
+  | "sidebarDraftStore"
+  | "createTask"
+  | "deleteTask"
+  | "focusTaskDraftProject"
+  | "patchTask"
+  | "projectList"
+  | "projectScopeLocked"
+  | "selectedProject"
+  | "runTaskNow"
+  | "openTaskRunThread"
+  | "taskBusyId"
+  | "taskError"
+  | "taskFormOpen"
+  | "tasks"
+  | "updateTaskDraftMachine"
+  | "updateTaskDraftProject"
 >;
 
 export type AppViewModel = {
@@ -486,20 +547,10 @@ export type AppViewModel = {
 };
 
 const sidebarKeys = [
-  "activeProjectKey", "addSshHost", "collapsedProjectMachineKeys", "connectionMode",
-  "connectParentRegistration", "connectSshHost", "copyCurrentServerShareUrl", "copyRegisteredCommand",
-  "createTask", "currentServerShareUrl", "deleteProject", "deleteTask", "deletingProjectId",
-  "disconnectParentRegistration", "focusTaskDraftProject", "localMachines", "machines",
-  "offlineProjectsCollapsed", "onlineMachines", "openingProjectKey", "showProjectPicker",
-  "parentRegistration", "parentRegistrationBusy", "parentRegistrationError", "patchTask",
-  "projectGroups", "projectList", "projectScopeLocked", "projectActionError", "registeredCommand",
-  "registeredCommandIncludesToken", "registeredCommandCopied", "registeredMachines", "removeSshHost",
-  "runTaskNow", "openTaskRunThread", "selectedProject", "selectProject", "runtimeList",
-  "serverShareCopied", "sidebarDraftStore", "setConnectionMode", "setOfflineProjectsCollapsed",
-  "setTaskFormOpen", "setSettingsDialogOpen", "stopSshConnection", "sshConfigHostOptions",
-  "sshConfigHosts", "sshConnectingHost", "sshConnections", "sshError", "sshHostBusy", "sshHosts",
-  "taskBusyId", "taskError", "taskFormOpen", "tasks", "toggleProjectMachineGroup",
-  "toggleProjectPinned", "updateTaskDraftMachine", "updateTaskDraftProject"
+  "activeProjectKey", "collapsedProjectMachineKeys", "deleteProject", "deletingProjectId", "machines",
+  "offlineProjectsCollapsed", "openingProjectKey", "showProjectPicker", "projectGroups", "projectScopeLocked",
+  "projectActionError", "selectProject", "sidebarDraftStore", "setOfflineProjectsCollapsed", "setSettingsDialogOpen",
+  "setTasksDialogOpen", "toggleProjectMachineGroup", "toggleProjectPinned"
 ] as const satisfies readonly (keyof AppSidebarViewModel)[];
 
 const workspaceKeys = [
@@ -537,6 +588,8 @@ const dialogKeys = [
   "chooseThreadCandidate", "confirmProjectPicker", "copyContextSelection", "createMachineThread",
   "createWorktreeThread", "goalDialog", "imagePreview", "inspectContextMessage", "inspectMessage",
   "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageContextMenu",
+  "addSshHost", "connectionMode", "connectParentRegistration", "connectSshHost", "copyCurrentServerShareUrl",
+  "copyRegisteredCommand", "currentServerShareUrl", "disconnectParentRegistration", "localMachines",
   "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "threadModelDialogModelSelection",
   "threadModelDialogReasoningSelection", "threadModelDialogServiceTierSelection", "modelOptions", "reasoningOptions",
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
@@ -546,7 +599,14 @@ const dialogKeys = [
   "setProjectPicker", "setThreadModelDialogModelDraft", "setThreadModelDialogReasoningDraft",
   "setThreadModelDialogServiceTierDraft", "setThreadModelDialogOpen", "setThreadRenameDialog",
   "setThreadTabContextMenu", "setSettingsDialogOpen", "setThreadPicker", "submitProjectPickerPath",
-  "threadOrderByMachine", "threadPicker", "openPetPicker", "petEnabled", "petName"
+  "threadOrderByMachine", "threadPicker", "openPetPicker", "petEnabled", "petName",
+  "parentRegistration", "parentRegistrationBusy", "parentRegistrationError", "registeredCommand",
+  "registeredCommandIncludesToken", "registeredCommandCopied", "registeredMachines", "removeSshHost",
+  "serverShareCopied", "setConnectionMode", "stopSshConnection", "sshConfigHostOptions", "sshConfigHosts",
+  "sshConnectingHost", "sshConnections", "sshError", "sshHostBusy", "sshHosts", "sidebarDraftStore",
+  "tasksDialogOpen", "setTaskFormOpen", "setTasksDialogOpen", "createTask", "deleteTask", "focusTaskDraftProject", "patchTask",
+  "projectList", "projectScopeLocked", "selectedProject", "runTaskNow", "openTaskRunThread", "taskBusyId", "taskError",
+  "taskFormOpen", "tasks", "updateTaskDraftMachine", "updateTaskDraftProject"
 ] as const satisfies readonly (keyof AppDialogsViewModel)[];
 
 const pickViewModel = <Source extends object, const Keys extends readonly (keyof Source)[]>(
