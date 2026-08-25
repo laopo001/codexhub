@@ -211,15 +211,14 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     const browseMachineId = machine.machineId;
     const summary = editableProjectPickerMachine(browseMachineId);
     if (!summary) return;
-    const initialPath = summary?.cwd ?? machine.projects[0]?.path ?? "";
     ctx.setProjectPicker({
       machineId: browseMachineId,
-      path: initialPath,
+      path: "~",
       entries: [],
       loading: true,
       error: ""
     });
-    void loadProjectPickerDirectory(browseMachineId, initialPath);
+    void loadProjectPickerDirectory(browseMachineId, "~");
   };
 
   const changeProjectPickerMachine = (machineId: string) => {
@@ -228,15 +227,14 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ctx.setProjectPicker((current) => current ? { ...current, loading: false, error: fixedCatalogMessage } : current);
       return;
     }
-    const initialPath = summary?.cwd ?? "";
     ctx.setProjectPicker({
       machineId,
-      path: initialPath,
+      path: "~",
       entries: [],
       loading: true,
       error: ""
     });
-    void loadProjectPickerDirectory(machineId, initialPath);
+    void loadProjectPickerDirectory(machineId, "~");
   };
 
   const submitProjectPickerPath = (event: React.FormEvent<HTMLFormElement>) => {

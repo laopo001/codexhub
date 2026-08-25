@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { emptyThreadUsage } from "../../src/core/threadUsage.js";
-import type { OpenThreadState, RuntimeSummary, StreamEvent, SubagentThreadDialogState } from "../../src/web/types.js";
+import type {
+  MachineSummary,
+  OpenThreadState,
+  ProjectPickerState,
+  RuntimeSummary,
+  StreamEvent,
+  SubagentThreadDialogState
+} from "../../src/web/types.js";
 
 Object.defineProperty(globalThis, "window", {
   configurable: true,
@@ -131,6 +138,17 @@ const fixture = async ({
     thread: parentThread,
     error: ""
   } : null;
+  let projectPicker: ProjectPickerState | null = null;
+  const projectMachine: MachineSummary = {
+    machineId: "machine-a",
+    type: "local",
+    hostname: "test-host",
+    online: true,
+    status: "online",
+    lastSeenAt: "2026-08-03T00:00:00.000Z",
+    cwd: "/projects/a",
+    capabilities: { projectLauncher: true, projectCatalog: "editable" }
+  };
   const syncConversationThreads = () => {
     conversationThreads.clear();
     for (const item of openThreads) conversationThreads.set(item.threadId, item);
@@ -167,7 +185,7 @@ const fixture = async ({
     conversationThreadsRef: { current: conversationThreads },
     latestRequestedThreadId: { current: "parent-thread" },
     openingSubagentThreads: { current: new Set<string>() },
-    machines: [],
+    machines: [projectMachine],
     projectList: [],
     projectPicker: null,
     selectedProjectKey: "",
@@ -198,7 +216,11 @@ const fixture = async ({
     setMachines: () => undefined,
     setOpeningProjectKey: () => undefined,
     setProjectActionError: () => undefined,
-    setProjectPicker: () => undefined,
+    setProjectPicker: (
+      action: ProjectPickerState | null | ((value: ProjectPickerState | null) => ProjectPickerState | null)
+    ) => {
+      projectPicker = resolveStateAction(projectPicker, action);
+    },
     setProjects: () => undefined,
     setSelectedProjectKey: () => undefined,
     setSubagentThreadDialog: (
@@ -243,10 +265,49 @@ const fixture = async ({
       activeTabThreadId,
       activeTabThreadByMachine,
       threadOrderByMachine,
-      subagentThreadDialog
+      subagentThreadDialog,
+      projectPicker
     })
   };
 };
+
+test("the project picker starts at the machine home directory", async () => {
+  const requests: string[] = [];
+  const testFixture = await fixture({
+    fetchImpl: async (input) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({
+        cwd: "/home/laop",
+        parent: "/home",
+        home: "/home/laop",
+        entries: [{ name: "projects", path: "/home/laop/projects" }]
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
+  });
+
+  testFixture.actions.showProjectPicker({
+    key: "machine-a",
+    machineId: "machine-a",
+    machineType: "local",
+    label: "local",
+    online: true,
+    projectLauncher: true,
+    badgeLabel: "local",
+    projects: []
+  });
+
+  assert.equal(testFixture.state().projectPicker?.path, "~");
+  assert.equal(new URL(requests[0], "http://codexhub.test").searchParams.get("path"), "~");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(testFixture.state().projectPicker?.path, "/home/laop");
+  assert.deepEqual(testFixture.state().projectPicker?.entries, [{
+    name: "projects",
+    path: "/home/laop/projects"
+  }]);
+});
 
 test("opening a subagent shows a dialog immediately and never activates a workspace tab", async () => {
   const requests: Array<{ url: string; method: string; body: unknown }> = [];
