@@ -259,6 +259,32 @@ const transportFactory: HeadlessSessionTransportFactory = (_context, callbacks) 
   sendHeartbeat: () => undefined
 });
 
+test("attached runtime can handshake for its protocol version without creating a default thread", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket();
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    appServerTransportFactory: async () => socket,
+    ensureDefaultThread: false,
+    machineId: "machine-runtime-only",
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return transportFactory(transportContext, nextCallbacks);
+    }
+  });
+  try {
+    assert.equal(session.threadId, undefined);
+    assert.equal(socket.requestCount("initialize"), 1);
+    assert.equal(socket.requestCount("thread/start"), 0);
+    assert.equal(callbacks?.registration().cliVersion, "0.144.4");
+  } finally {
+    await session.stop();
+  }
+});
+
 test("attached runtime persists the model catalog cache", async (context) => {
   context.mock.method(console, "error", () => undefined);
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "codexhub-runtime-model-cache."));

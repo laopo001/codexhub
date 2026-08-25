@@ -22,7 +22,7 @@ type AttachTunneledAppServerInput = {
 };
 
 export type MachineTransportRoutesContext = {
-  attachTunneledAppServer: (input: AttachTunneledAppServerInput) => Promise<string>;
+  attachTunneledAppServer: (input: AttachTunneledAppServerInput) => Promise<string | undefined>;
   clearMachineRegistrationProjects: (machineId: string) => void;
   machines: MachineHub;
   onMachineRegistered?: (machine: MachineSummary, registration: MachineRegistration) => void;
@@ -211,7 +211,12 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
             appServerUrl: parsed.appServerUrl,
             tunnel
           });
-          send({ type: "app_server_attached", commandId: parsed.commandId, sessionId: parsed.sessionId, threadId });
+          send({
+            type: "app_server_attached",
+            commandId: parsed.commandId,
+            sessionId: parsed.sessionId,
+            ...(threadId ? { threadId } : {})
+          });
           return;
         }
         if (parsed.type === "app_server_start_thread") {

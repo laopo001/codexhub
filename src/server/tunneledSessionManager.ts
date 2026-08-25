@@ -65,6 +65,7 @@ export class TunneledSessionManager {
       sessionId: input.sessionId,
       machineId: input.machineId,
       cwd: input.cwd,
+      ensureDefaultThread: false,
       runtimeCatalogCachePath: this.options.runtimeCatalogCachePath,
       readyLabel: "codexhub tunneled app-server ready",
       transportFactory: (_context, callbacks) => new DirectThreadHubSessionTransport({

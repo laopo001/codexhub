@@ -71,7 +71,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 10. SSH：`GET /api/ssh/config-hosts`、`GET /api/ssh/hosts`、`POST /api/ssh/hosts`、`DELETE /api/ssh/hosts/:alias`、`GET /api/ssh/connections`、`POST /api/ssh/connect`、`DELETE /api/ssh/connections/:connectionId`、`GET /api/ssh/remote-client/:hash`。
 11. Plugins：`GET /api/plugins`、`GET /api/plugins/:pluginId/assets/*`。
 12. Web/TG/task 和外部 API 发送对话统一使用 `/api/threads/:threadId/turn`，不提供 session 级 turn 兼容入口。
-13. project 不拥有 runtime lifecycle。`POST /api/projects/open` 是显式 project path bootstrap/persistence 入口，通常返回 `machineId` 和创建/恢复的 `threadId`；匹配当前 embedded surface 且 `persist:false` 的 workspace provider seed 只验证目录并登记 transient project，不能启动 runtime/thread。Add Thread 冷启动必须调用 `POST /api/machines/:machineId/runtime/ensure`，不能借用普通 project open 造成 project 状态写入。不要新增 per-project runtime stop/restart API。runtime 不由 project delete 或 idle watcher 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
+13. project 不拥有 runtime lifecycle。`POST /api/projects/open` 是显式 project path bootstrap/persistence 入口，通常返回 `machineId` 和创建/恢复的 `threadId`；匹配当前 embedded surface 且 `persist:false` 的 workspace provider seed 只验证目录并登记 transient project，不能启动 runtime/thread。machine transport 建立后会立即启动并通过 app-server `initialize` 注册唯一 runtime，Add Thread 只负责按 explicit cwd 创建或恢复 thread；`POST /api/machines/:machineId/runtime/ensure` 保留为幂等 readiness fallback。不要新增 per-project runtime stop/restart API。runtime 不由 project delete 或 idle watcher 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
 
 ## Server Config
 
@@ -85,7 +85,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 ## Project / Task 模型
 
 1. project 是 `machineId + path` 推导出的 UI/路由元数据。project 不拥有 Codex 进程，也不在 `/api/projects` 投影里携带 `session`、`sessions` 或 thread 列表。
-2. thread 创建/恢复必须通过 machine runtime + explicit cwd/path 表达。`POST /api/machines/:machineId/threads` 使用 body `cwd`；`POST /api/projects/open` 只负责显式 project path bootstrap/persistence，Add Thread 冷启动先调用 machine runtime ensure，再用 machine thread API 创建或恢复 thread。
+2. thread 创建/恢复必须通过 machine runtime + explicit cwd/path 表达。`POST /api/machines/:machineId/threads` 使用 body `cwd`；`POST /api/projects/open` 只负责显式 project path bootstrap/persistence，machine runtime 在 transport 连接时已通过 app-server 协议建立，Add Thread 再用 machine thread API 创建或恢复 thread。
 3. project 列表不展示 open 数、thread/history 数或任何 transcript 历史数量。在线 thread 列表属于 machine thread picker 和 workspace tabs，不属于 project 卡片持久属性。
 4. project 级 UI 操作可以有 pin、delete、保存 transient project 和选择 active project；不要把 session restart/stop、rename、thread count 或 thread history 重新放回 project row。
 5. task 是 server-local 调度记录，选择 machine、project path、可选 thread 和五字段 cron，然后按计划向该 thread 投递一轮对话。默认 cron timezone 是 `Asia/Shanghai`。
@@ -150,7 +150,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 1. Electron main process 只包装共享 authority service 和 Web UI。窗口使用隔离/sandbox WebPreferences，外链用系统浏览器打开。
 2. Electron 与 VSCode 使用同一套固定 authority 端口、authority ID、`config.yaml`、local runtime 和 parent machine transport。Electron 先 probe，若 VSCode authority 已在线就 attach；否则从 Electron bundle detached 启动 `authority-service.cjs`。默认端口不读取 `CODEX_HUB_PORT`，显式 `CODEX_HUB_AUTHORITY_PORT` 只用于隔离开发/测试，被占用时直接失败。
 3. authority ID 保存在共享数据目录的 `authority-id`，`config.yaml` 和 `authority.log` 也属于同一 authority 数据目录。authority 默认仅监听 `127.0.0.1`；只有 `config.yaml` 的 `env.CODEX_HUB_AUTHORITY_HOST` 显式设置为 `0.0.0.0` 或 `::` 时才对外绑定。默认不启用认证，也不能自动生成 token；只有 extension host 环境或 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式非空时才启用。显式 token 只通过子进程环境注入，不能出现在命令行或日志；认证启用后 surface API、Web API/WebSocket 和 iframe/Open in Browser URL 都必须携带它。Webview iframe 和 Open in Browser 必须通过 `vscode.env.asExternalUri` 暴露 server URL，不能直接写 raw loopback URL。
-4. 每个 VSCode 窗口和每个 Electron 窗口使用唯一 `surfaceId + leaseId` 调用 `/api/embedded/surfaces` 注册当前 workspace paths，并每 10 秒 heartbeat；deactivate/close 主动 unregister，进程异常退出则由 30 秒 lease 清理。authority 合并所有活动 surface 的 transient projects，同一路径由多个 surface 引用时必须保留到最后一个 lease 消失；注册只能验证目录，不能启动 app-server/runtime/thread，真正的 runtime 冷启动留给 Add Thread。Electron 没有 workspace path 时仍可注册空 workspace surface。
+4. 每个 VSCode 窗口和每个 Electron 窗口使用唯一 `surfaceId + leaseId` 调用 `/api/embedded/surfaces` 注册当前 workspace paths，并每 10 秒 heartbeat；deactivate/close 主动 unregister，进程异常退出则由 30 秒 lease 清理。authority 合并所有活动 surface 的 transient projects，同一路径由多个 surface 引用时必须保留到最后一个 lease 消失；surface 注册只能验证目录，不能启动 app-server/thread；authority 的 machine transport 建立后会独立启动 app-server 并完成协议握手，Add Thread 才创建用户 thread。Electron 没有 workspace path 时仍可注册空 workspace surface。
 5. Embedded authority 的 local machine、官方 app-server runtime、SSH/tasks/integrations/Registered 配置和 parent machine transport 在同一执行环境的 VSCode/Electron surface 间共享；UI 仍按 URL 中的 workspace paths 过滤项目，localStorage 按稳定 surface scope 隔离，任务完成通知不能发到不包含该 project path 的窗口。Windows host、WSL、Remote SSH 等不同 authority 不能合并成同一个 machine。
 6. authority 没有 surface 后等待 30 秒退出；窗口 heartbeat 发现服务退出时要重新 probe/start/register。VSIX build 更新时允许兼容窗口临时复用旧 authority，但当活动 surfaces 全部来自同一个新 build 后应关闭旧 service，让新窗口完成接管。
 7. VSCode extension 启用和普通 Web 相同的 SSH/tasks/integrations/Registered 能力；用户显式保存 transient project 后才写入共享 `config.yaml`，窗口自动 workspace project 不应污染持久 project list。

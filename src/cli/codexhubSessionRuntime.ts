@@ -184,6 +184,8 @@ export type HeadlessCodexhubSessionOptions = {
   port?: number;
   appServerLaunch?: CodexAppServerLaunchOptions;
   readyLabel?: string;
+  /** 仅连接并握手 app-server；不在 runtime 启动阶段创建用户 thread。 */
+  ensureDefaultThread?: boolean;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy?: "untrusted" | "on-request" | "never";
@@ -193,7 +195,7 @@ export type HeadlessCodexhubSessionOptions = {
 
 export type HeadlessCodexhubSessionHandle = {
   sessionId: string;
-  threadId: string;
+  threadId?: string;
   appServerUrl: string;
   cwd: string;
   ensureThread: (threadId: string, cwd?: string) => Promise<string>;
@@ -205,6 +207,7 @@ export type HeadlessCodexhubSessionHandle = {
 
 export type AttachedCodexhubSessionOptions = Omit<BridgeOptions, "sessionId" | "ensureDefaultThread"> & {
   sessionId?: string;
+  ensureDefaultThread?: boolean;
 };
 
 export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSessionOptions): Promise<HeadlessCodexhubSessionHandle> {
@@ -218,7 +221,7 @@ export async function startHeadlessCodexhubSession(options: HeadlessCodexhubSess
     sessionId,
     machineId: options.machineId,
     cwd,
-    ensureDefaultThread: true,
+    ensureDefaultThread: options.ensureDefaultThread ?? true,
     readyLabel: options.readyLabel,
     model: options.model,
     sandbox: options.sandbox,
@@ -266,7 +269,7 @@ export async function startAttachedCodexhubSession(options: AttachedCodexhubSess
     ...options,
     sessionId,
     cwd,
-    ensureDefaultThread: true
+    ensureDefaultThread: options.ensureDefaultThread ?? true
   });
   const cleanup = cleanupOnce(async () => {
     await bridgeRunner.stop();
@@ -299,7 +302,7 @@ class ProxyBridgeRunner {
   private loopStarted = false;
   private lastState: "offline" | "online" | null = null;
   private lastReadyThreadId: string | null = null;
-  private readonly ready = new Deferred<{ sessionId: string; threadId: string }>();
+  private readonly ready = new Deferred<{ sessionId: string; threadId?: string }>();
   private readonly stopped = new Deferred<void>();
   private bridgeState: BridgeState = { threadIds: [] };
 
@@ -384,13 +387,14 @@ class ProxyBridgeRunner {
             appServerUrl: this.options.appServerUrl
           };
           this.transport = this.options.transportFactory(transportContext, callbacks);
+          let threadId: string | undefined;
           if (this.options.ensureDefaultThread) {
-            const threadId = await this.bridge.ensureDefaultThread();
+            threadId = await this.bridge.ensureDefaultThread();
             this.bridgeState = this.bridge.snapshotState();
             this.logHeadlessReady(threadId);
-            this.ready.resolve({ sessionId: this.options.sessionId, threadId });
           }
           this.transport.start();
+          this.ready.resolve({ sessionId: this.options.sessionId, ...(threadId ? { threadId } : {}) });
           await this.runBridge(this.bridge);
         } catch (error) {
           if (this.stopping) return;

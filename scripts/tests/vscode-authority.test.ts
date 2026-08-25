@@ -11,7 +11,7 @@ import { codexhubVersion } from "../../src/shared/version.js";
 import { findFreePort, localServerUrl } from "../../src/server/embedded.js";
 import { startServer } from "../../src/server/index.js";
 
-test("one embedded authority accepts VSCode and Electron surfaces without starting a runtime", async () => {
+test("one embedded authority accepts VSCode and Electron surfaces after runtime startup", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-vscode-authority."));
   const dataDir = path.join(root, "data");
   const workspaceA = path.join(root, "workspace-a");
@@ -101,8 +101,8 @@ test("one embedded authority accepts VSCode and Electron surfaces without starti
       [workspaceB]
     );
 
-    const runtimes = await client.request<RuntimesPayload>("/api/runtimes?includeOffline=true");
-    assert.deepEqual(runtimes.runtimes, []);
+    const runtimes = await waitForRuntime(client);
+    assert.ok(runtimes.runtimes?.some((runtime) => runtime.online && runtime.cliVersion));
   } finally {
     await server.stop();
     await rm(root, { recursive: true, force: true });
@@ -149,6 +149,15 @@ test("embedded authority restart endpoint closes the authority server", async ()
 });
 
 type Client = ReturnType<typeof createCodexHubApiClient>;
+
+const waitForRuntime = async (client: Client) => {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const runtimes = await client.request<RuntimesPayload>("/api/runtimes?includeOffline=true");
+    if (runtimes.runtimes?.some((runtime) => runtime.online)) return runtimes;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("Codex runtime did not connect during embedded authority startup");
+};
 
 const registerSurfaceWithRetry = async (
   client: Client,

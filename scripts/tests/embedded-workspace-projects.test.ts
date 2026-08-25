@@ -8,7 +8,7 @@ import { findFreePort, localServerUrl } from "../../src/server/embedded.js";
 import { startServer } from "../../src/server/index.js";
 import type { ProjectsPayload, RuntimesPayload } from "../../src/shared/apiContract.js";
 
-test("embedded workspace startup registers projects without starting a Codex runtime", async () => {
+test("embedded workspace startup registers projects after the machine runtime connects", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-embedded-workspace."));
   const dataDir = path.join(root, "data");
   const workspacePath = path.join(root, "workspace");
@@ -47,8 +47,8 @@ test("embedded workspace startup registers projects without starting a Codex run
       && project.transient === true
       && project.source?.kind === "vscode"
     ));
-    const runtimes = await getJson<RuntimesPayload>(`${serverUrl}/api/runtimes?includeOffline=true`);
-    assert.deepEqual(runtimes.runtimes, []);
+    const runtimes = await waitForRuntime(serverUrl);
+    assert.ok(runtimes.runtimes?.some((runtime) => runtime.online && runtime.cliVersion));
   } finally {
     await server.stop();
     await rm(root, { recursive: true, force: true });
@@ -60,4 +60,13 @@ const getJson = async <T>(url: string) => {
   const body = await response.text();
   assert.equal(response.ok, true, `${response.status} ${body}`);
   return JSON.parse(body) as T;
+};
+
+const waitForRuntime = async (serverUrl: string) => {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const runtimes = await getJson<RuntimesPayload>(`${serverUrl}/api/runtimes?includeOffline=true`);
+    if (runtimes.runtimes?.some((runtime) => runtime.online)) return runtimes;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("Codex runtime did not connect during embedded workspace startup");
 };

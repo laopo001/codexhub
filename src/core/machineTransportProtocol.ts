@@ -8,7 +8,7 @@ export type MachineTransportMessage =
   | { type: "session_registered"; sessionId: string; session?: unknown }
   | { type: "session_commands"; sessionId: string; cursor: number; commands: SessionCommand[] }
   | { type: "session_error"; sessionId: string; message: string }
-  | { type: "app_server_attached"; commandId: string; sessionId: string; threadId: string }
+  | { type: "app_server_attached"; commandId: string; sessionId: string; threadId?: string }
   | { type: "app_server_attach_error"; commandId: string; sessionId?: string; message: string }
   | AppServerTunnelFrame
   | { type: "error"; message: string };
@@ -60,8 +60,8 @@ export const parseMachineTransportMessage = (data: unknown): MachineTransportMes
   if (type === "app_server_attached") {
     const commandId = typeof message.commandId === "string" ? message.commandId : "";
     const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
-    const threadId = typeof message.threadId === "string" ? message.threadId : "";
-    return commandId && sessionId && threadId ? { type: "app_server_attached", commandId, sessionId, threadId } : null;
+    const threadId = typeof message.threadId === "string" && message.threadId ? message.threadId : undefined;
+    return commandId && sessionId ? { type: "app_server_attached", commandId, sessionId, ...(threadId ? { threadId } : {}) } : null;
   }
   if (type === "app_server_attach_error") {
     const commandId = typeof message.commandId === "string" ? message.commandId : "";
