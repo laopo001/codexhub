@@ -16,7 +16,7 @@ import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
 import { emptyMemoryCitation, formatMemoryCitationCount, formatMemoryCitationLines, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
 import { formatInspectDetail, renderToolMessageBody } from "./toolPreview.js";
 import { activityStatusPriority, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
-import { createStatusRegistry, StatusRegistryRows, StatusRegistryToggleIcon } from "./statusRegistry.js";
+import { createStatusRegistry, StatusPanelToggleIcon, StatusRegistryRows } from "./statusRegistry.js";
 
 const SyntaxCodeBlock = lazy(() => import("../SyntaxCodeBlock.js"));
 
@@ -1008,7 +1008,7 @@ export const StatusCardOverview = ({
           aria-label={expanded ? "Collapse activity details" : "Expand activity details"}
           title={expanded ? "Collapse activity details" : "Expand activity details"}
         >
-          <StatusRegistryToggleIcon expanded={expanded} size={14} strokeWidth={2.4} />
+          <StatusPanelToggleIcon expanded={expanded} size={14} strokeWidth={2.4} />
         </button>
       ) : null}
     </div>

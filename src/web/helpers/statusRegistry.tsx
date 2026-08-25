@@ -21,6 +21,34 @@ export type StatusRegistry = {
   entries: (scope?: StatusRegistryScope) => StatusRegistration[];
 };
 
+const StatusToggleIcon = ({
+  expanded,
+  expandedIcon,
+  size = 13,
+  strokeWidth = 2.2
+}: {
+  expanded: boolean;
+  expandedIcon: "up" | "down";
+  size?: number;
+  strokeWidth?: number;
+}) => {
+  const showUpIcon = expandedIcon === "up" ? expanded : !expanded;
+  const ToggleIcon = showUpIcon ? ChevronUp : ChevronDown;
+  return <ToggleIcon size={size} strokeWidth={strokeWidth} aria-hidden="true" />;
+};
+
+// The outer activity panel uses an up chevron for its expanded state.
+export const StatusPanelToggleIcon = ({
+  expanded,
+  size = 13,
+  strokeWidth = 2.2
+}: {
+  expanded: boolean;
+  size?: number;
+  strokeWidth?: number;
+}) => <StatusToggleIcon expanded={expanded} expandedIcon="up" size={size} strokeWidth={strokeWidth} />;
+
+// Individual registry entries use the opposite visual direction.
 export const StatusRegistryToggleIcon = ({
   expanded,
   size = 13,
@@ -29,10 +57,7 @@ export const StatusRegistryToggleIcon = ({
   expanded: boolean;
   size?: number;
   strokeWidth?: number;
-}) => {
-  const ToggleIcon = expanded ? ChevronUp : ChevronDown;
-  return <ToggleIcon size={size} strokeWidth={strokeWidth} aria-hidden="true" />;
-};
+}) => <StatusToggleIcon expanded={expanded} expandedIcon="down" size={size} strokeWidth={strokeWidth} />;
 
 export const createStatusRegistry = (): StatusRegistry => {
   const entriesById = new Map<string, StatusRegistration>();

@@ -711,6 +711,27 @@ test("Turn Status keeps Usage at the end and colors file deltas", async () => {
   assert.ok(overview.indexOf(">Usage<") < overview.indexOf(">BG<"));
 });
 
+test("outer and inner status toggles use opposite chevron directions", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { StatusPanelToggleIcon, StatusRegistryToggleIcon } = await import("../../src/web/helpers/statusRegistry.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+
+  const outerExpanded = renderToStaticMarkup(createElement(StatusPanelToggleIcon, { expanded: true }));
+  const outerCollapsed = renderToStaticMarkup(createElement(StatusPanelToggleIcon, { expanded: false }));
+  const innerExpanded = renderToStaticMarkup(createElement(StatusRegistryToggleIcon, { expanded: true }));
+  const innerCollapsed = renderToStaticMarkup(createElement(StatusRegistryToggleIcon, { expanded: false }));
+
+  assert.match(outerExpanded, /lucide-chevron-up/);
+  assert.match(outerCollapsed, /lucide-chevron-down/);
+  assert.match(innerExpanded, /lucide-chevron-down/);
+  assert.match(innerCollapsed, /lucide-chevron-up/);
+});
+
 test("completed Plan status uses an explicit completion label", async () => {
   const previousWindow = "window" in globalThis
     ? (globalThis as { window?: unknown }).window
