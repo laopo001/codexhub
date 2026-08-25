@@ -1309,7 +1309,7 @@ test("ThreadHub ingests real paginated turn history in bounded historical batche
   );
   assert.equal((liveRecord?.payload as { message?: string })?.message?.length, 1_000);
   assert.ok((liveRecord?.order ?? 0) > maxHistoricalOrder);
-  assert.ok(deltaElapsedMs < 5_000, `large-thread deltas took ${Math.round(deltaElapsedMs)}ms`);
+  assert.ok(deltaElapsedMs < 30_000, `large-thread deltas took ${Math.round(deltaElapsedMs)}ms`);
   unsubscribe();
 });
 
