@@ -193,6 +193,8 @@ export type ServerStartOptions = {
   authToken?: string | null;
   buildId?: string | null;
   appServerLaunch?: CodexAppServerLaunchOptions;
+  /** Registration-only embedded/test callers can defer runtime startup; production defaults eager. */
+  autoStartRuntime?: boolean;
   parentRegistration?: Partial<ParentRegistrationConnectInput>;
   parentRegistrationIdentity?: ParentRegistrationIdentity;
   localProjectCatalog?: "editable" | "fixed";
@@ -614,7 +616,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
   async function startParentRegistration(
     input: z.infer<typeof parentRegistrationConnectSchema>,
-    options: { persist?: boolean } = {}
+    registrationOptions: { persist?: boolean } = {}
   ) {
     const url = normalizeBaseUrl(input.url);
     await assertNotSelfRegistrationTarget(input.url, {
@@ -640,7 +642,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       || input.name?.trim()
       || process.env.CODEX_HUB_REGISTER_NAME
       || `CodexHub Server ${localApiBaseUrl(config.host, config.port)}`;
-    if (options.persist !== false) {
+    if (registrationOptions.persist !== false) {
       state.setParentRegistration({
         url,
         ...(inputAuthToken ? { authToken: inputAuthToken } : {}),
@@ -661,6 +663,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       machineId,
       type: "registered",
       name,
+      autoStartRuntime: options.autoStartRuntime ?? true,
       appServerLaunch,
       capabilities: embeddedSurface ? { projectCatalog: "fixed" } : undefined,
       projects: embeddedParentRegistrationProjects,
@@ -920,6 +923,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       machineId: process.env.CODEX_HUB_LOCAL_MACHINE_ID,
       type: "local",
       name: process.env.CODEX_HUB_LOCAL_MACHINE_NAME || "local",
+      autoStartRuntime: options.autoStartRuntime ?? true,
       appServerLaunch,
       runtimeCatalogCachePath,
       capabilities: localProjectCatalog ? { projectCatalog: localProjectCatalog } : undefined

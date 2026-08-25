@@ -43,6 +43,8 @@ export type MachineRunnerOptions = {
   sshConnectionId?: string;
   type?: MachineType;
   name?: string;
+  /** Registration-only callers can defer app-server startup; production defaults to eager runtime. */
+  autoStartRuntime?: boolean;
   capabilities?: Partial<MachineCapabilities>;
   appServerLaunch?: CodexAppServerLaunchOptions;
   runtimeCatalogCachePath?: string;
@@ -279,7 +281,7 @@ class CodexhubMachineRunner {
             console.error(`codexhub machine app-server reattach failed: ${errorText(error)}`);
           }
         });
-      } else if (!runtime) {
+      } else if (!runtime && this.options.autoStartRuntime !== false) {
         void this.ensureRuntimeSession(process.cwd(), `startup-${randomUUID()}`).catch((error: unknown) => {
           if (!this.stopped && this.registered) {
             console.error(`codexhub machine app-server startup failed: ${errorText(error)}`);
@@ -463,6 +465,10 @@ class CodexhubMachineRunner {
         cwd,
         projectsByCwd: new Map<string, MachineStartSessionResult>()
       };
+      if (this.stopped) {
+        await session.stop();
+        throw new Error("codexhub machine stopped during app-server startup");
+      }
       this.runtimeSession = runtime;
       void session.wait().then(() => {
         if (this.runtimeSession?.session.sessionId === session.sessionId) this.runtimeSession = null;

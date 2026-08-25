@@ -1,2 +1,2 @@
 /** Kept in sync with package.json by unit and app-server protocol checks. */
-export const codexhubVersion = "0.8.1";
+export const codexhubVersion = "0.8.2";

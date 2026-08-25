@@ -159,6 +159,7 @@ const main = async () => {
       dataDir: sharedProfileDataDir,
       surface: "vscode",
       parentRegistrationIdentity: { machineId: sharedMachineA, name: sharedMachineAName },
+      autoStartRuntime: false,
       features: { localMachine: false, ssh: false, tasks: false, integrations: false }
     });
     try {
@@ -182,6 +183,7 @@ const main = async () => {
       dataDir: sharedProfileDataDir,
       surface: "vscode",
       parentRegistrationIdentity: { machineId: sharedMachineA, name: sharedMachineAName },
+      autoStartRuntime: false,
       features: { localMachine: false, ssh: false, tasks: false, integrations: false }
     });
     const sharedB = await startServer({
@@ -190,6 +192,7 @@ const main = async () => {
       dataDir: sharedProfileDataDir,
       surface: "vscode",
       parentRegistrationIdentity: { machineId: sharedMachineB, name: sharedMachineBName },
+      autoStartRuntime: false,
       features: { localMachine: false, ssh: false, tasks: false, integrations: false }
     });
     try {
@@ -222,6 +225,7 @@ const assertRegisteredProjectCatalogRefresh = async (apiBase: string, root: stri
     apiBase,
     machineId,
     name: machineName,
+    autoStartRuntime: false,
     capabilities: { projectCatalog: "fixed" },
     projects: () => projects
   });
