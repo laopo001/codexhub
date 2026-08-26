@@ -1,10 +1,52 @@
-const SHELL_CACHE = "codexhub-shell-v1";
+const SHELL_CACHE = "codexhub-shell-v2";
 const PRECACHE_URLS = [
   "/",
   "/manifest.webmanifest",
   "/icons/codexhub-192.png",
   "/icons/codexhub-512.png"
 ];
+
+const hasEmbeddedSurfaceParams = (params) => {
+  const surface = params.get("surface");
+  return surface === "vscode"
+    || surface === "electron"
+    || params.has("surfaceId")
+    || params.has("stateScope");
+};
+
+// VS Code remote/webview URI serialization can encode the complete query as
+// one query component (`?surface%3Dvscode%26...`). This mirrors the bounded
+// normalization used by the Web before embedded surface consumers read it.
+const embeddedSearchParams = (rawSearch) => {
+  const original = rawSearch.startsWith("?") ? rawSearch.slice(1) : rawSearch;
+  let candidate = original;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const params = new URLSearchParams(candidate);
+    if (hasEmbeddedSurfaceParams(params) || !candidate.includes("%")) return params;
+    try {
+      const decoded = decodeURIComponent(candidate);
+      if (decoded === candidate) return params;
+      candidate = decoded;
+    } catch {
+      return params;
+    }
+  }
+  return new URLSearchParams(candidate);
+};
+
+const isEmbeddedRequest = (url, request) => {
+  if (hasEmbeddedSurfaceParams(embeddedSearchParams(url.search))) return true;
+
+  if (request.referrer) {
+    try {
+      const referrerUrl = new URL(request.referrer);
+      if (hasEmbeddedSurfaceParams(embeddedSearchParams(referrerUrl.search))) return true;
+    } catch {
+      // ignore invalid referrer URLs
+    }
+  }
+  return false;
+};
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -32,6 +74,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return;
+  if (isEmbeddedRequest(url, request)) return;
 
   if (request.destination === "document") {
     event.respondWith(networkFirstDocument(request));

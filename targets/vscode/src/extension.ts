@@ -33,6 +33,7 @@ import {
   type VscodeExtensionSettings
 } from "./settings.js";
 import { buildWebviewBridgeScript } from "./webviewBridge.js";
+import { VscodeWebviewHtmlController } from "./webviewHtmlController.js";
 
 const viewId = "codexhub.workspaceView";
 const surfaceHeartbeatMs = 10_000;
@@ -94,6 +95,11 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   private readonly surfaceId = `vscode-${randomUUID()}`;
   private readonly leaseId = randomUUID();
   private disposed = false;
+  private readonly htmlController = new VscodeWebviewHtmlController((html) => {
+    if (this.view && !this.disposed) {
+      this.view.webview.html = html;
+    }
+  });
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -106,7 +112,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       this.stopHeartbeat();
       void this.unregisterSurface();
       if (this.view && !this.disposed) {
-        this.view.webview.html = statusHtml("Codex Hub is disabled in VS Code Settings.");
+        this.setWebviewHtml("disabled", statusHtml("Codex Hub is disabled in VS Code Settings."));
       }
       return;
     }
@@ -123,6 +129,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   resolveWebviewView(view: vscode.WebviewView) {
     this.view = view;
+    this.htmlController.reset();
     this.webviewMessageSubscription?.dispose();
     this.webviewMessageSubscription = view.webview.onDidReceiveMessage((message) => {
       void this.handleWebviewMessage(message);
@@ -131,10 +138,9 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       enableScripts: true
     };
     if (!this.isEnabled()) {
-      view.webview.html = statusHtml("Codex Hub is disabled in VS Code Settings.");
+      this.setWebviewHtml("disabled", statusHtml("Codex Hub is disabled in VS Code Settings."));
       return;
     }
-    view.webview.html = statusHtml("Starting Codex Hub...");
     this.renderPromise = this.render();
     void this.renderPromise;
   }
@@ -155,11 +161,10 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   async refresh() {
     if (!this.view || this.disposed) return;
     if (!this.isEnabled()) {
-      this.view.webview.html = statusHtml("Codex Hub is disabled in VS Code Settings.");
+      this.setWebviewHtml("disabled", statusHtml("Codex Hub is disabled in VS Code Settings."), true);
       return;
     }
-    this.view.webview.html = statusHtml("Refreshing Codex Hub...");
-    this.renderPromise = this.render();
+    this.renderPromise = this.render({ forceHtml: true });
     await this.renderPromise;
   }
 
@@ -294,22 +299,34 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     }
   }
 
-  private async render() {
+  private setWebviewHtml(key: string, html: string, force = false) {
     if (!this.view || this.disposed) return;
+    this.htmlController.update(key, html, force);
+  }
+
+  private async render(options?: { forceHtml?: boolean }) {
+    if (!this.view || this.disposed) return;
+    const forceHtml = Boolean(options?.forceHtml);
     if (!this.isEnabled()) {
       this.stopHeartbeat();
       await this.unregisterSurface();
-      this.view.webview.html = statusHtml("Codex Hub is disabled in VS Code Settings.");
+      this.setWebviewHtml("disabled", statusHtml("Codex Hub is disabled in VS Code Settings."), forceHtml);
       return;
     }
     const workspaceFolders = fileWorkspaceFolders();
     if (!workspaceFolders.length) {
       this.stopHeartbeat();
       await this.unregisterSurface();
-      this.view.webview.html = statusHtml("Open a folder or workspace to use Codex Hub.");
+      this.setWebviewHtml("no-workspace", statusHtml("Open a folder or workspace to use Codex Hub."), forceHtml);
       return;
     }
     const activeFolder = activeWorkspaceFolder(workspaceFolders) ?? workspaceFolders[0];
+
+    const loadingTimer = setTimeout(() => {
+      if (!this.htmlController.currentKey && this.view && !this.disposed) {
+        this.setWebviewHtml("loading", statusHtml("Starting Codex Hub..."), forceHtml);
+      }
+    }, 800);
 
     try {
       const server = await this.ensureServer();
@@ -317,9 +334,12 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       const externalIframeUri = await externalServerUri(
         vscodeSurfaceServerUrl(server, workspaceFolders, activeFolder.path, this.surfaceId)
       );
-      this.view.webview.html = iframeHtml(externalIframeUri.toString(true), activeFolder.path);
+      const iframeSrc = externalIframeUri.toString(true);
+      this.setWebviewHtml(`iframe:${iframeSrc}`, iframeHtml(iframeSrc, activeFolder.path), forceHtml);
     } catch (error) {
-      this.view.webview.html = statusHtml(`Codex Hub failed to start: ${errorText(error)}`);
+      this.setWebviewHtml(`error:${errorText(error)}`, statusHtml(`Codex Hub failed to start: ${errorText(error)}`), forceHtml);
+    } finally {
+      clearTimeout(loadingTimer);
     }
   }
 
