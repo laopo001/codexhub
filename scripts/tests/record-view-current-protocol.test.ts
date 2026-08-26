@@ -47,6 +47,21 @@ test("compact views only coalesce normalized context_compaction events", () => {
   assert.equal(compactToolViews(mixedViews).length, 2);
 });
 
+test("context compaction stays in the transcript and out of Status", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { activityStatusesFromRecords } = await import("../../src/web/helpers/records.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  const compaction = compactionRecord("completed-compaction", "context_compaction");
+
+  assert.equal(recordToView(compaction)?.text, "Compaction complete");
+  assert.deepEqual(activityStatusesFromRecords([compaction]), []);
+});
+
 test("Goal snapshots mark lifecycle transitions without treating every update as start or end", async () => {
   const makeGoalRecord = (
     id: string,

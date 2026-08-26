@@ -979,7 +979,7 @@ const activityStatusSnapshotTargetRecordId = (records: CodexRecord[]) => {
 
 const isActivityStatusDetail = (status: ActivityStatusView) => {
   if (status.key === "userInput") return status.status !== "completed";
-  return status.key === "plan" || status.key === "files" || status.key === "usage" || status.key === "context";
+  return status.key === "plan" || status.key === "files" || status.key === "usage";
 };
 
 export const latestTurnStatusFromRecords = (records: CodexRecord[]): ActivityStatusView | null => {
@@ -1126,21 +1126,6 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
     };
   }
 
-  if (isContextCompactionType(type)) {
-    const status = activityRecordStatus(payload.status) ?? "completed";
-    return {
-      key: "context",
-      label: "Context",
-      status,
-      at: record.timestamp,
-      text: typeof payload.message === "string"
-        ? payload.message
-        : status === "completed"
-          ? "Compaction complete"
-          : "Compacting"
-    };
-  }
-
   if (type === "thread_goal_updated") {
     const goal = asRecord(payload.goal);
     return {
@@ -1283,8 +1268,7 @@ export const activityStatusPriority = (key: string) => {
     plan: 0,
     userInput: 1,
     files: 2,
-    usage: 3,
-    context: 4
+    usage: 3
   };
   return order[key] ?? 10;
 };
