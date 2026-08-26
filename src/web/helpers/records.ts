@@ -1164,14 +1164,14 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
     const progress = planProgressFromPlan(payload.plan);
     if (!progress) return null;
     const activeStep = steps[progress.currentIndex]!;
-    const text = progress.allCompleted ? "All steps complete" : activeStep.step;
+    const text = `${progress.allCompleted ? "All steps complete" : activeStep.step} · ${formatPlanProgress(progress)}`;
     return {
       key: "plan",
       label: "Plan",
       status: progress.allCompleted ? "completed" : activeStep.status,
       at: record.timestamp,
       text,
-      summaryText: `${text} · ${formatPlanProgress(progress)}`,
+      summaryText: text,
       steps
     };
   }

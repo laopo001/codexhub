@@ -418,7 +418,7 @@ test("structured app-server plans become one expandable Status item with the cur
     label: "Plan",
     status: "in_progress",
     at: "2026-07-19T02:00:02.000Z",
-    text: "Connect Plan to Status",
+    text: "Connect Plan to Status · 2/4",
     summaryText: "Connect Plan to Status · 2/4",
     steps: [
       { step: "Inspect the app-server plan", status: "completed" },
@@ -442,7 +442,7 @@ test("Plan Status rows stay compact until expanded and then render every step", 
     key: "plan",
     label: "Plan",
     status: "in_progress" as const,
-    text: "Connect Plan to Status",
+    text: "Connect Plan to Status · 2/4",
     summaryText: "Connect Plan to Status · 2/4",
     steps: [
       { step: "Inspect the app-server plan", status: "completed" as const },
@@ -458,6 +458,7 @@ test("Plan Status rows stay compact until expanded and then render every step", 
     onToggle: () => undefined
   }));
   assert.match(collapsed, /Connect Plan to Status/);
+  assert.match(collapsed, /2\/4/);
   assert.doesNotMatch(collapsed, /Inspect the app-server plan/);
   assert.match(collapsed, /aria-expanded="false"/);
 
@@ -470,6 +471,7 @@ test("Plan Status rows stay compact until expanded and then render every step", 
   assert.match(expanded, /activityStatusPlanSteps/);
   assert.match(expanded, /Inspect the app-server plan/);
   assert.match(expanded, /Connect Plan to Status/);
+  assert.match(expanded, /2\/4/);
   assert.match(expanded, /Verify in the browser/);
   assert.match(expanded, /Review the final diff/);
 });
@@ -487,7 +489,8 @@ test("live Plan status uses its registration default until the scope is initiali
     key: "plan",
     label: "Plan",
     status: "in_progress" as const,
-    text: "Connect Plan to Status",
+    text: "Connect Plan to Status · 1/1",
+    summaryText: "Connect Plan to Status · 1/1",
     steps: [{ step: "Connect Plan to Status", status: "in_progress" as const }]
   };
   const defaultExpanded = renderToStaticMarkup(createElement(ActivityStatusBar, {
@@ -498,6 +501,7 @@ test("live Plan status uses its registration default until the scope is initiali
     onToggle: () => undefined
   }));
   assert.match(defaultExpanded, /aria-expanded="true"/);
+  assert.match(defaultExpanded, /1\/1/);
   assert.match(defaultExpanded, /activityStatusPlanSteps/);
 
   const initializedCollapsed = renderToStaticMarkup(createElement(ActivityStatusBar, {
@@ -797,7 +801,7 @@ test("completed Plan status uses an explicit completion label", async () => {
     label: "Plan",
     status: "completed",
     at: "2026-07-19T02:00:03.000Z",
-    text: "All steps complete",
+    text: "All steps complete · 4/4",
     summaryText: "All steps complete · 4/4",
     steps: [
       { step: "Inspect the app-server plan", status: "completed" },
