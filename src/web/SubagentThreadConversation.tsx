@@ -106,7 +106,7 @@ export const SubagentThreadConversation = ({
       onMessageRenderModeChange={(_threadId, messageId, mode) => workspace.updateMessageRenderMode(messageId, mode)}
       onMessageContextMenu={workspace.openMessageContextMenu}
       onInspectMessage={(_threadId, message) => workspace.setInspectMessage(message)}
-      onOpenImage={(_threadId, image) => workspace.setImagePreview(image)}
+      onOpenImage={workspace.setImagePreview}
       onOpenSubagentThread={(parentThreadId, activity) => {
         if (!activity.agentThreadId) return;
         return workspace.openSubagentThread(activity.agentThreadId, {

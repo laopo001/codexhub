@@ -10,6 +10,7 @@ import {
   composerCursorOnLastLine,
   contextMenuPosition,
   normalizeSelectedText,
+  selectionToolbarPosition,
   selectedTextWithin,
   type ComposerDraftStore,
   writeTextToClipboard
@@ -424,18 +425,41 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     event: React.MouseEvent,
     threadId: string,
     message: WebRecordView,
-    canInspect: boolean
+    canInspect: boolean,
+    presentation: MessageContextMenuState["presentation"] = "contextMenu"
   ) => {
     const target = event.currentTarget;
     if (!(target instanceof HTMLElement)) return;
     const selectedText = selectedTextWithin(target);
     if (!canInspect && !selectedText) return;
+    if (presentation === "selectionToolbar") {
+      if (!selectedText) return;
+      const selection = window.getSelection();
+      if (!selection?.rangeCount) return;
+      const rect = selection.getRangeAt(selection.rangeCount - 1).getBoundingClientRect();
+      const position = selectionToolbarPosition(rect);
+      window.requestAnimationFrame(() => {
+        if (selectedTextWithin(target) !== selectedText) return;
+        ctx.setComposerMenuOpen(false);
+        ctx.setThreadControlsMenuOpen(false);
+        ctx.setMessageContextMenu({
+          ...position,
+          presentation,
+          threadId,
+          message,
+          selectedText,
+          canInspect
+        });
+      });
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     ctx.setComposerMenuOpen(false);
     ctx.setThreadControlsMenuOpen(false);
     ctx.setMessageContextMenu({
       ...contextMenuPosition(event.clientX, event.clientY),
+      presentation,
       threadId,
       message,
       selectedText,

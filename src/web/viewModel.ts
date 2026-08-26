@@ -232,7 +232,8 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
     event: React.MouseEvent,
     threadId: string,
     message: WebRecordView,
-    canInspect: boolean
+    canInspect: boolean,
+    presentation?: MessageContextMenuState["presentation"]
   ) => void;
   insertThreadPathText: (
     threadId: string,

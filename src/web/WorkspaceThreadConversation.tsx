@@ -206,10 +206,10 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
       setExpandedStatusKeys={setExpandedStatusKeys}
       setExpandedStatusTurns={setExpandedStatusTurns}
       onMessageRenderModeChange={(_targetThreadId, messageId, mode) => updateMessageRenderMode(messageId, mode)}
-      onMessageContextMenu={(event, targetThreadId, message, canInspect) =>
-        openMessageContextMenu(event, targetThreadId, message, canInspect)}
+      onMessageContextMenu={(event, targetThreadId, message, canInspect, presentation) =>
+        openMessageContextMenu(event, targetThreadId, message, canInspect, presentation)}
       onInspectMessage={(_targetThreadId, message) => setInspectMessage(message)}
-      onOpenImage={(_targetThreadId, image) => setImagePreview(image)}
+      onOpenImage={setImagePreview}
       onOpenSubagentThread={(parentThreadId, activity) => {
         if (!activity.agentThreadId) return;
         return openSubagentThread(activity.agentThreadId, {

@@ -895,7 +895,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
           }}
         >
           <div
-            className="messageContextMenu"
+            className={`messageContextMenu${messageContextMenu.presentation === "selectionToolbar" ? " selectionToolbar" : ""}`}
             role="menu"
             style={{ left: messageContextMenu.x, top: messageContextMenu.y }}
             onMouseDown={(event) => event.stopPropagation()}

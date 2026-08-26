@@ -110,10 +110,11 @@ export type ThreadConversationProps = {
     event: React.MouseEvent<HTMLElement>,
     threadId: string,
     message: WebRecordView,
-    canInspect: boolean
+    canInspect: boolean,
+    presentation?: "contextMenu" | "selectionToolbar"
   ) => void;
   onInspectMessage?: (threadId: string, message: WebRecordView) => void;
-  onOpenImage?: (threadId: string, image: ImagePreviewState) => void;
+  onOpenImage?: (image: ImagePreviewState) => void;
   onOpenSubagentThread?: (threadId: string, activity: SubagentActivityView) => MaybePromise;
   onToggleToolBatch?: (threadId: string, toolBatchKey: string, expanded: boolean) => void;
   onApprovalDecision?: (
@@ -526,10 +527,13 @@ export const ThreadConversation = ({
         onContextMenu={onMessageContextMenu
           ? (event) => onMessageContextMenu(event, thread.threadId, message, inspectable)
           : undefined}
+        onSelectionMenu={onMessageContextMenu
+          ? (event) => onMessageContextMenu(event, thread.threadId, message, inspectable, "selectionToolbar")
+          : undefined}
         onInspect={inspectable && onInspectMessage
           ? () => onInspectMessage(thread.threadId, message)
           : undefined}
-        onOpenImage={onOpenImage ? (image) => onOpenImage(thread.threadId, image) : undefined}
+        onOpenImage={onOpenImage}
         onOpenSubagentThread={onOpenSubagentThread
           ? (activity) => onOpenSubagentThread(thread.threadId, activity)
           : undefined}
@@ -565,7 +569,6 @@ export const ThreadConversation = ({
     thread.threadId,
     thread.workingDirectory
   ]);
-
   const threadStatus = executionMeta ? (
     <ThreadStatusCard
       visible={statusPanelExpanded}
@@ -719,7 +722,7 @@ export const ThreadConversation = ({
                           <button
                             type="button"
                             className="composerAttachmentThumb composerAttachmentThumbButton"
-                            onClick={() => onOpenImage(thread.threadId, {
+                            onClick={() => onOpenImage({
                               url: image.previewUrl,
                               title: image.name || "Image attachment"
                             })}

@@ -421,6 +421,24 @@ export const contextMenuPosition = (clientX: number, clientY: number) => {
   };
 };
 
+export const selectionToolbarPosition = (rect: DOMRect) => {
+  const padding = 8;
+  const gap = 8;
+  const estimatedWidth = 260;
+  const estimatedHeight = 40;
+  const centerX = rect.left + rect.width / 2;
+  const aboveY = rect.top - estimatedHeight - gap;
+  return {
+    x: Math.max(
+      padding + estimatedWidth / 2,
+      Math.min(centerX, window.innerWidth - estimatedWidth / 2 - padding)
+    ),
+    y: aboveY >= padding
+      ? aboveY
+      : Math.max(padding, Math.min(rect.bottom + gap, window.innerHeight - estimatedHeight - padding))
+  };
+};
+
 export const submissionFailedRecord = (error: unknown): CodexRecord => ({
   id: `web:${browserId()}`,
   timestamp: new Date().toISOString(),

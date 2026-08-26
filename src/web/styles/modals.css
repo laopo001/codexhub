@@ -608,6 +608,27 @@
   background: #eef3eb;
 }
 
+.messageContextMenu.selectionToolbar {
+  display: flex;
+  min-width: 0;
+  padding: 3px;
+  border-radius: 10px;
+  transform: translateX(-50%);
+}
+
+.messageContextMenu.selectionToolbar button {
+  min-height: 32px;
+  padding: 0 12px;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.messageContextMenu.selectionToolbar button + button {
+  border-left: 1px solid #dbe3d8;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
 .secondaryButton {
   border: 1px solid #cbd6c7;
   background: #ffffff;

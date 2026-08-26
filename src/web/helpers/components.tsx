@@ -59,6 +59,7 @@ export const MessageCard = ({
   threadWorkingDirectory,
   onRenderModeChange,
   onContextMenu,
+  onSelectionMenu,
   onInspect,
   onToggleToolBatch,
   onApprovalDecision,
@@ -79,6 +80,7 @@ export const MessageCard = ({
   threadWorkingDirectory?: string;
   onRenderModeChange?: (mode: MessageRenderMode) => void;
   onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
+  onSelectionMenu?: (event: React.MouseEvent<HTMLElement>) => void;
   onInspect?: () => void;
   onToggleToolBatch?: () => void;
   onApprovalDecision?: (approvalId: string, decision: AppServerApprovalDecision) => void;
@@ -158,8 +160,9 @@ export const MessageCard = ({
   }
   return (
     <article
-      className={`message ${message.role} ${messageToneClass} ${hasToolBody ? "richTool" : ""} ${canClickInspect ? "inspectableTool" : ""} ${onContextMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
+      className={`message ${message.role} ${messageToneClass} ${hasToolBody ? "richTool" : ""} ${canClickInspect ? "inspectableTool" : ""} ${onContextMenu || onSelectionMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
       onContextMenu={onContextMenu}
+      onMouseUp={onSelectionMenu}
       onClick={canClickInspect ? inspectOnClick : undefined}
       onKeyDown={canClickInspect ? inspectOnKeyDown : undefined}
       role={canClickInspect ? "button" : undefined}
@@ -566,16 +569,18 @@ export const MessageText = ({
     }
     setFilePreview({ target, machineId: threadMachineId });
   }, [threadMachineId]);
-  const components = useMemo(
-    () => markdownComponents(threadWorkingDirectory, handleFileLinkClick, onOpenImage),
+  const markdownInteraction = useMemo<MarkdownInteractionContextValue>(
+    () => ({ threadWorkingDirectory, onFileLinkClick: handleFileLinkClick, onOpenImage }),
     [handleFileLinkClick, onOpenImage, threadWorkingDirectory]
   );
   if (!markdownEnabled || mode === "raw") return <pre>{text}</pre>;
   return (
     <div className="messageMarkdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={markdownUrlTransform}>
-        {text}
-      </ReactMarkdown>
+      <MarkdownInteractionContext.Provider value={markdownInteraction}>
+        <ReactMarkdown remarkPlugins={markdownRemarkPlugins} components={markdownComponents} urlTransform={markdownUrlTransform}>
+          {text}
+        </ReactMarkdown>
+      </MarkdownInteractionContext.Provider>
       {filePreview ? (
         <FilePreviewDialog preview={filePreview} onClose={() => setFilePreview(null)} />
       ) : null}
@@ -767,13 +772,19 @@ const fileLinkCopyActions = (target: LocalFileLinkTarget) => {
   });
 };
 
-export const markdownComponents = (
-  threadWorkingDirectory: string | undefined,
-  onFileLinkClick: (target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => void,
-  onOpenImage?: (image: ImagePreviewState) => void
-): Components => ({
+type MarkdownInteractionContextValue = {
+  threadWorkingDirectory?: string;
+  onFileLinkClick: (target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => void;
+  onOpenImage?: (image: ImagePreviewState) => void;
+};
+
+const MarkdownInteractionContext = React.createContext<MarkdownInteractionContextValue | null>(null);
+const markdownRemarkPlugins = [remarkGfm];
+
+export const markdownComponents: Components = {
   a: ({ children, href, className, title, ...props }) => {
-    const fileTarget = localFileLinkTargetFromHref(href, threadWorkingDirectory);
+    const interaction = React.useContext(MarkdownInteractionContext);
+    const fileTarget = localFileLinkTargetFromHref(href, interaction?.threadWorkingDirectory);
     const linkClassName = [className, fileTarget ? "localFileLink" : null].filter(Boolean).join(" ") || undefined;
     return (
       <a
@@ -784,13 +795,14 @@ export const markdownComponents = (
         rel={fileTarget ? undefined : "noreferrer"}
         title={fileTarget?.title ?? title}
         aria-label={fileTarget ? `File link ${fileTarget.title}` : props["aria-label"]}
-        onClick={fileTarget ? (event) => onFileLinkClick(fileTarget, event) : undefined}
+        onClick={fileTarget && interaction ? (event) => interaction.onFileLinkClick(fileTarget, event) : undefined}
       >
         {fileTarget?.label ?? children}
       </a>
     );
   },
   img: ({ src, alt, className, title, ...props }) => {
+    const { onOpenImage } = React.useContext(MarkdownInteractionContext) ?? {};
     // Markdown images and attachment thumbnails share the same preview dialog behavior.
     const imageUrl = typeof src === "string" ? authenticatedFileUrl(src) : src;
     const imageTitle = title || alt || imageUrl || "Image";
@@ -837,7 +849,7 @@ export const markdownComponents = (
       <table>{children}</table>
     </div>
   )
-});
+};
 
 type LocalFileLinkTarget = {
   path: string;

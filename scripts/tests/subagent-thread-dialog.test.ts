@@ -250,3 +250,39 @@ test("workspace and subagent conversations share one thread body, status bar, an
   assert.match(viewSelectorSource, /openThreadModelDialog\(thread\.threadId\)/);
   assert.match(viewSelectorSource, /compactThread\(thread\.threadId\)/);
 });
+
+test("message image preview keeps markdown component identities stable across parent state updates", async () => {
+  const [workspaceSource, subagentSource, conversationSource, componentsSource] = await Promise.all([
+    readFile(new URL("../../src/web/WorkspaceThreadConversation.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/SubagentThreadConversation.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/ThreadConversation.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/helpers/components.tsx", import.meta.url), "utf8")
+  ]);
+
+  assert.match(workspaceSource, /onOpenImage=\{setImagePreview\}/);
+  assert.match(subagentSource, /onOpenImage=\{workspace\.setImagePreview\}/);
+  assert.match(conversationSource, /onOpenImage\?: \(image: ImagePreviewState\) => void;/);
+  assert.match(conversationSource, /onOpenImage=\{onOpenImage\}/);
+  assert.doesNotMatch(conversationSource, /onOpenImage=\{onOpenImage \? \(image\)/);
+  assert.match(componentsSource, /export const markdownComponents: Components = \{/);
+  assert.match(componentsSource, /<MarkdownInteractionContext\.Provider value=\{markdownInteraction\}>/);
+  assert.doesNotMatch(componentsSource, /markdownComponents\(threadWorkingDirectory,/);
+});
+
+test("mouse selection opens a compact toolbar while right click keeps the existing action menu", async () => {
+  const [actionsSource, componentsSource, dialogsSource, modalsCss] = await Promise.all([
+    readFile(new URL("../../src/web/appActions/composerActions.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/helpers/components.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/AppDialogs.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/styles/modals.css", import.meta.url), "utf8")
+  ]);
+
+  assert.match(componentsSource, /onMouseUp=\{onSelectionMenu\}/);
+  assert.match(actionsSource, /presentation: MessageContextMenuState\["presentation"\] = "contextMenu"/);
+  assert.match(actionsSource, /if \(presentation === "selectionToolbar"\)/);
+  assert.match(actionsSource, /window\.requestAnimationFrame\(\(\) => \{/);
+  assert.match(actionsSource, /event\.preventDefault\(\);[\s\S]*?contextMenuPosition\(event\.clientX, event\.clientY\)/);
+  assert.match(dialogsSource, /messageContextMenu\.presentation === "selectionToolbar"/);
+  assert.match(cssBlock(modalsCss, ".messageContextMenu.selectionToolbar"), /display:\s*flex/);
+  assert.match(cssBlock(modalsCss, ".messageContextMenu.selectionToolbar"), /min-width:\s*0/);
+});

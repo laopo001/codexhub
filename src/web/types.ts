@@ -213,6 +213,7 @@ export type TextAttachment = {
 export type MessageContextMenuState = {
   x: number;
   y: number;
+  presentation: "contextMenu" | "selectionToolbar";
   threadId: string;
   message: WebRecordView;
   selectedText: string;
