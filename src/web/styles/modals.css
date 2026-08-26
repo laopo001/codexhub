@@ -967,23 +967,33 @@
 }
 
 .threadPickerWorktree {
-  display: grid;
-  gap: 8px;
   border: 1px solid #dfe5dc;
   border-radius: 7px;
   background: #fbfcf8;
-  padding: 9px 10px;
 }
 
-.threadPickerWorktreeHeader {
+.threadPickerWorktreeSummary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
+  min-height: 40px;
+  border-radius: 6px;
+  padding: 7px 10px;
+  cursor: pointer;
+  list-style: none;
 }
 
-.threadPickerWorktreeHeader span {
+.threadPickerWorktreeSummary::-webkit-details-marker {
+  display: none;
+}
+
+.threadPickerWorktreeSummary:hover,
+.threadPickerWorktreeSummary:focus-visible {
+  background: #eef3eb;
+}
+
+.threadPickerWorktreeTitle {
   min-width: 0;
   overflow: hidden;
   color: #17211a;
@@ -993,7 +1003,35 @@
   white-space: nowrap;
 }
 
-.threadPickerWorktreeHeader button,
+.threadPickerWorktreeMeta {
+  min-width: 0;
+  overflow: hidden;
+  color: #66715f;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threadPickerWorktreeSummary svg {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #66715f;
+  transition: transform 140ms ease;
+}
+
+.threadPickerWorktree[open] .threadPickerWorktreeSummary svg {
+  transform: rotate(90deg);
+}
+
+.threadPickerWorktreeBody {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #dfe5dc;
+  border-radius: 0 0 6px 6px;
+  padding: 9px 10px;
+}
+
+.threadPickerWorktreeFooter button,
 .threadPickerWorktree input {
   border: 1px solid #cdd8ca;
   border-radius: 6px;
@@ -1001,14 +1039,14 @@
   color: #17211a;
 }
 
-.threadPickerWorktreeHeader button {
+.threadPickerWorktreeFooter button {
   flex: 0 0 auto;
   padding: 4px 9px;
   font-size: 12px;
   font-weight: 750;
 }
 
-.threadPickerWorktreeHeader button:disabled {
+.threadPickerWorktreeFooter button:disabled {
   color: #8a9586;
 }
 
@@ -1038,6 +1076,13 @@
   gap: 8px;
 }
 
+.threadPickerWorktreeFooter {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
 .threadPickerWorktreePreview,
 .threadPickerSearch {
   display: grid;
@@ -1046,6 +1091,7 @@
 }
 
 .threadPickerWorktreePreview {
+  flex: 1 1 auto;
   border-top: 1px solid #dfe5dc;
   padding-top: 6px;
 }

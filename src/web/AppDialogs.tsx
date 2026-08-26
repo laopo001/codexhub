@@ -1,6 +1,6 @@
 import React from "react";
 import { Modal, Select, Switch } from "antd";
-import { Target } from "lucide-react";
+import { ChevronRight, Target } from "lucide-react";
 import { isNativeElectronSurface } from "./appConfig.js";
 import {
   apiRouteJson,
@@ -562,68 +562,74 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                       : "Start a new Codex thread"}
                 </span>
               </button>
-              <form
-                className="threadPickerWorktree"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void createWorktreeThread();
-                }}
-              >
-                <div className="threadPickerWorktreeHeader">
-                  <span>New worktree thread</span>
-                  <button
-                    type="submit"
-                    disabled={!threadPickerReady || threadPicker.acting !== null || !threadPicker.worktreeBranch.trim()}
-                  >
-                    {threadPicker.acting === "worktree" ? "creating" : "Create"}
-                  </button>
-                </div>
-                <label>
-                  <span>Branch</span>
-                  <input
-                    value={threadPicker.worktreeBranch}
-                    onChange={(event) => setThreadPicker((current) => current ? {
-                      ...current,
-                      worktreeBranch: event.target.value,
-                      error: ""
-                    } : current)}
-                    disabled={!threadPickerReady || threadPicker.acting !== null}
-                    placeholder="feature/name"
-                  />
-                </label>
-                <div className="threadPickerWorktreeGrid">
+              <details className="threadPickerWorktree">
+                <summary className="threadPickerWorktreeSummary">
+                  <span className="threadPickerWorktreeTitle">New worktree thread</span>
+                  <span className="threadPickerWorktreeMeta">Create an isolated branch</span>
+                  <ChevronRight size={15} strokeWidth={2.25} aria-hidden="true" />
+                </summary>
+                <form
+                  className="threadPickerWorktreeBody"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void createWorktreeThread();
+                  }}
+                >
                   <label>
-                    <span>Base</span>
+                    <span>Branch</span>
                     <input
-                      value={threadPicker.worktreeBaseRef}
+                      value={threadPicker.worktreeBranch}
                       onChange={(event) => setThreadPicker((current) => current ? {
                         ...current,
-                        worktreeBaseRef: event.target.value,
+                        worktreeBranch: event.target.value,
                         error: ""
                       } : current)}
                       disabled={!threadPickerReady || threadPicker.acting !== null}
-                      placeholder="HEAD"
+                      placeholder="feature/name"
                     />
                   </label>
-                  <label>
-                    <span>Path</span>
-                    <input
-                      value={threadPicker.worktreePath}
-                      onChange={(event) => setThreadPicker((current) => current ? {
-                        ...current,
-                        worktreePath: event.target.value,
-                        error: ""
-                      } : current)}
-                      disabled={!threadPickerReady || threadPicker.acting !== null}
-                      placeholder="auto"
-                    />
-                  </label>
-                </div>
-                <div className="threadPickerWorktreePreview" title={worktreePreview}>
-                  <span>Target</span>
-                  <code>{worktreePreview}</code>
-                </div>
-              </form>
+                  <div className="threadPickerWorktreeGrid">
+                    <label>
+                      <span>Base</span>
+                      <input
+                        value={threadPicker.worktreeBaseRef}
+                        onChange={(event) => setThreadPicker((current) => current ? {
+                          ...current,
+                          worktreeBaseRef: event.target.value,
+                          error: ""
+                        } : current)}
+                        disabled={!threadPickerReady || threadPicker.acting !== null}
+                        placeholder="HEAD"
+                      />
+                    </label>
+                    <label>
+                      <span>Path</span>
+                      <input
+                        value={threadPicker.worktreePath}
+                        onChange={(event) => setThreadPicker((current) => current ? {
+                          ...current,
+                          worktreePath: event.target.value,
+                          error: ""
+                        } : current)}
+                        disabled={!threadPickerReady || threadPicker.acting !== null}
+                        placeholder="auto"
+                      />
+                    </label>
+                  </div>
+                  <div className="threadPickerWorktreeFooter">
+                    <div className="threadPickerWorktreePreview" title={worktreePreview}>
+                      <span>Target</span>
+                      <code>{worktreePreview}</code>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={!threadPickerReady || threadPicker.acting !== null || !threadPicker.worktreeBranch.trim()}
+                    >
+                      {threadPicker.acting === "worktree" ? "creating" : "Create"}
+                    </button>
+                  </div>
+                </form>
+              </details>
               <label className="threadPickerSearch">
                 <span>Search</span>
                 <input
