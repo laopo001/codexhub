@@ -239,8 +239,14 @@ program
     const { installVSCodeExtension } = await import("../core/vscodeExtensionInstaller.js");
     const result = await installVSCodeExtension({ vsixPath: options.vsix });
     console.log(`Installed VS Code extension in current host: ${result.localExtension}`);
+    if (result.localInsidersExtension) {
+      console.log(`Installed VS Code extension in current host Insiders: ${result.localInsidersExtension}`);
+    }
     if (result.windowsExtension) {
       console.log(`Installed VS Code extension in Windows host: ${result.windowsExtension}`);
+    }
+    if (result.windowsInsidersExtension) {
+      console.log(`Installed VS Code extension in Windows host Insiders: ${result.windowsInsidersExtension}`);
     }
     console.log("Reload the VS Code window to activate the extension.");
   });

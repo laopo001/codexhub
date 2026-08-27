@@ -10,6 +10,7 @@ const previousLog = process.env.CODEXHUB_FAKE_CODE_LOG;
 
 try {
   const fakeCode = path.join(root, "code");
+  const fakeCodeInsiders = path.join(root, "code-insiders");
   const logPath = path.join(root, "code-calls.jsonl");
   const vsixPath = path.join(root, "codexhub.vsix");
   await writeFile(vsixPath, "fake VSIX consumed by the fake code host");
@@ -20,15 +21,25 @@ try {
     `if (process.argv.includes('--list-extensions')) console.log('dadigua.codexhub@${version}');`,
   ].join("\n"));
   await chmod(fakeCode, 0o755);
+  await writeFile(fakeCodeInsiders, [
+    "#!/usr/bin/env node",
+    "const fs = require('node:fs');",
+    "fs.appendFileSync(process.env.CODEXHUB_FAKE_CODE_LOG, JSON.stringify(process.argv.slice(2)) + '\\n');",
+    `if (process.argv.includes('--list-extensions')) console.log('dadigua.codexhub@${version}');`,
+  ].join("\n"));
+  await chmod(fakeCodeInsiders, 0o755);
   process.env.CODEXHUB_FAKE_CODE_LOG = logPath;
 
   const result = await installVSCodeExtension({
     codeCommand: fakeCode,
+    codeInsidersCommand: fakeCodeInsiders,
     installWindowsHost: false,
     vsixPath,
   });
   assert.equal(result.localExtension, `dadigua.codexhub@${version}`);
+  assert.equal(result.localInsidersExtension, `dadigua.codexhub@${version}`);
   assert.equal(result.windowsExtension, null);
+  assert.equal(result.windowsInsidersExtension, null);
   assert.equal(result.vsixPath, vsixPath);
 
   const calls = (await readFile(logPath, "utf8"))
@@ -38,10 +49,33 @@ try {
   assert.deepEqual(calls, [
     ["--install-extension", vsixPath, "--force"],
     ["--list-extensions", "--show-versions"],
+    ["--version"],
+    ["--install-extension", vsixPath, "--force"],
+    ["--list-extensions", "--show-versions"],
   ]);
+
+  await writeFile(logPath, "");
+  const stableOnlyResult = await installVSCodeExtension({
+    codeCommand: fakeCode,
+    codeInsidersCommand: path.join(root, "missing-code-insiders"),
+    installWindowsHost: false,
+    vsixPath,
+  });
+  assert.equal(stableOnlyResult.localExtension, `dadigua.codexhub@${version}`);
+  assert.equal(stableOnlyResult.localInsidersExtension, null);
+  const stableOnlyCalls = (await readFile(logPath, "utf8"))
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line) as string[]);
+  assert.deepEqual(stableOnlyCalls, [
+    ["--install-extension", vsixPath, "--force"],
+    ["--list-extensions", "--show-versions"],
+  ]);
+
   await assert.rejects(
     installVSCodeExtension({
       codeCommand: path.join(root, "missing-code"),
+      codeInsidersCommand: path.join(root, "missing-code-insiders"),
       installWindowsHost: false,
       vsixPath,
     }),
