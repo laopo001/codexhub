@@ -1,5 +1,9 @@
 import { useEffect } from "react";
-import { isFixedWorkspaceSurface, storageKey } from "./appConfig.js";
+import {
+  isFixedWorkspaceSurface,
+  readCurrentSurfaceUiStateRaw,
+  writeCurrentSurfaceUiStateRaw
+} from "./appConfig.js";
 import {
   apiRouteJson,
   findProjectByMachinePath,
@@ -7,6 +11,7 @@ import {
   permissionProfileScopeKey,
   preferredThreadIdForRuntime,
   primeTaskCompletionSound,
+  readStoredUiState,
   runtimeForProject
 } from "./appHelpers.js";
 import type { AppSelectors } from "./appSelectors.js";
@@ -22,6 +27,8 @@ type AppEffectsActions = {
   clearActiveThreadIfLatest: (threadId: string) => void;
   initialize: () => Promise<void>;
   openThread: (threadId: string, options?: {
+    expectedMachineId?: string;
+    preferredWorkingDirectory?: string;
     activate?: boolean;
     deferActivationUntilLoaded?: boolean;
   }) => Promise<void>;
@@ -100,16 +107,26 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
 
   useEffect(() => {
     if (!state.initialized) return;
-    const persistedOpenThreadIds = [...new Set([
-      ...selectors.openThreadIds,
-      ...state.pendingRestoreThreadIds
-    ])];
-    localStorage.setItem(storageKey, JSON.stringify({
+    const persistedOpenThreadIds = [...new Set(selectors.openThreadIds)];
+    const currentThreadTargets = Object.fromEntries(state.openThreads.flatMap((thread) => {
+      const machineId = thread.runtime.machineId;
+      return machineId ? [[thread.threadId, {
+        machineId,
+        ...(thread.workingDirectory ? { workingDirectory: thread.workingDirectory } : {})
+      }]] : [];
+    }));
+    const openThreadTargets = Object.fromEntries(persistedOpenThreadIds.flatMap((threadId) => {
+      const target = currentThreadTargets[threadId];
+      return target ? [[threadId, target]] : [];
+    }));
+    writeCurrentSurfaceUiStateRaw(JSON.stringify({
+      tabSnapshotVersion: 1,
       activeWorkspacePath: state.activeWorkspacePath,
       activeMachineId: state.activeMachineId,
-      activeTabThreadId: state.activeTabThreadId || state.pendingRestoreActiveThreadId,
+      activeTabThreadId: state.activeTabThreadId,
       activeTabThreadByMachine: state.activeTabThreadByMachine,
       openThreadIds: persistedOpenThreadIds,
+      openThreadTargets,
       threadOrderByMachine: state.threadOrderByMachine,
       selectedProjectKey: state.selectedProjectKey,
       projectSearch: state.sidebarDraftStore.getSnapshot().projectSearch,
@@ -121,8 +138,6 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.activeMachineId,
     state.activeTabThreadByMachine,
     state.activeTabThreadId,
-    state.pendingRestoreActiveThreadId,
-    state.pendingRestoreThreadIds,
     selectors.openThreadIds,
     state.selectedProjectKey,
     state.sidebarCollapsed,
@@ -146,14 +161,23 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       const pendingThreadIds = [...state.pendingRestoreThreadIds];
       const pendingActiveThreadId = state.pendingRestoreActiveThreadId;
       const hasActiveThread = Boolean(state.activeTabThreadId);
+      const saved = readStoredUiState();
       try {
         for (const threadId of pendingThreadIds) {
           if (disposed) return;
           const activate = threadId === pendingActiveThreadId && !hasActiveThread;
+          const explicitTarget = saved?.openThreadTargets?.[threadId];
+          const inferredMachineId = explicitTarget?.machineId;
+          const preferredWorkingDirectory = explicitTarget?.workingDirectory
+            || (threadId === pendingActiveThreadId ? saved?.activeWorkspacePath : undefined);
           try {
             await actions.openThread(
               threadId,
-              activate ? { deferActivationUntilLoaded: true } : { activate: false }
+              {
+                ...(activate ? { deferActivationUntilLoaded: true } : { activate: false }),
+                ...(inferredMachineId ? { expectedMachineId: inferredMachineId } : {}),
+                ...(preferredWorkingDirectory ? { preferredWorkingDirectory } : {})
+              }
             );
             if (disposed) return;
             state.setPendingRestoreThreadIds((current) => current.filter((id) => id !== threadId));
@@ -190,9 +214,9 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     const persistProjectSearch = () => {
       timer = null;
       try {
-        const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+        const parsed = JSON.parse(readCurrentSurfaceUiStateRaw() ?? "null");
         const stored = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-        localStorage.setItem(storageKey, JSON.stringify({ ...stored, projectSearch }));
+        writeCurrentSurfaceUiStateRaw(JSON.stringify({ ...stored, projectSearch }));
       } catch {
         // Ignore storage failures; project search remains available for this page.
       }

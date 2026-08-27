@@ -1,5 +1,6 @@
 import type React from "react";
 import { Modal } from "antd";
+import { CodexHubApiError } from "../../shared/apiClient.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers, RealtimeOutgoingMessage, ThreadGoalUpdateInput } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import type { ProxyInput } from "../../shared/inputTypes.js";
@@ -130,6 +131,18 @@ export type ThreadActions = {
 export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActionsDependencies): ThreadActions => {
   let forkRequestPending = false;
   const loadingOlderThreads = new Set<string>();
+  const resumeCandidateCwdsByMachine = new Map<string, Promise<Map<string, string>>>();
+  const resumeCandidateCwd = async (machineId: string, threadId: string) => {
+    let pending = resumeCandidateCwdsByMachine.get(machineId);
+    if (!pending) {
+      pending = apiRouteJson(apiRoutes.threadCandidates, machineId, undefined, 200)
+        .then((payload) => new Map(
+          (payload.threads ?? []).map((candidate) => [candidate.threadId, candidate.cwd])
+        ));
+      resumeCandidateCwdsByMachine.set(machineId, pending);
+    }
+    return (await pending).get(threadId);
+  };
   const runActionRequest = async (
     key: string,
     title: string,
@@ -186,7 +199,21 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
 
     const open = (async () => {
-      const thread = await apiRouteJson(apiRoutes.thread, threadId);
+      let thread: ThreadDetail;
+      try {
+        thread = await apiRouteJson(apiRoutes.thread, threadId);
+      } catch (error) {
+        if (!(error instanceof CodexHubApiError) || error.status !== 404 || !options.expectedMachineId) {
+          throw error;
+        }
+        const workingDirectory = options.preferredWorkingDirectory
+          || await resumeCandidateCwd(options.expectedMachineId, threadId);
+        thread = await apiRouteJson(apiRoutes.createMachineThread, options.expectedMachineId, {
+          action: "resume",
+          threadId,
+          ...(workingDirectory ? { cwd: workingDirectory } : {})
+        });
+      }
       const machineId = thread.runtime.machineId;
       if (options.expectedMachineId && machineId !== options.expectedMachineId) {
         throw new Error(`Thread ${threadId} is attached to ${machineId ?? "an unknown machine"}, not ${options.expectedMachineId}.`);

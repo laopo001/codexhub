@@ -265,7 +265,7 @@ const App = () => {
       });
     },
     onThreadCompleted: petFeature.handleThreadCompleted,
-    openThread: (threadId) => requireThreadActions().openThread(threadId)
+    openThread: (threadId, options) => requireThreadActions().openThread(threadId, options)
   });
   const sshActions = createSshActions(actionContext);
   const taskActions = createTaskActions(actionContext, {

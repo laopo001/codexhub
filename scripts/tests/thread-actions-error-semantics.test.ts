@@ -213,6 +213,111 @@ test("failed deferred thread activation leaves the current tab untouched", async
   assert.deepEqual(activeTabChanges, []);
 });
 
+test("machine-scoped open resumes a persisted thread missing from a replacement authority", async () => {
+  const resumedThread = openThread(false, "chat", "persisted-thread");
+  const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+  const { actions, activeTabChanges } = await fixture(
+    false,
+    "chat",
+    async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({
+        url,
+        method,
+        ...(typeof init?.body === "string" ? { body: JSON.parse(init.body) } : {})
+      });
+      if (url.endsWith("/api/threads/persisted-thread")) {
+        return new Response(JSON.stringify({ error: "thread not attached" }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response(JSON.stringify(resumedThread), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    },
+    { threadId: resumedThread.threadId, workspaceOpen: false }
+  );
+
+  await actions.openThread(resumedThread.threadId, {
+    expectedMachineId: "machine-actions",
+    preferredWorkingDirectory: "/tmp/thread-actions",
+    deferActivationUntilLoaded: true
+  });
+
+  assert.deepEqual(requests, [
+    {
+      url: "/api/threads/persisted-thread",
+      method: "GET"
+    },
+    {
+      url: "/api/machines/machine-actions/threads",
+      method: "POST",
+      body: {
+        action: "resume",
+        threadId: "persisted-thread",
+        cwd: "/tmp/thread-actions"
+      }
+    }
+  ]);
+  assert.deepEqual(activeTabChanges, [resumedThread.threadId]);
+});
+
+test("legacy persisted tabs resolve cwd from machine thread candidates before resume", async () => {
+  const resumedThread = openThread(false, "chat", "legacy-thread");
+  const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+  const { actions } = await fixture(
+    false,
+    "chat",
+    async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({
+        url,
+        method,
+        ...(typeof init?.body === "string" ? { body: JSON.parse(init.body) } : {})
+      });
+      if (url.endsWith("/api/threads/legacy-thread")) {
+        return new Response(JSON.stringify({ error: "thread not attached" }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.includes("/thread-candidates")) {
+        return new Response(JSON.stringify({
+          threads: [{ threadId: "legacy-thread", cwd: "/repo/legacy" }]
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response(JSON.stringify({
+        ...resumedThread,
+        workingDirectory: "/repo/legacy"
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    },
+    { threadId: resumedThread.threadId, workspaceOpen: false }
+  );
+
+  await actions.openThread(resumedThread.threadId, {
+    expectedMachineId: "machine-actions",
+    activate: false
+  });
+
+  assert.deepEqual(requests.map((request) => request.method), ["GET", "GET", "POST"]);
+  assert.match(requests[1]?.url ?? "", /thread-candidates\?limit=200$/);
+  assert.deepEqual(requests[2]?.body, {
+    action: "resume",
+    threadId: "legacy-thread",
+    cwd: "/repo/legacy"
+  });
+});
+
 test("failed active cleanup clears the current tab even after a newer request claims latest", async () => {
   const { actions, activeTabChanges, latestRequestedThreadId } = await fixture(
     false,

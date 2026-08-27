@@ -141,7 +141,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     if (!restartAvailable || restartState === "restarting") return;
     Modal.confirm({
       title: "Restart this CodexHub authority?",
-      content: "Restart the authority and Codex runtime for this host. This window will reconnect automatically; VS Code or Electron itself will stay open, and other hosts will not be restarted.",
+      content: "Restart the authority and Codex runtime for this host. Every connected CodexHub surface will reconnect and restore its tabs automatically; host applications stay open, and other hosts will not be restarted.",
       okText: "Restart",
       cancelText: "Cancel",
       onOk: async () => {

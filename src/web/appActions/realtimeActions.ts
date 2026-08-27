@@ -16,6 +16,7 @@ import {
   isElectronSurface,
   isFixedWorkspaceSurface,
   isEmbeddedHostSurface,
+  isHostManagedSurfaceDocument,
   isVscodeSurface
 } from "../appConfig.js";
 import {
@@ -70,6 +71,7 @@ import type {
   LocalTaskRun
 } from "../types.js";
 import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
+import { authorityInstanceRecovery } from "../helpers/authorityInstanceRecovery.js";
 import { preferredPersistedThreadId, restorePersistedThreadTabs } from "../helpers/threadRestore.js";
 
 type RealtimeActionsContext = {
@@ -123,7 +125,12 @@ export type RealtimeActionsDependencies = {
   notifyRegisteredMachineConnected: (machine: MachineSummary) => void;
   notifyRegisteredMachineDisconnected: (machine: MachineSummary) => void;
   onThreadCompleted: (completionKey: string) => void;
-  openThread: (threadId: string) => Promise<void>;
+  openThread: (threadId: string, options?: {
+    expectedMachineId?: string;
+    preferredWorkingDirectory?: string;
+    activate?: boolean;
+    deferActivationUntilLoaded?: boolean;
+  }) => Promise<void>;
 };
 
 export type RealtimeActions = {
@@ -172,6 +179,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
 
   const initialize = async () => {
     const health = await apiRouteJson(apiRoutes.health);
+    authorityInstanceRecovery.accept(health.serverInstanceId);
     ctx.setServerAuthRequired(Boolean(health.authRequired));
     if (!health.authRequired && authToken()) setAuthToken("");
     if (health.authRequired && !health.authenticated && !authToken()) {
@@ -235,6 +243,9 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         fixedWorkspaceThreadIds
       )
       : "";
+    const persistedThreadTarget = (threadId: string) => {
+      return saved?.openThreadTargets?.[threadId];
+    };
     const savedActiveTabThreadByMachine = fixedWorkspaceThreadIds
       ? Object.fromEntries(
         Object.entries(saved?.activeTabThreadByMachine ?? {})
@@ -315,7 +326,18 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         threadIds: restoredThreadIds,
         activeThreadId: restoredActiveThreadId,
         activateFirstThreadWhenNoPreferred: !isFixedWorkspaceSurface,
-        openThread: deps.openThread,
+        openThread: (threadId, options) => {
+          const target = persistedThreadTarget(threadId);
+          return deps.openThread(threadId, {
+            ...options,
+            ...(target ? {
+              expectedMachineId: target.machineId,
+              ...(target.workingDirectory
+                ? { preferredWorkingDirectory: target.workingDirectory }
+                : {})
+            } : {})
+          });
+        },
         clearActiveThreadIfLatest: deps.clearActiveThreadIfLatest
       });
       const restoredSet = new Set(restored.threadIds);
@@ -353,7 +375,15 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         tasksAfter: ctx.tasksLastSeq.current,
         connectionsAfter: ctx.connectionsLastSeq.current
       },
-      onMessage: handleRealtimeMessage
+      onMessage: handleRealtimeMessage,
+      onOpen: isHostManagedSurfaceDocument
+        ? undefined
+        : () => {
+          void authorityInstanceRecovery.checkAfterReconnect(
+            () => apiRouteJson(apiRoutes.health),
+            () => window.location.reload()
+          ).catch(() => undefined);
+        }
     });
     for (const threadId of ctx.realtimeThreadSubscriptions.current) {
       client.subscribeThread(threadId, ctx.threadLastSeqs.current.get(threadId) ?? 0);

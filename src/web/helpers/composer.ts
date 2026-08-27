@@ -1,7 +1,7 @@
 import { recordsToViews } from "../../core/codexRecordView.js";
 import { petIdPattern } from "../../shared/petTypes.js";
 import type { CodexRecord, CodexRecordView } from "../../shared/recordTypes.js";
-import { defaultAppSettings, storageKey } from "../appConfig.js";
+import { defaultAppSettings, readCurrentSurfaceUiStateRaw } from "../appConfig.js";
 import type { AppSettings, TextAttachment } from "../types.js";
 import { browserId } from "./common.js";
 
@@ -498,12 +498,36 @@ const storedStringArrayRecord = (value: unknown) => {
   return entries.length ? Object.fromEntries(entries) : undefined;
 };
 
+export type PersistedOpenThreadTarget = {
+  machineId: string;
+  workingDirectory?: string;
+};
+
+const storedOpenThreadTargets = (value: unknown) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value).flatMap(([threadId, item]) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const machineId = typeof record.machineId === "string" ? record.machineId.trim() : "";
+    if (!machineId) return [];
+    const workingDirectory = typeof record.workingDirectory === "string"
+      ? record.workingDirectory.trim()
+      : "";
+    return [[threadId, {
+      machineId,
+      ...(workingDirectory ? { workingDirectory } : {})
+    }] as const];
+  });
+  return entries.length ? Object.fromEntries(entries) : undefined;
+};
+
 export const readStoredUiState = (): {
   activeWorkspacePath?: string;
   activeMachineId?: string;
   activeTabThreadId?: string;
   activeTabThreadByMachine?: Record<string, string>;
   openThreadIds?: string[];
+  openThreadTargets?: Record<string, PersistedOpenThreadTarget>;
   threadOrderByMachine?: Record<string, string[]>;
   selectedProjectKey?: string;
   projectSearch?: string;
@@ -512,15 +536,27 @@ export const readStoredUiState = (): {
   collapsedProjectMachineKeys?: string[];
 } | null => {
   try {
-    const parsed = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+    const parsed = JSON.parse(readCurrentSurfaceUiStateRaw() ?? "null");
     if (!parsed || typeof parsed !== "object") return null;
+    const hasCurrentTabSnapshot = parsed.tabSnapshotVersion === 1;
     return {
       activeWorkspacePath: typeof parsed.activeWorkspacePath === "string" ? parsed.activeWorkspacePath : undefined,
       activeMachineId: typeof parsed.activeMachineId === "string" ? parsed.activeMachineId : undefined,
-      activeTabThreadId: typeof parsed.activeTabThreadId === "string" ? parsed.activeTabThreadId : undefined,
-      activeTabThreadByMachine: storedStringRecord(parsed.activeTabThreadByMachine),
-      openThreadIds: Array.isArray(parsed.openThreadIds) ? storedStringArray(parsed.openThreadIds) ?? [] : undefined,
-      threadOrderByMachine: storedStringArrayRecord(parsed.threadOrderByMachine),
+      activeTabThreadId: hasCurrentTabSnapshot && typeof parsed.activeTabThreadId === "string"
+        ? parsed.activeTabThreadId
+        : undefined,
+      activeTabThreadByMachine: hasCurrentTabSnapshot
+        ? storedStringRecord(parsed.activeTabThreadByMachine)
+        : undefined,
+      openThreadIds: hasCurrentTabSnapshot && Array.isArray(parsed.openThreadIds)
+        ? storedStringArray(parsed.openThreadIds) ?? []
+        : undefined,
+      openThreadTargets: hasCurrentTabSnapshot
+        ? storedOpenThreadTargets(parsed.openThreadTargets)
+        : undefined,
+      threadOrderByMachine: hasCurrentTabSnapshot
+        ? storedStringArrayRecord(parsed.threadOrderByMachine)
+        : undefined,
       selectedProjectKey: typeof parsed.selectedProjectKey === "string" ? parsed.selectedProjectKey : undefined,
       projectSearch: typeof parsed.projectSearch === "string" ? parsed.projectSearch : undefined,
       settings: storedAppSettings(parsed.settings),

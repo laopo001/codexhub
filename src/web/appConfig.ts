@@ -5,6 +5,12 @@ import type {
 } from "./types.js";
 import { defaultPetId } from "../shared/petTypes.js";
 import { isCodexHubSurface, isEmbeddedCodexHubSurface } from "../shared/surfaceTypes.js";
+import {
+  readSurfaceUiStateRaw,
+  writeSurfaceUiStateRaw,
+  type UiStateStorageTarget
+} from "./helpers/surfaceUiStateStorage.js";
+import { hostManagesSurfaceDocument } from "./helpers/surfaceDocument.js";
 import { codexHubSearchParams } from "./urlSearch.js";
 
 const searchParams = codexHubSearchParams(
@@ -23,6 +29,11 @@ export const isNativeElectronSurface =
   isElectronSurface && typeof window !== "undefined" && Boolean(window.codexhubElectronPet);
 export const isElectronDesktopPetWindow = isNativeElectronSurface && searchParams.get("desktopPet") === "1";
 export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
+export const isHostManagedSurfaceDocument = hostManagesSurfaceDocument({
+  surface: webSurface,
+  nativeElectron: isNativeElectronSurface,
+  topLevel: typeof window === "undefined" || window.parent === window
+});
 /** VS Code projects come from the host workspace; Electron can browse local folders. */
 export const isFixedWorkspaceSurface = isEmbeddedHostSurface && !isElectronSurface;
 export const embeddedSurfaceId = searchParams.get("surfaceId")?.trim() ?? "";
@@ -34,6 +45,21 @@ export const storageKey = isVscodeSurface
   : isElectronSurface
     ? `codexhub-ui-state-electron-v1${embeddedStateScope ? `:${encodeURIComponent(embeddedStateScope)}` : ""}`
     : "codexhub-ui-state-v6";
+export const exactSurfaceStorageKey = isEmbeddedHostSurface && embeddedSurfaceId
+  ? `codexhub-ui-state-surface-v1:${webSurface}:${encodeURIComponent(embeddedSurfaceId)}`
+  : "codexhub-ui-state-web-tab-v1";
+
+const uiStateStorageTargets = (): UiStateStorageTarget[] => {
+  if (typeof window === "undefined") return [];
+  const exactTarget: UiStateStorageTarget = isHostManagedSurfaceDocument
+    ? { storage: window.localStorage, key: exactSurfaceStorageKey }
+    : { storage: window.sessionStorage, key: exactSurfaceStorageKey };
+  return [exactTarget, { storage: window.localStorage, key: storageKey }];
+};
+
+export const readCurrentSurfaceUiStateRaw = () => readSurfaceUiStateRaw(uiStateStorageTargets());
+export const writeCurrentSurfaceUiStateRaw = (value: string) =>
+  writeSurfaceUiStateRaw(uiStateStorageTargets(), value);
 export const defaultAppSettings = (): AppSettings => ({
   selectedPetId: defaultPetId,
   showFloatingPet: false,
