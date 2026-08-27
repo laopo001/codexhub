@@ -61,8 +61,13 @@ export type GoalDialogState = {
 export type ThreadRenameDialogState = {
   threadId: string;
   title: string;
+  generating: boolean;
   saving: boolean;
   error: string;
+};
+
+export type ThreadRenameGenerationRequest = {
+  backgroundSave: boolean;
 };
 
 export type RuntimeSummary = ApiRuntimeSummary;

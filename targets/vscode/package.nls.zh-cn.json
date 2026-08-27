@@ -11,6 +11,12 @@
   "command.sendSelection.shortTitle": "发送到 Codex Hub",
   "command.sendPath.title": "发送路径到 Codex Hub",
   "command.sendPath.shortTitle": "发送路径",
+  "command.generateCommitMessage.title": "使用 Codex Hub 生成提交信息",
+  "command.generateCommitMessage.shortTitle": "生成提交信息",
+  "configuration.tools.model.description": "Codex Hub VS Code 扩展提供的工具所使用的全局默认模型。",
+  "configuration.gitCommit.model.description": "源代码管理提交消息生成器使用的模型。留空则继承“Codex Hub › Tools: Model”。推理强度固定为 `low`。",
+  "configuration.gitCommit.prompt.description": "生成 Git 提交消息时使用的提示词。当前 SCM 输入和 Git diff 会自动追加。",
   "viewsContainer.codexhub.title": "Codex Hub",
-  "view.workspace.name": "Workspace"
+  "view.workspace.name": "Workspace",
+  "configuration.title": "Codex Hub"
 }

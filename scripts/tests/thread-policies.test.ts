@@ -10,6 +10,7 @@ import {
   threadGoalThreadId,
   threadGoalTimestamp
 } from "../../src/core/threadGoalPolicy.js";
+import { builtinCommandPaletteEntries } from "../../src/cli/commandPalette.js";
 import { localCommandMessage, parseLocalSlashCommand } from "../../src/core/threadLocalCommands.js";
 import { ThreadHub } from "../../src/core/threadHub.js";
 import type { ThreadState } from "../../src/core/threadHubState.js";
@@ -33,6 +34,10 @@ const thread = (): ThreadState => ({
 
 test("local command parser and fast mode policy stay outside ThreadHub state orchestration", () => {
   assert.deepEqual(parseLocalSlashCommand(" /FAST on "), { command: "fast", args: ["on"] });
+  assert.deepEqual(parseLocalSlashCommand(" /rename Release readiness "), {
+    command: "rename",
+    args: ["Release", "readiness"]
+  });
   assert.equal(parseLocalSlashCommand([{ type: "text", text: "/status" }]), null);
 
   const state = thread();
@@ -47,6 +52,101 @@ test("local command parser and fast mode policy stay outside ThreadHub state orc
   assert.equal(state.threadOptions.serviceTier, "priority");
     localCommandMessage(state, { online: true, runnable: true, machineId: "machine-test" }, null, "fast", ["off"]);
   assert.equal(state.threadOptions.serviceTier, undefined);
+});
+
+test("rename command palette entry inserts the transcript-free local command", () => {
+  const rename = builtinCommandPaletteEntries(null).find((entry) => entry.name === "rename");
+  assert.deepEqual(rename, {
+    id: "builtin:rename",
+    kind: "builtin",
+    name: "rename",
+    title: "Rename",
+    shortDescription: "重命名当前对话",
+    description: "为当前 thread 生成名称建议，确认后才保存，不改变 transcript。",
+    insertText: "/rename",
+    action: "insert",
+    enabled: true
+  });
+});
+
+test("ThreadHub requests a title suggestion without changing name or transcript", async () => {
+  const hub = new ThreadHub();
+  const sessionId = "rename-session";
+  const threadId = "rename-thread";
+  hub.registerSession({ sessionId, machineId: "rename-machine", workingDirectory: "/tmp/project" });
+  hub.attachSessionThread(sessionId, threadId, "/tmp/project");
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: {
+      method: "item/completed",
+      params: {
+        threadId,
+        turnId: "title-context-turn",
+        item: {
+          id: "title-context-message",
+          type: "userMessage",
+          content: [{ type: "text", text: "Add automatic titles" }]
+        }
+      }
+    }
+  });
+  const recordCount = hub.getThread(threadId)?.records.length;
+
+  const suggested = hub.suggestThreadTitle(threadId);
+  const batch = await hub.waitSessionCommands(sessionId, 0, 10);
+  assert.equal(batch.commands.length, 1);
+  assert.deepEqual(batch.commands[0], {
+    seq: batch.commands[0]?.seq,
+    commandId: batch.commands[0]?.commandId,
+    type: "suggest_thread_title",
+    workingDirectory: "/tmp/project",
+    createdAt: batch.commands[0]?.createdAt,
+    threadId,
+    input: "User: Add automatic titles",
+    options: { model: "gpt-5.6-luna", modelReasoningEffort: "low" }
+  });
+  hub.resolveSessionCommand(sessionId, batch.commands[0]!.commandId, { title: "Release readiness" });
+
+  assert.deepEqual(await suggested, { title: "Release readiness" });
+  assert.equal(hub.getThread(threadId)?.title, threadId);
+  assert.equal(hub.getThread(threadId)?.records.length, recordCount);
+  assert.throws(
+    () => hub.runLocalCommand(threadId, "/rename"),
+    /interactive title confirmation/
+  );
+  assert.equal(hub.getThread(threadId)?.records.length, recordCount);
+});
+
+test("ThreadHub generates commit messages with configurable model and prompt at low effort", async () => {
+  const hub = new ThreadHub();
+  const sessionId = "commit-message-session";
+  const machineId = "commit-message-machine";
+  hub.registerSession({ sessionId, machineId, workingDirectory: "/tmp/project" });
+
+  const generated = hub.generateCommitMessage(
+    machineId,
+    "/tmp/project",
+    "diff --git a/a.ts b/a.ts",
+    "focus on the API",
+    "gpt-commit",
+    "Return a Chinese conventional commit."
+  );
+  const batch = await hub.waitSessionCommands(sessionId, 0, 10);
+  assert.equal(batch.commands.length, 1);
+  assert.deepEqual(batch.commands[0], {
+    seq: batch.commands[0]?.seq,
+    commandId: batch.commands[0]?.commandId,
+    type: "generate_commit_message",
+    workingDirectory: "/tmp/project",
+    createdAt: batch.commands[0]?.createdAt,
+    input: "diff --git a/a.ts b/a.ts",
+    commitMessageHint: "focus on the API",
+    commitMessagePrompt: "Return a Chinese conventional commit.",
+    options: { model: "gpt-commit", modelReasoningEffort: "low" }
+  });
+  hub.resolveSessionCommand(sessionId, batch.commands[0]!.commandId, { message: "feat: generated commit" });
+  assert.deepEqual(await generated, { message: "feat: generated commit" });
 });
 
 test("goal input and app-server payload use current Goal fields", () => {

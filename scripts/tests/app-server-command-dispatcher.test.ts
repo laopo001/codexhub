@@ -84,6 +84,8 @@ const createHost = (options: {
     loadThread: async (threadId) => ({ threadId }),
     ensureThreadLoaded: async (threadId) => threadId,
     rememberDefaultThread: async () => undefined,
+    suggestThreadTitle: async () => ({ title: "Generated title" }),
+    generateCommitMessage: async () => ({ message: "feat: generated commit" }),
     request: async (method, params) => {
       requests.push({ method, params });
       if (method === "thread/settings/update") {
@@ -132,6 +134,45 @@ test("dispatcher maps compact commands to official app-server RPC and sync", asy
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(requests, [{ method: "thread/compact/start", params: { threadId: "thread-1" } }]);
   assert.deepEqual(synced, ["thread-1"]);
+});
+
+test("dispatcher generates a title through the bridge-owned ephemeral workflow", async () => {
+  const { host } = createHost({ defaultModel: "gpt-title" });
+  let received: unknown;
+  host.suggestThreadTitle = async (...args) => {
+    received = args;
+    return { title: "Generated title" };
+  };
+  assert.deepEqual(await dispatchAppServerCommand(command({
+    type: "suggest_thread_title",
+    threadId: "thread-1",
+    input: "User: Add automatic titles",
+    options: { model: "gpt-title", modelReasoningEffort: "low" }
+  }), host), { title: "Generated title" });
+  assert.deepEqual(received, ["/tmp/project", "gpt-title", "User: Add automatic titles"]);
+});
+
+test("dispatcher generates a commit message through the bridge-owned ephemeral workflow", async () => {
+  const { host } = createHost({ defaultModel: "gpt-title" });
+  let received: unknown;
+  host.generateCommitMessage = async (...args) => {
+    received = args;
+    return { message: "feat: generated commit" };
+  };
+  assert.deepEqual(await dispatchAppServerCommand(command({
+    type: "generate_commit_message",
+    input: "diff --git a/a.ts b/a.ts",
+    commitMessageHint: "focus on the API",
+    commitMessagePrompt: "Return a Chinese conventional commit.",
+    options: { model: "gpt-5.6-luna", modelReasoningEffort: "low" }
+  }), host), { message: "feat: generated commit" });
+  assert.deepEqual(received, [
+    "/tmp/project",
+    "gpt-5.6-luna",
+    "diff --git a/a.ts b/a.ts",
+    "focus on the API",
+    "Return a Chinese conventional commit."
+  ]);
 });
 
 test("dispatcher returns official stop and steer RPC responses", async () => {

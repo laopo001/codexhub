@@ -39,6 +39,17 @@ export const builtinCommandPaletteEntries = (config: JsonRecord | null): Command
       enabled: true
     },
     {
+      id: "builtin:rename",
+      kind: "builtin",
+      name: "rename",
+      title: "Rename",
+      shortDescription: "重命名当前对话",
+      description: "为当前 thread 生成名称建议，确认后才保存，不改变 transcript。",
+      insertText: "/rename",
+      action: "insert",
+      enabled: true
+    },
+    {
       id: "builtin:plan",
       kind: "builtin",
       name: "plan",
@@ -218,4 +229,3 @@ export const stringField = (record: JsonRecord | null | undefined, key: string) 
   const value = record?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : "";
 };
-

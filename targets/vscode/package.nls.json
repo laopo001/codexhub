@@ -11,6 +11,12 @@
   "command.sendSelection.shortTitle": "Send to Codex Hub",
   "command.sendPath.title": "Send Path to Codex Hub",
   "command.sendPath.shortTitle": "Send Path",
+  "command.generateCommitMessage.title": "Generate Commit Message with Codex Hub",
+  "command.generateCommitMessage.shortTitle": "Generate Commit Message",
+  "configuration.tools.model.description": "Default model for Codex Hub tools provided by the VS Code extension.",
+  "configuration.gitCommit.model.description": "Model used by the Source Control commit-message generator. Leave empty to inherit Codex Hub › Tools: Model. Reasoning effort remains `low`.",
+  "configuration.gitCommit.prompt.description": "Instructions used to generate Git commit messages. The current SCM input and Git diff are appended automatically.",
   "viewsContainer.codexhub.title": "Codex Hub",
-  "view.workspace.name": "Workspace"
+  "view.workspace.name": "Workspace",
+  "configuration.title": "Codex Hub"
 }

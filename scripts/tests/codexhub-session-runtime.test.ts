@@ -53,6 +53,8 @@ class CurrentProtocolSocket implements AppServerSocketLike {
     failTurnPageOnce?: number;
     repeatTurnCursor?: boolean;
     backgroundTerminals?: unknown[];
+    generatedTitle?: string;
+    generatedCommitMessage?: string;
   } = {}) {
     this.backgroundTerminals = options.backgroundTerminals ?? [];
   }
@@ -89,7 +91,11 @@ class CurrentProtocolSocket implements AppServerSocketLike {
         platformOs: "linux"
       };
     } else if (message.method === "thread/start") {
-      result = { thread: currentThread("default-thread", stringParam(params, "cwd") ?? "/tmp/current-protocol") };
+      result = {
+        thread: params?.ephemeral === true && (this.options.generatedTitle || this.options.generatedCommitMessage)
+          ? { ...currentThread("structured-helper", stringParam(params, "cwd") ?? "/tmp/current-protocol"), ephemeral: true }
+          : currentThread("default-thread", stringParam(params, "cwd") ?? "/tmp/current-protocol")
+      };
     } else if (message.method === "thread/resume") {
       this.resumeRequests += 1;
       this.resumeParams.push(params ?? {});
@@ -173,6 +179,52 @@ class CurrentProtocolSocket implements AppServerSocketLike {
       this.emit("message", {
         data: JSON.stringify({ id: message.id, result })
       });
+      if (
+        message.method === "thread/start"
+        && params?.ephemeral === true
+        && (this.options.generatedTitle || this.options.generatedCommitMessage)
+      ) {
+        this.emit("message", {
+          data: JSON.stringify({
+            method: "thread/started",
+            params: { thread: (result as { thread: unknown }).thread }
+          })
+        });
+      }
+      if (
+        message.method === "turn/start"
+        && stringParam(params, "threadId") === "structured-helper"
+        && (this.options.generatedTitle || this.options.generatedCommitMessage)
+      ) {
+        const structured = this.options.generatedCommitMessage
+          ? { message: this.options.generatedCommitMessage }
+          : { title: this.options.generatedTitle };
+        const item = { id: "structured-item", type: "agentMessage", text: JSON.stringify(structured) };
+        this.emit("message", {
+          data: JSON.stringify({
+            method: "item/completed",
+            params: { threadId: "structured-helper", turnId: "immediate-turn", item }
+          })
+        });
+        this.emit("message", {
+          data: JSON.stringify({
+            method: "turn/completed",
+            params: {
+              threadId: "structured-helper",
+              turn: {
+                id: "immediate-turn",
+                status: "completed",
+                itemsView: "full",
+                error: null,
+                startedAt: 1,
+                completedAt: 2,
+                durationMs: 1000,
+                items: [item]
+              }
+            }
+          })
+        });
+      }
       if (message.method === "turn/start" && this.options.completeTurnImmediately) {
         this.emit("message", {
           data: JSON.stringify({
@@ -448,6 +500,91 @@ test("attached runtime loads command palette plugins live without persistent cac
     assert.equal(socket.requestCount("skills/list"), 2);
     assert.equal(socket.requestCount("plugin/list"), 2);
     assert.equal(socket.requestCount("plugin/read"), 2);
+  } finally {
+    await session.stop();
+  }
+});
+
+test("attached runtime generates a title in an invisible ephemeral thread", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket({ validResume: true, generatedTitle: "接入自动标题" });
+  const forwardedEvents: unknown[] = [];
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    appServerTransportFactory: async () => socket,
+    machineId: "machine-title-generation",
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return {
+        ...transportFactory(transportContext, nextCallbacks),
+        sendEvent: (event) => forwardedEvents.push(event)
+      };
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    const result = await callbacks.handleCommand({
+      seq: 1,
+      commandId: "title-command",
+      type: "suggest_thread_title",
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: "source-thread",
+      input: "User: Add automatic titles",
+      options: { model: "gpt-title", modelReasoningEffort: "low" }
+    });
+    assert.deepEqual(result, { title: "接入自动标题" });
+    assert.equal(socket.requestCount("thread/fork"), 0);
+    assert.equal(socket.requestCount("thread/start"), 2);
+    assert.equal(socket.requestCount("turn/start"), 1);
+    assert.equal(socket.requestCount("thread/unsubscribe"), 1);
+    assert.equal(forwardedEvents.some((event) =>
+      (event as { threadId?: string }).threadId === "structured-helper"
+    ), false);
+  } finally {
+    await session.stop();
+  }
+});
+
+test("attached runtime generates a commit message in an invisible ephemeral thread", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket({ generatedCommitMessage: "feat: add SCM generation" });
+  const forwardedEvents: unknown[] = [];
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    appServerTransportFactory: async () => socket,
+    machineId: "machine-commit-generation",
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return {
+        ...transportFactory(transportContext, nextCallbacks),
+        sendEvent: (event) => forwardedEvents.push(event)
+      };
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    const result = await callbacks.handleCommand({
+      seq: 1,
+      commandId: "commit-command",
+      type: "generate_commit_message",
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      input: "diff --git a/a.ts b/a.ts",
+      options: { model: "gpt-5.6-luna", modelReasoningEffort: "low" }
+    });
+    assert.deepEqual(result, { message: "feat: add SCM generation" });
+    assert.equal(socket.requestCount("turn/start"), 1);
+    assert.equal(socket.requestCount("thread/unsubscribe"), 1);
+    assert.equal(forwardedEvents.some((event) =>
+      (event as { threadId?: string }).threadId === "structured-helper"
+    ), false);
   } finally {
     await session.stop();
   }

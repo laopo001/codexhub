@@ -373,6 +373,17 @@ export type ThreadRenamePayload = {
   thread?: ThreadDetail;
 };
 
+/** ephemeral title generator 返回的待确认名称。 */
+export type ThreadTitleSuggestionPayload = {
+  title?: string;
+  error?: string;
+};
+
+export type CommitMessageGenerationPayload = {
+  message?: string;
+  error?: string;
+};
+
 /** 基于 project path 启动/复用 machine runtime 并创建或恢复 thread 的返回值。 */
 export type ProjectThreadStartPayload = ProjectsPayload & {
   ok?: boolean;
@@ -611,6 +622,14 @@ const appServerUserInputRequestSchema = z.object({
 
 export const threadRenameSchema = z.object({
   title: z.string().trim().min(1).max(200)
+}).strict();
+
+export const commitMessageGenerationSchema = z.object({
+  cwd: z.string().trim().min(1),
+  diff: z.string().trim().min(1).max(100_000),
+  currentMessage: z.string().max(2_000).optional(),
+  model: z.string().trim().min(1).max(200).optional(),
+  prompt: z.string().trim().min(1).max(10_000).optional()
 }).strict();
 
 export const projectSourceSchema = z.object({
@@ -1049,3 +1068,5 @@ export type ThreadUserInputResponseInput = z.infer<typeof threadUserInputRespons
 
 /** 更新 thread 展示名称的请求 body。 */
 export type ThreadRenameInput = z.infer<typeof threadRenameSchema>;
+
+export type CommitMessageGenerationInput = z.infer<typeof commitMessageGenerationSchema>;

@@ -359,6 +359,8 @@ export type SessionCommand = {
     | "compact_thread"
     | "review_thread"
     | "rename_thread"
+    | "suggest_thread_title"
+    | "generate_commit_message"
     | "stop"
     | "terminate_background_terminal"
     | "list_threads"
@@ -387,6 +389,8 @@ export type SessionCommand = {
   refresh?: boolean;
   commandPalettePart?: CommandPalettePart;
   title?: string;
+  commitMessageHint?: string;
+  commitMessagePrompt?: string;
   goal?: ThreadGoalUpdate;
   reviewTarget?: { type: "uncommittedChanges" };
   options?: ThreadRunOptions;

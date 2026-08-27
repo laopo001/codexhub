@@ -123,7 +123,7 @@ env:
 
 修改 `config.yaml` 后需要重启 server。Embedded authority 是独立于窗口的 detached 进程：关闭该 authority 的全部 VSCode/Electron surface 并等待 30 秒，再重新打开客户端，才能让新的进程重新读取 `env`；只 reload 单个窗口不会强制结束仍被其他 surface 使用的 authority。`CODEX_HUB_DATA_DIR` 本身仍决定去哪读这个配置文件，因此不能靠同一个文件里的 `env.CODEX_HUB_DATA_DIR` 改变当前配置路径。
 
-VS Code 的 `settings.json` 不负责 CodexHub 的共享配置。`dataDir`、`serverUrl`、`authorityPort`、app-server、SSH、插件、通知、Electron 和共享 UI 配置都必须写在共享 authority 使用的 `config.yaml` 中，这样多个 VS Code 窗口、Electron 和普通 Node server 才能看到同一份配置。VS Code 的 `Open Config` 命令打开的也是这份共享 `config.yaml`，不是另一个插件配置副本。需要停用集成时，使用 VS Code 原生的扩展禁用功能。
+VS Code 的 `settings.json` 只保存插件自身的工具模型和 Git 提交信息生成选项。`dataDir`、`serverUrl`、`authorityPort`、app-server、SSH、插件、通知、Electron 和共享 UI 配置都不属于 VS Code Settings；它们必须写在共享 authority 使用的 `config.yaml` 中。这样多个 VS Code 窗口、Electron 和普通 Node server 才能看到同一份配置。VS Code 的 `Open Config` 命令打开的也是这份共享 `config.yaml`，不是另一个插件配置副本。需要停用集成时，使用 VS Code 原生的扩展禁用功能。
 
 `cxh` 是 `codexhub` 的短别名。
 

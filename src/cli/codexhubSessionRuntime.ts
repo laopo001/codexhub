@@ -36,6 +36,7 @@ import {
 } from "../core/runtimeCatalogCache.js";
 import type { AppServerSocketLike } from "../core/appServerTunnel.js";
 import { readPositiveIntEnv } from "../shared/env.js";
+import { defaultCommitMessagePrompt } from "../shared/commitMessageGeneration.js";
 import type { ProxyInput } from "../shared/inputTypes.js";
 import {
   asActivePermissionProfile,
@@ -68,12 +69,28 @@ export type { CodexAppServerProcessHandle };
 
 type JsonRecord = Record<string, unknown>;
 
+type RequestContext = {
+  threadId?: string;
+  commandId?: string;
+  suppressForwarding?: boolean;
+};
+
 type PendingRequest = {
   method: string;
   threadId?: string;
   commandId?: string;
+  suppressForwarding?: boolean;
   timeout?: NodeJS.Timeout;
   resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+};
+
+type TemporaryStructuredRequest = {
+  text?: string;
+  label: string;
+  parse: (text: string) => string;
+  timeout: NodeJS.Timeout;
+  resolve: (value: string) => void;
   reject: (error: Error) => void;
 };
 
@@ -458,6 +475,9 @@ class CodexAppServerBridge {
   private readonly pendingUserInputs = new Map<string, PendingUserInputRequest>();
   private readonly syncedThreads = new Map<string, SyncedThread>();
   private readonly loadedThreads = new Set<string>();
+  private readonly internalThreadIds = new Set<string>();
+  private pendingInternalThreadStarts = 0;
+  private readonly temporaryStructuredRequests = new Map<string, TemporaryStructuredRequest>();
   private readonly threadUnsubscribeTasks = new Map<string, Promise<void>>();
   private readonly threadCwds = new Map<string, string>();
   private nextId = 1;
@@ -627,6 +647,13 @@ class CodexAppServerBridge {
     this.pending.clear();
     this.pendingApprovals.clear();
     this.pendingUserInputs.clear();
+    for (const pending of this.temporaryStructuredRequests.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(`codex app-server bridge closed during ${pending.label}`));
+    }
+    this.temporaryStructuredRequests.clear();
+    this.internalThreadIds.clear();
+    this.pendingInternalThreadStarts = 0;
     for (const state of this.syncedThreads.values()) {
       this.closeAppServerTurnsSync(state);
     }
@@ -663,6 +690,10 @@ class CodexAppServerBridge {
       ensureThreadLoaded: (threadId, cwd, model, context, options) =>
         this.ensureThreadLoaded(threadId, cwd, model, context, options),
       rememberDefaultThread: (threadId) => this.rememberDefaultThread(threadId),
+      suggestThreadTitle: (cwd, model, conversationContext) =>
+        this.generateThreadTitle(cwd, model, conversationContext),
+      generateCommitMessage: (cwd, model, diff, currentMessage, prompt) =>
+        this.generateCommitMessage(cwd, model, diff, currentMessage, prompt),
       request: (method, params, context) => this.request(method, params, context),
       scheduleThreadSync: (threadId) => this.scheduleAppServerTurnsSync(threadId),
       forwardThreadExecutionChanged: (threadId, running, turnId, provisional) =>
@@ -695,7 +726,129 @@ class CodexAppServerBridge {
     return { threadId, ...(thread ? { thread } : {}) };
   }
 
-  private async request(method: string, params: unknown, command?: { threadId?: string; commandId?: string }) {
+  private async generateThreadTitle(
+    cwd: string,
+    model: string | null | undefined,
+    conversationContext: string
+  ) {
+    const title = await this.generateTemporaryStructuredValue({
+      cwd,
+      model,
+      prompt: `${threadTitleGenerationPrompt}\n\nRecent conversation messages:\n${conversationContext}`,
+      outputSchema: generatedThreadTitleSchema,
+      parse: generatedThreadTitleFromText,
+      label: "title generation"
+    });
+    return { title };
+  }
+
+  private async generateCommitMessage(
+    cwd: string,
+    model: string | null | undefined,
+    diff: string,
+    currentMessage?: string,
+    customPrompt?: string
+  ) {
+    const prompt = [
+      customPrompt?.trim() || defaultCommitMessagePrompt,
+      currentMessage?.trim() ? `Current SCM input (use only as an optional hint):\n${currentMessage.trim()}` : null,
+      `Git diff:\n${diff}`
+    ].filter((value): value is string => Boolean(value)).join("\n\n");
+    const message = await this.generateTemporaryStructuredValue({
+      cwd,
+      model,
+      prompt,
+      outputSchema: generatedCommitMessageSchema,
+      parse: generatedCommitMessageFromText,
+      label: "commit message generation"
+    });
+    return { message };
+  }
+
+  private async generateTemporaryStructuredValue(options: {
+    cwd: string;
+    model: string | null | undefined;
+    prompt: string;
+    outputSchema: JsonRecord;
+    parse: (text: string) => string;
+    label: string;
+  }) {
+    let helperThreadId: string | undefined;
+    let internalStartPending = true;
+    this.pendingInternalThreadStarts += 1;
+    try {
+      const result = asRecord(await this.request("thread/start", {
+        cwd: options.cwd,
+        ...(options.model === undefined ? {} : { model: options.model }),
+        approvalPolicy: "never",
+        sandbox: "read-only",
+        ephemeral: true
+      }, { suppressForwarding: true }));
+      const thread = asRecord(result?.thread);
+      helperThreadId = stringValue(thread?.id);
+      if (!helperThreadId) throw new Error(`Codex app-server ${options.label} thread did not return thread.id`);
+      this.internalThreadIds.add(helperThreadId);
+      this.pendingInternalThreadStarts = Math.max(0, this.pendingInternalThreadStarts - 1);
+      internalStartPending = false;
+
+      const generated = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          if (!helperThreadId) return;
+          this.temporaryStructuredRequests.delete(helperThreadId);
+          reject(new Error(`Codex ${options.label} timed out`));
+        }, titleGenerationTimeoutMs());
+        timeout.unref?.();
+        this.temporaryStructuredRequests.set(helperThreadId!, {
+          timeout,
+          resolve,
+          reject,
+          parse: options.parse,
+          label: options.label
+        });
+      });
+
+      try {
+        await this.request("turn/start", {
+          threadId: helperThreadId,
+          input: toAppServerInput(options.prompt),
+          ...(options.model === undefined ? {} : { model: options.model }),
+          effort: "low",
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "readOnly", networkAccess: false },
+          outputSchema: options.outputSchema
+        }, { suppressForwarding: true });
+      } catch (error) {
+        const pending = this.temporaryStructuredRequests.get(helperThreadId);
+        if (pending) {
+          clearTimeout(pending.timeout);
+          this.temporaryStructuredRequests.delete(helperThreadId);
+          pending.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+        await generated.catch(() => undefined);
+        throw error;
+      }
+      return await generated;
+    } finally {
+      if (internalStartPending) {
+        this.pendingInternalThreadStarts = Math.max(0, this.pendingInternalThreadStarts - 1);
+      }
+      if (helperThreadId) {
+        const pending = this.temporaryStructuredRequests.get(helperThreadId);
+        if (pending) {
+          clearTimeout(pending.timeout);
+          this.temporaryStructuredRequests.delete(helperThreadId);
+        }
+        await this.request("thread/unsubscribe", { threadId: helperThreadId }, { suppressForwarding: true }).catch(() => undefined);
+        this.internalThreadIds.delete(helperThreadId);
+        this.loadedThreads.delete(helperThreadId);
+        this.threadCwds.delete(helperThreadId);
+        this.appServerThreadSettings.delete(helperThreadId);
+        this.forwardedThreadSettings.delete(helperThreadId);
+      }
+    }
+  }
+
+  private async request(method: string, params: unknown, command?: RequestContext) {
     const maxRetries = 3;
     for (let attempt = 0; ; attempt += 1) {
       try {
@@ -707,7 +860,7 @@ class CodexAppServerBridge {
     }
   }
 
-  private sendRequest(method: string, params: unknown, command?: { threadId?: string; commandId?: string }) {
+  private sendRequest(method: string, params: unknown, command?: RequestContext) {
     // 每个请求都登记 pending，响应回来时才能把结果和 command/thread 对上。
     const id = this.nextId++;
     const message = { id, method, params };
@@ -723,6 +876,7 @@ class CodexAppServerBridge {
         method,
         threadId: command?.threadId,
         commandId: command?.commandId,
+        suppressForwarding: command?.suppressForwarding,
         timeout,
         resolve,
         reject
@@ -755,6 +909,7 @@ class CodexAppServerBridge {
   private async handleMessage(data: unknown) {
     const message = parseJsonRecord(data);
     if (!message) return;
+    if (this.consumeInternalThreadMessage(message)) return;
     this.rememberThreads(message);
 
     // 这里的 JSON-RPC 响应会回到 pending command，但其中仍可能携带 thread 状态。
@@ -769,7 +924,7 @@ class CodexAppServerBridge {
         return;
       }
       const threadId = threadIdForPendingMessage(pending, message);
-      if (threadId && !error) {
+      if (threadId && !error && !pending.suppressForwarding) {
         // A very fast Turn may complete immediately after the response. Forward
         // the response first, but mark its Submission ID provisional so it can
         // neither replace the authoritative turn/started ID nor revive a
@@ -796,6 +951,51 @@ class CodexAppServerBridge {
     if (threadId) {
       await this.forwardAppServerThreadNotification(threadId, message);
     }
+  }
+
+  private consumeInternalThreadMessage(message: JsonRecord) {
+    if (typeof message.id === "string" || typeof message.id === "number") return false;
+    const method = typeof message.method === "string" ? message.method : "";
+    const params = asRecord(message.params);
+    const startedThread = asRecord(params?.thread);
+    const startedThreadId = stringValue(startedThread?.id);
+    if (
+      method === "thread/started"
+      && startedThreadId
+      && startedThread?.ephemeral === true
+      && this.pendingInternalThreadStarts > 0
+    ) {
+      this.internalThreadIds.add(startedThreadId);
+      return true;
+    }
+
+    const threadId = threadIdForMessage(message);
+    if (!threadId || !this.internalThreadIds.has(threadId)) return false;
+    const pending = this.temporaryStructuredRequests.get(threadId);
+    if (!pending) return true;
+
+    if (method === "item/completed") {
+      const text = agentMessageText(asRecord(params?.item));
+      if (text) pending.text = text;
+      return true;
+    }
+    if (method !== "turn/completed") return true;
+
+    clearTimeout(pending.timeout);
+    this.temporaryStructuredRequests.delete(threadId);
+    const turn = asRecord(params?.turn);
+    const status = stringValue(turn?.status);
+    if (status !== "completed") {
+      const error = asRecord(turn?.error);
+      pending.reject(new Error(stringValue(error?.message) || `Codex ${pending.label} ended with status ${status || "unknown"}`));
+      return true;
+    }
+    const items = Array.isArray(turn?.items) ? turn.items : [];
+    const completedText = [...items].reverse().map((item) => agentMessageText(asRecord(item))).find(Boolean);
+    const value = pending.parse(completedText || pending.text || "");
+    if (value) pending.resolve(value);
+    else pending.reject(new Error(`Codex ${pending.label} returned no usable value`));
+    return true;
   }
 
   private rememberThreads(message: JsonRecord) {
@@ -2197,6 +2397,77 @@ const appServerServiceTierOptions = (model: JsonRecord | null, defaultServiceTie
   push(defaultServiceTier);
   return options;
 };
+
+const threadTitleGenerationPrompt = [
+  "Generate a concise, single-line task title of at most 80 characters and under five words where possible.",
+  "Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise.",
+  "Preserve ticket references exactly. Write in the user's language. Do not use quotes, markdown, or trailing punctuation.",
+  "Prioritize the current task and latest substantive user request. Do not answer the request."
+].join(" ");
+
+const generatedThreadTitleSchema = {
+  type: "object",
+  properties: { title: { type: "string" } },
+  required: ["title"],
+  additionalProperties: false
+};
+
+const generatedCommitMessageSchema = {
+  type: "object",
+  properties: { message: { type: "string" } },
+  required: ["message"],
+  additionalProperties: false
+};
+
+const agentMessageText = (item: JsonRecord | null) => {
+  if (!item || item.type !== "agentMessage") return "";
+  return stringValue(item.text) ?? "";
+};
+
+const generatedThreadTitleFromText = (value: string) => {
+  const text = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  if (!text) return "";
+  try {
+    const parsed = asRecord(JSON.parse(text));
+    return compactGeneratedThreadTitle(stringValue(parsed?.title) ?? "");
+  } catch {
+    return compactGeneratedThreadTitle(text);
+  }
+};
+
+const compactGeneratedThreadTitle = (value: string) => value
+  .replace(/\s+/g, " ")
+  .trim()
+  .replace(/^["'`]+|["'`.]+$/g, "")
+  .slice(0, 80)
+  .trim();
+
+const generatedCommitMessageFromText = (value: string) => {
+  const text = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  if (!text) return "";
+  try {
+    const parsed = asRecord(JSON.parse(text));
+    return compactGeneratedCommitMessage(stringValue(parsed?.message) ?? "");
+  } catch {
+    return compactGeneratedCommitMessage(text);
+  }
+};
+
+const compactGeneratedCommitMessage = (value: string) => value
+  .split("\n")
+  .map((line) => line.trimEnd())
+  .join("\n")
+  .trim()
+  .replace(/^```(?:text)?\s*/i, "")
+  .replace(/\s*```$/, "")
+  .slice(0, 2_000)
+  .trim();
+
+const titleGenerationTimeoutMs = () => readPositiveIntEnv(
+  process.env,
+  "CODEX_HUB_TITLE_GENERATION_TIMEOUT_MS",
+  120_000
+);
 
 const stringValue = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : undefined;
 

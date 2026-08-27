@@ -72,6 +72,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     retryModelCatalog,
     saveGoalDialog,
     saveThreadRenameDialog,
+    saveThreadRenameDialogInBackground,
     threadModelDialogOpen,
     threadRenameDialog,
     threadTabContextMenu,
@@ -719,6 +720,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 setThreadRenameDialog({
                   threadId: threadTabContextThread.threadId,
                   title: threadDisplayTitle(threadTabContextThread),
+                  generating: false,
                   saving: false,
                   error: ""
                 });
@@ -765,14 +767,19 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   ? { ...current, title: event.target.value, error: "" }
                   : current)}
                 maxLength={200}
-                disabled={threadRenameDialog.saving}
+                placeholder={threadRenameDialog.generating ? "Generating title..." : undefined}
+                disabled={threadRenameDialog.saving || threadRenameDialog.generating}
                 autoFocus
               />
             </label>
+            {threadRenameDialog.generating ? <div className="threadRenameDialogGenerating">Generating title...</div> : null}
             {threadRenameDialog.error ? <div className="threadRenameDialogError">{threadRenameDialog.error}</div> : null}
             <footer className="threadRenameDialogActions">
               <button type="button" onClick={() => setThreadRenameDialog(null)} disabled={threadRenameDialog.saving}>Cancel</button>
-              <button type="submit" className="primary" disabled={threadRenameDialog.saving || !threadRenameDialog.title.trim()}>
+              {threadRenameDialog.generating ? (
+                <button type="button" onClick={saveThreadRenameDialogInBackground}>后台取名并保存</button>
+              ) : null}
+              <button type="submit" className="primary" disabled={threadRenameDialog.generating || threadRenameDialog.saving || !threadRenameDialog.title.trim()}>
                 {threadRenameDialog.saving ? "Saving" : "Save"}
               </button>
             </footer>

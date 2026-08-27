@@ -16,6 +16,7 @@ import type {
   SshHost,
   SubagentThreadDialogState,
   ThreadRenameDialogState,
+  ThreadRenameGenerationRequest,
   ThreadTabContextMenuState,
   WebRecordView
 } from "./types.js";
@@ -101,6 +102,7 @@ export const useUiState = () => {
   const [goalDialog, setGoalDialog] = useState<GoalDialogState | null>(null);
   const [subagentThreadDialog, setSubagentThreadDialog] = useState<SubagentThreadDialogState | null>(null);
   const [threadRenameDialog, setThreadRenameDialog] = useState<ThreadRenameDialogState | null>(null);
+  const threadRenameGenerationRequests = useRef<Map<string, ThreadRenameGenerationRequest>>(new Map());
   const [threadTabContextMenu, setThreadTabContextMenu] = useState<ThreadTabContextMenuState | null>(null);
   const [expandedStatusTurns, setExpandedStatusTurns] = useState<Record<string, string>>({});
   const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
@@ -177,6 +179,7 @@ export const useUiState = () => {
     threadModelDialogThreadId,
     openThreadModelDialog,
     threadRenameDialog,
+    threadRenameGenerationRequests,
     threadTabContextMenu
   };
 };

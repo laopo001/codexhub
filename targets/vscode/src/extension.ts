@@ -28,12 +28,41 @@ import {
   configuredVscodeAuthorityAuthToken,
   removeLegacyVscodeAuthorityTokenFile
 } from "./authorityAuth.js";
+import {
+  readVscodeExtensionSettings,
+  vscodeToolModel
+} from "./settings.js";
 import { buildWebviewBridgeScript } from "./webviewBridge.js";
 import { VscodeWebviewHtmlController } from "./webviewHtmlController.js";
 
 const viewId = "codexhub.workspaceView";
 const surfaceHeartbeatMs = 10_000;
 const maxSelectionAttachmentBytes = 512 * 1024;
+const maxCommitDiffCharacters = 96_000;
+
+type GitSourceControl = {
+  rootUri?: vscode.Uri;
+};
+
+type GitRepository = {
+  rootUri: vscode.Uri;
+  inputBox: { value: string };
+  diff: (cached?: boolean) => Promise<string>;
+  state: {
+    indexChanges: Array<{ uri: vscode.Uri }>;
+    workingTreeChanges: Array<{ uri: vscode.Uri }>;
+    untrackedChanges: Array<{ uri: vscode.Uri }>;
+  };
+};
+
+type GitApi = {
+  repositories: GitRepository[];
+  getRepository: (uri: vscode.Uri) => GitRepository | null;
+};
+
+const currentVscodeExtensionSettings = () => readVscodeExtensionSettings(
+  vscode.workspace.getConfiguration("codexhub")
+);
 
 type VscodeCodexHubServer = EmbeddedAuthorityHandle;
 
@@ -42,6 +71,7 @@ let activeProvider: CodexHubWorkspaceViewProvider | null = null;
 export function activate(context: vscode.ExtensionContext) {
   const provider = new CodexHubWorkspaceViewProvider(context);
   activeProvider = provider;
+  void vscode.commands.executeCommand("setContext", "codexhub.commitMessageGenerating", false);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(viewId, provider, {
       webviewOptions: { retainContextWhenHidden: true }
@@ -51,6 +81,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("codexhub.openConfig", () => provider.openConfig()),
     vscode.commands.registerCommand("codexhub.sendSelectionToChat", () => provider.sendSelectionToChat()),
     vscode.commands.registerCommand("codexhub.sendPathToChat", (uri?: vscode.Uri, selectedUris?: vscode.Uri[]) => provider.sendPathToChat(uri, selectedUris)),
+    vscode.commands.registerCommand("codexhub.generateCommitMessage", (sourceControl?: GitSourceControl) => provider.generateCommitMessage(sourceControl)),
     vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()),
     provider
   );
@@ -158,6 +189,65 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       return;
     }
     await this.sendTextAttachmentsToChat(attachment.texts);
+  }
+
+  async generateCommitMessage(sourceControl?: GitSourceControl) {
+    const git = await gitApi();
+    if (!git) {
+      await vscode.window.showErrorMessage("Codex Hub could not access the built-in Git extension.");
+      return;
+    }
+    const repository = sourceControl?.rootUri
+      ? git.getRepository(sourceControl.rootUri)
+      : await selectGitRepository(git.repositories);
+    if (!repository) return;
+
+    let failureMessage: string | null = null;
+    await vscode.commands.executeCommand("setContext", "codexhub.commitMessageGenerating", true);
+    try {
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.SourceControl,
+        title: `Codex Hub: Generating commit message for ${path.basename(repository.rootUri.fsPath) || "repository"}...`
+      }, async () => {
+        const diff = await commitGenerationDiff(repository);
+        if (!diff) {
+          void vscode.window.showInformationMessage("Codex Hub found no Git changes to describe.");
+          return;
+        }
+        const server = await this.ensureServer();
+        const folders = fileWorkspaceFolders();
+        const activeFolder = workspaceFolderForPath(folders, repository.rootUri.fsPath)
+          ?? activeWorkspaceFolder(folders)
+          ?? folders[0];
+        if (!activeFolder) throw new Error("Open a workspace folder before generating a commit message.");
+        await this.registerSurface(server, folders, activeFolder.path);
+        const client = createCodexHubApiClient({ baseUrl: server.url, authToken: server.authToken });
+        const projects = await client.route(apiRoutes.projects);
+        const project = projects.projects.find((candidate) => sameFsPath(candidate.path, activeFolder.path));
+        if (!project) throw new Error(`Codex Hub project is not registered for ${activeFolder.path}`);
+        await client.route(apiRoutes.ensureRuntime, project.machineId, { cwd: repository.rootUri.fsPath });
+        const generationSettings = currentVscodeExtensionSettings();
+        const result = await client.route(apiRoutes.generateCommitMessage, project.machineId, {
+          cwd: repository.rootUri.fsPath,
+          diff,
+          model: vscodeToolModel(generationSettings, generationSettings.gitCommitModel),
+          prompt: generationSettings.gitCommitPrompt,
+          ...(repository.inputBox.value.trim() ? { currentMessage: repository.inputBox.value.trim() } : {})
+        });
+        const message = result.message?.trim();
+        if (!message) throw new Error(result.error || "Codex did not generate a commit message.");
+        repository.inputBox.value = message;
+      });
+    } catch (error) {
+      failureMessage = error instanceof CodexHubApiError && error.status === 404
+        ? "The shared Codex Hub authority is still running an older build without commit-message generation. Reload every VS Code or Electron window using Codex Hub, then try again."
+        : errorText(error);
+    } finally {
+      await vscode.commands.executeCommand("setContext", "codexhub.commitMessageGenerating", false);
+    }
+    if (failureMessage) {
+      void vscode.window.showErrorMessage(`Codex Hub commit message generation failed: ${failureMessage}`);
+    }
   }
 
   private async sendTextAttachmentsToChat(texts: string[]) {
@@ -548,6 +638,65 @@ const fileWorkspaceFolders = (): VscodeWorkspaceFolder[] =>
       path: folder.uri.fsPath,
       name: folder.name
     }));
+
+const gitApi = async (): Promise<GitApi | null> => {
+  const extension = vscode.extensions.getExtension<{ getAPI: (version: 1) => GitApi }>("vscode.git");
+  if (!extension) return null;
+  const exports = extension.isActive ? extension.exports : await extension.activate();
+  return exports?.getAPI(1) ?? null;
+};
+
+const selectGitRepository = async (repositories: GitRepository[]) => {
+  if (!repositories.length) {
+    await vscode.window.showInformationMessage("Codex Hub found no Git repositories in this workspace.");
+    return null;
+  }
+  if (repositories.length === 1) return repositories[0];
+  const selected = await vscode.window.showQuickPick(
+    repositories.map((repository) => ({
+      label: path.basename(repository.rootUri.fsPath) || repository.rootUri.fsPath,
+      description: repository.rootUri.fsPath,
+      repository
+    })),
+    { placeHolder: "Select a repository for commit message generation" }
+  );
+  return selected?.repository ?? null;
+};
+
+const commitGenerationDiff = async (repository: GitRepository) => {
+  const staged = (await repository.diff(true)).trim();
+  if (staged) return truncateCommitDiff(`Staged changes:\n${staged}`);
+  const working = (await repository.diff(false)).trim();
+  const untracked = repository.state.untrackedChanges.map((change) =>
+    path.relative(repository.rootUri.fsPath, change.uri.fsPath) || path.basename(change.uri.fsPath)
+  );
+  if (working) {
+    return truncateCommitDiff([
+      `Working tree changes:\n${working}`,
+      untracked.length ? `Untracked files:\n${untracked.map((file) => `- ${file}`).join("\n")}` : null
+    ].filter((value): value is string => Boolean(value)).join("\n\n"));
+  }
+  if (untracked.length) return truncateCommitDiff(`Untracked files:\n${untracked.map((file) => `- ${file}`).join("\n")}`);
+  return "";
+};
+
+const truncateCommitDiff = (value: string) => value.length <= maxCommitDiffCharacters
+  ? value
+  : `${value.slice(0, maxCommitDiffCharacters)}\n\n[Diff truncated by Codex Hub]`;
+
+const workspaceFolderForPath = (folders: VscodeWorkspaceFolder[], candidatePath: string) =>
+  folders.find((folder) => {
+    const relative = path.relative(folder.path, candidatePath);
+    return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+  });
+
+const sameFsPath = (left: string, right: string) => {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+};
 
 const activeWorkspaceFolder = (folders: VscodeWorkspaceFolder[]) => {
   const activeUri = vscode.window.activeTextEditor?.document.uri;

@@ -4,6 +4,7 @@ import type { MachineHub } from "../core/machineHub.js";
 import { defaultThreadHistoryPageSize, type ThreadHub } from "../core/threadHub.js";
 import {
   inputSchema,
+  commitMessageGenerationSchema,
   threadApprovalDecisionSchema,
   threadGoalUpdateSchema,
   threadRenameSchema,
@@ -15,6 +16,7 @@ import {
   type RuntimePermissionProfilesPayload,
   type RuntimesPayload,
   type CommandPalettePayload,
+  type CommitMessageGenerationPayload,
   type ThreadCandidatesPayload,
   type ThreadCompactPayload,
   type ThreadDeletePayload,
@@ -23,6 +25,7 @@ import {
   type ThreadBackgroundTerminalTerminatePayload,
   type ThreadGoalMutationPayload,
   type ThreadRenamePayload,
+  type ThreadTitleSuggestionPayload,
   type ThreadReviewPayload,
   type ThreadsPayload,
   type ThreadStopPayload,
@@ -289,6 +292,25 @@ export const registerThreadRoutes = <
     }
   });
 
+  app.post("/api/machines/:machineId/commit-message", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
+    const payload = commitMessageGenerationSchema.parse(request.body);
+    try {
+      return await ctx.threads.generateCommitMessage(
+        params.machineId,
+        payload.cwd,
+        payload.diff,
+        payload.currentMessage,
+        payload.model,
+        payload.prompt
+      ) satisfies CommitMessageGenerationPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Runtime not found") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
   app.post("/api/machines/:machineId/threads", async (request, reply) => {
     const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const payload = z.discriminatedUnion("action", [
@@ -347,6 +369,17 @@ export const registerThreadRoutes = <
     try {
       const thread = await ctx.threads.renameThread(params.threadId, payload.title);
       return { ok: true, thread } satisfies ThreadRenamePayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { error: message };
+    }
+  });
+
+  app.post("/api/threads/:threadId/name/suggest", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    try {
+      return await ctx.threads.suggestThreadTitle(params.threadId) satisfies ThreadTitleSuggestionPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") ? 404 : 409);

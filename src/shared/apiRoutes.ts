@@ -9,6 +9,8 @@ import type {
   PetsPayload,
   PluginsPayload,
   CommandPalettePayload,
+  CommitMessageGenerationInput,
+  CommitMessageGenerationPayload,
   ProjectMutationPayload,
   ProjectThreadStartPayload,
   ProjectUpdateInput,
@@ -38,6 +40,7 @@ import type {
   ThreadGoalUpdateInput,
   ThreadRenameInput,
   ThreadRenamePayload,
+  ThreadTitleSuggestionPayload,
   ThreadReviewPayload,
   ThreadStopPayload,
   ThreadTurnPayload,
@@ -200,6 +203,13 @@ export const apiRoutes = {
     (machineId, cwd, part) =>
       `/api/machines/${encode(machineId)}/command-palette${queryString({ cwd, part })}`
   ),
+  generateCommitMessage: post<
+    CommitMessageGenerationInput,
+    CommitMessageGenerationPayload,
+    (machineId: string) => string
+  >(
+    (machineId) => `/api/machines/${encode(machineId)}/commit-message`
+  ),
   thread: get<ThreadDetail, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}`
   ),
@@ -256,6 +266,9 @@ export const apiRoutes = {
   ),
   renameThread: patch<ThreadRenameInput, ThreadRenamePayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/name`
+  ),
+  suggestThreadTitle: postNoBody<ThreadTitleSuggestionPayload, (threadId: string) => string>(
+    (threadId) => `/api/threads/${encode(threadId)}/name/suggest`
   ),
   updateThreadGoal: post<ThreadGoalUpdateInput, ThreadGoalMutationPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/goal`

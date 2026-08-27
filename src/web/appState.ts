@@ -115,6 +115,7 @@ export const useAppState = () => {
     threadControlsMenuOpen,
     threadModelDialogOpen,
     threadModelDialogThreadId,
+    threadRenameGenerationRequests,
     threadRenameDialog,
     threadTabContextMenu
   } = uiState;
@@ -349,6 +350,7 @@ export const useAppState = () => {
     threadModelDialogThreadId,
     openThreadModelDialog,
     threadOrderByMachine,
+    threadRenameGenerationRequests,
     threadRenameDialog,
     threadTabContextMenu,
     threadPicker

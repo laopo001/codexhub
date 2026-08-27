@@ -65,6 +65,18 @@ export type AppServerCommandHost = {
     options?: { markBridgeStarted?: boolean }
   ) => Promise<string>;
   rememberDefaultThread: (threadId: string) => Promise<void>;
+  suggestThreadTitle: (
+    cwd: string,
+    model: string | null | undefined,
+    conversationContext: string
+  ) => Promise<{ title: string }>;
+  generateCommitMessage: (
+    cwd: string,
+    model: string | null | undefined,
+    diff: string,
+    currentMessage?: string,
+    prompt?: string
+  ) => Promise<{ message: string }>;
   request: (method: string, params: unknown, command?: CommandContext) => Promise<unknown>;
   scheduleThreadSync: (threadId: string) => void;
   forwardThreadExecutionChanged: (
@@ -129,6 +141,27 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
       return await host.request("turn/interrupt", { threadId: command.threadId, turnId: command.turnId }, command);
     }
     return {};
+  }
+  if (command.type === "suggest_thread_title") {
+    requireThreadId(command);
+    const conversationContext = typeof command.input === "string" ? command.input.trim() : "";
+    if (!conversationContext) throw new Error("suggest_thread_title command requires conversation context");
+    return await host.suggestThreadTitle(
+      command.workingDirectory,
+      modelForCommand(command, host.defaultModel),
+      conversationContext
+    );
+  }
+  if (command.type === "generate_commit_message") {
+    const diff = typeof command.input === "string" ? command.input.trim() : "";
+    if (!diff) throw new Error("generate_commit_message command requires a diff");
+    return await host.generateCommitMessage(
+      command.workingDirectory,
+      modelForCommand(command, host.defaultModel),
+      diff,
+      command.commitMessageHint,
+      command.commitMessagePrompt
+    );
   }
   if (command.type === "terminate_background_terminal") {
     const threadId = requireThreadId(command);

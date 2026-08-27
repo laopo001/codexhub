@@ -694,6 +694,46 @@ export class ThreadHub {
     );
   }
 
+  async generateCommitMessage(
+    machineId: string,
+    workingDirectory: string,
+    diff: string,
+    currentMessage?: string,
+    model?: string,
+    prompt?: string
+  ) {
+    const session = this.requireOnlineRuntimeSession(machineId);
+    const cwd = workingDirectory.trim();
+    const gitDiff = diff.trim();
+    if (!cwd) throw new Error("Commit message generation requires cwd");
+    if (!gitDiff) throw new Error("Commit message generation requires a diff");
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<{ message: string }>(
+      commandId,
+      "generate_commit_message",
+      undefined,
+      null,
+      cwd
+    );
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "generate_commit_message",
+      workingDirectory: cwd,
+      createdAt: new Date().toISOString(),
+      input: gitDiff,
+      ...(currentMessage?.trim() ? { commitMessageHint: currentMessage.trim() } : {}),
+      ...(prompt?.trim() ? { commitMessagePrompt: prompt.trim() } : {}),
+      options: {
+        model: model?.trim() || lightweightGenerationModel,
+        modelReasoningEffort: "low"
+      }
+    });
+    const result = await promise;
+    const message = result.message.trim();
+    if (!message) throw new Error("Codex did not generate a usable commit message");
+    return { message };
+  }
+
   async startSessionThread(sessionId: string, workingDirectory?: string): Promise<ThreadDetail> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
@@ -1011,6 +1051,9 @@ export class ThreadHub {
     if (!parsed) return { handled: false };
 
     const thread = this.requireThread(threadId);
+    if (parsed.command === "rename") {
+      throw new Error("/rename requires interactive title confirmation in CodexHub Web");
+    }
     this.appendUserInputRecord(thread, input);
     this.appendHubRecord(thread, "event_msg", {
       type: "agent_message",
@@ -1024,6 +1067,39 @@ export class ThreadHub {
       phase: "final_answer"
     });
     return { handled: true, command: parsed.command };
+  }
+
+  async suggestThreadTitle(threadId: string) {
+    const thread = this.requireThread(threadId);
+    if (thread.running) throw new Error(`Thread is running: ${threadId}`);
+    const session = this.requireThreadSession(thread);
+    const conversationContext = threadTitleGenerationContext(thread.records)
+      || (thread.title !== thread.threadId ? `User: ${thread.title}` : "");
+    if (!conversationContext) throw new Error("Thread has no conversation context for title generation");
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<{ title: string }>(
+      commandId,
+      "suggest_thread_title",
+      thread.threadId,
+      null,
+      thread.workingDirectory
+    );
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId,
+      type: "suggest_thread_title",
+      workingDirectory: thread.workingDirectory,
+      createdAt: new Date().toISOString(),
+      threadId: thread.threadId,
+      input: conversationContext,
+      options: {
+        model: lightweightGenerationModel,
+        modelReasoningEffort: "low"
+      }
+    });
+    const result = await promise;
+    const title = compactThreadTitle(result.title);
+    if (!title) throw new Error("Codex did not generate a usable thread title");
+    return { title };
   }
 
   runTurn(threadId: string, input: ProxyInput, _source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
@@ -3187,6 +3263,39 @@ const turnDispatch = (
 };
 
 const compactThreadTitle = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 80);
+
+const lightweightGenerationModel = "gpt-5.6-luna";
+
+const threadTitleGenerationContext = (records: CodexRecord[]) => {
+  const messages = records.flatMap((record) => {
+    const payload = asRecord(record.payload);
+    if (!payload) return [];
+    if (payload.type === "user_message" && typeof payload.message === "string") {
+      return [{ role: "User", text: payload.message }];
+    }
+    if (payload.type === "agent_message" && typeof payload.message === "string") {
+      return [{ role: "Assistant", text: payload.message }];
+    }
+    if (payload.type !== "message" || (payload.role !== "user" && payload.role !== "assistant")) return [];
+    const content = Array.isArray(payload.content) ? payload.content : [];
+    const text = content.flatMap((item) => {
+      const block = asRecord(item);
+      const value = typeof block?.text === "string"
+        ? block.text
+        : typeof block?.input_text === "string"
+          ? block.input_text
+          : typeof block?.output_text === "string"
+            ? block.output_text
+            : "";
+      return value.trim() ? [value] : [];
+    }).join("\n");
+    return text ? [{ role: payload.role === "user" ? "User" : "Assistant", text }] : [];
+  });
+  const bounded = messages.slice(-8).map(({ role, text }) =>
+    `${role}: ${text.replace(/\s+/g, " ").trim().slice(0, 800)}`
+  );
+  return bounded.join("\n").slice(-5_000);
+};
 
 const appServerThreadTitle = (thread: Record<string, unknown>) => {
   const name = typeof thread.name === "string" ? compactThreadTitle(thread.name) : "";

@@ -35,7 +35,8 @@
     "onCommand:codexhub.openInBrowser",
     "onCommand:codexhub.openConfig",
     "onCommand:codexhub.sendSelectionToChat",
-    "onCommand:codexhub.sendPathToChat"
+    "onCommand:codexhub.sendPathToChat",
+    "onCommand:codexhub.generateCommitMessage"
   ],
   "main": "./extension.cjs",
   "contributes": {
@@ -69,8 +70,42 @@
         "category": "%command.category%",
         "title": "%command.sendPath.title%",
         "shortTitle": "%command.sendPath.shortTitle%"
+      },
+      {
+        "command": "codexhub.generateCommitMessage",
+        "category": "%command.category%",
+        "title": "%command.generateCommitMessage.title%",
+        "shortTitle": "%command.generateCommitMessage.shortTitle%",
+        "icon": "$(wand)"
       }
     ],
+    "configuration": {
+      "title": "%configuration.title%",
+      "properties": {
+        "codexhub.tools.model": {
+          "type": "string",
+          "default": "gpt-5.6-luna",
+          "scope": "window",
+          "order": 10,
+          "markdownDescription": "%configuration.tools.model.description%"
+        },
+        "codexhub.gitCommit.model": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "order": 20,
+          "markdownDescription": "%configuration.gitCommit.model.description%"
+        },
+        "codexhub.gitCommit.prompt": {
+          "type": "string",
+          "default": "Generate a concise Git commit message based only on the supplied diff. Use a conventional commit subject when the change has a clear type and scope. Keep the subject imperative and at most 72 characters. Add a short body only when it materially explains why the change was made. Do not use markdown fences, quotes, or commentary. Do not invent changes that are absent from the diff.",
+          "scope": "window",
+          "order": 30,
+          "editPresentation": "multilineText",
+          "markdownDescription": "%configuration.gitCommit.prompt.description%"
+        }
+      }
+    },
     "menus": {
       "editor/context": [
         {
@@ -84,6 +119,13 @@
           "command": "codexhub.sendPathToChat",
           "when": "resourceScheme == file",
           "group": "navigation@93"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "codexhub.generateCommitMessage",
+          "when": "scmProvider == git && !codexhub.commitMessageGenerating",
+          "group": "navigation@91"
         }
       ]
     },

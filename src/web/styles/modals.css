@@ -532,9 +532,17 @@
   font-size: 14px;
 }
 
+.threadRenameDialogGenerating,
+.threadRenameDialogError {
+  font-size: 12px;
+}
+
+.threadRenameDialogGenerating {
+  color: #526b56;
+}
+
 .threadRenameDialogError {
   color: #8b3f31;
-  font-size: 12px;
 }
 
 .threadRenameDialogActions {
