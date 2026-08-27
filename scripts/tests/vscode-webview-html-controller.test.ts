@@ -16,26 +16,28 @@ test("VscodeWebviewHtmlController deduplicates ordinary renders with the same ke
   assert.deepEqual(writtenHtmls, ["<html>iframe-1</html>"]);
 });
 
-test("VscodeWebviewHtmlController forces HTML update on explicit refresh even with identical key", () => {
+test("VscodeWebviewHtmlController forces HTML reload after explicit refresh or authority recovery", () => {
   const writtenHtmls: string[] = [];
   const controller = new VscodeWebviewHtmlController((html) => writtenHtmls.push(html));
 
   controller.update("iframe:http://127.0.0.1:28789/?surface=vscode", "<html>iframe-1</html>");
   assert.deepEqual(writtenHtmls, ["<html>iframe-1</html>"]);
 
-  // 用户主动点击 Refresh（force: true）：必须强制写入
+  // 用户主动 Refresh 或宿主确认 authority 恢复后（force: true），即使
+  // stable authority URL 没变，也必须换掉旧 iframe document。
   assert.equal(controller.update("iframe:http://127.0.0.1:28789/?surface=vscode", "<html>iframe-1-refreshed</html>", true), true);
   assert.deepEqual(writtenHtmls, ["<html>iframe-1</html>", "<html>iframe-1-refreshed</html>"]);
 });
 
-test("VscodeWebviewHtmlController preserves iframe on heartbeat recovery when URL is unchanged", () => {
+test("VscodeWebviewHtmlController preserves iframe on an ordinary render when URL is unchanged", () => {
   const writtenHtmls: string[] = [];
   const controller = new VscodeWebviewHtmlController((html) => writtenHtmls.push(html));
 
   controller.update("iframe:http://127.0.0.1:28789/?surface=vscode&workspacePath=/repo", "<html>iframe-repo</html>");
   assert.equal(writtenHtmls.length, 1);
 
-  // 心跳恢复（普通 render）：相同 key 不重载 iframe
+  // 普通 render：相同 key 不重载 iframe。真正的 authority recovery
+  // 由宿主显式传 force=true，与普通 heartbeat 更新分开。
   const updated = controller.update("iframe:http://127.0.0.1:28789/?surface=vscode&workspacePath=/repo", "<html>iframe-repo-heartbeat</html>", false);
   assert.equal(updated, false);
   assert.equal(writtenHtmls.length, 1);

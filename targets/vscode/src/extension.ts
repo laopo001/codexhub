@@ -504,7 +504,12 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
         const activeFolder = activeWorkspaceFolder(folders) ?? folders[0];
         await this.registerSurface(server, folders, activeFolder.path, 3);
         if (this.view) {
-          this.renderPromise = this.render();
+          // The authority can restart on the same stable URL, so an ordinary
+          // render would be deduplicated and leave the old iframe document
+          // (including its local "Restarting..." state) mounted forever.
+          // A failed heartbeat followed by successful re-registration is the
+          // host's authoritative recovery signal and must reload once.
+          this.renderPromise = this.render({ forceHtml: true });
           await this.renderPromise;
         }
       } catch (reconnectError) {

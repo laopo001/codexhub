@@ -2,7 +2,7 @@
 
 一个 local-first 的 Codex 控制面。Web 按机器、项目、项目运行状态和对话组织工作区；本机 Node.js server 负责连接机器、排队命令、镜像事件和保存轻量项目元数据。机器来源分为三类：`local` 表示此电脑，`ssh` 表示本机主动通过 SSH 拉起的远端机器，`registered` 表示远端机器主动连接进来。右侧对话仍以官方 Codex `threadId` 和镜像 transcript 为核心。
 
-CodexHub 0.8.2 要求运行 machine 上的官方 Codex CLI 不低于 `0.144.4`。VSCode 0.8.2 延续 authority 级共享服务，并优先使用本机 Node.js 与 npm/link 安装的 CodexHub 包；升级前请先阅读 [0.8.0 迁移说明](./MIGRATION.md)。
+CodexHub 0.9.0 要求运行 machine 上的官方 Codex CLI 不低于 `0.144.4`。VSCode 0.9.0 延续 authority 级共享服务，并优先使用本机 Node.js 与 npm/link 安装的 CodexHub 包；升级前请先阅读 [0.8.0 迁移说明](./MIGRATION.md)。
 
 - 共享核心：API server 统一管理 machines、machine runtime sessions 和 threads，并把轻量 project 元数据投影到 `/api/projects`；Web 左侧按项目优先展示，点击 project 只切换 active path，Add Tab/thread picker 基于该 path 创建或恢复 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
