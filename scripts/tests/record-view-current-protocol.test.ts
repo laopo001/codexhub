@@ -530,6 +530,45 @@ test("live Plan status uses its registration default until the scope is initiali
   assert.doesNotMatch(initializedCollapsed, /activityStatusPlanSteps/);
 });
 
+test("Status panel auto-expands for Plan and backgrounds without overriding an explicit collapse", async () => {
+  const { resolveStatusPanelExpanded } = await import("../../src/web/helpers/statusPanelExpansion.js");
+  const planStatus = {
+    key: "plan",
+    label: "Plan",
+    status: "in_progress" as const,
+    text: "Implement automatic expansion · 1/1"
+  };
+  const scopeKey = "thread-1:turn-1";
+
+  assert.equal(resolveStatusPanelExpanded({
+    scopeKey,
+    statuses: [planStatus],
+    backgroundTerminalCount: 0
+  }), true);
+  assert.equal(resolveStatusPanelExpanded({
+    scopeKey,
+    statuses: [],
+    backgroundTerminalCount: 1
+  }), true);
+  assert.equal(resolveStatusPanelExpanded({
+    scopeKey,
+    decision: { scopeKey, expanded: false },
+    statuses: [planStatus],
+    backgroundTerminalCount: 1
+  }), false);
+  assert.equal(resolveStatusPanelExpanded({
+    scopeKey: "thread-1:turn-2",
+    decision: { scopeKey, expanded: false },
+    statuses: [planStatus],
+    backgroundTerminalCount: 0
+  }), true);
+  assert.equal(resolveStatusPanelExpanded({
+    scopeKey,
+    statuses: [],
+    backgroundTerminalCount: 0
+  }), false);
+});
+
 test("approval interactions stay on their message and out of Turn Status", async () => {
   const { activityStatusesFromRecords } = await import("../../src/web/helpers/records.js");
   assert.deepEqual(activityStatusesFromRecords([{

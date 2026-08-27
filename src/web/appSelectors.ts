@@ -3,6 +3,7 @@ import { isEmbeddedSurfaceKind } from "../shared/surfaceTypes.js";
 import { conversationViewsFromRecords } from "./helpers/conversationViews.js";
 import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from "./helpers/turnDurations.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
+import { resolveStatusPanelExpanded } from "./helpers/statusPanelExpansion.js";
 import { embeddedWorkspacePaths, isFixedWorkspaceSurface } from "./appConfig.js";
 import {
   activeGoalActivityScopeFromRecords,
@@ -282,11 +283,14 @@ export const useAppSelectors = (state: AppState) => {
   const statusScopeKey = activeThread?.threadId && statusActivityKey
     ? `${activeThread.threadId}:${statusActivityKey}`
     : "";
-  const statusPanelExpanded = Boolean(
-    activeThread?.threadId
-    && statusScopeKey
-    && state.expandedStatusTurns[activeThread.threadId] === statusScopeKey
-  );
+  const statusPanelExpanded = resolveStatusPanelExpanded({
+    scopeKey: statusScopeKey,
+    decision: activeThread?.threadId
+      ? state.expandedStatusTurns[activeThread.threadId]
+      : undefined,
+    statuses: turnStatusItems,
+    backgroundTerminalCount: activeThread?.backgroundTerminals?.length ?? 0
+  });
   const activeExpandedStatusKeys = useMemo(
     () => new Set(statusScopeKey ? state.expandedStatusKeys[statusScopeKey] ?? [] : []),
     [state.expandedStatusKeys, statusScopeKey]

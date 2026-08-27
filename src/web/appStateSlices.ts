@@ -2,6 +2,7 @@ import type React from "react";
 import { useRef, useState } from "react";
 import { defaultAppSettings } from "./appConfig.js";
 import { createSidebarDraftStore } from "./appHelpers.js";
+import type { StatusPanelExpansionDecision } from "./helpers/statusPanelExpansion.js";
 import type {
   AppSettings,
   ConnectionMode,
@@ -104,7 +105,7 @@ export const useUiState = () => {
   const [threadRenameDialog, setThreadRenameDialog] = useState<ThreadRenameDialogState | null>(null);
   const threadRenameGenerationRequests = useRef<Map<string, ThreadRenameGenerationRequest>>(new Map());
   const [threadTabContextMenu, setThreadTabContextMenu] = useState<ThreadTabContextMenuState | null>(null);
-  const [expandedStatusTurns, setExpandedStatusTurns] = useState<Record<string, string>>({});
+  const [expandedStatusTurns, setExpandedStatusTurns] = useState<Record<string, StatusPanelExpansionDecision>>({});
   const [expandedStatusKeys, setExpandedStatusKeys] = useState<Record<string, string[]>>({});
   const [expandedToolBatchKeys, setExpandedToolBatchKeys] = useState<Record<string, string[]>>({});
   const [sidebarDraftStore] = useState(createSidebarDraftStore);

@@ -25,6 +25,10 @@ import {
 import type { ComposerDraftStore } from "./helpers/composer.js";
 import { renderedPrependCount } from "./helpers/historyViewport.js";
 import {
+  resolveStatusPanelExpanded,
+  type StatusPanelExpansionDecision
+} from "./helpers/statusPanelExpansion.js";
+import {
   MessagesTurnLoadingFooter,
   type MessagesTurnLoadingContext
 } from "./helpers/liveTime.js";
@@ -51,7 +55,7 @@ export type ThreadConversationProps = {
   activeGoal?: ThreadGoalView | null;
   messageRenderModes: Readonly<Record<string, MessageRenderMode>>;
   expandedStatusKeys: Readonly<Record<string, string[]>>;
-  expandedStatusTurns: Readonly<Record<string, string>>;
+  expandedStatusTurns: Readonly<Record<string, StatusPanelExpansionDecision>>;
 
   className?: string;
   leading?: React.ReactNode;
@@ -99,7 +103,7 @@ export type ThreadConversationProps = {
   onResizeComposerTextarea: (threadId: string, textarea: HTMLTextAreaElement | null) => void;
   onThreadModelDialogChange?: (threadId: string, open: boolean) => void;
   setExpandedStatusKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
-  setExpandedStatusTurns: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setExpandedStatusTurns: React.Dispatch<React.SetStateAction<Record<string, StatusPanelExpansionDecision>>>;
 
   onMessageRenderModeChange?: (
     threadId: string,
@@ -269,10 +273,12 @@ export const ThreadConversation = ({
       scopeKey: key ? `${thread.threadId}:${key}` : ""
     };
   }, [activeGoal, statusRecords, thread.activeTurnId, thread.status, thread.threadId]);
-  const statusPanelExpanded = Boolean(
-    statusActivity.scopeKey
-    && expandedStatusTurns[thread.threadId] === statusActivity.scopeKey
-  );
+  const statusPanelExpanded = resolveStatusPanelExpanded({
+    scopeKey: statusActivity.scopeKey,
+    decision: expandedStatusTurns[thread.threadId],
+    statuses: statusActivity.items,
+    backgroundTerminalCount: backgroundTerminals.length
+  });
   const activeExpandedStatusKeys = React.useMemo(
     () => new Set(statusActivity.scopeKey ? expandedStatusKeys[statusActivity.scopeKey] ?? [] : []),
     [expandedStatusKeys, statusActivity.scopeKey]
@@ -601,14 +607,12 @@ export const ThreadConversation = ({
         onToggleExpanded={() => {
           if (!statusActivity.scopeKey) return;
           setExpandedStatusTurns((current) => {
-            if (current[thread.threadId] === statusActivity.scopeKey) {
-              const next = { ...current };
-              delete next[thread.threadId];
-              return next;
-            }
             return {
               ...current,
-              [thread.threadId]: statusActivity.scopeKey
+              [thread.threadId]: {
+                scopeKey: statusActivity.scopeKey,
+                expanded: !statusPanelExpanded
+              }
             };
           });
         }}

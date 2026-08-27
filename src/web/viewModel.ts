@@ -8,6 +8,7 @@ import type {
   ThreadGoalUpdateInput as ApiThreadGoalUpdateInput
 } from "../shared/apiContract.js";
 import type { ComposerDraftStore, SidebarDraftStore, TurnActivityScope } from "./appHelpers.js";
+import type { StatusPanelExpansionDecision } from "./helpers/statusPanelExpansion.js";
 import type {
   ActivityStatusView,
   AppSettings,
@@ -188,7 +189,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   threadModelDialogReasoningSelection: ReasoningSelection;
   threadModelDialogServiceTierSelection: ServiceTierSelection;
   expandedStatusKeys: Record<string, string[]>;
-  expandedStatusTurns: Record<string, string>;
+  expandedStatusTurns: Record<string, StatusPanelExpansionDecision>;
   expandedToolBatchKeys: Record<string, string[]>;
   forkingMessageKey: string;
   forkMessage: (threadId: string, messageId: string) => MaybePromise;
@@ -289,7 +290,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   setExpandedStatusKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   setExpandedToolBatchKeys: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
-  setExpandedStatusTurns: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setExpandedStatusTurns: React.Dispatch<React.SetStateAction<Record<string, StatusPanelExpansionDecision>>>;
   setImagePreview: React.Dispatch<React.SetStateAction<ImagePreviewState | null>>;
   setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
   setMessageSelectionToolbar: React.Dispatch<React.SetStateAction<MessageSelectionToolbarState | null>>;
