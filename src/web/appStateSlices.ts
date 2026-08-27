@@ -8,7 +8,7 @@ import type {
   GoalDialogState,
   ImagePreviewState,
   LocalTask,
-  MessageContextMenuState,
+  MessageSelectionToolbarState,
   MessageRenderMode,
   ParentRegistrationStatus,
   PluginSummary,
@@ -88,7 +88,7 @@ export const useUiState = () => {
   const [authTokenDraft, setAuthTokenDraft] = useState("");
   const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
   const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
-  const [messageContextMenu, setMessageContextMenu] = useState<MessageContextMenuState | null>(null);
+  const [messageSelectionToolbar, setMessageSelectionToolbar] = useState<MessageSelectionToolbarState | null>(null);
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [collapsedProjectMachineKeys, setCollapsedProjectMachineKeys] = useState<string[]>([]);
@@ -142,7 +142,7 @@ export const useUiState = () => {
     goalDialog,
     imagePreview,
     inspectMessage,
-    messageContextMenu,
+    messageSelectionToolbar,
     messageRenderModes,
     offlineProjectsCollapsed,
     serverAuthRequired,
@@ -162,7 +162,7 @@ export const useUiState = () => {
     setGoalDialog,
     setImagePreview,
     setInspectMessage,
-    setMessageContextMenu,
+    setMessageSelectionToolbar,
     setMessageRenderModes,
     setOfflineProjectsCollapsed,
     setServerAuthRequired,

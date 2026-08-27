@@ -38,22 +38,21 @@ type AppDialogsProps = {
 
 export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const {
-    addContextSelectionToConversation,
+    addSelectionToConversation,
     appSettings,
     changeProjectPickerMachine,
     chooseThreadCandidate,
     confirmProjectPicker,
-    copyContextSelection,
+    copySelection,
     createMachineThread,
     createWorktreeThread,
     goalDialog,
     imagePreview,
-    inspectContextMessage,
     inspectMessage,
     loadProjectPickerDirectory,
     loadThreadPickerCandidates,
     machines,
-    messageContextMenu,
+    messageSelectionToolbar,
     activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
@@ -84,7 +83,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setImagePreview,
     setInspectMessage,
     setAppSettings,
-    setMessageContextMenu,
+    setMessageSelectionToolbar,
     setProjectPicker,
     setThreadModelDialogModelDraft,
     setThreadModelDialogReasoningDraft,
@@ -170,7 +169,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     || goalDialog
     || threadRenameDialog
     || threadTabContextMenu
-    || messageContextMenu
+    || messageSelectionToolbar
   );
   React.useEffect(() => {
     if (!imagePreview && !inspectMessage && !goalDialog && !threadModelDialogOpen) return undefined;
@@ -891,38 +890,24 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
         </div>
       ) : null}
 
-      {messageContextMenu ? (
+      {messageSelectionToolbar ? (
         <div
-          className="messageContextMenuLayer"
+          className="messageContextMenuLayer selectionToolbarLayer"
           role="presentation"
-          onMouseDown={() => setMessageContextMenu(null)}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            setMessageContextMenu(null);
-          }}
+          onMouseDown={() => setMessageSelectionToolbar(null)}
         >
           <div
-            className={`messageContextMenu${messageContextMenu.presentation === "selectionToolbar" ? " selectionToolbar" : ""}`}
+            className="messageContextMenu selectionToolbar"
             role="menu"
-            style={{ left: messageContextMenu.x, top: messageContextMenu.y }}
+            style={{ left: messageSelectionToolbar.x, top: messageSelectionToolbar.y }}
             onMouseDown={(event) => event.stopPropagation()}
-            onContextMenu={(event) => event.preventDefault()}
           >
-            {messageContextMenu.selectedText ? (
-              <>
-                <button type="button" role="menuitem" onClick={() => void copyContextSelection()}>
-                  复制
-                </button>
-                <button type="button" role="menuitem" onClick={addContextSelectionToConversation}>
-                  添加到对话
-                </button>
-              </>
-            ) : null}
-            {messageContextMenu.canInspect ? (
-              <button type="button" role="menuitem" onClick={inspectContextMessage}>
-                查看详细
-              </button>
-            ) : null}
+            <button type="button" role="menuitem" onClick={() => void copySelection()}>
+              复制
+            </button>
+            <button type="button" role="menuitem" onClick={addSelectionToConversation}>
+              添加到对话
+            </button>
           </div>
         </div>
       ) : null}

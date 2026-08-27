@@ -469,8 +469,8 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
   }, [state.threadControlsMenuOpen]);
 
   useEffect(() => {
-    if (!state.messageContextMenu) return undefined;
-    const close = () => state.setMessageContextMenu(null);
+    if (!state.messageSelectionToolbar) return undefined;
+    const close = () => state.setMessageSelectionToolbar(null);
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -485,10 +485,10 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("keydown", closeOnEscape, true);
     };
-  }, [state.messageContextMenu]);
+  }, [state.messageSelectionToolbar]);
 
   useEffect(() => {
-    state.setMessageContextMenu(null);
+    state.setMessageSelectionToolbar(null);
   }, [state.activeTabThreadId]);
 
   useEffect(() => {

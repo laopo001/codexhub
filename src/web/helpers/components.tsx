@@ -58,7 +58,6 @@ export const MessageCard = ({
   threadMachineId,
   threadWorkingDirectory,
   onRenderModeChange,
-  onContextMenu,
   onSelectionMenu,
   onInspect,
   onToggleToolBatch,
@@ -79,7 +78,6 @@ export const MessageCard = ({
   threadMachineId?: string;
   threadWorkingDirectory?: string;
   onRenderModeChange?: (mode: MessageRenderMode) => void;
-  onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
   onSelectionMenu?: (event: React.MouseEvent<HTMLElement>) => void;
   onInspect?: () => void;
   onToggleToolBatch?: () => void;
@@ -130,7 +128,6 @@ export const MessageCard = ({
         timestampText={showTimestamp ? formatMessageMeta(message) : undefined}
         timestampTitle={showTimestamp ? formatMessageMetaTitle(message) : undefined}
         onOpenThread={onOpenSubagentThread}
-        onContextMenu={onContextMenu}
       />
     );
   }
@@ -160,8 +157,7 @@ export const MessageCard = ({
   }
   return (
     <article
-      className={`message ${message.role} ${messageToneClass} ${hasToolBody ? "richTool" : ""} ${canClickInspect ? "inspectableTool" : ""} ${onContextMenu || onSelectionMenu ? "hasContextMenu" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
-      onContextMenu={onContextMenu}
+      className={`message ${message.role} ${messageToneClass} ${hasToolBody ? "richTool" : ""} ${canClickInspect ? "inspectableTool" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
       onMouseUp={onSelectionMenu}
       onClick={canClickInspect ? inspectOnClick : undefined}
       onKeyDown={canClickInspect ? inspectOnKeyDown : undefined}

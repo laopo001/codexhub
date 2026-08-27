@@ -23,7 +23,7 @@ import type {
   ImagePreviewState,
   LocalTask,
   MachineSummary,
-  MessageContextMenuState,
+  MessageSelectionToolbarState,
   MessageRenderMode,
   ModelSelection,
   ParentRegistrationStatus,
@@ -163,7 +163,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   activeUserMessageHistory: string[];
   activeViews: WebRecordView[];
   activeWorkspacePath: string;
-  addContextSelectionToConversation: () => void;
+  addSelectionToConversation: () => void;
   addThreadFiles: (threadId: string, files: FileList | null) => MaybePromise;
   addThreadImages: (threadId: string, files: FileList | null) => MaybePromise;
   authError: string;
@@ -181,7 +181,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   composerMode: ComposerMode;
   composerTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
   confirmProjectPicker: () => MaybePromise;
-  copyContextSelection: () => MaybePromise;
+  copySelection: () => MaybePromise;
   createMachineThread: () => MaybePromise;
   createWorktreeThread: () => MaybePromise;
   threadModelDialogModelSelection: ModelSelection;
@@ -201,13 +201,12 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   ) => void;
   imageFileInputRef: React.RefObject<HTMLInputElement | null>;
   imagePreview: ImagePreviewState | null;
-  inspectContextMessage: () => void;
   inspectMessage: WebRecordView | null;
   latestTurnActivityScope: TurnActivityScope;
   loadCommandPalette: (machineId: string, cwd: string) => MaybePromise;
   loadOlderThread: (threadId: string) => MaybePromise<number>;
   loadProjectPickerDirectory: (machineId: string, path: string) => MaybePromise;
-  messageContextMenu: MessageContextMenuState | null;
+  messageSelectionToolbar: MessageSelectionToolbarState | null;
   messageRenderModes: Record<string, MessageRenderMode>;
   activeThreadApprovalPolicySelection?: ApprovalPolicySelection;
   activeThreadApprovalPolicyDraft: ApprovalPolicyDraft;
@@ -228,12 +227,9 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   modelOptions: ModelOption[];
   reasoningOptions: ModelOption[];
   serviceTierOptions: ModelOption[];
-  openMessageContextMenu: (
+  openMessageSelectionToolbar: (
     event: React.MouseEvent,
-    threadId: string,
-    message: WebRecordView,
-    canInspect: boolean,
-    presentation?: MessageContextMenuState["presentation"]
+    threadId: string
   ) => void;
   insertThreadPathText: (
     threadId: string,
@@ -296,7 +292,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   setExpandedStatusTurns: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setImagePreview: React.Dispatch<React.SetStateAction<ImagePreviewState | null>>;
   setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
-  setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
+  setMessageSelectionToolbar: React.Dispatch<React.SetStateAction<MessageSelectionToolbarState | null>>;
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
   setActiveThreadApprovalPolicyDraft: React.Dispatch<React.SetStateAction<ApprovalPolicyDraft>>;
   setActiveThreadApprovalsReviewerDraft: React.Dispatch<React.SetStateAction<ApprovalsReviewerDraft>>;
@@ -380,7 +376,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "messageRenderModes"
   | "messagesRef"
   | "messagesShouldFollowRef"
-  | "openMessageContextMenu"
+  | "openMessageSelectionToolbar"
   | "openSubagentThread"
   | "openThreadModelDialog"
   | "openSelectedProjectThreadPicker"
@@ -436,18 +432,17 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
 >;
 
 export type AppDialogsViewModel = Pick<AppViewModelSource,
-  | "addContextSelectionToConversation"
+  | "addSelectionToConversation"
   | "appSettings"
   | "systemStatus"
   | "changeProjectPickerMachine"
   | "chooseThreadCandidate"
   | "confirmProjectPicker"
-  | "copyContextSelection"
+  | "copySelection"
   | "createMachineThread"
   | "createWorktreeThread"
   | "goalDialog"
   | "imagePreview"
-  | "inspectContextMessage"
   | "inspectMessage"
   | "loadProjectPickerDirectory"
   | "loadThreadPickerCandidates"
@@ -461,7 +456,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "currentServerShareUrl"
   | "disconnectParentRegistration"
   | "localMachines"
-  | "messageContextMenu"
+  | "messageSelectionToolbar"
   | "activeModelCatalogCacheNotice"
   | "activeModelCatalogError"
   | "activeModelCatalogStatus"
@@ -492,7 +487,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "setImagePreview"
   | "setInspectMessage"
   | "setAppSettings"
-  | "setMessageContextMenu"
+  | "setMessageSelectionToolbar"
   | "setProjectPicker"
   | "setThreadModelDialogModelDraft"
   | "setThreadModelDialogReasoningDraft"
@@ -569,7 +564,7 @@ const workspaceKeys = [
   "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "expandedStatusKeys", "expandedStatusTurns", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage",
   "handleComposerKeyDown", "imageFileInputRef", "insertThreadPathText", "latestTurnActivityScope",
   "loadCommandPalette", "loadOlderThread", "messageRenderModes", "messagesRef",
-  "messagesShouldFollowRef", "openMessageContextMenu", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",
+  "messagesShouldFollowRef", "openMessageSelectionToolbar", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",
   "openThreads",
   "pasteThreadImages", "removeThreadImage", "removeThreadTextAttachment", "renderComposerThreadControls",
   "resetComposerHistory", "respondToApproval", "respondToUserInput", "reviewThread",
@@ -587,10 +582,10 @@ const workspaceKeys = [
 ] as const satisfies readonly (keyof AppWorkspaceViewModel)[];
 
 const dialogKeys = [
-  "addContextSelectionToConversation", "appSettings", "systemStatus", "changeProjectPickerMachine",
-  "chooseThreadCandidate", "confirmProjectPicker", "copyContextSelection", "createMachineThread",
-  "createWorktreeThread", "goalDialog", "imagePreview", "inspectContextMessage", "inspectMessage",
-  "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageContextMenu",
+  "addSelectionToConversation", "appSettings", "systemStatus", "changeProjectPickerMachine",
+  "chooseThreadCandidate", "confirmProjectPicker", "copySelection", "createMachineThread",
+  "createWorktreeThread", "goalDialog", "imagePreview", "inspectMessage",
+  "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageSelectionToolbar",
   "addSshHost", "connectionMode", "connectParentRegistration", "connectSshHost", "copyCurrentServerShareUrl",
   "copyRegisteredCommand", "currentServerShareUrl", "disconnectParentRegistration", "localMachines",
   "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "threadModelDialogModelSelection",
@@ -598,7 +593,7 @@ const dialogKeys = [
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
   "saveGoalDialog", "saveThreadRenameDialog", "saveThreadRenameDialogInBackground", "threadModelDialogOpen", "threadRenameDialog",
   "threadTabContextMenu", "settingsDialogOpen", "runtimeList", "openThreads", "setGoalDialog",
-  "setImagePreview", "setInspectMessage", "setAppSettings", "setMessageContextMenu",
+  "setImagePreview", "setInspectMessage", "setAppSettings", "setMessageSelectionToolbar",
   "setProjectPicker", "setThreadModelDialogModelDraft", "setThreadModelDialogReasoningDraft",
   "setThreadModelDialogServiceTierDraft", "setThreadModelDialogOpen", "setThreadRenameDialog",
   "setThreadTabContextMenu", "setSettingsDialogOpen", "setThreadPicker", "submitProjectPickerPath",

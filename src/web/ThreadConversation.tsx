@@ -106,12 +106,9 @@ export type ThreadConversationProps = {
     messageId: string,
     mode: MessageRenderMode
   ) => void;
-  onMessageContextMenu?: (
+  onMessageSelection?: (
     event: React.MouseEvent<HTMLElement>,
-    threadId: string,
-    message: WebRecordView,
-    canInspect: boolean,
-    presentation?: "contextMenu" | "selectionToolbar"
+    threadId: string
   ) => void;
   onInspectMessage?: (threadId: string, message: WebRecordView) => void;
   onOpenImage?: (image: ImagePreviewState) => void;
@@ -214,7 +211,7 @@ export const ThreadConversation = ({
   setExpandedStatusKeys,
   setExpandedStatusTurns,
   onMessageRenderModeChange,
-  onMessageContextMenu,
+  onMessageSelection,
   onInspectMessage,
   onOpenImage,
   onOpenSubagentThread,
@@ -524,11 +521,8 @@ export const ThreadConversation = ({
         onRenderModeChange={markdownEnabled && onMessageRenderModeChange
           ? (mode) => onMessageRenderModeChange(thread.threadId, message.id, mode)
           : undefined}
-        onContextMenu={onMessageContextMenu
-          ? (event) => onMessageContextMenu(event, thread.threadId, message, inspectable)
-          : undefined}
-        onSelectionMenu={onMessageContextMenu
-          ? (event) => onMessageContextMenu(event, thread.threadId, message, inspectable, "selectionToolbar")
+        onSelectionMenu={onMessageSelection
+          ? (event) => onMessageSelection(event, thread.threadId)
           : undefined}
         onInspect={inspectable && onInspectMessage
           ? () => onInspectMessage(thread.threadId, message)
@@ -560,7 +554,7 @@ export const ThreadConversation = ({
     onApprovalDecision,
     onForkMessage,
     onInspectMessage,
-    onMessageContextMenu,
+    onMessageSelection,
     onMessageRenderModeChange,
     onOpenImage,
     onOpenSubagentThread,

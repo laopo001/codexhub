@@ -587,6 +587,14 @@
   background: transparent;
 }
 
+.messageContextMenuLayer.selectionToolbarLayer {
+  pointer-events: none;
+}
+
+.messageContextMenuLayer.selectionToolbarLayer .messageContextMenu {
+  pointer-events: auto;
+}
+
 .messageContextMenu {
   position: fixed;
   display: grid;

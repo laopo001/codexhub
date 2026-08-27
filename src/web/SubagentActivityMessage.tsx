@@ -8,14 +8,12 @@ export const SubagentActivityMessage = ({
   timestampText,
   timestampTitle,
   onOpenThread,
-  onContextMenu
 }: {
   activity: SubagentActivityView;
   statusLabel: string;
   timestampText?: string;
   timestampTitle?: string;
   onOpenThread?: (activity: SubagentActivityView) => void | Promise<void>;
-  onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
 }) => {
   const agentName = subagentActivityAgentName(activity);
   const tone = subagentActivityTone(activity.kind);
@@ -47,8 +45,7 @@ export const SubagentActivityMessage = ({
   ].filter(Boolean).join(". ");
   return (
     <article
-      className={`message event subagentActivityMessage ${tone} ${hasAssignment ? "hasAssignment" : ""} ${onContextMenu ? "hasContextMenu" : ""}`}
-      onContextMenu={onContextMenu}
+      className={`message event subagentActivityMessage ${tone} ${hasAssignment ? "hasAssignment" : ""}`}
       aria-label={articleLabel}
     >
       <span className="subagentActivityIcon" aria-hidden="true"><Bot size={15} strokeWidth={1.9} /></span>

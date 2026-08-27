@@ -8,7 +8,6 @@ import {
   commandPaletteCacheKey,
   composerCursorOnFirstLine,
   composerCursorOnLastLine,
-  contextMenuPosition,
   normalizeSelectedText,
   selectionToolbarPosition,
   selectedTextWithin,
@@ -22,10 +21,9 @@ import type {
   CommandPaletteEntry,
   OpenThreadState,
   ComposerHistoryState,
-  MessageContextMenuState,
+  MessageSelectionToolbarState,
   MessageRenderMode,
-  PermissionProfileDraft,
-  WebRecordView
+  PermissionProfileDraft
 } from "../types.js";
 import type { ConversationThreadAction } from "../openThreadReducer.js";
 
@@ -35,13 +33,12 @@ type ComposerActionsContext = {
   composerDraftStore: ComposerDraftStore;
   composerHistoryRef: React.MutableRefObject<ComposerHistoryState | null>;
   conversationThreadsRef: React.MutableRefObject<Map<string, OpenThreadState>>;
-  messageContextMenu: MessageContextMenuState | null;
+  messageSelectionToolbar: MessageSelectionToolbarState | null;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
   setCommandPaletteByScope: React.Dispatch<React.SetStateAction<Record<string, CommandPalette>>>;
   setCommandPaletteLoadingScopes: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setComposerMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
-  setMessageContextMenu: React.Dispatch<React.SetStateAction<MessageContextMenuState | null>>;
+  setMessageSelectionToolbar: React.Dispatch<React.SetStateAction<MessageSelectionToolbarState | null>>;
   setMessageRenderModes: React.Dispatch<React.SetStateAction<Record<string, MessageRenderMode>>>;
   setThreadControlsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   dispatchConversationThread: (action: ConversationThreadAction) => void;
@@ -149,15 +146,12 @@ export type ComposerActions = {
   clearThreadAttachments: (threadId: string) => void;
   removeThreadImage: (threadId: string, imageId: string) => void;
   removeThreadTextAttachment: (threadId: string, textId: string) => void;
-  openMessageContextMenu: (
+  openMessageSelectionToolbar: (
     event: React.MouseEvent,
-    threadId: string,
-    message: WebRecordView,
-    canInspect: boolean
+    threadId: string
   ) => void;
-  inspectContextMessage: () => void;
-  addContextSelectionToConversation: () => void;
-  copyContextSelection: () => Promise<void>;
+  addSelectionToConversation: () => void;
+  copySelection: () => Promise<void>;
 };
 
 export const createComposerActions = (ctx: ComposerActionsContext, deps: ComposerActionsDependencies): ComposerActions => {
@@ -421,69 +415,41 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     ctx.dispatchConversationThread({ type: "remove-text", threadId, textId });
   };
 
-  const openMessageContextMenu = (
+  const openMessageSelectionToolbar = (
     event: React.MouseEvent,
-    threadId: string,
-    message: WebRecordView,
-    canInspect: boolean,
-    presentation: MessageContextMenuState["presentation"] = "contextMenu"
+    threadId: string
   ) => {
     const target = event.currentTarget;
     if (!(target instanceof HTMLElement)) return;
     const selectedText = selectedTextWithin(target);
-    if (!canInspect && !selectedText) return;
-    if (presentation === "selectionToolbar") {
-      if (!selectedText) return;
-      const selection = window.getSelection();
-      if (!selection?.rangeCount) return;
-      const rect = selection.getRangeAt(selection.rangeCount - 1).getBoundingClientRect();
-      const position = selectionToolbarPosition(rect);
-      window.requestAnimationFrame(() => {
-        if (selectedTextWithin(target) !== selectedText) return;
-        ctx.setComposerMenuOpen(false);
-        ctx.setThreadControlsMenuOpen(false);
-        ctx.setMessageContextMenu({
-          ...position,
-          presentation,
-          threadId,
-          message,
-          selectedText,
-          canInspect
-        });
+    if (!selectedText) return;
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const rect = selection.getRangeAt(selection.rangeCount - 1).getBoundingClientRect();
+    const position = selectionToolbarPosition(rect);
+    window.requestAnimationFrame(() => {
+      if (selectedTextWithin(target) !== selectedText) return;
+      ctx.setComposerMenuOpen(false);
+      ctx.setThreadControlsMenuOpen(false);
+      ctx.setMessageSelectionToolbar({
+        ...position,
+        threadId,
+        selectedText
       });
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    ctx.setComposerMenuOpen(false);
-    ctx.setThreadControlsMenuOpen(false);
-    ctx.setMessageContextMenu({
-      ...contextMenuPosition(event.clientX, event.clientY),
-      presentation,
-      threadId,
-      message,
-      selectedText,
-      canInspect
     });
   };
 
-  const inspectContextMessage = () => {
-    if (!ctx.messageContextMenu?.canInspect) return;
-    ctx.setInspectMessage(ctx.messageContextMenu.message);
-    ctx.setMessageContextMenu(null);
-  };
-
-  const addContextSelectionToConversation = () => {
-    if (!ctx.messageContextMenu?.selectedText) return;
-    addThreadTextAttachment(ctx.messageContextMenu.threadId, ctx.messageContextMenu.selectedText);
-    ctx.setMessageContextMenu(null);
+  const addSelectionToConversation = () => {
+    if (!ctx.messageSelectionToolbar?.selectedText) return;
+    addThreadTextAttachment(ctx.messageSelectionToolbar.threadId, ctx.messageSelectionToolbar.selectedText);
+    ctx.setMessageSelectionToolbar(null);
     window.getSelection()?.removeAllRanges();
   };
 
-  const copyContextSelection = async () => {
-    if (!ctx.messageContextMenu?.selectedText) return;
-    await writeTextToClipboard(ctx.messageContextMenu.selectedText);
-    ctx.setMessageContextMenu(null);
+  const copySelection = async () => {
+    if (!ctx.messageSelectionToolbar?.selectedText) return;
+    await writeTextToClipboard(ctx.messageSelectionToolbar.selectedText);
+    ctx.setMessageSelectionToolbar(null);
   };
 
   return {
@@ -507,10 +473,9 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     clearThreadAttachments,
     removeThreadImage,
     removeThreadTextAttachment,
-    openMessageContextMenu,
-    inspectContextMessage,
-    addContextSelectionToConversation,
-    copyContextSelection
+    openMessageSelectionToolbar,
+    addSelectionToConversation,
+    copySelection
   };
 };
 

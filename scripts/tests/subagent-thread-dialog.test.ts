@@ -269,20 +269,28 @@ test("message image preview keeps markdown component identities stable across pa
   assert.doesNotMatch(componentsSource, /markdownComponents\(threadWorkingDirectory,/);
 });
 
-test("mouse selection opens a compact toolbar while right click keeps the existing action menu", async () => {
-  const [actionsSource, componentsSource, dialogsSource, modalsCss] = await Promise.all([
+test("mouse selection opens a compact toolbar while messages keep the native context menu", async () => {
+  const [actionsSource, componentsSource, conversationSource, dialogsSource, modalsCss] = await Promise.all([
     readFile(new URL("../../src/web/appActions/composerActions.ts", import.meta.url), "utf8"),
     readFile(new URL("../../src/web/helpers/components.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../src/web/ThreadConversation.tsx", import.meta.url), "utf8"),
     readFile(new URL("../../src/web/AppDialogs.tsx", import.meta.url), "utf8"),
     readFile(new URL("../../src/web/styles/modals.css", import.meta.url), "utf8")
   ]);
 
   assert.match(componentsSource, /onMouseUp=\{onSelectionMenu\}/);
-  assert.match(actionsSource, /presentation: MessageContextMenuState\["presentation"\] = "contextMenu"/);
-  assert.match(actionsSource, /if \(presentation === "selectionToolbar"\)/);
+  assert.doesNotMatch(componentsSource, /onContextMenu=\{onContextMenu\}/);
+  assert.doesNotMatch(conversationSource, /onContextMenu=\{onMessage/);
+  assert.doesNotMatch(actionsSource, /contextMenuPosition|MessageContextMenuState|presentation === "contextMenu"/);
+  assert.match(actionsSource, /const openMessageSelectionToolbar = \(/);
   assert.match(actionsSource, /window\.requestAnimationFrame\(\(\) => \{/);
-  assert.match(actionsSource, /event\.preventDefault\(\);[\s\S]*?contextMenuPosition\(event\.clientX, event\.clientY\)/);
-  assert.match(dialogsSource, /messageContextMenu\.presentation === "selectionToolbar"/);
+  assert.match(dialogsSource, /className="messageContextMenuLayer selectionToolbarLayer"/);
+  assert.doesNotMatch(dialogsSource, /messageSelectionToolbar\.canInspect|inspectContextMessage/);
+  assert.match(cssBlock(modalsCss, ".messageContextMenuLayer.selectionToolbarLayer"), /pointer-events:\s*none/);
+  assert.match(
+    cssBlock(modalsCss, ".messageContextMenuLayer.selectionToolbarLayer .messageContextMenu"),
+    /pointer-events:\s*auto/
+  );
   assert.match(cssBlock(modalsCss, ".messageContextMenu.selectionToolbar"), /display:\s*flex/);
   assert.match(cssBlock(modalsCss, ".messageContextMenu.selectionToolbar"), /min-width:\s*0/);
 });

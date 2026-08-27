@@ -1332,14 +1332,6 @@
   color: #9aa39c;
 }
 
-.message.hasContextMenu {
-  user-select: text;
-}
-
-.message.hasContextMenu:hover {
-  background: #f2f8fb;
-}
-
 .message.inspectableTool {
   cursor: pointer;
 }
