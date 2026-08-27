@@ -1448,16 +1448,27 @@
 }
 
 .imagePreviewModal {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(1100px, calc(100vw - 36px));
   height: min(820px, calc(100vh - 36px));
+  border-radius: 14px;
+}
+
+.imagePreviewHeader {
+  align-items: center;
+  min-width: 0;
+}
+
+.imagePreviewHeader .iconButton {
+  flex: 0 0 auto;
 }
 
 .imagePreviewBody {
   min-height: 0;
+  min-width: 0;
   display: grid;
   place-items: center;
-  overflow: auto;
+  overflow: hidden;
   border-radius: 8px;
   background: #f5f7f1;
 }
@@ -1467,6 +1478,49 @@
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+}
+
+.imagePreviewDetails {
+  min-width: 0;
+  border-top: 1px solid #dbe3d8;
+  color: #51604f;
+  font-size: 13px;
+  line-height: 1.45;
+  padding-top: 8px;
+}
+
+.imagePreviewDetails summary {
+  width: fit-content;
+  color: #405244;
+  cursor: pointer;
+  font-weight: 700;
+  user-select: none;
+}
+
+.imagePreviewDetails p {
+  max-height: min(22vh, 180px);
+  margin: 8px 0 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 640px) {
+  .imagePreviewOverlay {
+    padding: 8px;
+  }
+
+  .imagePreviewModal {
+    width: calc(100vw - 16px);
+    height: calc(100svh - 16px);
+    max-height: calc(100svh - 16px);
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .imagePreviewDetails p {
+    max-height: min(28svh, 180px);
+  }
 }
 
 .filePreviewModal .ant-modal-container {

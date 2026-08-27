@@ -1,6 +1,6 @@
 import React from "react";
 import { Modal, Select, Switch } from "antd";
-import { ChevronRight, Target } from "lucide-react";
+import { ChevronRight, Target, X } from "lucide-react";
 import { isNativeElectronSurface } from "./appConfig.js";
 import {
   apiRouteJson,
@@ -929,17 +929,22 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
 
       {imagePreview ? (
         <div className="modalOverlay imagePreviewOverlay" role="dialog" aria-modal="true" onClick={() => setImagePreview(null)}>
-          <section className="modal imagePreviewModal" onClick={(event) => event.stopPropagation()}>
-            <header className="modalHeader">
-              <div>
-                <h2>Image</h2>
-                {imagePreview.title ? <p>{imagePreview.title}</p> : null}
-              </div>
-              <button type="button" className="iconButton" onClick={() => setImagePreview(null)} aria-label="Close">x</button>
+          <section className="modal imagePreviewModal" aria-labelledby="image-preview-title" onClick={(event) => event.stopPropagation()}>
+            <header className="modalHeader imagePreviewHeader">
+              <h2 id="image-preview-title">Image preview</h2>
+              <button type="button" className="iconButton" onClick={() => setImagePreview(null)} aria-label="Close image preview">
+                <X size={18} aria-hidden="true" />
+              </button>
             </header>
             <div className="imagePreviewBody">
               <img src={imagePreview.url} alt={imagePreview.title ?? "preview"} />
             </div>
+            {imagePreview.title ? (
+              <details className="imagePreviewDetails">
+                <summary>Image details</summary>
+                <p>{imagePreview.title}</p>
+              </details>
+            ) : null}
           </section>
         </div>
       ) : null}
