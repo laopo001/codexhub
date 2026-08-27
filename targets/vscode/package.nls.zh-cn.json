@@ -12,7 +12,5 @@
   "command.sendPath.title": "发送路径到 Codex Hub",
   "command.sendPath.shortTitle": "发送路径",
   "viewsContainer.codexhub.title": "Codex Hub",
-  "view.workspace.name": "Workspace",
-  "configuration.title": "Codex Hub",
-  "configuration.enabled.description": "启用当前 VS Code 窗口中的 Codex Hub 插件集成。"
+  "view.workspace.name": "Workspace"
 }

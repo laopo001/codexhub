@@ -28,20 +28,12 @@ import {
   configuredVscodeAuthorityAuthToken,
   removeLegacyVscodeAuthorityTokenFile
 } from "./authorityAuth.js";
-import {
-  readVscodeExtensionSettings,
-  type VscodeExtensionSettings
-} from "./settings.js";
 import { buildWebviewBridgeScript } from "./webviewBridge.js";
 import { VscodeWebviewHtmlController } from "./webviewHtmlController.js";
 
 const viewId = "codexhub.workspaceView";
 const surfaceHeartbeatMs = 10_000;
 const maxSelectionAttachmentBytes = 512 * 1024;
-
-const currentVscodeExtensionSettings = () => readVscodeExtensionSettings(
-  vscode.workspace.getConfiguration("codexhub")
-);
 
 type VscodeCodexHubServer = EmbeddedAuthorityHandle;
 
@@ -50,14 +42,6 @@ let activeProvider: CodexHubWorkspaceViewProvider | null = null;
 export function activate(context: vscode.ExtensionContext) {
   const provider = new CodexHubWorkspaceViewProvider(context);
   activeProvider = provider;
-
-  const updateSettings = () => {
-    const settings = currentVscodeExtensionSettings();
-    void vscode.commands.executeCommand("setContext", "codexhub.enabled", settings.enabled);
-    provider.onSettingsChanged(settings);
-  };
-
-  updateSettings();
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(viewId, provider, {
       webviewOptions: { retainContextWhenHidden: true }
@@ -68,10 +52,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("codexhub.sendSelectionToChat", () => provider.sendSelectionToChat()),
     vscode.commands.registerCommand("codexhub.sendPathToChat", (uri?: vscode.Uri, selectedUris?: vscode.Uri[]) => provider.sendPathToChat(uri, selectedUris)),
     vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()),
-    vscode.workspace.onDidChangeConfiguration((event) => {
-      if (!event.affectsConfiguration("codexhub")) return;
-      updateSettings();
-    }),
     provider
   );
 }
@@ -103,25 +83,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
-  isEnabled() {
-    return currentVscodeExtensionSettings().enabled;
-  }
-
-  onSettingsChanged(settings: VscodeExtensionSettings) {
-    if (!settings.enabled) {
-      this.stopHeartbeat();
-      void this.unregisterSurface();
-      if (this.view && !this.disposed) {
-        this.setWebviewHtml("disabled", statusHtml("Codex Hub is disabled in VS Code Settings."));
-      }
-      return;
-    }
-    if (this.view && !this.disposed) {
-      this.renderPromise = this.render();
-      void this.renderPromise;
-    }
-  }
-
   static resetCurrentServer() {
     CodexHubWorkspaceViewProvider.currentServer = null;
     CodexHubWorkspaceViewProvider.currentServerStart = null;
@@ -137,10 +98,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     view.webview.options = {
       enableScripts: true
     };
-    if (!this.isEnabled()) {
-      this.setWebviewHtml("disabled", statusHtml("Codex Hub is disabled in VS Code Settings."));
-      return;
-    }
     this.renderPromise = this.render();
     void this.renderPromise;
   }
@@ -160,19 +117,11 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   async refresh() {
     if (!this.view || this.disposed) return;
-    if (!this.isEnabled()) {
-      this.setWebviewHtml("disabled", statusHtml("Codex Hub is disabled in VS Code Settings."), true);
-      return;
-    }
     this.renderPromise = this.render({ forceHtml: true });
     await this.renderPromise;
   }
 
   async openInBrowser() {
-    if (!this.isEnabled()) {
-      await vscode.window.showInformationMessage("Codex Hub is disabled in VS Code Settings.");
-      return;
-    }
     const server = await this.ensureServer();
     const folders = fileWorkspaceFolders();
     if (folders.length) {
@@ -212,10 +161,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   }
 
   private async sendTextAttachmentsToChat(texts: string[]) {
-    if (!this.isEnabled()) {
-      await vscode.window.showInformationMessage("Codex Hub is disabled in VS Code Settings.");
-      return;
-    }
     const normalized = texts.map((text) => text.trim()).filter(Boolean);
     if (!normalized.length) return;
     if (this.view) {
@@ -307,12 +252,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   private async render(options?: { forceHtml?: boolean }) {
     if (!this.view || this.disposed) return;
     const forceHtml = Boolean(options?.forceHtml);
-    if (!this.isEnabled()) {
-      this.stopHeartbeat();
-      await this.unregisterSurface();
-      this.setWebviewHtml("disabled", statusHtml("Codex Hub is disabled in VS Code Settings."), forceHtml);
-      return;
-    }
     const workspaceFolders = fileWorkspaceFolders();
     if (!workspaceFolders.length) {
       this.stopHeartbeat();
@@ -344,7 +283,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   }
 
   private async ensureServer() {
-    if (!this.isEnabled()) throw new Error("Codex Hub is disabled in VS Code Settings.");
     const current = CodexHubWorkspaceViewProvider.currentServer;
     if (current) {
       const health = await probeEmbeddedAuthority(current.url, current.authorityId, Boolean(current.authToken));
@@ -502,7 +440,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   private async resolveConfigPath() {
     const fallbackPath = path.join(embeddedAuthorityDataDirectory(), "config.yaml");
-    if (!this.isEnabled()) return fallbackPath;
     try {
       const server = await this.ensureServer();
       const response = await fetch(new URL("/api/health", server.url));
