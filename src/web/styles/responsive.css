@@ -56,16 +56,17 @@
   }
 
   .composer {
-    padding: 8px 9px calc(9px + env(safe-area-inset-bottom));
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   }
 
   .composerLayout {
     width: 100%;
+    gap: 6px;
   }
 
   .composerSurface {
-    border-radius: 13px;
-    padding: 8px 9px;
+    border-radius: 14px;
+    padding: 7px 9px 8px;
   }
 
   .goalStrip {
@@ -89,12 +90,13 @@
   .composer textarea {
     min-height: calc(2 * 1.4em);
     max-height: 132px;
-    padding: 0 4px;
+    padding: 1px 4px 3px;
+    font-size: 13px;
   }
 
   .composerActions {
     flex-wrap: wrap;
-    gap: 5px;
+    gap: 6px;
   }
 
   .composerRightActions {
@@ -103,13 +105,14 @@
   }
 
   .composerModeSegmented {
-    flex: 0 0 98px;
-    width: 98px;
-    min-width: 98px;
+    flex: 0 0 96px;
+    width: 96px;
+    min-width: 96px;
+    height: 30px;
   }
 
   .composerMenu {
-    min-width: min(248px, calc(100vw - 48px));
+    min-width: min(260px, calc(100vw - 32px));
   }
 
   .modalOverlay {

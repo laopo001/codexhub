@@ -1,5 +1,5 @@
 import React from "react";
-import { Command as CommandIcon, Package, Sparkles } from "lucide-react";
+import { ArrowUp, Command as CommandIcon, Package, Sparkles } from "lucide-react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { isVscodeSurface } from "./appConfig.js";
 import {
@@ -498,7 +498,7 @@ export const ComposerSubmitButton = ({
       aria-label="Send message"
       title={title}
     >
-      ↑
+      <ArrowUp size={16} strokeWidth={2.6} aria-hidden="true" />
     </button>
   );
 };

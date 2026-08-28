@@ -94,7 +94,7 @@ test("reasoning catalog stays model-specific and preserves descriptions", async 
   assert.equal(modelOptionLabel({ value: "auto", label: "Auto" }), "Auto");
   assert.equal(modelOptionLabel({ value: "gpt-5.6-sol", label: "Sol" }), "gpt-5.6-sol");
   const ultraOption = automaticOptions.find((option) => option.value === "ultra");
-  assert.equal(reasoningOptionLabel(ultraOption!), "Ultra");
+  assert.equal(reasoningOptionLabel(ultraOption!), "ultra");
   assert.equal(ultraOption?.description, "Maximum reasoning with automatic task delegation");
   assert.equal(automaticOptions.some((option) => option.value === "max"), false);
   assert.equal(modelSupportsReasoningEffort(catalog, "gpt-5.6-luna", "ultra"), false);

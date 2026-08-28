@@ -1052,7 +1052,7 @@ export const reasoningDisplayLabel = (value: string, catalogLabel?: string) => {
 };
 
 export const reasoningOptionLabel = (option: { value: string; label: string }) =>
-  reasoningDisplayLabel(option.value, option.label);
+  option.value;
 
 export const isFastServiceTier = (tier: string | null | undefined) =>
   tier === "priority" || tier === "fast";

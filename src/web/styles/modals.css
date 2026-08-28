@@ -713,14 +713,6 @@
   opacity: 0.55;
 }
 
-.imageUploadInput {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
 .messageContextMenuLayer {
   position: fixed;
   inset: 0;

@@ -1,21 +1,21 @@
 .composer {
   border-top: 1px solid #dfe5dc;
-  padding: 8px 14px calc(10px + env(safe-area-inset-bottom));
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
   background: #f4f6f1;
 }
 
 .composerLayout {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   width: min(1522px, 100%);
   margin: 0 auto;
 }
 
 .composerThreadEmpty {
   display: grid;
-  min-height: 34px;
+  min-height: 36px;
   place-items: center;
-  color: #8a9584;
+  color: #859180;
   font-size: 12px;
 }
 
@@ -110,10 +110,18 @@
   height: 16px;
   color: #66715f;
   line-height: 1;
+  border-radius: 4px;
+  transition: color 120ms ease, background-color 120ms ease;
 }
 
 .openThreadTabs > .ant-tabs-nav .openThreadTabCloseTrigger:hover {
   color: #17211a;
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+.openThreadTabs > .ant-tabs-nav .openThreadTabCloseTrigger:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1px;
 }
 
 .openThreadCloseConfirm .ant-popover-inner {
@@ -206,89 +214,122 @@
   font-size: 12px;
 }
 
+/* ==========================================================================
+   Composer Surface & Shell
+   ========================================================================== */
+
 .composerSurface {
   position: relative;
   display: grid;
-  gap: 5px;
+  gap: 6px;
   width: 100%;
   min-width: 0;
-  border: 1px solid #c6d0c2;
-  border-radius: 14px;
+  border: 1px solid #c7d2c3;
+  border-radius: 16px;
   background: #ffffff;
-  padding: 8px 10px;
-  box-shadow: 0 8px 22px rgb(18 32 24 / 0.07);
+  padding: 9px 12px 10px;
+  box-shadow: 0 1px 3px rgba(18, 32, 24, 0.04), 0 6px 20px rgba(18, 32, 24, 0.06);
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
+
+.composerSurface:focus-within {
+  border-color: #9cb399;
+  box-shadow: 0 2px 6px rgba(18, 32, 24, 0.04), 0 10px 28px rgba(18, 32, 24, 0.08), 0 0 0 1.5px rgba(35, 83, 54, 0.18);
+}
+
+/* ==========================================================================
+   Goal Strip
+   ========================================================================== */
 
 .goalStrip {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-height: 30px;
-  border: 1px solid #d9dfd5;
-  border-radius: 14px;
-  background: #f8faf5;
-  padding: 4px 6px 4px 8px;
+  border: 1px solid #d6dfd2;
+  border-radius: 10px;
+  background: #f7faf5;
+  padding: 4px 6px 4px 9px;
   color: #17211a;
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
 
 .goalStrip.active {
-  border-color: #cad8ca;
-  background: #f6faf4;
+  border-color: #b8dcbf;
+  background: #f0f8f3;
+  color: #13462b;
 }
 
 .goalStrip.paused {
-  border-color: #d9d4c7;
-  background: #faf8f0;
+  border-color: #e5dab9;
+  background: #fbf8ee;
+  color: #6b4d0e;
 }
 
 .goalStrip.blocked {
-  border-color: #ead0c8;
-  background: #fff5f2;
+  border-color: #f1cfc6;
+  background: #fff4f1;
+  color: #8c2819;
 }
 
 .goalStrip.complete {
-  border-color: #d7ded4;
-  background: #f7f9f5;
-  color: #66715f;
+  border-color: #dbe2d7;
+  background: #f5f8f3;
+  color: #556351;
 }
 
 .goalStripMain {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
 }
 
 .goalStripIcon {
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  color: #7c8778;
+  width: 15px;
+  height: 15px;
+  color: #6d7b6a;
   stroke-width: 2.35;
+}
+
+.goalStrip.active .goalStripIcon {
+  color: #1b7a44;
+}
+
+.goalStrip.paused .goalStripIcon {
+  color: #8f620e;
+}
+
+.goalStrip.blocked .goalStripIcon {
+  color: #bf341d;
 }
 
 .goalStripLabel {
   flex: 0 0 auto;
-  color: #3f4c3b;
-  font-size: 12px;
-  font-weight: 780;
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 750;
   white-space: nowrap;
 }
 
 .goalStripObjective {
   min-width: 0;
   overflow: hidden;
-  color: #17211a;
+  color: inherit;
   font-size: 12px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+  opacity: 0.92;
 }
 
 .goalStripAge {
   flex: 0 0 auto;
-  color: #8a9586;
-  font-size: 12px;
+  color: #7b8877;
+  font-size: 11.5px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -301,33 +342,83 @@
 .goalIconButton {
   display: grid;
   place-items: center;
-  width: 26px;
-  min-height: 26px;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
-  color: #66715f;
+  color: #606d5c;
   padding: 0;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, transform 80ms ease;
 }
 
 .goalIconButton:hover {
-  background: #e8eee4;
+  background: rgba(0, 0, 0, 0.07);
   color: #17211a;
 }
 
-.goalIconButton.danger:hover {
-  background: #f6dfd7;
-  color: #8b3f31;
+.goalIconButton:active {
+  transform: scale(0.96);
 }
+
+.goalIconButton:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1px;
+}
+
+.goalIconButton.danger:hover {
+  background: #fde8e8;
+  color: #c81e1e;
+}
+
+/* ==========================================================================
+   Composer Input & Textarea
+   ========================================================================== */
 
 .composerInput {
   position: relative;
   display: grid;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
+
+.composer textarea {
+  min-height: calc(2 * 1.45em);
+  max-height: 180px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #17211a;
+  padding: 2px 4px 4px;
+  resize: none;
+  overflow-y: hidden;
+  box-shadow: none;
+  font-size: 13.5px;
+  line-height: 1.45;
+  scrollbar-width: thin;
+}
+
+.composer textarea:focus {
+  outline: none;
+}
+
+.composer textarea::placeholder {
+  color: #8a9686;
+  font-weight: 400;
+}
+
+.composer textarea::selection {
+  background: #cbe3d3;
+  color: #0b2214;
+}
+
+/* ==========================================================================
+   Command Palette
+   ========================================================================== */
 
 .commandPalette {
   position: absolute;
@@ -339,11 +430,11 @@
   width: min(720px, 100%);
   max-height: min(420px, 52vh);
   overflow: hidden;
-  border: 1px solid #cbd6c7;
-  border-radius: 12px;
+  border: 1px solid #c7d2c3;
+  border-radius: 14px;
   background: #ffffff;
   padding: 6px;
-  box-shadow: 0 18px 46px rgb(18 32 24 / 0.18);
+  box-shadow: 0 4px 12px rgba(18, 32, 24, 0.08), 0 16px 40px rgba(18, 32, 24, 0.15);
 }
 
 .commandPaletteHeader {
@@ -352,25 +443,26 @@
   justify-content: space-between;
   gap: 10px;
   min-height: 24px;
-  color: #66715f;
-  padding: 0 8px;
+  color: #667360;
+  padding: 2px 8px 4px;
   font-size: 11px;
-  font-weight: 780;
-  letter-spacing: 0;
+  font-weight: 750;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
 }
 
 .commandPaletteGroup {
-  color: #7b8676;
+  color: #7b8875;
   padding: 8px 8px 3px;
-  font-size: 11px;
-  font-weight: 760;
-  letter-spacing: 0;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
 }
 
 .commandPaletteList {
   min-height: 36px;
+  scrollbar-width: thin;
 }
 
 .commandPaletteItem {
@@ -380,17 +472,24 @@
   gap: 8px;
   min-height: 36px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: #17211a;
   padding: 4px 8px;
   width: 100%;
   text-align: left;
+  cursor: pointer;
+  transition: background-color 100ms ease;
 }
 
 .commandPaletteItem:hover,
 .commandPaletteItem.active {
-  background: #eef3eb;
+  background: #edf3ec;
+}
+
+.commandPaletteItem:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: -1px;
 }
 
 .commandPalette.keyboardNavigation .commandPaletteItem:hover:not(.active) {
@@ -398,9 +497,9 @@
 }
 
 .commandPaletteItem.disabled {
-  color: #8a9584;
-  cursor: default;
-  opacity: 0.64;
+  color: #8c9787;
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .commandPaletteItem.disabled:hover,
@@ -414,24 +513,24 @@
   width: 24px;
   height: 24px;
   border-radius: 7px;
-  background: #f0f4ed;
-  color: #53604f;
+  background: #edf2eb;
+  color: #3f5240;
 }
 
 .commandPaletteIcon.skill {
-  background: #eef5fa;
-  color: #2f6f9f;
+  background: #e9f3fa;
+  color: #1d6fa5;
 }
 
 .commandPaletteIcon.plugin {
-  background: #f1f0fa;
-  color: #5b54a0;
+  background: #f0eef9;
+  color: #5548a1;
 }
 
 .commandPaletteIcon svg {
-  width: 15px;
-  height: 15px;
-  stroke-width: 2.35;
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.3;
 }
 
 .commandPaletteText {
@@ -452,39 +551,44 @@
 .commandPaletteTitle {
   color: inherit;
   font-size: 12px;
-  font-weight: 780;
+  font-weight: 750;
 }
 
 .commandPaletteDescription {
-  color: #66715f;
-  font-size: 12px;
+  color: #63705d;
+  font-size: 11.5px;
 }
 
 .commandPaletteDetail {
   max-width: 190px;
-  color: #7c8778;
+  color: #7b8876;
   font-size: 11px;
+  font-weight: 500;
 }
 
 .commandPaletteEmpty {
-  min-height: 32px;
+  min-height: 34px;
   display: grid;
   place-items: center;
-  color: #66715f;
+  color: #6a7765;
   font-size: 12px;
 }
+
+/* ==========================================================================
+   Attachments Strip & Chips
+   ========================================================================== */
 
 .composerAttachmentStrip {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
-  min-height: 36px;
-  border: 1px solid #dbe3d7;
-  border-radius: 10px;
-  background: #f8faf5;
-  padding: 4px 5px;
+  min-height: 38px;
+  border: 1px solid #d9e2d5;
+  border-radius: 11px;
+  background: #f7faf5;
+  padding: 4px 6px;
 }
 
 .composerAttachmentCount {
@@ -492,22 +596,23 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-width: 34px;
-  height: 26px;
-  border: 1px solid #d4ded0;
+  min-width: 32px;
+  height: 25px;
+  border: 1px solid #cbd6c7;
   border-radius: 999px;
   background: #ffffff;
-  color: #4b5a48;
+  color: #354734;
   padding: 0 7px;
-  font-size: 12px;
-  font-weight: 780;
+  font-size: 11.5px;
+  font-weight: 750;
   line-height: 1;
+  box-shadow: 0 1px 2px rgba(18, 32, 24, 0.04);
 }
 
 .composerAttachmentCount svg {
   width: 13px;
   height: 13px;
-  stroke-width: 2.4;
+  stroke-width: 2.3;
 }
 
 .composerAttachmentScroller {
@@ -518,13 +623,14 @@
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+  padding: 1px 0;
 }
 
 .composerAttachmentChip {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   flex: 0 1 min(280px, 58vw);
   min-width: 0;
   max-width: min(280px, 58vw);
@@ -532,8 +638,14 @@
   border: 1px solid #cbd6c7;
   border-radius: 8px;
   background: #ffffff;
-  color: #26342a;
+  color: #233127;
   padding: 2px 3px 2px 7px;
+  box-shadow: 0 1px 2px rgba(18, 32, 24, 0.03);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.composerAttachmentChip:hover {
+  border-color: #b3c2ae;
 }
 
 .composerAttachmentChip.image {
@@ -541,11 +653,12 @@
   grid-template-rows: auto auto;
   align-items: center;
   gap: 4px;
-  flex: 0 0 112px;
-  width: 112px;
-  max-width: 112px;
+  flex: 0 0 114px;
+  width: 114px;
+  max-width: 114px;
   height: auto;
   padding: 4px;
+  border-radius: 9px;
 }
 
 .composerAttachmentChip.text {
@@ -553,11 +666,12 @@
   grid-template-rows: minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px;
-  flex: 0 0 112px;
-  width: 112px;
-  max-width: 112px;
-  height: 112px;
-  padding: 4px;
+  flex: 0 0 114px;
+  width: 114px;
+  max-width: 114px;
+  height: 114px;
+  padding: 5px;
+  border-radius: 9px;
 }
 
 .composerAttachmentIcon,
@@ -572,36 +686,43 @@
 }
 
 .composerAttachmentIcon {
-  background: #eef5fa;
-  color: #2f6f9f;
+  background: #edf4fa;
+  color: #216a9c;
 }
 
 .composerAttachmentIcon svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 2.35;
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.3;
 }
 
 .composerAttachmentChip.text .composerAttachmentIcon {
   grid-column: 1;
   grid-row: 2;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
 }
 
 .composerAttachmentThumb {
-  border: 1px solid #d7ded4;
-  background: #f4f6f1;
+  border: 1px solid #d4ded0;
+  background: #f4f7f1;
 }
 
 .composerAttachmentThumbButton {
   padding: 0;
   cursor: zoom-in;
+  border: 1px solid #d4ded0;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.composerAttachmentThumbButton:hover {
+  border-color: #235336;
+  transform: scale(1.02);
 }
 
 .composerAttachmentThumbButton:focus-visible {
-  outline: 2px solid #2f7d5a;
-  outline-offset: 2px;
+  outline: 2px solid #235336;
+  outline-offset: 1px;
 }
 
 .composerAttachmentChip.image .composerAttachmentThumb {
@@ -616,6 +737,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
 }
 
 .composerAttachmentText {
@@ -630,7 +752,7 @@
 }
 
 .composerAttachmentChip.image .composerAttachmentText {
-  padding-left: 1px;
+  padding-left: 2px;
 }
 
 .composerAttachmentChip.image .composerAttachmentPreview {
@@ -647,15 +769,15 @@
 
 .composerAttachmentName {
   color: #17211a;
-  font-size: 12px;
-  font-weight: 760;
+  font-size: 11.5px;
+  font-weight: 700;
 }
 
 .composerAttachmentPreview {
   display: flex;
   align-items: center;
   gap: 3px;
-  color: #6f7a69;
+  color: #6b7765;
   font-size: 10px;
 }
 
@@ -663,7 +785,7 @@
   grid-column: 2;
   grid-row: 2;
   align-self: center;
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.15;
 }
 
@@ -673,14 +795,14 @@
   display: -webkit-box;
   min-height: 0;
   align-self: stretch;
-  border: 1px solid #e2e9de;
+  border: 1px solid #e0e8dc;
   border-radius: 6px;
-  background: #f8faf5;
-  padding: 5px;
+  background: #f6f9f3;
+  padding: 5px 6px;
   overflow: hidden;
-  color: #53604f;
-  font-size: 11px;
-  line-height: 1.25;
+  color: #485845;
+  font-size: 10.5px;
+  line-height: 1.3;
   white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
@@ -703,87 +825,87 @@
 .composerAttachmentRemoveButton {
   display: grid;
   place-items: center;
-  width: 24px;
-  min-width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  background: transparent;
-  color: #7b8676;
-  padding: 0;
-}
-
-.composerAttachmentChip.image .composerAttachmentRemoveButton {
   width: 22px;
   min-width: 22px;
   height: 22px;
+  border-radius: 6px;
+  background: transparent;
+  color: #768371;
+  padding: 0;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.composerAttachmentChip.image .composerAttachmentRemoveButton {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
 }
 
 .composerAttachmentChip.text .composerAttachmentRemoveButton {
   grid-column: 3;
   grid-row: 2;
   align-self: center;
-  width: 22px;
-  min-width: 22px;
-  height: 22px;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
 }
 
 .composerAttachmentRemoveButton svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 2.6;
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.4;
 }
 
 .composerAttachmentRemoveButton:hover {
-  background: #eef3eb;
-  color: #17211a;
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.composerAttachmentRemoveButton:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1px;
 }
 
 .composerAttachmentClearButton {
-  min-height: 26px;
-  border-radius: 8px;
-  background: #e8eee4;
-  color: #3f4c3b;
+  min-height: 25px;
+  border-radius: 7px;
+  background: #e4ebe0;
+  color: #384936;
   padding: 0 8px;
-  font-size: 12px;
-  font-weight: 750;
+  font-size: 11.5px;
+  font-weight: 700;
   white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
 .composerAttachmentClearButton:hover {
-  background: #dfe8da;
+  background: #d8e2d3;
   color: #17211a;
 }
 
-.composer textarea {
-  min-height: calc(2 * 1.4em);
-  max-height: 180px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0 6px;
-  resize: none;
-  overflow-y: hidden;
-  box-shadow: none;
-  line-height: 1.4;
+.composerAttachmentClearButton:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1px;
 }
 
-.composer textarea:focus {
-  outline: none;
-}
+/* ==========================================================================
+   Composer Actions & Bottom Bar
+   ========================================================================== */
 
 .composerActions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 5px;
+  gap: 8px;
   min-height: 32px;
+  margin-top: 1px;
 }
 
 .composerLeftActions,
 .composerRightActions {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -791,17 +913,206 @@
   justify-content: flex-end;
 }
 
+/* ==========================================================================
+   Mode Segmented Control (Chat / Plan / Goal)
+   ========================================================================== */
+
+.composerModeSegmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 96px;
+  min-width: 96px;
+  height: 30px;
+  border: 1px solid #cbd6c7;
+  border-radius: 999px;
+  background: #f0f4ed;
+  padding: 2px;
+  gap: 2px;
+}
+
+.composerModeOption {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #50604e;
+  padding: 0;
+  cursor: pointer;
+  transition: background-color 130ms ease, color 130ms ease, box-shadow 130ms ease;
+}
+
+.composerModeOption:hover:not(.active) {
+  background: rgba(0, 0, 0, 0.05);
+  color: #17211a;
+}
+
+.composerModeOption.active {
+  background: #17261c;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.composerModeOption:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1px;
+}
+
+.composerModeIcon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.3;
+}
+
+/* ==========================================================================
+   Buttons: Icon, More, Send, Stop
+   ========================================================================== */
+
+.composerIconButton,
+.composerMoreButton,
+.composerSendButton,
+.composerStopButton {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  cursor: pointer;
+  transition: background-color 130ms ease, border-color 130ms ease, color 130ms ease, transform 90ms ease, box-shadow 130ms ease, filter 130ms ease;
+}
+
+.composerIconButton {
+  border: 1px solid #cbd6c7;
+  background: #ffffff;
+  color: #3b493a;
+  box-shadow: 0 1px 2px rgba(18, 32, 24, 0.03);
+}
+
+.composerMoreButton {
+  border: 1px solid #cbd6c7;
+  background: #ffffff;
+  color: #556350;
+  box-shadow: 0 1px 2px rgba(18, 32, 24, 0.03);
+}
+
+.composerIconButton:hover,
+.composerMoreButton:hover {
+  background: #f2f6ef;
+  border-color: #b5c3b0;
+  color: #17211a;
+}
+
+.composerIconButton:active,
+.composerMoreButton:active {
+  transform: scale(0.96);
+  background: #e6ede2;
+}
+
+.composerIconButton:focus-visible,
+.composerMoreButton:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1.5px;
+}
+
+.composerButtonIcon {
+  display: block;
+}
+
 .composerActionButtons {
-  --composer-status-ring: #cbd6c7;
+  --composer-status-ring: transparent;
   display: flex;
   align-items: center;
   gap: 5px;
 }
 
-.composerActionButtons.status-running,
-.composerActionButtons.status-waiting {
-  --composer-status-ring: #f28c28;
+.composerActionButtons.status-running {
+  --composer-status-ring: #10b981;
 }
+
+.composerActionButtons.status-waiting {
+  --composer-status-ring: #f59e0b;
+}
+
+.composerActionButton {
+  box-shadow: 0 0 0 2px var(--composer-status-ring);
+}
+
+.composerActionButton:not(:disabled):hover {
+  filter: brightness(1.05);
+}
+
+.composerActionButton:disabled {
+  cursor: not-allowed;
+}
+
+.composerSendButton {
+  background: #141f17;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 2px var(--composer-status-ring);
+}
+
+.composerSendButton:hover:not(:disabled) {
+  background: #1f3325;
+  transform: translateY(-0.5px);
+  box-shadow: 0 2px 7px rgba(20, 31, 23, 0.22), 0 0 0 2px var(--composer-status-ring);
+}
+
+.composerSendButton:active:not(:disabled) {
+  background: #0d160f;
+  transform: translateY(0.5px);
+}
+
+.composerSendButton:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 2px;
+}
+
+.composerStopButton {
+  border: 1.5px solid #ef4444;
+  background: #ffffff;
+  color: #ef4444;
+  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.1), 0 0 0 2px var(--composer-status-ring);
+}
+
+.composerStopButton:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #dc2626;
+  color: #dc2626;
+  transform: translateY(-0.5px);
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.18), 0 0 0 2px var(--composer-status-ring);
+}
+
+.composerStopButton:active:not(:disabled) {
+  background: #fee2e2;
+  transform: translateY(0.5px);
+}
+
+.composerStopButton:focus-visible {
+  outline: 2px solid #dc2626;
+  outline-offset: 2px;
+}
+
+.composerSendButton:disabled {
+  background: #e3e9e0;
+  color: #9aa796;
+  box-shadow: none;
+}
+
+.composerStopButton:disabled {
+  border-color: #dbe2d8;
+  background: #f5f8f3;
+  color: #9aa796;
+  box-shadow: none;
+}
+
+/* ==========================================================================
+   Session Controls: Model Button, Usage Pills, Context Compact
+   ========================================================================== */
 
 .composerSessionControls {
   display: flex;
@@ -815,45 +1126,61 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 5px;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
-  color: #66715f;
-  font-size: 12px;
+  color: #63715e;
+  font-size: 11.5px;
 }
 
 .usagePill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   border: 1px solid #dfe5dc;
   border-radius: 999px;
-  background: #f4f6f1;
-  padding: 3px 7px;
+  background: #f2f5ee;
+  color: #556452;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1;
   white-space: nowrap;
 }
 
 .contextCompactButton {
   --context-progress: 0%;
-  width: 25px;
-  height: 25px;
-  min-height: 25px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-color: transparent;
-  background: transparent;
-  color: #66715f;
+  border: 1px solid #dfe5dc;
+  border-radius: 999px;
+  background: #f2f5ee;
+  color: #606f5c;
   font: inherit;
   cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .contextCompactButton:hover:not(:disabled) {
-  background: #f4f6f1;
-  border-color: #dfe5dc;
-  color: #26342a;
+  background: #e6ede2;
+  border-color: #cbd6c7;
+  color: #17211a;
+}
+
+.contextCompactButton:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1px;
 }
 
 .contextCompactButton:disabled {
   cursor: default;
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .contextUsageIcon {
@@ -866,112 +1193,6 @@
   box-shadow: inset 0 0 0 1px #d3d8d1;
 }
 
-.composerSessionMenuHost {
-  position: relative;
-  display: none;
-}
-
-.composerMenuHost {
-  position: relative;
-}
-
-.composerModeSegmented {
-  display: grid;
-  grid-template-columns: repeat(3, 32px);
-  width: 98px;
-  min-width: 98px;
-  height: 32px;
-  overflow: hidden;
-  border: 1px solid #cbd6c7;
-  border-radius: 999px;
-  background: #ffffff;
-}
-
-.composerModeOption {
-  display: grid;
-  place-items: center;
-  min-width: 0;
-  border: 0;
-  border-left: 1px solid #dfe5dc;
-  background: transparent;
-  color: #3c4738;
-  padding: 0;
-  letter-spacing: 0;
-}
-
-.composerModeOption:first-child {
-  border-left: 0;
-}
-
-.composerModeOption:hover:not(.active) {
-  background: #f4f6f1;
-}
-
-.composerModeOption.active {
-  background: #1f6feb;
-  color: #ffffff;
-}
-
-.composerModeIcon {
-  width: 16px;
-  height: 16px;
-  stroke-width: 2.35;
-}
-
-.composerIconButton,
-.composerMoreButton,
-.composerSendButton,
-.composerStopButton {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  min-width: 32px;
-  min-height: 32px;
-  border: 0;
-  border-radius: 999px;
-  padding: 0;
-}
-
-.composerIconButton {
-  border: 1px solid #cbd6c7;
-  background: transparent;
-  color: #17211a;
-  font-size: 22px;
-  line-height: 1;
-}
-
-.composerMoreButton {
-  border: 1px solid #cbd6c7;
-  background: #ffffff;
-  color: #66715f;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: 1;
-}
-
-.composerIconButton:hover,
-.composerMoreButton:hover {
-  background: #f4f6f1;
-}
-
-.composerSessionPopover {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  z-index: 60;
-  max-width: calc(100vw - 32px);
-  border: 1px solid #dfe5dc;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 8px;
-  box-shadow: 0 16px 40px rgb(18 32 24 / 0.18);
-}
-
-.composerSessionPopover .composerSessionControls {
-  justify-content: flex-start;
-}
-
 .composerModelButton {
   display: inline-flex;
   align-items: center;
@@ -980,54 +1201,47 @@
   border: 1px solid #cbd6c7;
   border-radius: 999px;
   background: #ffffff;
-  color: #66715f;
+  color: #384937;
   padding: 0 9px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(18, 32, 24, 0.03);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
 .composerModelButton:hover {
-  background: #f4f6f1;
+  background: #f2f6ef;
+  border-color: #b5c3b0;
+  color: #17211a;
+  box-shadow: 0 2px 5px rgba(18, 32, 24, 0.06);
+}
+
+.composerModelButton:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1px;
 }
 
 .composerModelTierIcon {
-  width: 14px;
-  height: 14px;
-  color: #b7791f;
+  width: 13px;
+  height: 13px;
+  color: #d97706;
   stroke-width: 2.4;
   flex: 0 0 auto;
 }
 
-.composerActionButton {
-  box-shadow: 0 0 0 2px var(--composer-status-ring);
+/* ==========================================================================
+   Menus & Popovers
+   ========================================================================== */
+
+.composerMenuHost {
+  position: relative;
 }
 
-.composerActionButton:not(:disabled):hover {
-  filter: brightness(1.04);
-}
-
-.composerActionButton:disabled {
-  cursor: default;
-}
-
-.composerSendButton {
-  background: #17211a;
-  color: #ffffff;
-  font-size: 20px;
-}
-
-.composerStopButton {
-  background: #ffffff;
-  color: #17211a;
-  font-size: 15px;
-  line-height: 1;
-}
-
-.composerSendButton:disabled,
-.composerStopButton:disabled {
-  background: #dfe5dc;
-  color: #8a9584;
+.composerSessionMenuHost {
+  position: relative;
+  display: none;
 }
 
 .composerMenu {
@@ -1036,55 +1250,90 @@
   left: 0;
   z-index: 50;
   display: grid;
-  width: min(336px, calc(100vw - 32px));
+  width: min(340px, calc(100vw - 32px));
   max-height: min(70vh, 640px);
   overflow-x: hidden;
   overflow-y: auto;
-  border: 1px solid #cbd6c7;
-  border-radius: 12px;
+  border: 1px solid #c7d2c3;
+  border-radius: 14px;
   background: #ffffff;
   padding: 6px;
-  box-shadow: 0 18px 46px rgb(18 32 24 / 0.18);
+  box-shadow: 0 4px 12px rgba(18, 32, 24, 0.08), 0 16px 40px rgba(18, 32, 24, 0.15);
+  scrollbar-width: thin;
+}
+
+.composerSessionPopover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 60;
+  max-width: calc(100vw - 32px);
+  border: 1px solid #c7d2c3;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 8px 10px;
+  box-shadow: 0 4px 12px rgba(18, 32, 24, 0.08), 0 16px 40px rgba(18, 32, 24, 0.15);
+}
+
+.composerSessionPopover .composerSessionControls {
+  justify-content: flex-start;
 }
 
 .composerMenuItem {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-height: 32px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: #17211a;
   padding: 0 8px;
   text-align: left;
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background-color 100ms ease;
 }
 
 .composerMenuItem:hover:not(:disabled) {
-  background: #f4f6f1;
+  background: #edf3ec;
+}
+
+.composerMenuItem:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: -1px;
+}
+
+.composerMenuItem:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .composerMenuIcon {
-  color: #66715f;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 13px;
+  display: grid;
+  place-items: center;
+  color: #566453;
+  width: 18px;
+  height: 18px;
 }
 
 .composerMenuGroup {
   display: grid;
   gap: 6px;
-  border-top: 1px solid #eef2eb;
+  border-top: 1px solid #edf2eb;
   margin-top: 6px;
   padding: 8px 2px 2px;
 }
 
 .composerMenuGroupLabel {
-  color: #66715f;
-  font-size: 11px;
-  font-weight: 700;
+  color: #6a7764;
+  font-size: 10.5px;
+  font-weight: 750;
   line-height: 1;
   padding: 0 6px;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
 }
 
@@ -1096,24 +1345,38 @@
 
 .composerMenuChoice {
   min-height: 28px;
-  border: 1px solid #dbe4d7;
-  border-radius: 8px;
+  border: 1px solid #d8e2d4;
+  border-radius: 7px;
   background: #ffffff;
-  color: #253026;
-  font-size: 12px;
+  color: #263428;
+  font-size: 11.5px;
+  font-weight: 550;
   padding: 0 8px;
   text-align: center;
+  cursor: pointer;
+  transition: background-color 110ms ease, border-color 110ms ease, color 110ms ease;
 }
 
-.composerMenuChoice:hover {
-  background: #f4f6f1;
+.composerMenuChoice:hover:not(:disabled) {
+  background: #f2f6ef;
+  border-color: #b8c7b4;
 }
 
 .composerMenuChoice.active {
-  border-color: #2374d1;
-  background: #e9f2ff;
-  color: #0d4f9e;
-  font-weight: 700;
+  border-color: #235336;
+  background: #eaf4ed;
+  color: #144629;
+  font-weight: 750;
+}
+
+.composerMenuChoice:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1px;
+}
+
+.composerMenuChoice:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .composerGranularGrid {
@@ -1136,27 +1399,53 @@
   align-items: center;
   justify-content: space-between;
   min-height: 28px;
-  border: 0;
+  border: 1px solid #e1e9dc;
   border-radius: 7px;
-  background: #f6f8f4;
-  color: #566052;
+  background: #f7faf5;
+  color: #4a5a48;
   font-size: 11px;
+  font-weight: 550;
   padding: 0 8px;
   text-align: left;
+  cursor: pointer;
+  transition: background-color 110ms ease, border-color 110ms ease, color 110ms ease;
+}
+
+.composerMenuToggle:hover {
+  background: #eef4ec;
+  border-color: #c9d8c5;
 }
 
 .composerMenuToggle.active {
-  background: #edf5ff;
-  color: #0d4f9e;
+  border-color: #235336;
+  background: #eaf4ed;
+  color: #144629;
+  font-weight: 700;
+}
+
+.composerMenuToggle:focus-visible {
+  outline: 2px solid #235336;
+  outline-offset: 1px;
 }
 
 .composerMenuNotice {
-  color: #748070;
+  color: #72806e;
   font-size: 11px;
   line-height: 1.35;
   padding: 5px 8px;
 }
 
 .composerMenuNotice.error {
-  color: #a43b34;
+  color: #b91c1c;
+}
+
+.imageUploadInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
 }

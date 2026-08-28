@@ -1,5 +1,5 @@
 import React from "react";
-import { FileText, Image as ImageIcon, Paperclip, X } from "lucide-react";
+import { FileText, Image as ImageIcon, Paperclip, Square, X } from "lucide-react";
 import { Virtuoso, type Components, type VirtuosoHandle } from "react-virtuoso";
 import type {
   AppServerApprovalDecision,
@@ -823,7 +823,7 @@ export const ThreadConversation = ({
                       title={`Stop current turn · ${executionText}`}
                       onClick={() => void onStop(thread.threadId)}
                     >
-                      ■
+                      <Square size={11} fill="currentColor" strokeWidth={0} aria-hidden="true" />
                     </button>
                   ) : null}
                 </div>

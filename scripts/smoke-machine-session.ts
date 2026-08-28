@@ -1109,9 +1109,9 @@ const assertModelOptionSearch = async () => {
   if (
     !ultraOption
     || ultraOption.description !== "Maximum reasoning with automatic task delegation"
-    || reasoningOptionLabel(ultraOption) !== "Ultra"
+    || reasoningOptionLabel(ultraOption) !== "ultra"
     || !xhighOption
-    || reasoningOptionLabel(xhighOption) !== "Extra High"
+    || reasoningOptionLabel(xhighOption) !== "xhigh"
   ) {
     throw new Error(`reasoning catalog labels/descriptions were not preserved: ${JSON.stringify(reasoningOptions)}`);
   }

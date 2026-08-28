@@ -1,7 +1,11 @@
 import React from "react";
 import {
+  FileCode,
   ListChecks,
   MessageCircle,
+  MoreHorizontal,
+  Paperclip,
+  Plus,
   Target,
   type LucideIcon
 } from "lucide-react";
@@ -127,7 +131,7 @@ export const ThreadComposerLeftActions = ({
           aria-expanded={menuOpen}
           onClick={toggleMenu}
         >
-          +
+          <Plus className="composerButtonIcon" size={15} strokeWidth={2.4} aria-hidden="true" />
         </button>
         {menuOpen ? (
           <div className="composerMenu" role="menu">
@@ -140,7 +144,9 @@ export const ThreadComposerLeftActions = ({
                 fileInputRef.current?.click();
               }}
             >
-              <span className="composerMenuIcon" aria-hidden="true">[]</span>
+              <span className="composerMenuIcon" aria-hidden="true">
+                <Paperclip size={14} strokeWidth={2.2} />
+              </span>
               <span>添加照片和文件</span>
             </button>
             <button
@@ -156,7 +162,9 @@ export const ThreadComposerLeftActions = ({
                 void workspace.reviewThread(thread.threadId);
               }}
             >
-              <span className="composerMenuIcon" aria-hidden="true">R</span>
+              <span className="composerMenuIcon" aria-hidden="true">
+                <FileCode size={14} strokeWidth={2.2} />
+              </span>
               <span>Review changes</span>
             </button>
             <div className="composerMenuGroup" role="group" aria-label="Approval policy">
@@ -301,7 +309,7 @@ export const ThreadComposerRightActions = ({
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((open) => !open)}
         >
-          ...
+          <MoreHorizontal className="composerButtonIcon" size={15} strokeWidth={2.2} aria-hidden="true" />
         </button>
         {menuOpen ? (
           <div className="composerSessionPopover">

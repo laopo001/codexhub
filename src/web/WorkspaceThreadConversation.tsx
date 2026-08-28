@@ -1,4 +1,4 @@
-import { Target } from "lucide-react";
+import { Pencil, Target, X } from "lucide-react";
 import {
   goalStatusClass,
   goalStatusControl,
@@ -116,7 +116,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
             });
           }}
         >
-          ✎
+          <Pencil size={12} strokeWidth={2.2} aria-hidden="true" />
         </button>
         {activeGoalStatusControl ? (
           <button
@@ -138,7 +138,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
           aria-label="清除目标"
           onClick={() => void clearThreadGoal(threadId)}
         >
-          ×
+          <X size={13} strokeWidth={2.4} aria-hidden="true" />
         </button>
       </div>
     </div>

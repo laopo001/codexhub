@@ -296,13 +296,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 disabled={threadModelSelectDisabled}
                 loading={modelCatalogLoading}
                 virtual={false}
-                classNames={{ popup: { root: "threadModelOptionPopup" } }}
-                optionRender={(option) => (
-                  <div className="threadModelOption">
-                    <strong>{option.label}</strong>
-                    {option.data.description ? <small>{option.data.description}</small> : null}
-                  </div>
-                )}
                 onChange={(value) => setThreadModelDialogReasoningDraft(value as ReasoningSelection)}
               />
             </label>
