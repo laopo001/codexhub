@@ -27,6 +27,10 @@ import {
   threadDisplayTitle,
   threadRecordsForNotifications
 } from "../appHelpers.js";
+import {
+  composerInputHistoryStore,
+  type ComposerInputHistoryStore
+} from "../helpers/composerInputHistory.js";
 import type {
   OpenThreadState,
   GoalDialogState,
@@ -49,6 +53,7 @@ type ThreadActionsContext = {
   activeTabThreadIdRef?: React.MutableRefObject<string>;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   composerDraftStore: ComposerDraftStore;
+  composerInputHistoryStore?: ComposerInputHistoryStore;
   conversationThreadsRef: React.MutableRefObject<Map<string, OpenThreadState>>;
   expandedToolBatchKeys: Record<string, string[]>;
   forkingMessageKey: string;
@@ -525,7 +530,11 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   const send = async (threadId: string) => {
     const openThread = ctx.conversationThreadsRef.current.get(threadId);
     if (!openThread) return;
-    const typedText = ctx.composerDraftStore.get(threadId).trim();
+    const rawDraftText = ctx.composerDraftStore.get(threadId);
+    const typedText = rawDraftText.trim();
+    if (typedText) {
+      (ctx.composerInputHistoryStore ?? composerInputHistoryStore).record(rawDraftText);
+    }
     const textAttachments = openThread.textAttachments;
     const imageAttachments = openThread.imageAttachments;
     if (!textAttachments.length && !imageAttachments.length && typedText.toLowerCase() === "/rename") {

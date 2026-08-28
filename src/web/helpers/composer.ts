@@ -467,8 +467,9 @@ export const writeTextToClipboard = async (text: string) => {
   textarea.style.opacity = "0";
   document.body.appendChild(textarea);
   textarea.select();
-  document.execCommand("copy");
+  const copied = document.execCommand("copy");
   textarea.remove();
+  if (!copied) throw new Error("Clipboard copy failed");
 };
 
 export const contextMenuPosition = (clientX: number, clientY: number) => {

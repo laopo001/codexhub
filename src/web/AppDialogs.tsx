@@ -27,6 +27,11 @@ import {
 } from "./appHelpers.js";
 import { apiRoutes } from "../shared/apiRoutes.js";
 import { writeTextToClipboard } from "./helpers/composer.js";
+import {
+  composerInputHistoryStore,
+  formatComposerInputHistoryTime,
+  useComposerInputHistory
+} from "./helpers/composerInputHistory.js";
 import { ConnectionsPanel } from "./ConnectionsPanel.js";
 import { TaskDialog } from "./TaskDialog.js";
 import type { ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
@@ -100,7 +105,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   } = viewModel;
   const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
   const [restartState, setRestartState] = React.useState<"idle" | "restarting" | "error">("idle");
-  const [settingsSection, setSettingsSection] = React.useState<"general" | "connections">("general");
+  const [settingsSection, setSettingsSection] = React.useState<"general" | "connections" | "inputHistory">("general");
   const [notificationPersistAfterMinutesDraft, setNotificationPersistAfterMinutesDraft] = React.useState(
     String(appSettings.taskCompleteNotificationPersistAfterMinutes)
   );
@@ -367,6 +372,14 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 >
                   Connections
                 </button>
+                <button
+                  type="button"
+                  className={settingsSection === "inputHistory" ? "active" : ""}
+                  onClick={() => setSettingsSection("inputHistory")}
+                  aria-current={settingsSection === "inputHistory" ? "page" : undefined}
+                >
+                  Input history
+                </button>
               </nav>
               <div className="settingsDialogContent">
                 {settingsSection === "general" ? (
@@ -469,8 +482,10 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                       </div>
                     ) : null}
                   </div>
-                ) : (
+                ) : settingsSection === "connections" ? (
                   <ConnectionsPanel viewModel={viewModel} />
+                ) : (
+                  <InputHistorySettingsPanel />
                 )}
               </div>
             </div>
@@ -962,4 +977,99 @@ const selectOptionSearchPayload = (option: unknown) => {
     label: typeof record?.label === "string" ? record.label : "",
     searchText: typeof record?.searchText === "string" ? record.searchText : ""
   };
+};
+
+export const InputHistorySettingsPanel = ({
+  store = composerInputHistoryStore,
+  copyText = writeTextToClipboard
+}: {
+  store?: typeof composerInputHistoryStore;
+  copyText?: (text: string) => Promise<void>;
+}) => {
+  const entries = useComposerInputHistory(store);
+  const [copyStatus, setCopyStatus] = React.useState<{
+    id: string;
+    status: "copied" | "failed";
+  } | null>(null);
+
+  const handleCopy = async (id: string, text: string) => {
+    try {
+      await copyText(text);
+      setCopyStatus({ id, status: "copied" });
+    } catch {
+      setCopyStatus({ id, status: "failed" });
+    }
+    window.setTimeout(() => setCopyStatus((current) => (current?.id === id ? null : current)), 1500);
+  };
+
+  const handleClearAll = () => {
+    Modal.confirm({
+      title: "Clear all input history?",
+      content: "This will remove all saved composer input history. This action cannot be undone.",
+      okText: "Clear all",
+      okType: "danger",
+      cancelText: "Cancel",
+      onOk: () => {
+        store.clear();
+      }
+    });
+  };
+
+  return (
+    <div className="settingsHistoryPanel">
+      <div className="settingsHistoryToolbar">
+        <span className="settingsHistoryCount">
+          {entries.length === 0 ? "No input history" : `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`}
+        </span>
+        {entries.length > 0 ? (
+          <button
+            type="button"
+            className="settingsHistoryClearButton"
+            onClick={handleClearAll}
+          >
+            Clear all
+          </button>
+        ) : null}
+      </div>
+      {entries.length === 0 ? (
+        <div className="settingsHistoryEmpty" role="status">
+          No input history yet. Messages sent from the composer will appear here.
+        </div>
+      ) : (
+        <div className="settingsHistoryList" role="list">
+          {entries.map((entry) => (
+            <div className="settingsHistoryRow" key={entry.id} role="listitem">
+              <div className="settingsHistoryRowHeader">
+                <span className="settingsHistoryTime" title={entry.createdAt}>
+                  {formatComposerInputHistoryTime(entry.createdAt)}
+                </span>
+                <div className="settingsHistoryActions">
+                  <button
+                    type="button"
+                    className={`settingsHistoryActionButton${copyStatus?.id === entry.id ? ` ${copyStatus.status}` : ""}`}
+                    onClick={() => void handleCopy(entry.id, entry.text)}
+                    aria-label="Copy input text"
+                    aria-live="polite"
+                  >
+                    {copyStatus?.id === entry.id
+                      ? copyStatus.status === "copied" ? "Copied" : "Copy failed"
+                      : "Copy"}
+                  </button>
+                  <button
+                    type="button"
+                    className="settingsHistoryActionButton delete"
+                    onClick={() => store.delete(entry.id)}
+                    aria-label="Delete input history entry"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+              <pre className="settingsHistoryText">{entry.text}</pre>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 };

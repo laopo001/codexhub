@@ -386,6 +386,147 @@
   flex: 0 0 112px;
 }
 
+.settingsHistoryPanel {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.settingsHistoryToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.settingsHistoryCount {
+  color: #66715f;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settingsHistoryClearButton {
+  min-height: 28px;
+  border: 1px solid #e0e6dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #b42318;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.settingsHistoryClearButton:hover {
+  border-color: #fda29b;
+  background: #fef3f2;
+}
+
+.settingsHistoryEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 140px;
+  border: 1px dashed #d8dfd4;
+  border-radius: 8px;
+  background: #fbfcf8;
+  color: #66715f;
+  font-size: 13px;
+  text-align: center;
+  padding: 20px;
+}
+
+.settingsHistoryList {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+}
+
+.settingsHistoryRow {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #e0e6dc;
+  border-radius: 8px;
+  background: #fbfcf8;
+  padding: 9px 11px;
+}
+
+.settingsHistoryRowHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settingsHistoryTime {
+  color: #66715f;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settingsHistoryActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settingsHistoryActionButton {
+  min-height: 24px;
+  border: 1px solid #e0e6dc;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #315b36;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.settingsHistoryActionButton:hover {
+  border-color: #cbd6c7;
+  background: #eef5ea;
+}
+
+.settingsHistoryActionButton.copied {
+  border-color: #9bb89a;
+  background: #eef7ec;
+  color: #2b6e34;
+}
+
+.settingsHistoryActionButton.failed {
+  border-color: #fda29b;
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.settingsHistoryActionButton.delete {
+  color: #889382;
+}
+
+.settingsHistoryActionButton.delete:hover {
+  border-color: #fecdca;
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.settingsHistoryText {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid #e8ede4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17211a;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
 .goalDialog {
   display: grid;
   gap: 10px;
