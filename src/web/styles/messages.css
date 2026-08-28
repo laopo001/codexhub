@@ -1457,12 +1457,17 @@
 }
 
 .message.thinking {
-  border: 1px solid rgba(184, 134, 40, 0.25);
-  border-left: 3px solid #a67c2e;
-  background: #fffdf8;
+  border: 1px solid rgba(102, 82, 123, 0.24);
+  border-left: 3px solid #66527b;
+  background: #faf8fc;
   padding: 6px 12px;
   margin-bottom: 6px;
   border-radius: 7px;
+}
+
+.message.thinking .messageHeader,
+.message.thinking .messageHeader b {
+  color: #66527b;
 }
 
 .message.error {
