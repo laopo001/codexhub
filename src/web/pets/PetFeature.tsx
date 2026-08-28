@@ -413,7 +413,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
               <strong>Codex activity</strong>
               <span>{activeActivities.length ? `${activeActivities.length} active` : "All quiet"}</span>
             </div>
-            <button type="button" className="petIconButton" onClick={() => controller.setTrayOpen(false)} aria-label="Close activity"><X size={16} /></button>
+            <button type="button" className="petIconButton" onClick={() => controller.setTrayOpen(false)} aria-label="Close activity"><X size={14} /></button>
           </header>
           <div className="petActivityList">
             {activeActivities.length ? activeActivities.map((activity) => (
@@ -442,7 +442,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
             )) : <div className="petActivityEmpty">No Codex work needs attention.</div>}
           </div>
           {!desktopPetWindow ? (
-            <button type="button" className="petTraySettings" onClick={controller.openPicker}><PawPrint size={15} /> Choose pet</button>
+            <button type="button" className="petTraySettings" onClick={controller.openPicker}><PawPrint size={14} /> Choose pet</button>
           ) : null}
         </section>
       ) : null}
