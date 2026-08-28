@@ -49,7 +49,8 @@ const openThread = (
   approvalsReviewerDraft: "auto",
   permissionProfileDraft: null,
   imageAttachments: [],
-  textAttachments: []
+  textAttachments: [],
+  pendingUserMessages: []
 });
 
 const fixture = async (
@@ -616,6 +617,38 @@ const serverFailure = (message: string, delivery: "turn" | "steer" | "goal") =>
     status: 409,
     headers: { "content-type": "application/json" }
   });
+
+test("chat send queues a visible local user message before the turn request resolves", async () => {
+  let resolveFetch!: (response: Response) => void;
+  let markFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => {
+    markFetchStarted = resolve;
+  });
+  const fetchResponse = new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  });
+  const { actions, conversationThreads, threadId } = await fixture(
+    true,
+    "chat",
+    async () => {
+      markFetchStarted();
+      return fetchResponse;
+    }
+  );
+
+  const sending = actions.send(threadId);
+  await fetchStarted;
+  const queued = conversationThreads.get(threadId)?.pendingUserMessages ?? [];
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].text, "hello");
+
+  resolveFetch(new Response(JSON.stringify({ ok: true, delivery: "queued", queued: true }), {
+    status: 200,
+    headers: { "content-type": "application/json" }
+  }));
+  await sending;
+  assert.equal(conversationThreads.get(threadId)?.pendingUserMessages.length, 1);
+});
 
 type SendFailureCase = {
   name: string;

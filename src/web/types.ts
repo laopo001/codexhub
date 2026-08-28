@@ -171,6 +171,14 @@ export type OpenThreadState = ThreadDetail & {
   permissionProfileDraft: PermissionProfileDraft;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];
+  pendingUserMessages: PendingUserMessage[];
+};
+
+export type PendingUserMessage = {
+  id: string;
+  text: string;
+  imageUrls: string[];
+  createdAt: string;
 };
 
 export type SubagentThreadDialogState = {

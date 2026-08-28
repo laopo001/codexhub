@@ -1,4 +1,5 @@
 import type { SetStateAction } from "react";
+import { recordsToViews } from "../core/codexRecordView.js";
 import type { CodexRecord } from "../shared/recordTypes.js";
 import type {
   ThreadBackgroundTerminals,
@@ -14,10 +15,12 @@ import type {
   OpenThreadState,
   ReasoningSelection,
   PermissionProfileDraft,
+  PendingUserMessage,
   ServiceTierSelection,
   ThreadDetail
 } from "./types.js";
 import { applyThreadRecordDelta, combineRecordSources, mergeRecord } from "./helpers/records.js";
+import { normalizeHistoryMessageText, normalizeSelectedText } from "./helpers/composer.js";
 
 type DraftAction =
   | { field: "modelDraft"; value: SetStateAction<ModelSelection> }
@@ -41,6 +44,8 @@ export type ConversationThreadAction =
       backgroundTerminals?: ThreadBackgroundTerminals;
     }
   | { type: "append-record"; threadId: string; record: CodexRecord }
+  | { type: "enqueue-user-message"; threadId: string; message: PendingUserMessage }
+  | { type: "remove-pending-user-message"; threadId: string; messageId: string }
   | { type: "set-fields"; threadId: string; fields: Partial<OpenThreadState> }
   | ({ type: "set-draft"; threadId: string } & DraftAction)
   | { type: "set-composer-mode"; threadId: string; mode: ComposerMode }
@@ -73,8 +78,32 @@ export const openThreadStateFromDetail = (
   approvalsReviewerDraft: existing?.approvalsReviewerDraft ?? "auto",
   permissionProfileDraft: existing?.permissionProfileDraft ?? null,
   imageAttachments: existing?.imageAttachments ?? [],
-  textAttachments: existing?.textAttachments ?? []
+  textAttachments: existing?.textAttachments ?? [],
+  pendingUserMessages: existing?.pendingUserMessages ?? []
 });
+
+const newlyAddedRecords = (current: CodexRecord[], next: CodexRecord[]) => {
+  const currentIds = new Set(current.map((record) => record.id));
+  return next.filter((record) => !currentIds.has(record.id));
+};
+
+const reconcilePendingUserMessages = (
+  pending: PendingUserMessage[],
+  incoming: CodexRecord[]
+) => {
+  if (!pending.length || !incoming.length) return pending;
+  const confirmedTexts = incoming.flatMap((record) => {
+    const view = recordsToViews([record]).find((candidate) => candidate.role === "user");
+    return view ? [normalizeHistoryMessageText(view)] : [];
+  });
+  if (!confirmedTexts.length) return pending;
+  const remaining = [...pending];
+  for (const text of confirmedTexts) {
+    const index = remaining.findIndex((message) => normalizeSelectedText(message.text) === text);
+    if (index >= 0) remaining.splice(index, 1);
+  }
+  return remaining;
+};
 
 const updateThread = (
   state: OpenThreadState[],
@@ -89,6 +118,12 @@ export const openThreadReducer = (state: OpenThreadState[], action: OpenThreadAc
   if (action.type === "upsert-detail") {
     const existing = state.find((thread) => thread.threadId === action.thread.threadId);
     const next = openThreadStateFromDetail(action.thread, existing);
+    if (existing) {
+      next.pendingUserMessages = reconcilePendingUserMessages(
+        next.pendingUserMessages,
+        newlyAddedRecords(existing.records, next.records)
+      );
+    }
     return existing
       ? state.map((thread) => thread.threadId === next.threadId ? next : thread)
       : [...state, next];
@@ -118,7 +153,14 @@ export const reduceConversationThreadState = (
 ): OpenThreadState => {
   if (action.threadId !== thread.threadId) return thread;
   if (action.type === "sync-detail") {
-    return openThreadStateFromDetail(action.thread, thread);
+    const next = openThreadStateFromDetail(action.thread, thread);
+    return {
+      ...next,
+      pendingUserMessages: reconcilePendingUserMessages(
+        next.pendingUserMessages,
+        newlyAddedRecords(thread.records, next.records)
+      )
+    };
   }
   if (action.type === "merge-history") {
     return {
@@ -138,18 +180,32 @@ export const reduceConversationThreadState = (
     const mergedRecords = action.record
       ? mergeRecord(snapshotRecords, action.record)
       : snapshotRecords;
+    const records = action.delta
+      ? applyThreadRecordDelta(mergedRecords, action.delta)
+      : mergedRecords;
     return {
       ...thread,
       ...action.thread,
       ...(action.backgroundTerminals === undefined ? {} : { backgroundTerminals: action.backgroundTerminals }),
       history: action.snapshot?.history ?? thread.history,
-      records: action.delta
-        ? applyThreadRecordDelta(mergedRecords, action.delta)
-        : mergedRecords
+      records,
+      pendingUserMessages: reconcilePendingUserMessages(
+        thread.pendingUserMessages,
+        newlyAddedRecords(thread.records, records)
+      )
     };
   }
   if (action.type === "append-record") {
     return { ...thread, records: [...thread.records, action.record] };
+  }
+  if (action.type === "enqueue-user-message") {
+    return { ...thread, pendingUserMessages: [...thread.pendingUserMessages, action.message] };
+  }
+  if (action.type === "remove-pending-user-message") {
+    return {
+      ...thread,
+      pendingUserMessages: thread.pendingUserMessages.filter((message) => message.id !== action.messageId)
+    };
   }
   if (action.type === "set-fields") {
     return { ...thread, ...action.fields };

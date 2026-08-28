@@ -48,6 +48,7 @@ const thread = (threadId: string, records: CodexRecord[] = [], running = false):
   permissionProfileDraft: null,
   imageAttachments: [],
   textAttachments: [],
+  pendingUserMessages: [],
 });
 
 test("pet atlas supports the Codex V1 and V2 sprite contracts", () => {

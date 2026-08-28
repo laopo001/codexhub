@@ -70,6 +70,45 @@ test("open thread reducer merges stream records and applies semantic ordering", 
   assert.equal(state[1].running, true);
 });
 
+test("open thread reducer reconciles one queued message per new canonical user record", async () => {
+  const openThreadReducer = await loadReducer();
+  let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });
+  for (const id of ["pending-1", "pending-2"]) {
+    state = openThreadReducer(state, {
+      type: "enqueue-user-message",
+      threadId: "thread-1",
+      message: {
+        id,
+        text: "same prompt",
+        imageUrls: [],
+        createdAt: "2026-08-28T00:00:00.000Z"
+      }
+    });
+  }
+
+  const canonicalUserRecord: CodexRecord = {
+    id: "user-record-1",
+    type: "event_msg",
+    timestamp: "2026-08-28T00:00:01.000Z",
+    payload: { type: "user_message", message: "same prompt" }
+  };
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    threadId: "thread-1",
+    thread: { ...detail("thread-1"), status: "running", running: true },
+    record: canonicalUserRecord
+  });
+  assert.deepEqual(state[0].pendingUserMessages.map((message) => message.id), ["pending-2"]);
+
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    threadId: "thread-1",
+    thread: { ...detail("thread-1"), status: "running", running: true },
+    record: canonicalUserRecord
+  });
+  assert.deepEqual(state[0].pendingUserMessages.map((message) => message.id), ["pending-2"]);
+});
+
 test("open thread reducer keeps background terminals independent from transcript records", async () => {
   const openThreadReducer = await loadReducer();
   let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });

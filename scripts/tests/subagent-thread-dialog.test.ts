@@ -53,7 +53,8 @@ const subagentThread = (records: CodexRecord[]): OpenThreadState => ({
   approvalsReviewerDraft: "auto",
   permissionProfileDraft: null,
   imageAttachments: [],
-  textAttachments: []
+  textAttachments: [],
+  pendingUserMessages: []
 });
 
 test("subagent dialog exposes the complete child thread id as selectable text", async () => {

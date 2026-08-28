@@ -55,7 +55,8 @@ const thread = (
   approvalsReviewerDraft: "auto",
   permissionProfileDraft: null,
   imageAttachments: [],
-  textAttachments: []
+  textAttachments: [],
+  pendingUserMessages: []
 });
 
 const runtime = (

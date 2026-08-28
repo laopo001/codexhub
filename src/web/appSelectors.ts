@@ -24,6 +24,7 @@ import {
   normalizeReasoningEffort,
   projectKeyForProject,
   permissionProfileScopeKey,
+  pendingUserMessageViews,
   reasoningDraftForModelSelection,
   reasoningOptionsForSelection,
   runtimeForProject,
@@ -308,18 +309,21 @@ export const useAppSelectors = (state: AppState) => {
     [displayRecords]
   );
   const activeViews = useMemo<WebRecordView[]>(
-    () => withActivityStatusSnapshots(
-      finalAnswerViewsWithTurnDurations(
-        baseViews,
-        turnDurations
+    () => [
+      ...withActivityStatusSnapshots(
+        finalAnswerViewsWithTurnDurations(
+          baseViews,
+          turnDurations
+        ),
+        activityStatusSnapshots
       ),
-      activityStatusSnapshots
-    ),
-    [activityStatusSnapshots, baseViews, turnDurations]
+      ...pendingUserMessageViews(activeThread?.pendingUserMessages ?? [])
+    ],
+    [activeThread?.pendingUserMessages, activityStatusSnapshots, baseViews, turnDurations]
   );
   const activeUserMessageHistory = useMemo(
-    () => userMessageHistoryFromRecords(displayRecords),
-    [displayRecords]
+    () => userMessageHistoryFromRecords(displayRecords, activeThread?.pendingUserMessages),
+    [activeThread?.pendingUserMessages, displayRecords]
   );
   const activeDisplayThreadId = activeThread?.threadId ?? state.activeTabThreadId;
   const activeThreadIsOpen = Boolean(activeThread && openThreadIds.includes(activeThread.threadId));

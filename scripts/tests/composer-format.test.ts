@@ -69,3 +69,21 @@ test("code fence length is calculated from the selected code body", async () => 
     "## Reference 1\n\nFile: README.md\nLanguage: markdown\n\n````\n```ts\nconst value = 1;\n```\n````"
   );
 });
+
+test("pending user messages are immediately visible and included in composer history", async () => {
+  const { pendingUserMessageViews, userMessageHistoryFromRecords } = await loadComposerHelpers();
+  const pending = [{
+    id: "web:pending:1",
+    text: "queued prompt",
+    imageUrls: [],
+    createdAt: "2026-08-28T00:00:00.000Z"
+  }];
+
+  const views = pendingUserMessageViews(pending);
+  assert.equal(views.length, 1);
+  assert.equal(views[0].role, "user");
+  assert.equal(views[0].text, "queued prompt");
+  assert.equal(views[0].status, "pending");
+  assert.equal(views[0].statusText, "queued");
+  assert.deepEqual(userMessageHistoryFromRecords([], pending), ["queued prompt"]);
+});

@@ -10,6 +10,7 @@ import {
   apiRouteJson,
   authFetch,
   appendThreadOrder,
+  browserId,
   combineRecordSources,
   composeUserInputText,
   fastCommandAction,
@@ -468,12 +469,13 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
   const deliverThreadInput = async (
     thread: OpenThreadState,
-    input: ProxyInput
+    input: ProxyInput,
+    pendingMessageId?: string
   ) => {
     const composerMode = thread.composerMode;
     const updatesActiveGoal = thread.running && composerMode === "goal";
     try {
-      await apiRouteJson(apiRoutes.sendThreadTurn, thread.threadId, {
+      const payload = await apiRouteJson(apiRoutes.sendThreadTurn, thread.threadId, {
         input,
         source: "web",
         options: selectedThreadOptions(
@@ -486,10 +488,24 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
           thread.permissionProfileDraft
         )
       });
+      if (pendingMessageId && payload.command) {
+        ctx.dispatchConversationThread({
+          type: "remove-pending-user-message",
+          threadId: thread.threadId,
+          messageId: pendingMessageId
+        });
+      }
       if (composerMode !== "chat") {
         ctx.dispatchConversationThread({ type: "reset-composer-mode", threadId: thread.threadId, expected: composerMode });
       }
     } catch (error) {
+      if (pendingMessageId) {
+        ctx.dispatchConversationThread({
+          type: "remove-pending-user-message",
+          threadId: thread.threadId,
+          messageId: pendingMessageId
+        });
+      }
       const details = apiErrorDetails(error, { plainHttpMessage: true });
       if (details.delivery === "goal" || (!details.delivery && updatesActiveGoal)) {
         deps.showActionError(`${thread.threadId}:goal-update`, "Goal update failed", details.message);
@@ -602,7 +618,20 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
         ...encodedImages.map((image) => ({ type: "image" as const, url: image.url }))
       ]
       : text;
-    await deliverThreadInput(openThread, input);
+    const pendingMessageId = openThread.composerMode === "goal" ? undefined : `web:pending:${browserId()}`;
+    if (pendingMessageId) {
+      ctx.dispatchConversationThread({
+        type: "enqueue-user-message",
+        threadId,
+        message: {
+          id: pendingMessageId,
+          text,
+          imageUrls: encodedImages.map((image) => image.url),
+          createdAt: new Date().toISOString()
+        }
+      });
+    }
+    await deliverThreadInput(openThread, input, pendingMessageId);
   };
 
   const stopTurn = async (threadId: string) => {

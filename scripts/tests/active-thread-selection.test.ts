@@ -24,7 +24,8 @@ const thread = (threadId: string, workingDirectory: string, machineId: string): 
   approvalsReviewerDraft: "auto",
   permissionProfileDraft: null,
   imageAttachments: [],
-  textAttachments: []
+  textAttachments: [],
+  pendingUserMessages: []
 });
 
 const openThreads = [

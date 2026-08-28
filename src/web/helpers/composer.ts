@@ -2,7 +2,7 @@ import { recordsToViews } from "../../core/codexRecordView.js";
 import { petIdPattern } from "../../shared/petTypes.js";
 import type { CodexRecord, CodexRecordView } from "../../shared/recordTypes.js";
 import { defaultAppSettings, readCurrentSurfaceUiStateRaw } from "../appConfig.js";
-import type { AppSettings, TextAttachment } from "../types.js";
+import type { AppSettings, PendingUserMessage, TextAttachment, WebRecordView } from "../types.js";
 import { browserId } from "./common.js";
 
 export type ComposerDraftStore = {
@@ -347,7 +347,10 @@ const caretOffsetInRow = (
 const clampNumber = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(value, max));
 
-export const userMessageHistoryFromRecords = (records: CodexRecord[]) => {
+export const userMessageHistoryFromRecords = (
+  records: CodexRecord[],
+  pendingUserMessages: PendingUserMessage[] = []
+) => {
   const history: string[] = [];
   for (const view of recordsToViews(records)) {
     if (view.role !== "user") continue;
@@ -355,8 +358,33 @@ export const userMessageHistoryFromRecords = (records: CodexRecord[]) => {
     if (!text || history.at(-1) === text) continue;
     history.push(text);
   }
+  for (const message of pendingUserMessages) {
+    if (!message.text || history.at(-1) === message.text) continue;
+    history.push(message.text);
+  }
   return history;
 };
+
+export const pendingUserMessageViews = (messages: PendingUserMessage[]): WebRecordView[] =>
+  messages.map((message) => {
+    const record: CodexRecord = {
+      id: message.id,
+      timestamp: message.createdAt,
+      type: "event_msg",
+      payload: {
+        type: "user_message",
+        message: message.text,
+        images: message.imageUrls
+      }
+    };
+    const view = recordsToViews([record])[0];
+    if (!view) throw new Error("Pending user message could not be projected");
+    return {
+      ...view,
+      status: "pending",
+      statusText: "queued"
+    };
+  });
 
 export const normalizeHistoryMessageText = (view: CodexRecordView) => {
   const text = normalizeSelectedText(view.text);
