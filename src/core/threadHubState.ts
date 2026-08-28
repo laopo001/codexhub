@@ -6,6 +6,7 @@ import type {
   SessionRegistration,
   SessionSummary,
   ThreadBackgroundTerminals,
+  ThreadQueueItem,
   ThreadRunOptions,
   ThreadStreamEvent
 } from "../shared/threadTypes.js";
@@ -49,15 +50,17 @@ export type PendingCommand = {
   workingDirectory?: string;
   keepTurns?: number;
   input?: ProxyInput;
+  turnOptions?: ThreadRunOptions;
+  submissionId?: string;
+  submissionCreatedAt?: string;
   knownAppServerTurnIds?: Set<string>;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;
   timer?: NodeJS.Timeout;
 };
 
-export type QueuedTurn = {
+export type QueuedTurn = Omit<ThreadQueueItem, "text" | "imageCount" | "position"> & {
   input: ProxyInput;
-  source: "web" | "telegram" | "task";
   options?: ThreadRunOptions;
   resolve: () => void;
   reject: (error: Error) => void;

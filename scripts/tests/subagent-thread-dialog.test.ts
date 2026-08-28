@@ -54,6 +54,7 @@ const subagentThread = (records: CodexRecord[]): OpenThreadState => ({
   permissionProfileDraft: null,
   imageAttachments: [],
   textAttachments: [],
+  queuedTurns: [],
   pendingUserMessages: []
 });
 

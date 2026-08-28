@@ -314,10 +314,17 @@ export type RuntimeEnsurePayload = {
 /** thread turn mutation 返回值。 */
 export type ThreadTurnPayload = {
   ok?: boolean;
+  submissionId?: string;
   queued?: boolean;
   delivery?: "turn" | "steer" | "goal" | "queued";
   thread?: ThreadSummary | ThreadDetail;
   command?: string;
+  error?: string;
+};
+
+export type ThreadQueueCancelPayload = {
+  cancelled?: boolean;
+  submissionId?: string;
   error?: string;
 };
 

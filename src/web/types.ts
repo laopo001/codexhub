@@ -36,9 +36,11 @@ import type { CodexRecordView, SubagentActivityView } from "../shared/recordType
 import type { CodexHubAuthorityDescriptor } from "../shared/surfaceTypes.js";
 import type { TaskCompleteNotification as ApiTaskCompleteNotification } from "../shared/taskNotifications.js";
 import type { ThreadApprovalPolicy, ThreadApprovalsReviewer } from "../shared/usageTypes.js";
+import type { ThreadQueueItem as ApiThreadQueueItem } from "../shared/threadTypes.js";
 
 export type ThreadSummary = ApiThreadSummary;
 export type ThreadDetail = ApiThreadDetail;
+export type ThreadQueueItem = ApiThreadQueueItem;
 export type BackgroundTerminalView = NonNullable<ThreadDetail["backgroundTerminals"]>[number] & {
   startedAt?: string;
 };
@@ -171,6 +173,7 @@ export type OpenThreadState = ThreadDetail & {
   permissionProfileDraft: PermissionProfileDraft;
   imageAttachments: ImageAttachment[];
   textAttachments: TextAttachment[];
+  queuedTurns: ThreadQueueItem[];
   pendingUserMessages: PendingUserMessage[];
 };
 
@@ -179,6 +182,7 @@ export type PendingUserMessage = {
   text: string;
   imageUrls: string[];
   createdAt: string;
+  serverQueued?: boolean;
 };
 
 export type SubagentThreadDialogState = {
@@ -288,6 +292,8 @@ export type ActivityStatusPlanStep = {
 };
 export type WebRecordView = CompactRecordView & {
   activityStatuses?: ActivityStatusView[];
+  pendingUserMessage?: boolean;
+  queuedSubmissionId?: string;
 };
 export type ActivityStatusSnapshot = {
   targetRecordId: string;

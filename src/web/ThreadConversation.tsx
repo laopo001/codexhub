@@ -115,6 +115,8 @@ export type ThreadConversationProps = {
     threadId: string
   ) => void;
   onInspectMessage?: (threadId: string, message: WebRecordView) => void;
+  onDismissPendingMessage?: (threadId: string, messageId: string) => void;
+  onCancelQueuedMessage?: (threadId: string, messageId: string, submissionId: string) => MaybePromise;
   onOpenImage?: (image: ImagePreviewState) => void;
   onOpenSubagentThread?: (threadId: string, activity: SubagentActivityView) => MaybePromise;
   onToggleToolBatch?: (threadId: string, toolBatchKey: string, expanded: boolean) => void;
@@ -217,6 +219,8 @@ export const ThreadConversation = ({
   onMessageRenderModeChange,
   onMessageSelection,
   onInspectMessage,
+  onDismissPendingMessage,
+  onCancelQueuedMessage,
   onOpenImage,
   onOpenSubagentThread,
   onToggleToolBatch,
@@ -533,6 +537,12 @@ export const ThreadConversation = ({
         onInspect={inspectable && onInspectMessage
           ? () => onInspectMessage(thread.threadId, message)
           : undefined}
+        onDismiss={message.queuedSubmissionId && onCancelQueuedMessage
+          ? () => void onCancelQueuedMessage(thread.threadId, message.id, message.queuedSubmissionId!)
+          : message.pendingUserMessage && onDismissPendingMessage
+            ? () => onDismissPendingMessage(thread.threadId, message.id)
+            : undefined}
+        dismissLabel={message.queuedSubmissionId ? "Cancel queued message" : "Dismiss pending message"}
         onOpenImage={onOpenImage}
         onOpenSubagentThread={onOpenSubagentThread
           ? (activity) => onOpenSubagentThread(thread.threadId, activity)
@@ -558,6 +568,8 @@ export const ThreadConversation = ({
     forkingMessageKey,
     messageRenderModes,
     onApprovalDecision,
+    onDismissPendingMessage,
+    onCancelQueuedMessage,
     onForkMessage,
     onInspectMessage,
     onMessageSelection,

@@ -56,6 +56,7 @@ const thread = (
   permissionProfileDraft: null,
   imageAttachments: [],
   textAttachments: [],
+  queuedTurns: [],
   pendingUserMessages: []
 });
 

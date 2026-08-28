@@ -90,6 +90,7 @@ import type {
   RuntimeSummary,
   ThreadDetail,
   ThreadHistoryPageInfo,
+  ThreadQueueItem,
   ThreadGoalUpdate,
   ThreadRunOptions,
   ThreadStreamEvent,
@@ -102,6 +103,7 @@ export const defaultThreadHistoryPageSize = 24;
 export type ThreadTurnDelivery = "turn" | "steer" | "goal" | "queued";
 
 export type ThreadTurnDispatch = {
+  submissionId: string;
   delivery: ThreadTurnDelivery;
   accepted: boolean;
   completion: Promise<void>;
@@ -268,6 +270,10 @@ export class ThreadHub {
     }
     const thread = this.threads.get(pending.threadId);
     if (pending.type === "steer") {
+      if (thread && pending.input !== undefined && inactiveTurnSteerError(message)) {
+        this.retryInactiveSteerAsNextTurn(commandId, pending, thread);
+        return { ok: true, sessionId, commandId };
+      }
       this.rejectCommand(commandId, error);
       if (thread) this.appendSubmissionFailedRecord(thread, pending.input, error);
       return { ok: true, sessionId, commandId };
@@ -1110,21 +1116,30 @@ export class ThreadHub {
     threadId: string,
     input: ProxyInput,
     _source: "web" | "telegram" | "task" = "web",
-    options?: ThreadRunOptions
+    options?: ThreadRunOptions,
+    requestedSubmissionId?: string
   ): ThreadTurnDispatch {
     const thread = this.requireThread(threadId);
+    const submissionId = requestedSubmissionId?.trim() || randomUUID();
+    const submissionCreatedAt = new Date().toISOString();
     if (thread.running && _source === "web" && options?.goalMode) {
-      return turnDispatch("goal", () => this.setThreadGoal(thread, goalUpdateFromInput(input, options)));
+      return turnDispatch(submissionId, "goal", () => this.setThreadGoal(thread, goalUpdateFromInput(input, options)));
     }
     if (thread.running && _source === "web" && thread.appServerTurnId) {
       return turnDispatch(
+        submissionId,
         "steer",
-        () => this.steerTurn(thread, input, thread.appServerTurnId!),
+        () => this.steerTurn(thread, input, thread.appServerTurnId!, options, submissionId, submissionCreatedAt),
         (error) => this.appendSubmissionFailedRecord(thread, input, error)
       );
     }
-    if (thread.running) return turnDispatch("queued", () => this.queueTurn(thread, input, _source, options));
+    if (thread.running) return turnDispatch(
+      submissionId,
+      "queued",
+      () => this.queueTurn(thread, input, _source, options, submissionId, submissionCreatedAt)
+    );
     return turnDispatch(
+      submissionId,
       "turn",
       () => this.startTurn(thread, input, _source, options),
       (error) => this.appendSubmissionFailedRecord(thread, input, error)
@@ -1184,13 +1199,21 @@ export class ThreadHub {
   private steerTurn(
     thread: ThreadState,
     input: ProxyInput,
-    turnId: string
+    turnId: string,
+    options: ThreadRunOptions | undefined,
+    submissionId: string,
+    submissionCreatedAt: string
   ) {
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "steer", thread.threadId, null, thread.workingDirectory);
     const pending = this.pendingCommands.get(commandId);
-    if (pending) pending.input = input;
+    if (pending) {
+      pending.input = input;
+      pending.turnOptions = options ? { ...options } : undefined;
+      pending.submissionId = submissionId;
+      pending.submissionCreatedAt = submissionCreatedAt;
+    }
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
       type: "steer",
@@ -1201,6 +1224,37 @@ export class ThreadHub {
       turnId
     });
     return promise;
+  }
+
+  private retryInactiveSteerAsNextTurn(
+    commandId: string,
+    pending: PendingCommand,
+    thread: ThreadState
+  ) {
+    if (pending.timer) clearTimeout(pending.timer);
+    this.pendingCommands.delete(commandId);
+    let completion: Promise<void>;
+    try {
+      completion = thread.running
+        ? this.queueTurn(
+          thread,
+          pending.input!,
+          "web",
+          pending.turnOptions,
+          pending.submissionId ?? randomUUID(),
+          pending.submissionCreatedAt ?? new Date().toISOString()
+        )
+        : this.startTurn(thread, pending.input!, "web", pending.turnOptions);
+    } catch (error) {
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      this.appendSubmissionFailedRecord(thread, pending.input, normalizedError);
+      pending.reject(normalizedError);
+      return;
+    }
+    completion.then(
+      () => pending.resolve(),
+      (error) => pending.reject(error instanceof Error ? error : new Error(String(error)))
+    );
   }
 
   setGoal(threadId: string, goal: ThreadGoalUpdate) {
@@ -1243,10 +1297,23 @@ export class ThreadHub {
     return promise;
   }
 
-  private queueTurn(thread: ThreadState, input: ProxyInput, source: "web" | "telegram" | "task", options?: ThreadRunOptions) {
+  private queueTurn(
+    thread: ThreadState,
+    input: ProxyInput,
+    source: "web" | "telegram" | "task",
+    options: ThreadRunOptions | undefined,
+    submissionId: string,
+    createdAt: string
+  ) {
+    const currentQueue = this.queuedTurns.get(thread.threadId) ?? [];
+    if (currentQueue.some((item) => item.submissionId === submissionId)) {
+      throw new Error(`Duplicate queued submission: ${submissionId}`);
+    }
     return new Promise<void>((resolve, reject) => {
       const queue = this.queuedTurns.get(thread.threadId) ?? [];
       queue.push({
+        submissionId,
+        createdAt,
         input,
         source,
         options: options ? { ...options } : undefined,
@@ -1257,6 +1324,31 @@ export class ThreadHub {
       thread.updatedAt = new Date().toISOString();
       this.publish(thread, "thread");
     });
+  }
+
+  queuedTurnItems(threadId: string): ThreadQueueItem[] {
+    return (this.queuedTurns.get(threadId) ?? []).map((item, index) => ({
+      submissionId: item.submissionId,
+      text: summarizeProxyInput(item.input),
+      imageCount: imageUrls(item.input).length,
+      source: item.source,
+      createdAt: item.createdAt,
+      position: index + 1
+    }));
+  }
+
+  cancelQueuedTurn(threadId: string, submissionId: string) {
+    const thread = this.requireThread(threadId);
+    const queue = this.queuedTurns.get(threadId) ?? [];
+    const index = queue.findIndex((item) => item.submissionId === submissionId);
+    if (index < 0) throw new Error(`Queued submission not found or already dispatching: ${submissionId}`);
+    const [cancelled] = queue.splice(index, 1);
+    if (!cancelled) throw new Error(`Queued submission not found or already dispatching: ${submissionId}`);
+    if (!queue.length) this.queuedTurns.delete(threadId);
+    thread.updatedAt = new Date().toISOString();
+    cancelled.reject(new Error(`Queued submission cancelled: ${submissionId}`));
+    this.publish(thread, "thread");
+    return { submissionId };
   }
 
   subscribe(
@@ -1306,6 +1398,7 @@ export class ThreadHub {
           historical: true,
           thread: this.summary(thread),
           backgroundTerminals: thread.backgroundTerminals,
+          queue: this.queuedTurnItems(thread.threadId),
           records: page.records,
           snapshot: {
             snapshotId: historySnapshotId,
@@ -1329,6 +1422,7 @@ export class ThreadHub {
             historical: true,
             thread: summary,
             backgroundTerminals: thread.backgroundTerminals,
+            queue: this.queuedTurnItems(thread.threadId),
             records,
             snapshot: {
               snapshotId,
@@ -2888,6 +2982,7 @@ export class ThreadHub {
       }
       item.reject(error);
     }
+    if (thread) this.publish(thread, "thread");
   }
 
   private publish(
@@ -2908,7 +3003,10 @@ export class ThreadHub {
       ...(options.records !== undefined ? { records: options.records } : {}),
       ...(options.delta ? { delta: options.delta } : {}),
       ...((kind === "thread" || kind === "done")
-        ? { backgroundTerminals: thread.backgroundTerminals }
+        ? {
+          backgroundTerminals: thread.backgroundTerminals,
+          queue: this.queuedTurnItems(thread.threadId)
+        }
         : {}),
       thread: this.summary(thread),
       record
@@ -3245,16 +3343,18 @@ const appServerTurnIds = (thread: ThreadState) => {
 };
 
 const turnDispatch = (
+  submissionId: string,
   delivery: ThreadTurnDelivery,
   start: () => Promise<void>,
   onSynchronousFailure?: (error: Error) => void
 ): ThreadTurnDispatch => {
   try {
-    return { delivery, accepted: true, completion: start() };
+    return { submissionId, delivery, accepted: true, completion: start() };
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error(String(error));
     onSynchronousFailure?.(normalizedError);
     return {
+      submissionId,
       delivery,
       accepted: false,
       completion: Promise.reject(normalizedError)
@@ -3263,6 +3363,9 @@ const turnDispatch = (
 };
 
 const compactThreadTitle = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 80);
+
+const inactiveTurnSteerError = (message: string) =>
+  message.trim().toLowerCase() === "no active turn to steer";
 
 const lightweightGenerationModel = "gpt-5.6-luna";
 

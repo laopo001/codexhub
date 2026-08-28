@@ -2,7 +2,7 @@ import { recordsToViews } from "../../core/codexRecordView.js";
 import { petIdPattern } from "../../shared/petTypes.js";
 import type { CodexRecord, CodexRecordView } from "../../shared/recordTypes.js";
 import { defaultAppSettings, readCurrentSurfaceUiStateRaw } from "../appConfig.js";
-import type { AppSettings, PendingUserMessage, TextAttachment, WebRecordView } from "../types.js";
+import type { AppSettings, PendingUserMessage, TextAttachment, ThreadQueueItem, WebRecordView } from "../types.js";
 import { browserId } from "./common.js";
 
 export type ComposerDraftStore = {
@@ -349,7 +349,8 @@ const clampNumber = (value: number, min: number, max: number) =>
 
 export const userMessageHistoryFromRecords = (
   records: CodexRecord[],
-  pendingUserMessages: PendingUserMessage[] = []
+  pendingUserMessages: PendingUserMessage[] = [],
+  queuedTurns: ThreadQueueItem[] = []
 ) => {
   const history: string[] = [];
   for (const view of recordsToViews(records)) {
@@ -358,15 +359,43 @@ export const userMessageHistoryFromRecords = (
     if (!text || history.at(-1) === text) continue;
     history.push(text);
   }
-  for (const message of pendingUserMessages) {
+  const queuedIds = new Set(queuedTurns.map((item) => item.submissionId));
+  const localMessages = [
+    ...queuedTurns.map((item) => ({ id: item.submissionId, text: item.text })),
+    ...pendingUserMessages.filter((message) => !queuedIds.has(message.id))
+  ];
+  for (const message of localMessages) {
     if (!message.text || history.at(-1) === message.text) continue;
     history.push(message.text);
   }
   return history;
 };
 
-export const pendingUserMessageViews = (messages: PendingUserMessage[]): WebRecordView[] =>
-  messages.map((message) => {
+export const pendingUserMessageViews = (
+  messages: PendingUserMessage[],
+  queuedTurns: ThreadQueueItem[] = []
+): WebRecordView[] => {
+  const pendingById = new Map(messages.map((message) => [message.id, message]));
+  const queuedIds = new Set(queuedTurns.map((item) => item.submissionId));
+  const projectedMessages = [
+    ...queuedTurns.map((item) => ({
+      ...(pendingById.get(item.submissionId) ?? {
+        id: item.submissionId,
+        text: [
+          item.text,
+          item.imageCount ? `[${item.imageCount} queued image${item.imageCount === 1 ? "" : "s"}]` : ""
+        ].filter(Boolean).join("\n"),
+        imageUrls: [],
+        createdAt: item.createdAt
+      }),
+      statusText: `queued · #${item.position}`,
+      queuedSubmissionId: item.submissionId
+    })),
+    ...messages
+      .filter((message) => !queuedIds.has(message.id))
+      .map((message) => ({ ...message, statusText: "queued", queuedSubmissionId: undefined }))
+  ];
+  return projectedMessages.map((message) => {
     const record: CodexRecord = {
       id: message.id,
       timestamp: message.createdAt,
@@ -382,9 +411,12 @@ export const pendingUserMessageViews = (messages: PendingUserMessage[]): WebReco
     return {
       ...view,
       status: "pending",
-      statusText: "queued"
+      statusText: message.statusText,
+      pendingUserMessage: true,
+      ...(message.queuedSubmissionId ? { queuedSubmissionId: message.queuedSubmissionId } : {})
     };
   });
+};
 
 export const normalizeHistoryMessageText = (view: CodexRecordView) => {
   const text = normalizeSelectedText(view.text);

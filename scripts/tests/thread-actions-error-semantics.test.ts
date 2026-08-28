@@ -50,6 +50,7 @@ const openThread = (
   permissionProfileDraft: null,
   imageAttachments: [],
   textAttachments: [],
+  queuedTurns: [],
   pendingUserMessages: []
 });
 
@@ -73,7 +74,7 @@ const fixture = async (
   };
   const draft = new Map([[threadId, "hello"]]);
   const conversationThreads = new Map([[threadId, thread]]);
-  const actionsDispatched: Array<{ type: string; record?: CodexRecord }> = [];
+  const actionsDispatched: Array<{ type: string; record?: CodexRecord; messageId?: string }> = [];
   const shownErrors: Array<{ key: string; title: string; message: string }> = [];
   const openedModelThreadIds: string[] = [];
   const activeTabChanges: string[] = [];
@@ -650,6 +651,51 @@ test("chat send queues a visible local user message before the turn request reso
   assert.equal(conversationThreads.get(threadId)?.pendingUserMessages.length, 1);
 });
 
+test("queued message dismissal cancels the authoritative queue item before removing its projection", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const { actions, actionsDispatched, threadId } = await fixture(
+    false,
+    "chat",
+    async (input, init) => {
+      requests.push({ url: String(input), method: init?.method ?? "GET" });
+      return new Response(JSON.stringify({ cancelled: true, submissionId: "submission-1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
+  );
+
+  await actions.cancelQueuedSubmission(threadId, "submission-1", "submission-1");
+
+  assert.deepEqual(requests, [{
+    url: `/api/threads/${threadId}/queue/submission-1`,
+    method: "DELETE"
+  }]);
+  assert.equal(actionsDispatched.some((action) =>
+    action.type === "remove-pending-user-message" && action.messageId === "submission-1"
+  ), true);
+});
+
+test("queue cancellation conflict keeps the queued projection visible", async () => {
+  const { actions, actionsDispatched, shownErrors, threadId } = await fixture(
+    false,
+    "chat",
+    async () => new Response(JSON.stringify({ error: "Queued submission not found or already dispatching" }), {
+      status: 409,
+      headers: { "content-type": "application/json" }
+    })
+  );
+
+  await actions.cancelQueuedSubmission(threadId, "submission-1", "submission-1");
+
+  assert.equal(actionsDispatched.some((action) => action.type === "remove-pending-user-message"), false);
+  assert.deepEqual(shownErrors, [{
+    key: `${threadId}:queue:submission-1`,
+    title: "Queue cancellation failed",
+    message: "Queued submission not found or already dispatching"
+  }]);
+});
+
 type SendFailureCase = {
   name: string;
   running: boolean;
@@ -765,6 +811,9 @@ test("dialog-only subagent send uses the shared thread delivery path without ope
 
   await actions.send(threadId);
 
+  const requestBody = requests[0]?.body as Record<string, unknown> | undefined;
+  assert.match(String(requestBody?.submissionId), /^web:pending:[0-9a-f-]{36}$/);
+  if (requestBody) delete requestBody.submissionId;
   assert.deepEqual(requests, [{
     url: "/api/threads/child-thread/turn",
     body: {

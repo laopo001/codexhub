@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ThreadHub } from "../../src/core/threadHub.js";
-import type { SessionCommand } from "../../src/shared/threadTypes.js";
+import type { SessionCommand, ThreadStreamEvent } from "../../src/shared/threadTypes.js";
 import {
   appServerTurn,
   executionChanged,
@@ -187,6 +187,91 @@ test("turn and steer delivery failures are conversation-local submission records
   assert.equal(hub.getThread(threadId)?.running, true);
   assert.equal(errorPayloads(hub, threadId).at(-1)?.type, "submission_failed");
   assert.equal(errorPayloads(hub, threadId).at(-1)?.input_text, "steer me");
+});
+
+test("inactive steer rejection resumes the same input as the next Turn", async () => {
+  for (const completionFirst of [false, true]) {
+    const suffix = completionFirst ? "inactive-steer-completed" : "inactive-steer-running";
+    const { hub, sessionId, threadId } = createHub(suffix);
+    const oldTurnId = `${suffix}-old-turn`;
+    hub.applySessionEvent(sessionId, executionChanged(threadId, true, oldTurnId));
+
+    const dispatch = hub.runTurnWithDelivery(threadId, "run me next", "web", { model: "queued-model" });
+    assert.equal(dispatch.delivery, "steer");
+    const steerCommand = await nextCommand(hub, sessionId);
+    assert.equal(steerCommand.type, "steer");
+
+    if (completionFirst) hub.applySessionEvent(sessionId, turnCompleted(threadId, oldTurnId));
+    hub.failSessionCommand(sessionId, steerCommand.commandId, "no active turn to steer");
+    if (!completionFirst) {
+      assert.deepEqual(hub.queuedTurnItems(threadId).map((item) => ({
+        submissionId: item.submissionId,
+        text: item.text,
+        position: item.position
+      })), [{
+        submissionId: dispatch.submissionId,
+        text: "run me next",
+        position: 1
+      }]);
+    }
+    if (!completionFirst) hub.applySessionEvent(sessionId, turnCompleted(threadId, oldTurnId));
+
+    const turnCommand = await nextCommand(hub, sessionId, steerCommand.seq);
+    assert.equal(turnCommand.type, "turn");
+    assert.equal(turnCommand.input, "run me next");
+    assert.equal(turnCommand.options?.model, "queued-model");
+    assert.deepEqual(errorPayloads(hub, threadId), []);
+
+    const nextTurnId = `${suffix}-next-turn`;
+    hub.applySessionEvent(sessionId, executionChanged(threadId, true, nextTurnId));
+    hub.applySessionEvent(sessionId, turnCompleted(threadId, nextTurnId));
+    await dispatch.completion;
+  }
+});
+
+test("thread queue exposes stable FIFO identities and cancels only queued submissions", async () => {
+  const { hub, sessionId, threadId } = createHub("cancel-queue");
+  const streamEvents: ThreadStreamEvent[] = [];
+  const unsubscribe = hub.subscribe(threadId, -1, (event) => streamEvents.push(event));
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true));
+  const first = hub.runTurnWithDelivery(threadId, "first queued", "web", undefined, "submission-1");
+  const second = hub.runTurnWithDelivery(threadId, "second queued", "web", undefined, "submission-2");
+  assert.equal(first.delivery, "queued");
+  assert.equal(second.delivery, "queued");
+  assert.deepEqual(hub.queuedTurnItems(threadId).map((item) => ({
+    submissionId: item.submissionId,
+    text: item.text,
+    position: item.position
+  })), [
+    { submissionId: "submission-1", text: "first queued", position: 1 },
+    { submissionId: "submission-2", text: "second queued", position: 2 }
+  ]);
+  assert.deepEqual(streamEvents.at(-1)?.queue?.map((item) => ({
+    submissionId: item.submissionId,
+    position: item.position
+  })), [
+    { submissionId: "submission-1", position: 1 },
+    { submissionId: "submission-2", position: 2 }
+  ]);
+
+  hub.cancelQueuedTurn(threadId, "submission-1");
+  await assert.rejects(first.completion, /Queued submission cancelled: submission-1/);
+  assert.deepEqual(hub.queuedTurnItems(threadId).map((item) => ({
+    submissionId: item.submissionId,
+    position: item.position
+  })), [{ submissionId: "submission-2", position: 1 }]);
+  assert.deepEqual(streamEvents.at(-1)?.queue?.map((item) => ({
+    submissionId: item.submissionId,
+    position: item.position
+  })), [{ submissionId: "submission-2", position: 1 }]);
+  assert.throws(
+    () => hub.cancelQueuedTurn(threadId, "submission-1"),
+    /not found or already dispatching/
+  );
+
+  hub.disconnectSession(sessionId);
+  await assert.rejects(second.completion, /transport disconnected/);
+  unsubscribe();
 });
 
 test("running Web input remains guidance for the same app-server Turn", async () => {

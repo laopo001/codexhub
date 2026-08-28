@@ -308,6 +308,16 @@ export type ThreadRecordsSnapshot = {
   history?: ThreadHistoryPageInfo;
 };
 
+/** ThreadHub 内存队列的可取消 Web 投影；完整 input 仍只保留在 server 内部。 */
+export type ThreadQueueItem = {
+  submissionId: string;
+  text: string;
+  imageCount: number;
+  source: "web" | "telegram" | "task";
+  createdAt: string;
+  position: number;
+};
+
 /** `/api/events/ws` 下发的 thread 当前状态或实时增量事件。 */
 export type ThreadStreamEvent = {
   seq: number;
@@ -323,6 +333,8 @@ export type ThreadStreamEvent = {
   snapshot?: ThreadRecordsSnapshot;
   /** 当前 thread 的 app-server experimental 后台终端快照。 */
   backgroundTerminals?: ThreadBackgroundTerminals;
+  /** 当前 thread 尚未 dispatch 的 FIFO submission 队列。 */
+  queue?: ThreadQueueItem[];
 };
 
 /** machine/session bridge 注册官方 Codex runtime 时提交的 session 信息。 */

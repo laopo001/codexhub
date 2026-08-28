@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 const loadComposerHelpers = async () => {
   Object.defineProperty(globalThis, "window", {
@@ -85,5 +87,38 @@ test("pending user messages are immediately visible and included in composer his
   assert.equal(views[0].text, "queued prompt");
   assert.equal(views[0].status, "pending");
   assert.equal(views[0].statusText, "queued");
+  assert.equal(views[0].pendingUserMessage, true);
   assert.deepEqual(userMessageHistoryFromRecords([], pending), ["queued prompt"]);
+});
+
+test("queued user messages expose an explicit dismiss control", async () => {
+  const { pendingUserMessageViews } = await loadComposerHelpers();
+  const { MessageCard } = await import("../../src/web/helpers/components.js");
+  const pending = {
+    id: "web:pending:dismiss",
+    text: "queued prompt",
+    imageUrls: [],
+    createdAt: "2026-08-28T00:00:00.000Z"
+  };
+  const message = pendingUserMessageViews([pending], [{
+    submissionId: pending.id,
+    text: pending.text,
+    imageCount: 0,
+    source: "web",
+    createdAt: pending.createdAt,
+    position: 1
+  }])[0];
+  assert.ok(message);
+  assert.equal(message.queuedSubmissionId, pending.id);
+
+  const markup = renderToStaticMarkup(createElement(MessageCard, {
+    message,
+    renderMode: "raw",
+    markdownEnabled: false,
+    onDismiss: () => undefined,
+    dismissLabel: "Cancel queued message"
+  }));
+
+  assert.match(markup, /class="messageHeaderAction"/);
+  assert.match(markup, /aria-label="Cancel queued message"/);
 });

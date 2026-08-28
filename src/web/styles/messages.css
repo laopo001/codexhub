@@ -1367,6 +1367,30 @@
   white-space: nowrap;
 }
 
+.messageHeaderAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #73806f;
+  cursor: pointer;
+  padding: 0;
+}
+
+.messageHeaderAction:hover {
+  background: #e8eee4;
+  color: #33433a;
+}
+
+.messageHeaderAction:focus-visible {
+  outline: 2px solid rgba(47, 125, 90, 0.35);
+  outline-offset: 1px;
+}
+
 .messageStatus {
   display: inline-flex;
   align-items: center;

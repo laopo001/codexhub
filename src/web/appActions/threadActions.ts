@@ -116,6 +116,8 @@ export type ThreadActions = {
   syncThreadSubscriptions: (threadIds: string[]) => void;
   forkMessage: (threadId: string, messageId: string) => Promise<void>;
   send: (threadId: string) => Promise<void>;
+  dismissPendingUserMessage: (threadId: string, messageId: string) => void;
+  cancelQueuedSubmission: (threadId: string, messageId: string, submissionId: string) => Promise<void>;
   stopTurn: (threadId: string) => Promise<void>;
   terminateBackgroundTerminal: (threadId: string, processId: string) => Promise<void>;
   compactThread: (threadId: string) => Promise<void>;
@@ -476,6 +478,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const updatesActiveGoal = thread.running && composerMode === "goal";
     try {
       const payload = await apiRouteJson(apiRoutes.sendThreadTurn, thread.threadId, {
+        ...(pendingMessageId ? { submissionId: pendingMessageId } : {}),
         input,
         source: "web",
         options: selectedThreadOptions(
@@ -642,6 +645,32 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     );
   };
 
+  const dismissPendingUserMessage = (threadId: string, messageId: string) => {
+    ctx.dispatchConversationThread({
+      type: "remove-pending-user-message",
+      threadId,
+      messageId
+    });
+  };
+
+  const cancelQueuedSubmission = async (
+    threadId: string,
+    messageId: string,
+    submissionId: string
+  ) => {
+    try {
+      await apiRouteJson(apiRoutes.cancelQueuedThreadTurn, threadId, submissionId);
+    } catch (error) {
+      deps.showActionError(
+        `${threadId}:queue:${submissionId}`,
+        "Queue cancellation failed",
+        apiErrorDetails(error, { plainHttpMessage: true }).message
+      );
+      return;
+    }
+    dismissPendingUserMessage(threadId, messageId);
+  };
+
   const terminateBackgroundTerminal = async (threadId: string, processId: string) => {
     await runActionRequest(
       `${threadId}:background-terminal:${processId}`,
@@ -757,6 +786,8 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     syncThreadSubscriptions,
     forkMessage,
     send,
+    dismissPendingUserMessage,
+    cancelQueuedSubmission,
     stopTurn,
     terminateBackgroundTerminal,
     compactThread,

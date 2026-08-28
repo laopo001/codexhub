@@ -317,13 +317,13 @@ export const useAppSelectors = (state: AppState) => {
         ),
         activityStatusSnapshots
       ),
-      ...pendingUserMessageViews(activeThread?.pendingUserMessages ?? [])
+      ...pendingUserMessageViews(activeThread?.pendingUserMessages ?? [], activeThread?.queuedTurns ?? [])
     ],
-    [activeThread?.pendingUserMessages, activityStatusSnapshots, baseViews, turnDurations]
+    [activeThread?.pendingUserMessages, activeThread?.queuedTurns, activityStatusSnapshots, baseViews, turnDurations]
   );
   const activeUserMessageHistory = useMemo(
-    () => userMessageHistoryFromRecords(displayRecords, activeThread?.pendingUserMessages),
-    [activeThread?.pendingUserMessages, displayRecords]
+    () => userMessageHistoryFromRecords(displayRecords, activeThread?.pendingUserMessages, activeThread?.queuedTurns),
+    [activeThread?.pendingUserMessages, activeThread?.queuedTurns, displayRecords]
   );
   const activeDisplayThreadId = activeThread?.threadId ?? state.activeTabThreadId;
   const activeThreadIsOpen = Boolean(activeThread && openThreadIds.includes(activeThread.threadId));

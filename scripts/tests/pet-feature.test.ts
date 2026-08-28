@@ -48,6 +48,7 @@ const thread = (threadId: string, records: CodexRecord[] = [], running = false):
   permissionProfileDraft: null,
   imageAttachments: [],
   textAttachments: [],
+  queuedTurns: [],
   pendingUserMessages: [],
 });
 

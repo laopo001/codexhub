@@ -25,6 +25,7 @@ const thread = (threadId: string, workingDirectory: string, machineId: string): 
   permissionProfileDraft: null,
   imageAttachments: [],
   textAttachments: [],
+  queuedTurns: [],
   pendingUserMessages: []
 });
 

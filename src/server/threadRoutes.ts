@@ -27,6 +27,7 @@ import {
   type ThreadRenamePayload,
   type ThreadTitleSuggestionPayload,
   type ThreadReviewPayload,
+  type ThreadQueueCancelPayload,
   type ThreadsPayload,
   type ThreadStopPayload,
   type ThreadTurnPayload,
@@ -421,6 +422,7 @@ export const registerThreadRoutes = <
   app.post("/api/threads/:threadId/turn", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
     const payload = z.object({
+      submissionId: z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9:_-]+$/).optional(),
       input: inputSchema,
       source: z.enum(["web", "telegram", "task"]).optional(),
       options: threadRunOptionsSchema.optional()
@@ -434,7 +436,8 @@ export const registerThreadRoutes = <
         params.threadId,
         payload.input,
         payload.source ?? "web",
-        payload.options
+        payload.options,
+        payload.submissionId
       );
       delivery = dispatch.delivery;
       if (!dispatch.accepted || dispatch.delivery === "goal") {
@@ -444,6 +447,7 @@ export const registerThreadRoutes = <
       }
       return {
         ok: true,
+        submissionId: dispatch.submissionId,
         delivery: dispatch.delivery,
         ...(dispatch.delivery === "queued" ? { queued: true } : {})
       } satisfies ThreadTurnPayload;
@@ -451,6 +455,21 @@ export const registerThreadRoutes = <
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") ? 404 : 409);
       return { error: message, ...(delivery ? { delivery } : {}) } satisfies ThreadTurnPayload;
+    }
+  });
+
+  app.delete("/api/threads/:threadId/queue/:submissionId", async (request, reply) => {
+    const params = z.object({
+      threadId: z.string().min(1),
+      submissionId: z.string().min(1).max(160)
+    }).parse(request.params);
+    try {
+      const cancelled = ctx.threads.cancelQueuedTurn(params.threadId, params.submissionId);
+      return { cancelled: true, submissionId: cancelled.submissionId } satisfies ThreadQueueCancelPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { cancelled: false, error: message } satisfies ThreadQueueCancelPayload;
     }
   });
 

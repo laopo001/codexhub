@@ -32,6 +32,8 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     commandPaletteLoadingScopes,
     composerDraftStore,
     composerTextareaRef,
+    dismissPendingUserMessage,
+    cancelQueuedSubmission,
     expandedStatusKeys,
     expandedStatusTurns,
     forkingMessageKey,
@@ -208,6 +210,8 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
       onMessageRenderModeChange={(_targetThreadId, messageId, mode) => updateMessageRenderMode(messageId, mode)}
       onMessageSelection={openMessageSelectionToolbar}
       onInspectMessage={(_targetThreadId, message) => setInspectMessage(message)}
+      onDismissPendingMessage={dismissPendingUserMessage}
+      onCancelQueuedMessage={cancelQueuedSubmission}
       onOpenImage={setImagePreview}
       onOpenSubagentThread={(parentThreadId, activity) => {
         if (!activity.agentThreadId) return;

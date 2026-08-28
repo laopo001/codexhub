@@ -109,6 +109,67 @@ test("open thread reducer reconciles one queued message per new canonical user r
   assert.deepEqual(state[0].pendingUserMessages.map((message) => message.id), ["pending-2"]);
 });
 
+test("open thread reducer lets the user dismiss one queued projection", async () => {
+  const openThreadReducer = await loadReducer();
+  let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });
+  state = openThreadReducer(state, {
+    type: "enqueue-user-message",
+    threadId: "thread-1",
+    message: {
+      id: "pending-1",
+      text: "queued prompt",
+      imageUrls: [],
+      createdAt: "2026-08-28T00:00:00.000Z"
+    }
+  });
+  state = openThreadReducer(state, {
+    type: "remove-pending-user-message",
+    threadId: "thread-1",
+    messageId: "pending-1"
+  });
+
+  assert.deepEqual(state[0].pendingUserMessages, []);
+});
+
+test("open thread reducer promotes provisional submissions to the authoritative queue", async () => {
+  const openThreadReducer = await loadReducer();
+  let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });
+  state = openThreadReducer(state, {
+    type: "enqueue-user-message",
+    threadId: "thread-1",
+    message: {
+      id: "submission-1",
+      text: "queued prompt",
+      imageUrls: [],
+      createdAt: "2026-08-28T00:00:00.000Z"
+    }
+  });
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    threadId: "thread-1",
+    thread: detail("thread-1"),
+    queue: [{
+      submissionId: "submission-1",
+      text: "queued prompt",
+      imageCount: 0,
+      source: "web",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      position: 1
+    }]
+  });
+  assert.equal(state[0].pendingUserMessages[0]?.serverQueued, true);
+  assert.equal(state[0].queuedTurns[0]?.submissionId, "submission-1");
+
+  state = openThreadReducer(state, {
+    type: "merge-stream",
+    threadId: "thread-1",
+    thread: detail("thread-1"),
+    queue: []
+  });
+  assert.deepEqual(state[0].pendingUserMessages, []);
+  assert.deepEqual(state[0].queuedTurns, []);
+});
+
 test("open thread reducer keeps background terminals independent from transcript records", async () => {
   const openThreadReducer = await loadReducer();
   let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });

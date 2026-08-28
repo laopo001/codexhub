@@ -63,6 +63,8 @@ export const MessageCard = ({
   onToggleToolBatch,
   onApprovalDecision,
   onUserInputResponse,
+  onDismiss,
+  dismissLabel = "Dismiss pending message",
   onFork,
   forkDisabled = false,
   forking = false,
@@ -83,6 +85,8 @@ export const MessageCard = ({
   onToggleToolBatch?: () => void;
   onApprovalDecision?: (approvalId: string, decision: AppServerApprovalDecision) => void;
   onUserInputResponse?: (userInputId: string, answers: AppServerUserInputAnswers) => void | Promise<void>;
+  onDismiss?: () => void;
+  dismissLabel?: string;
   onFork?: () => void;
   forkDisabled?: boolean;
   forking?: boolean;
@@ -171,6 +175,20 @@ export const MessageCard = ({
             <em className={`messageStatus ${message.status}`}>
               <LiveStatusLabel status={message.status} statusText={message.statusText} statusDurationMs={message.statusDurationMs} startedAt={message.at} />
             </em>
+          ) : null}
+          {onDismiss ? (
+            <button
+              type="button"
+              className="messageHeaderAction"
+              title={dismissLabel}
+              aria-label={dismissLabel}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDismiss();
+              }}
+            >
+              <X size={14} strokeWidth={2.2} aria-hidden="true" />
+            </button>
           ) : null}
         </span>
       )}

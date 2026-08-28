@@ -43,6 +43,7 @@ import type {
   ThreadTitleSuggestionPayload,
   ThreadReviewPayload,
   ThreadStopPayload,
+  ThreadQueueCancelPayload,
   ThreadTurnPayload,
   ThreadUserInputPayload,
   ThreadUserInputResponseInput,
@@ -142,6 +143,7 @@ export type ThreadForkInput = {
 };
 
 export type ThreadTurnInput = {
+  submissionId?: string;
   input: ProxyInput;
   source?: "web" | "telegram" | "task";
   options?: ThreadRunOptions;
@@ -242,6 +244,9 @@ export const apiRoutes = {
   ),
   sendThreadTurn: post<ThreadTurnInput, ThreadTurnPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/turn`
+  ),
+  cancelQueuedThreadTurn: del<ThreadQueueCancelPayload, (threadId: string, submissionId: string) => string>(
+    (threadId, submissionId) => `/api/threads/${encode(threadId)}/queue/${encode(submissionId)}`
   ),
   stopThreadTurn: postNoBody<ThreadStopPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/stop`

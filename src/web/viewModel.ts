@@ -193,6 +193,8 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   expandedToolBatchKeys: Record<string, string[]>;
   forkingMessageKey: string;
   forkMessage: (threadId: string, messageId: string) => MaybePromise;
+  dismissPendingUserMessage: (threadId: string, messageId: string) => void;
+  cancelQueuedSubmission: (threadId: string, messageId: string, submissionId: string) => MaybePromise;
   goalDialog: GoalDialogState | null;
   handleComposerKeyDown: (
     event: React.KeyboardEvent<HTMLTextAreaElement>,
@@ -368,6 +370,8 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "expandedToolBatchKeys"
   | "forkingMessageKey"
   | "forkMessage"
+  | "dismissPendingUserMessage"
+  | "cancelQueuedSubmission"
   | "handleComposerKeyDown"
   | "imageFileInputRef"
   | "insertThreadPathText"
@@ -562,7 +566,7 @@ const workspaceKeys = [
   "activeUserMessageHistory", "activeViews", "authError",
   "authRequired", "authTokenDraft", "addThreadFiles", "clearThreadAttachments", "clearThreadGoal",
   "closeThread", "compactThread", "commandPaletteByScope", "commandPaletteLoadingScopes",
-  "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "expandedStatusKeys", "expandedStatusTurns", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage",
+  "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "expandedStatusKeys", "expandedStatusTurns", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage", "dismissPendingUserMessage", "cancelQueuedSubmission",
   "handleComposerKeyDown", "imageFileInputRef", "insertThreadPathText", "latestTurnActivityScope",
   "loadCommandPalette", "loadOlderThread", "messageRenderModes", "messagesRef",
   "messagesShouldFollowRef", "openMessageSelectionToolbar", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",

@@ -3,6 +3,7 @@ import { recordsToViews } from "../core/codexRecordView.js";
 import type { CodexRecord } from "../shared/recordTypes.js";
 import type {
   ThreadBackgroundTerminals,
+  ThreadQueueItem,
   ThreadRecordDelta,
   ThreadRecordsSnapshot,
   ThreadSummary
@@ -42,6 +43,7 @@ export type ConversationThreadAction =
       delta?: ThreadRecordDelta;
       snapshot?: ThreadRecordsSnapshot;
       backgroundTerminals?: ThreadBackgroundTerminals;
+      queue?: ThreadQueueItem[];
     }
   | { type: "append-record"; threadId: string; record: CodexRecord }
   | { type: "enqueue-user-message"; threadId: string; message: PendingUserMessage }
@@ -79,8 +81,23 @@ export const openThreadStateFromDetail = (
   permissionProfileDraft: existing?.permissionProfileDraft ?? null,
   imageAttachments: existing?.imageAttachments ?? [],
   textAttachments: existing?.textAttachments ?? [],
+  queuedTurns: existing?.queuedTurns ?? [],
   pendingUserMessages: existing?.pendingUserMessages ?? []
 });
+
+const reconcilePendingUserMessagesWithQueue = (
+  pending: PendingUserMessage[],
+  previousQueue: ThreadQueueItem[],
+  nextQueue: ThreadQueueItem[]
+) => {
+  const previousIds = new Set(previousQueue.map((item) => item.submissionId));
+  const nextIds = new Set(nextQueue.map((item) => item.submissionId));
+  return pending.flatMap((message) => {
+    if (nextIds.has(message.id)) return [{ ...message, serverQueued: true }];
+    if (message.serverQueued && previousIds.has(message.id)) return [];
+    return [message];
+  });
+};
 
 const newlyAddedRecords = (current: CodexRecord[], next: CodexRecord[]) => {
   const currentIds = new Set(current.map((record) => record.id));
@@ -183,15 +200,22 @@ export const reduceConversationThreadState = (
     const records = action.delta
       ? applyThreadRecordDelta(mergedRecords, action.delta)
       : mergedRecords;
+    const queuedTurns = action.queue ?? thread.queuedTurns;
+    const reconciledPending = reconcilePendingUserMessages(
+      thread.pendingUserMessages,
+      newlyAddedRecords(thread.records, records)
+    );
     return {
       ...thread,
       ...action.thread,
       ...(action.backgroundTerminals === undefined ? {} : { backgroundTerminals: action.backgroundTerminals }),
       history: action.snapshot?.history ?? thread.history,
       records,
-      pendingUserMessages: reconcilePendingUserMessages(
-        thread.pendingUserMessages,
-        newlyAddedRecords(thread.records, records)
+      queuedTurns,
+      pendingUserMessages: reconcilePendingUserMessagesWithQueue(
+        reconciledPending,
+        thread.queuedTurns,
+        queuedTurns
       )
     };
   }
