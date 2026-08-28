@@ -247,9 +247,24 @@
     position: fixed;
     inset: 0 auto 0 0;
     z-index: 70;
-    width: min(306px, 86vw);
+    width: min(320px, 88vw);
     max-height: none;
-    box-shadow: 18px 0 42px rgb(0 0 0 / 0.32);
+    box-shadow: 20px 0 50px rgba(0, 0, 0, 0.6);
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+
+  .sidebarFooter {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  .projectRowActions {
+    opacity: 0.9;
+  }
+
+  .projectMiniButton,
+  .projectDeleteButton {
+    width: 26px;
+    height: 26px;
   }
 
   .sidebarScrim {
@@ -260,7 +275,8 @@
     min-height: 0;
     border: 0;
     border-radius: 0;
-    background: rgb(0 0 0 / 0.42);
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(2px);
     padding: 0;
   }
 

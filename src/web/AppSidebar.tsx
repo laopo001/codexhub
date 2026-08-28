@@ -1,5 +1,18 @@
 import React from "react";
-import { ChevronRight, Copy, ListTodo, Pin, PinOff, Settings, Trash2 } from "lucide-react";
+import {
+  ChevronRight,
+  Copy,
+  FolderGit2,
+  GitBranch,
+  ListTodo,
+  Pin,
+  PinOff,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+  X
+} from "lucide-react";
 import type { ProjectMachineGroup } from "./types.js";
 import type { AppSidebarViewModel } from "./viewModel.js";
 import {
@@ -79,10 +92,11 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           aria-expanded={!collapsed}
         >
           <span className={`projectOfflineArrow ${collapsed ? "collapsed" : ""}`} aria-hidden="true">
-            <ChevronRight size={14} strokeWidth={2.25} />
+            <ChevronRight size={13} strokeWidth={2.3} />
           </span>
-          <span title={machine.label}>{machine.label}</span>
-          <strong>{machine.badgeLabel}</strong>
+          <span className={`projectMachineStatusDot ${machine.online ? "online" : "offline"}`} aria-hidden="true" />
+          <span className="projectMachineName" title={machine.label}>{machine.label}</span>
+          <strong className={`projectMachineBadge ${machine.machineType}`}>{machine.badgeLabel}</strong>
         </button>
         {!collapsed ? (
           <div className="projectMachineRows">
@@ -118,7 +132,12 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   <div className="projectRowTop">
                     <span className="projectSelectText projectSelectName" title={project.name}>
                       <span className="projectSelectNameText">{project.name}</span>
-                      {worktreeRelation ? <em className="projectWorktreeBadge" title={worktreeRelation.branch}>{worktreeRelation.branch}</em> : null}
+                      {worktreeRelation ? (
+                        <em className="projectWorktreeBadge" title={worktreeRelation.branch}>
+                          <GitBranch size={10} strokeWidth={2.2} aria-hidden="true" />
+                          <span>{worktreeRelation.branch}</span>
+                        </em>
+                      ) : null}
                     </span>
                     <div className="projectRowActions">
                       <button
@@ -169,15 +188,21 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   return (
     <aside id="codexhub-sidebar" className="sidebar">
       <div className="brand">
-        <div>
-          <h1>Codex Hub</h1>
+        <div className="brandInfo">
+          <div className="brandLogo" aria-hidden="true">
+            <FolderGit2 size={16} strokeWidth={2.2} />
+          </div>
+          <div className="brandTitleWrap">
+            <h1>Codex Hub</h1>
+            <span className="brandSubtitle">Control Plane</span>
+          </div>
         </div>
       </div>
 
       <section className="projectPanel">
         <div className="projectPanelHeader">
           <h2>Projects</h2>
-          <span>{projectGroups.length} groups</span>
+          <span className="projectGroupCountBadge">{projectGroups.length} {projectGroups.length === 1 ? "group" : "groups"}</span>
         </div>
         {!projectScopeLocked ? (
           <button
@@ -187,16 +212,31 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             disabled={!projectAddMachine}
             title={projectAddMachine ? "Add a project" : "No online machines"}
           >
-            Add Project
+            <Plus size={14} strokeWidth={2.4} aria-hidden="true" />
+            <span>Add Project</span>
           </button>
         ) : null}
-        <input
-          className="projectSearchInput"
-          value={projectSearch}
-          onChange={(event) => setProjectSearch(event.target.value)}
-          placeholder="Search projects"
-          spellCheck={false}
-        />
+        <div className="projectSearchWrapper">
+          <Search size={13} strokeWidth={2.2} className="projectSearchIcon" aria-hidden="true" />
+          <input
+            className="projectSearchInput"
+            value={projectSearch}
+            onChange={(event) => setProjectSearch(event.target.value)}
+            placeholder="Search projects"
+            spellCheck={false}
+          />
+          {projectQuery ? (
+            <button
+              type="button"
+              className="projectSearchClear"
+              onClick={() => setProjectSearch("")}
+              aria-label="Clear search"
+              title="Clear search"
+            >
+              <X size={12} strokeWidth={2.4} aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
         {visibleProjectGroups.length === 0 ? (
           <div className="projectEmptyRow">{projectQuery ? "No matching projects" : "No project groups"}</div>
         ) : (
@@ -211,10 +251,11 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   aria-expanded={!offlineProjectsCollapsed}
                 >
                   <span className={`projectOfflineArrow ${offlineProjectsCollapsed ? "collapsed" : ""}`} aria-hidden="true">
-                    <ChevronRight size={14} strokeWidth={2.25} />
+                    <ChevronRight size={13} strokeWidth={2.3} />
                   </span>
-                  <span>Offline</span>
-                  <strong>{offlineProjectGroups.length}</strong>
+                  <span className="projectOfflineStatusDot" aria-hidden="true" />
+                  <span className="projectOfflineTitle">Offline</span>
+                  <strong className="projectOfflineCountBadge">{offlineProjectGroups.length}</strong>
                 </button>
                 {!offlineProjectsCollapsed ? (
                   <div className="projectOfflineMachines">
@@ -236,7 +277,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             title="Open tasks"
             aria-label="Open tasks"
           >
-            <ListTodo size={16} strokeWidth={2.1} aria-hidden="true" />
+            <ListTodo size={15} strokeWidth={2.2} aria-hidden="true" />
             <span>Tasks</span>
           </button>
         ) : null}
@@ -247,7 +288,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           title="Open settings"
           aria-label="Open settings"
         >
-          <Settings size={16} strokeWidth={2.1} aria-hidden="true" />
+          <Settings size={15} strokeWidth={2.2} aria-hidden="true" />
           <span>Settings</span>
         </button>
       </div>

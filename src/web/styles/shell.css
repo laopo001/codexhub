@@ -95,13 +95,14 @@
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 10px;
   min-width: 0;
   min-height: 0;
   overflow-x: hidden;
   overflow: hidden;
-  padding: 14px;
-  background: #151815;
+  padding: 14px 12px 12px;
+  background: #121613;
+  border-right: 1px solid #1f2721;
   color: #f8fbf4;
 }
 
@@ -115,16 +116,61 @@
 
 .brand {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
+  padding: 2px 2px 4px;
+}
+
+.brandInfo {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.brandLogo {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #244431 0%, #15271d 100%);
+  border: 1px solid #355741;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  color: #4ade80;
+  flex-shrink: 0;
+}
+
+.brandLogo svg {
+  display: block;
+}
+
+.brandTitleWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
 .brand h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: #f8fbf4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brandSubtitle {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #728471;
   line-height: 1.1;
-  letter-spacing: 0;
+  letter-spacing: 0.02em;
 }
 
 .brand p {
@@ -135,38 +181,57 @@
 
 .sidebarFooter {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 6px;
   position: sticky;
-  bottom: -14px;
-  z-index: 1;
+  bottom: -12px;
+  z-index: 10;
   margin-top: auto;
-  margin-right: -14px;
-  margin-bottom: -14px;
-  margin-left: -14px;
-  border-top: 1px solid #293129;
-  background: #151815;
-  padding: 10px 14px 14px;
+  margin-right: -12px;
+  margin-bottom: -12px;
+  margin-left: -12px;
+  border-top: 1px solid #1f2721;
+  background: #121613;
+  padding: 10px 12px 12px;
 }
 
 .sidebarSettingsButton {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
+  justify-content: center;
+  gap: 7px;
   width: 100%;
-  min-height: 36px;
-  border: 1px solid #394039;
-  border-radius: 8px;
-  background: #1d231e;
-  color: #f8fbf4;
-  padding: 0 11px;
-  font-size: 13px;
-  font-weight: 750;
+  min-height: 34px;
+  border: 1px solid #243026;
+  border-radius: 7px;
+  background: #172019;
+  color: #c8d5c5;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 130ms ease, background-color 130ms ease, color 130ms ease, transform 80ms ease;
+}
+
+.sidebarSettingsButton svg {
+  flex-shrink: 0;
+  display: block;
 }
 
 .sidebarSettingsButton:hover {
-  border-color: #4e5d50;
-  background: #242b25;
+  border-color: #3b4e3e;
+  background: #1f2c22;
+  color: #f8fbf4;
+}
+
+.sidebarSettingsButton:active {
+  background: #141d16;
+  transform: translateY(1px);
+}
+
+.sidebarSettingsButton:focus-visible {
+  outline: 2px solid #4a634e;
+  outline-offset: 1px;
 }
 
 input,
