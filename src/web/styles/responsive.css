@@ -17,6 +17,7 @@
 
   .message {
     padding: 6px 9px;
+    margin-bottom: 6px;
   }
 
   .message.user {

@@ -40,18 +40,37 @@
   width: 100%;
   min-width: 0;
   min-height: 0;
-  border: 1px solid #d4ddd1;
+  border: 1px solid #d2ded0;
   border-left-width: 3px;
-  border-left-color: #96a292;
+  border-left-color: #8c9e8a;
   border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 3px 12px rgba(49, 55, 65, 0.08);
-  color: #26342a;
+  box-shadow: 0 1px 3px rgba(22, 38, 26, 0.04), 0 4px 12px rgba(22, 38, 26, 0.03);
+  color: #243328;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 
 .activityStatusBar.statusCard {
   gap: 0;
   overflow: hidden;
+}
+
+.activityStatusBar.running {
+  border-color: rgba(42, 111, 151, 0.28);
+  border-left-color: #2a6f97;
+  box-shadow: 0 1px 3px rgba(26, 68, 92, 0.04), 0 4px 12px rgba(26, 68, 92, 0.04);
+}
+
+.activityStatusBar.waiting {
+  border-color: rgba(184, 126, 34, 0.28);
+  border-left-color: #b87e22;
+  box-shadow: 0 1px 3px rgba(102, 70, 18, 0.04), 0 4px 12px rgba(102, 70, 18, 0.04);
+}
+
+.activityStatusBar.background {
+  border-color: rgba(47, 125, 90, 0.28);
+  border-left-color: #2f7d5a;
+  box-shadow: 0 1px 3px rgba(24, 64, 46, 0.04), 0 4px 12px rgba(24, 64, 46, 0.04);
 }
 
 .activityStatusCardOverview {
@@ -63,8 +82,9 @@
   padding: 3px 4px 3px 7px;
 }
 
-.statusCard.hasTurn .activityStatusCardOverview {
-  border-bottom: 1px solid rgba(104, 115, 145, 0.18);
+.statusCard.hasTurn .activityStatusCardOverview,
+.statusCard.background .activityStatusCardOverview {
+  border-bottom: 1px solid rgba(100, 120, 105, 0.12);
 }
 
 .activityStatusSection {
@@ -77,42 +97,7 @@
 }
 
 .statusCard > .turnStatusCard {
-  border-bottom: 1px solid rgba(104, 115, 145, 0.18);
-}
-
-.activityStatusRows {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  gap: 2px;
-  min-width: 0;
-  max-height: min(148px, 24vh);
-  overflow-y: auto;
-  padding: 0 5px 5px;
-}
-
-.activityStatusSection.expanded .activityStatusRows {
-  /* Keep a multi-step Plan and its sibling metrics inside the same scroll area. */
-  max-height: min(320px, 40vh);
-}
-
-.activityStatusRows.expanded {
-  gap: 3px;
-}
-
-.activityStatusBar.running {
-  border-color: rgba(47, 111, 159, 0.36);
-  border-left-color: #2f6f9f;
-}
-
-.activityStatusBar.waiting {
-  border-color: rgba(184, 126, 34, 0.34);
-  border-left-color: #b87e22;
-}
-
-.activityStatusBar.background {
-  border-color: rgba(47, 125, 90, 0.34);
-  border-left-color: #2f7d5a;
+  border-bottom: 1px solid rgba(100, 120, 105, 0.12);
 }
 
 .activityStatusHeader {
@@ -125,31 +110,37 @@
 }
 
 .activityStatusSummary {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
-  color: #66715f;
+  color: #5c6c5e;
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
 }
 
 .activityStatusSummary strong {
-  font-weight: 800;
+  font-weight: 750;
+  letter-spacing: 0.02em;
 }
 
 .activityStatusSummary.running {
-  color: #245d88;
+  color: #245f89;
 }
 
 .activityStatusSummary.waiting {
-  color: #8a641f;
+  color: #8c631c;
+}
+
+.activityStatusSummary.background {
+  color: #2a6f50;
 }
 
 .activityStatusHeaderMetrics {
   display: flex;
   align-items: center;
+  gap: 0;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -162,8 +153,8 @@
   flex: 0 0 auto;
   min-width: 0;
   padding: 0 7px;
-  border-left: 1px solid rgba(104, 115, 145, 0.18);
-  color: #4f5e53;
+  border-left: 1px solid rgba(104, 125, 110, 0.14);
+  color: #4a5a4e;
   font-size: 10px;
   line-height: 18px;
   white-space: nowrap;
@@ -173,6 +164,7 @@
   color: #2f7d5a;
   font-size: 9px;
   font-weight: 800;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
@@ -180,6 +172,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  color: #26342a;
 }
 
 .activityStatusHeaderMetric.usage {
@@ -199,6 +193,42 @@
   background: currentColor;
 }
 
+.activityStatusSummary.running .activityStatusIndicator,
+.activityStatusSummary.waiting .activityStatusIndicator {
+  animation: codexhubStatusPulse 1.2s ease-in-out infinite;
+}
+
+.activityStatusToggle {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #556c58;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.activityStatusToggle svg {
+  display: block;
+}
+
+.activityStatusToggle:hover {
+  background: rgba(47, 125, 90, 0.09);
+  color: #1a4f32;
+}
+
+.activityStatusToggle:focus-visible {
+  outline: 2px solid #2f7d5a;
+  outline-offset: 1px;
+}
+
 .statusRegistryRows {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -209,6 +239,7 @@
 
 .statusRegistryDetail > .statusRegistryRows {
   padding: 0;
+  gap: 2px;
 }
 
 .statusRegistryItem {
@@ -219,13 +250,22 @@
   min-width: 0;
   min-height: 24px;
   padding: 2px 6px;
-  border: 1px solid rgba(47, 125, 90, 0.16);
+  border: 1px solid rgba(100, 120, 105, 0.12);
   border-radius: 5px;
-  background: rgba(248, 250, 247, 0.86);
+  background: rgba(250, 252, 249, 0.9);
+  color: #243328;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .statusRegistryItem.hasActions {
   grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.statusRegistryItem:hover,
+.statusRegistryItem:focus-within {
+  background: #ffffff;
+  border-color: rgba(47, 125, 90, 0.3);
+  box-shadow: 0 1px 3px rgba(25, 45, 30, 0.04);
 }
 
 .statusRegistryActions {
@@ -243,14 +283,20 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: #7b675f;
+  color: #6e7d70;
   cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
 .statusRegistryAction:hover,
 .statusRegistryAction:focus-visible {
-  background: rgba(198, 63, 63, 0.1);
-  color: #a52e2e;
+  background: rgba(198, 63, 63, 0.12);
+  color: #a82e2e;
+}
+
+.statusRegistryAction:focus-visible {
+  outline: 2px solid #a82e2e;
+  outline-offset: 1px;
 }
 
 .statusRegistryAction:disabled {
@@ -258,24 +304,30 @@
   opacity: 0.55;
 }
 
-.statusRegistryItem:hover,
-.statusRegistryItem:focus-within {
-  background: #ffffff;
-  border-color: rgba(104, 115, 145, 0.24);
-}
-
 .statusRegistryIndicator {
   width: 6px;
   height: 6px;
   flex: 0 0 auto;
   border-radius: 999px;
-  background: #879183;
+  background: #93a291;
 }
 
-.statusRegistryItem.pending .statusRegistryIndicator,
+.statusRegistryItem.pending .statusRegistryIndicator {
+  background: #b87e22;
+  animation: codexhubStatusPulse 1.2s ease-in-out infinite;
+}
+
 .statusRegistryItem.in_progress .statusRegistryIndicator {
   background: #2f7d5a;
-  animation: codexhubStatusPulse 1s ease-in-out infinite;
+  animation: codexhubStatusPulse 1.2s ease-in-out infinite;
+}
+
+.statusRegistryItem.completed .statusRegistryIndicator {
+  background: #2f7d5a;
+}
+
+.statusRegistryItem.failed .statusRegistryIndicator {
+  background: #b53838;
 }
 
 .statusRegistryPreview {
@@ -303,10 +355,11 @@
 
 .statusRegistryLabel {
   min-width: 52px;
-  color: #5f6a78;
+  color: #526354;
   font-size: 9px;
   font-weight: 800;
   line-height: 16px;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
@@ -317,6 +370,7 @@
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
+  color: #243328;
 }
 
 .statusRegistryToggle {
@@ -328,23 +382,28 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: #66715f;
+  color: #5e7060;
   cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
-.statusRegistryToggle:hover,
+.statusRegistryToggle:hover {
+  background: rgba(47, 125, 90, 0.1);
+  color: #1a4f32;
+}
+
 .statusRegistryToggle:focus-visible {
-  background: rgba(104, 115, 145, 0.12);
-  color: #26342a;
+  outline: 2px solid #2f7d5a;
+  outline-offset: 1px;
 }
 
 .statusRegistryDetail {
   margin: -2px 5px 3px 5px;
   padding: 3px 5px 4px 17px;
-  border: 1px solid rgba(104, 115, 145, 0.12);
+  border: 1px solid rgba(100, 120, 105, 0.12);
   border-radius: 5px;
-  background: rgba(248, 250, 247, 0.62);
-  color: #65706a;
+  background: rgba(246, 249, 245, 0.7);
+  color: #546558;
   font-size: 11px;
   line-height: 1.35;
 }
@@ -366,6 +425,7 @@
   padding: 4px 6px;
   border-top: 0;
   border-bottom: 0;
+  background: transparent;
 }
 
 .backgroundTerminalCommand,
@@ -379,47 +439,47 @@
 
 .backgroundTerminalCommand {
   flex: 0 1 auto;
-}
-
-.backgroundTerminalSeparator {
-  flex: 0 0 auto;
-  color: #a1aaa0;
-}
-
-.backgroundTerminalMeta {
-  flex: 1 1 auto;
-}
-
-.backgroundTerminalCommand,
-.backgroundTerminalMeta,
-.backgroundTerminalStatus {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.backgroundTerminalCommand {
-  color: #26342a;
+  color: #243328;
   font: inherit;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
 }
 
-.backgroundTerminalMeta,
-.backgroundTerminalStatus {
-  color: #6b766c;
+.backgroundTerminalSeparator {
+  flex: 0 0 auto;
+  color: #9cb09e;
+}
+
+.backgroundTerminalMeta {
+  flex: 1 1 auto;
+  color: #657667;
   font-size: 10px;
 }
 
 .backgroundTerminalStatus {
   color: #2f7d5a;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
 }
 
-.activityStatusSummary.running .activityStatusIndicator,
-.activityStatusSummary.waiting .activityStatusIndicator {
-  animation: codexhubStatusPulse 1s ease-in-out infinite;
+.activityStatusRows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 2px;
+  min-width: 0;
+  max-height: min(148px, 24vh);
+  overflow-y: auto;
+  padding: 0 5px 5px;
+}
+
+.activityStatusSection.expanded .activityStatusRows {
+  /* Keep a multi-step Plan and its sibling metrics inside the same scroll area. */
+  max-height: min(320px, 40vh);
+}
+
+.activityStatusRows.expanded {
+  gap: 3px;
 }
 
 .activityStatusItem {
@@ -430,7 +490,7 @@
   min-width: 0;
   max-width: 100%;
   min-height: 20px;
-  border: 1px solid rgba(104, 115, 145, 0.12);
+  border: 1px solid rgba(100, 120, 105, 0.12);
   border-radius: 5px;
   background: rgba(248, 250, 247, 0.86);
   color: inherit;
@@ -442,7 +502,12 @@
 .activityStatusItem:hover,
 .activityStatusItem:focus-visible {
   background: #ffffff;
-  border-color: rgba(104, 115, 145, 0.24);
+  border-color: rgba(47, 125, 90, 0.3);
+}
+
+.activityStatusItem:focus-visible {
+  outline: 2px solid #2f7d5a;
+  outline-offset: 1px;
 }
 
 .activityStatusLabel {
@@ -451,8 +516,8 @@
   place-items: center;
   min-width: 52px;
   padding: 0 6px;
-  border-right: 1px solid rgba(104, 115, 145, 0.16);
-  color: #5f6a78;
+  border-right: 1px solid rgba(100, 120, 105, 0.14);
+  color: #526354;
   font-size: 9px;
   font-weight: 800;
   line-height: 18px;
@@ -465,7 +530,7 @@
 }
 
 .activityStatusItem.failed .activityStatusLabel {
-  color: #9c2d2d;
+  color: #b53838;
 }
 
 .activityStatusItem.pending .activityStatusLabel,
@@ -474,7 +539,7 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  color: #2a648c;
+  color: #245f89;
 }
 
 .activityStatusItem.pending .activityStatusLabel::before,
@@ -485,7 +550,7 @@
   flex: 0 0 auto;
   border-radius: 999px;
   background: currentColor;
-  animation: codexhubStatusPulse 1s ease-in-out infinite;
+  animation: codexhubStatusPulse 1.2s ease-in-out infinite;
 }
 
 .activityStatusViewport {
@@ -514,8 +579,8 @@
   min-width: 0;
   margin: 0;
   padding: 4px 6px 5px 28px;
-  border-top: 1px solid rgba(104, 115, 145, 0.12);
-  background: #fbfcf8;
+  border-top: 1px solid rgba(100, 120, 105, 0.12);
+  background: #fbfcf9;
   list-style: none;
 }
 
@@ -525,7 +590,7 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  color: #65706a;
+  color: #5d6d60;
   font-size: 10px;
   line-height: 18px;
 }
@@ -535,7 +600,7 @@
 }
 
 .activityStatusPlanStep.in_progress {
-  color: #2a648c;
+  color: #245f89;
   font-weight: 700;
 }
 
@@ -559,41 +624,11 @@
 }
 
 .activityStatusDelta.added {
-  color: #0a9a58;
+  color: #1b8a53;
 }
 
 .activityStatusDelta.removed {
-  color: #c63f3f;
-}
-
-.activityStatusToggle {
-  margin-left: auto;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  min-height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: #446346;
-  cursor: pointer;
-}
-
-.activityStatusToggle svg {
-  display: block;
-}
-
-.activityStatusToggle:hover {
-  background: #eaf4ec;
-  color: #174f31;
-}
-
-.activityStatusToggle:focus-visible {
-  outline: 2px solid #2f7d5a;
-  outline-offset: 1px;
+  color: #c03838;
 }
 
 .activityStatusFiles {
@@ -603,15 +638,15 @@
   min-width: 0;
   margin: 0;
   padding: 4px 6px;
-  border-top: 1px solid rgba(104, 115, 145, 0.12);
-  background: #fbfcf8;
+  border-top: 1px solid rgba(100, 120, 105, 0.12);
+  background: #fbfcf9;
 }
 
 .messageActivityStatusSnapshot {
   min-width: 0;
   margin-top: 2px;
   padding-top: 5px;
-  border-top: 1px solid rgba(104, 115, 145, 0.12);
+  border-top: 1px solid rgba(100, 120, 105, 0.12);
 }
 
 .messageActivityStatusSnapshot .activityStatusRows {
@@ -655,9 +690,13 @@
   max-width: 1080px;
   min-width: 0;
   margin-bottom: 6px;
-  border-left: 4px solid #a8b4a4;
+  border: 1px solid rgba(80, 100, 85, 0.16);
+  border-left: 4px solid #8e9e8a;
+  border-radius: 8px;
   padding: 6px 12px;
   background: #ffffff;
+  box-shadow: 0 1px 3px rgba(30, 45, 35, 0.03);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .message.user {
@@ -665,32 +704,68 @@
   min-width: min(320px, 100%);
   max-width: min(760px, 100%);
   margin-left: auto;
+  border: 1px solid rgba(47, 125, 90, 0.22);
   border-right: 4px solid #2f7d5a;
-  border-left: 0;
-  border-color: #2f7d5a;
-  background: #fbfdf9;
+  border-left: 1px solid rgba(47, 125, 90, 0.22);
+  border-radius: 8px 3px 8px 8px;
+  background: linear-gradient(180deg, #f7fbf6 0%, #f1f8f0 100%);
+  box-shadow: 0 1px 3px rgba(47, 125, 90, 0.05);
 }
 
 .message.user .messageHeader {
   justify-content: flex-end;
+  border-bottom-color: rgba(47, 125, 90, 0.12);
+}
+
+.message.user .messageHeader b {
+  color: #236846;
+}
+
+.message.user .messageMeta {
+  border-top-color: rgba(47, 125, 90, 0.12);
 }
 
 .message.codex {
-  border-color: #d95f36;
+  border-color: rgba(90, 110, 95, 0.2);
+  border-left-color: #3b7e5a;
+  background: #ffffff;
+}
+
+.message.codex.commentary {
+  border-color: rgba(145, 120, 75, 0.22);
+  border-left-color: #9c7b44;
+  background: #fafaf7;
+}
+
+.message.codex.commentary .messageHeader {
+  color: #7a5f32;
+}
+
+.message.codex.commentary .messageHeader b {
+  color: #7a5f32;
 }
 
 .message.codex.finalAnswer {
-  border-color: #267c86;
-  background: #fbfefe;
+  border-color: rgba(30, 122, 133, 0.32);
+  border-left-color: #1e7a85;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(30, 122, 133, 0.06), 0 1px 3px rgba(30, 122, 133, 0.04);
 }
 
 .message.codex.finalAnswer .messageHeader {
-  color: #236974;
+  color: #17656f;
+  border-bottom-color: rgba(30, 122, 133, 0.14);
+}
+
+.message.codex.finalAnswer .messageHeader b {
+  color: #17656f;
 }
 
 .message.event {
-  border-color: #7b8794;
-  background: #fbfcf8;
+  border-color: rgba(100, 115, 130, 0.2);
+  border-left: 3px solid #7b8794;
+  background: #fbfcf9;
+  border-radius: 7px;
 }
 
 .message.subagentActivityMessage {
@@ -698,14 +773,17 @@
   align-items: center;
   gap: 8px;
   min-height: 38px;
-  border-color: #66839b;
+  margin-bottom: 6px;
+  border: 1px solid rgba(102, 131, 155, 0.2);
+  border-left: 3px solid #66839b;
   background: #f6f9fb;
   padding: 6px 10px;
+  border-radius: 7px;
 }
 
 .message.subagentActivityMessage.hasAssignment {
   grid-template-rows: auto auto;
-  row-gap: 4px;
+  row-gap: 5px;
   min-height: 60px;
 }
 
@@ -714,17 +792,20 @@
 }
 
 .message.subagentActivityMessage.started {
-  border-color: #3f78a3;
+  border-color: rgba(63, 120, 163, 0.25);
+  border-left-color: #3f78a3;
   background: #f3f8fc;
 }
 
 .message.subagentActivityMessage.interacted {
-  border-color: #478266;
+  border-color: rgba(71, 130, 102, 0.25);
+  border-left-color: #478266;
   background: #f4faf6;
 }
 
 .message.subagentActivityMessage.interrupted {
-  border-color: #9a7750;
+  border-color: rgba(154, 119, 80, 0.25);
+  border-left-color: #9a7750;
   background: #fcf8f2;
 }
 
@@ -851,7 +932,7 @@
 }
 
 .subagentActivityTime {
-  color: #8a9584;
+  color: #637361;
   font-size: 11px;
   line-height: 1.2;
   white-space: nowrap;
@@ -876,7 +957,7 @@
 .subagentActivityAssignmentLabel,
 .subagentActivityTaskLabel {
   flex: 0 0 auto;
-  color: #78858e;
+  color: #65756c;
   font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.03em;
@@ -927,23 +1008,33 @@
 }
 
 .message.tool {
-  border-color: #2f6f9f;
-  background: #f8fbfd;
+  gap: 4px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(70, 105, 140, 0.18);
+  border-left: 3px solid #3d7099;
+  border-radius: 7px;
+  background: #f7fafd;
+  padding: 6px 12px;
 }
 
 .message.richTool {
-  border-color: #5a6890;
+  border-color: rgba(90, 105, 145, 0.2);
+  border-left-color: #52678f;
   background: #f7f9fd;
 }
 
 .message.toolBatchRow {
   padding: 0;
-  border-color: #8a97ad;
+  margin-bottom: 6px;
+  border: 1px solid rgba(100, 115, 140, 0.2);
+  border-left: 3px solid #6b7e9c;
+  border-radius: 7px;
   background: #f4f7fb;
+  overflow: hidden;
 }
 
 .message.toolBatchRow.expanded {
-  background: #eef4fa;
+  background: #edf3f9;
 }
 
 .toolBatchToggle {
@@ -1006,7 +1097,7 @@
 
 .toolPreview {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
   color: #17211a;
 }
@@ -1016,9 +1107,9 @@
   align-items: center;
   min-width: 0;
   gap: 6px;
-  color: #344050;
-  font-size: 13px;
-  line-height: 1.25;
+  color: #2a3848;
+  font-size: 12.5px;
+  line-height: 1.3;
 }
 
 .toolPreviewTitle strong {
@@ -1035,7 +1126,7 @@
   flex: 0 0 auto;
   width: 18px;
   height: 18px;
-  color: #687391;
+  color: #566885;
   font-size: 18px;
   line-height: 1;
 }
@@ -1051,10 +1142,10 @@
   flex-wrap: wrap;
   min-width: 0;
   gap: 2px 8px;
-  padding-left: 26px;
-  color: #6d7783;
-  font-size: 12px;
-  line-height: 1.25;
+  padding-left: 24px;
+  color: #566373;
+  font-size: 11.5px;
+  line-height: 1.3;
 }
 
 .toolPreviewMetaItem {
@@ -1068,20 +1159,20 @@
 .toolPreviewBody {
   min-width: 0;
   margin: 0;
-  padding-left: 26px;
-  color: #26342a;
+  padding-left: 24px;
+  color: #202d24;
   font-size: 13px;
-  line-height: 1.35;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
 .toolCommandLine {
   min-width: 0;
   margin: 0;
-  padding-left: 26px;
-  color: #26342a;
+  padding-left: 24px;
+  color: #1f2b23;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 13px;
+  font-size: 12.5px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1089,7 +1180,7 @@
 .shellCommandPreview {
   display: grid;
   min-width: 0;
-  padding-left: 26px;
+  padding-left: 24px;
 }
 
 .shellCommandPreview .toolCommandLine {
@@ -1189,7 +1280,7 @@
   display: grid;
   gap: 2px;
   min-width: 0;
-  margin-left: 26px;
+  margin-left: 24px;
   padding: 6px 8px;
   border: 1px solid rgba(104, 115, 145, 0.16);
   border-radius: 8px;
@@ -1203,8 +1294,8 @@
   gap: 10px;
   min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 13px;
-  line-height: 1.85;
+  font-size: 12.5px;
+  line-height: 1.8;
 }
 
 .applyPatchRow {
@@ -1273,8 +1364,8 @@
 .updatePlanExplanation {
   min-width: 0;
   margin: 0;
-  padding-left: 26px;
-  color: #5f6a78;
+  padding-left: 24px;
+  color: #4c5a66;
   font-size: 13px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -1285,7 +1376,7 @@
   gap: 4px;
   min-width: 0;
   margin: 0;
-  padding: 0 0 0 26px;
+  padding: 0 0 0 24px;
   list-style: none;
 }
 
@@ -1295,7 +1386,7 @@
   align-items: start;
   min-width: 0;
   gap: 4px;
-  color: #26342a;
+  color: #202e24;
   font-size: 13px;
   line-height: 1.45;
 }
@@ -1342,12 +1433,18 @@
 }
 
 .message.thinking {
-  border-color: #8a6f2f;
-  background: #fffdf6;
+  border: 1px solid rgba(184, 134, 40, 0.25);
+  border-left: 3px solid #a67c2e;
+  background: #fffdf8;
+  padding: 6px 12px;
+  margin-bottom: 6px;
+  border-radius: 7px;
 }
 
 .message.error {
-  border-color: #bd3434;
+  border: 1px solid rgba(189, 52, 52, 0.3);
+  border-left: 4px solid #c63f3f;
+  background: #fffcfc;
 }
 
 .messageHeader {
@@ -1355,14 +1452,22 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  color: #66715f;
+  color: #4a5c4c;
   font-size: 12px;
-  text-transform: uppercase;
+  line-height: 1.3;
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: 0;
 }
 
 .messageHeader b {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   overflow: hidden;
-  font-weight: 650;
+  font-size: 11.5px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1376,14 +1481,14 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #73806f;
+  color: #637561;
   cursor: pointer;
   padding: 0;
 }
 
 .messageHeaderAction:hover {
   background: #e8eee4;
-  color: #33433a;
+  color: #24352a;
 }
 
 .messageHeaderAction:focus-visible {
@@ -1394,14 +1499,15 @@
 .messageStatus {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   border-radius: 999px;
-  background: #e6ece2;
-  color: #405244;
-  font-size: 11px;
+  background: #e9f0e6;
+  color: #2d4532;
+  font-size: 10.5px;
+  font-weight: 600;
   font-style: normal;
   line-height: 1;
-  padding: 4px 7px;
+  padding: 3px 7px;
   text-transform: none;
   white-space: nowrap;
 }
@@ -1538,6 +1644,8 @@
 @media (prefers-reduced-motion: reduce) {
   .activityStatusSummary.running .activityStatusIndicator,
   .activityStatusSummary.waiting .activityStatusIndicator,
+  .statusRegistryItem.pending .statusRegistryIndicator,
+  .statusRegistryItem.in_progress .statusRegistryIndicator,
   .activityStatusItem.pending .activityStatusLabel::before,
   .activityStatusItem.in_progress .activityStatusLabel::before,
   .messageStatus.in_progress::before,
@@ -1561,10 +1669,12 @@
 
 .messageMarkdown {
   min-width: 0;
+  max-width: 100%;
   overflow-wrap: anywhere;
-  color: #17211a;
+  color: #17241c;
   font-size: 14px;
   line-height: 1.42;
+  letter-spacing: 0.005em;
 }
 
 .messageMarkdown > :first-child {
@@ -1575,17 +1685,45 @@
   margin-bottom: 0;
 }
 
-.messageMarkdown p,
-.messageMarkdown ul,
-.messageMarkdown ol,
-.messageMarkdown blockquote,
-.messageMarkdown .markdownCodeBlock,
-.messageMarkdown .markdownTableScroll {
+.messageMarkdown p {
   margin: 0 0 4px;
+}
+
+.messageMarkdown h1,
+.messageMarkdown h2,
+.messageMarkdown h3,
+.messageMarkdown h4,
+.messageMarkdown h5,
+.messageMarkdown h6 {
+  margin: 8px 0 4px;
+  font-weight: 750;
+  line-height: 1.35;
+  color: #111e16;
+}
+
+.messageMarkdown h1 {
+  font-size: 18px;
+  border-bottom: 1px solid rgba(104, 115, 145, 0.14);
+  padding-bottom: 4px;
+}
+
+.messageMarkdown h2 {
+  font-size: 16px;
+}
+
+.messageMarkdown h3 {
+  font-size: 14.5px;
+}
+
+.messageMarkdown h4,
+.messageMarkdown h5,
+.messageMarkdown h6 {
+  font-size: 13.5px;
 }
 
 .messageMarkdown ul,
 .messageMarkdown ol {
+  margin: 0 0 4px;
   padding-left: 22px;
 }
 
@@ -1594,19 +1732,22 @@
 }
 
 .messageMarkdown blockquote {
-  border-left: 3px solid #cbd6c7;
-  color: #51604f;
-  padding-left: 10px;
+  margin: 0 0 4px;
+  border-left: 3px solid #7ea38b;
+  border-radius: 0 6px 6px 0;
+  background: rgba(238, 244, 236, 0.5);
+  color: #3b4e41;
+  padding: 4px 10px;
 }
 
 .messageMarkdown a {
-  color: #246c8f;
+  color: #1b6d91;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .messageMarkdown a:hover {
-  color: #df5b35;
+  color: #d95f36;
 }
 
 .messageMarkdown a.localFileLink {
@@ -1618,20 +1759,22 @@
 
 .messageMarkdown code {
   border-radius: 4px;
-  background: #f0f4ed;
-  color: #26342a;
+  background: #edf3eb;
+  border: 1px solid rgba(47, 125, 90, 0.14);
+  color: #1a3826;
   padding: 1px 4px;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 0.92em;
+  font-size: 0.88em;
 }
 
 .markdownCodeBlock {
   min-width: 0;
   overflow-x: auto;
-  border: 1px solid #dfe5dc;
+  border: 1px solid #dce4d9;
   border-radius: 8px;
-  background: #f8faf6;
+  background: #f6f8f5;
   padding: 5px 8px;
+  margin: 0 0 4px;
 }
 
 .markdownCodeBlock code {
@@ -1639,9 +1782,10 @@
   width: max-content;
   min-width: 100%;
   background: transparent;
+  border: 0;
   padding: 0;
   color: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.45;
   overflow-wrap: normal;
   white-space: pre;
@@ -1656,6 +1800,7 @@
 .markdownTableScroll {
   min-width: 0;
   overflow-x: auto;
+  margin: 0 0 10px;
 }
 
 .messageMarkdown table {
@@ -1667,39 +1812,39 @@
 
 .messageMarkdown th,
 .messageMarkdown td {
-  border: 1px solid #d7dfd3;
-  padding: 5px 7px;
+  border: 1px solid #d4ded0;
+  padding: 6px 9px;
   text-align: left;
   vertical-align: top;
 }
 
 .messageMarkdown th {
-  background: #eef4ec;
-  color: #26342a;
+  background: #ebf2e8;
+  color: #1c2b20;
   font-weight: 700;
 }
 
 .messageMarkdown hr {
   width: 100%;
   border: 0;
-  border-top: 1px solid #dfe5dc;
-  margin: 8px 0;
+  border-top: 1px solid #dce4d9;
+  margin: 12px 0;
 }
 
 .memoryCitation {
   display: grid;
   gap: 6px;
-  border: 1px solid #dfe5dc;
+  border: 1px solid #dce4d9;
   border-radius: 8px;
   background: #f8faf6;
-  padding: 7px 9px;
-  color: #405244;
+  padding: 8px 10px;
+  color: #384a3c;
   font-size: 12px;
 }
 
 .memoryCitation summary {
   cursor: pointer;
-  color: #51604f;
+  color: #495947;
   font-weight: 750;
   line-height: 1.3;
 }
@@ -1717,7 +1862,7 @@
 }
 
 .memoryCitationEntry + .memoryCitationEntry {
-  border-top: 1px solid #e4eadf;
+  border-top: 1px solid #e1e8dc;
   padding-top: 6px;
 }
 
@@ -1730,17 +1875,17 @@
 }
 
 .memoryCitationSource strong {
-  color: #26342a;
+  color: #202f24;
   overflow-wrap: anywhere;
 }
 
 .memoryCitationSource span {
-  color: #66715f;
+  color: #5c6c5a;
 }
 
 .memoryCitationEntry p {
   margin: 0;
-  color: #5f6a5d;
+  color: #546352;
   overflow-wrap: anywhere;
 }
 
@@ -1752,8 +1897,10 @@
   gap: 8px;
   justify-self: end;
   align-self: end;
-  margin-bottom: -0px;
-  color: #8a9584;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+  color: #5a6b57;
   font-size: 11px;
   line-height: 1.2;
   white-space: normal;
@@ -1762,12 +1909,27 @@
 .messageMetaAction {
   border: 0;
   background: transparent;
-  color: #405244;
+  color: #2e4a36;
   cursor: pointer;
   font: inherit;
+  font-weight: 600;
   padding: 0;
+  border-radius: 4px;
   text-decoration: underline;
   text-underline-offset: 2px;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.messageMetaAction:hover:not(:disabled) {
+  color: #d95f36;
+  background: rgba(217, 95, 54, 0.08);
+  text-decoration: none;
+}
+
+.messageMetaAction:disabled {
+  color: #92a08f;
+  cursor: default;
+  text-decoration: none;
 }
 
 .approvalActions {
@@ -1779,43 +1941,61 @@
 }
 
 .approvalButton {
-  border: 1px solid #d3dccf;
+  border: 1px solid #ced9ca;
   border-radius: 6px;
   background: #ffffff;
-  color: #344037;
+  color: #2d3b31;
   cursor: pointer;
   font: inherit;
   font-size: 11px;
+  font-weight: 600;
   line-height: 1;
   padding: 5px 8px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .approvalButton:hover {
-  border-color: #93a48d;
+  border-color: #889e81;
 }
 
 .approvalButton.approve {
-  border-color: #2f6f4f;
-  background: #2f6f4f;
+  border-color: #276846;
+  background: #276846;
   color: #ffffff;
 }
 
+.approvalButton.approve:hover {
+  border-color: #1f5639;
+  background: #1f5639;
+}
+
 .approvalButton.deny {
+  border-color: rgba(185, 67, 50, 0.3);
   color: #b94332;
 }
 
+.approvalButton.deny:hover {
+  border-color: #b94332;
+  background: rgba(185, 67, 50, 0.06);
+}
+
 .approvalButton.session {
-  border-color: #567197;
+  border-color: rgba(86, 113, 151, 0.35);
   color: #2f4f78;
 }
 
+.approvalButton.session:hover {
+  border-color: #567197;
+  background: rgba(86, 113, 151, 0.06);
+}
+
 .approvalButton.cancel {
-  color: #5e6674;
+  color: #58616f;
 }
 
 .approvalButton:disabled {
   cursor: default;
-  opacity: 0.65;
+  opacity: 0.6;
 }
 
 .userInputRequestForm {
@@ -1823,7 +2003,7 @@
   gap: 10px;
   min-width: 0;
   margin-top: 10px;
-  padding-left: 26px;
+  padding-left: 24px;
 }
 
 .userInputQuestion {
@@ -1833,7 +2013,7 @@
 }
 
 .userInputQuestionHeader {
-  color: #39473d;
+  color: #334337;
   font-size: 12px;
   font-weight: 700;
   line-height: 1.25;
@@ -1842,7 +2022,7 @@
 .userInputQuestionText,
 .userInputEmpty {
   margin: 0;
-  color: #5d675d;
+  color: #546054;
   font-size: 12px;
   line-height: 1.35;
 }
@@ -1850,10 +2030,10 @@
 .userInputControl {
   width: min(420px, 100%);
   min-width: 0;
-  border: 1px solid #d5ded1;
+  border: 1px solid #d0dad0;
   border-radius: 6px;
   background: #ffffff;
-  color: #26342a;
+  color: #202f24;
   font: inherit;
   font-size: 12px;
   line-height: 1.3;
@@ -1862,16 +2042,6 @@
 
 .userInputSubmit {
   justify-self: start;
-}
-
-.messageMetaAction:hover:not(:disabled) {
-  color: #df5b35;
-}
-
-.messageMetaAction:disabled {
-  color: #8a9584;
-  cursor: default;
-  text-decoration: none;
 }
 
 .sidebarScrim,

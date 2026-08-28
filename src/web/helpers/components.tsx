@@ -170,7 +170,7 @@ export const MessageCard = ({
     >
       {hasToolBody ? null : (
         <span className="messageHeader">
-          <b>{message.label ?? message.role}</b>
+          <b className="messageHeaderLabel">{message.label ?? message.role}</b>
           {showStatus && message.status ? (
             <em className={`messageStatus ${message.status}`}>
               <LiveStatusLabel status={message.status} statusText={message.statusText} statusDurationMs={message.statusDurationMs} startedAt={message.at} />
@@ -283,8 +283,15 @@ export const MessageCard = ({
   );
 };
 
-const messageToneClassName = (message: WebRecordView) =>
-  message.role === "codex" && message.label === "final_answer" ? "finalAnswer" : "";
+const messageToneClassName = (message: WebRecordView) => {
+  if (message.role === "codex") {
+    const label = (message.label || "").toLowerCase();
+    if (label === "final_answer") return "finalAnswer";
+    if (label === "commentary") return "commentary";
+    if (label === "assistant") return "assistant";
+  }
+  return "";
+};
 
 type PendingUserInputQuestionView = {
   id: string;
