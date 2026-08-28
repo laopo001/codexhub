@@ -67,10 +67,16 @@ export const createStatusRegistry = (): StatusRegistry => {
   };
 };
 
-export const StatusRegistryRows = ({ entries }: { entries: StatusRegistration[] }) => {
+export const StatusRegistryRows = ({
+  entries,
+  className
+}: {
+  entries: StatusRegistration[];
+  className?: string;
+}) => {
   if (!entries.length) return null;
   return (
-    <div className="statusRegistryRows">
+    <div className={["statusRegistryRows", className].filter(Boolean).join(" ")}>
       {entries.map((entry) => {
         const expandable = Boolean(entry.detail);
         const hasActions = Boolean(entry.actions);

@@ -611,6 +611,7 @@ test("Thread background processes use an expandable BACKGROUNDS section", async 
   assert.match(markup, /BACKGROUNDS/);
   assert.match(markup, /1 process/);
   assert.match(markup, /aria-expanded="true"/);
+  assert.match(markup, /statusRegistryRows backgroundTerminalRows/);
   assert.match(markup, /sleep 45/);
   assert.match(markup, /statusRegistryAction/);
   assert.match(markup, /Terminate background process sleep 45/);

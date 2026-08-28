@@ -1106,7 +1106,7 @@ export const ThreadStatusCard = ({
         </span>
       </>
     ),
-    detail: <StatusRegistryRows entries={backgroundRegistry.entries("thread")} />,
+    detail: <StatusRegistryRows entries={backgroundRegistry.entries("thread")} className="backgroundTerminalRows" />,
     expanded,
     onToggle: () => setExpanded((current) => !current),
     ariaLabel: `Backgrounds: ${backgroundTerminals.length} process${backgroundTerminals.length === 1 ? "" : "es"}`

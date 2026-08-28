@@ -242,6 +242,30 @@
   gap: 2px;
 }
 
+.statusRegistryRows.backgroundTerminalRows {
+  gap: 0;
+}
+
+.backgroundTerminalRows .statusRegistryItem {
+  min-height: 22px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.backgroundTerminalRows .statusRegistryItem + .statusRegistryItem {
+  border-top: 1px solid rgba(100, 120, 105, 0.12);
+}
+
+.backgroundTerminalRows .statusRegistryItem:hover,
+.backgroundTerminalRows .statusRegistryItem:focus-within {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: none;
+}
+
 .statusRegistryItem {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
