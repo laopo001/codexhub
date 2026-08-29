@@ -44,6 +44,39 @@ export type ProjectSource = {
   vscodeChannel?: VscodeChannel;
 };
 
+/** Canonical strict parser for project source values crossing API/IPC boundaries. */
+export const parseProjectSource = (value: unknown): ProjectSource | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !["kind", "groupId", "label", "vscodeChannel"].includes(key))) {
+    return null;
+  }
+  if (record.kind !== "vscode" && record.kind !== "electron") return null;
+  const groupId = projectSourceString(record.groupId, 256);
+  if (!groupId) return null;
+  const label = record.label === undefined ? undefined : projectSourceString(record.label, 512);
+  if (record.label !== undefined && !label) return null;
+  const vscodeChannel = record.vscodeChannel;
+  if (vscodeChannel !== undefined) {
+    if (record.kind !== "vscode" || (vscodeChannel !== "stable" && vscodeChannel !== "insiders")) return null;
+  }
+  return {
+    kind: record.kind,
+    groupId,
+    ...(label ? { label } : {}),
+    ...(vscodeChannel ? { vscodeChannel } : {})
+  };
+};
+
+export const isProjectSource = (value: unknown): value is ProjectSource =>
+  parseProjectSource(value) !== null;
+
+const projectSourceString = (value: unknown, maxLength: number) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed && trimmed.length <= maxLength && !/[\u0000-\u001f\u007f]/.test(trimmed) ? trimmed : null;
+};
+
 /** task 最近一次运行或历史运行的状态。 */
 export type TaskRunStatus = "queued" | "completed" | "failed" | "skipped";
 

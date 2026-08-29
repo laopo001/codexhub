@@ -26,7 +26,6 @@ import {
   collectRegisteredMachineActivityCompletions,
   findProjectByMachinePath,
   findProjectByWorkspacePath,
-  formatDuration,
   isTaskCompleteRecord,
   mergeNotificationRecords,
   mergeThreadOrderByMachine,
@@ -50,10 +49,13 @@ import {
   type SidebarDraftStore,
   streamEventRecords,
   taskCompleteNotification,
+  taskRunCompleteNotification,
+  taskCompleteNotificationFromActivity,
   taskCompleteNotificationShouldPersist,
   taskCompletionNotificationKey,
   taskCompleteRecordIsForLatestUserInput
 } from "../appHelpers.js";
+import { findLongestMatchingProject } from "../../shared/petActivityRouting.js";
 import type {
   AppSettings,
   LocalTask,
@@ -67,8 +69,7 @@ import type {
   SshHost,
   StreamEvent,
   SystemStatus,
-  TaskCompleteNotification,
-  LocalTaskRun
+  TaskCompleteNotification
 } from "../types.js";
 import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
 import { authorityInstanceRecovery } from "../helpers/authorityInstanceRecovery.js";
@@ -91,6 +92,7 @@ type RealtimeActionsContext = {
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
   latestRequestedThreadId: React.MutableRefObject<string>;
   machinesRef?: React.MutableRefObject<MachineSummary[]>;
+  projectsRef?: React.MutableRefObject<ProjectSummary[]>;
   setActiveMachineId: React.Dispatch<React.SetStateAction<string>>;
   setActiveTabThreadByMachine: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setActiveTabThreadId: React.Dispatch<React.SetStateAction<string>>;
@@ -145,22 +147,6 @@ export type RealtimeActions = {
 
 const taskRunNotificationKey = (task: LocalTask, runId: string) => `task:${task.taskId}:${runId}`;
 const embeddedWorkspacePathSet = new Set(embeddedWorkspacePaths);
-
-const taskRunCompleteNotification = (
-  task: LocalTask,
-  run: LocalTaskRun,
-  machineLabel?: string
-): TaskCompleteNotification => {
-  const duration = formatDuration(run.durationMs) || undefined;
-  return {
-    title: task.name || "计划任务",
-    body: duration ? `已完成 · 用时 ${duration}` : "已完成",
-    threadId: run.threadId ?? task.threadId ?? task.taskId,
-    ...(machineLabel ? { machineLabel } : {}),
-    duration,
-    ...(typeof run.durationMs === "number" ? { durationMs: run.durationMs } : {})
-  };
-};
 
 export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: RealtimeActionsDependencies): RealtimeActions => {
   const registeredMachineConnections = createRegisteredMachineConnectionTracker();
@@ -502,11 +488,22 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       const machine = event.thread.runtime.machineId
         ? ctx.machinesRef?.current.find((candidate) => candidate.machineId === event.thread.runtime.machineId)
         : undefined;
+      const matchedProject = findLongestMatchingProject(
+        ctx.projectsRef?.current ?? [],
+        event.thread.runtime.machineId,
+        event.thread.workingDirectory
+      );
       dispatchTaskCompleteNotification(taskCompleteNotification(
         event.thread,
         record,
         nextRecords,
-        machine ? machineNotificationLabel(machine, event.thread.workingDirectory) : undefined
+        {
+          source: matchedProject?.source,
+          machine,
+          machineHostname: machine?.hostname,
+          projectPath: matchedProject?.path,
+          machineLabel: machine ? machineNotificationLabel(machine, event.thread.workingDirectory) : undefined
+        }
       ));
     }
   }
@@ -534,10 +531,20 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         ctx.notifiedTaskCompletions.current.add(key);
         if (run.threadId && ctx.realtimeThreadSubscriptions.current.has(run.threadId)) continue;
         const machine = ctx.machinesRef?.current.find((candidate) => candidate.machineId === task.machineId);
+        const matchedProject = findLongestMatchingProject(
+          ctx.projectsRef?.current ?? [],
+          task.machineId,
+          task.projectPath
+        );
         dispatchTaskCompleteNotification(taskRunCompleteNotification(
           task,
           run,
-          machine ? machineNotificationLabel(machine, task.projectPath) : undefined
+          {
+            source: matchedProject?.source,
+            machine,
+            projectPath: matchedProject?.path || task.projectPath,
+            machineLabel: machine ? machineNotificationLabel(machine, task.projectPath) : undefined
+          }
         ));
       }
     }
@@ -567,16 +574,16 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         && embeddedWorkspacePathSet.size
         && !embeddedWorkspacePathSet.has(activity.workingDirectory)
       ) continue;
-      const machineLabel = machineNotificationLabel(machine, activity.workingDirectory)
-        || machine.name
-        || machine.hostname
-        || "registered machine";
-      dispatchTaskCompleteNotification({
-        title: activity.activityTitle ?? activity.title ?? "远程任务",
-        body: "已完成",
-        threadId: activity.threadId,
-        machineLabel
-      });
+      const matchedProject = findLongestMatchingProject(
+        ctx.projectsRef?.current ?? [],
+        machine.machineId,
+        activity.workingDirectory
+      );
+      dispatchTaskCompleteNotification(taskCompleteNotificationFromActivity(
+        machine,
+        activity,
+        matchedProject?.source
+      ));
     }
   }
 
@@ -594,7 +601,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const notificationWithPersistence = { ...notification, persistent };
     if (isElectronSurface) {
       if (sendElectronTaskCompleteNotification(notificationWithPersistence, window.codexhubElectronPet) === "notification") return;
-      void showBrowserTaskCompleteNotification(notificationWithPersistence);
+      void showBrowserTaskCompleteNotification(
+        notificationWithPersistence,
+        undefined,
+        (threadId) => void deps.openThread(threadId, { activate: true })
+      );
       return;
     }
     if (isEmbeddedHostSurface) {
@@ -608,7 +619,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       }
       return;
     }
-    void showBrowserTaskCompleteNotification(notificationWithPersistence);
+    void showBrowserTaskCompleteNotification(
+      notificationWithPersistence,
+      undefined,
+      (threadId) => void deps.openThread(threadId, { activate: true })
+    );
   }
 
   return {

@@ -1,6 +1,12 @@
-import type { TaskCompleteNotification } from "../types.js";
+import type { LocalTask, LocalTaskRun, TaskCompleteNotification } from "../types.js";
 import type { MachineActivitySummary, MachineSummary } from "../../shared/machineTypes.js";
-import { taskCompleteNotificationTitle } from "../../shared/taskNotifications.js";
+import type { ProjectSource } from "../../shared/projectTypes.js";
+import {
+  formatStatusDuration,
+  formatTaskNotificationBody,
+  taskCompleteNotificationTitle,
+  type TaskCompleteNotificationOptions
+} from "../../shared/taskNotifications.js";
 import { appServiceWorkerUrl } from "../pwa.js";
 
 export type RegisteredMachineActivityCompletion = {
@@ -13,6 +19,64 @@ export const machineNotificationLabel = (machine: MachineSummary, workingDirecto
   const machineName = (machine.name ?? machine.hostname).trim();
   const machineContext = machineName.split(" · ").slice(1).filter(Boolean).join(" · ") || machineName;
   return [directoryName, machineContext].filter(Boolean).join(" · ");
+};
+
+export const taskRunCompleteNotification = (
+  task: LocalTask,
+  run: LocalTaskRun,
+  options?: TaskCompleteNotificationOptions | string
+): TaskCompleteNotification => {
+  const opts: TaskCompleteNotificationOptions = typeof options === "string"
+    ? { machineLabel: options }
+    : options || {};
+  const durationMs = typeof run.durationMs === "number" ? run.durationMs : undefined;
+  const duration = typeof durationMs === "number" ? formatStatusDuration(durationMs) : undefined;
+  const body = formatTaskNotificationBody({
+    source: opts.source,
+    machine: opts.machine,
+    workingDirectory: task.projectPath,
+    duration,
+    message: "任务已完成"
+  });
+  return {
+    title: task.name?.trim() || "计划任务",
+    body,
+    threadId: run.threadId || `task:${task.taskId}:${run.runId}`,
+    machineId: task.machineId,
+    ...(opts.machineHostname || opts.machine?.hostname
+      ? { machineHostname: opts.machineHostname || opts.machine?.hostname }
+      : {}),
+    projectPath: task.projectPath,
+    workingDirectory: task.projectPath,
+    ...(opts.source ? { source: opts.source } : {}),
+    ...(opts.machineLabel?.trim() ? { machineLabel: opts.machineLabel.trim() } : {}),
+    ...(duration ? { duration } : {}),
+    ...(durationMs === undefined ? {} : { durationMs })
+  };
+};
+
+export const taskCompleteNotificationFromActivity = (
+  machine: MachineSummary,
+  activity: MachineActivitySummary,
+  source?: ProjectSource
+): TaskCompleteNotification => {
+  const workingDirectory = activity.workingDirectory || "";
+  const body = formatTaskNotificationBody({
+    source,
+    machine,
+    workingDirectory,
+    message: null
+  });
+  return {
+    title: activity.activityTitle?.trim() || activity.title?.trim() || "远程任务",
+    body,
+    threadId: activity.threadId,
+    machineId: machine.machineId,
+    machineHostname: machine.hostname,
+    workingDirectory,
+    ...(source ? { source } : {}),
+    machineLabel: machineNotificationLabel(machine, workingDirectory)
+  };
 };
 
 /**
@@ -88,6 +152,7 @@ export type BrowserTaskNotificationEnvironment = {
   notificationApi?: BrowserNotificationApi;
   serviceWorker?: BrowserServiceWorkerContainer;
   focusWindow: () => void;
+  openThread?: (threadId: string) => void;
   pageUrl: string;
 };
 
@@ -159,20 +224,27 @@ const activatedServiceWorkerRegistration = async (registration: BrowserServiceWo
 
 export const showBrowserTaskCompleteNotification = async (
   notification: TaskCompleteNotification,
-  environment?: BrowserTaskNotificationEnvironment
+  environment?: BrowserTaskNotificationEnvironment,
+  openThread?: (threadId: string) => void
 ): Promise<BrowserTaskNotificationResult> => {
   try {
     const current = environment ?? currentBrowserNotificationEnvironment();
     const NotificationApi = current.notificationApi;
     if (!NotificationApi || NotificationApi.permission !== "granted") return "unavailable";
 
+    const title = taskCompleteNotificationTitle(notification);
+
     try {
       const browserNotification = new NotificationApi(
-        taskCompleteNotificationTitle(notification),
+        title,
         notificationOptions(notification)
       );
       browserNotification.onclick = () => {
         current.focusWindow();
+        const open = current.openThread ?? openThread;
+        if (open && notification.threadId) {
+          open(notification.threadId);
+        }
         browserNotification.close();
       };
       return "notification";
@@ -182,7 +254,7 @@ export const showBrowserTaskCompleteNotification = async (
       const registration = await serviceWorker.register(appServiceWorkerUrl, { scope: "/" });
       const readyRegistration = serviceWorker.ready ? await serviceWorker.ready : registration;
       const activeRegistration = await activatedServiceWorkerRegistration(readyRegistration);
-      await activeRegistration.showNotification(taskCompleteNotificationTitle(notification), {
+      await activeRegistration.showNotification(title, {
         ...notificationOptions(notification),
         data: { url: notificationPageUrl(current.pageUrl) }
       });

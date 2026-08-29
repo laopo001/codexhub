@@ -10,12 +10,15 @@ const notification: TaskCompleteNotification = {
   title: "Codex task complete",
   body: "Done",
   threadId: "thread-test",
+  machineId: "machine-test",
+  workingDirectory: "/workspace/test",
   machineLabel: "remote · linux"
 };
 
 test("browser notification uses the Notification constructor when supported", async () => {
   let focused = false;
   let closed = false;
+  let openedThreadId = "";
   let created: { title: string; options?: NotificationOptions } | undefined;
   let createdInstance: FakeNotification | undefined;
   class FakeNotification {
@@ -36,12 +39,15 @@ test("browser notification uses the Notification constructor when supported", as
     focusWindow: () => {
       focused = true;
     },
+    openThread: (threadId) => {
+      openedThreadId = threadId;
+    },
     pageUrl: "https://codexhub.example/thread?codexhub_token=secret"
   };
 
   assert.equal(await showBrowserTaskCompleteNotification(notification, environment), "notification");
   assert.deepEqual(created, {
-    title: "Codex task complete · remote · linux",
+    title: "Codex task complete",
     options: {
       body: notification.body,
       tag: "codexhub-task-complete:thread-test"
@@ -50,6 +56,7 @@ test("browser notification uses the Notification constructor when supported", as
   createdInstance?.onclick?.({} as Event);
   assert.equal(focused, true);
   assert.equal(closed, true);
+  assert.equal(openedThreadId, "thread-test");
 });
 
 test("browser notification falls back to a service worker when Android rejects the constructor", async () => {
@@ -108,7 +115,7 @@ test("browser notification falls back to a service worker when Android rejects t
     options: { scope: "/" }
   });
   assert.deepEqual(shown, [{
-    title: "Codex task complete · remote · linux",
+    title: "Codex task complete",
     options: {
       body: notification.body,
       tag: "codexhub-task-complete:thread-test",

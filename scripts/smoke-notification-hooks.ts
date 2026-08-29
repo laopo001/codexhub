@@ -83,7 +83,9 @@ async function assertNtfyLifecycle() {
   const titles = requests.map((request) => decodeNtfyHeader(request.title));
   if (titles[0] !== "Running smoke"
     || titles[1] !== "Progress smoke"
+    || !requests[0].body.includes("codexhub-test")
     || !requests[0].body.includes("运行中")
+    || !requests[1].body.includes("codexhub-test")
     || !requests[1].body.includes("运行中")) {
     throw new Error(`ntfy running activity was not preserved: ${JSON.stringify(requests)}`);
   }
@@ -91,6 +93,7 @@ async function assertNtfyLifecycle() {
     throw new Error(`ntfy plan progress was not included: ${requests[1].body}`);
   }
   if (titles[2] !== "Smoke hook"
+    || !requests[2].body.includes("codexhub-test")
     || !requests[2].body.includes("已完成")
     || requests[2].tags !== "white_check_mark") {
     throw new Error(`ntfy completion update was wrong: ${JSON.stringify(requests[2])}`);
@@ -118,6 +121,7 @@ async function assertNtfyLifecycle() {
   const failureTitles = requests.slice(3).map((request) => decodeNtfyHeader(request.title));
   if (failureTitles[0] !== "Failure smoke"
     || failureTitles[1] !== "Smoke hook"
+    || !requests[4].body.includes("codexhub-test")
     || !requests[4].body.includes("失败")
     || requests[4].tags !== "x"
     || !requests[4].body.includes("Smoke failure")) {

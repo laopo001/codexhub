@@ -292,9 +292,9 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     const rawNotification = asRecord(record.notification);
     const title = notification
       ? taskCompleteNotificationTitle(notification)
-      : stringValue(rawNotification?.title) ?? "Codex task complete";
+      : stringValue(rawNotification?.title) ?? "Codex 任务已完成";
     const body = notification?.body ?? stringValue(rawNotification?.body) ?? "";
-    const text = truncateNotificationText(body ? `${title}: ${body}` : title);
+    const text = truncateNotificationText(body ? `${title} · ${body}` : title);
     const open = "Open";
     const selected = await vscode.window.showInformationMessage(text, open);
     if (selected !== open) return;

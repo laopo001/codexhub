@@ -399,16 +399,21 @@ const runningNtfyPayload = (
   const progress = latestPlanProgress(records, turnId);
   const needsInput = hasPendingNtfyInteraction(records);
   const activityTitle = taskActivityTitle(thread, records);
+  const directoryName = thread.workingDirectory.split(/[\\/]/).filter(Boolean).pop() || "";
+  const stateLabel = needsInput ? "等待输入" : "运行中";
   return {
     type: "task_lifecycle",
     status: needsInput ? "needs_input" : "running",
     sequenceId,
     title: activityTitle,
     body: notificationText([
-      needsInput ? "等待输入" : "运行中",
-      progress === undefined ? null : `进度 ${formatPlanProgress(progress)}`,
-      elapsedMs === undefined ? null : `已用 ${formatStatusDuration(elapsedMs)}`
-    ].filter((value): value is string => Boolean(value)).join(" · ")),
+      directoryName,
+      [
+        stateLabel,
+        progress === undefined ? null : `进度 ${formatPlanProgress(progress)}`,
+        elapsedMs === undefined ? null : `已用 ${formatStatusDuration(elapsedMs)}`
+      ].filter((value): value is string => Boolean(value)).join(" · ")
+    ].filter(Boolean).join("\n")),
     threadId: thread.threadId,
     ...(thread.runtime.machineId ? { machineId: thread.runtime.machineId } : {}),
     workingDirectory: thread.workingDirectory,
@@ -450,17 +455,18 @@ const terminalNtfyPayload = (
   const reason = typeof payload?.reason === "string" && payload.reason.trim()
     ? payload.reason.trim()
     : interrupted ? "Turn interrupted" : "Turn failed";
+  const directoryName = thread.workingDirectory.split(/[\\/]/).filter(Boolean).pop() || "";
+  const stateLabel = interrupted ? "已停止" : "失败";
   return {
     type: "task_lifecycle",
     status: interrupted ? "cancelled" : "failed",
     sequenceId,
     title: taskActivityTitle(thread, records),
     body: notificationText([
-      threadContext(thread),
-      interrupted ? "已停止" : "失败",
-      reason,
-      duration ? `用时 ${duration}` : null
-    ].filter((value): value is string => Boolean(value)).join(" · ")),
+      directoryName,
+      [stateLabel, duration ? `用时 ${duration}` : null, reason]
+        .filter((value): value is string => Boolean(value)).join(" · ")
+    ].filter(Boolean).join("\n")),
     threadId: thread.threadId,
     ...(thread.runtime.machineId ? { machineId: thread.runtime.machineId } : {}),
     workingDirectory: thread.workingDirectory,
@@ -504,13 +510,8 @@ const hasPendingNtfyInteraction = (records: CodexRecord[]) => records.some((reco
     && (userInput?.status === "pending" || payload.status === "pending_user_input");
 });
 
-const threadContext = (thread: ThreadSummary) =>
-  thread.title.trim()
-  || thread.workingDirectory.split(/[\\/]/).filter(Boolean).pop()
-  || "Codex 任务";
-
 const notificationText = (value: string) => {
-  const text = value.replace(/\s+/g, " ").trim();
+  const text = value.split(/\r?\n/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
   return text.length > 220 ? `${text.slice(0, 217)}...` : text;
 };
 

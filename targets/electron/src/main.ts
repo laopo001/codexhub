@@ -48,6 +48,7 @@ import {
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
 import {
   isTaskCompleteNotification,
+  taskCompleteNotificationOpenTarget,
   taskCompleteNotificationTitle,
   type TaskCompleteNotification
 } from "../../../src/shared/taskNotifications.js";
@@ -184,7 +185,8 @@ const showTaskCompleteNativeNotification = (notification: TaskCompleteNotificati
     });
     nativeNotification.once("click", () => {
       release();
-      void focusMainWindowForThread(notification.threadId);
+      const openTarget = taskCompleteNotificationOpenTarget(notification);
+      handleHostActivityOpenTarget(openTarget, { fallbackToElectron: true });
     });
     nativeNotification.show();
   } catch (error) {
@@ -446,53 +448,64 @@ const launchVsCodeTarget = (plan: { command: string; args: string[] }) => {
   }
 };
 
-const handlePetOpenActivity = (target: PetActivityOpenTarget | null) => {
-  if (!target) return;
+const handleHostActivityOpenTarget = (
+  target: PetActivityOpenTarget | null,
+  options?: { fallbackToElectron?: boolean }
+): boolean => {
+  if (!target) return false;
+
   // 1. Explicit Electron source: 聚焦/打开 Electron
   if (target.source?.kind === "electron") {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
     if (target.threadId.trim()) {
-      mainWindow.webContents.send("codexhub:open-thread", target.threadId);
+      void focusMainWindowForThread(target.threadId.trim());
+    } else {
+      void showMainWindow();
     }
-    return;
+    return true;
   }
 
   // 2. Explicit VSCode source: 仅对具有合法 vscodeChannel 且可确认的本机 Windows/WSL VSCode 尝试唤起
   if (target.source?.kind === "vscode") {
     const channel = target.source.vscodeChannel;
-    if (!channel) {
-      console.warn("[codexhub:electron] VSCode source missing vscodeChannel, ignoring activity click");
-      return;
+    if (channel) {
+      const customExecutable = process.platform === "win32"
+        ? resolveWindowsVsCodeCliExecutable(channel, process.env, existsSync)
+        : undefined;
+      if (process.platform !== "win32" || customExecutable) {
+        const plan = resolveVsCodeLaunchPlan(target, {
+          localHostname: os.hostname(),
+          ...(customExecutable ? { customExecutable } : {})
+        });
+        if (plan) {
+          const launched = launchVsCodeTarget(plan);
+          if (launched) return true;
+        }
+      }
     }
-    const customExecutable = process.platform === "win32"
-      ? resolveWindowsVsCodeCliExecutable(channel, process.env, existsSync)
-      : undefined;
-    if (process.platform === "win32" && !customExecutable) {
-      console.warn(`[codexhub:electron] Could not resolve an installed Windows VSCode CLI for channel ${channel}`);
-      return;
+    // 当 VSCode 无法唤起时（如 hostname mismatch 或无本地 CLI）：
+    // 若开启 fallbackToElectron（如通知点击），则回退聚焦 Electron 并打开 thread；
+    // 若未开启 fallbackToElectron（如桌宠点击），则 safe no-op。
+    if (options?.fallbackToElectron && target.threadId.trim()) {
+      void focusMainWindowForThread(target.threadId.trim());
+      return true;
     }
-    const plan = resolveVsCodeLaunchPlan(target, {
-      localHostname: os.hostname(),
-      ...(customExecutable ? { customExecutable } : {})
-    });
-    if (plan) {
-      launchVsCodeTarget(plan);
-    }
-    // 无论是启动还是 unsupported remote / hostname mismatch，都绝不 fallback 弹 Electron
-    return;
+    return false;
   }
 
-  // 3. Source 缺失 / 未知 / 其他：no-op，绝不弹 Electron
+  // 3. Source 缺失 / 未知 / 其他：
+  if (options?.fallbackToElectron && target.threadId.trim()) {
+    void focusMainWindowForThread(target.threadId.trim());
+    return true;
+  }
+
+  return false;
 };
 
 ipcMain.on("codexhub:pet-open-activity", (event, value: unknown) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
   const target = parsePetActivityOpenTarget(value);
-  handlePetOpenActivity(target);
+  handleHostActivityOpenTarget(target, { fallbackToElectron: false });
 });
 
 ipcMain.on("codexhub:task-complete-notification", (event, value: unknown) => {

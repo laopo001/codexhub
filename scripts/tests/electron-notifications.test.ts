@@ -9,6 +9,7 @@ import {
 import {
   isTaskCompleteNotification,
   taskCompleteNotification,
+  taskCompleteNotificationOpenTarget,
   taskCompleteRecordIsForLatestUserInput,
   taskCompleteNotificationShouldPersist,
   taskCompleteNotificationTitle
@@ -67,14 +68,14 @@ test("notification persistence uses zero for all or a runtime threshold in minut
   assert.equal(taskCompleteNotificationShouldPersist({ durationMs: 600_000 }, 5), true);
 });
 
-test("task completion notification title is shared across hosts", () => {
+test("task completion notification title is shared across hosts and focuses on activity title", () => {
   assert.equal(
     taskCompleteNotificationTitle(notification),
-    "Codex 任务完成 · codexhub · WSL Ubuntu · jx"
+    "Codex 任务完成"
   );
 });
 
-test("task completion notification title follows the latest Activity title", () => {
+test("task completion notification title follows the latest Activity title and includes formatted source context in body", () => {
   const thread: ThreadSummary = {
     threadId: "thread-activity-title",
     workingDirectory: "/tmp/codexhub-title",
@@ -107,9 +108,22 @@ test("task completion notification title follows the latest Activity title", () 
       payload: { type: "task_complete", turn_id: "turn-title", duration_ms: 2000 }
     }
   ];
-  const notification = taskCompleteNotification(thread, records[2], records);
-  assert.equal(notification.title, "检查 ntfy 通知");
-  assert.equal(notification.body, "已完成 · 用时 2.0s · 已修复");
+  const notificationWithoutSource = taskCompleteNotification(thread, records[2], records);
+  assert.equal(notificationWithoutSource.title, "检查 ntfy 通知");
+  assert.equal(notificationWithoutSource.body, "codexhub-title\n已完成 · 用时 2.0s · 已修复");
+
+  const notificationWithLocal = taskCompleteNotification(thread, records[2], records, {
+    machine: { type: "local", hostname: "jx" }
+  });
+  assert.equal(notificationWithLocal.body, "Local · codexhub-title\n已完成 · 用时 2.0s · 已修复");
+
+  const notificationWithInsiders = taskCompleteNotification(thread, records[2], records, {
+    source: { kind: "vscode", groupId: "vscode-window-1", vscodeChannel: "insiders" }
+  });
+  assert.equal(notificationWithInsiders.title, "检查 ntfy 通知");
+  assert.equal(notificationWithInsiders.body, "VS Code Insiders · codexhub-title\n已完成 · 用时 2.0s · 已修复");
+  assert.equal(notificationWithInsiders.source?.kind, "vscode");
+  assert.equal(notificationWithInsiders.source?.vscodeChannel, "insiders");
 });
 
 test("task completion notification follows the latest user input turn", () => {
@@ -189,4 +203,34 @@ test("registered machine notification labels match the activity tray context", (
     }, "/home/laop/projects/codexhub"),
     "codexhub · WSL Ubuntu · jx"
   );
+});
+
+test("notification with vscode source preserves full target routing metadata", () => {
+  const fullNotification = {
+    title: "测试任务",
+    body: "VS Code Insiders · codexhub · 已完成",
+    threadId: "thread-vscode-click",
+    machineId: "machine-jx",
+    machineHostname: "jx",
+    projectPath: "/home/laop/projects/codexhub",
+    workingDirectory: "/home/laop/projects/codexhub",
+    source: {
+      kind: "vscode" as const,
+      groupId: "vscode-window-1",
+      label: "VS Code Insiders: codexhub [WSL: Ubuntu]",
+      vscodeChannel: "insiders" as const
+    },
+    machineLabel: "codexhub · WSL Ubuntu · jx"
+  };
+
+  assert.equal(isTaskCompleteNotification(fullNotification), true);
+  assert.equal(isTaskCompleteNotification({ ...fullNotification, machineHostname: "" }), false);
+  assert.deepEqual(taskCompleteNotificationOpenTarget(fullNotification), {
+    threadId: "thread-vscode-click",
+    machineId: "machine-jx",
+    machineHostname: "jx",
+    projectPath: "/home/laop/projects/codexhub",
+    workingDirectory: "/home/laop/projects/codexhub",
+    source: fullNotification.source
+  });
 });

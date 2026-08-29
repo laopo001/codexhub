@@ -148,6 +148,8 @@ export const useAppState = () => {
   const machinesRef = useRef<MachineSummary[]>(machines);
   machinesRef.current = machines;
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const projectsRef = useRef<ProjectSummary[]>(projects);
+  projectsRef.current = projects;
   const [activeMachineId, setActiveMachineId] = useState("");
   const [selectedProjectKey, setSelectedProjectKey] = useState("");
   const [openingProjectKey, setOpeningProjectKey] = useState("");
@@ -251,6 +253,7 @@ export const useAppState = () => {
     projectActionError,
     projectPicker,
     projects,
+    projectsRef,
     projectsLastSeq,
     realtimeClient,
     realtimeThreadSubscriptions,

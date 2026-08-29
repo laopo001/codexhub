@@ -1,5 +1,7 @@
-import type { ProjectSource, ProjectSummary } from "./projectTypes.js";
+import { parseProjectSource, type ProjectSource, type ProjectSummary } from "./projectTypes.js";
 import type { VscodeChannel } from "./surfaceTypes.js";
+
+export { parseProjectSource } from "./projectTypes.js";
 
 /** 桌面宠物 Activity 点击时向宿主投递的目标描述 */
 export type PetActivityOpenTarget = {
@@ -21,44 +23,6 @@ export const validateSafeString = (value: unknown, maxLength = 4096): string | n
   if (!trimmed || trimmed.length > maxLength) return null;
   if (/[\u0000-\u001f\u007f]|\0/.test(trimmed)) return null;
   return trimmed;
-};
-
-/** 解析 ProjectSource，存在非法字段或异常字符时返回 null */
-export const parseProjectSource = (value: unknown): ProjectSource | null => {
-  if (!isRecord(value)) return null;
-  for (const key of Object.keys(value)) {
-    if (key !== "kind" && key !== "groupId" && key !== "label" && key !== "vscodeChannel") {
-      return null;
-    }
-  }
-
-  const kindRaw = validateSafeString(value.kind, 32);
-  if (kindRaw !== "vscode" && kindRaw !== "electron") return null;
-  const kind = kindRaw as "vscode" | "electron";
-
-  const groupId = validateSafeString(value.groupId, 256);
-  if (!groupId) return null;
-
-  let label: string | undefined;
-  if (value.label !== undefined) {
-    const parsedLabel = validateSafeString(value.label, 512);
-    if (!parsedLabel) return null;
-    label = parsedLabel;
-  }
-
-  let vscodeChannel: VscodeChannel | undefined;
-  if (value.vscodeChannel !== undefined) {
-    if (kind !== "vscode") return null;
-    if (value.vscodeChannel !== "stable" && value.vscodeChannel !== "insiders") return null;
-    vscodeChannel = value.vscodeChannel;
-  }
-
-  return {
-    kind,
-    groupId,
-    ...(label ? { label } : {}),
-    ...(vscodeChannel ? { vscodeChannel } : {})
-  };
 };
 
 /**
