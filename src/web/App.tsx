@@ -200,7 +200,7 @@ const App = () => {
     appSettings.selectedPetId,
     setAppSettings,
     isElectronDesktopPetWindow ? "desktop" : "window",
-    { runtimeList, machines, dialogThreads: petDialogThreads }
+    { runtimeList, machines, dialogThreads: petDialogThreads, projects: projectList }
   );
   React.useEffect(() => {
     if (!isElectronDesktopPetWindow) return undefined;

@@ -1,3 +1,5 @@
+import type { ProjectSource, ProjectSummary } from "../../shared/projectTypes.js";
+import { findLongestMatchingProject } from "../../shared/petActivityRouting.js";
 import { asRecord, type CodexRecord } from "../../shared/recordTypes.js";
 import {
   planProgressFromPlan,
@@ -35,12 +37,15 @@ export type PetActivity = {
   updatedAt: string;
   status: PetActivityStatus;
   machineId?: string;
+  machineHostname?: string;
   machineLabel?: string;
   machineLabelParts?: PetActivityMachineLabel;
   latestAgentMessage?: string;
   executionMeta?: ThreadExecutionMeta;
   activeGoal?: ThreadGoalView | null;
   activePlanProgress?: PlanProgressSummary;
+  projectSource?: ProjectSource;
+  projectPath?: string;
 };
 
 export const petCompletionJumpDurationMs = 3_000;
@@ -240,7 +245,8 @@ export const derivePetActivities = (
   threads: OpenThreadState[],
   runtimeList: RuntimeSummary[] = [],
   machines: MachineSummary[] = [],
-  dialogThreads: OpenThreadState[] = []
+  dialogThreads: OpenThreadState[] = [],
+  projects: readonly ProjectSummary[] = []
 ) => {
   const candidates = new Map<string, PetActivityCandidate>();
   const machineById = new Map(machines.map((machine) => [machine.machineId, machine]));
@@ -272,11 +278,13 @@ export const derivePetActivities = (
         ?? runtime?.machineId
         ?? candidateMachine?.machineId;
       const machine = machineById.get(machineId ?? "") ?? candidateMachine;
+      const machineHostname = machine?.hostname || candidateMachine?.hostname || runtime?.hostname;
       const workingDirectory = detail?.workingDirectory
         ?? summary?.workingDirectory
         ?? activity?.workingDirectory
         ?? runtime?.workingDirectory
         ?? "";
+      const matchedProject = findLongestMatchingProject(projects, machineId, workingDirectory);
       const status = detail
         ? petStatusForThread(detail)
         : runtime?.online && summary && (summary.running || summary.status === "running")
@@ -333,9 +341,12 @@ export const derivePetActivities = (
         updatedAt: detail?.updatedAt ?? summary?.updatedAt ?? activity?.updatedAt ?? runtime?.lastSeenAt ?? "",
         status,
         ...(machineId ? { machineId } : {}),
+        ...(machineHostname ? { machineHostname } : {}),
         ...(machineLabel ? { machineLabel } : {}),
         ...(machineLabelParts ? { machineLabelParts } : {}),
         ...(latestAgentMessage ? { latestAgentMessage } : {}),
+        ...(matchedProject?.source ? { projectSource: matchedProject.source } : {}),
+        ...(matchedProject?.path ? { projectPath: matchedProject.path } : {}),
         ...(detailExecution ?? summaryExecution ?? machineExecution ?? {})
       };
     })

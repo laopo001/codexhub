@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { PetActivityOpenTarget } from "../../../src/shared/petActivityRouting.js";
 import type { RestartPayload } from "../../../src/shared/apiContract.js";
 import type { PetHitRegion } from "../../../src/shared/petInput.js";
 import type { TaskCompleteNotification } from "../../../src/shared/taskNotifications.js";
@@ -10,8 +11,8 @@ contextBridge.exposeInMainWorld("codexhubElectronPet", {
   setPetDragActive: (active: boolean) => {
     ipcRenderer.send("codexhub:pet-drag-active", Boolean(active));
   },
-  focusMainWindow: (threadId?: string) => {
-    ipcRenderer.send("codexhub:pet-focus-main", typeof threadId === "string" ? threadId : "");
+  openPetActivity: (target: PetActivityOpenTarget) => {
+    ipcRenderer.send("codexhub:pet-open-activity", target);
   },
   restartAuthority: () => ipcRenderer.invoke("codexhub:restart-authority") as Promise<RestartPayload>,
   showTaskCompleteNotification: (notification: TaskCompleteNotification) => {

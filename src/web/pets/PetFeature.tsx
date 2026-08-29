@@ -387,9 +387,15 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
   const trayVertical = position.y + petSize.height / 2 > viewport.height / 2 ? "above" : "below";
   const trayHorizontal = position.x + petSize.width / 2 > viewport.width / 2 ? "right" : "left";
   const openActivity = (activity: PetActivity) => {
-    controller.setTrayOpen(false);
-    if (desktopPetWindow && window.codexhubElectronPet) {
-      window.codexhubElectronPet.focusMainWindow(activity.threadId);
+    if (desktopPetWindow) {
+      window.codexhubElectronPet?.openPetActivity?.({
+        threadId: activity.threadId,
+        workingDirectory: activity.workingDirectory,
+        machineId: activity.machineId,
+        machineHostname: activity.machineHostname,
+        projectPath: activity.projectPath,
+        source: activity.projectSource
+      });
       return;
     }
     void onOpenThread(activity.threadId);

@@ -1,4 +1,6 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import {
   app as electronApp,
@@ -11,6 +13,12 @@ import {
   shell,
   Tray
 } from "electron";
+import {
+  buildSafeWindowsCmdInvocation,
+  parsePetActivityOpenTarget,
+  resolveVsCodeLaunchPlan,
+  type PetActivityOpenTarget
+} from "../../../src/shared/petActivityRouting.js";
 import { applyServerConfigEnv, readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import { embeddedAuthorityDataDirectory } from "../../../src/core/authorityPaths.js";
 import { resolveAuthorityPackage } from "../../../src/core/authorityPackage.js";
@@ -397,15 +405,73 @@ ipcMain.on("codexhub:pet-drag-active", (event, active: unknown) => {
   updateDesktopPetInputMode(true);
 });
 
-ipcMain.on("codexhub:pet-focus-main", (event, threadId: unknown) => {
-  const sender = BrowserWindow.fromWebContents(event.sender);
-  if (sender !== desktopPetWindow || !mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-  if (typeof threadId === "string" && threadId.trim()) {
-    mainWindow.webContents.send("codexhub:open-thread", threadId);
+const launchVsCodeTarget = (plan: { command: string; args: string[] }) => {
+  try {
+    const isWindows = process.platform === "win32";
+    if (isWindows) {
+      const invocation = buildSafeWindowsCmdInvocation(plan.command, plan.args);
+      if (!invocation) {
+        console.warn("[codexhub:electron] Refusing unsafe Windows cmd invocation for VSCode target");
+        return false;
+      }
+      const child = spawn(invocation.cmdExe, invocation.cmdArgs, {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true
+      });
+      child.unref();
+      child.on("error", (error) => {
+        console.warn("[codexhub:electron] Failed to launch VSCode target:", error);
+      });
+      return true;
+    }
+    const child = spawn(plan.command, plan.args, {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+    child.on("error", (error) => {
+      console.warn("[codexhub:electron] Failed to launch VSCode target:", error);
+    });
+    return true;
+  } catch (error) {
+    console.warn("[codexhub:electron] Failed to spawn VSCode process:", error);
+    return false;
   }
+};
+
+const handlePetOpenActivity = (target: PetActivityOpenTarget | null) => {
+  if (!target) return;
+  // 1. Explicit Electron source: 聚焦/打开 Electron
+  if (target.source?.kind === "electron") {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    if (target.threadId.trim()) {
+      mainWindow.webContents.send("codexhub:open-thread", target.threadId);
+    }
+    return;
+  }
+
+  // 2. Explicit VSCode source: 仅对可确认的本机 Windows/WSL VSCode 尝试唤起
+  if (target.source?.kind === "vscode") {
+    const plan = resolveVsCodeLaunchPlan(target, { localHostname: os.hostname() });
+    if (plan) {
+      launchVsCodeTarget(plan);
+    }
+    // 无论是启动还是 unsupported remote / hostname mismatch，都绝不 fallback 弹 Electron
+    return;
+  }
+
+  // 3. Source 缺失 / 未知 / 其他：no-op，绝不弹 Electron
+};
+
+ipcMain.on("codexhub:pet-open-activity", (event, value: unknown) => {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
+  const target = parsePetActivityOpenTarget(value);
+  handlePetOpenActivity(target);
 });
 
 ipcMain.on("codexhub:task-complete-notification", (event, value: unknown) => {

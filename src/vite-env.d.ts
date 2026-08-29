@@ -9,7 +9,18 @@ interface Window {
       height: number;
     }>) => void;
     setPetDragActive: (active: boolean) => void;
-    focusMainWindow: (threadId?: string) => void;
+    openPetActivity: (target: {
+      threadId: string;
+      workingDirectory?: string;
+      machineId?: string;
+      machineHostname?: string;
+      projectPath?: string;
+      source?: {
+        kind: "vscode" | "electron";
+        groupId: string;
+        label?: string;
+      };
+    }) => void;
     restartAuthority: () => Promise<{ ok: boolean; restarting: boolean }>;
     onOpenThread: (listener: (threadId: string) => void) => () => void;
     showTaskCompleteNotification: (notification: {

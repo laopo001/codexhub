@@ -424,6 +424,7 @@ test("machine-only pet activities expose the registered turn start and Agent mes
     updatedAt: "2026-01-01T00:00:10.000Z",
     status: "running",
     machineId: "machine-activity-only",
+    machineHostname: "remote",
     machineLabel: "Registered · codexhub · Remote authority",
     machineLabelParts: {
       type: "Registered",
@@ -580,4 +581,88 @@ test("a completion during jumping restarts the three-second deadline", () => {
     hasRunningThreads: false,
   });
   assert.equal(state.phase, "none");
+});
+
+test("derivePetActivities matches project source using machineId and longest path ancestor", () => {
+  const machineId = "machine-authority-00ad99e0-a745-4ce9-9a10-fb5620893367";
+  const projectList: import("../../src/shared/projectTypes.js").ProjectSummary[] = [
+    {
+      projectId: "p-root",
+      machineId,
+      path: "/home/laop/projects",
+      name: "projects",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastOpenedAt: "2026-01-01T00:00:00.000Z",
+      machineOnline: true,
+      running: false,
+      source: { kind: "vscode", groupId: "parent-surface", label: "VSCode: parent [WSL: Ubuntu]" }
+    },
+    {
+      projectId: "p-specific",
+      machineId,
+      path: "/home/laop/projects/codexhub",
+      name: "codexhub",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastOpenedAt: "2026-01-01T00:00:00.000Z",
+      machineOnline: true,
+      running: false,
+      source: {
+        kind: "vscode",
+        groupId: "registered:machine-authority-00ad99e0-a745-4ce9-9a10-fb5620893367:vscode-93ed5dee",
+        label: "VSCode: codexhub [WSL: Ubuntu]"
+      }
+    }
+  ];
+
+  const threadState = {
+    ...thread("wsl-thread-1", [], true),
+    workingDirectory: "/home/laop/projects/codexhub/src/web",
+    runtime: { online: true, runnable: true, machineId }
+  };
+
+  const machines: import("../../src/web/types.js").MachineSummary[] = [
+    {
+      machineId,
+      name: "jx-workstation",
+      hostname: "jx",
+      platform: "linux-x64",
+      type: "registered",
+      online: true,
+      status: "online",
+      capabilities: { projectLauncher: true },
+      lastSeenAt: "2026-01-01T00:00:00.000Z"
+    }
+  ];
+
+  const activities = derivePetActivities([threadState], [], machines, [], projectList);
+  assert.equal(activities.length, 1);
+  assert.equal(activities[0]?.projectPath, "/home/laop/projects/codexhub");
+  assert.equal(activities[0]?.machineHostname, "jx");
+  assert.deepEqual(activities[0]?.projectSource, {
+    kind: "vscode",
+    groupId: "registered:machine-authority-00ad99e0-a745-4ce9-9a10-fb5620893367:vscode-93ed5dee",
+    label: "VSCode: codexhub [WSL: Ubuntu]"
+  });
+});
+
+test("PetFeature openActivity retains tray expansion without closing it and has no focusMainWindow fallback", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const petFeatureCode = await readFile(
+    new URL("../../src/web/pets/PetFeature.tsx", import.meta.url),
+    "utf8"
+  );
+  const openActivityMatch = petFeatureCode.match(/const openActivity = \(activity: PetActivity\) => \{([\s\S]*?)\};/);
+  assert.ok(openActivityMatch, "openActivity definition must exist");
+  assert.ok(
+    !openActivityMatch[1].includes("setTrayOpen(false)"),
+    "clicking an activity must NOT call setTrayOpen(false) to keep the tray open"
+  );
+  assert.ok(
+    openActivityMatch[1].includes("openPetActivity"),
+    "openActivity must dispatch structured openPetActivity payload"
+  );
+  assert.ok(
+    !openActivityMatch[1].includes("focusMainWindow"),
+    "openActivity must NOT contain any legacy focusMainWindow fallback"
+  );
 });
