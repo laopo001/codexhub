@@ -10,6 +10,7 @@ import {
   parseProjectSource,
   resolveVsCodeCliExecutable,
   resolveVsCodeLaunchPlan,
+  resolveWindowsVsCodeCliExecutable,
   validateSafeString,
 } from "../../src/shared/petActivityRouting.js";
 import type { ProjectSummary } from "../../src/shared/projectTypes.js";
@@ -41,16 +42,29 @@ test("validateSafeString enforces length and rejects control characters", () => 
   assert.equal(validateSafeString("", 32), null);
 });
 
-test("parseProjectSource validates source kinds and requires valid fields", () => {
-  assert.deepEqual(parseProjectSource({ kind: "vscode", groupId: "group-1", label: "VSCode: codexhub" }), {
+test("parseProjectSource validates source kinds, channels and rejects unknown fields", () => {
+  assert.deepEqual(parseProjectSource({ kind: "vscode", groupId: "group-1", label: "VSCode: codexhub", vscodeChannel: "stable" }), {
     kind: "vscode",
     groupId: "group-1",
-    label: "VSCode: codexhub"
+    label: "VSCode: codexhub",
+    vscodeChannel: "stable"
+  });
+  assert.deepEqual(parseProjectSource({ kind: "vscode", groupId: "group-1", label: "VSCode: codexhub", vscodeChannel: "insiders" }), {
+    kind: "vscode",
+    groupId: "group-1",
+    label: "VSCode: codexhub",
+    vscodeChannel: "insiders"
   });
   assert.deepEqual(parseProjectSource({ kind: "electron", groupId: "electron-main" }), {
     kind: "electron",
     groupId: "electron-main"
   });
+  // Electron cannot declare vscodeChannel
+  assert.equal(parseProjectSource({ kind: "electron", groupId: "electron-main", vscodeChannel: "stable" }), null);
+  // Invalid vscodeChannel
+  assert.equal(parseProjectSource({ kind: "vscode", groupId: "group-1", vscodeChannel: "nightly" }), null);
+  // Unknown fields rejected
+  assert.equal(parseProjectSource({ kind: "vscode", groupId: "group-1", unknownField: "bad" }), null);
   assert.equal(parseProjectSource({ kind: "unknown", groupId: "group-1" }), null);
   assert.equal(parseProjectSource({ kind: "vscode" }), null);
   assert.equal(parseProjectSource({ kind: "vscode", groupId: "g", label: "bad\nlabel" }), null);
@@ -64,7 +78,7 @@ test("parsePetActivityOpenTarget strictly validates IPC payloads and rejects mal
     machineId: "machine-1",
     machineHostname: "jx-workstation",
     projectPath: "/home/laop/projects/codexhub",
-    source: { kind: "vscode", groupId: "surface-1", label: "VSCode: codexhub [WSL: Ubuntu]" }
+    source: { kind: "vscode" as const, groupId: "surface-1", label: "VSCode: codexhub [WSL: Ubuntu]", vscodeChannel: "insiders" as const }
   };
   assert.deepEqual(parsePetActivityOpenTarget(validPayload), validPayload);
 
@@ -94,6 +108,10 @@ test("parsePetActivityOpenTarget strictly validates IPC payloads and rejects mal
     threadId: "thread-1",
     source: { kind: "other", groupId: "group-1" }
   }), null);
+  assert.equal(parsePetActivityOpenTarget({
+    threadId: "thread-1",
+    source: { kind: "electron", groupId: "group-1", vscodeChannel: "stable" }
+  }), null);
 });
 
 test("normalizePath handles POSIX, Windows slashes, and root boundaries", () => {
@@ -122,9 +140,9 @@ test("findLongestMatchingProject isolates machines and selects most specific anc
   const sshMachine = "machine-authority-ssh";
 
   const rootProjects = [
-    makeProject(wslMachine, "/home/laop/projects", { kind: "vscode", groupId: "parent-group" }),
-    makeProject(wslMachine, "/home/laop/projects/comfyui-sdk", { kind: "vscode", groupId: "child-group", label: "VSCode: comfyui-sdk [WSL: Ubuntu]" }),
-    makeProject(sshMachine, "/home/laop/projects/comfyui-sdk", { kind: "vscode", groupId: "ssh-group" }),
+    makeProject(wslMachine, "/home/laop/projects", { kind: "vscode", groupId: "parent-group", vscodeChannel: "stable" }),
+    makeProject(wslMachine, "/home/laop/projects/comfyui-sdk", { kind: "vscode", groupId: "child-group", label: "VSCode: comfyui-sdk [WSL: Ubuntu]", vscodeChannel: "insiders" }),
+    makeProject(sshMachine, "/home/laop/projects/comfyui-sdk", { kind: "vscode", groupId: "ssh-group", vscodeChannel: "stable" }),
   ];
 
   // 1. Longest match: nested workingDirectory matches the most specific child project
@@ -135,6 +153,7 @@ test("findLongestMatchingProject isolates machines and selects most specific anc
   );
   assert.equal(matchChild?.path, "/home/laop/projects/comfyui-sdk");
   assert.equal(matchChild?.source?.groupId, "child-group");
+  assert.equal(matchChild?.source?.vscodeChannel, "insiders");
 
   // 2. Parent match when not under child project
   const matchParent = findLongestMatchingProject(
@@ -144,6 +163,7 @@ test("findLongestMatchingProject isolates machines and selects most specific anc
   );
   assert.equal(matchParent?.path, "/home/laop/projects");
   assert.equal(matchParent?.source?.groupId, "parent-group");
+  assert.equal(matchParent?.source?.vscodeChannel, "stable");
 
   // 3. Machine isolation: same path on different machine does not leak
   const matchSsh = findLongestMatchingProject(
@@ -172,20 +192,60 @@ test("extractWslDistroFromLabel parses standard VSCode and Authority WSL pattern
   assert.equal(extractWslDistroFromLabel(undefined), null);
 });
 
-test("resolveVsCodeCliExecutable returns code.cmd on win32 and code on other platforms", () => {
-  assert.equal(resolveVsCodeCliExecutable({}, "win32"), "code.cmd");
-  assert.equal(resolveVsCodeCliExecutable({}, "linux"), "code");
-  assert.equal(resolveVsCodeCliExecutable({ CODEX_HUB_VSCODE_CLI: "custom-code" }, "win32"), "custom-code");
+test("resolveVsCodeCliExecutable returns correct executable names per channel and platform", () => {
+  assert.equal(resolveVsCodeCliExecutable("stable", {}, "win32"), "code.cmd");
+  assert.equal(resolveVsCodeCliExecutable("stable", {}, "linux"), "code");
+  assert.equal(resolveVsCodeCliExecutable("insiders", {}, "win32"), "code-insiders.cmd");
+  assert.equal(resolveVsCodeCliExecutable("insiders", {}, "linux"), "code-insiders");
+  assert.equal(resolveVsCodeCliExecutable("stable", { CODEX_HUB_VSCODE_CLI: "custom-code" }, "win32"), "custom-code");
+  assert.equal(resolveVsCodeCliExecutable("insiders", { CODEX_HUB_VSCODE_INSIDERS_CLI: "custom-insiders" }, "win32"), "custom-insiders");
 });
 
-test("buildSafeWindowsCmdInvocation quotes safe arguments and rejects cmd expansion", () => {
-  // 1. Safe command and arguments
+test("resolveWindowsVsCodeCliExecutable requires an existing absolute Windows shim for stable and insiders", () => {
+  const stableProgramFiles = "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd";
+  const stableLocalAppData = "C:\\Users\\tester\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd";
+  const insidersLocalAppData = "C:\\Users\\tester\\AppData\\Local\\Programs\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd";
+  const insidersProgramFiles = "C:\\Program Files\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd";
+
+  // Stable resolution
+  assert.equal(resolveWindowsVsCodeCliExecutable("stable", { ProgramFiles: "C:\\Program Files" },
+    (candidate) => candidate === stableProgramFiles), stableProgramFiles);
+  assert.equal(resolveWindowsVsCodeCliExecutable("stable", { LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" },
+    (candidate) => candidate === stableLocalAppData), stableLocalAppData);
+  assert.equal(resolveWindowsVsCodeCliExecutable("stable", {
+    CODEX_HUB_VSCODE_CLI: "D:\\VSCode\\bin\\code.cmd",
+    ProgramFiles: "C:\\Program Files"
+  }, (candidate) => candidate === "D:\\VSCode\\bin\\code.cmd"), "D:\\VSCode\\bin\\code.cmd");
+  assert.equal(resolveWindowsVsCodeCliExecutable("stable", {
+    CODEX_HUB_VSCODE_CLI: "D:\\missing\\code.cmd",
+    ProgramFiles: "C:\\Program Files"
+  }, (candidate) => candidate === stableProgramFiles), null, "an explicit missing override must not silently fall back");
+
+  // Insiders resolution
+  assert.equal(resolveWindowsVsCodeCliExecutable("insiders", { LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" },
+    (candidate) => candidate === insidersLocalAppData), insidersLocalAppData);
+  assert.equal(resolveWindowsVsCodeCliExecutable("insiders", { ProgramFiles: "C:\\Program Files" },
+    (candidate) => candidate === insidersProgramFiles), insidersProgramFiles);
+  assert.equal(resolveWindowsVsCodeCliExecutable("insiders", {
+    CODEX_HUB_VSCODE_INSIDERS_CLI: "D:\\VSCodeInsiders\\bin\\code-insiders.cmd",
+    LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local"
+  }, (candidate) => candidate === "D:\\VSCodeInsiders\\bin\\code-insiders.cmd"), "D:\\VSCodeInsiders\\bin\\code-insiders.cmd");
+  assert.equal(resolveWindowsVsCodeCliExecutable("insiders", {
+    CODEX_HUB_VSCODE_INSIDERS_CLI: "D:\\missing\\code-insiders.cmd",
+    LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local"
+  }, (candidate) => candidate === insidersLocalAppData), null, "an explicit missing insiders override must not fall back");
+
+  assert.equal(resolveWindowsVsCodeCliExecutable("stable", {}, () => false), null);
+  assert.equal(resolveWindowsVsCodeCliExecutable("insiders", {}, () => false), null);
+});
+
+test("buildSafeWindowsCmdInvocation quotes safe arguments and supports code.cmd and code-insiders.cmd", () => {
+  // 1. Safe command and arguments without reuse-window
   const validInvocation = buildSafeWindowsCmdInvocation("code.cmd", [
-    "--reuse-window",
     "--remote",
     "wsl+Ubuntu",
     "/home/laop/projects/codexhub"
-  ], "cmd.exe");
+  ], { comSpec: "cmd.exe", cwd: "C:\\Windows" });
   assert.deepEqual(validInvocation, {
     cmdExe: "cmd.exe",
     cmdArgs: [
@@ -193,26 +253,31 @@ test("buildSafeWindowsCmdInvocation quotes safe arguments and rejects cmd expans
       "/v:off",
       "/s",
       "/c",
-      'call "code.cmd" "--reuse-window" "--remote" "wsl+Ubuntu" "/home/laop/projects/codexhub"'
+      'call "code.cmd" "--remote" "wsl+Ubuntu" "/home/laop/projects/codexhub"'
     ],
-    rawCommandLine: '"code.cmd" "--reuse-window" "--remote" "wsl+Ubuntu" "/home/laop/projects/codexhub"'
+    rawCommandLine: '"code.cmd" "--remote" "wsl+Ubuntu" "/home/laop/projects/codexhub"',
+    windowsVerbatimArguments: true,
+    cwd: "C:\\Windows"
   });
 
-  // 2. Space, ampersand, and Unicode characters stay quoted as one argument.
-  const unicodeInvocation = buildSafeWindowsCmdInvocation("C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd", [
-    "--reuse-window",
+  // 2. Insiders cmd path with space and Unicode and default environment resolution
+  const insidersInvocation = buildSafeWindowsCmdInvocation("C:\\Users\\0laop\\AppData\\Local\\Programs\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd", [
+    "--remote",
+    "wsl+Ubuntu",
     "C:\\Users\\0laop\\项目 & 资料\\sub"
-  ], "cmd.exe");
-  assert.deepEqual(unicodeInvocation, {
+  ], { comSpec: "cmd.exe", env: { SystemRoot: "C:\\Windows" } });
+  assert.deepEqual(insidersInvocation, {
     cmdExe: "cmd.exe",
     cmdArgs: [
       "/d",
       "/v:off",
       "/s",
       "/c",
-      'call "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd" "--reuse-window" "C:\\Users\\0laop\\项目 & 资料\\sub"'
+      'call "C:\\Users\\0laop\\AppData\\Local\\Programs\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd" "--remote" "wsl+Ubuntu" "C:\\Users\\0laop\\项目 & 资料\\sub"'
     ],
-    rawCommandLine: '"C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd" "--reuse-window" "C:\\Users\\0laop\\项目 & 资料\\sub"'
+    rawCommandLine: '"C:\\Users\\0laop\\AppData\\Local\\Programs\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd" "--remote" "wsl+Ubuntu" "C:\\Users\\0laop\\项目 & 资料\\sub"',
+    windowsVerbatimArguments: true,
+    cwd: "C:\\Windows"
   });
 
   // 3. Rejects quotes, control characters, cmd expansion, and non-code commands.
@@ -228,9 +293,9 @@ test("buildSafeWindowsCmdInvocation quotes safe arguments and rejects cmd expans
   assert.equal(buildSafeWindowsCmdInvocation("C:\\%TEMP%\\code.cmd", ["arg"]), null);
 });
 
-test("resolveVsCodeLaunchPlan requires case-insensitive machineHostname match for WSL VSCode", () => {
+test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes reuse-window", () => {
   const localHostname = "jx-pc";
-  const wslTarget = {
+  const wslInsidersTarget = {
     threadId: "t-1",
     workingDirectory: "/home/laop/projects/codexhub/src",
     machineHostname: "JX-PC",
@@ -238,32 +303,59 @@ test("resolveVsCodeLaunchPlan requires case-insensitive machineHostname match fo
     source: {
       kind: "vscode" as const,
       groupId: "registered:wsl:vscode-1",
-      label: "VSCode: codexhub [WSL: Ubuntu]"
+      label: "VSCode: codexhub [WSL: Ubuntu]",
+      vscodeChannel: "insiders" as const
     }
   };
 
-  // 1. Matches local hostname -> generates safe WSL remote plan
-  const planWin = resolveVsCodeLaunchPlan(wslTarget, { platform: "win32", localHostname });
+  // 1. Matches local hostname and insiders channel -> generates safe WSL remote plan with code-insiders.cmd without --reuse-window
+  const planWin = resolveVsCodeLaunchPlan(wslInsidersTarget, { platform: "win32", localHostname });
   assert.deepEqual(planWin, {
-    command: "code.cmd",
-    args: ["--reuse-window", "--remote", "wsl+Ubuntu", "/home/laop/projects/codexhub"],
+    command: "code-insiders.cmd",
+    args: ["--remote", "wsl+Ubuntu", "/home/laop/projects/codexhub"],
     remote: "wsl+Ubuntu",
     targetPath: "/home/laop/projects/codexhub"
   });
 
-  // 2. Remote physical machine hostname mismatch -> returns null (no-op)
+  // 2. Stable channel generates code.cmd
+  const wslStableTarget = {
+    ...wslInsidersTarget,
+    source: {
+      ...wslInsidersTarget.source,
+      vscodeChannel: "stable" as const
+    }
+  };
+  assert.deepEqual(resolveVsCodeLaunchPlan(wslStableTarget, { platform: "win32", localHostname }), {
+    command: "code.cmd",
+    args: ["--remote", "wsl+Ubuntu", "/home/laop/projects/codexhub"],
+    remote: "wsl+Ubuntu",
+    targetPath: "/home/laop/projects/codexhub"
+  });
+
+  // 3. Missing vscodeChannel -> returns null (no-op, never defaults to stable!)
+  const missingChannelTarget = {
+    ...wslInsidersTarget,
+    source: {
+      kind: "vscode" as const,
+      groupId: "registered:wsl:vscode-1",
+      label: "VSCode: codexhub [WSL: Ubuntu]"
+    }
+  };
+  assert.equal(resolveVsCodeLaunchPlan(missingChannelTarget, { platform: "win32", localHostname }), null);
+
+  // 4. Remote physical machine hostname mismatch -> returns null (no-op)
   const mismatchTarget = {
-    ...wslTarget,
+    ...wslInsidersTarget,
     machineHostname: "other-physical-host"
   };
   assert.equal(resolveVsCodeLaunchPlan(mismatchTarget, { platform: "win32", localHostname }), null);
 
-  // 3. Missing machineHostname or localHostname -> returns null
-  assert.equal(resolveVsCodeLaunchPlan({ ...wslTarget, machineHostname: undefined }, { platform: "win32", localHostname }), null);
-  assert.equal(resolveVsCodeLaunchPlan(wslTarget, { platform: "win32", localHostname: "" }), null);
+  // 5. Missing machineHostname or localHostname -> returns null
+  assert.equal(resolveVsCodeLaunchPlan({ ...wslInsidersTarget, machineHostname: undefined }, { platform: "win32", localHostname }), null);
+  assert.equal(resolveVsCodeLaunchPlan(wslInsidersTarget, { platform: "win32", localHostname: "" }), null);
 });
 
-test("resolveVsCodeLaunchPlan requires hostname match for local Windows VSCode targets", () => {
+test("resolveVsCodeLaunchPlan generates clean args without --reuse-window for local Windows VSCode", () => {
   const localHostname = "my-windows-desktop";
   const winTarget = {
     threadId: "t-win",
@@ -272,7 +364,8 @@ test("resolveVsCodeLaunchPlan requires hostname match for local Windows VSCode t
     source: {
       kind: "vscode" as const,
       groupId: "vscode-local",
-      label: "VSCode: codexhub"
+      label: "VSCode: codexhub",
+      vscodeChannel: "stable" as const
     }
   };
 
@@ -280,7 +373,7 @@ test("resolveVsCodeLaunchPlan requires hostname match for local Windows VSCode t
   const plan = resolveVsCodeLaunchPlan(winTarget, { platform: "win32", localHostname });
   assert.deepEqual(plan, {
     command: "code.cmd",
-    args: ["--reuse-window", "C:\\Users\\0laop\\projects\\codexhub"],
+    args: ["C:\\Users\\0laop\\projects\\codexhub"],
     targetPath: "C:\\Users\\0laop\\projects\\codexhub"
   });
 
@@ -298,7 +391,8 @@ test("resolveVsCodeLaunchPlan returns null for SSH/Remote, non-vscode, or missin
     source: {
       kind: "vscode",
       groupId: "registered:machine:vscode-ssh",
-      label: "VSCode: app [SSH: production-server]"
+      label: "VSCode: app [SSH: production-server]",
+      vscodeChannel: "stable"
     }
   }, { localHostname }), null);
 
@@ -309,7 +403,8 @@ test("resolveVsCodeLaunchPlan returns null for SSH/Remote, non-vscode, or missin
     machineHostname: localHostname,
     source: {
       kind: "vscode",
-      groupId: "machine:ssh:vscode-1"
+      groupId: "machine:ssh:vscode-1",
+      vscodeChannel: "insiders"
     }
   }, { localHostname }), null);
 

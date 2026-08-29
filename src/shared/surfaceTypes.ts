@@ -3,6 +3,40 @@ export type EmbeddedCodexHubSurface = Exclude<CodexHubSurface, "default">;
 export type EmbeddedSurfaceKind = "vscode" | "electron";
 export const embeddedSurfaceKinds: EmbeddedSurfaceKind[] = ["vscode", "electron"];
 
+export type VscodeChannel = "stable" | "insiders";
+export const vscodeChannels: VscodeChannel[] = ["stable", "insiders"];
+
+export const isVscodeChannel = (value: unknown): value is VscodeChannel =>
+  value === "stable" || value === "insiders";
+
+/**
+ * 从 vscode.env.uriScheme 和 appName 判定 VSCode 发布渠道。
+ * uriScheme 为权威判定，appName 为受控 fallback。
+ */
+export const resolveVscodeChannel = (
+  uriScheme?: string | null,
+  appName?: string | null
+): VscodeChannel | null => {
+  const scheme = uriScheme?.trim().toLowerCase();
+  if (scheme === "vscode-insiders") return "insiders";
+  if (scheme === "vscode") return "stable";
+
+  const app = appName?.trim().toLowerCase();
+  if (app) {
+    if (app.includes("insiders")) return "insiders";
+    if (app.includes("code") || app.includes("visual studio code")) return "stable";
+  }
+  return null;
+};
+
+/** 统一的 VSCode 渠道紧凑徽标标识（如侧边栏 badge / 标签） */
+export const formatVscodeChannelBadge = (channel?: VscodeChannel): string =>
+  channel === "insiders" ? "Insiders" : "VS Code";
+
+/** 统一的 VSCode surface 组名或标题前缀 */
+export const formatVscodeSurfacePrefix = (channel?: VscodeChannel): string =>
+  channel === "insiders" ? "VS Code Insiders" : "VS Code";
+
 export type CodexHubAuthorityKind = "windows" | "macos" | "linux" | "wsl";
 
 /**

@@ -16,7 +16,10 @@ import { resolveAuthorityPackage } from "../../../src/core/authorityPackage.js";
 import { withUserPath } from "../../../src/core/userPath.js";
 import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import {
-  embeddedSurfaceProtocolVersion
+  embeddedSurfaceProtocolVersion,
+  formatVscodeSurfacePrefix,
+  resolveVscodeChannel,
+  type VscodeChannel
 } from "../../../src/shared/surfaceTypes.js";
 import {
   isTaskCompleteNotification,
@@ -444,6 +447,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     attempts = 30
   ) {
     const client = createCodexHubApiClient({ baseUrl: server.url, authToken: server.authToken });
+    const vscodeChannel = resolveVscodeChannel(vscode.env.uriScheme, vscode.env.appName) ?? undefined;
     let lastError: unknown = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
@@ -454,8 +458,9 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
           protocolVersion: embeddedSurfaceProtocolVersion,
           workspacePaths: folders.map((folder) => folder.path),
           activeWorkspacePath: activePath,
-          label: vscodeWorkspaceGroupLabel(folders),
-          buildId: server.buildId
+          label: vscodeWorkspaceGroupLabel(folders, vscodeChannel),
+          buildId: server.buildId,
+          ...(vscodeChannel ? { vscodeChannel } : {})
         });
         this.registeredServerUrl = server.url;
         this.registeredAuthToken = server.authToken;
@@ -711,11 +716,12 @@ const activeWorkspaceFolder = (folders: VscodeWorkspaceFolder[]) => {
     : undefined;
 };
 
-const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[]) => {
+const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[], channel?: VscodeChannel) => {
+  const prefix = formatVscodeSurfacePrefix(channel);
   const workspaceName = vscode.workspace.name?.trim();
-  if (workspaceName && (folders.length > 1 || workspaceName !== folders[0]?.name)) return `VSCode: ${workspaceName}`;
+  if (workspaceName && (folders.length > 1 || workspaceName !== folders[0]?.name)) return `${prefix}: ${workspaceName}`;
   const folderName = folders[0]?.name?.trim();
-  return folderName ? `VSCode: ${folderName}` : "VSCode Workspace";
+  return folderName ? `${prefix}: ${folderName}` : `${prefix} Workspace`;
 };
 
 const vscodeWorkspaceStateScope = (folders: VscodeWorkspaceFolder[]) => createHash("sha256")

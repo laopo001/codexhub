@@ -19,6 +19,7 @@ interface Window {
         kind: "vscode" | "electron";
         groupId: string;
         label?: string;
+        vscodeChannel?: "stable" | "insiders";
       };
     }) => void;
     restartAuthority: () => Promise<{ ok: boolean; restarting: boolean }>;

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  embeddedSurfaceRegistrationSchema,
   machineHeartbeatSchema,
   machineRegistrationSchema,
+  projectSourceSchema,
   sessionEventSchema,
   sessionHeartbeatSchema,
   sessionRegistrationSchema,
@@ -10,6 +12,11 @@ import {
   threadGoalUpdateSchema,
   threadRunOptionsSchema
 } from "../../src/shared/apiContract.js";
+import {
+  formatVscodeChannelBadge,
+  formatVscodeSurfacePrefix,
+  resolveVscodeChannel
+} from "../../src/shared/surfaceTypes.js";
 import {
   linuxAppServerSupervisorLaunch,
   linuxAppServerSupervisorScript,
@@ -188,5 +195,105 @@ test("thread permissions follow the current granular, reviewer, and named-profil
   assert.equal(threadRunOptionsSchema.safeParse({
     permissions: ":workspace",
     sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
+  }).success, false);
+});
+
+test("resolveVscodeChannel prioritizes uriScheme and falls back to appName", () => {
+  assert.equal(resolveVscodeChannel("vscode-insiders", "Visual Studio Code"), "insiders");
+  assert.equal(resolveVscodeChannel("vscode", "Visual Studio Code - Insiders"), "stable");
+  assert.equal(resolveVscodeChannel("vscode-insiders"), "insiders");
+  assert.equal(resolveVscodeChannel("vscode"), "stable");
+
+  // Controlled fallback for unknown scheme
+  assert.equal(resolveVscodeChannel("vscode-oss", "Visual Studio Code - Insiders"), "insiders");
+  assert.equal(resolveVscodeChannel("vscode-oss", "Visual Studio Code"), "stable");
+  assert.equal(resolveVscodeChannel("vscode-oss", "VSCodium"), null);
+  assert.equal(resolveVscodeChannel(undefined, "VS Code Insiders"), "insiders");
+  assert.equal(resolveVscodeChannel(undefined, "Code"), "stable");
+  assert.equal(resolveVscodeChannel(undefined, undefined), null);
+
+  assert.equal(formatVscodeChannelBadge("insiders"), "Insiders");
+  assert.equal(formatVscodeChannelBadge("stable"), "VS Code");
+  assert.equal(formatVscodeChannelBadge(undefined), "VS Code");
+
+  assert.equal(formatVscodeSurfacePrefix("insiders"), "VS Code Insiders");
+  assert.equal(formatVscodeSurfacePrefix("stable"), "VS Code");
+  assert.equal(formatVscodeSurfacePrefix(undefined), "VS Code");
+});
+
+test("embedded surface registration and project source schemas strictly validate vscodeChannel", () => {
+  const baseVscode = {
+    surface: "vscode" as const,
+    surfaceId: "surf-1",
+    leaseId: "lease-1",
+    protocolVersion: 2,
+    workspacePaths: ["/tmp/ws"],
+    label: "VSCode: ws"
+  };
+
+  assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseVscode, vscodeChannel: "stable" }).success, true);
+  assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseVscode, vscodeChannel: "insiders" }).success, true);
+  assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseVscode, vscodeChannel: "nightly" }).success, false);
+  assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseVscode, unknownField: true }).success, false);
+
+  const baseElectron = {
+    surface: "electron" as const,
+    surfaceId: "surf-el",
+    leaseId: "lease-el",
+    protocolVersion: 2,
+    workspacePaths: [],
+    label: "Electron"
+  };
+  assert.equal(embeddedSurfaceRegistrationSchema.safeParse(baseElectron).success, true);
+  // Electron surface cannot declare vscodeChannel
+  assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseElectron, vscodeChannel: "stable" }).success, false);
+
+  // projectSourceSchema
+  assert.equal(projectSourceSchema.safeParse({ kind: "vscode", groupId: "g1", vscodeChannel: "stable" }).success, true);
+  assert.equal(projectSourceSchema.safeParse({ kind: "vscode", groupId: "g1", vscodeChannel: "insiders" }).success, true);
+  assert.equal(projectSourceSchema.safeParse({ kind: "vscode", groupId: "g1", vscodeChannel: "unknown" }).success, false);
+  assert.equal(projectSourceSchema.safeParse({ kind: "electron", groupId: "g1" }).success, true);
+  assert.equal(projectSourceSchema.safeParse({ kind: "electron", groupId: "g1", vscodeChannel: "stable" }).success, false);
+});
+
+test("machineRegistrationSchema preserves projects[].source.vscodeChannel and strictly validates it", () => {
+  const parsed = machineRegistrationSchema.parse({
+    hostname: "test-host",
+    projects: [{
+      path: "/home/laop/projects/codexhub",
+      source: {
+        kind: "vscode",
+        groupId: "surface-1",
+        label: "VSCode: codexhub [WSL: Ubuntu]",
+        vscodeChannel: "insiders"
+      }
+    }]
+  });
+  assert.equal(parsed.projects?.[0]?.source?.vscodeChannel, "insiders");
+
+  // Invalid vscodeChannel rejected
+  assert.equal(machineRegistrationSchema.safeParse({
+    hostname: "test-host",
+    projects: [{
+      path: "/home/laop/projects/codexhub",
+      source: {
+        kind: "vscode",
+        groupId: "surface-1",
+        vscodeChannel: "nightly"
+      }
+    }]
+  }).success, false);
+
+  // Electron source cannot declare vscodeChannel
+  assert.equal(machineRegistrationSchema.safeParse({
+    hostname: "test-host",
+    projects: [{
+      path: "/home/laop/projects/codexhub",
+      source: {
+        kind: "electron",
+        groupId: "surface-electron",
+        vscodeChannel: "insiders"
+      }
+    }]
   }).success, false);
 });

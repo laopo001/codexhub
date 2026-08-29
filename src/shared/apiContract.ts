@@ -28,7 +28,8 @@ import type {
   AuthorityNodeSource,
   AuthorityServiceSource,
   CodexHubAuthorityDescriptor,
-  CodexHubSurface
+  CodexHubSurface,
+  VscodeChannel
 } from "./surfaceTypes.js";
 import type { InvalidPetPackage, PetManifest, PetMutationPayload, PetsPayload } from "./petTypes.js";
 import type {
@@ -187,6 +188,7 @@ export type EmbeddedSurfaceRegistrationInput = {
   activeWorkspacePath?: string;
   label: string;
   buildId?: string;
+  vscodeChannel?: VscodeChannel;
 };
 
 export type EmbeddedSurfaceHeartbeatInput = {
@@ -205,6 +207,7 @@ export type EmbeddedSurfacePayload = {
     activeWorkspacePath?: string;
     label: string;
     buildId?: string;
+    vscodeChannel?: VscodeChannel;
     updatedAt: string;
     expiresAt: string;
   };
@@ -642,8 +645,16 @@ export const commitMessageGenerationSchema = z.object({
 export const projectSourceSchema = z.object({
   kind: z.enum(["vscode", "electron"]),
   groupId: z.string().min(1),
-  label: z.string().min(1).optional()
-}).strict();
+  label: z.string().min(1).optional(),
+  vscodeChannel: z.enum(["stable", "insiders"]).optional()
+}).strict().superRefine((data, ctx) => {
+  if (data.kind === "electron" && data.vscodeChannel !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Electron project sources cannot declare a vscodeChannel"
+    });
+  }
+});
 
 const embeddedSurfaceIdSchema = z.string().trim().min(1).max(200);
 
@@ -655,8 +666,16 @@ export const embeddedSurfaceRegistrationSchema = z.object({
   workspacePaths: z.array(z.string().trim().min(1)).max(64),
   activeWorkspacePath: z.string().trim().min(1).optional(),
   label: z.string().trim().min(1).max(200),
-  buildId: z.string().trim().min(1).max(500).optional()
-}).strict();
+  buildId: z.string().trim().min(1).max(500).optional(),
+  vscodeChannel: z.enum(["stable", "insiders"]).optional()
+}).strict().superRefine((data, ctx) => {
+  if (data.surface === "electron" && data.vscodeChannel !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Electron embedded surfaces cannot declare a vscodeChannel"
+    });
+  }
+});
 
 export const embeddedSurfaceHeartbeatSchema = z.object({
   leaseId: embeddedSurfaceIdSchema,

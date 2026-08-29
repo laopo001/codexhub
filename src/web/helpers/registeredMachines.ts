@@ -1,4 +1,6 @@
 import type { MachineSummary } from "../../shared/machineTypes.js";
+import type { ProjectSummary } from "../../shared/projectTypes.js";
+import type { VscodeChannel } from "../../shared/surfaceTypes.js";
 
 const onlineRegisteredMachines = (machines: MachineSummary[]) => new Map(
   machines
@@ -22,4 +24,20 @@ export const createRegisteredMachineConnectionTracker = () => {
       return { connected, disconnected };
     }
   };
+};
+
+/** 从项目列表中按 machineId 汇总实际存在的 VSCode 渠道（同时存在时返回 stable 与 insiders） */
+export const machineVsCodeChannels = (
+  machineId: string,
+  projects: readonly Pick<ProjectSummary, "machineId" | "source">[] = []
+): VscodeChannel[] => {
+  const channels = new Set<VscodeChannel>();
+  for (const project of projects) {
+    if (project.machineId === machineId && project.source?.kind === "vscode") {
+      if (project.source.vscodeChannel === "stable" || project.source.vscodeChannel === "insiders") {
+        channels.add(project.source.vscodeChannel);
+      }
+    }
+  }
+  return [...channels].sort((a, b) => (a === "stable" ? -1 : b === "stable" ? 1 : 0));
 };

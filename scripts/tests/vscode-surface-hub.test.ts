@@ -20,7 +20,8 @@ test("VSCode surface leases merge workspace projects and retain shared paths", (
       machineId: "machine-local",
       workspacePaths: ["/workspace/a", "/workspace/shared"],
       activeWorkspacePath: "/workspace/a",
-      label: "VSCode: A"
+      label: "VSCode: A",
+      vscodeChannel: "insiders"
     });
     hub.upsert({
       surface: "vscode",
@@ -29,20 +30,28 @@ test("VSCode surface leases merge workspace projects and retain shared paths", (
       machineId: "machine-local",
       workspacePaths: ["/workspace/shared", "/workspace/b"],
       activeWorkspacePath: "/workspace/b",
-      label: "VSCode: B"
+      label: "VSCode: B",
+      vscodeChannel: "stable"
     });
 
     assert.deepEqual(hub.list().map((surface) => surface.surfaceId), ["surface-a", "surface-b"]);
     assert.deepEqual(
-      snapshots.at(-1)?.map((project) => project.path),
-      ["/workspace/a", "/workspace/b", "/workspace/shared"]
+      snapshots.at(-1)?.map((project) => ({ path: project.path, channel: project.source.vscodeChannel })),
+      [
+        { path: "/workspace/a", channel: "insiders" },
+        { path: "/workspace/b", channel: "stable" },
+        { path: "/workspace/shared", channel: "insiders" }
+      ]
     );
 
     assert.equal(hub.remove("surface-a", "wrong-lease"), false);
     assert.equal(hub.remove("surface-a", "lease-a"), true);
     assert.deepEqual(
-      snapshots.at(-1)?.map((project) => project.path),
-      ["/workspace/b", "/workspace/shared"]
+      snapshots.at(-1)?.map((project) => ({ path: project.path, channel: project.source.vscodeChannel })),
+      [
+        { path: "/workspace/b", channel: "stable" },
+        { path: "/workspace/shared", channel: "stable" }
+      ]
     );
   } finally {
     hub.stop();

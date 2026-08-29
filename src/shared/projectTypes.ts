@@ -3,6 +3,7 @@ import type {
   MachineSummary,
   MachineType
 } from "./machineTypes.js";
+import type { VscodeChannel } from "./surfaceTypes.js";
 
 /** config.yaml 中持久化的 local/SSH machine 元数据；registered machine 只存在于运行时。 */
 export type StoredMachine = {
@@ -40,6 +41,7 @@ export type ProjectSource = {
   kind: "vscode" | "electron";
   groupId: string;
   label?: string;
+  vscodeChannel?: VscodeChannel;
 };
 
 /** task 最近一次运行或历史运行的状态。 */

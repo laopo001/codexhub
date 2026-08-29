@@ -1,5 +1,5 @@
 import type { ProjectSource } from "../shared/projectTypes.js";
-import type { EmbeddedSurfaceKind } from "../shared/surfaceTypes.js";
+import type { EmbeddedSurfaceKind, VscodeChannel } from "../shared/surfaceTypes.js";
 
 export type EmbeddedSurfaceProject = {
   machineId: string;
@@ -16,6 +16,7 @@ export type EmbeddedSurfaceRegistration = {
   activeWorkspacePath?: string;
   label: string;
   buildId?: string;
+  vscodeChannel?: VscodeChannel;
 };
 
 export type EmbeddedSurfaceView = EmbeddedSurfaceRegistration & {
@@ -146,7 +147,8 @@ export class EmbeddedSurfaceHub {
           source: {
             kind: surface.surface,
             groupId: surface.surfaceId,
-            label: surface.label
+            label: surface.label,
+            ...(surface.vscodeChannel ? { vscodeChannel: surface.vscodeChannel } : {})
           }
         });
       }
@@ -170,6 +172,7 @@ export class EmbeddedSurfaceHub {
       activeWorkspacePath: surface.activeWorkspacePath,
       label: surface.label,
       buildId: surface.buildId,
+      ...(surface.vscodeChannel ? { vscodeChannel: surface.vscodeChannel } : {}),
       updatedAt: new Date(surface.updatedAtMs).toISOString(),
       expiresAt: new Date(surface.updatedAtMs + this.leaseTimeoutMs).toISOString()
     };

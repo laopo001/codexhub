@@ -1,4 +1,5 @@
 import type { ProjectSource, ProjectSummary } from "../../shared/projectTypes.js";
+import { formatVscodeSurfacePrefix } from "../../shared/surfaceTypes.js";
 import { findLongestMatchingProject } from "../../shared/petActivityRouting.js";
 import { asRecord, type CodexRecord } from "../../shared/recordTypes.js";
 import {
@@ -196,7 +197,11 @@ const threadTitle = (title: string | undefined, workingDirectory: string, thread
 const firstNonBlank = (...values: Array<string | undefined>) =>
   values.find((value) => typeof value === "string" && value.trim())?.trim();
 
-const machineTypeLabel = (type: MachineSummary["type"]) => {
+const machineTypeLabel = (type?: MachineSummary["type"], source?: ProjectSource) => {
+  if (source?.kind === "vscode") {
+    return formatVscodeSurfacePrefix(source.vscodeChannel);
+  }
+  if (source?.kind === "electron") return "Electron";
   if (type === "registered") return "Registered";
   if (type === "ssh") return "SSH";
   return "Local";
@@ -205,15 +210,17 @@ const machineTypeLabel = (type: MachineSummary["type"]) => {
 const petMachineLabelParts = (
   machine: MachineSummary | undefined,
   runtime: RuntimeSummary | undefined,
-  workingDirectory: string
+  workingDirectory: string,
+  source?: ProjectSource
 ) => {
   const directoryName = workingDirectoryName(workingDirectory);
   const machineName = machine?.name || machine?.hostname || runtime?.name || runtime?.hostname;
   const machineContext = machineName?.split(" · ").slice(1).filter(Boolean).join(" · ")
     || (!directoryName ? machineName : undefined);
   if (!directoryName && !machineContext && !machineName) return undefined;
+  const type = machineTypeLabel(machine?.type, source);
   return {
-    ...(machine ? { type: machineTypeLabel(machine.type) } : {}),
+    ...(type ? { type } : {}),
     ...(directoryName ? { directoryName } : {}),
     ...(machineContext ? { machineContext } : {}),
   } satisfies PetActivityMachineLabel;
@@ -222,9 +229,10 @@ const petMachineLabelParts = (
 const petMachineLabel = (
   machine: MachineSummary | undefined,
   runtime: RuntimeSummary | undefined,
-  workingDirectory: string
+  workingDirectory: string,
+  source?: ProjectSource
 ) => {
-  const parts = petMachineLabelParts(machine, runtime, workingDirectory);
+  const parts = petMachineLabelParts(machine, runtime, workingDirectory, source);
   if (!parts) return undefined;
   const name = parts.directoryName
     ? [parts.directoryName, parts.machineContext].filter(Boolean).join(" · ")
@@ -290,8 +298,8 @@ export const derivePetActivities = (
         : runtime?.online && summary && (summary.running || summary.status === "running")
           ? "running"
           : activity?.status ?? "idle";
-      const machineLabel = petMachineLabel(machine, runtime, workingDirectory);
-      const machineLabelParts = petMachineLabelParts(machine, runtime, workingDirectory);
+      const machineLabel = petMachineLabel(machine, runtime, workingDirectory, matchedProject?.source);
+      const machineLabelParts = petMachineLabelParts(machine, runtime, workingDirectory, matchedProject?.source);
       const detailExecution = detail
         ? (() => {
             const records = threadDisplayRecords(detail.threadId, detail);

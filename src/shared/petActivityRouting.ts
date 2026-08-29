@@ -1,4 +1,5 @@
 import type { ProjectSource, ProjectSummary } from "./projectTypes.js";
+import type { VscodeChannel } from "./surfaceTypes.js";
 
 /** 桌面宠物 Activity 点击时向宿主投递的目标描述 */
 export type PetActivityOpenTarget = {
@@ -25,6 +26,12 @@ export const validateSafeString = (value: unknown, maxLength = 4096): string | n
 /** 解析 ProjectSource，存在非法字段或异常字符时返回 null */
 export const parseProjectSource = (value: unknown): ProjectSource | null => {
   if (!isRecord(value)) return null;
+  for (const key of Object.keys(value)) {
+    if (key !== "kind" && key !== "groupId" && key !== "label" && key !== "vscodeChannel") {
+      return null;
+    }
+  }
+
   const kindRaw = validateSafeString(value.kind, 32);
   if (kindRaw !== "vscode" && kindRaw !== "electron") return null;
   const kind = kindRaw as "vscode" | "electron";
@@ -39,10 +46,18 @@ export const parseProjectSource = (value: unknown): ProjectSource | null => {
     label = parsedLabel;
   }
 
+  let vscodeChannel: VscodeChannel | undefined;
+  if (value.vscodeChannel !== undefined) {
+    if (kind !== "vscode") return null;
+    if (value.vscodeChannel !== "stable" && value.vscodeChannel !== "insiders") return null;
+    vscodeChannel = value.vscodeChannel;
+  }
+
   return {
     kind,
     groupId,
-    ...(label ? { label } : {})
+    ...(label ? { label } : {}),
+    ...(vscodeChannel ? { vscodeChannel } : {})
   };
 };
 
@@ -185,12 +200,58 @@ export const extractWslDistroFromLabel = (label?: string): string | null => {
 
 /** 解析可用的 VSCode CLI 可执行文件名称 */
 export const resolveVsCodeCliExecutable = (
+  channel: VscodeChannel = "stable",
   env: NodeJS.ProcessEnv = process.env,
   platform = process.platform
 ): string => {
+  if (channel === "insiders") {
+    const configured = env.CODEX_HUB_VSCODE_INSIDERS_CLI?.trim();
+    if (configured) return configured;
+    return platform === "win32" ? "code-insiders.cmd" : "code-insiders";
+  }
   const configured = env.CODEX_HUB_VSCODE_CLI?.trim();
   if (configured) return configured;
   return platform === "win32" ? "code.cmd" : "code";
+};
+
+const windowsPath = (root: string, suffix: string) =>
+  `${root.replace(/[\\/]+$/, "")}${suffix}`;
+
+/** Windows Electron must invoke code.cmd / code-insiders.cmd by absolute path so `%~dp0` resolves inside the shim. */
+export const resolveWindowsVsCodeCliExecutable = (
+  channel: VscodeChannel,
+  env: NodeJS.ProcessEnv,
+  fileExists: (candidate: string) => boolean
+): string | null => {
+  if (channel === "insiders") {
+    const configured = env.CODEX_HUB_VSCODE_INSIDERS_CLI?.trim();
+    if (configured) return fileExists(configured) ? configured : null;
+
+    const candidates = [
+      env.LOCALAPPDATA ? windowsPath(env.LOCALAPPDATA, "\\Programs") : undefined,
+      env.ProgramFiles,
+      env.ProgramW6432
+    ]
+      .filter((root): root is string => typeof root === "string" && root.trim().length > 0)
+      .map((root) => windowsPath(root, "\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd"));
+    return [...new Set(candidates)].find(fileExists) ?? null;
+  }
+
+  if (channel === "stable") {
+    const configured = env.CODEX_HUB_VSCODE_CLI?.trim();
+    if (configured) return fileExists(configured) ? configured : null;
+
+    const candidates = [
+      env.ProgramW6432,
+      env.ProgramFiles,
+      env.LOCALAPPDATA ? windowsPath(env.LOCALAPPDATA, "\\Programs") : undefined
+    ]
+      .filter((root): root is string => typeof root === "string" && root.trim().length > 0)
+      .map((root) => windowsPath(root, "\\Microsoft VS Code\\bin\\code.cmd"));
+    return [...new Set(candidates)].find(fileExists) ?? null;
+  }
+
+  return null;
 };
 
 export type VsCodeLaunchPlan = {
@@ -203,7 +264,9 @@ export type VsCodeLaunchPlan = {
 /**
  * 构建 VSCode 唤起计划。
  * 必须校验 target.machineHostname 与 localHostname 大小写不敏感一致；
- * 仅对可确认的本机 Windows/WSL VSCode 生成有效计划；
+ * 必须校验明确的 vscodeChannel（stable 或 insiders），缺失时返回 null（no-op）；
+ * 仅对可确认的本机 Windows/WSL/Linux VSCode 生成有效计划；
+ * WSL 仅使用 ['--remote', 'wsl+<distro>', path]；Windows local 仅使用 [path]；
  * 对 SSH/Remote/未知 source/hostname mismatch 返回 null（no-op），绝不 fallback 弹 Electron。
  */
 export const resolveVsCodeLaunchPlan = (
@@ -216,6 +279,9 @@ export const resolveVsCodeLaunchPlan = (
   } = {}
 ): VsCodeLaunchPlan | null => {
   if (target.source?.kind !== "vscode") return null;
+  const channel = target.source.vscodeChannel;
+  if (!channel || (channel !== "stable" && channel !== "insiders")) return null;
+
   const targetPath = target.projectPath?.trim() || target.workingDirectory?.trim();
   if (!targetPath) return null;
 
@@ -227,15 +293,15 @@ export const resolveVsCodeLaunchPlan = (
 
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
-  const command = options.customExecutable || resolveVsCodeCliExecutable(env, platform);
-  const distro = extractWslDistroFromLabel(target.source.label);
+  const command = options.customExecutable || resolveVsCodeCliExecutable(channel, env, platform);
 
+  const distro = extractWslDistroFromLabel(target.source.label);
   if (distro) {
-    // 目标属于 WSL 环境：通过 code.cmd --reuse-window --remote wsl+<distro> <path> 唤起
+    // 目标属于 WSL 环境：通过 code/code-insiders --remote wsl+<distro> <path> 唤起（不传 --reuse-window 与 --new-window）
     const normalizedWslPath = targetPath.replace(/\\+/g, "/");
     return {
       command,
-      args: ["--reuse-window", "--remote", `wsl+${distro}`, normalizedWslPath],
+      args: ["--remote", `wsl+${distro}`, normalizedWslPath],
       remote: `wsl+${distro}`,
       targetPath: normalizedWslPath
     };
@@ -250,20 +316,20 @@ export const resolveVsCodeLaunchPlan = (
     return null;
   }
 
-  // Windows 本地 VSCode 场景
+  // Windows 本地 VSCode 场景（不传 --reuse-window 与 --new-window）
   if (platform === "win32" && (isWindowsDrivePath(targetPath) || targetPath.startsWith("\\\\"))) {
     return {
       command,
-      args: ["--reuse-window", targetPath],
+      args: [targetPath],
       targetPath
     };
   }
 
-  // Linux 本机桌面 VSCode 场景
+  // Linux 本机桌面 VSCode 场景（不传 --reuse-window 与 --new-window）
   if (platform === "linux" && targetPath.startsWith("/")) {
     return {
       command,
-      args: ["--reuse-window", targetPath],
+      args: [targetPath],
       targetPath
     };
   }
@@ -275,23 +341,37 @@ export type SafeWindowsCmdInvocation = {
   cmdExe: string;
   cmdArgs: string[];
   rawCommandLine: string;
+  windowsVerbatimArguments: true;
+  cwd: string;
 };
 
 /**
  * 构造安全的 Windows cmd.exe 调用边界。
  * 严格检验 command 与每个参数，拒绝 NUL/CR/LF/双引号和 cmd expansion 字符；
- * 处理引号包裹并开启 /v:off（防止 ! 延迟扩展），生成安全单行命令。
+ * 处理引号包裹并开启 /v:off（防止 ! 延迟扩展），生成安全单行命令；
+ * 固定 windowsVerbatimArguments: true 防止 Node.js 二次转义 /c 内部的双引号；
+ * 固定 cwd 为 Windows 本地 SystemRoot（默认 C:\Windows）以避免从 WSL UNC 路径启动时 cmd 报错。
  */
 export const buildSafeWindowsCmdInvocation = (
   command: string,
   args: string[],
-  comSpec = process.env.ComSpec || "cmd.exe"
+  options: {
+    comSpec?: string;
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+  } | string = {}
 ): SafeWindowsCmdInvocation | null => {
-  // Command 必须是 "code.cmd" 或以 "code.cmd" 结尾的安全绝对路径
+  const opts = typeof options === "string" ? { comSpec: options } : options;
+  const env = opts.env || process.env;
+  const comSpec = opts.comSpec || env.ComSpec || "cmd.exe";
+  const cwd = opts.cwd || env.SystemRoot || env.windir || "C:\\Windows";
+
+  // Command 必须是 "code.cmd" / "code-insiders.cmd" 或以其结尾的安全绝对路径
   const trimmedCommand = command.trim();
   if (!trimmedCommand || /[\0\r\n"%!^]/.test(trimmedCommand)) return null;
   const isSafeCommand = trimmedCommand.toLowerCase() === "code.cmd"
-    || /^[a-zA-Z]:[\\/][^"\r\n\0]+[\\/]code\.cmd$/i.test(trimmedCommand);
+    || trimmedCommand.toLowerCase() === "code-insiders.cmd"
+    || /^[a-zA-Z]:[\\/][^"\r\n\0]+[\\/]code(?:-insiders)?\.cmd$/i.test(trimmedCommand);
   if (!isSafeCommand) return null;
 
   const quotedArgs: string[] = [];
@@ -308,6 +388,8 @@ export const buildSafeWindowsCmdInvocation = (
   return {
     cmdExe: comSpec,
     cmdArgs: ["/d", "/v:off", "/s", "/c", `call ${rawCommandLine}`],
-    rawCommandLine
+    rawCommandLine,
+    windowsVerbatimArguments: true,
+    cwd
   };
 };

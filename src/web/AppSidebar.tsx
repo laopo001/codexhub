@@ -21,6 +21,7 @@ import {
   machineProjectCatalogEditable,
   machineProjectLauncher,
   projectKeyForProject,
+  projectMachineBadgeToneClass,
   uniqueMachines
 } from "./appHelpers.js";
 import { writeTextToClipboard } from "./helpers/composer.js";
@@ -96,7 +97,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           </span>
           <span className={`projectMachineStatusDot ${machine.online ? "online" : "offline"}`} aria-hidden="true" />
           <span className="projectMachineName" title={machine.label}>{machine.label}</span>
-          <strong className={`projectMachineBadge ${machine.machineType}`}>{machine.badgeLabel}</strong>
+          <strong className={`projectMachineBadge ${projectMachineBadgeToneClass(machine)}`}>{machine.badgeLabel}</strong>
         </button>
         {!collapsed ? (
           <div className="projectMachineRows">

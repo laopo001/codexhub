@@ -307,6 +307,26 @@
   color: #fcd34d;
 }
 
+.projectMachineBadge.vscode,
+.projectMachineBadge.vscode-stable {
+  background: #11283d;
+  border: 1px solid #1c4568;
+  color: #7dd3fc;
+}
+
+.projectMachineBadge.insiders,
+.projectMachineBadge.vscode-insiders {
+  background: #152d24;
+  border: 1px solid #235443;
+  color: #86efac;
+}
+
+.projectMachineBadge.electron {
+  background: #1f2038;
+  border: 1px solid #363963;
+  color: #c4b5fd;
+}
+
 .projectMachineHeader.offline {
   color: #7e8f7d;
 }

@@ -1,12 +1,17 @@
 import { turnIdFromAppRecordId } from "../../shared/recordIdentity.js";
 import { asRecord } from "../../shared/recordTypes.js";
-import { isEmbeddedSurfaceKind } from "../../shared/surfaceTypes.js";
+import {
+  formatVscodeChannelBadge,
+  formatVscodeSurfacePrefix,
+  isEmbeddedSurfaceKind
+} from "../../shared/surfaceTypes.js";
 import { createCodexHubApiClient } from "../../shared/apiClient.js";
 import type { ModelCatalogItem, StoredMachine, ThreadGoalStatus } from "../../shared/apiContract.js";
 import type { AnyApiRoute, ApiRouteCallArgs, ApiRouteResponse } from "../../shared/apiRoutes.js";
 export { parseRealtimeMessage } from "../../shared/realtimeClient.js";
 import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../shared/taskCron.js";
 import { threadGranularApprovalKeys, type ThreadGranularApprovalKey } from "../../shared/usageTypes.js";
+import type { ProjectSource } from "../../shared/projectTypes.js";
 import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, RuntimeSummary, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, ApprovalsReviewerDraft, PermissionProfileDraft } from "../types.js";
 import { codexHubSearchParams } from "../urlSearch.js";
 import { formatDate, shortId } from "./common.js";
@@ -379,6 +384,31 @@ export const uniqueMachines = (machines: MachineSummary[]) => {
   return [...byId.values()];
 };
 
+/**
+ * 规范化嵌入工作区的前端展示 Label。
+ * 无论旧 VSIX 扩展上报的是 `VSCode: ...` 还是其他前缀，都根据 source.vscodeChannel 规范化为统一格式：
+ * - `insiders` -> `VS Code Insiders: <name>`
+ * - `stable` / 默认 -> `VS Code: <name>`
+ */
+export const normalizeEmbeddedWorkspaceLabel = (
+  rawLabel: string | undefined,
+  source?: ProjectSource
+): string => {
+  const label = rawLabel?.trim() || "Workspace";
+  if (source?.kind === "vscode") {
+    const prefix = formatVscodeSurfacePrefix(source.vscodeChannel);
+    const colonMatch = label.match(/^(?:VS\s*Code(?:\s+Insiders)?|VSCode(?:\s+Insiders)?)\s*:\s*(.+)$/i);
+    if (colonMatch) {
+      return `${prefix}: ${colonMatch[1].trim()}`;
+    }
+    if (/^(?:VS\s*Code|VSCode)\s*Workspace$/i.test(label)) {
+      return `${prefix} Workspace`;
+    }
+    return `${prefix}: ${label}`;
+  }
+  return label;
+};
+
 export const groupProjectsByMachine = (projects: ProjectSummary[], machines: MachineSummary[]): ProjectMachineGroup[] => {
   const machinesById = new Map(machines.map((machine) => [machine.machineId, machine]));
   const groups = new Map<string, ProjectMachineGroup>();
@@ -390,21 +420,28 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
       ? `${project.source.kind}:${project.source.groupId}`
       : "";
     const groupKey = sourceGroupKey || project.machineId;
-    const label = machine
+    const baseLabel = machine
       ? machine.name ?? machine.hostname
       : project.machineId;
+    const rawLabel = project.source?.label ?? baseLabel;
+    const normalizedLabel = sourceGroupKey ? normalizeEmbeddedWorkspaceLabel(rawLabel, project.source) : rawLabel;
     const online = Boolean(machine && "online" in machine ? machine.online : project.machineOnline);
     let group = groups.get(groupKey);
     if (!group) {
+      const embeddedBadgeLabel = project.source?.kind === "vscode"
+        ? formatVscodeChannelBadge(project.source.vscodeChannel)
+        : project.source?.kind === "electron"
+          ? "Electron"
+          : machineType;
       group = {
         key: groupKey,
         kind: sourceGroupKey ? "embeddedWorkspace" : "machine",
         machineId: project.machineId,
         machineType,
-        label: project.source?.label ?? label,
+        label: normalizedLabel,
         online,
         projectLauncher: machineProjectLauncher(machine),
-        badgeLabel: machineType,
+        badgeLabel: sourceGroupKey ? embeddedBadgeLabel : machineType,
         projects: []
       };
       groups.set(groupKey, group);
@@ -412,7 +449,7 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
     group.online = group.online || online;
     group.machineType = group.machineType ?? machineType;
     group.projectLauncher = group.projectLauncher || machineProjectLauncher(machine);
-    if (group.label === project.machineId && label !== project.machineId) group.label = label;
+    if (group.label === project.machineId && normalizedLabel !== project.machineId) group.label = normalizedLabel;
     group.projects.push(project);
     groupedMachineIds.add(project.machineId);
   }
@@ -446,7 +483,16 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
     );
 };
 
-export const projectMachineBadgeLabel = (group: Pick<ProjectMachineGroup, "machineType">) => {
+export const projectMachineBadgeLabel = (group: Pick<ProjectMachineGroup, "machineType"> & { badgeLabel?: string }) => {
+  return group.badgeLabel || group.machineType;
+};
+
+export const projectMachineBadgeToneClass = (
+  group: Pick<ProjectMachineGroup, "machineType" | "badgeLabel">
+) => {
+  if (group.badgeLabel === "Insiders") return "vscode-insiders";
+  if (group.badgeLabel === "VS Code") return "vscode-stable";
+  if (group.badgeLabel === "Electron") return "electron";
   return group.machineType;
 };
 

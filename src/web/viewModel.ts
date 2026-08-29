@@ -82,6 +82,7 @@ export type AppConnectionsViewModel = {
   parentRegistration: ParentRegistrationStatus;
   parentRegistrationBusy: boolean;
   parentRegistrationError: string;
+  projectList: ProjectSummary[];
   registeredCommand: string;
   registeredCommandIncludesToken: boolean;
   registeredCommandCopied: boolean;

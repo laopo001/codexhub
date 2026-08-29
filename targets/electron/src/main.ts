@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -17,6 +18,7 @@ import {
   buildSafeWindowsCmdInvocation,
   parsePetActivityOpenTarget,
   resolveVsCodeLaunchPlan,
+  resolveWindowsVsCodeCliExecutable,
   type PetActivityOpenTarget
 } from "../../../src/shared/petActivityRouting.js";
 import { applyServerConfigEnv, readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
@@ -409,7 +411,9 @@ const launchVsCodeTarget = (plan: { command: string; args: string[] }) => {
   try {
     const isWindows = process.platform === "win32";
     if (isWindows) {
-      const invocation = buildSafeWindowsCmdInvocation(plan.command, plan.args);
+      const invocation = buildSafeWindowsCmdInvocation(plan.command, plan.args, {
+        env: process.env
+      });
       if (!invocation) {
         console.warn("[codexhub:electron] Refusing unsafe Windows cmd invocation for VSCode target");
         return false;
@@ -417,7 +421,9 @@ const launchVsCodeTarget = (plan: { command: string; args: string[] }) => {
       const child = spawn(invocation.cmdExe, invocation.cmdArgs, {
         detached: true,
         stdio: "ignore",
-        windowsHide: true
+        windowsHide: true,
+        windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+        cwd: invocation.cwd
       });
       child.unref();
       child.on("error", (error) => {
@@ -454,9 +460,24 @@ const handlePetOpenActivity = (target: PetActivityOpenTarget | null) => {
     return;
   }
 
-  // 2. Explicit VSCode source: 仅对可确认的本机 Windows/WSL VSCode 尝试唤起
+  // 2. Explicit VSCode source: 仅对具有合法 vscodeChannel 且可确认的本机 Windows/WSL VSCode 尝试唤起
   if (target.source?.kind === "vscode") {
-    const plan = resolveVsCodeLaunchPlan(target, { localHostname: os.hostname() });
+    const channel = target.source.vscodeChannel;
+    if (!channel) {
+      console.warn("[codexhub:electron] VSCode source missing vscodeChannel, ignoring activity click");
+      return;
+    }
+    const customExecutable = process.platform === "win32"
+      ? resolveWindowsVsCodeCliExecutable(channel, process.env, existsSync)
+      : undefined;
+    if (process.platform === "win32" && !customExecutable) {
+      console.warn(`[codexhub:electron] Could not resolve an installed Windows VSCode CLI for channel ${channel}`);
+      return;
+    }
+    const plan = resolveVsCodeLaunchPlan(target, {
+      localHostname: os.hostname(),
+      ...(customExecutable ? { customExecutable } : {})
+    });
     if (plan) {
       launchVsCodeTarget(plan);
     }

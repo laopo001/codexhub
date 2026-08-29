@@ -2,10 +2,12 @@ import React from "react";
 import { Unplug } from "lucide-react";
 import type { ParentRegistrationDraft } from "./types.js";
 import type { AppConnectionsViewModel } from "./viewModel.js";
+import { formatVscodeChannelBadge } from "../shared/surfaceTypes.js";
 import {
   connectionCodexRuntimeLine,
   connectionCodexRuntimeState
 } from "./helpers/connectionRuntime.js";
+import { machineVsCodeChannels } from "./helpers/registeredMachines.js";
 import {
   activeSshConnectionForHost,
   latestSshConnectionForHost,
@@ -45,6 +47,7 @@ export const ConnectionsPanel = ({ viewModel }: ConnectionsPanelProps) => {
     parentRegistration,
     parentRegistrationBusy,
     parentRegistrationError,
+    projectList = [],
     registeredCommand,
     registeredCommandIncludesToken,
     registeredCommandCopied,
@@ -320,9 +323,21 @@ export const ConnectionsPanel = ({ viewModel }: ConnectionsPanelProps) => {
             <div className="connectionEmpty">No registered machines</div>
           ) : registeredMachines.map((machine) => {
             const codex = connectionCodexRuntimeState(machine, runtimeList);
+            const channels = machineVsCodeChannels(machine.machineId, projectList);
             return (
               <div className={`connectionRow codex-${codex.kind}`} key={machine.machineId}>
-                <span title={machine.name ?? machine.hostname}>{machine.name ?? machine.hostname}</span>
+                <div className="connectionMachineNameWrap">
+                  <span title={machine.name ?? machine.hostname}>{machine.name ?? machine.hostname}</span>
+                  {channels.length ? (
+                    <span className="connectionChannels">
+                      {channels.map((channel) => (
+                        <strong key={channel} className={`projectMachineBadge vscode-${channel}`}>
+                          {formatVscodeChannelBadge(channel)}
+                        </strong>
+                      ))}
+                    </span>
+                  ) : null}
+                </div>
                 <strong className={`codexRuntimeStatus ${codex.kind}`}>{codex.label}</strong>
                 <code className="connectionCodexDetail" title={machine.machineId}>{codex.detail}</code>
               </div>

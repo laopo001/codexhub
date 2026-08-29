@@ -183,6 +183,21 @@
   font-weight: 750;
 }
 
+.connectionMachineNameWrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.connectionChannels {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .connectionRow code {
   grid-column: 1 / -1;
   color: #66715f;

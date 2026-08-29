@@ -609,7 +609,8 @@ test("derivePetActivities matches project source using machineId and longest pat
       source: {
         kind: "vscode",
         groupId: "registered:machine-authority-00ad99e0-a745-4ce9-9a10-fb5620893367:vscode-93ed5dee",
-        label: "VSCode: codexhub [WSL: Ubuntu]"
+        label: "VSCode: codexhub [WSL: Ubuntu]",
+        vscodeChannel: "insiders"
       }
     }
   ];
@@ -641,8 +642,13 @@ test("derivePetActivities matches project source using machineId and longest pat
   assert.deepEqual(activities[0]?.projectSource, {
     kind: "vscode",
     groupId: "registered:machine-authority-00ad99e0-a745-4ce9-9a10-fb5620893367:vscode-93ed5dee",
-    label: "VSCode: codexhub [WSL: Ubuntu]"
+    label: "VSCode: codexhub [WSL: Ubuntu]",
+    vscodeChannel: "insiders"
   });
+  assert.equal(activities[0]?.projectSource?.vscodeChannel, "insiders");
+  assert.equal(activities[0]?.machineLabelParts?.type, "VS Code Insiders");
+  assert.equal(activities[0]?.machineLabelParts?.directoryName, "web");
+  assert.equal(activities[0]?.machineLabel, "VS Code Insiders · web");
 });
 
 test("PetFeature openActivity retains tray expansion without closing it and has no focusMainWindow fallback", async () => {

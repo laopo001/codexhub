@@ -1,4 +1,5 @@
 import type { PlanProgressSummary } from "./planProgress.js";
+import type { VscodeChannel } from "./surfaceTypes.js";
 
 /** 机器来源类型；表示执行路径解析和 Codex runtime 启动的机器边界。 */
 export type MachineType = "local" | "ssh" | "registered";
@@ -17,6 +18,7 @@ export type MachineRegistrationProjectSource = {
   kind: "vscode" | "electron";
   groupId: string;
   label?: string;
+  vscodeChannel?: VscodeChannel;
 };
 
 /** 机器注册时声明的可见项目目录。 */
