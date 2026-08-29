@@ -144,8 +144,11 @@ export const LiveThreadExecutionText = ({
     executionMeta.status === "running",
     executionMeta.startedAt
   );
-  const duration = liveDurationMs === undefined ? executionMeta.duration : formatThreadDuration(liveDurationMs);
-  return <>{[leadingText, includeLabel ? executionMeta.label : "", duration].filter(Boolean).join(" · ")}</>;
+  const prefix = [leadingText, includeLabel ? executionMeta.label : ""].filter(Boolean).join(" · ");
+  const duration = liveDurationMs === undefined
+    ? executionMeta.duration
+    : <ThreadDuration durationMs={liveDurationMs} />;
+  return <>{prefix}{prefix && duration ? " · " : null}{duration}</>;
 };
 
 export const threadExecutionTimeMode = (
@@ -209,7 +212,7 @@ export const LiveGoalDuration = ({
     timeUsedSeconds,
     liveElapsedMs
   });
-  return <>{durationMs === undefined ? null : formatThreadDuration(durationMs)}</>;
+  return <>{durationMs === undefined ? null : <ThreadDuration durationMs={durationMs} />}</>;
 };
 
 export const LiveThreadRunningText = ({
@@ -294,11 +297,33 @@ export const MessagesTurnLoadingFooter = ({
 };
 
 export const formatThreadDuration = (durationMs: number) => {
+  return threadDurationParts(durationMs).map(({ value, unit }) => `${value}${unit}`).join("");
+};
+
+const threadDurationParts = (durationMs: number) => {
   const seconds = Math.max(0, Math.round(durationMs / 1000));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainder = seconds % 60;
-  if (hours) return `${hours}h${minutes}m${remainder}s`;
-  if (minutes) return `${minutes}m${remainder}s`;
-  return `${remainder}s`;
+  if (hours) return [
+    { value: hours, unit: "h" },
+    { value: minutes, unit: "m" },
+    { value: remainder, unit: "s" }
+  ];
+  if (minutes) return [
+    { value: minutes, unit: "m" },
+    { value: remainder, unit: "s" }
+  ];
+  return [{ value: remainder, unit: "s" }];
 };
+
+const ThreadDuration = ({ durationMs }: { durationMs: number }) => (
+  <span className="threadDuration">
+    {threadDurationParts(durationMs).map(({ value, unit }) => (
+      <React.Fragment key={unit}>
+        <span className="threadDurationValue">{value}</span>
+        <span className="threadDurationUnit">{unit}</span>
+      </React.Fragment>
+    ))}
+  </span>
+);

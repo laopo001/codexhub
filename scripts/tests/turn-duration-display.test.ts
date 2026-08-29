@@ -176,7 +176,9 @@ test("compact Running text keeps only the prioritized clock", () => {
 
   assert.doesNotMatch(compact, /Turn/);
   assert.match(compact, /Running/);
-  assert.match(compact, /2m0s/);
+  assert.equal(compact.replace(/<[^>]+>/g, ""), "Running · 2m0s");
+  assert.match(compact, /class="threadDurationUnit">m<\/span>/);
+  assert.match(compact, /class="threadDurationUnit">s<\/span>/);
 });
 
 test("Running text can lead with the current Plan step without repeating Running", () => {
@@ -194,7 +196,8 @@ test("Running text can lead with the current Plan step without repeating Running
     leadingText: "1/4"
   }));
 
-  assert.match(compact, /^1\/4 · \d+s$/);
+  assert.match(compact.replace(/<[^>]+>/g, ""), /^1\/4 · \d+s$/);
+  assert.match(compact, /class="threadDurationUnit">s<\/span>/);
   assert.doesNotMatch(compact, /Running/);
 });
 
