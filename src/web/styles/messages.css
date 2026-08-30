@@ -1497,13 +1497,31 @@
   color: #9aa39c;
 }
 
-.message.inspectableTool {
+.toolInspectButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #6a7c92;
   cursor: pointer;
+  padding: 0;
+  flex: 0 0 auto;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
-.message.inspectableTool:focus-visible {
-  outline: 2px solid rgba(47, 111, 159, 0.35);
-  outline-offset: 2px;
+.toolInspectButton:hover {
+  background: #e2eaf2;
+  color: #1e2b3c;
+}
+
+.toolInspectButton:focus-visible {
+  outline: 2px solid rgba(47, 111, 159, 0.4);
+  outline-offset: 1px;
 }
 
 .message.thinking {

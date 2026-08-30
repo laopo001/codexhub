@@ -14,7 +14,7 @@ import { apiRouteJson, authFetch, authToken } from "./core.js";
 import { writeTextToClipboard } from "./composer.js";
 import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
 import { emptyMemoryCitation, formatMemoryCitationCount, formatMemoryCitationLines, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
-import { formatInspectDetail, renderToolMessageBody } from "./toolPreview.js";
+import { formatInspectDetail, renderToolMessageBody, ToolInspectContext } from "./toolPreview.js";
 import { activityStatusPriority, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
 import { createStatusRegistry, StatusPanelToggleIcon, StatusRegistryRows } from "./statusRegistry.js";
 
@@ -113,17 +113,6 @@ export const MessageCard = ({
     || approval
     || onFork
   );
-  const canClickInspect = Boolean(hasToolBody && onInspect);
-  const inspectOnKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
-    if (!canClickInspect || event.defaultPrevented) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    onInspect?.();
-  };
-  const inspectOnClick = () => {
-    if (!canClickInspect || window.getSelection()?.toString()) return;
-    onInspect?.();
-  };
   if (message.subagentActivity) {
     return (
       <SubagentActivityMessage
@@ -161,12 +150,8 @@ export const MessageCard = ({
   }
   return (
     <article
-      className={`message ${message.role} ${messageToneClass} ${hasToolBody ? "richTool" : ""} ${canClickInspect ? "inspectableTool" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
+      className={`message ${message.role} ${messageToneClass} ${hasToolBody ? "richTool" : ""} ${renderMode === "markdown" ? "markdownMode" : "rawMode"}`}
       onMouseUp={onSelectionMenu}
-      onClick={canClickInspect ? inspectOnClick : undefined}
-      onKeyDown={canClickInspect ? inspectOnKeyDown : undefined}
-      role={canClickInspect ? "button" : undefined}
-      tabIndex={canClickInspect ? 0 : undefined}
     >
       {hasToolBody ? null : (
         <span className="messageHeader">
@@ -193,7 +178,11 @@ export const MessageCard = ({
         </span>
       )}
       {hasToolBody ? (
-        <StatusStartedAtContext.Provider value={message.at}>{toolBody}</StatusStartedAtContext.Provider>
+        <StatusStartedAtContext.Provider value={message.at}>
+          <ToolInspectContext.Provider value={onInspect}>
+            {toolBody}
+          </ToolInspectContext.Provider>
+        </StatusStartedAtContext.Provider>
       ) : messageText ? (
         <MessageText
           text={messageText}

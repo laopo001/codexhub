@@ -11,6 +11,8 @@ import { compactToolViews } from "../../src/shared/compactRecordViews.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
 import { SubagentActivityMessage } from "../../src/web/SubagentActivityMessage.js";
 import { resolveSubagentThreadTarget } from "../../src/web/helpers/subagentThreads.js";
+import { appServerToolMeta, formatInspectDetail } from "../../src/web/helpers/toolPreview.js";
+import { MessageCard } from "../../src/web/helpers/components.js";
 
 const compactionRecord = (id: string, type: string): CodexRecord => ({
   id,
@@ -1323,3 +1325,54 @@ const goalTurnRecords = (
   payload: { type: "task_complete", turn_id: turnId },
   sourceThreadId: "goal-thread"
 }] : [])];
+
+test("tool cards use an explicit details button and keep internal IDs in Inspect", () => {
+  const callId = "exec-aec51e04-d5fd-48a0-bb2e-cf666dcb5ee4";
+  const record: CodexRecord = {
+    id: `app:thread-1:turn-1:item:commandExecution:${callId}`,
+    timestamp: "2026-08-30T16:20:00.000Z",
+    type: "response_item",
+    sourceThreadId: "thread-1",
+    payload: {
+      type: "local_shell_call",
+      call_id: callId,
+      status: "completed",
+      duration_ms: 1250,
+      exit_code: 0,
+      action: { type: "exec", command: "git status" },
+      aggregated_output: "On branch main\nnothing to commit"
+    }
+  };
+  const [view] = compactToolViews(recordsToViews([record]));
+  assert.ok(view);
+
+  const markup = renderToStaticMarkup(createElement(MessageCard, {
+    message: view,
+    renderMode: "markdown",
+    markdownEnabled: true,
+    showStatus: true,
+    onInspect: () => undefined
+  }));
+  const articleTag = markup.match(/^<article[^>]*>/)?.[0] ?? "";
+  assert.doesNotMatch(articleTag, /inspectableTool|role="button"|tabindex=/);
+  assert.match(markup, /class="toolInspectButton"/);
+  assert.match(markup, /aria-label="View tool details"/);
+  assert.match(markup, /title="View tool details"/);
+  assert.doesNotMatch(markup, new RegExp(callId));
+
+  const withoutInspect = renderToStaticMarkup(createElement(MessageCard, {
+    message: view,
+    renderMode: "markdown",
+    markdownEnabled: true
+  }));
+  assert.doesNotMatch(withoutInspect, /toolInspectButton/);
+
+  const toolMeta = appServerToolMeta(record.payload as Record<string, unknown>);
+  assert.equal(toolMeta.includes(callId), false);
+  assert.ok(toolMeta.includes("exit 0"));
+
+  const inspectDetail = formatInspectDetail(view);
+  assert.match(inspectDetail.inputMeta ?? "", new RegExp(`call_id:\\s*${callId}`));
+  assert.equal(inspectDetail.inputBlock, "git status");
+  assert.equal(inspectDetail.outputBlock, "On branch main\nnothing to commit");
+});

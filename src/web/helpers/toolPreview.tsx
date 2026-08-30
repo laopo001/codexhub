@@ -1,6 +1,6 @@
 import React from "react";
 import { Tag } from "antd";
-import { FileDiff, Image, MessageSquareText, Plug, Search, ShieldCheck, Sparkles, Terminal, Users, Workflow } from "lucide-react";
+import { FileDiff, Image, Info, MessageSquareText, Plug, Search, ShieldCheck, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
 import { formatCompactNumber, formatWriteStdinSummary, parseJsonObject } from "../../shared/toolFormatting.js";
 import { normalizeUpdatePlanStatus, parseUpdatePlanArguments, updatePlanStatusIcon, updatePlanStatusLabel, type UpdatePlanView as UpdatePlanViewModel } from "../../shared/updatePlanView.js";
@@ -8,6 +8,8 @@ import type { InspectDetail, ParsedToolCall, WebRecordView, WebToolPresenter } f
 import { emptyMemoryCitation, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
 import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
+
+export const ToolInspectContext = React.createContext<(() => void) | undefined>(undefined);
 
 type ToolPreviewIcon = React.ComponentType<{
   className?: string;
@@ -109,6 +111,7 @@ export const ToolPreview = ({
   children: React.ReactNode;
 }) => {
   const startedAt = React.useContext(StatusStartedAtContext);
+  const onInspect = React.useContext(ToolInspectContext);
   return (
     <div className={`toolPreview ${className}`.trim()}>
       <div className="toolPreviewTitle">
@@ -120,6 +123,20 @@ export const ToolPreview = ({
           <em className={`messageStatus ${status}`}>
             <LiveStatusLabel status={status} statusText={statusText} statusDurationMs={statusDurationMs} startedAt={startedAt} />
           </em>
+        ) : null}
+        {onInspect ? (
+          <button
+            type="button"
+            className="toolInspectButton"
+            aria-label="View tool details"
+            title="View tool details"
+            onClick={(event) => {
+              event.stopPropagation();
+              onInspect();
+            }}
+          >
+            <Info size={13} strokeWidth={2.2} aria-hidden="true" />
+          </button>
         ) : null}
       </div>
       {meta?.length || metaExtra ? (
@@ -682,7 +699,6 @@ export const appServerToolMeta = (payload: Record<string, unknown>) => [
   typeof payload.exit_code === "number" ? `exit ${payload.exit_code}` : null,
   typeof payload.namespace === "string" ? `ns ${payload.namespace}` : null,
   typeof payload.tool === "string" ? payload.tool : null,
-  typeof payload.call_id === "string" ? payload.call_id : null,
   Array.isArray(payload.changes) ? `${payload.changes.length} files` : null,
   Array.isArray(payload.questions) ? `${payload.questions.length} questions` : null,
   Array.isArray(payload.receiver_thread_ids) ? `${payload.receiver_thread_ids.length} agents` : null,
