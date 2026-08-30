@@ -113,6 +113,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  flex: 0 0 auto;
   min-width: 0;
   color: #5c6c5e;
   font-size: 11px;
@@ -150,8 +151,9 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  overflow: hidden;
   padding: 0 7px;
   border-left: 1px solid rgba(104, 125, 110, 0.14);
   color: #4a5a4e;
@@ -161,6 +163,7 @@
 }
 
 .activityStatusHeaderMetric strong {
+  flex: 0 0 auto;
   color: #2f7d5a;
   font-size: 9px;
   font-weight: 800;
@@ -169,8 +172,11 @@
 }
 
 .activityStatusHeaderMetric > span {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 10px;
   color: #26342a;
@@ -267,8 +273,7 @@
 }
 
 .statusRegistryItem {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -279,10 +284,6 @@
   background: rgba(250, 252, 249, 0.9);
   color: #243328;
   transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
-}
-
-.statusRegistryItem.hasActions {
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
 
 .statusRegistryItem:hover,
@@ -296,6 +297,8 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .statusRegistryAction {
@@ -355,29 +358,35 @@
 }
 
 .statusRegistryPreview {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .statusRegistryMain {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .statusRegistryMain.backgroundTerminalMain {
   display: flex;
   align-items: center;
   gap: 7px;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
 
 .statusRegistryLabel {
+  flex: 0 0 auto;
   min-width: 52px;
   color: #526354;
   font-size: 9px;
@@ -385,9 +394,11 @@
   line-height: 16px;
   letter-spacing: 0.03em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .statusRegistryText {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -402,13 +413,19 @@
   place-items: center;
   width: 20px;
   height: 20px;
-  margin-right: 3px;
+  margin-right: 0;
+  margin-left: auto;
+  flex: 0 0 auto;
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: #5e7060;
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease;
+}
+
+.statusRegistryActions + .statusRegistryToggle {
+  margin-left: 0;
 }
 
 .statusRegistryToggle:hover {
@@ -430,6 +447,8 @@
   color: #546558;
   font-size: 11px;
   line-height: 1.35;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .statusRegistryDetail .activityStatusPlanStep,
@@ -439,8 +458,19 @@
 }
 
 .statusRegistryDetail .activityStatusPlanStep {
+  display: grid;
   grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
   gap: 4px;
+  min-width: 0;
+}
+
+.statusRegistryDetail .fileChangeRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(36px, auto) minmax(36px, auto);
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
 
 .statusRegistryDetail > .activityStatusPlanSteps,
@@ -481,6 +511,7 @@
 }
 
 .backgroundTerminalStatus {
+  flex: 0 0 auto;
   color: #2f7d5a;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 10px;

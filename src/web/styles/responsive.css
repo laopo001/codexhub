@@ -238,6 +238,40 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  .activityStatusCardOverview {
+    padding: 3px 4px 3px 6px;
+    gap: 4px;
+  }
+
+  .activityStatusSummary {
+    font-size: 10.5px;
+    gap: 4px;
+  }
+
+  .activityStatusHeaderMetric {
+    padding: 0 5px;
+    gap: 4px;
+  }
+
+  .statusRegistryRows {
+    padding: 0 4px 3px;
+  }
+
+  .statusRegistryItem {
+    padding: 2px 5px;
+    gap: 5px;
+  }
+
+  .statusRegistryLabel {
+    min-width: 44px;
+  }
+
+  .statusRegistryDetail {
+    margin-left: 4px;
+    margin-right: 4px;
+    padding-left: 14px;
+  }
 }
 
 @media (max-width: 860px), (orientation: portrait) {
