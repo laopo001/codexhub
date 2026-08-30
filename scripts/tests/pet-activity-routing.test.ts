@@ -13,6 +13,10 @@ import {
   resolveWindowsVsCodeCliExecutable,
   validateSafeString,
 } from "../../src/shared/petActivityRouting.js";
+import {
+  parseWorkspaceFileLaunchReference,
+  resolveWorkspaceFileLaunchReference
+} from "../../src/shared/surfaceTypes.js";
 import type { ProjectSummary } from "../../src/shared/projectTypes.js";
 
 const makeProject = (
@@ -43,11 +47,12 @@ test("validateSafeString enforces length and rejects control characters", () => 
 });
 
 test("parseProjectSource validates source kinds, channels and rejects unknown fields", () => {
-  assert.deepEqual(parseProjectSource({ kind: "vscode", groupId: "group-1", label: "VSCode: codexhub", vscodeChannel: "stable" }), {
+  assert.deepEqual(parseProjectSource({ kind: "vscode", groupId: "group-1", label: "VSCode: codexhub", vscodeChannel: "stable", workspaceFile: "/home/laop/projects/codexhub/my.code-workspace" }), {
     kind: "vscode",
     groupId: "group-1",
     label: "VSCode: codexhub",
-    vscodeChannel: "stable"
+    vscodeChannel: "stable",
+    workspaceFile: "/home/laop/projects/codexhub/my.code-workspace"
   });
   assert.deepEqual(parseProjectSource({ kind: "vscode", groupId: "group-1", label: "VSCode: codexhub", vscodeChannel: "insiders" }), {
     kind: "vscode",
@@ -59,8 +64,9 @@ test("parseProjectSource validates source kinds, channels and rejects unknown fi
     kind: "electron",
     groupId: "electron-main"
   });
-  // Electron cannot declare vscodeChannel
+  // Electron cannot declare vscodeChannel or workspaceFile
   assert.equal(parseProjectSource({ kind: "electron", groupId: "electron-main", vscodeChannel: "stable" }), null);
+  assert.equal(parseProjectSource({ kind: "electron", groupId: "electron-main", workspaceFile: "/tmp/ws.code-workspace" }), null);
   // Invalid vscodeChannel
   assert.equal(parseProjectSource({ kind: "vscode", groupId: "group-1", vscodeChannel: "nightly" }), null);
   // Unknown fields rejected
@@ -293,6 +299,53 @@ test("buildSafeWindowsCmdInvocation quotes safe arguments and supports code.cmd 
   assert.equal(buildSafeWindowsCmdInvocation("C:\\%TEMP%\\code.cmd", ["arg"]), null);
 });
 
+test("workspace-file launch references preserve WSL authority and reject unsupported remotes", () => {
+  // 1. file: URI scheme returns fsPath or path
+  assert.equal(resolveWorkspaceFileLaunchReference({
+    scheme: "file",
+    fsPath: "/home/laop/projects/codexhub/my.code-workspace"
+  }), "/home/laop/projects/codexhub/my.code-workspace");
+  assert.equal(resolveWorkspaceFileLaunchReference({
+    scheme: "file",
+    fsPath: "C:\\Users\\0laop\\projects\\my.code-workspace"
+  }), "C:\\Users\\0laop\\projects\\my.code-workspace");
+
+  // 2. vscode-remote: scheme on WSL returns Linux path
+  assert.equal(resolveWorkspaceFileLaunchReference({
+    scheme: "vscode-remote",
+    authority: "wsl+Ubuntu",
+    path: "/home/laop/projects/codexhub/my.code-workspace"
+  }), "vscode-remote://wsl+Ubuntu/home/laop/projects/codexhub/my.code-workspace");
+  assert.deepEqual(
+    parseWorkspaceFileLaunchReference("vscode-remote://wsl+Ubuntu/home/laop/projects/codexhub/my.code-workspace"),
+    { remote: "wsl+Ubuntu", path: "/home/laop/projects/codexhub/my.code-workspace" }
+  );
+
+  // 3. untitled: workspace returns undefined (unsaved workspace must never launch CLI)
+  assert.equal(resolveWorkspaceFileLaunchReference({
+    scheme: "untitled",
+    path: "Untitled-1.code-workspace"
+  }), undefined);
+
+  // 4. Remote SSH / Dev Container / Tunnel returns undefined
+  assert.equal(resolveWorkspaceFileLaunchReference({
+    scheme: "vscode-remote",
+    authority: "ssh-remote+prod-server",
+    path: "/root/prod.code-workspace"
+  }), undefined);
+  assert.equal(resolveWorkspaceFileLaunchReference({
+    scheme: "vscode-remote",
+    authority: "dev-container+container-1",
+    path: "/workspace/container.code-workspace"
+  }), undefined);
+
+  // 5. Invalid / Null / Control characters
+  assert.equal(resolveWorkspaceFileLaunchReference(undefined), undefined);
+  assert.equal(resolveWorkspaceFileLaunchReference(null), undefined);
+  assert.equal(resolveWorkspaceFileLaunchReference({ scheme: "file", fsPath: "bad\0path" }), undefined);
+  assert.equal(parseWorkspaceFileLaunchReference("vscode-remote://ssh-remote+prod/root/ws.code-workspace"), null);
+});
+
 test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes reuse-window", () => {
   const localHostname = "jx-pc";
   const wslInsidersTarget = {
@@ -326,6 +379,56 @@ test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes r
     }
   };
   assert.deepEqual(resolveVsCodeLaunchPlan(wslStableTarget, { platform: "win32", localHostname }), {
+    command: "code.cmd",
+    args: ["--remote", "wsl+Ubuntu", "/home/laop/projects/codexhub"],
+    remote: "wsl+Ubuntu",
+    targetPath: "/home/laop/projects/codexhub"
+  });
+
+  // 2.1 Multi-root .code-workspace window (Insiders): prioritizes workspaceFile over single projectPath folder
+  const wslWorkspaceFileInsidersTarget = {
+    ...wslInsidersTarget,
+    source: {
+      ...wslInsidersTarget.source,
+      label: "VS Code Insiders: team-workspace",
+      workspaceFile: "vscode-remote://wsl+Ubuntu/home/laop/projects/codexhub/team-workspace.code-workspace"
+    }
+  };
+  assert.deepEqual(resolveVsCodeLaunchPlan(wslWorkspaceFileInsidersTarget, { platform: "win32", localHostname }), {
+    command: "code-insiders.cmd",
+    args: ["--remote", "wsl+Ubuntu", "/home/laop/projects/codexhub/team-workspace.code-workspace"],
+    remote: "wsl+Ubuntu",
+    targetPath: "/home/laop/projects/codexhub/team-workspace.code-workspace"
+  });
+
+  // 2.2 Multi-root .code-workspace window (Stable): prioritizes workspaceFile over single projectPath folder
+  const wslWorkspaceFileStableTarget = {
+    ...wslStableTarget,
+    source: {
+      ...wslStableTarget.source,
+      workspaceFile: "/home/laop/projects/codexhub/team-workspace.code-workspace"
+    }
+  };
+  assert.deepEqual(resolveVsCodeLaunchPlan(wslWorkspaceFileStableTarget, { platform: "win32", localHostname }), {
+    command: "code.cmd",
+    args: ["--remote", "wsl+Ubuntu", "/home/laop/projects/codexhub/team-workspace.code-workspace"],
+    remote: "wsl+Ubuntu",
+    targetPath: "/home/laop/projects/codexhub/team-workspace.code-workspace"
+  });
+
+  // 2.3 Single folder fallback when workspaceFile is absent
+  const wslSingleFolderFallbackTarget = {
+    ...wslStableTarget,
+    source: {
+      kind: "vscode" as const,
+      groupId: "registered:wsl:vscode-1",
+      label: "VSCode: codexhub [WSL: Ubuntu]",
+      vscodeChannel: "stable" as const
+    },
+    projectPath: "/home/laop/projects/codexhub",
+    workingDirectory: "/home/laop/projects/codexhub/nested/sub"
+  };
+  assert.deepEqual(resolveVsCodeLaunchPlan(wslSingleFolderFallbackTarget, { platform: "win32", localHostname }), {
     command: "code.cmd",
     args: ["--remote", "wsl+Ubuntu", "/home/laop/projects/codexhub"],
     remote: "wsl+Ubuntu",
@@ -375,6 +478,20 @@ test("resolveVsCodeLaunchPlan generates clean args without --reuse-window for lo
     command: "code.cmd",
     args: ["C:\\Users\\0laop\\projects\\codexhub"],
     targetPath: "C:\\Users\\0laop\\projects\\codexhub"
+  });
+
+  // Multi-root .code-workspace on local Windows
+  const winWorkspaceFileTarget = {
+    ...winTarget,
+    source: {
+      ...winTarget.source,
+      workspaceFile: "C:\\Users\\0laop\\projects\\my.code-workspace"
+    }
+  };
+  assert.deepEqual(resolveVsCodeLaunchPlan(winWorkspaceFileTarget, { platform: "win32", localHostname }), {
+    command: "code.cmd",
+    args: ["C:\\Users\\0laop\\projects\\my.code-workspace"],
+    targetPath: "C:\\Users\\0laop\\projects\\my.code-workspace"
   });
 
   // Hostname mismatch -> no-op

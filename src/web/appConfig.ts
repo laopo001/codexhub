@@ -40,8 +40,13 @@ export const embeddedSurfaceId = searchParams.get("surfaceId")?.trim() ?? "";
 export const embeddedStateScope = searchParams.get("stateScope")?.trim() ?? embeddedSurfaceId;
 export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ?? "";
 export const embeddedWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "workspacePath"]);
+export const vscodeUiStateStorageKey = (stateScope?: string | null): string => {
+  const trimmed = stateScope?.trim();
+  return `codexhub-ui-state-vscode-v4${trimmed ? `:${encodeURIComponent(trimmed)}` : ""}`;
+};
+
 export const storageKey = isVscodeSurface
-  ? `codexhub-ui-state-vscode-v3${embeddedStateScope ? `:${encodeURIComponent(embeddedStateScope)}` : ""}`
+  ? vscodeUiStateStorageKey(embeddedStateScope)
   : isElectronSurface
     ? `codexhub-ui-state-electron-v1${embeddedStateScope ? `:${encodeURIComponent(embeddedStateScope)}` : ""}`
     : "codexhub-ui-state-v6";

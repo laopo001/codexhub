@@ -19,6 +19,7 @@ export type MachineRegistrationProjectSource = {
   groupId: string;
   label?: string;
   vscodeChannel?: VscodeChannel;
+  workspaceFile?: string;
 };
 
 /** 机器注册时声明的可见项目目录。 */

@@ -189,6 +189,7 @@ export type EmbeddedSurfaceRegistrationInput = {
   label: string;
   buildId?: string;
   vscodeChannel?: VscodeChannel;
+  workspaceFile?: string;
 };
 
 export type EmbeddedSurfaceHeartbeatInput = {
@@ -646,12 +647,19 @@ export const projectSourceSchema = z.object({
   kind: z.enum(["vscode", "electron"]),
   groupId: z.string().min(1),
   label: z.string().min(1).optional(),
-  vscodeChannel: z.enum(["stable", "insiders"]).optional()
+  vscodeChannel: z.enum(["stable", "insiders"]).optional(),
+  workspaceFile: z.string().trim().min(1).max(4096).optional()
 }).strict().superRefine((data, ctx) => {
   if (data.kind === "electron" && data.vscodeChannel !== undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Electron project sources cannot declare a vscodeChannel"
+    });
+  }
+  if (data.kind === "electron" && data.workspaceFile !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Electron project sources cannot declare a workspaceFile"
     });
   }
 });
@@ -667,12 +675,19 @@ export const embeddedSurfaceRegistrationSchema = z.object({
   activeWorkspacePath: z.string().trim().min(1).optional(),
   label: z.string().trim().min(1).max(200),
   buildId: z.string().trim().min(1).max(500).optional(),
-  vscodeChannel: z.enum(["stable", "insiders"]).optional()
+  vscodeChannel: z.enum(["stable", "insiders"]).optional(),
+  workspaceFile: z.string().trim().min(1).max(4096).optional()
 }).strict().superRefine((data, ctx) => {
   if (data.surface === "electron" && data.vscodeChannel !== undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Electron embedded surfaces cannot declare a vscodeChannel"
+    });
+  }
+  if (data.surface === "electron" && data.workspaceFile !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Electron embedded surfaces cannot declare a workspaceFile"
     });
   }
 });

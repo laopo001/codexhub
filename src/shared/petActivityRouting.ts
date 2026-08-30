@@ -1,5 +1,8 @@
 import { parseProjectSource, type ProjectSource, type ProjectSummary } from "./projectTypes.js";
-import type { VscodeChannel } from "./surfaceTypes.js";
+import {
+  parseWorkspaceFileLaunchReference,
+  type VscodeChannel
+} from "./surfaceTypes.js";
 
 export { parseProjectSource } from "./projectTypes.js";
 
@@ -246,7 +249,10 @@ export const resolveVsCodeLaunchPlan = (
   const channel = target.source.vscodeChannel;
   if (!channel || (channel !== "stable" && channel !== "insiders")) return null;
 
-  const targetPath = target.projectPath?.trim() || target.workingDirectory?.trim();
+  const workspaceFile = parseWorkspaceFileLaunchReference(target.source.workspaceFile);
+  const targetPath = workspaceFile?.path
+    || target.projectPath?.trim()
+    || target.workingDirectory?.trim();
   if (!targetPath) return null;
 
   // 校验 machineHostname 与宿主机 localHostname 强一致
@@ -259,7 +265,8 @@ export const resolveVsCodeLaunchPlan = (
   const env = options.env ?? process.env;
   const command = options.customExecutable || resolveVsCodeCliExecutable(channel, env, platform);
 
-  const distro = extractWslDistroFromLabel(target.source.label);
+  const remote = workspaceFile?.remote;
+  const distro = remote?.startsWith("wsl+") ? remote.slice("wsl+".length) : extractWslDistroFromLabel(target.source.label);
   if (distro) {
     // 目标属于 WSL 环境：通过 code/code-insiders --remote wsl+<distro> <path> 唤起（不传 --reuse-window 与 --new-window）
     const normalizedWslPath = targetPath.replace(/\\+/g, "/");

@@ -19,7 +19,10 @@ import {
   embeddedSurfaceProtocolVersion,
   formatVscodeSurfacePrefix,
   resolveVscodeChannel,
-  type VscodeChannel
+  resolveWorkspaceFileLaunchReference,
+  workspaceFileForAuthorityRegistration,
+  type VscodeChannel,
+  type VscodeWorkspaceFileLike
 } from "../../../src/shared/surfaceTypes.js";
 import {
   isTaskCompleteNotification,
@@ -37,6 +40,7 @@ import {
 } from "./settings.js";
 import { buildWebviewBridgeScript } from "./webviewBridge.js";
 import { VscodeWebviewHtmlController } from "./webviewHtmlController.js";
+import { vscodeWorkspaceStateScope } from "./workspaceStateScope.js";
 
 const viewId = "codexhub.workspaceView";
 const surfaceHeartbeatMs = 10_000;
@@ -161,8 +165,9 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     if (folders.length) {
       const activeFolder = activeWorkspaceFolder(folders) ?? folders[0];
       await this.registerSurface(server, folders, activeFolder.path);
+      const workspaceFile = vscode.workspace.workspaceFile;
       await vscode.env.openExternal(await externalServerUri(
-        vscodeSurfaceServerUrl(server, folders, activeFolder.path, this.surfaceId)
+        vscodeSurfaceServerUrl(server, folders, activeFolder.path, this.surfaceId, workspaceFile)
       ));
       return;
     }
@@ -363,8 +368,9 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     try {
       const server = await this.ensureServer();
       await this.registerSurface(server, workspaceFolders, activeFolder.path);
+      const workspaceFile = vscode.workspace.workspaceFile;
       const externalIframeUri = await externalServerUri(
-        vscodeSurfaceServerUrl(server, workspaceFolders, activeFolder.path, this.surfaceId)
+        vscodeSurfaceServerUrl(server, workspaceFolders, activeFolder.path, this.surfaceId, workspaceFile)
       );
       const iframeSrc = externalIframeUri.toString(true);
       this.setWebviewHtml(`iframe:${iframeSrc}`, iframeHtml(iframeSrc, activeFolder.path), forceHtml);
@@ -448,6 +454,10 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   ) {
     const client = createCodexHubApiClient({ baseUrl: server.url, authToken: server.authToken });
     const vscodeChannel = resolveVscodeChannel(vscode.env.uriScheme, vscode.env.appName) ?? undefined;
+    const workspaceFile = workspaceFileForAuthorityRegistration(
+      fileWorkspaceFileLaunchReference(),
+      server.replacementExpected
+    );
     let lastError: unknown = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
@@ -460,7 +470,8 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
           activeWorkspacePath: activePath,
           label: vscodeWorkspaceGroupLabel(folders, vscodeChannel),
           buildId: server.buildId,
-          ...(vscodeChannel ? { vscodeChannel } : {})
+          ...(vscodeChannel ? { vscodeChannel } : {}),
+          ...(workspaceFile ? { workspaceFile } : {})
         });
         this.registeredServerUrl = server.url;
         this.registeredAuthToken = server.authToken;
@@ -649,6 +660,9 @@ const fileWorkspaceFolders = (): VscodeWorkspaceFolder[] =>
       name: folder.name
     }));
 
+const fileWorkspaceFileLaunchReference = (): string | undefined =>
+  resolveWorkspaceFileLaunchReference(vscode.workspace.workspaceFile);
+
 const gitApi = async (): Promise<GitApi | null> => {
   const extension = vscode.extensions.getExtension<{ getAPI: (version: 1) => GitApi }>("vscode.git");
   if (!extension) return null;
@@ -723,11 +737,6 @@ const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[], channel?: V
   const folderName = folders[0]?.name?.trim();
   return folderName ? `${prefix}: ${folderName}` : `${prefix} Workspace`;
 };
-
-const vscodeWorkspaceStateScope = (folders: VscodeWorkspaceFolder[]) => createHash("sha256")
-  .update(folders.map((folder) => folder.path).sort().join("\0"))
-  .digest("hex")
-  .slice(0, 24);
 
 const iframeHtml = (src: string, workspacePath: string) => {
   const nonce = randomNonce();
@@ -876,12 +885,13 @@ const vscodeSurfaceServerUrl = (
   server: VscodeCodexHubServer,
   folders: VscodeWorkspaceFolder[],
   activePath: string,
-  surfaceId: string
+  surfaceId: string,
+  workspaceFile?: VscodeWorkspaceFileLike | string | null
 ) => {
   const url = new URL(authenticatedServerUrl(server));
   url.searchParams.set("surface", "vscode");
   url.searchParams.set("surfaceId", surfaceId);
-  url.searchParams.set("stateScope", vscodeWorkspaceStateScope(folders));
+  url.searchParams.set("stateScope", vscodeWorkspaceStateScope(folders, workspaceFile));
   url.searchParams.set("workspacePath", activePath);
   for (const folder of folders) url.searchParams.append("workspaceFolder", folder.path);
   return url.toString();

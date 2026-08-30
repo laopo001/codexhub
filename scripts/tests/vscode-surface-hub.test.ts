@@ -21,7 +21,8 @@ test("VSCode surface leases merge workspace projects and retain shared paths", (
       workspacePaths: ["/workspace/a", "/workspace/shared"],
       activeWorkspacePath: "/workspace/a",
       label: "VSCode: A",
-      vscodeChannel: "insiders"
+      vscodeChannel: "insiders",
+      workspaceFile: "/workspace/a.code-workspace"
     });
     hub.upsert({
       surface: "vscode",
@@ -31,26 +32,35 @@ test("VSCode surface leases merge workspace projects and retain shared paths", (
       workspacePaths: ["/workspace/shared", "/workspace/b"],
       activeWorkspacePath: "/workspace/b",
       label: "VSCode: B",
-      vscodeChannel: "stable"
+      vscodeChannel: "stable",
+      workspaceFile: "/workspace/b.code-workspace"
     });
 
     assert.deepEqual(hub.list().map((surface) => surface.surfaceId), ["surface-a", "surface-b"]);
     assert.deepEqual(
-      snapshots.at(-1)?.map((project) => ({ path: project.path, channel: project.source.vscodeChannel })),
+      snapshots.at(-1)?.map((project) => ({
+        path: project.path,
+        channel: project.source.vscodeChannel,
+        workspaceFile: project.source.workspaceFile
+      })),
       [
-        { path: "/workspace/a", channel: "insiders" },
-        { path: "/workspace/b", channel: "stable" },
-        { path: "/workspace/shared", channel: "insiders" }
+        { path: "/workspace/a", channel: "insiders", workspaceFile: "/workspace/a.code-workspace" },
+        { path: "/workspace/b", channel: "stable", workspaceFile: "/workspace/b.code-workspace" },
+        { path: "/workspace/shared", channel: "insiders", workspaceFile: undefined }
       ]
     );
 
     assert.equal(hub.remove("surface-a", "wrong-lease"), false);
     assert.equal(hub.remove("surface-a", "lease-a"), true);
     assert.deepEqual(
-      snapshots.at(-1)?.map((project) => ({ path: project.path, channel: project.source.vscodeChannel })),
+      snapshots.at(-1)?.map((project) => ({
+        path: project.path,
+        channel: project.source.vscodeChannel,
+        workspaceFile: project.source.workspaceFile
+      })),
       [
-        { path: "/workspace/b", channel: "stable" },
-        { path: "/workspace/shared", channel: "stable" }
+        { path: "/workspace/b", channel: "stable", workspaceFile: "/workspace/b.code-workspace" },
+        { path: "/workspace/shared", channel: "stable", workspaceFile: "/workspace/b.code-workspace" }
       ]
     );
   } finally {

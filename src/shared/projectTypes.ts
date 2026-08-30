@@ -42,13 +42,14 @@ export type ProjectSource = {
   groupId: string;
   label?: string;
   vscodeChannel?: VscodeChannel;
+  workspaceFile?: string;
 };
 
 /** Canonical strict parser for project source values crossing API/IPC boundaries. */
 export const parseProjectSource = (value: unknown): ProjectSource | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["kind", "groupId", "label", "vscodeChannel"].includes(key))) {
+  if (Object.keys(record).some((key) => !["kind", "groupId", "label", "vscodeChannel", "workspaceFile"].includes(key))) {
     return null;
   }
   if (record.kind !== "vscode" && record.kind !== "electron") return null;
@@ -60,11 +61,14 @@ export const parseProjectSource = (value: unknown): ProjectSource | null => {
   if (vscodeChannel !== undefined) {
     if (record.kind !== "vscode" || (vscodeChannel !== "stable" && vscodeChannel !== "insiders")) return null;
   }
+  const workspaceFile = record.workspaceFile === undefined ? undefined : projectSourceString(record.workspaceFile, 4096);
+  if (record.workspaceFile !== undefined && (!workspaceFile || record.kind !== "vscode")) return null;
   return {
     kind: record.kind,
     groupId,
     ...(label ? { label } : {}),
-    ...(vscodeChannel ? { vscodeChannel } : {})
+    ...(vscodeChannel ? { vscodeChannel } : {}),
+    ...(workspaceFile ? { workspaceFile } : {})
   };
 };
 

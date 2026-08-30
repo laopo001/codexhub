@@ -42,7 +42,8 @@ test("embedded workspace startup registers projects after the machine runtime co
       source: {
         kind: "vscode",
         groupId: "workspace",
-        label: "VSCode: workspace"
+        label: "VSCode: workspace",
+        workspaceFile: path.join(workspacePath, "multi.code-workspace")
       },
       attempts: 30,
       retryDelayMs: 25
@@ -53,6 +54,7 @@ test("embedded workspace startup registers projects after the machine runtime co
       project.path === workspacePath
       && project.transient === true
       && project.source?.kind === "vscode"
+      && project.source?.workspaceFile === path.join(workspacePath, "multi.code-workspace")
     ));
     const runtimes = await waitForRuntime(serverUrl);
     assert.ok(runtimes.runtimes?.some((runtime) => runtime.online && runtime.cliVersion));

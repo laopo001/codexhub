@@ -56,6 +56,8 @@ CodexHub 0.7.0 把 VSCode 从“每个窗口一个 embedded server/runtime”迁
 
 VSCode Web 不再读取共享的 `codexhub-ui-state-vscode-v2`，改为 `codexhub-ui-state-vscode-v3:<workspace-scope>`，避免共享 authority origin 后不同窗口互相覆盖 tabs、active project 和草稿。升级后各 workspace 的本地 UI 状态会重置一次；`config.yaml`、project/task 配置和 app-server thread transcript 不受影响。
 
+后续 workspace identity 版本使用 `codexhub-ui-state-vscode-v4:<workspace-scope>`：保存的工作区优先以 `workspaceFile` URI/path 作为稳定身份，没有 workspace file 时才使用规范化的 folder URI/path；VS Code Stable 与 Insiders 共用同一 workspace profile。v4 不读取、复制、迁移或删除 v3 数据，因此首次进入每个 v4 workspace profile 时从空的本地 Tab 状态开始，server 配置和 app-server thread transcript 仍不受影响。
+
 ## 验证 0.7.0
 
 ```bash

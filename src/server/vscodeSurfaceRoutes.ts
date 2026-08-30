@@ -43,6 +43,7 @@ export const registerEmbeddedSurfaceRoutes = (app: FastifyInstance, ctx: Embedde
         && current.label === input.label
         && current.buildId === input.buildId
         && current.vscodeChannel === input.vscodeChannel
+        && current.workspaceFile === input.workspaceFile
         && samePaths(current.workspacePaths, input.workspacePaths)
         && current.activeWorkspacePath === normalizedActivePath(input.activeWorkspacePath, input.workspacePaths)
       ) {
@@ -65,7 +66,8 @@ export const registerEmbeddedSurfaceRoutes = (app: FastifyInstance, ctx: Embedde
         activeWorkspacePath,
         label: input.label,
         buildId: input.buildId,
-        vscodeChannel: input.vscodeChannel
+        vscodeChannel: input.vscodeChannel,
+        ...(input.workspaceFile ? { workspaceFile: input.workspaceFile } : {})
       });
       return { ok: true, surface } satisfies EmbeddedSurfacePayload;
     } catch (error) {

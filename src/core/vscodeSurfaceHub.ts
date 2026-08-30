@@ -17,6 +17,7 @@ export type EmbeddedSurfaceRegistration = {
   label: string;
   buildId?: string;
   vscodeChannel?: VscodeChannel;
+  workspaceFile?: string;
 };
 
 export type EmbeddedSurfaceView = EmbeddedSurfaceRegistration & {
@@ -140,7 +141,13 @@ export class EmbeddedSurfaceHub {
     for (const surface of surfaces) {
       for (const workspacePath of surface.workspacePaths) {
         const key = `${surface.machineId}\0${workspacePath}`;
-        if (projectsByTarget.has(key)) continue;
+        const existing = projectsByTarget.get(key);
+        if (existing) {
+          if (existing.source.workspaceFile !== surface.workspaceFile) {
+            delete existing.source.workspaceFile;
+          }
+          continue;
+        }
         projectsByTarget.set(key, {
           machineId: surface.machineId,
           path: workspacePath,
@@ -148,7 +155,8 @@ export class EmbeddedSurfaceHub {
             kind: surface.surface,
             groupId: surface.surfaceId,
             label: surface.label,
-            ...(surface.vscodeChannel ? { vscodeChannel: surface.vscodeChannel } : {})
+            ...(surface.vscodeChannel ? { vscodeChannel: surface.vscodeChannel } : {}),
+            ...(surface.workspaceFile ? { workspaceFile: surface.workspaceFile } : {})
           }
         });
       }
@@ -173,6 +181,7 @@ export class EmbeddedSurfaceHub {
       label: surface.label,
       buildId: surface.buildId,
       ...(surface.vscodeChannel ? { vscodeChannel: surface.vscodeChannel } : {}),
+      ...(surface.workspaceFile ? { workspaceFile: surface.workspaceFile } : {}),
       updatedAt: new Date(surface.updatedAtMs).toISOString(),
       expiresAt: new Date(surface.updatedAtMs + this.leaseTimeoutMs).toISOString()
     };

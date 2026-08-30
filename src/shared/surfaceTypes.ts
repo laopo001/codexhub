@@ -37,6 +37,144 @@ export const formatVscodeChannelBadge = (channel?: VscodeChannel): string =>
 export const formatVscodeSurfacePrefix = (channel?: VscodeChannel): string =>
   channel === "insiders" ? "VS Code Insiders" : "VS Code";
 
+export type VscodeWorkspaceFileLike = {
+  scheme: string;
+  path?: string;
+  fsPath?: string;
+  authority?: string;
+};
+
+/**
+ * Serialize a VS Code workspace file into the launch reference carried by ProjectSource.
+ * - file: preserve the local filesystem path;
+ * - vscode-remote: preserve both a validated WSL authority and its absolute remote path;
+ * - untitled / ssh-remote / dev-container / tunnel / 其他自定义 scheme: 返回 undefined，绝不上报以防止误打开。
+ */
+export const resolveWorkspaceFileLaunchReference = (
+  workspaceFile?: VscodeWorkspaceFileLike | null
+): string | undefined => {
+  if (!workspaceFile || typeof workspaceFile !== "object") return undefined;
+  const scheme = workspaceFile.scheme?.trim().toLowerCase();
+  if (!scheme || scheme === "untitled") return undefined;
+
+  if (scheme === "file") {
+    const rawPath = workspaceFile.fsPath?.trim() || workspaceFile.path?.trim();
+    return rawPath && !/[\u0000-\u001f\u007f]/.test(rawPath) ? rawPath : undefined;
+  }
+
+  if (scheme === "vscode-remote") {
+    const authority = workspaceFile.authority?.trim() || "";
+    if (/^wsl\+[a-zA-Z0-9._-]+$/.test(authority)) {
+      const rawPath = workspaceFile.path?.trim() || workspaceFile.fsPath?.trim();
+      if (rawPath?.startsWith("/") && !/[\u0000-\u001f\u007f]/.test(rawPath)) {
+        return `vscode-remote://${authority}${rawPath.replace(/\\+/g, "/")}`;
+      }
+    }
+    return undefined;
+  }
+
+  return undefined;
+};
+
+export type VscodeWorkspaceLaunchReference = {
+  path: string;
+  remote?: string;
+};
+
+/** Parse the serialized workspace-file reference carried by ProjectSource. */
+export const parseWorkspaceFileLaunchReference = (
+  reference?: string | null
+): VscodeWorkspaceLaunchReference | null => {
+  const trimmed = reference?.trim();
+  if (!trimmed || /[\u0000-\u001f\u007f]/.test(trimmed)) return null;
+
+  const remoteMatch = trimmed.match(/^vscode-remote:\/\/(wsl\+([a-zA-Z0-9._-]+))(\/.*)$/i);
+  if (remoteMatch) {
+    return {
+      remote: `wsl+${remoteMatch[2]}`,
+      path: remoteMatch[3].replace(/\\+/g, "/")
+    };
+  }
+  if (/^vscode-remote:/i.test(trimmed)) return null;
+  return { path: trimmed };
+};
+
+/**
+ * A replacement extension may temporarily attach to the previous strict-schema authority.
+ * Omit fields introduced by the replacement build for that one compatibility registration;
+ * the new authority receives the complete registration after takeover.
+ */
+export const workspaceFileForAuthorityRegistration = (
+  workspaceFile: string | undefined,
+  replacementExpected?: boolean
+): string | undefined => replacementExpected ? undefined : workspaceFile;
+
+export type VscodeWorkspaceFolderLike = string | { path: string };
+
+/**
+ * 确定性规范化 VS Code 工作区状态身份字符串（用于生成稳定的 stateScope / storage key）。
+ * 规则：
+ * 1. 优先使用 workspaceFile（保存的 .code-workspace、untitled workspace、remote workspace 等）；
+ *    一旦存在 workspaceFile，绝不混入 folders 列表，保证在多根工作区增删 folder 时 identity 保持不变；
+ * 2. workspaceFile 不存在时，使用 folders 集合（规范化路径后去重并按字典序升序排序）；
+ * 3. 严格拒绝控制字符；
+ * 4. 渠道（vscodeChannel）不作为输入，Stable 与 Insiders 打开同一 workspace 得到完全相同的 identity。
+ */
+export const normalizeVscodeWorkspaceIdentity = (
+  workspaceFile?: VscodeWorkspaceFileLike | string | null,
+  folders?: readonly VscodeWorkspaceFolderLike[] | null
+): string => {
+  if (typeof workspaceFile === "string") {
+    const trimmed = workspaceFile.trim();
+    if (trimmed && !/[\u0000-\u001f\u007f]/.test(trimmed)) {
+      return `workspace-file:${trimmed.replace(/\\+/g, "/")}`;
+    }
+  } else if (workspaceFile && typeof workspaceFile === "object") {
+    const scheme = workspaceFile.scheme?.trim().toLowerCase() || "";
+    if (scheme) {
+      if (scheme === "file") {
+        const rawPath = (workspaceFile.fsPath?.trim() || workspaceFile.path?.trim() || "").replace(/\\+/g, "/");
+        if (rawPath && !/[\u0000-\u001f\u007f]/.test(rawPath)) {
+          return `workspace-file:${rawPath}`;
+        }
+      } else if (scheme === "untitled") {
+        const rawPath = (workspaceFile.path?.trim() || "untitled").replace(/\\+/g, "/");
+        if (!/[\u0000-\u001f\u007f]/.test(rawPath)) {
+          return `workspace-untitled:${rawPath}`;
+        }
+      } else {
+        const authority = workspaceFile.authority?.trim() || "";
+        const rawPath = (workspaceFile.path?.trim() || workspaceFile.fsPath?.trim() || "").replace(/\\+/g, "/");
+        const fullIdentity = `${scheme}:${authority ? `//${authority}` : ""}${rawPath}`;
+        if (!/[\u0000-\u001f\u007f]/.test(fullIdentity)) {
+          return `workspace-remote:${fullIdentity}`;
+        }
+      }
+    }
+  }
+
+  // Fallback to folders collection
+  const rawFolderList = Array.isArray(folders) ? folders : [];
+  const normalizedPaths = rawFolderList
+    .map((folder) => {
+      const raw = typeof folder === "string" ? folder : folder?.path;
+      if (typeof raw !== "string") return "";
+      const trimmed = raw.trim();
+      return trimmed && !/[\u0000-\u001f\u007f]/.test(trimmed) ? trimmed.replace(/\\+/g, "/") : "";
+    })
+    .filter(Boolean);
+
+  const uniqueSorted = [...new Set(normalizedPaths)].sort();
+  if (uniqueSorted.length === 1) {
+    return `workspace-folder:${uniqueSorted[0]}`;
+  }
+  if (uniqueSorted.length > 1) {
+    return `workspace-folders:${uniqueSorted.join("\0")}`;
+  }
+
+  return "workspace-empty";
+};
+
 export type CodexHubAuthorityKind = "windows" | "macos" | "linux" | "wsl";
 
 /**

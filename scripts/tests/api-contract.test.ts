@@ -231,7 +231,7 @@ test("embedded surface registration and project source schemas strictly validate
     label: "VSCode: ws"
   };
 
-  assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseVscode, vscodeChannel: "stable" }).success, true);
+  assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseVscode, vscodeChannel: "stable", workspaceFile: "/tmp/ws/my.code-workspace" }).success, true);
   assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseVscode, vscodeChannel: "insiders" }).success, true);
   assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseVscode, vscodeChannel: "nightly" }).success, false);
   assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseVscode, unknownField: true }).success, false);
@@ -245,18 +245,20 @@ test("embedded surface registration and project source schemas strictly validate
     label: "Electron"
   };
   assert.equal(embeddedSurfaceRegistrationSchema.safeParse(baseElectron).success, true);
-  // Electron surface cannot declare vscodeChannel
+  // Electron surface cannot declare vscodeChannel or workspaceFile
   assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseElectron, vscodeChannel: "stable" }).success, false);
+  assert.equal(embeddedSurfaceRegistrationSchema.safeParse({ ...baseElectron, workspaceFile: "/tmp/my.code-workspace" }).success, false);
 
   // projectSourceSchema
-  assert.equal(projectSourceSchema.safeParse({ kind: "vscode", groupId: "g1", vscodeChannel: "stable" }).success, true);
+  assert.equal(projectSourceSchema.safeParse({ kind: "vscode", groupId: "g1", vscodeChannel: "stable", workspaceFile: "/tmp/my.code-workspace" }).success, true);
   assert.equal(projectSourceSchema.safeParse({ kind: "vscode", groupId: "g1", vscodeChannel: "insiders" }).success, true);
   assert.equal(projectSourceSchema.safeParse({ kind: "vscode", groupId: "g1", vscodeChannel: "unknown" }).success, false);
   assert.equal(projectSourceSchema.safeParse({ kind: "electron", groupId: "g1" }).success, true);
   assert.equal(projectSourceSchema.safeParse({ kind: "electron", groupId: "g1", vscodeChannel: "stable" }).success, false);
+  assert.equal(projectSourceSchema.safeParse({ kind: "electron", groupId: "g1", workspaceFile: "/tmp/my.code-workspace" }).success, false);
 });
 
-test("machineRegistrationSchema preserves projects[].source.vscodeChannel and strictly validates it", () => {
+test("machineRegistrationSchema preserves projects[].source.vscodeChannel and workspaceFile and strictly validates it", () => {
   const parsed = machineRegistrationSchema.parse({
     hostname: "test-host",
     projects: [{
@@ -265,11 +267,13 @@ test("machineRegistrationSchema preserves projects[].source.vscodeChannel and st
         kind: "vscode",
         groupId: "surface-1",
         label: "VSCode: codexhub [WSL: Ubuntu]",
-        vscodeChannel: "insiders"
+        vscodeChannel: "insiders",
+        workspaceFile: "/home/laop/projects/codexhub/my.code-workspace"
       }
     }]
   });
   assert.equal(parsed.projects?.[0]?.source?.vscodeChannel, "insiders");
+  assert.equal(parsed.projects?.[0]?.source?.workspaceFile, "/home/laop/projects/codexhub/my.code-workspace");
 
   // Invalid vscodeChannel rejected
   assert.equal(machineRegistrationSchema.safeParse({
@@ -284,7 +288,7 @@ test("machineRegistrationSchema preserves projects[].source.vscodeChannel and st
     }]
   }).success, false);
 
-  // Electron source cannot declare vscodeChannel
+  // Electron source cannot declare vscodeChannel or workspaceFile
   assert.equal(machineRegistrationSchema.safeParse({
     hostname: "test-host",
     projects: [{
@@ -293,6 +297,17 @@ test("machineRegistrationSchema preserves projects[].source.vscodeChannel and st
         kind: "electron",
         groupId: "surface-electron",
         vscodeChannel: "insiders"
+      }
+    }]
+  }).success, false);
+  assert.equal(machineRegistrationSchema.safeParse({
+    hostname: "test-host",
+    projects: [{
+      path: "/home/laop/projects/codexhub",
+      source: {
+        kind: "electron",
+        groupId: "surface-electron",
+        workspaceFile: "/tmp/ws.code-workspace"
       }
     }]
   }).success, false);
