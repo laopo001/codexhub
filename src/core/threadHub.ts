@@ -1361,6 +1361,7 @@ export class ThreadHub {
     const barrierSeq = thread.seq;
     const historyPageSize = options.historyPageSize;
     let historySent = false;
+    let latestHistoryPageSignature = "";
     const historySnapshotId = randomUUID();
     const webSubscriber = historyPageSize
       ? (event: ThreadStreamEvent) => {
@@ -1370,10 +1371,13 @@ export class ThreadHub {
           }
           const page = this.threadHistoryPage(thread, { limit: historyPageSize });
           const firstHistoryPage = !historySent;
+          const pageSignature = JSON.stringify(page.records);
+          const latestHistoryPageChanged = pageSignature !== latestHistoryPageSignature;
           historySent = true;
+          latestHistoryPageSignature = pageSignature;
           callback({
             ...event,
-            ...(firstHistoryPage ? { records: page.records } : { records: undefined }),
+            ...(firstHistoryPage || latestHistoryPageChanged ? { records: page.records } : { records: undefined }),
             snapshot: {
               ...(event.snapshot ?? {
                 snapshotId: historySnapshotId,

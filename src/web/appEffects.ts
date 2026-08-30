@@ -58,6 +58,29 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
   }, []);
 
   useEffect(() => {
+    if (!state.initialized || !state.systemStatus.authority) return;
+    let disposed = false;
+    const refreshAuthorityUpdate = async () => {
+      try {
+        const health = await apiRouteJson(apiRoutes.health);
+        if (disposed) return;
+        state.setSystemStatus((current) => ({
+          ...current,
+          authorityUpdate: health.authorityUpdate
+        }));
+      } catch {
+        // Keep the last confirmed update state while the authority is temporarily unavailable.
+      }
+    };
+    const timer = window.setInterval(() => void refreshAuthorityUpdate(), 5_000);
+    void refreshAuthorityUpdate();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [state.initialized, state.systemStatus.authority?.authorityId]);
+
+  useEffect(() => {
     if (!state.initialized || !state.openThreads.length) return;
     const activeThreadId = resolveActiveThreadId({
       activeMachineId: state.activeMachineId,

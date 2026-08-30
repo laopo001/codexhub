@@ -145,6 +145,11 @@ export type ServerConfigUpdateInput = {
   ui?: Partial<ServerUiConfig>;
 };
 
+export type AuthorityUpdatePayload = {
+  buildId: string;
+  detectedAt: string;
+};
+
 /** `/api/health` 返回的 server 运行状态和默认配置。 */
 export type HealthPayload = AuthStatusPayload & {
   ok?: boolean;
@@ -156,6 +161,7 @@ export type HealthPayload = AuthStatusPayload & {
   port?: number;
   surface?: CodexHubSurface;
   authority?: CodexHubAuthorityDescriptor;
+  authorityUpdate?: AuthorityUpdatePayload;
   authorityRuntime?: AuthorityRuntimePayload;
   authorityServiceSource?: AuthorityServiceSource;
   features?: Record<string, boolean>;

@@ -123,6 +123,8 @@ type SyncedThread = {
   appServerTurnsPending: boolean;
   appServerTurnsRetryCount: number;
   appServerTurnsDebounceTimer?: NodeJS.Timeout;
+  appServerTurnsStabilizationDelaysMs: number[];
+  appServerTurnsStabilizationTimer?: NodeJS.Timeout;
   backgroundTerminals: ThreadBackgroundTerminal[];
   backgroundTerminalsSyncing: boolean;
   backgroundTerminalsUnsupported: boolean;
@@ -191,6 +193,7 @@ type BridgeOptions = {
   approvalPolicy?: "untrusted" | "on-request" | "never";
   expectedCliVersion?: string;
   runtimeCatalogCachePath?: string;
+  threadTurnsStabilizationDelaysMs?: readonly number[];
   transportFactory: HeadlessSessionTransportFactory;
 };
 
@@ -1060,6 +1063,9 @@ class CodexAppServerBridge {
       appServerTurnsSyncing: false,
       appServerTurnsPending: false,
       appServerTurnsRetryCount: 0,
+      appServerTurnsStabilizationDelaysMs: threadTurnsStabilizationDelaysMs(
+        this.options.threadTurnsStabilizationDelaysMs
+      ),
       backgroundTerminals: [],
       backgroundTerminalsSyncing: false,
       backgroundTerminalsUnsupported: false
@@ -1226,6 +1232,7 @@ class CodexAppServerBridge {
         if (completed) {
           state.appServerTurnsRetryCount = 0;
           if (state.appServerTurnsPending) this.scheduleAppServerTurnsSync(threadId);
+          else this.scheduleAppServerTurnsStabilization(threadId, state);
         } else {
           state.appServerTurnsRetryCount += 1;
           this.scheduleAppServerTurnsSync(threadId, {
@@ -1284,9 +1291,28 @@ class CodexAppServerBridge {
 
   private closeAppServerTurnsSync(state: SyncedThread) {
     if (state.appServerTurnsDebounceTimer) clearTimeout(state.appServerTurnsDebounceTimer);
+    if (state.appServerTurnsStabilizationTimer) clearTimeout(state.appServerTurnsStabilizationTimer);
     state.appServerTurnsDebounceTimer = undefined;
+    state.appServerTurnsStabilizationTimer = undefined;
     state.appServerTurnsPending = false;
     state.appServerTurnsRetryCount = 0;
+    state.appServerTurnsStabilizationDelaysMs = [];
+  }
+
+  private scheduleAppServerTurnsStabilization(threadId: string, state: SyncedThread) {
+    if (
+      this.closed
+      || this.syncedThreads.get(threadId) !== state
+      || state.appServerTurnsStabilizationTimer
+      || !state.appServerTurnsStabilizationDelaysMs.length
+    ) return;
+    const delayMs = state.appServerTurnsStabilizationDelaysMs.shift()!;
+    state.appServerTurnsStabilizationTimer = setTimeout(() => {
+      state.appServerTurnsStabilizationTimer = undefined;
+      if (this.closed || this.syncedThreads.get(threadId) !== state) return;
+      this.scheduleAppServerTurnsSync(threadId, { delayMs: 0 });
+    }, delayMs);
+    state.appServerTurnsStabilizationTimer.unref?.();
   }
 
   private async listAppServerThreads(workingDirectory: string, limit?: number): Promise<ThreadCandidateSummary[]> {
@@ -1993,6 +2019,11 @@ const appServerOverloadRetryDelayMs = (attempt: number) => {
 };
 const appServerTurnsRetryDelayMs = (retryCount: number) =>
   Math.min(30_000, 250 * 2 ** Math.max(0, retryCount - 1));
+const defaultThreadTurnsStabilizationDelaysMs = [250, 3_000] as const;
+const threadTurnsStabilizationDelaysMs = (value: readonly number[] | undefined) =>
+  [...(value ?? defaultThreadTurnsStabilizationDelaysMs)]
+    .filter((delayMs) => Number.isFinite(delayMs) && delayMs >= 0)
+    .map((delayMs) => Math.floor(delayMs));
 
 const appServerRpcError = (error: JsonRecord) => new AppServerRpcError(
   typeof error.code === "number" ? error.code : undefined,

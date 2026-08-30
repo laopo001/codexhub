@@ -50,6 +50,7 @@ class CurrentProtocolSocket implements AppServerSocketLike {
     pluginList?: unknown;
     pluginReads?: Record<string, unknown>;
     turnPages?: unknown[][];
+    turnSnapshots?: unknown[][][];
     failTurnPageOnce?: number;
     repeatTurnCursor?: boolean;
     backgroundTerminals?: unknown[];
@@ -127,7 +128,10 @@ class CurrentProtocolSocket implements AppServerSocketLike {
         }));
         return;
       }
-      const pages = this.options.turnPages ?? [[]];
+      const snapshots = this.options.turnSnapshots;
+      const pages = snapshots
+        ? snapshots[Math.min(requestCount - 1, snapshots.length - 1)] ?? [[]]
+        : this.options.turnPages ?? [[]];
       result = {
         data: pages[pageIndex] ?? [],
         nextCursor: this.options.repeatTurnCursor
@@ -1014,6 +1018,60 @@ test("runtime retries a partial turns snapshot from the head while the thread re
     assert.notEqual(snapshots[1].snapshotId, snapshots[0].snapshotId);
     assert.equal(snapshots[2].snapshotId, snapshots[1].snapshotId);
     assert.equal(snapshots[2].complete, true);
+  } finally {
+    await session.stop();
+  }
+});
+
+test("runtime stabilizes a successful thread snapshot after a fresh resume", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket({
+    validResume: true,
+    turnSnapshots: [
+      [[{ id: "newest-turn" }]],
+      [[{ id: "newest-turn" }, { id: "older-turn" }]],
+      [[{ id: "newest-turn" }, { id: "older-turn" }]]
+    ]
+  });
+  const forwardedEvents: unknown[] = [];
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
+    appServerTransportFactory: async () => socket,
+    cwd: "/tmp/current-protocol",
+    threadTurnsStabilizationDelaysMs: [5, 10],
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return {
+        ...transportFactory(transportContext, nextCallbacks),
+        sendEvent: (event) => forwardedEvents.push(event)
+      };
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    await callbacks.handleCommand({
+      seq: 1,
+      commandId: "stabilized-subscription",
+      type: "subscribe_thread_records",
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: new Date(0).toISOString(),
+      threadId: "stabilized-thread"
+    });
+    await waitForCondition(() => socket.turnsListParams.length >= 3);
+    await delay(30);
+    assert.equal(socket.turnsListParams.length, 3);
+    const snapshots = forwardedEvents.filter((event) =>
+      (event as { type?: string }).type === "thread_turns_snapshot"
+    ) as Array<{ turns: Array<{ id?: string }>; head?: boolean; complete?: boolean }>;
+    assert.deepEqual(snapshots.map((snapshot) => snapshot.turns.map((turn) => turn.id)), [
+      ["newest-turn"],
+      ["older-turn", "newest-turn"],
+      ["older-turn", "newest-turn"]
+    ]);
+    assert.ok(snapshots.every((snapshot) => snapshot.head === true && snapshot.complete === true));
   } finally {
     await session.stop();
   }

@@ -334,6 +334,18 @@
     box-shadow 180ms ease;
 }
 
+.settingsDialog .settingsRestartRow.has-update {
+  border-color: #e0b38f;
+  background-color: #fffaf5;
+  box-shadow: inset 3px 0 0 #d47b3d;
+}
+
+.settingsDialog .settingsRestartRow.has-update .settingsRestartButton:not(.is-loading) {
+  border-color: #d8a176;
+  background-color: #fff4e9;
+  color: #8b4c20;
+}
+
 .settingsDialog .settingsRestartRow.is-restarting {
   border-color: #9bb89a;
   background-color: #f3faf1;

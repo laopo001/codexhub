@@ -17,6 +17,8 @@ export type EmbeddedServerOptions = {
   staticDirectory?: string;
   surface?: CodexHubSurface;
   buildId?: string | null;
+  authorityBuildFiles?: string[];
+  authorityBuildPollMs?: number;
   authToken?: string;
   localProjectCatalog?: "editable" | "fixed";
   parentRegistrationIdentity?: ParentRegistrationIdentity;
@@ -44,6 +46,8 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       staticDirectory: options.staticDirectory,
       surface: options.surface,
       buildId: options.buildId,
+      authorityBuildFiles: options.authorityBuildFiles,
+      authorityBuildPollMs: options.authorityBuildPollMs,
       authToken: options.authToken,
       localProjectCatalog: options.localProjectCatalog,
       parentRegistrationIdentity: options.parentRegistrationIdentity,

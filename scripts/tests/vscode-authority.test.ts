@@ -148,6 +148,56 @@ test("embedded authority restart endpoint closes the authority server", async ()
   }
 });
 
+test("embedded authority reports a replacement build without closing automatically", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-vscode-authority-update."));
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const server = await startServer({
+    host: "127.0.0.1",
+    port: await findFreePort("127.0.0.1"),
+    dataDir: path.join(root, "data"),
+    authToken: "",
+    surface: "default",
+    buildId: "build-old",
+    authority: {
+      authorityId: "authority-update-test",
+      kind: "linux",
+      surfaceProtocolVersion: embeddedSurfaceProtocolVersion
+    },
+    embeddedSurfaceLeaseTimeoutMs: 60_000,
+    embeddedSurfaceIdleShutdownMs: 60_000,
+    features: {
+      localMachine: true,
+      ssh: false,
+      tasks: false,
+      integrations: false
+    }
+  });
+  const client = createCodexHubApiClient({ baseUrl: localServerUrl(server) });
+  try {
+    assert.equal((await client.route(apiRoutes.health) as HealthPayload).authorityUpdate, undefined);
+    await registerSurfaceWithRetry(client, {
+      surface: "vscode",
+      surfaceId: "window-new-build",
+      leaseId: "lease-new-build",
+      protocolVersion: embeddedSurfaceProtocolVersion,
+      workspacePaths: [workspace],
+      activeWorkspacePath: workspace,
+      label: "VSCode: New build",
+      buildId: "build-new"
+    });
+    const updateHealth = await client.route(apiRoutes.health) as HealthPayload;
+    assert.equal(updateHealth.authorityUpdate?.buildId, "build-new");
+    assert.ok(Date.parse(updateHealth.authorityUpdate?.detectedAt ?? "") > 0);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal((await client.route(apiRoutes.health) as HealthPayload).serverInstanceId, server.serverInstanceId);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 type Client = ReturnType<typeof createCodexHubApiClient>;
 
 const waitForRuntime = async (client: Client) => {
@@ -169,6 +219,7 @@ const registerSurfaceWithRetry = async (
     workspacePaths: string[];
     activeWorkspacePath?: string;
     label: string;
+    buildId?: string;
   }
 ) => {
   let lastError: unknown;

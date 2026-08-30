@@ -1522,6 +1522,39 @@ test("Web history subscriptions send the latest window instead of the full canon
   assert.equal(events[0]?.snapshot?.reset, true);
   assert.equal(events[0]?.snapshot?.history?.hasOlder, true);
   assert.ok((hub.getThread(threadId)?.records.length ?? 0) > 6);
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: Array.from({ length: 7 }, (_, index) => ({
+      id: `turn-${index}`,
+      status: "completed",
+      items: [{
+        id: `agent-${index}`,
+        type: "agentMessage",
+        text: `message-${index}`,
+        phase: "final_answer"
+      }]
+    }))
+  });
+  assert.equal(events.at(-1)?.records?.some((record) => record.id.includes("agent-6")), true);
+  assert.equal(events.at(-1)?.snapshot?.reset, false);
+
+  hub.applySessionEvent(sessionId, {
+    type: "thread_turns_snapshot",
+    threadId,
+    turns: Array.from({ length: 7 }, (_, index) => ({
+      id: `turn-${index}`,
+      status: "completed",
+      items: [{
+        id: `agent-${index}`,
+        type: "agentMessage",
+        text: `message-${index}`,
+        phase: "final_answer"
+      }]
+    }))
+  });
+  assert.equal(events.at(-1)?.records, undefined);
   unsubscribe();
 });
 

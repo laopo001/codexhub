@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { createMachineId, MachineHub } from "../core/machineHub.js";
+import { AuthorityBuildMonitor } from "../core/authorityBuildMonitor.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
@@ -24,6 +25,7 @@ import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhu
 import { resolveCodexAppServerLaunchOptions, type CodexAppServerLaunchOptions } from "../cli/codexAppServerProcess.js";
 import {
   parentRegistrationConnectSchema,
+  type AuthorityUpdatePayload,
   type ConnectionsStreamEvent,
   type ParentRegistrationConnectInput,
   type ParentRegistrationStatus,
@@ -201,6 +203,8 @@ export type ServerStartOptions = {
   authority?: CodexHubAuthorityDescriptor;
   embeddedSurfaceLeaseTimeoutMs?: number;
   embeddedSurfaceIdleShutdownMs?: number;
+  authorityBuildFiles?: string[];
+  authorityBuildPollMs?: number;
   features?: Partial<ServerFeatureOptions>;
 };
 
@@ -248,6 +252,15 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const shouldPersistMachine = (machine: { type?: string }) =>
     machine.type !== "registered" && !(embeddedSurface && machine.type === "local");
   let threads: ThreadHub;
+  let authorityUpdate: AuthorityUpdatePayload | undefined;
+  const reportAuthorityUpdate = (replacementBuildId: string) => {
+    if (!replacementBuildId || replacementBuildId === buildId || authorityUpdate?.buildId === replacementBuildId) return;
+    authorityUpdate = {
+      buildId: replacementBuildId,
+      detectedAt: new Date().toISOString()
+    };
+    console.error(`codexhub embedded authority update available: ${replacementBuildId}`);
+  };
   const captureSessionState = () => {
     state.captureSessions({
       sessions: threads.listSessions({ includeOffline: true }),
@@ -350,17 +363,19 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           console.error(`codexhub embedded authority idle shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
         });
       },
-      onReplacementBuild: (replacementBuildId: string) => {
-        console.error(`codexhub embedded authority yielding to build ${replacementBuildId}`);
-        const timer = setTimeout(() => {
-          void app.close().catch((error: unknown) => {
-            console.error(`codexhub embedded authority build handoff failed: ${error instanceof Error ? error.message : String(error)}`);
-          });
-        }, 100);
-        timer.unref?.();
+      onReplacementBuildAvailable: (replacementBuildId: string) => {
+        reportAuthorityUpdate(replacementBuildId);
       }
     } : {})
   });
+  const authorityBuildMonitor = authorityService && buildId && options.authorityBuildFiles?.length
+    ? new AuthorityBuildMonitor({
+        currentBuildId: buildId,
+        files: options.authorityBuildFiles,
+        pollMs: options.authorityBuildPollMs,
+        onUpdateAvailable: reportAuthorityUpdate
+      })
+    : null;
   const threadRecordSubscriptionCounts = new Map<string, number>();
   const threadRecordSubscriptionTimers = new Map<string, NodeJS.Timeout>();
   const tunneledSessions = new TunneledSessionManager({
@@ -399,7 +414,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       await localMachine?.stop();
       localMachine = null;
     },
-    stopEmbeddedSurfaces: () => embeddedSurfaces.stop(),
+    stopEmbeddedSurfaces: () => {
+      authorityBuildMonitor?.stop();
+      embeddedSurfaces.stop();
+    },
     stopIntegrations: () => {
       telegramBot?.stop("server closing");
       telegramBot = null;
@@ -792,6 +810,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       port: config.port,
       surface,
       authority: options.authority,
+      authorityUpdate,
       ...(options.authority ? {
         authorityRuntime: {
           nodePath: process.execPath,

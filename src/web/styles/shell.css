@@ -196,6 +196,7 @@
 }
 
 .sidebarSettingsButton {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -211,6 +212,19 @@
   font-weight: 650;
   cursor: pointer;
   transition: border-color 130ms ease, background-color 130ms ease, color 130ms ease, transform 80ms ease;
+}
+
+.sidebarSettingsUpdateDot {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid #172019;
+  border-radius: 50%;
+  background: #e14b45;
+  box-shadow: 0 0 0 2px rgb(225 75 69 / 16%);
+  pointer-events: none;
 }
 
 .sidebarSettingsButton svg {

@@ -140,6 +140,7 @@ export type AppSidebarViewModel = {
   projectActionError: string;
   selectProject: (project: ProjectSummary) => MaybePromise;
   sidebarDraftStore: SidebarDraftStore;
+  systemStatus: SystemStatus;
   setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSettingsDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setTasksDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -554,7 +555,7 @@ const sidebarKeys = [
   "activeProjectKey", "collapsedProjectMachineKeys", "deleteProject", "deletingProjectId", "machines",
   "offlineProjectsCollapsed", "openingProjectKey", "showProjectPicker", "projectGroups", "projectScopeLocked",
   "projectActionError", "selectProject", "sidebarDraftStore", "setOfflineProjectsCollapsed", "setSettingsDialogOpen",
-  "setTasksDialogOpen", "toggleProjectMachineGroup", "toggleProjectPinned"
+  "setTasksDialogOpen", "systemStatus", "toggleProjectMachineGroup", "toggleProjectPinned"
 ] as const satisfies readonly (keyof AppSidebarViewModel)[];
 
 const workspaceKeys = [

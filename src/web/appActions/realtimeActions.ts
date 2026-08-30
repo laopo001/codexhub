@@ -265,6 +265,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setSystemStatus({
       version: health.version ?? null,
       authority: health.authority,
+      authorityUpdate: health.authorityUpdate,
       model: health.model ?? null,
       modelReasoningEffort: health.modelReasoningEffort ?? null,
       serviceTier: health.serviceTier ?? null,

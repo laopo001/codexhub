@@ -1,6 +1,7 @@
 import type React from "react";
 import type {
   ConnectionsStreamEvent as ApiConnectionsStreamEvent,
+  AuthorityUpdatePayload,
   CommandPalette as ApiCommandPalette,
   CommandPaletteEntry as ApiCommandPaletteEntry,
   MachineDirectoryListing as ApiMachineDirectoryListing,
@@ -353,6 +354,7 @@ export type ParsedToolCall = {
 export type SystemStatus = {
   version: string | null;
   authority?: CodexHubAuthorityDescriptor;
+  authorityUpdate?: AuthorityUpdatePayload;
   model: string | null;
   modelReasoningEffort: string | null;
   serviceTier: string | null;

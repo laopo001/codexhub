@@ -48,6 +48,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     setOfflineProjectsCollapsed,
     setSettingsDialogOpen,
     setTasksDialogOpen,
+    systemStatus,
     toggleProjectMachineGroup,
     toggleProjectPinned
   } = viewModel;
@@ -64,6 +65,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   );
 
   const projectQuery = projectSearch.trim();
+  const authorityUpdateAvailable = Boolean(systemStatus.authorityUpdate);
   const visibleProjectGroups = filterProjectMachineGroupsBySearch(projectGroups, projectQuery);
   const onlineProjectGroups = visibleProjectGroups.filter((machine) => machine.online);
   const offlineProjectGroups = visibleProjectGroups.filter((machine) => !machine.online);
@@ -284,13 +286,14 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
         ) : null}
         <button
           type="button"
-          className="sidebarSettingsButton"
+          className={`sidebarSettingsButton${authorityUpdateAvailable ? " has-update" : ""}`}
           onClick={() => setSettingsDialogOpen(true)}
-          title="Open settings"
-          aria-label="Open settings"
+          title={authorityUpdateAvailable ? "Open settings — update available" : "Open settings"}
+          aria-label={authorityUpdateAvailable ? "Open settings, update available" : "Open settings"}
         >
           <Settings size={15} strokeWidth={2.2} aria-hidden="true" />
           <span>Settings</span>
+          {authorityUpdateAvailable ? <span className="sidebarSettingsUpdateDot" aria-hidden="true" /> : null}
         </button>
       </div>
     </aside>

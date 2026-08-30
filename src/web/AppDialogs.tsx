@@ -112,6 +112,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   );
   const [imageCopyStatus, setImageCopyStatus] = React.useState<"idle" | "copying" | "copied" | "failed">("idle");
   const restartAvailable = Boolean(systemStatus.authority);
+  const authorityUpdateAvailable = Boolean(systemStatus.authorityUpdate);
+  const reloadFrontend = () => window.location.reload();
   React.useEffect(() => {
     setProjectPickerSearch("");
   }, [projectPicker?.machineId, projectPicker?.entries]);
@@ -160,9 +162,13 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const restartAuthority = () => {
     if (!restartAvailable || restartState === "restarting") return;
     Modal.confirm({
-      title: "Restart this CodexHub authority?",
-      content: "Restart the authority and Codex runtime for this host. Every connected CodexHub surface will reconnect and restore its tabs automatically; host applications stay open, and other hosts will not be restarted.",
-      okText: "Restart",
+      title: authorityUpdateAvailable
+        ? "Update and restart this CodexHub authority and frontend?"
+        : "Restart this CodexHub authority and frontend?",
+      content: authorityUpdateAvailable
+        ? "Apply the detected CodexHub build by restarting this authority, its Codex runtime, and connected CodexHub frontends. Any running turns on this host will be interrupted. Connected surfaces will reconnect and restore their tabs; host applications stay open, and other hosts are not restarted."
+        : "Restart this authority, its Codex runtime, and connected CodexHub frontends. Any running turns on this host will be interrupted. Connected surfaces will reconnect and restore their tabs; host applications stay open, and other hosts are not restarted.",
+      okText: authorityUpdateAvailable ? "Update and restart all" : "Restart all",
       cancelText: "Cancel",
       onOk: async () => {
         setRestartState("restarting");
@@ -455,22 +461,39 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                         <em>{systemStatus.version ? `CodexHub v${systemStatus.version}` : "Version unavailable"}</em>
                       </span>
                     </div>
+                    <div className="settingsRow settingsFrontendReloadRow">
+                      <span className="settingsRowText">
+                        <strong>Reload frontend</strong>
+                        <em>Reload only this CodexHub surface. The authority, Codex runtime, and other windows keep running.</em>
+                      </span>
+                      <button
+                        type="button"
+                        className="petSettingsButton settingsRestartButton"
+                        onClick={reloadFrontend}
+                      >
+                        Reload frontend
+                      </button>
+                    </div>
                     {restartAvailable ? (
                       <div
-                        className={`settingsRow settingsRestartRow${restartState === "restarting" ? " is-restarting" : ""}${restartState === "error" ? " has-error" : ""}`}
+                        className={`settingsRow settingsRestartRow${authorityUpdateAvailable ? " has-update" : ""}${restartState === "restarting" ? " is-restarting" : ""}${restartState === "error" ? " has-error" : ""}`}
                         aria-busy={restartState === "restarting"}
                       >
                         <span className="settingsRowText">
-                          <strong>Restart current authority</strong>
+                          <strong>{authorityUpdateAvailable ? "Update authority and frontends" : "Restart authority and frontends"}</strong>
                           <em
                             className={restartState === "error" ? "settingsError" : undefined}
                             aria-live="polite"
                           >
                             {restartState === "restarting"
-                              ? "Restarting this host's authority and reconnecting this window..."
+                              ? authorityUpdateAvailable
+                                ? "Applying the update, restarting this host's authority, and reconnecting this window..."
+                                : "Restarting this host's authority and reconnecting this window..."
                               : restartState === "error"
                                 ? "Restart failed. Check the authority log and try again."
-                                : "Restart this host's authority and Codex runtime. The host application stays open."}
+                                : authorityUpdateAvailable
+                                  ? "A new CodexHub build is ready. Apply it by explicitly restarting this host's authority, runtime, and connected frontends."
+                                  : "Restart this host's authority, Codex runtime, and connected frontends. Host applications stay open."}
                           </em>
                         </span>
                         <button
@@ -483,9 +506,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                           {restartState === "restarting" ? (
                             <>
                               <span className="settingsRestartSpinner" aria-hidden="true" />
-                              <span>Restarting...</span>
+                              <span>{authorityUpdateAvailable ? "Updating..." : "Restarting..."}</span>
                             </>
-                          ) : "Restart"}
+                          ) : authorityUpdateAvailable ? "Update and restart all" : "Restart all"}
                         </button>
                       </div>
                     ) : null}

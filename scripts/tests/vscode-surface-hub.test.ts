@@ -122,14 +122,14 @@ test("an empty VSCode authority reaches its idle callback", async () => {
   }
 });
 
-test("an old VSCode authority yields after every remaining surface uses the replacement build", () => {
+test("an old VSCode authority reports an update as soon as one surface uses a replacement build", () => {
   const replacements: string[] = [];
   const hub = new EmbeddedSurfaceHub({
     leaseTimeoutMs: 60_000,
     idleShutdownMs: 60_000,
     currentBuildId: "build-old",
     onProjectsChange: () => undefined,
-    onReplacementBuild: (buildId) => replacements.push(buildId)
+    onReplacementBuildAvailable: (buildId) => replacements.push(buildId)
   });
   try {
     hub.upsert({
@@ -150,7 +150,7 @@ test("an old VSCode authority yields after every remaining surface uses the repl
       label: "VSCode: New",
       buildId: "build-new"
     });
-    assert.deepEqual(replacements, []);
+    assert.deepEqual(replacements, ["build-new"]);
     assert.equal(hub.get("new-window")?.buildId, "build-new");
 
     hub.remove("old-window", "old-lease");

@@ -1,4 +1,5 @@
 import os from "node:os";
+import path from "node:path";
 import { resolveEmbeddedAuthorityHost } from "../../../src/core/embeddedAuthority.js";
 import type { CodexHubAuthorityKind } from "../../../src/shared/surfaceTypes.js";
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
@@ -40,6 +41,7 @@ async function main() {
     surface: "default",
     localProjectCatalog,
     buildId,
+    authorityBuildFiles: [path.resolve(process.argv[1]), path.join(staticDirectory, "index.html")],
     authToken,
     authority: {
       authorityId,

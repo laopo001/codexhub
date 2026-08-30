@@ -36,7 +36,7 @@ export type EmbeddedSurfaceHubOptions = {
   currentBuildId?: string | null;
   onProjectsChange: (projects: EmbeddedSurfaceProject[]) => void;
   onIdle?: () => void;
-  onReplacementBuild?: (buildId: string) => void;
+  onReplacementBuildAvailable?: (buildId: string) => void;
 };
 
 const defaultLeaseTimeoutMs = 30_000;
@@ -54,7 +54,7 @@ export class EmbeddedSurfaceHub {
   private readonly sweepTimer: NodeJS.Timeout;
   private idleTimer: NodeJS.Timeout | null = null;
   private projectSignature = "";
-  private replacementBuildId = "";
+  private availableBuildId = "";
 
   constructor(private readonly options: EmbeddedSurfaceHubOptions) {
     this.leaseTimeoutMs = positiveMilliseconds(options.leaseTimeoutMs, defaultLeaseTimeoutMs);
@@ -82,7 +82,7 @@ export class EmbeddedSurfaceHub {
     this.surfaces.set(input.surfaceId, state);
     this.cancelIdleShutdown();
     this.publishProjects();
-    this.detectReplacementBuild();
+    this.detectAvailableBuild();
     return this.view(state);
   }
 
@@ -104,7 +104,7 @@ export class EmbeddedSurfaceHub {
     if (!state || state.leaseId !== leaseId) return false;
     this.surfaces.delete(surfaceId);
     this.publishProjects();
-    this.detectReplacementBuild();
+    this.detectAvailableBuild();
     if (!this.surfaces.size) this.scheduleIdleShutdown();
     return true;
   }
@@ -131,7 +131,7 @@ export class EmbeddedSurfaceHub {
     }
     if (!changed) return;
     this.publishProjects();
-    this.detectReplacementBuild();
+    this.detectAvailableBuild();
     if (!this.surfaces.size) this.scheduleIdleShutdown();
   }
 
@@ -196,15 +196,17 @@ export class EmbeddedSurfaceHub {
     this.idleTimer.unref?.();
   }
 
-  private detectReplacementBuild() {
+  private detectAvailableBuild() {
     const currentBuildId = this.options.currentBuildId?.trim();
-    if (!currentBuildId || !this.options.onReplacementBuild || !this.surfaces.size) return;
-    const builds = new Set([...this.surfaces.values()].map((surface) => surface.buildId?.trim() ?? ""));
-    if (builds.size !== 1) return;
-    const [buildId] = builds;
-    if (!buildId || buildId === currentBuildId || buildId === this.replacementBuildId) return;
-    this.replacementBuildId = buildId;
-    this.options.onReplacementBuild(buildId);
+    if (!currentBuildId || !this.options.onReplacementBuildAvailable || !this.surfaces.size) return;
+    const [buildId] = [...new Set(
+      [...this.surfaces.values()]
+        .map((surface) => surface.buildId?.trim() ?? "")
+        .filter((candidate) => candidate && candidate !== currentBuildId)
+    )].sort();
+    if (!buildId || buildId === this.availableBuildId) return;
+    this.availableBuildId = buildId;
+    this.options.onReplacementBuildAvailable(buildId);
   }
 
   private cancelIdleShutdown() {
