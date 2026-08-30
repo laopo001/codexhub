@@ -172,10 +172,12 @@
 }
 
 .activityStatusHeaderMetric > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 10px;
@@ -398,14 +400,30 @@
 }
 
 .statusRegistryText {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  color: #243328;
+}
+
+.activityStatusTextMain {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  color: #243328;
+}
+
+.activityStatusTextSeparator,
+.activityStatusTextFixed {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .statusRegistryToggle {
@@ -615,11 +633,12 @@
 }
 
 .activityStatusTrack {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 10.5px;

@@ -1149,7 +1149,8 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
     const progress = planProgressFromPlan(payload.plan);
     if (!progress) return null;
     const activeStep = steps[progress.currentIndex]!;
-    const text = `${progress.allCompleted ? "All steps complete" : activeStep.step} · ${formatPlanProgress(progress)}`;
+    const fixedSuffix = formatPlanProgress(progress);
+    const text = `${progress.allCompleted ? "All steps complete" : activeStep.step} · ${fixedSuffix}`;
     return {
       key: "plan",
       label: "Plan",
@@ -1157,6 +1158,7 @@ export const activityStatusFromRecord = (record: CodexRecord): ActivityStatusVie
       at: record.timestamp,
       text,
       summaryText: text,
+      fixedSuffix,
       steps
     };
   }

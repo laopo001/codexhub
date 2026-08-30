@@ -281,6 +281,7 @@ export type ActivityStatusView = {
   label: string;
   text: string;
   summaryText?: string;
+  fixedSuffix?: string;
   at?: string;
   status?: CodexRecordView["status"];
   files?: ActivityStatusFile[];

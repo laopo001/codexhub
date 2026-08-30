@@ -26,8 +26,9 @@ const sampleStatuses: ActivityStatusView[] = [
     key: "plan",
     label: "PLAN",
     status: "in_progress",
-    text: "1. 确认当前窄屏重叠根因并制定修复方案以覆盖外层总览与内层状态行",
-    summaryText: "1. 确认当前窄屏重叠根因并制定修复方案以覆盖外层总览与内层状态行",
+    text: "1. 确认当前窄屏重叠根因并制定修复方案以覆盖外层总览与内层状态行 · 1/3",
+    summaryText: "1. 确认当前窄屏重叠根因并制定修复方案以覆盖外层总览与内层状态行 · 1/3",
+    fixedSuffix: "1/3",
     steps: [
       { step: "排查 CSS 与 statusRegistry DOM 链路", status: "completed" },
       { step: "修复 statusRegistryPreview 和 headerMetric 的 flex shrink 与截断", status: "in_progress" },
@@ -84,6 +85,9 @@ test("StatusCardOverview renders overview with running summary, plan metric, usa
   assert.ok(html.includes("Running"), "contains Running label text");
   assert.ok(html.includes("activityStatusHeaderMetrics"), "renders metrics list container");
   assert.ok(html.includes("activityStatusHeaderMetric plan"), "renders plan metric");
+  assert.ok(html.includes("activityStatusTextMain"), "renders shrinkable plan text");
+  assert.ok(html.includes("activityStatusTextFixed"), "renders fixed plan progress");
+  assert.ok(html.includes("1/3"), "keeps plan progress visible as a separate suffix");
   assert.ok(html.includes("activityStatusHeaderMetric usage"), "renders usage metric");
   assert.ok(html.includes("activityStatusHeaderMetric background"), "renders background process metric");
   assert.ok(html.includes("activityStatusToggle"), "renders collapsible toggle button");
@@ -106,6 +110,7 @@ test("ActivityStatusBar renders structured status rows for PLAN, FILES, USAGE wi
   assert.ok(html.includes("statusRegistryItem"), "renders status registry items");
   assert.ok(html.includes("statusRegistryLabel"), "renders status label element");
   assert.ok(html.includes("statusRegistryText"), "renders status text element");
+  assert.ok(html.includes("activityStatusTextFixed"), "renders fixed plan progress in the shared row");
   assert.ok(html.includes("statusRegistryToggle"), "renders row toggle button");
   assert.ok(html.includes("activityStatusPlanSteps"), "renders plan steps list");
   assert.ok(html.includes("activityStatusFiles"), "renders changed files list");
@@ -172,8 +177,16 @@ test("CSS contracts ensure narrow-screen flex shrink, text truncation, and layou
   assert.ok(
     messagesCss.includes(".statusRegistryText {") &&
     messagesCss.includes("flex: 1 1 auto;") &&
-    messagesCss.includes("text-overflow: ellipsis;"),
-    "statusRegistryText flexes and truncates gracefully"
+    messagesCss.includes("overflow: hidden;"),
+    "statusRegistryText flexes and clips its shrinkable content"
+  );
+  assert.ok(
+    messagesCss.includes(".activityStatusTextMain {") &&
+    messagesCss.includes("text-overflow: ellipsis;") &&
+    messagesCss.includes(".activityStatusTextSeparator,") &&
+    messagesCss.includes(".activityStatusTextFixed {") &&
+    messagesCss.includes("flex: 0 0 auto;"),
+    "status text truncates the main copy while preserving its fixed suffix"
   );
   assert.ok(
     messagesCss.includes(".statusRegistryToggle {") &&

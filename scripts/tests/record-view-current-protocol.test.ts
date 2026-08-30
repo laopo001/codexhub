@@ -435,6 +435,7 @@ test("structured app-server plans become one expandable Status item with the cur
     at: "2026-07-19T02:00:02.000Z",
     text: "Connect Plan to Status · 2/4",
     summaryText: "Connect Plan to Status · 2/4",
+    fixedSuffix: "2/4",
     steps: [
       { step: "Inspect the app-server plan", status: "completed" },
       { step: "Connect Plan to Status", status: "in_progress" },
@@ -858,6 +859,7 @@ test("completed Plan status uses an explicit completion label", async () => {
     at: "2026-07-19T02:00:03.000Z",
     text: "All steps complete · 4/4",
     summaryText: "All steps complete · 4/4",
+    fixedSuffix: "4/4",
     steps: [
       { step: "Inspect the app-server plan", status: "completed" },
       { step: "Connect Plan to Status", status: "completed" },

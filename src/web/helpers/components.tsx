@@ -1018,7 +1018,7 @@ export const StatusCardOverview = ({
           {summaryStatuses.map((status) => (
             <span className={`activityStatusHeaderMetric ${status.key}`} title={`${status.label}: ${status.text}`} key={status.key}>
               <strong>{status.label}</strong>
-              <span>{renderActivityStatusText(status.summaryText ?? status.text)}</span>
+              <span>{renderActivityStatusText(status.summaryText ?? status.text, status.fixedSuffix)}</span>
             </span>
           ))}
           {hasBackgroundTerminals ? (
@@ -1147,7 +1147,7 @@ export const ActivityStatusBar = ({
       preview: (
         <>
           <span className="statusRegistryLabel">{status.label}</span>
-          <span className="statusRegistryText">{renderActivityStatusText(status.text)}</span>
+          <span className="statusRegistryText">{renderActivityStatusText(status.text, status.fixedSuffix)}</span>
         </>
       ),
       detail,
@@ -1212,7 +1212,7 @@ export const ActivityStatusRows = ({
         <>
           <span className="activityStatusLabel">{status.label}</span>
           <span className="activityStatusViewport">
-            <span className="activityStatusTrack">{renderActivityStatusText(status.text)}</span>
+            <span className="activityStatusTrack">{renderActivityStatusText(status.text, status.fixedSuffix)}</span>
           </span>
           {status.steps?.length && planExpanded ? <ActivityStatusPlanSteps steps={status.steps} /> : null}
           {expanded && status.files?.length ? <ActivityStatusFiles files={status.files} /> : null}
@@ -1268,13 +1268,32 @@ const MessageActivityStatusSnapshot = ({ statuses }: { statuses: ActivityStatusV
   );
 };
 
-const renderActivityStatusText = (text: string) =>
+const renderActivityStatusTextParts = (text: string) =>
   text.split(/([+-]\d+)/g).map((part, index) => {
     if (!part) return null;
     if (/^\+\d+$/.test(part)) return <span className="activityStatusDelta added" key={`${part}:${index}`}>{part}</span>;
     if (/^-\d+$/.test(part)) return <span className="activityStatusDelta removed" key={`${part}:${index}`}>{part}</span>;
     return <React.Fragment key={`${part}:${index}`}>{part}</React.Fragment>;
   });
+
+const renderActivityStatusText = (text: string, fixedSuffix?: string) => {
+  if (!fixedSuffix) {
+    return <span className="activityStatusTextMain">{renderActivityStatusTextParts(text)}</span>;
+  }
+  const suffixStart = text.endsWith(` · ${fixedSuffix}`)
+    ? text.length - fixedSuffix.length - 3
+    : -1;
+  if (suffixStart < 0) {
+    return <span className="activityStatusTextMain">{renderActivityStatusTextParts(text)}</span>;
+  }
+  return (
+    <>
+      <span className="activityStatusTextMain">{renderActivityStatusTextParts(text.slice(0, suffixStart))}</span>
+      <span className="activityStatusTextSeparator" aria-hidden="true">·</span>
+      <span className="activityStatusTextFixed">{fixedSuffix}</span>
+    </>
+  );
+};
 
 export const ActivityStatusFiles = ({ files }: { files: ActivityStatusFile[] }) => (
   <div className="activityStatusFiles">
