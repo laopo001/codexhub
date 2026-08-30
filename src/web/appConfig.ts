@@ -10,7 +10,7 @@ import {
   writeSurfaceUiStateRaw,
   type UiStateStorageTarget
 } from "./helpers/surfaceUiStateStorage.js";
-import { hostManagesSurfaceDocument } from "./helpers/surfaceDocument.js";
+import { surfaceDocumentUsesPersistentState } from "./helpers/surfaceDocument.js";
 import { codexHubSearchParams } from "./urlSearch.js";
 
 const searchParams = codexHubSearchParams(
@@ -29,7 +29,7 @@ export const isNativeElectronSurface =
   isElectronSurface && typeof window !== "undefined" && Boolean(window.codexhubElectronPet);
 export const isElectronDesktopPetWindow = isNativeElectronSurface && searchParams.get("desktopPet") === "1";
 export const isEmbeddedHostSurface = isEmbeddedCodexHubSurface(webSurface);
-export const isHostManagedSurfaceDocument = hostManagesSurfaceDocument({
+export const usesPersistentSurfaceState = surfaceDocumentUsesPersistentState({
   surface: webSurface,
   nativeElectron: isNativeElectronSurface,
   topLevel: typeof window === "undefined" || window.parent === window
@@ -56,7 +56,7 @@ export const exactSurfaceStorageKey = isEmbeddedHostSurface && embeddedSurfaceId
 
 const uiStateStorageTargets = (): UiStateStorageTarget[] => {
   if (typeof window === "undefined") return [];
-  const exactTarget: UiStateStorageTarget = isHostManagedSurfaceDocument
+  const exactTarget: UiStateStorageTarget = usesPersistentSurfaceState
     ? { storage: window.localStorage, key: exactSurfaceStorageKey }
     : { storage: window.sessionStorage, key: exactSurfaceStorageKey };
   return [exactTarget, { storage: window.localStorage, key: storageKey }];

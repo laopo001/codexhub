@@ -690,10 +690,15 @@ const recoverElectronSurface = () => {
           : launched;
         authority = next;
         await registerSurface(next, 3);
-        if (mainWindow && !mainWindow.isDestroyed()) {
+        // Keep renderer recovery in the shared Web app. Repoint native windows
+        // only when their effective document URL (authority/auth/scope) changed;
+        // otherwise realtime compares serverInstanceId and reloads exactly once.
+        const mainDocumentChanged = !previous || electronSurfaceUrl(previous) !== electronSurfaceUrl(next);
+        const petDocumentChanged = !previous || electronSurfaceUrl(previous, true) !== electronSurfaceUrl(next, true);
+        if (mainDocumentChanged && mainWindow && !mainWindow.isDestroyed()) {
           await mainWindow.loadURL(electronSurfaceUrl(next));
         }
-        if (desktopPetWindow && !desktopPetWindow.isDestroyed()) {
+        if (petDocumentChanged && desktopPetWindow && !desktopPetWindow.isDestroyed()) {
           await desktopPetWindow.loadURL(electronSurfaceUrl(next, true));
           ensureDesktopPetAlwaysOnTop(desktopPetWindow);
           resetDesktopPetInputMode();

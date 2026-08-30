@@ -16,7 +16,6 @@ import {
   isElectronSurface,
   isFixedWorkspaceSurface,
   isEmbeddedHostSurface,
-  isHostManagedSurfaceDocument,
   isVscodeSurface
 } from "../appConfig.js";
 import {
@@ -363,14 +362,12 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         connectionsAfter: ctx.connectionsLastSeq.current
       },
       onMessage: handleRealtimeMessage,
-      onOpen: isHostManagedSurfaceDocument
-        ? undefined
-        : () => {
-          void authorityInstanceRecovery.checkAfterReconnect(
-            () => apiRouteJson(apiRoutes.health),
-            () => window.location.reload()
-          ).catch(() => undefined);
-        }
+      onOpen: () => {
+        void authorityInstanceRecovery.checkAfterReconnect(
+          () => apiRouteJson(apiRoutes.health),
+          () => window.location.reload()
+        ).catch(() => undefined);
+      }
     });
     for (const threadId of ctx.realtimeThreadSubscriptions.current) {
       client.subscribeThread(threadId, ctx.threadLastSeqs.current.get(threadId) ?? 0);

@@ -1,6 +1,6 @@
 import type { CodexHubSurface } from "../../shared/surfaceTypes.js";
 
-export const hostManagesSurfaceDocument = (input: {
+export const surfaceDocumentUsesPersistentState = (input: {
   surface: CodexHubSurface;
   nativeElectron: boolean;
   topLevel: boolean;

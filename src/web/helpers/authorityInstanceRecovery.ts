@@ -3,8 +3,9 @@ export type AuthorityInstanceHealth = {
 };
 
 /**
- * Top-level Web clients reload only when realtime reconnects to a replacement
- * authority process. Same-instance network reconnects remain mounted.
+ * Every Web document, including VS Code and Electron renderers, reloads only
+ * when realtime reconnects to a replacement authority process. Same-instance
+ * network reconnects and embedded-surface lease recovery remain mounted.
  */
 export class AuthorityInstanceRecoveryController {
   private acceptedInstanceId = "";
