@@ -1596,7 +1596,51 @@
   flex: 0 0 auto;
 }
 
+.imagePreviewActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.imagePreviewCopyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #26342a;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.imagePreviewCopyButton:hover:not(:disabled) {
+  background: #eef5ea;
+}
+
+.imagePreviewCopyButton:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.imagePreviewCopyButton.copied {
+  border-color: #9bb89a;
+  background: #eef7ec;
+  color: #2b6e34;
+}
+
+.imagePreviewCopyButton.failed {
+  border-color: #fda29b;
+  background: #fef3f2;
+  color: #b42318;
+}
+
 .imagePreviewBody {
+  position: relative;
   min-height: 0;
   min-width: 0;
   display: grid;
@@ -1607,7 +1651,13 @@
 }
 
 .imagePreviewBody img {
+  position: absolute;
+  inset: 0;
   display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;

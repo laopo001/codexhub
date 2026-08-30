@@ -1,6 +1,6 @@
 import React from "react";
 import { Modal, Select, Switch } from "antd";
-import { ChevronRight, Target, X } from "lucide-react";
+import { Check, ChevronRight, Copy, Target, X } from "lucide-react";
 import { isNativeElectronSurface } from "./appConfig.js";
 import {
   apiRouteJson,
@@ -32,6 +32,7 @@ import {
   formatComposerInputHistoryTime,
   useComposerInputHistory
 } from "./helpers/composerInputHistory.js";
+import { writeImageToClipboard } from "./helpers/imageClipboard.js";
 import { ConnectionsPanel } from "./ConnectionsPanel.js";
 import { TaskDialog } from "./TaskDialog.js";
 import type { ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
@@ -109,6 +110,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const [notificationPersistAfterMinutesDraft, setNotificationPersistAfterMinutesDraft] = React.useState(
     String(appSettings.taskCompleteNotificationPersistAfterMinutes)
   );
+  const [imageCopyStatus, setImageCopyStatus] = React.useState<"idle" | "copying" | "copied" | "failed">("idle");
   const restartAvailable = Boolean(systemStatus.authority);
   React.useEffect(() => {
     setProjectPickerSearch("");
@@ -119,6 +121,19 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
       setNotificationPersistAfterMinutesDraft(String(appSettings.taskCompleteNotificationPersistAfterMinutes));
     }
   }, [appSettings.taskCompleteNotificationPersistAfterMinutes, settingsDialogOpen]);
+  React.useEffect(() => {
+    setImageCopyStatus("idle");
+  }, [imagePreview?.url]);
+  const copyPreviewImage = async () => {
+    if (!imagePreview || imageCopyStatus === "copying") return;
+    setImageCopyStatus("copying");
+    try {
+      await writeImageToClipboard(imagePreview.url);
+      setImageCopyStatus("copied");
+    } catch {
+      setImageCopyStatus("failed");
+    }
+  };
   const saveNotificationPersistence = () => {
     const parsed = Number(notificationPersistAfterMinutesDraft.trim());
     if (!Number.isInteger(parsed) || parsed < 0) {
@@ -940,9 +955,24 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
           <section className="modal imagePreviewModal" aria-labelledby="image-preview-title" onClick={(event) => event.stopPropagation()}>
             <header className="modalHeader imagePreviewHeader">
               <h2 id="image-preview-title">Image preview</h2>
-              <button type="button" className="iconButton" onClick={() => setImagePreview(null)} aria-label="Close image preview">
-                <X size={18} aria-hidden="true" />
-              </button>
+              <div className="imagePreviewActions">
+                <button
+                  type="button"
+                  className={`imagePreviewCopyButton ${imageCopyStatus}`}
+                  onClick={() => void copyPreviewImage()}
+                  disabled={imageCopyStatus === "copying"}
+                  aria-label="Copy image"
+                  title={imageCopyStatus === "failed" ? "Copy failed. Try again." : undefined}
+                >
+                  {imageCopyStatus === "copied"
+                    ? <Check size={16} aria-hidden="true" />
+                    : <Copy size={16} aria-hidden="true" />}
+                  <span>{imageCopyButtonLabel(imageCopyStatus)}</span>
+                </button>
+                <button type="button" className="iconButton" onClick={() => setImagePreview(null)} aria-label="Close image preview">
+                  <X size={18} aria-hidden="true" />
+                </button>
+              </div>
             </header>
             <div className="imagePreviewBody">
               <img src={imagePreview.url} alt={imagePreview.title ?? "preview"} />
@@ -958,6 +988,13 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
       ) : null}
     </>
   );
+};
+
+const imageCopyButtonLabel = (status: "idle" | "copying" | "copied" | "failed") => {
+  if (status === "copying") return "Copying...";
+  if (status === "copied") return "Copied";
+  if (status === "failed") return "Copy failed";
+  return "Copy image";
 };
 
 const optionsWithoutAutoWhenResolved = <T extends { value: string; label: string }>(options: T[], value: string) =>
