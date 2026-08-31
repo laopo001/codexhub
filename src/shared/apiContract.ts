@@ -198,9 +198,18 @@ export type EmbeddedSurfaceRegistrationInput = {
   workspaceFile?: string;
 };
 
-export type EmbeddedSurfaceHeartbeatInput = {
-  leaseId: string;
-  protocolVersion: number;
+export type WebClientHeartbeatInput = {
+  clientId: string;
+  embeddedSurface?: {
+    surfaceId: string;
+    leaseId: string;
+    protocolVersion: number;
+  };
+};
+
+export type WebClientHeartbeatPayload = {
+  ok: true;
+  embeddedSurfaceLeaseActive?: boolean;
 };
 
 export type EmbeddedSurfacePayload = {
@@ -698,9 +707,13 @@ export const embeddedSurfaceRegistrationSchema = z.object({
   }
 });
 
-export const embeddedSurfaceHeartbeatSchema = z.object({
-  leaseId: embeddedSurfaceIdSchema,
-  protocolVersion: z.number().int().positive()
+export const webClientHeartbeatSchema = z.object({
+  clientId: embeddedSurfaceIdSchema,
+  embeddedSurface: z.object({
+    surfaceId: embeddedSurfaceIdSchema,
+    leaseId: embeddedSurfaceIdSchema,
+    protocolVersion: z.number().int().positive()
+  }).strict().optional()
 }).strict();
 
 export const machineRegistrationProjectSchema = z.object({

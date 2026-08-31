@@ -19,7 +19,7 @@ export const buildWebviewBridgeScript = (sourceOrigin: string) => [
   "  const data = event.data;",
   "  if (!data) return;",
   "  if (event.source === codexhubFrame.contentWindow && event.origin === codexhubOrigin) {",
-  "    if (data.type !== 'codexhub.taskCompleteNotification' && data.type !== 'codexhub.openFile') return;",
+  "    if (data.type !== 'codexhub.taskCompleteNotification' && data.type !== 'codexhub.openFile' && data.type !== 'codexhub.recoverSurface') return;",
   "    vscode.postMessage(data);",
   "    return;",
   "  }",

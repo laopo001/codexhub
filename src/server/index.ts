@@ -20,7 +20,8 @@ import { listSshHosts } from "../core/sshConfig.js";
 import { SshMachineManager } from "../core/sshMachine.js";
 import { resolveSshRemoteClientBundle } from "../core/sshRemoteClient.js";
 import { ThreadHub } from "../core/threadHub.js";
-import { EmbeddedSurfaceHub } from "../core/vscodeSurfaceHub.js";
+import { EmbeddedSurfaceHub } from "../core/embeddedSurfaceHub.js";
+import { WebClientHub } from "../core/webClientHub.js";
 import { startCodexhubMachine, type CodexhubMachineHandle } from "../cli/codexhubMachine.js";
 import { resolveCodexAppServerLaunchOptions, type CodexAppServerLaunchOptions } from "../cli/codexAppServerProcess.js";
 import {
@@ -202,7 +203,8 @@ export type ServerStartOptions = {
   localProjectCatalog?: "editable" | "fixed";
   authority?: CodexHubAuthorityDescriptor;
   embeddedSurfaceLeaseTimeoutMs?: number;
-  embeddedSurfaceIdleShutdownMs?: number;
+  webClientTimeoutMs?: number;
+  webClientRetryMs?: number;
   authorityBuildFiles?: string[];
   authorityBuildPollMs?: number;
   features?: Partial<ServerFeatureOptions>;
@@ -340,7 +342,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     : undefined;
   const embeddedSurfaces = new EmbeddedSurfaceHub({
     leaseTimeoutMs: options.embeddedSurfaceLeaseTimeoutMs,
-    idleShutdownMs: options.embeddedSurfaceIdleShutdownMs,
     currentBuildId: buildId,
     onProjectsChange: (projects) => {
       const machineId = localMachine?.machineId ?? projects[0]?.machineId;
@@ -358,16 +359,23 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       parentRegistration?.refreshRegistration();
     },
     ...(authorityService ? {
-      onIdle: () => {
-        void app.close().catch((error: unknown) => {
-          console.error(`codexhub embedded authority idle shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
-        });
-      },
       onReplacementBuildAvailable: (replacementBuildId: string) => {
         reportAuthorityUpdate(replacementBuildId);
       }
     } : {})
   });
+  const webClients = authorityService
+    ? new WebClientHub({
+      timeoutMs: options.webClientTimeoutMs,
+      retryMs: options.webClientRetryMs,
+      canShutdown: () => !threads.listThreads().some((thread) => thread.running),
+      onIdle: () => {
+        void app.close().catch((error: unknown) => {
+          console.error(`codexhub Web client idle shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
+    })
+    : null;
   const authorityBuildMonitor = authorityService && buildId && options.authorityBuildFiles?.length
     ? new AuthorityBuildMonitor({
         currentBuildId: buildId,
@@ -417,6 +425,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     stopEmbeddedSurfaces: () => {
       authorityBuildMonitor?.stop();
       embeddedSurfaces.stop();
+      webClients?.stop();
     },
     stopIntegrations: () => {
       telegramBot?.stop("server closing");
@@ -834,6 +843,19 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       telegram: { started: Boolean(telegramBot) }
     }),
     restartAuthority,
+    heartbeatWebClient: webClients
+      ? (input) => {
+        webClients.touch(input.clientId);
+        if (!input.embeddedSurface) return { ok: true };
+        const embeddedSurfaceLeaseActive = input.embeddedSurface.protocolVersion
+          === options.authority?.surfaceProtocolVersion
+          && Boolean(embeddedSurfaces.touch(
+            input.embeddedSurface.surfaceId,
+            input.embeddedSurface.leaseId
+          ));
+        return { ok: true, embeddedSurfaceLeaseActive };
+      }
+      : undefined,
     configPayload: () => ({ config: state.config() }),
     updateUiConfig: (ui) => state.updateUiConfig(ui)
   });

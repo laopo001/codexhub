@@ -121,7 +121,7 @@ env:
   # CODEX_HUB_AUTH_TOKEN: "replace-with-a-long-random-token"
 ```
 
-修改 `config.yaml` 后需要重启 server。Embedded authority 是独立于窗口的 detached 进程：关闭该 authority 的全部 VSCode/Electron surface 并等待 30 秒，再重新打开客户端，才能让新的进程重新读取 `env`；只 reload 单个窗口不会强制结束仍被其他 surface 使用的 authority。`CODEX_HUB_DATA_DIR` 本身仍决定去哪读这个配置文件，因此不能靠同一个文件里的 `env.CODEX_HUB_DATA_DIR` 改变当前配置路径。
+修改 `config.yaml` 后需要重启 server。Embedded authority 是独立于窗口的 detached 进程：关闭所有连接该 authority 的 Web 文档、确认没有 running turn 并等待最后一次 Web heartbeat 后 5 分钟，再重新打开客户端，才能让新的进程重新读取 `env`；更直接的方式是在 Settings 明确确认重启。只 reload 单个窗口不会强制结束仍被其他 Web 使用的 authority。`CODEX_HUB_DATA_DIR` 本身仍决定去哪读这个配置文件，因此不能靠同一个文件里的 `env.CODEX_HUB_DATA_DIR` 改变当前配置路径。
 
 VS Code 的 `settings.json` 只保存插件自身的工具模型和 Git 提交信息生成选项。`dataDir`、`serverUrl`、`authorityPort`、app-server、SSH、插件、通知、Electron 和共享 UI 配置都不属于 VS Code Settings；它们必须写在共享 authority 使用的 `config.yaml` 中。这样多个 VS Code 窗口、Electron 和普通 Node server 才能看到同一份配置。VS Code 的 `Open Config` 命令打开的也是这份共享 `config.yaml`，不是另一个插件配置副本。需要停用集成时，使用 VS Code 原生的扩展禁用功能。
 
@@ -376,7 +376,7 @@ Electron 壳和 VSCode extension 现在按同一个“执行 authority”共享�
 
 WSL 使用桌面端口的 `+1`，是为了在 WSL mirrored networking 与 Windows 共享 localhost 端口空间时避开 Windows 的 `28788`。Remote SSH/Container 在自己的执行环境和网络命名空间中按上表选端口。VSCode 和 Electron authority 默认不读取 `CODEX_HUB_PORT`，也不在占用时顺延；如果固定端口上不是同一个 `authorityId` 和 embedded surface protocol 的 CodexHub 服务，客户端会明确报错。`CODEX_HUB_AUTHORITY_PORT` 可以显式指定隔离开发/测试端口，生产默认不要设置。
 
-第一个客户端会优先从本地 npm/link 包的 `dist-node/authority-service.cjs` 和 `dist` detached 启动服务；没有可用本地包时才使用 VSIX 或 Electron bundle 内的 `authority-service.cjs`。后续客户端只 probe 并 attach。authority ID、共享 `config.yaml` 和 `authority.log` 位于 `CODEX_HUB_DATA_DIR`（默认 `~/.config/codexhub`）；ID 文件尽可能以 `0600` 创建。authority 默认只监听 `127.0.0.1`，因此可直接打开 `http://127.0.0.1:28788`（WSL 为 `28789`）；明确需要局域网访问时，可在共享 `config.yaml` 的 `env` 设置 `CODEX_HUB_AUTHORITY_HOST: "0.0.0.0"` 或 `"::"`，然后使用执行环境的局域网 IP 和对应端口。只有 extension host 环境或该 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式设置为非空值时，Web/API/WebSocket 才启用认证；显式 token 只通过子进程环境和窗口请求传递，不放进 service 命令行或日志。旧版生成的 `vscode-authority-token` / `authority-token` 文件会在 authority 下次启动时删除，浏览器发现服务未启用认证时也会清掉同 origin 下的旧 token。每个 VSCode 窗口和 Electron 窗口用唯一 `surfaceId + leaseId` 调用 `/api/embedded/surfaces`，分别传 `surface: "vscode"` 或 `surface: "electron"`，之后每 10 秒 heartbeat；正常 deactivate/close 会 unregister，异常退出的 lease 约 30 秒后过期，最后一个 surface 离开后服务再等待 30 秒自动退出。多个客户端注册的 workspace 会聚合成同一 local machine 的 transient projects；相同路径被多个 surface 引用时保留到最后一个 lease 消失。注册只验证目录，authority machine transport 随后启动 Codex app-server 并通过协议握手；Add Thread 只创建用户 thread。
+第一个客户端会优先从本地 npm/link 包的 `dist-node/authority-service.cjs` 和 `dist` detached 启动服务；没有可用本地包时才使用 VSIX 或 Electron bundle 内的 `authority-service.cjs`。后续客户端只 probe 并 attach。authority ID、共享 `config.yaml` 和 `authority.log` 位于 `CODEX_HUB_DATA_DIR`（默认 `~/.config/codexhub`）；ID 文件尽可能以 `0600` 创建。authority 默认只监听 `127.0.0.1`，因此可直接打开 `http://127.0.0.1:28788`（WSL 为 `28789`）；明确需要局域网访问时，可在共享 `config.yaml` 的 `env` 设置 `CODEX_HUB_AUTHORITY_HOST: "0.0.0.0"` 或 `"::"`，然后使用执行环境的局域网 IP 和对应端口。只有 extension host 环境或该 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式设置为非空值时，Web/API/WebSocket 才启用认证；显式 token 只通过子进程环境和窗口请求传递，不放进 service 命令行或日志。旧版生成的 `vscode-authority-token` / `authority-token` 文件会在 authority 下次启动时删除，浏览器发现服务未启用认证时也会清掉同 origin 下的旧 token。普通浏览器、VSCode WebView 和 Electron renderer 中的每个 Web 文档都有独立 `webClientId`，统一调用 `/api/web-clients/heartbeat`，每 10 秒 heartbeat，并在页面恢复可见时立即补发。authority 生命周期只看这些 Web heartbeat：最后一次 Web 通信后连续 5 分钟没有任何 Web client，且没有 running turn，才允许退出；embedded workspace surface 的数量和 register/unregister 不参与 authority 生命周期。VSCode/Electron 的 `surfaceId + leaseId` 仍只管理 workspace transient project，并由 embedded Web 在统一 heartbeat 中附带刷新；VSCode Extension Host 和 Electron main 不再各自维护 heartbeat timer，只处理注册、恢复和正常注销。多个客户端注册的 workspace 会聚合成同一 local machine 的 transient projects；相同路径被多个 surface 引用时保留到最后一个 lease 消失。注册只验证目录，authority machine transport 随后启动 Codex app-server 并通过协议握手；Add Thread 只创建用户 thread。
 
 authority 启动时会先读取当前用户登录 shell 的 `PATH`，并把它与 VSCode/Electron 宿主继承的 `PATH` 合并；因此即使从桌面启动，也可以使用用户通过 nvm、fnm、asdf、npm 或 pnpm 配置的 Node 和 CLI。然后优先使用本地 npm/链接包中的 authority service 和 Web `dist`；如果用户 PATH 中的 `codexhub`/`cxh` 没有指向可用构建，才回退到 VSIX/Electron bundle。Node 运行时优先使用用户 PATH 中满足 Node 20+ 要求的 `node`，最后才回退到 VSCode/Electron 宿主自带的 Node。选择结果和 authority 代码来源会显示在 `/api/health` 的 `authorityRuntime`、`authorityServiceSource` 中。更新本地包或 Node 后重启 authority（Settings → Restart CodexHub），下一个首次启动 authority 的客户端就会使用新版本；VSCode 和 Electron 后续会 attach 到同一个已运行的 authority。npm 是包管理器，不负责替换 Node 本身；通常不需要把 Node 或 CodexHub 的绝对路径写入 `config.yaml`。
 
@@ -443,7 +443,7 @@ sudo apt install wine64 wine32:i386
 - `CODEX_HUB_DATA_DIR`: VSCode/Electron 共享 authority 数据目录，默认 `~/.config/codexhub`
 - `CODEX_HUB_ELECTRON_DEVTOOLS=1`: 启动后打开 DevTools；也可以写入共享 `config.yaml` 的 `env`
 
-Electron 关闭时只注销自己的 surface lease；如果 VSCode 仍在线，共享 authority 和 runtime 会继续运行。最后一个 surface 离开后，authority 等待约 30 秒自动退出。在 Electron 里连接宿主机 project launcher 的方式和 Web 相同。
+Electron 正常关闭时只显式注销自己的 workspace surface lease；该动作不控制 authority 生命周期。只要任意普通浏览器、VSCode WebView 或 Electron renderer 仍在发送 Web heartbeat，共享 authority 和 runtime 就继续运行；所有 Web heartbeat 停止 5 分钟后仍需确认没有 running turn 才允许退出。在 Electron 里连接宿主机 project launcher 的方式和 Web 相同。
 
 发布后的 CodexHub CLI 自带共享 VSIX，可以直接安装到 VS Code：
 

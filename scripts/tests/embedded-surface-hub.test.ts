@@ -3,13 +3,12 @@ import test from "node:test";
 import {
   EmbeddedSurfaceHub,
   type EmbeddedSurfaceProject
-} from "../../src/core/vscodeSurfaceHub.js";
+} from "../../src/core/embeddedSurfaceHub.js";
 
-test("VSCode surface leases merge workspace projects and retain shared paths", () => {
+test("embedded surface leases merge workspace projects and retain shared paths", () => {
   const snapshots: EmbeddedSurfaceProject[][] = [];
   const hub = new EmbeddedSurfaceHub({
     leaseTimeoutMs: 60_000,
-    idleShutdownMs: 60_000,
     onProjectsChange: (projects) => snapshots.push(projects)
   });
   try {
@@ -68,10 +67,9 @@ test("VSCode surface leases merge workspace projects and retain shared paths", (
   }
 });
 
-test("a new VSCode lease supersedes stale unregister and heartbeat calls", () => {
+test("a new embedded surface lease supersedes stale unregister and heartbeat calls", () => {
   const hub = new EmbeddedSurfaceHub({
     leaseTimeoutMs: 60_000,
-    idleShutdownMs: 60_000,
     onProjectsChange: () => undefined
   });
   try {
@@ -101,32 +99,35 @@ test("a new VSCode lease supersedes stale unregister and heartbeat calls", () =>
   }
 });
 
-test("an empty VSCode authority reaches its idle callback", async () => {
-  let resolveIdle: (() => void) | undefined;
-  const idle = new Promise<void>((resolve) => {
-    resolveIdle = resolve;
-  });
+test("expired surface leases only clear transient project state", async () => {
+  const snapshots: EmbeddedSurfaceProject[][] = [];
   const hub = new EmbeddedSurfaceHub({
-    leaseTimeoutMs: 100,
-    idleShutdownMs: 10,
-    onProjectsChange: () => undefined,
-    onIdle: () => resolveIdle?.()
+    leaseTimeoutMs: 10,
+    onProjectsChange: (projects) => snapshots.push(projects)
   });
   try {
-    await Promise.race([
-      idle,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("idle callback timeout")), 500))
-    ]);
+    hub.upsert({
+      surface: "vscode",
+      surfaceId: "surface-expiring",
+      leaseId: "lease-expiring",
+      machineId: "machine-local",
+      workspacePaths: ["/workspace/expiring"],
+      label: "VSCode: Expiring"
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+    assert.equal(hub.get("surface-expiring"), null);
+    assert.deepEqual(snapshots.at(-1), []);
   } finally {
     hub.stop();
   }
 });
 
-test("an old VSCode authority reports an update as soon as one surface uses a replacement build", () => {
+test("an old embedded authority reports an update as soon as one surface uses a replacement build", () => {
   const replacements: string[] = [];
   const hub = new EmbeddedSurfaceHub({
     leaseTimeoutMs: 60_000,
-    idleShutdownMs: 60_000,
     currentBuildId: "build-old",
     onProjectsChange: () => undefined,
     onReplacementBuildAvailable: (buildId) => replacements.push(buildId)

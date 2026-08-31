@@ -49,9 +49,10 @@ import type {
   ThreadUserInputResponseInput,
   WorktreeThreadStartInput,
   WorktreeThreadStartPayload,
-  EmbeddedSurfaceHeartbeatInput,
   EmbeddedSurfacePayload,
-  EmbeddedSurfaceRegistrationInput
+  EmbeddedSurfaceRegistrationInput,
+  WebClientHeartbeatInput,
+  WebClientHeartbeatPayload
 } from "./apiContract.js";
 import type { ProxyInput } from "./inputTypes.js";
 import type { CommandPalettePart, ThreadRunOptions } from "./threadTypes.js";
@@ -169,11 +170,7 @@ export const apiRoutes = {
   sshConnections: get<SshConnectionsPayload>("/api/ssh/connections"),
   parentRegistration: get<ParentRegistrationPayload>("/api/registered/parent"),
   registerEmbeddedSurface: post<EmbeddedSurfaceRegistrationInput, EmbeddedSurfacePayload>("/api/embedded/surfaces"),
-  heartbeatEmbeddedSurface: post<
-    EmbeddedSurfaceHeartbeatInput,
-    EmbeddedSurfacePayload,
-    (surfaceId: string) => string
-  >((surfaceId) => `/api/embedded/surfaces/${encode(surfaceId)}/heartbeat`),
+  heartbeatWebClient: post<WebClientHeartbeatInput, WebClientHeartbeatPayload>("/api/web-clients/heartbeat"),
   unregisterEmbeddedSurface: del<EmbeddedSurfacePayload, (surfaceId: string, leaseId: string) => string>(
     (surfaceId, leaseId) => `/api/embedded/surfaces/${encode(surfaceId)}/${encode(leaseId)}`
   ),

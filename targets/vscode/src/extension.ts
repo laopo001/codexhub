@@ -43,7 +43,6 @@ import { VscodeWebviewHtmlController } from "./webviewHtmlController.js";
 import { vscodeWorkspaceStateScope } from "./workspaceStateScope.js";
 
 const viewId = "codexhub.workspaceView";
-const surfaceHeartbeatMs = 10_000;
 const maxSelectionAttachmentBytes = 512 * 1024;
 const maxCommitDiffCharacters = 96_000;
 
@@ -106,8 +105,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   private view: vscode.WebviewView | null = null;
   private webviewMessageSubscription: vscode.Disposable | null = null;
   private renderPromise: Promise<void> | null = null;
-  private heartbeatTimer: NodeJS.Timeout | null = null;
-  private heartbeatInFlight = false;
+  private surfaceRecoveryInFlight: Promise<void> | null = null;
   private registeredServerUrl = "";
   private registeredAuthToken = "";
   private readonly surfaceId = `vscode-${randomUUID()}`;
@@ -147,7 +145,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   async shutdown() {
     if (this.disposed) return;
     this.disposed = true;
-    this.stopHeartbeat();
     this.webviewMessageSubscription?.dispose();
     this.webviewMessageSubscription = null;
     await this.unregisterSurface();
@@ -167,7 +164,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       await this.registerSurface(server, folders, activeFolder.path);
       const workspaceFile = vscode.workspace.workspaceFile;
       await vscode.env.openExternal(await externalServerUri(
-        vscodeSurfaceServerUrl(server, folders, activeFolder.path, this.surfaceId, workspaceFile)
+        vscodeSurfaceServerUrl(server, folders, activeFolder.path, this.surfaceId, this.leaseId, workspaceFile)
       ));
       return;
     }
@@ -288,6 +285,10 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   private async handleWebviewMessage(message: unknown) {
     const record = asRecord(message);
+    if (record?.type === "codexhub.recoverSurface") {
+      await this.recoverSurface();
+      return;
+    }
     if (record?.type === "codexhub.openFile") {
       await this.openFileFromWebview(record);
       return;
@@ -352,7 +353,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     const forceHtml = Boolean(options?.forceHtml);
     const workspaceFolders = fileWorkspaceFolders();
     if (!workspaceFolders.length) {
-      this.stopHeartbeat();
       await this.unregisterSurface();
       this.setWebviewHtml("no-workspace", statusHtml("Open a folder or workspace to use Codex Hub."), forceHtml);
       return;
@@ -370,7 +370,14 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       await this.registerSurface(server, workspaceFolders, activeFolder.path);
       const workspaceFile = vscode.workspace.workspaceFile;
       const externalIframeUri = await externalServerUri(
-        vscodeSurfaceServerUrl(server, workspaceFolders, activeFolder.path, this.surfaceId, workspaceFile)
+        vscodeSurfaceServerUrl(
+          server,
+          workspaceFolders,
+          activeFolder.path,
+          this.surfaceId,
+          this.leaseId,
+          workspaceFile
+        )
       );
       const iframeSrc = externalIframeUri.toString(true);
       this.setWebviewHtml(`iframe:${iframeSrc}`, iframeHtml(iframeSrc, activeFolder.path), forceHtml);
@@ -475,8 +482,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
         });
         this.registeredServerUrl = server.url;
         this.registeredAuthToken = server.authToken;
-        this.startHeartbeat();
-        if (server.replacementExpected) void delay(500).then(() => this.heartbeat());
         return;
       } catch (error) {
         lastError = error;
@@ -487,31 +492,9 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
-  private startHeartbeat() {
-    if (this.heartbeatTimer || this.disposed) return;
-    this.heartbeatTimer = setInterval(() => void this.heartbeat(), surfaceHeartbeatMs);
-    this.heartbeatTimer.unref?.();
-  }
-
-  private stopHeartbeat() {
-    if (!this.heartbeatTimer) return;
-    clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = null;
-  }
-
-  private async heartbeat() {
-    if (this.heartbeatInFlight || this.disposed || !this.registeredServerUrl) return;
-    this.heartbeatInFlight = true;
-    try {
-      const client = createCodexHubApiClient({
-        baseUrl: this.registeredServerUrl,
-        authToken: this.registeredAuthToken
-      });
-      await client.route(apiRoutes.heartbeatEmbeddedSurface, this.surfaceId, {
-        leaseId: this.leaseId,
-        protocolVersion: embeddedSurfaceProtocolVersion
-      });
-    } catch (error) {
+  private recoverSurface() {
+    if (this.surfaceRecoveryInFlight) return this.surfaceRecoveryInFlight;
+    this.surfaceRecoveryInFlight = (async () => {
       try {
         CodexHubWorkspaceViewProvider.resetCurrentServer();
         const server = await this.ensureServer();
@@ -519,15 +502,13 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
         if (!folders.length) return;
         const activeFolder = activeWorkspaceFolder(folders) ?? folders[0];
         await this.registerSurface(server, folders, activeFolder.path, 3);
-        // Lease recovery belongs to the host, but document recovery belongs to
-        // the Web app. Its realtime reconnect compares serverInstanceId and
-        // reloads only after an actual authority replacement.
-      } catch (reconnectError) {
-        console.error(`codexhub vscode surface reconnect failed: ${errorText(reconnectError || error)}`);
+      } catch (error) {
+        console.error(`codexhub vscode surface reconnect failed: ${errorText(error)}`);
       }
-    } finally {
-      this.heartbeatInFlight = false;
-    }
+    })().finally(() => {
+      this.surfaceRecoveryInFlight = null;
+    });
+    return this.surfaceRecoveryInFlight;
   }
 
   private async unregisterSurface() {
@@ -880,11 +861,13 @@ const vscodeSurfaceServerUrl = (
   folders: VscodeWorkspaceFolder[],
   activePath: string,
   surfaceId: string,
+  leaseId: string,
   workspaceFile?: VscodeWorkspaceFileLike | string | null
 ) => {
   const url = new URL(authenticatedServerUrl(server));
   url.searchParams.set("surface", "vscode");
   url.searchParams.set("surfaceId", surfaceId);
+  url.searchParams.set("surfaceLeaseId", leaseId);
   url.searchParams.set("stateScope", vscodeWorkspaceStateScope(folders, workspaceFile));
   url.searchParams.set("workspacePath", activePath);
   for (const folder of folders) url.searchParams.append("workspaceFolder", folder.path);

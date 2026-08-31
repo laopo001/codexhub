@@ -1,10 +1,16 @@
 import { useEffect } from "react";
 import {
+  currentWebClientId,
+  embeddedSurfaceId,
+  embeddedSurfaceLeaseId,
   isFixedWorkspaceSurface,
+  isNativeElectronSurface,
+  isVscodeSurface,
   readCurrentSurfaceUiStateRaw,
   writeCurrentSurfaceUiStateRaw
 } from "./appConfig.js";
 import {
+  apiJson,
   apiRouteJson,
   findProjectByMachinePath,
   machineProjectLauncher,
@@ -17,11 +23,17 @@ import {
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { apiRoutes } from "../shared/apiRoutes.js";
+import { CodexHubApiError } from "../shared/apiClient.js";
+import type { EmbeddedSurfacePayload, WebClientHeartbeatPayload } from "../shared/apiContract.js";
+import { embeddedSurfaceProtocolVersion } from "../shared/surfaceTypes.js";
 import {
   subagentDialogConversationThreads,
   subagentThreadSubscriptionIds
 } from "./helpers/subagentThreadDialog.js";
 import { resolveActiveThreadId } from "./helpers/activeThreadSelection.js";
+import { createWebClientHeartbeat } from "./helpers/webClientHeartbeat.js";
+
+const webClientHeartbeatMs = 10_000;
 
 type AppEffectsActions = {
   clearActiveThreadIfLatest: (threadId: string) => void;
@@ -56,6 +68,81 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       state.realtimeThreadSubscriptions.current.clear();
     };
   }, []);
+
+  useEffect(() => {
+    if (!state.initialized || !state.systemStatus.authority) return;
+    const clientId = currentWebClientId();
+    if (!clientId) return;
+    let disposed = false;
+    const requestRecovery = () => {
+      if (disposed) return;
+      if (isNativeElectronSurface) {
+        void window.codexhubElectronPet?.recoverSurface?.();
+        return;
+      }
+      if (isVscodeSurface && window.parent !== window) {
+        window.parent.postMessage({ type: "codexhub.recoverSurface" }, "*");
+      }
+    };
+    const heartbeat = createWebClientHeartbeat({
+      send: async () => {
+        let payload: WebClientHeartbeatPayload;
+        try {
+          payload = await apiRouteJson(apiRoutes.heartbeatWebClient, {
+            clientId,
+            ...(embeddedSurfaceId && embeddedSurfaceLeaseId ? {
+              embeddedSurface: {
+                surfaceId: embeddedSurfaceId,
+                leaseId: embeddedSurfaceLeaseId,
+                protocolVersion: embeddedSurfaceProtocolVersion
+              }
+            } : {})
+          });
+        } catch (error) {
+          // A running pre-WebClientHub authority can serve the newly built Web
+          // before the user explicitly applies the authority update. Keep that
+          // concrete old process alive from Web, without restoring host timers
+          // or retaining the legacy route in the new authority.
+          if (
+            !(error instanceof CodexHubApiError)
+            || error.status !== 404
+            || !embeddedSurfaceId
+            || !embeddedSurfaceLeaseId
+          ) throw error;
+          const legacy = await apiJson<EmbeddedSurfacePayload>(
+            `/api/embedded/surfaces/${encodeURIComponent(embeddedSurfaceId)}/heartbeat`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                leaseId: embeddedSurfaceLeaseId,
+                protocolVersion: embeddedSurfaceProtocolVersion
+              })
+            }
+          );
+          if (!legacy.surface) throw new Error("Legacy embedded surface lease is no longer active.");
+          return;
+        }
+        if (payload.embeddedSurfaceLeaseActive === false) {
+          throw new Error("Embedded surface lease is no longer active.");
+        }
+      },
+      requestRecovery
+    });
+    const beatWhenVisible = () => {
+      if (document.visibilityState === "visible") void heartbeat.beat();
+    };
+    const timer = window.setInterval(() => void heartbeat.beat(), webClientHeartbeatMs);
+    document.addEventListener("visibilitychange", beatWhenVisible);
+    window.addEventListener("pageshow", beatWhenVisible);
+    void heartbeat.beat();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", beatWhenVisible);
+      window.removeEventListener("pageshow", beatWhenVisible);
+    };
+  }, [state.initialized, state.systemStatus.authority?.authorityId]);
 
   useEffect(() => {
     if (!state.initialized || !state.systemStatus.authority) return;

@@ -10,7 +10,8 @@ import {
   sessionRegistrationSchema,
   sshConnectSchema,
   threadGoalUpdateSchema,
-  threadRunOptionsSchema
+  threadRunOptionsSchema,
+  webClientHeartbeatSchema
 } from "../../src/shared/apiContract.js";
 import {
   formatVscodeChannelBadge,
@@ -24,6 +25,22 @@ import {
   parseCodexApprovalsReviewer,
   resolveCodexAppServerLaunchOptions
 } from "../../src/cli/codexAppServerProcess.js";
+
+test("Web client heartbeat strictly separates authority and embedded surface leases", () => {
+  assert.equal(webClientHeartbeatSchema.safeParse({ clientId: "web-a" }).success, true);
+  assert.equal(webClientHeartbeatSchema.safeParse({
+    clientId: "web-a",
+    embeddedSurface: {
+      surfaceId: "surface-a",
+      leaseId: "lease-a",
+      protocolVersion: 2
+    }
+  }).success, true);
+  assert.equal(webClientHeartbeatSchema.safeParse({
+    clientId: "web-a",
+    surfaceId: "legacy-parallel-heartbeat"
+  }).success, false);
+});
 
 test("machine registration and heartbeat reject unknown compatibility fields", () => {
   const registration = {

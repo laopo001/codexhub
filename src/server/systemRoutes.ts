@@ -6,8 +6,11 @@ import type {
   HealthPayload,
   RestartPayload,
   ServerConfigPayload,
-  ServerConfigUpdateInput
+  ServerConfigUpdateInput,
+  WebClientHeartbeatInput,
+  WebClientHeartbeatPayload
 } from "../shared/apiContract.js";
+import { webClientHeartbeatSchema } from "../shared/apiContract.js";
 import { petIdPattern } from "../shared/petTypes.js";
 import { previewImageErrorStatus, resolvePreviewImage } from "./serverFiles.js";
 
@@ -16,6 +19,7 @@ export type SystemRoutesContext = {
   isAuthorized: (request: FastifyRequest) => boolean;
   healthPayload: () => Omit<HealthPayload, "authRequired" | "authenticated">;
   restartAuthority?: () => void;
+  heartbeatWebClient?: (input: WebClientHeartbeatInput) => WebClientHeartbeatPayload;
   configPayload: () => ServerConfigPayload;
   updateUiConfig: (ui: NonNullable<ServerConfigUpdateInput["ui"]>) => void;
 };
@@ -49,6 +53,14 @@ export const registerSystemRoutes = (app: FastifyInstance, ctx: SystemRoutesCont
     }
     ctx.restartAuthority();
     return { ok: true, restarting: true } satisfies RestartPayload;
+  });
+
+  app.post("/api/web-clients/heartbeat", async (request, reply) => {
+    if (!ctx.heartbeatWebClient) {
+      reply.code(409);
+      return { error: "Web client heartbeat is only available for an embedded authority." };
+    }
+    return ctx.heartbeatWebClient(webClientHeartbeatSchema.parse(request.body));
   });
 
   app.get("/api/config", async () => ctx.configPayload());

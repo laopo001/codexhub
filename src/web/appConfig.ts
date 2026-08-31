@@ -37,9 +37,21 @@ export const usesPersistentSurfaceState = surfaceDocumentUsesPersistentState({
 /** VS Code projects come from the host workspace; Electron can browse local folders. */
 export const isFixedWorkspaceSurface = isEmbeddedHostSurface && !isElectronSurface;
 export const embeddedSurfaceId = searchParams.get("surfaceId")?.trim() ?? "";
+export const embeddedSurfaceLeaseId = searchParams.get("surfaceLeaseId")?.trim() ?? "";
 export const embeddedStateScope = searchParams.get("stateScope")?.trim() ?? embeddedSurfaceId;
 export const initialWorkspacePath = searchParams.get("workspacePath")?.trim() ?? "";
 export const embeddedWorkspacePaths = uniqueTrimmedParams(["workspaceFolder", "workspacePath"]);
+const webClientIdStorageKey = "codexhub-web-client-id-v1";
+export const currentWebClientId = () => {
+  if (typeof window === "undefined") return "";
+  const stored = window.sessionStorage.getItem(webClientIdStorageKey)?.trim();
+  if (stored) return stored;
+  const created = typeof crypto.randomUUID === "function"
+    ? `web-${crypto.randomUUID()}`
+    : `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  window.sessionStorage.setItem(webClientIdStorageKey, created);
+  return created;
+};
 export const vscodeUiStateStorageKey = (stateScope?: string | null): string => {
   const trimmed = stateScope?.trim();
   return `codexhub-ui-state-vscode-v4${trimmed ? `:${encodeURIComponent(trimmed)}` : ""}`;

@@ -31,16 +31,13 @@ type SurfaceState = EmbeddedSurfaceRegistration & {
 
 export type EmbeddedSurfaceHubOptions = {
   leaseTimeoutMs?: number;
-  idleShutdownMs?: number;
   now?: () => number;
   currentBuildId?: string | null;
   onProjectsChange: (projects: EmbeddedSurfaceProject[]) => void;
-  onIdle?: () => void;
   onReplacementBuildAvailable?: (buildId: string) => void;
 };
 
 const defaultLeaseTimeoutMs = 30_000;
-const defaultIdleShutdownMs = 30_000;
 
 /**
  * Embedded client window 只是 authority service 的临时 surface，不是 machine。
@@ -49,23 +46,19 @@ const defaultIdleShutdownMs = 30_000;
 export class EmbeddedSurfaceHub {
   private readonly surfaces = new Map<string, SurfaceState>();
   private readonly leaseTimeoutMs: number;
-  private readonly idleShutdownMs: number;
   private readonly now: () => number;
   private readonly sweepTimer: NodeJS.Timeout;
-  private idleTimer: NodeJS.Timeout | null = null;
   private projectSignature = "";
   private availableBuildId = "";
 
   constructor(private readonly options: EmbeddedSurfaceHubOptions) {
     this.leaseTimeoutMs = positiveMilliseconds(options.leaseTimeoutMs, defaultLeaseTimeoutMs);
-    this.idleShutdownMs = positiveMilliseconds(options.idleShutdownMs, defaultIdleShutdownMs);
     this.now = options.now ?? Date.now;
     this.sweepTimer = setInterval(
       () => this.expireStaleSurfaces(),
       Math.max(1_000, Math.min(5_000, Math.floor(this.leaseTimeoutMs / 3)))
     );
     this.sweepTimer.unref?.();
-    this.scheduleIdleShutdown();
   }
 
   upsert(input: EmbeddedSurfaceRegistration): EmbeddedSurfaceView {
@@ -80,7 +73,6 @@ export class EmbeddedSurfaceHub {
       updatedAtMs: this.now()
     };
     this.surfaces.set(input.surfaceId, state);
-    this.cancelIdleShutdown();
     this.publishProjects();
     this.detectAvailableBuild();
     return this.view(state);
@@ -105,7 +97,6 @@ export class EmbeddedSurfaceHub {
     this.surfaces.delete(surfaceId);
     this.publishProjects();
     this.detectAvailableBuild();
-    if (!this.surfaces.size) this.scheduleIdleShutdown();
     return true;
   }
 
@@ -117,7 +108,6 @@ export class EmbeddedSurfaceHub {
 
   stop() {
     clearInterval(this.sweepTimer);
-    this.cancelIdleShutdown();
     this.surfaces.clear();
   }
 
@@ -132,7 +122,6 @@ export class EmbeddedSurfaceHub {
     if (!changed) return;
     this.publishProjects();
     this.detectAvailableBuild();
-    if (!this.surfaces.size) this.scheduleIdleShutdown();
   }
 
   private publishProjects() {
@@ -187,15 +176,6 @@ export class EmbeddedSurfaceHub {
     };
   }
 
-  private scheduleIdleShutdown() {
-    if (!this.options.onIdle || this.idleTimer) return;
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = null;
-      if (!this.surfaces.size) this.options.onIdle?.();
-    }, this.idleShutdownMs);
-    this.idleTimer.unref?.();
-  }
-
   private detectAvailableBuild() {
     const currentBuildId = this.options.currentBuildId?.trim();
     if (!currentBuildId || !this.options.onReplacementBuildAvailable || !this.surfaces.size) return;
@@ -209,22 +189,9 @@ export class EmbeddedSurfaceHub {
     this.options.onReplacementBuildAvailable(buildId);
   }
 
-  private cancelIdleShutdown() {
-    if (!this.idleTimer) return;
-    clearTimeout(this.idleTimer);
-    this.idleTimer = null;
-  }
 }
 
 const uniquePaths = (paths: string[]) => [...new Set(paths.map((value) => value.trim()).filter(Boolean))];
 
 const positiveMilliseconds = (value: number | undefined, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
-
-export type {
-  EmbeddedSurfaceProject as VscodeSurfaceProject,
-  EmbeddedSurfaceRegistration as VscodeSurfaceRegistration,
-  EmbeddedSurfaceView as VscodeSurfaceView,
-  EmbeddedSurfaceHubOptions as VscodeSurfaceHubOptions
-};
-export { EmbeddedSurfaceHub as VscodeSurfaceHub };

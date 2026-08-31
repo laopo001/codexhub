@@ -1,9 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { MachineHub } from "../core/machineHub.js";
-import type { EmbeddedSurfaceHub } from "../core/vscodeSurfaceHub.js";
+import type { EmbeddedSurfaceHub } from "../core/embeddedSurfaceHub.js";
 import {
-  embeddedSurfaceHeartbeatSchema,
   embeddedSurfaceRegistrationSchema,
   type EmbeddedSurfacePayload
 } from "../shared/apiContract.js";
@@ -74,25 +73,6 @@ export const registerEmbeddedSurfaceRoutes = (app: FastifyInstance, ctx: Embedde
       reply.code(409);
       return { error: error instanceof Error ? error.message : String(error) };
     }
-  });
-
-  app.post("/api/embedded/surfaces/:surfaceId/heartbeat", async (request, reply) => {
-    if (!ctx.enabled) {
-      reply.code(409);
-      return { error: "This CodexHub server is not an embedded authority service." };
-    }
-    const params = z.object({ surfaceId: z.string().trim().min(1).max(200) }).parse(request.params);
-    const input = embeddedSurfaceHeartbeatSchema.parse(request.body);
-    if (input.protocolVersion !== ctx.protocolVersion) {
-      reply.code(409);
-      return { error: `Unsupported embedded surface protocol: ${input.protocolVersion}.` };
-    }
-    const surface = ctx.surfaces.touch(params.surfaceId, input.leaseId);
-    if (!surface) {
-      reply.code(404);
-      return { error: "Embedded surface lease was not found." };
-    }
-    return { ok: true, surface } satisfies EmbeddedSurfacePayload;
   });
 
   app.delete("/api/embedded/surfaces/:surfaceId/:leaseId", async (request, reply) => {

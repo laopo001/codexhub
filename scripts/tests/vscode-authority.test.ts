@@ -29,7 +29,7 @@ test("one embedded authority accepts VSCode and Electron surfaces after runtime 
       surfaceProtocolVersion: embeddedSurfaceProtocolVersion
     },
     embeddedSurfaceLeaseTimeoutMs: 60_000,
-    embeddedSurfaceIdleShutdownMs: 60_000,
+    webClientTimeoutMs: 60_000,
     features: {
       localMachine: true,
       ssh: false,
@@ -89,10 +89,15 @@ test("one embedded authority accepts VSCode and Electron surfaces after runtime 
       [workspaceA, workspaceB].sort()
     );
 
-    await client.route(apiRoutes.heartbeatEmbeddedSurface, "window-b", {
-      leaseId: "lease-b",
-      protocolVersion: embeddedSurfaceProtocolVersion
+    const heartbeat = await client.route(apiRoutes.heartbeatWebClient, {
+      clientId: "web-window-b",
+      embeddedSurface: {
+        surfaceId: "window-b",
+        leaseId: "lease-b",
+        protocolVersion: embeddedSurfaceProtocolVersion
+      }
     });
+    assert.equal(heartbeat.embeddedSurfaceLeaseActive, true);
     await client.route(apiRoutes.unregisterEmbeddedSurface, "window-a", "lease-a");
     await client.route(apiRoutes.unregisterEmbeddedSurface, "electron-window", "electron-lease");
     projects = await client.route(apiRoutes.projects) as ProjectsPayload;
@@ -148,6 +153,90 @@ test("embedded authority restart endpoint closes the authority server", async ()
   }
 });
 
+test("Web heartbeat revives an expired surface without changing authority generation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-vscode-authority-expired-lease."));
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const server = await startServer({
+    host: "127.0.0.1",
+    port: await findFreePort("127.0.0.1"),
+    dataDir: path.join(root, "data"),
+    authToken: "",
+    surface: "default",
+    authority: {
+      authorityId: "authority-expired-lease-test",
+      kind: "linux",
+      surfaceProtocolVersion: embeddedSurfaceProtocolVersion
+    },
+    embeddedSurfaceLeaseTimeoutMs: 10,
+    webClientTimeoutMs: 1_500,
+    webClientRetryMs: 50,
+    features: {
+      localMachine: true,
+      ssh: false,
+      tasks: false,
+      integrations: false
+    }
+  });
+  const client = createCodexHubApiClient({ baseUrl: localServerUrl(server) });
+  try {
+    await registerSurfaceWithRetry(client, {
+      surface: "vscode",
+      surfaceId: "window-expiring",
+      leaseId: "lease-expiring",
+      protocolVersion: embeddedSurfaceProtocolVersion,
+      workspacePaths: [workspace],
+      activeWorkspacePath: workspace,
+      label: "VSCode: Expiring"
+    });
+    assert.equal((await client.route(apiRoutes.heartbeatWebClient, {
+      clientId: "web-expiring",
+      embeddedSurface: {
+        surfaceId: "window-expiring",
+        leaseId: "lease-expiring",
+        protocolVersion: embeddedSurfaceProtocolVersion
+      }
+    })).embeddedSurfaceLeaseActive, true);
+
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+    const recoveredHealth = await client.route(apiRoutes.health) as HealthPayload;
+    assert.equal(recoveredHealth.serverInstanceId, server.serverInstanceId);
+    assert.equal((await client.route(apiRoutes.heartbeatWebClient, {
+      clientId: "web-expiring",
+      embeddedSurface: {
+        surfaceId: "window-expiring",
+        leaseId: "lease-expiring",
+        protocolVersion: embeddedSurfaceProtocolVersion
+      }
+    })).embeddedSurfaceLeaseActive, false);
+
+    const recoveredSurface = await registerSurfaceWithRetry(client, {
+      surface: "vscode",
+      surfaceId: "window-expiring",
+      leaseId: "lease-recovered",
+      protocolVersion: embeddedSurfaceProtocolVersion,
+      workspacePaths: [workspace],
+      activeWorkspacePath: workspace,
+      label: "VSCode: Recovered"
+    });
+    assert.equal(recoveredSurface.surface?.leaseId, "lease-recovered");
+    assert.equal((await client.route(apiRoutes.heartbeatWebClient, {
+      clientId: "web-expiring",
+      embeddedSurface: {
+        surfaceId: "window-expiring",
+        leaseId: "lease-recovered",
+        protocolVersion: embeddedSurfaceProtocolVersion
+      }
+    })).embeddedSurfaceLeaseActive, true);
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    assert.equal((await client.route(apiRoutes.health) as HealthPayload).serverInstanceId, server.serverInstanceId);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("embedded authority reports a replacement build without closing automatically", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-vscode-authority-update."));
   const workspace = path.join(root, "workspace");
@@ -165,7 +254,7 @@ test("embedded authority reports a replacement build without closing automatical
       surfaceProtocolVersion: embeddedSurfaceProtocolVersion
     },
     embeddedSurfaceLeaseTimeoutMs: 60_000,
-    embeddedSurfaceIdleShutdownMs: 60_000,
+    webClientTimeoutMs: 60_000,
     features: {
       localMachine: true,
       ssh: false,

@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("codexhubElectronPet", {
   openPetActivity: (target: PetActivityOpenTarget) => {
     ipcRenderer.send("codexhub:pet-open-activity", target);
   },
+  recoverSurface: () => ipcRenderer.invoke("codexhub:recover-surface") as Promise<{ ok: boolean }>,
   restartAuthority: () => ipcRenderer.invoke("codexhub:restart-authority") as Promise<RestartPayload>,
   showTaskCompleteNotification: (notification: TaskCompleteNotification) => {
     ipcRenderer.send("codexhub:task-complete-notification", notification);

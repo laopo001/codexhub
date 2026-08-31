@@ -24,7 +24,8 @@ export type EmbeddedServerOptions = {
   parentRegistrationIdentity?: ParentRegistrationIdentity;
   authority?: CodexHubAuthorityDescriptor;
   embeddedSurfaceLeaseTimeoutMs?: number;
-  embeddedSurfaceIdleShutdownMs?: number;
+  webClientTimeoutMs?: number;
+  webClientRetryMs?: number;
   features?: Partial<ServerFeatureOptions>;
   logPrefix?: string;
 };
@@ -53,7 +54,8 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       parentRegistrationIdentity: options.parentRegistrationIdentity,
       authority: options.authority,
       embeddedSurfaceLeaseTimeoutMs: options.embeddedSurfaceLeaseTimeoutMs,
-      embeddedSurfaceIdleShutdownMs: options.embeddedSurfaceIdleShutdownMs,
+      webClientTimeoutMs: options.webClientTimeoutMs,
+      webClientRetryMs: options.webClientRetryMs,
       features: options.features
     });
 

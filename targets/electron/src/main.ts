@@ -57,7 +57,6 @@ const mainDirectory = electronApp.isPackaged
   ? path.join(electronApp.getAppPath(), "dist-node", "electron")
   : electronApp.getAppPath();
 const preloadPath = path.join(mainDirectory, "preload.cjs");
-const surfaceHeartbeatMs = 10_000;
 const desktopPetSyncMs = 1_000;
 const desktopPetInputPollMs = 16;
 const desktopPetInputExitGraceMs = 100;
@@ -90,8 +89,6 @@ let authority: EmbeddedAuthorityHandle | null = null;
 let tray: Tray | null = null;
 let allowQuit = false;
 let stoppingSurface: Promise<void> | null = null;
-let heartbeatTimer: NodeJS.Timeout | null = null;
-let heartbeatInFlight = false;
 let authorityRecoveryInFlight: Promise<void> | null = null;
 let surfaceRegistered = false;
 let desktopPetSyncTimer: NodeJS.Timeout | null = null;
@@ -518,7 +515,6 @@ ipcMain.on("codexhub:task-complete-notification", (event, value: unknown) => {
 const ensureElectronSurface = async () => {
   if (!authority) authority = await startElectronAuthority();
   await registerSurface(authority);
-  startHeartbeat();
 };
 
 const startElectronAuthority = async () => {
@@ -609,18 +605,6 @@ const registerSurface = async (target: EmbeddedAuthorityHandle, attempts = 30) =
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
-};
-
-const startHeartbeat = () => {
-  if (heartbeatTimer) return;
-  heartbeatTimer = setInterval(() => void heartbeat(), surfaceHeartbeatMs);
-  heartbeatTimer.unref?.();
-};
-
-const stopHeartbeat = () => {
-  if (!heartbeatTimer) return;
-  clearInterval(heartbeatTimer);
-  heartbeatTimer = null;
 };
 
 const isProcessAlive = (pid: number) => {
@@ -720,43 +704,12 @@ const recoverElectronSurface = () => {
   return authorityRecoveryInFlight;
 };
 
-const heartbeat = async () => {
-  if (heartbeatInFlight) return;
-  heartbeatInFlight = true;
-  try {
-    if (!authority || !surfaceRegistered) {
-      try {
-        await recoverElectronSurface();
-      } catch (reconnectError) {
-        console.error(`codexhub electron surface reconnect failed: ${errorText(reconnectError)}`);
-      }
-      return;
-    }
-    try {
-      const client = createCodexHubApiClient({ baseUrl: authority.url, authToken: authority.authToken });
-      await client.route(apiRoutes.heartbeatEmbeddedSurface, surfaceId, {
-        leaseId,
-        protocolVersion: embeddedSurfaceProtocolVersion
-      });
-    } catch (error) {
-      try {
-        await recoverElectronSurface();
-      } catch (reconnectError) {
-        console.error(`codexhub electron surface reconnect failed: ${errorText(reconnectError || error)}`);
-      }
-    }
-  } finally {
-    heartbeatInFlight = false;
-  }
-};
-
 const unregisterSurface = async (stopOwnedAuthority = false) => {
   if (stoppingSurface) return stoppingSurface;
   if (stopOwnedAuthority) {
     stopDesktopPetSync();
     closeDesktopPetWindow();
   }
-  stopHeartbeat();
   const current = authority;
   authority = null;
   surfaceRegistered = false;
@@ -784,6 +737,8 @@ const runSmoke = async () => {
   if (!restart.ok || !restart.restarting) {
     throw new Error(`Electron smoke restart request failed: ${JSON.stringify(restart)}`);
   }
+  await delay(100);
+  await recoverElectronSurface();
 
   const recoveryDeadline = Date.now() + 25_000;
   let restartHealth: Record<string, unknown> | null = null;
@@ -830,11 +785,21 @@ ipcMain.handle("codexhub:restart-authority", async () => {
   return response;
 });
 
+ipcMain.handle("codexhub:recover-surface", async (event) => {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (!sender || (sender !== mainWindow && sender !== desktopPetWindow) || sender.isDestroyed()) {
+    throw new Error("CodexHub surface recovery is only available to an active Electron window.");
+  }
+  await recoverElectronSurface();
+  return { ok: true };
+});
+
 const electronSurfaceUrl = (target: EmbeddedAuthorityHandle, desktopPet = false) => {
   const url = new URL("/", target.url);
   if (target.authToken) url.searchParams.set("codexhub_token", target.authToken);
   url.searchParams.set("surface", "electron");
   url.searchParams.set("surfaceId", surfaceId);
+  if (!desktopPet) url.searchParams.set("surfaceLeaseId", leaseId);
   url.searchParams.set(
     "stateScope",
     desktopPet ? `authority:${target.authorityId}:desktop-pet` : `authority:${target.authorityId}`
