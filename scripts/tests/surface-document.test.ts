@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { surfaceDocumentUsesPersistentState } from "../../src/web/helpers/surfaceDocument.js";
 
-test("VS Code iframe and native Electron documents keep exact UI state across renderer reloads", () => {
+test("ordinary Web, VS Code iframe, and native Electron keep persistent UI state", () => {
+  assert.equal(surfaceDocumentUsesPersistentState({
+    surface: "default",
+    nativeElectron: false,
+    topLevel: true
+  }), true);
   assert.equal(surfaceDocumentUsesPersistentState({
     surface: "vscode",
     nativeElectron: false,
@@ -15,12 +20,7 @@ test("VS Code iframe and native Electron documents keep exact UI state across re
   }), true);
 });
 
-test("ordinary and Open in Browser documents keep exact UI state tab-local", () => {
-  assert.equal(surfaceDocumentUsesPersistentState({
-    surface: "default",
-    nativeElectron: false,
-    topLevel: true
-  }), false);
+test("Open in Browser documents keep their exact renderer state tab-local", () => {
   assert.equal(surfaceDocumentUsesPersistentState({
     surface: "vscode",
     nativeElectron: false,

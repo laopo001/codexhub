@@ -25,6 +25,7 @@ export const writeSurfaceUiStateRaw = (
 ) => {
   for (const target of targets) {
     try {
+      if (target.storage.getItem(target.key) === value) continue;
       target.storage.setItem(target.key, value);
     } catch {
       // UI persistence is best-effort and must not break the application.

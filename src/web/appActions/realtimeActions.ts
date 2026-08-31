@@ -72,7 +72,8 @@ import type {
 } from "../types.js";
 import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
 import { authorityInstanceRecovery } from "../helpers/authorityInstanceRecovery.js";
-import { preferredPersistedThreadId, restorePersistedThreadTabs } from "../helpers/threadRestore.js";
+import { restorePersistedThreadTabs } from "../helpers/threadRestore.js";
+import { projectsForSurface, threadIdsForSurfaceProjects } from "../helpers/surfaceThreadScope.js";
 
 type RealtimeActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
@@ -204,37 +205,47 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     registeredMachineConnections.seed(loadedMachines);
     rememberRegisteredMachineActivities(loadedMachines);
     const saved = readStoredUiState();
-    const fixedWorkspaceThreadIds = isFixedWorkspaceSurface
-      ? new Set(
-        loadedRuntimes
-          .flatMap((runtime) => runtime.threads ?? [])
-          .filter((thread) => embeddedWorkspacePaths.includes(thread.workingDirectory))
-          .map((thread) => thread.threadId)
-      )
-      : undefined;
     const shouldRestoreSavedTabs = (isVscodeSurface || !initialWorkspacePath)
       && Array.isArray(saved?.openThreadIds);
-    const restoredThreadIds = shouldRestoreSavedTabs
+    const savedThreadIds = shouldRestoreSavedTabs
       ? uniqueThreadIds([
         ...(saved?.openThreadIds ?? []),
         ...(saved?.activeTabThreadId ? [saved.activeTabThreadId] : [])
       ])
       : undefined;
+    const loadedThreadTargets = Object.fromEntries(
+      loadedRuntimes.flatMap((runtime) => (runtime.threads ?? []).map((thread) => [thread.threadId, {
+        machineId: runtime.machineId,
+        workingDirectory: thread.workingDirectory
+      }]))
+    );
+    const persistedThreadTarget = (threadId: string) =>
+      loadedThreadTargets[threadId] ?? saved?.openThreadTargets?.[threadId];
+    const restoreThreadTargets = Object.fromEntries(
+      (savedThreadIds ?? []).flatMap((threadId) => {
+        const target = persistedThreadTarget(threadId);
+        return target ? [[threadId, target]] : [];
+      })
+    );
+    const surfaceProjects = isFixedWorkspaceSurface
+      ? projectsForSurface(loadedProjects, {
+        kind: "vscode",
+        groupId: embeddedSurfaceId,
+        workspacePaths: embeddedWorkspacePaths
+      })
+      : [];
+    const restoredThreadIds = savedThreadIds && isFixedWorkspaceSurface
+      ? threadIdsForSurfaceProjects(savedThreadIds, restoreThreadTargets, surfaceProjects)
+      : savedThreadIds;
     const persistedActiveThreadId = saved?.activeTabThreadId ?? "";
-    const restoredActiveThreadId = restoredThreadIds
-      ? preferredPersistedThreadId(
-        restoredThreadIds,
-        persistedActiveThreadId,
-        fixedWorkspaceThreadIds
-      )
-      : "";
-    const persistedThreadTarget = (threadId: string) => {
-      return saved?.openThreadTargets?.[threadId];
-    };
-    const savedActiveTabThreadByMachine = fixedWorkspaceThreadIds
+    const restoredActiveThreadId = restoredThreadIds?.includes(persistedActiveThreadId)
+      ? persistedActiveThreadId
+      : restoredThreadIds?.[0] ?? "";
+    const restoredThreadIdSet = new Set(restoredThreadIds ?? []);
+    const savedActiveTabThreadByMachine = isFixedWorkspaceSurface
       ? Object.fromEntries(
         Object.entries(saved?.activeTabThreadByMachine ?? {})
-          .filter(([, threadId]) => fixedWorkspaceThreadIds.has(threadId))
+          .filter(([, threadId]) => restoredThreadIdSet.has(threadId))
       )
       : saved?.activeTabThreadByMachine ?? {};
     const savedRuntime = saved?.activeMachineId
@@ -311,7 +322,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       const restored = await restorePersistedThreadTabs({
         threadIds: restoredThreadIds,
         activeThreadId: restoredActiveThreadId,
-        activateFirstThreadWhenNoPreferred: !isFixedWorkspaceSurface,
         openThread: (threadId, options) => {
           const target = persistedThreadTarget(threadId);
           return deps.openThread(threadId, {
@@ -337,9 +347,6 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       ));
       ctx.latestRequestedThreadId.current = restored.activeThreadId;
       ctx.setActiveTabThreadId(restored.activeThreadId);
-      if (!restored.activeThreadId && isFixedWorkspaceSurface && initialThreadId) {
-        await deps.openThread(initialThreadId).catch(() => deps.clearActiveThreadIfLatest(initialThreadId));
-      }
       // 全部 persisted tabs 失败时保持空状态；initialized 后的默认 thread effect 会重试 initialThreadId。
     } else if (initialThreadId) {
       await deps.openThread(initialThreadId).catch(() => deps.clearActiveThreadIfLatest(initialThreadId));

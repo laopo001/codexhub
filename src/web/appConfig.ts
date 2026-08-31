@@ -23,6 +23,7 @@ const uniqueTrimmedParams = (names: string[]) => {
 
 const requestedSurface = searchParams.get("surface");
 export const webSurface = isCodexHubSurface(requestedSurface) ? requestedSurface : "default";
+export const isSharedWebSurface = webSurface === "default";
 export const isVscodeSurface = webSurface === "vscode";
 export const isElectronSurface = webSurface === "electron";
 export const isNativeElectronSurface =
@@ -57,17 +58,20 @@ export const vscodeUiStateStorageKey = (stateScope?: string | null): string => {
   return `codexhub-ui-state-vscode-v4${trimmed ? `:${encodeURIComponent(trimmed)}` : ""}`;
 };
 
+export const webUiStateStorageKey = "codexhub-ui-state-v6";
+
 export const storageKey = isVscodeSurface
   ? vscodeUiStateStorageKey(embeddedStateScope)
   : isElectronSurface
     ? `codexhub-ui-state-electron-v1${embeddedStateScope ? `:${encodeURIComponent(embeddedStateScope)}` : ""}`
-    : "codexhub-ui-state-v6";
+    : webUiStateStorageKey;
 export const exactSurfaceStorageKey = isEmbeddedHostSurface && embeddedSurfaceId
   ? `codexhub-ui-state-surface-v1:${webSurface}:${encodeURIComponent(embeddedSurfaceId)}`
-  : "codexhub-ui-state-web-tab-v1";
+  : storageKey;
 
 const uiStateStorageTargets = (): UiStateStorageTarget[] => {
   if (typeof window === "undefined") return [];
+  if (isSharedWebSurface) return [{ storage: window.localStorage, key: storageKey }];
   const exactTarget: UiStateStorageTarget = usesPersistentSurfaceState
     ? { storage: window.localStorage, key: exactSurfaceStorageKey }
     : { storage: window.sessionStorage, key: exactSurfaceStorageKey };

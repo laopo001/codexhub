@@ -1,10 +1,10 @@
 import { useMemo, type Dispatch, type SetStateAction } from "react";
-import { isEmbeddedSurfaceKind } from "../shared/surfaceTypes.js";
 import { conversationViewsFromRecords } from "./helpers/conversationViews.js";
 import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from "./helpers/turnDurations.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
 import { resolveStatusPanelExpanded } from "./helpers/statusPanelExpansion.js";
-import { embeddedWorkspacePaths, isFixedWorkspaceSurface } from "./appConfig.js";
+import { embeddedSurfaceId, embeddedWorkspacePaths, isFixedWorkspaceSurface } from "./appConfig.js";
+import { projectsForSurface } from "./helpers/surfaceThreadScope.js";
 import {
   activeGoalActivityScopeFromRecords,
   activityStatusesFromRecords,
@@ -41,15 +41,12 @@ import type {
   ApprovalPolicyDraft,
   ApprovalsReviewerDraft,
   ModelSelection,
-  ProjectSummary,
   ReasoningSelection,
   PermissionProfileDraft,
   ServiceTierSelection,
   ThreadSummary,
   WebRecordView
 } from "./types.js";
-
-const currentEmbeddedWorkspacePaths = new Set(embeddedWorkspacePaths);
 
 export const useAppSelectors = (state: AppState) => {
   const activeThread = useMemo(
@@ -141,7 +138,11 @@ export const useAppSelectors = (state: AppState) => {
   };
   const projectList = useMemo(
     () => isFixedWorkspaceSurface
-      ? state.projects.filter(isCurrentEmbeddedWorkspaceProject)
+      ? projectsForSurface(state.projects, {
+        kind: "vscode",
+        groupId: embeddedSurfaceId,
+        workspacePaths: embeddedWorkspacePaths
+      })
       : state.projects,
     [state.projects]
   );
@@ -549,12 +550,6 @@ export const useAppSelectors = (state: AppState) => {
 };
 
 export type AppSelectors = ReturnType<typeof useAppSelectors>;
-
-
-const isCurrentEmbeddedWorkspaceProject = (project: ProjectSummary) =>
-  isEmbeddedSurfaceKind(project.source?.kind)
-  && (!currentEmbeddedWorkspacePaths.size || currentEmbeddedWorkspacePaths.has(project.path));
-
 const registeredMachineCommand = (origin: string, token: string) => {
   const command = `codexhub server --register-to ${shellQuote(origin)}`;
   return token.trim()

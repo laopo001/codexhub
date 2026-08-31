@@ -8,12 +8,14 @@ import {
 
 class MemoryStorage implements UiStateStorage {
   readonly values = new Map<string, string>();
+  writes = 0;
 
   getItem(key: string) {
     return this.values.get(key) ?? null;
   }
 
   setItem(key: string, value: string) {
+    this.writes += 1;
     this.values.set(key, value);
   }
 }
@@ -48,23 +50,35 @@ test("surface UI state falls back to the stable profile and writes both layers",
   assert.equal(profile.getItem("profile"), "next-state");
 });
 
-test("independent Web tab storage areas keep exact active threads isolated", () => {
-  const tabA = new MemoryStorage();
-  const tabB = new MemoryStorage();
-  const profile = new MemoryStorage();
+test("Web tabs in one browser profile share one canonical state key", () => {
+  const browserProfile = new MemoryStorage();
+  const tabATarget = [{ storage: browserProfile, key: "web-surface" }];
+  const tabBTarget = [{ storage: browserProfile, key: "web-surface" }];
 
-  writeSurfaceUiStateRaw([
-    { storage: tabA, key: "web-tab" },
-    { storage: profile, key: "web-profile" }
-  ], "thread-a");
-  writeSurfaceUiStateRaw([
-    { storage: tabB, key: "web-tab" },
-    { storage: profile, key: "web-profile" }
-  ], "thread-b");
+  writeSurfaceUiStateRaw(tabATarget, "thread-a");
+  assert.equal(readSurfaceUiStateRaw(tabBTarget), "thread-a");
 
-  assert.equal(readSurfaceUiStateRaw([{ storage: tabA, key: "web-tab" }]), "thread-a");
-  assert.equal(readSurfaceUiStateRaw([{ storage: tabB, key: "web-tab" }]), "thread-b");
-  assert.equal(profile.getItem("web-profile"), "thread-b");
+  writeSurfaceUiStateRaw(tabBTarget, "thread-b");
+  assert.equal(readSurfaceUiStateRaw(tabATarget), "thread-b");
+});
+
+test("different browser profiles keep independent Web surface states", () => {
+  const browserA = new MemoryStorage();
+  const browserB = new MemoryStorage();
+  writeSurfaceUiStateRaw([{ storage: browserA, key: "web-surface" }], "thread-a");
+  writeSurfaceUiStateRaw([{ storage: browserB, key: "web-surface" }], "thread-b");
+
+  assert.equal(browserA.getItem("web-surface"), "thread-a");
+  assert.equal(browserB.getItem("web-surface"), "thread-b");
+});
+
+test("writing an unchanged surface snapshot is a no-op", () => {
+  const storage = new MemoryStorage();
+  const targets = [{ storage, key: "surface" }];
+  writeSurfaceUiStateRaw(targets, "same");
+  writeSurfaceUiStateRaw(targets, "same");
+
+  assert.equal(storage.writes, 1);
 });
 
 test("an unavailable exact storage area does not block profile recovery", () => {

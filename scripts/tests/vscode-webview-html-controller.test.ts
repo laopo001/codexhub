@@ -6,7 +6,7 @@ import {
   normalizeVscodeWorkspaceIdentity,
   workspaceFileForAuthorityRegistration
 } from "../../src/shared/surfaceTypes.js";
-import { vscodeUiStateStorageKey } from "../../src/web/appConfig.js";
+import { vscodeUiStateStorageKey, webUiStateStorageKey } from "../../src/web/appConfig.js";
 
 test("VscodeWebviewHtmlController deduplicates ordinary renders with the same key", () => {
   const writtenHtmls: string[] = [];
@@ -174,6 +174,10 @@ test("vscodeUiStateStorageKey generates canonical v4 profile keys and rejects v3
   assert.equal(vscodeUiStateStorageKey("   "), "codexhub-ui-state-vscode-v4");
   assert.equal(vscodeUiStateStorageKey(undefined), "codexhub-ui-state-vscode-v4");
   assert.equal(vscodeUiStateStorageKey(null), "codexhub-ui-state-vscode-v4");
+});
+
+test("ordinary Web uses one canonical browser-profile state key", () => {
+  assert.equal(webUiStateStorageKey, "codexhub-ui-state-v6");
 });
 
 test("replacement extensions omit new workspace fields until the old authority yields", () => {

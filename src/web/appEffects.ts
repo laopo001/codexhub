@@ -32,6 +32,7 @@ import {
 } from "./helpers/subagentThreadDialog.js";
 import { resolveActiveThreadId } from "./helpers/activeThreadSelection.js";
 import { createWebClientHeartbeat } from "./helpers/webClientHeartbeat.js";
+import { threadIdsForSurfaceProjects } from "./helpers/surfaceThreadScope.js";
 
 const webClientHeartbeatMs = 10_000;
 
@@ -56,6 +57,10 @@ type AppEffectsInput = {
 };
 
 export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, state }: AppEffectsInput) => {
+  const surfaceProjectScopeKey = selectors.projectList
+    .map((project) => `${project.machineId}\0${project.path}\0${project.source?.kind ?? ""}\0${project.source?.groupId ?? ""}`)
+    .sort()
+    .join("\n");
   useEffect(() => {
     resizeComposerTextarea(state.composerTextareaRef.current);
   }, [selectors.activeThread?.threadId]);
@@ -217,7 +222,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
 
   useEffect(() => {
     if (!state.initialized) return;
-    const persistedOpenThreadIds = [...new Set(selectors.openThreadIds)];
+    const candidateOpenThreadIds = [...new Set(selectors.openThreadIds)];
     const currentThreadTargets = Object.fromEntries(state.openThreads.flatMap((thread) => {
       const machineId = thread.runtime.machineId;
       return machineId ? [[thread.threadId, {
@@ -225,19 +230,38 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
         ...(thread.workingDirectory ? { workingDirectory: thread.workingDirectory } : {})
       }]] : [];
     }));
+    const persistedOpenThreadIds = isFixedWorkspaceSurface
+      ? threadIdsForSurfaceProjects(candidateOpenThreadIds, currentThreadTargets, selectors.projectList)
+      : candidateOpenThreadIds;
+    const persistedOpenThreadIdSet = new Set(persistedOpenThreadIds);
     const openThreadTargets = Object.fromEntries(persistedOpenThreadIds.flatMap((threadId) => {
       const target = currentThreadTargets[threadId];
       return target ? [[threadId, target]] : [];
     }));
+    const activeTabThreadId = persistedOpenThreadIdSet.has(state.activeTabThreadId)
+      ? state.activeTabThreadId
+      : "";
+    const activeTabThreadByMachine = Object.fromEntries(
+      Object.entries(state.activeTabThreadByMachine)
+        .filter(([, threadId]) => persistedOpenThreadIdSet.has(threadId))
+    );
+    const threadOrderByMachine = Object.fromEntries(
+      Object.entries(state.threadOrderByMachine)
+        .map(([machineId, threadIds]) => [
+          machineId,
+          threadIds.filter((threadId) => persistedOpenThreadIdSet.has(threadId))
+        ])
+        .filter(([, threadIds]) => threadIds.length)
+    );
     writeCurrentSurfaceUiStateRaw(JSON.stringify({
       tabSnapshotVersion: 1,
       activeWorkspacePath: state.activeWorkspacePath,
       activeMachineId: state.activeMachineId,
-      activeTabThreadId: state.activeTabThreadId,
-      activeTabThreadByMachine: state.activeTabThreadByMachine,
+      activeTabThreadId,
+      activeTabThreadByMachine,
       openThreadIds: persistedOpenThreadIds,
       openThreadTargets,
-      threadOrderByMachine: state.threadOrderByMachine,
+      threadOrderByMachine,
       selectedProjectKey: state.selectedProjectKey,
       projectSearch: state.sidebarDraftStore.getSnapshot().projectSearch,
       sidebarCollapsed: state.sidebarCollapsed,
@@ -248,7 +272,8 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.activeMachineId,
     state.activeTabThreadByMachine,
     state.activeTabThreadId,
-    selectors.openThreadIds,
+    selectors.openThreadIdsKey,
+    surfaceProjectScopeKey,
     state.selectedProjectKey,
     state.sidebarCollapsed,
     state.collapsedProjectMachineKeys,
@@ -417,10 +442,19 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     if (state.activeTabThreadId || state.openThreads.length) return;
 
     const initialThreadId = runtime
-      ? preferredThreadIdForRuntime(
-        runtime,
-        findProjectByMachinePath(selectors.projectList, runtime.machineId, runtime.workingDirectory)
-      )
+      ? isFixedWorkspaceSurface
+        ? threadIdsForSurfaceProjects(
+          (runtime.threads ?? []).map((thread) => thread.threadId),
+          Object.fromEntries((runtime.threads ?? []).map((thread) => [thread.threadId, {
+            machineId: runtime.machineId,
+            workingDirectory: thread.workingDirectory
+          }])),
+          selectors.projectList
+        )[0]
+        : preferredThreadIdForRuntime(
+          runtime,
+          findProjectByMachinePath(selectors.projectList, runtime.machineId, runtime.workingDirectory)
+        )
       : undefined;
     if (initialThreadId) {
       void actions.openThread(initialThreadId).catch(() => actions.clearActiveThreadIfLatest(initialThreadId));
