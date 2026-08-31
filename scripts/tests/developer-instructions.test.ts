@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Fastify from "fastify";
@@ -81,17 +81,14 @@ test("serverState: Developer Instructions migration, backward compatibility, and
     assert.equal(reloadedList[0].id, created1.id);
     assert.equal(reloadedList[0].name, "Senior Code Reviewer");
 
-    // 8. Snapshot immutability simulation:
-    // When thread starts, authority extracts snapshot
+    // 8. The create call takes a transient snapshot without adding thread data to config.
     const templateSnapshot = state.getDeveloperInstruction(created1.id)?.instructions;
     assert.equal(templateSnapshot, "Review code thoroughly.");
 
-    // Now update or delete template in state
     state.updateDeveloperInstruction(created1.id, {
       name: "Senior Code Reviewer",
       instructions: "New instruction v2"
     });
-    // The snapshot taken at thread creation remains unchanged
     assert.equal(templateSnapshot, "Review code thoroughly.");
     assert.equal(state.getDeveloperInstruction(created1.id)?.instructions, "New instruction v2");
   } finally {
@@ -337,7 +334,13 @@ test("Machine thread route resolves one immutable template snapshot only for act
     publishProjects: () => undefined,
     releaseThreadRecordSubscription: () => undefined,
     retainThreadRecordSubscription: () => undefined,
-    resolveDeveloperInstructions: (id: string) => id === "reviewer" ? currentInstructions : null,
+    resolveDeveloperInstruction: (id: string) => id === "reviewer" ? {
+      id,
+      name: "Reviewer",
+      instructions: currentInstructions,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString()
+    } : null,
     taskSnapshotEvent: () => ({ seq: 0, kind: "tasks" }),
     taskSubscribers: new Set(),
     threads: {
@@ -361,6 +364,7 @@ test("Machine thread route resolves one immutable template snapshot only for act
     });
     assert.equal(plain.statusCode, 200);
     assert.deepEqual(starts[0], { machineId: "machine-1", cwd: "/tmp/project", creationOptions: undefined });
+    assert.equal(plain.json().developerInstruction, undefined);
 
     const instructed = await app.inject({
       method: "POST",
@@ -369,6 +373,8 @@ test("Machine thread route resolves one immutable template snapshot only for act
     });
     assert.equal(instructed.statusCode, 200);
     assert.equal(starts[1].creationOptions?.developerInstructions, "Reviewer v1");
+    assert.equal(instructed.json().developerInstruction.templateName, "Reviewer");
+    assert.equal(instructed.json().developerInstruction.instructions, "Reviewer v1");
     currentInstructions = "Reviewer v2";
     assert.equal(starts[1].creationOptions?.developerInstructions, "Reviewer v1");
 
@@ -387,6 +393,7 @@ test("Machine thread route resolves one immutable template snapshot only for act
     });
     assert.equal(resumed.statusCode, 200);
     assert.deepEqual(resumes, [{ machineId: "machine-1", threadId: "thread-existing", cwd: "/tmp/project" }]);
+    assert.equal(resumed.json().developerInstruction, undefined);
 
     const invalidResume = await app.inject({
       method: "POST",
@@ -402,4 +409,17 @@ test("Machine thread route resolves one immutable template snapshot only for act
   } finally {
     await app.close();
   }
+});
+
+test("thread tabs mark and disclose injected Developer Instructions", () => {
+  const selectorSource = readFileSync(new URL("../../src/web/appViewSelectors.tsx", import.meta.url), "utf8");
+  const styleSource = readFileSync(new URL("../../src/web/styles/composer.css", import.meta.url), "utf8");
+
+  assert.match(selectorSource, /hasDeveloperInstruction/);
+  assert.match(selectorSource, /Developer Instruction/);
+  assert.match(selectorSource, /developerInstruction\.templateName/);
+  assert.match(selectorSource, /developerInstruction\.instructions/);
+  assert.match(styleSource, /\.openThreadTabLabel\.hasDeveloperInstruction/);
+  assert.match(styleSource, /box-shadow:\s*inset 3px 0 #d97706/);
+  assert.match(styleSource, /\.openThreadTabInstructionDetails pre/);
 });

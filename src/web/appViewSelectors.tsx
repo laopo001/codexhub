@@ -153,6 +153,7 @@ const OpenThreadTabLabel = ({
     ? formatPlanProgress(planProgress)
     : undefined;
   const activeGoal = latestThreadGoalFromRecords(records, thread.threadId);
+  const developerInstruction = thread.developerInstruction;
   const details = (
     <div className="openThreadTabDetails">
       <div>
@@ -183,6 +184,16 @@ const OpenThreadTabLabel = ({
           <code>{thread.runtime.machineId}</code>
         </div>
       ) : null}
+      {developerInstruction ? (
+        <div className="openThreadTabInstructionDetails">
+          <span>Developer Instruction</span>
+          <section>
+            <strong>{developerInstruction.templateName}</strong>
+            <small>Immutable snapshot injected when this thread was created</small>
+            <pre>{developerInstruction.instructions}</pre>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 
@@ -194,11 +205,22 @@ const OpenThreadTabLabel = ({
       overlayClassName="openThreadTabDetailsPopover"
     >
       <span
-        className="openThreadTabLabel"
-        title={`${thread.workingDirectory}\n${title}\n${thread.threadId}`}
+        className={`openThreadTabLabel${developerInstruction ? " hasDeveloperInstruction" : ""}`}
+        title={`${thread.workingDirectory}\n${title}\n${thread.threadId}${developerInstruction ? `\nDeveloper Instructions: ${developerInstruction.templateName}` : ""}`}
         onContextMenu={onContextMenu}
       >
-        <span className="openThreadTabTitle">{title}</span>
+        <span className="openThreadTabTitleRow">
+          <span className="openThreadTabTitle">{title}</span>
+          {developerInstruction ? (
+            <span
+              className="openThreadTabInstructionMark"
+              title={`Developer Instructions: ${developerInstruction.templateName}`}
+              aria-label={`Developer Instructions: ${developerInstruction.templateName}`}
+            >
+              DEV
+            </span>
+          ) : null}
+        </span>
         <span className="openThreadTabMeta">
           <code title={`${thread.workingDirectory}\n${thread.threadId}`}>{workspaceName} · {shortId(thread.threadId)}</code>
           <em className={`openThreadTabBadge ${executionMeta.status}`}>

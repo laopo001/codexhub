@@ -72,6 +72,9 @@ export const openThreadStateFromDetail = (
   existing?: OpenThreadState
 ): OpenThreadState => ({
   ...thread,
+  ...((thread.developerInstruction ?? existing?.developerInstruction)
+    ? { developerInstruction: thread.developerInstruction ?? existing?.developerInstruction }
+    : {}),
   composerMode: existing?.composerMode ?? "chat",
   modelDraft: existing?.modelDraft ?? thread.model ?? "auto",
   reasoningDraft: existing?.reasoningDraft ?? thread.modelReasoningEffort ?? "auto",

@@ -53,6 +53,26 @@ test("open thread reducer preserves local drafts when fresh server detail arrive
   assert.equal(state[0].title, "server title");
 });
 
+test("open thread reducer retains transient Developer Instructions for the current tab only", async () => {
+  const openThreadReducer = await loadReducer();
+  const developerInstruction = {
+    templateId: "reviewer",
+    templateName: "Reviewer",
+    instructions: "Review without editing.",
+    injectedAt: new Date(0).toISOString()
+  };
+  let state = openThreadReducer([], {
+    type: "upsert-detail",
+    thread: { ...detail("thread-1"), developerInstruction }
+  });
+  state = openThreadReducer(state, {
+    type: "upsert-detail",
+    thread: { ...detail("thread-1"), title: "refreshed" }
+  });
+
+  assert.equal(state[0]?.developerInstruction?.instructions, "Review without editing.");
+});
+
 test("open thread reducer merges stream records and applies semantic ordering", async () => {
   const openThreadReducer = await loadReducer();
   let state = openThreadReducer([], { type: "upsert-detail", thread: detail("thread-1") });

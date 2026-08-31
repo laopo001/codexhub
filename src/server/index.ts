@@ -883,9 +883,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     publishProjects,
     releaseThreadRecordSubscription,
     retainThreadRecordSubscription,
-    resolveDeveloperInstructions: (id: string) => {
-      const template = state.getDeveloperInstruction(id);
-      return template?.instructions ?? null;
+    resolveDeveloperInstruction: (id: string) => {
+      return state.getDeveloperInstruction(id);
     },
     taskSnapshotEvent: () => taskScheduler.snapshotEvent(),
     taskSubscribers: taskScheduler.subscribers,

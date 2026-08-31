@@ -75,6 +75,7 @@ const fixture = async (
   const draft = new Map([[threadId, "hello"]]);
   const conversationThreads = new Map([[threadId, thread]]);
   const actionsDispatched: Array<{ type: string; record?: CodexRecord; messageId?: string }> = [];
+  const openedThreadDetails: OpenThreadState[] = [];
   const shownErrors: Array<{ key: string; title: string; message: string }> = [];
   const openedModelThreadIds: string[] = [];
   const activeTabChanges: string[] = [];
@@ -132,7 +133,9 @@ const fixture = async (
         : value;
     },
     setRuntimeList: () => undefined,
-    dispatchOpenThreads: () => undefined,
+    dispatchOpenThreads: (action: { type: string; thread?: OpenThreadState }) => {
+      if (action.type === "upsert-detail" && action.thread) openedThreadDetails.push(action.thread);
+    },
     dispatchConversationThread: (action: Parameters<typeof reduceConversationThreadState>[1]) => {
       actionsDispatched.push(action);
       const current = conversationThreads.get(action.threadId);
@@ -153,6 +156,7 @@ const fixture = async (
   return {
     actions,
     actionsDispatched,
+    openedThreadDetails,
     shownErrors,
     openedModelThreadIds,
     activeTabChanges,
@@ -164,6 +168,34 @@ const fixture = async (
     threadRenameDialog: () => threadRenameDialog
   };
 };
+
+test("fresh thread detail opens without refetching and retains transient creation metadata", async () => {
+  const initialThread = {
+    ...openThread(false, "chat", "fresh-thread"),
+    developerInstruction: {
+      templateId: "reviewer",
+      templateName: "Reviewer",
+      instructions: "Review without editing.",
+      injectedAt: new Date(0).toISOString()
+    }
+  };
+  let fetchCalls = 0;
+  const { actions, openedThreadDetails } = await fixture(
+    false,
+    "chat",
+    async () => {
+      fetchCalls += 1;
+      throw new Error("fresh thread should not be fetched");
+    },
+    { threadId: initialThread.threadId, workspaceOpen: false }
+  );
+
+  await actions.openThread(initialThread.threadId, { initialThread });
+
+  assert.equal(fetchCalls, 0);
+  assert.equal(openedThreadDetails[0]?.developerInstruction?.templateName, "Reviewer");
+  assert.equal(openedThreadDetails[0]?.developerInstruction?.instructions, "Review without editing.");
+});
 
 test("deferred thread activation waits for a successful load", async () => {
   let resolveFetch!: (response: Response) => void;

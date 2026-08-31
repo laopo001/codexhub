@@ -98,6 +98,14 @@
   line-height: 1.14;
 }
 
+.openThreadTabLabel.hasDeveloperInstruction {
+  margin: -4px -6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.05));
+  box-shadow: inset 3px 0 #d97706;
+}
+
 .openThreadTabs > .ant-tabs-nav .ant-tabs-tab-btn {
   min-width: 0;
 }
@@ -144,11 +152,35 @@
   white-space: nowrap;
 }
 
+.openThreadTabTitleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
 .openThreadTabTitle {
   display: block;
   color: #17211a;
   font-size: 12px;
   font-weight: 700;
+}
+
+.hasDeveloperInstruction .openThreadTabTitle {
+  color: #a94b08;
+}
+
+.openThreadTabInstructionMark {
+  border: 1px solid rgba(180, 83, 9, 0.32);
+  border-radius: 999px;
+  background: #ffedd5;
+  color: #9a3412;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 2px 4px;
 }
 
 .openThreadTabMeta {
@@ -212,6 +244,44 @@
   color: #17211a;
   font-family: inherit;
   font-size: 12px;
+}
+
+.openThreadTabDetails .openThreadTabInstructionDetails {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid #ead7bd;
+}
+
+.openThreadTabInstructionDetails section {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #f0c98f;
+  border-radius: 7px;
+  background: #fff8ed;
+}
+
+.openThreadTabInstructionDetails strong {
+  color: #9a4a0a;
+  font-size: 12px;
+}
+
+.openThreadTabInstructionDetails small {
+  color: #8a6b49;
+  font-size: 10px;
+}
+
+.openThreadTabInstructionDetails pre {
+  max-height: min(320px, 45vh);
+  margin: 2px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #35291e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 /* ==========================================================================

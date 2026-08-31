@@ -103,6 +103,8 @@ export type OpenThreadOptions = {
   activate?: boolean;
   /** Keep the current tab stable until the requested thread has loaded successfully. */
   deferActivationUntilLoaded?: boolean;
+  /** Fresh create response; used once so transient creation metadata reaches the first tab. */
+  initialThread?: ThreadDetail;
 };
 
 type ThreadGoalUpdateOptions = {
@@ -208,19 +210,26 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
 
     const open = (async () => {
       let thread: ThreadDetail;
-      try {
-        thread = await apiRouteJson(apiRoutes.thread, threadId);
-      } catch (error) {
-        if (!(error instanceof CodexHubApiError) || error.status !== 404 || !options.expectedMachineId) {
-          throw error;
+      if (options.initialThread) {
+        if (options.initialThread.threadId !== threadId) {
+          throw new Error(`Initial thread detail does not match ${threadId}.`);
         }
-        const workingDirectory = options.preferredWorkingDirectory
-          || await resumeCandidateCwd(options.expectedMachineId, threadId);
-        thread = await apiRouteJson(apiRoutes.createMachineThread, options.expectedMachineId, {
-          action: "resume",
-          threadId,
-          ...(workingDirectory ? { cwd: workingDirectory } : {})
-        });
+        thread = options.initialThread;
+      } else {
+        try {
+          thread = await apiRouteJson(apiRoutes.thread, threadId);
+        } catch (error) {
+          if (!(error instanceof CodexHubApiError) || error.status !== 404 || !options.expectedMachineId) {
+            throw error;
+          }
+          const workingDirectory = options.preferredWorkingDirectory
+            || await resumeCandidateCwd(options.expectedMachineId, threadId);
+          thread = await apiRouteJson(apiRoutes.createMachineThread, options.expectedMachineId, {
+            action: "resume",
+            threadId,
+            ...(workingDirectory ? { cwd: workingDirectory } : {})
+          });
+        }
       }
       const machineId = thread.runtime.machineId;
       if (options.expectedMachineId && machineId !== options.expectedMachineId) {

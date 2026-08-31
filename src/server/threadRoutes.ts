@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { MachineHub } from "../core/machineHub.js";
 import { defaultThreadHistoryPageSize, type ThreadHub } from "../core/threadHub.js";
+import type { StoredDeveloperInstruction } from "../shared/projectTypes.js";
 import {
   inputSchema,
   commitMessageGenerationSchema,
@@ -56,7 +57,7 @@ export type ThreadRoutesContext<
   publishProjects: () => void;
   releaseThreadRecordSubscription: (threadId: string) => void;
   retainThreadRecordSubscription: (threadId: string) => void;
-  resolveDeveloperInstructions: (id: string) => string | null;
+  resolveDeveloperInstruction: (id: string) => StoredDeveloperInstruction | null;
   taskSnapshotEvent: () => TaskEvent;
   taskSubscribers: Set<(event: TaskEvent) => void>;
   threads: ThreadHub;
@@ -319,26 +320,36 @@ export const registerThreadRoutes = <
     const payload = machineThreadInputSchema.parse(request.body);
     try {
       let thread: ThreadDetail;
+      let developerInstruction: StoredDeveloperInstruction | null = null;
       if (payload.action === "new") {
-        let developerInstructions: string | undefined;
         if (payload.developerInstructionsId) {
-          const resolved = ctx.resolveDeveloperInstructions(payload.developerInstructionsId);
-          if (resolved === null) {
+          developerInstruction = ctx.resolveDeveloperInstruction(payload.developerInstructionsId);
+          if (developerInstruction === null) {
             reply.code(404);
             return { error: `Developer instruction template not found: ${payload.developerInstructionsId}` };
           }
-          developerInstructions = resolved;
         }
         thread = await ctx.threads.startMachineThread(
           params.machineId,
           payload.cwd,
-          developerInstructions ? { developerInstructions } : undefined
+          developerInstruction ? { developerInstructions: developerInstruction.instructions } : undefined
         );
       } else {
         thread = await ctx.threads.resumeMachineThread(params.machineId, payload.threadId, payload.cwd);
       }
       ctx.publishProjects();
-      return ctx.threads.getThreadPage(thread.threadId) satisfies ThreadDetail;
+      const detail = ctx.threads.getThreadPage(thread.threadId);
+      return {
+        ...detail,
+        ...(payload.action === "new" && developerInstruction ? {
+          developerInstruction: {
+            templateId: developerInstruction.id,
+            templateName: developerInstruction.name,
+            instructions: developerInstruction.instructions,
+            injectedAt: new Date().toISOString()
+          }
+        } : {})
+      } satisfies ThreadDetail;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Runtime not found") ? 404 : 409);

@@ -35,6 +35,7 @@ import type {
   RuntimeSummary,
   SubagentThreadDialogState,
   SubagentThreadOpenOptions,
+  ThreadDetail,
   ThreadPickerState
 } from "../types.js";
 
@@ -84,6 +85,7 @@ export type ProjectActionsDependencies = {
 
 type ActivateMachineThreadOptions = {
   preferredWorkingDirectory?: string;
+  initialThread?: ThreadDetail;
 };
 
 type StartProjectThreadOptions = {
@@ -406,6 +408,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     }
     await deps.openThread(threadId, {
       expectedMachineId: machineId,
+      ...(options.initialThread ? { initialThread: options.initialThread } : {}),
       ...(options.preferredWorkingDirectory
         ? { preferredWorkingDirectory: options.preferredWorkingDirectory }
         : {})
@@ -433,7 +436,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         ...(options?.developerInstructionsId ? { developerInstructionsId: options.developerInstructionsId } : {})
       });
       ctx.setThreadPicker(null);
-      await activateMachineThread(machineId, thread.threadId);
+      await activateMachineThread(machineId, thread.threadId, { initialThread: thread });
     } catch (error) {
       ctx.setThreadPicker((current) => current && current.machineId === machineId ? {
         ...current,

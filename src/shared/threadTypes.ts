@@ -6,6 +6,14 @@ import type { ThreadOptions, ThreadRateLimits, ThreadUsage, Usage } from "./usag
 /** Web/API 可见的 thread 摘要，records 之外的轻量投影。 */
 export type ThreadExecutionStatus = "waiting" | "running" | "idle";
 
+/** thread 创建时实际注入的 Developer Instructions 不可变快照。 */
+export type ThreadDeveloperInstructionSnapshot = {
+  templateId: string;
+  templateName: string;
+  instructions: string;
+  injectedAt: string;
+};
+
 export type ThreadSummary = {
   threadId: string;
   workingDirectory: string;
@@ -182,6 +190,8 @@ export type AppServerUserInputRequest = {
 
 /** thread 详情接口返回值，包含当前 records 快照和最后事件序号。 */
 export type ThreadDetail = ThreadSummary & {
+  /** 仅由创建响应携带的临时提示；恢复旧 thread 时不还原。 */
+  developerInstruction?: ThreadDeveloperInstructionSnapshot;
   records: CodexRecord[];
   lastSeq: number;
   /** 当前 thread 仍由 app-server 管理的后台终端，不属于 transcript。 */
