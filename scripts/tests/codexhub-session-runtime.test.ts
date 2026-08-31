@@ -30,6 +30,7 @@ class CurrentProtocolSocket implements AppServerSocketLike {
   resumeRequests = 0;
   unsubscribeRequests = 0;
   readonly resumeParams: Record<string, unknown>[] = [];
+  readonly startParams: Record<string, unknown>[] = [];
   readonly turnsListParams: Record<string, unknown>[] = [];
   readonly backgroundTerminalParams: Record<string, unknown>[] = [];
   readonly clientResponses: Array<{ id: string | number; result: unknown }> = [];
@@ -92,6 +93,7 @@ class CurrentProtocolSocket implements AppServerSocketLike {
         platformOs: "linux"
       };
     } else if (message.method === "thread/start") {
+      this.startParams.push(params ?? {});
       result = {
         thread: params?.ephemeral === true && (this.options.generatedTitle || this.options.generatedCommitMessage)
           ? { ...currentThread("structured-helper", stringParam(params, "cwd") ?? "/tmp/current-protocol"), ephemeral: true }
@@ -336,6 +338,46 @@ test("attached runtime can handshake for its protocol version without creating a
     assert.equal(socket.requestCount("initialize"), 1);
     assert.equal(socket.requestCount("thread/start"), 0);
     assert.equal(callbacks?.registration().cliVersion, "0.144.4");
+  } finally {
+    await session.stop();
+  }
+});
+
+test("attached runtime injects developer instructions only into explicit thread creation", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket();
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    appServerTransportFactory: async () => socket,
+    ensureDefaultThread: false,
+    machineId: "machine-developer-instructions",
+    cwd: "/tmp/current-protocol",
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return transportFactory(transportContext, nextCallbacks);
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    await callbacks.handleCommand({
+      seq: 1,
+      commandId: "instructed-thread",
+      type: "start_thread",
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: new Date(0).toISOString(),
+      creationOptions: { developerInstructions: "Review without editing." }
+    });
+    await callbacks.handleCommand({
+      seq: 2,
+      commandId: "plain-thread",
+      type: "start_thread",
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: new Date(0).toISOString()
+    });
+    assert.equal(socket.startParams[0].developerInstructions, "Review without editing.");
+    assert.equal(Object.hasOwn(socket.startParams[1], "developerInstructions"), false);
   } finally {
     await session.stop();
   }
@@ -837,6 +879,7 @@ test("runtime excludes resume turns and unsubscribes app-server thread records",
   try {
     await session.ensureThread("history-thread");
     assert.equal(socket.resumeParams.at(-1)?.excludeTurns, true);
+    assert.equal(Object.hasOwn(socket.resumeParams.at(-1) ?? {}, "developerInstructions"), false);
     assert.ok(callbacks);
     const baseCommand = {
       seq: 1,

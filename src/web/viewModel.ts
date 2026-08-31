@@ -185,7 +185,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   composerTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
   confirmProjectPicker: () => MaybePromise;
   copySelection: () => MaybePromise;
-  createMachineThread: () => MaybePromise;
+  createMachineThread: (options?: { developerInstructionsId?: string }) => MaybePromise;
   createWorktreeThread: () => MaybePromise;
   threadModelDialogModelSelection: ModelSelection;
   threadModelDialogReasoningSelection: ReasoningSelection;

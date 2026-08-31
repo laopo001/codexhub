@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -19,6 +19,7 @@ import type {
   ProjectSummary,
   ServerStateData,
   ServerUiConfig,
+  StoredDeveloperInstruction,
   StoredMachine,
   StoredParentRegistration,
   StoredProject,
@@ -243,6 +244,69 @@ export class CodexhubServerState {
     const index = this.data.sshHosts.findIndex((host) => host.alias === alias);
     if (index === -1) return false;
     this.data.sshHosts.splice(index, 1);
+    this.touch();
+    return true;
+  }
+
+  listDeveloperInstructions() {
+    return this.data.developerInstructions
+      .map((item) => ({ ...item }))
+      .sort(compareDeveloperInstructions);
+  }
+
+  getDeveloperInstruction(id: string) {
+    const item = this.data.developerInstructions.find((candidate) => candidate.id === id);
+    return item ? { ...item } : null;
+  }
+
+  createDeveloperInstruction(input: {
+    name: string;
+    description?: string;
+    instructions: string;
+  }) {
+    const name = input.name.trim();
+    if (!name) throw new Error("Template name is required.");
+    const instructions = input.instructions.trim();
+    if (!instructions) throw new Error("Template instructions are required.");
+    const now = new Date().toISOString();
+    const description = input.description?.trim() || undefined;
+
+    const template: StoredDeveloperInstruction = {
+      id: `inst-${randomUUID()}`,
+      name,
+      ...(description ? { description } : {}),
+      instructions,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.data.developerInstructions.push(template);
+    this.touch();
+    return { ...template };
+  }
+
+  updateDeveloperInstruction(id: string, input: {
+    name: string;
+    description?: string;
+    instructions: string;
+  }) {
+    const existing = this.data.developerInstructions.find((item) => item.id === id);
+    if (!existing) return null;
+    const name = input.name.trim();
+    if (!name) throw new Error("Template name is required.");
+    const instructions = input.instructions.trim();
+    if (!instructions) throw new Error("Template instructions are required.");
+    existing.name = name;
+    existing.description = input.description?.trim() || undefined;
+    existing.instructions = instructions;
+    existing.updatedAt = new Date().toISOString();
+    this.touch();
+    return { ...existing };
+  }
+
+  deleteDeveloperInstruction(id: string) {
+    const index = this.data.developerInstructions.findIndex((item) => item.id === id);
+    if (index === -1) return false;
+    this.data.developerInstructions.splice(index, 1);
     this.touch();
     return true;
   }
@@ -691,7 +755,10 @@ const readStateFile = async (filePath: string): Promise<StateFileReadResult> => 
         machines: normalizedMachines.filter((machine) => machine.type !== "registered"),
         projects: projects.map(normalizeStoredProject).filter(isStoredProject),
         tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeStoredTask).filter(isStoredTask) : [],
-        sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : []
+        sshHosts: Array.isArray(parsed.sshHosts) ? parsed.sshHosts.map(normalizeStoredSshHost).filter(isStoredSshHost) : [],
+        developerInstructions: Array.isArray(parsed.developerInstructions)
+          ? parsed.developerInstructions.map(normalizeStoredDeveloperInstruction).filter(isStoredDeveloperInstruction)
+          : []
       },
       needsRewrite: Array.isArray(parsed.threads)
         || projects.some((project) => Boolean(project && typeof project === "object" && !Array.isArray(project) && ("name" in project || "lastSessionId" in project)))
@@ -713,7 +780,8 @@ const emptyState = (): ServerStateData => ({
   machines: [],
   projects: [],
   tasks: [],
-  sshHosts: []
+  sshHosts: [],
+  developerInstructions: []
 });
 
 const projectIdFor = (machineId: string, projectPath: string) =>
@@ -996,4 +1064,42 @@ const isStoredSshHost = (value: unknown): value is StoredSshHost => {
     && item.alias.trim().length > 0
     && typeof item.createdAt === "string"
     && typeof item.updatedAt === "string";
+};
+
+const normalizeStoredDeveloperInstruction = (value: unknown): unknown => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const item = value as Record<string, unknown>;
+  const now = new Date().toISOString();
+  const id = typeof item.id === "string" ? item.id.trim() : "";
+  const name = typeof item.name === "string" ? item.name.trim() : "";
+  const description = typeof item.description === "string" && item.description.trim() ? item.description.trim() : undefined;
+  const instructions = typeof item.instructions === "string" ? item.instructions.trim() : "";
+  return {
+    id,
+    name,
+    ...(description ? { description } : {}),
+    instructions,
+    createdAt: typeof item.createdAt === "string" ? item.createdAt : now,
+    updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : now
+  };
+};
+
+const isStoredDeveloperInstruction = (value: unknown): value is StoredDeveloperInstruction => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Partial<StoredDeveloperInstruction>;
+  return typeof item.id === "string"
+    && item.id.length > 0
+    && typeof item.name === "string"
+    && item.name.length > 0
+    && (item.description === undefined || typeof item.description === "string")
+    && typeof item.instructions === "string"
+    && item.instructions.length > 0
+    && typeof item.createdAt === "string"
+    && typeof item.updatedAt === "string";
+};
+
+const compareDeveloperInstructions = (left: StoredDeveloperInstruction, right: StoredDeveloperInstruction) => {
+  const nameCompare = left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+  if (nameCompare) return nameCompare;
+  return right.updatedAt.localeCompare(left.updatedAt);
 };

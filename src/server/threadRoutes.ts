@@ -5,6 +5,7 @@ import { defaultThreadHistoryPageSize, type ThreadHub } from "../core/threadHub.
 import {
   inputSchema,
   commitMessageGenerationSchema,
+  machineThreadInputSchema,
   threadApprovalDecisionSchema,
   threadGoalUpdateSchema,
   threadRenameSchema,
@@ -55,6 +56,7 @@ export type ThreadRoutesContext<
   publishProjects: () => void;
   releaseThreadRecordSubscription: (threadId: string) => void;
   retainThreadRecordSubscription: (threadId: string) => void;
+  resolveDeveloperInstructions: (id: string) => string | null;
   taskSnapshotEvent: () => TaskEvent;
   taskSubscribers: Set<(event: TaskEvent) => void>;
   threads: ThreadHub;
@@ -313,15 +315,28 @@ export const registerThreadRoutes = <
   });
 
   app.post("/api/machines/:machineId/threads", async (request, reply) => {
-    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
-    const payload = z.discriminatedUnion("action", [
-      z.object({ action: z.literal("new"), cwd: z.string().min(1).optional() }),
-      z.object({ action: z.literal("resume"), threadId: z.string().min(1), cwd: z.string().min(1).optional() })
-    ]).parse(request.body);
+    const params = z.object({ machineId: z.string().min(1) }).strict().parse(request.params);
+    const payload = machineThreadInputSchema.parse(request.body);
     try {
-      const thread = payload.action === "new"
-        ? await ctx.threads.startMachineThread(params.machineId, payload.cwd)
-        : await ctx.threads.resumeMachineThread(params.machineId, payload.threadId, payload.cwd);
+      let thread: ThreadDetail;
+      if (payload.action === "new") {
+        let developerInstructions: string | undefined;
+        if (payload.developerInstructionsId) {
+          const resolved = ctx.resolveDeveloperInstructions(payload.developerInstructionsId);
+          if (resolved === null) {
+            reply.code(404);
+            return { error: `Developer instruction template not found: ${payload.developerInstructionsId}` };
+          }
+          developerInstructions = resolved;
+        }
+        thread = await ctx.threads.startMachineThread(
+          params.machineId,
+          payload.cwd,
+          developerInstructions ? { developerInstructions } : undefined
+        );
+      } else {
+        thread = await ctx.threads.resumeMachineThread(params.machineId, payload.threadId, payload.cwd);
+      }
       ctx.publishProjects();
       return ctx.threads.getThreadPage(thread.threadId) satisfies ThreadDetail;
     } catch (error) {

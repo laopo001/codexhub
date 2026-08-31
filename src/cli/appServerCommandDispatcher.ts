@@ -7,10 +7,11 @@ import type {
   SessionModelCatalogResult,
   SessionPermissionProfilesResult,
   ThreadGoalUpdate,
-  ThreadRunOptions
+  ThreadRunOptions,
+  ThreadCreationOptions
 } from "../shared/threadTypes.js";
 
-type CommandContext = { commandId?: string; threadId?: string };
+type CommandContext = { commandId?: string; threadId?: string; creationOptions?: ThreadCreationOptions };
 
 type LoadedThread = {
   threadId: string;

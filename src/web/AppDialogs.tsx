@@ -34,6 +34,8 @@ import {
 } from "./helpers/composerInputHistory.js";
 import { writeImageToClipboard } from "./helpers/imageClipboard.js";
 import { ConnectionsPanel } from "./ConnectionsPanel.js";
+import { DeveloperInstructionsSettings } from "./DeveloperInstructionsSettings.js";
+import { ThreadPickerInstructions } from "./ThreadPickerInstructions.js";
 import { TaskDialog } from "./TaskDialog.js";
 import type { ModelSelection, ReasoningSelection, ServiceTierSelection } from "./types.js";
 import type { AppDialogsViewModel } from "./viewModel.js";
@@ -106,7 +108,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   } = viewModel;
   const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
   const [restartState, setRestartState] = React.useState<"idle" | "restarting" | "error">("idle");
-  const [settingsSection, setSettingsSection] = React.useState<"general" | "connections" | "inputHistory">("general");
+  const [settingsSection, setSettingsSection] = React.useState<"general" | "developerInstructions" | "connections" | "inputHistory">("general");
   const [notificationPersistAfterMinutesDraft, setNotificationPersistAfterMinutesDraft] = React.useState(
     String(appSettings.taskCompleteNotificationPersistAfterMinutes)
   );
@@ -380,6 +382,14 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 </button>
                 <button
                   type="button"
+                  className={settingsSection === "developerInstructions" ? "active" : ""}
+                  onClick={() => setSettingsSection("developerInstructions")}
+                  aria-current={settingsSection === "developerInstructions" ? "page" : undefined}
+                >
+                  Developer instructions
+                </button>
+                <button
+                  type="button"
                   className={settingsSection === "connections" ? "active" : ""}
                   onClick={() => setSettingsSection("connections")}
                   aria-current={settingsSection === "connections" ? "page" : undefined}
@@ -513,6 +523,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                       </div>
                     ) : null}
                   </div>
+                ) : settingsSection === "developerInstructions" ? (
+                  <DeveloperInstructionsSettings />
                 ) : settingsSection === "connections" ? (
                   <ConnectionsPanel viewModel={viewModel} />
                 ) : (
@@ -592,23 +604,56 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
               </div>
             </header>
-            <div className="threadPickerList" role="listbox" aria-label="Thread candidates">
-              <button
-                type="button"
-                className="threadPickerRow newThread"
-                onClick={() => void createMachineThread()}
-                disabled={!threadPickerReady || threadPicker.acting !== null}
-              >
-                <span className="threadPickerRowTitle">New thread</span>
-                <span className="threadPickerRowMeta">
-                  {threadPicker.preparingRuntime
-                    ? "Available when the Codex runtime is ready"
-                    : threadPicker.acting === "new"
-                      ? "creating"
-                      : "Start a new Codex thread"}
-                </span>
-              </button>
-              <details className="threadPickerWorktree">
+            <div
+              className="threadPickerList"
+              role={threadPicker.selectingInstructions ? undefined : "listbox"}
+              aria-label={threadPicker.selectingInstructions ? undefined : "Thread candidates"}
+            >
+              {threadPicker.selectingInstructions ? (
+                <ThreadPickerInstructions
+                  disabled={!threadPickerReady}
+                  acting={threadPicker.acting}
+                  onBack={() => setThreadPicker((current) => current ? { ...current, selectingInstructions: false } : current)}
+                  onSelect={(developerInstructionsId) => void createMachineThread({ developerInstructionsId })}
+                  onOpenSettings={() => {
+                    setThreadPicker(null);
+                    setSettingsSection("developerInstructions");
+                    setSettingsDialogOpen(true);
+                  }}
+                />
+              ) : (
+                <>
+                  <div className="threadPickerNewRow">
+                    <button
+                      type="button"
+                      className="threadPickerRow newThread"
+                      onClick={() => void createMachineThread()}
+                      disabled={!threadPickerReady || threadPicker.acting !== null}
+                    >
+                      <span className="threadPickerRowTitle">New thread</span>
+                      <span className="threadPickerRowMeta">
+                        {threadPicker.preparingRuntime
+                          ? "Available when the Codex runtime is ready"
+                          : threadPicker.acting === "new"
+                            ? "creating"
+                            : "Start a new Codex thread"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="threadPickerRow newThreadWithInstructions"
+                      onClick={() => setThreadPicker((current) => current ? { ...current, selectingInstructions: true } : current)}
+                      disabled={!threadPickerReady || threadPicker.acting !== null}
+                    >
+                      <span className="threadPickerRowTitle">New with instructions</span>
+                      <span className="threadPickerRowMeta">
+                        {threadPicker.preparingRuntime
+                          ? "Available when the Codex runtime is ready"
+                          : "Choose instruction template"}
+                      </span>
+                    </button>
+                  </div>
+                  <details className="threadPickerWorktree">
                 <summary className="threadPickerWorktreeSummary">
                   <span className="threadPickerWorktreeTitle">New worktree thread</span>
                   <span className="threadPickerWorktreeMeta">Create an isolated branch</span>
@@ -723,8 +768,10 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                       {acting ? <strong>restoring</strong> : null}
                     </span>
                   </button>
-                );
-              })}
+                  );
+                })}
+                </>
+              )}
             </div>
             {threadPicker.error ? <div className="projectActionError">{threadPicker.error}</div> : null}
           </section>

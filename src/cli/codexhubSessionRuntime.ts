@@ -61,6 +61,7 @@ import type {
   SessionRegistration,
   ThreadBackgroundTerminal,
   ThreadCandidateSummary,
+  ThreadCreationOptions,
   ThreadRunOptions
 } from "../shared/threadTypes.js";
 
@@ -711,12 +712,14 @@ class CodexAppServerBridge {
   private async startNewThread(
     cwd: string,
     model: string | null | undefined,
-    command: { commandId?: string; threadId?: string }
+    command: { commandId?: string; threadId?: string; creationOptions?: ThreadCreationOptions }
   ) {
+    const developerInstructions = command.creationOptions?.developerInstructions?.trim() || undefined;
     const result = asRecord(await this.request("thread/start", {
       cwd,
       ...(model === undefined ? {} : { model }),
       ...permissionParams(this.options),
+      ...(developerInstructions ? { developerInstructions } : {}),
       threadSource: "user"
     }, command));
     const thread = asRecord(result?.thread);

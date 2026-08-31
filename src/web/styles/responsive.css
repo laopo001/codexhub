@@ -190,6 +190,10 @@
     padding: 7px 9px;
   }
 
+  .threadPickerNewRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .threadPickerWorktreeGrid {
     grid-template-columns: minmax(0, 1fr);
   }

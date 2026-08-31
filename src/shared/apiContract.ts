@@ -16,6 +16,7 @@ import type {
   ProjectSummary,
   ServerConfig,
   ServerUiConfig,
+  StoredDeveloperInstruction,
   StoredMachine,
   StoredProject,
   StoredTask,
@@ -67,6 +68,7 @@ export type {
   ProjectSummary,
   ServerConfig,
   ServerUiConfig,
+  StoredDeveloperInstruction,
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
   CommandPalette,
@@ -92,6 +94,20 @@ export type {
   ThreadSummary,
   ThreadUsage,
   Usage
+};
+
+/** Developer Instructions 模板摘要模型 */
+export type DeveloperInstructionSummary = StoredDeveloperInstruction;
+
+export type DeveloperInstructionsPayload = {
+  templates?: DeveloperInstructionSummary[];
+};
+
+export type DeveloperInstructionMutationPayload = {
+  ok?: boolean;
+  template?: DeveloperInstructionSummary;
+  deleted?: boolean;
+  error?: string;
 };
 
 /** OpenAI reasoning effort 的 Web/API 别名。 */
@@ -1095,6 +1111,42 @@ export const taskUpdateSchema = taskCreateSchema.partial();
 export const projectUpdateSchema = z.object({
   pinned: z.boolean().nullable().optional()
 }).strict();
+
+export const developerInstructionIdSchema = z.string().trim().min(1).max(200);
+export const developerInstructionNameSchema = z.string().trim().min(1).max(200);
+export const developerInstructionDescriptionSchema = z.string().trim().max(2000).optional();
+export const developerInstructionContentSchema = z.string().trim().min(1).max(32_768);
+
+export const developerInstructionCreateSchema = z.object({
+  name: developerInstructionNameSchema,
+  description: developerInstructionDescriptionSchema,
+  instructions: developerInstructionContentSchema
+}).strict();
+
+export const developerInstructionUpdateSchema = z.object({
+  name: developerInstructionNameSchema.optional(),
+  description: developerInstructionDescriptionSchema.nullable(),
+  instructions: developerInstructionContentSchema.optional()
+}).strict().refine((data) => Object.keys(data).length > 0, {
+  message: "At least one field must be provided for update"
+});
+
+export const machineThreadInputSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("new"),
+    cwd: z.string().min(1).optional(),
+    developerInstructionsId: developerInstructionIdSchema.optional()
+  }).strict(),
+  z.object({
+    action: z.literal("resume"),
+    threadId: z.string().min(1),
+    cwd: z.string().min(1).optional()
+  }).strict()
+]);
+
+export type MachineThreadInput = z.infer<typeof machineThreadInputSchema>;
+export type DeveloperInstructionCreateInput = z.infer<typeof developerInstructionCreateSchema>;
+export type DeveloperInstructionUpdateInput = z.infer<typeof developerInstructionUpdateSchema>;
 
 /** 用户输入 payload，可为纯文本或文本/图片混合输入。 */
 export type ProxyInputPayload = z.infer<typeof inputSchema>;

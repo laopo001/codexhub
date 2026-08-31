@@ -64,7 +64,11 @@ try {
     [/thread: Thread/, "ThreadResumeResponse.thread must be required"]
   ]);
   await assertSchema("v2/ThreadResumeParams.ts", [
-    [/excludeTurns\?: boolean/, "ThreadResumeParams.excludeTurns must be available"]
+    [/excludeTurns\?: boolean/, "ThreadResumeParams.excludeTurns must be available"],
+    [/developerInstructions\?: string \| null/, "thread/resume must expose developerInstructions"]
+  ]);
+  await assertSchema("v2/ThreadForkParams.ts", [
+    [/developerInstructions\?: string \| null/, "thread/fork must expose developerInstructions"]
   ]);
   await assertSchema("v2/ThreadUnsubscribeParams.ts", [
     [/threadId: string/, "ThreadUnsubscribeParams.threadId must be required"]
@@ -104,7 +108,8 @@ try {
   ]);
   await assertSchema("v2/ThreadStartParams.ts", [
     [/approvalsReviewer\?: ApprovalsReviewer \| null/, "thread/start must expose approvalsReviewer"],
-    [/permissions\?: string \| null/, "thread/start must expose named permissions"]
+    [/permissions\?: string \| null/, "thread/start must expose named permissions"],
+    [/developerInstructions\?: string \| null/, "thread/start must expose developerInstructions"]
   ]);
   await assertSchema("v2/ThreadBackgroundTerminal.ts", [
     [/itemId: string/, "background terminals must expose itemId"],
@@ -130,7 +135,8 @@ try {
   ]);
   await assertSchema("v2/TurnStartParams.ts", [
     [/approvalsReviewer\?: ApprovalsReviewer \| null/, "turn/start must expose approvalsReviewer"],
-    [/permissions\?: string \| null/, "turn/start must expose named permissions"]
+    [/permissions\?: string \| null/, "turn/start must expose named permissions"],
+    [/^(?![\s\S]*developerInstructions)[\s\S]*$/, "turn/start must not expose developerInstructions"]
   ]);
   await assertSchemaVariant("v2/ThreadItem.ts", "subAgentActivity", [
     [/\bid\s*:\s*string\b/, "ThreadItem.subAgentActivity.id must be required"],

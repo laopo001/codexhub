@@ -2,7 +2,12 @@ import type {
   HealthPayload,
   FilePreviewPayload,
   MachineDirectoryListing,
+  MachineThreadInput,
   MachinesPayload,
+  DeveloperInstructionsPayload,
+  DeveloperInstructionMutationPayload,
+  DeveloperInstructionCreateInput,
+  DeveloperInstructionUpdateInput,
   ParentRegistrationConnectInput,
   ParentRegistrationPayload,
   PetMutationPayload,
@@ -135,9 +140,7 @@ export type ProjectThreadStartInput = {
   source?: { kind: "vscode" | "electron"; groupId: string; label?: string };
 };
 
-export type MachineThreadInput =
-  | { action: "new"; cwd?: string }
-  | { action: "resume"; threadId: string; cwd?: string };
+export type { MachineThreadInput };
 
 export type ThreadForkInput = {
   messageId: string;
@@ -290,5 +293,13 @@ export const apiRoutes = {
     (alias) => `/api/ssh/hosts/${encode(alias)}`
   ),
   connectParentRegistration: post<ParentRegistrationConnectInput, ParentRegistrationPayload>("/api/registered/parent"),
-  disconnectParentRegistration: del<ParentRegistrationPayload>("/api/registered/parent")
+  disconnectParentRegistration: del<ParentRegistrationPayload>("/api/registered/parent"),
+  developerInstructions: get<DeveloperInstructionsPayload>("/api/developer-instructions"),
+  createDeveloperInstruction: post<DeveloperInstructionCreateInput, DeveloperInstructionMutationPayload>("/api/developer-instructions"),
+  updateDeveloperInstruction: patch<DeveloperInstructionUpdateInput, DeveloperInstructionMutationPayload, (id: string) => string>(
+    (id) => `/api/developer-instructions/${encode(id)}`
+  ),
+  deleteDeveloperInstruction: del<DeveloperInstructionMutationPayload, (id: string) => string>(
+    (id) => `/api/developer-instructions/${encode(id)}`
+  )
 } as const;

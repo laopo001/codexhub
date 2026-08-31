@@ -84,6 +84,11 @@ export type RuntimeSummary = {
   threads: ThreadSummary[];
 };
 
+/** thread 创建阶段专用参数，仅在 thread/start 注入一次；创建后锁定不可修改。 */
+export type ThreadCreationOptions = {
+  developerInstructions?: string;
+};
+
 /** turn/start 可选参数。模型/effort/tier/权限可延续；Plan 走官方 collaborationMode 后复位为 default，Ultra 只由 effort 表达。 */
 export type ThreadRunOptions = {
   model?: string | null;
@@ -406,6 +411,7 @@ export type SessionCommand = {
   goal?: ThreadGoalUpdate;
   reviewTarget?: { type: "uncommittedChanges" };
   options?: ThreadRunOptions;
+  creationOptions?: ThreadCreationOptions;
 };
 
 /** list_threads 命令返回的 thread 候选集合。 */

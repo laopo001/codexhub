@@ -88,6 +88,7 @@ import type {
   SessionThreadCandidatesResult,
   RuntimeStreamEvent,
   RuntimeSummary,
+  ThreadCreationOptions,
   ThreadDetail,
   ThreadHistoryPageInfo,
   ThreadQueueItem,
@@ -740,7 +741,11 @@ export class ThreadHub {
     return { message };
   }
 
-  async startSessionThread(sessionId: string, workingDirectory?: string): Promise<ThreadDetail> {
+  async startSessionThread(
+    sessionId: string,
+    workingDirectory?: string,
+    creationOptions?: ThreadCreationOptions
+  ): Promise<ThreadDetail> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
     const commandId = randomUUID();
@@ -749,13 +754,22 @@ export class ThreadHub {
       commandId,
       type: "start_thread",
       workingDirectory: cwd,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...(creationOptions ? { creationOptions } : {})
     });
     return await promise;
   }
 
-  async startMachineThread(machineId: string, workingDirectory?: string): Promise<ThreadDetail> {
-    return await this.startSessionThread(this.requireOnlineRuntimeSession(machineId).sessionId, workingDirectory);
+  async startMachineThread(
+    machineId: string,
+    workingDirectory?: string,
+    creationOptions?: ThreadCreationOptions
+  ): Promise<ThreadDetail> {
+    return await this.startSessionThread(
+      this.requireOnlineRuntimeSession(machineId).sessionId,
+      workingDirectory,
+      creationOptions
+    );
   }
 
   async resumeSessionThread(sessionId: string, threadId: string, workingDirectory?: string): Promise<ThreadDetail> {

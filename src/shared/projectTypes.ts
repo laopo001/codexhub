@@ -147,6 +147,16 @@ export type StoredParentRegistration = {
   updatedAt: string;
 };
 
+/** config.yaml 中持久化的 Developer Instructions 模板。 */
+export type StoredDeveloperInstruction = {
+  id: string;
+  name: string;
+  description?: string;
+  instructions: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** config.yaml 的持久化结构。 */
 export type ServerStateData = {
   version: 1;
@@ -158,6 +168,7 @@ export type ServerStateData = {
   projects: StoredProject[];
   tasks: StoredTask[];
   sshHosts: StoredSshHost[];
+  developerInstructions: StoredDeveloperInstruction[];
 };
 
 /** Web/API 展示用项目投影。project 只是 machineId + path 的控制面元数据。 */

@@ -106,7 +106,7 @@ export type ProjectActions = {
   openSelectedProjectThreadPicker: () => Promise<void>;
   activateMachineThread: (machineId: string, threadId: string) => Promise<void>;
   threadIsOpenForMachine: (machineId: string, threadId: string) => boolean;
-  createMachineThread: () => Promise<void>;
+  createMachineThread: (options?: { developerInstructionsId?: string }) => Promise<void>;
   createWorktreeThread: () => Promise<void>;
   chooseThreadCandidate: (candidate: CodexThreadCandidate) => Promise<void>;
   startProjectThread: (projectPath: string, machineId?: string, options?: StartProjectThreadOptions) => Promise<boolean>;
@@ -421,7 +421,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     );
   };
 
-  const createMachineThread = async () => {
+  const createMachineThread = async (options?: { developerInstructionsId?: string }) => {
     const picker = ctx.threadPicker;
     if (!picker || picker.preparingRuntime || !picker.machineId) return;
     const machineId = picker.machineId;
@@ -429,7 +429,8 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     try {
       const thread = await apiRouteJson(apiRoutes.createMachineThread, machineId, {
         action: "new",
-        cwd: picker.workingDirectory
+        cwd: picker.workingDirectory,
+        ...(options?.developerInstructionsId ? { developerInstructionsId: options.developerInstructionsId } : {})
       });
       ctx.setThreadPicker(null);
       await activateMachineThread(machineId, thread.threadId);

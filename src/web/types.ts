@@ -160,6 +160,7 @@ export type ThreadPickerState = {
   worktreeBranch: string;
   worktreeBaseRef: string;
   worktreePath: string;
+  selectingInstructions?: boolean;
 };
 
 export type ProjectsPayload = ApiProjectsPayload;

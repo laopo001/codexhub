@@ -1957,3 +1957,302 @@
   background: #f8faf5;
   padding: 8px 10px;
 }
+
+/* Thread Picker New Actions */
+.threadPickerNewRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+}
+
+.threadPickerRow.newThreadWithInstructions {
+  border-color: #3b7a8a;
+  background: #f0f7f9;
+}
+
+.threadPickerRow.newThreadWithInstructions:hover,
+.threadPickerRow.newThreadWithInstructions:focus-visible {
+  border-color: #2b6170;
+  background: #e4f2f5;
+}
+
+/* Thread Picker Instructions Sub-view */
+.threadPickerInstructions {
+  display: grid;
+  gap: 8px;
+  min-height: 180px;
+}
+
+.threadPickerInstructionsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.threadPickerBackButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #cbd6c7;
+  border-radius: 6px;
+  background: #fbfcf8;
+  color: #315b36;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.threadPickerBackButton:hover:not(:disabled) {
+  background: #eef5ea;
+  border-color: #a8bfa4;
+}
+
+.threadPickerInstructionsNotice {
+  color: #66715f;
+  font-size: 11px;
+}
+
+.threadPickerInstructionsSearch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dfe5dc;
+  border-radius: 6px;
+  background: #fbfcf8;
+  padding: 4px 8px;
+  color: #66715f;
+}
+
+.threadPickerInstructionsSearch input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 12px;
+  color: #17211a;
+}
+
+.threadPickerInstructionsList {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.threadPickerRow.instructionTemplateRow {
+  border-color: #d5ded1;
+  cursor: pointer;
+}
+
+.threadPickerRow.instructionTemplateRow:hover {
+  border-color: #3b7a8a;
+  background: #f0f7f9;
+}
+
+.threadPickerInlineSettingsBtn {
+  margin-top: 6px;
+  border: 1px solid #3b7a8a;
+  border-radius: 6px;
+  background: #f0f7f9;
+  color: #245866;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+/* Settings Developer Instructions Panel */
+.developerInstructionsSettings {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.devInstructionsNotice {
+  border-radius: 8px;
+  border: 1px solid #d4dfd0;
+  background: #f4f8f2;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #405244;
+}
+
+.devInstructionsNotice strong {
+  display: block;
+  font-size: 13px;
+  color: #1b2e20;
+  margin-bottom: 2px;
+}
+
+.devInstructionsNotice p {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.devInstructionsListWrapper {
+  display: grid;
+  gap: 10px;
+}
+
+.devInstructionsToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: #66715f;
+}
+
+.devInstructionsToolbar .addTemplateBtn {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+}
+
+.devInstructionsGrid {
+  display: grid;
+  gap: 8px;
+}
+
+.devInstructionCard {
+  border: 1px solid #dbe3d8;
+  border-radius: 8px;
+  background: #fdfefc;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.devInstructionCardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.devInstructionCardHeader strong {
+  font-size: 13px;
+  color: #17211a;
+}
+
+.devInstructionDesc {
+  font-size: 12px;
+  color: #66715f;
+}
+
+.devInstructionCardBody {
+  max-height: 80px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #f5f8f3;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.devInstructionCardBody pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #3b4739;
+  font-family: inherit;
+}
+
+.devInstructionCardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #8a9586;
+}
+
+.devInstructionCardActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.developerInstructionsSettings .textButton {
+  border: none;
+  background: transparent;
+  color: #2f7d5a;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.developerInstructionsSettings .textButton:hover {
+  text-decoration: underline;
+}
+
+.developerInstructionsSettings .textButton.danger {
+  color: #c94a29;
+}
+
+.developerInstructionsSettings .textButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.devInstructionForm {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #cbd6c7;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+.devInstructionForm h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #17211a;
+}
+
+.devInstructionForm label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #51604f;
+  font-weight: 600;
+}
+
+.devInstructionForm input,
+.devInstructionForm textarea {
+  border: 1px solid #cbd6c7;
+  border-radius: 6px;
+  background: #fbfcf8;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #17211a;
+  font-family: inherit;
+}
+
+.devInstructionForm textarea {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.4;
+}
+
+.devInstructionFormActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.devInstructionsEmpty {
+  text-align: center;
+  padding: 24px 12px;
+  color: #66715f;
+  font-size: 13px;
+  background: #f8faf6;
+  border-radius: 8px;
+  border: 1px dashed #cbd6c7;
+}

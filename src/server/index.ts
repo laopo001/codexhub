@@ -55,6 +55,7 @@ import { registerServerLifecycle } from "./serverLifecycle.js";
 import { registerEmbeddedSurfaceRoutes } from "./vscodeSurfaceRoutes.js";
 import { TunneledSessionManager } from "./tunneledSessionManager.js";
 import { registerSystemRoutes } from "./systemRoutes.js";
+import { registerDeveloperInstructionRoutes } from "./developerInstructionRoutes.js";
 import { registerPetRoutes } from "./petRoutes.js";
 import { registerConnectionRoutes } from "./connectionRoutes.js";
 import { registerFileStreamRoutes } from "./fileStreamRoutes.js";
@@ -860,6 +861,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     updateUiConfig: (ui) => state.updateUiConfig(ui)
   });
 
+  registerDeveloperInstructionRoutes(app, { state });
+
   registerPetRoutes(app, pets);
 
   registerEmbeddedSurfaceRoutes(app, {
@@ -880,6 +883,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     publishProjects,
     releaseThreadRecordSubscription,
     retainThreadRecordSubscription,
+    resolveDeveloperInstructions: (id: string) => {
+      const template = state.getDeveloperInstruction(id);
+      return template?.instructions ?? null;
+    },
     taskSnapshotEvent: () => taskScheduler.snapshotEvent(),
     taskSubscribers: taskScheduler.subscribers,
     threads,
