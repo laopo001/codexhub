@@ -127,6 +127,10 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 9. Thread Model 弹窗的 model/reasoning/service tier 选项只使用当前在线 app-server `model/list` catalog 或 CodexHub 对该 runtime 响应的带时间戳缓存；缓存来源必须明确显示并允许强制刷新。catalog 不可用且没有缓存时显示加载/错误状态并禁用选择，不提供静态 fallback，也不能把 catalog 保存进 `config.yaml`。
 10. Composer 权限菜单的 permission profile 只使用当前在线 app-server `permissionProfile/list` catalog；Web 在 Composer 挂载后后台加载，并在当前页面按 machine/cwd 复用，不做后端持久缓存。允许展示协议固定的 approval policy / reviewer 枚举，但不能为 profile 提供本地静态 fallback，也不能把 profile catalog 保存进 `config.yaml`。
 11. UI 文案和交互不要重新暴露已删除概念：worker、instance、project rename、project thread/history count、per-project runtime restart/stop。
+12. 产品能力默认按 browser-first 实现：普通顶层 Web、VSCode WebView 和 Electron renderer 必须复用同一套 Web 状态、effects、actions、HTTP/WebSocket 协议并直接与 authority 交互。不能因为 VSCode/Electron 有宿主容器，就把 Web 能直接完成的 heartbeat、轮询、重试、恢复状态机、业务 API 调用或缓存再实现一份到 Extension Host、Electron main 或 preload。
+13. 普通 Web 没有宿主容器，因此任何新功能在设计时都必须先回答“没有 VSCode/Electron bridge 时如何通过 Web + authority 完成”。只要浏览器平台和 authority API 足以完成，canonical owner 就必须在共享 Web/authority；`surface=vscode` / `surface=electron` 只能选择不可避免的宿主适配，不能成为平行业务实现开关。
+14. 只有浏览器确实无法提供的 OS/宿主能力才允许走 bridge，例如 authority 进程首次启动与失效恢复、workspace/SCM 元数据采集、原生窗口与托盘、系统通知、宿主文件打开、桌面宠物输入区域和 `asExternalUri`。bridge 必须保持薄：验证来源与 payload、调用一个宿主原语、把结果返回 Web；不得持有与 Web 重复的产品状态、timer、API workflow 或重试策略。新增 bridge 时必须在代码和测试中说明普通 Web 为何无法直接完成，并验证 bridge unavailable 时的 Web 行为。
+15. 审阅 VSCode/Electron 改动时必须搜索共享 Web/authority 是否已有同义实现；优先顺序是复用 Web/authority → 扩展共享协议 → 最薄宿主 bridge。验收至少覆盖普通顶层 Web 无宿主运行，以及 VSCode/Electron 只做适配后仍使用相同核心路径；不能只用宿主 smoke 证明功能成立。
 
 ## 插件和集成
 
@@ -156,6 +160,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 7. VSCode extension 启用和普通 Web 相同的 SSH/tasks/integrations/Registered 能力；用户显式保存 transient project 后才写入共享 `config.yaml`，窗口自动 workspace project 不应污染持久 project list。
 8. VSCode 打包由 `scripts/build-vscode.ts` 负责：先完整 build，再分别将 extension 和 detached authority service 打成 Node CJS bundle、把 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；staging 必须包含 `authority-service.cjs`、`dist`、`dist-node/ssh`、media、README、LICENSE。
 9. Docker 镜像运行 server/Web/API，默认应关闭内嵌 local machine，由宿主机、registered machine 或 SSH 接入真实 machine runtime。
+10. `targets/vscode` 和 `targets/electron` 的长期目标是只保留 authority bootstrap/probe/recovery、surface/workspace 注册、Web 容器装载和不可替代的原生能力。发现宿主代码新增 Web 可完成的网络请求、heartbeat/polling timer、业务状态机、模型缓存、thread/project/task 操作或与 Web 相同的恢复分支时，应视为所有权回退并迁回共享 Web/authority，而不是继续在两个宿主中同步维护。
 
 ## 发布和验证
 
