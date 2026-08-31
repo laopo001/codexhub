@@ -39,7 +39,6 @@ import type {
   RuntimeSummary,
   ThreadDetail,
   ThreadRenameDialogState,
-  ThreadRenameGenerationRequest,
 } from "../types.js";
 import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
 import { apiErrorDetails } from "../helpers/apiErrors.js";
@@ -59,7 +58,7 @@ type ThreadActionsContext = {
   forkingMessageKey: string;
   goalDialog: GoalDialogState | null;
   threadRenameDialog: ThreadRenameDialogState | null;
-  threadRenameGenerationRequests: React.MutableRefObject<Map<string, ThreadRenameGenerationRequest>>;
+  threadRenameRequestTokens: React.MutableRefObject<Map<string, object>>;
   latestRequestedThreadId: React.MutableRefObject<string>;
   notificationRecordsByThread: React.MutableRefObject<Map<string, CodexRecord[]>>;
   openThreadIdsRef: React.MutableRefObject<Set<string>>;
@@ -135,7 +134,6 @@ export type ThreadActions = {
   clearThreadGoal: (threadId: string) => Promise<void>;
   saveGoalDialog: () => Promise<void>;
   saveThreadRenameDialog: () => Promise<void>;
-  saveThreadRenameDialogInBackground: () => void;
 };
 
 export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActionsDependencies): ThreadActions => {
@@ -425,15 +423,6 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
   };
 
-  const saveThreadRenameDialogInBackground = () => {
-    const dialog = ctx.threadRenameDialog;
-    if (!dialog?.generating) return;
-    const request = ctx.threadRenameGenerationRequests.current.get(dialog.threadId);
-    if (!request) return;
-    request.backgroundSave = true;
-    ctx.setThreadRenameDialog(null);
-  };
-
   function subscribeThread(threadId: string, after: number) {
     const subscribedAfter = Math.max(after, ctx.threadLastSeqs.current.get(threadId) ?? 0);
     ctx.threadLastSeqs.current.set(threadId, subscribedAfter);
@@ -556,26 +545,18 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
         saving: false,
         error: ""
       });
-      const generationRequest: ThreadRenameGenerationRequest = { backgroundSave: false };
-      ctx.threadRenameGenerationRequests.current.set(threadId, generationRequest);
+      const requestToken = {};
+      ctx.threadRenameRequestTokens.current.set(threadId, requestToken);
       void apiRouteJson(apiRoutes.suggestThreadTitle, threadId).then((payload) => {
         const title = payload.title?.trim();
         if (!title) throw new Error(payload.error || "Codex did not generate a title");
-        if (ctx.threadRenameGenerationRequests.current.get(threadId) !== generationRequest) return;
-        if (generationRequest.backgroundSave) {
-          return apiRouteJson(apiRoutes.renameThread, threadId, { title }).then((renamed) => {
-            if (renamed.thread) applyThreadDetail(renamed.thread);
-          });
-        }
-        ctx.setThreadRenameDialog((current) => current?.threadId === threadId
+        if (ctx.threadRenameRequestTokens.current.get(threadId) !== requestToken) return;
+        ctx.setThreadRenameDialog((current) => current?.threadId === threadId && current.generating
           ? { ...current, title, generating: false }
           : current);
       }).catch((error) => {
-        if (generationRequest.backgroundSave) {
-          deps.showActionError(`${threadId}:rename-background`, "Background rename failed", apiErrorDetails(error).message);
-          return;
-        }
-        ctx.setThreadRenameDialog((current) => current?.threadId === threadId
+        if (ctx.threadRenameRequestTokens.current.get(threadId) !== requestToken) return;
+        ctx.setThreadRenameDialog((current) => current?.threadId === threadId && current.generating
           ? {
               ...current,
               title: threadDisplayTitle(openThread),
@@ -584,8 +565,8 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
             }
           : current);
       }).finally(() => {
-        if (ctx.threadRenameGenerationRequests.current.get(threadId) === generationRequest) {
-          ctx.threadRenameGenerationRequests.current.delete(threadId);
+        if (ctx.threadRenameRequestTokens.current.get(threadId) === requestToken) {
+          ctx.threadRenameRequestTokens.current.delete(threadId);
         }
       });
       return;
@@ -815,7 +796,6 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     updateThreadGoal,
     clearThreadGoal,
     saveGoalDialog,
-    saveThreadRenameDialog,
-    saveThreadRenameDialogInBackground
+    saveThreadRenameDialog
   };
 };

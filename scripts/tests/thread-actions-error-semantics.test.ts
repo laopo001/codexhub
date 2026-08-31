@@ -84,7 +84,6 @@ const fixture = async (
   const latestRequestedThreadId = { current: "" };
   let projectUpdates = 0;
   let threadRenameDialog: import("../../src/web/types.js").ThreadRenameDialogState | null = null;
-  const threadRenameGenerationRequests = { current: new Map() };
   currentFetch = fetchImpl;
   const context = {
     activeTabThreadId: initialActiveTabThreadId,
@@ -103,7 +102,7 @@ const fixture = async (
     get threadRenameDialog() {
       return threadRenameDialog;
     },
-    threadRenameGenerationRequests,
+    threadRenameRequestTokens: { current: new Map() },
     latestRequestedThreadId,
     notificationRecordsByThread: { current: new Map() },
     openThreadIdsRef: { current: new Set(options.workspaceOpen === false ? [] : [threadId]) },
@@ -365,7 +364,7 @@ test("failed active cleanup clears the current tab even after a newer request cl
   assert.deepEqual(activeTabChanges, [""]);
 });
 
-test("background rename reuses the in-flight suggestion and saves after closing the dialog", async () => {
+test("/rename opens generating dialog, fills suggestion, and saves explicitly", async () => {
   let resolveSuggestion!: (response: Response) => void;
   const suggestion = new Promise<Response>((resolve) => {
     resolveSuggestion = resolve;
@@ -396,22 +395,91 @@ test("background rename reuses the in-flight suggestion and saves after closing 
   draft.set(threadId, "/rename");
   await actions.send(threadId);
   assert.equal(threadRenameDialog()?.generating, true);
-  actions.saveThreadRenameDialogInBackground();
-  assert.equal(threadRenameDialog(), null);
+  assert.equal(threadRenameDialog()?.title, "");
 
-  resolveSuggestion(new Response(JSON.stringify({ title: "后台生成标题" }), {
+  resolveSuggestion(new Response(JSON.stringify({ title: "建议新标题" }), {
     status: 200,
     headers: { "content-type": "application/json" }
   }));
-  for (let attempt = 0; attempt < 20 && requests.length < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 20 && threadRenameDialog()?.generating; attempt += 1) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
 
+  assert.equal(threadRenameDialog()?.generating, false);
+  assert.equal(threadRenameDialog()?.title, "建议新标题");
+  assert.deepEqual(requests, [
+    { url: `/api/threads/${threadId}/name/suggest`, method: "POST" }
+  ]);
+
+  await actions.saveThreadRenameDialog();
+  assert.equal(threadRenameDialog(), null);
   assert.deepEqual(requests, [
     { url: `/api/threads/${threadId}/name/suggest`, method: "POST" },
-    { url: `/api/threads/${threadId}/name`, method: "PATCH", body: { title: "后台生成标题" } }
+    { url: `/api/threads/${threadId}/name`, method: "PATCH", body: { title: "建议新标题" } }
   ]);
   assert.deepEqual(shownErrors, []);
+});
+
+test("/rename stale suggestion response is discarded when dialog is reopened with a new request token", async () => {
+  let resolveSuggestion1!: (response: Response) => void;
+  const suggestion1 = new Promise<Response>((resolve) => {
+    resolveSuggestion1 = resolve;
+  });
+  let resolveSuggestion2!: (response: Response) => void;
+  const suggestion2 = new Promise<Response>((resolve) => {
+    resolveSuggestion2 = resolve;
+  });
+
+  let suggestCount = 0;
+  const { actions, draft, shownErrors, threadId, threadRenameDialog } = await fixture(
+    false,
+    "chat",
+    async (input) => {
+      const url = String(input);
+      if (url.endsWith("/name/suggest")) {
+        suggestCount += 1;
+        return suggestCount === 1 ? await suggestion1 : await suggestion2;
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }
+  );
+
+  // 1. 发起第一次 /rename
+  draft.set(threadId, "/rename");
+  await actions.send(threadId);
+  assert.equal(threadRenameDialog()?.generating, true);
+
+  // 2. 重新在同一个 thread 发起 /rename（作废 token 1 并生成 token 2）
+  draft.set(threadId, "/rename");
+  await actions.send(threadId);
+  assert.equal(threadRenameDialog()?.generating, true);
+
+  // 3. 第一次请求现在返回（应被丢弃）
+  resolveSuggestion1(new Response(JSON.stringify({ title: "Stale Suggestion 1" }), {
+    status: 200,
+    headers: { "content-type": "application/json" }
+  }));
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  // 对话框不应被旧响应污染
+  assert.equal(threadRenameDialog()?.generating, true);
+  assert.equal(threadRenameDialog()?.title, "");
+
+  // 4. 第二次请求返回
+  resolveSuggestion2(new Response(JSON.stringify({ title: "Fresh Suggestion 2" }), {
+    status: 200,
+    headers: { "content-type": "application/json" }
+  }));
+  for (let attempt = 0; attempt < 20 && threadRenameDialog()?.generating; attempt += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(threadRenameDialog()?.generating, false);
+  assert.equal(threadRenameDialog()?.title, "Fresh Suggestion 2");
+  assert.deepEqual(shownErrors, []);
+
+  // 验证 saveThreadRenameDialogInBackground 符号已完全删除
+  assert.equal("saveThreadRenameDialogInBackground" in actions, false);
 });
 
 const conversationRecord = (

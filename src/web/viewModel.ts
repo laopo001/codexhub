@@ -278,7 +278,6 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
   saveGoalDialog: () => MaybePromise;
   saveThreadRenameDialog: () => MaybePromise;
-  saveThreadRenameDialogInBackground: () => void;
   send: (threadId: string) => MaybePromise;
   subagentThreadDialog: SubagentThreadDialogState | null;
   threadModelDialogOpen: boolean;
@@ -479,7 +478,6 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "retryModelCatalog"
   | "saveGoalDialog"
   | "saveThreadRenameDialog"
-  | "saveThreadRenameDialogInBackground"
   | "threadModelDialogOpen"
   | "threadRenameDialog"
   | "threadTabContextMenu"
@@ -598,7 +596,7 @@ const dialogKeys = [
   "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "threadModelDialogModelSelection",
   "threadModelDialogReasoningSelection", "threadModelDialogServiceTierSelection", "modelOptions", "reasoningOptions",
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
-  "saveGoalDialog", "saveThreadRenameDialog", "saveThreadRenameDialogInBackground", "threadModelDialogOpen", "threadRenameDialog",
+  "saveGoalDialog", "saveThreadRenameDialog", "threadModelDialogOpen", "threadRenameDialog",
   "threadTabContextMenu", "settingsDialogOpen", "runtimeList", "openThreads", "setGoalDialog",
   "setImagePreview", "setInspectMessage", "setAppSettings", "setMessageSelectionToolbar",
   "setProjectPicker", "setThreadModelDialogModelDraft", "setThreadModelDialogReasoningDraft",

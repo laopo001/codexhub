@@ -30,7 +30,9 @@ const serverConfigUpdateSchema = z.object({
     showFloatingPet: z.boolean().optional(),
     showDesktopPet: z.boolean().optional(),
     taskCompleteSystemNotifications: z.boolean().optional(),
-    taskCompleteNotificationPersistAfterMinutes: z.number().int().min(0).optional()
+    taskCompleteNotificationPersistAfterMinutes: z.number().int().min(0).optional(),
+    autoGenerateThreadTitle: z.boolean().optional(),
+    autoGenerateThreadTitleInterval: z.number().int().min(1).optional()
   }).strict().optional()
 }).strict();
 

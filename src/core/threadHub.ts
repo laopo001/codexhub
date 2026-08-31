@@ -27,6 +27,7 @@ import { summarizeProxyInput, type ProxyInput } from "../shared/inputTypes.js";
 import { planProgressFromPlan, planProgressSummary } from "../shared/planProgress.js";
 import { compareCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
+import { isTaskCompleteRecord, countCompletedUserTurns } from "../shared/taskNotifications.js";
 import { isAgentActivityRecord, latestAgentMessageFromRecords, threadActivityTitleFromRecords } from "../shared/threadActivity.js";
 import {
   asActivePermissionProfile,
@@ -143,6 +144,8 @@ export class ThreadHub {
   private readonly historySnapshots = new WeakMap<ThreadState, ThreadHistorySnapshotState>();
   private readonly runtimeEvents: RuntimeStreamEvent[] = [];
   private readonly runtimeSubscribers = new Set<(event: RuntimeStreamEvent) => void>();
+  private readonly triggeredAutoRenameMilestones = new Set<string>();
+  private readonly autoNamingThreadIds = new Set<string>();
   private lastRuntimeSnapshotKey = "";
   private runtimeSeq = 0;
 
@@ -152,6 +155,7 @@ export class ThreadHub {
       onCatalogChange?: () => void;
       onThreadChange?: () => void;
       onThreadEvent?: (event: ThreadStreamEvent, records: CodexRecord[]) => void;
+      autoGenerateThreadTitleInterval?: () => number | null;
     } = {}
   ) {}
 
@@ -3032,6 +3036,14 @@ export class ThreadHub {
     for (const subscriber of thread.subscribers) subscriber(streamEvent);
     this.options.onThreadEvent?.(streamEvent, thread.records);
     this.options.onThreadChange?.();
+    if (
+      kind === "record"
+      && record !== undefined
+      && !options.historical
+      && isTaskCompleteRecord(record)
+    ) {
+      this.maybeAutoRenameThread(thread);
+    }
     // Detached consumers such as the Electron desktop pet do not subscribe to
     // every thread stream. Keep the runtime projection in sync whenever a
     // thread summary changes so they can observe waiting/running/idle turns.
@@ -3044,6 +3056,32 @@ export class ThreadHub {
         || isTurnPlanUpdatedRecord(record)
       ))
     ) this.publishRuntimes();
+  }
+
+  private maybeAutoRenameThread(thread: ThreadState) {
+    const interval = this.options.autoGenerateThreadTitleInterval?.();
+    if (!interval || !Number.isInteger(interval) || interval < 1) return;
+    const userTurnCount = countCompletedUserTurns(thread.records);
+    if (userTurnCount <= 0 || userTurnCount % interval !== 0) return;
+    const milestoneKey = `${thread.threadId}:${userTurnCount}`;
+    if (this.triggeredAutoRenameMilestones.has(milestoneKey)) return;
+    if (this.autoNamingThreadIds.has(thread.threadId)) return;
+
+    this.triggeredAutoRenameMilestones.add(milestoneKey);
+    this.autoNamingThreadIds.add(thread.threadId);
+
+    void (async () => {
+      try {
+        const suggestion = await this.suggestThreadTitle(thread.threadId);
+        const title = compactThreadTitle(suggestion.title);
+        if (!title) return;
+        await this.renameThread(thread.threadId, title);
+      } catch {
+        // Best effort: 自动取名失败不能影响正常 turn 与广播
+      } finally {
+        this.autoNamingThreadIds.delete(thread.threadId);
+      }
+    })();
   }
 
   private summary(thread: ThreadState): ThreadSummary {

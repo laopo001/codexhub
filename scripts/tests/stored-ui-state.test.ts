@@ -68,3 +68,19 @@ test("current tab snapshot restores only its explicit open tabs and targets", ()
     "open-thread": { machineId: "machine", workingDirectory: "/repo" }
   });
 });
+
+test("stored UI state preserves autoGenerateThreadTitle setting", () => {
+  storedValue = JSON.stringify({
+    tabSnapshotVersion: 1,
+    settings: {
+      autoGenerateThreadTitle: true,
+      autoGenerateThreadTitleInterval: 7,
+      taskCompleteSystemNotifications: false
+    }
+  });
+
+  const stored = readStoredUiState();
+  assert.equal(stored?.settings?.autoGenerateThreadTitle, true);
+  assert.equal(stored?.settings?.autoGenerateThreadTitleInterval, 7);
+  assert.equal(stored?.settings?.taskCompleteSystemNotifications, false);
+});

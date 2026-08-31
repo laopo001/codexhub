@@ -69,10 +69,6 @@ export type ThreadRenameDialogState = {
   error: string;
 };
 
-export type ThreadRenameGenerationRequest = {
-  backgroundSave: boolean;
-};
-
 export type RuntimeSummary = ApiRuntimeSummary;
 export type ModelCatalogItem = ApiModelCatalogItem;
 type RuntimeCatalogLoadMetadata = {
@@ -248,6 +244,8 @@ export type AppSettings = {
   showDesktopPet: boolean;
   taskCompleteSystemNotifications: boolean;
   taskCompleteNotificationPersistAfterMinutes: number;
+  autoGenerateThreadTitle: boolean;
+  autoGenerateThreadTitleInterval: number;
 };
 
 export type StreamEvent = ApiThreadStreamEvent;

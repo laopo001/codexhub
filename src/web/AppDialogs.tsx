@@ -79,7 +79,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     retryModelCatalog,
     saveGoalDialog,
     saveThreadRenameDialog,
-    saveThreadRenameDialogInBackground,
     threadModelDialogOpen,
     threadRenameDialog,
     threadTabContextMenu,
@@ -112,6 +111,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const [notificationPersistAfterMinutesDraft, setNotificationPersistAfterMinutesDraft] = React.useState(
     String(appSettings.taskCompleteNotificationPersistAfterMinutes)
   );
+  const [autoGenerateThreadTitleIntervalDraft, setAutoGenerateThreadTitleIntervalDraft] = React.useState(
+    String(appSettings.autoGenerateThreadTitleInterval)
+  );
   const [imageCopyStatus, setImageCopyStatus] = React.useState<"idle" | "copying" | "copied" | "failed">("idle");
   const restartAvailable = Boolean(systemStatus.authority);
   const authorityUpdateAvailable = Boolean(systemStatus.authorityUpdate);
@@ -123,8 +125,13 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     if (settingsDialogOpen) {
       setRestartState("idle");
       setNotificationPersistAfterMinutesDraft(String(appSettings.taskCompleteNotificationPersistAfterMinutes));
+      setAutoGenerateThreadTitleIntervalDraft(String(appSettings.autoGenerateThreadTitleInterval));
     }
-  }, [appSettings.taskCompleteNotificationPersistAfterMinutes, settingsDialogOpen]);
+  }, [
+    appSettings.autoGenerateThreadTitleInterval,
+    appSettings.taskCompleteNotificationPersistAfterMinutes,
+    settingsDialogOpen
+  ]);
   React.useEffect(() => {
     setImageCopyStatus("idle");
   }, [imagePreview?.url]);
@@ -159,6 +166,25 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
         taskCompleteNotificationPersistAfterMinutes: previous
       }));
       setNotificationPersistAfterMinutesDraft(String(previous));
+    });
+  };
+  const saveAutoGenerateThreadTitleInterval = () => {
+    const parsed = Number(autoGenerateThreadTitleIntervalDraft.trim());
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      setAutoGenerateThreadTitleIntervalDraft(String(appSettings.autoGenerateThreadTitleInterval));
+      return;
+    }
+    const previous = appSettings.autoGenerateThreadTitleInterval;
+    setAppSettings((current) => ({ ...current, autoGenerateThreadTitleInterval: parsed }));
+    void apiRouteJson(apiRoutes.updateConfig, {
+      ui: { autoGenerateThreadTitleInterval: parsed }
+    }).then((payload) => {
+      const interval = payload.config.ui.autoGenerateThreadTitleInterval;
+      setAppSettings((current) => ({ ...current, autoGenerateThreadTitleInterval: interval }));
+      setAutoGenerateThreadTitleIntervalDraft(String(interval));
+    }).catch(() => {
+      setAppSettings((current) => ({ ...current, autoGenerateThreadTitleInterval: previous }));
+      setAutoGenerateThreadTitleIntervalDraft(String(previous));
     });
   };
   const restartAuthority = () => {
@@ -442,6 +468,52 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                         }}
                         aria-labelledby="settingTaskCompletePopups"
                       />
+                    </div>
+                    <div className="settingsRow">
+                      <span className="settingsRowText">
+                        <strong id="settingAutoGenerateThreadTitle">Auto rename threads</strong>
+                        <em>Automatically generate titles after completed user turns; steer does not add a turn</em>
+                      </span>
+                      <Switch
+                        checked={appSettings.autoGenerateThreadTitle}
+                        onChange={(checked) => {
+                          const previous = appSettings.autoGenerateThreadTitle;
+                          setAppSettings((current) => ({ ...current, autoGenerateThreadTitle: checked }));
+                          void apiRouteJson(apiRoutes.updateConfig, {
+                            ui: { autoGenerateThreadTitle: checked }
+                          }).then((payload) => {
+                            setAppSettings((current) => ({
+                              ...current,
+                              autoGenerateThreadTitle: payload.config.ui.autoGenerateThreadTitle
+                            }));
+                          }).catch(() => {
+                            setAppSettings((current) => ({ ...current, autoGenerateThreadTitle: previous }));
+                          });
+                        }}
+                        aria-labelledby="settingAutoGenerateThreadTitle"
+                      />
+                    </div>
+                    <div className="settingsRow">
+                      <span className="settingsRowText">
+                        <strong id="settingAutoGenerateThreadTitleInterval">Auto rename interval</strong>
+                        <em>Generate a new title after this many completed user turns</em>
+                      </span>
+                      <label className="settingsNumberControl" aria-labelledby="settingAutoGenerateThreadTitleInterval">
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          inputMode="numeric"
+                          value={autoGenerateThreadTitleIntervalDraft}
+                          onChange={(event) => setAutoGenerateThreadTitleIntervalDraft(event.currentTarget.value)}
+                          onBlur={saveAutoGenerateThreadTitleInterval}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
+                          aria-label="Auto rename interval in completed user turns"
+                        />
+                        <span>turns</span>
+                      </label>
                     </div>
                     <div className="settingsRow settingsNotificationPersistenceRow">
                       <span className="settingsRowText">
@@ -868,9 +940,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
             {threadRenameDialog.error ? <div className="threadRenameDialogError">{threadRenameDialog.error}</div> : null}
             <footer className="threadRenameDialogActions">
               <button type="button" onClick={() => setThreadRenameDialog(null)} disabled={threadRenameDialog.saving}>Cancel</button>
-              {threadRenameDialog.generating ? (
-                <button type="button" onClick={saveThreadRenameDialogInBackground}>后台取名并保存</button>
-              ) : null}
               <button type="submit" className="primary" disabled={threadRenameDialog.generating || threadRenameDialog.saving || !threadRenameDialog.title.trim()}>
                 {threadRenameDialog.saving ? "Saving" : "Save"}
               </button>

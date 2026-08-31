@@ -291,7 +291,7 @@ export const formatStatusDuration = (value: number) => {
 
 const compactLine = (value: string) => value.replace(/\s+/g, " ").trim();
 
-const isUserMessageRecord = (record: CodexRecord) => {
+export const isUserMessageRecord = (record: CodexRecord) => {
   const payload = asRecord(record.payload);
   return Boolean(
     payload
@@ -300,6 +300,30 @@ const isUserMessageRecord = (record: CodexRecord) => {
       || (record.type === "response_item" && payload.type === "message" && payload.role === "user")
     )
   );
+};
+
+export const countCompletedUserTurns = (records: CodexRecord[]): number => {
+  const completedTurns = new Set<string>();
+  const turnsWithUserMessage = new Set<string>();
+
+  for (const record of records) {
+    const turnId = turnIdFromRecord(record);
+    if (!turnId) continue;
+    if (isTaskCompleteRecord(record)) {
+      completedTurns.add(turnId);
+    }
+    if (isUserMessageRecord(record)) {
+      turnsWithUserMessage.add(turnId);
+    }
+  }
+
+  let count = 0;
+  for (const turnId of completedTurns) {
+    if (turnsWithUserMessage.has(turnId)) {
+      count += 1;
+    }
+  }
+  return count;
 };
 
 const stringField = (record: Record<string, unknown> | null | undefined, key: string) => {

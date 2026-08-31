@@ -115,8 +115,8 @@ export const useAppState = () => {
     threadControlsMenuOpen,
     threadModelDialogOpen,
     threadModelDialogThreadId,
-    threadRenameGenerationRequests,
     threadRenameDialog,
+    threadRenameRequestTokens,
     threadTabContextMenu
   } = uiState;
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
@@ -353,8 +353,8 @@ export const useAppState = () => {
     threadModelDialogThreadId,
     openThreadModelDialog,
     threadOrderByMachine,
-    threadRenameGenerationRequests,
     threadRenameDialog,
+    threadRenameRequestTokens,
     threadTabContextMenu,
     threadPicker
   };

@@ -171,7 +171,7 @@ test("threadActions.send records typedText including slash commands, but exclude
     forkingMessageKey: "",
     goalDialog: null,
     threadRenameDialog: null,
-    threadRenameGenerationRequests: { current: new Map() },
+    threadRenameRequestTokens: { current: new Map() },
     latestRequestedThreadId: { current: threadId },
     notificationRecordsByThread: { current: new Map() },
     openThreadIdsRef: { current: new Set([threadId]) },

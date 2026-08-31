@@ -280,6 +280,10 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     onThreadChange: () => {
       captureSessionState();
       parentRegistration?.refreshRegistration();
+    },
+    autoGenerateThreadTitleInterval: () => {
+      const ui = state.config().ui;
+      return ui.autoGenerateThreadTitle ? ui.autoGenerateThreadTitleInterval : null;
     }
   });
   const app = Fastify({

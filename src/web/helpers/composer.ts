@@ -533,7 +533,15 @@ const storedAppSettings = (value: unknown): AppSettings | undefined => {
       && Number.isInteger(record.taskCompleteNotificationPersistAfterMinutes)
       && record.taskCompleteNotificationPersistAfterMinutes >= 0
       ? record.taskCompleteNotificationPersistAfterMinutes
-      : defaultAppSettings().taskCompleteNotificationPersistAfterMinutes
+      : defaultAppSettings().taskCompleteNotificationPersistAfterMinutes,
+    autoGenerateThreadTitle: typeof record.autoGenerateThreadTitle === "boolean"
+      ? record.autoGenerateThreadTitle
+      : defaultAppSettings().autoGenerateThreadTitle,
+    autoGenerateThreadTitleInterval: typeof record.autoGenerateThreadTitleInterval === "number"
+      && Number.isInteger(record.autoGenerateThreadTitleInterval)
+      && record.autoGenerateThreadTitleInterval >= 1
+      ? record.autoGenerateThreadTitleInterval
+      : defaultAppSettings().autoGenerateThreadTitleInterval
   };
 };
 
