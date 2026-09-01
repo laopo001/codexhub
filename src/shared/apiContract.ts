@@ -164,6 +164,8 @@ export type ServerConfigUpdateInput = {
 export type AuthorityUpdatePayload = {
   buildId: string;
   detectedAt: string;
+  restartable: boolean;
+  reason?: "surface-build-not-verified" | "authority-build-not-ready";
 };
 
 /** `/api/health` 返回的 server 运行状态和默认配置。 */

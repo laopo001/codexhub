@@ -4,6 +4,8 @@ import { resolveEmbeddedAuthorityHost } from "../../../src/core/embeddedAuthorit
 import type { CodexHubAuthorityKind } from "../../../src/shared/surfaceTypes.js";
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
 import { startEmbeddedServer } from "../../../src/server/embedded.js";
+import { runAuthorityRestartSupervisor } from "../../../src/core/embeddedAuthority.js";
+import { resolveAuthorityNode } from "../../../src/core/authorityNode.js";
 import {
   authorityServiceAuthToken,
   removeLegacyAuthorityTokenFiles
@@ -15,6 +17,11 @@ void main().catch((error: unknown) => {
 });
 
 async function main() {
+  if (process.argv[2] === "--restart-supervisor") {
+    if (process.argv[3] !== "--handoff" || !process.argv[4]) throw new Error("Missing --handoff for authority restart supervisor.");
+    await runAuthorityRestartSupervisor(process.argv[4]);
+    return;
+  }
   const args = parseArgs(process.argv.slice(2));
   const port = positiveInteger(required(args, "port"), "port");
   const authorityId = required(args, "authority-id");
@@ -31,6 +38,7 @@ async function main() {
   });
   const remoteClientPath = args.get("remote-client");
   if (remoteClientPath) process.env.CODEX_HUB_SSH_REMOTE_CLIENT_PATH = remoteClientPath;
+  const nodeRuntime = await resolveAuthorityNode(process.env);
 
   const server = await startEmbeddedServer({
     host,
@@ -42,6 +50,13 @@ async function main() {
     localProjectCatalog,
     buildId,
     authorityBuildFiles: [path.resolve(process.argv[1]), path.join(staticDirectory, "index.html")],
+    authorityRestart: {
+      servicePath: path.resolve(process.argv[1]),
+      remoteClientPath,
+      nodeCommand: nodeRuntime.command,
+      nodeSource: nodeRuntime.source,
+      authToken
+    },
     authToken,
     authority: {
       authorityId,

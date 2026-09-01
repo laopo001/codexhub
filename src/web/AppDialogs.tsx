@@ -1,7 +1,6 @@
 import React from "react";
 import { Modal, Select, Switch } from "antd";
 import { Check, ChevronRight, Copy, Target, X } from "lucide-react";
-import { isNativeElectronSurface } from "./appConfig.js";
 import {
   apiRouteJson,
   filterProjectDirectoryEntries,
@@ -116,7 +115,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   );
   const [imageCopyStatus, setImageCopyStatus] = React.useState<"idle" | "copying" | "copied" | "failed">("idle");
   const restartAvailable = Boolean(systemStatus.authority);
-  const authorityUpdateAvailable = Boolean(systemStatus.authorityUpdate);
+  const authorityUpdateDetected = Boolean(systemStatus.authorityUpdate);
+  const authorityUpdateAvailable = Boolean(systemStatus.authorityUpdate?.restartable);
   const reloadFrontend = () => window.location.reload();
   React.useEffect(() => {
     setProjectPickerSearch("");
@@ -188,7 +188,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     });
   };
   const restartAuthority = () => {
-    if (!restartAvailable || restartState === "restarting") return;
+    if (!restartAvailable || (authorityUpdateDetected && !authorityUpdateAvailable) || restartState === "restarting") return;
     Modal.confirm({
       title: authorityUpdateAvailable
         ? "Update and restart this CodexHub authority and frontend?"
@@ -201,11 +201,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
       onOk: async () => {
         setRestartState("restarting");
         try {
-          if (isNativeElectronSurface && window.codexhubElectronPet?.restartAuthority) {
-            await window.codexhubElectronPet.restartAuthority();
-          } else {
-            await apiRouteJson(apiRoutes.restartAuthority);
-          }
+          await apiRouteJson(apiRoutes.restartAuthority);
         } catch {
           setRestartState("error");
         }
@@ -573,15 +569,17 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                                 : "Restarting this host's authority and reconnecting this window..."
                               : restartState === "error"
                                 ? "Restart failed. Check the authority log and try again."
-                                : authorityUpdateAvailable
+                              : authorityUpdateAvailable
                                   ? "A new CodexHub build is ready. Apply it by explicitly restarting this host's authority, runtime, and connected frontends."
+                                  : authorityUpdateDetected
+                                    ? "A different surface reported a build, but this authority has not verified its service and frontend files. Update is unavailable here."
                                   : "Restart this host's authority, Codex runtime, and connected frontends. Host applications stay open."}
                           </em>
                         </span>
                         <button
                           type="button"
                           className={`petSettingsButton settingsRestartButton${restartState === "restarting" ? " is-loading" : ""}`}
-                          disabled={restartState === "restarting"}
+                          disabled={restartState === "restarting" || (authorityUpdateDetected && !authorityUpdateAvailable)}
                           onClick={() => void restartAuthority()}
                           aria-busy={restartState === "restarting"}
                         >
@@ -590,7 +588,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                               <span className="settingsRestartSpinner" aria-hidden="true" />
                               <span>{authorityUpdateAvailable ? "Updating..." : "Restarting..."}</span>
                             </>
-                          ) : authorityUpdateAvailable ? "Update and restart all" : "Restart all"}
+                          ) : authorityUpdateAvailable ? "Update and restart all" : authorityUpdateDetected ? "Update unavailable" : "Restart all"}
                         </button>
                       </div>
                     ) : null}

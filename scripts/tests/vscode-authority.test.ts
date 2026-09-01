@@ -114,7 +114,7 @@ test("one embedded authority accepts VSCode and Electron surfaces after runtime 
   }
 });
 
-test("embedded authority restart endpoint closes the authority server", async () => {
+test("embedded authority without a launch spec rejects restart without closing", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-vscode-authority-restart."));
   let server: Awaited<ReturnType<typeof startServer>> | null = null;
   try {
@@ -137,16 +137,11 @@ test("embedded authority restart endpoint closes the authority server", async ()
       }
     });
     const client = createCodexHubApiClient({ baseUrl: localServerUrl(server) });
-    const closed = new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("embedded authority did not close after restart request")), 2_000);
-      server?.app.server.once("close", () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-    });
-
-    assert.deepEqual(await client.route(apiRoutes.restartAuthority), { ok: true, restarting: true });
-    await closed;
+    await assert.rejects(
+      () => client.route(apiRoutes.restartAuthority),
+      (error: unknown) => error instanceof Error && "status" in error && error.status === 409
+    );
+    assert.equal((await client.route(apiRoutes.health) as HealthPayload).serverInstanceId, server.serverInstanceId);
   } finally {
     await server?.stop().catch(() => undefined);
     await rm(root, { recursive: true, force: true });

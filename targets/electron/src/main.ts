@@ -29,6 +29,8 @@ import {
   authorityBuildId,
   ensureEmbeddedAuthority,
   probeEmbeddedAuthority,
+  shouldStopOwnedAuthorityProcess,
+  type AuthorityStopReason,
   type EmbeddedAuthorityHandle
 } from "../../../src/core/embeddedAuthority.js";
 import {
@@ -618,8 +620,13 @@ const isProcessAlive = (pid: number) => {
 };
 
 /** Stop only an authority process that this Electron host started itself. */
-const stopOwnedAuthorityProcess = async (target: EmbeddedAuthorityHandle | null) => {
+const stopOwnedAuthorityProcess = async (
+  target: EmbeddedAuthorityHandle | null,
+  reason: AuthorityStopReason
+) => {
   if (!target?.startedByCaller || !target.pid) return;
+  const currentHealth = await probeEmbeddedAuthority(target.url, target.authorityId, Boolean(target.authToken)).catch(() => null);
+  if (!shouldStopOwnedAuthorityProcess(target, currentHealth, reason)) return;
   const pid = target.pid;
   try {
     process.kill(pid, "SIGTERM");
@@ -660,31 +667,29 @@ const recoverElectronSurface = () => {
     const previousHealth = previous
       ? await probeEmbeddedAuthority(previous.url, previous.authorityId, Boolean(previous.authToken)).catch(() => null)
       : null;
-    if (!previousHealth) await stopOwnedAuthorityProcess(previous);
+    // Recovery may stop only an owned, still-unreachable authority. A changed
+    // generation means takeover/self-restart; a same generation means attach.
+    if (previous && shouldStopOwnedAuthorityProcess(previous, previousHealth, "recovery")) {
+      await stopOwnedAuthorityProcess(previous, "recovery");
+    }
 
     let lastError: unknown = new Error("Electron authority recovery failed.");
     for (let attempt = 0; attempt < 12; attempt += 1) {
       let launched: EmbeddedAuthorityHandle | null = null;
       try {
         launched = await startElectronAuthority();
-        const next = !launched.startedByCaller
-          && previous?.startedByCaller
-          && previous.pid
-          && previousHealth
-          ? { ...launched, startedByCaller: true, pid: previous.pid }
-          : launched;
-        authority = next;
-        await registerSurface(next, 3);
+        authority = launched;
+        await registerSurface(launched, 3);
         // Keep renderer recovery in the shared Web app. Repoint native windows
         // only when their effective document URL (authority/auth/scope) changed;
         // otherwise realtime compares serverInstanceId and reloads exactly once.
-        const mainDocumentChanged = !previous || electronSurfaceUrl(previous) !== electronSurfaceUrl(next);
-        const petDocumentChanged = !previous || electronSurfaceUrl(previous, true) !== electronSurfaceUrl(next, true);
+        const mainDocumentChanged = !previous || electronSurfaceUrl(previous) !== electronSurfaceUrl(launched);
+        const petDocumentChanged = !previous || electronSurfaceUrl(previous, true) !== electronSurfaceUrl(launched, true);
         if (mainDocumentChanged && mainWindow && !mainWindow.isDestroyed()) {
-          await mainWindow.loadURL(electronSurfaceUrl(next));
+          await mainWindow.loadURL(electronSurfaceUrl(launched));
         }
         if (petDocumentChanged && desktopPetWindow && !desktopPetWindow.isDestroyed()) {
-          await desktopPetWindow.loadURL(electronSurfaceUrl(next, true));
+          await desktopPetWindow.loadURL(electronSurfaceUrl(launched, true));
           ensureDesktopPetAlwaysOnTop(desktopPetWindow);
           resetDesktopPetInputMode();
         }
@@ -693,7 +698,7 @@ const recoverElectronSurface = () => {
         lastError = error;
         surfaceRegistered = false;
         authority = null;
-        if (launched?.startedByCaller) await stopOwnedAuthorityProcess(launched);
+        if (launched?.startedByCaller) await stopOwnedAuthorityProcess(launched, "recovery");
         if (attempt + 1 < 12) await delay(250 + attempt * 250);
       }
     }
@@ -719,7 +724,7 @@ const unregisterSurface = async (stopOwnedAuthority = false) => {
       const client = createCodexHubApiClient({ baseUrl: current.url, authToken: current.authToken });
       await client.route(apiRoutes.unregisterEmbeddedSurface, surfaceId, leaseId).catch(() => undefined);
     }
-    if (stopOwnedAuthority) await stopOwnedAuthorityProcess(current);
+    if (stopOwnedAuthority) await stopOwnedAuthorityProcess(current, "shutdown");
   })().finally(() => {
     stoppingSurface = null;
   });
@@ -732,28 +737,26 @@ const runSmoke = async () => {
   const response = await fetch(new URL("/api/health", current.url));
   if (!response.ok) throw new Error(`Electron smoke health failed: HTTP ${response.status}`);
   const health = await response.json();
-  const initialPid = current.pid;
+  const initialGeneration = current.serverInstanceId;
   const client = createCodexHubApiClient({ baseUrl: current.url, authToken: current.authToken });
   const restart = await client.route(apiRoutes.restartAuthority);
   if (!restart.ok || !restart.restarting) {
     throw new Error(`Electron smoke restart request failed: ${JSON.stringify(restart)}`);
   }
-  await delay(100);
-  await recoverElectronSurface();
-
-  const recoveryDeadline = Date.now() + 25_000;
+  const recoveryDeadline = Date.now() + 30_000;
   let restartHealth: Record<string, unknown> | null = null;
   while (Date.now() < recoveryDeadline) {
-    if (surfaceRegistered && authority && authority.pid !== initialPid) {
-      try {
-        const recovered = await fetch(new URL("/api/health", authority.url));
-        if (recovered.ok) {
-          restartHealth = await recovered.json() as Record<string, unknown>;
+    try {
+      const recovered = await fetch(new URL("/api/health", current.url));
+      if (recovered.ok) {
+        const candidate = await recovered.json() as Record<string, unknown>;
+        if (candidate.serverInstanceId !== initialGeneration) {
+          restartHealth = candidate;
           break;
         }
-      } catch {
-        // Heartbeat recovery may still be between stopping and rebinding.
       }
+    } catch {
+      // The supervisor may still be waiting for the old authority to release the port.
     }
     await delay(250);
   }
@@ -774,17 +777,6 @@ const requiredAuthority = () => {
   if (!authority) throw new Error("Electron authority is not available.");
   return authority;
 };
-
-ipcMain.handle("codexhub:restart-authority", async () => {
-  const current = requiredAuthority();
-  const client = createCodexHubApiClient({ baseUrl: current.url, authToken: current.authToken });
-  const response = await client.route(apiRoutes.restartAuthority);
-  // The authority schedules app.close() after returning the response. Give
-  // that close hook a chance to run before probing/restarting the service.
-  await delay(100);
-  await recoverElectronSurface();
-  return response;
-});
 
 ipcMain.handle("codexhub:recover-surface", async (event) => {
   const sender = BrowserWindow.fromWebContents(event.sender);

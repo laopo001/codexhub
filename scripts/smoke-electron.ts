@@ -1,19 +1,32 @@
-import { spawn } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import {
   authorityServicePort,
   embeddedSurfaceProtocolVersion
 } from "../src/shared/surfaceTypes.js";
+
+const execFileAsync = promisify(execFile);
 
 const main = async () => {
   await prepareAuthorityPortForSmoke();
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-state."));
   const pluginDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-plugins."));
   const userDataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-user-data."));
-  const output = await runElectronSmoke(dataDir, pluginDir, userDataDir);
+  let output: string;
+  try {
+    output = await runElectronSmoke(dataDir, pluginDir, userDataDir);
+  } finally {
+    await cleanupIsolatedAuthority(dataDir);
+    await Promise.all([
+      rm(dataDir, { recursive: true, force: true }),
+      rm(pluginDir, { recursive: true, force: true }),
+      rm(userDataDir, { recursive: true, force: true })
+    ]);
+  }
   const payload = parseSmokePayload(output);
   if (payload.health.port !== authorityServicePort()) {
     throw new Error(
@@ -140,6 +153,29 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir:
     reject(new Error(`Electron smoke failed: code=${code ?? ""} signal=${signal ?? ""}\n${output}`));
   });
 });
+
+const cleanupIsolatedAuthority = async (dataDir: string) => {
+  if (process.platform === "win32") return;
+  const { stdout } = await execFileAsync("ps", ["-eo", "pid=,args="]);
+  const servicePath = path.resolve("dist-node/authority-service.cjs");
+  const pids = stdout.split("\n").flatMap((line) => {
+    const trimmed = line.trim();
+    const match = trimmed.match(/^(\d+)\s+(.+)$/);
+    if (!match) return [];
+    const args = match[2].split(/\s+/);
+    const hasDataDir = args.includes("--data-dir") && args.includes(dataDir);
+    const hasHandoff = args.includes("--handoff") && args.some((arg) => arg.startsWith(dataDir + path.sep));
+    if (!args.includes(servicePath) || (!hasDataDir && !hasHandoff)) return [];
+    return [Number(match[1])];
+  }).filter((pid) => pid > 0 && pid !== process.pid);
+  for (const pid of pids) {
+    try { process.kill(pid, "SIGTERM"); } catch { continue; }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  for (const pid of pids) {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ }
+  }
+};
 
 const parseSmokePayload = (output: string): {
   ok: true;

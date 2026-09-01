@@ -23,7 +23,6 @@ interface Window {
       };
     }) => void;
     recoverSurface: () => Promise<{ ok: boolean }>;
-    restartAuthority: () => Promise<{ ok: boolean; restarting: boolean }>;
     onOpenThread: (listener: (threadId: string) => void) => () => void;
     showTaskCompleteNotification: (notification: {
       title: string;

@@ -53,6 +53,7 @@
     "smoke:notification-hooks": "tsx scripts/smoke-notification-hooks.ts",
     "smoke:vscode-install": "tsx scripts/smoke-vscode-installer.ts",
     "smoke:electron": "pnpm build && tsx scripts/smoke-electron.ts",
+    "smoke:authority-restart": "pnpm build && tsx scripts/smoke-authority-restart.ts",
     "package:electron:win": "pnpm build && tsx scripts/package-electron.ts --win",
     "package:electron:win:dir": "pnpm build && tsx scripts/package-electron.ts --win --dir",
     "smoke:core": "pnpm run smoke:auth && pnpm run smoke:machine-session && pnpm run smoke:task-lock && pnpm run smoke:registered-machine",

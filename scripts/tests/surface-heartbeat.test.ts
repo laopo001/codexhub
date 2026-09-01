@@ -22,7 +22,7 @@ test("Web surface heartbeat coalesces overlapping sends", async () => {
   await first;
 });
 
-test("Web surface heartbeat asks its host to recover after failure", async () => {
+test("Web surface heartbeat waits for consecutive failures before asking its host to recover", async () => {
   let recoveries = 0;
   const heartbeat = createWebClientHeartbeat({
     send: async () => {
@@ -33,6 +33,34 @@ test("Web surface heartbeat asks its host to recover after failure", async () =>
     }
   });
 
+  await heartbeat.beat();
+  await heartbeat.beat();
+  assert.equal(recoveries, 0);
+  await heartbeat.beat();
+  assert.equal(recoveries, 1);
+  await heartbeat.beat();
+  assert.equal(recoveries, 1);
+});
+
+test("Web surface heartbeat resets its recovery threshold after a success", async () => {
+  let shouldFail = true;
+  let recoveries = 0;
+  const heartbeat = createWebClientHeartbeat({
+    send: async () => {
+      if (shouldFail) throw new Error("temporary interruption");
+    },
+    requestRecovery: () => {
+      recoveries += 1;
+    },
+    failuresBeforeRecovery: 2
+  });
+
+  await heartbeat.beat();
+  shouldFail = false;
+  await heartbeat.beat();
+  shouldFail = true;
+  await heartbeat.beat();
+  assert.equal(recoveries, 0);
   await heartbeat.beat();
   assert.equal(recoveries, 1);
 });

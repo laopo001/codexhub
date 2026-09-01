@@ -7,8 +7,9 @@ import { AppDialogs } from "../../src/web/AppDialogs.js";
 import { AppSidebar } from "../../src/web/AppSidebar.js";
 import { createSidebarDraftStore } from "../../src/web/helpers/sidebarDrafts.js";
 import type { AppDialogsViewModel, AppSidebarViewModel } from "../../src/web/viewModel.js";
+import type { SystemStatus } from "../../src/web/types.js";
 
-const systemStatus = (updateAvailable: boolean) => ({
+const systemStatus = (updateAvailable: boolean): SystemStatus => ({
   version: "0.9.0",
   authority: {
     authorityId: "authority-test",
@@ -18,7 +19,8 @@ const systemStatus = (updateAvailable: boolean) => ({
   ...(updateAvailable ? {
     authorityUpdate: {
       buildId: "build-new",
-      detectedAt: new Date(0).toISOString()
+      detectedAt: new Date(0).toISOString(),
+      restartable: true
     }
   } : {}),
   model: null,
@@ -108,4 +110,20 @@ test("Settings separates frontend reload from authority restart and marks update
   assert.match(update, />Update authority and frontends</);
   assert.match(update, />Update and restart all</);
   assert.match(update, /A new CodexHub build is ready/);
+});
+
+test("Settings does not offer an unsafe surface-only update", () => {
+  const status = systemStatus(true);
+  status.authorityUpdate = {
+    buildId: "surface-only",
+    detectedAt: new Date(0).toISOString(),
+    restartable: false,
+    reason: "surface-build-not-verified"
+  };
+  const viewModel = dialogsViewModel(false);
+  viewModel.systemStatus = status;
+  const markup = renderToStaticMarkup(createElement(AppDialogs, { viewModel }));
+  assert.match(markup, /Update unavailable/);
+  assert.match(markup, /has not verified its service and frontend files/);
+  assert.match(markup, /disabled/);
 });

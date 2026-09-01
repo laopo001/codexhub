@@ -34,3 +34,53 @@ select,
 textarea {
   font: inherit;
 }
+
+.appFatalError {
+  display: grid;
+  min-height: 100%;
+  padding: 24px;
+  place-items: center;
+}
+
+.appFatalErrorCard {
+  width: min(560px, 100%);
+  padding: 24px;
+  border: 1px solid rgba(97, 61, 53, 0.2);
+  border-radius: 16px;
+  background: #fffdf9;
+  box-shadow: 0 18px 50px rgba(42, 49, 43, 0.12);
+}
+
+.appFatalErrorCard h1 {
+  margin: 0 0 10px;
+  font-size: 20px;
+}
+
+.appFatalErrorCard p {
+  margin: 0;
+  color: #5f675f;
+  line-height: 1.55;
+}
+
+.appFatalErrorCard pre {
+  max-height: 180px;
+  margin: 16px 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 10px;
+  background: #f1f2ee;
+  color: #7b3029;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.appFatalErrorCard button {
+  min-height: 36px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 9px;
+  background: #17211a;
+  color: #fff;
+  cursor: pointer;
+}

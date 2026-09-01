@@ -65,7 +65,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   );
 
   const projectQuery = projectSearch.trim();
-  const authorityUpdateAvailable = Boolean(systemStatus.authorityUpdate);
+  const authorityUpdateAvailable = Boolean(systemStatus.authorityUpdate?.restartable);
   const visibleProjectGroups = filterProjectMachineGroupsBySearch(projectGroups, projectQuery);
   const onlineProjectGroups = visibleProjectGroups.filter((machine) => machine.online);
   const offlineProjectGroups = visibleProjectGroups.filter((machine) => !machine.online);

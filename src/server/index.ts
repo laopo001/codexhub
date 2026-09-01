@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { createMachineId, MachineHub } from "../core/machineHub.js";
 import { AuthorityBuildMonitor } from "../core/authorityBuildMonitor.js";
+import { createAuthorityRestartCoordinator, type AuthorityRestartCoordinator } from "../core/embeddedAuthority.js";
 import { loadConfig } from "../core/config.js";
 import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
@@ -208,6 +209,13 @@ export type ServerStartOptions = {
   webClientRetryMs?: number;
   authorityBuildFiles?: string[];
   authorityBuildPollMs?: number;
+  authorityRestart?: {
+    servicePath: string;
+    remoteClientPath?: string;
+    nodeCommand: string;
+    nodeSource: "configured" | "path" | "host-fallback";
+    authToken: string;
+  };
   features?: Partial<ServerFeatureOptions>;
 };
 
@@ -256,11 +264,20 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     machine.type !== "registered" && !(embeddedSurface && machine.type === "local");
   let threads: ThreadHub;
   let authorityUpdate: AuthorityUpdatePayload | undefined;
-  const reportAuthorityUpdate = (replacementBuildId: string) => {
-    if (!replacementBuildId || replacementBuildId === buildId || authorityUpdate?.buildId === replacementBuildId) return;
+  const reportAuthorityUpdate = (replacementBuildId: string, restartable: boolean) => {
+    if (!replacementBuildId || replacementBuildId === buildId) return;
+    if (authorityUpdate?.buildId === replacementBuildId) {
+      if (restartable && !authorityUpdate.restartable) {
+        authorityUpdate = { ...authorityUpdate, restartable: true };
+        delete authorityUpdate.reason;
+      }
+      return;
+    }
     authorityUpdate = {
       buildId: replacementBuildId,
-      detectedAt: new Date().toISOString()
+      detectedAt: new Date().toISOString(),
+      restartable,
+      ...(restartable ? {} : { reason: "surface-build-not-verified" as const })
     };
     console.error(`codexhub embedded authority update available: ${replacementBuildId}`);
   };
@@ -335,15 +352,34 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   let localMachine: CodexhubMachineHandle | null = null;
   let parentRegistration: CodexhubMachineHandle | null = null;
   let parentRegistrationStatus: ParentRegistrationStatus = { status: "idle" };
-  const restartAuthority = authorityService
-    ? () => {
-        const restartTimer = setTimeout(() => {
-          void app.close().catch((error: unknown) => {
-            console.error(`codexhub authority restart failed: ${error instanceof Error ? error.message : String(error)}`);
-          });
-        }, 50);
-        restartTimer.unref?.();
-      }
+  let restartCoordinator: AuthorityRestartCoordinator | undefined;
+  if (authorityService && options.authorityRestart && buildId && options.authority) {
+    restartCoordinator = createAuthorityRestartCoordinator({
+      servicePath: options.authorityRestart.servicePath,
+      staticDirectory,
+      remoteClientPath: options.authorityRestart.remoteClientPath,
+      dataDir: path.dirname(state.path),
+      authorityId: options.authority.authorityId,
+      authorityKind: options.authority.kind,
+      host: config.host,
+      port: config.port,
+      projectCatalog: localProjectCatalog ?? "fixed",
+      buildId,
+      protocolVersion: options.authority.surfaceProtocolVersion,
+      nodeCommand: options.authorityRestart.nodeCommand,
+      nodeSource: options.authorityRestart.nodeSource,
+      authRequired: Boolean(serverAuthToken),
+      oldPid: process.pid,
+      serverInstanceId,
+      authorityBuildFiles: options.authorityBuildFiles ?? [],
+      authToken: options.authorityRestart.authToken,
+      onClose: () => app.close().catch((error: unknown) => {
+        console.error(`codexhub authority restart failed: ${error instanceof Error ? error.message : String(error)}`);
+      })
+    });
+  }
+  const restartAuthority = restartCoordinator
+    ? (targetBuildId?: string) => restartCoordinator!.request(targetBuildId)
     : undefined;
   const embeddedSurfaces = new EmbeddedSurfaceHub({
     leaseTimeoutMs: options.embeddedSurfaceLeaseTimeoutMs,
@@ -364,8 +400,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       parentRegistration?.refreshRegistration();
     },
     ...(authorityService ? {
-      onReplacementBuildAvailable: (replacementBuildId: string) => {
-        reportAuthorityUpdate(replacementBuildId);
+        onReplacementBuildAvailable: (replacementBuildId: string) => {
+        reportAuthorityUpdate(replacementBuildId, false);
       }
     } : {})
   });
@@ -386,7 +422,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         currentBuildId: buildId,
         files: options.authorityBuildFiles,
         pollMs: options.authorityBuildPollMs,
-        onUpdateAvailable: reportAuthorityUpdate
+        onUpdateAvailable: (replacementBuildId) => reportAuthorityUpdate(replacementBuildId, true)
       })
     : null;
   const threadRecordSubscriptionCounts = new Map<string, number>();
@@ -847,7 +883,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       ssh: { connections: sshMachines.listConnections() },
       telegram: { started: Boolean(telegramBot) }
     }),
-    restartAuthority,
+    restartAuthority: restartAuthority ? () => restartAuthority(authorityUpdate?.buildId) : undefined,
     heartbeatWebClient: webClients
       ? (input) => {
         webClients.touch(input.clientId);

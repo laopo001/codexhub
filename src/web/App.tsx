@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { ConfigProvider, message, Modal } from "antd";
 import { AppView } from "./AppView.js";
+import { AppErrorBoundary } from "./AppErrorBoundary.js";
 import { useAppEffects } from "./appEffects.js";
 import { useAppSelectors } from "./appSelectors.js";
 import { useAppState } from "./appState.js";
@@ -716,7 +717,9 @@ const root = document.getElementById("root");
 if (!root) throw new Error("root element not found");
 
 createRoot(root).render(
-  <ConfigProvider>
-    <App />
-  </ConfigProvider>
+  <AppErrorBoundary>
+    <ConfigProvider>
+      <App />
+    </ConfigProvider>
+  </AppErrorBoundary>
 );

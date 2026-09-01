@@ -19,6 +19,13 @@ export type EmbeddedServerOptions = {
   buildId?: string | null;
   authorityBuildFiles?: string[];
   authorityBuildPollMs?: number;
+  authorityRestart?: {
+    servicePath: string;
+    remoteClientPath?: string;
+    nodeCommand: string;
+    nodeSource: "configured" | "path" | "host-fallback";
+    authToken: string;
+  };
   authToken?: string;
   localProjectCatalog?: "editable" | "fixed";
   parentRegistrationIdentity?: ParentRegistrationIdentity;
@@ -49,6 +56,7 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       buildId: options.buildId,
       authorityBuildFiles: options.authorityBuildFiles,
       authorityBuildPollMs: options.authorityBuildPollMs,
+      authorityRestart: options.authorityRestart,
       authToken: options.authToken,
       localProjectCatalog: options.localProjectCatalog,
       parentRegistrationIdentity: options.parentRegistrationIdentity,

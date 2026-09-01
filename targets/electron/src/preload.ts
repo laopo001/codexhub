@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { PetActivityOpenTarget } from "../../../src/shared/petActivityRouting.js";
-import type { RestartPayload } from "../../../src/shared/apiContract.js";
 import type { PetHitRegion } from "../../../src/shared/petInput.js";
 import type { TaskCompleteNotification } from "../../../src/shared/taskNotifications.js";
 
@@ -15,7 +14,6 @@ contextBridge.exposeInMainWorld("codexhubElectronPet", {
     ipcRenderer.send("codexhub:pet-open-activity", target);
   },
   recoverSurface: () => ipcRenderer.invoke("codexhub:recover-surface") as Promise<{ ok: boolean }>,
-  restartAuthority: () => ipcRenderer.invoke("codexhub:restart-authority") as Promise<RestartPayload>,
   showTaskCompleteNotification: (notification: TaskCompleteNotification) => {
     ipcRenderer.send("codexhub:task-complete-notification", notification);
   },

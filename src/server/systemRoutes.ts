@@ -18,7 +18,7 @@ export type SystemRoutesContext = {
   authRequired: boolean;
   isAuthorized: (request: FastifyRequest) => boolean;
   healthPayload: () => Omit<HealthPayload, "authRequired" | "authenticated">;
-  restartAuthority?: () => void;
+  restartAuthority?: (targetBuildId?: string) => Promise<RestartPayload | { ok: false; restarting: false; error: string }> | RestartPayload;
   heartbeatWebClient?: (input: WebClientHeartbeatInput) => WebClientHeartbeatPayload;
   configPayload: () => ServerConfigPayload;
   updateUiConfig: (ui: NonNullable<ServerConfigUpdateInput["ui"]>) => void;
@@ -48,13 +48,19 @@ export const registerSystemRoutes = (app: FastifyInstance, ctx: SystemRoutesCont
     authenticated: !ctx.authRequired || ctx.isAuthorized(request)
   } satisfies HealthPayload));
 
-  app.post("/api/restart", async (_request, reply) => {
+  app.post("/api/restart", async (request, reply) => {
     if (!ctx.restartAuthority) {
       reply.code(409);
       return { ok: false, restarting: false, error: "Restart is only available for an embedded authority." };
     }
-    ctx.restartAuthority();
-    return { ok: true, restarting: true } satisfies RestartPayload;
+    const targetBuildId = z.object({ buildId: z.string().trim().min(1).max(500).optional() }).strict()
+      .parse(request.body ?? {});
+    const result = await ctx.restartAuthority(targetBuildId.buildId);
+    if (!result.ok) {
+      reply.code(409);
+      return result;
+    }
+    return result satisfies RestartPayload;
   });
 
   app.post("/api/web-clients/heartbeat", async (request, reply) => {
