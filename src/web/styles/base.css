@@ -84,3 +84,15 @@ textarea {
   color: #fff;
   cursor: pointer;
 }
+
+.appFatalErrorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.appFatalErrorCard button.secondary {
+  border: 1px solid rgba(23, 33, 26, 0.25);
+  background: transparent;
+  color: #17211a;
+}

@@ -21,6 +21,7 @@ import { parseCodexHubHostIncomingMessage } from "./hostBridge.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
 import { partitionAppViewModel } from "./viewModel.js";
 import type { WebRecordView } from "./types.js";
+import { updateRendererDiagnosticContext } from "./helpers/rendererDiagnostics.js";
 import { PetOverlay, PetPicker, usePetFeature } from "./pets/index.js";
 import { registerPwaServiceWorker } from "./pwa.js";
 
@@ -240,6 +241,12 @@ const App = () => {
     };
   }, [activeTabThreadId]);
   const actionContext = { ...appState, ...selectors, resizeComposerTextarea };
+  React.useEffect(() => {
+    updateRendererDiagnosticContext({
+      activeThreadId: activeTabThreadId || undefined,
+      openThreadIds: openThreads.map((thread) => thread.threadId)
+    });
+  }, [activeTabThreadId, openThreads]);
   let threadActions: ThreadActions | null = null;
   const requireThreadActions = () => {
     if (!threadActions) throw new Error("Thread actions used before initialization.");

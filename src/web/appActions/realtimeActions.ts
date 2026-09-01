@@ -83,6 +83,10 @@ import {
   type PendingThreadRestoreTargets
 } from "../helpers/pendingThreadRestore.js";
 import { workspaceTargetForProjectTarget } from "../pets/petStatus.js";
+import {
+  recordRendererRealtimeEvent,
+  updateRendererDiagnosticContext
+} from "../helpers/rendererDiagnostics.js";
 
 type RealtimeActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
@@ -179,6 +183,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
 
   const initialize = async () => {
     const health = await apiRouteJson(apiRoutes.health);
+    updateRendererDiagnosticContext({
+      serverInstanceId: health.serverInstanceId,
+      authorityId: health.authority?.authorityId,
+      surface: health.surface
+    });
     authorityInstanceRecovery.accept(health.serverInstanceId);
     ctx.setServerAuthRequired(Boolean(health.authRequired));
     if (!health.authRequired && authToken()) setAuthToken("");
@@ -403,6 +412,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
   }
 
   function handleRealtimeMessage(message: RealtimeMessage) {
+    recordRendererRealtimeEvent(message);
     if (message.type === "runtimes") {
       const payload = message;
       ctx.runtimesLastSeq.current = Math.max(ctx.runtimesLastSeq.current, payload.seq);
