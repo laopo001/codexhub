@@ -19,6 +19,7 @@ import { setAuthToken } from "./appHelpers.js";
 import { parseCodexHubHostIncomingMessage } from "./hostBridge.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
 import { partitionAppViewModel } from "./viewModel.js";
+import type { WebRecordView } from "./types.js";
 import { PetOverlay, PetPicker, usePetFeature } from "./pets/index.js";
 import { registerPwaServiceWorker } from "./pwa.js";
 
@@ -61,7 +62,7 @@ const App = () => {
     goalDialog,
     imageFileInputRef,
     imagePreview,
-    inspectMessage,
+    inspectMessageSelection,
     machines,
     messageSelectionToolbar,
     messageRenderModes,
@@ -94,7 +95,7 @@ const App = () => {
     setExpandedStatusTurns,
     setImagePreview,
     setInitialized,
-    setInspectMessage,
+    setInspectMessageSelection,
     setMessageSelectionToolbar,
     setModelCatalogByMachine,
     setOfflineProjectsCollapsed,
@@ -160,6 +161,7 @@ const App = () => {
     activeViews,
     composerMode,
     currentServerShareUrl,
+    inspectMessage,
     threadModelDialogModelSelection,
     threadModelDialogReasoningSelection,
     threadModelDialogServiceTierSelection,
@@ -190,6 +192,9 @@ const App = () => {
     threadModelDialogMachineId,
     turnStatusItems
   } = selectors;
+  React.useEffect(() => {
+    if (inspectMessageSelection && !inspectMessage) setInspectMessageSelection(null);
+  }, [inspectMessage, inspectMessageSelection, setInspectMessageSelection]);
   const petDialogThreads = React.useMemo(
     () => subagentDialogConversationThreads(subagentThreadDialog),
     [subagentThreadDialog]
@@ -537,6 +542,7 @@ const App = () => {
     imageFileInputRef,
     imagePreview,
     inspectMessage,
+    inspectMessageSelection,
     latestTurnActivityScope,
     loadCommandPalette,
     loadOlderThread,
@@ -631,7 +637,10 @@ const App = () => {
     setGoalDialog,
     setExpandedStatusTurns,
     setImagePreview,
-    setInspectMessage,
+    setInspectMessageSelection,
+    openInspectMessage: (threadId: string, message: WebRecordView) => {
+      if (threadId && message.record.id) setInspectMessageSelection({ threadId, recordId: message.record.id });
+    },
     setMessageSelectionToolbar,
     setOfflineProjectsCollapsed,
     setProjectPicker,

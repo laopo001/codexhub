@@ -37,6 +37,7 @@ import {
 } from "./appHelpers.js";
 import type { AppState } from "./appState.js";
 import { selectActiveThread } from "./helpers/activeThreadSelection.js";
+import { resolveInspectMessage } from "./helpers/inspectMessage.js";
 import type {
   ComposerMode,
   ApprovalPolicyDraft,
@@ -331,6 +332,33 @@ export const useAppSelectors = (state: AppState) => {
     ],
     [activeThread?.pendingUserMessages, activeThread?.queuedTurns, activityStatusSnapshots, baseViews, turnDurations]
   );
+  const inspectMessage = useMemo(() => {
+    const selection = state.inspectMessageSelection;
+    if (!selection) return null;
+    const selectedThread = state.openThreads.find((thread) => thread.threadId === selection.threadId)
+      ?? subagentDialogConversationThreads(state.subagentThreadDialog)
+        .find((thread) => thread.threadId === selection.threadId);
+    if (!selectedThread) return null;
+    if (selectedThread === activeThread) return resolveInspectMessage(selection, selectedThread.threadId, activeViews);
+    return resolveInspectMessage(
+      selection,
+      selectedThread.threadId,
+      finalAnswerViewsWithTurnDurations(
+        conversationViewsFromRecords(
+          threadDisplayRecords(selectedThread.threadId, selectedThread),
+          new Set(state.expandedToolBatchKeys[selectedThread.threadId] ?? [])
+        ),
+        turnDurationMapFromRecords(threadDisplayRecords(selectedThread.threadId, selectedThread))
+      )
+    );
+  }, [
+    activeThread,
+    activeViews,
+    state.expandedToolBatchKeys,
+    state.inspectMessageSelection,
+    state.openThreads,
+    state.subagentThreadDialog
+  ]);
   const activeUserMessageHistory = useMemo(
     () => userMessageHistoryFromRecords(displayRecords, activeThread?.pendingUserMessages, activeThread?.queuedTurns),
     [activeThread?.pendingUserMessages, activeThread?.queuedTurns, displayRecords]
@@ -522,6 +550,7 @@ export const useAppSelectors = (state: AppState) => {
     activeThreadUsage,
     activeUserMessageHistory,
     activeViews,
+    inspectMessage,
     composerMode,
     currentServerShareUrl,
     latestTurnActivityScope: latestTurnActivity,

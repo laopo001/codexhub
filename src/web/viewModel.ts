@@ -22,6 +22,7 @@ import type {
   ConnectionMode,
   GoalDialogState,
   ImagePreviewState,
+  InspectMessageSelection,
   LocalTask,
   MachineSummary,
   MessageSelectionToolbarState,
@@ -207,6 +208,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   imageFileInputRef: React.RefObject<HTMLInputElement | null>;
   imagePreview: ImagePreviewState | null;
   inspectMessage: WebRecordView | null;
+  inspectMessageSelection: InspectMessageSelection | null;
   latestTurnActivityScope: TurnActivityScope;
   loadCommandPalette: (machineId: string, cwd: string) => MaybePromise;
   loadOlderThread: (threadId: string) => MaybePromise<number>;
@@ -295,7 +297,8 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   setGoalDialog: React.Dispatch<React.SetStateAction<GoalDialogState | null>>;
   setExpandedStatusTurns: React.Dispatch<React.SetStateAction<Record<string, StatusPanelExpansionDecision>>>;
   setImagePreview: React.Dispatch<React.SetStateAction<ImagePreviewState | null>>;
-  setInspectMessage: React.Dispatch<React.SetStateAction<WebRecordView | null>>;
+  setInspectMessageSelection: React.Dispatch<React.SetStateAction<InspectMessageSelection | null>>;
+  openInspectMessage: (threadId: string, message: WebRecordView) => void;
   setMessageSelectionToolbar: React.Dispatch<React.SetStateAction<MessageSelectionToolbarState | null>>;
   setProjectPicker: React.Dispatch<React.SetStateAction<ProjectPickerState | null>>;
   setActiveThreadApprovalPolicyDraft: React.Dispatch<React.SetStateAction<ApprovalPolicyDraft>>;
@@ -411,7 +414,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "setGoalDialog"
   | "setExpandedStatusTurns"
   | "setImagePreview"
-  | "setInspectMessage"
+  | "openInspectMessage"
   | "setActiveThreadApprovalPolicyDraft"
   | "setActiveThreadApprovalsReviewerDraft"
   | "setActiveThreadPermissionProfileDraft"
@@ -490,7 +493,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "petName"
   | "setGoalDialog"
   | "setImagePreview"
-  | "setInspectMessage"
+  | "setInspectMessageSelection"
   | "setAppSettings"
   | "setMessageSelectionToolbar"
   | "setProjectPicker"
@@ -576,7 +579,7 @@ const workspaceKeys = [
   "resizeComposerTextarea", "runtimeList", "selectedProject", "send", "threadControlsMenuOpen",
   "setComposerMenuOpen", "setComposerMode", "setThreadComposerMode", "setThreadApprovalPolicyDraft",
   "setThreadApprovalsReviewerDraft", "setThreadPermissionProfileDraft", "setExpandedStatusKeys", "setExpandedToolBatchKeys",
-  "setGoalDialog", "setExpandedStatusTurns", "setImagePreview", "setInspectMessage",
+  "setGoalDialog", "setExpandedStatusTurns", "setImagePreview", "openInspectMessage",
   "setActiveThreadApprovalPolicyDraft", "setActiveThreadApprovalsReviewerDraft",
   "setActiveThreadPermissionProfileDraft",
   "setAuthTokenDraft", "setThreadControlsMenuOpen", "setThreadModelDialogOpen", "setSidebarCollapsed", "setSubagentThreadDialog",
@@ -598,7 +601,7 @@ const dialogKeys = [
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
   "saveGoalDialog", "saveThreadRenameDialog", "threadModelDialogOpen", "threadRenameDialog",
   "threadTabContextMenu", "settingsDialogOpen", "runtimeList", "openThreads", "setGoalDialog",
-  "setImagePreview", "setInspectMessage", "setAppSettings", "setMessageSelectionToolbar",
+  "setImagePreview", "setInspectMessageSelection", "setAppSettings", "setMessageSelectionToolbar",
   "setProjectPicker", "setThreadModelDialogModelDraft", "setThreadModelDialogReasoningDraft",
   "setThreadModelDialogServiceTierDraft", "setThreadModelDialogOpen", "setThreadRenameDialog",
   "setThreadTabContextMenu", "setSettingsDialogOpen", "setThreadPicker", "submitProjectPickerPath",

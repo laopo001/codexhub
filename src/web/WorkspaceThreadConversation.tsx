@@ -64,7 +64,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     setExpandedToolBatchKeys,
     setGoalDialog,
     setImagePreview,
-    setInspectMessage,
+    openInspectMessage,
     setThreadComposerMode,
     setThreadModelDialogOpen,
     showComposerSendButton,
@@ -209,7 +209,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
       setExpandedStatusTurns={setExpandedStatusTurns}
       onMessageRenderModeChange={(_targetThreadId, messageId, mode) => updateMessageRenderMode(messageId, mode)}
       onMessageSelection={openMessageSelectionToolbar}
-      onInspectMessage={(_targetThreadId, message) => setInspectMessage(message)}
+      onInspectMessage={openInspectMessage}
       onDismissPendingMessage={dismissPendingUserMessage}
       onCancelQueuedMessage={cancelQueuedSubmission}
       onOpenImage={setImagePreview}

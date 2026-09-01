@@ -18,7 +18,7 @@ import type {
   SubagentThreadDialogState,
   ThreadRenameDialogState,
   ThreadTabContextMenuState,
-  WebRecordView
+  InspectMessageSelection
 } from "./types.js";
 
 export const useIntegrationState = () => {
@@ -86,7 +86,7 @@ export const useUiState = () => {
   const [serverAuthRequired, setServerAuthRequired] = useState(false);
   const [authError, setAuthError] = useState("");
   const [authTokenDraft, setAuthTokenDraft] = useState("");
-  const [inspectMessage, setInspectMessage] = useState<WebRecordView | null>(null);
+  const [inspectMessageSelection, setInspectMessageSelection] = useState<InspectMessageSelection | null>(null);
   const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const [messageSelectionToolbar, setMessageSelectionToolbar] = useState<MessageSelectionToolbarState | null>(null);
   const [messageRenderModes, setMessageRenderModes] = useState<Record<string, MessageRenderMode>>({});
@@ -141,7 +141,7 @@ export const useUiState = () => {
     expandedToolBatchKeys,
     goalDialog,
     imagePreview,
-    inspectMessage,
+    inspectMessageSelection,
     messageSelectionToolbar,
     messageRenderModes,
     offlineProjectsCollapsed,
@@ -162,7 +162,7 @@ export const useUiState = () => {
     setExpandedToolBatchKeys,
     setGoalDialog,
     setImagePreview,
-    setInspectMessage,
+    setInspectMessageSelection,
     setMessageSelectionToolbar,
     setMessageRenderModes,
     setOfflineProjectsCollapsed,

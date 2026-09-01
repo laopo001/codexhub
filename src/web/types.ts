@@ -234,6 +234,11 @@ export type MessageSelectionToolbarState = {
   selectedText: string;
 };
 
+export type InspectMessageSelection = {
+  threadId: string;
+  recordId: string;
+};
+
 export type ThreadTabContextMenuState = {
   x: number;
   y: number;

@@ -105,7 +105,7 @@ export const SubagentThreadConversation = ({
       setExpandedStatusTurns={workspace.setExpandedStatusTurns}
       onMessageRenderModeChange={(_threadId, messageId, mode) => workspace.updateMessageRenderMode(messageId, mode)}
       onMessageSelection={workspace.openMessageSelectionToolbar}
-      onInspectMessage={(_threadId, message) => workspace.setInspectMessage(message)}
+      onInspectMessage={workspace.openInspectMessage}
       onOpenImage={workspace.setImagePreview}
       onOpenSubagentThread={(parentThreadId, activity) => {
         if (!activity.agentThreadId) return;
