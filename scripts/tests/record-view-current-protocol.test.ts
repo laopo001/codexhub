@@ -5,9 +5,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   recordsToViews,
   recordToView,
+  isActiveRecordStatus,
   subagentAssignmentForChild
 } from "../../src/core/codexRecordView.js";
-import { compactToolViews } from "../../src/shared/compactRecordViews.js";
+import { compactToolViews, collapseHistoricalToolBatches } from "../../src/shared/compactRecordViews.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
 import { SubagentActivityMessage } from "../../src/web/SubagentActivityMessage.js";
 import { resolveSubagentThreadTarget } from "../../src/web/helpers/subagentThreads.js";
@@ -1434,4 +1435,92 @@ test("tool cards use an explicit details button and keep internal IDs in Inspect
   assert.match(inspectDetail.inputMeta ?? "", new RegExp(`call_id:\\s*${callId}`));
   assert.equal(inspectDetail.inputBlock, "git status");
   assert.equal(inspectDetail.outputBlock, "On branch main\nnothing to commit");
+});
+
+test("local shell outcomes use one canonical status presentation", () => {
+  const cases = [
+    [{ status: "completed", exit_code: 0 }, "completed", "Completed"],
+    [{ status: "completed", exit_code: 1 }, "failed", "Failed"],
+    [{ status: "failed", exit_code: -1 }, "terminated", "Terminated"],
+    [{ status: "in_progress" }, "in_progress", "Running"],
+    [{ status: "pending_approval" }, "pending", "Pending"],
+    [{ status: "approved" }, "completed", "Completed"],
+    [{ status: "accepted" }, "completed", "Completed"],
+    [{ status: "completed" }, "completed", "Completed"],
+    [{ status: "failed" }, "failed", "Failed"],
+    [{ status: "denied" }, "failed", "Failed"],
+    [{ status: "error" }, "failed", "Failed"],
+    [{ status: "generating" }, "in_progress", "Running"],
+    [{ status: "cancelled" }, "terminated", "Terminated"],
+    [{ status: "interrupted" }, "terminated", "Terminated"],
+    [{ status: "unexpected" }, "pending", "Pending"]
+  ] as const;
+  for (const [payload, status, statusText] of cases) {
+    const view = recordToView({ id: `shell-${status}-${statusText}`, type: "response_item", payload: {
+      type: "local_shell_call",
+      action: { command: "echo test" },
+      ...payload
+    } });
+    assert.equal(view?.status, status);
+    assert.equal(view?.statusText, statusText);
+  }
+  assert.equal(isActiveRecordStatus("terminated"), false);
+});
+
+test("terminated shell cards stay terminated and show raw exit details", () => {
+  const record = {
+    id: "terminated-shell",
+    type: "response_item",
+    payload: {
+      type: "local_shell_call",
+      status: "failed",
+      exit_code: -1,
+      duration_ms: 59534937,
+      action: { command: "echo test" }
+    }
+  } satisfies CodexRecord;
+  const [view] = compactToolViews(recordsToViews([record]));
+  assert.equal(view.status, "terminated");
+  assert.equal(view.statusText, "Terminated");
+  assert.equal(view.statusDurationMs, 59534937);
+  const markup = renderToStaticMarkup(createElement(MessageCard, {
+    message: view,
+    renderMode: "markdown",
+    markdownEnabled: true,
+    showStatus: true,
+    onInspect: () => undefined
+  }));
+  assert.match(markup, /messageStatus terminated/);
+  assert.match(markup, />Terminated · 16h32m15s</);
+  assert.match(markup, /exit -1/);
+  assert.doesNotMatch(markup, /messageStatus completed/);
+  assert.doesNotMatch(markup, /messageStatus failed/);
+  const inspect = formatInspectDetail(view);
+  assert.match(inspect.inputMeta ?? "", /status: failed/);
+  assert.match(inspect.outputMeta ?? "", /exit: -1/);
+});
+
+test("tool batches keep terminated below active and failed above completed", () => {
+  const shellView = (id: string, payload: Record<string, unknown>) => recordToView({
+    id,
+    type: "response_item",
+    payload: { type: "local_shell_call", action: { command: "echo test" }, ...payload }
+  })!;
+  const separator = recordToView({
+    id: "separator",
+    type: "event_msg",
+    payload: { type: "user_message", message: "next" }
+  })!;
+  const summarize = (statuses: Record<string, unknown>[]) => {
+    const views = collapseHistoricalToolBatches([
+      ...statuses.map((payload, index) => shellView(`batch-${index}`, payload)),
+      separator,
+      shellView("latest", { exit_code: 0 })
+    ]);
+    return views.find((view) => view.toolBatch)?.status;
+  };
+
+  assert.equal(summarize([{ exit_code: 0 }, { exit_code: -1 }]), "terminated");
+  assert.equal(summarize([{ exit_code: 1 }, { exit_code: -1 }]), "failed");
+  assert.equal(summarize([{ status: "in_progress" }, { exit_code: -1 }]), "in_progress");
 });

@@ -1641,6 +1641,11 @@
   color: #9b2f25;
 }
 
+.messageStatus.terminated {
+  background: #e8e9e7;
+  color: #5f625d;
+}
+
 .turnLoadingMessage {
   display: flex;
   position: relative;

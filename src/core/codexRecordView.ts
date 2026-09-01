@@ -510,14 +510,15 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
   }
 
   if (payload.type === "local_shell_call") {
+    const presentation = localShellPresentation(payload);
     return {
       id: record.id,
       role: "tool",
       label: "shell",
       text: localShellText(payload),
       at: record.timestamp,
-      status: localShellStatus(payload),
-      statusText: recordViewStatusText(payload.status),
+      status: presentation.status,
+      statusText: presentation.statusText,
       record
     };
   }
@@ -701,11 +702,35 @@ const contextCompactionStatus = (payload: Record<string, unknown>): NonNullable<
   return "pending";
 };
 
-const localShellStatus = (payload: Record<string, unknown>): NonNullable<CodexRecordView["status"]> => {
-  if (typeof payload.exit_code === "number") return "completed";
-  const status = recordViewStatusFromAppStatus(payload.status);
-  if (status) return status;
-  return "pending";
+const localShellPresentation = (payload: Record<string, unknown>): {
+  status: NonNullable<CodexRecordView["status"]>;
+  statusText: string;
+} => {
+  if (typeof payload.exit_code === "number") {
+    return payload.exit_code === 0
+      ? { status: "completed", statusText: "Completed" }
+      : payload.exit_code === -1
+        ? { status: "terminated", statusText: "Terminated" }
+        : { status: "failed", statusText: "Failed" };
+  }
+
+  const rawStatus = typeof payload.status === "string"
+    ? payload.status.trim().replace(/[-\s]+/g, "_").toLowerCase()
+    : "";
+  if (rawStatus === "cancelled" || rawStatus === "canceled" || rawStatus === "interrupted") {
+    return { status: "terminated", statusText: "Terminated" };
+  }
+  const status = recordViewStatusFromAppStatus(payload.status) ?? "pending";
+  const statusText = status === "in_progress"
+    ? "Running"
+    : status === "completed"
+      ? "Completed"
+      : status === "failed"
+        ? "Failed"
+        : status === "terminated"
+          ? "Terminated"
+          : "Pending";
+  return { status, statusText };
 };
 
 export const imageGenerationStatus = (payload: Record<string, unknown>): NonNullable<CodexRecordView["status"]> => {

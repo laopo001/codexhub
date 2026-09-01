@@ -336,6 +336,7 @@ const compactToolBatchStatus = (views: CompactRecordView[]): CodexRecordView["st
   if (views.some((view) => view.status === "failed")) return "failed";
   if (views.some((view) => view.status === "in_progress")) return "in_progress";
   if (views.some((view) => view.status === "pending")) return "pending";
+  if (views.some((view) => view.status === "terminated")) return "terminated";
   return "completed";
 };
 

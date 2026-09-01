@@ -45,6 +45,7 @@ test("local shell inspection follows a replaced record to its final output", () 
     payload: {
       ...runningRecord.payload,
       status: "completed",
+      exit_code: 0,
       aggregated_output: "final"
     }
   };

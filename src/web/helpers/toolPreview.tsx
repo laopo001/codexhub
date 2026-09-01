@@ -722,7 +722,7 @@ const appServerOutputMeta = (payload: Record<string, unknown>) => [
 ].filter((line): line is string => Boolean(line)).join("\n") || undefined;
 
 const appServerStatusMeta = (payload: Record<string, unknown>, prefix = "") => {
-  if (payload.type === "local_shell_call" && typeof payload.exit_code === "number") return null;
+  if (!prefix && payload.type === "local_shell_call" && typeof payload.exit_code === "number") return null;
   return typeof payload.status === "string" ? `${prefix}${payload.status}` : null;
 };
 
