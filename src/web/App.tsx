@@ -50,7 +50,6 @@ const App = () => {
     collapsedProjectMachineKeys,
     composerDraftStore,
     composerMenuOpen,
-    composerTextareaRef,
     expandedStatusKeys,
     expandedStatusTurns,
     expandedToolBatchKeys,
@@ -60,14 +59,11 @@ const App = () => {
     deletingProjectId,
     forkingMessageKey,
     goalDialog,
-    imageFileInputRef,
     imagePreview,
     inspectMessageSelection,
     machines,
     messageSelectionToolbar,
     messageRenderModes,
-    messagesRef,
-    messagesShouldFollowRef,
     offlineProjectsCollapsed,
     openingProjectKey,
     openThreadModelDialog,
@@ -222,7 +218,8 @@ const App = () => {
       composerChangeTimerRef.current = null;
     }
     const handleComposerInput = (event: Event) => {
-      if (event.target !== composerTextareaRef.current) return;
+      if (!(event.target instanceof HTMLTextAreaElement)
+        || event.target.dataset.threadId !== activeTabThreadId) return;
       setComposerRecentlyChanged(true);
       if (composerChangeTimerRef.current !== null) {
         window.clearTimeout(composerChangeTimerRef.current);
@@ -240,7 +237,7 @@ const App = () => {
         composerChangeTimerRef.current = null;
       }
     };
-  }, [activeTabThreadId, composerTextareaRef]);
+  }, [activeTabThreadId]);
   const actionContext = { ...appState, ...selectors, resizeComposerTextarea };
   let threadActions: ThreadActions | null = null;
   const requireThreadActions = () => {
@@ -337,13 +334,15 @@ const App = () => {
       }
       composerActions.addThreadTextAttachment(activeThread.threadId, message.text);
       window.requestAnimationFrame(() => {
-        composerTextareaRef.current?.focus();
-        resizeComposerTextarea(composerTextareaRef.current);
+        const textarea = [...document.querySelectorAll<HTMLTextAreaElement>("textarea[data-thread-id]")]
+          .find((item) => item.dataset.threadId === activeThread.threadId) ?? null;
+        textarea?.focus();
+        resizeComposerTextarea(textarea);
       });
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [activeThread?.threadId, composerActions, composerTextareaRef]);
+  }, [activeThread?.threadId, composerActions]);
   const {
     addSelectionToConversation,
     addThreadFiles,
@@ -433,7 +432,6 @@ const App = () => {
       stopTurn,
       syncThreadSubscriptions
     },
-    resizeComposerTextarea,
     selectors,
     state: appState
   });
@@ -480,6 +478,7 @@ const App = () => {
 
   const viewModel = {
     activeCanStop,
+    activeTabThreadId: appState.activeTabThreadId,
     activeDisplayThreadId,
     activeExpandedStatusKeys,
     activeGoal,
@@ -508,7 +507,6 @@ const App = () => {
     composerDraftStore,
     composerMenuOpen,
     composerMode,
-    composerTextareaRef,
     commandPaletteByScope,
     commandPaletteLoadingScopes,
     confirmProjectPicker,
@@ -539,7 +537,6 @@ const App = () => {
     forkMessage,
     goalDialog,
     handleComposerKeyDown,
-    imageFileInputRef,
     imagePreview,
     inspectMessage,
     inspectMessageSelection,
@@ -566,8 +563,6 @@ const App = () => {
     activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
-    messagesRef,
-    messagesShouldFollowRef,
     modelOptions,
     reasoningOptions,
     serviceTierOptions,

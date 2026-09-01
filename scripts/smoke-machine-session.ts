@@ -693,7 +693,7 @@ const assertComposerAttachmentClear = async () => {
       commandPaletteByScope: {},
       commandPaletteLoadingScopes: {},
       composerDraftStore,
-      composerHistoryRef: { current: null },
+      composerHistoryByThreadRef: { current: new Map() },
       messageSelectionToolbar: null,
       conversationThreadsRef: { current: new Map(openThreads.map((thread) => [thread.threadId, thread])) },
       resizeComposerTextarea: () => undefined,

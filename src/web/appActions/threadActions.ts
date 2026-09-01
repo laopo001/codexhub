@@ -33,6 +33,7 @@ import {
 } from "../helpers/composerInputHistory.js";
 import type {
   OpenThreadState,
+  ComposerHistoryState,
   GoalDialogState,
   ProjectSummary,
   ProjectsPayload,
@@ -53,6 +54,7 @@ type ThreadActionsContext = {
   activeTabThreadIdRef?: React.MutableRefObject<string>;
   closedThreadIds: React.MutableRefObject<Set<string>>;
   composerDraftStore: ComposerDraftStore;
+  composerHistoryByThreadRef?: React.MutableRefObject<Map<string, ComposerHistoryState>>;
   composerInputHistoryStore?: ComposerInputHistoryStore;
   conversationThreadsRef: React.MutableRefObject<Map<string, OpenThreadState>>;
   expandedToolBatchKeys: Record<string, string[]>;
@@ -398,6 +400,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   function removeThreadFromUi(threadId: string, machineId: string, nextThreadId: string) {
     ctx.openingThreads.current.delete(threadId);
     ctx.composerDraftStore.delete(threadId);
+    ctx.composerHistoryByThreadRef?.current.delete(threadId);
     ctx.threadLastSeqs.current.delete(threadId);
     unsubscribeThread(threadId);
     for (const image of ctx.openThreads.find((thread) => thread.threadId === threadId)?.imageAttachments ?? []) {

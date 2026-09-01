@@ -34,7 +34,7 @@ const openThreads = [
   thread("thread-active", "/workspace/current", "machine-current")
 ];
 
-test("selected project never derives active thread from machine-only fallback", () => {
+test("an explicit active surface tab remains authoritative without project metadata", () => {
   const selectedProject = { machineId: "machine-current", path: "/workspace/a" };
   assert.equal(selectActiveThread({
     activeTabThreadId: "thread-active",
@@ -44,7 +44,10 @@ test("selected project never derives active thread from machine-only fallback", 
     projectSelectionActive: true,
     threadProjectTargets: {},
     fixedSurface: true
-  }), undefined);
+  })?.threadId, "thread-active");
+
+  // With no explicit tab, project selection still requires an explicit target
+  // and never falls back through workingDirectory or machine-only matching.
   assert.equal(selectActiveThread({
     activeTabThreadId: "",
     activeMachineId: "machine-current",
@@ -61,9 +64,21 @@ test("selected project never derives active thread from machine-only fallback", 
   })?.threadId, "thread-explicit");
 });
 
-test("stale selected project identity never falls back to another open thread", () => {
+test("a valid active surface tab survives stale selected-project identity", () => {
   assert.equal(selectActiveThread({
     activeTabThreadId: "thread-active",
+    activeMachineId: "machine-current",
+    openThreads,
+    selectedProjectTarget: undefined,
+    projectSelectionActive: true,
+    threadProjectTargets: {},
+    fixedSurface: true
+  })?.threadId, "thread-active");
+});
+
+test("stale selected project identity has no fallback when no tab is active", () => {
+  assert.equal(selectActiveThread({
+    activeTabThreadId: "",
     activeMachineId: "machine-current",
     openThreads,
     selectedProjectTarget: undefined,

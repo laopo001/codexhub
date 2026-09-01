@@ -24,8 +24,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   const { workspace, sidebar, dialogs } = viewModel;
   const {
     activeRuntime,
-    activeThread,
-    activeThreadIsOpen,
+    activeTabThreadId,
     authError,
     authRequired,
     authTokenDraft,
@@ -45,7 +44,9 @@ export const AppView = ({ viewModel }: AppViewProps) => {
     openThreadTabs
   } = workspace;
   const canAddThreadForProject = Boolean(activeRuntime?.online || selectedProject?.machineOnline);
-  const activeThreadKey = activeThread && activeThreadIsOpen ? activeThread.threadId : "";
+  const activeThreadKey = activeTabThreadId && openThreadTabs.some((item) => item.key === activeTabThreadId)
+    ? activeTabThreadId
+    : "";
   // Open tabs are global workspace state. Keep the full tab strip visible as
   // long as there are legal open threads; the selector supplies a valid
   // fallback active thread while selection recovery commits its state update.
@@ -131,6 +132,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
             size="small"
             type="editable-card"
             activeKey={activeThreadKey || undefined}
+            destroyOnHidden={false}
             locale={{ removeAriaLabel: "Close thread" }}
             items={openThreadTabs.map((item) => ({
               ...item,
@@ -154,9 +156,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
                   </span>
                 </Popconfirm>
               ),
-              children: activeThread && item.key === activeThreadKey
-                ? <WorkspaceThreadConversation workspace={workspace} />
-                : null
+              children: <WorkspaceThreadConversation key={item.key} workspace={workspace} threadId={item.key} />
             }))}
             onChange={(threadId) => void switchMachineThread(threadId)}
             onEdit={(targetKey, action) => {

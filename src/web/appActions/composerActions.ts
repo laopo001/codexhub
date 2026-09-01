@@ -31,7 +31,7 @@ type ComposerActionsContext = {
   commandPaletteByScope: Record<string, CommandPalette>;
   commandPaletteLoadingScopes: Record<string, boolean>;
   composerDraftStore: ComposerDraftStore;
-  composerHistoryRef: React.MutableRefObject<ComposerHistoryState | null>;
+  composerHistoryByThreadRef: React.MutableRefObject<Map<string, ComposerHistoryState>>;
   conversationThreadsRef: React.MutableRefObject<Map<string, OpenThreadState>>;
   messageSelectionToolbar: MessageSelectionToolbarState | null;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
@@ -142,7 +142,7 @@ export type ComposerActions = {
   addThreadImages: (threadId: string, files: FileList | null) => void;
   addThreadFiles: (threadId: string, files: FileList | null) => Promise<void>;
   pasteThreadImages: (threadId: string, clipboardData: DataTransfer) => boolean;
-  updateMessageRenderMode: (messageId: string, mode: MessageRenderMode) => void;
+  updateMessageRenderMode: (threadId: string, messageId: string, mode: MessageRenderMode) => void;
   clearThreadAttachments: (threadId: string) => void;
   removeThreadImage: (threadId: string, imageId: string) => void;
   removeThreadTextAttachment: (threadId: string, textId: string) => void;
@@ -220,7 +220,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
   };
 
   const resetComposerHistory = (threadId: string) => {
-    if (ctx.composerHistoryRef.current?.threadId === threadId) ctx.composerHistoryRef.current = null;
+    ctx.composerHistoryByThreadRef.current.delete(threadId);
   };
 
   const setComposerHistoryInput = (threadId: string, textarea: HTMLTextAreaElement, input: string) => {
@@ -238,9 +238,8 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     history: string[],
     direction: ComposerHistoryDirection
   ) => {
-    const current = ctx.composerHistoryRef.current?.threadId === threadId
-      ? ctx.composerHistoryRef.current
-      : { threadId, draft: textarea.value, offsetFromEnd: 0 };
+    const current = ctx.composerHistoryByThreadRef.current.get(threadId)
+      ?? { threadId, draft: textarea.value, offsetFromEnd: 0 };
     const offsetFromEnd = Math.min(current.offsetFromEnd, history.length);
     const nextOffset = direction === "previous"
       ? Math.min(history.length, offsetFromEnd + 1)
@@ -250,7 +249,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     const input = nextOffset === 0
       ? current.draft
       : history[history.length - nextOffset] ?? current.draft;
-    ctx.composerHistoryRef.current = { ...current, offsetFromEnd: nextOffset };
+    ctx.composerHistoryByThreadRef.current.set(threadId, { ...current, offsetFromEnd: nextOffset });
     setComposerHistoryInput(threadId, textarea, input);
   };
 
@@ -277,8 +276,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
       }
       if (
         event.key === "ArrowDown"
-        && ctx.composerHistoryRef.current?.threadId === threadId
-        && ctx.composerHistoryRef.current.offsetFromEnd > 0
+        && (ctx.composerHistoryByThreadRef.current.get(threadId)?.offsetFromEnd ?? 0) > 0
         && composerCursorOnLastLine(textarea)
       ) {
         event.preventDefault();
@@ -310,7 +308,7 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
   ) => {
     const text = paths.map((path) => normalizeSelectedText(path)).filter(Boolean).join("\n");
     if (!text) return;
-    ctx.composerHistoryRef.current = null;
+    ctx.composerHistoryByThreadRef.current.delete(threadId);
     const hasDropCaret = typeof caretIndex === "number";
     const selection = textarea
       ? {
@@ -392,7 +390,8 @@ export const createComposerActions = (ctx: ComposerActionsContext, deps: Compose
     return true;
   };
 
-  const updateMessageRenderMode = (messageId: string, mode: MessageRenderMode) => {
+  const updateMessageRenderMode = (threadId: string, messageId: string, mode: MessageRenderMode) => {
+    if (!ctx.conversationThreadsRef.current.has(threadId)) return;
     ctx.setMessageRenderModes((current) => current[messageId] === mode ? current : { ...current, [messageId]: mode });
   };
 

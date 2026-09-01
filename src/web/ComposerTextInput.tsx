@@ -440,6 +440,7 @@ export const ComposerTextInput = ({
       ) : null}
       <textarea
         ref={composerTextareaRef}
+        data-thread-id={thread.threadId}
         value={input}
         onChange={(event) => {
           resetComposerHistory(thread.threadId);

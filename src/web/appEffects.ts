@@ -54,20 +54,15 @@ type AppEffectsActions = {
 
 type AppEffectsInput = {
   actions: AppEffectsActions;
-  resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
   selectors: AppSelectors;
   state: AppState;
 };
 
-export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, state }: AppEffectsInput) => {
+export const useAppEffects = ({ actions, selectors, state }: AppEffectsInput) => {
   const surfaceProjectScopeKey = selectors.projectList
     .map((project) => `${project.machineId}\0${project.path}\0${project.source?.kind ?? ""}\0${project.source?.groupId ?? ""}`)
     .sort()
     .join("\n");
-  useEffect(() => {
-    resizeComposerTextarea(state.composerTextareaRef.current);
-  }, [selectors.activeThread?.threadId]);
-
   useEffect(() => {
     void actions.initialize();
     return () => {
@@ -627,11 +622,6 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.permissionProfilesByScope,
     state.subagentThreadDialog
   ]);
-
-  useEffect(() => {
-    if (!state.activeTabThreadId) return;
-    state.messagesShouldFollowRef.current = true;
-  }, [state.activeTabThreadId]);
 
   useEffect(() => {
     if (!state.composerMenuOpen) return undefined;

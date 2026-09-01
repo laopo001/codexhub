@@ -26,18 +26,17 @@ export const selectActiveThread = (input: {
   fixedSurface: boolean;
 }) => {
   const active = input.openThreads.find((thread) => thread.threadId === input.activeTabThreadId);
+  // An explicitly open/active surface tab is authoritative. Project selection
+  // only supplies a target for project-scoped actions; it must not invalidate a
+  // restored tab whose older snapshot has no optional projectTarget metadata.
+  if (active) return active;
   if (input.selectedProjectTarget) {
-    if (active && threadMatchesProjectTarget(
-      input.threadProjectTargets[active.threadId],
-      input.selectedProjectTarget
-    )) return active;
     return input.openThreads.find((thread) => threadMatchesProjectTarget(
       input.threadProjectTargets[thread.threadId],
       input.selectedProjectTarget
     ));
   }
   if (input.projectSelectionActive) return undefined;
-  if (active) return active;
   if (input.fixedSurface) return undefined;
   return input.openThreads.find((thread) =>
     !input.activeMachineId || thread.runtime.machineId === input.activeMachineId

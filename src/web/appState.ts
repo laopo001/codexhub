@@ -1,5 +1,4 @@
 import { useReducer, useRef, useState } from "react";
-import type { VirtuosoHandle } from "react-virtuoso";
 import type { CodexRecord } from "../shared/recordTypes.js";
 import type { CodexHubRealtimeClient } from "../shared/realtimeClient.js";
 import { createComposerDraftStore, initAuthTokenFromUrl } from "./appHelpers.js";
@@ -195,11 +194,7 @@ export const useAppState = () => {
   const openingSubagentThreads = useRef(new Set<string>());
   const latestRequestedThreadId = useRef("");
   const closedThreadIds = useRef(new Set<string>());
-  const messagesRef = useRef<VirtuosoHandle>(null);
-  const messagesShouldFollowRef = useRef(true);
-  const imageFileInputRef = useRef<HTMLInputElement>(null);
-  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const composerHistoryRef = useRef<ComposerHistoryState | null>(null);
+  const composerHistoryByThreadRef = useRef(new Map<string, ComposerHistoryState>());
   const composerDraftStore = useRef(createComposerDraftStore()).current;
   const notificationRecordsByThread = useRef(new Map<string, CodexRecord[]>());
   const notifiedTaskCompletions = useRef(new Set<string>());
@@ -217,11 +212,10 @@ export const useAppState = () => {
     authTokenDraft,
     closedThreadIds,
     collapsedProjectMachineKeys,
-    composerHistoryRef,
+    composerHistoryByThreadRef,
     composerDraftStore,
     conversationThreadsRef,
     composerMenuOpen,
-    composerTextareaRef,
     commandPaletteByScope,
     commandPaletteLoadingScopes,
     connectionMode,
@@ -232,7 +226,6 @@ export const useAppState = () => {
     forkingMessageKey,
     goalDialog,
     expandedStatusTurns,
-    imageFileInputRef,
     imagePreview,
     initialized,
     inspectMessageSelection,
@@ -243,8 +236,6 @@ export const useAppState = () => {
     messageRenderModes,
     modelCatalogByMachine,
     permissionProfilesByScope,
-    messagesRef,
-    messagesShouldFollowRef,
     notificationAudioContext,
     notificationRecordsByThread,
     notifiedTaskCompletions,

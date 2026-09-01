@@ -1,3 +1,4 @@
+import React from "react";
 import { Pencil, Target, X } from "lucide-react";
 import {
   goalStatusClass,
@@ -5,6 +6,7 @@ import {
   goalStatusLabel
 } from "./appHelpers.js";
 import { LiveGoalDuration } from "./helpers/liveTime.js";
+import { threadConversationProjection } from "./helpers/threadConversationProjection.js";
 import {
   ThreadComposerLeftActions,
   ThreadComposerRightActions
@@ -14,16 +16,11 @@ import type { AppWorkspaceViewModel } from "./viewModel.js";
 
 export type WorkspaceThreadConversationProps = {
   workspace: AppWorkspaceViewModel;
+  threadId: string;
 };
 
-export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConversationProps) => {
+export const WorkspaceThreadConversation = ({ workspace, threadId }: WorkspaceThreadConversationProps) => {
   const {
-    activeCanStop,
-    activeGoal,
-    activeThread,
-    activeThreadExecutionMeta,
-    activeUserMessageHistory,
-    activeViews,
     addThreadFiles,
     clearThreadAttachments,
     clearThreadGoal,
@@ -31,7 +28,6 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     commandPaletteByScope,
     commandPaletteLoadingScopes,
     composerDraftStore,
-    composerTextareaRef,
     dismissPendingUserMessage,
     cancelQueuedSubmission,
     expandedStatusKeys,
@@ -39,14 +35,10 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     forkingMessageKey,
     forkMessage,
     handleComposerKeyDown,
-    imageFileInputRef,
     insertThreadPathText,
-    latestTurnActivityScope,
     loadCommandPalette,
     loadOlderThread,
     messageRenderModes,
-    messagesRef,
-    messagesShouldFollowRef,
     openMessageSelectionToolbar,
     openSubagentThread,
     openThreadModelDialog,
@@ -67,16 +59,19 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     openInspectMessage,
     setThreadComposerMode,
     setThreadModelDialogOpen,
-    showComposerSendButton,
     stopTurn,
     updateMessageRenderMode,
     updateThreadGoal,
     updateThreadInput
   } = workspace;
 
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const activeThread = workspace.openThreads.find((thread) => thread.threadId === threadId);
   if (!activeThread) return null;
-
-  const threadId = activeThread.threadId;
+  const projection = threadConversationProjection(activeThread, {
+    expandedToolBatchKeys: workspace.expandedToolBatchKeys
+  });
+  const activeGoal = projection.activeGoal;
   const activeGoalStatusControl = activeGoal ? goalStatusControl(activeGoal.status) : null;
 
   const goal = activeGoal ? (
@@ -94,7 +89,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
             <LiveGoalDuration
               status={activeGoal.status}
               running={activeThread.status === "running"}
-              activeTurnStartedAt={latestTurnActivityScope.startedAt}
+              activeTurnStartedAt={projection.latestTurnActivity.startedAt}
               timeUsedSeconds={activeGoal.timeUsedSeconds}
               updatedAt={activeGoal.updatedAt}
             />
@@ -148,7 +143,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     <ThreadComposerLeftActions
       workspace={workspace}
       thread={activeThread}
-      fileInputRef={imageFileInputRef}
+      fileInputRef={fileInputRef}
     />
   );
 
@@ -160,22 +155,19 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
     <ThreadConversation
       className="threadWorkspacePane"
       thread={activeThread}
-      views={activeViews}
-      userMessageHistory={activeUserMessageHistory}
+      views={projection.views}
+      userMessageHistory={projection.userMessageHistory}
       composerDraftStore={composerDraftStore}
       commandPaletteByScope={commandPaletteByScope}
       commandPaletteLoadingScopes={commandPaletteLoadingScopes}
-      executionMeta={activeThreadExecutionMeta}
-      activeGoal={activeGoal}
+      executionMeta={projection.executionMeta}
+      activeGoal={projection.activeGoal}
       messageRenderModes={messageRenderModes}
       expandedStatusKeys={expandedStatusKeys}
       expandedStatusTurns={expandedStatusTurns}
-      messagesRef={messagesRef}
-      messagesShouldFollowRef={messagesShouldFollowRef}
-      composerTextareaRef={composerTextareaRef}
-      fileInputRef={imageFileInputRef}
-      showSendButton={showComposerSendButton}
-      canStop={activeCanStop}
+      fileInputRef={fileInputRef}
+      showSendButton={projection.showSendButton}
+      canStop={projection.canStop}
       forkingMessageKey={forkingMessageKey}
       goal={goal}
       leftActions={leftActions}
@@ -207,7 +199,7 @@ export const WorkspaceThreadConversation = ({ workspace }: WorkspaceThreadConver
       }}
       setExpandedStatusKeys={setExpandedStatusKeys}
       setExpandedStatusTurns={setExpandedStatusTurns}
-      onMessageRenderModeChange={(_targetThreadId, messageId, mode) => updateMessageRenderMode(messageId, mode)}
+      onMessageRenderModeChange={updateMessageRenderMode}
       onMessageSelection={openMessageSelectionToolbar}
       onInspectMessage={openInspectMessage}
       onDismissPendingMessage={dismissPendingUserMessage}

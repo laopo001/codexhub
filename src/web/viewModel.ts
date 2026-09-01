@@ -1,5 +1,4 @@
 import type React from "react";
-import type { VirtuosoHandle } from "react-virtuoso";
 import type {
   AppServerApprovalDecision,
   AppServerUserInputAnswers,
@@ -157,6 +156,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   petEnabled: boolean;
   petName: string;
   activeCanStop: boolean;
+  activeTabThreadId: string;
   activeDisplayThreadId: string;
   activeExpandedStatusKeys: Set<string>;
   activeGoal: ThreadGoalView | null;
@@ -183,7 +183,6 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   composerDraftStore: ComposerDraftStore;
   composerMenuOpen: boolean;
   composerMode: ComposerMode;
-  composerTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
   confirmProjectPicker: () => MaybePromise;
   copySelection: () => MaybePromise;
   createMachineThread: (options?: { developerInstructionsId?: string }) => MaybePromise;
@@ -205,7 +204,6 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
     history: string[],
     canSend: boolean
   ) => void;
-  imageFileInputRef: React.RefObject<HTMLInputElement | null>;
   imagePreview: ImagePreviewState | null;
   inspectMessage: WebRecordView | null;
   inspectMessageSelection: InspectMessageSelection | null;
@@ -229,8 +227,6 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   activeModelCatalogCacheNotice: string;
   activeModelCatalogError: string;
   activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
-  messagesRef: React.RefObject<VirtuosoHandle | null>;
-  messagesShouldFollowRef: React.MutableRefObject<boolean>;
   modelOptions: ModelOption[];
   reasoningOptions: ModelOption[];
   serviceTierOptions: ModelOption[];
@@ -327,7 +323,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   threadOrderByMachine: Record<string, string[]>;
   threadPicker: ThreadPickerState | null;
   turnStatusItems: ActivityStatusView[];
-  updateMessageRenderMode: (messageId: string, mode: MessageRenderMode) => void;
+  updateMessageRenderMode: (threadId: string, messageId: string, mode: MessageRenderMode) => void;
   updateThreadInput: (threadId: string, input: string) => void;
   updateThreadGoal: (threadId: string, goal: ThreadGoalUpdateInput) => MaybePromise<boolean>;
   openThreadEmptyMessage: string;
@@ -336,6 +332,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
 
 export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "activeCanStop"
+  | "activeTabThreadId"
   | "activeExpandedStatusKeys"
   | "activeGoal"
   | "activeRuntime"
@@ -368,7 +365,6 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "composerDraftStore"
   | "composerMenuOpen"
   | "composerMode"
-  | "composerTextareaRef"
   | "expandedStatusKeys"
   | "expandedStatusTurns"
   | "expandedToolBatchKeys"
@@ -377,14 +373,11 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "dismissPendingUserMessage"
   | "cancelQueuedSubmission"
   | "handleComposerKeyDown"
-  | "imageFileInputRef"
   | "insertThreadPathText"
   | "latestTurnActivityScope"
   | "loadCommandPalette"
   | "loadOlderThread"
   | "messageRenderModes"
-  | "messagesRef"
-  | "messagesShouldFollowRef"
   | "openMessageSelectionToolbar"
   | "openSubagentThread"
   | "openThreadModelDialog"
@@ -560,7 +553,7 @@ const sidebarKeys = [
 ] as const satisfies readonly (keyof AppSidebarViewModel)[];
 
 const workspaceKeys = [
-  "activeCanStop", "activeExpandedStatusKeys", "activeGoal", "activeRuntime", "activeThread",
+  "activeCanStop", "activeTabThreadId", "activeExpandedStatusKeys", "activeGoal", "activeRuntime", "activeThread",
   "activeThreadIsOpen", "activeThreadExecutionMeta", "activeThreadApprovalPolicyDraft",
   "activeThreadApprovalPolicyKind", "activeThreadApprovalPolicySelection",
   "activeThreadApprovalsReviewerDraft", "activeThreadApprovalsReviewerSelection",
@@ -569,10 +562,9 @@ const workspaceKeys = [
   "activeUserMessageHistory", "activeViews", "authError",
   "authRequired", "authTokenDraft", "addThreadFiles", "clearThreadAttachments", "clearThreadGoal",
   "closeThread", "compactThread", "commandPaletteByScope", "commandPaletteLoadingScopes",
-  "composerDraftStore", "composerMenuOpen", "composerMode", "composerTextareaRef", "expandedStatusKeys", "expandedStatusTurns", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage", "dismissPendingUserMessage", "cancelQueuedSubmission",
-  "handleComposerKeyDown", "imageFileInputRef", "insertThreadPathText", "latestTurnActivityScope",
-  "loadCommandPalette", "loadOlderThread", "messageRenderModes", "messagesRef",
-  "messagesShouldFollowRef", "openMessageSelectionToolbar", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",
+  "composerDraftStore", "composerMenuOpen", "composerMode", "expandedStatusKeys", "expandedStatusTurns", "expandedToolBatchKeys", "forkingMessageKey", "forkMessage", "dismissPendingUserMessage", "cancelQueuedSubmission",
+  "handleComposerKeyDown", "insertThreadPathText", "latestTurnActivityScope",
+  "loadCommandPalette", "loadOlderThread", "messageRenderModes", "openMessageSelectionToolbar", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",
   "openThreads",
   "pasteThreadImages", "removeThreadImage", "removeThreadTextAttachment", "renderComposerThreadControls",
   "resetComposerHistory", "respondToApproval", "respondToUserInput", "reviewThread",
