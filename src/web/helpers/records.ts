@@ -447,7 +447,6 @@ export const isSimpleMainView = (view: CodexRecordView) => {
   const payload = asRecord(view.record.payload);
   if (view.record.type === "event_msg" && isContextCompactionType(payload?.type)) return true;
   if (view.record.type !== "response_item") return false;
-  if (payload?.type === "file_change") return isPendingApprovalPayload(payload);
   if (payload?.type !== "message") return true;
   return payload.role === "user" || payload.role === "assistant";
 };

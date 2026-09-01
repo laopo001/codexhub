@@ -573,8 +573,8 @@ test("Status panel auto-expands for Plan and backgrounds without overriding an e
 });
 
 test("approval interactions stay on their message and out of Turn Status", async () => {
-  const { activityStatusesFromRecords } = await import("../../src/web/helpers/records.js");
-  assert.deepEqual(activityStatusesFromRecords([{
+  const { activityStatusesFromRecords, recordHasPendingInteraction } = await import("../../src/web/helpers/records.js");
+  const approvalRecord: CodexRecord = {
     id: "approval-request",
     type: "response_item",
     payload: {
@@ -585,7 +585,66 @@ test("approval interactions stay on their message and out of Turn Status", async
         status: "pending"
       }
     }
-  }]), []);
+  };
+  assert.deepEqual(activityStatusesFromRecords([approvalRecord]), []);
+  assert.equal(recordHasPendingInteraction(approvalRecord), true);
+});
+
+test("file changes use the ordinary Simple conversation tool path in every app-server state", async () => {
+  const previousWindow = "window" in globalThis
+    ? (globalThis as { window?: unknown }).window
+    : undefined;
+  (globalThis as { window?: unknown }).window = { location: { search: "" } };
+  const { conversationViewsFromRecords } = await import("../../src/web/helpers/conversationViews.js").finally(() => {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  });
+  const { activityStatusesFromRecords } = await import("../../src/web/helpers/records.js");
+
+  const records: CodexRecord[] = (["in_progress", "completed", "failed"] as const).map((status) => ({
+    id: `file-change-${status}`,
+    timestamp: "2026-09-01T08:00:00.000Z",
+    type: "response_item",
+    payload: {
+      type: "file_change",
+      status,
+      changes: [{ path: `${status}.ts`, diff: `+${status}` }]
+    }
+  }));
+
+  const views = conversationViewsFromRecords(records);
+  assert.deepEqual(views.map((view) => view.status), ["in_progress", "completed", "failed"]);
+  assert.equal(views.every((view) => view.role === "tool"), true);
+  assert.match(views[0].text, /in_progress/);
+  assert.match(views[1].text, /completed/);
+  assert.match(views[2].text, /failed/);
+  assert.deepEqual(
+    activityStatusesFromRecords(records).find((status) => status.key === "files")?.files?.map((file) => file.path),
+    ["in_progress.ts", "completed.ts", "failed.ts"]
+  );
+  const pendingApproval = conversationViewsFromRecords([{
+    id: "file-change-pending-approval",
+    type: "response_item",
+    payload: {
+      type: "file_change",
+      approval: { approvalId: "approval-1", status: "pending" },
+      changes: [{ path: "pending.ts", diff: "+pending" }]
+    }
+  }]);
+  assert.equal(pendingApproval.length, 1);
+  assert.equal(pendingApproval[0].role, "tool");
+
+  const markup = renderToStaticMarkup(createElement(MessageCard, {
+    message: views[1],
+    renderMode: "markdown",
+    markdownEnabled: true,
+    showStatus: true,
+    onInspect: () => undefined
+  }));
+  assert.match(markup, /Files changed/);
+  assert.match(markup, /completed\.ts/);
+  assert.match(markup, /aria-label="View tool details"/);
+  assert.match(markup, /title="View tool details"/);
 });
 
 test("Thread background processes use an expandable BACKGROUNDS section", async () => {
