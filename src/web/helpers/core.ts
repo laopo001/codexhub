@@ -884,10 +884,10 @@ export const runtimeThreadIds = (runtime: RuntimeSummary) => {
 export const preferredThreadIdForRuntime = (runtime: RuntimeSummary, project?: ProjectSummary) => {
   const runtimeThreads = runtime.threads ?? [];
   if (!project) return runtimeThreads[0]?.threadId ?? "";
-  const projectThreads = runtimeThreads.filter((thread) => thread.workingDirectory === project.path);
-  const projectThreadIds = new Set(projectThreads.map((thread) => thread.threadId));
-  if (project.lastThreadId && projectThreadIds.has(project.lastThreadId)) return project.lastThreadId;
-  return projectThreads[0]?.threadId ?? "";
+  if (project.lastThreadId && runtimeThreads.some((thread) => thread.threadId === project.lastThreadId)) {
+    return project.lastThreadId;
+  }
+  return "";
 };
 
 export const runtimeForMachine = (runtimes: RuntimeSummary[], machineId?: string) => {
@@ -920,13 +920,18 @@ export const patchRuntimesThread = (runtimeList: RuntimeSummary[], thread: Threa
   return changed ? next : runtimeList;
 };
 
-export const patchProjectsThread = (projects: ProjectSummary[], thread: ThreadSummary) => {
+export const patchProjectsThread = (
+  projects: ProjectSummary[],
+  thread: ThreadSummary,
+  projectTarget?: { machineId: string; path: string }
+) => {
   const machineId = thread?.runtime?.machineId;
-  if (!machineId) return projects;
+  if (!machineId || !projectTarget) return projects;
+  if (projectTarget.machineId !== machineId) return projects;
   const matchingProject = findProjectByMachinePath(
     projects,
     machineId,
-    thread.workingDirectory
+    projectTarget.path
   );
   if (!matchingProject) return projects;
   let changed = false;

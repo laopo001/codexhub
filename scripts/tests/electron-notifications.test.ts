@@ -124,6 +124,22 @@ test("task completion notification title follows the latest Activity title and i
   assert.equal(notificationWithInsiders.body, "VS Code Insiders · codexhub-title\n已完成 · 用时 2.0s · 已修复");
   assert.equal(notificationWithInsiders.source?.kind, "vscode");
   assert.equal(notificationWithInsiders.source?.vscodeChannel, "insiders");
+  const explicitTargets = taskCompleteNotification(thread, records[2], records, {
+    machineId: "machine-title",
+    projectPath: "/repo/a",
+    projectTarget: { machineId: "machine-title", path: "/repo/a" },
+    workspaceTarget: {
+      machineId: "machine-title",
+      kind: "electron",
+      groupId: "electron-main",
+      workspacePaths: ["/repo/a"]
+    }
+  });
+  assert.deepEqual(taskCompleteNotificationOpenTarget(explicitTargets).projectTarget, {
+    machineId: "machine-title",
+    path: "/repo/a"
+  });
+  assert.equal(taskCompleteNotificationOpenTarget(explicitTargets).workspaceTarget?.kind, "electron");
 });
 
 test("task completion notification follows the latest user input turn", () => {
@@ -220,6 +236,14 @@ test("notification with vscode source preserves full target routing metadata", (
       label: "VS Code Insiders: codexhub [WSL: Ubuntu]",
       vscodeChannel: "insiders" as const
     },
+    projectTarget: { machineId: "machine-jx", path: "/home/laop/projects/codexhub" },
+    workspaceTarget: {
+      machineId: "machine-jx",
+      kind: "vscode" as const,
+      groupId: "vscode-window-1",
+      workspacePaths: ["/home/laop/projects/codexhub"],
+      vscodeChannel: "insiders" as const
+    },
     machineLabel: "codexhub · WSL Ubuntu · jx"
   };
 
@@ -231,6 +255,16 @@ test("notification with vscode source preserves full target routing metadata", (
     machineHostname: "jx",
     projectPath: "/home/laop/projects/codexhub",
     workingDirectory: "/home/laop/projects/codexhub",
-    source: fullNotification.source
+    source: fullNotification.source,
+    projectTarget: fullNotification.projectTarget,
+    workspaceTarget: fullNotification.workspaceTarget
   });
+  assert.equal(isTaskCompleteNotification({
+    ...fullNotification,
+    projectTarget: { machineId: "other-machine", path: fullNotification.projectPath }
+  }), false);
+  assert.equal(isTaskCompleteNotification({
+    ...fullNotification,
+    workspaceTarget: { ...fullNotification.workspaceTarget, machineId: "other-machine" }
+  }), false);
 });

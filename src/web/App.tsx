@@ -81,6 +81,7 @@ const App = () => {
     serverShareCopied,
     subagentThreadDialog,
     runtimeList,
+    threadProjectTargets,
     setAppSettings,
     setAuthError,
     setAuthRequired,
@@ -200,7 +201,7 @@ const App = () => {
     appSettings.selectedPetId,
     setAppSettings,
     isElectronDesktopPetWindow ? "desktop" : "window",
-    { runtimeList, machines, dialogThreads: petDialogThreads, projects: projectList }
+    { runtimeList, machines, dialogThreads: petDialogThreads, projects: projectList, threadProjectTargets }
   );
   React.useEffect(() => {
     if (!isElectronDesktopPetWindow) return undefined;

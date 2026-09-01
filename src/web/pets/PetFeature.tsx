@@ -394,7 +394,9 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
         machineId: activity.machineId,
         machineHostname: activity.machineHostname,
         projectPath: activity.projectPath,
-        source: activity.projectSource
+        source: activity.projectSource,
+        ...(activity.projectTarget ? { projectTarget: activity.projectTarget } : {}),
+        ...(activity.workspaceTarget ? { workspaceTarget: activity.workspaceTarget } : {})
       });
       return;
     }

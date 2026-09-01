@@ -583,7 +583,7 @@ test("a completion during jumping restarts the three-second deadline", () => {
   assert.equal(state.phase, "none");
 });
 
-test("derivePetActivities matches project source using machineId and longest path ancestor", () => {
+test("derivePetActivities routes explicit project origin to its workspace", () => {
   const machineId = "machine-authority-00ad99e0-a745-4ce9-9a10-fb5620893367";
   const projectList: import("../../src/shared/projectTypes.js").ProjectSummary[] = [
     {
@@ -602,6 +602,22 @@ test("derivePetActivities matches project source using machineId and longest pat
       machineId,
       path: "/home/laop/projects/codexhub",
       name: "codexhub",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastOpenedAt: "2026-01-01T00:00:00.000Z",
+      machineOnline: true,
+      running: false,
+      source: {
+        kind: "vscode",
+        groupId: "registered:machine-authority-00ad99e0-a745-4ce9-9a10-fb5620893367:vscode-93ed5dee",
+        label: "VSCode: codexhub [WSL: Ubuntu]",
+        vscodeChannel: "insiders"
+      }
+    },
+    {
+      projectId: "p-sibling",
+      machineId,
+      path: "/home/laop/projects/other",
+      name: "other",
       createdAt: "2026-01-01T00:00:00.000Z",
       lastOpenedAt: "2026-01-01T00:00:00.000Z",
       machineOnline: true,
@@ -635,7 +651,15 @@ test("derivePetActivities matches project source using machineId and longest pat
     }
   ];
 
-  const activities = derivePetActivities([threadState], [], machines, [], projectList);
+  const projectTarget = { machineId, path: "/home/laop/projects/codexhub" };
+  const activities = derivePetActivities(
+    [threadState],
+    [],
+    machines,
+    [],
+    projectList,
+    { "wsl-thread-1": projectTarget }
+  );
   assert.equal(activities.length, 1);
   assert.equal(activities[0]?.projectPath, "/home/laop/projects/codexhub");
   assert.equal(activities[0]?.machineHostname, "jx");
@@ -646,9 +670,25 @@ test("derivePetActivities matches project source using machineId and longest pat
     vscodeChannel: "insiders"
   });
   assert.equal(activities[0]?.projectSource?.vscodeChannel, "insiders");
+  assert.deepEqual(activities[0]?.projectTarget, projectTarget);
+  assert.deepEqual(activities[0]?.workspaceTarget, {
+    machineId,
+    kind: "vscode",
+    groupId: "registered:machine-authority-00ad99e0-a745-4ce9-9a10-fb5620893367:vscode-93ed5dee",
+    workspacePaths: ["/home/laop/projects/codexhub", "/home/laop/projects/other"],
+    label: "VSCode: codexhub [WSL: Ubuntu]",
+    vscodeChannel: "insiders"
+  });
   assert.equal(activities[0]?.machineLabelParts?.type, "VS Code Insiders");
   assert.equal(activities[0]?.machineLabelParts?.directoryName, "web");
   assert.equal(activities[0]?.machineLabel, "VS Code Insiders · web");
+});
+
+test("derivePetActivities leaves a thread without explicit origin unresolved", () => {
+  const activities = derivePetActivities([thread("unknown-origin", [], true)], [], [], [], [], {});
+  assert.equal(activities[0]?.projectTarget, undefined);
+  assert.equal(activities[0]?.workspaceTarget, undefined);
+  assert.equal(activities[0]?.projectPath, undefined);
 });
 
 test("PetFeature openActivity retains tray expansion without closing it and has no focusMainWindow fallback", async () => {

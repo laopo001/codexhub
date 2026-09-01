@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   projectsForSurface,
-  threadIdsForSurfaceProjects
+  threadMatchesProjectTarget,
+  workspaceIncludesProjectTarget
 } from "../../src/web/helpers/surfaceThreadScope.js";
 
 test("selects every project contributed by one surface and excludes another surface", () => {
@@ -36,60 +37,30 @@ test("selects every project contributed by one surface and excludes another surf
   assert.deepEqual(result.map((project) => project.path), ["/workspace/a", "/workspace/b"]);
 });
 
-test("keeps every project path contributed by one surface", () => {
-  const result = threadIdsForSurfaceProjects(
-    ["project-a", "project-b", "foreign"],
-    {
-      "project-a": { machineId: "machine-local", workingDirectory: "/workspace/a" },
-      "project-b": { machineId: "machine-local", workingDirectory: "/workspace/b" },
-      foreign: { machineId: "machine-local", workingDirectory: "/workspace/foreign" }
-    },
-    [
-      { machineId: "machine-local", path: "/workspace/a" },
-      { machineId: "machine-local", path: "/workspace/b" }
-    ]
-  );
-
-  assert.deepEqual(result, ["project-a", "project-b"]);
+test("workspace membership uses explicit project target instead of thread cwd", () => {
+  const paths = new Set(["/workspace/a", "/workspace/b"]);
+  assert.equal(workspaceIncludesProjectTarget(
+    paths,
+    { machineId: "machine-local", path: "/workspace/b" },
+    "machine-local"
+  ), true);
+  assert.equal(workspaceIncludesProjectTarget(
+    paths,
+    { machineId: "machine-other", path: "/workspace/b" },
+    "machine-local"
+  ), false);
+  assert.equal(workspaceIncludesProjectTarget(paths, undefined, "machine-local"), false);
 });
 
-test("isolates the same path on another machine", () => {
-  const result = threadIdsForSurfaceProjects(
-    ["local", "remote"],
-    {
-      local: { machineId: "machine-local", workingDirectory: "/workspace/shared" },
-      remote: { machineId: "machine-remote", workingDirectory: "/workspace/shared" }
-    },
-    [{ machineId: "machine-local", path: "/workspace/shared" }]
-  );
-
-  assert.deepEqual(result, ["local"]);
-});
-
-test("uses persisted targets when a restarted runtime has not loaded the thread yet", () => {
-  const result = threadIdsForSurfaceProjects(
-    ["saved-current", "saved-foreign", "missing-target"],
-    {
-      "saved-current": { machineId: "machine-local", workingDirectory: "/workspace/current" },
-      "saved-foreign": { machineId: "machine-local", workingDirectory: "/workspace/other" }
-    },
-    [{ machineId: "machine-local", path: "/workspace/current" }]
-  );
-
-  assert.deepEqual(result, ["saved-current"]);
-});
-
-test("does not select a runtime fallback outside every project in the surface", () => {
-  const result = threadIdsForSurfaceProjects(
-    ["runtime-foreign"],
-    {
-      "runtime-foreign": { machineId: "machine-local", workingDirectory: "/workspace/foreign" }
-    },
-    [
-      { machineId: "machine-local", path: "/workspace/a" },
-      { machineId: "machine-local", path: "/workspace/b" }
-    ]
-  );
-
-  assert.deepEqual(result, []);
+test("project association requires an explicit machine and path target", () => {
+  const projectA = { machineId: "machine-local", path: "/workspace/a" };
+  assert.equal(threadMatchesProjectTarget(
+    { machineId: "machine-local", path: "/workspace/a" },
+    projectA
+  ), true);
+  assert.equal(threadMatchesProjectTarget(
+    { machineId: "machine-remote", path: "/workspace/a" },
+    projectA
+  ), false);
+  assert.equal(threadMatchesProjectTarget(undefined, projectA), false);
 });

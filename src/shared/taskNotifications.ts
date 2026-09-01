@@ -3,7 +3,14 @@ import { threadActivityTitleFromRecords } from "./threadActivity.js";
 import type { ThreadSummary } from "./threadTypes.js";
 import { type ProjectSource, isProjectSource } from "./projectTypes.js";
 import { formatVscodeSurfacePrefix } from "./surfaceTypes.js";
-import type { PetActivityOpenTarget } from "./petActivityRouting.js";
+import {
+  parseProjectTarget,
+  parseWorkspaceTarget,
+  pathIdentityKey,
+  type PetActivityOpenTarget,
+  type ProjectTarget,
+  type WorkspaceTarget
+} from "./petActivityRouting.js";
 
 export const workingDirectoryName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || "";
 
@@ -16,6 +23,8 @@ export type TaskCompleteNotification = {
   projectPath?: string;
   workingDirectory?: string;
   source?: ProjectSource;
+  projectTarget?: ProjectTarget;
+  workspaceTarget?: WorkspaceTarget;
   machineLabel?: string;
   duration?: string;
   durationMs?: number;
@@ -24,15 +33,33 @@ export type TaskCompleteNotification = {
 
 export const isTaskCompleteNotification = (value: unknown): value is TaskCompleteNotification => {
   const record = asRecord(value);
+  if (!record) return false;
+  const projectTarget = record.projectTarget === undefined ? undefined : parseProjectTarget(record.projectTarget);
+  const workspaceTarget = record.workspaceTarget === undefined ? undefined : parseWorkspaceTarget(record.workspaceTarget);
   return Boolean(
-    nonEmptyString(record?.title)
-    && typeof record?.body === "string"
+    nonEmptyString(record.title)
+    && typeof record.body === "string"
     && nonEmptyString(record.threadId)
     && (record.machineId === undefined || nonEmptyString(record.machineId))
     && (record.machineHostname === undefined || nonEmptyString(record.machineHostname))
     && (record.projectPath === undefined || nonEmptyString(record.projectPath))
     && (record.workingDirectory === undefined || nonEmptyString(record.workingDirectory))
     && (record.source === undefined || isProjectSource(record.source))
+    && (record.projectTarget === undefined || Boolean(projectTarget))
+    && (record.workspaceTarget === undefined || Boolean(workspaceTarget))
+    && (!workspaceTarget || workspaceTarget.machineId === record.machineId)
+    && (!(projectTarget && workspaceTarget) || projectTarget.machineId === workspaceTarget.machineId)
+    && (!projectTarget || projectTarget.machineId === record.machineId)
+    && (!projectTarget || !workspaceTarget || workspaceTarget.workspacePaths.includes(projectTarget.path))
+    && (!projectTarget || record.projectPath === undefined
+      || pathIdentityKey(String(record.projectPath)) === pathIdentityKey(projectTarget.path))
+    && (!workspaceTarget || !record.source || (
+      record.source.kind === workspaceTarget.kind
+      && record.source.groupId === workspaceTarget.groupId
+      && (!record.source.vscodeChannel
+        || record.source.vscodeChannel === workspaceTarget.vscodeChannel)
+      && record.source.workspaceFile === workspaceTarget.workspaceFile
+    ))
     && (record.machineLabel === undefined || nonEmptyString(record.machineLabel))
     && (record.duration === undefined || nonEmptyString(record.duration))
     && (record.durationMs === undefined || nonNegativeFiniteNumber(record.durationMs))
@@ -103,6 +130,8 @@ export type TaskCompleteNotificationOptions = {
   machineHostname?: string;
   projectPath?: string;
   machineLabel?: string;
+  projectTarget?: ProjectTarget;
+  workspaceTarget?: WorkspaceTarget;
 };
 
 /**
@@ -186,6 +215,8 @@ export const taskCompleteNotification = (
     ...(machineId ? { machineId } : {}),
     ...(machineHostname ? { machineHostname } : {}),
     ...(opts.projectPath ? { projectPath: opts.projectPath } : {}),
+    ...(opts.projectTarget ? { projectTarget: opts.projectTarget } : {}),
+    ...(opts.workspaceTarget ? { workspaceTarget: opts.workspaceTarget } : {}),
     ...(workingDirectory ? { workingDirectory } : {}),
     ...(opts.source ? { source: opts.source } : {}),
     ...(opts.machineLabel?.trim() ? { machineLabel: opts.machineLabel.trim() } : {}),
@@ -202,6 +233,8 @@ export const taskCompleteNotificationOpenTarget = (
   ...(notification.machineId ? { machineId: notification.machineId } : {}),
   ...(notification.machineHostname ? { machineHostname: notification.machineHostname } : {}),
   ...(notification.projectPath ? { projectPath: notification.projectPath } : {}),
+  ...(notification.projectTarget ? { projectTarget: notification.projectTarget } : {}),
+  ...(notification.workspaceTarget ? { workspaceTarget: notification.workspaceTarget } : {}),
   ...(notification.source ? { source: notification.source } : {})
 });
 

@@ -1,7 +1,7 @@
-export type SurfaceProjectTarget = {
-  machineId: string;
-  path: string;
-};
+import type { ProjectTarget } from "../../shared/petActivityRouting.js";
+
+/** @deprecated Prefer the canonical shared ProjectTarget; retained as a Web-local compatibility alias. */
+export type SurfaceProjectTarget = ProjectTarget;
 
 export type SurfaceProject = SurfaceProjectTarget & {
   source?: {
@@ -13,10 +13,28 @@ export type SurfaceProject = SurfaceProjectTarget & {
 export type SurfaceThreadTarget = {
   machineId: string;
   workingDirectory?: string;
+  projectTarget?: SurfaceProjectTarget;
 };
 
-const surfaceTargetKey = (machineId: string, workingDirectory: string) =>
-  `${machineId}\0${workingDirectory}`;
+export const threadMatchesProjectTarget = (
+  target: SurfaceProjectTarget | undefined,
+  project: SurfaceProjectTarget | undefined
+) => Boolean(
+  target
+  && project
+  && target.machineId === project.machineId
+  && target.path === project.path
+);
+
+export const workspaceIncludesProjectTarget = (
+  workspacePaths: ReadonlySet<string>,
+  target: SurfaceProjectTarget | undefined,
+  machineId?: string
+) => Boolean(
+  target
+  && (!machineId || target.machineId === machineId)
+  && workspacePaths.has(target.path)
+);
 
 export const projectsForSurface = <Project extends SurfaceProject>(
   projects: readonly Project[],
@@ -32,26 +50,4 @@ export const projectsForSurface = <Project extends SurfaceProject>(
     && project.source.groupId === surface.groupId
     && (!workspacePaths.size || workspacePaths.has(project.path))
   );
-};
-
-/**
- * Restrict thread tabs to the projects contributed by one embedded surface.
- * A surface may contribute several workspace folders, so active path is not a
- * membership boundary; machine + project path is.
- */
-export const threadIdsForSurfaceProjects = (
-  threadIds: readonly string[],
-  threadTargets: Readonly<Record<string, SurfaceThreadTarget | undefined>>,
-  surfaceProjects: readonly SurfaceProjectTarget[]
-) => {
-  const allowedTargets = new Set(
-    surfaceProjects.map((project) => surfaceTargetKey(project.machineId, project.path))
-  );
-  return threadIds.filter((threadId) => {
-    const target = threadTargets[threadId];
-    return Boolean(
-      target?.workingDirectory
-      && allowedTargets.has(surfaceTargetKey(target.machineId, target.workingDirectory))
-    );
-  });
 };

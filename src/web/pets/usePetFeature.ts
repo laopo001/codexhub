@@ -3,6 +3,7 @@ import { apiRoutes } from "../../shared/apiRoutes.js";
 import { defaultPetId, type InvalidPetPackage, type PetManifest } from "../../shared/petTypes.js";
 import type { ProjectSummary } from "../../shared/projectTypes.js";
 import type { AppSettings, MachineSummary, OpenThreadState, RuntimeSummary } from "../types.js";
+import type { ProjectTarget } from "../../shared/petActivityRouting.js";
 import { isElectronDesktopPetWindow, isNativeElectronSurface } from "../appConfig.js";
 import { apiRouteJson } from "../helpers/core.js";
 import { parsePetCommand } from "./petCommands.js";
@@ -57,6 +58,7 @@ export type PetFeatureSources = {
   machines?: MachineSummary[];
   dialogThreads?: OpenThreadState[];
   projects?: ProjectSummary[];
+  threadProjectTargets?: Readonly<Record<string, ProjectTarget | undefined>>;
 };
 
 export const usePetFeature = (
@@ -72,6 +74,7 @@ export const usePetFeature = (
   const machines = sources.machines ?? [];
   const dialogThreads = sources.dialogThreads ?? [];
   const projects = sources.projects ?? [];
+  const threadProjectTargets = sources.threadProjectTargets ?? {};
   const preferencesKey = isElectronDesktopPetWindow ? desktopPreferencesKey : webPreferencesKey;
   const activeVisibilityKey = visibilityMode === "desktop" ? "showDesktopPet" : "showFloatingPet";
   const [preferences, setPreferences] = React.useState<PetPreferences>(() => loadPreferences(preferencesKey));
@@ -165,7 +168,7 @@ export const usePetFeature = (
   const pets = React.useMemo(() => [...builtinPets, ...importedPets], [importedPets]);
   const selectedPet = pets.find((pet) => pet.id === selectedPetId) ?? builtinPet;
   const activities = React.useMemo(() => {
-    const derivedActivities = derivePetActivities(openThreads, runtimeList, machines, dialogThreads, projects);
+    const derivedActivities = derivePetActivities(openThreads, runtimeList, machines, dialogThreads, projects, threadProjectTargets);
     const activeThreadIds = new Set<string>();
 
     for (const activity of derivedActivities) {
@@ -182,7 +185,7 @@ export const usePetFeature = (
     }
 
     return sortPetActivities(derivedActivities, activityOrderRef.current);
-  }, [dialogThreads, machines, openThreads, projects, runtimeList]);
+  }, [dialogThreads, machines, openThreads, projects, runtimeList, threadProjectTargets]);
   const status = headlinePetStatus(activities);
 
   const setVisibilityEnabled = React.useCallback((

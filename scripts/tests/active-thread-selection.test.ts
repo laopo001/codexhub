@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { emptyThreadUsage } from "../../src/core/threadUsage.js";
-import { resolveActiveThreadId } from "../../src/web/helpers/activeThreadSelection.js";
+import { resolveActiveThreadId, selectActiveThread } from "../../src/web/helpers/activeThreadSelection.js";
 import type { OpenThreadState } from "../../src/web/types.js";
 
 const thread = (threadId: string, workingDirectory: string, machineId: string): OpenThreadState => ({
@@ -33,6 +33,45 @@ const openThreads = [
   thread("thread-other", "/workspace/other", "machine-other"),
   thread("thread-active", "/workspace/current", "machine-current")
 ];
+
+test("selected project never derives active thread from machine-only fallback", () => {
+  const selectedProject = { machineId: "machine-current", path: "/workspace/a" };
+  assert.equal(selectActiveThread({
+    activeTabThreadId: "thread-active",
+    activeMachineId: "machine-current",
+    openThreads,
+    selectedProjectTarget: selectedProject,
+    projectSelectionActive: true,
+    threadProjectTargets: {},
+    fixedSurface: true
+  }), undefined);
+  assert.equal(selectActiveThread({
+    activeTabThreadId: "",
+    activeMachineId: "machine-current",
+    openThreads: [
+      ...openThreads,
+      thread("thread-explicit", "/workspace/root", "machine-current")
+    ],
+    selectedProjectTarget: selectedProject,
+    projectSelectionActive: true,
+    threadProjectTargets: {
+      "thread-explicit": selectedProject
+    },
+    fixedSurface: true
+  })?.threadId, "thread-explicit");
+});
+
+test("stale selected project identity never falls back to another open thread", () => {
+  assert.equal(selectActiveThread({
+    activeTabThreadId: "thread-active",
+    activeMachineId: "machine-current",
+    openThreads,
+    selectedProjectTarget: undefined,
+    projectSelectionActive: true,
+    threadProjectTargets: {},
+    fixedSurface: true
+  }), undefined);
+});
 
 test("keeps a valid active thread", () => {
   assert.equal(resolveActiveThreadId({
@@ -81,7 +120,8 @@ test("recovers the open thread belonging to the selected project", () => {
       thread("thread-selected-project", "/workspace/new", "machine-current")
     ],
     selectedProjectMachineId: "machine-current",
-    selectedProjectPath: "/workspace/new"
+    selectedProjectPath: "/workspace/new",
+    selectedProjectThreadId: "thread-selected-project"
   }), "thread-selected-project");
 });
 
@@ -121,7 +161,7 @@ test("keeps a same-machine open thread when the selected project has no matching
   }), "thread-active");
 });
 
-test("does not fall back to a foreign thread for a fixed workspace", () => {
+test("does not use workingDirectory to change fixed-surface tab selection", () => {
   assert.equal(resolveActiveThreadId({
     activeMachineId: "machine-current",
     activeTabThreadId: "",

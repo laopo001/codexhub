@@ -12,12 +12,10 @@ import {
 import {
   apiJson,
   apiRouteJson,
-  findProjectByMachinePath,
   machineProjectLauncher,
   permissionProfileScopeKey,
   preferredThreadIdForRuntime,
   primeTaskCompletionSound,
-  readStoredUiState,
   runtimeForProject
 } from "./appHelpers.js";
 import type { AppSelectors } from "./appSelectors.js";
@@ -32,7 +30,12 @@ import {
 } from "./helpers/subagentThreadDialog.js";
 import { resolveActiveThreadId } from "./helpers/activeThreadSelection.js";
 import { createWebClientHeartbeat } from "./helpers/webClientHeartbeat.js";
-import { threadIdsForSurfaceProjects } from "./helpers/surfaceThreadScope.js";
+import type { SurfaceThreadTarget } from "./helpers/surfaceThreadScope.js";
+import {
+  claimPendingThreadRestoreAttempt,
+  pendingThreadRestoreOpenOptions,
+  removePendingThreadRestoreTarget
+} from "./helpers/pendingThreadRestore.js";
 
 const webClientHeartbeatMs = 10_000;
 
@@ -182,6 +185,11 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       loadingThreadIds: new Set(state.openingThreads.current.keys()),
       selectedProjectMachineId: selectors.selectedProject?.machineId,
       selectedProjectPath: selectors.selectedProject?.path,
+      selectedProjectThreadId: state.openThreads.find((thread) => {
+        const target = state.threadProjectTargets[thread.threadId];
+        return target?.machineId === selectors.selectedProject?.machineId
+          && target.path === selectors.selectedProject?.path;
+      })?.threadId,
       restrictToWorkspacePath: isFixedWorkspaceSurface
     });
     if (!activeThreadId || activeThreadId === state.activeTabThreadId) return;
@@ -227,12 +235,13 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
       const machineId = thread.runtime.machineId;
       return machineId ? [[thread.threadId, {
         machineId,
+        ...(state.threadProjectTargets[thread.threadId]
+          ? { projectTarget: state.threadProjectTargets[thread.threadId] }
+          : {}),
         ...(thread.workingDirectory ? { workingDirectory: thread.workingDirectory } : {})
-      }]] : [];
+      } satisfies SurfaceThreadTarget]] : [];
     }));
-    const persistedOpenThreadIds = isFixedWorkspaceSurface
-      ? threadIdsForSurfaceProjects(candidateOpenThreadIds, currentThreadTargets, selectors.projectList)
-      : candidateOpenThreadIds;
+    const persistedOpenThreadIds = candidateOpenThreadIds;
     const persistedOpenThreadIdSet = new Set(persistedOpenThreadIds);
     const openThreadTargets = Object.fromEntries(persistedOpenThreadIds.flatMap((threadId) => {
       const target = currentThreadTargets[threadId];
@@ -278,6 +287,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.sidebarCollapsed,
     state.collapsedProjectMachineKeys,
     state.threadOrderByMachine,
+    state.threadProjectTargets,
     state.initialized
   ]);
 
@@ -285,47 +295,74 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     if (!state.initialized || !state.pendingRestoreThreadIds.length) return;
     let disposed = false;
     let inFlight = false;
-    let attempts = 0;
     let retryTimer: number | null = null;
     const maxAttempts = 10;
 
     const retryPendingThreads = async () => {
-      if (disposed || inFlight || attempts >= maxAttempts) return;
+      if (disposed || inFlight) return;
       inFlight = true;
-      attempts += 1;
       const pendingThreadIds = [...state.pendingRestoreThreadIds];
       const pendingActiveThreadId = state.pendingRestoreActiveThreadId;
       const hasActiveThread = Boolean(state.activeTabThreadId);
-      const saved = readStoredUiState();
       try {
         for (const threadId of pendingThreadIds) {
           if (disposed) return;
-          const activate = threadId === pendingActiveThreadId && !hasActiveThread;
-          const explicitTarget = saved?.openThreadTargets?.[threadId];
-          const inferredMachineId = explicitTarget?.machineId;
-          const preferredWorkingDirectory = explicitTarget?.workingDirectory
-            || (threadId === pendingActiveThreadId ? saved?.activeWorkspacePath : undefined);
+          const claimedAttempts = claimPendingThreadRestoreAttempt(
+            state.pendingRestoreAttemptCountsRef.current,
+            threadId,
+            maxAttempts
+          );
+          if (!claimedAttempts) continue;
+          state.pendingRestoreAttemptCountsRef.current = claimedAttempts;
           try {
             await actions.openThread(
               threadId,
-              {
-                ...(activate ? { deferActivationUntilLoaded: true } : { activate: false }),
-                ...(inferredMachineId ? { expectedMachineId: inferredMachineId } : {}),
-                ...(preferredWorkingDirectory ? { preferredWorkingDirectory } : {})
-              }
+              pendingThreadRestoreOpenOptions({
+                threadId,
+                activeThreadId: pendingActiveThreadId,
+                hasActiveThread,
+                targets: state.pendingRestoreTargets
+              })
             );
             if (disposed) return;
             state.setPendingRestoreThreadIds((current) => current.filter((id) => id !== threadId));
             state.setPendingRestoreActiveThreadId((current) => current === threadId ? "" : current);
+            state.setPendingRestoreTargets((current) =>
+              removePendingThreadRestoreTarget(current, threadId)
+            );
+            const remainingAttempts = { ...state.pendingRestoreAttemptCountsRef.current };
+            delete remainingAttempts[threadId];
+            state.pendingRestoreAttemptCountsRef.current = remainingAttempts;
           } catch {
-            // Keep the ID persisted; the authority/runtime may still be waking up.
+            // Keep the target in memory; the authority/runtime may still be waking up.
           }
         }
       } finally {
         inFlight = false;
-        if (attempts >= maxAttempts && retryTimer !== null) {
+        const exhausted = pendingThreadIds.every(
+          (threadId) => (state.pendingRestoreAttemptCountsRef.current[threadId] ?? 0) >= maxAttempts
+        );
+        if (exhausted && retryTimer !== null) {
+          const exhaustedIds = new Set(pendingThreadIds.filter(
+            (threadId) => (state.pendingRestoreAttemptCountsRef.current[threadId] ?? 0) >= maxAttempts
+          ));
           window.clearInterval(retryTimer);
           retryTimer = null;
+          state.setPendingRestoreThreadIds((current) => current.filter(
+            (threadId) => !exhaustedIds.has(threadId)
+          ));
+          state.setPendingRestoreActiveThreadId((current) =>
+            exhaustedIds.has(current) ? "" : current
+          );
+          state.setPendingRestoreTargets((current) => Object.fromEntries(
+            Object.entries(current).filter(([threadId]) => !exhaustedIds.has(threadId))
+          ));
+          state.setThreadProjectTargets((current) => Object.fromEntries(
+            Object.entries(current).filter(([threadId]) => !exhaustedIds.has(threadId))
+          ));
+          const remainingAttempts = { ...state.pendingRestoreAttemptCountsRef.current };
+          for (const threadId of exhaustedIds) delete remainingAttempts[threadId];
+          state.pendingRestoreAttemptCountsRef.current = remainingAttempts;
         }
       }
     };
@@ -340,6 +377,7 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
     state.activeTabThreadId,
     state.initialized,
     state.pendingRestoreActiveThreadId,
+    state.pendingRestoreTargets,
     state.pendingRestoreThreadIds
   ]);
 
@@ -443,17 +481,10 @@ export const useAppEffects = ({ actions, resizeComposerTextarea, selectors, stat
 
     const initialThreadId = runtime
       ? isFixedWorkspaceSurface
-        ? threadIdsForSurfaceProjects(
-          (runtime.threads ?? []).map((thread) => thread.threadId),
-          Object.fromEntries((runtime.threads ?? []).map((thread) => [thread.threadId, {
-            machineId: runtime.machineId,
-            workingDirectory: thread.workingDirectory
-          }])),
-          selectors.projectList
-        )[0]
+        ? ""
         : preferredThreadIdForRuntime(
           runtime,
-          findProjectByMachinePath(selectors.projectList, runtime.machineId, runtime.workingDirectory)
+          undefined
         )
       : undefined;
     if (initialThreadId) {

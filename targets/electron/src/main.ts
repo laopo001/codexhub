@@ -451,8 +451,8 @@ const handleHostActivityOpenTarget = (
 ): boolean => {
   if (!target) return false;
 
-  // 1. Explicit Electron source: 聚焦/打开 Electron
-  if (target.source?.kind === "electron") {
+  // 1. Explicit workspace target chooses the host surface; ProjectTarget alone is insufficient.
+  if (target.workspaceTarget?.kind === "electron") {
     if (target.threadId.trim()) {
       void focusMainWindowForThread(target.threadId.trim());
     } else {
@@ -461,9 +461,9 @@ const handleHostActivityOpenTarget = (
     return true;
   }
 
-  // 2. Explicit VSCode source: 仅对具有合法 vscodeChannel 且可确认的本机 Windows/WSL VSCode 尝试唤起
-  if (target.source?.kind === "vscode") {
-    const channel = target.source.vscodeChannel;
+  // 2. Explicit VSCode workspace: only a validated workspace target may launch VSCode.
+  if (target.workspaceTarget?.kind === "vscode") {
+    const channel = target.workspaceTarget.vscodeChannel;
     if (channel) {
       const customExecutable = process.platform === "win32"
         ? resolveWindowsVsCodeCliExecutable(channel, process.env, existsSync)
@@ -481,7 +481,7 @@ const handleHostActivityOpenTarget = (
     }
     // 当 VSCode 无法唤起时（如 hostname mismatch 或无本地 CLI）：
     // 若开启 fallbackToElectron（如通知点击），则回退聚焦 Electron 并打开 thread；
-    // 若未开启 fallbackToElectron（如桌宠点击），则 safe no-op。
+    // Pet/notification callers may safely fall back to Electron; never launch from cwd/projectPath.
     if (options?.fallbackToElectron && target.threadId.trim()) {
       void focusMainWindowForThread(target.threadId.trim());
       return true;
@@ -489,7 +489,8 @@ const handleHostActivityOpenTarget = (
     return false;
   }
 
-  // 3. Source 缺失 / 未知 / 其他：
+  // 3. Legacy/source-only payloads may safely fall back to Electron for notifications,
+  // but never use cwd/projectPath to launch VSCode.
   if (options?.fallbackToElectron && target.threadId.trim()) {
     void focusMainWindowForThread(target.threadId.trim());
     return true;
@@ -502,7 +503,7 @@ ipcMain.on("codexhub:pet-open-activity", (event, value: unknown) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
   const target = parsePetActivityOpenTarget(value);
-  handleHostActivityOpenTarget(target, { fallbackToElectron: false });
+  handleHostActivityOpenTarget(target, { fallbackToElectron: true });
 });
 
 ipcMain.on("codexhub:task-complete-notification", (event, value: unknown) => {

@@ -4,6 +4,10 @@
 
 CodexHub 0.9.0 要求运行 machine 上的官方 Codex CLI 不低于 `0.144.4`。VSCode 0.9.0 延续 authority 级共享服务，并优先使用本机 Node.js 与 npm/link 安装的 CodexHub 包；升级前请先阅读 [0.8.0 迁移说明](./MIGRATION.md)。
 
+Machine、surface、workspace、project、thread 与 `workingDirectory` 的身份和所有权边界见
+[Surface、Machine、Workspace、Project 与 Thread 边界](./docs/architecture/surface-machine-workspace-project-thread.md)。
+其中 `workingDirectory` 只表示 thread 的执行 cwd，不能作为 project、workspace 或 surface membership。
+
 - 共享核心：API server 统一管理 machines、machine runtime sessions 和 threads，并把轻量 project 元数据投影到 `/api/projects`；Web 左侧按项目优先展示，点击 project 只切换 active path，Add Tab/thread picker 基于该 path 创建或恢复 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
@@ -198,7 +202,7 @@ pnpm codexhub task run daily-summary
 
 server 每 30 秒扫描一次本地 task 状态，间隔可用 `CODEX_HUB_TASK_SCAN_INTERVAL_MS` 调整。task 的 `schedule` 会在保存时校验为五字段 cron 表达式；无效表达式会被 API 拒绝，而不是静默保存后永远不触发。task 不再写入 `.codexp/tasks`，也不由远端 workspace 持有。
 
-任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VS Code notification，并只把对应 project path 的完成事件发到包含该 workspace 的窗口；Electron surface 则在 Electron main process 创建原生系统通知，点击后恢复并聚焦通知来源窗口，再打开对应 `threadId`。这个开关默认关闭并保存在本地 UI state。
+任务完成时 Web 会播放完成音效；Settings 里的 Task complete popups 控制是否额外发系统通知。普通 Web 使用 browser Notification，VSCode surface 通过 iframe `postMessage` 转成 VS Code notification，并用显式 workspace target 验证通知属于当前窗口后打开对应 `threadId`；Electron surface 则在 Electron main process 创建原生系统通知。Electron 桌宠和完成通知的跨宿主点击先使用显式 workspace target 区分 VSCode workspace 与 Electron，再使用 project target 定位项目；`workingDirectory` 只作执行/展示信息。无法证明 VSCode workspace、multi-root 缺少 workspace file 或启动失败时安全回退 Electron thread，不用 cwd/project path 猜测 VSCode workspace。这个开关默认关闭并保存在本地 UI state。
 
 如果希望通知像桌宠 Activity 一样反映整个 Turn 生命周期，可以直接配置 ntfy：
 

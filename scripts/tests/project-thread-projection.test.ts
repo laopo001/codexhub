@@ -41,12 +41,28 @@ const unresolvedThread = () => {
 
 test("patches only the project belonging to the thread machine when paths collide", () => {
   const projects = [project("machine-other", "/workspace/shared"), project("machine-current", "/workspace/shared")];
-  const next = patchProjectsThread(projects, thread("machine-current"));
+  const next = patchProjectsThread(projects, thread("machine-current"), {
+    machineId: "machine-current",
+    path: "/workspace/shared"
+  });
 
   assert.equal(next[0]?.lastThreadId, undefined);
   assert.equal(next[0]?.running, false);
   assert.equal(next[1]?.lastThreadId, "thread-current");
   assert.equal(next[1]?.running, true);
+});
+
+test("does not infer project association from a thread workingDirectory", () => {
+  const projects = [project("machine-current", "/workspace/shared")];
+  assert.strictEqual(patchProjectsThread(projects, thread("machine-current")), projects);
+});
+
+test("does not project a mismatched explicit project machine", () => {
+  const projects = [project("machine-current", "/workspace/shared")];
+  assert.strictEqual(patchProjectsThread(projects, thread("machine-current"), {
+    machineId: "machine-other",
+    path: "/workspace/shared"
+  }), projects);
 });
 
 test("resolves project identity strictly by machine and path", () => {

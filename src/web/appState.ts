@@ -5,6 +5,11 @@ import type { CodexHubRealtimeClient } from "../shared/realtimeClient.js";
 import { createComposerDraftStore, initAuthTokenFromUrl } from "./appHelpers.js";
 import { useIntegrationState, useUiState } from "./appStateSlices.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
+import type {
+  PendingThreadRestoreAttemptCounts,
+  PendingThreadRestoreTargets
+} from "./helpers/pendingThreadRestore.js";
+import type { SurfaceProjectTarget } from "./helpers/surfaceThreadScope.js";
 import {
   openThreadReducer,
   reduceConversationThreadState,
@@ -162,6 +167,11 @@ export const useAppState = () => {
   const [threadOrderByMachine, setThreadOrderByMachine] = useState<Record<string, string[]>>({});
   const [pendingRestoreThreadIds, setPendingRestoreThreadIds] = useState<string[]>([]);
   const [pendingRestoreActiveThreadId, setPendingRestoreActiveThreadId] = useState("");
+  const [pendingRestoreTargets, setPendingRestoreTargets] = useState<PendingThreadRestoreTargets>({});
+  const pendingRestoreAttemptCountsRef = useRef<PendingThreadRestoreAttemptCounts>({});
+  const [threadProjectTargets, setThreadProjectTargets] = useState<Record<string, SurfaceProjectTarget>>({});
+  const threadProjectTargetsRef = useRef<Record<string, SurfaceProjectTarget>>({});
+  threadProjectTargetsRef.current = threadProjectTargets;
   const [initialized, setInitialized] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     version: null,
@@ -245,7 +255,12 @@ export const useAppState = () => {
     openThreads,
     openThreadIdsRef,
     pendingRestoreActiveThreadId,
+    pendingRestoreAttemptCountsRef,
+    pendingRestoreTargets,
     pendingRestoreThreadIds,
+    setThreadProjectTargets,
+    threadProjectTargets,
+    threadProjectTargetsRef,
     parentRegistration,
     parentRegistrationBusy,
     parentRegistrationError,
@@ -294,6 +309,7 @@ export const useAppState = () => {
     setOfflineProjectsCollapsed,
     setOpeningProjectKey,
     setPendingRestoreActiveThreadId,
+    setPendingRestoreTargets,
     setPendingRestoreThreadIds,
     dispatchOpenThreads,
     dispatchConversationThread,

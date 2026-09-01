@@ -4,7 +4,7 @@ import { finalAnswerViewsWithTurnDurations, turnDurationMapFromRecords } from ".
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
 import { resolveStatusPanelExpanded } from "./helpers/statusPanelExpansion.js";
 import { embeddedSurfaceId, embeddedWorkspacePaths, isFixedWorkspaceSurface } from "./appConfig.js";
-import { projectsForSurface } from "./helpers/surfaceThreadScope.js";
+import { projectsForSurface, threadMatchesProjectTarget } from "./helpers/surfaceThreadScope.js";
 import {
   activeGoalActivityScopeFromRecords,
   activityStatusesFromRecords,
@@ -36,6 +36,7 @@ import {
   withActivityStatusSnapshots
 } from "./appHelpers.js";
 import type { AppState } from "./appState.js";
+import { selectActiveThread } from "./helpers/activeThreadSelection.js";
 import type {
   ComposerMode,
   ApprovalPolicyDraft,
@@ -49,19 +50,26 @@ import type {
 } from "./types.js";
 
 export const useAppSelectors = (state: AppState) => {
+  const selectedProjectTarget = state.selectedProjectKey
+    ? (isFixedWorkspaceSurface
+      ? projectsForSurface(state.projects, {
+        kind: "vscode",
+        groupId: embeddedSurfaceId,
+        workspacePaths: embeddedWorkspacePaths
+      })
+      : state.projects).find((project) => projectKeyForProject(project) === state.selectedProjectKey)
+    : undefined;
   const activeThread = useMemo(
-    () => state.openThreads.find((thread) => thread.threadId === state.activeTabThreadId)
-      ?? state.openThreads.find((thread) =>
-        (!state.activeMachineId || thread.runtime.machineId === state.activeMachineId)
-        && (!state.activeWorkspacePath || thread.workingDirectory === state.activeWorkspacePath)
-      )
-      ?? (isFixedWorkspaceSurface && state.activeWorkspacePath
-        ? undefined
-        : state.openThreads.find((thread) =>
-          !state.activeMachineId || thread.runtime.machineId === state.activeMachineId
-        )
-          ?? state.openThreads[0]),
-    [state.activeMachineId, state.activeTabThreadId, state.activeWorkspacePath, state.openThreads]
+    () => selectActiveThread({
+      activeTabThreadId: state.activeTabThreadId,
+      activeMachineId: state.activeMachineId,
+      openThreads: state.openThreads,
+      selectedProjectTarget,
+      projectSelectionActive: Boolean(state.selectedProjectKey),
+      threadProjectTargets: state.threadProjectTargets,
+      fixedSurface: isFixedWorkspaceSurface
+    }),
+    [state.activeMachineId, state.activeTabThreadId, state.openThreads, selectedProjectTarget, state.threadProjectTargets]
   );
   const threadModelDialogThread = useMemo(() => {
     const threadId = state.threadModelDialogThreadId || state.activeTabThreadId;
@@ -187,13 +195,13 @@ export const useAppSelectors = (state: AppState) => {
     if (selectedProjectByKey) return selectedProjectByKey;
     if (activeRuntime) {
       return findProjectByMachinePath(projectList, activeRuntime.machineId, state.activeWorkspacePath)
-        ?? findProjectByMachinePath(projectList, activeRuntime.machineId, activeRuntime.workingDirectory);
+        ?? undefined;
     }
     if (state.activeMachineId) {
       const runtime = state.runtimeList.find((runtime) => runtime.machineId === state.activeMachineId);
       const sessionProject = runtime
         ? findProjectByMachinePath(projectList, runtime.machineId, state.activeWorkspacePath)
-          ?? findProjectByMachinePath(projectList, runtime.machineId, runtime.workingDirectory)
+          ?? undefined
         : undefined;
       if (sessionProject) return sessionProject;
     }
@@ -202,9 +210,10 @@ export const useAppSelectors = (state: AppState) => {
   const activeProjectKey = selectedProject ? projectKeyForProject(selectedProject) : "";
   const activeProjectThreads = useMemo(() => {
     const byId = new Map<string, ThreadSummary>();
-    const projectPath = selectedProject?.path ?? state.activeWorkspacePath;
     for (const thread of activeRuntime?.threads ?? []) {
-      if (projectPath && thread.workingDirectory !== projectPath) continue;
+      if (selectedProject) {
+        if (!threadMatchesProjectTarget(state.threadProjectTargets[thread.threadId], selectedProject)) continue;
+      }
       byId.set(thread.threadId, thread);
     }
     const orderedIds = state.threadOrderByMachine[activeRuntime?.machineId ?? ""] ?? [];
@@ -217,7 +226,7 @@ export const useAppSelectors = (state: AppState) => {
       }),
       ...byId.values()
     ];
-  }, [activeRuntime, selectedProject?.path, state.activeWorkspacePath, state.threadOrderByMachine]);
+  }, [activeRuntime, selectedProject?.machineId, selectedProject?.path, state.threadOrderByMachine, state.threadProjectTargets]);
   const openThreadIds = useMemo(
     () => state.openThreads.map((thread) => thread.threadId),
     [state.openThreads]

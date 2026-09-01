@@ -21,7 +21,7 @@ Object.defineProperty(globalThis, "window", {
 
 const { readStoredUiState } = await import("../../src/web/helpers/composer.js");
 
-test("legacy unversioned UI state keeps preferences but drops contaminated tab recovery", () => {
+test("legacy unversioned UI state keeps preferences but drops tab recovery", () => {
   storedValue = JSON.stringify({
     activeWorkspacePath: "/repo",
     openThreadIds: ["stale-thread"],
@@ -50,14 +50,18 @@ test("legacy unversioned UI state keeps preferences but drops contaminated tab r
   });
 });
 
-test("current tab snapshot restores only its explicit open tabs and targets", () => {
+test("v1 exact tab snapshot remains compatible and parses optional project origin", () => {
   storedValue = JSON.stringify({
     tabSnapshotVersion: 1,
     activeWorkspacePath: "/repo",
     activeTabThreadId: "open-thread",
     openThreadIds: ["open-thread"],
     openThreadTargets: {
-      "open-thread": { machineId: "machine", workingDirectory: "/repo" }
+      "open-thread": {
+        machineId: "machine",
+        workingDirectory: "/workspace-root",
+        projectTarget: { machineId: "machine", path: "/repo" }
+      }
     }
   });
 
@@ -65,7 +69,11 @@ test("current tab snapshot restores only its explicit open tabs and targets", ()
   assert.equal(stored?.activeTabThreadId, "open-thread");
   assert.deepEqual(stored?.openThreadIds, ["open-thread"]);
   assert.deepEqual(stored?.openThreadTargets, {
-    "open-thread": { machineId: "machine", workingDirectory: "/repo" }
+    "open-thread": {
+      machineId: "machine",
+      workingDirectory: "/workspace-root",
+      projectTarget: { machineId: "machine", path: "/repo" }
+    }
   });
 });
 
@@ -83,4 +91,20 @@ test("stored UI state preserves autoGenerateThreadTitle setting", () => {
   assert.equal(stored?.settings?.autoGenerateThreadTitle, true);
   assert.equal(stored?.settings?.autoGenerateThreadTitleInterval, 7);
   assert.equal(stored?.settings?.taskCompleteSystemNotifications, false);
+});
+
+test("stored project origin is unresolved when its machine differs from the tab machine", () => {
+  storedValue = JSON.stringify({
+    tabSnapshotVersion: 1,
+    openThreadIds: ["thread"],
+    openThreadTargets: {
+      thread: {
+        machineId: "machine-a",
+        projectTarget: { machineId: "machine-b", path: "/repo" }
+      }
+    }
+  });
+  assert.deepEqual(readStoredUiState()?.openThreadTargets, {
+    thread: { machineId: "machine-a" }
+  });
 });

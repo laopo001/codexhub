@@ -43,6 +43,7 @@ import type {
 import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
 import { apiErrorDetails } from "../helpers/apiErrors.js";
 import { conversationViewsFromRecords } from "../helpers/conversationViews.js";
+import type { SurfaceProjectTarget } from "../helpers/surfaceThreadScope.js";
 
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
@@ -80,6 +81,8 @@ type ThreadActionsContext = {
   dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
   dispatchConversationThread: (action: ConversationThreadAction) => void;
   setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+  threadProjectTargets: Readonly<Record<string, SurfaceProjectTarget | undefined>>;
+  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, SurfaceProjectTarget>>>;
 };
 
 export type ThreadActionsDependencies = {
@@ -104,6 +107,8 @@ export type OpenThreadOptions = {
   deferActivationUntilLoaded?: boolean;
   /** Fresh create response; used once so transient creation metadata reaches the first tab. */
   initialThread?: ThreadDetail;
+  /** Explicit UI origin; never inferred from the returned workingDirectory. */
+  projectTarget?: SurfaceProjectTarget;
 };
 
 type ThreadGoalUpdateOptions = {
@@ -181,8 +186,18 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       || existingThread.runtime.machineId === options.expectedMachineId
     );
     if (existingThreadMatchesMachine) {
-      subscribeThread(threadId, existingThread.lastSeq);
       const machineId = existingThread.runtime.machineId;
+      if (options.projectTarget && options.projectTarget.machineId === machineId) {
+        ctx.setThreadProjectTargets((current) => ({ ...current, [threadId]: options.projectTarget! }));
+      } else if (options.projectTarget) {
+        ctx.setThreadProjectTargets((current) => {
+          if (!current[threadId]) return current;
+          const next = { ...current };
+          delete next[threadId];
+          return next;
+        });
+      }
+      subscribeThread(threadId, existingThread.lastSeq);
       if (machineId && activate) {
         if (updateWorkspaceContext) ctx.setActiveMachineId(machineId);
         ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: threadId }));
@@ -237,9 +252,22 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
         ctx.setThreadOrderByMachine((current) => appendThreadOrder(current, machineId, thread.threadId));
       }
       ctx.setRuntimeList((current) => patchRuntimesThread(current, thread));
-      ctx.setProjects((current) => patchProjectsThread(current, thread));
+      const projectTarget = options.projectTarget?.machineId === machineId
+        ? options.projectTarget
+        : undefined;
+      ctx.setProjects((current) => patchProjectsThread(current, thread, projectTarget));
       ctx.notificationRecordsByThread.current.set(thread.threadId, threadRecordsForNotifications(thread.threadId, thread));
       ctx.dispatchOpenThreads({ type: "upsert-detail", thread });
+      if (projectTarget) {
+        ctx.setThreadProjectTargets((current) => ({ ...current, [threadId]: projectTarget }));
+      } else if (options.projectTarget) {
+        ctx.setThreadProjectTargets((current) => {
+          if (!current[threadId]) return current;
+          const next = { ...current };
+          delete next[threadId];
+          return next;
+        });
+      }
       const shouldActivateThread = activate && ctx.latestRequestedThreadId.current === thread.threadId;
       if (activate && !shouldActivateThread) return;
       if (shouldActivateThread && machineId) {
@@ -341,6 +369,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     const nextThreadId = ctx.activeTabThreadId === threadId
       ? adjacentThreadId(threadIds, threadId)
       : ctx.activeTabThreadId;
+    const closingProjectTarget = ctx.threadProjectTargets[threadId];
 
     ctx.closedThreadIds.current.add(threadId);
     removeThreadFromUi(threadId, machineId, nextThreadId);
@@ -351,6 +380,9 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       }
     } catch (error) {
       ctx.closedThreadIds.current.delete(threadId);
+      if (closingProjectTarget) {
+        ctx.setThreadProjectTargets((current) => ({ ...current, [threadId]: closingProjectTarget }));
+      }
       Modal.error({
         title: "Close thread failed",
         content: error instanceof Error ? error.message : String(error),
@@ -372,6 +404,12 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       URL.revokeObjectURL(image.previewUrl);
     }
     ctx.dispatchOpenThreads({ type: "remove", threadId });
+    ctx.setThreadProjectTargets((current) => {
+      if (!current[threadId]) return current;
+      const next = { ...current };
+      delete next[threadId];
+      return next;
+    });
     ctx.setRuntimeList((current) => removeRuntimesThread(current, threadId));
     ctx.setProjects((current) => removeProjectsThread(current, threadId));
     ctx.setThreadOrderByMachine((current) => removeThreadOrder(current, threadId));
@@ -399,7 +437,11 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     ctx.dispatchConversationThread({ type: "sync-detail", threadId: thread.threadId, thread });
     ctx.setRuntimeList((current) => patchRuntimesThread(current, thread));
     if (ctx.openThreadIdsRef.current.has(thread.threadId)) {
-      ctx.setProjects((current) => patchProjectsThread(current, thread));
+      ctx.setProjects((current) => patchProjectsThread(
+        current,
+        thread,
+        ctx.threadProjectTargets?.[thread.threadId]
+      ));
     }
   };
 

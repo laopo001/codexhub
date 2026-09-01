@@ -1,6 +1,7 @@
 import type { LocalTask, LocalTaskRun, TaskCompleteNotification } from "../types.js";
 import type { MachineActivitySummary, MachineSummary } from "../../shared/machineTypes.js";
 import type { ProjectSource } from "../../shared/projectTypes.js";
+import type { ProjectTarget, WorkspaceTarget } from "../../shared/petActivityRouting.js";
 import {
   formatStatusDuration,
   formatTaskNotificationBody,
@@ -48,6 +49,8 @@ export const taskRunCompleteNotification = (
       : {}),
     projectPath: task.projectPath,
     workingDirectory: task.projectPath,
+    ...(opts.projectTarget ? { projectTarget: opts.projectTarget } : {}),
+    ...(opts.workspaceTarget ? { workspaceTarget: opts.workspaceTarget } : {}),
     ...(opts.source ? { source: opts.source } : {}),
     ...(opts.machineLabel?.trim() ? { machineLabel: opts.machineLabel.trim() } : {}),
     ...(duration ? { duration } : {}),
@@ -58,7 +61,8 @@ export const taskRunCompleteNotification = (
 export const taskCompleteNotificationFromActivity = (
   machine: MachineSummary,
   activity: MachineActivitySummary,
-  source?: ProjectSource
+  source?: ProjectSource,
+  options?: { projectTarget?: ProjectTarget; workspaceTarget?: WorkspaceTarget }
 ): TaskCompleteNotification => {
   const workingDirectory = activity.workingDirectory || "";
   const body = formatTaskNotificationBody({
@@ -74,6 +78,8 @@ export const taskCompleteNotificationFromActivity = (
     machineId: machine.machineId,
     machineHostname: machine.hostname,
     workingDirectory,
+    ...(options?.projectTarget ? { projectTarget: options.projectTarget } : {}),
+    ...(options?.workspaceTarget ? { workspaceTarget: options.workspaceTarget } : {}),
     ...(source ? { source } : {}),
     machineLabel: machineNotificationLabel(machine, workingDirectory)
   };

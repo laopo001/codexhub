@@ -1,10 +1,27 @@
 import { parseProjectSource, type ProjectSource, type ProjectSummary } from "./projectTypes.js";
 import {
   parseWorkspaceFileLaunchReference,
+  isVscodeChannel,
   type VscodeChannel
 } from "./surfaceTypes.js";
 
 export { parseProjectSource } from "./projectTypes.js";
+
+export type ProjectTarget = {
+  machineId: string;
+  path: string;
+};
+
+/** Explicit workspace routing metadata. It is deliberately separate from ProjectSource and ProjectTarget. */
+export type WorkspaceTarget = {
+  machineId: string;
+  kind: "vscode" | "electron";
+  groupId: string;
+  workspacePaths: string[];
+  workspaceFile?: string;
+  vscodeChannel?: VscodeChannel;
+  label?: string;
+};
 
 /** 桌面宠物 Activity 点击时向宿主投递的目标描述 */
 export type PetActivityOpenTarget = {
@@ -14,10 +31,62 @@ export type PetActivityOpenTarget = {
   machineHostname?: string;
   projectPath?: string;
   source?: ProjectSource;
+  projectTarget?: ProjectTarget;
+  workspaceTarget?: WorkspaceTarget;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const safePathList = (value: unknown): string[] | null => {
+  if (!Array.isArray(value) || value.length > 256) return null;
+  const paths = value.map((item) => {
+    const path = validateSafeString(item, 4096);
+    return path ? normalizePath(path) : null;
+  });
+  if (paths.some((item): item is null => item === null)) return null;
+  const unique = [...new Set(paths as string[])];
+  return unique.length ? unique : null;
+};
+
+export const parseProjectTarget = (value: unknown): ProjectTarget | null => {
+  if (!isRecord(value) || Object.keys(value).some((key) => !["machineId", "path"].includes(key))) return null;
+  const machineId = validateSafeString(value.machineId, 256);
+  const rawPath = validateSafeString(value.path, 4096);
+  const path = rawPath ? normalizePath(rawPath) : "";
+  return machineId && path ? { machineId, path } : null;
+};
+
+export const parseWorkspaceTarget = (value: unknown): WorkspaceTarget | null => {
+  if (!isRecord(value)) return null;
+  if (Object.keys(value).some((key) =>
+    !["machineId", "kind", "groupId", "workspacePaths", "workspaceFile", "vscodeChannel", "label"].includes(key)
+  )) return null;
+  if (value.kind !== "vscode" && value.kind !== "electron") return null;
+  const groupId = validateSafeString(value.groupId, 256);
+  const machineId = validateSafeString(value.machineId, 256);
+  const workspacePaths = safePathList(value.workspacePaths);
+  if (!machineId || !groupId || !workspacePaths) return null;
+  const label = value.label === undefined ? undefined : validateSafeString(value.label, 512);
+  if (value.label !== undefined && !label) return null;
+  const workspaceFile = value.workspaceFile === undefined
+    ? undefined
+    : validateSafeString(value.workspaceFile, 4096);
+  if (value.workspaceFile !== undefined && (!workspaceFile || value.kind !== "vscode")) return null;
+  const vscodeChannel = value.vscodeChannel;
+  if (value.kind === "vscode" && !isVscodeChannel(vscodeChannel)) return null;
+  if (value.kind === "electron" && vscodeChannel !== undefined) return null;
+  const parsedVscodeChannel = isVscodeChannel(vscodeChannel) ? vscodeChannel : undefined;
+  return {
+    machineId,
+    kind: value.kind,
+    groupId,
+    workspacePaths,
+    ...(workspaceFile ? { workspaceFile } : {}),
+    ...(parsedVscodeChannel ? { vscodeChannel: parsedVscodeChannel } : {}),
+    ...(label ? { label } : {})
+  };
+};
 
 /** 安全字符串校验：限制最大长度并拒绝所有控制字符（包括 NUL/CR/LF） */
 export const validateSafeString = (value: unknown, maxLength = 4096): string | null => {
@@ -63,7 +132,7 @@ export const parsePetActivityOpenTarget = (value: unknown): PetActivityOpenTarge
   if (value.projectPath !== undefined) {
     const parsed = validateSafeString(value.projectPath, 4096);
     if (!parsed) return null;
-    projectPath = parsed;
+    projectPath = normalizePath(parsed);
   }
 
   let source: ProjectSource | undefined;
@@ -73,18 +142,39 @@ export const parsePetActivityOpenTarget = (value: unknown): PetActivityOpenTarge
     source = parsed;
   }
 
+  const projectTarget = value.projectTarget === undefined
+    ? undefined
+    : parseProjectTarget(value.projectTarget);
+  if (value.projectTarget !== undefined && !projectTarget) return null;
+  if (projectTarget && machineId !== projectTarget.machineId) return null;
+  const workspaceTarget = value.workspaceTarget === undefined
+    ? undefined
+    : parseWorkspaceTarget(value.workspaceTarget);
+  if (value.workspaceTarget !== undefined && !workspaceTarget) return null;
+  if (workspaceTarget && machineId !== workspaceTarget.machineId) return null;
+  if ((projectTarget || workspaceTarget) && !machineId) return null;
+  if (projectTarget && workspaceTarget && !workspaceTarget.workspacePaths.includes(projectTarget.path)) return null;
+  if (source && workspaceTarget
+    && (source.kind !== workspaceTarget.kind || source.groupId !== workspaceTarget.groupId)) return null;
+  if (source?.vscodeChannel && workspaceTarget?.vscodeChannel
+    && source.vscodeChannel !== workspaceTarget.vscodeChannel) return null;
+  if (source && workspaceTarget && source.workspaceFile !== workspaceTarget.workspaceFile) return null;
+  if (projectPath && projectTarget && projectPath !== projectTarget.path) return null;
+
   return {
     threadId,
     ...(workingDirectory ? { workingDirectory } : {}),
     ...(machineId ? { machineId } : {}),
     ...(machineHostname ? { machineHostname } : {}),
     ...(projectPath ? { projectPath } : {}),
-    ...(source ? { source } : {})
+    ...(source ? { source } : {}),
+    ...(projectTarget ? { projectTarget } : {}),
+    ...(workspaceTarget ? { workspaceTarget } : {})
   };
 };
 
 /** 路径规范化：统一正斜杠、去除连续斜杠、去除末尾斜杠（保留根路径或盘符根） */
-export const normalizePath = (rawPath: string): string => {
+export function normalizePath(rawPath: string): string {
   const trimmed = rawPath.trim().replace(/\\+/g, "/");
   if (!trimmed) return "";
   const isUnc = trimmed.startsWith("//");
@@ -93,9 +183,16 @@ export const normalizePath = (rawPath: string): string => {
     return normalized;
   }
   return normalized.replace(/\/+$/, "");
-};
+}
 
 const isWindowsDrivePath = (path: string) => /^[a-zA-Z]:(?:[\\/]|$)/.test(path);
+
+export const pathIdentityKey = (rawPath: string): string => {
+  const normalized = normalizePath(rawPath);
+  return isWindowsDrivePath(normalized) || normalized.startsWith("//")
+    ? normalized.toLowerCase()
+    : normalized;
+};
 
 /**
  * 判断 basePath 是否为 targetPath 的祖先目录或完全相同路径。
@@ -245,14 +342,27 @@ export const resolveVsCodeLaunchPlan = (
     env?: NodeJS.ProcessEnv;
   } = {}
 ): VsCodeLaunchPlan | null => {
-  if (target.source?.kind !== "vscode") return null;
-  const channel = target.source.vscodeChannel;
+  const workspaceTarget = parseWorkspaceTarget(target.workspaceTarget);
+  if (!workspaceTarget || workspaceTarget.kind !== "vscode") return null;
+  if (!target.machineId || target.machineId !== workspaceTarget.machineId) return null;
+  if (target.projectTarget && target.machineId !== target.projectTarget.machineId) return null;
+  if (target.projectTarget && !workspaceTarget.workspacePaths.includes(target.projectTarget.path)) return null;
+  if (target.projectPath && target.projectTarget && target.projectPath !== target.projectTarget.path) return null;
+  if (target.source && (
+    target.source.kind !== workspaceTarget.kind
+    || target.source.groupId !== workspaceTarget.groupId
+    || target.source.workspaceFile !== workspaceTarget.workspaceFile
+    || (target.source.vscodeChannel !== undefined
+      && target.source.vscodeChannel !== workspaceTarget.vscodeChannel)
+  )) return null;
+  const channel = workspaceTarget.vscodeChannel;
   if (!channel || (channel !== "stable" && channel !== "insiders")) return null;
 
-  const workspaceFile = parseWorkspaceFileLaunchReference(target.source.workspaceFile);
-  const targetPath = workspaceFile?.path
-    || target.projectPath?.trim()
-    || target.workingDirectory?.trim();
+  const explicitWorkspaceFile = parseWorkspaceFileLaunchReference(workspaceTarget.workspaceFile);
+  if (workspaceTarget.workspaceFile !== undefined && !explicitWorkspaceFile) return null;
+  const launchReference = explicitWorkspaceFile;
+  const targetPath = launchReference?.path
+    || (workspaceTarget.workspacePaths.length === 1 ? workspaceTarget.workspacePaths[0] : undefined);
   if (!targetPath) return null;
 
   // 校验 machineHostname 与宿主机 localHostname 强一致
@@ -265,8 +375,8 @@ export const resolveVsCodeLaunchPlan = (
   const env = options.env ?? process.env;
   const command = options.customExecutable || resolveVsCodeCliExecutable(channel, env, platform);
 
-  const remote = workspaceFile?.remote;
-  const distro = remote?.startsWith("wsl+") ? remote.slice("wsl+".length) : extractWslDistroFromLabel(target.source.label);
+  const remote = launchReference?.remote;
+  const distro = remote?.startsWith("wsl+") ? remote.slice("wsl+".length) : extractWslDistroFromLabel(workspaceTarget.label);
   if (distro) {
     // 目标属于 WSL 环境：通过 code/code-insiders --remote wsl+<distro> <path> 唤起（不传 --reuse-window 与 --new-window）
     const normalizedWslPath = targetPath.replace(/\\+/g, "/");
@@ -279,11 +389,11 @@ export const resolveVsCodeLaunchPlan = (
   }
 
   // 检查是否包含明确的 Remote/SSH 标识
-  const label = target.source.label || "";
+  const label = workspaceTarget.label || "";
   if (/\[(?:SSH|Dev Container|Tunnel|Attached Container):/i.test(label)) {
     return null;
   }
-  if (target.source.groupId.includes(":ssh:")) {
+  if (workspaceTarget.groupId.includes(":ssh:")) {
     return null;
   }
 

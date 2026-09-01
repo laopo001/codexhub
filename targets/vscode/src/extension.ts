@@ -40,7 +40,7 @@ import {
 } from "./settings.js";
 import { buildWebviewBridgeScript } from "./webviewBridge.js";
 import { VscodeWebviewHtmlController } from "./webviewHtmlController.js";
-import { vscodeWorkspaceStateScope } from "./workspaceStateScope.js";
+import { vscodeWorkspaceStateScope, workspaceTargetMatchesCurrentWindow } from "./workspaceStateScope.js";
 
 const viewId = "codexhub.workspaceView";
 const maxSelectionAttachmentBytes = 512 * 1024;
@@ -304,6 +304,16 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
     const open = "Open";
     const selected = await vscode.window.showInformationMessage(text, open);
     if (selected !== open) return;
+    if (notification?.workspaceTarget?.kind === "vscode"
+      && !workspaceTargetMatchesCurrentWindow(
+        notification.workspaceTarget,
+        fileWorkspaceFileLaunchReference(),
+        fileWorkspaceFolders().map((folder) => folder.path),
+        resolveVscodeChannel(vscode.env.uriScheme, vscode.env.appName) ?? undefined
+      )) {
+      await vscode.window.showWarningMessage("Codex Hub notification belongs to another VS Code workspace.");
+      return;
+    }
     const threadId = notification?.threadId ?? stringValue(rawNotification?.threadId);
     if (threadId) await this.openThreadFromHost(threadId);
     else if (this.view) this.view.show(false);

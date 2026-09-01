@@ -3,6 +3,7 @@ import { petIdPattern } from "../../shared/petTypes.js";
 import type { CodexRecord, CodexRecordView } from "../../shared/recordTypes.js";
 import { defaultAppSettings, readCurrentSurfaceUiStateRaw } from "../appConfig.js";
 import type { AppSettings, PendingUserMessage, TextAttachment, ThreadQueueItem, WebRecordView } from "../types.js";
+import type { SurfaceProjectTarget } from "./surfaceThreadScope.js";
 import { browserId } from "./common.js";
 
 export type ComposerDraftStore = {
@@ -570,6 +571,7 @@ const storedStringArrayRecord = (value: unknown) => {
 export type PersistedOpenThreadTarget = {
   machineId: string;
   workingDirectory?: string;
+  projectTarget?: SurfaceProjectTarget;
 };
 
 const storedOpenThreadTargets = (value: unknown) => {
@@ -582,9 +584,23 @@ const storedOpenThreadTargets = (value: unknown) => {
     const workingDirectory = typeof record.workingDirectory === "string"
       ? record.workingDirectory.trim()
       : "";
+    const projectRecord = record.projectTarget as Record<string, unknown> | undefined;
+    const projectTarget = projectRecord && typeof projectRecord === "object" && !Array.isArray(projectRecord)
+      ? {
+          machineId: typeof projectRecord.machineId === "string" ? projectRecord.machineId.trim() : "",
+          path: typeof projectRecord.path === "string" ? projectRecord.path.trim() : ""
+        }
+      : undefined;
+    if (!projectTarget?.machineId || !projectTarget.path || projectTarget.machineId !== machineId) {
+      return [[threadId, {
+        machineId,
+        ...(workingDirectory ? { workingDirectory } : {})
+      }] as const];
+    }
     return [[threadId, {
       machineId,
-      ...(workingDirectory ? { workingDirectory } : {})
+      ...(workingDirectory ? { workingDirectory } : {}),
+      projectTarget
     }] as const];
   });
   return entries.length ? Object.fromEntries(entries) : undefined;

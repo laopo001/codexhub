@@ -1,4 +1,8 @@
 import type { OpenThreadState } from "../types.js";
+import {
+  threadMatchesProjectTarget,
+  type SurfaceProjectTarget
+} from "./surfaceThreadScope.js";
 
 type ActiveThreadSelectionInput = {
   activeMachineId: string;
@@ -8,7 +12,36 @@ type ActiveThreadSelectionInput = {
   loadingThreadIds?: ReadonlySet<string>;
   selectedProjectMachineId?: string;
   selectedProjectPath?: string;
+  selectedProjectThreadId?: string;
   restrictToWorkspacePath?: boolean;
+};
+
+export const selectActiveThread = (input: {
+  activeTabThreadId: string;
+  activeMachineId: string;
+  openThreads: readonly OpenThreadState[];
+  selectedProjectTarget?: SurfaceProjectTarget;
+  projectSelectionActive: boolean;
+  threadProjectTargets: Readonly<Record<string, SurfaceProjectTarget | undefined>>;
+  fixedSurface: boolean;
+}) => {
+  const active = input.openThreads.find((thread) => thread.threadId === input.activeTabThreadId);
+  if (input.selectedProjectTarget) {
+    if (active && threadMatchesProjectTarget(
+      input.threadProjectTargets[active.threadId],
+      input.selectedProjectTarget
+    )) return active;
+    return input.openThreads.find((thread) => threadMatchesProjectTarget(
+      input.threadProjectTargets[thread.threadId],
+      input.selectedProjectTarget
+    ));
+  }
+  if (input.projectSelectionActive) return undefined;
+  if (active) return active;
+  if (input.fixedSurface) return undefined;
+  return input.openThreads.find((thread) =>
+    !input.activeMachineId || thread.runtime.machineId === input.activeMachineId
+  ) ?? input.openThreads[0];
 };
 
 /**
@@ -26,6 +59,7 @@ export const resolveActiveThreadId = ({
   loadingThreadIds,
   selectedProjectMachineId,
   selectedProjectPath,
+  selectedProjectThreadId,
   restrictToWorkspacePath = false
 }: ActiveThreadSelectionInput): string => {
   const activeThreadIsOpen = openThreads.some((thread) => thread.threadId === activeTabThreadId);
@@ -34,25 +68,16 @@ export const resolveActiveThreadId = ({
   }
 
   if (selectedProjectPath) {
-    const selectedProjectThread = openThreads.find((thread) =>
-      thread.runtime.machineId === selectedProjectMachineId
-      && thread.workingDirectory === selectedProjectPath
-    );
-    if (selectedProjectThread) return selectedProjectThread.threadId;
-
-    // Open tabs are global workspace state. A selected project path should
-    // not hide every other legal thread on the same machine; only machine
-    // identity remains a hard boundary here unless this is a fixed embedded
-    // workspace recovering with no matching active thread.
+    if (selectedProjectThreadId
+      && openThreads.some((thread) => thread.threadId === selectedProjectThreadId)) {
+      return selectedProjectThreadId;
+    }
     if (restrictToWorkspacePath) return "";
+    // Open tabs are global workspace state. A selected project path should
+    // not be matched through workingDirectory. Explicit tab/project routing
+    // is owned by the caller; this fallback only preserves machine scope.
     return openThreads.find((thread) => thread.runtime.machineId === selectedProjectMachineId)?.threadId ?? "";
   }
-
-  const workspaceThread = openThreads.find((thread) =>
-    (!activeMachineId || thread.runtime.machineId === activeMachineId)
-    && (!activeWorkspacePath || thread.workingDirectory === activeWorkspacePath)
-  );
-  if (workspaceThread) return workspaceThread.threadId;
 
   if (restrictToWorkspacePath && activeWorkspacePath) return "";
 

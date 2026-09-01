@@ -3,6 +3,7 @@ import test from "node:test";
 import { emptyThreadUsage } from "../../src/core/threadUsage.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
 import type { ThreadStreamEvent, ThreadSummary } from "../../src/shared/threadTypes.js";
+import type { ProjectSummary } from "../../src/web/types.js";
 
 test("thread state is merged before a browser completion notification is attempted", async () => {
   const calls: string[] = [];
@@ -39,6 +40,17 @@ test("thread state is merged before a browser completion notification is attempt
   });
 
   const { createRealtimeActions } = await import("../../src/web/appActions/realtimeActions.js");
+  const project: ProjectSummary = {
+    projectId: "project-test",
+    machineId: "session-test",
+    path: "/tmp/codexhub-test",
+    name: "test",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastOpenedAt: "2026-01-01T00:00:00.000Z",
+    machineOnline: true,
+    running: false
+  };
+  let projectState = [project];
   const context = {
     appSettingsRef: { current: { selectedPetId: "red-spark", showFloatingPet: false, showDesktopPet: false, taskCompleteSystemNotifications: true } },
     closedThreadIds: { current: new Set<string>() },
@@ -51,8 +63,13 @@ test("thread state is merged before a browser completion notification is attempt
     dispatchOpenThreads: () => undefined,
     dispatchConversationThread: () => calls.push("thread"),
     setThreadOrderByMachine: () => calls.push("order"),
+    threadProjectTargetsRef: { current: {} },
+    setThreadProjectTargets: () => undefined,
     setRuntimeList: () => calls.push("runtimes"),
-    setProjects: () => calls.push("projects")
+    setProjects: (update: (current: typeof projectState) => typeof projectState) => {
+      projectState = update(projectState);
+      calls.push("projects");
+    }
   } as unknown as Parameters<typeof createRealtimeActions>[0];
   const actions = createRealtimeActions(context, {
     clearActiveThreadIfLatest: () => undefined,
@@ -71,6 +88,14 @@ test("thread state is merged before a browser completion notification is attempt
     "pet:thread-test:turn-test",
     "notification",
   ]);
+
+  assert.equal(projectState[0]?.lastThreadId, undefined);
+  context.threadProjectTargetsRef.current = {
+    "thread-test": { machineId: "session-test", path: "/tmp/codexhub-test" }
+  };
+  calls.length = 0;
+  actions.applyThreadStreamEvent({ ...turnAbortedEvent(), seq: 7 });
+  assert.equal(projectState[0]?.lastThreadId, "thread-test");
 
   calls.length = 0;
   assert.doesNotThrow(() => actions.applyThreadStreamEvent({

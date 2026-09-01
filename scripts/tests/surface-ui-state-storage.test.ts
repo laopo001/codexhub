@@ -72,6 +72,18 @@ test("different browser profiles keep independent Web surface states", () => {
   assert.equal(browserB.getItem("web-surface"), "thread-b");
 });
 
+test("embedded surface scopes in one profile keep independent exact snapshots", () => {
+  const browserProfile = new MemoryStorage();
+  const surfaceA = [{ storage: browserProfile, key: "surface:a" }];
+  const surfaceB = [{ storage: browserProfile, key: "surface:b" }];
+
+  writeSurfaceUiStateRaw(surfaceA, "thread-a");
+  writeSurfaceUiStateRaw(surfaceB, "thread-b");
+
+  assert.equal(readSurfaceUiStateRaw(surfaceA), "thread-a");
+  assert.equal(readSurfaceUiStateRaw(surfaceB), "thread-b");
+});
+
 test("writing an unchanged surface snapshot is a no-op", () => {
   const storage = new MemoryStorage();
   const targets = [{ storage, key: "surface" }];

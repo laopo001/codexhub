@@ -24,6 +24,7 @@ import { resolveSubagentThreadTarget } from "../helpers/subagentThreads.js";
 import { releaseDialogOnlyThreadAttachments } from "../helpers/subagentThreadDialog.js";
 import { openThreadStateFromDetail } from "../openThreadReducer.js";
 import type { OpenThreadOptions } from "./threadActions.js";
+import type { SurfaceProjectTarget } from "../helpers/surfaceThreadScope.js";
 import type {
   OpenThreadState,
   CodexThreadCandidate,
@@ -86,6 +87,7 @@ export type ProjectActionsDependencies = {
 type ActivateMachineThreadOptions = {
   preferredWorkingDirectory?: string;
   initialThread?: ThreadDetail;
+  projectTarget?: SurfaceProjectTarget;
 };
 
 type StartProjectThreadOptions = {
@@ -137,7 +139,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       : undefined;
     const project = selectedProject?.machineId === runtime.machineId
       ? selectedProject
-      : findProjectByMachinePath(ctx.projectList, runtime.machineId, runtime.workingDirectory);
+      : undefined;
     ctx.setActiveWorkspacePath(project?.path ?? runtime.workingDirectory);
     if (project) {
       ctx.setSelectedProjectKey(projectKeyForProject(project));
@@ -149,7 +151,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ? activeTabThreadIdForSession
       : preferredThreadIdForRuntime(runtime, project);
     if (targetThreadId) {
-      await deps.openThread(targetThreadId).catch(() => deps.clearActiveThreadIfLatest(targetThreadId));
+      await deps.openThread(targetThreadId, project
+        ? { projectTarget: { machineId: project.machineId, path: project.path } }
+        : undefined
+      ).catch(() => deps.clearActiveThreadIfLatest(targetThreadId));
     }
   };
 
@@ -285,7 +290,8 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
   const openThreadPicker = (
     runtime: RuntimeSummary,
     workingDirectory = runtime.workingDirectory,
-    bootstrapId?: string
+    bootstrapId?: string,
+    projectTarget?: SurfaceProjectTarget
   ) => {
     if (!bootstrapId) {
       ctx.setActiveMachineId(runtime.machineId);
@@ -294,6 +300,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     const readyPicker: ThreadPickerState = {
       machineId: runtime.machineId,
       workingDirectory,
+      ...(projectTarget ? { projectTarget } : {}),
       preparingRuntime: false,
       bootstrapId,
       loading: true,
@@ -327,7 +334,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     ctx.setActiveWorkspacePath(selectedProject.path);
     const runtime = runtimeForProject(selectedProject, ctx.runtimeList);
     if (runtime?.online) {
-      openThreadPicker(runtime, selectedProject.path);
+      openThreadPicker(runtime, selectedProject.path, undefined, {
+        machineId: selectedProject.machineId,
+        path: selectedProject.path
+      });
       return;
     }
     if (!selectedProject.machineOnline) {
@@ -363,7 +373,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         ...current.filter((item) => item.machineId !== payload.runtime!.machineId),
         payload.runtime!
       ]);
-      openThreadPicker(payload.runtime, selectedProject.path, bootstrapId);
+      openThreadPicker(payload.runtime, selectedProject.path, bootstrapId, {
+        machineId: selectedProject.machineId,
+        path: selectedProject.path
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       ctx.setThreadPicker((current) => current?.bootstrapId === bootstrapId ? {
@@ -401,9 +414,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       thread.threadId === threadId
       && thread.runtime.machineId === machineId
     )) {
-      ctx.latestRequestedThreadId.current = threadId;
-      deps.subscribeThread(threadId, ctx.threadLastSeqs.current.get(threadId) ?? 0);
-      ctx.setActiveTabThreadId(threadId);
+      await deps.openThread(threadId, {
+        expectedMachineId: machineId,
+        ...(options.projectTarget ? { projectTarget: options.projectTarget } : {})
+      });
       return;
     }
     await deps.openThread(threadId, {
@@ -411,7 +425,8 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ...(options.initialThread ? { initialThread: options.initialThread } : {}),
       ...(options.preferredWorkingDirectory
         ? { preferredWorkingDirectory: options.preferredWorkingDirectory }
-        : {})
+        : {}),
+      ...(options.projectTarget ? { projectTarget: options.projectTarget } : {})
     });
   };
 
@@ -436,7 +451,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         ...(options?.developerInstructionsId ? { developerInstructionsId: options.developerInstructionsId } : {})
       });
       ctx.setThreadPicker(null);
-      await activateMachineThread(machineId, thread.threadId, { initialThread: thread });
+      await activateMachineThread(machineId, thread.threadId, {
+        initialThread: thread,
+        projectTarget: picker.projectTarget
+      });
     } catch (error) {
       ctx.setThreadPicker((current) => current && current.machineId === machineId ? {
         ...current,
@@ -495,7 +513,9 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ctx.setThreadPicker(null);
       const openedMachineId = payload.result?.machineId;
       if (openedMachineId && payload.result?.threadId) {
-        await activateMachineThread(openedMachineId, payload.result.threadId);
+        await activateMachineThread(openedMachineId, payload.result.threadId, {
+          projectTarget: { machineId: parentProject.machineId, path: parentProject.path }
+        });
       } else if (openedMachineId) {
         ctx.setActiveMachineId(openedMachineId);
       }
@@ -514,7 +534,9 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     const machineId = picker.machineId;
     if (threadIsOpenForMachine(machineId, candidate.threadId)) {
       ctx.setThreadPicker(null);
-      await activateMachineThread(machineId, candidate.threadId);
+      await activateMachineThread(machineId, candidate.threadId, {
+        projectTarget: picker.projectTarget
+      });
       return;
     }
     ctx.setThreadPicker((current) => current && current.machineId === machineId ? {
@@ -529,7 +551,9 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         cwd: picker.workingDirectory
       });
       ctx.setThreadPicker(null);
-      await activateMachineThread(machineId, thread.threadId);
+      await activateMachineThread(machineId, thread.threadId, {
+        projectTarget: picker.projectTarget
+      });
     } catch (error) {
       ctx.setThreadPicker((current) => current && current.machineId === machineId ? {
         ...current,
@@ -586,11 +610,14 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         openThreadPicker(
           runtime,
           payload.result?.cwd ?? trimmedPath,
-          options.threadPickerBootstrapId
+          options.threadPickerBootstrapId,
+          machineId ? { machineId, path: trimmedPath } : undefined
         );
       }
       if (runtime && payload.result?.threadId && options.activateThread !== false) {
-        await activateMachineThread(runtime.machineId, payload.result.threadId);
+        await activateMachineThread(runtime.machineId, payload.result.threadId, {
+          projectTarget: { machineId: runtime.machineId, path: trimmedPath }
+        });
       } else if (runtime) {
         ctx.setActiveMachineId(runtime.machineId);
       }

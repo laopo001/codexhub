@@ -1,6 +1,6 @@
 import type { ProjectSource, ProjectSummary } from "../../shared/projectTypes.js";
 import { formatVscodeSurfacePrefix } from "../../shared/surfaceTypes.js";
-import { findLongestMatchingProject } from "../../shared/petActivityRouting.js";
+import type { ProjectTarget, WorkspaceTarget } from "../../shared/petActivityRouting.js";
 import { asRecord, type CodexRecord } from "../../shared/recordTypes.js";
 import {
   planProgressFromPlan,
@@ -47,6 +47,8 @@ export type PetActivity = {
   activePlanProgress?: PlanProgressSummary;
   projectSource?: ProjectSource;
   projectPath?: string;
+  projectTarget?: ProjectTarget;
+  workspaceTarget?: WorkspaceTarget;
 };
 
 export const petCompletionJumpDurationMs = 3_000;
@@ -188,6 +190,34 @@ type PetActivityCandidate = {
   summary?: RuntimeThreadSummary;
 };
 
+export const workspaceTargetForProjectTarget = (
+  projects: readonly ProjectSummary[],
+  projectTarget: ProjectTarget | undefined
+): WorkspaceTarget | undefined => {
+  if (!projectTarget) return undefined;
+  const project = projects.find((item) =>
+    item.machineId === projectTarget.machineId && item.path === projectTarget.path
+  );
+  const source = project?.source;
+  if (!source) return undefined;
+  if (source.kind === "vscode" && !source.vscodeChannel) return undefined;
+  const workspacePaths = [...new Set(projects
+    .filter((item) => item.machineId === projectTarget.machineId
+      && item.source?.kind === source.kind
+      && item.source.groupId === source.groupId)
+    .map((item) => item.path))];
+  if (!workspacePaths.length) return undefined;
+  return {
+    machineId: projectTarget.machineId,
+    kind: source.kind,
+    groupId: source.groupId,
+    workspacePaths,
+    ...(source.workspaceFile ? { workspaceFile: source.workspaceFile } : {}),
+    ...(source.vscodeChannel ? { vscodeChannel: source.vscodeChannel } : {}),
+    ...(source.label ? { label: source.label } : {})
+  };
+};
+
 const workingDirectoryName = (workingDirectory: string) =>
   workingDirectory.split(/[\\/]/).filter(Boolean).pop();
 
@@ -254,7 +284,8 @@ export const derivePetActivities = (
   runtimeList: RuntimeSummary[] = [],
   machines: MachineSummary[] = [],
   dialogThreads: OpenThreadState[] = [],
-  projects: readonly ProjectSummary[] = []
+  projects: readonly ProjectSummary[] = [],
+  threadProjectTargets: Readonly<Record<string, ProjectTarget | undefined>> = {}
 ) => {
   const candidates = new Map<string, PetActivityCandidate>();
   const machineById = new Map(machines.map((machine) => [machine.machineId, machine]));
@@ -292,7 +323,11 @@ export const derivePetActivities = (
         ?? activity?.workingDirectory
         ?? runtime?.workingDirectory
         ?? "";
-      const matchedProject = findLongestMatchingProject(projects, machineId, workingDirectory);
+      const projectTarget = threadProjectTargets[detail?.threadId ?? summary?.threadId ?? activity?.threadId ?? ""];
+      const matchedProject = projectTarget
+        ? projects.find((project) => project.machineId === projectTarget.machineId && project.path === projectTarget.path)
+        : undefined;
+      const workspaceTarget = workspaceTargetForProjectTarget(projects, projectTarget);
       const status = detail
         ? petStatusForThread(detail)
         : runtime?.online && summary && (summary.running || summary.status === "running")
@@ -355,6 +390,8 @@ export const derivePetActivities = (
         ...(latestAgentMessage ? { latestAgentMessage } : {}),
         ...(matchedProject?.source ? { projectSource: matchedProject.source } : {}),
         ...(matchedProject?.path ? { projectPath: matchedProject.path } : {}),
+        ...(projectTarget ? { projectTarget } : {}),
+        ...(workspaceTarget ? { workspaceTarget } : {}),
         ...(detailExecution ?? summaryExecution ?? machineExecution ?? {})
       };
     })

@@ -192,7 +192,9 @@ test("threadActions.send records typedText including slash commands, but exclude
     setRuntimeList: () => undefined,
     dispatchOpenThreads: () => undefined,
     dispatchConversationThread: () => undefined,
-    setThreadOrderByMachine: () => undefined
+    setThreadOrderByMachine: () => undefined,
+    threadProjectTargets: {},
+    setThreadProjectTargets: () => undefined
   }, {
     handleLocalComposerCommand: (cmd) => {
       if (cmd.startsWith("/pet")) {

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VscodeWebviewHtmlController } from "../../targets/vscode/src/webviewHtmlController.js";
-import { vscodeWorkspaceStateScope } from "../../targets/vscode/src/workspaceStateScope.js";
+import {
+  vscodeWorkspaceStateScope,
+  workspaceTargetMatchesCurrentWindow
+} from "../../targets/vscode/src/workspaceStateScope.js";
 import {
   normalizeVscodeWorkspaceIdentity,
   workspaceFileForAuthorityRegistration
@@ -159,6 +162,37 @@ test("normalizeVscodeWorkspaceIdentity and vscodeWorkspaceStateScope prioritize 
 
   // 8. Rejects control characters and falls back safely
   assert.equal(normalizeVscodeWorkspaceIdentity("/bad\0path.code-workspace", folderA), "workspace-folder:/home/laop/projects/repo-a");
+});
+
+test("VSCode notification workspace matching ignores surface group and compares normalized identity", () => {
+  const target = {
+    machineId: "machine-a",
+    kind: "vscode" as const,
+    groupId: "another-surface",
+    workspacePaths: ["C:\\Repo\\A\\", "C:\\Repo\\B"],
+    vscodeChannel: "stable" as const
+  };
+  assert.equal(workspaceTargetMatchesCurrentWindow(
+    target,
+    undefined,
+    ["c:/repo/a", "C:/repo/b/"],
+    "stable"
+  ), true);
+  assert.equal(workspaceTargetMatchesCurrentWindow(
+    target,
+    undefined,
+    ["C:/repo/a"],
+    "stable"
+  ), false);
+  assert.equal(workspaceTargetMatchesCurrentWindow(target, undefined, target.workspacePaths, "insiders"), false);
+  assert.equal(workspaceTargetMatchesCurrentWindow({
+    ...target,
+    workspaceFile: "C:\\Repo\\team.code-workspace"
+  }, "c:/repo/team.code-workspace", target.workspacePaths, "stable"), true);
+  assert.equal(workspaceTargetMatchesCurrentWindow({
+    ...target,
+    workspacePaths: ["/Repo/A"]
+  }, undefined, ["/repo/a"], "stable"), false);
 });
 
 test("vscodeUiStateStorageKey generates canonical v4 profile keys and rejects v3 migration", () => {

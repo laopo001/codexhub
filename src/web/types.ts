@@ -36,6 +36,7 @@ import type { CompactRecordView } from "../shared/compactRecordViews.js";
 import type { CodexRecordView, SubagentActivityView } from "../shared/recordTypes.js";
 import type { CodexHubAuthorityDescriptor } from "../shared/surfaceTypes.js";
 import type { TaskCompleteNotification as ApiTaskCompleteNotification } from "../shared/taskNotifications.js";
+import type { SurfaceProjectTarget } from "./helpers/surfaceThreadScope.js";
 import type { ThreadApprovalPolicy, ThreadApprovalsReviewer } from "../shared/usageTypes.js";
 import type { ThreadQueueItem as ApiThreadQueueItem } from "../shared/threadTypes.js";
 
@@ -146,6 +147,7 @@ export type ProjectPickerState = {
 export type ThreadPickerState = {
   machineId: string;
   workingDirectory: string;
+  projectTarget?: SurfaceProjectTarget;
   preparingRuntime: boolean;
   bootstrapId?: string;
   loading: boolean;

@@ -6,8 +6,11 @@ import {
   findLongestMatchingProject,
   isPathSegmentAncestorOrEqual,
   normalizePath,
+  pathIdentityKey,
   parsePetActivityOpenTarget,
+  parseProjectTarget,
   parseProjectSource,
+  parseWorkspaceTarget,
   resolveVsCodeCliExecutable,
   resolveVsCodeLaunchPlan,
   resolveWindowsVsCodeCliExecutable,
@@ -118,6 +121,45 @@ test("parsePetActivityOpenTarget strictly validates IPC payloads and rejects mal
     threadId: "thread-1",
     source: { kind: "electron", groupId: "group-1", vscodeChannel: "stable" }
   }), null);
+  const workspaceTarget = {
+    machineId: "machine-1",
+    kind: "vscode" as const,
+    groupId: "workspace-group",
+    workspacePaths: ["/repo/a", "/repo/b", "/repo/a"],
+    vscodeChannel: "stable" as const
+  };
+  assert.deepEqual(parseWorkspaceTarget(workspaceTarget)?.workspacePaths, ["/repo/a", "/repo/b"]);
+  assert.equal(parseWorkspaceTarget({ ...workspaceTarget, workspacePaths: ["/repo/\na"] }), null);
+  assert.equal(parseWorkspaceTarget({ ...workspaceTarget, vscodeChannel: "nightly" }), null);
+  assert.equal(parseWorkspaceTarget({ ...workspaceTarget, extra: true }), null);
+  assert.deepEqual(parseProjectTarget({ machineId: "machine-a", path: "/repo" }), {
+    machineId: "machine-a",
+    path: "/repo"
+  });
+  assert.equal(parsePetActivityOpenTarget({
+    threadId: "thread-target",
+    machineId: "machine-a",
+    projectTarget: { machineId: "machine-b", path: "/repo" }
+  }), null);
+  assert.equal(parsePetActivityOpenTarget({
+    threadId: "thread-target",
+    machineId: "machine-a",
+    projectPath: "/repo/other",
+    projectTarget: { machineId: "machine-a", path: "/repo" }
+  }), null);
+  assert.equal(parsePetActivityOpenTarget({
+    threadId: "thread-target",
+    machineId: "machine-a",
+    source: { kind: "vscode", groupId: "group", vscodeChannel: "stable", workspaceFile: "/repo/a.code-workspace" },
+    workspaceTarget: {
+      machineId: "machine-a",
+      kind: "vscode",
+      groupId: "group",
+      workspacePaths: ["/repo"],
+      vscodeChannel: "stable",
+      workspaceFile: "/repo/b.code-workspace"
+    }
+  }), null);
 });
 
 test("normalizePath handles POSIX, Windows slashes, and root boundaries", () => {
@@ -126,6 +168,11 @@ test("normalizePath handles POSIX, Windows slashes, and root boundaries", () => 
   assert.equal(normalizePath("/"), "/");
   assert.equal(normalizePath("C:\\"), "C:/");
   assert.equal(normalizePath(""), "");
+});
+
+test("path identity is case-insensitive only for Windows and UNC paths", () => {
+  assert.equal(pathIdentityKey("C:\\Repo\\App"), pathIdentityKey("c:/repo/app/"));
+  assert.notEqual(pathIdentityKey("/Repo/App"), pathIdentityKey("/repo/app"));
 });
 
 test("isPathSegmentAncestorOrEqual enforces strict path segment boundaries", () => {
@@ -350,9 +397,18 @@ test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes r
   const localHostname = "jx-pc";
   const wslInsidersTarget = {
     threadId: "t-1",
+    machineId: "machine-1",
     workingDirectory: "/home/laop/projects/codexhub/src",
     machineHostname: "JX-PC",
     projectPath: "/home/laop/projects/codexhub",
+    workspaceTarget: {
+      machineId: "machine-1",
+      kind: "vscode" as const,
+      groupId: "registered:wsl:vscode-1",
+      workspacePaths: ["/home/laop/projects/codexhub"],
+      label: "VSCode: codexhub [WSL: Ubuntu]",
+      vscodeChannel: "insiders" as const
+    },
     source: {
       kind: "vscode" as const,
       groupId: "registered:wsl:vscode-1",
@@ -373,6 +429,10 @@ test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes r
   // 2. Stable channel generates code.cmd
   const wslStableTarget = {
     ...wslInsidersTarget,
+    workspaceTarget: {
+      ...wslInsidersTarget.workspaceTarget,
+      vscodeChannel: "stable" as const
+    },
     source: {
       ...wslInsidersTarget.source,
       vscodeChannel: "stable" as const
@@ -388,6 +448,10 @@ test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes r
   // 2.1 Multi-root .code-workspace window (Insiders): prioritizes workspaceFile over single projectPath folder
   const wslWorkspaceFileInsidersTarget = {
     ...wslInsidersTarget,
+    workspaceTarget: {
+      ...wslInsidersTarget.workspaceTarget,
+      workspaceFile: "vscode-remote://wsl+Ubuntu/home/laop/projects/codexhub/team-workspace.code-workspace"
+    },
     source: {
       ...wslInsidersTarget.source,
       label: "VS Code Insiders: team-workspace",
@@ -404,6 +468,10 @@ test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes r
   // 2.2 Multi-root .code-workspace window (Stable): prioritizes workspaceFile over single projectPath folder
   const wslWorkspaceFileStableTarget = {
     ...wslStableTarget,
+    workspaceTarget: {
+      ...wslStableTarget.workspaceTarget,
+      workspaceFile: "/home/laop/projects/codexhub/team-workspace.code-workspace"
+    },
     source: {
       ...wslStableTarget.source,
       workspaceFile: "/home/laop/projects/codexhub/team-workspace.code-workspace"
@@ -419,6 +487,10 @@ test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes r
   // 2.3 Single folder fallback when workspaceFile is absent
   const wslSingleFolderFallbackTarget = {
     ...wslStableTarget,
+    workspaceTarget: {
+      ...wslStableTarget.workspaceTarget,
+      workspacePaths: ["/home/laop/projects/codexhub"]
+    },
     source: {
       kind: "vscode" as const,
       groupId: "registered:wsl:vscode-1",
@@ -438,6 +510,10 @@ test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes r
   // 3. Missing vscodeChannel -> returns null (no-op, never defaults to stable!)
   const missingChannelTarget = {
     ...wslInsidersTarget,
+    workspaceTarget: {
+      ...wslInsidersTarget.workspaceTarget,
+      vscodeChannel: undefined
+    },
     source: {
       kind: "vscode" as const,
       groupId: "registered:wsl:vscode-1",
@@ -456,14 +532,43 @@ test("resolveVsCodeLaunchPlan requires channel, matching hostname and excludes r
   // 5. Missing machineHostname or localHostname -> returns null
   assert.equal(resolveVsCodeLaunchPlan({ ...wslInsidersTarget, machineHostname: undefined }, { platform: "win32", localHostname }), null);
   assert.equal(resolveVsCodeLaunchPlan(wslInsidersTarget, { platform: "win32", localHostname: "" }), null);
+  assert.equal(resolveVsCodeLaunchPlan({
+    ...wslInsidersTarget,
+    workspaceTarget: {
+      ...wslInsidersTarget.workspaceTarget,
+      workspacePaths: ["/home/laop/projects/a", "/home/laop/projects/b"]
+    }
+  }, { platform: "win32", localHostname }), null);
+  assert.equal(resolveVsCodeLaunchPlan({
+    threadId: "project-only",
+    machineHostname: localHostname,
+    projectPath: "/home/laop/projects/codexhub",
+    workingDirectory: "/home/laop/projects/codexhub"
+  }, { platform: "win32", localHostname }), null);
+  assert.equal(resolveVsCodeLaunchPlan({
+    ...wslInsidersTarget,
+    workspaceTarget: {
+      ...wslInsidersTarget.workspaceTarget,
+      workspaceFile: "vscode-remote://ssh-remote+prod/workspace.code-workspace"
+    }
+  }, { platform: "win32", localHostname }), null);
 });
 
 test("resolveVsCodeLaunchPlan generates clean args without --reuse-window for local Windows VSCode", () => {
   const localHostname = "my-windows-desktop";
   const winTarget = {
     threadId: "t-win",
+    machineId: "machine-win",
     workingDirectory: "C:\\Users\\0laop\\projects\\codexhub",
     machineHostname: "MY-WINDOWS-DESKTOP",
+    workspaceTarget: {
+      machineId: "machine-win",
+      kind: "vscode" as const,
+      groupId: "vscode-local",
+      workspacePaths: ["C:\\Users\\0laop\\projects\\codexhub"],
+      label: "VSCode: codexhub",
+      vscodeChannel: "stable" as const
+    },
     source: {
       kind: "vscode" as const,
       groupId: "vscode-local",
@@ -476,13 +581,17 @@ test("resolveVsCodeLaunchPlan generates clean args without --reuse-window for lo
   const plan = resolveVsCodeLaunchPlan(winTarget, { platform: "win32", localHostname });
   assert.deepEqual(plan, {
     command: "code.cmd",
-    args: ["C:\\Users\\0laop\\projects\\codexhub"],
-    targetPath: "C:\\Users\\0laop\\projects\\codexhub"
+    args: ["C:/Users/0laop/projects/codexhub"],
+    targetPath: "C:/Users/0laop/projects/codexhub"
   });
 
   // Multi-root .code-workspace on local Windows
   const winWorkspaceFileTarget = {
     ...winTarget,
+    workspaceTarget: {
+      ...winTarget.workspaceTarget,
+      workspaceFile: "C:\\Users\\0laop\\projects\\my.code-workspace"
+    },
     source: {
       ...winTarget.source,
       workspaceFile: "C:\\Users\\0laop\\projects\\my.code-workspace"

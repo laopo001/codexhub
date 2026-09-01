@@ -15,7 +15,9 @@ Agent 开发改动时按这套固定流程起本地服务并用 CDP 测试，不
 
 codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP/WebSocket API 和 Web UI，machine 侧负责路径解析、官方 `codex app-server`/headless 进程启动、thread 操作和 app-server transcript 同步。server 可以镜像事件、维护控制面状态和调度任务，但不能变成 Codex app-server、远端文件系统或 thread transcript 的权威来源。
 
-当前产品心智是 project-first、machine-runtime-second。公开模型以 `machineId`、`projectId`、`threadId` 为主；一台 machine 同时最多只有一个在线 Codex runtime，它可以承载多个不同 project cwd 的 threads。`sessionId` 只标识内部 app-server/headless 进程代次，不进入公共 HTTP、Web state、task history 或 thread 投影。`/api/projects` 是 Web 主投影，project 只带 `machineOnline` 等 project/machine 元数据，不携带 runtime 或 thread 列表；`/api/runtimes` 按稳定 `machineId` 投影当前 runtime 状态。
+当前产品心智是 project-first、machine-runtime-second。公开模型以 `machineId`、`projectId`、`threadId` 为主；一台 machine 同时最多只有一个在线 Codex runtime，它可以承载多个不同执行 cwd/workspace context 的 threads。`sessionId` 只标识内部 app-server/headless 进程代次，不进入公共 HTTP、Web state、task history 或 thread 投影。`/api/projects` 是 Web 主投影，project 只带 `machineOnline` 等 project/machine 元数据，不携带 runtime 或 thread 列表；`/api/runtimes` 按稳定 `machineId` 投影当前 runtime 状态。
+
+身份和所有权的详细定义以 `docs/architecture/surface-machine-workspace-project-thread.md` 为准。`workingDirectory` 只是 thread/app-server 的执行 cwd 或 resume hint，不是 project identity、workspace identity 或 surface membership。workspace 可以包含多个 projects/paths；project identity 仍严格是 `machineId + path`。需要 thread 的 project 来源时，必须在 UI 动作边界显式保留 project target，不能用 cwd/path equality、路径包含关系或唯一匹配反推。
 
 不要恢复旧 `workerId` 模型。`workerId` 只允许出现在 legacy 输入拒绝、回归断言或迁移说明里；公共 JSON 和 Web 主模型使用 `machineId`，内部 machine/session bridge 才允许使用 `sessionId`。不要恢复 `/api/workers`、`/api/instances`、`/api/sessions`、`.codexp/instances.yaml` 或旧 worker/instance 兼容层。
 
@@ -41,9 +43,10 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 7. 不再支持 `type=server` machine、CodexHub server-to-server bridge、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。
 8. 父 server 注册必须防止自注册：同本机地址且同端口直接拒绝，目标 `/api/health` 返回的 `serverInstanceId` 与当前实例相同也拒绝；同一台电脑不同端口的多个 server 可以互相注册用于测试。
 9. session 是一次官方 Codex app-server/headless 进程代次，只在内部 transport 使用。公共 runtime 以 `machineId` 标识，能通过 app-server 的 per-thread/per-turn `cwd` 支持多个 project。Web 中点击 project 只切换 active project path；Add Tab/thread picker 才基于 active path 创建或恢复 thread。不提供手动 restart/stop 或独立 session 管理入口。
-10. threadId 来自官方 Codex app-server。server/Web/TG/task 读取和展示 thread transcript，但 transcript 来源只能是 app-server turns snapshot、实时 item/rawResponseItem/tokenUsage 事件。
-11. server/session 不维护 `currentThreadId` 或 `currentThread`。Web 当前 tab、Telegram chat 绑定、task `threadId` 都是各自的客户端/任务选择状态；发送入口最终必须显式知道目标 `threadId`。
-12. machine/session registration 都是 strict schema。未知字段以及旧 `workerId`、`currentThreadId` 必须直接拒绝，不能静默丢弃或重新进入公共模型。
+10. thread 的 `workingDirectory` 是执行 cwd，不代表 thread 归属于一个同路径 project。它可以等于 project path、位于其子目录，或表示一个包含多个 project paths 的 workspace 上下文。surface tab 归属来自该 surface 的显式 open set/版本化 snapshot；workspace project membership 来自完整 `workspacePaths` 注册。两者都不能由 cwd/path equality 推导。
+11. threadId 来自官方 Codex app-server。server/Web/TG/task 读取和展示 thread transcript，但 transcript 来源只能是 app-server turns snapshot、实时 item/rawResponseItem/tokenUsage 事件。
+12. server/session 不维护 `currentThreadId` 或 `currentThread`。Web 当前 tab、Telegram chat 绑定、task `threadId` 都是各自的客户端/任务选择状态；发送入口最终必须显式知道目标 `threadId`。
+13. machine/session registration 都是 strict schema。未知字段以及旧 `workerId`、`currentThreadId` 必须直接拒绝，不能静默丢弃或重新进入公共模型。
 
 ## App-server Thread Sync 和实时流
 
@@ -85,13 +88,15 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 ## Project / Task 模型
 
 1. project 是 `machineId + path` 推导出的 UI/路由元数据。project 不拥有 Codex 进程，也不在 `/api/projects` 投影里携带 `session`、`sessions` 或 thread 列表。
-2. thread 创建/恢复必须通过 machine runtime + explicit cwd/path 表达。`POST /api/machines/:machineId/threads` 使用 body `cwd`；`POST /api/projects/open` 只负责显式 project path bootstrap/persistence，machine runtime 在 transport 连接时已通过 app-server 协议建立，Add Thread 再用 machine thread API 创建或恢复 thread。
-3. project 列表不展示 open 数、thread/history 数或任何 transcript 历史数量。在线 thread 列表属于 machine thread picker 和 workspace tabs，不属于 project 卡片持久属性。
-4. project 级 UI 操作可以有 pin、delete、保存 transient project 和选择 active project；不要把 session restart/stop、rename、thread count 或 thread history 重新放回 project row。
-5. task 是 server-local 调度记录，选择 machine、project path、可选 thread 和五字段 cron，然后按计划向该 thread 投递一轮对话。默认 cron timezone 是 `Asia/Shanghai`。
-6. task 运行时复用 project 所属 machine 的 runtime session；若配置了 `threadId` 则按 task project path resume 该 thread，否则按 task project path 创建/复用 thread 并写回 task 状态。
-7. task 并发边界是 task 记录本身。同一 task 已 running/queued 时，新触发应记录为 skipped，不要叠加执行。
-8. 不再扫描 `.codexp/tasks`，也不写 `.codexp/task-runs`。任务配置和最近 run 摘要都在 `config.yaml`。
+2. workspace 是 surface 提供的 project target 集合，一个 workspace 可以包含多个 paths/projects；它不拥有 runtime/thread。`activeWorkspacePath` 只表示当前 UI 选择，不能代表完整 workspace membership。
+3. thread 创建/恢复通过 machine runtime + explicit cwd/path 表达，但 cwd 只用于执行或 resume，不建立 thread→project identity。`POST /api/machines/:machineId/threads` 使用 body `cwd`；`POST /api/projects/open` 只负责显式 project path bootstrap/persistence，machine runtime 在 transport 连接时已通过 app-server 协议建立，Add Thread 再用 machine thread API 创建或恢复 thread。
+4. surface open tabs 是 surface-local 的显式 thread 引用。重启恢复只读取该 surface scope 的 exact open set；不得使用 cwd/path equality、pending IDs、thread order、candidates 或历史列表推导 tab membership。candidates 只允许为一个已经显式保存的 thread ID 补 cwd。
+5. project 列表不展示 open 数、thread/history 数或任何 transcript 历史数量。在线 thread 列表属于 machine thread picker 和 workspace tabs，不属于 project 卡片持久属性。
+6. project 级 UI 操作可以有 pin、delete、保存 transient project 和选择 active project；不要把 session restart/stop、rename、thread count 或 thread history 重新放回 project row。
+7. task 是 server-local 调度记录，选择 machine、project path、可选 thread 和五字段 cron，然后按计划向该 thread 投递一轮对话。默认 cron timezone 是 `Asia/Shanghai`。
+8. task 运行时复用 project 所属 machine 的 runtime session；若配置了 `threadId` 则按 task project path resume 该 thread，否则按 task project path 创建/复用 thread 并写回 task 状态。task 的显式 project path 是调度输入，不应由 thread workingDirectory 反推。
+9. task 并发边界是 task 记录本身。同一 task 已 running/queued 时，新触发应记录为 skipped，不要叠加执行。
+10. 不再扫描 `.codexp/tasks`，也不写 `.codexp/task-runs`。任务配置和最近 run 摘要都在 `config.yaml`。
 
 ## CLI 模型
 
@@ -121,9 +126,9 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 3. 渲染入口是 `AppView.tsx`、`AppSidebar.tsx`、`AppDialogs.tsx`，共享格式化和 view helpers 在 `appHelpers.tsx` 及 `helpers/*`。
 4. record 渲染链路分三层：core `recordsToViews`、Web `detailedRecordViews`、shared `compactRecordViews`。Simple/compact/detailed 模式调整要先核对实际 record source。
 5. Web 优先显示 app-server snapshot/live events 归一化后的 records；goal/status/notification 这类提取逻辑可以合并 snapshot 和 live records，但不要把主消息渲染链随意改成双源重复。
-6. Workspace thread tabs 使用 Ant Design Tabs 的官方 editable-card 行为和 pane 高度契约；不要为 add/remove 重新写一套自定义 tabs 外观。
+6. Workspace thread tabs 使用 Ant Design Tabs 的官方 editable-card 行为和 pane 高度契约；不要为 add/remove 重新写一套自定义 tabs 外观。Tab membership 由当前 surface 的显式 open set 和版本化 per-surface snapshot 决定，不由 `thread.workingDirectory === project.path` 决定。一个 VSCode surface 可以注册多个 workspace paths/projects；active path 只是选择状态。需要 project 来源时在 open/create 动作中显式携带 `ProjectTarget { machineId, path }`，缺失时保持 unresolved。
 7. VSCode 和 Electron surface 使用同一套 Web UI 和完整左侧控制面。`surface=vscode` / `surface=electron` 只用于通知桥、daemon 兼容判断、workspace project group 等嵌入环境差异，不应隐藏 sidebar 或关闭 SSH/tasks/plugins/Registered 能力。
-8. 任务完成通知：完成音效总是由 Web 播放；Settings 里的 `taskCompleteSystemNotifications` 只控制系统弹窗，普通 Web 走 browser Notification，VSCode 走 iframe `postMessage` 到 extension，再由 VSCode notification 展示。
+8. 任务完成通知：完成音效总是由 Web 播放；Settings 里的 `taskCompleteSystemNotifications` 只控制系统弹窗，普通 Web 走 browser Notification，VSCode 走 iframe `postMessage` 到 extension，再由 VSCode notification 展示。Electron 桌宠/完成通知的跨宿主点击必须先用显式 `WorkspaceTarget` 区分 VSCode workspace 与 Electron，再用可选 `ProjectTarget` 定位项目；不得用 `workingDirectory` 或 project path 猜 workspace。无法证明或启动目标 VSCode workspace 时安全回退 Electron thread。
 9. Thread Model 弹窗的 model/reasoning/service tier 选项只使用当前在线 app-server `model/list` catalog 或 CodexHub 对该 runtime 响应的带时间戳缓存；缓存来源必须明确显示并允许强制刷新。catalog 不可用且没有缓存时显示加载/错误状态并禁用选择，不提供静态 fallback，也不能把 catalog 保存进 `config.yaml`。
 10. Composer 权限菜单的 permission profile 只使用当前在线 app-server `permissionProfile/list` catalog；Web 在 Composer 挂载后后台加载，并在当前页面按 machine/cwd 复用，不做后端持久缓存。允许展示协议固定的 approval policy / reviewer 枚举，但不能为 profile 提供本地静态 fallback，也不能把 profile catalog 保存进 `config.yaml`。
 11. UI 文案和交互不要重新暴露已删除概念：worker、instance、project rename、project thread/history count、per-project runtime restart/stop。
@@ -154,8 +159,8 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 1. Electron main process 只包装共享 authority service 和 Web UI。窗口使用隔离/sandbox WebPreferences，外链用系统浏览器打开。
 2. Electron 与 VSCode 使用同一套固定 authority 端口、authority ID、`config.yaml`、local runtime 和 parent machine transport。Electron 先 probe，若 VSCode authority 已在线就 attach；否则从 Electron bundle detached 启动 `authority-service.cjs`。默认端口不读取 `CODEX_HUB_PORT`，显式 `CODEX_HUB_AUTHORITY_PORT` 只用于隔离开发/测试，被占用时直接失败。
 3. authority ID 保存在共享数据目录的 `authority-id`，`config.yaml` 和 `authority.log` 也属于同一 authority 数据目录。authority 默认仅监听 `127.0.0.1`；只有 `config.yaml` 的 `env.CODEX_HUB_AUTHORITY_HOST` 显式设置为 `0.0.0.0` 或 `::` 时才对外绑定。默认不启用认证，也不能自动生成 token；只有 extension host 环境或 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式非空时才启用。显式 token 只通过子进程环境注入，不能出现在命令行或日志；认证启用后 surface API、Web API/WebSocket 和 iframe/Open in Browser URL 都必须携带它。Webview iframe 和 Open in Browser 必须通过 `vscode.env.asExternalUri` 暴露 server URL，不能直接写 raw loopback URL。
-4. 每个 VSCode 窗口和每个 Electron 窗口使用唯一 `surfaceId + leaseId` 调用 `/api/embedded/surfaces` 注册当前 workspace paths；共享 Web renderer 是唯一 heartbeat 发送者，每 10 秒 heartbeat，并在页面恢复可见时立即补发。VSCode Extension Host 和 Electron main 只负责首次注册、authority/surface 恢复和 deactivate/close 主动 unregister，不能保留平行 heartbeat timer；进程异常退出则由 30 秒 lease 清理。authority 合并所有活动 surface 的 transient projects，同一路径由多个 surface 引用时必须保留到最后一个 lease 消失；surface 注册只能验证目录，不能启动 app-server/thread；authority 的 machine transport 建立后会独立启动 app-server 并完成协议握手，Add Thread 才创建用户 thread。Electron 没有 workspace path 时仍可注册空 workspace surface。
-5. Embedded authority 的 local machine、官方 app-server runtime、SSH/tasks/integrations/Registered 配置和 parent machine transport 在同一执行环境的 VSCode/Electron surface 间共享；UI 仍按 URL 中的 workspace paths 过滤项目，localStorage 按稳定 surface scope 隔离，任务完成通知不能发到不包含该 project path 的窗口。Windows host、WSL、Remote SSH 等不同 authority 不能合并成同一个 machine。
+4. 每个 VSCode 窗口和每个 Electron 窗口使用唯一 `surfaceId + leaseId` 调用 `/api/embedded/surfaces` 注册当前完整 workspace paths；共享 Web renderer 是唯一 heartbeat 发送者，每 10 秒 heartbeat，并在页面恢复可见时立即补发。VSCode Extension Host 和 Electron main 只负责首次注册、authority/surface 恢复和 deactivate/close 主动 unregister，不能保留平行 heartbeat timer；进程异常退出则由 30 秒 lease 清理。authority 合并所有活动 surface 的 transient projects，同一路径由多个 surface 引用时必须保留到最后一个 lease 消失；一个 workspace 可以投影多个 project targets，active path 不能替代完整集合。surface 注册只能验证目录，不能启动 app-server/thread；authority 的 machine transport 建立后会独立启动 app-server 并完成协议握手，Add Thread 才创建用户 thread。Electron 没有 workspace path 时仍可注册空 workspace surface。
+5. Embedded authority 的 local machine、官方 app-server runtime、SSH/tasks/integrations/Registered 配置和 parent machine transport 在同一执行环境的 VSCode/Electron surface 间共享；UI 仍按 URL 中的 workspace paths 过滤 project catalog，localStorage 按稳定 surface scope 隔离，任务完成通知不能发到不包含该显式 project target 的窗口。Thread tab 是否属于 surface 由显式 surface open state 决定，不能由 workingDirectory 与任一 workspace path 的相等关系决定。Windows host、WSL、Remote SSH 等不同 authority 不能合并成同一个 machine。
 6. authority 生命周期只看 Web-client heartbeat，不看 embedded surface 数量、register/unregister 或 workspace lease：连续 5 分钟没有任何 Web heartbeat 后，只有没有 running turn 才可关闭 authority；存在 running turn 时必须持续延后并在 turn 结束后重新评估，期间任一 Web heartbeat 会取消待退出。embedded surface heartbeat 失败时由 Web 通知宿主恢复 workspace surface；只有 health probe 确认 authority 已不存在时才能 start replacement。VSIX build 更新只上报可用更新，不能自动关闭旧 service；authority 和前端更新必须由用户显式确认重启。
 7. VSCode extension 启用和普通 Web 相同的 SSH/tasks/integrations/Registered 能力；用户显式保存 transient project 后才写入共享 `config.yaml`，窗口自动 workspace project 不应污染持久 project list。
 8. VSCode 打包由 `scripts/build-vscode.ts` 负责：先完整 build，再分别将 extension 和 detached authority service 打成 Node CJS bundle、把 `navigator` 定义为 `undefined` 并断言 bundle 不引用浏览器全局；staging 必须包含 `authority-service.cjs`、`dist`、`dist-node/ssh`、media、README、LICENSE。

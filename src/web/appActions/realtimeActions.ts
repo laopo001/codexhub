@@ -14,7 +14,6 @@ import {
   embeddedSurfaceId,
   initialWorkspacePath,
   isElectronSurface,
-  isFixedWorkspaceSurface,
   isEmbeddedHostSurface,
   isVscodeSurface
 } from "../appConfig.js";
@@ -54,7 +53,7 @@ import {
   taskCompletionNotificationKey,
   taskCompleteRecordIsForLatestUserInput
 } from "../appHelpers.js";
-import { findLongestMatchingProject } from "../../shared/petActivityRouting.js";
+import type { ProjectTarget } from "../../shared/petActivityRouting.js";
 import type {
   AppSettings,
   LocalTask,
@@ -73,7 +72,17 @@ import type {
 import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
 import { authorityInstanceRecovery } from "../helpers/authorityInstanceRecovery.js";
 import { restorePersistedThreadTabs } from "../helpers/threadRestore.js";
-import { projectsForSurface, threadIdsForSurfaceProjects } from "../helpers/surfaceThreadScope.js";
+import {
+  workspaceIncludesProjectTarget,
+  type SurfaceProjectTarget,
+  type SurfaceThreadTarget
+} from "../helpers/surfaceThreadScope.js";
+import {
+  mergeThreadRestoreTarget,
+  selectPendingThreadRestoreTargets,
+  type PendingThreadRestoreTargets
+} from "../helpers/pendingThreadRestore.js";
+import { workspaceTargetForProjectTarget } from "../pets/petStatus.js";
 
 type RealtimeActionsContext = {
   appSettingsRef: React.MutableRefObject<AppSettings>;
@@ -105,6 +114,8 @@ type RealtimeActionsContext = {
   setMachines: React.Dispatch<React.SetStateAction<MachineSummary[]>>;
   setParentRegistration: React.Dispatch<React.SetStateAction<ParentRegistrationStatus>>;
   setPendingRestoreActiveThreadId: React.Dispatch<React.SetStateAction<string>>;
+  pendingRestoreAttemptCountsRef: React.MutableRefObject<Record<string, number>>;
+  setPendingRestoreTargets: React.Dispatch<React.SetStateAction<PendingThreadRestoreTargets>>;
   setPendingRestoreThreadIds: React.Dispatch<React.SetStateAction<string[]>>;
   setPlugins: React.Dispatch<React.SetStateAction<PluginSummary[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
@@ -120,6 +131,8 @@ type RealtimeActionsContext = {
   setSystemStatus: React.Dispatch<React.SetStateAction<SystemStatus>>;
   setTasks: React.Dispatch<React.SetStateAction<LocalTask[]>>;
   setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+  threadProjectTargetsRef: React.MutableRefObject<Readonly<Record<string, SurfaceProjectTarget | undefined>>>;
+  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, SurfaceProjectTarget>>>;
 };
 
 export type RealtimeActionsDependencies = {
@@ -130,6 +143,7 @@ export type RealtimeActionsDependencies = {
   openThread: (threadId: string, options?: {
     expectedMachineId?: string;
     preferredWorkingDirectory?: string;
+    projectTarget?: SurfaceProjectTarget;
     activate?: boolean;
     deferActivationUntilLoaded?: boolean;
   }) => Promise<void>;
@@ -208,46 +222,35 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     const shouldRestoreSavedTabs = (isVscodeSurface || !initialWorkspacePath)
       && Array.isArray(saved?.openThreadIds);
     const savedThreadIds = shouldRestoreSavedTabs
-      ? uniqueThreadIds([
-        ...(saved?.openThreadIds ?? []),
-        ...(saved?.activeTabThreadId ? [saved.activeTabThreadId] : [])
-      ])
+      ? uniqueThreadIds(saved?.openThreadIds ?? [])
       : undefined;
-    const loadedThreadTargets = Object.fromEntries(
+    const loadedThreadTargets: Record<string, SurfaceThreadTarget> = Object.fromEntries(
       loadedRuntimes.flatMap((runtime) => (runtime.threads ?? []).map((thread) => [thread.threadId, {
         machineId: runtime.machineId,
         workingDirectory: thread.workingDirectory
       }]))
     );
-    const persistedThreadTarget = (threadId: string) =>
-      loadedThreadTargets[threadId] ?? saved?.openThreadTargets?.[threadId];
+    const persistedThreadTarget = (threadId: string) => {
+      const savedTarget = saved?.openThreadTargets?.[threadId];
+      const loadedTarget = loadedThreadTargets[threadId];
+      return mergeThreadRestoreTarget(loadedTarget, savedTarget);
+    };
     const restoreThreadTargets = Object.fromEntries(
       (savedThreadIds ?? []).flatMap((threadId) => {
         const target = persistedThreadTarget(threadId);
         return target ? [[threadId, target]] : [];
       })
     );
-    const surfaceProjects = isFixedWorkspaceSurface
-      ? projectsForSurface(loadedProjects, {
-        kind: "vscode",
-        groupId: embeddedSurfaceId,
-        workspacePaths: embeddedWorkspacePaths
-      })
-      : [];
-    const restoredThreadIds = savedThreadIds && isFixedWorkspaceSurface
-      ? threadIdsForSurfaceProjects(savedThreadIds, restoreThreadTargets, surfaceProjects)
-      : savedThreadIds;
+    const restoredThreadIds = savedThreadIds;
     const persistedActiveThreadId = saved?.activeTabThreadId ?? "";
     const restoredActiveThreadId = restoredThreadIds?.includes(persistedActiveThreadId)
       ? persistedActiveThreadId
       : restoredThreadIds?.[0] ?? "";
     const restoredThreadIdSet = new Set(restoredThreadIds ?? []);
-    const savedActiveTabThreadByMachine = isFixedWorkspaceSurface
-      ? Object.fromEntries(
-        Object.entries(saved?.activeTabThreadByMachine ?? {})
-          .filter(([, threadId]) => restoredThreadIdSet.has(threadId))
-      )
-      : saved?.activeTabThreadByMachine ?? {};
+    const savedActiveTabThreadByMachine = Object.fromEntries(
+      Object.entries(saved?.activeTabThreadByMachine ?? {})
+        .filter(([, threadId]) => restoredThreadIdSet.has(threadId))
+    );
     const savedRuntime = saved?.activeMachineId
       ? loadedRuntimes.find((runtime) => runtime.machineId === saved.activeMachineId)
       : undefined;
@@ -264,7 +267,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       ?? (initialWorkspacePath || !initialRuntime
         ? undefined
         : findProjectByMachinePath(loadedProjects, initialRuntime.machineId, initialWorkspace)
-          ?? findProjectByMachinePath(loadedProjects, initialRuntime.machineId, initialRuntime.workingDirectory));
+          ?? undefined);
     const initialSettings = {
       ...defaultAppSettings(),
       ...(configData.config.ui ?? saved?.settings ?? {})
@@ -309,6 +312,9 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     ctx.setThreadOrderByMachine(() => mergeThreadOrderByMachine(saved?.threadOrderByMachine ?? {}, loadedRuntimes));
     ctx.setPendingRestoreThreadIds([]);
     ctx.setPendingRestoreActiveThreadId("");
+    ctx.pendingRestoreAttemptCountsRef.current = {};
+    ctx.setPendingRestoreTargets({});
+    ctx.setThreadProjectTargets({});
     connectRealtimeEvents();
     const initialThreadId = initialRuntime ? preferredThreadIdForRuntime(initialRuntime, initialProject) : "";
     if (initialProject) {
@@ -330,17 +336,30 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
               expectedMachineId: target.machineId,
               ...(target.workingDirectory
                 ? { preferredWorkingDirectory: target.workingDirectory }
-                : {})
+                : {}),
+              ...(target.projectTarget ? { projectTarget: target.projectTarget } : {})
             } : {})
           });
         },
         clearActiveThreadIfLatest: deps.clearActiveThreadIfLatest
       });
       const restoredSet = new Set(restored.threadIds);
+      const pendingTargets = selectPendingThreadRestoreTargets(
+        restored.pendingThreadIds,
+        restoreThreadTargets
+      );
+      const retainedRestoreIds = new Set([...restored.threadIds, ...restored.pendingThreadIds]);
+      ctx.setThreadProjectTargets(Object.fromEntries(
+        [...retainedRestoreIds].flatMap((threadId) => {
+          const target = persistedThreadTarget(threadId)?.projectTarget;
+          return target ? [[threadId, target]] : [];
+        })
+      ));
       ctx.setPendingRestoreThreadIds(restored.pendingThreadIds);
       ctx.setPendingRestoreActiveThreadId(
         restored.pendingThreadIds.includes(restoredActiveThreadId) ? restoredActiveThreadId : ""
       );
+      ctx.setPendingRestoreTargets(pendingTargets);
       ctx.dispatchOpenThreads({ type: "reorder", threadIds: restored.threadIds });
       ctx.setActiveTabThreadByMachine((current) => Object.fromEntries(
         Object.entries(current).filter(([, threadId]) => restoredSet.has(threadId))
@@ -460,7 +479,11 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
     }
     ctx.setRuntimeList((current) => patchRuntimesThread(current, payload.thread));
     if (isWorkspaceThread) {
-      ctx.setProjects((current) => patchProjectsThread(current, payload.thread));
+      ctx.setProjects((current) => patchProjectsThread(
+        current,
+        payload.thread,
+        ctx.threadProjectTargetsRef.current[payload.thread.threadId]
+      ));
     }
     if (!payload.historical && payload.kind === "record" && payload.record && isTaskCompleteRecord(payload.record)) {
       deps.onThreadCompleted(taskCompletionNotificationKey(payload.thread.threadId, payload.record));
@@ -469,10 +492,18 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
   }
 
   function notifyTaskCompletionsFromStreamEvent(event: StreamEvent) {
+    const candidateProjectTarget = ctx.threadProjectTargetsRef.current[event.thread.threadId];
+    const projectTarget = candidateProjectTarget?.machineId === event.thread.runtime.machineId
+      ? candidateProjectTarget
+      : undefined;
     if (
       isEmbeddedHostSurface
       && embeddedWorkspacePathSet.size
-      && !embeddedWorkspacePathSet.has(event.thread.workingDirectory)
+      && !workspaceIncludesProjectTarget(
+        embeddedWorkspacePathSet,
+        projectTarget,
+        event.thread.runtime.machineId
+      )
     ) return;
     const threadId = event.thread.threadId;
     const incomingRecords = streamEventRecords(event);
@@ -493,11 +524,10 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       const machine = event.thread.runtime.machineId
         ? ctx.machinesRef?.current.find((candidate) => candidate.machineId === event.thread.runtime.machineId)
         : undefined;
-      const matchedProject = findLongestMatchingProject(
-        ctx.projectsRef?.current ?? [],
-        event.thread.runtime.machineId,
-        event.thread.workingDirectory
-      );
+      const matchedProject = projectTarget
+        ? findProjectByMachinePath(ctx.projectsRef?.current ?? [], projectTarget.machineId, projectTarget.path)
+        : undefined;
+      const workspaceTarget = workspaceTargetForProjectTarget(ctx.projectsRef?.current ?? [], projectTarget);
       dispatchTaskCompleteNotification(taskCompleteNotification(
         event.thread,
         record,
@@ -506,7 +536,9 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
           source: matchedProject?.source,
           machine,
           machineHostname: machine?.hostname,
-          projectPath: matchedProject?.path,
+          projectPath: projectTarget?.path,
+          projectTarget,
+          workspaceTarget,
           machineLabel: machine ? machineNotificationLabel(machine, event.thread.workingDirectory) : undefined
         }
       ));
@@ -536,10 +568,15 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         ctx.notifiedTaskCompletions.current.add(key);
         if (run.threadId && ctx.realtimeThreadSubscriptions.current.has(run.threadId)) continue;
         const machine = ctx.machinesRef?.current.find((candidate) => candidate.machineId === task.machineId);
-        const matchedProject = findLongestMatchingProject(
+        const projectTarget: ProjectTarget = { machineId: task.machineId, path: task.projectPath };
+        const matchedProject = findProjectByMachinePath(
           ctx.projectsRef?.current ?? [],
-          task.machineId,
-          task.projectPath
+          projectTarget.machineId,
+          projectTarget.path
+        );
+        const workspaceTarget = workspaceTargetForProjectTarget(
+          ctx.projectsRef?.current ?? [],
+          projectTarget
         );
         dispatchTaskCompleteNotification(taskRunCompleteNotification(
           task,
@@ -547,7 +584,9 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
           {
             source: matchedProject?.source,
             machine,
-            projectPath: matchedProject?.path || task.projectPath,
+            projectPath: projectTarget.path,
+            projectTarget,
+            workspaceTarget,
             machineLabel: machine ? machineNotificationLabel(machine, task.projectPath) : undefined
           }
         ));
@@ -574,20 +613,28 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
 
     for (const { machine, activity } of completed) {
       if (ctx.realtimeThreadSubscriptions.current.has(activity.threadId)) continue;
+      const candidateProjectTarget = ctx.threadProjectTargetsRef.current[activity.threadId];
+      const projectTarget = candidateProjectTarget?.machineId === machine.machineId
+        ? candidateProjectTarget
+        : undefined;
       if (
         isEmbeddedHostSurface
         && embeddedWorkspacePathSet.size
-        && !embeddedWorkspacePathSet.has(activity.workingDirectory)
+        && !workspaceIncludesProjectTarget(
+          embeddedWorkspacePathSet,
+          projectTarget,
+          machine.machineId
+        )
       ) continue;
-      const matchedProject = findLongestMatchingProject(
-        ctx.projectsRef?.current ?? [],
-        machine.machineId,
-        activity.workingDirectory
-      );
+      const matchedProject = projectTarget
+        ? findProjectByMachinePath(ctx.projectsRef?.current ?? [], projectTarget.machineId, projectTarget.path)
+        : undefined;
+      const workspaceTarget = workspaceTargetForProjectTarget(ctx.projectsRef?.current ?? [], projectTarget);
       dispatchTaskCompleteNotification(taskCompleteNotificationFromActivity(
         machine,
         activity,
-        matchedProject?.source
+        matchedProject?.source,
+        { projectTarget, workspaceTarget }
       ));
     }
   }
