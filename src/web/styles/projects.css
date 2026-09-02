@@ -14,6 +14,39 @@
   padding: 2px 2px 0;
 }
 
+.sidebarCatalogHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sidebarCatalogToggle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1px solid #2b3b2e;
+  border-radius: 6px;
+  background: #18221a;
+  color: #9aab98;
+  padding: 0;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.sidebarCatalogToggle:hover {
+  border-color: #4b654f;
+  background: #223026;
+  color: #f8fbf4;
+}
+
+.sidebarCatalogToggle:focus-visible {
+  outline: 2px solid #d95f36;
+  outline-offset: 2px;
+}
+
 .projectPanel h2,
 .projectPanelHeader h2 {
   margin: 0;
@@ -190,6 +223,121 @@
 .projectList::-webkit-scrollbar-thumb {
   background: #27372a;
   border-radius: 999px;
+}
+
+.openThreadSidebarList {
+  gap: 4px;
+}
+
+.openThreadSidebarRow {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #202d22;
+  border-radius: 7px;
+  background: #101612;
+  color: #d4e0d3;
+  padding: 7px 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
+}
+
+.openThreadSidebarRow:hover,
+.openThreadSidebarRow:focus-visible {
+  border-color: #354938;
+  background: #152017;
+}
+
+.openThreadSidebarRow:focus-visible {
+  outline: 2px solid #d95f36;
+  outline-offset: 1px;
+}
+
+.openThreadSidebarRow.active {
+  border-color: #d95f36;
+  background: linear-gradient(135deg, #1b3022 0%, #13241a 100%);
+  box-shadow: 0 0 0 1px #d95f36, 0 2px 8px rgba(217, 95, 54, 0.18);
+}
+
+.openThreadSidebarTitleRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.openThreadSidebarTitleRow svg {
+  color: #7e947d;
+}
+
+.openThreadSidebarTitleRow strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f0f6ee;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.openThreadSidebarTitleRow code,
+.openThreadSidebarPath {
+  color: #718371;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+}
+
+.openThreadSidebarPath {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.openThreadSidebarMachine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: #748574;
+  font-size: 10px;
+}
+
+.openThreadSidebarMachine > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.openThreadSidebarMachine strong {
+  flex: 0 0 auto;
+  border: 1px solid #2d3d30;
+  border-radius: 999px;
+  background: #18221a;
+  color: #94a693;
+  font-size: 8.5px;
+  font-weight: 750;
+  line-height: 1.35;
+  padding: 0 5px;
+  text-transform: uppercase;
+}
+
+.openThreadSidebarMachine strong.ssh {
+  border-color: #31445a;
+  background: #17212b;
+  color: #91b7dc;
+}
+
+.openThreadSidebarMachine strong.registered {
+  border-color: #4d4025;
+  background: #251f13;
+  color: #d5b86e;
 }
 
 .projectList::-webkit-scrollbar-thumb:hover {

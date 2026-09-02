@@ -127,6 +127,7 @@ export type AppTaskDialogViewModel = {
 };
 
 export type AppSidebarViewModel = {
+  activeTabThreadId: string;
   activeProjectKey: string;
   collapsedProjectMachineKeys: string[];
   deleteProject: (project: ProjectSummary) => MaybePromise;
@@ -134,6 +135,7 @@ export type AppSidebarViewModel = {
   machines: MachineSummary[];
   offlineProjectsCollapsed: boolean;
   openingProjectKey: string;
+  openThreads: OpenThreadState[];
   showProjectPicker: (machine: ProjectMachineGroup) => MaybePromise;
   projectGroups: ProjectMachineGroup[];
   projectScopeLocked: boolean;
@@ -144,6 +146,7 @@ export type AppSidebarViewModel = {
   setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSettingsDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setTasksDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  switchMachineThread: (threadId: string) => MaybePromise;
   toggleProjectMachineGroup: (key: string) => void;
   toggleProjectPinned: (project: ProjectSummary) => MaybePromise;
 };
@@ -548,10 +551,10 @@ export type AppViewModel = {
 };
 
 const sidebarKeys = [
-  "activeProjectKey", "collapsedProjectMachineKeys", "deleteProject", "deletingProjectId", "machines",
+  "activeTabThreadId", "activeProjectKey", "collapsedProjectMachineKeys", "deleteProject", "deletingProjectId", "machines",
   "offlineProjectsCollapsed", "openingProjectKey", "showProjectPicker", "projectGroups", "projectScopeLocked",
-  "projectActionError", "selectProject", "sidebarDraftStore", "setOfflineProjectsCollapsed", "setSettingsDialogOpen",
-  "setTasksDialogOpen", "systemStatus", "toggleProjectMachineGroup", "toggleProjectPinned"
+  "openThreads", "projectActionError", "selectProject", "sidebarDraftStore", "setOfflineProjectsCollapsed", "setSettingsDialogOpen",
+  "setTasksDialogOpen", "switchMachineThread", "systemStatus", "toggleProjectMachineGroup", "toggleProjectPinned"
 ] as const satisfies readonly (keyof AppSidebarViewModel)[];
 
 const workspaceKeys = [

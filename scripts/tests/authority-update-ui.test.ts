@@ -32,6 +32,7 @@ const systemStatus = (updateAvailable: boolean): SystemStatus => ({
 const noop = () => undefined;
 
 const sidebarViewModel = (updateAvailable: boolean): AppSidebarViewModel => ({
+  activeTabThreadId: "",
   activeProjectKey: "",
   collapsedProjectMachineKeys: [],
   deleteProject: noop,
@@ -39,6 +40,7 @@ const sidebarViewModel = (updateAvailable: boolean): AppSidebarViewModel => ({
   machines: [],
   offlineProjectsCollapsed: false,
   openingProjectKey: "",
+  openThreads: [],
   showProjectPicker: noop,
   projectGroups: [],
   projectScopeLocked: false,
@@ -48,6 +50,7 @@ const sidebarViewModel = (updateAvailable: boolean): AppSidebarViewModel => ({
   setOfflineProjectsCollapsed: noop,
   setSettingsDialogOpen: noop,
   setTasksDialogOpen: noop,
+  switchMachineThread: noop,
   systemStatus: systemStatus(updateAvailable),
   toggleProjectMachineGroup: noop,
   toggleProjectPinned: noop
@@ -96,6 +99,13 @@ test("Settings button exposes a red update indicator only when an authority buil
   assert.match(update, /sidebarSettingsButton has-update/);
   assert.match(update, /sidebarSettingsUpdateDot/);
   assert.match(update, /aria-label="Open settings, update available"/);
+});
+
+test("Sidebar exposes the project-to-open-threads view toggle", () => {
+  const markup = renderToStaticMarkup(createElement(AppSidebar, { viewModel: sidebarViewModel(false) }));
+  assert.match(markup, /aria-label="Show open threads"/);
+  assert.match(markup, />Projects</);
+  assert.match(markup, /placeholder="Search projects"/);
 });
 
 test("Settings separates frontend reload from authority restart and marks updates", () => {

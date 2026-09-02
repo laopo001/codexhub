@@ -5,12 +5,14 @@ import {
   FolderGit2,
   GitBranch,
   ListTodo,
+  MessagesSquare,
   Pin,
   PinOff,
   Plus,
   Search,
   Settings,
   Trash2,
+  PanelsTopLeft,
   X
 } from "lucide-react";
 import type { ProjectMachineGroup } from "./types.js";
@@ -22,9 +24,12 @@ import {
   machineProjectLauncher,
   projectKeyForProject,
   projectMachineBadgeToneClass,
+  shortId,
+  threadDisplayTitle,
   uniqueMachines
 } from "./appHelpers.js";
 import { writeTextToClipboard } from "./helpers/composer.js";
+import { sidebarOpenThreadItems } from "./helpers/sidebarOpenThreads.js";
 
 type AppSidebarProps = {
   viewModel: AppSidebarViewModel;
@@ -32,6 +37,7 @@ type AppSidebarProps = {
 
 export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const {
+    activeTabThreadId,
     activeProjectKey,
     collapsedProjectMachineKeys,
     deleteProject,
@@ -39,6 +45,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     machines,
     offlineProjectsCollapsed,
     openingProjectKey,
+    openThreads,
     showProjectPicker,
     projectGroups,
     projectScopeLocked,
@@ -48,10 +55,13 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     setOfflineProjectsCollapsed,
     setSettingsDialogOpen,
     setTasksDialogOpen,
+    switchMachineThread,
     systemStatus,
     toggleProjectMachineGroup,
     toggleProjectPinned
   } = viewModel;
+  const [catalogMode, setCatalogMode] = React.useState<"projects" | "threads">("projects");
+  const [threadSearch, setThreadSearch] = React.useState("");
   const {
     projectSearch
   } = React.useSyncExternalStore(
@@ -65,10 +75,22 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   );
 
   const projectQuery = projectSearch.trim();
+  const threadQuery = threadSearch.trim().toLocaleLowerCase();
   const authorityUpdateAvailable = Boolean(systemStatus.authorityUpdate?.restartable);
   const visibleProjectGroups = filterProjectMachineGroupsBySearch(projectGroups, projectQuery);
   const onlineProjectGroups = visibleProjectGroups.filter((machine) => machine.online);
   const offlineProjectGroups = visibleProjectGroups.filter((machine) => !machine.online);
+  const visibleOpenThreads = sidebarOpenThreadItems(openThreads, machines).filter((item) => {
+    if (!threadQuery) return true;
+    return [
+      threadDisplayTitle(item.thread),
+      item.thread.workingDirectory,
+      item.thread.threadId,
+      item.machineLabel,
+      item.machineType ?? ""
+    ]
+      .some((value) => value.toLocaleLowerCase().includes(threadQuery));
+  });
   const projectAddMachine = projectScopeLocked
     ? undefined
     : uniqueMachines(machines)
@@ -204,10 +226,27 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
 
       <section className="projectPanel">
         <div className="projectPanelHeader">
-          <h2>Projects</h2>
-          <span className="projectGroupCountBadge">{projectGroups.length} {projectGroups.length === 1 ? "group" : "groups"}</span>
+          <h2>{catalogMode === "projects" ? "Projects" : "Open threads"}</h2>
+          <div className="sidebarCatalogHeaderActions">
+            <span className="projectGroupCountBadge">
+              {catalogMode === "projects"
+                ? `${projectGroups.length} ${projectGroups.length === 1 ? "group" : "groups"}`
+                : `${openThreads.length} open`}
+            </span>
+            <button
+              type="button"
+              className="sidebarCatalogToggle"
+              onClick={() => setCatalogMode((mode) => mode === "projects" ? "threads" : "projects")}
+              aria-label={catalogMode === "projects" ? "Show open threads" : "Show projects"}
+              title={catalogMode === "projects" ? "Show open threads" : "Show projects"}
+            >
+              {catalogMode === "projects"
+                ? <MessagesSquare size={15} strokeWidth={2.2} aria-hidden="true" />
+                : <PanelsTopLeft size={15} strokeWidth={2.2} aria-hidden="true" />}
+            </button>
+          </div>
         </div>
-        {!projectScopeLocked ? (
+        {catalogMode === "projects" && !projectScopeLocked ? (
           <button
             type="button"
             className="projectAddButton"
@@ -223,16 +262,18 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           <Search size={13} strokeWidth={2.2} className="projectSearchIcon" aria-hidden="true" />
           <input
             className="projectSearchInput"
-            value={projectSearch}
-            onChange={(event) => setProjectSearch(event.target.value)}
-            placeholder="Search projects"
+            value={catalogMode === "projects" ? projectSearch : threadSearch}
+            onChange={(event) => catalogMode === "projects"
+              ? setProjectSearch(event.target.value)
+              : setThreadSearch(event.target.value)}
+            placeholder={catalogMode === "projects" ? "Search projects" : "Search open threads"}
             spellCheck={false}
           />
-          {projectQuery ? (
+          {(catalogMode === "projects" ? projectQuery : threadQuery) ? (
             <button
               type="button"
               className="projectSearchClear"
-              onClick={() => setProjectSearch("")}
+              onClick={() => catalogMode === "projects" ? setProjectSearch("") : setThreadSearch("")}
               aria-label="Clear search"
               title="Clear search"
             >
@@ -240,7 +281,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             </button>
           ) : null}
         </div>
-        {visibleProjectGroups.length === 0 ? (
+        {catalogMode === "projects" ? (visibleProjectGroups.length === 0 ? (
           <div className="projectEmptyRow">{projectQuery ? "No matching projects" : "No project groups"}</div>
         ) : (
           <div className="projectList">
@@ -268,8 +309,39 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               </section>
             ) : null}
           </div>
-        )}
-        {projectActionError ? <div className="projectActionError">{projectActionError}</div> : null}
+        )) : (visibleOpenThreads.length === 0 ? (
+          <div className="projectEmptyRow">{threadQuery ? "No matching open threads" : "No open threads"}</div>
+        ) : (
+          <div className="projectList openThreadSidebarList">
+            {visibleOpenThreads.map(({ thread, machineLabel, machineType }) => {
+              const active = thread.threadId === activeTabThreadId;
+              const title = threadDisplayTitle(thread);
+              return (
+                <button
+                  type="button"
+                  key={thread.threadId}
+                  className={`openThreadSidebarRow${active ? " active" : ""}`}
+                  onClick={() => void switchMachineThread(thread.threadId)}
+                  aria-label={`Open thread ${title}`}
+                  aria-current={active ? "true" : undefined}
+                  title={`${title}\n${thread.workingDirectory}\n${thread.threadId}`}
+                >
+                  <span className="openThreadSidebarTitleRow">
+                    <MessagesSquare size={13} strokeWidth={2.1} aria-hidden="true" />
+                    <strong>{title}</strong>
+                    <code>{shortId(thread.threadId)}</code>
+                  </span>
+                  <code className="openThreadSidebarPath">{thread.workingDirectory}</code>
+                  <span className="openThreadSidebarMachine">
+                    <span title={machineLabel}>{machineLabel}</span>
+                    <strong className={machineType ?? "unknown"}>{machineType ?? "machine"}</strong>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+        {catalogMode === "projects" && projectActionError ? <div className="projectActionError">{projectActionError}</div> : null}
       </section>
       <div className="sidebarFooter">
         {!projectScopeLocked ? (
