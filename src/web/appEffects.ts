@@ -178,13 +178,8 @@ export const useAppEffects = ({ actions, selectors, state }: AppEffectsInput) =>
       activeWorkspacePath: state.activeWorkspacePath,
       openThreads: state.openThreads,
       loadingThreadIds: new Set(state.openingThreads.current.keys()),
-      selectedProjectMachineId: selectors.selectedProject?.machineId,
-      selectedProjectPath: selectors.selectedProject?.path,
-      selectedProjectThreadId: state.openThreads.find((thread) => {
-        const target = state.threadProjectTargets[thread.threadId];
-        return target?.machineId === selectors.selectedProject?.machineId
-          && target.path === selectors.selectedProject?.path;
-      })?.threadId,
+      selectedProjectTarget: selectors.selectedProject,
+      threadProjectTargets: state.threadProjectTargets,
       restrictToWorkspacePath: isFixedWorkspaceSurface
     });
     if (!activeThreadId || activeThreadId === state.activeTabThreadId) return;

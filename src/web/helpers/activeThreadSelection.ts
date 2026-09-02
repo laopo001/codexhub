@@ -10,9 +10,8 @@ type ActiveThreadSelectionInput = {
   activeWorkspacePath: string;
   openThreads: readonly OpenThreadState[];
   loadingThreadIds?: ReadonlySet<string>;
-  selectedProjectMachineId?: string;
-  selectedProjectPath?: string;
-  selectedProjectThreadId?: string;
+  selectedProjectTarget?: SurfaceProjectTarget;
+  threadProjectTargets?: Readonly<Record<string, SurfaceProjectTarget | undefined>>;
   restrictToWorkspacePath?: boolean;
 };
 
@@ -56,9 +55,8 @@ export const resolveActiveThreadId = ({
   activeWorkspacePath,
   openThreads,
   loadingThreadIds,
-  selectedProjectMachineId,
-  selectedProjectPath,
-  selectedProjectThreadId,
+  selectedProjectTarget,
+  threadProjectTargets = {},
   restrictToWorkspacePath = false
 }: ActiveThreadSelectionInput): string => {
   const activeThreadIsOpen = openThreads.some((thread) => thread.threadId === activeTabThreadId);
@@ -66,16 +64,17 @@ export const resolveActiveThreadId = ({
     return activeTabThreadId;
   }
 
-  if (selectedProjectPath) {
-    if (selectedProjectThreadId
-      && openThreads.some((thread) => thread.threadId === selectedProjectThreadId)) {
-      return selectedProjectThreadId;
-    }
+  if (selectedProjectTarget) {
+    const selectedProjectThreadId = openThreads.find((thread) => threadMatchesProjectTarget(
+      threadProjectTargets[thread.threadId],
+      selectedProjectTarget
+    ))?.threadId;
+    if (selectedProjectThreadId) return selectedProjectThreadId;
     if (restrictToWorkspacePath) return "";
     // Open tabs are global workspace state. A selected project path should
     // not be matched through workingDirectory. Explicit tab/project routing
     // is owned by the caller; this fallback only preserves machine scope.
-    return openThreads.find((thread) => thread.runtime.machineId === selectedProjectMachineId)?.threadId ?? "";
+    return openThreads.find((thread) => thread.runtime.machineId === selectedProjectTarget.machineId)?.threadId ?? "";
   }
 
   if (restrictToWorkspacePath && activeWorkspacePath) return "";

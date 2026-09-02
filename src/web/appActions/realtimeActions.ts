@@ -136,7 +136,7 @@ type RealtimeActionsContext = {
   setTasks: React.Dispatch<React.SetStateAction<LocalTask[]>>;
   setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   threadProjectTargetsRef: React.MutableRefObject<Readonly<Record<string, SurfaceProjectTarget | undefined>>>;
-  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, SurfaceProjectTarget>>>;
+  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, SurfaceProjectTarget | undefined>>>;
 };
 
 export type RealtimeActionsDependencies = {

@@ -84,7 +84,7 @@ type ThreadActionsContext = {
   dispatchConversationThread: (action: ConversationThreadAction) => void;
   setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   threadProjectTargets: Readonly<Record<string, SurfaceProjectTarget | undefined>>;
-  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, SurfaceProjectTarget>>>;
+  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, SurfaceProjectTarget | undefined>>>;
 };
 
 export type ThreadActionsDependencies = {

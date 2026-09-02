@@ -168,8 +168,8 @@ export const useAppState = () => {
   const [pendingRestoreActiveThreadId, setPendingRestoreActiveThreadId] = useState("");
   const [pendingRestoreTargets, setPendingRestoreTargets] = useState<PendingThreadRestoreTargets>({});
   const pendingRestoreAttemptCountsRef = useRef<PendingThreadRestoreAttemptCounts>({});
-  const [threadProjectTargets, setThreadProjectTargets] = useState<Record<string, SurfaceProjectTarget>>({});
-  const threadProjectTargetsRef = useRef<Record<string, SurfaceProjectTarget>>({});
+  const [threadProjectTargets, setThreadProjectTargets] = useState<Record<string, SurfaceProjectTarget | undefined>>({});
+  const threadProjectTargetsRef = useRef<Record<string, SurfaceProjectTarget | undefined>>({});
   threadProjectTargetsRef.current = threadProjectTargets;
   const [initialized, setInitialized] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({

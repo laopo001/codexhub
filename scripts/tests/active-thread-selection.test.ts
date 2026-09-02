@@ -126,6 +126,7 @@ test("recovers a cleared active thread from the current workspace", () => {
 });
 
 test("recovers the open thread belonging to the selected project", () => {
+  const selectedProject = { machineId: "machine-current", path: "/workspace/new" };
   assert.equal(resolveActiveThreadId({
     activeMachineId: "machine-current",
     activeTabThreadId: "",
@@ -134,10 +135,22 @@ test("recovers the open thread belonging to the selected project", () => {
       ...openThreads,
       thread("thread-selected-project", "/workspace/new", "machine-current")
     ],
-    selectedProjectMachineId: "machine-current",
-    selectedProjectPath: "/workspace/new",
-    selectedProjectThreadId: "thread-selected-project"
+    selectedProjectTarget: selectedProject,
+    threadProjectTargets: {
+      "thread-selected-project": selectedProject
+    }
   }), "thread-selected-project");
+});
+
+test("restored threads without project targets do not crash before project selection is available", () => {
+  assert.equal(resolveActiveThreadId({
+    activeMachineId: "machine-current",
+    activeTabThreadId: "",
+    activeWorkspacePath: "/workspace/current",
+    openThreads,
+    selectedProjectTarget: undefined,
+    threadProjectTargets: {}
+  }), "thread-active");
 });
 
 test("selects the matching machine when projects share the same path", () => {
@@ -149,8 +162,7 @@ test("selects the matching machine when projects share the same path", () => {
       thread("thread-other-machine", "/workspace/shared", "machine-other"),
       thread("thread-selected-machine", "/workspace/shared", "machine-current")
     ],
-    selectedProjectMachineId: "machine-current",
-    selectedProjectPath: "/workspace/shared"
+    selectedProjectTarget: { machineId: "machine-current", path: "/workspace/shared" }
   }), "thread-selected-machine");
 });
 
@@ -160,8 +172,7 @@ test("does not select another machine at the selected project path", () => {
     activeTabThreadId: "",
     activeWorkspacePath: "/workspace/shared",
     openThreads: [thread("thread-other-machine", "/workspace/shared", "machine-other")],
-    selectedProjectMachineId: "machine-current",
-    selectedProjectPath: "/workspace/shared"
+    selectedProjectTarget: { machineId: "machine-current", path: "/workspace/shared" }
   }), "");
 });
 
@@ -171,8 +182,7 @@ test("keeps a same-machine open thread when the selected project has no matching
     activeTabThreadId: "",
     activeWorkspacePath: "/workspace/new",
     openThreads,
-    selectedProjectMachineId: "machine-current",
-    selectedProjectPath: "/workspace/new"
+    selectedProjectTarget: { machineId: "machine-current", path: "/workspace/new" }
   }), "thread-active");
 });
 
@@ -182,8 +192,7 @@ test("does not use workingDirectory to change fixed-surface tab selection", () =
     activeTabThreadId: "",
     activeWorkspacePath: "/workspace/new",
     openThreads,
-    selectedProjectMachineId: "machine-current",
-    selectedProjectPath: "/workspace/new",
+    selectedProjectTarget: { machineId: "machine-current", path: "/workspace/new" },
     restrictToWorkspacePath: true
   }), "");
 });
@@ -194,8 +203,7 @@ test("an explicitly selected foreign tab remains selectable", () => {
     activeTabThreadId: "thread-active",
     activeWorkspacePath: "/workspace/new",
     openThreads,
-    selectedProjectMachineId: "machine-current",
-    selectedProjectPath: "/workspace/new",
+    selectedProjectTarget: { machineId: "machine-current", path: "/workspace/new" },
     restrictToWorkspacePath: true
   }), "thread-active");
 });
