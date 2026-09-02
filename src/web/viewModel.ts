@@ -241,6 +241,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
     caretIndex?: number | null
   ) => void;
   loadThreadPickerCandidates: (machineId: string) => MaybePromise;
+  selectThreadPickerWorkingDirectory: (workingDirectory: string) => MaybePromise;
   openThreadPicker: (session: RuntimeSummary, workingDirectory?: string) => MaybePromise;
   openSubagentThread: (threadId: string, options?: SubagentThreadOpenOptions) => MaybePromise;
   openThreadModelDialog: (threadId: string) => void;
@@ -448,6 +449,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "inspectMessage"
   | "loadProjectPickerDirectory"
   | "loadThreadPickerCandidates"
+  | "selectThreadPickerWorkingDirectory"
   | "machines"
   | "addSshHost"
   | "connectionMode"
@@ -585,7 +587,7 @@ const dialogKeys = [
   "addSelectionToConversation", "appSettings", "systemStatus", "changeProjectPickerMachine",
   "chooseThreadCandidate", "confirmProjectPicker", "copySelection", "createMachineThread",
   "createWorktreeThread", "goalDialog", "imagePreview", "inspectMessage",
-  "loadProjectPickerDirectory", "loadThreadPickerCandidates", "machines", "messageSelectionToolbar",
+  "loadProjectPickerDirectory", "loadThreadPickerCandidates", "selectThreadPickerWorkingDirectory", "machines", "messageSelectionToolbar",
   "addSshHost", "connectionMode", "connectParentRegistration", "connectSshHost", "copyCurrentServerShareUrl",
   "copyRegisteredCommand", "currentServerShareUrl", "disconnectParentRegistration", "localMachines",
   "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "threadModelDialogModelSelection",

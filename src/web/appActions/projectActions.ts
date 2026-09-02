@@ -106,6 +106,7 @@ export type ProjectActions = {
   submitProjectPickerPath: (event: React.FormEvent<HTMLFormElement>) => void;
   confirmProjectPicker: () => Promise<void>;
   loadThreadPickerCandidates: (machineId: string) => Promise<void>;
+  selectThreadPickerWorkingDirectory: (workingDirectory: string) => Promise<void>;
   openThreadPicker: (runtime: RuntimeSummary, workingDirectory?: string) => void;
   openSelectedProjectThreadPicker: () => Promise<void>;
   activateMachineThread: (machineId: string, threadId: string) => Promise<void>;
@@ -285,6 +286,26 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         error: error instanceof Error ? error.message : String(error)
       } : current);
     }
+  };
+
+  const selectThreadPickerWorkingDirectory = async (workingDirectory: string) => {
+    const picker = ctx.threadPicker;
+    const nextWorkingDirectory = workingDirectory.trim();
+    if (!picker || !nextWorkingDirectory || nextWorkingDirectory === picker.workingDirectory) return;
+    const project = findProjectByMachinePath(ctx.projectList, picker.machineId, nextWorkingDirectory);
+    ctx.setThreadPicker((current) => current && current.machineId === picker.machineId ? {
+      ...current,
+      workingDirectory: nextWorkingDirectory,
+      ...(project
+        ? { projectTarget: { machineId: project.machineId, path: project.path } }
+        : { projectTarget: undefined }),
+      loading: true,
+      error: "",
+      candidates: [],
+      searchQuery: "",
+      selectingInstructions: false
+    } : current);
+    await loadThreadPickerCandidates(picker.machineId, nextWorkingDirectory);
   };
 
   const openThreadPicker = (
@@ -817,6 +838,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     submitProjectPickerPath,
     confirmProjectPicker,
     loadThreadPickerCandidates,
+    selectThreadPickerWorkingDirectory,
     openThreadPicker,
     openSelectedProjectThreadPicker,
     activateMachineThread,

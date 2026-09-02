@@ -2,8 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RuntimeSummary, ThreadPickerState } from "../../src/web/types.js";
 
+let candidateResponse: unknown[] = [];
+let candidateRequests: string[] = [];
+
 test("generic runtime thread picker keeps project origin unresolved", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    candidateRequests.push(String(input));
+    return new Response(JSON.stringify({ threads: candidateResponse }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
   const { createProjectActions } = await import("../../src/web/appActions/projectActions.js");
+  globalThis.fetch = originalFetch;
   const runtime: RuntimeSummary = {
     machineId: "machine-a",
     workingDirectory: "/workspace-root",
@@ -31,4 +43,59 @@ test("generic runtime thread picker keeps project origin unresolved", async () =
   const currentPicker = picker as ThreadPickerState | null;
   assert.equal(currentPicker?.workingDirectory, "/workspace-root");
   assert.equal(currentPicker?.projectTarget, undefined);
+});
+
+test("thread picker path selection updates cwd origin and reloads matching candidates", async () => {
+  const { createProjectActions } = await import("../../src/web/appActions/projectActions.js");
+  const candidate = (threadId: string, cwd: string) => ({
+    threadId,
+    cwd,
+    path: `/sessions/${threadId}.jsonl`,
+    title: threadId,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    firstUserMessage: "",
+    lastAssistantMessage: "",
+    artifactCount: 0,
+    messageCount: 0
+  });
+  candidateResponse = [candidate("thread-b", "/repo/b")];
+  candidateRequests = [];
+  try {
+    const context = {
+      threadPicker: {
+        machineId: "machine-a",
+        workingDirectory: "/repo/a",
+        projectTarget: { machineId: "machine-a", path: "/repo/a" },
+        preparingRuntime: false,
+        loading: false,
+        error: "old error",
+        candidates: [candidate("thread-a", "/repo/a")],
+        searchQuery: "old query",
+        acting: null,
+        worktreeBranch: "",
+        worktreeBaseRef: "",
+        worktreePath: "",
+        selectingInstructions: true
+      } satisfies ThreadPickerState,
+      projectList: [{ machineId: "machine-a", path: "/repo/b" }],
+      setThreadPicker: (value: ThreadPickerState | null | ((current: ThreadPickerState | null) => ThreadPickerState | null)) => {
+        context.threadPicker = (typeof value === "function" ? value(context.threadPicker) : value) as ThreadPickerState;
+      }
+    } as unknown as Parameters<typeof createProjectActions>[0];
+    const actions = createProjectActions(context, {} as Parameters<typeof createProjectActions>[1]);
+
+    await actions.selectThreadPickerWorkingDirectory("/repo/b");
+
+    const currentPicker = context.threadPicker;
+    assert.ok(currentPicker);
+    assert.equal(currentPicker.workingDirectory, "/repo/b");
+    assert.deepEqual(currentPicker.projectTarget, { machineId: "machine-a", path: "/repo/b" });
+    assert.equal(currentPicker.searchQuery, "");
+    assert.equal(currentPicker.selectingInstructions, false);
+    assert.deepEqual(currentPicker.candidates, [candidate("thread-b", "/repo/b")]);
+    assert.match(candidateRequests[0] ?? "", /\/api\/machines\/machine-a\/thread-candidates\?limit=20&cwd=%2Frepo%2Fb$/);
+  } finally {
+    candidateResponse = [];
+    candidateRequests = [];
+  }
 });

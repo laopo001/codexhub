@@ -1105,11 +1105,13 @@
   letter-spacing: 0;
 }
 
-.threadPickerHeader p {
-  margin: 3px 0 0;
-  color: #66715f;
+.threadPickerPathSelect {
+  width: min(100%, 360px);
+  margin-top: 3px;
+}
+
+.threadPickerPathSelect .ant-select-selector {
   font-size: 13px;
-  overflow-wrap: anywhere;
 }
 
 .threadPickerList {

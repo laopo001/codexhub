@@ -74,6 +74,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     openPetPicker,
     petEnabled,
     petName,
+    projectList,
     projectPicker,
     retryModelCatalog,
     saveGoalDialog,
@@ -99,6 +100,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setThreadTabContextMenu,
     setSettingsDialogOpen,
     setThreadPicker,
+    selectThreadPickerWorkingDirectory,
     submitProjectPickerPath,
     systemStatus,
     threadOrderByMachine,
@@ -268,6 +270,16 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     ? runtimeList.find((runtime) => runtime.machineId === threadPicker.machineId)
     : undefined;
   const threadPickerReady = Boolean(threadPicker?.machineId) && !threadPicker?.preparingRuntime;
+  const threadPickerPathOptions = threadPicker
+    ? [
+        ...projectList
+          .filter((project) => project.machineId === threadPicker.machineId)
+          .map((project) => ({ value: project.path, label: project.path })),
+        ...(projectList.some((project) =>
+          project.machineId === threadPicker.machineId && project.path === threadPicker.workingDirectory
+        ) ? [] : [{ value: threadPicker.workingDirectory, label: threadPicker.workingDirectory }])
+      ]
+    : [];
   const threadPickerOpenThreadIds = new Set([
     ...(threadPickerRuntime?.threads
       ?.filter((thread) => !threadPicker?.workingDirectory || thread.workingDirectory === threadPicker.workingDirectory)
@@ -658,7 +670,17 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
             <header className="threadPickerHeader">
               <div className="threadPickerHeaderTitle">
                 <h2 id="threadPickerTitle">Add Thread</h2>
-                <p title={threadPicker.workingDirectory}>{threadPicker.workingDirectory}</p>
+                <Select
+                  className="threadPickerPathSelect"
+                  value={threadPicker.workingDirectory}
+                  options={threadPickerPathOptions}
+                  onChange={(workingDirectory) => void selectThreadPickerWorkingDirectory(workingDirectory)}
+                  disabled={!threadPickerReady || threadPicker.acting !== null || threadPickerPathOptions.length <= 1}
+                  showSearch
+                  optionFilterProp="label"
+                  aria-label="Thread working directory"
+                  title={threadPicker.workingDirectory}
+                />
               </div>
               <div className="threadPickerHeaderActions">
                 <button
