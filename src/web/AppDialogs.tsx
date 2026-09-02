@@ -1,6 +1,7 @@
 import React from "react";
 import { Modal, Select, Switch } from "antd";
-import { Check, ChevronRight, Copy, Target, X } from "lucide-react";
+import { Check, ChevronRight, Copy, Download, ExternalLink, Target, X } from "lucide-react";
+import { isVscodeSurface } from "./appConfig.js";
 import {
   apiRouteJson,
   filterProjectDirectoryEntries,
@@ -31,7 +32,7 @@ import {
   formatComposerInputHistoryTime,
   useComposerInputHistory
 } from "./helpers/composerInputHistory.js";
-import { writeImageToClipboard } from "./helpers/imageClipboard.js";
+import { downloadImageFile, extractImageFilename, writeImageToClipboard } from "./helpers/imageClipboard.js";
 import { ConnectionsPanel } from "./ConnectionsPanel.js";
 import { DeveloperInstructionsSettings } from "./DeveloperInstructionsSettings.js";
 import { ThreadPickerInstructions } from "./ThreadPickerInstructions.js";
@@ -116,6 +117,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     String(appSettings.autoGenerateThreadTitleInterval)
   );
   const [imageCopyStatus, setImageCopyStatus] = React.useState<"idle" | "copying" | "copied" | "failed">("idle");
+  const [imageDownloadStatus, setImageDownloadStatus] = React.useState<"idle" | "downloading" | "downloaded">("idle");
+  const previewImageElementRef = React.useRef<HTMLImageElement | null>(null);
   const restartAvailable = Boolean(systemStatus.authority);
   const authorityUpdateDetected = Boolean(systemStatus.authorityUpdate);
   const authorityUpdateAvailable = Boolean(systemStatus.authorityUpdate?.restartable);
@@ -136,15 +139,29 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   ]);
   React.useEffect(() => {
     setImageCopyStatus("idle");
+    setImageDownloadStatus("idle");
   }, [imagePreview?.url]);
   const copyPreviewImage = async () => {
     if (!imagePreview || imageCopyStatus === "copying") return;
     setImageCopyStatus("copying");
     try {
-      await writeImageToClipboard(imagePreview.url);
+      await writeImageToClipboard(imagePreview.url, previewImageElementRef.current);
       setImageCopyStatus("copied");
     } catch {
       setImageCopyStatus("failed");
+    }
+  };
+  const downloadPreviewImage = async () => {
+    if (!imagePreview || imageDownloadStatus === "downloading") return;
+    setImageDownloadStatus("downloading");
+    try {
+      const filename = imagePreview.title ? extractImageFilename(imagePreview.title) : undefined;
+      await downloadImageFile(imagePreview.url, filename);
+      setImageDownloadStatus("downloaded");
+    } catch {
+      setImageDownloadStatus("idle");
+    } finally {
+      window.setTimeout(() => setImageDownloadStatus("idle"), 1500);
     }
   };
   const saveNotificationPersistence = () => {
@@ -1121,12 +1138,24 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   onClick={() => void copyPreviewImage()}
                   disabled={imageCopyStatus === "copying"}
                   aria-label="Copy image"
-                  title={imageCopyStatus === "failed" ? "Copy failed. Try again." : undefined}
+                  title={imageCopyStatus === "failed" ? "Copy failed. Try again or download image." : undefined}
                 >
                   {imageCopyStatus === "copied"
                     ? <Check size={16} aria-hidden="true" />
                     : <Copy size={16} aria-hidden="true" />}
                   <span>{imageCopyButtonLabel(imageCopyStatus)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="iconButton"
+                  onClick={() => void downloadPreviewImage()}
+                  disabled={imageDownloadStatus === "downloading"}
+                  aria-label="Download image"
+                  title="Download image"
+                >
+                  {imageDownloadStatus === "downloaded"
+                    ? <Check size={16} aria-hidden="true" />
+                    : <Download size={16} aria-hidden="true" />}
                 </button>
                 <button type="button" className="iconButton" onClick={() => setImagePreview(null)} aria-label="Close image preview">
                   <X size={18} aria-hidden="true" />
@@ -1134,12 +1163,27 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               </div>
             </header>
             <div className="imagePreviewBody">
-              <img src={imagePreview.url} alt={imagePreview.title ?? "preview"} />
+              <img ref={previewImageElementRef} src={imagePreview.url} alt={imagePreview.title ?? "preview"} />
             </div>
             {imagePreview.title ? (
               <details className="imagePreviewDetails">
                 <summary>Image details</summary>
                 <p>{imagePreview.title}</p>
+                {isVscodeSurface && isLocalAbsolutePath(imagePreview.title) ? (
+                  <button
+                    type="button"
+                    className="imagePreviewOpenFileButton"
+                    onClick={() => {
+                      window.parent?.postMessage({
+                        type: "codexhub.openFile",
+                        path: imagePreview.title
+                      }, "*");
+                    }}
+                  >
+                    <ExternalLink size={14} aria-hidden="true" />
+                    <span>在 VS Code 中打开</span>
+                  </button>
+                ) : null}
               </details>
             ) : null}
           </section>
@@ -1154,6 +1198,11 @@ const imageCopyButtonLabel = (status: "idle" | "copying" | "copied" | "failed") 
   if (status === "copied") return "Copied";
   if (status === "failed") return "Copy failed";
   return "Copy image";
+};
+
+const isLocalAbsolutePath = (value?: string | null): boolean => {
+  if (!value) return false;
+  return value.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(value);
 };
 
 const optionsWithoutAutoWhenResolved = <T extends { value: string; label: string }>(options: T[], value: string) =>

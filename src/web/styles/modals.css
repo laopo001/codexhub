@@ -1702,6 +1702,26 @@
   white-space: pre-wrap;
 }
 
+.imagePreviewOpenFileButton {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  border: 1px solid #cbd6c7;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #26342a;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.imagePreviewOpenFileButton:hover {
+  background: #eef5ea;
+}
+
 @media (max-width: 640px) {
   .imagePreviewOverlay {
     padding: 8px;

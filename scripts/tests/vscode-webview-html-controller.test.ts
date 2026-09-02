@@ -220,3 +220,22 @@ test("replacement extensions omit new workspace fields until the old authority y
   assert.equal(workspaceFileForAuthorityRegistration(workspaceFile, false), workspaceFile);
   assert.equal(workspaceFileForAuthorityRegistration(workspaceFile), workspaceFile);
 });
+
+test("vscode webview iframe explicitly grants clipboard permissions", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const extensionSource = await readFile(new URL("../../targets/vscode/src/extension.ts", import.meta.url), "utf8");
+  assert.match(
+    extensionSource,
+    /<iframe[^>]+id="codexhubFrame"[^>]+allow="clipboard-read; clipboard-write"/,
+    "VSCode webview iframe must declare allow='clipboard-read; clipboard-write' for clipboard operations to succeed"
+  );
+});
+
+test("extractImageFilename extracts friendly filenames with png fallback", async () => {
+  const { extractImageFilename } = await import("../../src/web/helpers/imageClipboard.js");
+  assert.equal(extractImageFilename(""), "image.png");
+  assert.equal(extractImageFilename(undefined), "image.png");
+  assert.equal(extractImageFilename("/path/to/my_render.png"), "my_render.png");
+  assert.equal(extractImageFilename("C:\\Users\\test\\chart.jpg"), "chart.jpg");
+  assert.equal(extractImageFilename("preview_without_ext"), "preview_without_ext.png");
+});

@@ -723,7 +723,7 @@ const vscodeWorkspaceGroupLabel = (folders: VscodeWorkspaceFolder[], channel?: V
   return folderName ? `${prefix}: ${folderName}` : `${prefix} Workspace`;
 };
 
-const iframeHtml = (src: string, workspacePath: string) => {
+export const iframeHtml = (src: string, workspacePath: string) => {
   const nonce = randomNonce();
   const sourceOrigin = new URL(src).origin;
   const escapedSource = escapeHtml(src);
@@ -744,7 +744,7 @@ const iframeHtml = (src: string, workspacePath: string) => {
     "</style>",
     "</head>",
     "<body>",
-    `<iframe id="codexhubFrame" src="${escapedSource}" title="${escapedTitle}" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></iframe>`,
+    `<iframe id="codexhubFrame" src="${escapedSource}" title="${escapedTitle}" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads" allow="clipboard-read; clipboard-write"></iframe>`,
     `<script nonce="${nonce}">`,
     buildWebviewBridgeScript(sourceOrigin),
     "</script>",
