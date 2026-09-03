@@ -252,7 +252,6 @@ export type AppSettings = {
   taskCompleteSystemNotifications: boolean;
   taskCompleteNotificationPersistAfterMinutes: number;
   autoGenerateThreadTitle: boolean;
-  autoGenerateThreadTitleInterval: number;
 };
 
 export type StreamEvent = ApiThreadStreamEvent;

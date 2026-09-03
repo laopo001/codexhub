@@ -27,7 +27,7 @@ import { summarizeProxyInput, type ProxyInput } from "../shared/inputTypes.js";
 import { planProgressFromPlan, planProgressSummary } from "../shared/planProgress.js";
 import { compareCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
-import { isTaskCompleteRecord, countCompletedUserTurns } from "../shared/taskNotifications.js";
+import { isUserMessageRecord } from "../shared/taskNotifications.js";
 import { isAgentActivityRecord, latestAgentMessageFromRecords, threadActivityTitleFromRecords } from "../shared/threadActivity.js";
 import {
   asActivePermissionProfile,
@@ -144,7 +144,6 @@ export class ThreadHub {
   private readonly historySnapshots = new WeakMap<ThreadState, ThreadHistorySnapshotState>();
   private readonly runtimeEvents: RuntimeStreamEvent[] = [];
   private readonly runtimeSubscribers = new Set<(event: RuntimeStreamEvent) => void>();
-  private readonly triggeredAutoRenameMilestones = new Set<string>();
   private readonly autoNamingThreadIds = new Set<string>();
   private lastRuntimeSnapshotKey = "";
   private runtimeSeq = 0;
@@ -155,7 +154,7 @@ export class ThreadHub {
       onCatalogChange?: () => void;
       onThreadChange?: () => void;
       onThreadEvent?: (event: ThreadStreamEvent, records: CodexRecord[]) => void;
-      autoGenerateThreadTitleInterval?: () => number | null;
+      autoGenerateThreadTitle?: () => boolean;
     } = {}
   ) {}
 
@@ -1095,10 +1094,8 @@ export class ThreadHub {
 
   async suggestThreadTitle(threadId: string) {
     const thread = this.requireThread(threadId);
-    if (thread.running) throw new Error(`Thread is running: ${threadId}`);
     const session = this.requireThreadSession(thread);
-    const conversationContext = threadTitleGenerationContext(thread.records)
-      || (thread.title !== thread.threadId ? `User: ${thread.title}` : "");
+    const conversationContext = threadTitleGenerationContext(thread.records, thread.title);
     if (!conversationContext) throw new Error("Thread has no conversation context for title generation");
     const commandId = randomUUID();
     const promise = this.waitForCommand<{ title: string }>(
@@ -3040,7 +3037,7 @@ export class ThreadHub {
       kind === "record"
       && record !== undefined
       && !options.historical
-      && isTaskCompleteRecord(record)
+      && isCompletedCompactionRecord(record)
     ) {
       this.maybeAutoRenameThread(thread);
     }
@@ -3059,15 +3056,9 @@ export class ThreadHub {
   }
 
   private maybeAutoRenameThread(thread: ThreadState) {
-    const interval = this.options.autoGenerateThreadTitleInterval?.();
-    if (!interval || !Number.isInteger(interval) || interval < 1) return;
-    const userTurnCount = countCompletedUserTurns(thread.records);
-    if (userTurnCount <= 0 || userTurnCount % interval !== 0) return;
-    const milestoneKey = `${thread.threadId}:${userTurnCount}`;
-    if (this.triggeredAutoRenameMilestones.has(milestoneKey)) return;
+    if (!this.options.autoGenerateThreadTitle?.()) return;
     if (this.autoNamingThreadIds.has(thread.threadId)) return;
 
-    this.triggeredAutoRenameMilestones.add(milestoneKey);
     this.autoNamingThreadIds.add(thread.threadId);
 
     void (async () => {
@@ -3425,17 +3416,15 @@ const inactiveTurnSteerError = (message: string) =>
 
 const lightweightGenerationModel = "gpt-5.6-luna";
 
-const threadTitleGenerationContext = (records: CodexRecord[]) => {
+const threadTitleGenerationContext = (records: CodexRecord[], previousTitle: string) => {
   const messages = records.flatMap((record) => {
     const payload = asRecord(record.payload);
     if (!payload) return [];
+    if (!isUserMessageRecord(record)) return [];
     if (payload.type === "user_message" && typeof payload.message === "string") {
-      return [{ role: "User", text: payload.message }];
+      return [payload.message];
     }
-    if (payload.type === "agent_message" && typeof payload.message === "string") {
-      return [{ role: "Assistant", text: payload.message }];
-    }
-    if (payload.type !== "message" || (payload.role !== "user" && payload.role !== "assistant")) return [];
+    if (payload.type !== "message") return [];
     const content = Array.isArray(payload.content) ? payload.content : [];
     const text = content.flatMap((item) => {
       const block = asRecord(item);
@@ -3448,12 +3437,23 @@ const threadTitleGenerationContext = (records: CodexRecord[]) => {
             : "";
       return value.trim() ? [value] : [];
     }).join("\n");
-    return text ? [{ role: payload.role === "user" ? "User" : "Assistant", text }] : [];
+    return text ? [text] : [];
   });
-  const bounded = messages.slice(-8).map(({ role, text }) =>
-    `${role}: ${text.replace(/\s+/g, " ").trim().slice(0, 800)}`
-  );
-  return bounded.join("\n").slice(-5_000);
+  const userMessages = messages
+    .map((message, index) => `${index + 1}. ${message.replace(/\s+/g, " ").trim()}`)
+    .join("\n");
+  return [
+    `Previous title: ${previousTitle.trim() || "(untitled)"}`,
+    "All user messages:",
+    userMessages
+  ].join("\n").trim();
+};
+
+const isCompletedCompactionRecord = (record: CodexRecord) => {
+  const payload = asRecord(record.payload);
+  return record.type === "event_msg"
+    && payload?.type === "context_compaction"
+    && (payload.status === undefined || payload.status === "completed");
 };
 
 const appServerThreadTitle = (thread: Record<string, unknown>) => {

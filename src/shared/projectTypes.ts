@@ -124,8 +124,6 @@ export type StoredSshHost = {
 };
 
 /** config.yaml 中持久化的 Web/IDE/Electron UI 偏好。 */
-export const defaultAutoGenerateThreadTitleInterval = 5;
-
 export type ServerUiConfig = {
   selectedPetId: string;
   showFloatingPet: boolean;
@@ -134,7 +132,6 @@ export type ServerUiConfig = {
   /** Minutes a task must run before its completion notification stays open; 0 keeps every notification open. */
   taskCompleteNotificationPersistAfterMinutes: number;
   autoGenerateThreadTitle: boolean;
-  autoGenerateThreadTitleInterval: number;
 };
 
 /** config.yaml 中持久化的全局配置。 */

@@ -4,7 +4,6 @@ import type {
   ComposerMode,
 } from "./types.js";
 import { defaultPetId } from "../shared/petTypes.js";
-import { defaultAutoGenerateThreadTitleInterval } from "../shared/projectTypes.js";
 import { isCodexHubSurface, isEmbeddedCodexHubSurface } from "../shared/surfaceTypes.js";
 import {
   readSurfaceUiStateRaw,
@@ -88,8 +87,7 @@ export const defaultAppSettings = (): AppSettings => ({
   showDesktopPet: false,
   taskCompleteSystemNotifications: false,
   taskCompleteNotificationPersistAfterMinutes: 3,
-  autoGenerateThreadTitle: false,
-  autoGenerateThreadTitleInterval: defaultAutoGenerateThreadTitleInterval
+  autoGenerateThreadTitle: false
 });
 export type ApprovalPolicyOptionValue = "untrusted" | "on-request" | "never" | "granular";
 

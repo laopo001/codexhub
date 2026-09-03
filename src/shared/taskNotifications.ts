@@ -335,30 +335,6 @@ export const isUserMessageRecord = (record: CodexRecord) => {
   );
 };
 
-export const countCompletedUserTurns = (records: CodexRecord[]): number => {
-  const completedTurns = new Set<string>();
-  const turnsWithUserMessage = new Set<string>();
-
-  for (const record of records) {
-    const turnId = turnIdFromRecord(record);
-    if (!turnId) continue;
-    if (isTaskCompleteRecord(record)) {
-      completedTurns.add(turnId);
-    }
-    if (isUserMessageRecord(record)) {
-      turnsWithUserMessage.add(turnId);
-    }
-  }
-
-  let count = 0;
-  for (const turnId of completedTurns) {
-    if (turnsWithUserMessage.has(turnId)) {
-      count += 1;
-    }
-  }
-  return count;
-};
-
 const stringField = (record: Record<string, unknown> | null | undefined, key: string) => {
   const value = record?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;

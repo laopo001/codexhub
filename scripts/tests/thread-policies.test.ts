@@ -103,7 +103,7 @@ test("ThreadHub requests a title suggestion without changing name or transcript"
     workingDirectory: "/tmp/project",
     createdAt: batch.commands[0]?.createdAt,
     threadId,
-    input: "User: Add automatic titles",
+    input: "Previous title: rename-thread\nAll user messages:\n1. Add automatic titles",
     options: { model: "gpt-5.6-luna", modelReasoningEffort: "low" }
   });
   hub.resolveSessionCommand(sessionId, batch.commands[0]!.commandId, { title: "Release readiness" });

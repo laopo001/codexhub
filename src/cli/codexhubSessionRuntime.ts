@@ -740,7 +740,7 @@ class CodexAppServerBridge {
     const title = await this.generateTemporaryStructuredValue({
       cwd,
       model,
-      prompt: `${threadTitleGenerationPrompt}\n\nRecent conversation messages:\n${conversationContext}`,
+      prompt: `${threadTitleGenerationPrompt}\n\nTitle context:\n${conversationContext}`,
       outputSchema: generatedThreadTitleSchema,
       parse: generatedThreadTitleFromText,
       label: "title generation"
@@ -2436,7 +2436,7 @@ const threadTitleGenerationPrompt = [
   "Generate a concise, single-line task title of at most 80 characters and under five words where possible.",
   "Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise.",
   "Preserve ticket references exactly. Write in the user's language. Do not use quotes, markdown, or trailing punctuation.",
-  "Prioritize the current task and latest substantive user request. Do not answer the request."
+  "Use all user messages and improve on the previous title when it is useful. Do not answer the request."
 ].join(" ");
 
 const generatedThreadTitleSchema = {

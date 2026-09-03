@@ -82,14 +82,12 @@ test("stored UI state preserves autoGenerateThreadTitle setting", () => {
     tabSnapshotVersion: 1,
     settings: {
       autoGenerateThreadTitle: true,
-      autoGenerateThreadTitleInterval: 7,
       taskCompleteSystemNotifications: false
     }
   });
 
   const stored = readStoredUiState();
   assert.equal(stored?.settings?.autoGenerateThreadTitle, true);
-  assert.equal(stored?.settings?.autoGenerateThreadTitleInterval, 7);
   assert.equal(stored?.settings?.taskCompleteSystemNotifications, false);
 });
 

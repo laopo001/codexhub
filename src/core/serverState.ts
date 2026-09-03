@@ -12,7 +12,6 @@ import {
 import { normalizeMachineCapabilities, normalizeMachineType } from "./machineHub.js";
 import type { MachineCapabilities, MachineSummary, MachineType } from "../shared/machineTypes.js";
 import { defaultPetId, petIdPattern } from "../shared/petTypes.js";
-import { defaultAutoGenerateThreadTitleInterval } from "../shared/projectTypes.js";
 import type {
   ProjectRelation,
   ProjectSource,
@@ -107,7 +106,6 @@ export class CodexhubServerState {
       || this.data.config.ui.taskCompleteNotificationPersistAfterMinutes
         !== nextUi.taskCompleteNotificationPersistAfterMinutes
       || this.data.config.ui.autoGenerateThreadTitle !== nextUi.autoGenerateThreadTitle
-      || this.data.config.ui.autoGenerateThreadTitleInterval !== nextUi.autoGenerateThreadTitleInterval
     ) {
       this.data.config.ui = nextUi;
       this.touch();
@@ -798,8 +796,7 @@ const defaultServerUiConfig = (): ServerUiConfig => ({
   showDesktopPet: false,
   taskCompleteSystemNotifications: false,
   taskCompleteNotificationPersistAfterMinutes: 3,
-  autoGenerateThreadTitle: false,
-  autoGenerateThreadTitleInterval: defaultAutoGenerateThreadTitleInterval
+  autoGenerateThreadTitle: false
 });
 
 const defaultServerConfig = (): ServerConfig => ({
@@ -838,12 +835,7 @@ const normalizeServerUiConfig = (value: unknown): ServerUiConfig => {
       : defaultServerUiConfig().taskCompleteNotificationPersistAfterMinutes,
     autoGenerateThreadTitle: typeof record?.autoGenerateThreadTitle === "boolean"
       ? record.autoGenerateThreadTitle
-      : defaultServerUiConfig().autoGenerateThreadTitle,
-    autoGenerateThreadTitleInterval: typeof record?.autoGenerateThreadTitleInterval === "number"
-      && Number.isInteger(record.autoGenerateThreadTitleInterval)
-      && record.autoGenerateThreadTitleInterval >= 1
-      ? record.autoGenerateThreadTitleInterval
-      : defaultServerUiConfig().autoGenerateThreadTitleInterval
+      : defaultServerUiConfig().autoGenerateThreadTitle
   };
 };
 
@@ -858,10 +850,7 @@ const isCompleteServerConfig = (value: unknown) => {
     && typeof ui.taskCompleteNotificationPersistAfterMinutes === "number"
     && Number.isInteger(ui.taskCompleteNotificationPersistAfterMinutes)
     && ui.taskCompleteNotificationPersistAfterMinutes >= 0
-    && typeof ui.autoGenerateThreadTitle === "boolean"
-    && typeof ui.autoGenerateThreadTitleInterval === "number"
-    && Number.isInteger(ui.autoGenerateThreadTitleInterval)
-    && ui.autoGenerateThreadTitleInterval >= 1;
+    && typeof ui.autoGenerateThreadTitle === "boolean";
 };
 
 const objectRecord = (value: unknown): Record<string, unknown> | null =>

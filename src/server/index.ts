@@ -298,9 +298,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       captureSessionState();
       parentRegistration?.refreshRegistration();
     },
-    autoGenerateThreadTitleInterval: () => {
+    autoGenerateThreadTitle: () => {
       const ui = state.config().ui;
-      return ui.autoGenerateThreadTitle ? ui.autoGenerateThreadTitleInterval : null;
+      return ui.autoGenerateThreadTitle;
     }
   });
   const app = Fastify({
