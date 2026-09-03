@@ -13,19 +13,23 @@ test("authority build monitor reports only a stable changed build", async () => 
   await Promise.all([writeFile(service, "service-old"), writeFile(index, "index-old")]);
   const currentBuildId = await authorityBuildId([service, index], "npm");
   const updates: string[] = [];
+  const observed: Array<string | null> = [];
   const monitor = new AuthorityBuildMonitor({
     currentBuildId,
     files: [service, index],
     pollMs: 60_000,
+    onBuildObserved: (buildId) => observed.push(buildId),
     onUpdateAvailable: (buildId) => updates.push(buildId)
   });
   try {
     await monitor.check();
     assert.deepEqual(updates, []);
+    assert.equal(observed.at(-1), currentBuildId);
 
     await writeFile(service, "service-new");
     await monitor.check();
     assert.deepEqual(updates, []);
+    assert.notEqual(observed.at(-1), currentBuildId);
     await monitor.check();
     assert.equal(updates.length, 1);
     assert.notEqual(updates[0], currentBuildId);
@@ -35,6 +39,7 @@ test("authority build monitor reports only a stable changed build", async () => 
     await rm(index);
     await monitor.check();
     assert.equal(updates.length, 1);
+    assert.equal(observed.at(-1), null);
   } finally {
     monitor.stop();
     await rm(root, { recursive: true, force: true });

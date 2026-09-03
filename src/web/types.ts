@@ -358,6 +358,8 @@ export type ParsedToolCall = {
 
 export type SystemStatus = {
   version: string | null;
+  build: string | null;
+  authorityLocalBuild: string | null;
   authority?: CodexHubAuthorityDescriptor;
   authorityUpdate?: AuthorityUpdatePayload;
   model: string | null;

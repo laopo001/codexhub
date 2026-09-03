@@ -174,6 +174,8 @@ export const useAppState = () => {
   const [initialized, setInitialized] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     version: null,
+    build: null,
+    authorityLocalBuild: null,
     model: null,
     modelReasoningEffort: null,
     serviceTier: null,

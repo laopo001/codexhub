@@ -5,6 +5,7 @@ export type AuthorityBuildMonitorOptions = {
   currentBuildId: string;
   files: string[];
   pollMs?: number;
+  onBuildObserved?: (buildId: string | null) => void;
   onUpdateAvailable: (buildId: string) => void;
 };
 
@@ -29,11 +30,13 @@ export class AuthorityBuildMonitor {
     try {
       const stats = await Promise.all(this.options.files.map((file) => stat(file)));
       if (stats.some((entry) => !entry.isFile())) {
+        this.options.onBuildObserved?.(null);
         this.pendingBuildId = "";
         return;
       }
       const prefix = this.options.currentBuildId.split(":", 1)[0] || "authority";
       const buildId = await authorityBuildId(this.options.files, prefix);
+      this.options.onBuildObserved?.(buildId);
       if (buildId === this.options.currentBuildId) {
         this.pendingBuildId = "";
         return;
@@ -48,6 +51,7 @@ export class AuthorityBuildMonitor {
       this.options.onUpdateAvailable(buildId);
     } catch {
       // A build can temporarily remove or replace its outputs. Wait for two stable reads.
+      this.options.onBuildObserved?.(null);
       this.pendingBuildId = "";
     } finally {
       this.checking = false;

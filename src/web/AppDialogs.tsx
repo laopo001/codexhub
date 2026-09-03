@@ -183,15 +183,35 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     });
   };
   const restartAuthority = () => {
-    if (!restartAvailable || (authorityUpdateDetected && !authorityUpdateAvailable) || restartState === "restarting") return;
+    if (!restartAvailable || restartState === "restarting") return;
+    const currentBuild = systemStatus.build ?? "unknown";
+    const localBuild = systemStatus.authorityLocalBuild ?? "unavailable";
+    const surfaceCandidate = systemStatus.authorityUpdate?.buildId;
+    const hasUnverifiedUpdate = authorityUpdateDetected && !authorityUpdateAvailable;
+    const updateState = authorityUpdateAvailable
+      ? "verified"
+      : hasUnverifiedUpdate
+        ? "unverified"
+        : localBuild === "unavailable"
+          ? "unavailable"
+          : localBuild === currentBuild
+            ? "same"
+            : "pending";
     Modal.confirm({
       title: authorityUpdateAvailable
-        ? "Update and restart this CodexHub authority and frontend?"
+        ? "Compare and apply this CodexHub build?"
+        : hasUnverifiedUpdate
+          ? "Compare builds and restart current authority?"
         : "Restart this CodexHub authority and frontend?",
-      content: authorityUpdateAvailable
-        ? "Apply the detected CodexHub build by restarting this authority, its Codex runtime, and connected CodexHub frontends. Any running turns on this host will be interrupted. Connected surfaces will reconnect and restore their tabs; host applications stay open, and other hosts are not restarted."
-        : "Restart this authority, its Codex runtime, and connected CodexHub frontends. Any running turns on this host will be interrupted. Connected surfaces will reconnect and restore their tabs; host applications stay open, and other hosts are not restarted.",
-      okText: authorityUpdateAvailable ? "Update and restart all" : "Restart all",
+      content: (
+        <AuthorityBuildComparison
+          currentBuild={currentBuild}
+          localBuild={localBuild}
+          surfaceCandidate={surfaceCandidate}
+          updateState={updateState}
+        />
+      ),
+      okText: authorityUpdateAvailable ? "Apply selected build" : hasUnverifiedUpdate ? "Restart current version" : "Restart all",
       cancelText: "Cancel",
       onOk: async () => {
         setRestartState("restarting");
@@ -555,14 +575,14 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                               : authorityUpdateAvailable
                                   ? "A new CodexHub build is ready. Apply it by explicitly restarting this host's authority, runtime, and connected frontends."
                                   : authorityUpdateDetected
-                                    ? "A different surface reported a build, but this authority has not verified its service and frontend files. Update is unavailable here."
+                                    ? "A different surface reported a build. Compare the hashes and choose whether to apply it."
                                   : "Restart this host's authority, Codex runtime, and connected frontends. Host applications stay open."}
                           </em>
                         </span>
                         <button
                           type="button"
                           className={`petSettingsButton settingsRestartButton${restartState === "restarting" ? " is-loading" : ""}`}
-                          disabled={restartState === "restarting" || (authorityUpdateDetected && !authorityUpdateAvailable)}
+                          disabled={restartState === "restarting"}
                           onClick={() => void restartAuthority()}
                           aria-busy={restartState === "restarting"}
                         >
@@ -571,7 +591,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                               <span className="settingsRestartSpinner" aria-hidden="true" />
                               <span>{authorityUpdateAvailable ? "Updating..." : "Restarting..."}</span>
                             </>
-                          ) : authorityUpdateAvailable ? "Update and restart all" : authorityUpdateDetected ? "Update unavailable" : "Restart all"}
+                          ) : authorityUpdateAvailable ? "Update and restart all" : authorityUpdateDetected ? "Compare builds" : "Restart all"}
                         </button>
                       </div>
                     ) : null}
@@ -1146,6 +1166,38 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     </>
   );
 };
+
+export const AuthorityBuildComparison = ({
+  currentBuild,
+  localBuild,
+  surfaceCandidate,
+  updateState
+}: {
+  currentBuild: string;
+  localBuild: string;
+  surfaceCandidate?: string;
+  updateState: "same" | "verified" | "unverified" | "pending" | "unavailable";
+}) => (
+  <div className="authorityBuildComparison">
+    <p>Compare the build hashes before restarting this CodexHub authority.</p>
+    <p><strong>Running authority:</strong> <code>{currentBuild}</code></p>
+    <p><strong>Local files:</strong> <code>{localBuild}</code></p>
+    {surfaceCandidate ? <p><strong>Surface candidate:</strong> <code>{surfaceCandidate}</code></p> : null}
+    <p>
+      <strong>Result:</strong>{" "}
+      {updateState === "verified"
+        ? "Local update available"
+        : updateState === "unverified"
+          ? "Surface candidate is not verified in local files"
+          : updateState === "pending"
+            ? "Local files differ; update verification is pending"
+            : updateState === "unavailable"
+              ? "Local build could not be verified"
+              : "Same build"}
+    </p>
+    <p>Restarting interrupts running turns on this host. Connected surfaces will reconnect and restore their tabs.</p>
+  </div>
+);
 
 const imageCopyButtonLabel = (status: "idle" | "copying" | "copied" | "failed") => {
   if (status === "copying") return "Copying...";

@@ -180,6 +180,7 @@ export type HealthPayload = AuthStatusPayload & {
   surface?: CodexHubSurface;
   authority?: CodexHubAuthorityDescriptor;
   authorityUpdate?: AuthorityUpdatePayload;
+  authorityLocalBuild?: string | null;
   authorityRuntime?: AuthorityRuntimePayload;
   authorityServiceSource?: AuthorityServiceSource;
   features?: Record<string, boolean>;

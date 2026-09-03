@@ -264,6 +264,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     machine.type !== "registered" && !(embeddedSurface && machine.type === "local");
   let threads: ThreadHub;
   let authorityUpdate: AuthorityUpdatePayload | undefined;
+  let authorityLocalBuild = authorityService && buildId && options.authorityBuildFiles?.length
+    ? buildId
+    : null;
   const reportAuthorityUpdate = (replacementBuildId: string, restartable: boolean) => {
     if (!replacementBuildId || replacementBuildId === buildId) return;
     if (authorityUpdate?.buildId === replacementBuildId) {
@@ -422,6 +425,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         currentBuildId: buildId,
         files: options.authorityBuildFiles,
         pollMs: options.authorityBuildPollMs,
+        onBuildObserved: (observedBuildId) => {
+          authorityLocalBuild = observedBuildId;
+        },
         onUpdateAvailable: (replacementBuildId) => reportAuthorityUpdate(replacementBuildId, true)
       })
     : null;
@@ -862,6 +868,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       authority: options.authority,
       authorityUpdate,
       ...(options.authority ? {
+        authorityLocalBuild,
         authorityRuntime: {
           nodePath: process.execPath,
           nodeVersion: process.version,
@@ -883,7 +890,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       ssh: { connections: sshMachines.listConnections() },
       telegram: { started: Boolean(telegramBot) }
     }),
-    restartAuthority: restartAuthority ? () => restartAuthority(authorityUpdate?.buildId) : undefined,
+    restartAuthority: restartAuthority
+      ? () => restartAuthority(authorityUpdate?.restartable ? authorityUpdate.buildId : undefined)
+      : undefined,
     heartbeatWebClient: webClients
       ? (input) => {
         webClients.touch(input.clientId);

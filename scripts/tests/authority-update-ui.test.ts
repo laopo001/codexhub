@@ -3,7 +3,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { defaultAppSettings } from "../../src/web/appConfig.js";
-import { AppDialogs } from "../../src/web/AppDialogs.js";
+import { AppDialogs, AuthorityBuildComparison } from "../../src/web/AppDialogs.js";
 import { AppSidebar } from "../../src/web/AppSidebar.js";
 import { createSidebarDraftStore } from "../../src/web/helpers/sidebarDrafts.js";
 import type { AppDialogsViewModel, AppSidebarViewModel } from "../../src/web/viewModel.js";
@@ -11,6 +11,8 @@ import type { SystemStatus } from "../../src/web/types.js";
 
 const systemStatus = (updateAvailable: boolean): SystemStatus => ({
   version: "0.9.0",
+  build: "build-old",
+  authorityLocalBuild: updateAvailable ? "build-new" : "build-old",
   authority: {
     authorityId: "authority-test",
     kind: "linux" as const,
@@ -122,7 +124,7 @@ test("Settings separates frontend reload from authority restart and marks update
   assert.match(update, /A new CodexHub build is ready/);
 });
 
-test("Settings does not offer an unsafe surface-only update", () => {
+test("Settings lets the user compare an unverified surface-only update", () => {
   const status = systemStatus(true);
   status.authorityUpdate = {
     buildId: "surface-only",
@@ -133,7 +135,27 @@ test("Settings does not offer an unsafe surface-only update", () => {
   const viewModel = dialogsViewModel(false);
   viewModel.systemStatus = status;
   const markup = renderToStaticMarkup(createElement(AppDialogs, { viewModel }));
-  assert.match(markup, /Update unavailable/);
-  assert.match(markup, /has not verified its service and frontend files/);
-  assert.match(markup, /disabled/);
+  assert.match(markup, />Compare builds</);
+  assert.match(markup, /A different surface reported a build/);
+  assert.doesNotMatch(markup, /disabled/);
+});
+
+test("authority restart comparison is always visible, including for the same build", () => {
+  const same = renderToStaticMarkup(createElement(AuthorityBuildComparison, {
+    currentBuild: "build-current",
+    localBuild: "build-current",
+    updateState: "same"
+  }));
+  const update = renderToStaticMarkup(createElement(AuthorityBuildComparison, {
+    currentBuild: "build-current",
+    localBuild: "build-next",
+    surfaceCandidate: "build-next",
+    updateState: "verified"
+  }));
+
+  assert.match(same, /Running authority:<\/strong> <code>build-current<\/code>/);
+  assert.match(same, /Local files:<\/strong> <code>build-current<\/code>/);
+  assert.match(same, /Result:<\/strong> Same build/);
+  assert.match(update, /Surface candidate:<\/strong> <code>build-next<\/code>/);
+  assert.match(update, /Result:<\/strong> Local update available/);
 });

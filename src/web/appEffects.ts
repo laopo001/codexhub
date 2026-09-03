@@ -156,6 +156,10 @@ export const useAppEffects = ({ actions, selectors, state }: AppEffectsInput) =>
         if (disposed) return;
         state.setSystemStatus((current) => ({
           ...current,
+          build: health.build ?? current.build,
+          authorityLocalBuild: "authorityLocalBuild" in health
+            ? health.authorityLocalBuild ?? null
+            : current.authorityLocalBuild,
           authorityUpdate: health.authorityUpdate
         }));
       } catch {
