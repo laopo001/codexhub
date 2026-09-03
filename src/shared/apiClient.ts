@@ -4,12 +4,15 @@ import type {
   ApiRoutePathArgs,
   ApiRouteResponse
 } from "./apiRoutes.js";
+import type { CodexHubSurface } from "./surfaceTypes.js";
 
 export type ApiAuthTokenProvider = string | null | undefined | (() => string | null | undefined);
+export type ApiSurfaceProvider = CodexHubSurface | (() => CodexHubSurface);
 
 export type CodexHubApiClientOptions = {
   baseUrl?: string;
   authToken?: ApiAuthTokenProvider;
+  surface?: ApiSurfaceProvider;
   fetch?: typeof fetch;
 };
 
@@ -28,6 +31,9 @@ export class CodexHubApiError extends Error {
 const resolveAuthToken = (provider: ApiAuthTokenProvider) =>
   (typeof provider === "function" ? provider() : provider)?.trim() ?? "";
 
+const resolveSurface = (provider: ApiSurfaceProvider | undefined) =>
+  typeof provider === "function" ? provider() : provider;
+
 const resolveUrl = (path: string, baseUrl?: string) =>
   baseUrl ? new URL(path, baseUrl).toString() : path;
 
@@ -45,6 +51,8 @@ export const createCodexHubApiClient = (options: CodexHubApiClientOptions = {}) 
     const headers = new Headers(init.headers);
     const token = resolveAuthToken(options.authToken);
     if (token && !headers.has("authorization")) headers.set("authorization", `Bearer ${token}`);
+    const surface = resolveSurface(options.surface);
+    if (surface && !headers.has("x-codexhub-surface")) headers.set("x-codexhub-surface", surface);
     const response = await fetchImpl(resolveUrl(path, options.baseUrl), { ...init, headers });
     if (!response.ok) throw new CodexHubApiError(response.status, await response.text());
     return await response.json() as Response;

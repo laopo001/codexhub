@@ -3,6 +3,7 @@ import { Modal } from "antd";
 import type { ProjectUpdateInput } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import { isEmbeddedSurfaceKind } from "../../shared/surfaceTypes.js";
+import { isFixedWorkspaceSurface } from "../appConfig.js";
 import {
   apiRouteJson,
   appendThreadOrder,
@@ -130,7 +131,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       machine.machineId === machineId
       && machine.online
       && machineProjectLauncher(machine)
-      && machineProjectCatalogEditable(machine)
+      && (!isFixedWorkspaceSurface || machineProjectCatalogEditable(machine))
     );
 
   const selectProjectRuntime = async (runtime: RuntimeSummary) => {

@@ -94,7 +94,11 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const projectAddMachine = projectScopeLocked
     ? undefined
     : uniqueMachines(machines)
-      .filter((machine) => machine.online && machineProjectLauncher(machine) && machineProjectCatalogEditable(machine))
+      .filter((machine) =>
+        machine.online
+        && machineProjectLauncher(machine)
+        && (!projectScopeLocked || machineProjectCatalogEditable(machine))
+      )
       .map((machine): ProjectMachineGroup => ({
         key: machine.machineId,
         kind: "machine",

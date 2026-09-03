@@ -14,6 +14,7 @@ import { threadGranularApprovalKeys, type ThreadGranularApprovalKey } from "../.
 import type { ProjectSource } from "../../shared/projectTypes.js";
 import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, RuntimeSummary, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, ApprovalsReviewerDraft, PermissionProfileDraft } from "../types.js";
 import { codexHubSearchParams } from "../urlSearch.js";
+import { webSurface } from "../appConfig.js";
 import { formatDate, shortId } from "./common.js";
 
 const authStorageKey = "codexhub.authToken";
@@ -50,7 +51,7 @@ export const authFetch = (path: string, init: RequestInit = {}) => {
   return fetch(path, { ...init, headers });
 };
 
-const webApiClient = createCodexHubApiClient({ authToken });
+const webApiClient = createCodexHubApiClient({ authToken, surface: () => webSurface });
 
 export const apiJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   return webApiClient.request<T>(path, init);

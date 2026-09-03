@@ -186,10 +186,14 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
     try {
       const machine = ctx.resolveTargetMachine(ctx.machines.listMachines(), payload.machineId);
       const fixedCatalog = machine.capabilities?.projectCatalog === "fixed";
-      const providerSeed = ctx.surface !== "default"
+      const requestSurfaceHeader = request.headers["x-codexhub-surface"];
+      const requestSurface = requestSurfaceHeader === "vscode" || requestSurfaceHeader === "electron" || requestSurfaceHeader === "default"
+        ? requestSurfaceHeader
+        : ctx.surface;
+      const providerSeed = requestSurface !== "default"
         && machine.type === "local"
         && ctx.isEmbeddedWorkspaceSource(payload.source);
-      if (fixedCatalog && !providerSeed && !ctx.fixedProjectPathExists(machine.machineId, payload.path)) {
+      if (fixedCatalog && requestSurface === "vscode" && !providerSeed && !ctx.fixedProjectPathExists(machine.machineId, payload.path)) {
         reply.code(409);
         return { error: "This machine exposes a fixed workspace project list." };
       }
