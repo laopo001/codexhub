@@ -17,6 +17,12 @@ import { emptyMemoryCitation, formatMemoryCitationCount, formatMemoryCitationLin
 import { formatInspectDetail, renderToolMessageBody, ToolInspectContext } from "./toolPreview.js";
 import { activityStatusPriority, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
 import { createStatusRegistry, StatusPanelToggleIcon, StatusRegistryRows } from "./statusRegistry.js";
+import {
+  rememberAgentQuestionAnswers,
+  storedAgentQuestionAnswers,
+  type AgentQuestion,
+  type AgentQuestionAnswers
+} from "./agentQuestions.js";
 
 const SyntaxCodeBlock = lazy(() => import("../SyntaxCodeBlock.js"));
 
@@ -55,6 +61,7 @@ export const MessageCard = ({
   renderToolPreview = true,
   renderMode,
   markdownEnabled,
+  threadId,
   threadMachineId,
   threadWorkingDirectory,
   onRenderModeChange,
@@ -63,6 +70,7 @@ export const MessageCard = ({
   onToggleToolBatch,
   onApprovalDecision,
   onUserInputResponse,
+  onAgentQuestionResponse,
   onDismiss,
   dismissLabel = "Dismiss pending message",
   onFork,
@@ -77,6 +85,7 @@ export const MessageCard = ({
   renderToolPreview?: boolean;
   renderMode: MessageRenderMode;
   markdownEnabled: boolean;
+  threadId?: string;
   threadMachineId?: string;
   threadWorkingDirectory?: string;
   onRenderModeChange?: (mode: MessageRenderMode) => void;
@@ -85,6 +94,12 @@ export const MessageCard = ({
   onToggleToolBatch?: () => void;
   onApprovalDecision?: (approvalId: string, decision: AppServerApprovalDecision) => void;
   onUserInputResponse?: (userInputId: string, answers: AppServerUserInputAnswers) => void | Promise<void>;
+  onAgentQuestionResponse?: (
+    threadId: string,
+    recordId: string,
+    questions: AgentQuestion[],
+    answers: AgentQuestionAnswers
+  ) => boolean | Promise<boolean>;
   onDismiss?: () => void;
   dismissLabel?: string;
   onFork?: () => void;
@@ -105,6 +120,12 @@ export const MessageCard = ({
   const messageText = memoryCitation.text;
   const approval = pendingApprovalFromMessage(message);
   const userInput = pendingUserInputFromMessage(message);
+  const agentQuestions = message.agentQuestions?.filter((question) => question.title.trim()) ?? [];
+  const agentQuestionsAnswered = Boolean(
+    agentQuestions.length
+    && threadId
+    && storedAgentQuestionAnswers(threadId, message.record.id)
+  );
   const approvalActions = approval ? approvalDecisionActions(approval.kind, approval.availableDecisions) : [];
   const hasMessageMeta = !isThinkingMessage && (
     (showTimestamp && message.at)
@@ -265,10 +286,115 @@ export const MessageCard = ({
       {userInput && onUserInputResponse ? (
         <UserInputRequestForm request={userInput} onSubmit={onUserInputResponse} />
       ) : null}
+      {agentQuestions.length && threadId && onAgentQuestionResponse ? (
+        <AgentQuestionForm
+          threadId={threadId}
+          recordId={message.record.id}
+          questions={agentQuestions}
+          answered={agentQuestionsAnswered}
+          onSubmit={onAgentQuestionResponse}
+        />
+      ) : null}
       {message.activityStatuses?.length ? (
         <MessageActivityStatusSnapshot statuses={message.activityStatuses} />
       ) : null}
     </article>
+  );
+};
+
+const AgentQuestionForm = ({
+  threadId,
+  recordId,
+  questions,
+  answered: initialAnswered,
+  onSubmit
+}: {
+  threadId: string;
+  recordId: string;
+  questions: AgentQuestion[];
+  answered: boolean;
+  onSubmit: (
+    threadId: string,
+    recordId: string,
+    questions: AgentQuestion[],
+    answers: AgentQuestionAnswers
+  ) => boolean | Promise<boolean>;
+}) => {
+  const [values, setValues] = useState<AgentQuestionAnswers>(() => (
+    storedAgentQuestionAnswers(threadId, recordId) ?? Object.fromEntries(questions.map((_question, index) => [index, ""]))
+  ));
+  const [answered, setAnswered] = useState(initialAnswered);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const allQuestionsAnswered = questions.every((_question, index) => Boolean(values[index]?.trim()));
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (submitting || answered || !allQuestionsAnswered) {
+      if (!allQuestionsAnswered) setError("请回答每个问题后再提交。");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      const accepted = await onSubmit(threadId, recordId, questions, values);
+      if (!accepted) {
+        setError("发送失败，请重试。");
+        return;
+      }
+      rememberAgentQuestionAnswers(threadId, recordId, values);
+      setAnswered(true);
+    } catch {
+      setError("发送失败，请重试。");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (answered) {
+    return <div className="agentQuestionAnswered" role="status">已回答</div>;
+  }
+
+  return (
+    <form className="agentQuestionForm" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
+      <div className="agentQuestionFormTitle">需要你的回答</div>
+      {questions.map((question, index) => (
+        <fieldset className="agentQuestion" key={`${question.title}:${index}`}>
+          <legend>{question.title}</legend>
+          {question.options?.length ? (
+            <div className="agentQuestionOptions">
+              {question.options.map((option) => (
+                <label key={option}>
+                  <input
+                    type="radio"
+                    name={`agent-question-${recordId}-${index}`}
+                    value={option}
+                    checked={values[index] === option}
+                    onChange={(event) => setValues((current) => ({ ...current, [index]: event.target.value }))}
+                    disabled={submitting}
+                  />
+                  <span>{option}</span>
+                </label>
+              ))}
+            </div>
+          ) : null}
+          <input
+            className="userInputControl"
+            type="text"
+            value={values[index] ?? ""}
+            onChange={(event) => setValues((current) => ({ ...current, [index]: event.target.value }))}
+            disabled={submitting}
+            placeholder={question.options?.length ? "或输入其他回答" : "输入回答"}
+            aria-label={`Answer: ${question.title}`}
+          />
+        </fieldset>
+      ))}
+      {error ? <p className="agentQuestionError" role="alert">{error}</p> : null}
+      <button type="submit" className="approvalButton approve userInputSubmit" disabled={submitting || !allQuestionsAnswered}>
+        {submitting ? "发送中…" : "回答"}
+      </button>
+    </form>
   );
 };
 

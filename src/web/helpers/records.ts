@@ -459,12 +459,15 @@ const isPendingApprovalPayload = (payload: Record<string, unknown> | null) => {
 const normalizedInteractionStatus = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/[-\s]+/g, "_").toLowerCase() : "";
 
+const isBlockingUserInputPayload = (payload: Record<string, unknown>) => payload.isBlocking !== false;
+
 export const recordHasPendingInteraction = (record: CodexRecord) => {
   const payload = asRecord(record.payload);
   if (!payload) return false;
   if (isPendingApprovalPayload(payload)) return true;
   const userInput = asRecord(payload.userInput);
   return payload.type === "user_input_request"
+    && isBlockingUserInputPayload(payload)
     && (userInput?.status === "pending" || normalizedInteractionStatus(payload.status) === "pending_user_input");
 };
 
@@ -977,7 +980,7 @@ const activityStatusSnapshotTargetRecordId = (records: CodexRecord[]) => {
 };
 
 const isActivityStatusDetail = (status: ActivityStatusView) => {
-  if (status.key === "userInput") return status.status !== "completed";
+  if (status.key === "userInput" || status.key === "userInputAsync") return status.status !== "completed";
   return status.key === "plan" || status.key === "files" || status.key === "usage";
 };
 
@@ -1187,6 +1190,7 @@ export const userInputActivityStatus = (
 ): ActivityStatusView => {
   const userInput = asRecord(payload.userInput);
   const status = activityRecordStatus(payload.status) ?? activityRecordStatus(userInput?.status) ?? "pending";
+  const isBlocking = isBlockingUserInputPayload(payload);
   const question = userInputQuestionSummary(payload.questions);
   const statusText = status === "completed"
     ? "Answered"
@@ -1194,8 +1198,8 @@ export const userInputActivityStatus = (
       ? "Failed"
       : "Waiting for answer";
   return {
-    key: "userInput",
-    label: "User input",
+    key: isBlocking ? "userInput" : "userInputAsync",
+    label: isBlocking ? "User input" : "Input available",
     status,
     at: record.timestamp,
     text: [statusText, question].filter(Boolean).join(" · ") || statusText

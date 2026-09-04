@@ -7,6 +7,7 @@ import type {
   ThreadGoalUpdateInput as ApiThreadGoalUpdateInput
 } from "../shared/apiContract.js";
 import type { ComposerDraftStore, SidebarDraftStore, TurnActivityScope } from "./appHelpers.js";
+import type { AgentQuestion, AgentQuestionAnswers } from "./helpers/agentQuestions.js";
 import type { StatusPanelExpansionDecision } from "./helpers/statusPanelExpansion.js";
 import type {
   ActivityStatusView,
@@ -211,7 +212,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   inspectMessage: WebRecordView | null;
   inspectMessageSelection: InspectMessageSelection | null;
   latestTurnActivityScope: TurnActivityScope;
-  loadCommandPalette: (machineId: string, cwd: string) => MaybePromise;
+  loadCommandPalette: (machineId: string, cwd: string, force?: boolean) => MaybePromise;
   loadOlderThread: (threadId: string) => MaybePromise<number>;
   loadProjectPickerDirectory: (machineId: string, path: string) => MaybePromise;
   messageSelectionToolbar: MessageSelectionToolbarState | null;
@@ -275,6 +276,12 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   resetComposerHistory: (threadId: string) => void;
   respondToApproval: (threadId: string, approvalId: string, decision: AppServerApprovalDecision) => MaybePromise;
   respondToUserInput: (threadId: string, userInputId: string, answers: AppServerUserInputAnswers) => MaybePromise;
+  respondToAgentQuestions: (
+    threadId: string,
+    recordId: string,
+    questions: AgentQuestion[],
+    answers: AgentQuestionAnswers
+  ) => MaybePromise<boolean>;
   reviewThread: (threadId: string) => MaybePromise;
   retryModelCatalog: () => void;
   resizeComposerTextarea: (textarea: HTMLTextAreaElement | null) => void;
@@ -394,6 +401,7 @@ export type AppWorkspaceViewModel = Pick<AppViewModelSource,
   | "resetComposerHistory"
   | "respondToApproval"
   | "respondToUserInput"
+  | "respondToAgentQuestions"
   | "reviewThread"
   | "resizeComposerTextarea"
   | "runtimeList"
@@ -451,6 +459,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "imagePreview"
   | "inspectMessage"
   | "loadProjectPickerDirectory"
+  | "loadCommandPalette"
   | "loadThreadPickerCandidates"
   | "selectThreadPickerWorkingDirectory"
   | "machines"
@@ -572,7 +581,7 @@ const workspaceKeys = [
   "loadCommandPalette", "loadOlderThread", "messageRenderModes", "openMessageSelectionToolbar", "openSubagentThread", "openThreadModelDialog", "openSelectedProjectThreadPicker",
   "openThreads",
   "pasteThreadImages", "removeThreadImage", "removeThreadTextAttachment", "renderComposerThreadControls",
-  "resetComposerHistory", "respondToApproval", "respondToUserInput", "reviewThread",
+  "resetComposerHistory", "respondToApproval", "respondToUserInput", "respondToAgentQuestions", "reviewThread",
   "resizeComposerTextarea", "runtimeList", "selectedProject", "send", "threadControlsMenuOpen",
   "setComposerMenuOpen", "setComposerMode", "setThreadComposerMode", "setThreadApprovalPolicyDraft",
   "setThreadApprovalsReviewerDraft", "setThreadPermissionProfileDraft", "setExpandedStatusKeys", "setExpandedToolBatchKeys",
@@ -590,7 +599,7 @@ const dialogKeys = [
   "addSelectionToConversation", "appSettings", "systemStatus", "changeProjectPickerMachine",
   "chooseThreadCandidate", "confirmProjectPicker", "copySelection", "createMachineThread",
   "createWorktreeThread", "goalDialog", "imagePreview", "inspectMessage",
-  "loadProjectPickerDirectory", "loadThreadPickerCandidates", "selectThreadPickerWorkingDirectory", "machines", "messageSelectionToolbar",
+  "loadProjectPickerDirectory", "loadCommandPalette", "loadThreadPickerCandidates", "selectThreadPickerWorkingDirectory", "machines", "messageSelectionToolbar",
   "addSshHost", "connectionMode", "connectParentRegistration", "connectSshHost", "copyCurrentServerShareUrl",
   "copyRegisteredCommand", "currentServerShareUrl", "disconnectParentRegistration", "localMachines",
   "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "threadModelDialogModelSelection",

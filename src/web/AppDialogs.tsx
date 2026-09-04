@@ -34,6 +34,7 @@ import {
 } from "./helpers/composerInputHistory.js";
 import { downloadImageFile, extractImageFilename, writeImageToClipboard } from "./helpers/imageClipboard.js";
 import { ConnectionsPanel } from "./ConnectionsPanel.js";
+import { MachineAppsPanel } from "./MachineAppsPanel.js";
 import { DeveloperInstructionsSettings } from "./DeveloperInstructionsSettings.js";
 import { ThreadPickerInstructions } from "./ThreadPickerInstructions.js";
 import { TaskDialog } from "./TaskDialog.js";
@@ -58,6 +59,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     imagePreview,
     inspectMessage,
     loadProjectPickerDirectory,
+    loadCommandPalette,
     loadThreadPickerCandidates,
     machines,
     messageSelectionToolbar,
@@ -109,7 +111,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   } = viewModel;
   const [projectPickerSearch, setProjectPickerSearch] = React.useState("");
   const [restartState, setRestartState] = React.useState<"idle" | "restarting" | "error">("idle");
-  const [settingsSection, setSettingsSection] = React.useState<"general" | "developerInstructions" | "connections" | "inputHistory">("general");
+  const [settingsSection, setSettingsSection] = React.useState<"general" | "developerInstructions" | "connections" | "apps" | "inputHistory">("general");
   const [notificationPersistAfterMinutesDraft, setNotificationPersistAfterMinutesDraft] = React.useState(
     String(appSettings.taskCompleteNotificationPersistAfterMinutes)
   );
@@ -445,6 +447,14 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 </button>
                 <button
                   type="button"
+                  className={settingsSection === "apps" ? "active" : ""}
+                  onClick={() => setSettingsSection("apps")}
+                  aria-current={settingsSection === "apps" ? "page" : undefined}
+                >
+                  Codex Apps
+                </button>
+                <button
+                  type="button"
                   className={settingsSection === "inputHistory" ? "active" : ""}
                   onClick={() => setSettingsSection("inputHistory")}
                   aria-current={settingsSection === "inputHistory" ? "page" : undefined}
@@ -600,6 +610,8 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                   <DeveloperInstructionsSettings />
                 ) : settingsSection === "connections" ? (
                   <ConnectionsPanel viewModel={viewModel} />
+                ) : settingsSection === "apps" ? (
+                  <MachineAppsPanel machines={machines} openThreads={openThreads} loadCommandPalette={loadCommandPalette} />
                 ) : (
                   <InputHistorySettingsPanel />
                 )}

@@ -115,10 +115,16 @@ try {
     [/itemId: string/, "background terminals must expose itemId"],
     [/processId: string/, "background terminals must expose processId"],
     [/command: string/, "background terminals must expose command"],
-    [/cwd: AbsolutePathBuf/, "background terminals must expose cwd"],
+    [/(?:cwd: (?:AbsolutePathBuf|LegacyAppPathString))/, "background terminals must expose cwd"],
     [/osPid: number \| null/, "background terminals must expose osPid"],
     [/cpuPercent: number \| null/, "background terminals must expose cpuPercent"],
     [/rssKb: bigint \| null/, "background terminals must expose rssKb"]
+  ]);
+  await assertSchema("AbsolutePathBuf.ts", [
+    [/export type AbsolutePathBuf = string/, "absolute paths must remain strings on the wire"]
+  ]);
+  await assertSchema("LegacyAppPathString.ts", [
+    [/export type LegacyAppPathString = string/, "background terminal cwd must remain a string on the wire"]
   ]);
   await assertSchema("v2/ThreadBackgroundTerminalsListParams.ts", [
     [/threadId: string/, "background terminal listing must be thread-scoped"]
@@ -151,6 +157,35 @@ try {
     [/\bmodel\s*:\s*string\s*\|\s*null\b/, "ThreadItem.collabAgentToolCall.model must be nullable"],
     [/\breasoningEffort\s*:\s*ReasoningEffort\s*\|\s*null\b/, "ThreadItem.collabAgentToolCall.reasoningEffort must be nullable"]
   ]);
+  if (protocolVersionAtLeast(actualVersion, "0.152.0")) {
+    await assertSchemaVariant("v2/ThreadItem.ts", "agentMessage", [
+      [/delivery: AgentMessageDelivery \| null/, "agent messages must expose nullable delivery"]
+    ]);
+    await assertSchema("v2/ToolRequestUserInputParams.ts", [
+      [/isBlocking: boolean/, "user input must expose blocking state"]
+    ]);
+    await assertSchema("ClientRequest.ts", [
+      [/"method": "app\/installed"/, "installed app snapshot must be available"],
+      [/"method": "app\/read"/, "app metadata read must be available"]
+    ]);
+  }
+  // 结构化异步问题、thread 模型元数据和 reconcile 是 0.153 系列新增协议。
+  if (protocolVersionAtLeast(actualVersion, "0.153.0")) {
+    await assertSchemaVariant("v2/ThreadItem.ts", "agentMessage", [
+      [/questions: Array<AsyncUserInputQuestion> \| null/, "agent messages must expose nullable async questions"]
+    ]);
+    await assertSchema("v2/AsyncUserInputQuestion.ts", [
+      [/title: string/, "async questions must expose a title"],
+      [/options: Array<string> \| null/, "async question options must be nullable strings"]
+    ]);
+    await assertSchema("v2/Thread.ts", [
+      [/model: string \| null/, "thread model metadata must remain nullable"],
+      [/reasoningEffort: ReasoningEffort \| null/, "thread effort metadata must remain nullable"]
+    ]);
+    await assertSchema("ClientRequest.ts", [
+      [/"method": "plugin\/reconcile"/, "plugin reconciliation must be available"]
+    ]);
+  }
   await assertSchema("v2/SubAgentActivityKind.ts", [
     [/"started"/, "SubAgentActivityKind must include started"],
     [/"interacted"/, "SubAgentActivityKind must include interacted"],
@@ -254,4 +289,14 @@ async function assertSchemaVariant(relativePath: string, variant: string, assert
   for (const [pattern, message] of assertions) {
     if (!pattern.test(variantSource)) throw new Error(`${relativePath}: ${message}`);
   }
+}
+
+function protocolVersionAtLeast(version: string, minimum: string) {
+  const parse = (value: string) => value.split("-", 1)[0].split(".").map(Number);
+  const left = parse(version);
+  const right = parse(minimum);
+  for (let index = 0; index < 3; index += 1) {
+    if ((left[index] ?? 0) !== (right[index] ?? 0)) return (left[index] ?? 0) > (right[index] ?? 0);
+  }
+  return true;
 }

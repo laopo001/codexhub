@@ -1,3 +1,4 @@
+import { readAppServerApps, reconcileAppServerPlugins } from "./appServerApps.js";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -56,6 +57,7 @@ import type {
   SessionCommand,
   SessionCommandPaletteResult,
   SessionEventInput,
+  SessionHistoryPageResult,
   SessionModelCatalogResult,
   SessionPermissionProfilesResult,
   SessionRegistration,
@@ -126,6 +128,17 @@ type SyncedThread = {
   appServerTurnsDebounceTimer?: NodeJS.Timeout;
   appServerTurnsStabilizationDelaysMs: number[];
   appServerTurnsStabilizationTimer?: NodeJS.Timeout;
+  /** 官方 turns/list cursor 只留在当前 bridge 代次，不能进入 Web/API。 */
+  historySnapshotId?: string;
+  historyNextCursor?: string;
+  historySeenCursors?: Set<string>;
+  historyNextPage: number;
+  historyComplete: boolean;
+  historyPageLoading?: {
+    snapshotId: string;
+    page: number;
+    promise: Promise<SessionHistoryPageResult>;
+  };
   backgroundTerminals: ThreadBackgroundTerminal[];
   backgroundTerminalsSyncing: boolean;
   backgroundTerminalsUnsupported: boolean;
@@ -685,9 +698,13 @@ class CodexAppServerBridge {
       captureThreadSettingsResponse: (threadId, value) => this.captureThreadSettingsResponse(threadId, value),
       planResetModes: this.planResetModes,
       listCommandPalette: (cwd, part) => this.listAppServerCommandPalette(cwd, part),
+      listApps: (threadId) => readAppServerApps((method, params) => this.request(method, params), threadId),
+      reconcilePlugins: (reason) => reconcileAppServerPlugins((method, params) => this.request(method, params), reason),
       bindThread: (threadId, cwd) => this.bindThread(threadId, cwd),
       unbindThread: (threadId) => this.unbindThread(threadId),
       syncThreadTurns: (threadId) => this.syncThreadAppServerTurns(threadId),
+      loadThreadHistoryPage: (threadId, snapshotId, page) =>
+        this.loadThreadHistoryPage(threadId, snapshotId, page),
       startThread: (cwd, model, context) => this.startNewThread(cwd, model, context),
       loadThread: (threadId, cwd, model, context, options) =>
         this.loadThread(threadId, cwd, model, context, options),
@@ -1069,6 +1086,8 @@ class CodexAppServerBridge {
       appServerTurnsStabilizationDelaysMs: threadTurnsStabilizationDelaysMs(
         this.options.threadTurnsStabilizationDelaysMs
       ),
+      historyNextPage: 1,
+      historyComplete: true,
       backgroundTerminals: [],
       backgroundTerminalsSyncing: false,
       backgroundTerminalsUnsupported: false
@@ -1226,7 +1245,7 @@ class CodexAppServerBridge {
       if (!stillObserved()) return;
       // 最新页优先逐页补历史，避免超大 thread 在 Extension Host 中同时保留完整
       // app-server turns 和 CodexHub records 两份大对象。
-      await this.forwardAppServerThreadTurnsPages(loadedThreadId, randomUUID(), stillObserved);
+      await this.forwardAppServerThreadTurnsHead(loadedThreadId, state, stillObserved);
       await this.syncBackgroundTerminals(loadedThreadId, state);
       completed = true;
     } finally {
@@ -1569,50 +1588,58 @@ class CodexAppServerBridge {
     });
   }
 
-  private async forwardAppServerThreadTurnsPages(
+  private async forwardAppServerThreadTurnsHead(
     threadId: string,
-    snapshotId: string,
+    state: SyncedThread,
     stillObserved: () => boolean
   ) {
-    let cursor: string | null | undefined;
-    let sentPage = false;
-    const seenCursors = new Set<string>();
     try {
-      for (let page = 0; ; page += 1) {
-        if (!stillObserved()) return;
+      if (!stillObserved()) return;
+      const snapshotId = randomUUID();
+      let data: unknown[] = [];
+      let nextCursor: string | null = null;
+      const seenCursors = new Set<string>();
+      // 空头页没有可供 Web 使用的 record cursor，先有界推进到第一份实际历史。
+      for (let attempt = 0; attempt < 100; attempt += 1) {
         const result = asRecord(await this.request("thread/turns/list", {
           threadId,
-          cursor,
+          ...(nextCursor ? { cursor: nextCursor } : {}),
           limit: 50,
           sortDirection: "desc",
           itemsView: "full"
         }));
         if (!stillObserved()) return;
-        const data = Array.isArray(result?.data) ? [...result.data].reverse() : [];
-        const nextCursor = typeof result?.nextCursor === "string" && result.nextCursor
-          ? result.nextCursor
-          : null;
-        this.hub.sendEvent({
-          type: "thread_turns_snapshot",
-          threadId,
-          turns: data,
-          head: page === 0,
-          complete: !nextCursor,
-          snapshotId,
-          page,
-          heartbeat: false
-        });
-        sentPage = true;
-        if (!nextCursor) return;
-        if (seenCursors.has(nextCursor)) {
-          throw new Error(`Codex app-server thread/turns/list repeated cursor for ${threadId}`);
-        }
-        seenCursors.add(nextCursor);
-        cursor = nextCursor;
+        if (!Array.isArray(result?.data)) throw new Error("Codex app-server thread/turns/list did not return data");
+        data = [...result.data].reverse();
+        nextCursor = typeof result.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
+        if (nextCursor && seenCursors.has(nextCursor)) throw new Error(`Codex app-server thread/turns/list repeated cursor for ${threadId}`);
+        if (nextCursor) seenCursors.add(nextCursor);
+        if (data.length || !nextCursor) break;
+        if (attempt === 99) throw new Error("Codex app-server history contains too many empty pages");
       }
+      state.historySeenCursors = seenCursors;
+      state.historySnapshotId = snapshotId;
+      state.historyNextCursor = nextCursor ?? undefined;
+      state.historyNextPage = 1;
+      state.historyComplete = !nextCursor;
+      this.hub.sendEvent({
+        type: "thread_turns_snapshot",
+        threadId,
+        turns: data,
+        head: true,
+        complete: !nextCursor,
+        snapshotId,
+        page: 0,
+        heartbeat: false
+      });
     } catch (error) {
-      if (!sentPage && appServerTurnsListUnavailableBeforeFirstMessage(error)) {
+      if (appServerTurnsListUnavailableBeforeFirstMessage(error)) {
         if (!stillObserved()) return;
+        const snapshotId = randomUUID();
+        state.historySnapshotId = snapshotId;
+        state.historyNextCursor = undefined;
+        state.historyNextPage = 1;
+        state.historyComplete = true;
         this.hub.sendEvent({
           type: "thread_turns_snapshot",
           threadId,
@@ -1626,6 +1653,77 @@ class CodexAppServerBridge {
         return;
       }
       throw error;
+    }
+  }
+
+  private async loadThreadHistoryPage(
+    threadId: string,
+    requestedSnapshotId: string | undefined,
+    requestedPage: number | undefined
+  ): Promise<SessionHistoryPageResult> {
+    const state = this.syncedThreads.get(threadId);
+    if (!state || this.closed) {
+      throw new Error(`Thread history is no longer observed: ${threadId}`);
+    }
+    const snapshotId = requestedSnapshotId?.trim();
+    if (!snapshotId || snapshotId !== state.historySnapshotId) {
+      throw new Error(`Stale thread history snapshot: ${threadId}`);
+    }
+    if (requestedPage === undefined || !Number.isInteger(requestedPage) || requestedPage !== state.historyNextPage) {
+      throw new Error(`Unexpected thread history page: ${threadId}`);
+    }
+    const page = requestedPage;
+    if (state.historyPageLoading?.snapshotId === snapshotId && state.historyPageLoading.page === page) {
+      return await state.historyPageLoading.promise;
+    }
+    if (state.historyComplete || !state.historyNextCursor) {
+      state.historyComplete = true;
+      return { loaded: true, snapshotId, page, complete: true };
+    }
+
+    const stillObserved = () => this.syncedThreads.get(threadId) === state && !this.closed;
+    const cursor = state.historyNextCursor;
+    const promise = (async (): Promise<SessionHistoryPageResult> => {
+      const result = asRecord(await this.request("thread/turns/list", {
+        threadId,
+        cursor,
+        limit: 50,
+        sortDirection: "desc",
+        itemsView: "full"
+      }));
+      // 请求期间可能已发布新头页；旧响应不能推进新代次的 cursor 或页序。
+      if (!stillObserved() || state.historySnapshotId !== snapshotId || state.historyNextPage !== page || state.historyNextCursor !== cursor) {
+        return { loaded: false, snapshotId, page, complete: false };
+      }
+      if (!Array.isArray(result?.data)) throw new Error("Codex app-server thread/turns/list did not return data");
+      const data = [...result.data].reverse();
+      const nextCursor = typeof result?.nextCursor === "string" && result.nextCursor
+        ? result.nextCursor
+        : null;
+      if (nextCursor && (nextCursor === cursor || state.historySeenCursors?.has(nextCursor))) {
+        throw new Error(`Codex app-server thread/turns/list repeated cursor for ${threadId}`);
+      }
+      state.historyNextCursor = nextCursor ?? undefined;
+      if (nextCursor) (state.historySeenCursors ??= new Set()).add(nextCursor);
+      state.historyNextPage = page + 1;
+      state.historyComplete = !nextCursor;
+      this.hub.sendEvent({
+        type: "thread_turns_snapshot",
+        threadId,
+        turns: data,
+        head: false,
+        complete: !nextCursor,
+        snapshotId,
+        page,
+        heartbeat: false
+      });
+      return { loaded: true, snapshotId, page, complete: !nextCursor };
+    })();
+    state.historyPageLoading = { snapshotId, page, promise };
+    try {
+      return await promise;
+    } finally {
+      if (state.historyPageLoading?.promise === promise) state.historyPageLoading = undefined;
     }
   }
 
@@ -1982,6 +2080,7 @@ class CodexAppServerBridge {
         ...(approvalItemId(params) ? { itemId: approvalItemId(params) } : {}),
         createdAt: approvalCreatedAt(params),
         questions: userInputQuestions(params),
+        ...(typeof params.isBlocking === "boolean" ? { isBlocking: params.isBlocking } : {}),
         params
       },
       heartbeat: false
@@ -2354,7 +2453,13 @@ const appServerThreadSummary = (
     firstUserMessage: typeof thread?.preview === "string" ? thread.preview : "",
     lastAssistantMessage: "",
     artifactCount: 0,
-    messageCount: 0
+    messageCount: 0,
+    ...(hasOwn(thread ?? {}, "model")
+      ? { model: typeof thread?.model === "string" ? thread.model : null }
+      : {}),
+    ...(hasOwn(thread ?? {}, "reasoningEffort")
+      ? { reasoningEffort: typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null }
+      : {})
   };
 };
 

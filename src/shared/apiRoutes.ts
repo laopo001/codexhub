@@ -205,6 +205,12 @@ export const apiRoutes = {
     (machineId, cwd, part) =>
       `/api/machines/${encode(machineId)}/command-palette${queryString({ cwd, part })}`
   ),
+  machineApps: get<import("./apiContract.js").MachineAppsPayload, (machineId: string, threadId?: string) => string>(
+    (machineId, threadId) => `/api/machines/${encode(machineId)}/apps${queryString({ threadId })}`
+  ),
+  reconcileMachinePlugins: post<{ reason?: string }, import("./apiContract.js").MachinePluginReconcilePayload, (machineId: string) => string>(
+    (machineId) => `/api/machines/${encode(machineId)}/plugins/reconcile`
+  ),
   generateCommitMessage: post<
     CommitMessageGenerationInput,
     CommitMessageGenerationPayload,

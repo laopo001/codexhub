@@ -12,6 +12,7 @@ import {
   threadRenameSchema,
   threadRunOptionsSchema,
   threadUserInputResponseSchema,
+  threadHistoryQuerySchema,
   webEventsMessageSchema,
   type RuntimeEnsurePayload,
   type RuntimeModelsPayload,
@@ -34,6 +35,8 @@ import {
   type ThreadStopPayload,
   type ThreadTurnPayload,
   type ThreadUserInputPayload,
+  type MachineAppsPayload,
+  type MachinePluginReconcilePayload,
   type WebEventsMessage
 } from "../shared/apiContract.js";
 
@@ -296,6 +299,35 @@ export const registerThreadRoutes = <
     }
   });
 
+  app.get("/api/machines/:machineId/apps", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
+    const query = z.object({ threadId: z.string().min(1).optional() }).parse(request.query);
+    try {
+      if (query.threadId) {
+        const thread = ctx.threads.getThread(query.threadId);
+        if (!thread || thread.runtime?.machineId !== params.machineId) {
+          reply.code(409);
+          return { error: "The selected thread does not belong to this machine." };
+        }
+      }
+      return await ctx.threads.listMachineApps(params.machineId, query.threadId) satisfies MachineAppsPayload;
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  app.post("/api/machines/:machineId/plugins/reconcile", async (request, reply) => {
+    const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
+    const body = z.object({ reason: z.string().trim().max(500).optional() }).strict().parse(request.body ?? {});
+    try {
+      return await ctx.threads.reconcileMachinePlugins(params.machineId, body.reason) satisfies MachinePluginReconcilePayload;
+    } catch (error) {
+      reply.code(409);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   app.post("/api/machines/:machineId/commit-message", async (request, reply) => {
     const params = z.object({ machineId: z.string().min(1) }).parse(request.params);
     const payload = commitMessageGenerationSchema.parse(request.body);
@@ -370,12 +402,9 @@ export const registerThreadRoutes = <
 
   app.get("/api/threads/:threadId/history", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
-    const query = z.object({
-      before: z.string().min(1).optional(),
-      limit: z.coerce.number().int().min(1).max(100).optional()
-    }).parse(request.query);
+    const query = threadHistoryQuerySchema.parse(request.query);
     try {
-      return ctx.threads.getThreadPage(params.threadId, query) satisfies ThreadDetail;
+      return await ctx.threads.loadThreadHistoryPage(params.threadId, query) satisfies ThreadDetail;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.startsWith("Thread not found:")) {

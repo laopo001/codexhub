@@ -47,9 +47,16 @@ export type AppServerCommandHost = {
     cwd: string,
     part: SessionCommand["commandPalettePart"]
   ) => Promise<SessionCommandPaletteResult>;
+  listApps?: (threadId?: string) => Promise<unknown>;
+  reconcilePlugins?: (reason: string | null) => Promise<unknown>;
   bindThread: (threadId: string, cwd: string) => void;
   unbindThread: (threadId: string) => Promise<void>;
   syncThreadTurns: (threadId: string) => Promise<void>;
+  loadThreadHistoryPage?: (
+    threadId: string,
+    snapshotId: string | undefined,
+    page: number | undefined
+  ) => Promise<unknown>;
   startThread: (cwd: string, model: string | null | undefined, command: CommandContext) => Promise<unknown>;
   loadThread: (
     threadId: string,
@@ -106,6 +113,14 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
   if (command.type === "list_command_palette") {
     return await host.listCommandPalette(command.workingDirectory, command.commandPalettePart);
   }
+  if (command.type === "list_apps") {
+    if (!host.listApps) throw new Error("Apps are unavailable on this runtime bridge");
+    return await host.listApps(command.threadId);
+  }
+  if (command.type === "reconcile_plugins") {
+    if (!host.reconcilePlugins) throw new Error("Plugin reconciliation is unavailable on this runtime bridge");
+    return await host.reconcilePlugins(typeof command.input === "string" ? command.input : null);
+  }
   if (command.type === "subscribe_thread_records") {
     const threadId = requireThreadId(command);
     host.bindThread(threadId, command.workingDirectory);
@@ -115,6 +130,14 @@ export const dispatchAppServerCommand = async (command: SessionCommand, host: Ap
   if (command.type === "unsubscribe_thread_records") {
     await host.unbindThread(requireThreadId(command));
     return;
+  }
+  if (command.type === "load_thread_history") {
+    if (!host.loadThreadHistoryPage) throw new Error("Thread history pagination is unavailable on this runtime bridge");
+    return await host.loadThreadHistoryPage(
+      requireThreadId(command),
+      command.historySnapshotId,
+      command.historyPage
+    );
   }
   if (command.type === "start_thread") {
     return await host.startThread(command.workingDirectory, modelForCommand(command, host.defaultModel), command);

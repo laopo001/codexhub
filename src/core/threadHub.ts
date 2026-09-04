@@ -80,7 +80,10 @@ import type {
   CommandPalettePart,
   SessionCommand,
   SessionCommandPaletteResult,
+  SessionAppsResult,
+  PluginReconcileResult,
   SessionEventInput,
+  SessionHistoryPageResult,
   SessionModelCatalogResult,
   SessionPermissionProfilesResult,
   SessionOfflineReason,
@@ -142,6 +145,7 @@ export class ThreadHub {
   }>();
   private readonly recordIndexes = new WeakMap<ThreadState, ThreadRecordIndex>();
   private readonly historySnapshots = new WeakMap<ThreadState, ThreadHistorySnapshotState>();
+  private readonly historyPageLoads = new Map<string, Promise<SessionHistoryPageResult>>();
   private readonly runtimeEvents: RuntimeStreamEvent[] = [];
   private readonly runtimeSubscribers = new Set<(event: RuntimeStreamEvent) => void>();
   private readonly autoNamingThreadIds = new Set<string>();
@@ -524,6 +528,81 @@ export class ThreadHub {
     };
   }
 
+  async loadThreadHistoryPage(
+    threadId: string,
+    options: { before?: string; limit?: number } = {}
+  ): Promise<ThreadDetail> {
+    const thread = this.requireThread(threadId);
+    const before = options.before?.trim();
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? defaultThreadHistoryPageSize)));
+    if (!before) return this.getThreadPage(threadId, { limit });
+
+    // before 指向当前缓存最早记录时，只有在官方分页尚未结束且本页不足时才向 owner machine 取旧页。
+    for (let attempts = 0; attempts < 100; attempts += 1) {
+      const page = this.getThreadPage(threadId, { before, limit });
+      const state = this.historySnapshots.get(thread);
+      if (page.records.length >= limit || !state || state.complete) return page;
+      const snapshotId = state.snapshotId;
+      const pageNumber = state.nextPage;
+      let result: SessionHistoryPageResult;
+      try {
+        result = await this.requestNextHistoryPage(thread, state);
+      } catch (error) {
+        const current = this.historySnapshots.get(thread);
+        // 重连可能已经换了官方 cursor 代次；旧命令失败时让本次 HTTP 请求继续使用新 head。
+        if (current && current.snapshotId !== snapshotId) continue;
+        throw error;
+      }
+      const current = this.historySnapshots.get(thread);
+      if (!result.loaded) {
+        if (current && current.snapshotId !== snapshotId) continue;
+        return page;
+      }
+      if (!current || current.snapshotId !== snapshotId) continue;
+      if (current.nextPage === pageNumber) return this.getThreadPage(threadId, { before, limit });
+    }
+    // 远端即使不断返回空页，也必须让 HTTP 请求有界结束，不能由异常 cursor 把服务端拖入死循环。
+    return this.getThreadPage(threadId, { before, limit });
+  }
+
+  private async requestNextHistoryPage(
+    thread: ThreadState,
+    state: ThreadHistorySnapshotState
+  ): Promise<SessionHistoryPageResult> {
+    const key = `${thread.threadId}:${state.snapshotId}:${state.nextPage}`;
+    const existing = this.historyPageLoads.get(key);
+    if (existing) return await existing;
+    const session = this.requireThreadSession(thread);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<SessionHistoryPageResult>(
+      commandId,
+      "load_thread_history",
+      thread.threadId,
+      60_000,
+      thread.workingDirectory
+    );
+    this.historyPageLoads.set(key, promise);
+    try {
+      try {
+        this.enqueueSessionCommand(session.sessionId, {
+          commandId,
+          type: "load_thread_history",
+          workingDirectory: thread.workingDirectory,
+          createdAt: new Date().toISOString(),
+          threadId: thread.threadId,
+          historySnapshotId: state.snapshotId,
+          historyPage: state.nextPage
+        });
+      } catch (error) {
+        this.rejectCommand(commandId, error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
+      return await promise;
+    } finally {
+      if (this.historyPageLoads.get(key) === promise) this.historyPageLoads.delete(key);
+    }
+  }
+
   attachSessionThread(sessionId: string, threadId: string, workingDirectory?: string): ThreadSummary {
     const session = this.requireOnlineSession(sessionId);
     const thread = this.ensureThread(threadId, session, {
@@ -702,6 +781,22 @@ export class ThreadHub {
       workingDirectory,
       part
     );
+  }
+
+  async listMachineApps(machineId: string, threadId?: string): Promise<SessionAppsResult> {
+    const session = this.requireOnlineRuntimeSession(machineId);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<SessionAppsResult>(commandId, "list_apps", threadId, 60_000, session.workingDirectory);
+    this.enqueueSessionCommand(session.sessionId, { commandId, type: "list_apps", threadId, workingDirectory: session.workingDirectory, createdAt: new Date().toISOString() });
+    return await promise;
+  }
+
+  async reconcileMachinePlugins(machineId: string, reason?: string): Promise<PluginReconcileResult> {
+    const session = this.requireOnlineRuntimeSession(machineId);
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<PluginReconcileResult>(commandId, "reconcile_plugins", undefined, 60_000, session.workingDirectory);
+    this.enqueueSessionCommand(session.sessionId, { commandId, type: "reconcile_plugins", input: reason, workingDirectory: session.workingDirectory, createdAt: new Date().toISOString() });
+    return await promise;
   }
 
   async generateCommitMessage(
@@ -2175,6 +2270,8 @@ export class ThreadHub {
         type: "agent_message",
         message: existingMessage + delta,
         phase,
+        ...(existingPayload?.delivery === "async" ? { delivery: "async" } : {}),
+        ...(Array.isArray(existingPayload?.questions) ? { questions: existingPayload.questions } : {}),
         status: "in_progress"
       },
       sourceThreadId: thread.threadId

@@ -41,6 +41,7 @@ import type {
   ThreadGoalView,
   WebRecordView
 } from "./types.js";
+import type { AgentQuestion, AgentQuestionAnswers } from "./helpers/agentQuestions.js";
 
 type MaybePromise<T = void> = T | Promise<T>;
 
@@ -130,6 +131,12 @@ export type ThreadConversationProps = {
     userInputId: string,
     answers: AppServerUserInputAnswers
   ) => MaybePromise;
+  onAgentQuestionResponse?: (
+    threadId: string,
+    recordId: string,
+    questions: AgentQuestion[],
+    answers: AgentQuestionAnswers
+  ) => boolean | Promise<boolean>;
   onForkMessage?: (threadId: string, recordId: string) => MaybePromise;
 };
 
@@ -226,6 +233,7 @@ export const ThreadConversation = ({
   onToggleToolBatch,
   onApprovalDecision,
   onUserInputResponse,
+  onAgentQuestionResponse,
   onForkMessage
 }: ThreadConversationProps) => {
   const localMessagesRef = React.useRef<VirtuosoHandle | null>(null);
@@ -324,6 +332,11 @@ export const ThreadConversation = ({
   const loadOlderMessages = React.useCallback(async () => {
     if (loadingOlderRef.current || !thread.history?.hasOlder) return;
     loadingOlderRef.current = true;
+    // 连续翻页时上一轮的释放定时器不能清除本轮仍在等待的滚动锚点保护。
+    if (historyPrependReleaseTimerRef.current !== null) {
+      window.clearTimeout(historyPrependReleaseTimerRef.current);
+      historyPrependReleaseTimerRef.current = null;
+    }
     historyPrependRef.current = true;
     messagesShouldFollowRef.current = false;
     setLoadingOlder(true);
@@ -526,6 +539,7 @@ export const ThreadConversation = ({
         renderToolPreview
         renderMode={renderMode}
         markdownEnabled={markdownEnabled}
+        threadId={thread.threadId}
         threadMachineId={thread.runtime.machineId}
         threadWorkingDirectory={thread.workingDirectory}
         onRenderModeChange={markdownEnabled && onMessageRenderModeChange
@@ -556,6 +570,7 @@ export const ThreadConversation = ({
         onUserInputResponse={onUserInputResponse
           ? (userInputId, answers) => onUserInputResponse(thread.threadId, userInputId, answers)
           : undefined}
+        onAgentQuestionResponse={onAgentQuestionResponse}
         onFork={onForkMessage && canForkAtMessage(thread.threadId, message)
           ? () => void onForkMessage(thread.threadId, message.record.id)
           : undefined}
@@ -578,6 +593,7 @@ export const ThreadConversation = ({
     onOpenSubagentThread,
     onToggleToolBatch,
     onUserInputResponse,
+    onAgentQuestionResponse,
     thread.threadId,
     thread.workingDirectory
   ]);

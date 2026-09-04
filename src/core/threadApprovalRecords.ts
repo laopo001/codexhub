@@ -120,6 +120,7 @@ export const userInputRecord = (userInput: PendingUserInput, errorMessage?: stri
   payload: {
     type: "user_input_request",
     questions: userInput.questions,
+    ...(userInput.isBlocking === undefined ? {} : { isBlocking: userInput.isBlocking }),
     response: userInput.answers ?? null,
     error: userInput.status === "failed"
       ? { message: errorMessage ?? "User input request failed." }

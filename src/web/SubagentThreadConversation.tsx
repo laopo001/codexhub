@@ -125,6 +125,7 @@ export const SubagentThreadConversation = ({
       }}
       onApprovalDecision={workspace.respondToApproval}
       onUserInputResponse={workspace.respondToUserInput}
+      onAgentQuestionResponse={workspace.respondToAgentQuestions}
     />
   );
 };

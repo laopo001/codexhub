@@ -54,6 +54,7 @@ class CurrentProtocolSocket implements AppServerSocketLike {
     turnSnapshots?: unknown[][][];
     failTurnPageOnce?: number;
     repeatTurnCursor?: boolean;
+    delayTurnListResponseMs?: number;
     backgroundTerminals?: unknown[];
     generatedTitle?: string;
     generatedCommitMessage?: string;
@@ -181,7 +182,7 @@ class CurrentProtocolSocket implements AppServerSocketLike {
     } else if (message.method === "turn/start") {
       result = { turn: { id: "immediate-turn" } };
     }
-    queueMicrotask(() => {
+    const respond = () => {
       this.emit("message", {
         data: JSON.stringify({ id: message.id, result })
       });
@@ -251,7 +252,12 @@ class CurrentProtocolSocket implements AppServerSocketLike {
           })
         });
       }
-    });
+    };
+    if (message.method === "thread/turns/list" && (this.options.delayTurnListResponseMs ?? 0) > 0) {
+      setTimeout(respond, this.options.delayTurnListResponseMs);
+    } else {
+      queueMicrotask(respond);
+    }
   }
 
   requestCount(method: string) {
@@ -889,16 +895,9 @@ test("runtime excludes resume turns and unsubscribes app-server thread records",
       threadId: "history-thread"
     };
     await callbacks.handleCommand({ ...baseCommand, type: "subscribe_thread_records" });
-    assert.deepEqual(socket.turnsListParams.slice(0, 2), [
+    assert.deepEqual(socket.turnsListParams.slice(0, 1), [
       {
         threadId: "history-thread",
-        limit: 50,
-        sortDirection: "desc",
-        itemsView: "full"
-      },
-      {
-        threadId: "history-thread",
-        cursor: "turn-page-1",
         limit: 50,
         sortDirection: "desc",
         itemsView: "full"
@@ -913,7 +912,7 @@ test("runtime excludes resume turns and unsubscribes app-server thread records",
       snapshotId?: string;
       page?: number;
     }>;
-    assert.deepEqual(snapshots.slice(0, 2).map((snapshot) => ({
+    assert.deepEqual(snapshots.slice(0, 1).map((snapshot) => ({
       ids: snapshot.turns.map((turn) => turn.id),
       head: snapshot.head,
       complete: snapshot.complete,
@@ -924,21 +923,50 @@ test("runtime excludes resume turns and unsubscribes app-server thread records",
         head: true,
         complete: false,
         page: 0
-      },
-      {
-        ids: ["old-turn"],
-        head: false,
-        complete: true,
-        page: 1
       }
     ]);
     assert.equal(typeof snapshots[0].snapshotId, "string");
-    assert.equal(snapshots[1].snapshotId, snapshots[0].snapshotId);
-    await callbacks.handleCommand({ ...baseCommand, seq: 2, commandId: "unsubscribe-command", type: "unsubscribe_thread_records" });
+    assert.equal(snapshots[0].complete, false);
+    await callbacks.handleCommand({
+      ...baseCommand,
+      seq: 2,
+      commandId: "history-page-command",
+      type: "load_thread_history",
+      historySnapshotId: snapshots[0].snapshotId,
+      historyPage: 1
+    });
+    assert.deepEqual(socket.turnsListParams.at(-1), {
+      threadId: "history-thread",
+      cursor: "turn-page-1",
+      limit: 50,
+      sortDirection: "desc",
+      itemsView: "full"
+    });
+    const loadedPage = forwardedEvents.filter((event) =>
+      (event as { type?: string }).type === "thread_turns_snapshot"
+    ).at(-1) as typeof snapshots[number];
+    assert.deepEqual(loadedPage.turns.map((turn) => turn.id), ["old-turn"]);
+    assert.equal(loadedPage.head, false);
+    assert.equal(loadedPage.complete, true);
+    assert.equal(loadedPage.snapshotId, snapshots[0].snapshotId);
+    await callbacks.handleCommand({ ...baseCommand, seq: 3, commandId: "unsubscribe-command", type: "unsubscribe_thread_records" });
     assert.equal(socket.unsubscribeRequests, 1);
-    await callbacks.handleCommand({ ...baseCommand, seq: 3, commandId: "resubscribe-command", type: "subscribe_thread_records" });
+    await callbacks.handleCommand({ ...baseCommand, seq: 4, commandId: "resubscribe-command", type: "subscribe_thread_records" });
     assert.equal(socket.resumeRequests, 2);
     assert.equal(socket.resumeParams.at(-1)?.excludeTurns, true);
+    const reboundHead = forwardedEvents.filter((event) =>
+      (event as { type?: string; head?: boolean }).type === "thread_turns_snapshot"
+      && (event as { head?: boolean }).head === true
+    ).at(-1) as { snapshotId?: string } | undefined;
+    assert.notEqual(reboundHead?.snapshotId, snapshots[0].snapshotId);
+    await assert.rejects(callbacks.handleCommand({
+      ...baseCommand,
+      seq: 5,
+      commandId: "stale-history-page-command",
+      type: "load_thread_history",
+      historySnapshotId: snapshots[0].snapshotId,
+      historyPage: 1
+    }), /Stale thread history snapshot/);
   } finally {
     await session.stop();
   }
@@ -1009,7 +1037,7 @@ test("runtime projects per-thread experimental background terminals and refreshe
   }
 });
 
-test("runtime retries a partial turns snapshot from the head while the thread remains subscribed", async (context) => {
+test("runtime retries a failed on-demand history page without rereading the head", async (context) => {
   context.mock.method(console, "error", () => undefined);
   const socket = new CurrentProtocolSocket({
     validResume: true,
@@ -1037,30 +1065,45 @@ test("runtime retries a partial turns snapshot from the head while the thread re
   });
   try {
     assert.ok(callbacks);
+    const baseCommand = {
+      seq: 1,
+      commandId: "retry-subscription-command",
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: new Date(0).toISOString(),
+      threadId: "retry-history-thread"
+    };
+    await callbacks.handleCommand({ ...baseCommand, type: "subscribe_thread_records" });
+    const head = forwardedEvents.find((event) =>
+      (event as { type?: string; head?: boolean }).type === "thread_turns_snapshot"
+      && (event as { head?: boolean }).head === true
+    ) as { snapshotId?: string } | undefined;
+    assert.equal(typeof head?.snapshotId, "string");
     await assert.rejects(
       callbacks.handleCommand({
-        seq: 1,
-        commandId: "retry-subscription-command",
-        type: "subscribe_thread_records",
-        workingDirectory: "/tmp/current-protocol",
-        createdAt: new Date(0).toISOString(),
-        threadId: "retry-history-thread"
+        ...baseCommand,
+        commandId: "retry-history-page-command",
+        type: "load_thread_history",
+        historySnapshotId: head?.snapshotId,
+        historyPage: 1
       }),
       /page 1 failed/
     );
-    await waitForCondition(() => forwardedEvents.some((event) => {
-      const snapshot = event as { type?: string; complete?: boolean };
-      return snapshot.type === "thread_turns_snapshot" && snapshot.complete === true;
-    }));
+    assert.equal(socket.turnsListParams.length, 2);
+    await callbacks.handleCommand({
+      ...baseCommand,
+      commandId: "retry-history-page-command-2",
+      type: "load_thread_history",
+      historySnapshotId: head?.snapshotId,
+      historyPage: 1
+    });
 
     const snapshots = forwardedEvents.filter((event) =>
       (event as { type?: string }).type === "thread_turns_snapshot"
     ) as Array<{ snapshotId?: string; page?: number; complete?: boolean }>;
-    assert.deepEqual(snapshots.map((snapshot) => snapshot.page), [0, 0, 1]);
+    assert.deepEqual(snapshots.map((snapshot) => snapshot.page), [0, 1]);
     assert.equal(snapshots[0].complete, false);
-    assert.notEqual(snapshots[1].snapshotId, snapshots[0].snapshotId);
-    assert.equal(snapshots[2].snapshotId, snapshots[1].snapshotId);
-    assert.equal(snapshots[2].complete, true);
+    assert.equal(snapshots[1].snapshotId, snapshots[0].snapshotId);
+    assert.equal(snapshots[1].complete, true);
   } finally {
     await session.stop();
   }
@@ -1120,6 +1163,141 @@ test("runtime stabilizes a successful thread snapshot after a fresh resume", asy
   }
 });
 
+test("runtime advances through an empty history page when the cursor advances", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket({
+    validResume: true,
+    turnPages: [
+      [{ id: "newest-turn" }],
+      [],
+      [{ id: "old-turn" }]
+    ]
+  });
+  const forwardedEvents: unknown[] = [];
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
+    appServerTransportFactory: async () => socket,
+    cwd: "/tmp/current-protocol",
+    threadTurnsStabilizationDelaysMs: [],
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return {
+        ...transportFactory(transportContext, nextCallbacks),
+        sendEvent: (event) => forwardedEvents.push(event)
+      };
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    const baseCommand = {
+      seq: 1,
+      commandId: "empty-history-subscription",
+      type: "subscribe_thread_records" as const,
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: new Date(0).toISOString(),
+      threadId: "empty-history-thread"
+    };
+    await callbacks.handleCommand(baseCommand);
+    const head = forwardedEvents.find((event) => (event as { head?: boolean }).head === true) as { snapshotId: string };
+    await callbacks.handleCommand({
+      ...baseCommand,
+      commandId: "empty-history-page-1",
+      type: "load_thread_history",
+      historySnapshotId: head.snapshotId,
+      historyPage: 1
+    });
+    await callbacks.handleCommand({
+      ...baseCommand,
+      commandId: "empty-history-page-2",
+      type: "load_thread_history",
+      historySnapshotId: head.snapshotId,
+      historyPage: 2
+    });
+    const snapshots = forwardedEvents.filter((event) =>
+      (event as { type?: string }).type === "thread_turns_snapshot"
+    ) as Array<{ page?: number; turns: unknown[]; complete?: boolean }>;
+    assert.deepEqual(snapshots.map((snapshot) => snapshot.page), [0, 1, 2]);
+    assert.deepEqual(snapshots[1].turns, []);
+    assert.equal(snapshots[1].complete, false);
+    assert.equal(snapshots[2].complete, true);
+  } finally {
+    await session.stop();
+  }
+});
+
+test("runtime deduplicates concurrent history page loads and drops a page after unbind", async (context) => {
+  context.mock.method(console, "error", () => undefined);
+  const socket = new CurrentProtocolSocket({
+    validResume: true,
+    delayTurnListResponseMs: 30,
+    turnPages: [[{ id: "newest-turn" }], [{ id: "old-turn" }], [{ id: "oldest-turn" }]]
+  });
+  const forwardedEvents: unknown[] = [];
+  let callbacks: HeadlessSessionTransportCallbacks | undefined;
+  const session = await startAttachedCodexhubSession({
+    apiBase: "http://127.0.0.1:1",
+    appServerUrl: "ws://127.0.0.1:1",
+    machineId: "machine-current-protocol",
+    appServerTransportFactory: async () => socket,
+    cwd: "/tmp/current-protocol",
+    threadTurnsStabilizationDelaysMs: [],
+    transportFactory: (transportContext, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return {
+        ...transportFactory(transportContext, nextCallbacks),
+        sendEvent: (event) => forwardedEvents.push(event)
+      };
+    }
+  });
+  try {
+    assert.ok(callbacks);
+    const baseCommand = {
+      seq: 1,
+      commandId: "dedupe-history-subscription",
+      type: "subscribe_thread_records" as const,
+      workingDirectory: "/tmp/current-protocol",
+      createdAt: new Date(0).toISOString(),
+      threadId: "dedupe-history-thread"
+    };
+    await callbacks.handleCommand(baseCommand);
+    const head = forwardedEvents.find((event) => (event as { head?: boolean }).head === true) as { snapshotId: string };
+    const first = callbacks.handleCommand({
+      ...baseCommand,
+      commandId: "dedupe-history-page-1",
+      type: "load_thread_history",
+      historySnapshotId: head.snapshotId,
+      historyPage: 1
+    });
+    const second = callbacks.handleCommand({
+      ...baseCommand,
+      commandId: "dedupe-history-page-2",
+      type: "load_thread_history",
+      historySnapshotId: head.snapshotId,
+      historyPage: 1
+    });
+    await Promise.all([first, second]);
+    assert.equal(socket.turnsListParams.length, 2);
+
+    const unboundLoad = callbacks.handleCommand({
+      ...baseCommand,
+      commandId: "unbind-race-page",
+      type: "load_thread_history",
+      historySnapshotId: head.snapshotId,
+      historyPage: 2
+    });
+    await waitForCondition(() => socket.turnsListParams.length === 3);
+    await callbacks.handleCommand({ ...baseCommand, commandId: "unbind-race", type: "unsubscribe_thread_records" });
+    const result = await unboundLoad;
+    assert.deepEqual(result, { loaded: false, snapshotId: head.snapshotId, page: 2, complete: false });
+    assert.equal(forwardedEvents.filter((event) => (event as { type?: string }).type === "thread_turns_snapshot").length, 2);
+  } finally {
+    await session.stop();
+  }
+});
+
 test("runtime rejects a repeated turns cursor instead of imposing a history page limit", async (context) => {
   context.mock.method(console, "error", () => undefined);
   const socket = new CurrentProtocolSocket({
@@ -1130,6 +1308,7 @@ test("runtime rejects a repeated turns cursor instead of imposing a history page
       [{ id: "old-turn" }]
     ]
   });
+  const forwardedEvents: unknown[] = [];
   let callbacks: HeadlessSessionTransportCallbacks | undefined;
   const session = await startAttachedCodexhubSession({
     apiBase: "http://127.0.0.1:1",
@@ -1139,7 +1318,10 @@ test("runtime rejects a repeated turns cursor instead of imposing a history page
     cwd: "/tmp/current-protocol",
     transportFactory: (transportContext, nextCallbacks) => {
       callbacks = nextCallbacks;
-      return transportFactory(transportContext, nextCallbacks);
+      return {
+        ...transportFactory(transportContext, nextCallbacks),
+        sendEvent: (event) => forwardedEvents.push(event)
+      };
     }
   });
   try {
@@ -1152,7 +1334,19 @@ test("runtime rejects a repeated turns cursor instead of imposing a history page
       createdAt: new Date(0).toISOString(),
       threadId: "repeated-cursor-thread"
     };
-    await assert.rejects(callbacks.handleCommand(baseCommand), /repeated cursor/);
+    await callbacks.handleCommand({ ...baseCommand, type: "subscribe_thread_records" });
+    const head = forwardedEvents.find((event) =>
+      (event as { type?: string; head?: boolean }).type === "thread_turns_snapshot"
+      && (event as { head?: boolean }).head === true
+    ) as { snapshotId?: string } | undefined;
+    assert.equal(typeof head?.snapshotId, "string");
+    await assert.rejects(callbacks.handleCommand({
+      ...baseCommand,
+      commandId: "repeated-cursor-page",
+      type: "load_thread_history",
+      historySnapshotId: head?.snapshotId,
+      historyPage: 1
+    }), /repeated cursor/);
     assert.equal(socket.turnsListParams.length, 2);
     await callbacks.handleCommand({
       ...baseCommand,
@@ -1339,4 +1533,42 @@ test("attached runtime rejects app-server versions below the protocol baseline",
     }),
     /0\.144\.4 or newer.*found 0\.143\.9/
   );
+});
+
+test("旧页响应不能覆盖后续头页的分页代次", async () => {
+ const events: any[]=[];
+ const socket=new CurrentProtocolSocket({validResume:true,turnPages:[[{id:"turn-head",items:[],status:"completed"}],[{id:"turn-old",items:[],status:"completed"}]]});
+ const originalSend=socket.send.bind(socket);let pending:any;
+ socket.send=(data:string)=>{const msg=JSON.parse(data);if(msg.method==="thread/turns/list"&&msg.params?.cursor){pending=msg;return;}originalSend(data);};
+ let callbacks:any;
+ const session=await startAttachedCodexhubSession({apiBase:"http://127.0.0.1:1",appServerUrl:"ws://127.0.0.1:1",machineId:"audit",cwd:"/tmp/current-protocol",appServerTransportFactory:async()=>socket,transportFactory:(context,next)=>{callbacks=next;return {...transportFactory(context,next),sendEvent:(e:any)=>events.push(e)};}});
+ const command={seq:1,commandId:"start",type:"subscribe_thread_records",threadId:"thread-a",workingDirectory:"/tmp/current-protocol",createdAt:new Date().toISOString()};
+ try{
+ await callbacks.handleCommand(command);
+ const headA=events.filter(e=>e.type==="thread_turns_snapshot"&&e.head).at(-1);
+ const loading=callbacks.handleCommand({...command,type:"load_thread_history",commandId:"old",historySnapshotId:headA.snapshotId,historyPage:1});
+ await waitForCondition(()=>!!pending);
+ await callbacks.handleCommand({...command,commandId:"refresh"});
+ const headB=events.filter(e=>e.type==="thread_turns_snapshot"&&e.head).at(-1);
+ assert.notEqual(headA.snapshotId,headB.snapshotId);
+ socket.emitServerRequest({id:pending.id,result:{data:[],nextCursor:"WRONG-OLD-CURSOR"}});
+ let answer:any;try{answer=await loading;}catch(e){answer={loaded:false};}
+ assert.equal(answer.loaded,false,"旧snapshot返回后应被丢弃，而不是覆盖新分页状态");
+ }finally{await session.stop();}
+});
+
+test("历史cursor跨页循环必须立即拒绝", async () => {
+ const events:any[]=[];
+ const socket=new CurrentProtocolSocket({validResume:true,turnPages:[[{id:"head",items:[],status:"completed"}],[]]});
+ const send=socket.send.bind(socket);
+ socket.send=(data:string)=>{const msg=JSON.parse(data);if(msg.method==='thread/turns/list'&&msg.params?.cursor){queueMicrotask(()=>socket.emitServerRequest({id:msg.id,result:{data:[],nextCursor:msg.params.cursor==='turn-page-1'?'turn-page-2':'turn-page-1'}}));return;}send(data);};
+ let callbacks:any;
+ const session=await startAttachedCodexhubSession({apiBase:'http://127.0.0.1:1',appServerUrl:'ws://127.0.0.1:1',machineId:'cycle-audit',cwd:'/tmp/current-protocol',appServerTransportFactory:async()=>socket,transportFactory:(context,next)=>{callbacks=next;return {...transportFactory(context,next),sendEvent:(e:any)=>events.push(e)};}});
+ const command={seq:1,commandId:'start',type:'subscribe_thread_records',threadId:'thread-a',workingDirectory:'/tmp/current-protocol',createdAt:new Date().toISOString()};
+ try{
+ await callbacks.handleCommand(command);
+ const head=events.filter(e=>e.type==='thread_turns_snapshot'&&e.head).at(-1);
+ await callbacks.handleCommand({...command,type:'load_thread_history',commandId:'page1',historySnapshotId:head.snapshotId,historyPage:1});
+ await assert.rejects(callbacks.handleCommand({...command,type:'load_thread_history',commandId:'page2',historySnapshotId:head.snapshotId,historyPage:2}),/cursor/i);
+ }finally{await session.stop();}
 });

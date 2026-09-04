@@ -826,6 +826,8 @@ export const threadCandidateSnippet = (candidate: CodexThreadCandidate) => {
 };
 
 export const threadCandidateStats = (candidate: CodexThreadCandidate) => [
+  `model: ${candidate.model || "unknown"}`,
+  `reasoning: ${candidate.reasoningEffort || "unknown"}`,
   candidate.messageCount > 0 ? `${candidate.messageCount} messages` : null,
   candidate.artifactCount > 0 ? `${candidate.artifactCount} artifacts` : null
 ].filter(Boolean).join(" · ");

@@ -102,7 +102,7 @@ const insertTextBlock = (value: string, text: string, start = value.length, end 
 };
 
 export type ComposerActions = {
-  loadCommandPalette: (machineId: string, cwd: string) => Promise<void>;
+  loadCommandPalette: (machineId: string, cwd: string, force?: boolean) => Promise<void>;
   setThreadComposerMode: (threadId: string, mode: OpenThreadState["composerMode"]) => void;
   setThreadApprovalPolicyDraft: (
     threadId: string,
@@ -155,9 +155,9 @@ export type ComposerActions = {
 };
 
 export const createComposerActions = (ctx: ComposerActionsContext, deps: ComposerActionsDependencies): ComposerActions => {
-  const loadCommandPalette = async (machineId: string, cwd: string) => {
+  const loadCommandPalette = async (machineId: string, cwd: string, force = false) => {
     const key = commandPaletteCacheKey(machineId, cwd);
-    if (ctx.commandPaletteByScope[key] || ctx.commandPaletteLoadingScopes[key]) return;
+    if ((!force && ctx.commandPaletteByScope[key]) || ctx.commandPaletteLoadingScopes[key]) return;
     ctx.setCommandPaletteLoadingScopes((current) => ({ ...current, [key]: true }));
     try {
       const payload = await apiRouteJson(apiRoutes.commandPalette, machineId, cwd, "core");

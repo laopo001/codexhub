@@ -238,6 +238,7 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
       at: record.timestamp,
       status,
       statusText,
+      ...(Array.isArray(payload.questions) ? { agentQuestions: payload.questions as CodexRecordView["agentQuestions"] } : {}),
       canFork: phase === "final_answer" && !isActiveRecordStatus(status),
       record
     };

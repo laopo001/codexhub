@@ -185,6 +185,8 @@ export type AppServerUserInputRequest = {
   itemId?: string;
   createdAt: string;
   questions: AppServerUserInputQuestion[];
+  /** 官方 request_user_input 是否会阻塞当前 turn。旧协议缺失时保持传统阻塞行为。 */
+  isBlocking?: boolean;
   params: unknown;
 };
 
@@ -196,7 +198,7 @@ export type ThreadDetail = ThreadSummary & {
   lastSeq: number;
   /** 当前 thread 仍由 app-server 管理的后台终端，不属于 transcript。 */
   backgroundTerminals?: ThreadBackgroundTerminals;
-  /** Web 当前加载的 transcript 窗口；完整 records 仍由 backend memory projection 保留。 */
+  /** Web 当前加载的 transcript 窗口；backend 只镜像已按需读取的官方历史。 */
   history?: ThreadHistoryPageInfo;
 };
 
@@ -232,6 +234,10 @@ export type ThreadCandidateSummary = {
   lastAssistantMessage: string;
   artifactCount: number;
   messageCount: number;
+  /** app-server 当前配置或最近持久化的模型；旧协议缺失时为 undefined。 */
+  model?: string | null;
+  /** app-server 当前配置或最近持久化的 reasoning effort；旧协议缺失时为 undefined。 */
+  reasoningEffort?: string | null;
 };
 
 /** app-server model/list 返回的 reasoning effort 选项，已归一化为 Web/API 稳定字段。 */
@@ -394,6 +400,9 @@ export type SessionCommand = {
     | "list_models"
     | "list_permission_profiles"
     | "list_command_palette"
+    | "list_apps"
+    | "reconcile_plugins"
+    | "load_thread_history"
     | "start_thread"
     | "resume_thread"
     | "subscribe_thread_records"
@@ -422,6 +431,9 @@ export type SessionCommand = {
   reviewTarget?: { type: "uncommittedChanges" };
   options?: ThreadRunOptions;
   creationOptions?: ThreadCreationOptions;
+  /** 只供 bridge/ThreadHub 校验历史分页代次，不对 Web 暴露官方 cursor。 */
+  historySnapshotId?: string;
+  historyPage?: number;
 };
 
 /** list_threads 命令返回的 thread 候选集合。 */
@@ -447,6 +459,27 @@ export type SessionCommandPaletteResult = {
   palette: CommandPalette;
 };
 
+export type AppInstalledSummary = { id: string; runtimeName: string | null; enabled: boolean; callable: boolean; accessible?: boolean | null };
+export type AppMetadataSummary = {
+  id: string; name: string; description: string | null; iconUrl: string | null; iconUrlDark: string | null;
+  distributionChannel: string | null; installUrl: string | null; pluginDisplayNames: string[];
+  tools: Array<{ name: string; title: string | null; description: string; enabled: boolean; disabledReason: string | null; readOnly: boolean }> | null;
+};
+export type SessionAppsResult = { installed: AppInstalledSummary[]; metadata: AppMetadataSummary[]; missingAppIds: string[]; warnings?: string[] };
+export type PluginReconcileResult = {
+  changedPlugins: Array<{ id: string; hasMcps: boolean; hasApps: boolean; hasHooks: boolean; hasSkills: boolean }>;
+  failedRemotePluginIds: string[];
+  failedMaterializationRemotePluginIds: string[];
+};
+
+/** bridge 读取一页历史后的内部确认结果。 */
+export type SessionHistoryPageResult = {
+  loaded: boolean;
+  snapshotId: string;
+  page: number;
+  complete: boolean;
+};
+
 /** start_thread/resume_thread 命令返回的 thread 标识和可选 app-server metadata。 */
 export type SessionThreadCommandResult = {
   threadId: string;
@@ -459,6 +492,9 @@ export type SessionCommandResult =
   | SessionModelCatalogResult
   | SessionPermissionProfilesResult
   | SessionCommandPaletteResult
+  | SessionAppsResult
+  | PluginReconcileResult
+  | SessionHistoryPageResult
   | SessionThreadCommandResult
   | { terminated: boolean }
   | { ok?: boolean }

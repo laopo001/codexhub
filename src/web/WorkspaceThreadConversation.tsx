@@ -226,6 +226,7 @@ export const WorkspaceThreadConversation = ({ workspace, threadId }: WorkspaceTh
       }}
       onApprovalDecision={respondToApproval}
       onUserInputResponse={respondToUserInput}
+      onAgentQuestionResponse={workspace.respondToAgentQuestions}
       onForkMessage={forkMessage}
     />
   );

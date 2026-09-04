@@ -36,6 +36,36 @@ test("image generation records preserve the official result payload", () => {
   assert.equal((record?.payload as { saved_path?: string })?.saved_path, "/tmp/image-1.png");
 });
 
+test("agent messages preserve async delivery and nullable question options", () => {
+  const record = codexRecordFromAppServerItem("async-thread", "turn-1", {
+    type: "agentMessage",
+    id: "agent-1",
+    text: "Could you clarify?",
+    phase: "commentary",
+    delivery: "async",
+    questions: [
+      { title: "Target", options: ["web", "desktop"] },
+      { title: "Details", options: null }
+    ]
+  });
+  assert.deepEqual((record?.payload as Record<string, unknown>), {
+    type: "agent_message",
+    message: "Could you clarify?",
+    phase: "commentary",
+    delivery: "async",
+    questions: [
+      { title: "Target", options: ["web", "desktop"] },
+      { title: "Details", options: null }
+    ]
+  });
+  const view = recordToView(record!);
+  assert.deepEqual(view?.agentQuestions, [
+    { title: "Target", options: ["web", "desktop"] },
+    { title: "Details", options: null }
+  ]);
+  assert.equal(view?.text, "Could you clarify?");
+});
+
 test("subAgentActivity remains lossless and gets a readable record view", () => {
   const item = {
     type: "subAgentActivity",

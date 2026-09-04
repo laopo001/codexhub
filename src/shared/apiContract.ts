@@ -50,6 +50,8 @@ import type {
   ThreadRunOptions,
   ThreadStreamEvent,
   ThreadSummary
+  ,SessionAppsResult
+  ,PluginReconcileResult
 } from "./threadTypes.js";
 
 export type {
@@ -380,6 +382,8 @@ export type ThreadStopPayload = {
 export type ThreadBackgroundTerminalTerminatePayload = {
   terminated?: boolean;
 };
+export type MachineAppsPayload = SessionAppsResult;
+export type MachinePluginReconcilePayload = PluginReconcileResult;
 
 /** thread context compact mutation 返回值。 */
 export type ThreadCompactPayload = {
@@ -662,6 +666,7 @@ const appServerUserInputRequestSchema = z.object({
   itemId: z.string().min(1).optional(),
   createdAt: z.string().min(1),
   questions: z.array(appServerUserInputQuestionSchema),
+  isBlocking: z.boolean().optional(),
   params: z.unknown()
 }).strict();
 
@@ -1146,6 +1151,12 @@ export const machineThreadInputSchema = z.discriminatedUnion("action", [
     cwd: z.string().min(1).optional()
   }).strict()
 ]);
+
+/** 旧历史请求只允许以 record id 向前翻页；不把 app-server cursor 暴露给 Web。 */
+export const threadHistoryQuerySchema = z.object({
+  before: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional()
+}).strict();
 
 export type MachineThreadInput = z.infer<typeof machineThreadInputSchema>;
 export type DeveloperInstructionCreateInput = z.infer<typeof developerInstructionCreateSchema>;

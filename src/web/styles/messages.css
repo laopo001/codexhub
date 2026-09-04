@@ -2146,6 +2146,64 @@
   justify-self: start;
 }
 
+.agentQuestionForm {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #cfe0d0;
+  border-radius: 8px;
+  background: #f7fbf6;
+}
+
+.agentQuestionFormTitle {
+  color: #31563b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agentQuestion {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.agentQuestion legend {
+  padding: 0;
+  color: #334337;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agentQuestionOptions {
+  display: grid;
+  gap: 4px;
+  color: #405244;
+  font-size: 12px;
+}
+
+.agentQuestionOptions label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.agentQuestionError {
+  margin: 0;
+  color: #b94332;
+  font-size: 12px;
+}
+
+.agentQuestionAnswered {
+  margin-top: 10px;
+  color: #46704c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .sidebarScrim,
 .sidebarPanelToggle,
 .composerIconButton,

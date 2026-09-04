@@ -144,6 +144,7 @@ const pendingInteraction = (record: CodexRecord) => {
   if (approval?.status === "pending") return true;
   const userInput = asRecord(payload.userInput);
   return payload.type === "user_input_request"
+    && payload.isBlocking !== false
     && (userInput?.status === "pending" || normalizedStatus(payload.status) === "pending_user_input");
 };
 

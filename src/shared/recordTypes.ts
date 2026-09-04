@@ -52,5 +52,7 @@ export type CodexRecordView = {
   statusDurationMs?: number;
   canFork?: boolean;
   subagentActivity?: SubagentActivityView;
+  /** Astra 等模型产生的异步澄清问题；问题没有选项时为 null。 */
+  agentQuestions?: Array<{ title: string; options: string[] | null }>;
   record: CodexRecord;
 };

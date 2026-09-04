@@ -135,6 +135,14 @@ VS Code 的 `settings.json` 只保存插件自身的工具模型和 Git 提交�
 
 server 在线时，每台 machine 最多维护一个官方 app-server runtime；内部进程代次使用 `sessionId` 传输，但公共 API、Web state、task history 和 thread 投影都以稳定 `machineId` 表达。该 runtime 会同步官方 app-server 的 thread/turn/item/rawResponseItem/tokenUsage 事件，并接收 Web、Telegram、task 或 API 对具体 `threadId` 的远程 turn。`/api/runtimes` 按 machine 投影当前状态，不暴露内部 session ID 或 app-server URL。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/runtimes/tasks/connections 和页面 thread tabs 的事件订阅。Thread context usage 由 server 从 `thread/tokenUsage/updated` 计算；账号 rate limits 独立从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 runtime 投影，Web 合并两者展示。Thread Model 和 Composer Permissions 分别通过 `/api/machines/:machineId/models`、`/api/machines/:machineId/permission-profiles` 读取当前在线 runtime 的 catalog，不写入 `config.yaml`，也不维护静态 fallback。Web Context 旁的 Compact 按钮和 `/api/threads/:threadId/compact` 会调用官方 app-server `thread/compact/start`，compact 进度继续由 app-server record 流显示。Composer menu 里的 Review changes 和 `/api/threads/:threadId/review` 会调用官方 app-server `review/start`，默认 review 当前 workspace 未提交改动并 inline 跑在当前 thread。
 
+
+### Codex Apps 与插件同步
+
+`GET /api/machines/:machineId/apps` 从该 machine 的官方 app-server 读取安装快照、账号可访问状态和展示元数据，可选 `threadId` 只允许属于该 machine 的已知 thread。`enabled`、`callable` 与 `accessible` 含义不同；可访问性未知时返回 `null`。元数据读取失败会保留安装快照并附带警告，不伪造空目录。
+
+`POST /api/machines/:machineId/plugins/reconcile` 是显式的 Codex 插件同步动作，返回变更及失败列表，随后客户端重新读取 Apps 与 Command Palette。同步成功不表示所有工具已就绪。这些插件属于 machine 的 Codex runtime，与 `/api/plugins` 提供的 CodexHub PluginHub 独立。旧 CLI 缺少这些 RPC 时会明确返回不支持；最低支持版本仍为 `0.144.4`。
+
+
 ## Codex 宠物
 
 Web 和 VS Code 的 Pet 入口只在当前 web window 内显示悬浮宠物。Electron 除了当前 web window 宠物，还可以在 Settings → Pet 中打开独立的桌面宠物；它是透明、置顶、可拖动的 Electron 窗口，不会被主窗口边界限制。宠物汇总当前打开 threads 的状态，按 `Needs input`、`Blocked`、`Ready`、`Running`、`Idle` 显示动画和活动面板；点宠物可以查看需要处理的 thread。只有 Electron 可以打开或关闭桌面宠物。

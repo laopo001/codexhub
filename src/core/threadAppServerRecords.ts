@@ -36,6 +36,19 @@ export const codexRecordFromAppServerItem = (
 
   if (itemType === "agentMessage") {
     if (typeof item.text !== "string") return null;
+    const questions = Array.isArray(item.questions)
+      ? item.questions.flatMap((question) => {
+          const value = asRecord(question);
+          const title = typeof value?.title === "string" ? value.title : "";
+          if (!title) return [];
+          const options = value?.options === null
+            ? null
+            : Array.isArray(value?.options)
+              ? (value.options as unknown[]).filter((option): option is string => typeof option === "string")
+              : null;
+          return [{ title, options }];
+        })
+      : undefined;
     return {
       ...base,
       id: `app:${threadId}:${turnId}:agent:${itemId}`,
@@ -44,6 +57,8 @@ export const codexRecordFromAppServerItem = (
         type: "agent_message",
         message: item.text,
         phase: typeof item.phase === "string" ? item.phase : "assistant",
+        ...(item.delivery === "async" ? { delivery: "async" } : {}),
+        ...(questions !== undefined ? { questions } : {}),
         ...(status ? { status } : {})
       }
     };

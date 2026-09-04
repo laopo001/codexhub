@@ -2733,11 +2733,11 @@ const assertLocalShellExitStatusView = async () => {
     }
   };
   const views = recordsToViews([finishedRecord, runningRecord]);
-  if (views[0]?.status !== "completed" || views[0]?.statusText !== "failed" || views[1]?.status !== "in_progress" || views[1]?.statusText !== "in_progress") {
+  if (views[0]?.status !== "failed" || views[0]?.statusText !== "Failed" || views[1]?.status !== "in_progress" || views[1]?.statusText !== "Running") {
     throw new Error(`local shell status views were not normalized: ${JSON.stringify(views)}`);
   }
   const [pendingView] = recordsToViews([pendingCommandRecord]);
-  if (pendingView?.status !== "in_progress" || pendingView.statusText !== "in_progress") {
+  if (pendingView?.status !== "in_progress" || pendingView.statusText !== "Running") {
     throw new Error(`pending shell command should expose in_progress status: ${JSON.stringify(pendingView)}`);
   }
   if (pendingView?.text !== "$ <empty>") {
@@ -2865,7 +2865,8 @@ const assertAppServerApprovalRequestFlow = async () => {
     if (approvalRecord.status !== "pending") throw new Error(`approval request record missing pending status: ${JSON.stringify(records)}`);
     assertPendingPayload(approvalPayload);
     const pendingView = recordsToViews([record as CodexRecord])[0];
-    if (pendingView?.status !== "pending" || pendingView.statusText !== "pending_approval") {
+    const pendingStatusText = approval.kind === "command_execution" ? "Pending" : "pending_approval";
+    if (pendingView?.status !== "pending" || pendingView.statusText !== pendingStatusText) {
       throw new Error(`approval request view was not pending: ${JSON.stringify(pendingView)}`);
     }
 

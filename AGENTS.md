@@ -54,7 +54,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 2. Control-plane 事件包括 `runtimes`、`projects`、`tasks`、`connections`；thread 事件只包括 `thread`、`record`、`done`。
 3. 浏览器不直接连接官方 app-server。server 通过内部 session command 发送 `subscribe_thread_records` / `unsubscribe_thread_records`，由 machine bridge 负责 app-server turns snapshot 和 live events。
 4. 每个被 Web 订阅的 thread 在一个 bridge 里只能有一份 thread records subscription。server 对 thread subscription 做 ref-count，并用 `CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS` 做 idle grace。
-5. Thread records subscription 只由 Web thread tab 订阅驱动。解绑后要保留 still-subscribed race guard，避免刚 unsubscribe 又被旧 async sync 重新写入。
+5. Thread records subscription 只由 Web thread tab 订阅驱动。解绑后要保留 still-subscribed race guard，避免刚 unsubscribe 又被旧 async sync 重新写入。 首次历史同步只读取最近的官方 turns 页，Web `/history` 向上翻页才驱动后续读取；官方 cursor 留在 machine bridge 内，旧响应必须校验订阅与 snapshot 代次，不能改写新代次的分页状态。
 6. runtime session 不走 idle auto-stop。machine 只维护一个 app-server/headless runtime，生命周期跟 machine/server 主进程走；project delete、subscription idle-close 和普通空闲都不能触发 `stop_session`。
 7. `CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS=0` 只表示禁用 subscription idle-close。session heartbeat 只表示进程存活，不能当成用户活跃信号。
 8. 不再保留 SSE 事件入口；实时控制面和 thread 增量统一走 `/api/events/ws`。
@@ -68,7 +68,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 4. Web/Embedded surfaces：所有 Web 文档统一使用 `POST /api/web-clients/heartbeat` 维持 authority Web-client lease；embedded Web 可在同一 heartbeat 附带 `surfaceId + leaseId + protocolVersion` 刷新 workspace surface lease。`POST /api/embedded/surfaces` 和 `DELETE /api/embedded/surfaces/:surfaceId/:leaseId` 只负责 embedded workspace 投影，只在 authority service 启用，body 的 `surface` 必须是 `vscode` 或 `electron`；注册要验证当前 authority 的 local launcher 和每个 workspace path，合并所有有效 lease 的 transient projects，但不能启动 runtime/thread。旧 lease 的 heartbeat/unregister 不能删除同一 surface 的新 lease。
 5. Realtime：`GET /api/events/ws` WebSocket。
 6. Projects：`GET /api/projects`、`POST /api/projects/open`、`PATCH /api/projects/:projectId`、`DELETE /api/projects/:projectId`。`PATCH` 目前只更新 `pinned`。
-7. Machine runtime：`GET /api/machines/:machineId/thread-candidates`、`GET /api/machines/:machineId/models`、`GET /api/machines/:machineId/permission-profiles`、`GET /api/machines/:machineId/command-palette`、`POST /api/machines/:machineId/threads`。
+7. Machine runtime：`GET /api/machines/:machineId/thread-candidates`、`GET /api/machines/:machineId/models`、`GET /api/machines/:machineId/permission-profiles`、`GET /api/machines/:machineId/command-palette`、`POST /api/machines/:machineId/threads`、`GET /api/machines/:machineId/apps`、`POST /api/machines/:machineId/plugins/reconcile`。Apps 与插件同步由 machine 的官方 app-server 执行，不属于 CodexHub PluginHub；同步结果不代表工具已就绪。
 8. Threads：`GET /api/threads`、`GET /api/threads/:threadId`、`PATCH /api/threads/:threadId/name`、`POST /api/threads/:threadId/turn`、`POST /api/threads/:threadId/stop`、`POST /api/threads/:threadId/compact`、`POST /api/threads/:threadId/review`、`POST /api/threads/:threadId/goal`、`DELETE /api/threads/:threadId/goal`、`POST /api/threads/:threadId/fork`、`DELETE /api/threads/:threadId`。
 9. Tasks：`GET /api/tasks`、`POST /api/tasks`、`PATCH /api/tasks/:taskId`、`DELETE /api/tasks/:taskId`、`POST /api/tasks/:taskId/run`。
 10. SSH：`GET /api/ssh/config-hosts`、`GET /api/ssh/hosts`、`POST /api/ssh/hosts`、`DELETE /api/ssh/hosts/:alias`、`GET /api/ssh/connections`、`POST /api/ssh/connect`、`DELETE /api/ssh/connections/:connectionId`、`GET /api/ssh/remote-client/:hash`。

@@ -45,6 +45,11 @@ import type { ConversationThreadAction, OpenThreadAction } from "../openThreadRe
 import { apiErrorDetails } from "../helpers/apiErrors.js";
 import { conversationViewsFromRecords } from "../helpers/conversationViews.js";
 import type { SurfaceProjectTarget } from "../helpers/surfaceThreadScope.js";
+import {
+  formatAgentQuestionAnswers,
+  type AgentQuestion,
+  type AgentQuestionAnswers
+} from "../helpers/agentQuestions.js";
 
 type RealtimeThreadMessage = Extract<RealtimeOutgoingMessage, { type: "subscribe_thread" | "unsubscribe_thread" }>;
 
@@ -137,6 +142,12 @@ export type ThreadActions = {
   reviewThread: (threadId: string) => Promise<void>;
   respondToApproval: (threadId: string, approvalId: string, decision: AppServerApprovalDecision) => Promise<void>;
   respondToUserInput: (threadId: string, userInputId: string, answers: AppServerUserInputAnswers) => Promise<void>;
+  respondToAgentQuestions: (
+    threadId: string,
+    recordId: string,
+    questions: AgentQuestion[],
+    answers: AgentQuestionAnswers
+  ) => Promise<boolean>;
   updateThreadGoal: (threadId: string, goal: ThreadGoalUpdateInput, options?: ThreadGoalUpdateOptions) => Promise<boolean>;
   clearThreadGoal: (threadId: string) => Promise<void>;
   saveGoalDialog: () => Promise<void>;
@@ -520,13 +531,16 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
   const deliverThreadInput = async (
     thread: OpenThreadState,
     input: ProxyInput,
-    pendingMessageId?: string
-  ) => {
-    const composerMode = thread.composerMode;
+    pendingMessageId?: string,
+    options: { composerMode?: OpenThreadState["composerMode"]; submissionId?: string } = {}
+  ): Promise<boolean> => {
+    const composerMode = options.composerMode ?? thread.composerMode;
     const updatesActiveGoal = thread.running && composerMode === "goal";
     try {
       const payload = await apiRouteJson(apiRoutes.sendThreadTurn, thread.threadId, {
-        ...(pendingMessageId ? { submissionId: pendingMessageId } : {}),
+        ...(options.submissionId || pendingMessageId
+          ? { submissionId: options.submissionId ?? pendingMessageId }
+          : {}),
         input,
         source: "web",
         options: selectedThreadOptions(
@@ -549,6 +563,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
       if (composerMode !== "chat") {
         ctx.dispatchConversationThread({ type: "reset-composer-mode", threadId: thread.threadId, expected: composerMode });
       }
+      return true;
     } catch (error) {
       if (pendingMessageId) {
         ctx.dispatchConversationThread({
@@ -567,6 +582,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
           record: submissionFailedRecord(details.message)
         });
       }
+      return false;
     }
   };
 
@@ -776,6 +792,30 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     }
   };
 
+  const respondToAgentQuestions = async (
+    threadId: string,
+    recordId: string,
+    questions: AgentQuestion[],
+    answers: AgentQuestionAnswers
+  ) => {
+    if (!questions.length || questions.some((_question, index) => !answers[index]?.trim())) {
+      deps.showActionError(`${threadId}:agent-questions:${recordId}`, "Response failed", "Please answer every question.");
+      return false;
+    }
+    const thread = ctx.conversationThreadsRef.current.get(threadId);
+    if (!thread) {
+      deps.showActionError(`${threadId}:agent-questions:${recordId}`, "Response failed", "Thread is no longer open.");
+      return false;
+    }
+    const submissionId = `agent-answer-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    return deliverThreadInput(
+      thread,
+      formatAgentQuestionAnswers(questions, answers),
+      undefined,
+      { composerMode: "chat", submissionId }
+    );
+  };
+
   const updateThreadGoal = async (
     threadId: string,
     goal: ThreadGoalUpdateInput,
@@ -838,6 +878,7 @@ export const createThreadActions = (ctx: ThreadActionsContext, deps: ThreadActio
     reviewThread,
     respondToApproval,
     respondToUserInput,
+    respondToAgentQuestions,
     updateThreadGoal,
     clearThreadGoal,
     saveGoalDialog,
