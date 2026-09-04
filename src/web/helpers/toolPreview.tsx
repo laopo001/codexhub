@@ -749,7 +749,7 @@ export const toolPreviewMeta = (args: Record<string, unknown>) => [
 
 export const appServerToolMeta = (payload: Record<string, unknown>) => [
   appServerStatusMeta(payload),
-  typeof payload.exit_code === "number" ? `exit ${payload.exit_code}` : null,
+  typeof payload.exit_code === "number" && !shellExitShownInStatus(payload) ? `exit ${payload.exit_code}` : null,
   typeof payload.namespace === "string" ? `ns ${payload.namespace}` : null,
   typeof payload.tool === "string" ? payload.tool : null,
   Array.isArray(payload.changes) ? `${payload.changes.length} files` : null,
@@ -761,7 +761,7 @@ export const appServerToolMeta = (payload: Record<string, unknown>) => [
 const appServerInspectMeta = (title: string, payload: Record<string, unknown>) => [
   title,
   appServerStatusMeta(payload, "status: "),
-  typeof payload.exit_code === "number" ? `exit: ${payload.exit_code}` : null,
+  typeof payload.exit_code === "number" && !shellExitShownInStatus(payload) ? `exit: ${payload.exit_code}` : null,
   typeof payload.success === "boolean" ? `success: ${payload.success}` : null,
   typeof payload.call_id === "string" ? `call_id: ${payload.call_id}` : null,
   typeof payload.namespace === "string" ? `namespace: ${payload.namespace}` : null,
@@ -770,11 +770,15 @@ const appServerInspectMeta = (title: string, payload: Record<string, unknown>) =
 
 const appServerOutputMeta = (payload: Record<string, unknown>) => [
   appServerStatusMeta(payload, "status: "),
-  typeof payload.exit_code === "number" ? `exit: ${payload.exit_code}` : null,
+  typeof payload.exit_code === "number" && !shellExitShownInStatus(payload) ? `exit: ${payload.exit_code}` : null,
   typeof payload.success === "boolean" ? `success: ${payload.success}` : null
 ].filter((line): line is string => Boolean(line)).join("\n") || undefined;
 
+const shellExitShownInStatus = (payload: Record<string, unknown>) =>
+  payload.type === "local_shell_call" && typeof payload.exit_code === "number" && payload.exit_code !== -1;
+
 const appServerStatusMeta = (payload: Record<string, unknown>, prefix = "") => {
+  if (shellExitShownInStatus(payload)) return null;
   if (!prefix && payload.type === "local_shell_call" && typeof payload.exit_code === "number") return null;
   return typeof payload.status === "string" ? `${prefix}${payload.status}` : null;
 };

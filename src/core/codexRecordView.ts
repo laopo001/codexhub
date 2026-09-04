@@ -739,11 +739,10 @@ const localShellPresentation = (payload: Record<string, unknown>): {
   statusText: string;
 } => {
   if (typeof payload.exit_code === "number") {
-    return payload.exit_code === 0
-      ? { status: "completed", statusText: "Completed" }
-      : payload.exit_code === -1
-        ? { status: "terminated", statusText: "Terminated" }
-        : { status: "failed", statusText: "Failed" };
+    // A nonzero exit code is tool-defined, not necessarily an execution failure.
+    return payload.exit_code === -1
+      ? { status: "terminated", statusText: "Terminated" }
+      : { status: "completed", statusText: `Exit ${payload.exit_code}` };
   }
 
   const rawStatus = typeof payload.status === "string"

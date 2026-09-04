@@ -1430,7 +1430,8 @@ test("tool cards use an explicit details button and keep internal IDs in Inspect
 
   const toolMeta = appServerToolMeta(record.payload as Record<string, unknown>);
   assert.equal(toolMeta.includes(callId), false);
-  assert.ok(toolMeta.includes("exit 0"));
+  assert.equal(toolMeta.includes("exit 0"), false);
+  assert.equal(view.statusText, "Exit 0");
 
   const inspectDetail = formatInspectDetail(view);
   assert.match(inspectDetail.inputMeta ?? "", new RegExp(`call_id:\\s*${callId}`));
@@ -1440,8 +1441,9 @@ test("tool cards use an explicit details button and keep internal IDs in Inspect
 
 test("local shell outcomes use one canonical status presentation", () => {
   const cases = [
-    [{ status: "completed", exit_code: 0 }, "completed", "Completed"],
-    [{ status: "completed", exit_code: 1 }, "failed", "Failed"],
+    [{ status: "completed", exit_code: 0 }, "completed", "Exit 0"],
+    [{ status: "completed", exit_code: 1 }, "completed", "Exit 1"],
+    [{ status: "failed", exit_code: 2 }, "completed", "Exit 2"],
     [{ status: "failed", exit_code: -1 }, "terminated", "Terminated"],
     [{ status: "in_progress" }, "in_progress", "Running"],
     [{ status: "pending_approval" }, "pending", "Pending"],
@@ -1591,6 +1593,7 @@ test("tool batches keep terminated below active and failed above completed", () 
   };
 
   assert.equal(summarize([{ exit_code: 0 }, { exit_code: -1 }]), "terminated");
-  assert.equal(summarize([{ exit_code: 1 }, { exit_code: -1 }]), "failed");
+  assert.equal(summarize([{ exit_code: 1 }, { exit_code: -1 }]), "terminated");
+  assert.equal(summarize([{ status: "failed" }, { exit_code: 0 }]), "failed");
   assert.equal(summarize([{ status: "in_progress" }, { exit_code: -1 }]), "in_progress");
 });
