@@ -2,12 +2,13 @@ import React from "react";
 import { Tag } from "antd";
 import { FileDiff, Image, Info, MessageSquareText, Plug, Search, ShieldCheck, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
-import { formatCompactNumber, formatWriteStdinSummary, parseJsonObject } from "../../shared/toolFormatting.js";
+import { formatCompactNumber, formatWriteStdinSummary, parseJsonObject, payloadDurationMs, formatMilliseconds } from "../../shared/toolFormatting.js";
 import { normalizeUpdatePlanStatus, parseUpdatePlanArguments, updatePlanStatusIcon, updatePlanStatusLabel, type UpdatePlanView as UpdatePlanViewModel } from "../../shared/updatePlanView.js";
 import type { InspectDetail, ParsedToolCall, WebRecordView, WebToolPresenter } from "../types.js";
 import { emptyMemoryCitation, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
 import { fileChangePreviewFiles } from "./fileChanges.js";
-import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
+import { LiveStatusLabel, sleepRemainingMs, StatusStartedAtContext, useLiveDurationMs } from "./liveTime.js";
+import { statusLabel } from "./common.js";
 
 export const ToolInspectContext = React.createContext<(() => void) | undefined>(undefined);
 
@@ -370,6 +371,14 @@ type AppServerToolPresenter = {
 };
 
 const appServerToolPresenters: Record<string, AppServerToolPresenter> = {
+  sleep: {
+    inspect: (_message, payload) => ({
+      inputMeta: appServerInspectMeta("tool: sleep", payload),
+      inputBlockLabel: "sleep",
+      inputBlock: formatJsonBlock(payload),
+      outputMeta: appServerOutputMeta(payload)
+    })
+  },
   local_shell_call: {
     render: (_message, payload, status, statusText, statusDurationMs) => {
       const command = shellCommandDisplay(payload);
@@ -545,6 +554,50 @@ const appServerToolPresenters: Record<string, AppServerToolPresenter> = {
       };
     }
   }
+};
+
+export const SleepMessage = ({
+  message,
+  showStatus = true,
+  onInspect
+}: {
+  message: WebRecordView;
+  showStatus?: boolean;
+  onInspect?: () => void;
+}) => {
+  const payload = asRecord(message.record.payload) ?? {};
+  const requestedDurationMs = payloadDurationMs(payload, "durationMs", "duration_ms");
+  const startedAt = typeof payload.started_at === "string" ? payload.started_at : undefined;
+  const elapsedMs = useLiveDurationMs(message.status === "in_progress", startedAt);
+  const remainingMs = sleepRemainingMs({ status: message.status, requestedDurationMs, elapsedMs });
+  const titleDurationMs = remainingMs ?? requestedDurationMs;
+  const title = titleDurationMs === undefined || titleDurationMs <= 0
+    ? "sleep"
+    : `sleep · ${formatMilliseconds(Math.ceil(titleDurationMs / 1000) * 1000)}`;
+  const status = message.status ?? "pending";
+  const badgeDurationMs = status === "in_progress" ? elapsedMs ?? message.statusDurationMs : message.statusDurationMs;
+  return (
+    <article className="message sleepMessage">
+      <span className="messageHeader">
+        <b className="messageHeaderLabel">{title}</b>
+        {showStatus ? <em className={`messageStatus ${status}`}>{statusLabel(status, message.statusText, badgeDurationMs)}</em> : null}
+        {onInspect ? (
+          <button
+            type="button"
+            className="messageHeaderAction"
+            title="View tool details"
+            aria-label="View tool details"
+            onClick={(event) => {
+              event.stopPropagation();
+              onInspect();
+            }}
+          >
+            <Info size={13} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        ) : null}
+      </span>
+    </article>
+  );
 };
 
 const inspectRequestResult = (
@@ -1215,11 +1268,6 @@ export const formatWriteStdinBlock = (args: Record<string, unknown>) => {
 };
 
 export const formatCommandBlock = (value: string) => value.trimEnd();
-
-const formatMilliseconds = (value: number) => {
-  if (value >= 1000 && value % 1000 === 0) return `${value / 1000}s`;
-  return `${value}ms`;
-};
 
 const formatArgumentValue = (value: unknown) => {
   if (typeof value === "string") return JSON.stringify(value);

@@ -221,15 +221,6 @@ export const formatContextUsage = (threadUsage: ThreadUsage | null) => {
   return `${Math.min(100, Math.round((context.usedTokens / context.windowTokens) * 100))}%`;
 };
 
-export const formatContextTitle = (threadUsage: ThreadUsage | null) => {
-  const context = threadUsage?.context;
-  if (!context) return undefined;
-  return [
-    `${formatCompactNumber(context.usedTokens)} / ${formatCompactNumber(context.windowTokens)} input tokens`,
-    threadUsage.observedAt ? `observed ${formatDate(threadUsage.observedAt)}` : null
-  ].filter(Boolean).join(" · ");
-};
-
 export const formatMessageMeta = (message: CodexRecordView, options: { showTimestamp?: boolean } = {}) => [
   options.showTimestamp === false ? null : message.at ? formatMessageTime(message.at) : null,
   message.usage ? `${formatCompactNumber(usageTotal(message.usage))} tokens` : null
@@ -268,17 +259,6 @@ export const formatPercent = (value: number) => {
   if (!Number.isFinite(value)) return "--";
   const normalized = Math.max(0, Math.min(100, value));
   return `${Number.isInteger(normalized) ? normalized : normalized.toFixed(1)}%`;
-};
-
-export const formatResetTitle = (window: RateLimitWindow | null | undefined) => {
-  if (!window) return undefined;
-  const resetAt = window.resetsAt === null ? null : new Date(window.resetsAt * 1000);
-  return [
-    `${formatPercent(100 - window.usedPercent)} remaining`,
-    `${formatPercent(window.usedPercent)} used`,
-    ...(window.windowMinutes === null ? [] : [`${window.windowMinutes}m window`]),
-    ...(resetAt && !Number.isNaN(resetAt.getTime()) ? [`resets ${resetAt.toLocaleString()}`] : [])
-  ].join(", ");
 };
 
 export const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
@@ -474,12 +454,20 @@ export const recordHasPendingInteraction = (record: CodexRecord) => {
 export const recordsHavePendingInteraction = (records: CodexRecord[]) =>
   records.some(recordHasPendingInteraction);
 
-export const hideSupersededSimpleThinkingViews = (views: CodexRecordView[]) => {
+// 关闭后，thinking 和 sleep 在出现后续消息时仍会保留。
+export const AUTO_HIDE_THINKING_AND_SLEEP = false;
+
+export const hideSupersededThinkingAndSleepViews = (
+  views: CodexRecordView[],
+  enabled: boolean = AUTO_HIDE_THINKING_AND_SLEEP
+) => {
+  if (!enabled) return views;
   let hasLaterView = false;
   const nextViews: CodexRecordView[] = [];
   for (let index = views.length - 1; index >= 0; index -= 1) {
     const view = views[index];
-    if (!(view.role === "thinking" && hasLaterView)) nextViews.push(view);
+    const autoHide = view.role === "thinking" || asRecord(view.record.payload)?.type === "sleep";
+    if (!(autoHide && hasLaterView)) nextViews.push(view);
     hasLaterView = true;
   }
   return nextViews.reverse();

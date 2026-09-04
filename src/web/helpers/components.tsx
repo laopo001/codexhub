@@ -14,7 +14,7 @@ import { apiRouteJson, authFetch, authToken } from "./core.js";
 import { writeTextToClipboard } from "./composer.js";
 import { LiveStatusLabel, StatusStartedAtContext } from "./liveTime.js";
 import { emptyMemoryCitation, formatMemoryCitationCount, formatMemoryCitationLines, parseMemoryCitationText, shouldExtractMemoryCitation } from "./memoryCitation.js";
-import { formatInspectDetail, renderToolMessageBody, ToolInspectContext } from "./toolPreview.js";
+import { formatInspectDetail, renderToolMessageBody, SleepMessage, ToolInspectContext } from "./toolPreview.js";
 import { activityStatusPriority, formatMessageMeta, formatMessageMetaTitle } from "./records.js";
 import { createStatusRegistry, StatusPanelToggleIcon, StatusRegistryRows } from "./statusRegistry.js";
 import {
@@ -109,6 +109,7 @@ export const MessageCard = ({
   onOpenSubagentThread?: (activity: SubagentActivityView) => void | Promise<void>;
 }) => {
   const isThinkingMessage = message.role === "thinking";
+  const isSleepMessage = asRecord(message.record.payload)?.type === "sleep";
   const isToolBatch = Boolean(message.toolBatch);
   const messageToneClass = messageToneClassName(message);
   const toolBody = !isToolBatch && renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined, showStatus ? message.statusText : undefined) : null;
@@ -134,6 +135,7 @@ export const MessageCard = ({
     || approval
     || onFork
   );
+  if (isSleepMessage) return <SleepMessage message={message} showStatus={showStatus} onInspect={onInspect} />;
   if (message.subagentActivity) {
     return (
       <SubagentActivityMessage

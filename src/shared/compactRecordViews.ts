@@ -351,7 +351,11 @@ const compactToolBatchDurationMs = (views: CompactRecordView[]) => {
   return hasDuration ? total : undefined;
 };
 
-const isBatchableToolView = (view: CompactRecordView) => view.role === "tool" && !view.toolBatch;
+const isBatchableToolView = (view: CompactRecordView) => {
+  const payload = asRecord(view.record.payload);
+  // sleep 是可见的等待活动，不能被普通 Tools batch 折叠掉。
+  return view.role === "tool" && !view.toolBatch && payload?.type !== "sleep";
+};
 
 const compactTurnId = (view: CodexRecordView) => {
   const parts = view.record.id.split(":");
@@ -363,6 +367,7 @@ const isInternalMessage = (payload: Record<string, unknown>) =>
 
 const formatCompactToolCall = (view: CodexRecordView) => {
   const payload = asRecord(view.record.payload);
+  if (payload?.type === "sleep") return view.text;
   if (payload?.type !== "function_call") return view.text;
   const name = typeof payload.name === "string" ? payload.name : "tool";
   const args = parseJsonObject(typeof payload.arguments === "string" ? payload.arguments : "");

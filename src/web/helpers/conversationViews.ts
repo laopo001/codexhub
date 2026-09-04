@@ -2,7 +2,7 @@ import { recordsToViews } from "../../core/codexRecordView.js";
 import { collapseHistoricalToolBatches, compactToolViews } from "../../shared/compactRecordViews.js";
 import type { CodexRecord } from "../../shared/recordTypes.js";
 import {
-  hideSupersededSimpleThinkingViews,
+  hideSupersededThinkingAndSleepViews,
   isSimpleMainView,
   isSimpleRecord
 } from "./records.js";
@@ -13,7 +13,7 @@ export const conversationViewsFromRecords = (
   expandedToolBatchKeys: ReadonlySet<string> = new Set()
 ) => collapseHistoricalToolBatches(
   compactToolViews(
-    hideSupersededSimpleThinkingViews(
+    hideSupersededThinkingAndSleepViews(
       recordsToViews(records.filter(isSimpleRecord)).filter(isSimpleMainView)
     )
   ),

@@ -1,6 +1,6 @@
 import { asRecord, type CodexRecord, type CodexRecordView, type RecordUsage, type SubagentActivityView } from "../shared/recordTypes.js";
 import { turnIdFromAppRecordId } from "../shared/recordIdentity.js";
-import { parseJsonObject } from "../shared/toolFormatting.js";
+import { parseJsonObject, payloadDurationMs, formatMilliseconds } from "../shared/toolFormatting.js";
 export type { CodexRecordView, RecordUsage } from "../shared/recordTypes.js";
 
 export const recordsToViews = (records: CodexRecord[]): CodexRecordView[] => {
@@ -206,7 +206,7 @@ export const subagentActivityKindLabel = (kind: string) => {
 };
 
 export const recordViewStatusDurationMs = (payload: Record<string, unknown>) => {
-  return durationMsValue(payload.duration_ms) ?? durationMsValue(payload.durationMs);
+  return payloadDurationMs(payload, "duration_ms", "durationMs");
 };
 
 const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown>): CodexRecordView | null => {
@@ -524,6 +524,21 @@ const responseItemToView = (record: CodexRecord, payload: Record<string, unknown
     };
   }
 
+  if (payload.type === "sleep") {
+    const status = sleepStatus(payload.status);
+    const durationMs = payloadDurationMs(payload, "durationMs", "duration_ms");
+    return {
+      id: record.id,
+      role: "tool",
+      label: "sleep",
+      text: sleepSummary(durationMs),
+      at: record.timestamp,
+      status,
+      statusText: sleepStatusText(status),
+      record
+    };
+  }
+
   if (payload.type === "function_call_output") {
     const output = typeof payload.output === "string" ? payload.output : stringify(payload.output);
     return {
@@ -697,6 +712,22 @@ const responseItemStatus = (payload: Record<string, unknown>): CodexRecordView["
   return undefined;
 };
 
+const sleepStatus = (status: unknown): NonNullable<CodexRecordView["status"]> => {
+  const normalized = typeof status === "string"
+    ? status.trim().replace(/[-\s]+/g, "_").toLowerCase()
+    : "";
+  if (normalized === "terminated" || normalized === "cancelled" || normalized === "canceled" || normalized === "interrupted" || normalized === "aborted") {
+    return "terminated";
+  }
+  return recordViewStatusFromAppStatus(status) ?? "pending";
+};
+
+const sleepStatusText = (status: NonNullable<CodexRecordView["status"]>) =>
+  status === "in_progress" ? "running" : status;
+
+const sleepSummary = (durationMs: number | undefined) =>
+  durationMs === undefined ? "sleep" : `sleep ${formatMilliseconds(durationMs)}`;
+
 const contextCompactionStatus = (payload: Record<string, unknown>): NonNullable<CodexRecordView["status"]> => {
   const status = recordViewStatusFromAppStatus(payload.status);
   if (status) return status;
@@ -780,9 +811,6 @@ export const recordViewStatusText = (status: unknown): string | undefined => {
   const text = status.trim();
   return text || undefined;
 };
-
-const durationMsValue = (value: unknown) =>
-  typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : undefined;
 
 const nonEmptyString = (value: unknown) => {
   if (typeof value !== "string") return undefined;

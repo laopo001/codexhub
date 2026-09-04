@@ -85,7 +85,7 @@ export const stableLiveDurationAnchor = (
   return next;
 };
 
-const useLiveDurationMs = (
+export const useLiveDurationMs = (
   active: boolean,
   startedAt: string | undefined,
   observedAt?: string
@@ -112,6 +112,27 @@ const useLiveDurationMs = (
     observedClientAtMs: anchor.observedClientAtMs,
     currentClientNowMs: currentNowMs
   });
+};
+
+/** 纯函数：sleep 只在有官方开始时间时倒计时，终态始终显示已不再等待。 */
+export const sleepRemainingMs = ({
+  status,
+  requestedDurationMs,
+  elapsedMs
+}: {
+  status: CodexRecordView["status"];
+  requestedDurationMs?: number;
+  elapsedMs?: number;
+}) => {
+  const requested = typeof requestedDurationMs === "number" && Number.isFinite(requestedDurationMs)
+    ? Math.max(0, requestedDurationMs)
+    : undefined;
+  if (status === "completed" || status === "failed" || status === "terminated") return 0;
+  if (status === "in_progress") {
+    if (requested === undefined || elapsedMs === undefined || !Number.isFinite(elapsedMs)) return undefined;
+    return Math.max(0, requested - Math.max(0, elapsedMs));
+  }
+  return requested;
 };
 
 export const StatusStartedAtContext = React.createContext<string | undefined>(undefined);

@@ -28,3 +28,19 @@ export const parseJsonObject = (value: string): Record<string, unknown> | null =
     return null;
   }
 };
+
+/** 兼容 app-server 新旧时长字段；无效值不进入展示层。 */
+export const payloadDurationMs = (
+  payload: Record<string, unknown>,
+  ...keys: string[]
+) => {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
+  }
+  return undefined;
+};
+
+/** 用于工具摘要的毫秒/整秒展示，不依赖消息时间戳。 */
+export const formatMilliseconds = (value: number) =>
+  value >= 1000 && value % 1000 === 0 ? `${value / 1000}s` : `${value}ms`;

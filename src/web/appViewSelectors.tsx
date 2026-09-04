@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type React from "react";
-import { Popover } from "antd";
+import { Popover, Tooltip } from "antd";
 import { Zap } from "lucide-react";
 import {
   fiveHourRateLimitWindowMinutes,
@@ -11,10 +11,11 @@ import {
   activityStatusesFromRecords,
   formatComposerModelButtonLabel,
   formatComposerModelTitle,
-  formatContextTitle,
+  formatCompactNumber,
+  formatDate,
+  formatPercent,
   formatContextUsage,
   formatRateLimitRemaining,
-  formatResetTitle,
   isFastServiceTier,
   latestThreadConfigFromRecords,
   latestThreadUsageFromRecords,
@@ -32,7 +33,7 @@ import { threadExecutionMeta } from "./helpers/threadExecution.js";
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { contextMenuPosition } from "./helpers/composer.js";
-import type { OpenThreadState } from "./types.js";
+import type { OpenThreadState, RateLimitWindow } from "./types.js";
 import { formatPlanProgress, planProgressFromStatuses } from "../shared/planProgress.js";
 
 type ComposerThreadControlsMode = "inline" | "popover";
@@ -236,6 +237,28 @@ const OpenThreadTabLabel = ({
   );
 };
 
+const RateLimitPill = ({ window, label }: { window: RateLimitWindow; label: string }) => {
+  const resetAt = window.resetsAt === null ? null : new Date(window.resetsAt * 1000);
+  return (
+    <Tooltip
+      trigger={["hover", "focus"]}
+      classNames={{ root: "composerUsageTooltip" }}
+      title={(
+        <div className="composerUsageTooltipContent">
+          <strong>{label} account usage</strong>
+          <dl>
+            <dt>Remaining</dt><dd>{formatRateLimitRemaining(window)}</dd>
+            <dt>Used</dt><dd>{formatPercent(window.usedPercent)}</dd>
+            <dt>Resets</dt><dd>{resetAt && !Number.isNaN(resetAt.getTime()) ? resetAt.toLocaleString() : "Unknown"}</dd>
+          </dl>
+        </div>
+      )}
+    >
+      <span className="usagePill" tabIndex={0}>{label} {formatRateLimitRemaining(window)}</span>
+    </Tooltip>
+  );
+};
+
 const ComposerThreadControls = ({
   thread,
   threadModel,
@@ -277,37 +300,48 @@ const ComposerThreadControls = ({
     threadUsage,
     sevenDayRateLimitWindowMinutes
   );
-  const compactTitle = thread.running
-    ? "Stop the running turn before compacting context"
-    : [
-        formatContextTitle(threadUsage),
-        "Click to compact this thread's app-server context"
-      ].filter(Boolean).join("\n");
+  const contextTooltip = (
+    <div className="composerUsageTooltipContent">
+      <strong>Context usage</strong>
+      {threadUsage?.context ? (
+        <dl>
+          <dt>Input tokens</dt>
+          <dd>{formatCompactNumber(threadUsage.context.usedTokens)} / {formatCompactNumber(threadUsage.context.windowTokens)}</dd>
+          <dt>Used</dt><dd>{contextUsageLabel}</dd>
+          {threadUsage.observedAt ? <><dt>Observed</dt><dd>{formatDate(threadUsage.observedAt)}</dd></> : null}
+        </dl>
+      ) : <p>Context usage unavailable</p>}
+      <p>{thread.running ? "Stop the running turn before compacting context" : "Click to compact this thread’s context"}</p>
+    </div>
+  );
 
   return (
     <div className={`composerSessionControls ${mode}`} aria-label="Thread usage and model">
       <div className="composerUsagePills" aria-label="Thread usage">
-        <button
-          type="button"
-          className="usagePill contextCompactButton"
-          disabled={!canCompactThread}
-          title={compactTitle}
-          aria-label={`Context ${contextUsageLabel}. Compact context`}
-          style={contextProgressStyle}
-          onClick={() => {
-            if (thread.running) return;
-            onRequestClose?.();
-            void compactThread(thread.threadId);
-          }}
-        >
-          <span className="contextUsageIcon" aria-hidden="true" />
-        </button>
+        <Tooltip title={contextTooltip} trigger={["hover", "focus"]} classNames={{ root: "composerUsageTooltip" }}>
+          <span className="contextUsageTooltipTrigger" tabIndex={canCompactThread ? undefined : 0}>
+            <button
+              type="button"
+              className="usagePill contextCompactButton"
+              disabled={!canCompactThread}
+              aria-label={`Context ${contextUsageLabel}. Compact context`}
+              style={contextProgressStyle}
+              onClick={() => {
+                if (thread.running) return;
+                onRequestClose?.();
+                void compactThread(thread.threadId);
+              }}
+            >
+              <span className="contextUsageIcon" aria-hidden="true" />
+            </button>
+          </span>
+        </Tooltip>
 
         {fiveHourRateLimit ? (
-          <span className="usagePill" title={formatResetTitle(fiveHourRateLimit)}>5h {formatRateLimitRemaining(fiveHourRateLimit)}</span>
+          <RateLimitPill window={fiveHourRateLimit} label="5h" />
         ) : null}
         {sevenDayRateLimit ? (
-          <span className="usagePill" title={formatResetTitle(sevenDayRateLimit)}>7d {formatRateLimitRemaining(sevenDayRateLimit)}</span>
+          <RateLimitPill window={sevenDayRateLimit} label="7d" />
         ) : null}
       </div>
       <button

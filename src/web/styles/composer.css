@@ -1203,6 +1203,42 @@
   font-size: 11.5px;
 }
 
+.contextUsageTooltipTrigger {
+  display: inline-flex;
+}
+
+.composerUsageTooltip {
+  max-width: min(320px, calc(100vw - 24px));
+}
+
+.composerUsageTooltipContent {
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.composerUsageTooltipContent dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 16px;
+  margin: 8px 0 0;
+}
+
+.composerUsageTooltipContent dt {
+  opacity: 0.75;
+}
+
+.composerUsageTooltipContent dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.composerUsageTooltipContent p {
+  margin: 8px 0 0;
+}
+
 .usagePill {
   display: inline-flex;
   align-items: center;

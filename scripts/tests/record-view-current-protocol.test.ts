@@ -14,6 +14,7 @@ import { SubagentActivityMessage } from "../../src/web/SubagentActivityMessage.j
 import { resolveSubagentThreadTarget } from "../../src/web/helpers/subagentThreads.js";
 import { appServerToolMeta, formatInspectDetail } from "../../src/web/helpers/toolPreview.js";
 import { MessageCard } from "../../src/web/helpers/components.js";
+import { sleepRemainingMs } from "../../src/web/helpers/liveTime.js";
 
 const compactionRecord = (id: string, type: string): CodexRecord => ({
   id,
@@ -1465,6 +1466,75 @@ test("local shell outcomes use one canonical status presentation", () => {
     assert.equal(view?.statusText, statusText);
   }
   assert.equal(isActiveRecordStatus("terminated"), false);
+});
+
+test("sleep items render as readable standalone waits across view modes", () => {
+  const record: CodexRecord = {
+    id: "app:thread-1:turn-1:item:sleep:sleep-1",
+    timestamp: "2026-08-30T16:20:00.000Z",
+    type: "response_item",
+    payload: { type: "sleep", id: "sleep-1", durationMs: 35_000, status: "completed", duration_ms: 40_000 }
+  };
+  const view = recordToView(record);
+  assert.ok(view);
+  assert.equal(view.role, "tool");
+  assert.equal(view.text, "sleep 35s");
+  assert.equal(view.status, "completed");
+  assert.equal(view.statusDurationMs, 40_000);
+
+  const compact = compactToolViews([view]);
+  assert.equal(compact.length, 1);
+  assert.equal(compact[0]?.text, "sleep 35s");
+  assert.equal(collapseHistoricalToolBatches(compact)[0]?.toolBatch, undefined);
+
+  const markup = renderToStaticMarkup(createElement(MessageCard, {
+    message: compact[0]!,
+    renderMode: "markdown",
+    markdownEnabled: true,
+    onInspect: () => undefined
+  }));
+  assert.match(markup, /messageHeaderLabel">sleep<\/b>/);
+  assert.doesNotMatch(markup, /sleep · 0ms/);
+  assert.match(markup, /completed · 40s/);
+  assert.doesNotMatch(markup, /Clock/);
+  assert.match(markup, /messageHeaderLabel/);
+  assert.doesNotMatch(markup, /durationMs/);
+  assert.doesNotMatch(markup, /sleep-1/);
+  assert.match(formatInspectDetail(compact[0]!).inputBlock ?? "", /durationMs/);
+});
+
+test("thinking and sleep auto-hide together only when followed by another visible message", async () => {
+  const { hideSupersededThinkingAndSleepViews } = await import("../../src/web/helpers/records.js");
+  const records: CodexRecord[] = [
+    { id: "thinking", type: "response_item", payload: { type: "reasoning", summary: ["Thinking"] } },
+    { id: "sleep", type: "response_item", payload: { type: "sleep", durationMs: 40_000, status: "completed" } },
+    { id: "answer", type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done" }] } }
+  ];
+  const views = recordsToViews(records);
+  assert.deepEqual(hideSupersededThinkingAndSleepViews(views, true).map((view) => view.id), ["answer"]);
+  assert.deepEqual(hideSupersededThinkingAndSleepViews(views.slice(0, 2), true).map((view) => view.id), ["sleep"]);
+  assert.deepEqual(hideSupersededThinkingAndSleepViews(views.slice(0, 1), true).map((view) => view.id), ["thinking"]);
+  assert.deepEqual(hideSupersededThinkingAndSleepViews(views, false).map((view) => view.id), ["thinking", "sleep", "answer"]);
+  assert.equal(views[1].record, records[1]);
+  assert.equal(views.length, 3);
+});
+
+test("sleep remaining time follows protocol status without fabricating lifecycle time", () => {
+  assert.equal(sleepRemainingMs({ status: "in_progress", requestedDurationMs: 40_000, elapsedMs: 12_000 }), 28_000);
+  assert.equal(sleepRemainingMs({ status: "pending", requestedDurationMs: 40_000 }), 40_000);
+  assert.equal(sleepRemainingMs({ status: "completed", requestedDurationMs: 40_000, elapsedMs: 40_000 }), 0);
+  assert.equal(sleepRemainingMs({ status: "terminated", requestedDurationMs: 40_000, elapsedMs: 40_000 }), 0);
+  assert.equal(sleepRemainingMs({ status: "failed", requestedDurationMs: 40_000, elapsedMs: 40_000 }), 0);
+  assert.equal(sleepRemainingMs({ status: "in_progress", requestedDurationMs: 40_000 }), undefined);
+  assert.equal(sleepRemainingMs({ status: "in_progress", requestedDurationMs: Number.NaN, elapsedMs: 1_000 }), undefined);
+  assert.equal(sleepRemainingMs({ status: "in_progress", requestedDurationMs: 40_000, elapsedMs: 50_000 }), 0);
+});
+
+test("sleep duration and terminal states remain safe for legacy and edge payloads", () => {
+  const make = (payload: Record<string, unknown>) => recordToView({ id: JSON.stringify(payload), type: "response_item", payload })!;
+  assert.equal(make({ type: "sleep", duration_ms: 0, status: "running" }).text, "sleep 0ms");
+  assert.equal(make({ type: "sleep", durationMs: Number.NaN, duration_ms: "bad", status: "terminated" }).text, "sleep");
+  assert.equal(make({ type: "sleep", durationMs: Number.NaN, duration_ms: "bad", status: "terminated" }).status, "terminated");
 });
 
 test("terminated shell cards stay terminated and show raw exit details", () => {
