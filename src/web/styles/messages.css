@@ -2196,6 +2196,16 @@
   align-items: center;
 }
 
+.agentQuestionOptions input[type="radio"] {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .agentQuestionError {
   margin: 0;
   color: #b94332;
